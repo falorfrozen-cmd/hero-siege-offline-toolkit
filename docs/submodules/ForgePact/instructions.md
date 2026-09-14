@@ -157,6 +157,7 @@ To add or modify a gameplay modifier or runtime command:
 - **Python:** Python 3.10+ (standard `py` launcher on Windows).
 - **C++ Compiler:** Microsoft Visual C++ (MSVC) from Visual Studio 2022 / Build Tools supporting `/std:c++20`.
 - **YYToolkit Headers:** YYToolkit C++ headers (`YYToolkit/`, `Aurie/`, `FunctionWrapper/`, and `YYTK_Shared_Types.cpp`) located in `plugin_build/include/`.
+- **hs-game-sdk:** required by **both** builds, not just the plugin. `build.bat` compiles against `hs-game-sdk/cpp/include` (`/I ..\..\hs-game-sdk\cpp\include`), and since 2026-09-14 `build_release.py` also puts `hs-game-sdk/python` on PyInstaller's analysis path — the panel imports `hs_game_sdk` for the Satanic Zone buff/debuff pool, and a package built without it ships that section empty. Building from inside a full toolkit checkout (ForgePact sits next to `hs-game-sdk/`) needs no extra setup; building ForgePact standalone means checking the hub out alongside it.
 - **Python Packages (Optional / Packaging):**
   - `pyinstaller` (required for running `build_release.py`).
   - `pywebview` (optional; if installed, panel launches in a native desktop window, otherwise falls back to the default web browser).
@@ -260,6 +261,7 @@ The packaging script (`build_release.py`) includes explicit fail-closed safety c
 1. **Plugin Sync Guard:** Compares `modfiles_shipped\BloodPactPlugin.dll` against `plugin_build\BloodPactPlugin_ship.dll`. If they differ or the ship DLL is missing, packaging is aborted to prevent shipping stale plugin binaries.
 2. **Process Lock Prevention:** Uses `taskkill /F /IM ForgePact.exe` before rebuilding to avoid locked executable errors in `dist/ForgePact/`.
 3. **Module Exclusion:** Excludes heavy or unused packages (`tkinter`, `PIL`, `numpy`, `pandas`, `PyQt5`, `IPython`, `pytest`) from the PyInstaller onefile package, keeping bundle size small.
+4. **SDK Bundling Guard (added 2026-09-14):** `hs-game-sdk/python` goes on PyInstaller's analysis path via `--paths`, packaging is refused outright if that directory is missing, and the build fails if PyInstaller's own `warn-ForgePact.txt` still reports `missing module named hs_game_sdk` afterwards. Fail-closed on purpose: `src/forgepact.py` catches that ImportError and falls back to empty Satanic pools, and its runtime `sys.path` fallback cannot help a frozen build (PyInstaller resolves imports at build time; the exe unpacks to a temp directory with no toolkit checkout above it). Every package built before this shipped a World tab whose Satanic Zone section rendered a heading with no rows — it built, started, and looked fine, which is exactly why the check is a hard error rather than a warning.
 
 ---
 

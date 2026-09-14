@@ -231,6 +231,22 @@ responses - no Aurie runtime, no DLL in the game, no live game.
 
 ### `Player::GetOwnedRelicLevels` / `GetMaxedRelicIds` — relic identification
 
+Both take the player as an **instance handle of either kind**: `VALUE_OBJECT` or
+`VALUE_REF`, tested with `Player::IsInstanceHandle`. This runner produces
+`VALUE_REF` (kind 15) for the local player, so the reference is the normal case —
+see `docs/RUNTIME_DATA_MODELS.md` §1.
+
+That was a real defect too (REPORTED 2026-09-14): the gate read
+`player.m_Kind != VALUE_OBJECT -> return {}`, so the scan returned an empty map
+for every player on this runner. An empty maxed set means "nothing to hold back",
+which is indistinguishable downstream from "the player owns no maxed relics" —
+so `ForgePact`'s relic filter armed, installed its hook, logged
+`hook installed -> ON`, and filtered nothing, for every user, silently.
+
+If a caller hands in something that is neither kind (an undefined value, a bare
+instance id), the scan still returns empty rather than guessing: convert an id
+with `GetInstanceObject` first.
+
 An item counts as a relic only on **positive identification**: rarity tier 16 via
 `c` / `cls` / `itemType`, or the relic-specific `relicLevel` field. Level is read
 only from `o`, `level` and `relicLevel`.

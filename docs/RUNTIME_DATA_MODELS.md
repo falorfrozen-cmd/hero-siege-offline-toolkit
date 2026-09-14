@@ -34,6 +34,26 @@ The `equippedItems` array (or `inventory` equipped region) organizes items by nu
 * `inventory`: Primary inventory array containing serialized item structs or nested bag structs.
 * `inventory_relic_tab` / `bags`: Extended bag containers.
 
+### How the local player arrives: `VALUE_REF`, not `VALUE_OBJECT`
+
+**The player handle this runner hands back is an instance reference — `VALUE_REF`,
+kind 15 — not a struct.** `instance_find(Player_obj)` returns one (measured
+2026-09-10), and `gml_Script_GetMyPlayer` does not resolve here at all, so the
+reference is the normal case rather than the exotic one.
+
+Every instance accessor takes it straight through — `variable_instance_get`,
+`variable_instance_set`, `variable_instance_exists` — so code that reads player
+variables needs no conversion. What it must not do is gate on
+`m_Kind == VALUE_OBJECT` before starting: that check silently disables the whole
+feature rather than failing loudly, and has now done so three times
+(`orbpickup`, the relic filter's arming step, and the maxed-relic scan itself).
+Use `HeroSiege::Player::IsInstanceHandle` (`player.hpp`), which accepts both
+kinds, or accept both explicitly.
+
+Note the contrast with the next section: *items* really are structs
+(`VALUE_OBJECT`), and struct accessors do require that kind. The rule is
+per-surface — an instance handle and an item struct are not interchangeable.
+
 ---
 
 ## 2. Item Definition & Runtime Struct (`itemDefinitionStruct`)
