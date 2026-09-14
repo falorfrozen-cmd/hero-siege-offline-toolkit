@@ -124,7 +124,7 @@ jobs:
       - name: Has anything actually changed?
         id: changed
         run: |
-          # `generated` moves on every run, so a nightly build that found nothing
+          # `generated` moves on every run, so a rebuild that found nothing
           # new still produces a diff. Comparing with that one line removed is
           # the whole question: anything else that moved is a real change.
           git show HEAD:catalog/catalog.json | grep -v '"generated"' > /tmp/before.json

@@ -445,7 +445,7 @@ the screenshot alone.
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `.github/workflows/catalog.yml` | `repository_dispatch: release-published`, nightly, manual | Rebuilds and re-signs the catalog, then **opens a pull request**. Publishes nothing. |
+| `.github/workflows/catalog.yml` | `repository_dispatch: release-published/submodule-updated`, manual | Rebuilds and re-signs the catalog, then **opens a pull request**. Publishes nothing. |
 | `.github/workflows/catalog-publish.yml` | push to `main` touching `catalog/`, manual | Verifies the signature and uploads the catalog to the `catalog` release tag. |
 | `.github/workflows/hub-release.yml` | `hub-v*` tag, manual dry run | Tests, builds, signs, and publishes the hub plus `latest.json`. |
 | `.github/workflow-templates/notify-hub-release.example.yml` | — | The sending half, to copy into a tool repository. |
@@ -512,9 +512,9 @@ a `catalog` release.
 | `HUB_MINISIGN_SECRET_KEY` | `catalog.yml` | The job fails deliberately. An unsigned catalog is one the hub refuses, so publishing one would ship a hub that cannot update. |
 | `TAURI_SIGNING_PRIVATE_KEY` | `hub-release.yml` | The installer builds but its updates can never be verified. |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | `hub-release.yml` | Only if the key has one. |
-| `HUB_DISPATCH_TOKEN` | each tool repository | The notification is skipped and the nightly schedule picks the release up instead. Latency, not correctness. |
+| `HUB_DISPATCH_TOKEN` | each tool repository | Release notification fails visibly. Configure the secret and rerun the notifier; there is no scheduled fallback. |
 
-### Still to do
+### Tool notifications
 
 The push notifier is installed in all ten tool repositories, keyed to each
 one's default branch — `hero-siege-item-editor` is `master`, not `main`.
@@ -523,10 +523,12 @@ were verified. The hub opens pointer-update PRs and automatically merges
 validated bumps through `submodule-dispatch.yml`; these push notifications
 are operational.
 
-`notify-hub-release.example.yml` is not installed at all, and it is the half
-that matters most: the catalog is built from each tool's latest *release*, and
-`notify-hub.yml` fires on a push. A release published by tagging an existing
-commit reaches this repository through nothing.
+`notify-hub-release.yml` supplies the second notification in each tool
+repository: a published stable release sends `release-published`, which
+rebuilds the catalog from the latest published release. A manual run from
+Actions sends the same notification without creating or editing a release.
+Prerelease publication is ignored. Missing credentials fail the notifier
+rather than pretending an absent nightly job will recover it.
 
 The two stay separate files rather than one workflow with two jobs. They answer
 to different events, they can be adopted independently, and a repository that

@@ -156,6 +156,10 @@ log), and add a row to *Confirmed by hand* in `docs/hub/design.md`.
 
 ## Releasing
 
+Tool repositories use `notify-hub-release.yml` to notify this hub when a stable
+release is published. Run that workflow manually to verify or recover a missed
+notification. It reuses `HUB_DISPATCH_TOKEN`; there is no nightly fallback.
+
 `py -3 tools/cut_release.py <version>` moves the version in all six places at
 once; `--check` is what CI verifies against the tag. **Do not hand-edit them** —
 a mismatch fails the release. Then tag `hub-v<version>` and push.

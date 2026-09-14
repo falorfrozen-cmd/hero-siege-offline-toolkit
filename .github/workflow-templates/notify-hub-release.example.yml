@@ -1,86 +1,50 @@
-# Copy this into a tool repository as `.github/workflows/notify-hub-release.yml`.
+# Copy to a tool repository as .github/workflows/notify-hub-release.yml.
+# Keep notify-hub.yml as well: push notifications update source pointers;
+# this workflow tells the hub to refresh its published-release catalog.
 #
-# It tells the toolkit hub that a release was published, so the hub's catalog is
-# rebuilt within a minute or two instead of waiting for the nightly schedule.
+# Reuse HUB_DISPATCH_TOKEN, scoped to the canonical hub repository with
+# Contents: read and write. No additional secret or tool-repository access
+# is needed. Missing credentials fail visibly: there is no nightly fallback.
 #
-# This is the sending half of `.github/workflows/catalog.yml` in
-# `hero-siege-offline-toolkit`. The receiving side validates the sender against
-# an allowlist and opens a pull request rather than pushing, so firing this event
-# cannot move the hub repository's default branch.
-#
-# Why this is a separate file from `notify-hub.example.yml`: that template sends
-# `submodule-updated` when a commit lands on the default branch, which the hub
-# answers by opening a pull request that bumps the recorded submodule pointer.
-# Different event, different receiving workflow, different reason to fire.
-# Keeping the two apart means a repository can install either, both, or
-# neither. If you already have `notify-hub.yml`, add the job below to it rather
-# than keeping two workflows.
-#
-# The repository this notifies must be the one the installed hubs read their
-# catalog from -- `HUB_REPO` in `hub/src-tauri/src/catalog.rs`, which a release
-# build overrides to whichever repository published it. Notifying one repository
-# while players' hubs read another means a release rebuilds a catalog nobody
-# fetches. The URL below is the canonical repository; change it if you are
-# running your own.
-#
-# Setup, once per tool repository:
-#
-#   1. Create a fine-grained personal access token whose repository access is
-#      only the hub repository, and whose only permission is
-#      `Contents: Read and write` — nothing else. (A classic token needs the
-#      `repo` scope, which is broader than necessary.)
-#
-#      Write, not read: `POST /repos/{owner}/{repo}/dispatches` is documented
-#      under Contents *write*, and a read-only token gets 403 "Resource not
-#      accessible by personal access token". An earlier version of this file
-#      said read; it was wrong.
-#   2. Add it as the repository secret `HUB_DISPATCH_TOKEN`, under
-#      Settings > Secrets and variables > Actions in this repository. This is
-#      the same secret name `notify-hub.example.yml` uses, so one token can
-#      serve both workflows.
-#   3. Commit this file.
-#
-# Publishing a release with no token set simply does nothing: the step is
-# skipped, and the hub's nightly schedule picks the release up anyway. The
-# notification is a latency improvement, never a requirement.
-
+# Run manually from Actions to verify notification or recover a missed event.
+# The hub resolves the latest published release itself, so a manual run does
+# not create a release or change a version. Catalog changes still require a PR.
 name: Notify hub of a release
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions: {}
+
+concurrency:
+  group: notify-hub-release-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   notify:
     runs-on: ubuntu-latest
-    # A draft becoming a release fires `published`; a prerelease is not
-    # something the catalog should switch users onto.
-    if: github.event.release.prerelease == false
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
     steps:
-      - name: Tell the hub
+      - name: Notify the hub catalog
         env:
           TOKEN: ${{ secrets.HUB_DISPATCH_TOKEN }}
         run: |
           if [ -z "$TOKEN" ]; then
-            echo "HUB_DISPATCH_TOKEN is not set; the hub will pick this release \
-          up on its next scheduled catalog build."
-            exit 0
+            echo "::error::HUB_DISPATCH_TOKEN is not configured. Add the hub-scoped secret and rerun this workflow."
+            exit 1
           fi
 
-          # The payload carries only what the receiving workflow reads. It does
-          # not carry the asset list or the version: the hub resolves those from
-          # the GitHub API itself, so a forged payload cannot talk it into
-          # pinning an artifact that is not on the release.
+          payload=$(jq -nc --arg repository "$GITHUB_REPOSITORY" \
+            '{event_type: "release-published", client_payload: {repository: $repository}}')
+
           curl --fail --silent --show-error \
-            -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/falorfrozen-cmd/hero-siege-offline-toolkit/dispatches \
-            -d "$(jq -nc \
-                  --arg repo "$GITHUB_REPOSITORY" \
-                  --arg tag "$GITHUB_REF_NAME" \
-                  '{event_type: "release-published",
-                    client_payload: {repository: $repo, tag: $tag}}')"
+            --data "$payload"
+
+          echo "Release notification delivered to the toolkit hub."
