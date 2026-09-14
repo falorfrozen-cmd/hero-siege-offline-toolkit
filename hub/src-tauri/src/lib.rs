@@ -543,8 +543,8 @@ fn check_for_updates(app: AppHandle, hub: State<'_, Arc<Hub>>) -> Result<Library
 /// Separate from `check_for_updates` rather than folded into it: they are two
 /// requests to two places, and keeping them apart lets the interface say which
 /// one it is waiting on instead of showing one spinner for both.
-#[tauri::command(async)]
-fn check_hub_update(app: AppHandle, hub: State<'_, Arc<Hub>>) -> Result<Option<HubUpdate>, String> {
+#[tauri::command]
+async fn check_hub_update(app: AppHandle, hub: State<'_, Arc<Hub>>) -> Result<Option<HubUpdate>, String> {
     let settings = hub.settings();
     if !settings.may_reach_network() {
         return Err(if settings.work_offline {
@@ -554,7 +554,7 @@ fn check_hub_update(app: AppHandle, hub: State<'_, Arc<Hub>>) -> Result<Option<H
         });
     }
 
-    let update = refresh_hub_update(&hub, &app);
+    let update = refresh_hub_update(&hub, &app).await;
     announce(&app, &hub);
     Ok(update)
 }
@@ -1097,16 +1097,17 @@ fn apply_staged(app: &AppHandle, hub: &Arc<Hub>) {
 
 /// Ask the updater endpoint whether a newer hub has been released.
 ///
-/// Blocking, so it belongs on a worker thread or in a command the interface has
-/// already disabled its button for.
+/// Awaited from commands. Only the startup worker outside the async runtime
+/// uses `block_on`: nesting it inside a command panics and leaves its IPC
+/// promise unresolved, so the interface stays on "Checking..." forever.
 ///
 /// Deliberately independent of the catalog check. They are two different files
 /// on two different release pages, and the hub's own update is the one a player
 /// has no other way to find out about -- so a catalog fetch that fails must not
 /// take it down with it.
-fn refresh_hub_update(hub: &Hub, app: &AppHandle) -> Option<HubUpdate> {
-    let found = match app.updater() {
-        Ok(updater) => match tauri::async_runtime::block_on(updater.check()) {
+async fn refresh_hub_update(hub: &Hub, app: &AppHandle) -> Option<HubUpdate> {
+    let found = match app.updater_builder().timeout(Duration::from_secs(30)).build() {
+        Ok(updater) => match updater.check().await {
             Ok(found) => found,
             Err(error) => {
                 // Offline, a release page with no latest.json, a signature that
@@ -1154,14 +1155,14 @@ fn refresh_hub_update(hub: &Hub, app: &AppHandle) -> Option<HubUpdate> {
 ///
 /// The handle stays on this side for its whole life, so nothing has to cross
 /// the boundary: `check()` returns it and `download_and_install` consumes it.
-#[tauri::command(async)]
-fn install_hub_update(app: AppHandle, hub: State<'_, Arc<Hub>>) -> Result<String, String> {
+#[tauri::command]
+async fn install_hub_update(app: AppHandle, hub: State<'_, Arc<Hub>>) -> Result<String, String> {
     if !hub.settings().may_reach_network() {
         return Err("Work offline is on. Turn it off to update the hub.".into());
     }
 
     let updater = app.updater().map_err(|error| error.to_string())?;
-    let found = tauri::async_runtime::block_on(updater.check()).map_err(|error| error.to_string())?;
+    let found = updater.check().await.map_err(|error| error.to_string())?;
     let Some(update) = found else {
         // The backend said there was one. Between then and now the release page
         // stopped offering it -- a draft re-drafted, a release deleted.
@@ -1169,7 +1170,9 @@ fn install_hub_update(app: AppHandle, hub: State<'_, Arc<Hub>>) -> Result<String
     };
 
     let version = update.version.clone();
-    tauri::async_runtime::block_on(update.download_and_install(|_, _| {}, || {}))
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
         .map_err(|error| error.to_string())?;
     hub.log.info(format!("installed hub update {version}"));
     Ok(version)
@@ -1185,7 +1188,7 @@ fn startup_check(app: AppHandle, hub: Arc<Hub>) {
     // Before the catalog, and announced on its own, because the catalog fetch
     // below returns early on any failure -- and the hub's own update went
     // unmentioned entirely until it was checked here.
-    if refresh_hub_update(&hub, &app).is_some() {
+    if tauri::async_runtime::block_on(refresh_hub_update(&hub, &app)).is_some() {
         announce(&app, &hub);
     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "hero-siege-toolkit-hub"
-version = "1.0.0"
+version = "1.0.1"
 description = "Installs, launches and updates every tool in the Hero Siege Offline Toolkit"
 authors = ["falorfrozen-cmd"]
 license = "MIT"

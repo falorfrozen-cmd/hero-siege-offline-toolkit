@@ -92,12 +92,14 @@ npm run check       # build + test, what CI runs
 
 ### Adding a command
 
-1. Write it in `lib.rs` as `#[tauri::command(async)]`. **The `(async)` is not
-   optional** on anything that touches the disk or the network: without it the
-   command runs on the thread pumping WebView2's messages and the window takes
-   no clicks for its whole duration. Only `hub_info`, `get_settings` and
-   `report` are plain `#[tauri::command]`, because they read memory and nothing
-   else.
+1. Use `#[tauri::command(async)]` for a synchronous function that touches disk
+   or the network, so it does not run on the WebView2 UI thread. For async APIs
+   such as the updater, use `#[tauri::command] async fn` and `.await` instead.
+   Never call `tauri::async_runtime::block_on` from a command running on that
+   runtime: it panics and leaves the frontend's IPC promise unresolved. The
+   startup worker may use `block_on` because it is a separate OS thread.
+   `hub_info`, `get_settings` and `report` remain synchronous commands because
+   they only read memory.
 2. Register it in `invoke_handler![...]` at the bottom of `run()`.
 3. **If it changes what a screen shows, call `announce(&app, &hub)`** before
    returning. Announcing is the rule: the backend pushes a freshly built view

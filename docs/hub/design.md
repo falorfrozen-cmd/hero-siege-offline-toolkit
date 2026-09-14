@@ -594,6 +594,8 @@ checks a test cannot make, and because three of them found defects.
 | Star two tools, unstar one | Cards moved into the *Starred* row and back; `state.json` held exactly the starred ids after each click (2026-09-13) |
 | *Join the Discord* | Invite resolves and does not expire (`expires_at: null`); opened through `open_url`, which hands it to the system browser (2026-09-13) |
 | Card controls after the move | Heading and `.corner` measured to the same client rect (198.3–218.3), both glyphs centred on it; menu opens downward and paints over the card below it; primary button has the footer to itself (2026-09-13) |
+| First canonical installer candidate | Extracted the actual NSIS application, verified its updater signature and manifest, opened it in an isolated WebView2 profile; all ten tools appeared, offline first run and favorites persisted, and the Steam Deck editor installed from its real release (2026-09-15) |
+| Manual hub update check after packaging | **Found a defect before publication:** the catalog refreshed but the hub check stayed on `Checking...`. Async Tauri commands nested `block_on` inside the runtime. Converted both updater commands to async/await and bounded the metadata check to 30 seconds. The 1.0.1 candidate resolves a missing release JSON, logs the error, restores the button, and retains the installed tool and favorite after restart (2026-09-15) |
 
 #### Stop kills a tree
 
