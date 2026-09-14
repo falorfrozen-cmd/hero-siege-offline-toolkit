@@ -126,6 +126,20 @@ static RValue FakePlayer() {
     return player;
 }
 
+// The local player as THIS runner actually hands it over: an instance
+// reference, not a struct. ForgePact resolves the player with
+// instance_find(Player_obj), which returns VALUE_REF (kind 15) - measured
+// 2026-09-10 and documented in ModuleMain.cpp's HhResolveLocalPlayer. Every
+// instance accessor the scanner uses (variable_instance_exists /
+// variable_instance_get) takes a reference happily, so a scan handed one must
+// return the same relics as a scan handed a struct.
+static RValue FakePlayerRef() {
+    RValue player;
+    player.m_Kind = YYTK::VALUE_REF;
+    player.m_Real = 100001.0;  // an instance id, the way a real reference carries one
+    return player;
+}
+
 // ---------------------------------------------------------------------------
 // Relic fixtures. The ordinary item is the negative example the review used,
 // and the same one test_expanded_sdk.py already relies on.
@@ -262,6 +276,38 @@ static void TestRelicIdentification() {
         const auto owned = GetOwnedRelicLevels(&yytk, FakePlayer());
         CHECK(owned.count(42) == 1);
         if (owned.count(42)) CHECK_EQ(owned.at(42), 10);
+    }
+
+    // 11. The player arrives as an instance REFERENCE, which is what this
+    //     runner hands back. A reference must scan exactly like a struct.
+    //
+    //     REPORTED 2026-09-14: "Remove owned relics from drop pool" did
+    //     nothing in game. The panel sent `relicfilter 1`, the plugin armed
+    //     it and logged "relicfilter: hook installed -> ON", and then every
+    //     drop came through unfiltered, because the scan below was handed the
+    //     VALUE_REF player and returned an empty map before reading anything.
+    {
+        ControlledYYTK yytk;
+        yytk.instanceFields["equippedItems"] = RValue::Array({ RealMaxedRelic() });
+        const auto owned = GetOwnedRelicLevels(&yytk, FakePlayerRef());
+        const auto maxed = GetMaxedRelicIds(&yytk, FakePlayerRef());
+        std::printf("C++: relic_scan_through_instance_reference=%d\n",
+                    maxed.count(42) ? 1 : 0);
+        CHECK(owned.count(42) == 1);
+        if (owned.count(42)) CHECK_EQ(owned.at(42), 10);
+        CHECK(maxed.count(42) == 1);
+
+        // ... and the same fixture through a struct player, so the two kinds
+        // are asserted to agree rather than merely both being non-empty.
+        CHECK(owned == GetOwnedRelicLevels(&yytk, FakePlayer()));
+    }
+
+    // 12. A reference is not a blank cheque: an undefined player still scans
+    //     nothing, so "accept VALUE_REF" cannot become "accept anything".
+    {
+        ControlledYYTK yytk;
+        yytk.instanceFields["equippedItems"] = RValue::Array({ RealMaxedRelic() });
+        CHECK(GetOwnedRelicLevels(&yytk, RValue()).empty());
     }
 }
 

@@ -31,6 +31,11 @@ enum RValueKind : int {
     VALUE_INT32 = 7,
     VALUE_INT64 = 8,
     VALUE_BOOL = 13,
+    // A live instance reference. This runner hands one back for the local
+    // player (MEASURED 2026-09-10, see ForgePact ModuleMain.cpp's
+    // HhResolveLocalPlayer), so the SDK has to accept it wherever it accepts
+    // an instance. The value matches YYToolkit's own enum.
+    VALUE_REF = 15,
 };
 
 struct RValue;

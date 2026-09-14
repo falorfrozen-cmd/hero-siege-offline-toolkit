@@ -20,7 +20,7 @@ hs-game-sdk/data/
 **/extracted/
 
 # Decompiler / disassembler artifacts — never committed, see "Legal: No
-# Decompiled Code in Any Origin" in agents.md. Names + indices go through
+# Decompiled Code in Any Origin" in AGENTS.md. Names + indices go through
 # hs-game-sdk instead; full script/disassembly dumps stay on the researcher's
 # machine only.
 *.i64

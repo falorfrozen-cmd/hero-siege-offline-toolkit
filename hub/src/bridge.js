@@ -5,7 +5,7 @@
 // the embedded catalog and an empty install set -- so the Library grid, the
 // cards, the detail view and the settings screen can all be worked on without
 // starting the Rust side at all. That is the "build the fast loop first" rule
-// from agents.md applied to this app's own development.
+// from AGENTS.md applied to this app's own development.
 
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';

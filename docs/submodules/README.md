@@ -32,7 +32,7 @@ Submodule development instructions adhere to the following authoring principles:
 2. **Deterministic Command Metadata:** Commands in the reference tables specify exact working directories, shells, prerequisites, side effects, and verification statuses (`Verified`, `Inspected`, or `Blocked`).
 3. **Safety & Fail-Closed Operations:** Guides document offline-only constraints, anti-cheat isolation (EAC disabled), non-destructive save handling, and atomic backup/restoration mechanisms.
 4. **Modified Upstream Provenance:** Modifications to third-party or upstream dependencies (such as Aurie or YYToolkit) must document exact change locations, compilation flags, and AGPL-3.0 compliance notices.
-5. **No Decompiled Game Code:** Research notes document measured runtime *behavior* (what a function does, observed crash signatures, memory layout) and reference game objects/scripts by the names and indices in `hs-game-sdk` — never by pasting decompiled or disassembled Hero Siege source. See "Legal: No Decompiled Code in Any Origin" in the root [`agents.md`](../../agents.md) for the full rule and what is/isn't safe to commit.
+5. **No Decompiled Game Code:** Research notes document measured runtime *behavior* (what a function does, observed crash signatures, memory layout) and reference game objects/scripts by the names and indices in `hs-game-sdk` — never by pasting decompiled or disassembled Hero Siege source. See "Legal: No Decompiled Code in Any Origin" in the root [`AGENTS.md`](../../AGENTS.md) for the full rule and what is/isn't safe to commit.
 6. **Standard Outline Structure:**
    - Module Overview & Metadata
    - Architecture & Repository Map
@@ -107,4 +107,4 @@ recorded source revision only; it does not build or publish a tool release.
 ## Index Maintenance & Guide Reconciliation
 
 - When a new submodule guide is authored at `docs/submodules/<module-name>/instructions.md`, update its entry in the inventory table above from a plain-text pending reference to an active relative link (`[<Module> Instructions](<module-name>/instructions.md)`).
-- Ensure navigation links from the root `README.md` and `agents.md` remain aligned with available guides.
+- Ensure navigation links from the root `README.md` and `AGENTS.md` remain aligned with available guides.

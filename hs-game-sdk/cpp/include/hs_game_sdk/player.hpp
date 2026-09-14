@@ -202,11 +202,36 @@ inline void ScanContainerForRelics(
 }
 
 /**
+ * Is this RValue a usable handle to a live instance?
+ *
+ * Two kinds qualify. VALUE_OBJECT is the struct-shaped instance. VALUE_REF is
+ * an instance reference, and it is what this runner actually produces for the
+ * local player: `instance_find(Player_obj)` returns kind 15, measured
+ * 2026-09-10 (ForgePact ModuleMain.cpp, HhResolveLocalPlayer).
+ *
+ * Both are accepted by every accessor used below - `variable_instance_exists`
+ * and `variable_instance_get` take a reference straight through - so the kind
+ * must not decide whether a scan runs at all.
+ *
+ * REPORTED 2026-09-14: "Remove owned relics from drop pool" armed, installed
+ * its DropRelic hook, logged ON, and then filtered nothing for anyone. The
+ * player handed to GetOwnedRelicLevels was a VALUE_REF, the old
+ * `!= VALUE_OBJECT` gate returned an empty map before reading a container,
+ * and an empty maxed set means the caller suppresses nothing. This is the
+ * third time a VALUE_REF instance has silently disabled a feature in this
+ * codebase (orbpickup and the relic filter's own arming step were the first
+ * two), which is why it is a named predicate rather than an inline check.
+ */
+inline bool IsInstanceHandle(const RValue& value) {
+    return value.m_Kind == ::YYTK::VALUE_OBJECT || value.m_Kind == ::YYTK::VALUE_REF;
+}
+
+/**
  * Returns a map of all owned relic IDs and their highest recorded level across equipped slots & inventory.
  */
 inline std::unordered_map<int, int> GetOwnedRelicLevels(YYTKInterface* yytk, const RValue& player) {
     std::unordered_map<int, int> relicMap;
-    if (!yytk || player.m_Kind != ::YYTK::VALUE_OBJECT) return relicMap;
+    if (!yytk || !IsInstanceHandle(player)) return relicMap;
 
     try {
         // 1. General containers: item structs only, each positively identified.

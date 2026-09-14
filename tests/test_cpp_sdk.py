@@ -152,6 +152,15 @@ class TestCppSdkBehaviour(unittest.TestCase):
         self.assertIn("ordinary_item_id_15_flagged_maxed_relic=0", self.output, self.output)
         self.assertIn("real_relic_id_42_flagged_maxed_relic=1", self.output, self.output)
 
+    def test_relics_are_found_through_an_instance_reference(self):
+        """The player this runner resolves is a reference, not a struct.
+
+        REPORTED 2026-09-14: the ForgePact relic filter armed and hooked but
+        never suppressed a drop, because the scan rejected the VALUE_REF
+        player before reading a single container.
+        """
+        self.assertIn("relic_scan_through_instance_reference=1", self.output, self.output)
+
     def test_numbers_in_a_general_container_invent_nothing(self):
         self.assertIn("numbers_in_general_container_invented_relics=0", self.output, self.output)
 

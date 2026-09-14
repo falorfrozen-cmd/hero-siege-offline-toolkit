@@ -137,7 +137,7 @@ npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp webview-interact  --window-id hub -
 
 The window label is **`hub`**, not the `main` every tool defaults to. The other
 sharp edges are in [`docs/hub/design.md`](../docs/hub/design.md#driving-the-running-window)
-and in `agents.md`.
+and in `AGENTS.md`.
 
 ---
 
