@@ -1,34 +1,37 @@
+@AGENTS.md
+
 # CLAUDE.md
 
-**Read [`agents.md`](agents.md) before doing anything in this repository.** It is
-the authoritative guide for this toolkit and it is not loaded automatically —
-this file exists only to point at it, so keep the rules there, not here.
+The line above imports [`AGENTS.md`](AGENTS.md), which holds this repository's
+actual rules. Claude Code loads `CLAUDE.md` automatically; nearly every other
+coding agent reads `AGENTS.md`. Keeping the rules in one file and importing them
+here means there is never a second copy to drift.
 
-Then, before working inside any submodule or directory, read that module's own
-guide:
+**Do not add rules to this file.** They belong in `AGENTS.md`, where every agent
+will see them.
+
+## Before touching a submodule
+
+`AGENTS.md` § "Submodule & Directory Development Instructions" sends you to that
+module's own guide, and it is not optional background:
 
 - Index: [`docs/submodules/README.md`](docs/submodules/README.md)
 - Per module: `docs/submodules/<submodule-name>/instructions.md`
 
-A module guide is not optional background. It carries the workflow, the test
-commands, the packaging guardrails and the release-notes rules for that module,
-and several of them require steps that no amount of reading the code reveals —
-e.g. ForgePact treats a player-visible change with no `release-notes-vX.Y.Z.md`
-file as an incomplete change.
+Those guides carry the workflow, test commands, packaging guardrails and release
+rules for each module — several of which no amount of reading the code reveals.
+ForgePact, for instance, treats a player-visible change with no
+`release-notes-vX.Y.Z.md` file as an incomplete change.
+
+Each submodule also carries its own `AGENTS.md` and `CLAUDE.md` pointing back
+here, since a submodule checkout is a separate repository and does not inherit
+this one.
 
 ## Why this file exists
 
 On 2026-09-14 an agent fixed two ForgePact bugs, opened both pull requests, and
-only then discovered `agents.md` — so the change shipped for review with no
+only then found `AGENTS.md` — so the change went up for review with no
 documentation updates, against that file's own "Documentation & Instructions
-Maintenance" rule, and without consulting
-`docs/submodules/ForgePact/instructions.md` at all. Nothing pointed at either
-document from a path the tooling reads by default. Now something does.
-
-## The short version
-
-- `agents.md` → repository-wide rules. Start there, every time.
-- `docs/submodules/<name>/instructions.md` → the module you are about to touch.
-- Updating docs is part of finishing a change, not a follow-up task.
-- Never commit decompiled or disassembled game source — see the hard rule in
-  `agents.md`, which governs tracked files, commit messages, and PR text alike.
+Maintenance" rule, and without ever reading
+`docs/submodules/ForgePact/instructions.md`. Nothing pointed at either document
+from a path the tooling loads by default. Now something does.

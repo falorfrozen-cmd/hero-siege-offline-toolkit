@@ -441,10 +441,12 @@ player as `VALUE_REF` (kind 15, `docs/RUNTIME_DATA_MODELS.md` §1). So the scan
 returned an empty map for every player, and because an empty maxed set means
 "nothing to hold back", ForgePact's relic filter armed, hooked, logged
 `hook installed -> ON`, and then let every relic through (reported 2026-09-14).
-This was the **third** feature the same trap disabled - `orbpickup` logged
-`seen=176993 noplayer=176993`, and the relic filter's own arming step never
-fired - which is why the kinds now live in a named `IsInstanceHandle` predicate
-instead of a fourth inline comparison. Every accessor involved
+This is a **recurring bug class in this codebase, not a one-off**: `orbpickup`
+logged `seen=176993 noplayer=176993`, the relic filter's own arming step never
+fired, and upstream had already fixed the same class in the Headhunter
+kill/steal path (`HhResolveInstance`, shipped in 1.3.16) — each found
+separately, each costing a live session. That is why the kinds now live in a
+named `IsInstanceHandle` predicate instead of one more inline comparison. Every accessor involved
 (`variable_instance_exists`, `variable_instance_get`) takes a reference straight
 through, so the kind was never load-bearing; it only decided whether anything
 ran. A feature that reports itself ON while doing nothing is the expensive

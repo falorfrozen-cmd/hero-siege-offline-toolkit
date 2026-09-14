@@ -323,7 +323,7 @@ compiled GML also calls straight into the function's address. So the installer
 does **both** - the table swap and an inline detour - and `*outOriginalFunc`
 becomes the trampoline, reaching the real original from either route without
 re-entering the hook. See the "Prove the Instrument" rule in
-[`agents.md`](../../../agents.md).
+[`AGENTS.md`](../../../AGENTS.md).
 
 Check `result.kind`:
 
