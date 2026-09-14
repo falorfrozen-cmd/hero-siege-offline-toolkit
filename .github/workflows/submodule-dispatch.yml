@@ -3,9 +3,9 @@ name: Bump Submodule Pointer (dispatch)
 # Receives a repository_dispatch event fired by a submodule's own repo when a
 # commit lands on its tracked branch (see
 # .github/workflow-templates/notify-hub.example.yml for the sender side that
-# belongs in each submodule repo, not here). Opens a PR that bumps this
-# repo's recorded commit for that submodule rather than pushing directly, so
-# a bad or unexpected payload can't land on main unreviewed.
+# belongs in each submodule repo, not here). Opens a pointer PR, then merges
+# only a validated bot-owned update to the tool's current default-branch tip.
+# Other PRs, stale targets and blocked checks/reviews stay open for a person.
 #
 # Expected client_payload:
 #   { "submodule": "<path from .gitmodules>", "sha": "<full commit SHA>" }
@@ -17,9 +17,16 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  checks: read
+  statuses: read
+
+concurrency:
+  group: pointer-${{ github.repository }}-${{ github.event.client_payload.submodule }}
+  cancel-in-progress: false
 
 jobs:
   bump-pointer:
+    if: github.repository == 'falorfrozen-cmd/hero-siege-offline-toolkit'
     runs-on: ubuntu-latest
     steps:
       - name: Validate payload
@@ -58,6 +65,15 @@ jobs:
           submodules: true
           fetch-depth: 0
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Run in this job: a bot-created PR must not depend on a second workflow
+      # automatically starting before it can be checked.
+      - name: Test pointer merge validation
+        run: python -m unittest discover -s tests -p test_pointer_automerge.py -v
+
       - name: Fetch and check out the dispatched commit in the submodule
         working-directory: ${{ steps.validate.outputs.submodule }}
         run: |
@@ -77,6 +93,7 @@ jobs:
           fi
 
       - name: Open PR with the updated pointer
+        id: pointer_pr
         if: steps.stage.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
@@ -96,3 +113,15 @@ jobs:
 
             Bumps the recorded submodule commit to
             `${{ steps.validate.outputs.sha }}`.
+
+      - name: Validate and merge only this pointer PR
+        if: steps.pointer_pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pointer_pr.outputs.pull-request-number }}
+          SUBMODULE: ${{ steps.validate.outputs.submodule }}
+          TARGET_SHA: ${{ steps.validate.outputs.sha }}
+        run: |
+          python tools/merge_submodule_pointer.py \
+            --pull-request "$PR_NUMBER" --submodule "$SUBMODULE" \
+            --sha "$TARGET_SHA" --merge
