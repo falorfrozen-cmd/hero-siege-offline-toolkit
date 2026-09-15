@@ -60,7 +60,14 @@ PREFIX = "hub-v"
 #: Deliberately the same shape `cut_release.py` will accept, anchored at both
 #: ends. Nothing with a suffix, a prefix, a space or a shell character in it
 #: gets past here.
-SHAPE = re.compile(r"^\d+\.\d+\.\d+$")
+#:
+#: Each component is `0` or a number that does not start with one. `\d+` alone
+#: accepts `01.0.2`, which is three numbers, passes the six-field check, and is
+#: then rejected by Cargo -- `invalid leading zero in major version number` --
+#: after the tree has been rewritten, `main` has the commit and the tag is
+#: pushed. `cut_release.VERSION` is the same pattern, so the gate and the
+#: bumper cannot disagree about what is writable.
+SHAPE = cut_release.VERSION
 
 
 class Plan(NamedTuple):
@@ -99,9 +106,14 @@ def plan(raw: str, refs: Iterable[str], tree: str) -> Plan:
         version = version[len(PREFIX) :]
 
     if not SHAPE.match(version):
+        hint = ""
+        if re.match(r"^\d+\.\d+\.\d+$", version):
+            # It is three numbers, so saying "give three numbers" would send
+            # whoever typed it looking in the wrong place.
+            hint = " Drop the leading zero: Cargo refuses to build 01.0.2."
         raise SystemExit(
             f"{raw.strip()!r} is not a version this can tag. "
-            f"Give three numbers, as 1.2.3 or {PREFIX}1.2.3."
+            f"Give three numbers, as 1.2.3 or {PREFIX}1.2.3.{hint}"
         )
 
     tag = PREFIX + version

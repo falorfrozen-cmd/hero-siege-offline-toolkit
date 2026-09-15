@@ -320,11 +320,31 @@ hand, which `hub-release.yml` still builds. The comparison is numeric: this
 repository's tags are ragged -- `0.1.x` and `1.0.x` both exist -- and
 `hub-v0.1.4` sorts after `hub-v1.0.0` in any lexical order.
 
-Anything that is not three plain numbers, with or without the `hub-v`. The
+Anything that is not three canonical numbers, with or without the `hub-v`. The
 string ends up in a shell and in `git tag`, so the check is not politeness about
 formatting. For the same reason the input reaches the shell only through `env:`;
 interpolated into a `run:` line, `${{ inputs.tag }}` is whatever was typed,
-executed.
+executed. Canonical rules out a leading zero: `01.0.2` is three numbers, passes
+the six-field check, and is then refused by Cargo — `invalid leading zero in
+major version number` — by which point the tree is rewritten and the tag is
+pushed. `hub_tag.py` reuses `cut_release.VERSION` for that pattern rather than
+keeping a second one, so the gate and the bumper cannot disagree about what is
+writable.
+
+Those checks are worth nothing if the answer they are measured against is
+wrong, which is the other thing this step gets right. `git ls-remote | cut | tr`
+exits with `tr`'s status, so a failed query reported success and an empty tag
+list — and every comparison against existing tags then passed vacuously. A
+downgrade to 0.5.0 was accepted that way with `hub-v1.0.1` present. `pipefail`
+makes the step stop instead, because "no tags" and "could not ask" are not the
+same answer.
+
+**Everything that can say no runs before anything is written.** The draft guard
+was originally after the rewrite, which meant a draft release sitting on an
+unpushed tag — the one case that guard exists for, and the one case
+`hub_tag.py` and `git` both structurally cannot see — was discovered only after
+the bump had been committed and pushed, leaving `main` claiming a version with
+no release and no tag behind it.
 
 Three more things about that workflow are less obvious than they look.
 

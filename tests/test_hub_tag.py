@@ -131,6 +131,40 @@ class MalformedInputIsRefused(unittest.TestCase):
             with self.assertRaises(SystemExit, msg=f"{bad!r} was accepted"):
                 hub_tag.plan(bad, TAGS, tree="1.0.1")
 
+    def test_leading_zeros_are_refused(self):
+        """`01.0.2` parses as three numbers and Cargo will not build it.
+
+        `invalid leading zero in major version number` -- and by then the tree
+        has been rewritten, `main` has the commit and the tag is pushed. The
+        shape check is the last place this is cheap to stop.
+        """
+        for bad in ("01.0.2", "1.01.2", "1.0.02", "hub-v01.0.2", "00.1.0"):
+            with self.assertRaises(SystemExit, msg=f"{bad!r} was accepted"):
+                hub_tag.plan(bad, TAGS, tree="1.0.1")
+
+    def test_the_leading_zero_refusal_says_which_thing_is_wrong(self):
+        """"Give three numbers" is unhelpful advice about a string that is three numbers."""
+        with self.assertRaises(SystemExit) as caught:
+            hub_tag.plan("01.0.2", TAGS, tree="1.0.1")
+        self.assertIn("leading zero", str(caught.exception))
+
+    def test_a_plain_zero_component_is_still_fine(self):
+        """`0` is canonical; only a *leading* zero is not."""
+        self.assertEqual(hub_tag.plan("1.0.0", [], tree="1.0.0").tag, "hub-v1.0.0")
+        self.assertEqual(hub_tag.plan("0.1.0", [], tree="0.1.0").tag, "hub-v0.1.0")
+
+    def test_the_bumper_agrees_about_the_shape(self):
+        """Two validators that disagree let the workflow past one and die at the other."""
+        import cut_release
+
+        for bad in ("01.0.2", "1.01.2", "1.0.02"):
+            self.assertFalse(
+                cut_release.VERSION.match(bad),
+                f"hub_tag.py refuses {bad!r} but cut_release.py would write it",
+            )
+        for good in ("1.0.0", "0.1.0", "10.20.30"):
+            self.assertTrue(cut_release.VERSION.match(good), good)
+
     def test_the_refusal_says_what_was_wanted(self):
         with self.assertRaises(SystemExit) as caught:
             hub_tag.plan("latest", TAGS, tree="1.0.1")

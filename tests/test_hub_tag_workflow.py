@@ -48,6 +48,23 @@ def workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
+def code_lines(text: str) -> list[str]:
+    """`run:` lines a shell will act on, with comments dropped.
+
+    Every check about what the workflow *does* has to read these rather than
+    the raw file: a comment explaining `pipefail` contains the word `pipefail`,
+    so a test that greps the step's text passes whether or not the command is
+    there. That is not hypothetical -- it is how the first version of
+    `test_a_failed_tag_query_is_not_read_as_no_tags` came to pass against a
+    workflow with the `set -o pipefail` line deleted.
+    """
+    return [
+        line.strip()
+        for line in run_lines(text)
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
 def run_lines(text: str) -> list[str]:
     """Every line inside a `run:` block, which is what a shell will execute."""
     lines = []
@@ -154,12 +171,33 @@ class TheTypedTagIsHandledSafely(unittest.TestCase):
         which is 0, and a refused tag would sail on into the bump, the push and
         the tag with no version behind it.
         """
-        for line in run_lines(workflow_text()):
+        lines = code_lines(workflow_text())
+        for at, line in enumerate(lines):
             if "hub_tag.py" in line and "|" in line:
-                self.assertTrue(
-                    "pipefail" in workflow_text(),
-                    f"the validator's exit status is discarded here: {line.strip()!r}",
+                self.assertIn(
+                    "set -o pipefail",
+                    lines[:at],
+                    f"the validator's exit status is discarded here: {line!r}",
                 )
+
+    def test_a_failed_tag_query_is_not_read_as_no_tags(self):
+        """An empty tag list is not the same answer as "could not ask".
+
+        `git ls-remote | cut | tr` exits with tr's status, so a failed query
+        returns 0 and no refs -- and every check in `hub_tag.py` that compares
+        against existing tags then passes vacuously. A downgrade to 0.5.0 with
+        `hub-v1.0.1` present was accepted this way, and the tree was rewritten
+        and pushed before anything noticed.
+        """
+        lines = code_lines(workflow_text())
+        piped = [i for i, line in enumerate(lines) if "git ls-remote" in line and "|" in line]
+        self.assertTrue(piped, "the tag query is gone, or no longer a pipeline")
+        for at in piped:
+            self.assertIn(
+                "set -o pipefail",
+                lines[:at],
+                "the query's exit status is discarded by the pipe it is in",
+            )
 
     def test_the_workflow_parses_no_manifest_of_its_own(self):
         # `jq -r .version`, a `grep` for `"version"`, a `node -e` reading
@@ -184,6 +222,26 @@ class TheBumpReachesMainBeforeTheTag(unittest.TestCase):
         self.assertTrue(
             re.search(r"if: steps\.plan\.outputs\.bump == 'true'", workflow_text()),
             "rewriting a tree that already matches would commit nothing, noisily",
+        )
+
+    def test_every_read_only_check_runs_before_anything_is_written(self):
+        """The draft guard exists for a case the tag checks cannot see.
+
+        A draft release does not create its tag, so `hub_tag.py` and `git`
+        both report the version free. Running that lookup *after* the rewrite
+        meant the bump was committed and pushed to `main` before the workflow
+        discovered the draft and failed -- leaving `main` claiming a version
+        that has no release and no tag.
+        """
+        text = workflow_text()
+        preflight = text.find("- name: This version has no release yet")
+        rewrite = text.find("- name: Move the version to match the tag")
+        self.assertNotEqual(preflight, -1, "the draft guard is gone")
+        self.assertNotEqual(rewrite, -1, "nothing bumps the version")
+        self.assertLess(
+            preflight,
+            rewrite,
+            "a read-only check that can fail must run before main is written to",
         )
 
     def test_main_is_pushed_before_the_tag_is_created(self):

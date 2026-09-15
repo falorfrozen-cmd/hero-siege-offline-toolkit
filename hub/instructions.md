@@ -171,7 +171,8 @@ publishing it is the one manual step left, and until someone does, every
 installed hub's update check gets a 404.
 
 Three tags are refused before anything happens: one that already exists, one
-below a version already tagged, and anything that is not three plain numbers.
+below a version already tagged, and anything that is not three canonical
+numbers (`01.0.2` is refused — Cargo will not build it).
 `tools/hub_tag.py` has the reasoning, and `py -3 tools/hub_tag.py --tag 1.0.2
 --existing $(git tag --list 'hub-v*')` answers "would this be accepted" without
 running the workflow.

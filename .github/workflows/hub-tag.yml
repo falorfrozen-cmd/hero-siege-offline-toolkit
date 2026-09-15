@@ -66,6 +66,14 @@ jobs:
       - name: Which hub versions are already tagged
         id: tags
         run: |
+          # `pipefail` because this is the answer every later check is measured
+          # against, and "no tags" is not the same answer as "could not ask".
+          # `git ls-remote | cut | tr` exits with tr's status, so a failed
+          # query would report success and an empty list -- and every check in
+          # `hub_tag.py` that compares against existing tags would then pass
+          # vacuously. A downgrade to 0.5.0 was accepted that way, with the
+          # tree rewritten and pushed before anything noticed.
+          set -o pipefail
           refs=$(git ls-remote --tags origin 'refs/tags/hub-v*' | cut -f2 | tr '\n' ' ')
           echo "refs=$refs" >> "$GITHUB_OUTPUT"
           echo "existing: ${refs:-none}"
@@ -96,6 +104,31 @@ jobs:
           echo "$plan"
           echo "$plan" >> "$GITHUB_OUTPUT"
 
+      # `hub_tag.py` already refused a tag that exists, but a *draft* release
+      # can be sitting on a tag that was never pushed -- a draft does not
+      # create its tag -- so it is invisible both to that check and to `git`.
+      # This is the same guard `hub-release.yml` runs, twelve minutes earlier.
+      # Why two releases on one tag matters: `tools/hub_tag.py`.
+      #
+      # Last of the read-only checks, and deliberately still ahead of the
+      # rewrite below. Running it afterwards meant the bump was committed and
+      # pushed before the draft was discovered, leaving `main` claiming a
+      # version with no release and no tag behind it. Everything that can say
+      # no happens before anything is written.
+      - name: This version has no release yet
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          existing=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")] | length")
+          echo "releases already on $TAG: $existing"
+          if [ "$existing" != "0" ]; then
+            echo "::error::$TAG already has $existing release(s), including drafts. Delete them before this version can be tagged."
+            exit 1
+          fi
+
       # Only when the tree says something else. `cut_release.py` refuses to
       # write a tree whose fields already disagree, so a half-bumped `main`
       # stops here rather than being tagged.
@@ -117,25 +150,6 @@ jobs:
         env:
           VERSION: ${{ steps.plan.outputs.version }}
         run: python tools/cut_release.py --check --expect "$VERSION"
-
-      # `hub_tag.py` already refused a tag that exists, but a *draft* release
-      # can be sitting on a tag that was never pushed -- a draft does not
-      # create its tag -- so it is invisible to that check and to `git`. This
-      # is the same guard `hub-release.yml` runs, twelve minutes earlier.
-      # Why two releases on one tag matters: `tools/hub_tag.py`.
-      - name: This version has no release yet
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ steps.plan.outputs.tag }}
-        run: |
-          existing=$(gh api "repos/$REPO/releases?per_page=100" \
-            --jq "[.[] | select(.tag_name == \"$TAG\")] | length")
-          echo "releases already on $TAG: $existing"
-          if [ "$existing" != "0" ]; then
-            echo "::error::$TAG already has $existing release(s), including drafts. Delete them before this version can be tagged."
-            exit 1
-          fi
 
       - name: Tag it
         env:

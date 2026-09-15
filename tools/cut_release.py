@@ -103,7 +103,12 @@ def sites(version: bytes) -> List[Site]:
     ]
 
 
-VERSION = re.compile(r"^\d+\.\d+\.\d+$")
+# Each component is `0` or a number that does not start with one. `\d+` alone
+# accepts `01.0.2`, which every check here would pass and Cargo then refuses to
+# build: `invalid leading zero in major version number`. `hub_tag.py` reuses
+# this pattern, so the tag gate and the bumper cannot disagree about what is
+# writable.
+VERSION = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
 
 
 def current(root: Path) -> str:
