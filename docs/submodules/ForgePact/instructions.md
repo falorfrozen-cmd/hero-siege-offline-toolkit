@@ -90,7 +90,7 @@
 |   +-------------------------------------------------------------------------------+   |
 |                                           |                                           |
 |                                           v (FrameCallback / PollCommands)            |
-|   - Reads & clears bp_ipc/cmd.txt every 6 frames                                      |
+|   - Reads & clears bp_ipc/cmd.txt every 30 frames (~2x/second at 60 fps)              |
 |   - Appends status/replies to bp_ipc/out.txt                                          |
 |   - Writes current item stats to bp_ipc/itemstats.json (max once every 2 seconds)     |
 |                                           |                                           |
@@ -169,7 +169,9 @@ To add or modify a gameplay modifier or runtime command:
 | Command | Working Directory | Shell / Platform | Prerequisites | Expected Result | Side Effects | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `py src/forgepact.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Launches local control panel HTTP server (`http://127.0.0.1:8766`). | Opens web browser / desktop window; watches for game process | Verified |
-| `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Executes all 188 Python contract tests (including the native behavior harnesses, which skip without a C++ toolchain). | Read-only test execution; all tests pass | Verified |
+| `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Executes all 295 Python contract tests (including the three native behavior harnesses, which skip without a C++ toolchain). | Read-only test execution; all tests pass | Verified 2026-09-15 |
+| `py tools/perf_panel.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Times the panel's two per-poll costs - the boot count and the process scan - against reference copies of the pre-1.3.20 implementations, and exits non-zero if either regressed below its floor. No game, no network. `--log-mb`, `--iterations`, `--min-speedup`. | Writes and deletes a synthetic log in a temp directory | Verified 2026-09-15 |
+| `py tools/cut_release.py --check --expect <version>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Reports the version at every site and fails if they disagree or the release notes are missing. `py tools/cut_release.py <version>` moves them. **Do not hand-edit the version sites** - a mismatch here is the signal, not a nuisance. Touches no git, runs no build, stages no DLL. | `--check` is read-only; a bump rewrites two files | Verified 2026-09-15 |
 | `plugin_build\build.bat` / `plugin_build\build.bat release` | `ForgePact/` | CMD / PowerShell (Windows x64) | MSVC v143+ (VS 2022), YYToolkit headers in `plugin_build\include\` | Compiles `BloodPactPlugin_ship.dll` with `/DFORGEPACT_RELEASE`. Equivalent commands - `build.bat` only special-cases `dev`; anything else (including no argument) takes this branch. | Generates `plugin_build\BloodPactPlugin_ship.dll` and `obj_ship\` | Verified 2026-09-10 |
 | `plugin_build\build.bat dev` | `ForgePact/` | CMD / PowerShell (Windows x64) | MSVC v143+ (VS 2022), YYToolkit headers in `plugin_build\include\` | Compiles `BloodPactPlugin_rel.dll` (research build with inspection commands, and `satmods` diagnostics). | Generates `plugin_build\BloodPactPlugin_rel.dll` and `obj_dev\` | Verified 2026-09-10 |
 | `py build_release.py` | `ForgePact/` | PowerShell / CMD | PyInstaller installed, matching `BloodPactPlugin_ship.dll` | Builds complete release bundle in `dist/ForgePact/`. | Terminates existing `ForgePact.exe` processes; generates onefile executable | Inspected |
@@ -223,7 +225,7 @@ UTF-8 / ASCII plain-text command queue. The panel appends lines to `cmd.txt`; th
   - `stat damage 1.25`: Sets damage multiplier to 1.25 (+25%).
   - `mapreveal on` / `mapreveal off`: Toggles full map fog of war clearing.
   - `relicfilter 1` / `relicfilter 0`: Toggles the relic drop pool filter to exclude relics already at maximum level (10/10) in player equipped slots, backpack, or inventory. Safe to send at launch: it arms the mod and the `DropRelic` hook is installed later, once a player instance exists.
-  - `orbpickup 10` / `orbpickup 0` / `orbpickup stat`: Widens the experience / magic-find globe pickup radius by 10x. `FrameCallback` enumerates the globe instances each frame and pulls any inside the widened radius toward the player at a constant `kGlobePullSpeed` (6 px/frame — tuned down from an accelerating ramp per user feedback 2026-09-10, which snapped the last stretch in a single frame and read as an unnatural teleport); the game's own pickup logic then fires normally once close enough. `orbpickup stat` (also printed when the mod is switched off) reads as a decision tree: `seen=0` while standing next to globes means the object indices are wrong, `noplayer>0` means the player never resolved, and only `outofreach` means the radius is too small — `nearest=` says by how much.
+  - `orbpickup 10` / `orbpickup 0` / `orbpickup stat`: Widens the experience / magic-find globe pickup radius by 10x. Since 1.3.20 `FrameCallback` *scans* for globe instances every `kOrbScanFrames` (15) frames — or sooner once the player has travelled the whole approach budget, which is what keeps the scan correct at 10x Movement Speed — and *pulls* the cached ones every frame toward the player at a constant `kGlobePullSpeed` (6 px/frame — tuned down from an accelerating ramp per user feedback 2026-09-10, which snapped the last stretch in a single frame and read as an unnatural teleport); the game's own pickup logic then fires normally once close enough. `orbpickup stat` (also printed when the mod is switched off) reads as a decision tree: `seen=0` while standing next to globes means the object indices are wrong, `noplayer>0` means the player never resolved, and only `outofreach` means the radius is too small — `nearest=` says by how much. `seen`, `noplayer` and `outofreach` are each counted once per globe per **scan** so they stay comparable with one another; `pulled` is per frame. See "Orb pickup: the scan is throttled, the pull is not" below.
   - `headhunter force` / `tyrant force` / `beacon force`: Activates custom forge mechanic overrides.
   - `enemyspeed 1.5 ct`: Scales enemy movement speed by 1.5x scoped exclusively to Chaos Tower.
   - `satmods buff 3,12` / `satmods debuff 7`: Disables the given Satanic Zone buff/debuff ids (comma-separated) from the pool the game can roll onto a future zone; empty csv clears that polarity. `satmods status` reports the current disabled counts and the poll's hit/change counters. Filtering is poll-driven, not a routine hook - see `docs/satanic-zone-mods-research.md`.
@@ -263,6 +265,692 @@ The packaging script (`build_release.py`) includes explicit fail-closed safety c
 3. **Module Exclusion:** Excludes heavy or unused packages (`tkinter`, `PIL`, `numpy`, `pandas`, `PyQt5`, `IPython`, `pytest`) from the PyInstaller onefile package, keeping bundle size small.
 4. **SDK Bundling Guard (added 2026-09-14):** `hs-game-sdk/python` goes on PyInstaller's analysis path via `--paths`, packaging is refused outright if that directory is missing, and the build fails if PyInstaller's own `warn-ForgePact.txt` still reports `missing module named hs_game_sdk` afterwards. Fail-closed on purpose: `src/forgepact.py` catches that ImportError and falls back to empty Satanic pools, and its runtime `sys.path` fallback cannot help a frozen build (PyInstaller resolves imports at build time; the exe unpacks to a temp directory with no toolkit checkout above it). Every package built before this shipped a World tab whose Satanic Zone section rendered a heading with no rows — it built, started, and looked fine, which is exactly why the check is a hard error rather than a warning.
 
+
+---
+
+## Performance Pass (1.3.20) - What Changed, and the Numbers
+
+Seven source-read findings across the panel, the plugin and the launcher, all of
+the shape "this got heavier the longer you played". None of them were measured
+before the change; part of the deliverable was the measurement, which is why
+each one now has either a timing harness or a call-count assertion in a native
+behaviour harness.
+
+### Measured before/after
+
+`py tools/perf_panel.py` (this machine, 2026-09-15, 64 MB synthetic log):
+
+| Path | Before | After | Ratio |
+| --- | --- | --- | --- |
+| `plugin_boot_count`, one poll | 35.2 ms | 3.5 ms | ~10x |
+| `running_paths`, one poll | 357.2 ms | 21.3 ms | ~17x |
+
+The absolute milliseconds move between runs on a machine doing other work, and
+so does the ratio, by less. Nine runs, same machine, same afternoon - the first
+four recorded while writing this section, the last five by independent
+verification passes afterwards:
+
+| Run | `plugin_boot_count` | `running_paths` |
+| --- | --- | --- |
+| 1 | 35.2 / 3.5 ms = 10.1x | 357.2 / 21.3 ms = 16.8x |
+| 2 | 40.1 / 4.0 ms = 10.0x | 481.0 / 26.8 ms = 17.9x |
+| 3 | 37.7 / 3.7 ms = 10.1x | 574.8 / 39.1 ms = 14.7x |
+| 4 | 36.5 / 4.2 ms = 8.7x | 582.8 / 39.4 ms = 14.8x |
+| 5 | 13.0x | 12.9x |
+| 6 | 11.3x | 13.6x |
+| 7 | 11.0x | 16.0x |
+| 8 | 10.2x | 16.0x |
+| 9 | 8.7x | 16.1x |
+
+So the honest statement is a **range**, not a figure: boot-count 8.7-13.0x,
+process-scan 12.9-17.9x. Note that the first four runs alone gave 8.7-10.1x and
+14.7-17.9x, and stating *those* as the range was wrong within hours - run 5 came
+in above the boot-count ceiling and below the process-scan floor. A range from
+one sitting is a sample, not a bound, which is the same "not observed is not
+does not happen" rule this file applies to behaviour, applied to a number. That
+is why `perf_panel.py` gates on a speedup *floor*
+(5x and 1.5x) rather than on an absolute time or on reproducing a number - a
+floor is the claim the measurement actually supports. The boot-count ratio also
+understates the win over a session: the "before" column grows with the log, the
+"after" column does not, because the scan resumes from the previous offset.
+
+Native harness call counts. **Rows 2-4 are measured** against a runnable copy of
+the pre-change shape in the same run (`est_force_harness.cpp`'s `PreChangeTick`,
+`orb_pickup_harness.cpp`'s `PreChangeOrbTick`), so both columns come out of one
+execution. **Rows 1 and 5 are the "after" measured and the "before" derived**
+from the removed code, because no runnable pre-change copy exists for either:
+`map_reveal_harness.cpp` has no pre-change hook, and `PullOneGlobe` no longer
+counts `outofreach` at all. Both derived values were later reproduced by
+mutation, but that is a separate run, not this table's:
+
+| Path | Before | After | Harness | Before is |
+| --- | --- | --- | --- | --- |
+| `enemyCreatorTimer` reads per lied-to creator | 2 | 1 | `ready_zone/timer_reads` | derived |
+| `array_get` over 60 idle frames (`eSt`) | 60 | 4 | `idle60/array_get_before` / `_after` | measured |
+| `instance_number` over 15 frames (orb) | 30 | 2 | `scan15/instance_number_*` | measured |
+| `instance_find` over 15 frames (orb) | 15 | 1 | `scan15/instance_find_*` | measured |
+| `outofreach` over 15 frames, one globe in the band | 15 | 1 | `counters/outofreach_once_per_scan` | derived |
+
+The lied-to path's total per-creator cost is also printed, because it is finding
+8's input: `liedto/callbuiltins got=2`, `liedto/object_index_share_pct got=50`.
+
+What the throttles cost, measured in the same runs rather than reasoned about:
+
+| Case | Result | Harness |
+| --- | --- | --- |
+| player crossing the orb band at ~10x speed | still pulled | `fastplayer/was_pulled` |
+| globe still stationary when the player resolves again | pulled the next frame | `playervalid/pulled_on_next_frame` |
+| what that costs, over 15 frames | 5 scans, vs 15 unthrottled | `fastplayer/scan_cost_bounded` |
+| ordinary walk, 15 frames | 1 scan | `walk/one_scan_only` |
+| Special Content toggled off and on in one room | corrected next frame | `toggle_off_on/*` |
+
+**Which of these were observed red, and which are only bounds.** An assertion
+that has never been seen to fail is a regression bound, not evidence, and the
+difference has to be written down rather than implied — it is `AGENTS.md`'s
+positive-control rule applied to a test.
+
+*Observed failing first, with the measured line.* "Frame-counted scan" below
+means the intermediate shape this change passed through: the throttle in place,
+but the scan forced only by the frame counter and a room change.
+
+| Assertion | Seen failing against | Reported |
+| --- | --- | --- |
+| `fastplayer/was_pulled` | the fixed 24 px/frame band, no travel forcing | `got=0 want=1` |
+| `counters/outofreach_once_per_scan` | `outofreach` counted in the per-frame pull | `got=15 want=1` |
+| `toggle_off_on/est0` | `EstForceTick` not dropping the room key on a mutation | `got=35 want=-1` (35 = the closed vanilla gate) |
+| `playervalid/pulled_on_next_frame` | the frame-counted scan | `got=16 want=2` |
+| `uncacheable/refusal_counted` | the frame-counted scan, no handle validation | `got=0 want=1` |
+
+*Bounds, not witnesses — and the distinction matters enough to name them.*
+`fastplayer/scan_cost_bounded` (`5 <= 15`) and `walk/one_scan_only` (`1 == 1`)
+are both satisfied by the pre-1.3.20 per-frame enumeration, which never
+rescanned early at all: they bound what the travel-forced rescan is allowed to
+**cost**, they do not witness that it works. The way to see them fail is to
+shrink `kOrbApproachMargin` (`walk/one_scan_only got=15 want=1`).
+`band/was_pulled` is in the same class — it is the guard that stops
+`pulled_within_scan_period` reading `-1 <= 15` as a pass, and its failing
+direction is reachable (`got=0 want=1` with the cache disabled), but it does
+**not** fail against the unthrottled code, where the player's move is picked up
+by the next scan and the scenario passes end to end. `bareid/pulled` and
+`bareid/not_refused` likewise passed before the handle check existed; they are
+the control saying the refusal did not narrow what is accepted, not evidence
+that it was needed.
+
+### The `eSt` correction is gated on the room, NOT throttled
+
+`EstForceApply()` ran on every frame while Special Content was on - three
+`CallBuiltin`s for `GlobalArray("eSt")` plus one `array_get` per forced entry,
+almost always to discover the value was already correct.
+
+**The obvious fix, a flat `kSatanicPollFrames`-style throttle, is unsafe here,
+and `docs/S10-special-content-notes.md` is why.** The game refills all eleven
+`eSt` entries at Room Start, and the special-content mechanic bodies read
+`global.eSt` **directly, at step time**, inside that same room-load sequence. A
+throttled correction puts up to ~250 ms of vanilla gate value exactly where the
+mechanics evaluate - the "Check a Permission Where It Is Used" defect from the
+repo-root `AGENTS.md`, and the same shape as Known Limitations item 13, where
+the first call in a new zone is the one that does the damage. The symptom would
+be Special Content silently producing less, intermittently.
+
+So `EstForceTick(fc)` reads the room key once per frame (`CurrentRoomKey()`, one
+member read, no `CallBuiltin`) and:
+
+- **room key changed** -> full apply on that frame, identical timing to the
+  per-frame write it replaces, zero added latency;
+- **otherwise** -> apply every `kEstPollFrames` (15) frames, as a safety
+  re-poll, because nobody has proven the game only writes `eSt` at Room Start
+  and an unproven negative stays unproven;
+- **room key unreadable** -> falls through to the periodic path. It never
+  suppresses the correction, and `INT64_MIN` is never stored, so "unknown"
+  cannot compare equal to a real room.
+
+**Worst-case correction latency, stated:** room-start overwrite -> unchanged
+(same frame as before); any other overwrite (none observed, none ruled out) ->
+up to 15 frames (~250 ms) instead of 1.
+
+**Changing *what* is forced also has to re-open the gate, and that is not free
+with a room gate.** `EstForceTick` only applies on the frame the room key
+changes, so turning Special Content off and on again *without leaving the room*
+looked like no change at all and waited for the next re-poll - ~250 ms of the
+closed vanilla gate (`eSt[0] = 35`) immediately after the user switched the
+feature on, in a feature whose consumers read `eSt` at step time. The per-frame
+write this design replaced had no such gap. So every mutation of `g_EstForce`
+goes through one of exactly three mutators - `EstForceSet`, `EstForceErase`,
+`EstForceClear` - each of which drops `g_EstLastRoom` back to `INT64_MIN`, the
+same "unknown" sentinel the tick already refuses to store, which makes the next
+frame look like a room change. A source test asserts there is no fourth way to
+touch the map and that each mutator carries the drop; the harness scenarios
+`toggle_off_on/*` and `toggle_erase/*` measure the timing. Adding a call that
+writes `g_EstForce` directly is what those tests exist to catch.
+
+**Two hard constraints, from the crash history in the same document.** Every
+attempt to write `eSt` from anywhere other than the frame callback crashed the
+game ("Room Start'ta global eSt override -> cokme", the same from a mechanic
+scope, and zeroing `ReturnSpecificStat`'s return). So: the write happens **only**
+from `FrameCallback`, and the room change is detected by a **read**, never a
+hook. The experimental gates those attempts lived behind
+(`kEstOverrideEnabled`, `gEstGateEnabled`, `gStatGateEnabled`) are **not in this
+plugin at all** - `tests/test_est_force_behavior.py` asserts their continued
+absence rather than that they default to false.
+
+Residual unknown, for a live session rather than a plan: whether the mechanic
+bodies evaluate *before* the first frame callback of a new room, in which case
+the per-frame write was already too late and the feature works for some other
+reason. This change cannot make that worse - it preserves the old timing
+exactly - and `eststat`'s `yazma=` counter is the instrument.
+
+### Orb pickup: the scan is throttled, the pull is not
+
+`OrbPickupTick()` enumerated every instance of every globe type on every frame -
+worst case ~196 `CallBuiltin`s per frame under the 64-instance budget.
+
+The **pull** genuinely needs per-frame work: globes glide toward the player at a
+constant `kGlobePullSpeed` (6 px/frame), and that constant speed was a
+deliberate fix to a user report (the old proportional step "read as an unnatural
+teleport right before pickup"). The **enumeration** does not.
+
+- `OrbScan()` runs every `kOrbScanFrames` (15) frames and caches the handles of
+  globes inside `reach + kOrbScanFrames * kOrbApproachMargin`.
+- **`kOrbApproachMargin` is 24 px/frame**, and it is a *budget*, not a claim
+  about how fast the player can move. Globes are not observed to move on their
+  own - they are dropped and sit still until the plugin pulls them - so the gap
+  is closed by the *player* walking into it, and 24 px/frame (~1440 px/s, four
+  times `kGlobePullSpeed`) is what each scan allows for that.
+- **The budget is enforced, not assumed, and this is the part that matters.**
+  The panel's own Movement Speed control multiplies total movement speed by up
+  to **10x** (`src/forgepact.py`, the `movespeed` slider), so a fixed margin is
+  a bound nothing holds the player to. Above it a globe crosses into reach
+  between two scans, is never cached and is never pulled - and because `seen`
+  and `pulled` both stay non-zero, `orbpickup stat` goes on looking healthy
+  while the widened radius applies only some of the time. So `OrbPickupTick`
+  records where the player stood at the last scan and **forces a rescan once
+  the player has travelled the whole budget**, whatever the frame counter says.
+  The bound then holds by construction at any speed. It costs no `CallBuiltin`:
+  `g_PlayerX`/`g_PlayerY` are refreshed in `FrameCallback` immediately before
+  the tick runs. Cost of holding it: more scans while sprinting, never more
+  than the per-frame enumeration this replaced (harness:
+  `fastplayer/scan_cost_bounded got=5 limit=15`), and an ordinary walk still
+  buys one scan per 15 frames (`walk/one_scan_only`).
+- **A rescan is also forced when the player resolves again.** A scan that runs
+  while the player is unresolved caches nothing - it has no position to measure
+  reach against - and the transition back to resolved is not something a frame
+  counter can see. Without forcing one, every resolution dropout that lands on
+  a scan frame leaves the cache empty for up to 15 frames, on the one feature
+  whose documented failure mode *is* intermittent player resolution (Known
+  Limitations item 7). `orbpickup stat` cannot show it either: `noplayer` ticks
+  once and the next scan reads healthy. The pre-1.3.20 per-frame enumeration
+  resumed on the very next frame, so this does too
+  (`playervalid/pulled_on_next_frame`).
+- The pull runs every frame over the cached handles, with `PullOneGlobe`'s
+  movement maths untouched, guarded by one `instance_exists` per handle because
+  a globe can be collected between scans.
+- **Caching instance handles across frames is safe here**, and the reason is
+  worth writing down once: `instance_find` returns a `VALUE_REF` id that the
+  runtime itself validates (`docs/RUNTIME_DATA_MODELS.md`), so a stale one
+  fails the `instance_exists` guard rather than dereferencing freed memory.
+  That is *not* true of raw struct pointers - `g_ForgedItems` holds those and
+  carries its own hazard note - so the distinction is the kind of value, not
+  the act of caching.
+- **...and that kind is now validated rather than assumed.** The sentence above
+  is a *measured property of this runner*, and the cache is the only cross-frame
+  instance lifetime this change introduces, so `OrbCacheableHandle()` checks
+  each handle where it is stored, refuses anything that cannot outlive the frame
+  (a `VALUE_OBJECT` is a `CInstance*` - the `g_ForgedItems` hazard), and counts
+  the refusal into `orbpickup stat` as `uncacheable=`. That is `AGENTS.md`'s
+  validate-refuse-and-count shape: a runtime that changed reports a number
+  instead of a crash dump. It accepts a **set** - `VALUE_REF` plus the bare
+  instance ids an older runner returns (`VALUE_REAL`/`INT32`/`INT64`, the same
+  ones `HhResolveLocalPlayer`'s fallback handles) - because every accessor the
+  cache feeds takes any of them straight through, so the check may decide only
+  whether a handle can be *stored*, never whether the work happens at all.
+  `uncacheable=` is expected to stay 0 forever; the harness has both controls,
+  `uncacheable/refusal_counted` and `bareid/pulled`.
+- The cache is dropped when `orbpickup` is switched off and on a room change.
+  Asset re-resolution is deliberately **not** a third point: nothing ever
+  clears `g_OrbAssetsResolved`, so `ResolveOrbAssets()` runs once per process
+  and a reset there could only ever fire against an already-empty cache. A call
+  that reads as an invalidation point while being unreachable is worse than its
+  absence, so the comment says so instead.
+
+**Accepted cost:** a globe entering the band between scans starts gliding up to
+15 frames (~250 ms) later than before. It is never *missed* - the next scan
+picks it up - and the glide itself is byte-for-byte the same motion.
+
+**`g_OrbGlobesSeen` is deliberately NOT wrapped in `BP_DIAG_INCREMENT`**, and
+this is a documented exception to step 1 of the Representative Change Workflow.
+`orbpickup` is in the **player-build** command set (`kPlayerCommands`),
+`orbpickup stat` is handled in every build, and Known Limitations item 7 depends
+on it - it is the diagnostic that turned `seen=176993 noplayer=176993` into a
+diagnosis. Stripping it in release would recreate exactly the "a mod that fails
+silently is a mod nobody can debug from a bug report" failure. `BP_DIAG_INCREMENT`'s
+own comment scopes it to telemetry on hot combat/drop paths; a player-facing stat
+command is not that. The counters also stop being a hot-path cost once the
+enumeration is throttled, because they then fire once per globe per **scan**.
+
+That changes their *meaning* - globe-frames to globe-scans - so `orbpickup stat`
+now says so in its own output. Zero-versus-nonzero, which is what the decision
+tree actually uses, is unchanged.
+
+**It does not change them by a fixed factor, and the printed line must not
+suggest one.** 15 frames is a *ceiling* on the scan period, not the period: the
+travel-forced rescan above fires sooner, measured at 5 scans per 15 frames at
+~10x movement speed (`fastplayer/scan_cost_bounded`). Anyone reconstructing
+elapsed frames from a pasted `orbpickup stat` would be wrong by up to 5x in
+exactly the high-Movement-Speed case the fix exists for, so the line reads
+"once per globe per scan, not per frame; a scan runs at most every 15 frames,
+sooner while the player is moving fast". The *ratio* between the three counters
+is what the decision tree reads, and that is still sound.
+
+**All three scan-clock counters are incremented in `OrbScan`, and none of them
+in `PullOneGlobe`.** Known Limitations item 7 was diagnosed from a *ratio* -
+`seen=176993 noplayer=176993` - so counters printed under one label have to be
+counted the same way. Moving only `seen` into the scan while `noplayer` and
+`outofreach` stayed in the per-frame pull would have put them on two different
+clocks under a line claiming they shared one: a single globe parked inside the
+band but outside reach reports ~15 `outofreach` per 1 `seen`, and the next
+person to read a pasted `orbpickup stat` mis-reads it. `outofreach` is measured
+against **reach**, not the band, because "cached but still not being pulled" is
+exactly what "the radius is too small" means. `pulled` is the one number still
+on the frame clock - pulling is the part that still happens every frame - and
+the printed line names it as such rather than leaving it to be assumed.
+
+### The readiness check runs once per creator, not twice
+
+`Hook_distance_to_object` asked `MapRevealManager::CreatorIsReady(inst)` and
+then `MayPopulate(inst)`, which **is** `window > 0 && CreatorIsReady(creator)` -
+so the same `enemyCreatorTimer` read happened twice for every creator on an open
+pack window, deciding nothing new, on the builtin every spawner polls.
+
+Fixed by inversion rather than by adding API: `MayPopulate` stays the reveal
+path's single authorization, and the standalone `CreatorIsReady` moved **into
+the Beacon branch**, which `MayPopulate` does not cover. Known Limitations item
+13's guard survives intact on both paths. Four cases, all decisions identical:
+
+| Case | Before | After |
+| --- | --- | --- |
+| reveal window open, ready creator | 2 | **1** |
+| Beacon only (reveal off) | 1 | 1 |
+| window open, unready creator, Beacon off | 1 | 1 |
+| window open, unready creator, Beacon on | 1 | 2 (transient zone-load, accepted) |
+
+**Scope the claim correctly:** `revealOk = revealWants && MayPopulate(inst)`
+short-circuits and `revealWants` is a relaxed atomic load, so with reveal off
+the Beacon path already paid exactly one readiness read. The saving is on the
+900-frame pack window after each zone change, not "continuously while the Beacon
+is active".
+
+The last row is the behaviour harness's **positive control** for the new call
+counter (`beacon_and_window/timer_reads got=2`): without a scenario that expects
+something other than 1, a counter stuck at 1 would look like a pass everywhere.
+
+### The dead IPC-poll condition
+
+`FrameCallback`'s command poll was `if (((fc++) % 30) == 0 && g_Setup)` wrapping
+`if ((g_RuntimeFrame % 6) == 0)`. The inner test was **dead**: `g_RuntimeFrame = fc`
+is assigned at the top of the same callback, *before* the `fc++`, so whenever the
+outer test passed `g_RuntimeFrame` equalled `fc` and was a multiple of 30, hence
+always a multiple of 6. The real rate was, and still is, **every 30 frames**
+(~2x/second at 60 fps). The dead condition is gone, and the architecture diagram
+above - which claimed the six-frame rate this file had documented since the
+condition was written - is corrected.
+
+### The adaptive poll policy, shared with HS-Offline-Launcher
+
+Both UIs polled on a fixed timer with no hidden-window gate - the panel every
+5 s, the launcher every 2 s. A fixed interval forces a trade nobody wins: fast
+costs poll work for the whole session, slow costs feedback latency at exactly the
+moments somebody is watching. **The trade only exists because the interval is
+fixed**, and both clients can already tell when a change is plausible.
+
+`POLL_POLICY_JS` is a named Python string constant in each app, concatenated
+into `HTML`, holding one pure `pollDelayMs(hidden, msSinceChange)` plus the
+watched-field comparison. Three tiers:
+
+| Tier | Constant | What it is for |
+| --- | --- | --- |
+| Fast | `POLL_FAST_MS` = 2000 | Something just happened and the user is watching: a control moved, Apply or Launch was pressed, or a watched field in the payload changed. |
+| Idle | `POLL_IDLE_MS` = 30000 | Nothing has changed for `POLL_FAST_WINDOW_MS` = 15000 ms. Play continues, nothing moves, the poll gets out of the way. |
+| Suspended | `pollDelayMs` returns `null` | `document.hidden`: no poll is scheduled at all. `visibilitychange` resumes with an immediate poll and resets the change clock, so a returning user sees fresh state and the fast tier covers the time they look. |
+
+**Both apps use the same three constant names and the same values, on purpose**,
+and a test in each suite parses both files and fails if they drift. The earlier
+"constants deliberately differ" idea was withdrawn: the `last applied` lag it was
+pricing does not arise, because the moments needing fast feedback are exactly the
+ones the client can detect.
+
+`gameRunning` is deliberately **not** a parameter. Its flip *is* an observed
+change, so it engages the fast tier by itself; while play continues nothing
+changes and the scheme idles on its own; and a user adjusting sliders mid-game
+generates local actions, which is when the panel must stay responsive - a
+"gameRunning forces idle" rule would have made that case worse.
+
+**Known gap, documented rather than special-cased:** a window *occluded* by a
+fullscreen game is not necessarily `document.hidden`, so it idles rather than
+suspending. That costs one poll per 30 s.
+
+Watched fields: the panel watches `gameRunning`, `ipcOk`, `lastApplied`,
+`queued`; the launcher watches `gameRunning`, `safe`, `ready`, `eacService`,
+`blocker`, `steamRunning`, `steamFound`, `game.build`, `game.path`. Each list is
+a named constant so a test can assert its contents.
+
+### Two deliberate duplications, and why neither is a shared component
+
+- **`snapshot_processes()` in `src/forgepact.py` is a second copy of
+  `HS-Offline-Launcher/src/hs_offline_launcher.py`'s `processes()`.** The
+  launcher is by design a standalone single-file application with **no**
+  `hs_game_sdk` dependency; adding one changes its PyInstaller packaging and its
+  stated "no external tools" property. ForgePact's `hs_game_sdk` import is
+  optional with a silent fallback, and the SDK only reaches a frozen panel
+  because `build_release.py` puts it on PyInstaller's analysis path and fails
+  closed if it is missing - routing a Win32 process helper through that adds a
+  packaging failure mode for zero functional gain. `AGENTS.md`'s "a correction in
+  one submodule is not done until the shared SDK has it too" is about a *bug
+  class* in a copy of a shared installer or scanner; this is neither a bug fix
+  nor a copy of an SDK component. Keep the two in step by hand.
+
+  **The fail direction differs on purpose.** The launcher's snapshot failure is
+  fail-*closed* because it gates a safety decision. The panel's yields an empty
+  list, i.e. "the game is not running", which makes the panel *queue* commands
+  into `cmd.txt` instead of sending them live - harmless, and the pre-existing
+  behaviour. Do not import the launcher's posture into the panel.
+
+  **No cache, either.** `game_running()` decides whether a command goes out live
+  or is queued; a cached "running" is a command sent to a dead game, a cached
+  "not running" silently queues one the player expected to apply now. The fix is
+  a cheaper enumeration, not a memoised one, and a test asserts the scan is
+  re-run every call.
+
+- **`tools/cut_release.py` deliberately mirrors the superproject's rather than
+  importing it.** ForgePact is a separate git repository and this guide says it
+  can be built standalone; a tool that only ran from inside a superproject
+  checkout would mean a standalone clone could neither bump nor verify its own
+  version, and `build_release.py` - which runs from inside ForgePact - could not
+  consult it. The superproject's copy is hub-specific by construction (its
+  `ROOT` and its site list are hardcoded to `hub/`). Same cross-repo constraint
+  as the process helper.
+
+### Where ForgePact's version lives (new in 1.3.20)
+
+Until 1.3.20 there was **no version anywhere** - no `__version__`, no `#define`,
+nothing in the panel UI. The version existed only as a release-notes filename, a
+git tag and prose, so "bump the version" could only mean "create a file".
+
+Two real sites, both moved by `tools/cut_release.py`:
+
+1. `src/forgepact.py` - `__version__`. **Canonical**: `current()` reads it,
+   because the panel is the always-present entry point and works with no
+   compiled DLL at all.
+2. `plugin/include/ForgePact/Version.hpp` - `#define FORGEPACT_VERSION`. A
+   dedicated header gives an unambiguous regex anchor, and `plugin/include` is
+   already on the compiler's include path.
+
+Two derived checks, asserted by `--check` and never rewritten:
+`release-notes-v<version>.md` must exist (this is that rule's first mechanical
+enforcement), and the plugin's boot line must reference `FORGEPACT_VERSION`
+rather than a literal.
+
+**Do not hand-edit those files.** A mismatch fails `--check`, and `cut()` refuses
+to write anything at all if the tree does not already agree, because a
+half-bumped tree is worse than an un-bumped one.
+
+**The plugin stamps its version into `out.txt`**, next to its boot marker, and
+the panel renders its own from `/api/state` (not from a literal in `HTML`, so
+there is nothing to go stale). The two are installed separately and can be
+different builds - Known Limitations item 12 makes that concrete - so "which
+build produced this log" is load-bearing for any report about rates or timing.
+
+**The boot marker is the trap.** `plugin_boot_count()` counts occurrences of the
+literal `BloodPact plugin loaded`, and `watcher()`'s new-process detection is
+built on a *change* in that count. The version is appended **after** the marker,
+keeping the substring contiguous; interpolating it (`BloodPact 1.3.20 plugin
+loaded`) would silently break auto-apply after a game restart with no error
+anywhere. Two tests pin this.
+
+`build_release.py` now generates its PyInstaller `--version-file` content from
+`__version__` into `build/` at package time, so the Windows version resource is
+**derived** rather than becoming a third site to sync. There is deliberately no
+tracked `version_info.txt` under `ForgePact/` (HS-Offline-Launcher keeps one;
+see its guide for why it is not covered yet).
+
+### Finding 8: the `object_index` struct read is research-only, with a destination
+
+`Hook_distance_to_object` reads `object_index` through
+`CallBuiltin("variable_instance_get", ...)`. Reading it off the `CInstance`
+instead would remove **50%** of what the lied-to path still costs after the
+dedup (the harness prints that share). It is **not shipped**, and the reason is a
+rule, not a preference:
+
+- Without `YYTK_DEFINE_INTERNAL`, `CInstance` is opaque - accessors only. With
+  it (which `plugin_build/build.bat` passes), `CInstance` holds an **anonymous
+  union of three layouts** and the only way in is `GetMembers()`.
+- `GetMembers()` is not a field read: it calls `GetBuiltin("id")` on **every**
+  invocation and compares `m_ID` in each arm to pick one. If none match it prints
+  an error and returns a layout that is not this build's.
+- The failure mode is the bad one: a garbage index makes `IsCreatorObject()`
+  return false, and map reveal and the Beacon silently stop lying - a feature
+  that reports armed and does nothing.
+- `GetMembers()` is used nowhere else in the plugin, so there is no positive
+  control on this runtime, and `AGENTS.md` requires one before a struct read
+  ships. The behaviour harness cannot supply one either: it stubs `CInstance` as
+  a plain struct with an `int object`, which cannot represent the union question
+  at all.
+
+**What 1.3.20 plants is the instrument.** A research-build-only probe
+(`objidxprobe`, absent from `kPlayerCommands`, inside `#ifndef FORGEPACT_RELEASE`)
+compares `GetMembers().m_ObjectIndex` against the `variable_instance_get` answer
+the hook computed anyway, counts agreements / disagreements / `GetMembers()`
+failures, logs one line naming the first mismatch, and **times both reads** so it
+can print medians. The shipped path uses the `CallBuiltin` answer on every path;
+the probe reads, times and counts, and decides nothing. A contract test asserts
+`GetMembers(` is absent from `strip_research_blocks(plugin_source)`.
+
+**It is off until you ask for it: `objidxprobe on`.** `off` stops it and keeps
+the counters; `reset` clears the counters and does *not* stop it; a bare
+`objidxprobe` reports, and the report names `ON`/`OFF` so a run of zeros cannot
+be misread as "no disagreements". The gate exists because the failure this probe
+is measuring for is the one it could itself trigger: `GetMembers()` picking an
+arm this build does not have is documented to return a wrong layout, and if the
+real `CInstance` is smaller than that arm, reading `m_ObjectIndex` is a read past
+the allocation — which `/EHsc` means the probe's own `catch (...)` will not
+catch. Backing out of that should cost a command, not a rebuild.
+
+**Two things its numbers do not say, because both read the other way round.**
+The probe prints them itself, and they belong here too, since this is where the
+session's results get written down.
+
+- **The counts are instances reaching the hook while a lie is wanted, not
+  creators.** The probe runs *after* the `(!beaconWants && !revealWants)`
+  early-out and *before* `IsCreatorObject`, so it samples everything
+  `Hook_distance_to_object` gets as far as identifying — not every call the
+  game makes, and not only creators. Record the figure that way; calling it a
+  creator count would promote it into a claim the measurement does not make.
+- **`getmembers-failed` counts thrown exceptions only.** The documented failure
+  mode of `GetMembers()` is to match no arm, print an error and return a layout
+  that is not this build's - which does **not** throw. So a zero there is not
+  evidence that `GetMembers()` succeeded; that failure arrives as a
+  *disagreement* instead. (Related, and also not evidence either way: the plugin
+  compiles with `/EHsc`, so the probe's `catch (...)` cannot catch an access
+  violation from a wrong union arm. No input demonstrating one has been seen;
+  that is "not observed", not "does not happen". Research build only.)
+
+**The destination - the design a later workorder would implement.** "Is this
+layout correct on every future game build" is unanswerable. "Is it correct in
+this process, right now" is answerable cheaply, every run. So the eventual
+shipped shape is a **self-validating fast path that fails safe**:
+
+- for the first `kObjIdxValidations` creators of a session (64 is a reasonable
+  start), compute **both** values and compare, using the `CallBuiltin` answer for
+  the decision while validating;
+- all agree -> use the struct read for the remainder of the session;
+- **any** disagreement, ever - including a `GetMembers()` failure or a throw ->
+  fall back permanently to `CallBuiltin` **for that session**, log exactly one
+  line naming what mismatched (expected, got, which creator), and increment a
+  counter surfaced by `reveal stat`;
+- never silently prefer the fast answer.
+
+That is `AGENTS.md`'s validate-refuse-and-count discipline applied to a layout
+rather than an address, the same shape as `SetRelicGate`'s refusal and
+`InvokeMethodValue`'s one-line failure log.
+
+**The go/no-go threshold, so this closes on a number.** Both conditions required:
+
+1. **Share of the hot path** - the `object_index` read must be **at or above
+   33%** of what the lied-to path costs. The harness prints it: 1 of 2 calls,
+   **50%**. This condition **passes**, which deliberately moves the decision onto
+   the second one.
+2. **Measured cost ratio** - the struct read's median must be **at or below 50%**
+   of the `variable_instance_get` median. This is the condition genuinely in
+   doubt, because `GetMembers()` itself calls `GetBuiltin("id")` once per
+   invocation, so it may be no cheaper at all. Only the live session can answer
+   it.
+
+If either fails, or the probe cannot produce timings, **finding 8 closes as
+"measured, not worth it"**: the probe is removed in a follow-up and the negative
+is written here with its numbers. If both pass and the session shows agreements
+> 0 with **zero** disagreements, the later workorder builds the self-validating
+path above. `0/0` has measured nothing - the probe says so itself rather than
+letting it read as "no disagreements found".
+
+### `InstallHeadLabelHook()` - not changed, measured live
+
+`InstallHeadLabelHook()` is still called unconditionally from `ModuleInitialize`,
+and 1.3.20 does not change that, not even behind a flag. The open question is
+whether it should be *armed* instead, and it is an open question - **"leave it
+alone" is a legitimate outcome.**
+
+- The per-frame cost is almost certainly nil: `HhDrawHeadLabels()` opens with one
+  atomic load plus a vector-empty check. The real question is load-time work plus
+  an eager binary patch in release builds, not frame time.
+- **The detour timing is the part that is easy to miss.** Since the PR #2 fix,
+  `HookOneScript` installs both the table swap and an inline detour, and the
+  detour is attempted only on the **first** install - the one moment the table
+  still holds the game's own function. An armed install must still be the first
+  one for that target or it silently degrades to table-only. The log says which:
+  `HOOK INSTALLED on DrawHudBuffs` versus `hook DrawHudBuffs: TABLE-ONLY (<reason>)`.
+- "Later is safer" is an **inference**, not a measurement. Known Limitations item
+  8 records that installing the `DropRelic` hook during character selection
+  stalled the runner, which is the same direction - plausible, not established.
+- The instrument exists in **both** builds: `hhlabel` is in `kPlayerCommands` and
+  its reply prints `callback ok|missing`, `hudCalls=`, `draws=` and `lastErr=`.
+
+A contract test pins the eager install unchanged, so this change cannot drift
+into it.
+
+### 1.3.20 is written but NOT released
+
+The version is set and `release-notes-v1.3.20.md` exists; **no release action was
+performed**. Nothing was built, nothing was staged into `modfiles_shipped/`,
+nothing was packaged into `dist/`, and no tag was created. An untouched `build/`,
+`modfiles_shipped/`, `plugin_build/` and `dist/` is the deliberate consequence.
+
+#### Live session verification (human-run, before the release)
+
+Every step names a **positive control**, per `AGENTS.md` § "Prove the Instrument
+Before Trusting a Negative Result": a reading of "no change" means nothing until
+the same instrument has produced a non-zero somewhere in the same session. A
+failed control voids the measurement; it does not mean the fix did nothing.
+
+1. Build and stage the research DLL: `plugin_build\build.bat dev`, then copy
+   `plugin_build\BloodPactPlugin_rel.dll` into the game's `mods\aurie\`. Do
+   **not** restage `modfiles_shipped\`. Drive it with
+   `.\ForgePact\tools\ipc.ps1 <command>`; `-Tail 40` reads recent `out.txt`
+   lines without sending anything.
+2. **Confirm the build identity first.** `-Tail 40` right after launch should show
+   the `BloodPact plugin loaded` line carrying 1.3.20, and the panel should show
+   the same version. If they disagree, stop - that is a mixed install and every
+   measurement below would be ambiguous. Ending that confusion is what finding 9
+   is for.
+3. **Frame cost, all three plugin findings at once.** `ipc.ps1 perf reset`, play
+   ~60 s of ordinary combat with Special Content, Orb Pickup and Map Reveal
+   (packs on) enabled, then `ipc.ps1 perf`. Record `avg`/`max` frame interval and
+   the `FrameCallback body` / `PollCommands` buckets. *Control:* a non-zero frame
+   count and non-zero time in at least one bucket. All zeros means the profiler is
+   not running (wrong DLL, or a release build).
+4. **`eSt`.** Enable a Special Content type, `ipc.ps1 eststat`, record `yazma=` and
+   the `guncel eSt` line. Change rooms and read it again: `yazma=` must have
+   increased and `guncel eSt[0]` must read the forced value. *Control:* `yazma=`
+   increasing across a room change proves the room-gated caller fires. If it does
+   not move, the room key read is blind - that is a defect-grade result, not a
+   pass. Repeat over three or four room changes including a Chaos Tower / Shadow
+   Realm entry, and confirm Special Content still appears at the rate it did.
+5. **Orb pickup.** `ipc.ps1 orbpickup 1`, kill until globes drop, walk near them,
+   `orbpickup stat`. Expect `seen>0`, `pulled>0`, `noplayer=0`, and a glide that
+   looks the same as before. *Control:* `pulled>0` with a globe visibly
+   travelling. `seen=0` while standing next to globes means the scan is blind.
+   Confirm `seen=` is much smaller than the pre-change value for a comparable
+   stretch - at rest it lands near 1/15th, but the travel-forced rescan makes
+   the real factor depend on how much you moved, so do not treat a higher number
+   as a fault. `uncacheable=` must be **0**; anything else means this runner
+   stopped returning a handle kind the cache can hold, and the scan is refusing
+   globes rather than crashing on them.
+   Then **do it again with Movement Speed at 10x**, which is the case the
+   throttle had to be made safe for: run past a field of globes at full speed and
+   confirm every one of them still glides in. *Control:* the same run with the
+   multiplier at 1x - if globes are picked up at 1x and missed at 10x, the
+   travelled-distance rescan is not firing, and that is a defect-grade result
+   rather than a tuning question. `orbpickup stat` cannot show this on its own:
+   `seen>0`/`pulled>0` stay healthy either way, which is precisely why it is
+   watched by eye here and pinned by `fastplayer/*` in the harness.
+6. **Map reveal.** Enable Map Reveal with packs, enter a new zone, `reveal stat`:
+   a window opens (900) and zones-populated increases. *Control:* the zone
+   visibly fills with packs - `docs/map-reveal-research.md` records 208 -> 1273
+   enemies in one zone.
+7. **Panel and launcher.** With the panel open, close and reopen the game:
+   settings must be re-applied automatically. *Control:* this is the direct test
+   of the incremental boot counter **and** of the version stamp on that same log
+   line - if the stamp had broken the marker, this is where it shows. Time
+   Launch-to-applied before and after. Then exercise the poll tiers in both apps:
+   move a control and confirm an update within a couple of seconds; leave the
+   window visible and untouched for a minute and confirm updates slow; switch away
+   for ten minutes and confirm near-zero CPU in Task Manager; switch back and
+   confirm an immediate refresh.
+8. **The `object_index` probe.** Turn it on first - `objidxprobe on`; it does
+   nothing until you do, and the report's `ON`/`OFF` field is how you check. Then
+   with Map Reveal packs on, enter a zone, and read
+   `objidxprobe`. **Required:** agreements **> 0** and disagreements **= 0**.
+   *Control:* the agreement count itself - `0/0` has measured nothing and settles
+   nothing; do not record it as "no disagreements found". If the game misbehaves
+   while it is on, `objidxprobe off` is the way out. Record the counts as
+   *instances through the hook while a lie was wanted*, not creators, and do not read
+   `getmembers-failed=0` as "`GetMembers()` worked" - it counts throws only, and
+   the documented wrong-layout return does not throw. Then apply the two
+   thresholds above and **write down which way it fell**, with both medians, the
+   ratio, the game build and the date, in this file.
+9. **`InstallHeadLabelHook()`.** Establish the control on the eager path first:
+   enable Headhunter, steal an affix, `hhlabel 1` - require `callback ok`,
+   `hudCalls > 0` and `draws > 0` before anything else. Record whether `out.txt`
+   says `HOOK INSTALLED on DrawHudBuffs` or `TABLE-ONLY`. Then ask whether a
+   deferred install works at all, and whether the eager one costs anything
+   measurable (compare process-start-to-plugin-ready with head labels never
+   enabled). **Write the decision down either way**, here, with the numbers and
+   the log lines. "Measured, costs nothing, left eager, here is the evidence" is a
+   complete outcome.
+10. Restore the shipped DLL in `mods\aurie\` so the tester is not left running a
+    research build, and fold any surprises into this file and, if a
+    player-visible number changed, into `release-notes-v1.3.20.md`.
+
+#### Manual release checklist (human, after the live session)
+
+Run in this order; the order is the guardrail.
+
+1. Confirm the live session passed and its numbers are already in the release
+   notes and in this file.
+2. From `ForgePact/`: `py -m unittest discover -s tests` - green.
+3. From `ForgePact/`: `py tools/cut_release.py --check --expect 1.3.20`.
+4. From `ForgePact/`: `plugin_build\build.bat release` - compiles
+   `BloodPactPlugin_ship.dll` with `/DFORGEPACT_RELEASE` and auto-stages it.
+5. Confirm the staged DLL matches; `build_release.py`'s guard aborts otherwise
+   (Known Limitations item 4 - the most common "build keeps failing" report).
+6. From `ForgePact/`: `py build_release.py`.
+7. Sanity-check the bundle: launch `dist\ForgePact\ForgePact.exe`, confirm the
+   panel reports 1.3.20, confirm Properties -> Details shows the stamped version
+   resource (the first release where that exists), confirm the World tab's Satanic
+   Zone section has rows, and confirm the Mods tab toggles still send.
+8. Start the game once with the shipped DLL and confirm `out.txt`'s
+   `BloodPact plugin loaded` line carries 1.3.20, matching the panel.
+9. Tag and publish per the usual flow, with `release-notes-v1.3.20.md` as the body.
+10. HS-Offline-Launcher is **not** part of this release; see its own guide.
+
 ---
 
 ## Known Limitations & Gaps
@@ -290,6 +978,8 @@ The packaging script (`build_release.py`) includes explicit fail-closed safety c
 7. **`instance_find` returns a REFERENCE, not a number (this broke every player-gated feature):**
    - **Measured 2026-09-10.** `HhResolveLocalPlayer`'s fallback accepted only `VALUE_REAL`/`VALUE_INT32`/`VALUE_INT64` from `instance_find(Player_obj, 0)`. This runner returns `VALUE_REF` (kind 15), so the fallback **always** failed, and with `GetMyPlayer` also returning a non-`VALUE_OBJECT` value the whole resolver returned false on every call. Everything gated on the local player then silently did nothing: `orbpickup` logged `seen=176993 noplayer=176993`, the relic filter never armed, and the Headhunter head labels reported "local player not found".
    - An instance reference is passed straight through — `variable_instance_get` accepts it. `HhUsableInstance()` now validates a candidate by *reading a variable from it*, which is what every caller does next, rather than trusting a kind tag. `orbpickup stat` reports `player via GetMyPlayer` / `instance_find(Player_obj)` / `none` so this can never fail silently again.
+   - **Reading that output since 1.3.20:** `seen`, `noplayer` and `outofreach` are each counted once per globe per *scan*, not per frame, so the numbers above would be much smaller today for identical behaviour — but they are still counted the same way **as each other**, which is what made `seen=176993 noplayer=176993` a diagnosis rather than two unrelated figures. `pulled` is the one counter still on the frame clock. Do **not** convert a scan count back into frames: 15 frames is the ceiling on the scan period, not the period — a rescan is forced early by distance travelled and by the player resolving again, measured at 5 scans per 15 frames at ~10x movement speed. The printed line names both clocks and says the period is a maximum; see "Orb pickup: the scan is throttled, the pull is not".
+   - `uncacheable=` on the same line is a fourth branch of the tree, added in 1.3.20 with the handle cache: a globe whose handle could not be held across frames was refused rather than stored. It is expected to stay 0 on this runner, and a non-zero means the runtime changed what `instance_find` hands back — the feature degrades to refusing globes instead of dereferencing freed memory.
    - **Independently, upstream hit the same bug class** in the Headhunter kill/steal path (origin `v1.3.16`, commits `7743a99`/`4ae4e30`/`8005249`) and fixed it there with `HhResolveInstance()` — a `CInstance*` resolver that also accepts `VALUE_REF`, verifies the resolved instance still exists, and checks its `id` matches. The two fixes are complementary, not duplicates: `HhUsableInstance()` validates an `RValue` for callers that only need to read variables from it (orb pickup, the relic filter); `HhResolveInstance()` converts to an actual `CInstance*` for callers that need one (`HhSteal`). `HhSteal`'s own fallback now calls `HhResolveInstance()` on `HhResolveLocalPlayer`'s result rather than the old `p.ToInstance()` (which silently dropped a `VALUE_REF`, same failure mode) — see the merge commit on `release/v1.3.17` for the full reconciliation.
 8. **Mods that install a hook must be armed, not hooked, at launch:**
    - Installing the `DropRelic` hook while character selection is still running stalls the runner. `relicfilter 1` therefore only sets `g_RelicFilterPending`; `FrameCallback` installs the hook once the `fc > 300` setup gate has passed and `HhResolveLocalPlayer` succeeds. This is what lets `build_cmds` emit the command at launch — an earlier workaround withheld it from `build_cmds` entirely, so the panel toggle stayed on but the mod silently did nothing after a game restart.

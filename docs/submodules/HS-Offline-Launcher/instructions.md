@@ -19,7 +19,7 @@
 - `src/`: Core Python application source.
   - `hs_offline_launcher.py`: Standalone single-file application combining the discovery engine, PE validator, SCM/process security monitors, loopback HTTP server (`http://127.0.0.1:8861–8961`), single-page HTML5/CSS3 frontend, and `pywebview` desktop host integration.
 - `tests/`: Automated unit test suite.
-  - `test_launcher.py`: 30 automated unit tests covering PE validation, Steam and library discovery, EAC status detection, process scan fail-closed safety, double-launch locking, Explorer folder opening guards, and loopback HTTP server authorization/origin security.
+  - `test_launcher.py`: 47 automated unit tests covering PE validation, Steam and library discovery, EAC status detection, process scan fail-closed safety, double-launch locking, Explorer folder opening guards, loopback HTTP server authorization/origin security, the exe-fact cache (including the proof that the launch path bypasses it), and the adaptive poll policy.
 - `build.ps1`: Automated packaging script managing an isolated clean virtual environment (`build/packaging-venv/`), dependency validation (`pip check`), test suite gating (`unittest discover`), PyInstaller single-file compilation, and SHA256 checksum generation.
 - `requirements-build.txt`: Pinned build-time dependencies for packaging on Python 3.13/3.14 (including `pyinstaller==6.20.0`, `pywebview==6.2.1`, `pythonnet==3.1.0`, `pefile==2024.8.26`, `cffi==2.1.1`, etc.).
 - `version_info.txt`: Windows PE version resource definition embedding product name (`HS Offline Launcher`), version (`1.0.1.0`), company (`falorfrozen-cmd`), and copyright details into the compiled executable.
@@ -55,7 +55,7 @@ The launcher implements multi-step discovery and binary inspection without invok
 |   |         pywebview Desktop UI        |      |      Embedded ThreadingHTTPServer  |   |
 |   |  - Microsoft Edge WebView2 backend  |      |  - Bound strictly to 127.0.0.1     |   |
 |   |  - Dark theme SPA (inline HTML/CSS) |      |  - Ports: 8861, 8862, 8863, 8961   |   |
-|   |  - 2-second status polling loop     |      |  - Token check (X-HS-Launcher-Token|   |
+|   |  - Adaptive status poll (2s/30s/off)|      |  - Token check (X-HS-Launcher-Token|   |
 |   |  - Native Win32 browse integration  |      |  - Strict Host & Origin validation |   |
 |   +------------------+------------------+      +------------------+-----------------+   |
 |                      |                                            |                     |
@@ -122,7 +122,7 @@ To modify launcher behavior (for example, adding a new recognized Season build h
      ```powershell
      py -m unittest discover -s tests -v
      ```
-   - Confirm all 30 tests pass.
+   - Confirm all 47 tests pass.
 3. **Test Launcher in Development Mode:**
    - Run the Python script directly on Windows:
      ```powershell
@@ -177,7 +177,7 @@ All commands below assume execution from the `HS-Offline-Launcher` submodule roo
 | Command | Working Directory | Shell / Platform | Prerequisites | Expected Result | Side Effects | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `py .\src\hs_offline_launcher.py` | `HS-Offline-Launcher\` | PowerShell / Windows | Python 3.11+, optional `pywebview` | Launches local HTTP server and opens desktop WebView UI (or default browser fallback) | Creates `%LOCALAPPDATA%\HSOfflineLauncher\` config and log files | **Verified** |
-| `py -m unittest discover -s tests -v` | `HS-Offline-Launcher\` | PowerShell / Cross-platform | Python 3.11+ | Runs all 30 unit test cases and outputs verbose test report | None (uses temp directories and mocks) | **Verified** |
+| `py -m unittest discover -s tests -v` | `HS-Offline-Launcher\` | PowerShell / Cross-platform | Python 3.11+ | Runs all 47 unit test cases and outputs verbose test report. The poll-policy truth table executes through `node` when one is on PATH and skips cleanly when it is not. | None (uses temp directories and mocks) | **Verified 2026-09-15** |
 | `.\build.ps1` | `HS-Offline-Launcher\` | PowerShell (Admin not required) / Windows | Python 3.11+ on PATH | Creates clean venv in `build/`, installs pinned packages, validates `pip check`, runs unittests, builds `dist\HS-Offline-Launcher.exe`, and updates `SHA256SUMS.txt` | Creates/overwrites `build/`, `dist/`, and `SHA256SUMS.txt` | **Verified** |
 | `Get-FileHash -Algorithm SHA256 .\dist\HS-Offline-Launcher.exe` | `HS-Offline-Launcher\` | PowerShell / Windows | Compiled release executable in `dist\` | Displays SHA256 hash matching `SHA256SUMS.txt` | Read-only | **Verified** |
 
@@ -195,7 +195,7 @@ All commands below assume execution from the `HS-Offline-Launcher` submodule roo
 
 ## Test Suite & Verification Fixtures
 
-The test suite in `tests/test_launcher.py` contains 30 unit tests organized into 6 test classes. All tests run in complete isolation using synthetic fixtures and mock patches without requiring Steam, the live game, or Windows administrator privileges.
+The test suite in `tests/test_launcher.py` contains 47 unit tests organized into 9 test classes. All tests run in complete isolation using synthetic fixtures and mock patches without requiring Steam, the live game, or Windows administrator privileges.
 
 ### Test Classes & Mock Boundaries
 | Test Class | Tests | Focus Area | Mock & Fixture Strategy |
@@ -207,6 +207,8 @@ The test suite in `tests/test_launcher.py` contains 30 unit tests organized into
 | `LaunchSafetyTests` | 3 | Mutex double-launch rejection, process snapshot failure blocking, EAC re-verification after Steam boot | Mocks `LAUNCH_LOCK`, `processes`, `validate_game`, and `start_steam_if_needed`, ensuring `subprocess.Popen` is never called when safety checks fail. |
 | `FolderOpeningTests` | 2 | Explorer folder opening path validation | Patches `subprocess.Popen` to verify correct arguments and tests rejection of unvalidated paths. |
 | `LocalServerSecurityTests` | 4 | HTTP security, token injection, token enforcement, Host header validation, Origin/CORS rejection | Starts an ephemeral `LauncherServer` on `127.0.0.1` and issues real HTTP requests via `http.client.HTTPConnection`. |
+| `ExeFactsCacheTests` | 10 | One PE parse per `game_details()`, the `game_details` dict unchanged for clean / `.aurie` / invalid files, cache invalidation on a changed exe, and the proof that the launch path bypasses the cache | Synthetic PE fixtures plus `os.utime(..., ns=...)` to drive the `(path, size, mtime_ns)` key deliberately, including the adversarial case of a replaced file with an unchanged key. |
+| `PollPolicyTests` | 7 | The adaptive poll policy's constants, watched-field list, `document.hidden` gate, and its truth table executed through `node` | Parses `POLL_POLICY_JS` out of the module, and compares its constants against ForgePact's copy; skips the executed half when no JS runtime is on PATH. |
 
 ---
 
@@ -238,6 +240,127 @@ The release packaging workflow is defined in `build.ps1` and produces an isolate
    - Writes UTF-8 without BOM checksum file to `SHA256SUMS.txt` in the root repository and copies it to `dist\SHA256SUMS.txt`.
    - If any step fails, removes incomplete artifacts to prevent stale builds.
 
+
+---
+
+## Status Poll Cost (2026-09-15)
+
+Two changes, both about what the launcher does while nobody is asking it to do
+anything. Neither touches the safety gate.
+
+### The exe-fact cache
+
+`game_details()` parsed the game's PE header **twice** per status poll - once
+inside `validate_game()` and once again for the `.aurie` check - and the UI
+polled every two seconds for the whole session. `_exe_facts(path, use_cache=True)`
+now does one `stat()` and one `pe_section_names()`, and both callers consume it.
+
+- **Key:** `(str(path).lower(), st_size, st_mtime_ns)` - the same shape
+  `file_sha256`'s cache already uses, so a changed file is a different key and
+  can never be served from the cache. The single `stat()` that produces the key
+  stays: it is metadata-only and O(1) whatever the file size, and it is not what
+  costs.
+- **Size 1**, like `HASH_CACHE`, because there is only ever one selected game
+  executable. `HASH_CACHE` was already correct and was deliberately left alone;
+  it now carries a comment saying why its `clear()` is not a bug.
+- **Read by the status/display path only.** A `threading.Lock` guards it because
+  handler threads share it (`ThreadingHTTPServer`, `daemon_threads = True`). The
+  allowed race is two threads parsing the same header at once - redundant and
+  identical.
+- **The launch path bypasses it**, structurally rather than by argument:
+  `launch_game_locked()` calls `validate_game(path, use_cache=False)`. A test
+  proves it, and proves it adversarially - it warms the cache with a valid exe,
+  overwrites the file with a same-size 32-bit PE, restores the original
+  `mtime_ns` so the key is *unchanged*, then asserts the status path still
+  reports the cached answer while the launch refuses with the
+  invalid-executable message and `subprocess.Popen` is never called.
+- **`processes()` and `eac_service_status()` are never cached.** They are the
+  safety gate: a cached "nothing is running" is a launch into a live EAC
+  session. `launch_safety_blocker()` calls them directly, every time, and a test
+  asserts that its body has no cache in it.
+
+`reset_caches()` drops both caches and is what the tests' `tearDown`s call.
+
+### The adaptive poll policy, shared with ForgePact's panel
+
+`setInterval(refresh, 2000)` is gone. A fixed interval forces a trade nobody
+wins: fast costs poll work for the whole session, slow costs feedback latency at
+exactly the moments somebody is watching. The trade only exists because the
+interval is fixed, and the client can already tell when a change is plausible.
+
+`POLL_POLICY_JS` is a named Python string constant concatenated into `HTML`,
+holding a pure `pollDelayMs(hidden, msSinceChange)` plus the watched-field
+comparison, so the tests can assert its structure always and execute it through
+`node` when one is installed.
+
+| Tier | Constant | What it is for |
+| --- | --- | --- |
+| Fast | `POLL_FAST_MS` = 2000 | Something just happened and the user is watching: they pressed Launch or Browse, or a watched field in `/api/status` changed. |
+| Idle | `POLL_IDLE_MS` = 30000 | Nothing has changed for `POLL_FAST_WINDOW_MS` = 15000 ms. |
+| Suspended | `pollDelayMs` returns `null` | `document.hidden`: no poll is scheduled at all. `visibilitychange` resumes with an immediate poll and resets the change clock. |
+
+**ForgePact's panel uses the same three constant names and the same values, on
+purpose.** A test in each repository parses both files and fails if they drift -
+editing one side now fails a test rather than diverging quietly. The earlier
+"the two apps should have different constants" idea was withdrawn: the feedback
+lag it was pricing does not arise, because the moments needing fast feedback are
+exactly the ones the client can detect.
+
+Watched fields (a named constant, asserted by a test): `gameRunning`, `safe`,
+`ready`, `eacService`, `blocker`, `steamRunning`, `steamFound`, `game.build`,
+`game.path`. Dotted paths are walked, which is why the comparison is a helper
+rather than an index.
+
+**Known gap, documented rather than special-cased:** a window *occluded* by a
+fullscreen game is not necessarily `document.hidden`, so it idles rather than
+suspending. That costs one poll per 30 s.
+
+### The duplicated process-enumeration helper
+
+`ForgePact/src/forgepact.py` now carries `snapshot_processes()`, a deliberate
+second copy of this module's `processes()`. It replaced a per-poll
+`tasklist.exe` spawn in the panel (357 ms -> 21 ms per call, and up to ~240
+short-lived processes during game startup).
+
+It is a copy rather than a shared component because **this launcher is by design
+a standalone single-file application with no `hs_game_sdk` dependency** - adding
+one would change its PyInstaller packaging and its stated "no external tools"
+property. Keep the two in step by hand if the Win32 structures ever need
+changing.
+
+**The fail direction differs on purpose and must stay different.** Here a failed
+snapshot is fail-*closed*, because it gates a launch. In ForgePact's panel it
+yields an empty list, i.e. "the game is not running", which makes the panel queue
+commands into `cmd.txt` instead of sending them live - harmless there, and the
+pre-existing behaviour. Do not unify them.
+
+### Versioning: deliberately not covered yet
+
+ForgePact gained a `tools/cut_release.py` in 1.3.20 that moves its version in
+every place at once and verifies it. **This launcher deliberately did not**, and
+its version legitimately stays at 1.0.1: it is not being released by that change,
+and a one-site tool buys little today.
+
+The copy is also not mechanical, which is the part worth recording. A later pass
+would need **four** sites, all inside `version_info.txt`:
+
+| Site | Form |
+| --- | --- |
+| `filevers` | four-part tuple, `(1, 0, 1, 0)` |
+| `prodvers` | four-part tuple, `(1, 0, 1, 0)` |
+| `FileVersion` | string, `1.0.1.0` |
+| `ProductVersion` | string, `1.0.1.0` |
+
+ForgePact's tool is built around a **three-part** `VERSION` regex
+(`^(?:0|[1-9][0-9]*)\.…$`), so it does not transfer without first deciding how
+the fourth component derives - always `0`, a build counter, or carried by hand.
+**That decision is the work**, and it belongs with an actual launcher release,
+alongside bumping `version_info.txt`, running `.\build.ps1` and regenerating
+`SHA256SUMS.txt`. Note that ForgePact took the opposite approach for its own
+Windows resource: it *generates* the version-info file at build time from
+`__version__` rather than tracking one, precisely so there is no fourth place to
+keep in step.
+
 ---
 
 ## Troubleshooting & Common Failure Modes
@@ -263,6 +386,6 @@ The release packaging workflow is defined in `build.ps1` and produces an isolate
 ## Gaps, Traceability & Maintenance Triggers
 
 - **Season Update Hashes:** When Hero Siege releases a new game update or season patch, compute its SHA256 digest via `file_sha256` and add the hash and release label to `KNOWN_BUILDS` in `src/hs_offline_launcher.py`.
-- **PyInstaller & WebView2 Updates:** When bumping dependencies in `requirements-build.txt`, re-run `build.ps1` and verify that `pip check`, the 30 unit tests, and the packaged executable pass sanity checks.
+- **PyInstaller & WebView2 Updates:** When bumping dependencies in `requirements-build.txt`, re-run `build.ps1` and verify that `pip check`, the unit test suite, and the packaged executable pass sanity checks.
 - **YYToolkit & Mod Framework Boundary:** HS-Offline-Launcher does not link or embed YYToolkit directly; it recognizes `.aurie`-modified binaries produced by ForgePact/Aurie as compatible offline targets. No code changes in the launcher are required when YYToolkit updates unless the section header structure changes.
 - **CI Automation:** Continuous integration workflows are **not available** in the upstream repository. If automated builds are introduced, port the isolated venv and test-gated PyInstaller steps from `build.ps1` into a GitHub Actions Windows runner.
