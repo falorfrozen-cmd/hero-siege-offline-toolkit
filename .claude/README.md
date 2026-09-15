@@ -226,6 +226,26 @@ and **3 implement→verify rounds**, then it stops and asks a human. The
 workorder file itself is `.claude/workorders/<slug>-plan.md`, gitignored by the
 existing `*-plan.md` rule, which matches at any depth.
 
+Three rules exist because the first real run — the panel-and-launcher
+performance pass — hit the cap with seven items open and had to be finished by
+hand, outside the phase separation:
+
+- **Only `BLOCKING` findings spend a round.** Every reviewer labels each finding
+  `BLOCKING` or `NON-BLOCKING`. That run reached its cap on a round whose
+  instrument reviewer opened with *"nothing here blocks shipping"* and then
+  listed eight improvements — polish consumed the last round and stopped eight
+  findings that were already green. Non-blocking findings ride along as context
+  and surface in the final report.
+- **At the cap, split rather than raise.** The recovery is a new workorder
+  carrying only the still-open findings, with its own fresh three rounds. The
+  cap means the pipeline lost the thread, and that does not become untrue
+  because the plan is large; raising it buys more of what was not working.
+- **Triage warns on size.** The caps are per *workorder*, so an oversized plan
+  puts unrelated work on one shared budget. Above 30 criteria, 3 independent
+  findings, or one submodule, the driver says so before spawning. That run was
+  116 criteria, 9 findings, 2 submodules, 1,524 lines — no individual finding
+  was too hard, there were simply too many sharing one budget.
+
 It has three modes: `/workorder <task>` runs everything, `/workorder plan
 <task>` stops after the plan, and `/workorder resume <slug>` picks up at
 implementation — in a **different session**, which is the point. Splitting there

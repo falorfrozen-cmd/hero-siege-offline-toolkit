@@ -86,6 +86,29 @@ Say which row you matched and why, in one line, before you spawn. A triage
 nobody can see is a triage nobody can correct — and the user is the cheapest
 source of "no, this one is harder than it looks" you will ever have.
 
+**Also check the plan's size, and say so before spawning.** The caps are per
+*workorder*, not per finding, so an oversized plan puts unrelated work on one
+shared three-round budget — and one stubborn finding then stops every finding
+that was already green.
+
+Count the `## Acceptance criteria` checkboxes. Warn the user, in one line,
+before spawning the implementer if any of these hold:
+
+- more than **30 acceptance criteria**;
+- more than **3 independent findings** — independent meaning a later one does
+  not depend on an earlier one being right;
+- more than **one submodule**, unless the change is a single contract they must
+  agree on.
+
+The panel-and-launcher pass was 116 criteria, 9 findings, 2 submodules and
+1,524 lines. It reached the cap with seven items still open and had to be closed
+by hand, outside the phase separation. Nothing about its individual findings was
+too hard; there were simply too many sharing one budget.
+
+Recommend splitting into one workorder per independent finding, or per
+submodule. Say it and let the user decide — a plan this size is usually
+deliberate, and the warning is worth more than a refusal.
+
 ### Step 1 — plan
 
 Spawn `planner` at the tier triage chose, with the request and the repository
@@ -231,25 +254,63 @@ Which reviewers apply:
 When in doubt, run it. A reviewer that finds nothing costs one spawn; a bug
 class that ships costs a live session.
 
+**Require the severity label in the dispatch.** Tell each reviewer to mark every
+finding `BLOCKING` or `NON-BLOCKING` and to lead with "no blocking findings"
+when that is the case. Their own files carry the rule; restating it in the
+dispatch is what makes an unlabelled report obviously incomplete rather than
+something you have to classify yourself afterwards.
+
 ### Step 4 — route the verdicts
 
 Merge everything into one decision:
 
-- **`verifier` PASS and no reviewer finding** → go to step 5.
-- **`verifier` PASS-PENDING-HUMAN and no reviewer finding** → everything
+**A round is for defects, not for improvements.** Every reviewer labels each
+finding `BLOCKING` or `NON-BLOCKING`, and only the blocking ones spend a round.
+This is not a nicety: the panel-and-launcher pass hit the cap on a round whose
+instrument reviewer opened with *"nothing here blocks shipping"* and then listed
+five follow-ups and three nits. Those cost the workorder its last round and shut
+down eight findings that were already green. A cap that counts polish as failure
+turns "the reviewers found something worth doing" into "the pipeline stops".
+
+The line, when a reviewer's label looks wrong to you:
+
+| Blocking | Non-blocking |
+|---|---|
+| a failed acceptance criterion | a test that could be sharper |
+| ships inert or wrong — the `HOOK INSTALLED`-and-does-nothing class | a follow-up idea for later |
+| a legal finding from `decompile-output-guard` — **always** | a naming or wording nit |
+| a player-visible change with no release notes | an overclaim in a research doc or a test comment |
+| an overclaim in **release notes** — `AGENTS.md` is explicit that one wrong "Fixed" erodes every note after it | an internal doc that is merely incomplete |
+
+- **`verifier` PASS and no blocking finding** → go to step 5, carrying every
+  non-blocking finding into the report.
+- **`verifier` PASS-PENDING-HUMAN and no blocking finding** → everything
   runnable passed and something needs a person: a live game session, a
   twelve-minute rebuild, eyes on a window. Go to step 5 and report it as such.
   **Do not spend a round on it** — the implementer cannot fix a criterion that
   is not broken — and do not quietly upgrade it to `PASS`. Set `status: PASS
   (pending <what)` in the workorder so the gap survives the session.
-- **Any `IMPL-DEFECT`, or any reviewer finding** → append all of it to the
-  workorder's `## Log`, bump `round:`, and re-spawn `implementer`. Send the
+- **Any `IMPL-DEFECT`, or any BLOCKING reviewer finding** → append all of it to
+  the workorder's `## Log`, bump `round:`, and re-spawn `implementer`. Send the
   **evidence**, not a summary: the failing command and its real output, the
   reviewer's `path:line`. A defect report the implementer has to re-derive
   wastes the round you spent finding it.
+
+  Carry the round's non-blocking findings along **as context, not as work** —
+  the implementer may fix one cheaply while it is already in that file, and
+  must not spend the round on them.
+
   Cap: **3 implement→verify rounds.** On a fourth, stop and bring it to the
   user with everything tried so far. Ping-ponging past three means the pipeline
   has lost the thread and more rounds will not find it.
+
+  **At the cap, split — do not raise.** The cap exists because three failed
+  rounds mean the pipeline has lost the thread, and that reasoning does not
+  change because the plan is large. So the recovery is a *new* workorder
+  carrying only the still-open findings, with its own fresh three rounds, not a
+  fourth round on this one. Say which findings are closed, so the split does not
+  re-litigate work that already passed. Raising the cap in place buys more of
+  the thing that was not working.
 - **Any `PLAN-DEFECT`** → back to step 1, under the replan cap.
 - **Anything under `UNATTEMPTED` that needs a human** — a live game session, a
   rebuild, eyes on a window — → stop and ask. Never record an unchecked

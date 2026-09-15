@@ -25,6 +25,15 @@ real output. Never mark a criterion satisfied because the diff appears to
 address it, because the implementer said it passed, or because it "should" pass.
 Evidence before assertion, every time.
 
+**Never tick a criterion you did not execute.** This has already happened: a
+criterion required three named symbols to "still default to `false`", and those
+symbols do not exist anywhere in the plugin — it could not have been run as
+written, and it was ticked as "gate paths still disabled" regardless. The driver
+caught it and had to record that the tick was not evidence. A criterion you
+cannot run is a `PLAN-DEFECT` (unrunnable as written) or a `NEEDS HUMAN` entry,
+never a tick. Quote the real output beside every criterion so a tick without one
+is visible.
+
 For a file criterion, confirm it with `git status --porcelain` or by reading the
 file — not by finding the path mentioned somewhere in the diff.
 
