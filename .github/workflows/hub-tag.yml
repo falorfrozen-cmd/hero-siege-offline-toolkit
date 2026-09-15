@@ -53,6 +53,14 @@ jobs:
         with:
           python-version: '3.12'
 
+      # Both the bump and the tag are made by this job, and the bump step is
+      # skipped when the tree already matches -- so the identity is set once
+      # here rather than in whichever step happens to run.
+      - name: Commit as the bot
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
       # Against the remote rather than the local clone, so this does not depend
       # on `actions/checkout` having fetched tags.
       - name: Which hub versions are already tagged
@@ -96,8 +104,6 @@ jobs:
         env:
           VERSION: ${{ steps.plan.outputs.version }}
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           python tools/cut_release.py "$VERSION"
           git commit --all --message "Cut $VERSION"
           # Before the tag, deliberately. If someone else's merge landed while
@@ -112,13 +118,11 @@ jobs:
           VERSION: ${{ steps.plan.outputs.version }}
         run: python tools/cut_release.py --check --expect "$VERSION"
 
-      # The same guard `hub-release.yml` runs, one step earlier and for a
-      # reason that only exists here: a *draft* release can be sitting on a tag
-      # that was never pushed, because a draft does not create its tag. Tagging
-      # into that state gives the tag two release objects, and
-      # `releases/latest/download/latest.json` then resolves to whichever one
-      # GitHub calls latest. That is what broke every installed hub on
-      # hub-v0.1.1.
+      # `hub_tag.py` already refused a tag that exists, but a *draft* release
+      # can be sitting on a tag that was never pushed -- a draft does not
+      # create its tag -- so it is invisible to that check and to `git`. This
+      # is the same guard `hub-release.yml` runs, twelve minutes earlier.
+      # Why two releases on one tag matters: `tools/hub_tag.py`.
       - name: This version has no release yet
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -138,8 +142,6 @@ jobs:
           TAG: ${{ steps.plan.outputs.tag }}
           VERSION: ${{ steps.plan.outputs.version }}
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git tag -a "$TAG" -m "Hero Siege Toolkit v$VERSION"
           git push origin "refs/tags/$TAG"
 

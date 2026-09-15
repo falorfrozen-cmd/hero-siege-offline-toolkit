@@ -1,4 +1,10 @@
 # Build, sign and publish the Toolkit Hub, plus the latest.json its updater reads.
+#
+# Normally started by `hub-tag.yml` (Actions > Hub tag), which checks the tag,
+# moves the version to match and pushes it -- and dispatches this against the
+# tag it just made, because every guard below is gated on a `refs/tags/hub-v`
+# ref. A hand-pushed `hub-v*` tag runs it too. What it leaves behind is a draft
+# in both cases.
 name: Hub release
 
 on:

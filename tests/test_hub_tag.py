@@ -1,26 +1,18 @@
 """Tests for the tag a hub release is being cut as.
 
-The tag is typed into a box on the Actions tab, which makes this the one place
-in the release path where a human hand reaches straight into CI. Everything
-downstream trusts it: the tree is rewritten to match it, the commit is pushed to
-`main`, and the release is built and signed against it. So the checks are here,
-before any of that has happened, and they are the whole reason this is a tested
-tool rather than four lines of shell.
+`tools/hub_tag.py` carries why each refusal exists. What is pinned here is that
+each one actually fires, because everything downstream of this check trusts its
+answer: the tree is rewritten to match the tag, the commit is pushed to `main`,
+and the release is built and signed against it.
 
-Three refusals matter more than the rest.
+The three refusals are a taken tag, a version below one already tagged, and
+anything that is not three plain numbers. The last is not politeness about
+formatting -- the string reaches a shell and a `git tag` either way -- so the
+malformed cases below include the ones that would matter if it did not fire.
 
-A tag that already exists must be refused, because tagging into one that has a
-release gives that tag two release objects, and
-`releases/latest/download/latest.json` then resolves to whichever of them GitHub
-calls latest. That is what hub-v0.1.1 did to every installed hub's update check.
-
-A version *below* one already tagged must be refused. `releases/latest` would
-point at it, and every hub asking what the newest version is would be told
-something older than what it has.
-
-Anything that is not three plain numbers must be refused, because the string
-reaches a shell and a `git tag` either way. The validation is not politeness
-about formatting.
+The ragged tag list is deliberate. This repository has both `0.1.x` and `1.0.x`
+tags, and `hub-v0.1.4` sorts after `hub-v1.0.0` in any lexical order, so a
+comparison done as text has a wrong answer readily available.
 """
 
 import subprocess
