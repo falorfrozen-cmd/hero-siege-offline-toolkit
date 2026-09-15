@@ -7,6 +7,20 @@ When developing, modifying, testing, or investigating code within any submodule 
 - Check for submodule-specific development guides located at `docs/submodules/<submodule-name>/instructions.md` (or `<submodule-name>/instructions.md` if present within the directory).
 - Adhere to the documented architecture, entry points, workflows, testing procedures, dependencies, and command conventions outlined in the relevant `instructions.md`.
 
+## Some of These Rules Are Enforced, Not Just Written
+
+[`.claude/`](.claude/README.md) carries the subset of this file that a machine
+can check or run, so those rules stop depending on whether the right section was
+read first. Three `PostToolUse` hooks (the catalog signature, the Tauri command
+threading rules, the hub's frontend tests), two review agents
+(`sdk-contract-reviewer`, `tauri-command-reviewer`), and two skills
+(`/catalog-rebuild`, and a `submodule-context` skill that loads the guide named
+above). MCP servers are in [`.mcp.json`](.mcp.json).
+
+If a hook blocks an edit, it is quoting a rule from this file — read what it
+printed rather than working around it. If you add a rule here that is
+mechanically checkable, add the check too; `.claude/README.md` says how.
+
 ## Legal: Decompiled Output Never Reaches Any Origin
 
 This toolkit reverse-engineers Hero Siege's runtime (memory layout, hooked functions,
@@ -158,6 +172,25 @@ Each one makes the bridge *look* broken while it is working fine:
 - **Long work needs two calls.** The transport gives up well before
   `--timeout` claims it will, so kick the work off, stash the result on
   `window`, and read it back in a second call.
+
+The CLI is one of two front ends to the same bridge, and **it has no server
+mode** — `@hypothesi/tauri-mcp-cli` is a terminal wrapper, so `tauri-mcp serve`
+does not exist and looking for it wastes a round. The MCP server is a separate
+package, `@hypothesi/tauri-mcp-server`, wired up as `tauri-hub` in
+[`.mcp.json`](.mcp.json); prefer it, and keep its version pinned to the
+`tauri-plugin-mcp-bridge` major in `hub/src-tauri/Cargo.toml`, because some
+tools return a version error against an older plugin rather than working
+partially.
+
+Subcommands are spelled either way — `webview-screenshot` or
+`webview_screenshot`. The ones worth knowing beyond the three above:
+`webview-dom-snapshot` (an accessibility or structure tree, better than a
+screenshot for asserting text), `webview-find-element` (geometry, attributes
+and computed styles — use it instead of `webview-execute-js` for
+`querySelector`/`getBoundingClientRect`/`getComputedStyle` reads),
+`webview-wait-for`, `read-logs --source console`, `ipc-execute-command` and
+`ipc-monitor` (Tauri IPC, not browser network), and `manage-window list` when
+you need to confirm the label rather than assume it.
 
 Prefer a **selector** over a coordinate (`--selector "button[aria-label='…']"`,
 or `--strategy text`): a selector re-queries after the interface has re-laid
