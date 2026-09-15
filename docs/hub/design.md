@@ -529,6 +529,7 @@ the screenshot alone.
 | `.github/workflows/catalog-publish.yml` | push to `main` touching `catalog/`, manual | Verifies the signature and uploads the catalog to the `catalog` release tag. |
 | `.github/workflows/hub-tag.yml` | manual, with the tag typed in | Checks the tag is one this repository can release, moves the version to match, tags it, then dispatches the release against the tag. Publishes nothing. |
 | `.github/workflows/hub-release.yml` | `hub-v*` tag, dispatch, manual dry run | Tests, builds, signs, and uploads the hub plus `latest.json` to a **draft** release. |
+| `.github/workflows/ai-review.yml` | the `ai-review` label, or a `@claude review` comment | Reviews the pull request and posts findings as inline comments. Opt-in only. |
 | `.github/workflow-templates/notify-hub-release.example.yml` | — | The sending half, to copy into a tool repository. |
 
 The catalog workflow opens a pull request rather than pushing, matching the rule
@@ -594,6 +595,40 @@ a `catalog` release.
 | `TAURI_SIGNING_PRIVATE_KEY` | `hub-release.yml` | The installer builds but its updates can never be verified. |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | `hub-release.yml` | Only if the key has one. |
 | `HUB_DISPATCH_TOKEN` | each tool repository | Release notification fails visibly. Configure the secret and rerun the notifier; there is no scheduled fallback. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `ai-review.yml`, here and in `ForgePact` | The review run fails to authenticate. Nothing else is affected, because no other workflow uses it and review is opt-in. |
+
+`CLAUDE_CODE_OAUTH_TOKEN` is not an API key and spends no API billing. It comes
+from `claude setup-token`, authenticates against a Claude subscription, and is
+tied to whoever generated it — which is why it is a per-repository secret here
+rather than an organisation-level one. The alternative, an `ANTHROPIC_API_KEY`
+from the Console, opens a second, separately-billed account and is not what this
+is set up to use.
+
+**The secret is only half of the setup.** The [Claude GitHub
+App](https://github.com/apps/claude) also has to be installed on the repository,
+because the action exchanges the workflow's OIDC token for an app token before
+it does anything else. Without the app that exchange returns `401 Unauthorized`
+with "Claude Code is not installed on this repository", and the job fails having
+reviewed nothing — a secret that is present and correct does not save it. Install
+the app once for the organisation and grant it both repositories. This was
+learned the direct way: ForgePact's first review run failed on exactly that,
+with the secret already in place.
+
+### Asking for a review
+
+`ai-review.yml` has no `on: pull_request` trigger on purpose. Two workflows in
+this repository open pull requests by themselves — `submodule-dispatch.yml`
+bumps a pointer, `catalog.yml` regenerates the catalog — and a one-line SHA
+change has nothing to review. Reviewing on open would spend a review on every
+one of them, so the request is the trigger instead:
+
+- add the **`ai-review`** label in the pull request sidebar, or
+- comment **`@claude review`** on the pull request.
+
+Either works again later for a fresh review after pushing; the label does not
+re-run by itself on subsequent pushes. The action additionally requires the
+requester to have write access and rejects bot actors, so automation cannot
+start a review by applying the label.
 
 ### Tool notifications
 
