@@ -23,13 +23,22 @@ So the standard trade-off does not settle it. Three facts about *this* project d
 
 ### 1. The repositories are not ours to move
 
-The canonical repositories are `falorfrozen-cmd/*`. This checkout's `origin` is
-`S-Borkowski/hero-siege-offline-toolkit` with `falorfrozen-cmd` as `upstream`,
-and each submodule carries `origin = falorfrozen-cmd`, `fork = S-Borkowski`.
+The canonical repositories are `falorfrozen-cmd/*`. Every checkout points
+`origin` at those, and where a fork still exists it is the remote named `fork`
+(`S-Borkowski/*`) — the superproject and each submodule agree on that.
 
 A migration is therefore not a change we can make — it is a proposal to
 upstream, across ten repositories, with ten sets of release history and issue
 links to preserve. Blocking the hub on that means shipping nothing.
+
+**Amended 2026-09-15.** This reason has weakened: the author is now a
+collaborator on all eleven `falorfrozen-cmd` repositories, so a migration is no
+longer someone else's to approve. The superproject's remotes were backwards
+until this date — `origin` was the fork and `falorfrozen-cmd` was `upstream`,
+which is why contributions kept being routed through a fork nobody needed — and
+were swapped to match the convention above. The decision below still stands, on
+reasons 2 and 3: those are about what a monorepo would and would not fix, and
+access changes neither.
 
 ### 2. Two members cannot join
 
