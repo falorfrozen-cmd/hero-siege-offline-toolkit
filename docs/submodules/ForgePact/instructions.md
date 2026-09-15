@@ -314,6 +314,54 @@ floor is the claim the measurement actually supports. The boot-count ratio also
 understates the win over a session: the "before" column grows with the log, the
 "after" column does not, because the scan resumes from the previous offset.
 
+### Map reveal's pack pass was dead, and why nothing said so (2026-09-15)
+
+`reveal` cleared the fog and never spawned a single pack, in any zone, on any
+build carrying this code. Diagnosed live: `reveal stat` read
+`zonesPopulated=0 pending=yes(721 ticks) creatorLies=0` against a zone with 92
+ready creators, so the pass was arming and then failing a gate every poll for
+four minutes, giving up silently at 1800 ticks.
+
+The gate was `ReadIdentity()`, which refuses when `RoomKey()` returns
+`INT64_MIN`. `RoomKey()` read `room` with `GetInstanceMember` on the global
+instance - but **`room` is a GameMaker built-in, not a user global**, so that
+read never answers and the key was always the "unreadable" sentinel. `Tick()`
+stores whatever `RoomKey()` returns *without checking it*, which is why the
+fog-clearing half kept working and hid the other half being dead.
+
+`roomprobe` (research build) established the fix by trying every candidate in
+one build with controls either side, rather than one guess per relaunch:
+
+| | call | result |
+| --- | --- | --- |
+| 1 | instance-member read of `room` | FAILED - the bug |
+| 2 | `GetBuiltinVariableIndex("room")` | index 118 |
+| 3 | `GetBuiltin("room", nullptr)` | `kind=15` `ref room Act_06_01` |
+| 5 | `variable_global_exists("room")` | false - negative control |
+| 6 | `GetBuiltin("fps", nullptr)` | `real:129` - positive control |
+
+Row 6 is what makes row 3 mean anything: it proves `GetBuiltin` works on this
+runtime, so row 1's failure is a fact about `room` rather than about the call.
+
+Two things the probe stopped us getting wrong. `room` comes back as a **ref,
+not a real**, so `llround(ToDouble())` would still have been wrong after
+switching APIs - the key now takes a number only when the kind *is* a number
+and otherwise hashes the ref's own text, masked positive so a valid key can
+never collide with the `INT64_MIN` sentinel. And the same read backs
+`CurrentRoomKey()`, so finding 5's room gating had been inert too: correct, but
+always via its 15-frame safety re-poll, never on the room-change frame.
+
+Confirmed live after the fix: `CurrentRoomKey() -> 6242359296347299236`,
+`zonesPopulated=1 pending=no creatorLies=92`, and the zone went from 42 to 547
+enemies.
+
+**The harness stubs were complicit.** All three faked `room` as a convenient
+real via `GetInstanceMember`, so every scenario passed over a function that
+returned `INT64_MIN` in production - `AGENTS.md`'s "a stub that cannot represent
+the failing input cannot catch the bug", exactly. They now return a `VALUE_REF`
+by default, keep `GetInstanceMember` permanently failing as a negative control,
+and carry a `roomIsReal` switch so the numeric branch is not dead code.
+
 Native harness call counts. **Rows 2-4 are measured** against a runnable copy of
 the pre-change shape in the same run (`est_force_harness.cpp`'s `PreChangeTick`,
 `orb_pickup_harness.cpp`'s `PreChangeOrbTick`), so both columns come out of one
