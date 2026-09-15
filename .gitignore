@@ -78,6 +78,12 @@ Thumbs.db
 # Junie agent plans/session files (local planning aid, not project docs)
 .junie/
 
+# Claude Code: the shared configuration in .claude/ is committed on purpose --
+# hooks, agents and skills are project rules, not personal taste. Only the
+# per-machine override file is local. It was previously ignored by one
+# contributor's global gitignore, which is not a rule a collaborator inherits.
+.claude/settings.local.json
+
 # Planning documents, for the same reason. A plan says what someone intends to
 # build; it is out of date the moment the thing is built, and then the reader
 # has two documents and no way to tell which one describes the software they
