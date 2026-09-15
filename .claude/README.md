@@ -13,11 +13,31 @@ All three are `PostToolUse`, exit 0 silently when nothing is wrong, and exit 2
 with an explanation when something is. They run through `py -3`; on a
 non-Windows machine change that to `python3` in `settings.json`.
 
-| Hook | Fires on | Catches |
+| Hook | Fires when | Catches |
 |---|---|---|
-| `catalog_signature.py` | `Edit`/`Write`/`Bash`/`PowerShell`, but only when `catalog/` actually differs from HEAD | `catalog/catalog.json` no longer verifying against its minisign signature, with CRLF called out by name when that is the cause |
-| `tauri_command_guard.py` | edits under `hub/src-tauri/src/` | `block_on` inside a `#[tauri::command]`, and `#[tauri::command(async)]` on an `async fn` |
-| `hub_frontend_tests.py` | edits to top-level `hub/src/*.js` | the hub's frontend tests failing |
+| `catalog_signature.py` | `catalog/` differs from HEAD | `catalog/catalog.json` no longer verifying against its minisign signature, with CRLF called out by name when that is the cause |
+| `tauri_command_guard.py` | a `.rs` under `hub/src-tauri/src/` differs from HEAD | `block_on` inside a `#[tauri::command]`, and `#[tauri::command(async)]` on an `async fn` |
+| `hub_frontend_tests.py` | a top-level `hub/src/*.js` differs from HEAD | the hub's frontend tests failing |
+
+**All three key off the working tree, not the tool payload**, and that is the
+single most important thing to preserve when editing them. A payload-shaped
+hook only sees `Edit` and `Write`, and only when it can resolve
+`tool_input.file_path` against the repository root. Both halves leak: a `sed -i`
+or heredoc under `Bash` never produces a `file_path`, and a path the hook cannot
+resolve returns "not my file" — which is indistinguishable from "nothing
+wrong". That is not theoretical. During development all three exited 0 against
+a harness feeding them POSIX-style paths Windows Python could not resolve, and
+looked installed and healthy while guarding nothing. `git status --porcelain`
+costs ~40 ms and has neither hole. `.claude/hooks/_common.py` holds the shared
+parts.
+
+**Escape hatch: `HSTK_SKIP_HOOKS=1`.** Every blocking message names it. There
+are legitimate states these would otherwise wedge — most clearly a catalog
+rebuilt *unsigned* on a machine without `$HUB_MINISIGN_SECRET_KEY`, which
+`skills/catalog-rebuild/SKILL.md` explicitly contemplates. Because the trigger
+is the working tree, that state would otherwise fail *every* later tool call,
+including the ones needed to finish or undo the work. A blocking hook with no
+way out is worse than no hook.
 
 Why these three and not others: each one guards a failure that has already
 shipped, and each is cheap. The catalog check is a signature verification; the
@@ -119,20 +139,31 @@ by `#` opens a comment and everything after it is silently dropped — no error,
 no warning, and the file still loads. `tauri-command-reviewer` shipped with
 `adds or edits a #[tauri::command]` in its description and lost the last 86
 characters, which were the trigger conditions that make the agent get picked at
-all. Keep attribute syntax, shell flags and URLs with fragments out of
-`description:`, or quote the whole value.
+all. It is now written as a **double-quoted scalar**, which is the right fix:
+the attribute stays readable in the trigger text, and the quoting stops YAML
+treating the `#` as a comment. Do the same for any `description:` containing
+attribute syntax, a shell flag, or a URL with a fragment — quote the value
+rather than rewording around the character, and never put authoring notes in
+`description:` itself, since that text is what gets matched against.
 
-To check a file: strip the frontmatter and look for ` #` in it.
+To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Run the hook scripts directly to test them — they read the Claude Code hook
-payload on stdin and take an absolute `file_path`:
+The hooks are covered by `tests/test_claude_hooks.py`, which runs with the rest
+of the suite:
 
 ```bash
-py -3 -c "import json,os;json.dump({'tool_name':'Edit','tool_input':{'file_path':os.path.abspath('hub/src-tauri/src/lib.rs')}},open('payload.json','w'))"
-py -3 .claude/hooks/tauri_command_guard.py < payload.json; echo $?
+py -3 -m unittest discover -s tests
+py -3 -m unittest tests.test_claude_hooks -v
 ```
 
-A hook that exits 0 on a file you *know* is broken is the failure mode to watch
-for — verify against a deliberately broken copy, not only against a clean tree.
+Every test there is a **pair**: a positive control proving the hook fires on a
+real violation, and a negative control proving it stays quiet on a clean tree.
+A suite with only the negative half passes against hooks that do nothing, which
+is exactly the failure this project keeps rediscovering — see `AGENTS.md`
+§ "Prove the Instrument Before Trusting a Negative Result". If you add a check,
+add both halves.
+
+The rig builds a throwaway git repository in the system temp directory rather
+than the session scratchpad, where `git init` fails with `Filename too long`.

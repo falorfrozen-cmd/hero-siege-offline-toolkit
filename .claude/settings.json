@@ -3,24 +3,19 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|Bash|PowerShell",
+        "matcher": "Edit|Write|Bash|PowerShell|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "py -3 .claude/hooks/catalog_signature.py"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "py -3 .claude/hooks/tauri_command_guard.py"
+            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/catalog_signature.py\""
           },
           {
             "type": "command",
-            "command": "py -3 .claude/hooks/hub_frontend_tests.py"
+            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/tauri_command_guard.py\""
+          },
+          {
+            "type": "command",
+            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/hub_frontend_tests.py\""
           }
         ]
       }
@@ -29,6 +24,7 @@
   "permissions": {
     "allow": [
       "Bash(py -3 -m unittest discover -s tests:*)",
+      "Bash(py -3 -m unittest tests.test_claude_hooks:*)",
       "Bash(py -3 tools/minisign.py verify:*)",
       "Bash(node --test:*)",
       "Bash(git status:*)",

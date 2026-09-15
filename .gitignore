@@ -84,6 +84,11 @@ Thumbs.db
 # contributor's global gitignore, which is not a rule a collaborator inherits.
 .claude/settings.local.json
 
+# Worktrees created under .claude/. Now that .claude/ is tracked these show up
+# as untracked directories, and `git add -A` would try to embed each one as a
+# nested repository.
+.claude/worktrees/
+
 # Planning documents, for the same reason. A plan says what someone intends to
 # build; it is out of date the moment the thing is built, and then the reader
 # has two documents and no way to tell which one describes the software they
