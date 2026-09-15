@@ -77,14 +77,40 @@ Start the hub with `npm start` in `hub/` and wait for `:9223` before expecting
 Asking Someone to Click It" has the rest, including the window label (`hub`, not
 the `main` every tool defaults to).
 
-`github` needs a token in the environment: set `GITHUB_MCP_PAT` (`gh auth token`
-prints a usable one; `repo` scope is enough). It does **not** authenticate
-interactively — Claude Code tries OAuth dynamic client registration, which that
-endpoint does not support, and the session reports *"Incompatible auth server:
-does not support dynamic client registration"*. Probing it directly confirms the
-shape: a POST with a bearer token returns 200, without one 401. Until the
-variable is set the entry simply fails to connect, which is harmless; the `gh`
-CLI covers the same ground in the meantime and is already authenticated.
+`github` does **not** authenticate interactively. Claude Code tries OAuth
+dynamic client registration, that endpoint does not support it, and the session
+reports *"Incompatible auth server: does not support dynamic client
+registration"*. Probing directly confirms what it wants: a POST with a bearer
+token returns 200, without one 401. So `.mcp.json` sends
+`Bearer ${GITHUB_MCP_PAT}`, expanded from the environment — no token in the
+repository.
+
+Set it once, piping so the value is never displayed:
+
+```powershell
+[Environment]::SetEnvironmentVariable('GITHUB_MCP_PAT', (gh auth token), 'User')
+```
+
+**Claude Code must be restarted afterwards.** A process reads its environment at
+launch, so the session that sets the variable is never the session that can use
+it.
+
+Three things worth knowing about that arrangement:
+
+- **It is a copy, and copies go stale.** That is the `gh` CLI's own OAuth token.
+  `gh auth refresh`, `gh auth logout` or a re-login rotates it, and this copy
+  then 401s while `gh` itself keeps working — so the symptom is "the MCP server
+  broke for no reason". Re-run the command above to resync.
+- **It is plaintext at rest**, in the user's registry environment, readable by
+  anything running as that user. `gh` keeps its own copy in the OS keyring, so
+  this is a deliberate downgrade accepted for convenience.
+- **It is broadly scoped**: gist, read:org, repo and workflow across *every*
+  repository the account can reach, not just this one. A fine-grained PAT
+  restricted to the `falorfrozen-cmd` repos narrows the blast radius
+  considerably and drops into the same variable.
+
+Until the variable is set the entry simply fails to connect, which is harmless —
+the `gh` CLI covers the same ground and keeps its token in the keyring.
 
 ## A trap worth knowing: `#` in frontmatter
 
