@@ -294,6 +294,63 @@ while still supplying `tagName`, which cannot work: `tauri-action` fails with
 whose whole job is to prove a release will build was the one that could never
 finish.
 
+### Cutting one
+
+**Actions > Hub tag > Run workflow**, type the tag, and `hub-tag.yml` does the
+four things that otherwise happen by hand and in the wrong order: it checks the
+tag is one this repository can release, moves the version to match, pushes the
+tag, and starts `hub-release.yml` against it. Nothing is tagged on a merge; a
+release happens when someone asks for one.
+
+The typed tag is the one place in the release path where a human hand reaches
+straight into CI, and everything downstream trusts it -- the tree is rewritten
+to match, the commit is pushed to `main`, the release is signed against it. So
+`tools/hub_tag.py` decides whether the tag is usable before any of that has
+happened, and refuses three things.
+
+A tag that already exists. Tagging into one that has a release gives that tag
+two release objects, and `releases/latest/download/latest.json` then resolves to
+whichever of the two GitHub calls latest -- which is what hub-v0.1.1 did to
+every installed hub's update check.
+
+A version below one already tagged. `releases/latest` would point at it, and
+every hub asking what the newest version is would be handed something older than
+what it is running. Releasing an older line on purpose means pushing that tag by
+hand, which `hub-release.yml` still builds. The comparison is numeric: this
+repository's tags are ragged -- `0.1.x` and `1.0.x` both exist -- and
+`hub-v0.1.4` sorts after `hub-v1.0.0` in any lexical order.
+
+Anything that is not three plain numbers, with or without the `hub-v`. The
+string ends up in a shell and in `git tag`, so the check is not politeness about
+formatting. For the same reason the input reaches the shell only through `env:`;
+interpolated into a `run:` line, `${{ inputs.tag }}` is whatever was typed,
+executed.
+
+Three more things about that workflow are less obvious than they look.
+
+It refuses to run anywhere but `main`, because the bump it pushes would
+otherwise put a feature branch's tree on `main` and tag code that was never
+merged.
+
+It dispatches the release rather than relying on the tag push. A tag pushed with
+`GITHUB_TOKEN` does not start another workflow run: GitHub blocks that to stop
+workflows triggering themselves, so `hub-release.yml`'s `on: push: tags:` never
+fires and the tag would sit there with nothing building it. `workflow_dispatch`
+is one of the two documented exceptions that always create a run.
+
+And it dispatches against the tag. Every guard in `hub-release.yml` is written
+`if: startsWith(github.ref, 'refs/tags/hub-v')`, so `--ref main` would still
+build, sign and publish -- with the six-field version check, the
+duplicate-release guard and the draft notice all silently skipped. `--ref "$TAG"`
+is what makes this run the same checks a hand-pushed tag does.
+`tests/test_hub_tag_workflow.py` fails if any of that drifts, and
+`tests/test_hub_tag.py` covers the tag checks themselves.
+
+What it deliberately does not do is publish. `releaseDraft: true` stands, so
+what it leaves behind is an installer, a signature and `latest.json` sitting in
+a draft, and a person still decides when that becomes the version every
+installed hub updates itself to.
+
 ---
 
 ## The interface
@@ -447,7 +504,8 @@ the screenshot alone.
 | --- | --- | --- |
 | `.github/workflows/catalog.yml` | `repository_dispatch: release-published/submodule-updated`, manual | Rebuilds and re-signs the catalog, then **opens a pull request**. Publishes nothing. |
 | `.github/workflows/catalog-publish.yml` | push to `main` touching `catalog/`, manual | Verifies the signature and uploads the catalog to the `catalog` release tag. |
-| `.github/workflows/hub-release.yml` | `hub-v*` tag, manual dry run | Tests, builds, signs, and publishes the hub plus `latest.json`. |
+| `.github/workflows/hub-tag.yml` | manual, with the tag typed in | Checks the tag is one this repository can release, moves the version to match, tags it, then dispatches the release against the tag. Publishes nothing. |
+| `.github/workflows/hub-release.yml` | `hub-v*` tag, dispatch, manual dry run | Tests, builds, signs, and uploads the hub plus `latest.json` to a **draft** release. |
 | `.github/workflow-templates/notify-hub-release.example.yml` | — | The sending half, to copy into a tool repository. |
 
 The catalog workflow opens a pull request rather than pushing, matching the rule

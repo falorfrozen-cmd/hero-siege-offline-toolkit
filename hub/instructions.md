@@ -12,9 +12,10 @@
 - **Purpose:** Install, launch, update and roll back the ten tools in the
   toolkit from a signed, hash-pinned catalog, without changing how any of them
   behaves when started by hand.
-- **CI:** `.github/workflows/hub-release.yml` (tag `hub-v*`) builds, tests,
-  signs and publishes. `catalog.yml` / `catalog-publish.yml` feed it the
-  catalog.
+- **CI:** `.github/workflows/hub-tag.yml` (manual: type the tag) validates it,
+  moves the version and tags it; `hub-release.yml` (tag `hub-v*`) builds, tests,
+  signs and leaves a **draft** release for a human to publish. `catalog.yml` /
+  `catalog-publish.yml` feed it the catalog.
 
 **Why each decision went the way it did is in
 [`docs/hub/design.md`](../docs/hub/design.md), and the catalog's fields are in
@@ -162,9 +163,23 @@ Tool repositories use `notify-hub-release.yml` to notify this hub when a stable
 release is published. Run that workflow manually to verify or recover a missed
 notification. It reuses `HUB_DISPATCH_TOKEN`; there is no nightly fallback.
 
+Cut a release from **Actions > Hub tag > Run workflow**, typing the tag it
+should go out as (`hub-v1.0.2`, or just `1.0.2`). It must be run from `main`.
+The workflow checks the tag, moves the version to match and commits that to
+`main`, pushes the tag, and starts the build. What comes out is a **draft**;
+publishing it is the one manual step left, and until someone does, every
+installed hub's update check gets a 404.
+
+Three tags are refused before anything happens: one that already exists, one
+below a version already tagged, and anything that is not three plain numbers.
+`tools/hub_tag.py` has the reasoning, and `py -3 tools/hub_tag.py --tag 1.0.2
+--existing $(git tag --list 'hub-v*')` answers "would this be accepted" without
+running the workflow.
+
 `py -3 tools/cut_release.py <version>` moves the version in all six places at
-once; `--check` is what CI verifies against the tag. **Do not hand-edit them** —
-a mismatch fails the release. Then tag `hub-v<version>` and push.
+once and `--check` is what CI verifies against the tag, but the release workflow
+calls it for you — bump by hand only when you want the commit separate from the
+release. **Do not hand-edit those files**; a mismatch fails the release.
 
 `HUB_REPO` in `src-tauri/src/catalog.rs` decides where the catalog, the hub's
 own updates and the documentation links point. `hub-release.yml` sets it from

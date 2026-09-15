@@ -1,0 +1,187 @@
+# Cut a hub release as a tag you type, and leave a draft.
+#
+# Run it from Actions > Hub tag > Run workflow, give it the tag, and it does the
+# four things that otherwise happen by hand and in the wrong order: it checks
+# the tag is one this repository can actually release, moves the version to
+# match, pushes the tag, and starts `hub-release.yml` against it.
+#
+# It stops at the tag. `hub-release.yml` builds, signs and leaves a draft, and
+# publishing that draft stays a human act.
+name: Hub tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release as, e.g. hub-v1.0.2 (or just 1.0.2)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hub-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      # Committing the version bump and pushing the tag.
+      contents: write
+      # Starting `hub-release.yml`. Without it `gh workflow run` is a 403 from
+      # a job that has already pushed the tag, which leaves a tag with no build
+      # behind it -- the one state this workflow exists to avoid.
+      actions: write
+    steps:
+      # A release is cut from `main`. Run from anywhere else, the bump below
+      # would push a branch's tree to `main` and the tag would point at code
+      # that was never merged.
+      - name: This has to be run from main
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ "$BRANCH" != "main" ]; then
+            echo "::error::Run this from main. It was started on '$BRANCH', whose code is not what a release should ship."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Against the remote rather than the local clone, so this does not depend
+      # on `actions/checkout` having fetched tags.
+      - name: Which hub versions are already tagged
+        id: tags
+        run: |
+          refs=$(git ls-remote --tags origin 'refs/tags/hub-v*' | cut -f2 | tr '\n' ' ')
+          echo "refs=$refs" >> "$GITHUB_OUTPUT"
+          echo "existing: ${refs:-none}"
+
+      # Everything after this trusts the tag, so everything that could be wrong
+      # with it is decided here: the shape, whether it is taken, and whether it
+      # would point `releases/latest` at something older than players are
+      # running. `tools/hub_tag.py` has the reasoning and the tests; a refusal
+      # exits non-zero having printed nothing, so no later step has a version
+      # to act on.
+      #
+      # The typed string reaches the shell only through `env:`, never
+      # interpolated into a `run:` line.
+      - name: Is this a tag we can release
+        id: plan
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+          REFS: ${{ steps.tags.outputs.refs }}
+        run: |
+          # Captured rather than piped into `$GITHUB_OUTPUT`. GitHub runs this
+          # as `bash -e {0}` with no `pipefail`, so a pipe would exit with
+          # tee's status -- 0 -- and a refused tag would sail on into the bump,
+          # the push and the tag with no version behind it.
+          #
+          # shellcheck disable=SC2086 -- REFS is a list of refs, and word
+          # splitting is how it becomes separate arguments.
+          plan=$(python tools/hub_tag.py --tag "$TAG_INPUT" --existing $REFS)
+          echo "$plan"
+          echo "$plan" >> "$GITHUB_OUTPUT"
+
+      # Only when the tree says something else. `cut_release.py` refuses to
+      # write a tree whose fields already disagree, so a half-bumped `main`
+      # stops here rather than being tagged.
+      - name: Move the version to match the tag
+        if: steps.plan.outputs.bump == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python tools/cut_release.py "$VERSION"
+          git commit --all --message "Cut $VERSION"
+          # Before the tag, deliberately. If someone else's merge landed while
+          # this ran, the push is rejected and the job fails having created
+          # nothing -- rather than leaving a tag on a commit `main` never got.
+          git push origin HEAD:main
+
+      # What the tag points at has to agree with the tag, because that is what
+      # `hub-release.yml` checks before it spends twelve minutes building.
+      - name: All six version fields agree
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: python tools/cut_release.py --check --expect "$VERSION"
+
+      # The same guard `hub-release.yml` runs, one step earlier and for a
+      # reason that only exists here: a *draft* release can be sitting on a tag
+      # that was never pushed, because a draft does not create its tag. Tagging
+      # into that state gives the tag two release objects, and
+      # `releases/latest/download/latest.json` then resolves to whichever one
+      # GitHub calls latest. That is what broke every installed hub on
+      # hub-v0.1.1.
+      - name: This version has no release yet
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          existing=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")] | length")
+          echo "releases already on $TAG: $existing"
+          if [ "$existing" != "0" ]; then
+            echo "::error::$TAG already has $existing release(s), including drafts. Delete them before this version can be tagged."
+            exit 1
+          fi
+
+      - name: Tag it
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" -m "Hero Siege Toolkit v$VERSION"
+          git push origin "refs/tags/$TAG"
+
+      # A tag pushed with GITHUB_TOKEN does not start another workflow run --
+      # GitHub blocks that to stop workflows triggering themselves -- so
+      # `hub-release.yml`'s `on: push: tags:` will not fire and the tag would
+      # sit there with nothing building it. `workflow_dispatch` is one of the
+      # two documented exceptions that always create a run.
+      #
+      # `--ref "$TAG"` is the load-bearing part. Every guard in that workflow
+      # is written `if: startsWith(github.ref, 'refs/tags/hub-v')`, so a
+      # dispatch against `main` would still build, sign and publish, with the
+      # version check, the duplicate-release guard and the draft notice all
+      # silently skipped.
+      - name: Build the release from that tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          gh workflow run hub-release.yml --ref "$TAG" -f dry_run=false
+          echo "dispatched hub-release.yml against $TAG"
+
+      - name: Say what still needs a human
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          BUMPED: ${{ steps.plan.outputs.bump }}
+        run: |
+          {
+            echo "### Tagged $TAG"
+            echo
+            if [ "$BUMPED" = "true" ]; then
+              echo "The version was moved to match, and that bump is on \`main\`."
+            else
+              echo "\`main\` was already at this version; nothing was rewritten."
+            fi
+            echo
+            echo "\`hub-release.yml\` is building it now. What it leaves behind is a"
+            echo "**draft**, and a draft's assets are not served -- until someone"
+            echo "publishes it, every installed hub's update check gets a 404:"
+            echo
+            echo "    https://github.com/$REPO/releases/latest/download/latest.json"
+            echo
+            echo "Publish it at https://github.com/$REPO/releases"
+          } >> "$GITHUB_STEP_SUMMARY"
