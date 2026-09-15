@@ -204,8 +204,19 @@ decisions were made at which tier.
 Spawn `verifier` **and** every applicable domain reviewer in a single message so
 they run concurrently. Wall-clock is one agent; only tokens add up.
 
-Give each the workorder path and tell it to read the change from
-`git diff` — never paste the implementer's transcript.
+Give each the workorder path and tell it to read the change itself — never
+paste the implementer's transcript.
+
+**Tell them how to read it, because `git diff` alone under-reports.** It shows
+neither untracked files nor the index, and a reviewer that cannot see a
+newly-added file is reviewing half the change:
+
+```bash
+git status --porcelain -uall     # untracked, named individually
+git diff HEAD                    # working tree and index
+git -C <submodule> status --porcelain -uall
+git -C <submodule> diff HEAD     # the hub's diff shows only the pointer
+```
 
 Which reviewers apply:
 
@@ -225,6 +236,12 @@ class that ships costs a live session.
 Merge everything into one decision:
 
 - **`verifier` PASS and no reviewer finding** → go to step 5.
+- **`verifier` PASS-PENDING-HUMAN and no reviewer finding** → everything
+  runnable passed and something needs a person: a live game session, a
+  twelve-minute rebuild, eyes on a window. Go to step 5 and report it as such.
+  **Do not spend a round on it** — the implementer cannot fix a criterion that
+  is not broken — and do not quietly upgrade it to `PASS`. Set `status: PASS
+  (pending <what)` in the workorder so the gap survives the session.
 - **Any `IMPL-DEFECT`, or any reviewer finding** → append all of it to the
   workorder's `## Log`, bump `round:`, and re-spawn `implementer`. Send the
   **evidence**, not a summary: the failing command and its real output, the

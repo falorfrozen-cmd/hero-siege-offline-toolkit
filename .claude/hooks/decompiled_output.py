@@ -23,6 +23,27 @@ that claim holds only while no game source text has reached any remote in this
 toolkit -- every submodule's own origin included. A mistake here is not
 something a later release fixes.
 
+## Added lines only, and why that is not a loophole
+
+The rule is about *introducing* game source, so this reads the lines a change
+adds, never the whole file.
+
+The first version matched whole file contents, and it was unusable. Five
+matches already sit in committed files -- two in
+`ForgePact/docs/pet-quest-collector-c-research.md`, two in
+`ForgePact/docs/dungeon-key-research.md`, one in the vendored YYToolkit at
+`HS-Offline-Tracker/aurie-loader/yytoolkit-modified/`. Some are legitimate
+(`AGENTS.md` explicitly keeps measured addresses in `docs/` as research
+findings), and one is third-party code that was never ours to police. With
+whole-file matching, appending a single paragraph to any of those dirties the
+tree and every subsequent tool call exits 2 until someone sets
+`HSTK_SKIP_HOOKS=1` -- which is exactly the outcome this file's own notes say
+it must avoid. A hook that fires on work it cannot help with does not protect
+the rule; it trains people to turn the rule off.
+
+An untracked file has no committed half, so all of it is "added" and all of it
+is read.
+
 ## Submodules
 
 The hub's `git status` reports a dirty submodule as a single changed pointer,
@@ -40,6 +61,10 @@ negative as "not observed" rather than "does not happen":
     job, and it is the failure mode most likely to actually occur.
   - **A listing reformatted** as a markdown list or prose, stripped of the
     syntax below.
+  - **Anything already committed.** See above -- that is a deliberate trade,
+    and it means this hook prevents new violations rather than auditing old
+    ones. `decompile-output-guard` reviews what a change adds; auditing history
+    is a separate job nobody has asked for.
   - **Commit messages.** The rule covers them; this hook sees the working tree.
   - **A submodule the hub's status does not report as dirty** -- a `.gitmodules`
     entry with `ignore = all` would be invisible here.
@@ -48,15 +73,19 @@ negative as "not observed" rather than "does not happen":
     themselves written in those files. Excluding them is what keeps the hook
     from flagging its own definition on every edit; it is not a claim that
     listings would be acceptable there.
+
+Re-vendoring a third-party dependency full of IDA symbols will trip this. That
+is a legitimate `HSTK_SKIP_HOOKS=1` case and the blocking message names it.
 """
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import SKIP_HINT, changed_paths, repo_root, skip_requested  # noqa: E402
+from _common import SKIP_HINT, changed_entries, repo_root, skip_requested  # noqa: E402
 
 # Text we might plausibly paste a listing into. A binary or an asset cannot
 # carry this accident, and reading every changed `.png` would cost real time.
@@ -98,14 +127,16 @@ SIGNATURES = (
     ),
     (
         re.compile(r"^\s*(?:push(?:glb|loc|var|bltn|i|e)|pop(?:glb|loc|var)|"
-                   r"conv\.[a-z]\.[a-z]|cmp\.[a-z]\.[a-z])\b", re.MULTILINE),
+                   r"conv\.[a-z]\.[a-z]|cmp\.[a-z]\.[a-z])\b"),
         "a GameMaker bytecode mnemonic",
     ),
     (
-        re.compile(r"^\s*```\s*gml\b", re.MULTILINE | re.IGNORECASE),
+        re.compile(r"^\s*```\s*gml\b", re.IGNORECASE),
         "a fenced block tagged as GML source",
     ),
 )
+
+HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
 def submodule_dirs(root: Path) -> list[str]:
@@ -123,45 +154,86 @@ def dirty_submodules(root: Path) -> list[str]:
     The hub reports these as one changed pointer, so this is the only way to
     reach the files inside them -- and `ForgePact/docs/` is where the risk is.
     """
-    changed = set(changed_paths(root, "."))
-    found = []
-    for rel in submodule_dirs(root):
-        if rel in changed and (root / rel / ".git").exists():
-            found.append(rel)
-    return found
+    changed = {path for _, path in changed_entries(root, ".")}
+    return [
+        rel
+        for rel in submodule_dirs(root)
+        if rel in changed and (root / rel / ".git").exists()
+    ]
 
 
-def inspect(display: str, source: str) -> list[str]:
+def read_text(path: Path) -> str | None:
+    try:
+        return path.read_bytes().decode("utf-8", "replace")
+    except OSError:
+        # Deleted between the tool call and this hook, or unreadable.
+        return None
+
+
+def added_lines(tree: Path, status: str, rel: str) -> list[tuple[int, str]]:
+    """(line number, text) for the lines this change adds to `rel`.
+
+    An untracked file is new in its entirety. For anything git already knows
+    about, only the `+` lines of `git diff HEAD` are this hook's business --
+    see the module docstring for why whole-file matching was unusable.
+    """
+    if status.startswith("?"):
+        source = read_text(tree / rel)
+        if source is None:
+            return []
+        return list(enumerate(source.splitlines(), start=1))
+
+    out = subprocess.run(
+        ["git", "diff", "HEAD", "--unified=0", "--no-color", "--", rel],
+        cwd=tree,
+        capture_output=True,
+        check=False,
+    )
+    if out.returncode != 0:
+        return []
+
+    lines: list[tuple[int, str]] = []
+    lineno = 0
+    for raw in out.stdout.decode("utf-8", "replace").splitlines():
+        hunk = HUNK.match(raw)
+        if hunk:
+            lineno = int(hunk.group(1))
+            continue
+        if raw.startswith("+++"):
+            continue
+        if raw.startswith("+"):
+            lines.append((lineno, raw[1:]))
+            lineno += 1
+    return lines
+
+
+def inspect(display: str, lines: list[tuple[int, str]]) -> list[str]:
+    """One finding per signature, reported at its first added occurrence."""
     problems = []
     for pattern, what in SIGNATURES:
-        match = pattern.search(source)
-        if not match:
-            continue
-        lineno = source.count("\n", 0, match.start()) + 1
-        excerpt = match.group(0).strip()
-        if len(excerpt) > 60:
-            excerpt = excerpt[:57] + "..."
-        problems.append(
-            f"{display}:{lineno}  contains {what}:\n"
-            f"    {excerpt!r}"
-        )
+        for lineno, text in lines:
+            match = pattern.search(text)
+            if not match:
+                continue
+            excerpt = match.group(0).strip()
+            if len(excerpt) > 60:
+                excerpt = excerpt[:57] + "..."
+            problems.append(
+                f"{display}:{lineno}  adds {what}:\n    {excerpt!r}"
+            )
+            break
     return problems
 
 
 def scan(tree: Path, prefix: str, skip_excluded: bool) -> list[str]:
-    """Every changed watched file under one git working tree."""
+    """Every line added to a watched file under one git working tree."""
     problems = []
-    for rel in changed_paths(tree, "."):
+    for status, rel in changed_entries(tree, "."):
         if skip_excluded and rel.startswith(EXCLUDED_PREFIXES):
             continue
         if not rel.endswith(WATCHED_SUFFIXES):
             continue
-        try:
-            source = (tree / rel).read_bytes().decode("utf-8", "replace")
-        except OSError:
-            # Deleted between the tool call and this hook, or unreadable.
-            continue
-        problems.extend(inspect(prefix + rel, source))
+        problems.extend(inspect(prefix + rel, added_lines(tree, status, rel)))
     return problems
 
 

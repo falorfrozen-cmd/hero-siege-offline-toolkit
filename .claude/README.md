@@ -154,8 +154,13 @@ diff, which is what makes it the same failure shape as the rest of this file —
 something that reports itself working while doing something other than what it
 says.
 
-So: set `model:` on every new agent, and use `inherit` only when following the
-session is genuinely the intent, spelled out in a comment.
+So: set `model:` on every new agent. `inherit` is a valid value when following
+the session is genuinely the intent — but say why in the agent's **body**, not
+as a YAML comment beside the value. A trailing ` # because …` makes the field
+read as `inherit # because …`, which is neither a known tier nor quoted, and
+fails both `test_every_pinned_model_is_a_known_tier` and
+`test_no_unquoted_hash_in_any_definition`. That is the same ` #` trap described
+further down, arriving through the field this page is about.
 
 The one thing that cannot be pinned is the **`/workorder` driver itself** — a
 skill runs in the main session, at the session's model. That is why its routing

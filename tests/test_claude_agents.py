@@ -36,17 +36,33 @@ SKILLS = REPO / ".claude" / "skills"
 # the version is not. See `.claude/README.md`, "Agents".
 VALID_MODELS = {"opus", "sonnet", "haiku", "fable", "inherit"}
 
-FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.S)
+FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 FIELD = re.compile(r"^([A-Za-z][\w-]*):[ \t]*(.*?)[ \t]*$", re.M)
 
 
 def parse_frontmatter(text):
-    """(fields, raw) for a definition file, or (None, None) if it has none."""
+    """(fields, raw) for a definition file, or (None, None) if it has none.
+
+    Newlines are normalised first. An earlier version matched `\\r?\\n` in the
+    pattern instead, which stripped the carriage return from the *last* field
+    only and left every other value ending in `\\r` -- `{'name': 'x\\r', ...}`.
+    That was invisible because the tests read through `read_text()`, whose
+    universal-newline translation hid it; both hooks read `read_bytes()`, and on
+    this CRLF worktree the same parser would have failed to match a single
+    agent name against its filename. Read the bytes here too, so the test
+    exercises what the tools actually do.
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     match = FRONTMATTER.match(text)
     if not match:
         return None, None
     raw = match.group(1)
     return dict(FIELD.findall(raw)), raw
+
+
+def read(path):
+    """Decode bytes, the way the hooks do -- never `read_text()`."""
+    return path.read_bytes().decode("utf-8")
 
 
 def yaml_comment_risk(raw):
@@ -71,7 +87,7 @@ class TestAgentDefinitions(unittest.TestCase):
     def test_every_agent_pins_a_model(self):
         for path in self.agents:
             with self.subTest(agent=path.name):
-                fields, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
+                fields, _ = parse_frontmatter(read(path))
                 self.assertIsNotNone(fields, f"{path.name} has no frontmatter")
                 self.assertIn(
                     "model",
@@ -84,7 +100,7 @@ class TestAgentDefinitions(unittest.TestCase):
     def test_every_pinned_model_is_a_known_tier(self):
         for path in self.agents:
             with self.subTest(agent=path.name):
-                fields, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
+                fields, _ = parse_frontmatter(read(path))
                 model = fields.get("model", "")
                 self.assertIn(
                     model,
@@ -97,13 +113,13 @@ class TestAgentDefinitions(unittest.TestCase):
     def test_agent_name_matches_its_filename(self):
         for path in self.agents:
             with self.subTest(agent=path.name):
-                fields, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
+                fields, _ = parse_frontmatter(read(path))
                 self.assertEqual(fields.get("name"), path.stem)
 
     def test_every_agent_declares_its_tools(self):
         for path in self.agents:
             with self.subTest(agent=path.name):
-                fields, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
+                fields, _ = parse_frontmatter(read(path))
                 self.assertIn("tools", fields, f"{path.name} declares no tools")
 
 
@@ -113,7 +129,7 @@ class TestFrontmatterIsNotSilentlyTruncated(unittest.TestCase):
     def test_no_unquoted_hash_in_any_definition(self):
         for path in definition_files():
             with self.subTest(definition=str(path.relative_to(REPO))):
-                _, raw = parse_frontmatter(path.read_text(encoding="utf-8"))
+                _, raw = parse_frontmatter(read(path))
                 self.assertIsNotNone(raw, f"{path} has no frontmatter")
                 self.assertEqual(
                     yaml_comment_risk(raw),
@@ -125,7 +141,7 @@ class TestFrontmatterIsNotSilentlyTruncated(unittest.TestCase):
     def test_every_definition_has_a_description(self):
         for path in definition_files():
             with self.subTest(definition=str(path.relative_to(REPO))):
-                fields, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
+                fields, _ = parse_frontmatter(read(path))
                 self.assertTrue(
                     fields.get("description"),
                     f"{path.name} has no description, so nothing can select it",
@@ -160,10 +176,41 @@ class TestTheCheckerItself(unittest.TestCase):
         fields, _ = parse_frontmatter("---\nname: x\ntools: Read\n---\n")
         self.assertNotIn("model", fields)
 
-    def test_crlf_frontmatter_parses(self):
-        """The worktree is CRLF; a parser anchored on '\\n---\\n' would see none."""
-        fields, _ = parse_frontmatter("---\r\nname: x\r\nmodel: opus\r\n---\r\n")
+    def test_crlf_frontmatter_parses_every_field_not_just_the_last(self):
+        """The control that was too weak to catch a real defect.
+
+        It used to assert only `model`, the final field -- the one line the
+        pattern's own `\\r?\\n` already stripped. Every earlier field came back
+        carrying a trailing carriage return (`{'name': 'x\\r'}`) and the suite
+        passed anyway. Assert the first and middle fields, which are where the
+        bug actually lived.
+        """
+        fields, _ = parse_frontmatter(
+            "---\r\nname: x\r\ntools: Read, Bash\r\nmodel: opus\r\n---\r\n"
+        )
+        self.assertEqual(fields.get("name"), "x")
+        self.assertEqual(fields.get("tools"), "Read, Bash")
         self.assertEqual(fields.get("model"), "opus")
+
+    def test_crlf_bytes_parse_the_same_as_lf_bytes(self):
+        """The hooks decode bytes; nothing translates newlines for them.
+
+        `read_text()` would hide a CRLF bug entirely. This compares the two
+        encodings of identical content through the real byte path, so the two
+        must agree field for field.
+        """
+        body = "---\nname: x\ntools: Read\nmodel: haiku\n---\n\nbody\n"
+        lf, _ = parse_frontmatter(body.encode("utf-8").decode("utf-8"))
+        crlf, _ = parse_frontmatter(
+            body.replace("\n", "\r\n").encode("utf-8").decode("utf-8")
+        )
+        self.assertEqual(lf, crlf)
+        self.assertEqual(crlf.get("name"), "x")
+
+    def test_a_carriage_return_would_break_the_filename_check(self):
+        """Names the consequence, so the control cannot be weakened silently."""
+        fields, _ = parse_frontmatter("---\r\nname: planner\r\nmodel: opus\r\n---\r\n")
+        self.assertEqual(fields["name"], "planner", "a trailing CR fails path.stem")
 
 
 if __name__ == "__main__":

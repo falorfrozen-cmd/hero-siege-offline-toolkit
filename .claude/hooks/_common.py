@@ -44,24 +44,13 @@ def repo_root() -> Path | None:
         return Path(root)
 
 
-def changed_paths(root: Path, pathspec: str) -> list[str]:
-    """Repo-relative paths under `pathspec` that differ from HEAD.
+def changed_entries(root: Path, pathspec: str) -> list[tuple[str, str]]:
+    """(status, path) for everything under `pathspec` that differs from HEAD.
 
-    Includes untracked files, which is deliberate -- a brand new `.rs` file is
-    exactly as capable of carrying a violation as an edited one.
-
-    `-uall` is load-bearing, not tidiness. By default git *collapses* an
-    untracked directory to a single entry (`?? docs/`) and never names the
-    files inside it, so every hook built on this helper was blind to anything
-    in a newly created folder -- it saw a directory it had no suffix rule for
-    and moved on. That is the same "returns 'not my file', which is
-    indistinguishable from 'nothing wrong'" hole this module exists to close,
-    reached by a different route. It was found by `decompiled_output.py`'s
-    tests, where a listing written to a fresh `docs/` went unflagged; the fix
-    belongs here rather than in that hook, because all four share the blindness.
-
-    Uses `-z` so paths containing spaces, quotes or non-ASCII arrive verbatim
-    instead of in git's quoted form.
+    `status` is git's two-character porcelain code, so a caller can tell an
+    untracked file (`??`) from a modified one. `decompiled_output.py` needs
+    that distinction: for a tracked file only the *added* lines are its
+    business, while an untracked file is new in its entirety.
     """
     out = subprocess.run(
         ["git", "status", "--porcelain", "-z", "-uall", "--", pathspec],
@@ -73,7 +62,7 @@ def changed_paths(root: Path, pathspec: str) -> list[str]:
         return []
 
     fields = out.stdout.decode("utf-8", "replace").split("\0")
-    paths: list[str] = []
+    entries: list[tuple[str, str]] = []
     index = 0
     while index < len(fields):
         entry = fields[index]
@@ -85,8 +74,31 @@ def changed_paths(root: Path, pathspec: str) -> list[str]:
         if "R" in status or "C" in status:
             index += 1
         if path:
-            paths.append(path)
-    return paths
+            entries.append((status, path))
+    return entries
+
+
+def changed_paths(root: Path, pathspec: str) -> list[str]:
+    """Repo-relative paths under `pathspec` that differ from HEAD.
+
+    Includes untracked files, which is deliberate -- a brand new `.rs` file is
+    exactly as capable of carrying a violation as an edited one.
+
+    `-uall` (in `changed_entries`, which this wraps) is load-bearing, not
+    tidiness. By default git *collapses* an untracked directory to a single
+    entry (`?? docs/`) and never names the files inside it, so every hook built
+    on this helper was blind to anything in a newly created folder -- it saw a
+    directory it had no suffix rule for and moved on. That is the same "returns
+    'not my file', which is indistinguishable from 'nothing wrong'" hole this
+    module exists to close, reached by a different route. It was found by
+    `decompiled_output.py`'s tests, where a listing written to a fresh `docs/`
+    went unflagged; the fix belongs here rather than in that hook, because all
+    four share the blindness.
+
+    Uses `-z` so paths containing spaces, quotes or non-ASCII arrive verbatim
+    instead of in git's quoted form.
+    """
+    return [path for _, path in changed_entries(root, pathspec)]
 
 
 def skip_requested() -> bool:

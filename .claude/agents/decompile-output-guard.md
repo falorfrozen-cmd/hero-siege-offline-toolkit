@@ -54,10 +54,27 @@ landing in a tracked file.
 
 ## How to review
 
-1. Get the change: `git diff` at the hub root, plus `git -C <submodule> diff` for
-   any dirty submodule — the hub's diff shows only the pointer.
-2. Read every added line in `.md`, `.cpp`, `.hpp`, `.py`, `.rs`, `.ts`, `.js`
-   and in commit messages on the branch.
+1. **Enumerate the change so that nothing is invisible.** A bare `git diff`
+   shows neither untracked files nor staged ones, and a brand-new
+   `ForgePact/docs/foo-research.md` with a pasted listing is exactly the shape
+   this guard exists for. Use all three:
+
+   ```bash
+   git status --porcelain -uall          # untracked files, by name, not "docs/"
+   git diff HEAD                         # working tree *and* index
+   git -C <submodule> status --porcelain -uall
+   git -C <submodule> diff HEAD          # the hub's diff shows only the pointer
+   ```
+
+   `-uall` is not optional: without it git collapses an untracked directory to
+   a single entry and never names the files inside. That blindness is the same
+   one this toolkit already fixed once in `.claude/hooks/_common.py`, and here
+   a miss is not something a later release fixes.
+
+2. Read **every added line** of every `.md`, `.cpp`, `.hpp`, `.py`, `.rs`,
+   `.ts`, `.js` the change touches, and the **whole contents** of any file it
+   adds. Also read the commit messages on the branch — the rule covers them and
+   no hook does.
 3. For each block that describes game internals, ask the one question that
    matters: **is this a statement about what the game does, or is it the game's
    own text?** A numbered sequence of statements with GML or pseudo-C control

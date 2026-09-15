@@ -400,6 +400,50 @@ Offsets: +0x18 is the RValue kind; calling convention is __fastcall.
         allowed = self.rig.run(self.HOOK, env={"HSTK_SKIP_HOOKS": "1"})
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
 
+    # -- added lines only -------------------------------------------------
+    #
+    # The first version of this hook matched whole file contents, and five
+    # matches already sit in committed files (two in
+    # ForgePact/docs/pet-quest-collector-c-research.md, two in
+    # dungeon-key-research.md, one in the vendored YYToolkit). Appending a
+    # paragraph to any of them made every subsequent tool call exit 2 until
+    # someone set HSTK_SKIP_HOOKS=1 -- the exact outcome the docstring says it
+    # avoids. These two tests are a pair: the hook must stop wedging, and
+    # grandfathering must not become a loophole.
+
+    LEGACY = "Old finding\n\n    iVar1 = FUN_00b489070(param_1);\n"
+
+    def _commit_legacy(self):
+        self.rig.write("docs/legacy-research.md", self.LEGACY)
+        _git("add", "-A", cwd=self.rig.root)
+        _git("commit", "-qm", "legacy research", cwd=self.rig.root)
+
+    def test_appending_to_a_file_that_already_contains_a_listing_is_silent(self):
+        self._commit_legacy()
+        self.rig.write(
+            "docs/legacy-research.md",
+            self.LEGACY + "\nMeasured 176993 calls through the same path.\n",
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_new_listing_added_to_such_a_file_still_blocks(self):
+        """Grandfathering is scoped to what is in HEAD, not to the file."""
+        self._commit_legacy()
+        self.rig.write(
+            "docs/legacy-research.md",
+            self.LEGACY + "\nand then: call    sub_140A3B7C0\n",
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("IDA", result.stderr)
+
+    def test_deleting_a_line_containing_a_listing_is_silent(self):
+        self._commit_legacy()
+        self.rig.write("docs/legacy-research.md", "Old finding\n")
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 class TestDecompiledOutputInSubmodules(HookTestCase):
     """`ForgePact/docs/` is where research notes land, and the hub's own

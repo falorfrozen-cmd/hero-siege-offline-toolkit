@@ -65,6 +65,25 @@ CRITERIA: <each one, with the command and its real exit status>
 SUITE: <output summary of the full run>
 ```
 
+**Everything you could run passed, but a criterion needs a human.** This is the
+normal shape here, not an edge case — a criterion needing a live game session, a
+twelve-minute rebuild, or eyes on a window is routine, and none of those are
+yours to perform:
+
+```
+VERDICT: PASS-PENDING-HUMAN
+CRITERIA: <each one you ran, with the command and its real exit status>
+SUITE: <output summary of the full run>
+NEEDS HUMAN:
+  - <criterion> -> <why you cannot run it: needs a live game / a rebuild / eyes>
+```
+
+Use this rather than forcing the choice between the two wrong answers. `PASS`
+would be the silence your own instructions call the most expensive mistake
+available to you; `IMPL-DEFECT` would burn one of three rounds sending the
+implementer to fix something that is not broken. The driver stops and asks the
+user, and no round is spent.
+
 **Something failed:**
 
 ```
@@ -97,9 +116,10 @@ it. Routing it back is correct and cheap; guessing is neither.
 ## Two things you must not do
 
 - **Do not pass something you could not check.** If a criterion needs a running
-  game, a rebuild you cannot perform, or a human's eyes, report it under
-  `UNATTEMPTED` and let the driver escalate. Silence here reads as success and
-  is the most expensive mistake available to you.
+  game, a rebuild you cannot perform, or a human's eyes, return
+  `PASS-PENDING-HUMAN` and name it under `NEEDS HUMAN` — or, when something also
+  failed, list it under `UNATTEMPTED` alongside the failures. Silence here reads
+  as success and is the most expensive mistake available to you.
 - **Do not fail something for style.** You are not a code reviewer. Readability,
   naming, architecture and subtle correctness belong to `sdk-contract-reviewer`,
   `tauri-command-reviewer`, `decompile-output-guard`, `docs-sync-reviewer` and
