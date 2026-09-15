@@ -48,6 +48,36 @@ If a hook blocks an edit, it is quoting a rule from this file — read what it
 printed rather than working around it. If you add a rule here that is
 mechanically checkable, add the check too; `.claude/README.md` says how.
 
+## Offer `/workorder` When the Work Has Shape, and Respect "Plan Only"
+
+`/workorder` cannot invoke itself — it spawns at least three agents, which is
+the wrong response to a typo. So it is on you to **offer** it, in one line,
+before starting, when the request matches any of these:
+
+- the change spans several files, or touches a submodule;
+- the user asks to **implement, execute or carry out a plan** — theirs, or one
+  from an earlier session;
+- it introduces concurrency, changes how a hook attaches, alters a contract the
+  C++/Python/TypeScript bindings must agree on, or would ship a player-visible
+  change;
+- there are three or more distinct steps and a later one depends on an earlier
+  one being right.
+
+Offer, then wait. One line — *"This spans the SDK and two bindings; want me to
+run it through `/workorder`, or just make the change?"* — and if the answer is
+no, do the work directly and drop it. Do not re-offer within a session, and do
+not ask about a one-line fix.
+
+**"Plan it" means plan it, and nothing else.** When the request is for a plan,
+a design, an approach, or an assessment of how something should be done, run
+`/workorder plan <task>` and **stop when the plan exists**. Report it, name the
+`resume` command, write no code, and edit nothing. The user is splitting the
+work across sessions on purpose: implementation starts from the file, not from
+the conversation, and the plan not surviving that split is exactly the signal
+they are trying to get. Starting the implementation because the plan looked
+obviously right removes the review checkpoint they asked for, and it is the one
+outcome that makes the split worthless.
+
 ## Legal: Decompiled Output Never Reaches Any Origin
 
 This toolkit reverse-engineers Hero Siege's runtime (memory layout, hooked functions,

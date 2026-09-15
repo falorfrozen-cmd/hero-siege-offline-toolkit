@@ -12,6 +12,33 @@ work goes next. Keeping that separation is the point: the verifier's value comes
 from never having seen the implementer's reasoning, and it loses that the moment
 you do the checking inline.
 
+## Modes
+
+| Invocation | Runs | Stops after |
+|---|---|---|
+| `/workorder <task>` | the whole pipeline | `PASS`, or a cap |
+| `/workorder plan <task>` | step 0 → step 1 only | the plan, reviewed and handed back |
+| `/workorder resume <slug>` | steps 2 → 5 | `PASS`, or a cap |
+
+**`plan` is not a degraded run — it is a checkpoint.** It exists so a plan can be
+read, argued with and revised before any code is written, and so the work can be
+picked up in a *different session* later. Stop cleanly when it is asked for:
+write the workorder, summarise it, print the exact `resume` command, and spawn
+nothing else. Do not start implementing because the plan looks obviously
+correct — the reason the user asked for a plan is that they intend to decide
+that themselves.
+
+**`resume` is the test of whether the plan was real.** A new session has none of
+the planning conversation: not the alternatives that were weighed, not the thing
+someone said in passing, not the reason a path was abandoned. The workorder file
+is the only channel. So on resume, read it and check it can actually carry the
+work alone — if a step depends on context that is not written down, that is a
+`PLAN-DEFECT` before the implementer is ever spawned, and it is far cheaper to
+catch here than three steps in.
+
+That constraint is a feature. A plan that cannot survive a fresh session was
+never a plan; it was a conversation someone was still holding in their head.
+
 ## The loop
 
 ```
@@ -77,7 +104,31 @@ back now — an unrunnable criterion costs a full implement round to discover.
 If it has a `## Needs human judgement` section, show that to the user and get an
 answer before spawning the implementer.
 
+**In `plan` mode, stop here.** Report:
+
+- the goal and what is explicitly out of scope;
+- the acceptance criteria, so the user can object to a check before it costs an
+  implement round;
+- anything under `## Needs human judgement`;
+- which triage row matched and therefore what tier implementation will start at;
+- the exact command to continue, including in a fresh session:
+  `/workorder resume <slug>`.
+
+Then stop. Spawn nothing further, and do not begin implementing.
+
 ### Step 2 — implement
+
+**Entering here from `resume`?** Do two things first, because this session did
+not write the plan and knows nothing it does not say:
+
+1. **Read the workorder in full**, `## Log` included, and re-run the step 0.5
+   triage against it. Triage is a property of the task, not of the session that
+   did it, so it reaches the same row — but a plan written a week ago may
+   describe a task the repository has since moved under.
+2. **Check it is self-sufficient.** Every step must be actionable from the file
+   alone. A step that assumes a decision made only in conversation, names a file
+   that no longer exists, or says "as discussed" is a `PLAN-DEFECT` now — cheaper
+   to route back before an implementer has spent a round discovering it.
 
 Spawn `implementer` with the workorder path. Three outcomes:
 

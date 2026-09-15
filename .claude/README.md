@@ -221,6 +221,27 @@ and **3 implement→verify rounds**, then it stops and asks a human. The
 workorder file itself is `.claude/workorders/<slug>-plan.md`, gitignored by the
 existing `*-plan.md` rule, which matches at any depth.
 
+It has three modes: `/workorder <task>` runs everything, `/workorder plan
+<task>` stops after the plan, and `/workorder resume <slug>` picks up at
+implementation — in a **different session**, which is the point. Splitting there
+buys two things the in-pipeline phase boundaries do not: a human checkpoint
+where a plan can be argued with before any code exists, and a real test of
+whether the plan is self-sufficient, since a fresh session has none of the
+conversation that produced it. Context isolation is *not* one of the benefits —
+planner and implementer are already separate subagents with separate contexts
+either way.
+
+That makes the split a forcing function rather than just a workflow: a plan that
+cannot survive a fresh session was never a plan, it was a conversation someone
+was still holding in their head. `resume` checks for exactly that before
+spawning anything, and routes `PLAN-DEFECT` if a step says "as discussed" or
+leans on a decision that was never written down.
+
+Because the skill cannot invoke itself (`disable-model-invocation: true` — three
+agent spawns is the wrong answer to a typo), `AGENTS.md` § "Offer `/workorder`
+When the Work Has Shape" carries the trigger list that makes Claude *suggest*
+it. Suggest, wait, and drop it if the answer is no.
+
 ## MCP servers — `../.mcp.json`
 
 | Server | For |
