@@ -604,6 +604,16 @@ rather than an organisation-level one. The alternative, an `ANTHROPIC_API_KEY`
 from the Console, opens a second, separately-billed account and is not what this
 is set up to use.
 
+**The secret is only half of the setup.** The [Claude GitHub
+App](https://github.com/apps/claude) also has to be installed on the repository,
+because the action exchanges the workflow's OIDC token for an app token before
+it does anything else. Without the app that exchange returns `401 Unauthorized`
+with "Claude Code is not installed on this repository", and the job fails having
+reviewed nothing — a secret that is present and correct does not save it. Install
+the app once for the organisation and grant it both repositories. This was
+learned the direct way: ForgePact's first review run failed on exactly that,
+with the secret already in place.
+
 ### Asking for a review
 
 `ai-review.yml` has no `on: pull_request` trigger on purpose. Two workflows in
