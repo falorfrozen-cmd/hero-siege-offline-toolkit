@@ -1,6 +1,6 @@
 ---
 name: tauri-command-reviewer
-description: Reviews changes to hub/src-tauri/src/ for the Tauri command rules — threading annotations, block_on, announce() after state changes, and the debug-only MCP bridge gate. Use when a change adds or edits a #[tauri::command], touches the updater, or changes anything the hub's interface reads.
+description: Reviews changes to hub/src-tauri/src/ for the Tauri command rules — threading annotations, block_on, announce() after state changes, and the debug-only MCP bridge gate. Use when a change adds or edits a Tauri command, touches the updater, or changes anything the hub's interface reads. Avoid a literal attribute in this line, a hash starts a YAML comment and silently truncates it.
 tools: Read, Grep, Glob, Bash
 ---
 

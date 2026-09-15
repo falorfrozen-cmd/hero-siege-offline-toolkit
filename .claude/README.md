@@ -77,7 +77,26 @@ Start the hub with `npm start` in `hub/` and wait for `:9223` before expecting
 Asking Someone to Click It" has the rest, including the window label (`hub`, not
 the `main` every tool defaults to).
 
-`github` is a remote server and will ask you to authenticate on first use.
+`github` needs a token in the environment: set `GITHUB_MCP_PAT` (`gh auth token`
+prints a usable one; `repo` scope is enough). It does **not** authenticate
+interactively — Claude Code tries OAuth dynamic client registration, which that
+endpoint does not support, and the session reports *"Incompatible auth server:
+does not support dynamic client registration"*. Probing it directly confirms the
+shape: a POST with a bearer token returns 200, without one 401. Until the
+variable is set the entry simply fails to connect, which is harmless; the `gh`
+CLI covers the same ground in the meantime and is already authenticated.
+
+## A trap worth knowing: `#` in frontmatter
+
+An agent or skill `description:` is a **plain YAML scalar**, so a space followed
+by `#` opens a comment and everything after it is silently dropped — no error,
+no warning, and the file still loads. `tauri-command-reviewer` shipped with
+`adds or edits a #[tauri::command]` in its description and lost the last 86
+characters, which were the trigger conditions that make the agent get picked at
+all. Keep attribute syntax, shell flags and URLs with fragments out of
+`description:`, or quote the whole value.
+
+To check a file: strip the frontmatter and look for ` #` in it.
 
 ## Changing any of this
 
