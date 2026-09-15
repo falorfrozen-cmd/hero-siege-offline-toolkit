@@ -127,6 +127,11 @@ it can invoke any command the app has. The window label is `hub`, not `main`;
 | Why submodules and not a monorepo | [`docs/adr/0001-repo-topology.md`](docs/adr/0001-repo-topology.md) |
 | Per-tool developer guides | [`docs/submodules/README.md`](docs/submodules/README.md) |
 
+A release is cut from **Actions → Hub tag → Run workflow**, typing the tag it
+should go out as (`hub-v1.0.2`). That checks the tag, moves the version in all
+six places it lives, tags it and starts the build; what comes out is a draft,
+and publishing it is the one step left to a person.
+
 A build points at the repository that published it: `HUB_REPO` in
 [`hub/src-tauri/src/catalog.rs`](hub/src-tauri/src/catalog.rs) decides where the
 catalog, the hub's own updates and the documentation links come from, and
