@@ -107,7 +107,10 @@ def plan(raw: str, refs: Iterable[str], tree: str) -> Plan:
 
     if not SHAPE.match(version):
         hint = ""
-        if re.match(r"^\d+\.\d+\.\d+$", version):
+        # `[0-9]` here for the same reason as in the pattern itself: with `\d`
+        # this would match `1.0.2` + U+0663 and advise dropping a leading zero
+        # that is not there.
+        if re.match(r"^[0-9]+\.[0-9]+\.[0-9]+$", version):
             # It is three numbers, so saying "give three numbers" would send
             # whoever typed it looking in the wrong place.
             hint = " Drop the leading zero: Cargo refuses to build 01.0.2."

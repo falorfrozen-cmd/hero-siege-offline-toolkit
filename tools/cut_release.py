@@ -103,12 +103,15 @@ def sites(version: bytes) -> List[Site]:
     ]
 
 
-# Each component is `0` or a number that does not start with one. `\d+` alone
-# accepts `01.0.2`, which every check here would pass and Cargo then refuses to
-# build: `invalid leading zero in major version number`. `hub_tag.py` reuses
-# this pattern, so the tag gate and the bumper cannot disagree about what is
+# Each component is `0` or an ASCII number that does not start with one, and
+# both halves of that are load-bearing. Cargo refuses `01.0.2` with `invalid
+# leading zero in major version number`, and `1.0.2` followed by U+0663 with
+# `unexpected character after patch version number` -- while `\d` matches that
+# character, so a `\d`-based pattern passes it and every version field in the
+# tree then holds it. `[0-9]` says what is meant. `hub_tag.py` reuses this
+# pattern, so the tag gate and the bumper cannot disagree about what is
 # writable.
-VERSION = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
+VERSION = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$")
 
 
 def current(root: Path) -> str:

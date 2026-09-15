@@ -327,9 +327,12 @@ interpolated into a `run:` line, `${{ inputs.tag }}` is whatever was typed,
 executed. Canonical rules out a leading zero: `01.0.2` is three numbers, passes
 the six-field check, and is then refused by Cargo — `invalid leading zero in
 major version number` — by which point the tree is rewritten and the tag is
-pushed. `hub_tag.py` reuses `cut_release.VERSION` for that pattern rather than
-keeping a second one, so the gate and the bumper cannot disagree about what is
-writable.
+pushed. It also rules out `\d`: Python matches Arabic-Indic and fullwidth
+digits with it, so `1.0.2` followed by U+0663 passed a `\d`-based check and
+every version field in the tree then held it, until Cargo refused the build
+with `unexpected character after patch version number`. The pattern says
+`[0-9]`. `hub_tag.py` reuses `cut_release.VERSION` rather than keeping a second
+one, so the gate and the bumper cannot disagree about what is writable.
 
 Those checks are worth nothing if the answer they are measured against is
 wrong, which is the other thing this step gets right. `git ls-remote | cut | tr`

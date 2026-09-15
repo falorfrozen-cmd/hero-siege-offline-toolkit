@@ -142,6 +142,42 @@ class MalformedInputIsRefused(unittest.TestCase):
             with self.assertRaises(SystemExit, msg=f"{bad!r} was accepted"):
                 hub_tag.plan(bad, TAGS, tree="1.0.1")
 
+    # Written as escapes so this file stays ASCII: the point is that these
+    # characters are hard to see, which is exactly why the regex has to be
+    # explicit rather than relying on what `\d` happens to mean.
+    UNICODE_DIGITS = (
+        "1.0.2٣",  # Arabic-Indic three, trailing
+        "١.0.0",  # Arabic-Indic one, leading
+        "1.२.0",  # Devanagari two
+        "１.0.0",  # fullwidth one
+    )
+
+    def test_unicode_digits_are_refused(self):
+        r"""Python's `\d` is not `[0-9]`.
+
+        `1.0.2٣` passes a `\d`-based check and the six-field check, and is
+        then refused by Cargo -- `unexpected character after patch version
+        number` -- with the tree rewritten, `main` pushed and the tag created.
+        """
+        for bad in self.UNICODE_DIGITS:
+            with self.assertRaises(SystemExit, msg=f"{bad!r} was accepted"):
+                hub_tag.plan(bad, TAGS, tree="1.0.1")
+
+    def test_the_bumper_refuses_unicode_digits_too(self):
+        import cut_release
+
+        for bad in self.UNICODE_DIGITS:
+            self.assertFalse(
+                cut_release.VERSION.match(bad),
+                f"hub_tag.py refuses {bad!r} but cut_release.py would write it",
+            )
+
+    def test_a_unicode_digit_is_not_reported_as_a_leading_zero(self):
+        """The hint is chosen by a second regex, which has the same trap in it."""
+        with self.assertRaises(SystemExit) as caught:
+            hub_tag.plan("1.0.2٣", TAGS, tree="1.0.1")
+        self.assertNotIn("leading zero", str(caught.exception))
+
     def test_the_leading_zero_refusal_says_which_thing_is_wrong(self):
         """"Give three numbers" is unhelpful advice about a string that is three numbers."""
         with self.assertRaises(SystemExit) as caught:
