@@ -50,9 +50,11 @@ mechanically checkable, add the check too; `.claude/README.md` says how.
 
 ## Offer `/workorder` When the Work Has Shape, and Respect "Plan Only"
 
-`/workorder` cannot invoke itself — it spawns at least three agents, which is
-the wrong response to a typo. So it is on you to **offer** it, in one line,
-before starting, when the request matches any of these:
+`/workorder` is user-invoked only. The skill sets `disable-model-invocation:
+true`, because it spawns at least three agents, which is the wrong response to
+a typo — so reaching for it through the `Skill` tool returns a refusal, not a
+pipeline. You cannot start it; you can only **offer** it, in one line, before
+starting, when the request matches any of these:
 
 - the change spans several files, or touches a submodule;
 - the user asks to **implement, execute or carry out a plan** — theirs, or one
@@ -69,8 +71,12 @@ no, do the work directly and drop it. Do not re-offer within a session, and do
 not ask about a one-line fix.
 
 **"Plan it" means plan it, and nothing else.** When the request is for a plan,
-a design, an approach, or an assessment of how something should be done, run
-`/workorder plan <task>` and **stop when the plan exists**. Report it, name the
+a design, an approach, or an assessment of how something should be done, the
+mode that fits is `/workorder plan <task>` — so name it and ask the user to run
+it, the same way you offer the full pipeline. Do not try to invoke it yourself;
+that is the refusal above, and it costs a round to discover.
+
+Once it is running, **stop when the plan exists**. Report it, name the
 `resume` command, write no code, and edit nothing. The user is splitting the
 work across sessions on purpose: implementation starts from the file, not from
 the conversation, and the plan not surviving that split is exactly the signal
