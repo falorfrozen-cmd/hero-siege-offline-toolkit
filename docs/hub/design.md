@@ -294,6 +294,21 @@ while still supplying `tagName`, which cannot work: `tauri-action` fails with
 whose whole job is to prove a release will build was the one that could never
 finish.
 
+A failed check -- offline, a release page with no `latest.json` because the
+newest release is still a draft, a signature that does not verify -- comes
+back from `check_hub_update` as `Err("Could not check for updates. Please try
+again.")`, distinct from a successful check that simply found nothing newer
+(`Ok(None)`). The two used to be indistinguishable: a rejected promise was
+caught, logged as a toast, and read back as `null`, so the About screen said
+"This is the newest release" after a check that never completed
+(issue #44). Only a successful check earns that sentence now. A failure
+leaves whatever was previously cached in `hub.hub_update` untouched -- a
+request that could not reach the release page is no evidence that a
+previously-found release went away, and `install_hub_update` already refuses
+with "no longer being offered" if it really did. The launch check
+(`startup_check`) stays silent on failure either way: no toast, no "hub
+checked at" timestamp, and the cache is left as it was.
+
 ### Cutting one
 
 **Actions > Hub tag > Run workflow**, type the tag, and `hub-tag.yml` does the

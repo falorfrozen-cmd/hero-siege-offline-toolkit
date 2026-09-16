@@ -6,10 +6,21 @@
 
 import { invoke, listen, native } from './bridge.js';
 import { createProgressRows } from './progress-rows.js';
+import { createHubCheck } from './hub-check.js';
 
 let view = $state(null);
 let loading = $state(true);
 let checking = $state(false);
+
+// The hub's own check result, and whether it failed, live in a runes-free
+// module so `node --test` can execute them -- the same split as `rows` below.
+// `About.svelte` reads this instead of guessing "no update" from a swallowed
+// rejection, which is the bug in issue #44.
+const hubCheck = createHubCheck({ invoke });
+let hubCheckSnapshot = $state(hubCheck.current());
+hubCheck.watch((next) => {
+  hubCheckSnapshot = next;
+});
 
 /**
  * Things that went wrong, shown as toasts until dismissed.
@@ -191,20 +202,24 @@ export async function checkForUpdates() {
   }
 }
 
+/** The hub's own check: `{ checking, result: null|'current'|'available'|'failed', message }`. */
+export function hubCheckState() {
+  return hubCheckSnapshot;
+}
+
 /**
  * Check only the hub's own release.
  *
- * The backend announces the result, so the view updates through
- * `library-changed`; the return value is for a caller that wants to say
- * something about this particular check.
+ * The backend announces the result on success, so the view updates through
+ * `library-changed`; a failure has no view to announce, so `hubCheckState()`
+ * is what a screen reads either way. No toast here: About shows the failure
+ * next to the button it belongs to, and showing both would report the one
+ * failure twice, the same reasoning as `awaitingInstall` above.
  */
 export async function checkHubUpdate() {
   checking = true;
   try {
-    return await invoke('check_hub_update');
-  } catch (e) {
-    notify('error', e?.message ?? e);
-    return null;
+    return await hubCheck.check();
   } finally {
     checking = false;
   }

@@ -127,7 +127,7 @@ pub struct HubInfo {
 /// Deliberately not carrying the release body: every hub release ships the same
 /// boilerplate about SmartScreen, so showing it would be a paragraph of noise
 /// on top of the one fact that differs, which is the version number.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct HubUpdate {
     pub version: String,
     pub current_version: String,
@@ -173,7 +173,10 @@ pub struct LibraryView {
     pub settings: state::Settings,
     pub game: game::GameStatus,
     pub hub_repo: String,
-    /// None when the last check found nothing newer, or found nothing at all.
+    /// None when the last successful check found nothing newer. A failed
+    /// check does not touch this field -- it leaves whatever was here in
+    /// place, because a request that could not reach the release page is no
+    /// evidence that a previously-found release went away.
     pub hub_update: Option<HubUpdate>,
 }
 
@@ -554,9 +557,12 @@ async fn check_hub_update(app: AppHandle, hub: State<'_, Arc<Hub>>) -> Result<Op
         });
     }
 
-    let update = refresh_hub_update(&hub, &app).await;
+    let result = refresh_hub_update(&hub, &app).await;
+    // Announce on both outcomes: harmless when nothing changed, and it keeps
+    // "announce after the check" unconditional rather than one more thing a
+    // failure path has to remember to do.
     announce(&app, &hub);
-    Ok(update)
+    result
 }
 
 /// Whether a tool is running, answered the way `build_view` answers it.
@@ -1095,6 +1101,46 @@ fn apply_staged(app: &AppHandle, hub: &Arc<Hub>) {
     }
 }
 
+/// Shown to the player when a hub update check fails. The updater's own
+/// error -- offline, a release page with no `latest.json`, a signature that
+/// does not verify -- goes to the log instead, where the wording in the
+/// issue and this constant can both be searched for.
+const HUB_UPDATE_CHECK_FAILED: &str = "Could not check for updates. Please try again.";
+
+/// Turn an update-check outcome into what `LibraryView::hub_update` should
+/// hold, and log it the way the log has always read.
+///
+/// Split out of `refresh_hub_update` so the bug in how a failure was handled
+/// -- looking exactly like "checked, nothing newer" -- has a home that does
+/// not need `tauri_plugin_updater::Updater` or an `AppHandle` to test: this
+/// half takes the outcome as a plain `Result` and never touches the network.
+fn settle_hub_update_check(hub: &Hub, outcome: Result<Option<HubUpdate>, String>) -> Result<Option<HubUpdate>, String> {
+    match outcome {
+        Ok(update) => {
+            match &update {
+                Some(update) => hub.log.info(format!(
+                    "hub update available: {} (running {})",
+                    update.version, update.current_version
+                )),
+                None => hub.log.info("hub update check: this is the newest release"),
+            }
+            if let Ok(mut guard) = hub.hub_update.lock() {
+                *guard = update.clone();
+            }
+            Ok(update)
+        }
+        Err(detail) => {
+            // A failed check says nothing about whether a cached newer
+            // release went away, so the cache is left untouched -- but it
+            // must not come back looking like a success. `install_hub_update`
+            // already refuses with "no longer being offered" if the cached
+            // release really did disappear.
+            hub.log.info(format!("hub update check: {detail}"));
+            Err(HUB_UPDATE_CHECK_FAILED.to_string())
+        }
+    }
+}
+
 /// Ask the updater endpoint whether a newer hub has been released.
 ///
 /// Awaited from commands. Only the startup worker outside the async runtime
@@ -1105,23 +1151,19 @@ fn apply_staged(app: &AppHandle, hub: &Arc<Hub>) {
 /// on two different release pages, and the hub's own update is the one a player
 /// has no other way to find out about -- so a catalog fetch that fails must not
 /// take it down with it.
-async fn refresh_hub_update(hub: &Hub, app: &AppHandle) -> Option<HubUpdate> {
+///
+/// A failure -- offline, a release page with no `latest.json`, a signature
+/// that does not verify against the built-in public key -- comes back as
+/// `Err`, not as `Ok(None)`: the two used to look identical, which is what let
+/// the About screen claim "This is the newest release" after a check that
+/// never actually ran.
+async fn refresh_hub_update(hub: &Hub, app: &AppHandle) -> Result<Option<HubUpdate>, String> {
     let found = match app.updater_builder().timeout(Duration::from_secs(30)).build() {
         Ok(updater) => match updater.check().await {
             Ok(found) => found,
-            Err(error) => {
-                // Offline, a release page with no latest.json, a signature that
-                // does not verify against the built-in public key. None of
-                // these is worth interrupting anyone over, and all of them are
-                // worth a line in the log.
-                hub.log.info(format!("hub update check: {error}"));
-                return hub.hub_update.lock().ok().and_then(|u| u.clone());
-            }
+            Err(error) => return settle_hub_update_check(hub, Err(error.to_string())),
         },
-        Err(error) => {
-            hub.log.error(format!("hub update check: {error}"));
-            return None;
-        }
+        Err(error) => return settle_hub_update_check(hub, Err(error.to_string())),
     };
 
     let update = found.map(|update| HubUpdate {
@@ -1129,18 +1171,7 @@ async fn refresh_hub_update(hub: &Hub, app: &AppHandle) -> Option<HubUpdate> {
         current_version: update.current_version.clone(),
     });
 
-    match &update {
-        Some(update) => hub.log.info(format!(
-            "hub update available: {} (running {})",
-            update.version, update.current_version
-        )),
-        None => hub.log.info("hub update check: this is the newest release"),
-    }
-
-    if let Ok(mut guard) = hub.hub_update.lock() {
-        *guard = update.clone();
-    }
-    update
+    settle_hub_update_check(hub, Ok(update))
 }
 
 /// Download and install the hub's own update.
@@ -1187,8 +1218,9 @@ fn startup_check(app: AppHandle, hub: Arc<Hub>) {
 
     // Before the catalog, and announced on its own, because the catalog fetch
     // below returns early on any failure -- and the hub's own update went
-    // unmentioned entirely until it was checked here.
-    if tauri::async_runtime::block_on(refresh_hub_update(&hub, &app)).is_some() {
+    // unmentioned entirely until it was checked here. Stays silent on
+    // failure: no timestamp, no toast, and whatever was cached is kept.
+    if matches!(tauri::async_runtime::block_on(refresh_hub_update(&hub, &app)), Ok(Some(_))) {
         announce(&app, &hub);
     }
 
@@ -1957,5 +1989,80 @@ mod tests {
                 "{url}"
             );
         }
+    }
+
+    /// A successful check that finds nothing newer replaces whatever was
+    /// cached, the same as a check that never found anything in the first
+    /// place -- a stale "v9.9.9 is available" must not survive a check that
+    /// really did run and really did come back clean.
+    #[test]
+    fn hub_update_check_that_finds_nothing_newer_is_ok_none_and_clears_the_cache() {
+        let (hub, root) = scratch_hub("hub-update-clears-cache");
+        *hub.hub_update.lock().unwrap() = Some(HubUpdate {
+            version: "9.9.9".into(),
+            current_version: "1.0.2".into(),
+        });
+
+        let result = settle_hub_update_check(&hub, Ok(None));
+
+        assert_eq!(result, Ok(None));
+        assert_eq!(*hub.hub_update.lock().unwrap(), None);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A successful check that finds a release caches it, so every other
+    /// screen reading `hub.hub_update` sees the same answer.
+    #[test]
+    fn hub_update_check_that_finds_a_release_caches_it() {
+        let (hub, root) = scratch_hub("hub-update-caches-release");
+        let found = HubUpdate {
+            version: "1.0.3".into(),
+            current_version: "1.0.2".into(),
+        };
+
+        let result = settle_hub_update_check(&hub, Ok(Some(found.clone())));
+
+        assert_eq!(result, Ok(Some(found.clone())));
+        assert_eq!(*hub.hub_update.lock().unwrap(), Some(found));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The bug in issue #44: a failed check with nothing cached must come
+    /// back as an error, not as `Ok(None)`, which looks exactly like "checked
+    /// and there is nothing newer".
+    #[test]
+    fn hub_update_check_that_fails_with_nothing_cached_is_an_error_not_no_update() {
+        let (hub, root) = scratch_hub("hub-update-fails-empty-cache");
+
+        let result = settle_hub_update_check(
+            &hub,
+            Err("Could not fetch a valid release JSON from the remote".into()),
+        );
+
+        assert_eq!(result, Err(HUB_UPDATE_CHECK_FAILED.to_string()));
+        assert_eq!(*hub.hub_update.lock().unwrap(), None);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A failed check says nothing about whether a previously-found update
+    /// went away, so the cache is left exactly as it was.
+    #[test]
+    fn hub_update_check_that_fails_keeps_the_cached_update() {
+        let (hub, root) = scratch_hub("hub-update-fails-keeps-cache");
+        let cached = HubUpdate {
+            version: "1.0.3".into(),
+            current_version: "1.0.2".into(),
+        };
+        *hub.hub_update.lock().unwrap() = Some(cached.clone());
+
+        let result = settle_hub_update_check(&hub, Err("offline".into()));
+
+        assert!(result.is_err());
+        assert_eq!(*hub.hub_update.lock().unwrap(), Some(cached));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

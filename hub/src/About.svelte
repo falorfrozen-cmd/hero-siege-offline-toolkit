@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { invoke } from './bridge.js';
-  import { library, act, ago, hubUpdate, checkHubUpdate, status } from './library.svelte.js';
+  import { library, act, ago, hubUpdate, checkHubUpdate, hubCheckState, status } from './library.svelte.js';
   import { hubInstall, installHubUpdate, clearHubInstall } from './hub-update.svelte.js';
   import { art } from './skin.svelte.js';
 
@@ -21,12 +21,11 @@
   let discordHovered = $state(false);
 
   let info = $state(null);
-  /** So "this is the newest release" is only claimed after a check this session. */
-  let checkedHere = $state(false);
 
   const view = $derived(library());
   const update = $derived(hubUpdate());
   const install = $derived(hubInstall());
+  const checkState = $derived(hubCheckState());
 
   onMount(() => {
     invoke('hub_info').then((i) => (info = i)).catch(() => {});
@@ -35,12 +34,14 @@
   /**
    * The check itself lives in Rust, where the launch check runs it too — one
    * implementation, and `work_offline` enforced in the place a hand-edited
-   * settings file cannot get past.
+   * settings file cannot get past. A rejection is not caught here: it comes
+   * back through `hubCheckState()` as `result: 'failed'` instead, so a failed
+   * check can never render as "This is the newest release" the way it did
+   * before issue #44.
    */
   async function check() {
     clearHubInstall();
     await checkHubUpdate();
-    checkedHere = true;
   }
 </script>
 
@@ -79,8 +80,11 @@
   </div>
   {#if update}
     <p class="result">v{update.version} is available. You are on v{update.current_version}.</p>
-  {:else if checkedHere && !status().checking}
-    <p class="result">This is the newest release.</p>
+  {:else if checkState.result === 'current'}
+    <p class="result">{checkState.message}</p>
+  {/if}
+  {#if checkState.result === 'failed'}
+    <p class="result bad">{checkState.message}</p>
   {/if}
   {#if install.message}
     <p class="result" class:bad={install.phase === 'error'}>{install.message}</p>
