@@ -292,7 +292,16 @@ its `tests/test_ai_review_workflow.py` pins that shape.
 `--allowedTools` must name every tool the code-review command declares
 (`gh pr view`, `gh pr diff`, `gh pr comment` and the rest), because it replaces
 that command's own list. With only the inline-comment tool listed, a review runs,
-is denied the calls it needs, posts nothing, and still goes green. Each run
+is denied the calls it needs, posts nothing, and still goes green. `Skill` is
+listed as well, because the prompt is a plugin command.
+
+The action step sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`. The code-review
+command works through subagents, which otherwise run in the background, and a
+headless run ends when the model ends its turn while waiting for one: hub #59
+went green after four turns with nothing reviewed. A final step fails the job
+when no comment appeared on the pull request after the review started, and
+prints the review's last message; a deliberate stop (closed, draft, or already
+commented on by Claude) goes red there too, with its reason. Each run
 uploads its full result as the `claude-execution-output` artifact, which is
 where per-model token counts and the names of any denied tools can be read.
 
