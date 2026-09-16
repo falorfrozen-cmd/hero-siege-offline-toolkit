@@ -2,15 +2,18 @@
 
 `AGENTS.md` holds this repository's rules in prose. This directory holds the
 subset that a machine can enforce or execute, so they stop depending on whether
-an agent happened to read the right section of a 482-line file first.
+an agent happened to read the right section of a long file first.
 
 Everything here is committed on purpose. Only `settings.local.json`
 (per-machine overrides) is gitignored.
 
 ## Hooks — `settings.json` + `hooks/`
 
-All four are `PostToolUse`, exit 0 silently when nothing is wrong, and exit 2
-with an explanation when something is. They run through `py -3`; on a
+The four `PostToolUse` hooks below exit 0 silently when nothing is wrong, and
+exit 2 with an explanation when something is. `leftover_processes.py` is
+different in shape — it runs on `PreToolUse` and `PostToolUse` to keep a
+ledger, and its blocking behavior lives at `Stop` — but the exit-0-quiet,
+exit-2-explains contract is the same one. They all run through `py -3`; on a
 non-Windows machine change that to `python3` in `settings.json`.
 
 | Hook | Fires when | Catches |
@@ -19,8 +22,9 @@ non-Windows machine change that to `python3` in `settings.json`.
 | `tauri_command_guard.py` | a `.rs` under `hub/src-tauri/src/` differs from HEAD | `block_on` inside a `#[tauri::command]`, and `#[tauri::command(async)]` on an `async fn` |
 | `hub_frontend_tests.py` | a top-level `hub/src/*.js` differs from HEAD | the hub's frontend tests failing |
 | `decompiled_output.py` | any changed text file, in the hub **or in a dirty submodule** | Ghidra/IDA symbols, GameMaker VM pseudo-variables, GML positional arguments and bytecode mnemonics reaching a tracked file |
+| `leftover_processes.py` | `PreToolUse`/`PostToolUse` on `Bash`/`PowerShell`/`Monitor`, and `Stop` | processes this session's tool calls started that are still alive when a reply ends |
 
-**All four key off the working tree, not the tool payload**, and that is the
+**The first four key off the working tree, not the tool payload**, and that is the
 single most important thing to preserve when editing them. A payload-shaped
 hook only sees `Edit` and `Write`, and only when it can resolve
 `tool_input.file_path` against the repository root. Both halves leak: a `sed -i`
@@ -66,6 +70,144 @@ and teach everyone to set `HSTK_SKIP_HOOKS`.
 The catalog hook keys off the working tree rather than off which tool ran,
 because a catalog can be rewritten by `Edit`, by a build script under `Bash`, or
 by a rebuild this session never saw the path of.
+
+### `leftover_processes.py` — a per-call ledger, not a descendant walk
+
+Unlike the other four, this hook keys off the **live process table**, not the
+working tree, because what it is guarding against — a `cargo` build or a
+detached `npm` script still running after the reply ends — never touches a
+file. It runs three times per tool call and once per reply: `pre` snapshots
+every live process before a `Bash`/`PowerShell`/`Monitor` call, `post`
+snapshots again afterward and admits whatever that call can be blamed for into
+a per-session ledger file, and `Stop` reports whichever ledger entries are
+still alive and have not been reported before. A process is identified by
+`(pid, creation time)`, never PID alone, because Windows reuses PIDs quickly.
+
+Three simpler designs were rejected, and are worth recording so nobody
+re-proposes them:
+
+- **Walking every live descendant of the session's `claude.exe` at `Stop`.**
+  This session's own MCP servers are exactly such descendants, and without
+  command lines the only way to tell them apart from something like a
+  `tauri-mcp driver-session` (which should be reported) is name matching on
+  "mcp" — which the driver-session's own name defeats. It also cannot see a
+  `Start-Process`-style detached child whose launcher has already exited,
+  since no descendant walk from a living ancestor reaches it.
+- **Attributing every orphan (dead parent) created since the session
+  started.** Multiple sessions run at once on this machine, and timing alone
+  cannot tell one session's orphan from another's — reporting a process a
+  different session started is exactly what this hook must never do.
+- **Reading another process's environment for a session marker.** That means
+  `ReadProcessMemory` against a PEB layout this hook does not own, for a
+  reporting tool that does not need it.
+
+`stop_hook_active` is the loop guard: a hook that blocks Stop again while
+`stop_hook_active` is true never lets the reply end. Every leftover is
+reported at most once per ledger, in a `reported.json` next to it, so a dev
+server the user asked to keep running does not re-block every later reply —
+`AGENTS.md`'s "verify with a command" covers a process Claude claimed to kill
+but did not.
+
+Two environment variables, both documented in the hook's own docstring:
+`HSTK_PROC_LEDGER_DIR` (default `%TEMP%/hstk-leftover-processes`, deliberately
+never inside the repository, since `decompiled_output.py` scans every
+untracked file and a ledger under the worktree would dirty `git status` on
+every tool call) and `HSTK_PROC_SESSION_ROOT_PID` (overrides the nearest
+`claude.exe` ancestor lookup; exists for tests).
+
+**It never kills anything.** No `TerminateProcess`, no `kill`, no `taskkill`
+run by the hook itself — it only prints what it found and suggests the command
+a human or the reply should run.
+
+**Known limitation, not observed to have happened yet:** if a whole parent
+chain back to a ledger entry dies between two observations — `cargo` exits
+while the `hub.exe` it started survives, with neither `post` nor `stop` having
+run in between — the survivor cannot be attributed and will not be reported.
+`AGENTS.md`'s "check with a command" is the backstop for exactly this gap.
+
+Three more identity safeguards, each added after a live report misattributed
+something and each proven by its own paired test in
+`TestLeftoverProcessesAdmissionRules`:
+
+- A PPID this hook cannot `OpenProcess` (a SYSTEM service, a protected
+  process) is still counted as alive by consulting the raw, unfiltered
+  Toolhelp32 PID list, not only the openable snapshot — otherwise an
+  unopenable-but-live parent (`svchost.exe` under `dllhost.exe`/`audiodg.exe`)
+  is indistinguishable from a dead one and its child looks like an orphan.
+- Rule (c)'s "parent already has a ledger entry" check requires a *live*
+  occupant of that PID to match the ledger entry's creation time exactly, not
+  merely postdate it — `entry.creation <= proc.creation` is true for any later
+  process once the ledger entry is dead, reused PID or not.
+- `stop`'s liveness check trusts `GetExitCodeProcess` (`STILL_ACTIVE`) over
+  Toolhelp32 membership alone, since a just-terminated PID can still appear in
+  a snapshot for a brief window after it exits. Treat this one as a
+  hypothesis-level safeguard rather than a confirmed fix: the flaky test that
+  motivated it has also passed 20/20 in local runs *without* this gate, so the
+  gate has not itself been shown to be what closes the flake.
+
+### Live checks
+
+**Live positive control — run this by hand in a real session; it cannot be a
+checkbox, because it needs a live session to end a reply:**
+
+1. In a Bash tool call, run
+   `powershell -NoProfile -Command "Start-Process py -ArgumentList '-3','-c','\"import time; time.sleep(600)\"'"`,
+   which is detached and orphaned. The inner `\"...\"` is required: Windows
+   PowerShell 5.1's `Start-Process` joins `-ArgumentList` with spaces without
+   quoting, so an unquoted code string reaches Python as `-c import`, which
+   exits at once with `SyntaxError`. Confirm the sleeper is alive, then let
+   the reply end. Expect one Stop block naming `py.exe` and its `python.exe`
+   child.
+2. Kill that process, then send a trivial message. Expect no report.
+3. Confirm no MCP `node.exe` and no process belonging to a second, separately
+   open session was listed.
+4. If step 1 shows nothing, check stderr in transcript mode for
+   `leftover_processes: no claude.exe ancestor; not tracking` before
+   concluding there was no leak — that note means the session-root lookup
+   failed inside the hook, which is a defect in the lookup, not evidence
+   nothing leaked.
+
+Record the result here, with the date, next to the runs below.
+
+**Recorded result (2026-09-16, one session):** step 1 blocked exactly once,
+naming `py.exe` and its `python.exe` child and nothing else -- no MCP
+`node.exe`. After `taskkill /T` the next two replies ended with no report.
+The first attempt measured nothing: it hit exactly the unquoted-`-ArgumentList`
+failure step 1 above warns about, so the sleeper never lived and the hook's
+silence proved nothing until the code string was quoted and the sleeper's
+liveness confirmed first. **Still not observed:** step 3, a second
+concurrently open session's processes staying out of the report — do not
+treat cross-session attribution as field proven until that is recorded here
+with its date.
+
+**Recorded result (2026-09-16 13:28, second run, separate session):** step 1
+blocked exactly once, naming only `py.exe` 658720 and its `python.exe` 658676
+-- no MCP `node.exe`, and nothing from the "forgepact-ci-build" session, which
+had its last activity at 13:31 and was running builds and an implementer
+subagent around that time. The detached sleeper was attributed even though
+`Start-Process` orphaned it. The sleeper was deliberately left alive, and the
+next reply ended with no report, which confirms report-once. Step 2's
+"killed, then silent" variant was not repeated in this run. This is a positive
+cross-session observation but a weak one: it was not confirmed that the other
+session started a process inside the sleeper's exact call window.
+
+**Live negative control, 2026-09-16 10:51 and 11:00 (recorded, not yet
+positive):** the hook went live in its own driver session as soon as
+`settings.json` changed, ahead of any planned live check. The first Stop, with
+several background agents running, blocked and reported 12 processes; 11 were
+false positives -- the hook's own concurrent sibling `PostToolUse` hook chains
+and their `conhost.exe`s, all dead by the time they were checked. A second
+Stop reported 8 more: a still-running background verifier's own acceptance
+run, correctly attributed but not actually left behind. Both runs are false
+positives this hook must not repeat, not evidence the mechanism works; they
+are the reason rules (a)-(c) now also exclude any chain running a
+`.claude/hooks/*` script and any `conhost.exe` reached through the Stop-time
+ledger extension, and why the report and `AGENTS.md`'s section both say a
+background task of this session still working is a reason to leave a process,
+not a leftover. The one plausible true positive that day, a `vctip.exe` from a
+C++ build, could not be killed with `taskkill` under auto mode's workload
+classifier -- see `AGENTS.md`'s section for what to do instead (tell the user,
+name the PID).
 
 ## Agents — `agents/`
 
