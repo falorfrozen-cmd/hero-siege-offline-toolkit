@@ -638,6 +638,22 @@ a review already in progress. Unrequested events now get a group unique to their
 own run. `tests/test_ai_review_workflow.py` pins that, pins the opt-in triggers,
 and fails if the two written-out copies of the request predicate drift apart.
 
+`--allowedTools` in `claude_args` is the **whole** allow-list for the run; it
+replaces the code-review command's own `allowed-tools` rather than adding to it.
+The first version listed only the inline-comment tool, so on hub #56 the review
+was denied `gh pr view` and `gh pr diff` (it could not read the pull request) and
+`gh pr comment` (it could not post its "No issues found" summary). The job went
+green with `permission_denials_count: 5` and nothing on the PR. The list now
+names every tool that command declares, the test checks it against that list,
+and `pull-requests: write` matches Anthropic's own review example.
+
+The action's log shows a trimmed result -- no per-model token counts, and a
+denial *count* but not which tools were denied. The full result is written to
+`${{ runner.temp }}/claude-execution-output.json` and deleted with the runner, so
+the workflow uploads it as the `claude-execution-output` artifact (14 days,
+uploaded even when the review fails). It includes the review transcript, visible
+to anyone with read access to the repository.
+
 ### Tool notifications
 
 The push notifier is installed in all ten tool repositories, keyed to each

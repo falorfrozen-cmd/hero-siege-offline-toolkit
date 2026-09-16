@@ -289,6 +289,13 @@ predicate is written out twice in the file (in the job `if` and in the
 concurrency group); change both together. The hub carries the same workflow and
 its `tests/test_ai_review_workflow.py` pins that shape.
 
+`--allowedTools` must name every tool the code-review command declares
+(`gh pr view`, `gh pr diff`, `gh pr comment` and the rest), because it replaces
+that command's own list. With only the inline-comment tool listed, a review runs,
+is denied the calls it needs, posts nothing, and still goes green. Each run
+uploads its full result as the `claude-execution-output` artifact, which is
+where per-model token counts and the names of any denied tools can be read.
+
 This lives in its own section rather than on the "CI / Pipeline Availability"
 line above because that line is rewritten whenever a release workflow changes,
 and every such rewrite conflicted with it.
