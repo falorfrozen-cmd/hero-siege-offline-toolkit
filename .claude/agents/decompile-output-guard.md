@@ -91,13 +91,14 @@ report, so this label decides whether the pipeline keeps working or stops.
 
 **BLOCKING** means the change is wrong if it ships as it stands: a failed
 acceptance criterion, something that ships inert or reports itself armed while
-doing nothing, a legal finding, a player-visible change with no release notes,
-or an overclaim in *release notes* -- `AGENTS.md` is explicit that one wrong
-"Fixed" erodes every note after it.
+doing nothing, a legal finding, or an overclaim in *release notes* --
+`AGENTS.md` is explicit that one wrong "Fixed" erodes every note after it.
 
 **NON-BLOCKING** means worth doing, not worth stopping for: a test that could be
 sharper, a follow-up idea, a naming nit, an overclaim in a research doc or a
-test comment, an internal doc that is merely incomplete.
+test comment, an internal doc that is merely incomplete, a player-visible
+ForgePact change with no release-notes file (the tag workflow falls back to
+generated notes under a rewrite banner).
 
 Do not inflate. A workorder once reached its cap on a round that opened with
 "nothing here blocks shipping" and then listed eight improvements; that spent

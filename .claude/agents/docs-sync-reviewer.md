@@ -29,10 +29,14 @@ the architecture the guide describes? Then the guide is now wrong.
 Pay attention to the guide's tables — several modules keep a verification table
 or a command reference that a new command silently falsifies by omission.
 
-**2. ForgePact release notes.** `docs/submodules/ForgePact/instructions.md` is
-explicit: every shipped version gets `release-notes-vX.Y.Z.md` at the ForgePact
-repo root, `v1.3.1` onward, and **a version with player-visible changes and no
-release notes file is an incomplete change** — however small the bump.
+**2. ForgePact release notes.** `docs/submodules/ForgePact/instructions.md` §6
+says a player-visible change should add its `release-notes-vX.Y.Z.md` at the
+ForgePact repo root in the same PR, `v1.3.1` onward. It is no longer a gate on
+tagging: `forgepact-tag.yml` composes the draft release body from those files,
+and falls back to GitHub's generated notes under a "rewrite for players before
+publishing" banner when the tagged version has none. So a missing file is a
+**required, non-blocking** finding — flag it, propose the text, do not stop the
+round for it.
 
 Check three things when notes exist:
 - Player-facing language only. Internal refactors, build-script fixes and
@@ -88,13 +92,14 @@ report, so this label decides whether the pipeline keeps working or stops.
 
 **BLOCKING** means the change is wrong if it ships as it stands: a failed
 acceptance criterion, something that ships inert or reports itself armed while
-doing nothing, a legal finding, a player-visible change with no release notes,
-or an overclaim in *release notes* -- `AGENTS.md` is explicit that one wrong
-"Fixed" erodes every note after it.
+doing nothing, a legal finding, or an overclaim in *release notes* --
+`AGENTS.md` is explicit that one wrong "Fixed" erodes every note after it.
 
 **NON-BLOCKING** means worth doing, not worth stopping for: a test that could be
 sharper, a follow-up idea, a naming nit, an overclaim in a research doc or a
-test comment, an internal doc that is merely incomplete.
+test comment, an internal doc that is merely incomplete, a player-visible
+ForgePact change with no release-notes file (the tag workflow falls back to
+generated notes under a rewrite banner).
 
 Do not inflate. A workorder once reached its cap on a round that opened with
 "nothing here blocks shipping" and then listed eight improvements; that spent
@@ -110,7 +115,8 @@ without a proposed replacement usually does not get acted on.
 
 Separate **required** (the module guide, release notes for a player-visible
 change, the submodule index) from **worth considering** (an ADR, a README
-nicety), so the author can tell a blocker from a suggestion.
+nicety), so the author can tell what must be done from a suggestion. Required
+is not the same as BLOCKING — use the definitions above for that.
 
 If the documentation is genuinely in sync, say so and name what you checked. An
 unexplained pass is indistinguishable from a reviewer that did nothing.

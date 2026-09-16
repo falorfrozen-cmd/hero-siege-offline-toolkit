@@ -279,8 +279,9 @@ The line, when a reviewer's label looks wrong to you:
 | a failed acceptance criterion | a test that could be sharper |
 | ships inert or wrong — the `HOOK INSTALLED`-and-does-nothing class | a follow-up idea for later |
 | a legal finding from `decompile-output-guard` — **always** | a naming or wording nit |
-| a player-visible change with no release notes | an overclaim in a research doc or a test comment |
-| an overclaim in **release notes** — `AGENTS.md` is explicit that one wrong "Fixed" erodes every note after it | an internal doc that is merely incomplete |
+| an overclaim in **release notes** — `AGENTS.md` is explicit that one wrong "Fixed" erodes every note after it | an overclaim in a research doc or a test comment |
+| | an internal doc that is merely incomplete |
+| | a player-visible ForgePact change with no `release-notes-vX.Y.Z.md` — `forgepact-tag.yml` falls back to generated notes under a rewrite banner; flag it, don't spend a round |
 
 - **`verifier` PASS and no blocking finding** → go to step 5, carrying every
   non-blocking finding into the report.

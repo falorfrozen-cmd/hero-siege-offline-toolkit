@@ -28,9 +28,10 @@ that is a signal the plan is not finished.
 1. **Load the module's guide.** If the change touches a submodule, invoke the
    `submodule-context` skill. `AGENTS.md` § "Submodule & Directory Development
    Instructions" is not optional background, and several of those guides carry
-   rules no amount of reading the code reveals — ForgePact treats a
-   player-visible change with no `release-notes-vX.Y.Z.md` as an incomplete
-   change, and that belongs in your acceptance criteria, not in someone's memory.
+   rules no amount of reading the code reveals — a player-visible ForgePact
+   change writes its `release-notes-vX.Y.Z.md` in the same PR (the tag workflow
+   composes the draft release body from those files), and that belongs in your
+   acceptance criteria, not in someone's memory.
 
 2. **Exhaust static search before proposing a live session.** This repository
    has paid for this rule repeatedly. `hs-game-sdk`'s `scripts.hpp` /
