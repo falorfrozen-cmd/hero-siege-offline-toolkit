@@ -668,7 +668,23 @@ was denied `gh pr view` and `gh pr diff` (it could not read the pull request) an
 `gh pr comment` (it could not post its "No issues found" summary). The job went
 green with `permission_denials_count: 5` and nothing on the PR. The list now
 names every tool that command declares, the test checks it against that list,
-and `pull-requests: write` matches Anthropic's own review example.
+and `pull-requests: write` matches Anthropic's own review example. `Skill` is
+on the list too, because the prompt is a plugin command and the model loads it
+through that tool.
+
+The code-review command does its work through subagents, and agents run in the
+background by default. A headless run ends when the model ends its turn, so on
+hub #59 the model started its eligibility check in the background, ended its
+turn to wait for the result, and the session ended there: four turns, nothing
+reviewed, nothing posted, job green. The action step now sets
+`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, which keeps every agent in the
+foreground. Twice now a review has posted nothing and still passed, so the job
+also checks what actually happened: a last step counts the comments and inline
+comments created on the pull request after the review started, and fails,
+printing the review's last message, if there are none. That also turns a
+deliberate stop red: the command skips a pull request that is closed, a draft,
+or already commented on by Claude. That is on purpose, since a review was
+requested and none was posted, and the printed message says why.
 
 The action's log shows a trimmed result -- no per-model token counts, and a
 denial *count* but not which tools were denied. The full result is written to

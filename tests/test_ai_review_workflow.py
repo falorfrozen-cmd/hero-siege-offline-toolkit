@@ -34,6 +34,14 @@ on the PR (hub #56). The allow-list is now checked against every tool that
 command declares, and the full result file is uploaded so the next denial is
 visible rather than a bare count.
 
+**That the review runs to the end, and that a run which posts nothing fails.**
+On hub #59 the job went green after four turns with nothing on the PR. The
+code-review command works through subagents, which run in the background by
+default; the model launched one, ended its turn to wait for it, and a headless
+run ends with the turn. `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` keeps agents in
+the foreground, and a final step fails the job when no comment appeared, so the
+next variant of this bug is red instead of silent.
+
 The file is read as text rather than parsed: CI runs this suite with
 `python -m unittest discover -s tests` and installs nothing, so PyYAML is not
 available there.
@@ -224,6 +232,74 @@ class TheReviewCanReadAndPost(unittest.TestCase):
         self.assertIn("if: always()", body)
         self.assertIn("uses: actions/upload-artifact@", body)
         self.assertIn("path: ${{ runner.temp }}/claude-execution-output.json", body)
+
+    def test_the_plugin_command_itself_is_allowed(self):
+        # The prompt is `/code-review:code-review`, which the model loads
+        # through the Skill tool; hub #59's run was denied that first call.
+        self.assertIn("Skill", allowed_tools(workflow_text()) or set())
+
+
+def step_body(text, name):
+    match = re.search(
+        rf"(?ms)^      - name: {re.escape(name)}\n(.*?)(?=^      - |\Z)", text
+    )
+    return None if match is None else match.group(1)
+
+
+def review_step(text):
+    match = re.search(
+        r"(?ms)^      - uses: anthropics/claude-code-action@[^\n]*\n(.*?)(?=^      - |\Z)",
+        text,
+    )
+    return None if match is None else match.group(1)
+
+
+def background_tasks_disabled(step):
+    return re.search(
+        r'(?m)^        env:\n(?:          .*\n)*?          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"$',
+        step or "",
+    ) is not None
+
+
+class TheReviewRunsToTheEnd(unittest.TestCase):
+    """hub #59: the job went green after 4 turns with nothing posted.
+
+    The code-review command does its work through subagents, which run in the
+    background by default. The model launched its eligibility check, ended its
+    turn to wait for the notification, and a headless run ends with the turn.
+    """
+
+    def test_agents_run_in_the_foreground(self):
+        self.assertTrue(
+            background_tasks_disabled(review_step(workflow_text())),
+            "the claude-code-action step must set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
+        )
+
+    def test_negative_control_the_setting_on_another_step_is_not_enough(self):
+        text = workflow_text()
+        step = review_step(text)
+        self.assertIsNotNone(step)
+        stripped = step.replace('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"', "OTHER: \"1\"")
+        self.assertFalse(background_tasks_disabled(stripped))
+
+    def test_a_run_that_posted_nothing_fails(self):
+        text = workflow_text()
+        body = step_body(text, "Fail if the review posted nothing")
+        self.assertIsNotNone(body, "outcome check step not found")
+        self.assertIn("issues/$PR/comments", body)
+        self.assertIn("pulls/$PR/comments", body)
+        self.assertIn("exit 1", body)
+        # Only comments made after the review started count, or the request
+        # comment itself would satisfy the check.
+        self.assertIn("SINCE: ${{ steps.started.outputs.at }}", body)
+        self.assertIsNotNone(step_body(text, "Note when the review started"))
+
+    def test_the_check_runs_after_the_review(self):
+        text = workflow_text()
+        started = text.find("- name: Note when the review started")
+        review = text.find("- uses: anthropics/claude-code-action@")
+        check = text.find("- name: Fail if the review posted nothing")
+        self.assertTrue(-1 < started < review < check, (started, review, check))
 
 
 if __name__ == "__main__":
