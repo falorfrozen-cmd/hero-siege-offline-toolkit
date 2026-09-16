@@ -507,12 +507,17 @@ throws where the hub works: `set_favorite` is the newest one.
 
 ### Driving the running window
 
-`tauri-plugin-mcp-bridge` is a dependency of `src-tauri`, started **only** under
-`#[cfg(debug_assertions)]`, bound to `127.0.0.1:9223`, with a dev-only capability
-naming the `hub` window. So a debug build can be clicked, screenshotted and
+`tauri-plugin-mcp-bridge` is an optional dependency of `src-tauri`, behind a
+non-default `mcp-bridge` feature that only `npm start` enables, started **only**
+under `#[cfg(all(debug_assertions, feature = "mcp-bridge"))]`, bound to
+`127.0.0.1:9223`, with a dev-only capability
+naming the `hub` window. So an `npm start` build can be clicked, screenshotted and
 queried from a terminal instead of by hand.
 
-The `cfg` is the whole point. The bridge can invoke any command this application
+The gate is the whole point, and it is two gates on purpose: the `cfg` alone
+kept the bridge from starting in a release but still compiled the crate into
+every one, one careless edit from shipping a listener. With the feature, `tauri
+build` never compiles it (`tests/test_hub_release_dev_tooling.py`). The bridge can invoke any command this application
 has, over a socket, with no authentication — which is exactly what makes it
 useful for verifying an interface change and exactly why a release build must
 never start one.

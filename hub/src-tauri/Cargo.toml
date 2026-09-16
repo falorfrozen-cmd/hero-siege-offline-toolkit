@@ -36,11 +36,13 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 minisign-verify = "0.2"
 ureq = { version = "2", features = ["tls"] }
 sysinfo = "0.33"
-# Development only. Registered under `cfg(debug_assertions)` in `run()`, so a
-# release build never starts it -- it listens on a socket and can invoke any
-# command in this app, which is exactly what makes it useful for driving the
-# hub from a test harness and exactly why it must not ship.
-tauri-plugin-mcp-bridge = "0.13"
+# Development only. Optional, behind the `mcp-bridge` feature that only
+# `npm start` turns on, and registered under `cfg(debug_assertions)` as well --
+# it listens on a socket and can invoke any command in this app, which is
+# exactly what makes it useful for driving the hub from a test harness and
+# exactly why it must not ship. The feature keeps it out of a release build
+# entirely rather than compiling it and relying on the cfg to leave it unused.
+tauri-plugin-mcp-bridge = { version = "0.13", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # ShellExecuteExW with the `runas` verb: the hub stays non-elevated and asks
@@ -56,6 +58,12 @@ windows-sys = { version = "0.59", features = [
     # Reading this process's own token, to know whether Stop can work.
     "Win32_Security",
 ] }
+
+[features]
+# Never a default: `tauri build` (and tauri-action in hub-release.yml) builds
+# the default feature set, so anything listed here would ship.
+default = []
+mcp-bridge = ["dep:tauri-plugin-mcp-bridge"]
 
 [profile.release]
 opt-level = "s"

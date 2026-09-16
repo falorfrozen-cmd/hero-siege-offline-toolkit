@@ -207,13 +207,16 @@ The same "build the fast loop first" rule applies to the Tauri submodules
 frontend compiling, and the alternative to verifying it should not be asking a
 human to click it and describe what happened.
 
-`hub/src-tauri` carries `tauri-plugin-mcp-bridge`, **behind
-`#[cfg(debug_assertions)]`**, listening on `127.0.0.1:9223`. A debug build can
-therefore be clicked, screenshotted, queried and measured from a terminal. The
+`hub/src-tauri` carries `tauri-plugin-mcp-bridge` as an **optional dependency
+behind a non-default `mcp-bridge` feature, registered under
+`#[cfg(all(debug_assertions, feature = "mcp-bridge"))]`**, listening on
+`127.0.0.1:9223`. `npm start` turns the feature on, so a dev build can be
+clicked, screenshotted, queried and measured from a terminal, while `tauri
+build` — what the release workflow runs — does not even compile the crate. The
 gate is not a detail: the bridge can invoke any command in the application, so
-a release build must never start one. Copy that arrangement — including the
+a release build must never carry one. Copy that arrangement — the feature, the
 `cfg` and the loopback bind — into any other Tauri submodule that wants this,
-rather than shipping a listener.
+rather than shipping a listener. `tests/test_hub_release_dev_tooling.py` pins it.
 
 ```bash
 npm start                                                     # in hub/, wait for :9223
