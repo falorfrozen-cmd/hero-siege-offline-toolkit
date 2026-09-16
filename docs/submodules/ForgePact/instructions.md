@@ -8,7 +8,7 @@
 - **Commit Message:** `Prepare ForgePact 1.3.16 Headhunter release` — includes upstream's independent fix for the `VALUE_REF` player-resolution bug class in the Headhunter kill/steal path (`HhResolveInstance`, commits `7743a99`/`4ae4e30`), the same bug class described below.
 - **Fork & Branch:** This guide additionally tracks work rebased onto that revision and pushed to `fork` (`S-Borkowski/ForgePact`) as **`release/v1.3.17`** — the version is 1.3.17, not 1.3.16, precisely because upstream had already shipped 1.3.16 by the time this branch was rebased onto it. See `release-notes-v1.3.17.md`. The branch has since grown a second release, **1.3.18** (`release-notes-v1.3.18.md`: the map-reveal pack pass and the Pet Quest Collector); the branch name is kept as-is because the open PR to origin tracks it.
 - **Source Availability:** Full application source is present (Python control panel `src/forgepact.py`, C++20 native mod plugin `plugin/ModuleMain.cpp`, modified YYToolkit patches `yytoolkit-modified/`, build scripts `plugin_build/build.bat` and `build_release.py`, Python contract tests `tests/`, and reverse-engineering research notes `docs/`).
-- **CI / Pipeline Availability:** **Not available** (no GitHub Actions or remote CI configurations exist; verification is conducted locally via Python unittest test suites and static build audits).
+- **CI / Pipeline Availability:** `notify-hub.yml` (push to `main`, bumps the hub's submodule pointer), `notify-hub-release.yml` (fires on a published release, skips prereleases) and `forgepact-tag.yml` (`workflow_dispatch`, tags a release and leaves a draft — no build CI; see "Tagging a release (forgepact-tag.yml)" below for what a build half would require). Verification is otherwise conducted locally via Python unittest test suites and static build audits.
 - **Purpose & Scope:** Standalone offline control panel and native runtime hook plugin providing runtime modifiers for Hero Siege single-player sessions. Controls monster density, special content spawns (Rift Portals, Battlefields, Cursed Orbs, Chaos Tower, Shadow Realm, etc.), drop rate multipliers and gated drop families (Keys, Relics, Angelic/Unholy uniques), gameplay mods (relic drop pool filter excluding maxed 10/10 relics, orb pickup radius, pet-driven quest item collection), player/combat stat scaling, full map reveal (fog, plus an optional pass that makes each new zone's spawners create their packs on arrival so monsters appear on the revealed map), and custom forge mechanics (Headhunter, Tyrant's Crown, Beacon, Item Editor base stat export) without permanently altering save files or the base game executable. Integrated with `hs-game-sdk`.
 - **Fork Branch vs. This Guide:** `release/v1.3.17` (`fork`) carries the Mods tab (relic filter, orb pickup, the Headhunter/Tyrant's Crown/Beacon/Map Reveal relocation), the build-order packaging guard, the stall watchdog, the `SafeF()` crash guard, and a second, complementary `VALUE_REF` player-resolution fix (`HhUsableInstance`, used by orb pickup and the relic filter's `HhResolveLocalPlayer` calls — distinct from upstream's `HhResolveInstance`, which fixed the same bug class for the Headhunter kill/steal path only). All covered by `tests/test_relic_filter_contract.py` (updated to match the merge) and documented in Known Limitations items 4-9 below; none are optional cleanup, all were needed to reach a working build.
 
@@ -139,8 +139,10 @@ To add or modify a gameplay modifier or runtime command:
      py build_release.py
      ```
   - The packaging guard requires `plugin_build\BloodPactPlugin_ship.dll` to exist and confirms that `modfiles_shipped\BloodPactPlugin.dll` matches it. A missing or stale staged plugin stops packaging so the Install button cannot ship an older DLL.
-6. **Write Release Notes (REQUIRED — `release-notes-vX.Y.Z.md`):**
-   - Every version that ships gets a `release-notes-vX.Y.Z.md` file at the ForgePact repo root (`v1.3.1` through `v1.3.15` are the existing precedent — do not skip this for a version bump, however small). Not optional: a version with player-visible changes and no release notes file is an incomplete change.
+6. **Write Release Notes (`release-notes-vX.Y.Z.md`, preferred but no longer a gate on tagging):**
+   - Every version with player-visible changes should still get a `release-notes-vX.Y.Z.md` file at the ForgePact repo root, written in the PR that makes the change (`v1.3.1` through `v1.3.20` are the existing precedent). This is the **preferred source**: it is player language, written by whoever made the change, while the change is fresh.
+   - It is no longer a prerequisite to tagging or releasing. `forgepact-tag.yml` composes the draft release body from whatever notes files exist at tag time — the tagged version's own file if it exists, otherwise GitHub's generated notes under a "rewrite for players before publishing" banner, plus every skipped version's own file concatenated in newest-first order. See "Tagging a release (forgepact-tag.yml)" below for the full composition rules. `cut_release.py --check` still fails on a missing notes file by default; only `--allow-missing-notes`, which only the tag workflow passes, relaxes that.
+   - If the top file is missing at tag time, the draft's top section is generated notes under that banner, and it **must be rewritten into player language before publishing** — generated notes are pull-request titles, not something written for a player deciding whether to update.
    - Player-facing only, in plain language — what was broken and what changed *for the player*, not internal refactors, build-script fixes, or debugging history (that belongs in this instructions.md, e.g. Known Limitations, not in release notes). Match the tone of the existing files: name the symptom before the fix ("Tyrant's Crown and Monster Rarity did nothing in 1.3.14" before explaining why), and give a measured before/after number when one exists.
    - Standard sections, in order: `## New`, `## Fixed` (either may be omitted if empty, but at least one must be present), then `## How to update` with the standard boilerplate (see any existing file). A `## Changed` section is used for reorganizations (e.g. a control moving to a different panel tab) that are neither strictly new nor a bug fix.
    - Never claim something is "Fixed" that is not actually resolved. If an investigation concluded the *reported* symptom is not this project's bug (e.g. a freeze traced to a display driver / GPU stall with a control run proving the plugin was not involved), that finding belongs in this instructions.md's Known Limitations, not in release notes as a fix — release notes are read by players deciding whether to update, and an overclaimed fix erodes trust in every note that follows it.
@@ -169,9 +171,11 @@ To add or modify a gameplay modifier or runtime command:
 | Command | Working Directory | Shell / Platform | Prerequisites | Expected Result | Side Effects | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `py src/forgepact.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Launches local control panel HTTP server (`http://127.0.0.1:8766`). | Opens web browser / desktop window; watches for game process | Verified |
-| `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Executes all 295 Python contract tests (including the three native behavior harnesses, which skip without a C++ toolchain). | Read-only test execution; all tests pass | Verified 2026-09-15 |
+| `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Executes all 361 Python contract tests (including the three native behavior harnesses, which skip without a C++ toolchain). | Read-only test execution; all tests pass | Verified 2026-09-16 |
 | `py tools/perf_panel.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Times the panel's two per-poll costs - the boot count and the process scan - against reference copies of the pre-1.3.20 implementations, and exits non-zero if either regressed below its floor. No game, no network. `--log-mb`, `--iterations`, `--min-speedup`. | Writes and deletes a synthetic log in a temp directory | Verified 2026-09-15 |
-| `py tools/cut_release.py --check --expect <version>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Reports the version at every site and fails if they disagree or the release notes are missing. `py tools/cut_release.py <version>` moves them. **Do not hand-edit the version sites** - a mismatch here is the signal, not a nuisance. Touches no git, runs no build, stages no DLL. | `--check` is read-only; a bump rewrites two files | Verified 2026-09-15 |
+| `py tools/cut_release.py --check --expect <version>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Reports the version at every site and fails if they disagree, or if the release notes are missing and `--allow-missing-notes` was not given. `py tools/cut_release.py <version>` moves them. `--allow-missing-notes` (only `--check`; only used by `forgepact-tag.yml`) reports a missing notes file without failing. **Do not hand-edit the version sites** - a mismatch here is the signal, not a nuisance. Touches no git, runs no build, stages no DLL. | `--check` is read-only; a bump rewrites two files | Verified 2026-09-16 |
+| `py tools/forgepact_tag.py --tag <version> --existing <tags…>` | `ForgePact/` | PowerShell / CMD (Git Bash for the real examples below) | Python 3.10+ | Checks a typed tag/version against the existing `v*` tags and the tree, and prints `version=`, `tag=`, `bump=`, `previous=`. Refuses a taken tag, a downgrade against the highest tag, a version below the tree, or a malformed input. | Read-only | Verified 2026-09-16 |
+| `py tools/forgepact_tag.py --compose-notes --version <v> --previous <tag> --generated <file> --out <file>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Composes the draft release body: the tagged version's own `release-notes-vX.Y.Z.md` if present (else the generated notes at `--generated`, under a banner), plus every skipped version's file, newest first. Prints `source=` and `versions=`. | Writes `--out`; reads notes files under `--root` (default: repo root) | Verified 2026-09-16 |
 | `plugin_build\build.bat` / `plugin_build\build.bat release` | `ForgePact/` | CMD / PowerShell (Windows x64) | MSVC v143+ (VS 2022), YYToolkit headers in `plugin_build\include\` | Compiles `BloodPactPlugin_ship.dll` with `/DFORGEPACT_RELEASE`. Equivalent commands - `build.bat` only special-cases `dev`; anything else (including no argument) takes this branch. | Generates `plugin_build\BloodPactPlugin_ship.dll` and `obj_ship\` | Verified 2026-09-10 |
 | `plugin_build\build.bat dev` | `ForgePact/` | CMD / PowerShell (Windows x64) | MSVC v143+ (VS 2022), YYToolkit headers in `plugin_build\include\` | Compiles `BloodPactPlugin_rel.dll` (research build with inspection commands, and `satmods` diagnostics). | Generates `plugin_build\BloodPactPlugin_rel.dll` and `obj_dev\` | Verified 2026-09-10 |
 | `py build_release.py` | `ForgePact/` | PowerShell / CMD | PyInstaller installed, matching `BloodPactPlugin_ship.dll` | Builds complete release bundle in `dist/ForgePact/`. | Terminates existing `ForgePact.exe` processes; generates onefile executable | Inspected |
@@ -733,9 +737,14 @@ Two real sites, both moved by `tools/cut_release.py`:
    already on the compiler's include path.
 
 Two derived checks, asserted by `--check` and never rewritten:
-`release-notes-v<version>.md` must exist (this is that rule's first mechanical
-enforcement), and the plugin's boot line must reference `FORGEPACT_VERSION`
-rather than a literal.
+`release-notes-v<version>.md` must exist, and the plugin's boot line must
+reference `FORGEPACT_VERSION` rather than a literal. The notes check can be
+relaxed with `--allow-missing-notes` (`--check` only) - **only
+`forgepact-tag.yml` passes it**, because that workflow composes the release
+body itself (falling back to generated notes under a banner when the file is
+missing) rather than requiring the file to exist before tagging. Every other
+caller keeps the default, so a version landing on `main` by hand still needs
+its notes file.
 
 **Do not hand-edit those files.** A mismatch fails `--check`, and `cut()` refuses
 to write anything at all if the tree does not already agree, because a
@@ -996,8 +1005,143 @@ Run in this order; the order is the guardrail.
    Zone section has rows, and confirm the Mods tab toggles still send.
 8. Start the game once with the shipped DLL and confirm `out.txt`'s
    `BloodPact plugin loaded` line carries 1.3.20, matching the panel.
-9. Tag and publish per the usual flow, with `release-notes-v1.3.20.md` as the body.
+9. Tag and publish per "Tagging a release (forgepact-tag.yml)" below:
+   1. Run Actions > ForgePact tag on `main`.
+   2. Open the draft release it leaves and upload the zip.
+   3. Review the composed body, and rewrite any section under the
+      generated-notes banner into player language.
+   4. Publish, which fires `notify-hub-release.yml`.
 10. HS-Offline-Launcher is **not** part of this release; see its own guide.
+
+---
+
+## Tagging a release (forgepact-tag.yml)
+
+`forgepact-tag.yml` (`workflow_dispatch`, "ForgePact tag" in the Actions tab)
+automates everything up to a draft release: type a version (`1.3.21` or
+`v1.3.21`), and it checks the tag is one this repository can actually
+release, moves the version to match with `tools/cut_release.py`, pushes the
+tag, and leaves a **draft** release whose body `tools/forgepact_tag.py`
+composes. It never builds, uploads or publishes — see "Why there is no build
+half" below.
+
+### How to run it
+
+Actions > ForgePact tag > Run workflow, on `main`, with the version typed
+into the `tag` box. Read the job summary afterward: it says whether a bump
+was made, where the draft notes came from (`source=file` / `files` /
+`generated` / `mixed`), and — when any section is generated — a bold
+reminder to rewrite it before publishing.
+
+### The five refusals
+
+Everything downstream trusts the tag, so anything wrong with it is decided
+before any write:
+
+1. **The tag has the wrong shape.** Not three plain numbers, optionally
+   `v`-prefixed (`vv1.3.21`, `V1.3.21`, `hub-v1.3.21`, a leading zero, a
+   suffix like `-rc1`, and non-ASCII digits are all refused).
+2. **The tag already exists.** A second release on one tag makes
+   `releases/latest` ambiguous.
+3. **The version is below the highest existing `v*` tag.** `releases/latest`
+   would point backwards.
+4. **The version is below what `main` already holds.** ForgePact does not tag
+   every version it ships — `main` moved from 1.3.16 straight through
+   1.3.17–1.3.20 with no tag for any of them — so the highest *tag* and the
+   tree's actual version can disagree. Without this check, tagging `v1.3.17`
+   today would relabel 1.3.20's code as 1.3.17.
+5. **The version already has a release, drafts included.** Catches a draft
+   sitting on a tag that was never pushed, which the tag-existence check
+   alone cannot see.
+
+Release notes are **never** a refusal — see the composition rules below and
+`AGENTS.md`.
+
+### The draft and how its body is composed
+
+The workflow always calls GitHub's `releases/generate-notes` before any
+write (so the YAML has no branch on whether the top notes file exists — that
+decision belongs entirely to `tools/forgepact_tag.py`, which has tests for
+it), then calls `forgepact_tag.py --compose-notes`:
+
+- **The tagged version's own `release-notes-vX.Y.Z.md`**, if it exists, is
+  the top section, byte-identical (normalised to `\n`, one trailing newline)
+  to today's one-file practice.
+- **Otherwise**, the top section is GitHub's generated notes (pull-request
+  titles since the previous tag) under a visible banner:
+  `> **Draft notes, generated from pull request titles.** Rewrite the
+  ForgePact <version> section for players before publishing: the Toolkit Hub
+  shows this text to players.` That section must be rewritten into player
+  language before the draft is published.
+- **Every skipped version's notes file** — strictly above the previous `v*`
+  tag and below the tagged version — is concatenated after the top section,
+  **newest first**. Tagging `v1.3.20` today needs no bump (the tree is
+  already there) and carries 1.3.20, 1.3.19, 1.3.18 and 1.3.17, because none
+  of those four was ever tagged or released on its own.
+- **With no previous `v*` tag at all**, there is nothing to bound "skipped"
+  with, so it is empty by definition rather than walking the whole history.
+  Not reachable for ForgePact today.
+- **`## How to update` is kept only once**, in the first file-sourced
+  section, and stripped from every later one — it is identical boilerplate
+  every time, and repeating it once per concatenated version would spend
+  roughly 800 characters of the hub's catalog budget per repetition for no
+  new information.
+
+**Why newest first matters.** The hub's `tools/build_catalog.py` truncates a
+release body at **8000 characters** and appends a "see the release page"
+notice (`docs/hub/catalog-schema.md`). ForgePact's notes for 1.3.17–1.3.20
+alone already total over 11000 characters, so tagging a version with several
+skipped predecessors is routinely going to get truncated in the catalog —
+newest-first means the cut lands on the oldest skipped version, never on the
+version players are actually updating to. This is a known, accepted
+trade-off; the hub is not changed and notes are not trimmed to fit.
+
+### It never builds, uploads or publishes
+
+No `build_release.py`, no `build.bat`, no `upload-artifact`, no
+`gh release upload`, no `gh workflow run`, no `--draft=false`, no
+`gh release edit`. Publishing the draft is a human act at
+`https://github.com/falorfrozen-cmd/ForgePact/releases`, and it is what fires
+`notify-hub-release.yml`.
+
+### The `GITHUB_TOKEN` bump does not notify the hub
+
+The version-bump commit this workflow pushes is authored by
+`github-actions[bot]` using the workflow's own `GITHUB_TOKEN`, and a push
+made that way does not trigger another workflow run on this repository —
+so `notify-hub.yml` (which watches pushes to `main` to open the hub's
+submodule-pointer bump PR) does not fire from it. The hub's pointer bump
+simply waits for the next push made by a human merge to `main`. This is a
+known gap, not a bug to fix.
+
+### Tag-without-release recovery
+
+If the final "Leave a draft release carrying the notes" step fails, the tag
+has already been pushed and no release exists on it — the same state a
+hand-made `git tag` + `git push` leaves. Recovery is creating the release by
+hand from the composed notes (they are still in the job's logs and in
+`$RUNNER_TEMP`, which does not survive past the run — regenerate with
+`tools/forgepact_tag.py --compose-notes` if needed). There is no retry
+machinery.
+
+### Why there is no build half
+
+`modfiles_shipped/` tracks only `.keep`, so `build_release.py`'s own guard —
+`ERROR: modfiles_shipped is incomplete` — stops a CI checkout immediately,
+and `plugin_build/include/` (the YYToolkit headers the plugin compiles
+against) is gitignored. A build half would need all of the following, which
+is a requirement list, not a plan for this change:
+
+1. Pinned Aurie binaries (`AurieCore.dll`, `AuriePatcher.exe`), with
+   checksums.
+2. The **modified** `YYToolkit.dll` (`yytoolkit-modified/NOTICE.md`), built
+   from a pinned commit or stored as a pinned artifact.
+3. Matching headers in `plugin_build/include/` (`plugin/BUILD.md`;
+   `/DYYTK_DEFINE_INTERNAL=1`).
+4. A Windows runner with **MSVC** v143.
+5. `hs-game-sdk` checked out alongside ForgePact (`build.bat` includes it;
+   `build_release.py` needs `../hs-game-sdk/python`), which means the hub.
+6. PyInstaller.
 
 ---
 
@@ -1088,4 +1232,6 @@ Run in this order; the order is the guardrail.
 - Live Plugin IPC Driver: `../../../ForgePact/tools/ipc.ps1` (send a command to the running game, print only the reply)
 - Ghidra Symbol Importer: `../../../ForgePact/tools/ghidra/ImportSymbols.java` (name the stripped game binary from its own script table)
 - Out-of-Process Freeze Probe: `../../../tools/freeze_probe.ps1` (toolkit root, not ForgePact-specific)
-- Release Notes: `../../../ForgePact/release-notes-v*.md` (one per shipped version, v1.3.1 onward; required for every version bump, see Representative Change Workflow)
+- Release Notes: `../../../ForgePact/release-notes-v*.md` (one per shipped version, v1.3.1 onward; preferred source for every version bump, see Representative Change Workflow §6)
+- Tag & Release-Notes Composition Tool: `../../../ForgePact/tools/forgepact_tag.py` (plans a tag, composes a draft release body from whatever notes files exist)
+- Tag Workflow: `../../../ForgePact/.github/workflows/forgepact-tag.yml` (see "Tagging a release (forgepact-tag.yml)" above)

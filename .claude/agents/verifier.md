@@ -53,7 +53,7 @@ shipped as a bug in this repository:
 | A new test double or stub | it cannot represent the input that would fail — e.g. a player fixture that is only ever `VALUE_OBJECT` when the runner returns `VALUE_REF` |
 | A changed accessor or scanner | a kind/type comparison gates whether the work runs at all, rather than being a predicate like `IsInstanceHandle` |
 | A `*Rva*` constant, or a module base plus a literal offset | it appears anywhere reachable from a release build |
-| A player-visible ForgePact change | no `release-notes-vX.Y.Z.md` accompanies it |
+| A player-visible ForgePact change | no `release-notes-vX.Y.Z.md` accompanies it — only when the workorder lists that file as a criterion; otherwise report it as a finding, not a failure, since `forgepact-tag.yml` falls back to generated notes |
 
 **5. Check `NOT DONE` and `DEVIATIONS`.** If the implementer reported either as
 non-empty, those are findings regardless of whether the tests pass.

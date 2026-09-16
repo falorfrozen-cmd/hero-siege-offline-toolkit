@@ -20,8 +20,9 @@ module's own guide, and it is not optional background:
 
 Those guides carry the workflow, test commands, packaging guardrails and release
 rules for each module — several of which no amount of reading the code reveals.
-ForgePact, for instance, treats a player-visible change with no
-`release-notes-vX.Y.Z.md` file as an incomplete change.
+ForgePact, for instance, expects a player-visible change to carry its
+`release-notes-vX.Y.Z.md` in the same PR, because its tag workflow composes the
+draft release body from those files.
 
 Each submodule also carries its own `AGENTS.md` and `CLAUDE.md` pointing back
 here, since a submodule checkout is a separate repository and does not inherit
