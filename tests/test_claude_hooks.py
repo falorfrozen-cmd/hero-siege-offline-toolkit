@@ -298,5 +298,206 @@ class TestHubFrontendTests(HookTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
+class TestDecompiledOutput(HookTestCase):
+    """The one hook whose failure is not fixable by a later release.
+
+    `ForgePact/CREDITS.md` claims AGPL-3.0 original work, and that holds only
+    while no game source text has reached any remote here. So this suite carries
+    more negative controls than the others: a hook that flags `hs-game-sdk`'s own
+    script-name tables would be switched off within a day, and a switched-off
+    hook guards nothing.
+    """
+
+    HOOK = "decompiled_output.py"
+
+    # Every one of these is explicitly blessed by AGENTS.md as an
+    # interoperability fact. If the patterns ever start matching them, the hook
+    # has become worse than useless.
+    ALLOWED = """\
+# Drop research
+
+`gml_Script_scr_DropItem` (index 4021) is reached from `Loot_Manager_obj`.
+We install through `HeroSiege::Scripts::gml_Script_scr_DropRelic` by name.
+Measured: 176993 calls, 0 with a resolvable player, before the IsInstanceHandle
+fix. The door script rolls the same die as case 11/31/40.
+Offsets: +0x18 is the RValue kind; calling convention is __fastcall.
+"""
+
+    def test_clean_tree_is_silent(self):
+        """Negative control: nothing changed, nothing said."""
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_sdk_names_indices_and_measurements_do_not_block(self):
+        """The load-bearing negative control -- see this class's docstring."""
+        self.rig.write("docs/drop-research.md", self.ALLOWED)
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_ghidra_symbol_blocks(self):
+        self.rig.write(
+            "docs/notes.md",
+            "The handler:\n\n    iVar1 = FUN_00b489070(param_1);\n",
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("Ghidra", result.stderr)
+
+    def test_ida_symbol_blocks(self):
+        self.rig.write("docs/notes.md", "call    sub_140A3B7C0\n")
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("IDA", result.stderr)
+
+    def test_ghidra_type_declaration_blocks(self):
+        self.rig.write("docs/notes.md", "undefined8 result;\n")
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stdout)
+
+    def test_gml_positional_argument_blocks(self):
+        self.rig.write(
+            "ForgePact-notes.md",
+            "the body reads:\n\nif (argument0 > 0) { return argument1; }\n",
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("GML positional argument", result.stderr)
+
+    def test_vm_pseudo_variable_blocks(self):
+        self.rig.write("docs/notes.md", "pushi.e @@This@@\n")
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stdout)
+
+    def test_gml_fence_blocks(self):
+        self.rig.write("docs/notes.md", "```gml\nvar x = 1;\n```\n")
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stdout)
+
+    def test_listing_in_source_blocks_not_only_markdown(self):
+        """A comment in a .cpp is as tracked as a docs page."""
+        self.rig.write(
+            "hub/src-tauri/src/note.rs",
+            "// original: iVar1 = FUN_00b489070(param_1);\n",
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stdout)
+
+    def test_guard_machinery_is_not_flagged_by_its_own_patterns(self):
+        """`.claude/` holds the patterns themselves; see the hook's docstring."""
+        self.rig.write(".claude/agents/note.md", "matches FUN_00b489070 too\n")
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_binary_asset_is_not_scanned(self):
+        self.rig.write("docs/shot.png", "FUN_00b489070\n")
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_skip_switch_silences_it(self):
+        self.rig.write("docs/notes.md", "call    sub_140A3B7C0\n")
+        blocked = self.rig.run(self.HOOK)
+        self.assertEqual(blocked.returncode, 2, blocked.stdout)
+        allowed = self.rig.run(self.HOOK, env={"HSTK_SKIP_HOOKS": "1"})
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
+    # -- added lines only -------------------------------------------------
+    #
+    # The first version of this hook matched whole file contents, and five
+    # matches already sit in committed files (two in
+    # ForgePact/docs/pet-quest-collector-c-research.md, two in
+    # dungeon-key-research.md, one in the vendored YYToolkit). Appending a
+    # paragraph to any of them made every subsequent tool call exit 2 until
+    # someone set HSTK_SKIP_HOOKS=1 -- the exact outcome the docstring says it
+    # avoids. These two tests are a pair: the hook must stop wedging, and
+    # grandfathering must not become a loophole.
+
+    LEGACY = "Old finding\n\n    iVar1 = FUN_00b489070(param_1);\n"
+
+    def _commit_legacy(self):
+        self.rig.write("docs/legacy-research.md", self.LEGACY)
+        _git("add", "-A", cwd=self.rig.root)
+        _git("commit", "-qm", "legacy research", cwd=self.rig.root)
+
+    def test_appending_to_a_file_that_already_contains_a_listing_is_silent(self):
+        self._commit_legacy()
+        self.rig.write(
+            "docs/legacy-research.md",
+            self.LEGACY + "\nMeasured 176993 calls through the same path.\n",
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_new_listing_added_to_such_a_file_still_blocks(self):
+        """Grandfathering is scoped to what is in HEAD, not to the file."""
+        self._commit_legacy()
+        self.rig.write(
+            "docs/legacy-research.md",
+            self.LEGACY + "\nand then: call    sub_140A3B7C0\n",
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("IDA", result.stderr)
+
+    def test_deleting_a_line_containing_a_listing_is_silent(self):
+        self._commit_legacy()
+        self.rig.write("docs/legacy-research.md", "Old finding\n")
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class TestDecompiledOutputInSubmodules(HookTestCase):
+    """`ForgePact/docs/` is where research notes land, and the hub's own
+    `git status` reports a dirty submodule as one changed pointer -- never as
+    the files inside it. Scanning only the hub would leave the single
+    highest-risk directory in the repository unguarded, which is precisely the
+    "looked installed and healthy while guarding nothing" failure this suite
+    exists to prevent.
+    """
+
+    HOOK = "decompiled_output.py"
+
+    def setUp(self):
+        super().setUp()
+        self.origin = Path(tempfile.mkdtemp(prefix="hstk-sub-"))
+        self.addCleanup(shutil.rmtree, self.origin, ignore_errors=True)
+        _git("init", "-q", cwd=self.origin)
+        _git("config", "user.email", "t@example.com", cwd=self.origin)
+        _git("config", "user.name", "T", cwd=self.origin)
+        (self.origin / "docs").mkdir()
+        (self.origin / "docs" / "research.md").write_bytes(b"clean\n")
+        _git("add", "-A", cwd=self.origin)
+        _git("commit", "-qm", "base", cwd=self.origin)
+        try:
+            _git(
+                "-c", "protocol.file.allow=always",
+                "submodule", "add", "-q", self.origin.as_uri(), "ForgePact",
+                cwd=self.rig.root,
+            )
+            _git("commit", "-qm", "add submodule", cwd=self.rig.root)
+        except subprocess.CalledProcessError as exc:
+            raise unittest.SkipTest(f"git submodule add unavailable: {exc.stderr}")
+        self.sub = self.rig.root / "ForgePact"
+
+    def test_clean_submodule_is_silent(self):
+        """Negative control: a registered, unmodified submodule says nothing."""
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_listing_inside_a_dirty_submodule_blocks(self):
+        (self.sub / "docs" / "research.md").write_bytes(
+            b"the collect path:\n\n    iVar1 = FUN_00b489070(param_1);\n"
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("ForgePact/docs/research.md", result.stderr)
+
+    def test_clean_change_inside_a_submodule_does_not_block(self):
+        (self.sub / "docs" / "research.md").write_bytes(
+            b"Measured 176993 calls through gml_Script_scr_DropRelic.\n"
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

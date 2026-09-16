@@ -11,15 +11,78 @@ When developing, modifying, testing, or investigating code within any submodule 
 
 [`.claude/`](.claude/README.md) carries the subset of this file that a machine
 can check or run, so those rules stop depending on whether the right section was
-read first. Three `PostToolUse` hooks (the catalog signature, the Tauri command
-threading rules, the hub's frontend tests), two review agents
-(`sdk-contract-reviewer`, `tauri-command-reviewer`), and two skills
-(`/catalog-rebuild`, and a `submodule-context` skill that loads the guide named
-above). MCP servers are in [`.mcp.json`](.mcp.json).
+read first. Four `PostToolUse` hooks (the catalog signature, the Tauri command
+threading rules, the hub's frontend tests, and decompiled output reaching a
+tracked file), five review agents (`sdk-contract-reviewer`,
+`tauri-command-reviewer`, `decompile-output-guard`, `docs-sync-reviewer`,
+`instrument-blindness-reviewer`), three phase agents that run a change through
+plan → implement → verify at three different model tiers (`planner`,
+`implementer`, `verifier`), a `consultant` a phase can put one hard decision to
+without escalating the whole phase, and three skills (`/catalog-rebuild`,
+`/workorder`
+which drives those phases and routes defects back to the phase that caused them,
+and a `submodule-context` skill that loads the guide named above). MCP servers
+are in [`.mcp.json`](.mcp.json).
+
+The phase split exists because the expensive failures in this file are not
+planning failures — they are an implementer meeting something the plan did not
+anticipate and writing something plausible instead of stopping. So the
+`implementer` is required to return `PLAN-DEFECT` with evidence rather than
+improvise, and the `verifier` runs the acceptance criteria and reports what they
+actually printed rather than judging whether the code looks right. Both rules
+are this file's "evidence before assertions" applied to a handover.
+
+A phase that is merely *stuck* on one decision has a cheaper move than failing:
+`ADVICE-NEEDED` puts that question to the `consultant` and resumes with the
+answer, keeping its context and its progress. It must state what it would do
+unaided, so the answer confirms or corrects a position rather than replacing the
+thinking — a consultation that skips that field is a handoff wearing a question
+mark, and the driver sends it back. Which problems start a tier higher is
+decided up front from **observable properties of the task** (does it introduce
+concurrency, must it establish an unknown mechanism, does it change how a hook
+attaches), never from a model's self-reported confidence: a model that cannot
+solve something is also badly calibrated about whether it can, which is the same
+reason this file does not accept an unproven negative.
 
 If a hook blocks an edit, it is quoting a rule from this file — read what it
 printed rather than working around it. If you add a rule here that is
 mechanically checkable, add the check too; `.claude/README.md` says how.
+
+## Offer `/workorder` When the Work Has Shape, and Respect "Plan Only"
+
+`/workorder` is user-invoked only. The skill sets `disable-model-invocation:
+true`, because it spawns at least three agents, which is the wrong response to
+a typo — so reaching for it through the `Skill` tool returns a refusal, not a
+pipeline. You cannot start it; you can only **offer** it, in one line, before
+starting, when the request matches any of these:
+
+- the change spans several files, or touches a submodule;
+- the user asks to **implement, execute or carry out a plan** — theirs, or one
+  from an earlier session;
+- it introduces concurrency, changes how a hook attaches, alters a contract the
+  C++/Python/TypeScript bindings must agree on, or would ship a player-visible
+  change;
+- there are three or more distinct steps and a later one depends on an earlier
+  one being right.
+
+Offer, then wait. One line — *"This spans the SDK and two bindings; want me to
+run it through `/workorder`, or just make the change?"* — and if the answer is
+no, do the work directly and drop it. Do not re-offer within a session, and do
+not ask about a one-line fix.
+
+**"Plan it" means plan it, and nothing else.** When the request is for a plan,
+a design, an approach, or an assessment of how something should be done, the
+mode that fits is `/workorder plan <task>` — so name it and ask the user to run
+it, the same way you offer the full pipeline. Do not try to invoke it yourself;
+that is the refusal above, and it costs a round to discover.
+
+Once it is running, **stop when the plan exists**. Report it, name the
+`resume` command, write no code, and edit nothing. The user is splitting the
+work across sessions on purpose: implementation starts from the file, not from
+the conversation, and the plan not surviving that split is exactly the signal
+they are trying to get. Starting the implementation because the plan looked
+obviously right removes the review checkpoint they asked for, and it is the one
+outcome that makes the split worthless.
 
 ## Legal: Decompiled Output Never Reaches Any Origin
 
