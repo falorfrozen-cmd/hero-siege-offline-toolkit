@@ -25,6 +25,15 @@ events the `if` rejects -- the original bug, reintroduced by an edit to one
 side. The comparison has a negative control, because a check that cannot fail
 proves nothing.
 
+**That the review is allowed to do its job.** `--allowedTools` replaces the
+code-review command's own tool list rather than adding to it. The first version
+listed only the inline-comment tool, so the review could neither read the pull
+request (`gh pr view`, `gh pr diff`) nor post its "No issues found" summary
+(`gh pr comment`); the job went green with five denied tool calls and nothing
+on the PR (hub #56). The allow-list is now checked against every tool that
+command declares, and the full result file is uploaded so the next denial is
+visible rather than a bare count.
+
 The file is read as text rather than parsed: CI runs this suite with
 `python -m unittest discover -s tests` and installs nothing, so PyYAML is not
 available there.
@@ -164,6 +173,57 @@ class PredicateCopiesAgree(unittest.TestCase):
             + text[second + len(needle):]
         )
         self.assertFalse(predicate_shared_with_group(drifted))
+
+
+# The `allowed-tools` frontmatter of the code-review command the workflow runs
+# (plugins/code-review/commands/code-review.md in anthropics/claude-code, read
+# 2026-09-16). If the plugin adds a tool, add it here and to the workflow.
+CODE_REVIEW_COMMAND_TOOLS = (
+    "Bash(gh issue view:*)",
+    "Bash(gh search:*)",
+    "Bash(gh issue list:*)",
+    "Bash(gh pr comment:*)",
+    "Bash(gh pr diff:*)",
+    "Bash(gh pr view:*)",
+    "Bash(gh pr list:*)",
+    "mcp__github_inline_comment__create_inline_comment",
+)
+
+
+def allowed_tools(text):
+    match = re.search(r'--allowedTools "([^"]*)"', text)
+    if match is None:
+        return None
+    return {tool.strip() for tool in match.group(1).split(",") if tool.strip()}
+
+
+class TheReviewCanReadAndPost(unittest.TestCase):
+    def test_allow_list_covers_every_tool_the_command_declares(self):
+        tools = allowed_tools(workflow_text())
+        self.assertIsNotNone(tools, "--allowedTools not found in claude_args")
+        missing = [tool for tool in CODE_REVIEW_COMMAND_TOOLS if tool not in tools]
+        self.assertEqual(missing, [], "denied at run time, silently: %s" % missing)
+
+    def test_negative_control_the_original_allow_list_fails(self):
+        # The shape that shipped first and posted nothing on hub #56.
+        original = """claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'"""
+        tools = allowed_tools(original)
+        self.assertEqual(tools, {"mcp__github_inline_comment__create_inline_comment"})
+        self.assertTrue(any(tool not in tools for tool in CODE_REVIEW_COMMAND_TOOLS))
+
+    def test_the_workflow_token_can_write_to_pull_requests(self):
+        self.assertRegex(workflow_text(), r"(?m)^  pull-requests: write$")
+
+    def test_the_full_result_is_kept_even_when_the_review_fails(self):
+        text = workflow_text()
+        step = re.search(
+            r"(?ms)^      - name: Keep the run's full result\n(.*?)(?=^      - |\Z)", text
+        )
+        self.assertIsNotNone(step, "result upload step not found")
+        body = step.group(1)
+        self.assertIn("if: always()", body)
+        self.assertIn("uses: actions/upload-artifact@", body)
+        self.assertIn("path: ${{ runner.temp }}/claude-execution-output.json", body)
 
 
 if __name__ == "__main__":
