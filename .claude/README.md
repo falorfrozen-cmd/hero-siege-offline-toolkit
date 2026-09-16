@@ -125,7 +125,17 @@ while the `hub.exe` it started survives, with neither `post` nor `stop` having
 run in between — the survivor cannot be attributed and will not be reported.
 `AGENTS.md`'s "check with a command" is the backstop for exactly this gap.
 
-Three more identity safeguards, each added after a live report misattributed
+**Known limitation, not observed (R1-A):** rule (b) (orphan admission) is
+narrowed to `DETACHED_ORPHAN_IMAGES`, so a detached dev tool outside that
+allowlist — an unusual build helper, say — is still missed by rule (b),
+silently, the same as any other process that rule was never going to
+attribute in the first place. See "Live checks" below for the incident that
+motivated the narrowing. One allowlisted process is expected to show up: `git
+fsmonitor--daemon run --detach` (seen 2026-09-16), which git starts detached
+when `core.fsmonitor` is on. It is a shared, long-lived watcher that git
+restarts on demand, so say so rather than treating it as a leak.
+
+Two more identity safeguards, each added after a live report misattributed
 something and each proven by its own paired test in
 `TestLeftoverProcessesAdmissionRules`:
 
@@ -138,12 +148,140 @@ something and each proven by its own paired test in
   occupant of that PID to match the ledger entry's creation time exactly, not
   merely postdate it — `entry.creation <= proc.creation` is true for any later
   process once the ledger entry is dead, reused PID or not.
-- `stop`'s liveness check trusts `GetExitCodeProcess` (`STILL_ACTIVE`) over
-  Toolhelp32 membership alone, since a just-terminated PID can still appear in
-  a snapshot for a brief window after it exits. Treat this one as a
-  hypothesis-level safeguard rather than a confirmed fix: the flaky test that
-  motivated it has also passed 20/20 in local runs *without* this gate, so the
-  gate has not itself been shown to be what closes the flake.
+
+#### The structural hook matcher (F1)
+
+A concurrent sibling `PostToolUse` hook spawns its own `bash -> bash -> py ->
+python` chain during a call's window, which reaches the session root through
+processes otherwise indistinguishable from a real leftover. Excluding it needs
+to tell "this hop is actually running one of this repo's `.claude/hooks/*`
+scripts" apart from "this hop's command line merely mentions one" — a
+distinction two earlier versions of this check got wrong. The first matched
+any command line containing the substring `.claude/hooks/` anywhere, which
+also matched a Bash tool call that merely *talked about* that path and hid its
+own `py`/`python` and every wrapping shell from the ledger (live A/B
+confirmed). A second version narrowed the substring to the unexpanded
+`$CLAUDE_PROJECT_DIR/.claude/hooks/...` fragment plus its two expanded
+slash-style spellings — still a substring search. Calling that matcher's own
+function directly against the three spellings (R1-B item 3: not itself a live
+A/B — no real process tree was involved, just the pure function) found it
+still hid all three whenever `CLAUDE_PROJECT_DIR` happened to be in
+forward-slash form, because the fragment itself is a substring of a mention
+that never invokes anything. The *replacement* matcher below was the one
+actually put through a live A/B, against real hook processes — see the citation
+after "This depends on two facts" below.
+
+The replacement parses each hop's command line the way the OS itself split
+it — `CommandLineToArgvW` via `ctypes` — and asks a narrower, shape-specific
+question instead of a substring search:
+
+- A shell hop (`bash.exe`/`sh.exe`): its `-c` argument, once parsed, equals
+  one of the `command` strings configured in `.claude/settings.json` **or**
+  `.claude/settings.local.json`, exactly.
+- A `py`/`python` hop (`py.exe`, or `python[0-9.]*w?.exe`): its first
+  non-flag argument — after `py.exe`'s own optional version selector such as
+  `-3` — is, once normalised (quotes stripped, backslashes to forward
+  slashes, `posixpath.normpath`, lower case), one of the script paths those
+  same `command` strings invoke. `-c`, `-m`, or any other leading interpreter
+  flag is deliberately never a match — an unusual flag makes the hook
+  over-report a real leftover, the safe direction, rather than hide one.
+
+This depends on two facts a 45 s read-only poll of two live sessions measured
+directly (2026-09-16): every configured hook ran as a four-hop
+`bash -> bash -> py -> python` chain, both bash hops' `-c` argument was the
+configured `command` string verbatim (checked against `CommandLineToArgvW`'s
+own parse), and the `py`/`python` hops showed the expanded path with forward
+slashes — the spelling of `CLAUDE_PROJECT_DIR` itself is never assumed,
+only normalised before comparing. Only `.claude/settings.json` and
+`.claude/settings.local.json` are read; a user-level (`~/.claude/settings.json`)
+or plugin-provided hook is not, which stays in the over-report direction (its
+chain is never excluded, so it can only be reported as a leftover it is not,
+never hidden). `_configured_hooks` never raises on an unreadable file or an
+oddly shaped `hooks` block — see "Fail-open" below.
+
+**Live A/B (round-0 reviewer, 2026-09-16 ~15:03):** the replacement matcher
+above was checked against a real, running session — 166/166 of that session's
+own real hook processes matched, and 0/8 deliberately non-hook probe processes
+did, where the substring-based matcher it replaced hid all 8 of those probes.
+This is the citation R1-B item 3 asked to add here, in place of calling the
+earlier paragraph's direct function call against three spellings a "live A/B"
+— it never ran against a real process tree.
+
+**F2 — capturing before anything slow.** `cmd_post`'s admission walk used to
+run after `_load_ledger` parsed every `post-*.json` in the session directory —
+hundreds of files, tens of milliseconds each — by which point a short-lived
+sibling hook hop had often already exited, so its command line read back
+`None` and the structural matcher above had nothing to match against. Measured
+before the fix (2026-09-16, 357 files, 4,089 entries): a mean of 10.7 ledger
+entries per call, almost all sibling `bash.exe`/`py.exe`/`python.exe`/`git.exe`
+hops that had already exited by the time they were checked. The fix captures
+each new pid's command line and liveness (`_capture_new`) immediately after
+diffing against `pre`, before the ledger load or any admission rule runs, and
+the captured line is what `_is_hook_chain` checks first (R1-B item 1: kept for
+a since-exited hop too, whenever the line itself was readable, not only for a
+hop still alive at capture time — the docstring said this from the start, the
+code did not until R1-B).
+
+Growth has not been observed after the fix, in two separate live measurements
+(2026-09-16): a mean of 0.059 entries per file at 14:47 (34 files, 12+ separate
+`Bash` calls after the final edit) and a mean of 0.353 across 99 files at
+round-0 verification. Attributed to the liveness filter plus this early
+capture together, not proven as a controlled before/after of one change in
+isolation — see the recorded runs under "Live checks" below.
+
+#### Fail-open, and what a session cannot see (F3/F4)
+
+Both of the notes below go through `systemMessage` on stdout — the one channel
+[the hooks docs](https://code.claude.com/docs/en/hooks) (fetched 2026-09-16)
+say is shown to the user and that `Stop` does not discard — alongside the same
+text on stderr. Plain stderr at exit 0 goes to Claude Code's debug log only,
+never the transcript, so the hook's previous no-root stderr note was invisible
+on every path that did not also report a leftover, which is most of them.
+
+- **`no hook commands found in .claude/settings.json or
+  .claude/settings.local.json`**: `_configured_hooks` found nothing to match
+  against — the matcher above then cannot recognise any sibling hook chain, so
+  leftovers may be over-reported. Shown **once per session**, not on every
+  reply while the configuration stays broken (the user's own call), tracked in
+  its own `hookwarn-reported.json` next to `reported.json`.
+- **`found no claude.exe ancestor`**: at `stop`, this is
+  `no claude.exe ancestor at Stop; not tracking this session`, said directly
+  every time that lookup fails. At `post`, the call records nothing but leaves
+  a `noroot-<tool_use_id>.json` marker; a later `stop` whose own lookup does
+  succeed counts those markers and reports `N PostToolUse call(s) found no
+  claude.exe ancestor and recorded nothing` once per newly blind call, in
+  `noroot-reported.json` — the same report-once shape `reported.json` already
+  uses for a leftover process.
+
+#### The liveness gate's proof (F5)
+
+`stop`'s liveness check trusts `GetExitCodeProcess` (`STILL_ACTIVE`) over
+Toolhelp32 membership alone, since a just-terminated PID can still appear in a
+snapshot for a brief window after it exits. This was previously unconfirmed,
+not because the gate was wrong but because the CLI-level flaky test that
+motivated it kept passing in local runs even with the gate removed —
+Toolhelp32Snapshot does not list an exited process on demand in that test's
+own timing, so it could not exercise the stale case either way, and a result
+like that has to be written down as "not observed", never as "proven".
+`TestLeftoverProcessesStaleToolhelp` proves it instead at unit level: a
+fabricated ledger entry plus a stubbed `snapshot()`/`_command_line` that still
+"sees" the pid, with `_is_still_active` stubbed both ways. Removing the gate
+(`sed 's/if not _is_still_active(pid):/if False:/'`, run against an
+`HSTK_HOOK_UNDER_TEST_DIR` copy so the live hook is
+never touched) turns that test's pass into `FAILED (failures=1)`.
+
+#### A/B without touching the live hook
+
+Auto mode denies overwriting the live hook, and editing it mid-session changes
+every hook call for the rest of that session. `HSTK_HOOK_UNDER_TEST_DIR` is
+the accepted way around both: when set, `HookRig` and `_load_hook_module` in
+`tests/test_claude_hooks.py` load hook scripts from that directory instead of
+the repository's `.claude/hooks/` (`settings.json` is still always copied from
+the repository, since F1 compares against it byte for byte). This is how F1's
+negatives are proven to fail against the pre-fix hook (`git show <rev>:...`
+into a scratch directory) and how F5's gate is proven to fail against a
+mutant, without ever writing to `.claude/hooks/leftover_processes.py` itself
+mid-session.
 
 ### Live checks
 
@@ -161,11 +299,11 @@ checkbox, because it needs a live session to end a reply:**
 2. Kill that process, then send a trivial message. Expect no report.
 3. Confirm no MCP `node.exe` and no process belonging to a second, separately
    open session was listed.
-4. If step 1 shows nothing, check stderr in transcript mode for
-   `leftover_processes: no claude.exe ancestor; not tracking` before
-   concluding there was no leak — that note means the session-root lookup
-   failed inside the hook, which is a defect in the lookup, not evidence
-   nothing leaked.
+4. If step 1 shows nothing, look for a visible warning naming
+   `no claude.exe ancestor at Stop` (F4's `systemMessage`, not a stderr-only
+   note — see "Fail-open" above) before concluding there was no leak — that
+   warning means the session-root lookup failed inside the hook, which is a
+   defect in the lookup, not evidence nothing leaked.
 
 Record the result here, with the date, next to the runs below.
 
@@ -208,6 +346,45 @@ not a leftover. The one plausible true positive that day, a `vctip.exe` from a
 C++ build, could not be killed with `taskkill` under auto mode's workload
 classifier -- see `AGENTS.md`'s section for what to do instead (tell the user,
 name the PID).
+
+**F2 measured live (2026-09-16, driver session, workorder round 0):** 12
+separate `Bash` tool calls (`true`) after the final edit to the hook, then the
+criterion's own measurement script against this session's ledger directory.
+34 `post-toolu_*.json` files were written after that edit, mean 0.059 entries
+per file -- against the pre-fix baseline of a mean of 10.7 entries per call
+(357 files, 4,089 entries, same date). Round-0 verification re-measured the
+same way against a larger sample and found a mean of 0.353 across 99 files --
+still well under the 10.7 baseline, growth not observed after the change in
+either run. This is attributed to `_capture_new` reading each new pid's
+command line before `_load_ledger`/the admission walk, together with the
+liveness filter it feeds; neither run isolates the two as a controlled
+before/after of one change alone.
+
+**R1-A (rule (b) narrowed to `DETACHED_ORPHAN_IMAGES`):** live, 2026-09-16
+15:05, before this round's fix. A Stop in this hook's own driver session
+reported two `DiscordSystemHelper.exe` PIDs (182872, 183060, started
+15:04:14) as leftovers. `Discord.exe` (179524) had just (re)started at
+15:04:08, and each helper's own parent was a short-lived launcher already
+dead by the time it was checked -- so the helpers were orphans whose launcher
+happened to be born and die inside this session's own tool-call window, and
+rule (b) admitted them exactly as designed. This is the accepted "another
+session's orphan, rarely" risk the rule's docstring already named, just from
+an image nobody's tool calls start rather than another session's. The report
+suggested `taskkill` against the user's own Discord; it was not run.
+`DETACHED_ORPHAN_IMAGES` bounds rule (b) to images a session plausibly starts
+itself, so this shape no longer reaches it -- see `_is_orphan_admissible`'s
+docstring for the list and its limitation.
+
+**F2 re-measured live (2026-09-16, round 1, after this round's `_capture_new`
+and `_is_orphan_admissible` changes):** 13 separate `Bash` tool calls (`true`)
+after the final edit to the hook this round, then the same measurement
+script. 34 `post-toolu_*.json` files were written after that edit, mean 0.029
+entries per file -- still well under the 10.7 baseline, growth still not
+observed after round 1's changes.
+
+**Not yet re-run after this round's changes:** the live positive control
+(steps 1-3 above), and a check that the `systemMessage` note from a blind
+`Stop` actually shows in the desktop app.
 
 ## Agents — `agents/`
 

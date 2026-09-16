@@ -309,7 +309,9 @@ whatever it can attribute to this session's own tool calls and is still alive
 when a reply ends, once per process. It never kills anything — reporting is
 all it does. A quiet hook is "not observed", not proof that nothing leaked; it
 can only see what its own ledger recorded, so the rule above is still yours to
-follow, not something to wait for the hook to catch.
+follow, not something to wait for the hook to catch. When it cannot track a
+session at all — no `claude.exe` ancestor, or unreadable hook settings — it
+says so with a visible warning instead of staying silently blind.
 
 ## Prove the Instrument Before Trusting a Negative Result
 

@@ -72,6 +72,18 @@ session, which is why this was accepted over alternative 2 above. Because this
 hook only ever reports, the cost of a wrong attribution is one line Claude can
 answer with "not mine" -- never a kill.
 
+**R1-A narrows rule (b) to `DETACHED_ORPHAN_IMAGES`**, a named allowlist of
+images a session's own tool calls plausibly start (interpreters, shells,
+`git`/`cargo`/`rustc`, the hub debug build) -- a live Stop on 2026-09-16 15:05
+attributed two `DiscordSystemHelper.exe` orphans to this session, whose
+short-lived relaunch launcher happened to die inside this call's window, which
+is exactly the risk above but for an image nobody's tool calls ever start.
+Rules (a) and (c) are unchanged: a child reachable through this session's own
+live tree is admitted whatever its name, because that chain already proves
+the session's own ancestry, not an image guess. Not observed: an unlisted
+detached dev tool is still missed, the same as any other orphan rule (b) was
+never going to attribute.
+
 The hook's own ancestor chain up to R, any `conhost.exe` (which dies with its
 owner and is pure noise), and any chain that is actually *running* one of this
 repo's `.claude/hooks/*` scripts, are never admitted. The last one exists
@@ -86,13 +98,36 @@ same reason.
 this check matched any command line containing the substring `.claude/hooks/`
 anywhere at all, which also matches a Bash tool call that merely *talks about*
 that path -- `echo .claude/hooks/ >/dev/null; py -3 -c "..."` hid its own
-`py`/`python` and every wrapping shell from the ledger, live A/B confirmed. The
-fix matches against the actual `$CLAUDE_PROJECT_DIR/.claude/hooks/<name>.py`
-fragments read from `.claude/settings.json`'s own hook `command` strings, in
-both the form a wrapping shell hop still carries unexpanded and the form a
-`py`/`python` descendant shows once that shell has substituted the real
-project directory in -- never a bare substring of the directory name, which
-arbitrary command text can contain without invoking anything there.
+`py`/`python` and every wrapping shell from the ledger, live A/B confirmed. A
+second version matched the *unexpanded* `$CLAUDE_PROJECT_DIR/.claude/hooks/...`
+fragment plus its two expanded slash-style spellings -- still a substring
+search, and calling that matcher directly against the three spellings (a
+function-level check, not a live process tree) found it still hid all three whenever `CLAUDE_PROJECT_DIR` happened to be
+in forward-slash form, because the fragment itself is a substring of a mention
+that never invokes anything.
+
+The structural replacement parses each hop's command line the same way the OS
+itself split it -- `shell32.CommandLineToArgvW` via `ctypes` -- and asks a
+narrower, shape-specific question instead of a substring search:
+
+  - A shell hop (`bash.exe`/`sh.exe`): its `-c` argument, once parsed, equals
+    one of the `command` strings configured in `.claude/settings.json` or
+    `.claude/settings.local.json`, exactly.
+  - A `py`/`python` hop (`py.exe`, or `python[0-9.]*w?.exe`): its first
+    non-flag argument -- after `py.exe`'s own optional version selector such
+    as `-3` -- is, once normalised (quotes stripped, backslashes turned to
+    forward slashes, `posixpath.normpath`, lower case), one of the script
+    paths those same `command` strings invoke. `-c`, `-m`, or any other
+    leading interpreter flag is deliberately never a match: an unusual flag
+    makes the hook over-report a real leftover, the safe direction, rather
+    than hide one.
+
+Both live-measured facts this depends on: both bash hops' `-c` argument is the
+configured `command` string verbatim (checked directly against
+`CommandLineToArgvW`'s own parse), and a `py`/`python` descendant's own command
+line shows the fully expanded path with forward slashes, spelling
+`CLAUDE_PROJECT_DIR` however the shell that substituted it happened to -- never
+assumed, always normalised before comparing.
 
 Two more identity details, both found the same way -- a live Stop misreporting
 something that was not actually a leftover:
@@ -122,7 +157,50 @@ Separately, `Stop`'s liveness check trusts `GetExitCodeProcess`
 (`STILL_ACTIVE`, 259) over Toolhelp32 membership: a just-terminated PID can
 still appear in a Toolhelp32Snapshot for a brief window after the process
 object is gone (observed as an intermittent false report of an already-killed
-test process), and the exit code is the authoritative answer.
+test process), and the exit code is the authoritative answer. Toolhelp cannot
+be made to list an exited PID on demand, so this gate is proven at unit level
+instead, in `TestLeftoverProcessesStaleToolhelp`: a fabricated ledger entry
+plus a stubbed `snapshot()`/`_command_line` that still "sees" a since-exited
+PID, with `_is_still_active` stubbed both ways. The positive case reports it;
+the negative case, with the gate telling the truth, does not. The mutant this
+catches: replacing `cmd_stop`'s gate with an unconditional pass turns the
+paired test's failure into a silent success.
+
+Separately, rule (b) (orphan admission) is narrowed to
+`DETACHED_ORPHAN_IMAGES`, a named allowlist of images a session's own tool
+calls plausibly start (R1-A, after a live Stop on 2026-09-16 15:05 attributed
+two `DiscordSystemHelper.exe` orphans to this session -- see
+`_is_orphan_admissible`'s docstring). **Not observed:** a detached dev tool
+outside that list -- an unusual build helper, say -- is still missed by rule
+(b), silently, the same as any other process rule (b) was never going to
+attribute in the first place.
+
+## Fail-open, and what a session cannot see
+
+Both of the following go through `systemMessage` on stdout, printed once by
+`stop` for whatever this Stop noticed, alongside the same text on stderr.
+Stderr from a hook that exits 0 goes to Claude Code's debug log only, never
+the transcript (confirmed against
+[the hooks docs](https://code.claude.com/docs/en/hooks), 2026-09-16) -- so a
+plain stderr note is invisible on every path that does not also report a
+leftover, which is most of them, including the previous version of both notes
+below.
+
+  - **No configured hook commands found** (an unreadable or oddly shaped
+    `.claude/settings.json`/`settings.local.json`): the structural matcher
+    (`_is_hook_invocation`) then cannot recognise *any* sibling hook chain, so
+    leftovers may be over-reported. `_configured_hooks` never raises on a
+    malformed shape -- it skips what it cannot parse and keeps going -- so
+    this is a warning, not a crash. Shown **once per session**, not on every
+    reply while the configuration stays broken, tracked in its own
+    `hookwarn-reported.json` next to `reported.json`.
+  - **No `claude.exe` ancestor found**, at `post` or at `stop`. `stop` says so
+    directly, every time its own lookup fails. A `post` call that could not
+    find its root records nothing but leaves a `noroot-<tool_use_id>.json`
+    marker; a later `stop` whose own lookup *does* succeed counts those
+    markers and reports the total once per newly blind call, in
+    `noroot-reported.json` -- the same "report once, not every reply" shape
+    `reported.json` already uses for a leftover process.
 
 ## Two environment variables
 
@@ -134,8 +212,8 @@ test process), and the exit code is the authoritative answer.
   - `HSTK_PROC_SESSION_ROOT_PID`: use this PID as the session root instead of
     searching for the nearest `claude.exe` ancestor. Exists for tests. If no
     `claude.exe` ancestor can be found and this is unset, `post` admits
-    nothing and `stop` says so once on stderr rather than staying silently
-    blind.
+    nothing and `stop` says so visibly (see "Fail-open" above) rather than
+    staying silently blind.
 
 Never kills anything: no Win32 call that ends a process, no signal sent from
 Python, no `taskkill`/`Stop-Process`, and it never spawns a child process of
@@ -147,7 +225,9 @@ import ctypes
 import functools
 import json
 import os
+import posixpath
 import re
+import shlex
 import sys
 import tempfile
 import time
@@ -161,6 +241,7 @@ from _common import SKIP_HINT, skip_requested  # noqa: E402
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if sys.platform == "win32" else None
 ntdll = ctypes.WinDLL("ntdll", use_last_error=True) if sys.platform == "win32" else None
+shell32 = ctypes.WinDLL("shell32", use_last_error=True) if sys.platform == "win32" else None
 
 TH32CS_SNAPPROCESS = 0x00000002
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -168,57 +249,162 @@ PROCESS_COMMAND_LINE_INFORMATION = 60
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 STILL_ACTIVE = 259
 
-_SETTINGS_PATH = Path(__file__).resolve().parent.parent / "settings.json"
+_CLAUDE_DIR = Path(__file__).resolve().parent.parent
 
-# The unexpanded fragment every configured hook `command` string carries, e.g.
-# `$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py`. No quoting or
-# `py -3` prefix is included on purpose: this repo's hooks are invoked through
-# a shell wrapper, and matching only the fragment lets a substring search find
-# it regardless of how that wrapper's own command line quotes the rest.
-_HOOK_FRAGMENT_RE = re.compile(r"\$CLAUDE_PROJECT_DIR/\.claude/hooks/[^\s\"]+\.py")
+if shell32 is not None:
+    shell32.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    shell32.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
 
 
-@functools.lru_cache(maxsize=1)
-def _hook_path_fragments():
-    """Every `$CLAUDE_PROJECT_DIR/.claude/hooks/<name>.py` fragment configured
-    in `.claude/settings.json`'s own hook `command` strings, unexpanded."""
+def _argv(cmdline):
+    """Parse a command line into argv the way Win32 itself does, via
+    `shell32.CommandLineToArgvW` -- the same parser every process on this
+    system was launched through, so it agrees with how the OS itself split
+    quoting and escaping, rather than a hand-rolled approximation of it."""
+    if not cmdline:
+        return []
+    count = ctypes.c_int(0)
+    raw = shell32.CommandLineToArgvW(cmdline, ctypes.byref(count))
+    if not raw:
+        return []
     try:
-        settings = json.loads(_SETTINGS_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ()
-    fragments = set()
-    for groups in settings.get("hooks", {}).values():
-        for group in groups:
-            for entry in group.get("hooks", []):
-                match = _HOOK_FRAGMENT_RE.search(entry.get("command", "") or "")
-                if match:
-                    fragments.add(match.group(0))
-    return tuple(fragments)
+        return [raw[i] for i in range(count.value)]
+    finally:
+        kernel32.LocalFree(raw)
+
+
+def _normalize_script_path(value):
+    """Fold quoting and slash-style differences out of a script path so a
+    fragment read from `settings.json` (which may carry `$CLAUDE_PROJECT_DIR`
+    with forward slashes) compares equal to what a live `py`/`python` hop's
+    own command line shows once its shell has substituted and, on Windows,
+    mixed slash styles into it (fact 2 of the round-0 research)."""
+    if value is None:
+        return None
+    value = value.strip().strip('"').strip("'")
+    value = value.replace("\\", "/")
+    return posixpath.normpath(value).lower()
+
+
+def _configured_hooks(claude_dir, project_dirs):
+    """Every hook `command` string, and every script path it invokes,
+    configured in `<claude_dir>/settings.json` and `settings.local.json`
+    (both optional). Never raises -- an unreadable or oddly shaped settings
+    file yields two empty sets rather than crashing `stop`, per F3."""
+    commands = set()
+    scripts = set()
+    for name in ("settings.json", "settings.local.json"):
+        try:
+            settings = json.loads((claude_dir / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(settings, dict):
+            continue
+        hooks = settings.get("hooks")
+        if not isinstance(hooks, dict):
+            continue
+        for groups in hooks.values():
+            if not isinstance(groups, list):
+                continue
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                entries = group.get("hooks")
+                if not isinstance(entries, list):
+                    continue
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    command = entry.get("command")
+                    if not isinstance(command, str):
+                        continue
+                    command = command.strip()
+                    if not command:
+                        continue
+                    commands.add(command)
+                    try:
+                        tokens = shlex.split(command)
+                    except ValueError:
+                        continue
+                    for token in tokens:
+                        if not token.endswith(".py"):
+                            continue
+                        for project_dir in project_dirs:
+                            if token.startswith("$CLAUDE_PROJECT_DIR"):
+                                resolved = project_dir + token[len("$CLAUDE_PROJECT_DIR"):]
+                            elif token.startswith("${CLAUDE_PROJECT_DIR}"):
+                                resolved = project_dir + token[len("${CLAUDE_PROJECT_DIR}"):]
+                            elif re.match(r"^[A-Za-z]:[\\/]", token) or token.startswith(("/", "\\")):
+                                resolved = token
+                            else:
+                                resolved = project_dir.rstrip("\\/") + "/" + token
+                            scripts.add(_normalize_script_path(resolved))
+                            if re.match(r"^[A-Za-z]:[\\/]", token) or token.startswith(("/", "\\")):
+                                break  # absolute -- project_dirs are irrelevant, do not repeat
+    return frozenset(commands), frozenset(scripts)
 
 
 @functools.lru_cache(maxsize=1)
-def _hook_process_markers():
-    """Every string that identifies a hop as genuinely running one of this
-    repo's hooks -- never a bare mention of the hooks directory.
+def _hooks():
+    """`(commands, scripts)` configured for this repository's own session,
+    cached for the life of this process. `project_dirs` includes both the
+    live `CLAUDE_PROJECT_DIR` (its spelling is not guaranteed -- see fact 2)
+    and this file's own resolved repository root, so a script token resolves
+    the same way regardless of which one a hop's shell actually substituted."""
+    project_dirs = []
+    env_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    if env_dir:
+        project_dirs.append(env_dir)
+    project_dirs.append(str(Path(__file__).resolve().parents[2]))
+    return _configured_hooks(_CLAUDE_DIR, project_dirs)
 
-    Two forms per configured hook, both observed live: the fragment as written
-    (`$CLAUDE_PROJECT_DIR/...`), which the wrapping shell hop still carries
-    unexpanded, and the same fragment with `$CLAUDE_PROJECT_DIR` replaced by
-    the real project directory (both slash styles), which is what a `py`/
-    `python` descendant's own command line shows once that shell has expanded
-    it. `CLAUDE_PROJECT_DIR` is the same environment variable `settings.json`
-    itself references, and it is inherited down this hook's own ancestry the
-    same way it reaches every hop below the shell that first resolved it.
+
+_PY_VERSION_SELECTOR_RE = re.compile(r"^-\d[\d.\-]*$")
+
+
+def _is_hook_invocation(image, cmdline, commands, scripts):
+    """True only when this hop is *actually running* a configured hook --
+    never merely mentioning one. Two shapes, both measured live:
+
+      - A shell hop (`bash.exe`/`sh.exe`): its `-c` argument, parsed the same
+        way the shell itself will parse it, equals a configured `command`
+        string exactly.
+      - A `py`/`python` hop: its first non-flag argument (after `py.exe`'s
+        own optional version selector, e.g. `-3`) is, once normalised, one of
+        the configured script paths.
+
+    Any other shape -- including `-c`, `-m`, or any other leading option on a
+    py/python hop -- returns False. That is deliberately strict: an unusual
+    interpreter flag makes the hook over-report a real leftover, which is the
+    safe direction, rather than hide one the way the substring matcher did.
     """
-    fragments = _hook_path_fragments()
-    markers = set(fragments)
-    project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
-    if project_dir:
-        for fragment in fragments:
-            expanded = fragment.replace("$CLAUDE_PROJECT_DIR", project_dir)
-            markers.add(expanded)
-            markers.add(expanded.replace("/", "\\"))
-    return tuple(marker.lower() for marker in markers)
+    if not cmdline:
+        return False
+    argv = _argv(cmdline)
+    if not argv:
+        return False
+    lowered_image = image.lower() if image else ""
+
+    if lowered_image in ("bash.exe", "sh.exe"):
+        for i in range(1, len(argv)):
+            if argv[i] == "-c" and i + 1 < len(argv):
+                return argv[i + 1].strip() in commands
+        return False
+
+    if lowered_image == "py.exe" or re.match(r"^python[0-9.]*w?\.exe$", lowered_image):
+        i = 1
+        if lowered_image == "py.exe" and len(argv) > 1 and _PY_VERSION_SELECTOR_RE.match(argv[1]):
+            i = 2
+        if i >= len(argv):
+            return False
+        candidate = argv[i]
+        if candidate.startswith("-"):
+            return False
+        return _normalize_script_path(candidate) in scripts
+
+    return False
 
 
 class PROCESSENTRY32W(ctypes.Structure):
@@ -396,6 +582,38 @@ def _read_json(path, default):
         return default
 
 
+def _read_count_marker(path):
+    """R1-B item 4: `noroot-reported.json`'s `{"count": N}` shape, or `0` for
+    anything else -- missing, unreadable, not a dict, or a `count` that is not
+    an int. `noroot_count > noroot_reported` (in `cmd_stop`) would otherwise
+    raise on a corrupt marker (`.get` on a non-dict, or comparing an int
+    against a non-int), turning a broken marker file into a crashed `stop`
+    instead of one more thing this hook fails open on."""
+    data = _read_json(path, {})
+    if not isinstance(data, dict):
+        return 0
+    count = data.get("count", 0)
+    return count if isinstance(count, int) and not isinstance(count, bool) else 0
+
+
+def _read_reported_marker(path):
+    """R1-B item 4: `reported.json`'s `{pid: creation}` shape, tolerating a
+    corrupt file (not a dict) or a corrupt entry (a key or value that will not
+    coerce to `int`) the same way -- skip what cannot be trusted rather than
+    raising, so a hand-edited or truncated marker degrades to "nothing was
+    reported before", not a crashed `stop`."""
+    data = _read_json(path, {})
+    if not isinstance(data, dict):
+        return {}
+    reported = {}
+    for pid, creation in data.items():
+        try:
+            reported[int(pid)] = int(creation)
+        except (TypeError, ValueError):
+            continue
+    return reported
+
+
 def _load_snapshot_file(path):
     """Load a ledger file (`post-*.json`): a flat `{pid: entry}` map."""
     data = _read_json(path, {})
@@ -499,14 +717,7 @@ def _locate_root_and_chain(hook_pid, snap):
         pid = parent_pid
 
 
-def _is_hook_process_cmdline(cmdline):
-    if not cmdline:
-        return False
-    lowered = cmdline.lower()
-    return any(marker in lowered for marker in _hook_process_markers())
-
-
-def _is_hook_chain(pid, snap, root):
+def _is_hook_chain(pid, snap, root, cmdlines=None):
     """True when `pid`, or an ancestor strictly between it and `root`, is
     itself running one of this repo's `.claude/hooks/*` scripts.
 
@@ -517,6 +728,11 @@ def _is_hook_chain(pid, snap, root):
     Stop on 2026-09-16 10:51 reported eleven of them this way. This is checked
     against every admission rule, not just (a): rule (b)'s orphan test and
     rule (c)'s ledger-parent test do not themselves look at command lines.
+
+    `cmdlines` (F2) is a command line captured earlier in the same `post`
+    call, before a sibling's short-lived hops could exit -- used in place of
+    a fresh `_command_line(pid)` read when available, since that read can
+    return `None` for a process that has since died.
     """
     seen = set()
     cur = pid
@@ -527,7 +743,8 @@ def _is_hook_chain(pid, snap, root):
         proc = snap.get(cur)
         if proc is None:
             return False
-        if _is_hook_process_cmdline(_command_line(cur)):
+        line = cmdlines[cur] if cmdlines and cur in cmdlines else _command_line(cur)
+        if _is_hook_invocation(proc["image"], line, *_hooks()):
             return True
         parent_pid = proc["ppid"]
         parent = snap.get(parent_pid)
@@ -560,8 +777,42 @@ def _chain_reaches_root(pid, post_snap, new_pids, root):
         first = False
 
 
+DETACHED_ORPHAN_IMAGES = frozenset(
+    {
+        "python.exe",
+        "py.exe",
+        "pythonw.exe",
+        "node.exe",
+        "cmd.exe",
+        "powershell.exe",
+        "pwsh.exe",
+        "bash.exe",
+        "sh.exe",
+        "sleep.exe",
+        "git.exe",
+        "cargo.exe",
+        "rustc.exe",
+        "hub.exe",
+    }
+)
+
+
 def _is_orphan_admissible(proc, post_snap, pre_snap, post_raw_pids, pre_raw_pids):
     """Rule (b): a parent born and killed inside this call's own window.
+
+    R1-A narrows this to a named allowlist of images a session's own tool
+    calls plausibly start (`DETACHED_ORPHAN_IMAGES`) -- a live Stop on
+    2026-09-16 15:05 attributed two `DiscordSystemHelper.exe` orphans to this
+    session: Discord had (re)started, its own short-lived relaunch helper
+    happened to die inside this call's window, and rule (b)'s timing test
+    alone cannot tell that apart from a real leftover. This does not remove
+    the risk rule (b) always carried (see the module docstring); it only
+    bounds it to processes a session is actually expected to start. Rules (a)
+    and (c) are unchanged -- a child already reachable through this session's
+    own live tree is still admitted whatever its name. Not observed: a
+    detached dev tool outside this list (an unusual build helper, say) is
+    still missed by rule (b), silently, the same as any other orphan rule (b)
+    was never going to attribute.
 
     `post_raw_pids`/`pre_raw_pids` are the unfiltered Toolhelp32 PID sets from
     `snapshot()`, not the openable `post_snap`/`pre_snap` maps: a PPID this
@@ -570,6 +821,9 @@ def _is_orphan_admissible(proc, post_snap, pre_snap, post_raw_pids, pre_raw_pids
     apart -- `dllhost.exe`/`audiodg.exe` under an unopenable `svchost.exe`
     looked exactly like orphans until this distinction was added.
     """
+    image = (proc.get("image") or "").lower()
+    if image not in DETACHED_ORPHAN_IMAGES:
+        return False
     parent_pid = proc["ppid"]
     parent = post_snap.get(parent_pid)
     if parent is not None:
@@ -617,16 +871,53 @@ def _parent_is_live_ledger_entry(proc, ledger, live_snap):
     return live_parent["creation"] == entry["creation"] and _valid_parent(proc, live_parent)
 
 
+def _capture_new(new_procs):
+    """(alive, cmdlines) for every pid in `new_procs`. F2: called immediately
+    after the diff against `pre`, before `_load_ledger` or any admission-rule
+    walk -- both of which can take long enough (hundreds of ledger files)
+    that a short-lived sibling hook hop has already exited by the time its
+    command line would otherwise be read, which is what made every one of
+    that sibling's hops (and its `git` grandchildren) look like an ordinary
+    leftover instead of a hook chain.
+
+    `cmdlines` keeps a pid's line whenever it could be read at all, live or
+    already exited by the time `_is_still_active` ran a moment later -- a
+    short-lived intermediate hop (the outer `bash.exe` hop of a sibling hook
+    chain, say) is exactly the case F2 exists for, and it is usually dead
+    before this call even gets to check it, so restricting `cmdlines` to
+    `alive` pids would drop the one line `_is_hook_chain` needs most. `alive`
+    is unaffected -- it still reflects only whether the pid is a live
+    admission *candidate*, which is orthogonal to whether its line was
+    readable."""
+    alive = set()
+    cmdlines = {}
+    for pid in new_procs:
+        line = _command_line(pid)
+        if line is not None:
+            cmdlines[pid] = line
+        if _is_still_active(pid):
+            alive.add(pid)
+    return alive, cmdlines
+
+
 def _admit_new(
-    new_procs, post_snap, pre_snap, post_raw_pids, pre_raw_pids, root, hook_chain, ledger
+    new_procs, post_snap, pre_snap, post_raw_pids, pre_raw_pids, root, hook_chain, ledger,
+    cmdlines, alive,
 ):
+    """`alive` restricts which pids are *considered* for admission -- a pid
+    that was already dead at `post` cannot be a ledger parent of anything, so
+    dropping it here loses no attribution (see F2 in the hook's docstring).
+    `new_procs` itself stays unfiltered for `_chain_reaches_root`: rule (a)
+    asks whether every ancestor is new, and an intermediate shell that died
+    before `_capture_new` checked it is still new relative to `pre`."""
     admitted = {}
-    for pid, proc in new_procs.items():
+    for pid in alive:
+        proc = new_procs[pid]
         if pid in hook_chain:
             continue
         if proc["image"].lower() == "conhost.exe":
             continue
-        if _is_hook_chain(pid, post_snap, root):
+        if _is_hook_chain(pid, post_snap, root, cmdlines):
             continue
         if (
             _chain_reaches_root(pid, post_snap, new_procs, root)
@@ -689,18 +980,28 @@ def cmd_post(payload):
     pre_snap, pre_raw_pids = loaded
 
     post_snap, post_raw_pids = snapshot()
-    root, hook_chain = _locate_root_and_chain(os.getpid(), post_snap)
-    if root is None:
-        pre_path.unlink(missing_ok=True)
-        return 0
-
     pre_keys = {(p["pid"], p["creation"]) for p in pre_snap.values()}
     new_procs = {
         pid: p for pid, p in post_snap.items() if (pid, p["creation"]) not in pre_keys
     }
+    # F2: capture each new pid's command line and liveness immediately, before
+    # `_locate_root_and_chain`/`_load_ledger` (which can take long enough,
+    # across hundreds of ledger files, that a short-lived sibling hook hop
+    # has already exited by the time it would otherwise be read).
+    alive, cmdlines = _capture_new(new_procs)
+
+    root, hook_chain = _locate_root_and_chain(os.getpid(), post_snap)
+    if root is None:
+        pre_path.unlink(missing_ok=True)
+        # F4: one marker file per blind call, so `stop` can count and report
+        # them once, the same race-free per-file pattern as `post-*.json`.
+        _write_json(sdir / f"noroot-{tool_use_id}.json", {})
+        return 0
+
     ledger = _load_ledger(sdir)
     admitted = _admit_new(
-        new_procs, post_snap, pre_snap, post_raw_pids, pre_raw_pids, root, hook_chain, ledger
+        new_procs, post_snap, pre_snap, post_raw_pids, pre_raw_pids, root, hook_chain, ledger,
+        cmdlines, alive,
     )
 
     _write_json(sdir / f"post-{tool_use_id}.json", admitted)
@@ -717,6 +1018,23 @@ def _format_time(filetime):
         return "unknown time"
 
 
+def _emit_notes(notes):
+    """F3/F4's only visible channel. Stderr from a hook that exits 0 goes to
+    the debug log only, never the transcript (confirmed against the hooks
+    docs, 2026-09-16) -- so a plain stderr note is invisible whenever nothing
+    else makes this `stop` exit 2. `systemMessage` on stdout is what the docs
+    say is shown to the user, and Stop is not one of the events that discard
+    it. Each note is still also written to stderr, since that channel is what
+    an exit-2 leftover report already reads, and the user asked for it kept.
+    Nothing is printed when there are no notes -- an ordinary tracked call
+    with nothing to say stays as silent as it always was."""
+    if not notes:
+        return
+    for note in notes:
+        sys.stderr.write(note + "\n")
+    print(json.dumps({"systemMessage": " | ".join(notes)}))
+
+
 def cmd_stop(payload):
     if payload.get("stop_hook_active"):
         return 0
@@ -731,11 +1049,49 @@ def cmd_stop(payload):
     _prune_old_sessions(root_dir)
     sdir = _session_dir(session)
 
+    notes = []
+
+    # F3: `_hooks()` found no configured hook commands at all (an unreadable
+    # or oddly shaped settings.json) -- the structural matcher above then
+    # cannot recognise any sibling hook chain, so leftovers may be
+    # over-reported. Fails open (never crashes) and says so once per session,
+    # not on every reply while the configuration stays broken, tracked in its
+    # own marker file next to `reported.json`.
+    commands, _scripts = _hooks()
+    if not commands:
+        hookwarn_path = sdir / "hookwarn-reported.json"
+        if not hookwarn_path.exists():
+            notes.append(
+                "leftover_processes: no hook commands found in .claude/settings.json "
+                "or .claude/settings.local.json; sibling hook processes may be "
+                "over-reported"
+            )
+            _write_json(hookwarn_path, {"warned": True})
+
     live_snap, _live_raw_pids = snapshot()
     root, _chain = _locate_root_and_chain(os.getpid(), live_snap)
     if root is None:
-        sys.stderr.write("leftover_processes: no claude.exe ancestor; not tracking\n")
+        notes.append(
+            "leftover_processes: no claude.exe ancestor at Stop; not tracking this session"
+        )
+        _emit_notes(notes)
         return 0
+
+    # F4: every `post` call this session that could not find its own root
+    # left a `noroot-*.json` marker instead of tracking anything. Report the
+    # count once per newly blind call, not once per reply, the same way
+    # `reported.json` already does for a leftover process.
+    noroot_reported_path = sdir / "noroot-reported.json"
+    noroot_count = len(
+        [p for p in sdir.glob("noroot-*.json") if p.name != noroot_reported_path.name]
+    )
+    noroot_reported = _read_count_marker(noroot_reported_path)
+    if noroot_count > noroot_reported:
+        notes.append(
+            f"leftover_processes: {noroot_count} PostToolUse call(s) found no "
+            "claude.exe ancestor and recorded nothing"
+        )
+        _write_json(noroot_reported_path, {"count": noroot_count})
 
     ledger = _load_ledger(sdir)
     extended = _extend_ledger_with_live_descendants(ledger, live_snap, root)
@@ -745,8 +1101,7 @@ def cmd_stop(payload):
         ledger.update(extended)
 
     reported_path = sdir / "reported.json"
-    reported = _read_json(reported_path, {})
-    reported = {int(pid): creation for pid, creation in reported.items()}
+    reported = _read_reported_marker(reported_path)
 
     leftovers = {}
     for pid, entry in ledger.items():
@@ -760,6 +1115,7 @@ def cmd_stop(payload):
         leftovers[pid] = live
 
     if not leftovers:
+        _emit_notes(notes)
         return 0
 
     for pid, entry in leftovers.items():
@@ -789,6 +1145,7 @@ def cmd_stop(payload):
         SKIP_HINT,
     ]
     sys.stderr.write("\n".join(lines) + "\n")
+    _emit_notes(notes)
     return 2
 
 

@@ -14,7 +14,9 @@ The rig is a throwaway git repository in the system temp directory, not the
 session scratchpad -- `git init` there fails with `Filename too long`.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -24,10 +26,21 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[1]
 HOOKS = REPO / ".claude" / "hooks"
 SETTINGS = REPO / ".claude" / "settings.json"
+
+
+def _hooks_source_dir():
+    """The directory `HookRig` and `_load_hook_module` load hook scripts from.
+
+    `HSTK_HOOK_UNDER_TEST_DIR` swaps in a scratchpad copy -- a mutant, or an
+    older revision fetched with `git show` -- without ever overwriting the
+    live `.claude/hooks/` the running session's own hooks execute from."""
+    override = os.environ.get("HSTK_HOOK_UNDER_TEST_DIR")
+    return Path(override) if override else HOOKS
 
 
 def _load_hook_module(name):
@@ -35,7 +48,7 @@ def _load_hook_module(name):
     its pure functions (as opposed to `HookRig`, which drives the hook as a
     subprocess the way `settings.json` actually invokes it). Not added to
     `sys.modules` -- each call gets its own copy."""
-    spec = importlib.util.spec_from_file_location(name, HOOKS / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name, _hooks_source_dir() / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -68,9 +81,9 @@ class HookRig:
         self.root = Path(tempfile.mkdtemp(prefix="hstk-hooks-"))
         for part in ("hub/src", "hub/src-tauri/src", "catalog", "tools"):
             (self.root / part).mkdir(parents=True, exist_ok=True)
-        shutil.copytree(HOOKS, self.root / ".claude" / "hooks")
+        shutil.copytree(_hooks_source_dir(), self.root / ".claude" / "hooks")
         # leftover_processes.py reads its sibling hooks' configured `command`
-        # strings out of this file (see `_hook_path_fragments`), so the rig
+        # strings out of this file (see `_configured_hooks`), so the rig
         # needs a real copy, not just the scripts themselves.
         shutil.copy2(SETTINGS, self.root / ".claude" / "settings.json")
 
@@ -654,8 +667,9 @@ class TestLeftoverProcesses(HookTestCase):
             "HSTK_PROC_LEDGER_DIR": self.ledger_dir,
             "HSTK_PROC_SESSION_ROOT_PID": str(os.getpid()),
             # Matches how a real session's hook commands resolve
-            # `$CLAUDE_PROJECT_DIR` -- needed for `_hook_process_markers`'s
-            # expanded-fragment form.
+            # `$CLAUDE_PROJECT_DIR` -- needed so `_configured_hooks`'s script
+            # paths (and a py/python hop's own expanded command line) resolve
+            # to the same normalised form.
             "CLAUDE_PROJECT_DIR": str(self.rig.root),
         }
         self._cleanup_pids = []
@@ -750,6 +764,17 @@ class TestLeftoverProcesses(HookTestCase):
         self.assertEqual(result.returncode, 2, result.stdout)
         self.assertIn(str(orphan_pid), result.stderr)
 
+    # R1-A positive: `_spawn_orphan`'s sleeper runs as `python.exe`, one of
+    # `DETACHED_ORPHAN_IMAGES` -- the allowlist must not blind rule (b) to the
+    # ordinary detached-dev-tool shape it exists to keep catching.
+    def test_detached_orphan_with_dev_tool_image_is_admitted(self):
+        self.assertEqual(self.pre().returncode, 0)
+        orphan_pid = self.track(_spawn_orphan())
+        self.assertEqual(self.post().returncode, 0)
+        result = self.stop()
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn(str(orphan_pid), result.stderr)
+
     # -- MCP-shaped exclusion (rule a's negative side) ----------------------
 
     # A child of a process that predates the call is not admitted. This is the
@@ -771,28 +796,96 @@ class TestLeftoverProcesses(HookTestCase):
         result = self.stop()
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    # B1: a concurrent sibling PostToolUse hook's own chain (bash -> bash ->
-    # py -> python .claude/hooks/*.py) is new relative to `pre` and reaches
-    # root through processes that are all new this call -- structurally
-    # identical to a real leftover under rule (a). A live Stop on 2026-09-16
-    # 10:51 reported eleven of these. The fixture below is that chain's real
-    # shape: a `py`/`python` descendant's own command line, after its shell
-    # has substituted `$CLAUDE_PROJECT_DIR`, carries the fully-expanded
-    # `<project dir>/.claude/hooks/<name>.py` fragment `_hook_process_markers`
-    # reads out of `settings.json` -- not a bare directory mention. Its
-    # negative pair is test_child_started_during_call_is_reported above: an
-    # otherwise identical new child, without that fragment in its command
-    # line, must still be reported. R2-1's own negative pair is
-    # test_process_whose_ancestor_merely_mentions_hook_path_is_still_reported
-    # below: a mention that is *not* this exact fragment must not exclude
-    # anything.
-    def test_process_running_a_hook_script_is_not_reported(self):
-        self.assertEqual(self.pre().returncode, 0)
-        expanded_fragment = f"{self.rig.root}/.claude/hooks/decompiled_output.py"
-        sibling = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(60)", "py", "-3", expanded_fragment]
+    # F1 (structural matcher, replacing the substring one): a hop's command
+    # line is only "running a hook" when `CommandLineToArgvW`'s parse matches
+    # a configured `command` string exactly (a shell hop) or a configured
+    # script path exactly (a py/python hop) -- never a bare mention. These
+    # three probe the old matcher's own blind spot (round-0 planner
+    # research): with `CLAUDE_PROJECT_DIR` in forward-slash form, the old
+    # code treated all three spellings below as proof a hop was running the
+    # hook, even though the process below only ever *mentions* one in its own
+    # command line and never invokes anything under `.claude/hooks/`.
+    # Positive pair for all three: test_real_hook_wrapper_chain_is_not_reported
+    # below.
+    def _assert_hook_path_mention_is_still_reported(self, spelling):
+        env = dict(self.env)
+        env["CLAUDE_PROJECT_DIR"] = str(self.rig.root).replace("\\", "/")
+        self.assertEqual(self.pre(env=env).returncode, 0)
+        pidfile = Path(self.ledger_dir) / "quoting_pidfile"
+        parent = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                _MENTION_PARENT_SRC,
+                str(pidfile),
+                "bash.exe",
+                "-c",
+                f'echo "{spelling}" >/dev/null; py -3 -c "import time; time.sleep(40)"',
+            ]
         )
-        self.addCleanup(_kill_popen, sibling)
+        self.addCleanup(_kill_popen, parent)
+        child_pid = self.track(_wait_for_pidfile(pidfile))
+        self.assertEqual(self.post(env=env).returncode, 0)
+        result = self.stop(env=env)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn(str(child_pid), result.stderr)
+
+    def test_command_quoting_unexpanded_hook_path_is_still_reported(self):
+        self._assert_hook_path_mention_is_still_reported(
+            "$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py"
+        )
+
+    def test_command_quoting_forward_slash_hook_path_is_still_reported(self):
+        root = str(self.rig.root).replace("\\", "/")
+        self._assert_hook_path_mention_is_still_reported(
+            f"{root}/.claude/hooks/decompiled_output.py"
+        )
+
+    def test_command_quoting_backslash_hook_path_is_still_reported(self):
+        root = str(self.rig.root).replace("\\", "/")
+        self._assert_hook_path_mention_is_still_reported(
+            f"{root}/.claude/hooks/decompiled_output.py".replace("/", "\\")
+        )
+
+    # F1's positive pair, and the round-2 N4 replacement for the deleted
+    # test_process_running_a_hook_script_is_not_reported: that fixture's
+    # `python -c ... py -3 <path>` gave argv[1] == "-c", which the structural
+    # rule rightly excludes from matching a py/python hop, so it proved
+    # nothing about F1's replacement. This spawns the real wrapper chain
+    # settings.json actually configures -- Git Bash's own `-c` argument, byte
+    # for byte -- so the exclusion is proven against the real shape, not a
+    # fixture that merely looks like it.
+    def test_real_hook_wrapper_chain_is_not_reported(self):
+        bash = os.path.join(
+            os.environ.get("ProgramFiles", r"C:\Program Files"), "Git", "bin", "bash.exe"
+        )
+        if not os.path.exists(bash):
+            bash = shutil.which("bash")
+        if not bash:
+            self.skipTest("Git Bash not found")
+        # Overwrite the rig's own copy -- never the repository's -- with a
+        # script that reports its PID and sleeps, standing in for the hook
+        # body so the test controls how long the chain lives.
+        pidfile = Path(self.ledger_dir) / "wrapper_pidfile"
+        self.rig.write(
+            ".claude/hooks/decompiled_output.py",
+            "import os\n"
+            "open(os.environ['HSTK_TEST_PIDFILE'], 'w').write(str(os.getpid()))\n"
+            "import time; time.sleep(60)\n",
+        )
+        self.assertEqual(self.pre().returncode, 0)
+        environ = dict(os.environ)
+        environ.pop("HSTK_SKIP_HOOKS", None)
+        environ.update(self.env)
+        environ["HSTK_TEST_PIDFILE"] = str(pidfile)
+        wrapper = subprocess.Popen(
+            [bash, "-c", 'py -3 "$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py"'],
+            cwd=self.rig.root,
+            env=environ,
+        )
+        self.addCleanup(_kill_popen, wrapper)
+        py_pid = _wait_for_pidfile(pidfile)
+        self.addCleanup(_kill_pid, py_pid)
         self.assertEqual(self.post().returncode, 0)
         result = self.stop()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -807,7 +900,7 @@ class TestLeftoverProcesses(HookTestCase):
     # merely carries that same kind of text as extra argv -- never actually
     # invoking anything under `.claude/hooks/` -- and must not shield the
     # sleeper it spawned. Positive pair:
-    # test_process_running_a_hook_script_is_not_reported above.
+    # test_real_hook_wrapper_chain_is_not_reported above.
     def test_process_whose_ancestor_merely_mentions_hook_path_is_still_reported(self):
         self.assertEqual(self.pre().returncode, 0)
         pidfile = Path(self.ledger_dir) / "mention_pidfile"
@@ -941,6 +1034,350 @@ class TestLeftoverProcesses(HookTestCase):
         self.assertEqual(result.returncode, 2, result.stdout)
         self.assertIn(SLEEPER_MARKER, result.stderr)
 
+    # -- fail-open and blindness are visible (F3/F4) --------------------------
+
+    # F3: an unreadable settings.json means `_hooks()` finds no configured
+    # hook command, so a sibling hook chain cannot be recognised -- fails
+    # open (never crashes) and says so on the one channel a person actually
+    # sees (`systemMessage`; plain stderr at exit 0 is invisible).
+    def test_malformed_settings_fails_open_with_note(self):
+        self.rig.write(".claude/settings.json", "{not json")
+        self.assertEqual(self.pre().returncode, 0)
+        self.spawn_sleeper()
+        self.assertEqual(self.post().returncode, 0)
+        result = self.stop()
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("no hook commands found", result.stderr)
+        message = json.loads(result.stdout)
+        self.assertIn("no hook commands found", message["systemMessage"])
+
+    # Same fail-open contract against a settings.json that parses as JSON but
+    # is the wrong shape throughout -- a non-list hook group, a bare string
+    # where a list belongs. Must not raise.
+    def test_non_dict_hooks_group_fails_open_without_traceback(self):
+        self.rig.write(
+            ".claude/settings.json",
+            json.dumps({"hooks": {"PostToolUse": ["oops", 3], "Stop": "x"}}),
+        )
+        self.assertEqual(self.pre().returncode, 0)
+        self.spawn_sleeper()
+        self.assertEqual(self.post().returncode, 0)
+        result = self.stop()
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertNotIn("Traceback", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("no hook commands found", result.stderr)
+
+    # Negative control: the real settings.json (what the rig copies by
+    # default) has hook commands, so the note never fires.
+    def test_valid_settings_emits_no_hook_note(self):
+        self.assertEqual(self.pre().returncode, 0)
+        self.spawn_sleeper()
+        self.assertEqual(self.post().returncode, 0)
+        result = self.stop()
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertNotIn("no hook commands found", result.stderr)
+        self.assertNotIn("no hook commands found", result.stdout)
+
+    # The F3 note is shown once per session, not repeated every reply while
+    # the config stays broken (the user's own call, overriding the plan's
+    # every-reply wording near its "Needs human judgement" section): the
+    # first Stop against a broken settings.json warns.
+    def test_malformed_settings_note_shown_only_on_first_stop(self):
+        self.rig.write(".claude/settings.json", "{not json")
+        self.assertEqual(self.pre().returncode, 0)
+        self.assertEqual(self.post().returncode, 0)
+        first = self.stop()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("no hook commands found", first.stderr)
+        message = json.loads(first.stdout)
+        self.assertIn("no hook commands found", message["systemMessage"])
+
+    # Positive/negative pair for the once-per-session claim above: a second
+    # Stop of the same session, settings still broken, says nothing more.
+    def test_malformed_settings_note_suppressed_on_second_stop(self):
+        self.rig.write(".claude/settings.json", "{not json")
+        self.assertEqual(self.pre().returncode, 0)
+        self.assertEqual(self.post().returncode, 0)
+        self.stop()
+        second = self.stop()
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertNotIn("no hook commands found", second.stderr)
+        self.assertEqual(second.stdout.strip(), "")
+
+    # F4 (stop): the session-root lookup itself failing is a visible warning,
+    # not a silent "admits nothing".
+    def test_stop_without_root_emits_system_message(self):
+        env = dict(self.env)
+        env["HSTK_PROC_SESSION_ROOT_PID"] = "not-a-pid"
+        result = self.stop(env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no claude.exe ancestor at Stop", result.stderr)
+        message = json.loads(result.stdout)
+        self.assertIn("no claude.exe ancestor at Stop", message["systemMessage"])
+
+    # F4 (post): a `post` call that could not find its session root records
+    # nothing but leaves a marker, so a later `stop` (with a working root)
+    # can say how many calls this session went blind for -- once per newly
+    # blind call, the same way `reported.json` already does for a leftover.
+    def test_post_without_root_is_surfaced_once_at_stop(self):
+        env = dict(self.env)
+        env["HSTK_PROC_SESSION_ROOT_PID"] = "not-a-pid"
+        self.assertEqual(self.pre(env=env).returncode, 0)
+        self.assertEqual(self.post(env=env).returncode, 0)
+        first = self.stop()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        message = json.loads(first.stdout)
+        self.assertIn(
+            "1 PostToolUse call(s) found no claude.exe ancestor", message["systemMessage"]
+        )
+        second = self.stop()
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(second.stdout.strip(), "")
+
+    # R1-B item 4: a hand-corrupted `reported.json` (wrong shape entirely, not
+    # merely an unreadable file) must not crash `stop` -- it degrades to
+    # "nothing was reported before", the same as a missing file, so a real
+    # leftover is still reported rather than the hook raising. Covers
+    # `noroot-reported.json` the same way in the same call.
+    def test_corrupt_marker_file_is_treated_as_empty(self):
+        self.assertEqual(self.pre().returncode, 0)
+        self.spawn_sleeper()
+        self.assertEqual(self.post().returncode, 0)
+        sdir = Path(self.ledger_dir) / self.session
+        sdir.mkdir(parents=True, exist_ok=True)
+        (sdir / "reported.json").write_text("[1, 2, 3]", encoding="utf-8")
+        (sdir / "noroot-reported.json").write_text('"not-a-dict"', encoding="utf-8")
+        result = self.stop()
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertNotIn("Traceback", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn(SLEEPER_MARKER, result.stderr)
+
+    # Negative control: an ordinary tracked call with nothing spawned and
+    # nothing broken prints no systemMessage at all.
+    def test_tracked_session_prints_no_system_message(self):
+        self.assertEqual(self.pre().returncode, 0)
+        self.assertEqual(self.post().returncode, 0)
+        result = self.stop()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "")
+
+
+@unittest.skipUnless(sys.platform == "win32", "leftover_processes.py is Windows-only")
+class TestLeftoverProcessesStaleToolhelp(unittest.TestCase):
+    """F5: a positive control for `stop`'s `GetExitCodeProcess` liveness gate.
+
+    `test_killed_process_is_not_reported` (in `TestLeftoverProcesses`) passes
+    even with the gate removed, because Toolhelp32Snapshot does not list an
+    exited process on demand in this suite's own timing -- it cannot produce
+    the stale case the gate exists for. Built at unit level instead: a
+    fabricated ledger entry, plus a stubbed `snapshot()`/`_command_line` that
+    still "sees" the pid the way a just-terminated process's stale Toolhelp32
+    entry does, with `_is_still_active` stubbed both ways so the gate itself
+    is what the assertion depends on.
+    """
+
+    def setUp(self):
+        self.hook = _load_hook_module("leftover_processes")
+        self.ledger_dir = tempfile.mkdtemp(prefix="hstk-stale-")
+        self.addCleanup(shutil.rmtree, self.ledger_dir, ignore_errors=True)
+        sdir = Path(self.ledger_dir) / "t"
+        sdir.mkdir(parents=True, exist_ok=True)
+        entry = {"pid": 4000004, "ppid": 1, "image": "sleeper.exe", "creation": 123}
+        (sdir / "post-x.json").write_text(json.dumps({"4000004": entry}), encoding="utf-8")
+        self.entry = entry
+        self.env_patch = mock.patch.dict(
+            os.environ,
+            {"HSTK_PROC_LEDGER_DIR": self.ledger_dir, "HSTK_PROC_SESSION_ROOT_PID": "1"},
+        )
+        self.env_patch.start()
+        os.environ.pop("HSTK_SKIP_HOOKS", None)
+        self.addCleanup(self.env_patch.stop)
+
+    def _run_stop(self):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = self.hook.cmd_stop({"session_id": "t", "stop_hook_active": False})
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    # A pid Toolhelp32 still lists, but whose exit code is no longer
+    # STILL_ACTIVE, must not be reported -- the gate this proves. Without
+    # `if not _is_still_active(pid):` in `cmd_stop`, this would report it.
+    def test_exited_process_still_in_snapshot_is_not_reported(self):
+        snap = {4000004: dict(self.entry)}
+        with mock.patch.object(self.hook, "snapshot", return_value=(snap, {4000004})), \
+             mock.patch.object(self.hook, "_command_line", return_value=None), \
+             mock.patch.object(self.hook, "_is_still_active", return_value=False):
+            code, _stdout, _stderr = self._run_stop()
+        self.assertEqual(code, 0)
+
+    # Positive pair: the same stale-looking snapshot, but the exit code
+    # genuinely still reads STILL_ACTIVE -- a real leftover, and it must
+    # still be reported.
+    def test_live_process_in_snapshot_is_reported(self):
+        snap = {4000004: dict(self.entry)}
+        with mock.patch.object(self.hook, "snapshot", return_value=(snap, {4000004})), \
+             mock.patch.object(self.hook, "_command_line", return_value=None), \
+             mock.patch.object(self.hook, "_is_still_active", return_value=True):
+            code, _stdout, stderr = self._run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("4000004", stderr)
+
+
+@unittest.skipUnless(sys.platform == "win32", "leftover_processes.py is Windows-only")
+class TestLeftoverProcessesHookMatch(unittest.TestCase):
+    """Unit-level tests of F1's structural matcher: `_configured_hooks` (what
+    counts as a configured hook, read straight from `settings.json`/
+    `settings.local.json`) and `_is_hook_invocation` (whether one hop's own
+    command line is actually running one) -- as opposed to `TestLeftoverProcesses`
+    above, which proves the mechanism end to end against a real process tree.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.hook = _load_hook_module("leftover_processes")
+
+    def setUp(self):
+        self.claude_dir = Path(tempfile.mkdtemp(prefix="hstk-claude-"))
+        self.addCleanup(shutil.rmtree, self.claude_dir, ignore_errors=True)
+
+    def _write(self, name, text):
+        (self.claude_dir / name).write_text(text, encoding="utf-8")
+
+    # The four hop shapes a 45 s live poll actually captured (round-0 planner
+    # research), read against a real `.claude/settings.json` copy -- proves
+    # the matcher recognises the hook chain settings.json actually produces,
+    # not just a hand-built approximation of it.
+    def test_measured_hook_command_lines_match(self):
+        self._write("settings.json", SETTINGS.read_text(encoding="utf-8"))
+        project_dir = "C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit"
+        commands, scripts = self.hook._configured_hooks(self.claude_dir, [project_dir])
+        cases = [
+            (
+                "bash.exe",
+                r'"C:\Program Files\Git\bin\bash.exe" -c "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py\""',
+            ),
+            (
+                "bash.exe",
+                r'"C:\Program Files\Git\bin\..\usr\bin\bash.exe" -c "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py\""',
+            ),
+            (
+                "py.exe",
+                r"C:\WINDOWS\py.exe -3 C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/decompiled_output.py",
+            ),
+            (
+                "python.exe",
+                r"C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/decompiled_output.py",
+            ),
+        ]
+        for image, cmdline in cases:
+            with self.subTest(image=image):
+                self.assertTrue(self.hook._is_hook_invocation(image, cmdline, commands, scripts))
+
+    # Negative pair: a bare mention (the Bash tool's own wrapper text), a
+    # `-c`/other-option interpreter flag, and another repo script are never
+    # mistaken for a hop actually running a configured hook.
+    def test_mentions_and_other_scripts_do_not_match(self):
+        self._write("settings.json", SETTINGS.read_text(encoding="utf-8"))
+        project_dir = "C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit"
+        commands, scripts = self.hook._configured_hooks(self.claude_dir, [project_dir])
+        cases = [
+            (
+                "bash.exe",
+                "bash.exe -c \"source x && eval 'echo $CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py'\"",
+            ),
+            (
+                "py.exe",
+                'py.exe -3 -c "import time" C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/decompiled_output.py',
+            ),
+            (
+                "python.exe",
+                "python.exe C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/_common.py",
+            ),
+            (
+                "python.exe",
+                r'python.exe -c "..." bash.exe -c "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py\""',
+            ),
+        ]
+        for image, cmdline in cases:
+            with self.subTest(image=image, cmdline=cmdline):
+                self.assertFalse(self.hook._is_hook_invocation(image, cmdline, commands, scripts))
+
+    # `settings.local.json` is read too, `${CLAUDE_PROJECT_DIR}` (braced) is
+    # recognised alongside the bare `$CLAUDE_PROJECT_DIR` form, and a script
+    # token with no `$CLAUDE_PROJECT_DIR` prefix at all is resolved relative
+    # to the project dir -- a hook's cwd is the project dir.
+    def test_configured_hooks_reads_local_settings_and_brace_and_relative_forms(self):
+        self._write(
+            "settings.json",
+            json.dumps(
+                {
+                    "hooks": {
+                        "Stop": [
+                            {
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "py -3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/a.py",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            ),
+        )
+        self._write(
+            "settings.local.json",
+            json.dumps(
+                {
+                    "hooks": {
+                        "Stop": [
+                            {"hooks": [{"type": "command", "command": "py -3 .claude/hooks/b.py"}]}
+                        ]
+                    }
+                }
+            ),
+        )
+        project_dir = "C:/proj"
+        commands, scripts = self.hook._configured_hooks(self.claude_dir, [project_dir])
+        self.assertIn("py -3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/a.py", commands)
+        self.assertIn("py -3 .claude/hooks/b.py", commands)
+        self.assertIn(f"{project_dir}/.claude/hooks/a.py".lower(), scripts)
+        self.assertIn(f"{project_dir}/.claude/hooks/b.py".lower(), scripts)
+
+    # F3's robustness contract: a missing file, a non-dict top level, a
+    # non-list hook group, and hook entries that are the wrong shape entirely
+    # must all be skipped rather than raising -- `stop` fails open on this,
+    # never crashes.
+    def test_configured_hooks_tolerates_malformed_shapes(self):
+        shapes = [
+            "{not json",
+            "[]",
+            json.dumps({"hooks": []}),
+            json.dumps({"hooks": {"Stop": "x"}}),
+            json.dumps(
+                {
+                    "hooks": {
+                        "PostToolUse": [
+                            "oops",
+                            3,
+                            {"hooks": "nope"},
+                            {"hooks": [{"command": 5}]},
+                        ]
+                    }
+                }
+            ),
+        ]
+        for shape in shapes:
+            with self.subTest(shape=shape[:40]):
+                self._write("settings.json", shape)
+                (self.claude_dir / "settings.local.json").unlink(missing_ok=True)
+                commands, scripts = self.hook._configured_hooks(self.claude_dir, ["C:/proj"])
+                self.assertEqual(commands, frozenset())
+                self.assertEqual(scripts, frozenset())
+
 
 @unittest.skipUnless(sys.platform == "win32", "leftover_processes.py is Windows-only")
 class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
@@ -966,7 +1403,9 @@ class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
     # as an orphan -- the live 2026-09-16 report did this to
     # `dllhost.exe`/`audiodg.exe` under an unopenable `svchost.exe`.
     def test_orphan_admission_respects_unopenable_parent_in_raw_pids(self):
-        proc = {"pid": 100, "ppid": 50, "creation": 500}
+        # image is an allowlisted dev tool (R1-A) so this test still exercises
+        # the raw-PID logic below, not the image filter added on top of it.
+        proc = {"pid": 100, "ppid": 50, "creation": 500, "image": "python.exe"}
         post_snap = {}  # parent unopenable -> absent from the creation-keyed map
         pre_snap = {}
         post_raw_pids = {50}  # but Toolhelp32 still lists PID 50 as existing
@@ -981,7 +1420,9 @@ class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
     # too, it is still a real orphan and must still be admitted -- the fix
     # above must not blind rule (b) to actual detached launches.
     def test_orphan_admission_still_admits_when_parent_truly_gone(self):
-        proc = {"pid": 100, "ppid": 50, "creation": 500}
+        # image is an allowlisted dev tool (R1-A); the unrelated-image case is
+        # test_detached_orphan_with_unrelated_image_is_not_admitted below.
+        proc = {"pid": 100, "ppid": 50, "creation": 500, "image": "python.exe"}
         post_snap = {}
         pre_snap = {}
         post_raw_pids = set()
@@ -1042,6 +1483,101 @@ class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
         }
         extended = self.hook._extend_ledger_with_live_descendants(ledger, live_snap, root)
         self.assertEqual(extended, {60: live_snap[60]})
+
+    # F2/R1-B item 1: `cmd_post` must capture each new pid's command line
+    # before doing anything slow (loading the ledger, walking every admission
+    # rule), so a short-lived sibling hook hop is not read after it has
+    # already exited. `_capture_new` is the function that does the capturing:
+    # it drops a pid that is no longer alive by the time it is checked from
+    # `alive` (the admission-candidate set) -- but it must still keep that
+    # pid's own command line in `cmdlines` when the line itself was readable,
+    # since that line is exactly what lets `_is_hook_chain` recognise a
+    # since-exited sibling hook hop as a hook chain rather than a leftover.
+    def test_capture_new_drops_exited_process(self):
+        new_procs = {10: {"pid": 10}, 20: {"pid": 20}}
+        with mock.patch.object(
+            self.hook, "_command_line", side_effect=lambda pid: f"cmd{pid}"
+        ), mock.patch.object(
+            self.hook, "_is_still_active", side_effect=lambda pid: pid == 10
+        ):
+            alive, cmdlines = self.hook._capture_new(new_procs)
+        self.assertNotIn(20, alive)
+        self.assertEqual(cmdlines[20], "cmd20")
+
+    # Positive pair: a pid still alive when checked keeps its captured line
+    # too, and is also a member of `alive` (unlike pid 20 above, which is
+    # kept in `cmdlines` but dropped from `alive`).
+    def test_capture_new_keeps_live_process_with_command_line(self):
+        new_procs = {10: {"pid": 10}, 20: {"pid": 20}}
+        with mock.patch.object(
+            self.hook, "_command_line", side_effect=lambda pid: f"cmd{pid}"
+        ), mock.patch.object(
+            self.hook, "_is_still_active", side_effect=lambda pid: pid == 10
+        ):
+            alive, cmdlines = self.hook._capture_new(new_procs)
+        self.assertEqual(alive, {10})
+        self.assertEqual(cmdlines[10], "cmd10")
+
+    # A pid whose command line could not be read at all (`_command_line`
+    # returned `None`) is never added to `cmdlines`, whether or not it is
+    # still alive -- there is no line to keep.
+    def test_capture_new_drops_unreadable_command_line(self):
+        new_procs = {10: {"pid": 10}}
+        with mock.patch.object(
+            self.hook, "_command_line", return_value=None
+        ), mock.patch.object(self.hook, "_is_still_active", return_value=True):
+            alive, cmdlines = self.hook._capture_new(new_procs)
+        self.assertEqual(alive, {10})
+        self.assertNotIn(10, cmdlines)
+
+    # R1-A: rule (b) is narrowed to a named allowlist of images a session
+    # plausibly starts itself (`DETACHED_ORPHAN_IMAGES`), after a live Stop on
+    # 2026-09-16 15:05 attributed two `DiscordSystemHelper.exe` orphans to this
+    # session -- Discord's own short-lived relaunch helper happened to die
+    # inside this session's call window, and timing alone (the rest of rule
+    # (b)) cannot tell that apart from a real leftover. This must fail against
+    # the code as it stood before R1-A, since that code admitted any orphan
+    # whose parent was truly gone regardless of image.
+    def test_detached_orphan_with_unrelated_image_is_not_admitted(self):
+        proc = {"pid": 100, "ppid": 50, "creation": 500, "image": "DiscordSystemHelper.exe"}
+        post_snap = {}
+        pre_snap = {}
+        post_raw_pids = set()
+        pre_raw_pids = set()
+        self.assertFalse(
+            self.hook._is_orphan_admissible(
+                proc, post_snap, pre_snap, post_raw_pids, pre_raw_pids
+            )
+        )
+
+    # `_is_hook_chain` must prefer a captured command line over a fresh
+    # `_command_line` read -- by the time `_admit_new` walks the chain, a
+    # short-lived sibling hop's own `_command_line(pid)` can return `None`
+    # (the process has already exited), which would wrongly stop looking
+    # like a hook and admit the whole sibling chain as a leftover.
+    def test_hook_chain_uses_captured_command_line(self):
+        snap = {
+            10: {"pid": 10, "ppid": 1, "creation": 100, "image": "bash.exe"},
+            11: {"pid": 11, "ppid": 10, "creation": 200, "image": "python.exe"},
+        }
+        outer_bash_line = (
+            r'"C:\Program Files\Git\bin\bash.exe" -c '
+            r'"py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py\""'
+        )
+        cmdlines = {10: outer_bash_line}
+        with mock.patch.object(self.hook, "_command_line", return_value=None):
+            self.assertTrue(self.hook._is_hook_chain(11, snap, 1, cmdlines))
+
+    # Negative pair: without the captured line, `_command_line` returning
+    # `None` for the dead hop means nothing in the chain looks like a hook,
+    # so the sibling is (wrongly, absent F2) admitted as a leftover.
+    def test_hook_chain_without_captured_line_is_admitted(self):
+        snap = {
+            10: {"pid": 10, "ppid": 1, "creation": 100, "image": "bash.exe"},
+            11: {"pid": 11, "ppid": 10, "creation": 200, "image": "python.exe"},
+        }
+        with mock.patch.object(self.hook, "_command_line", return_value=None):
+            self.assertFalse(self.hook._is_hook_chain(11, snap, 1, {}))
 
 
 if __name__ == "__main__":
