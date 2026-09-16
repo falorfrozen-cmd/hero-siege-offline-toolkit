@@ -362,6 +362,23 @@ def _hooks():
 
 
 _PY_VERSION_SELECTOR_RE = re.compile(r"^-\d[\d.\-]*$")
+_PYTHON_IMAGE_RE = re.compile(r"^python[0-9.]*w?\.exe$")
+
+
+def _is_python_interpreter_image(lowered_image):
+    """True for every Python interpreter image name a py/python hop's own
+    command line can show: `py.exe`/`pyw.exe` (the Python launcher, with or
+    without its windowed variant) or `python[0-9.]*w?.exe`
+    (`python.exe`/`python3.exe`/`python3.14.exe`/`pythonw.exe`, ...). One
+    helper, shared by both call sites that need "is this a Python hop at
+    all": `_is_hook_invocation` below (which additionally strips a
+    `py.exe`/`pyw.exe` launcher's own version selector before matching a
+    hook's configured script path) and R2-1's rule (b) orphan allowlist
+    (`_is_orphan_admissible`), which used to carry a second, narrower copy of
+    this same regex that only recognised the literal names
+    `python.exe`/`pythonw.exe` and missed every versioned interpreter
+    (`python3.exe`) a real detached build could use."""
+    return lowered_image in ("py.exe", "pyw.exe") or bool(_PYTHON_IMAGE_RE.match(lowered_image))
 
 
 def _is_hook_invocation(image, cmdline, commands, scripts):
@@ -371,9 +388,10 @@ def _is_hook_invocation(image, cmdline, commands, scripts):
       - A shell hop (`bash.exe`/`sh.exe`): its `-c` argument, parsed the same
         way the shell itself will parse it, equals a configured `command`
         string exactly.
-      - A `py`/`python` hop: its first non-flag argument (after `py.exe`'s
-        own optional version selector, e.g. `-3`) is, once normalised, one of
-        the configured script paths.
+      - A `py`/`python` hop: its first non-flag argument (after
+        `py.exe`/`pyw.exe`'s own optional version selector, e.g. `-3` -- the
+        two Python launchers, not every interpreter image) is, once
+        normalised, one of the configured script paths.
 
     Any other shape -- including `-c`, `-m`, or any other leading option on a
     py/python hop -- returns False. That is deliberately strict: an unusual
@@ -393,9 +411,13 @@ def _is_hook_invocation(image, cmdline, commands, scripts):
                 return argv[i + 1].strip() in commands
         return False
 
-    if lowered_image == "py.exe" or re.match(r"^python[0-9.]*w?\.exe$", lowered_image):
+    if _is_python_interpreter_image(lowered_image):
         i = 1
-        if lowered_image == "py.exe" and len(argv) > 1 and _PY_VERSION_SELECTOR_RE.match(argv[1]):
+        if (
+            lowered_image in ("py.exe", "pyw.exe")
+            and len(argv) > 1
+            and _PY_VERSION_SELECTOR_RE.match(argv[1])
+        ):
             i = 2
         if i >= len(argv):
             return False
@@ -448,6 +470,27 @@ def _iter_processes():
         kernel32.CloseHandle(snap)
 
 
+def _creation_time_from_handle(handle):
+    """FILETIME (as a 64-bit int) the process behind `handle` was created, or
+    None if unreadable. Factored out of `_creation_time` so `_process_identity`
+    can read it through a handle it already owns, rather than opening a
+    second one."""
+    creation = wintypes.FILETIME()
+    exit_time = wintypes.FILETIME()
+    kernel_time = wintypes.FILETIME()
+    user_time = wintypes.FILETIME()
+    ok = kernel32.GetProcessTimes(
+        handle,
+        ctypes.byref(creation),
+        ctypes.byref(exit_time),
+        ctypes.byref(kernel_time),
+        ctypes.byref(user_time),
+    )
+    if not ok:
+        return None
+    return (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+
+
 def _creation_time(pid):
     """FILETIME (as a 64-bit int) the process was created, or None if unreadable.
 
@@ -459,29 +502,16 @@ def _creation_time(pid):
     if not handle:
         return None
     try:
-        creation = wintypes.FILETIME()
-        exit_time = wintypes.FILETIME()
-        kernel_time = wintypes.FILETIME()
-        user_time = wintypes.FILETIME()
-        ok = kernel32.GetProcessTimes(
-            handle,
-            ctypes.byref(creation),
-            ctypes.byref(exit_time),
-            ctypes.byref(kernel_time),
-            ctypes.byref(user_time),
-        )
-        if not ok:
-            return None
-        return (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+        return _creation_time_from_handle(handle)
     finally:
         kernel32.CloseHandle(handle)
 
 
-def _command_line(pid):
-    """Best-effort full command line via NtQueryInformationProcess. None on failure."""
-    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-    if not handle:
-        return None
+def _command_line_from_handle(handle):
+    """Best-effort full command line via NtQueryInformationProcess, read
+    through `handle`. None on failure. Factored out of `_command_line` so
+    `_process_identity` can read it through a handle it already owns, rather
+    than opening a second one."""
     try:
         buf_len = 8192
         buf = ctypes.create_string_buffer(buf_len)
@@ -504,6 +534,40 @@ def _command_line(pid):
         return ctypes.wstring_at(ctypes.addressof(buf) + offset, info.Length // 2)
     except OSError:
         return None
+
+
+def _command_line(pid):
+    """Best-effort full command line via NtQueryInformationProcess. None on failure."""
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        return _command_line_from_handle(handle)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _process_identity(pid):
+    """(creation, cmdline) for `pid`, both read through the *same* open
+    `OpenProcess` handle -- the one direct `OpenProcess` call in this
+    function's own body.
+
+    An open handle keeps the underlying process object, and so this PID,
+    from being reused until the handle is closed. That is why one handle
+    closes both races `_creation_time`/`_command_line` were separately
+    exposed to: a PID recycled by an unrelated process between two separate
+    `OpenProcess` calls, and a process that exits between them. `(None, None)`
+    when the handle itself could not be opened -- another user's process, a
+    protected one, or a PID nothing occupies any more. After the process has
+    exited (but before the handle is closed), `GetProcessTimes` still
+    succeeds; the command-line query may legitimately return `None`, and
+    callers that need to trust the line still compare the returned creation
+    time against their own expectation (`_capture_new` does this)."""
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None, None
+    try:
+        return _creation_time_from_handle(handle), _command_line_from_handle(handle)
     finally:
         kernel32.CloseHandle(handle)
 
@@ -601,7 +665,10 @@ def _read_reported_marker(path):
     corrupt file (not a dict) or a corrupt entry (a key or value that will not
     coerce to `int`) the same way -- skip what cannot be trusted rather than
     raising, so a hand-edited or truncated marker degrades to "nothing was
-    reported before", not a crashed `stop`."""
+    reported before", not a crashed `stop`. R2-2: `int()` on a JSON `Infinity`
+    (valid JSON to Python's own parser, and easy to produce by hand-editing)
+    raises `OverflowError`, not `ValueError` -- `{"1": Infinity}` used to crash
+    this before that was also caught."""
     data = _read_json(path, {})
     if not isinstance(data, dict):
         return {}
@@ -609,15 +676,33 @@ def _read_reported_marker(path):
     for pid, creation in data.items():
         try:
             reported[int(pid)] = int(creation)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
     return reported
 
 
 def _load_snapshot_file(path):
-    """Load a ledger file (`post-*.json`): a flat `{pid: entry}` map."""
+    """Load a ledger file (`post-*.json`): a flat `{pid: entry}` map. R2-2: a
+    hand-edited or truncated file can be the wrong shape throughout -- a
+    top-level list instead of a `{pid: entry}` map, or an entry that is not
+    itself a dict, or a `creation` that is missing or will not coerce to
+    `int` -- so each layer is checked and the offending pid is skipped rather
+    than letting `.items()`/`int()`/a later `entry["creation"]` read raise."""
     data = _read_json(path, {})
-    return {int(pid): entry for pid, entry in data.items()}
+    if not isinstance(data, dict):
+        return {}
+    result = {}
+    for pid, entry in data.items():
+        if not isinstance(entry, dict):
+            continue
+        creation = entry.get("creation")
+        if not isinstance(creation, int) or isinstance(creation, bool):
+            continue
+        try:
+            result[int(pid)] = entry
+        except (TypeError, ValueError):
+            continue
+    return result
 
 
 def _write_pre_snapshot(path, procs, raw_pids):
@@ -633,12 +718,60 @@ def _load_pre_snapshot(path):
     """The inverse of `_write_pre_snapshot`, or `None` if the file is missing
     or not in that shape. Callers must treat `None` as "no usable baseline",
     not as an empty one -- an empty baseline would make every live process on
-    the machine look new since `pre` (see `cmd_post`)."""
+    the machine look new since `pre` (see `cmd_post`).
+
+    R2-2: `procs` itself not being a dict (a top-level list, say) is treated
+    the same as a missing file -- `None`, no usable baseline -- since there is
+    no way to tell which entries were meant. An individual entry within an
+    otherwise-good `procs` dict that is not itself a dict, or is missing a
+    valid `ppid`/`creation`, is instead just skipped: every downstream
+    chain-walk (`_valid_parent`, `_locate_root_and_chain`, ...) reads
+    `proc["ppid"]`/`proc["creation"]` by direct indexing, so a half-shaped
+    entry would otherwise raise deep inside one of those instead of simply
+    being treated as absent from the baseline.
+
+    An entry missing a valid int `pid` is skipped the same way -- `cmd_post`'s
+    `pre_keys` comprehension and `_parent_in_ledger`'s `pre_snap` scan both
+    read `p["pid"]` by direct indexing over every value this function returns,
+    so a hand-edited entry with no `pid` field would otherwise raise a
+    `KeyError` deep inside one of those instead of being treated as absent.
+    The `raw_pids` loop also catches `OverflowError` alongside
+    `TypeError`/`ValueError`: `int(float("inf"))` (a hand-edited `Infinity`,
+    valid JSON to Python's own parser) raises `OverflowError`, not
+    `ValueError`.
+    """
     data = _read_json(path, None)
     if not isinstance(data, dict) or "procs" not in data:
         return None
-    procs = {int(pid): entry for pid, entry in data.get("procs", {}).items()}
-    raw_pids = {int(pid) for pid in data.get("raw_pids", [])}
+    raw_procs = data.get("procs")
+    if not isinstance(raw_procs, dict):
+        return None
+    procs = {}
+    for pid, entry in raw_procs.items():
+        if not isinstance(entry, dict):
+            continue
+        proc_pid = entry.get("pid")
+        ppid = entry.get("ppid")
+        creation = entry.get("creation")
+        if not isinstance(proc_pid, int) or isinstance(proc_pid, bool):
+            continue
+        if not isinstance(ppid, int) or isinstance(ppid, bool):
+            continue
+        if not isinstance(creation, int) or isinstance(creation, bool):
+            continue
+        try:
+            procs[int(pid)] = entry
+        except (TypeError, ValueError):
+            continue
+    raw_pids_field = data.get("raw_pids", [])
+    if not isinstance(raw_pids_field, list):
+        raw_pids_field = []
+    raw_pids = set()
+    for raw_pid in raw_pids_field:
+        try:
+            raw_pids.add(int(raw_pid))
+        except (TypeError, ValueError, OverflowError):
+            continue
     return procs, raw_pids
 
 
@@ -733,6 +866,16 @@ def _is_hook_chain(pid, snap, root, cmdlines=None):
     call, before a sibling's short-lived hops could exit -- used in place of
     a fresh `_command_line(pid)` read when available, since that read can
     return `None` for a process that has since died.
+
+    Membership in `cmdlines` is authoritative even when the stored value is
+    `None`: `_capture_new` now gives every new pid a key, and `None` there
+    means "captured, and not trustworthy or not readable" -- re-reading it
+    here would be exactly the PID-reuse race `_capture_new` already resolved
+    against. A pid that is *not* in `cmdlines` was never captured by
+    `_capture_new` at all (an ancestor that predates the call, or any hop at
+    Stop, since `_extend_ledger_with_live_descendants` passes no `cmdlines`)
+    -- that fallback `_command_line(cur)` read is still a bare, creation-time-
+    unaware read; see the README's Known Limitations.
     """
     seen = set()
     cur = pid
@@ -743,7 +886,7 @@ def _is_hook_chain(pid, snap, root, cmdlines=None):
         proc = snap.get(cur)
         if proc is None:
             return False
-        line = cmdlines[cur] if cmdlines and cur in cmdlines else _command_line(cur)
+        line = cmdlines[cur] if cmdlines is not None and cur in cmdlines else _command_line(cur)
         if _is_hook_invocation(proc["image"], line, *_hooks()):
             return True
         parent_pid = proc["ppid"]
@@ -777,11 +920,14 @@ def _chain_reaches_root(pid, post_snap, new_pids, root):
         first = False
 
 
+# R2-1: every Python interpreter name is matched by `_is_python_interpreter_image`
+# instead of being listed here literally -- `python.exe`/`py.exe`/`pythonw.exe`
+# used to be the only three admitted, which missed a versioned interpreter
+# (`python3.exe`, `python3.14.exe`) or the windowed launcher (`pyw.exe`), all of
+# which the hook-invocation matcher above already treats as "a Python hop".
+# Everything else a session's own tool calls plausibly start still lives here.
 DETACHED_ORPHAN_IMAGES = frozenset(
     {
-        "python.exe",
-        "py.exe",
-        "pythonw.exe",
         "node.exe",
         "cmd.exe",
         "powershell.exe",
@@ -814,6 +960,13 @@ def _is_orphan_admissible(proc, post_snap, pre_snap, post_raw_pids, pre_raw_pids
     still missed by rule (b), silently, the same as any other orphan rule (b)
     was never going to attribute.
 
+    R2-1: the image check accepts `DETACHED_ORPHAN_IMAGES` **or** anything
+    `_is_python_interpreter_image` recognises, so a versioned or windowed
+    Python interpreter (`python3.exe`, `python3.14.exe`, `pyw.exe`) is
+    admitted the same way `python.exe` always was, through the one shared
+    pattern the hook-invocation matcher already uses -- not a second,
+    narrower copy of it that only knew the literal names.
+
     `post_raw_pids`/`pre_raw_pids` are the unfiltered Toolhelp32 PID sets from
     `snapshot()`, not the openable `post_snap`/`pre_snap` maps: a PPID this
     hook could not open (a SYSTEM service, a protected process) is a live
@@ -822,7 +975,7 @@ def _is_orphan_admissible(proc, post_snap, pre_snap, post_raw_pids, pre_raw_pids
     looked exactly like orphans until this distinction was added.
     """
     image = (proc.get("image") or "").lower()
-    if image not in DETACHED_ORPHAN_IMAGES:
+    if image not in DETACHED_ORPHAN_IMAGES and not _is_python_interpreter_image(image):
         return False
     parent_pid = proc["ppid"]
     parent = post_snap.get(parent_pid)
@@ -888,13 +1041,30 @@ def _capture_new(new_procs):
     `alive` pids would drop the one line `_is_hook_chain` needs most. `alive`
     is unaffected -- it still reflects only whether the pid is a live
     admission *candidate*, which is orthogonal to whether its line was
-    readable."""
+    readable.
+
+    R2-4: a pid can be recycled in the moment between `snapshot()`'s post read
+    (which supplied `new_procs[pid]["creation"]`) and this function's own
+    identity read a little later -- if some unrelated process has already
+    taken that PID, its command line would otherwise be captured and handed
+    to `_is_hook_chain`/the leftover report under the *old* process's
+    identity. `_process_identity(pid)` reads the creation time and the
+    command line through the *same* handle, so neither a PID reuse nor the
+    process exiting in between can split the two apart the way two separate
+    `_command_line`/`_creation_time` calls could. The reported creation is
+    compared against `new_procs[pid]["creation"]`; the line is kept only on a
+    match, and `cmdlines` gets a key -- `None` on a mismatch or an unreadable
+    line -- for *every* pid in `new_procs`, not only the ones that matched.
+    That key is what lets `_is_hook_chain` treat "captured, untrustworthy" as
+    final instead of falling through to a second, unprotected read. `alive`
+    is unaffected by any of this -- a recycled pid is still a real, live
+    process and stays a legitimate admission candidate, it simply is not the
+    same identity whose command line was captured."""
     alive = set()
     cmdlines = {}
     for pid in new_procs:
-        line = _command_line(pid)
-        if line is not None:
-            cmdlines[pid] = line
+        creation, line = _process_identity(pid)
+        cmdlines[pid] = line if creation == new_procs[pid]["creation"] else None
         if _is_still_active(pid):
             alive.add(pid)
     return alive, cmdlines
@@ -1105,12 +1275,21 @@ def cmd_stop(payload):
 
     leftovers = {}
     for pid, entry in ledger.items():
+        # R2-2: `_load_snapshot_file` already drops a non-dict entry or one
+        # missing a valid `creation`, but a ledger can also be built up
+        # in-process (`_extend_ledger_with_live_descendants`) -- so this is
+        # checked again at the point of use rather than trusted from upstream.
+        if not isinstance(entry, dict):
+            continue
+        creation = entry.get("creation")
+        if not isinstance(creation, int) or isinstance(creation, bool):
+            continue
         live = live_snap.get(pid)
-        if live is None or live["creation"] != entry["creation"]:
+        if live is None or live["creation"] != creation:
             continue
         if not _is_still_active(pid):
             continue
-        if reported.get(pid) == entry["creation"]:
+        if reported.get(pid) == creation:
             continue
         leftovers[pid] = live
 

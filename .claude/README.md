@@ -135,6 +135,51 @@ fsmonitor--daemon run --detach` (seen 2026-09-16), which git starts detached
 when `core.fsmonitor` is on. It is a shared, long-lived watcher that git
 restarts on demand, so say so rather than treating it as a leak.
 
+**Round 2 (2026-09-16), four small fixes on top of round 1:** rule (b)'s image
+check now accepts every Python interpreter name the hook-invocation matcher
+itself already recognises (`python[0-9.]*w?.exe`, plus `py.exe`/`pyw.exe`)
+through one shared helper (`_is_python_interpreter_image`), not the three
+literal names `DETACHED_ORPHAN_IMAGES` used to carry on its own, so a
+versioned interpreter (`python3.exe`, `python3.14.exe`) is admitted the same
+way `python.exe` always was (R2-1). `_load_snapshot_file`, `_load_pre_snapshot`
+and `_read_reported_marker` now tolerate a hand-corrupted ledger or marker file
+being the wrong shape throughout — a top-level list instead of a `{pid:
+entry}` map, an entry that is not itself a dict, a missing or non-int `pid`/
+`creation`/`ppid`, or a JSON `Infinity` that used to raise `OverflowError` out
+of `int()` (including inside `_load_pre_snapshot`'s own `raw_pids` loop, not
+only `reported.json`'s marker) — skipping what cannot be trusted instead of
+crashing `post`/`stop` (R2-2). The CLI-level
+`test_detached_orphan_with_dev_tool_image_is_admitted` duplicated
+`test_orphan_started_during_call_is_reported` byte for byte and added no
+coverage once R2-1 had its own unit-level pattern tests, so it was deleted
+rather than kept as a second copy (R2-3).
+
+**R2-4, fixed for real this round:** the first attempt at closing a PID-reuse
+race in `_capture_new` — discard a captured command line whose `_creation_time`
+no longer matched the pid's `new_procs` entry — left the discarded pid out of
+`cmdlines` entirely. `_is_hook_chain`'s own `cmdlines and cur in cmdlines` check
+then fell through to a fresh `_command_line(cur)` read for exactly that pid,
+which is the recycled line the discard was meant to prevent from ever being
+read at all — so R2-4 as shipped in round 2 did nothing. `_capture_new` now
+reads a pid's creation time and command line through one handle
+(`_process_identity`), and stores `None` — a real dict key, not a missing one —
+for a pid whose creation no longer matches. `_is_hook_chain` treats membership
+in `cmdlines` as authoritative even when the stored value is `None`, so the
+recycled line is never re-read. Proven by
+`test_hook_chain_does_not_reread_line_discarded_on_creation_mismatch`, which
+fails against the pre-fix hook (one re-read, chain returns `True`) and passes
+against this one (zero re-reads, chain returns `False`).
+
+**Known limitation, not observed:** `_is_hook_chain`'s fallback
+`_command_line(cur)` read — for a pid that is *not* a key in `cmdlines` at all
+(an ancestor that predates the call, or any hop walked at Stop through
+`_extend_ledger_with_live_descendants`, which passes no `cmdlines`) — is still
+not tied to creation time the way `_process_identity`'s reads are. If a PID
+were recycled into exactly a configured hook's command line there, a real
+leftover could be hidden, which is the unsafe direction; this has not been
+observed and would need a reuse into exactly a hook invocation's own command
+line to happen.
+
 Two more identity safeguards, each added after a live report misattributed
 something and each proven by its own paired test in
 `TestLeftoverProcessesAdmissionRules`:
@@ -178,13 +223,16 @@ question instead of a substring search:
 - A shell hop (`bash.exe`/`sh.exe`): its `-c` argument, once parsed, equals
   one of the `command` strings configured in `.claude/settings.json` **or**
   `.claude/settings.local.json`, exactly.
-- A `py`/`python` hop (`py.exe`, or `python[0-9.]*w?.exe`): its first
-  non-flag argument — after `py.exe`'s own optional version selector such as
-  `-3` — is, once normalised (quotes stripped, backslashes to forward
-  slashes, `posixpath.normpath`, lower case), one of the script paths those
-  same `command` strings invoke. `-c`, `-m`, or any other leading interpreter
-  flag is deliberately never a match — an unusual flag makes the hook
-  over-report a real leftover, the safe direction, rather than hide one.
+- A `py`/`python` hop — any image `_is_python_interpreter_image` recognises
+  (`py.exe`/`pyw.exe`, the two launchers, or `python[0-9.]*w?.exe`, an
+  interpreter itself): its first non-flag argument — after the version
+  selector, such as `-3`, only when the launcher itself (`py.exe`/`pyw.exe`)
+  carries one, never on a bare `python*.exe` interpreter where `-3` is an
+  option instead — is, once normalised (quotes stripped, backslashes to
+  forward slashes, `posixpath.normpath`, lower case), one of the script paths
+  those same `command` strings invoke. `-c`, `-m`, or any other leading
+  interpreter flag is deliberately never a match — an unusual flag makes the
+  hook over-report a real leftover, the safe direction, rather than hide one.
 
 This depends on two facts a 45 s read-only poll of two live sessions measured
 directly (2026-09-16): every configured hook ran as a four-hop
@@ -381,6 +429,14 @@ after the final edit to the hook this round, then the same measurement
 script. 34 `post-toolu_*.json` files were written after that edit, mean 0.029
 entries per file -- still well under the 10.7 baseline, growth still not
 observed after round 1's changes.
+
+**F2 re-measured live (2026-09-16, round 2, after the R2-1/R2-2/R2-4 fixes
+above -- none of which touch `_capture_new`'s early-capture ordering, so this
+is mainly a check that nothing in this round regressed it):** 12 separate
+`Bash` tool calls (`true`) after the final edit to the hook this round, then
+the same measurement script. 35 `post-toolu_*.json` files were written after
+that edit, mean 0.057 entries per file -- still well under the 10.7 baseline,
+growth still not observed after round 2's changes.
 
 **Not yet re-run after this round's changes:** the live positive control
 (steps 1-3 above), and a check that the `systemMessage` note from a blind

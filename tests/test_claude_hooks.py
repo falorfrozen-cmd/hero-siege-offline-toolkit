@@ -764,17 +764,6 @@ class TestLeftoverProcesses(HookTestCase):
         self.assertEqual(result.returncode, 2, result.stdout)
         self.assertIn(str(orphan_pid), result.stderr)
 
-    # R1-A positive: `_spawn_orphan`'s sleeper runs as `python.exe`, one of
-    # `DETACHED_ORPHAN_IMAGES` -- the allowlist must not blind rule (b) to the
-    # ordinary detached-dev-tool shape it exists to keep catching.
-    def test_detached_orphan_with_dev_tool_image_is_admitted(self):
-        self.assertEqual(self.pre().returncode, 0)
-        orphan_pid = self.track(_spawn_orphan())
-        self.assertEqual(self.post().returncode, 0)
-        result = self.stop()
-        self.assertEqual(result.returncode, 2, result.stdout)
-        self.assertIn(str(orphan_pid), result.stderr)
-
     # -- MCP-shaped exclusion (rule a's negative side) ----------------------
 
     # A child of a process that predates the call is not admitted. This is the
@@ -1154,6 +1143,82 @@ class TestLeftoverProcesses(HookTestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertIn(SLEEPER_MARKER, result.stderr)
 
+    # R2-2: a hand-corrupted ledger file can be wrong-shaped in ways the
+    # marker-file test above does not cover -- a `post-*.json` that is a
+    # top-level list instead of a `{pid: entry}` map, one whose entry is not
+    # itself a dict (a good entry sitting right next to a bad one, in the
+    # same file), a `pre-*.json` whose `procs` is likewise a list, and
+    # `reported.json` holding `Infinity` (valid JSON to Python's own parser,
+    # but `int(float("inf"))` raises `OverflowError`, not `ValueError`). None
+    # of this may crash `post` or `stop`, and a leftover recorded through the
+    # normal path must still be reported. Must fail against 6f536a6.
+    def test_wrong_shape_ledger_files_do_not_crash(self):
+        self.assertEqual(self.pre().returncode, 0)
+        proc = self.spawn_sleeper()
+        self.assertEqual(self.post().returncode, 0)
+        sdir = Path(self.ledger_dir) / self.session
+        post_call1 = sdir / "post-call1.json"
+        good_entry = json.loads(post_call1.read_text(encoding="utf-8"))
+        post_call1.unlink()
+        mixed = dict(good_entry)
+        mixed["1"] = 5
+        (sdir / "post-mixed.json").write_text(json.dumps(mixed), encoding="utf-8")
+        (sdir / "post-badlist.json").write_text("[1, 2, 3]", encoding="utf-8")
+        (sdir / "pre-call2.json").write_text(
+            json.dumps({"procs": [1, 2, 3], "raw_pids": []}), encoding="utf-8"
+        )
+        (sdir / "reported.json").write_text(
+            json.dumps({"1": float("inf")}), encoding="utf-8"
+        )
+        post_result = self.post(call="call2")
+        self.assertEqual(post_result.returncode, 0, post_result.stderr)
+        self.assertNotIn("Traceback", post_result.stdout)
+        self.assertNotIn("Traceback", post_result.stderr)
+        result = self.stop()
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertNotIn("Traceback", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn(str(proc.pid), result.stderr)
+
+    # E: item 2's two corruption shapes, exercised at CLI level through a
+    # real pre/post/stop sequence rather than `_load_pre_snapshot` alone -- a
+    # hand-corrupted `pre-*.json` must not crash the very next `post`, and a
+    # leftover recorded through the normal path must still be reported at
+    # `stop` afterward. Must fail against the pre-fix baseline, which raises
+    # `OverflowError` out of the `raw_pids` loop and `KeyError` out of
+    # `cmd_post`'s `pre_keys` comprehension.
+    def test_overflow_raw_pids_and_pidless_pre_entry_do_not_crash(self):
+        self.assertEqual(self.pre().returncode, 0)
+        proc = self.spawn_sleeper()
+        self.assertEqual(self.post().returncode, 0)
+        sdir = Path(self.ledger_dir) / self.session
+
+        self.assertEqual(self.pre(call="call2").returncode, 0)
+        pre2 = sdir / "pre-call2.json"
+        data = json.loads(pre2.read_text(encoding="utf-8"))
+        data["raw_pids"].append(float("inf"))
+        pre2.write_text(json.dumps(data), encoding="utf-8")
+        post2 = self.post(call="call2")
+        self.assertEqual(post2.returncode, 0, post2.stderr)
+        self.assertNotIn("Traceback", post2.stdout)
+        self.assertNotIn("Traceback", post2.stderr)
+
+        self.assertEqual(self.pre(call="call3").returncode, 0)
+        pre3 = sdir / "pre-call3.json"
+        data = json.loads(pre3.read_text(encoding="utf-8"))
+        data["procs"]["999999"] = {"ppid": 4, "image": "pidless.exe", "creation": 1}
+        pre3.write_text(json.dumps(data), encoding="utf-8")
+        post3 = self.post(call="call3")
+        self.assertEqual(post3.returncode, 0, post3.stderr)
+        self.assertNotIn("Traceback", post3.stdout)
+        self.assertNotIn("Traceback", post3.stderr)
+
+        result = self.stop()
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertNotIn("Traceback", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn(str(proc.pid), result.stderr)
+
     # Negative control: an ordinary tracked call with nothing spawned and
     # nothing broken prints no systemMessage at all.
     def test_tracked_session_prints_no_system_message(self):
@@ -1378,6 +1443,36 @@ class TestLeftoverProcessesHookMatch(unittest.TestCase):
                 self.assertEqual(commands, frozenset())
                 self.assertEqual(scripts, frozenset())
 
+    # F: item 3's docstring claimed `pyw.exe` (the windowed Python launcher)
+    # already matched the same way `py.exe` does, but the python branch only
+    # ever checked the literal `py.exe`/`_PYTHON_IMAGE_RE`, which does not
+    # cover `pyw.exe` -- the windowed launcher never got the version-selector
+    # skip at all. Must fail against the pre-fix baseline.
+    def test_windowed_launcher_with_version_selector_matches(self):
+        self._write("settings.json", SETTINGS.read_text(encoding="utf-8"))
+        project_dir = "C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit"
+        commands, scripts = self.hook._configured_hooks(self.claude_dir, [project_dir])
+        cmdline = (
+            r"C:\WINDOWS\pyw.exe -3 "
+            r"C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/decompiled_output.py"
+        )
+        self.assertTrue(self.hook._is_hook_invocation("pyw.exe", cmdline, commands, scripts))
+
+    # Negative pair: the version selector is only a launcher's own leading
+    # argument (`py.exe`/`pyw.exe`) -- on a `python*.exe` interpreter, `-3`
+    # is an option and must keep failing the match, deliberately strictly.
+    def test_version_selector_on_python_image_does_not_match(self):
+        self._write("settings.json", SETTINGS.read_text(encoding="utf-8"))
+        project_dir = "C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit"
+        commands, scripts = self.hook._configured_hooks(self.claude_dir, [project_dir])
+        cmdline = (
+            r"C:\WINDOWS\pythonw.exe -3 "
+            r"C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/decompiled_output.py"
+        )
+        self.assertFalse(
+            self.hook._is_hook_invocation("pythonw.exe", cmdline, commands, scripts)
+        )
+
 
 @unittest.skipUnless(sys.platform == "win32", "leftover_processes.py is Windows-only")
 class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
@@ -1494,9 +1589,10 @@ class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
     # since that line is exactly what lets `_is_hook_chain` recognise a
     # since-exited sibling hook hop as a hook chain rather than a leftover.
     def test_capture_new_drops_exited_process(self):
-        new_procs = {10: {"pid": 10}, 20: {"pid": 20}}
+        new_procs = {10: {"pid": 10, "creation": 100}, 20: {"pid": 20, "creation": 200}}
         with mock.patch.object(
-            self.hook, "_command_line", side_effect=lambda pid: f"cmd{pid}"
+            self.hook, "_process_identity",
+            side_effect=lambda pid: (new_procs[pid]["creation"], f"cmd{pid}"),
         ), mock.patch.object(
             self.hook, "_is_still_active", side_effect=lambda pid: pid == 10
         ):
@@ -1508,9 +1604,10 @@ class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
     # too, and is also a member of `alive` (unlike pid 20 above, which is
     # kept in `cmdlines` but dropped from `alive`).
     def test_capture_new_keeps_live_process_with_command_line(self):
-        new_procs = {10: {"pid": 10}, 20: {"pid": 20}}
+        new_procs = {10: {"pid": 10, "creation": 100}, 20: {"pid": 20, "creation": 200}}
         with mock.patch.object(
-            self.hook, "_command_line", side_effect=lambda pid: f"cmd{pid}"
+            self.hook, "_process_identity",
+            side_effect=lambda pid: (new_procs[pid]["creation"], f"cmd{pid}"),
         ), mock.patch.object(
             self.hook, "_is_still_active", side_effect=lambda pid: pid == 10
         ):
@@ -1518,17 +1615,34 @@ class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
         self.assertEqual(alive, {10})
         self.assertEqual(cmdlines[10], "cmd10")
 
-    # A pid whose command line could not be read at all (`_command_line`
-    # returned `None`) is never added to `cmdlines`, whether or not it is
-    # still alive -- there is no line to keep.
+    # A pid whose command line could not be read at all (`_process_identity`
+    # returned a `None` line) is captured as `None` in `cmdlines` -- still a
+    # key, just not a trustworthy one -- whether or not it is still alive.
     def test_capture_new_drops_unreadable_command_line(self):
-        new_procs = {10: {"pid": 10}}
+        new_procs = {10: {"pid": 10, "creation": 100}}
         with mock.patch.object(
-            self.hook, "_command_line", return_value=None
+            self.hook, "_process_identity", return_value=(100, None)
         ), mock.patch.object(self.hook, "_is_still_active", return_value=True):
             alive, cmdlines = self.hook._capture_new(new_procs)
         self.assertEqual(alive, {10})
-        self.assertNotIn(10, cmdlines)
+        self.assertIn(10, cmdlines)
+        self.assertIsNone(cmdlines[10])
+
+    # R2-4: a pid can be recycled between `snapshot()`'s post read (which
+    # supplied `new_procs[pid]["creation"]`) and this function's own
+    # `_process_identity` read a moment later -- if the PID has since been
+    # reused by an unrelated process, the captured line must not be
+    # attributed to the old identity. Must fail against 6f536a6, which never
+    # read a creation time here at all.
+    def test_capture_new_discards_command_line_on_creation_mismatch(self):
+        new_procs = {10: {"pid": 10, "creation": 100}}
+        with mock.patch.object(
+            self.hook, "_process_identity", return_value=(999, "cmd10")  # recycled: != 100
+        ), mock.patch.object(self.hook, "_is_still_active", return_value=True):
+            alive, cmdlines = self.hook._capture_new(new_procs)
+        self.assertEqual(alive, {10})  # still a live admission candidate
+        self.assertIn(10, cmdlines)  # captured, but...
+        self.assertIsNone(cmdlines[10])  # ...not trusted
 
     # R1-A: rule (b) is narrowed to a named allowlist of images a session
     # plausibly starts itself (`DETACHED_ORPHAN_IMAGES`), after a live Stop on
@@ -1548,6 +1662,29 @@ class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
             self.hook._is_orphan_admissible(
                 proc, post_snap, pre_snap, post_raw_pids, pre_raw_pids
             )
+        )
+
+    # R2-1: rule (b)'s image check must accept every Python interpreter name
+    # the hook-invocation matcher itself already accepts (`python[0-9.]*w?.exe`),
+    # plus `py.exe`/`pyw.exe` -- not just the literal `python.exe`/`pythonw.exe`
+    # names `DETACHED_ORPHAN_IMAGES` used to list on its own. Must fail against
+    # 6f536a6, which only recognised those two literal names.
+    def test_orphan_admission_admits_versioned_and_windowed_python_images(self):
+        for image in ("python3.exe", "python3.14.exe", "pyw.exe", "py.exe", "pythonw.exe"):
+            with self.subTest(image=image):
+                proc = {"pid": 100, "ppid": 50, "creation": 500, "image": image}
+                self.assertTrue(
+                    self.hook._is_orphan_admissible(proc, {}, {}, set(), set())
+                )
+
+    # Negative pair: a name that merely starts with "python" but is not one
+    # of the interpreter's own image names (a typosquat, or an unrelated
+    # tool) must not be admitted -- the shared pattern is anchored, not a
+    # prefix match.
+    def test_orphan_admission_rejects_python_lookalike_image(self):
+        proc = {"pid": 100, "ppid": 50, "creation": 500, "image": "pythonista.exe"}
+        self.assertFalse(
+            self.hook._is_orphan_admissible(proc, {}, {}, set(), set())
         )
 
     # `_is_hook_chain` must prefer a captured command line over a fresh
@@ -1578,6 +1715,92 @@ class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
         }
         with mock.patch.object(self.hook, "_command_line", return_value=None):
             self.assertFalse(self.hook._is_hook_chain(11, snap, 1, {}))
+
+    # A: R2-4 reproduced. A pid whose captured line was discarded on a
+    # creation mismatch must not be re-read from `_is_hook_chain` -- that
+    # re-read is exactly the recycled line R2-4 meant to discard. Patching
+    # both `_command_line`/`_creation_time` (what the pre-fix `_capture_new`
+    # calls) and `_process_identity` (what the fixed one calls) makes this
+    # one test meaningful against both trees: on the baseline, the mismatch
+    # leaves pid 11 out of `cmdlines` entirely, so `_is_hook_chain`'s
+    # `cmdlines and cur in cmdlines` falls through to a fresh, recycled
+    # `_command_line` read. Must fail against the pre-fix baseline.
+    def test_hook_chain_does_not_reread_line_discarded_on_creation_mismatch(self):
+        outer_bash_line = (
+            r'"C:\Program Files\Git\bin\bash.exe" -c '
+            r'"py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py\""'
+        )
+        new_procs = snap = {
+            11: {"pid": 11, "ppid": 1, "image": "bash.exe", "creation": 100},
+        }
+        with mock.patch.object(
+            self.hook, "_hooks",
+            return_value=(
+                frozenset({'py -3 "$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py"'}),
+                frozenset(),
+            ),
+        ), mock.patch.object(
+            self.hook, "_command_line", return_value=outer_bash_line
+        ) as command_line_mock, mock.patch.object(
+            self.hook, "_creation_time", return_value=999
+        ), mock.patch.object(
+            self.hook, "_process_identity", create=True,
+            return_value=(999, outer_bash_line),  # recycled: != new_procs[11]["creation"]
+        ), mock.patch.object(
+            self.hook, "_is_still_active", return_value=True
+        ):
+            _alive, cmdlines = self.hook._capture_new(new_procs)
+            command_line_mock.reset_mock()
+            result = self.hook._is_hook_chain(11, snap, 1, cmdlines)
+        self.assertFalse(result)
+        self.assertEqual(command_line_mock.call_count, 0)
+
+    # B: positive pair. The same shape, but the identity read's creation
+    # matches -- the captured line is trustworthy, and `_is_hook_chain` must
+    # recognise it as a hook invocation without ever re-reading it.
+    def test_hook_chain_uses_line_captured_with_matching_identity(self):
+        outer_bash_line = (
+            r'"C:\Program Files\Git\bin\bash.exe" -c '
+            r'"py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py\""'
+        )
+        new_procs = snap = {
+            11: {"pid": 11, "ppid": 1, "image": "bash.exe", "creation": 100},
+        }
+        with mock.patch.object(
+            self.hook, "_hooks",
+            return_value=(
+                frozenset({'py -3 "$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py"'}),
+                frozenset(),
+            ),
+        ), mock.patch.object(
+            self.hook, "_command_line", return_value=outer_bash_line
+        ), mock.patch.object(
+            self.hook, "_creation_time", return_value=100
+        ), mock.patch.object(
+            self.hook, "_process_identity", create=True,
+            return_value=(100, outer_bash_line),  # matches new_procs[11]["creation"]
+        ), mock.patch.object(
+            self.hook, "_is_still_active", return_value=True
+        ):
+            _alive, cmdlines = self.hook._capture_new(new_procs)
+            result = self.hook._is_hook_chain(11, snap, 1, cmdlines)
+        self.assertTrue(result)
+
+    # C: `_process_identity` reads both values through one handle. Its
+    # creation time must agree with `_creation_time`'s own (separate-handle)
+    # read of the same live process, and its command line must be readable.
+    def test_process_identity_reads_live_process(self):
+        pid = os.getpid()
+        creation, line = self.hook._process_identity(pid)
+        self.assertIsNotNone(creation)
+        self.assertEqual(creation, self.hook._creation_time(pid))
+        self.assertIsInstance(line, str)
+        self.assertTrue(line)
+
+    # Negative pair: an invalid pid fails `OpenProcess` outright, so both
+    # values come back `None` rather than one succeeding and the other not.
+    def test_process_identity_of_invalid_pid_is_none(self):
+        self.assertEqual(self.hook._process_identity(0), (None, None))
 
 
 if __name__ == "__main__":
