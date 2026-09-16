@@ -13,7 +13,8 @@ When developing, modifying, testing, or investigating code within any submodule 
 can check or run, so those rules stop depending on whether the right section was
 read first. Four `PostToolUse` hooks (the catalog signature, the Tauri command
 threading rules, the hub's frontend tests, and decompiled output reaching a
-tracked file), five review agents (`sdk-contract-reviewer`,
+tracked file) and a `Stop` hook that reports processes this session started and
+left running, five review agents (`sdk-contract-reviewer`,
 `tauri-command-reviewer`, `decompile-output-guard`, `docs-sync-reviewer`,
 `instrument-blindness-reviewer`), three phase agents that run a change through
 plan → implement → verify at three different model tiers (`planner`,
@@ -262,6 +263,55 @@ assert against what the change actually wrote — `state.json`, the log — rath
 than only against the screenshot, and record the result in that submodule's
 verification table. This is the "prove the instrument" rule below applied to a
 window instead of a hook.
+
+## Clean Up the Processes You Started Before Ending a Reply
+
+A session in this repository routinely starts real processes: `npm start` in
+`hub/` for the section above (a Tauri debug build plus its MCP bridge), `cargo`,
+`npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start`, a
+`run_in_background` shell, a `Monitor` task, a test or game launch. Left
+running past the reply that started them, these are exactly how a machine's
+memory fills up over a long day — one process at a time, none of them
+individually alarming.
+
+So: before ending a reply, stop what you started. Kill background shells
+through the tool that owns them. A dev server leaves more than its own PID —
+`npm start` in `hub/` leaves both `cargo` and the debug `hub.exe` behind it, so
+kill the **tree**, not just the process you launched. The same goes for
+watchers, a `tauri-mcp driver-session`, and test children. If the user asked
+for something to keep running, leave it, and say so in the reply, naming the
+PID. A background agent or shell of this session that is still working — not
+finished, not abandoned — is also a valid reason to leave a process running:
+say so and name the PID rather than treating a leftover report as an error.
+
+How to find what a PID left behind, on Windows:
+
+```powershell
+Get-CimInstance Win32_Process | Where-Object ParentProcessId -eq <pid> | Select ProcessId,Name,CreationDate,CommandLine
+Get-NetTCPConnection -LocalPort 9223 -State Listen | Select OwningProcess
+```
+
+then end it — `taskkill /PID <pid> /T /F`, written as `taskkill //PID <pid>
+//T //F` under Git Bash so it is not read as a path. In auto mode `taskkill`
+can be denied by the permission classifier (seen: "Interfere With Workloads");
+if it is, do not retry around it -- tell the user what is still running and
+name the PID.
+
+Never kill a process you did not start: the MCP servers backing this session
+(each is `npx` → `cmd.exe` → `node`, one full set per session), another
+Claude session's processes, or the user's own game or hub. Never kill by image
+name — `taskkill /IM node.exe` takes out every session's MCP servers along
+with the one you meant. And check with a command that the process is actually
+gone; do not assume a kill succeeded.
+
+`.claude/hooks/leftover_processes.py` backs this up: a `Stop` hook reports
+whatever it can attribute to this session's own tool calls and is still alive
+when a reply ends, once per process. It never kills anything — reporting is
+all it does. A quiet hook is "not observed", not proof that nothing leaked; it
+can only see what its own ledger recorded, so the rule above is still yours to
+follow, not something to wait for the hook to catch. When it cannot track a
+session at all — no `claude.exe` ancestor, or unreadable hook settings — it
+says so with a visible warning instead of staying silently blind.
 
 ## Prove the Instrument Before Trusting a Negative Result
 
