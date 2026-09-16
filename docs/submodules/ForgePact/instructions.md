@@ -264,6 +264,35 @@ Exported by the plugin at most once every 2 seconds when custom forge hooks are 
 
 ---
 
+## AI Code Review (`ai-review.yml`)
+
+`.github/workflows/ai-review.yml` runs an AI code review of a pull request and
+posts findings as inline comments. It is **opt-in, never automatic**: add the
+`ai-review` label, or comment `@claude review` on the pull request. The label
+does not re-run by itself on later pushes; request again for a fresh review.
+A comment trigger only works once the workflow is on `main`, because GitHub runs
+`issue_comment` workflows from the default branch.
+
+It needs two things, not one:
+
+- the `CLAUDE_CODE_OAUTH_TOKEN` repository secret, from `claude setup-token`,
+  which authenticates against a Claude subscription rather than a
+  separately-billed API key; **and**
+- the [Claude GitHub App](https://github.com/apps/claude) installed on the
+  repository. Without it the run fails at the OIDC-to-app-token exchange with
+  `401 Unauthorized`, "Claude Code is not installed on this repository", before
+  any review happens -- a correct secret does not help.
+
+Concurrency is on the job and shared only by a real request, so an ordinary
+comment or unrelated label cannot cancel a review in progress. The request
+predicate is written out twice in the file (in the job `if` and in the
+concurrency group); change both together. The hub carries the same workflow and
+its `tests/test_ai_review_workflow.py` pins that shape.
+
+This lives in its own section rather than on the "CI / Pipeline Availability"
+line above because that line is rewritten whenever a release workflow changes,
+and every such rewrite conflicted with it.
+
 ## Safety, Installation & Backup Lifecycle
 
 ### Safe Mod Installation & Restoration
