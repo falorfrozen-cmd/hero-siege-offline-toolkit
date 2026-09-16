@@ -178,6 +178,7 @@ To add or modify a gameplay modifier or runtime command:
 - **Python Packages (Optional / Packaging):**
   - `pyinstaller` (required for running `build_release.py`).
   - `pywebview` (optional; if installed, panel launches in a native desktop window, otherwise falls back to the default web browser).
+  - `requirements-build.txt` pins the exact versions CI builds with (`pyinstaller==6.22.2`, `pywebview==6.2.1`); `py -3 -m pip install -r requirements-build.txt` reproduces them locally when matching a CI-built zip.
 
 ---
 
