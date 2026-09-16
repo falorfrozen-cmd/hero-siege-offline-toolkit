@@ -128,8 +128,10 @@ fails if that creeps back.
 
 ### Driving the running window
 
-A debug build starts an MCP bridge on `127.0.0.1:9223` — behind
-`#[cfg(debug_assertions)]`, because it can invoke any command the app has:
+`npm start` starts an MCP bridge on `127.0.0.1:9223` — an optional dependency
+behind the `mcp-bridge` feature (which only `npm start` passes) and
+`#[cfg(debug_assertions)]`, because it can invoke any command the app has. A
+release build does not compile it:
 
 ```bash
 npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start --port 9223

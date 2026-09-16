@@ -655,9 +655,11 @@ it. Suggest, wait, and drop it if the answer is no.
 in step: some tools (the desktop `manage_window` actions) return a version error
 against an older plugin.
 
-The bridge only exists in a **debug** build — it is registered under
-`#[cfg(debug_assertions)]` because it can invoke any command in the application.
-Start the hub with `npm start` in `hub/` and wait for `:9223` before expecting
+The bridge only exists in a **debug** build with the `mcp-bridge` feature — an
+optional dependency registered under
+`#[cfg(all(debug_assertions, feature = "mcp-bridge"))]`, because it can invoke
+any command in the application. A bare `cargo run` or `tauri dev` does not start
+it. Start the hub with `npm start` in `hub/` (which passes `--features mcp-bridge`) and wait for `:9223` before expecting
 `tauri-hub` to connect. `AGENTS.md` § "Drive a Tauri App Yourself Instead of
 Asking Someone to Click It" has the rest, including the window label (`hub`, not
 the `main` every tool defaults to).

@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "start": "node scripts/tauri.mjs dev --config src-tauri/tauri.dev.conf.json",
+    "start": "node scripts/tauri.mjs dev --features mcp-bridge --config src-tauri/tauri.dev.conf.json",
     "release": "node scripts/tauri.mjs build",
     "package": "node scripts/tauri.mjs build",
     "icons": "py -3 scripts/make-icons.py",
