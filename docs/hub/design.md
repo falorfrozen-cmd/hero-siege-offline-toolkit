@@ -309,6 +309,14 @@ with "no longer being offered" if it really did. The launch check
 (`startup_check`) stays silent on failure either way: no toast, no "hub
 checked at" timestamp, and the cache is left as it was.
 
+Every manual hub check -- About's button and the general "Check for updates" /
+"Check now" on Library and Updates -- goes through the one `hub-check.js`
+state, so About always shows the outcome of the latest check, whichever screen
+ran it. Before that, a success from About followed by a failure from Updates
+left About saying "This is the newest release" (PR #56 review). A failure from
+Library or Updates also raises a toast, since those screens have no inline
+place for it; About shows it inline only.
+
 ### Cutting one
 
 **Actions > Hub tag > Run workflow**, type the tag, and `hub-tag.yml` does the

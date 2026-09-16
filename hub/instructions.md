@@ -39,7 +39,7 @@ how to work on the code; it deliberately does not restate the reasoning.
 | `TitleBar.svelte`, `StatusBar.svelte`, `Toasts.svelte` | Window chrome and notices. |
 | `library.svelte.js` | **The one copy of what the hub knows.** Every screen reads it; nothing recomputes it. |
 | `hub-update.svelte.js` | The hub's own updater, kept apart from the tools' catalog. |
-| `hub-check.js` | The runes-free state for `check_hub_update` -- checking/current/available/failed -- so `node --test` can run it; tested by `hub-check.test.js`. `library.svelte.js` copies it into `$state`. |
+| `hub-check.js` | The runes-free state for `check_hub_update` -- checking/current/available/failed -- so `node --test` can run it; tested by `hub-check.test.js`. `library.svelte.js` copies it into `$state`. `checkAll` is the general catalog-then-hub check, so every manual hub check updates the same state. |
 | `bridge.js` | The only file that knows whether Tauri is underneath. |
 | `skin.svelte.js`, `skin.css`, `theme.css` | Sprites and the three skins, adopted from HS-Offline-Tracker. |
 

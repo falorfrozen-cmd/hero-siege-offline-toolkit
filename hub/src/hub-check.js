@@ -25,6 +25,7 @@ export const NEWEST_RELEASE_MESSAGE = 'This is the newest release.';
 export function createHubCheck({ invoke }) {
   let state = { checking: false, result: null, message: '' };
   const watchers = new Set();
+  let inflight = null;
 
   const announce = () => watchers.forEach((watch) => watch(state));
 
@@ -47,26 +48,62 @@ export function createHubCheck({ invoke }) {
      * time.
      */
     async check() {
-      if (state.checking) return state;
+      // A second caller waits for the check already running rather than
+      // reading its half-finished snapshot as an answer.
+      if (inflight) return inflight;
 
       state = { checking: true, result: null, message: '' };
       announce();
 
-      try {
-        const update = await invoke('check_hub_update');
-        state =
-          update == null
-            ? { checking: true, result: 'current', message: NEWEST_RELEASE_MESSAGE }
-            : { checking: true, result: 'available', message: '' };
-      } catch (e) {
-        const text = e?.message ?? String(e ?? '');
-        state = { checking: true, result: 'failed', message: text || CHECK_FAILED_MESSAGE };
-      } finally {
-        state = { ...state, checking: false };
-        announce();
-      }
+      inflight = (async () => {
+        try {
+          const update = await invoke('check_hub_update');
+          state =
+            update == null
+              ? { checking: true, result: 'current', message: NEWEST_RELEASE_MESSAGE }
+              : { checking: true, result: 'available', message: '' };
+        } catch (e) {
+          const text = e?.message ?? String(e ?? '');
+          state = { checking: true, result: 'failed', message: text || CHECK_FAILED_MESSAGE };
+        } finally {
+          state = { ...state, checking: false };
+          inflight = null;
+          announce();
+        }
+        return state;
+      })();
 
-      return state;
+      return inflight;
     },
   };
+}
+
+/**
+ * The general "check for updates" (Library's and Updates' buttons): the
+ * catalog for the tools, then the hub's own release.
+ *
+ * The hub half goes through `hubCheck` like About's button does, so whichever
+ * screen ran the latest check, About shows its outcome -- a check that failed
+ * from Updates used to leave About saying "This is the newest release" from an
+ * earlier success (PR #56 review). Outside About a failure has nowhere inline
+ * to appear, so it is also raised through `notify`.
+ *
+ * Two requests, deliberately not one: a catalog that failed is no reason to
+ * skip the hub's own release, and the reverse cost a release going unnoticed
+ * entirely.
+ *
+ * @returns the refreshed library view, or `undefined` if the catalog check failed.
+ */
+export async function checkAll({ invoke, hubCheck, notify }) {
+  let view;
+  try {
+    view = await invoke('check_for_updates');
+  } catch (e) {
+    notify('error', e?.message ?? e);
+  }
+
+  const hub = await hubCheck.check();
+  if (hub.result === 'failed') notify('error', hub.message);
+
+  return view;
 }

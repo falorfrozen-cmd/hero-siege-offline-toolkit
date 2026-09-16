@@ -6,7 +6,7 @@
 
 import { invoke, listen, native } from './bridge.js';
 import { createProgressRows } from './progress-rows.js';
-import { createHubCheck } from './hub-check.js';
+import { createHubCheck, checkAll } from './hub-check.js';
 
 let view = $state(null);
 let loading = $state(true);
@@ -182,21 +182,12 @@ export async function refresh() {
   }
 }
 
+/** Library's and Updates' button: the catalog, then the hub through `hubCheck` (see `checkAll`). */
 export async function checkForUpdates() {
   checking = true;
   try {
-    view = await invoke('check_for_updates');
-  } catch (e) {
-    notify('error', e?.message ?? e);
-  }
-  // Two requests to two places: the catalog for the ten tools, the release page
-  // for the hub. Deliberately not one call -- a catalog that failed is no
-  // reason to skip the hub's own release, and the reverse cost a release going
-  // unnoticed entirely.
-  try {
-    await invoke('check_hub_update');
-  } catch (e) {
-    notify('error', e?.message ?? e);
+    const next = await checkAll({ invoke, hubCheck, notify });
+    if (next !== undefined) view = next;
   } finally {
     checking = false;
   }
