@@ -8,7 +8,7 @@
 - **Commit Message:** `Prepare ForgePact 1.3.16 Headhunter release` — includes upstream's independent fix for the `VALUE_REF` player-resolution bug class in the Headhunter kill/steal path (`HhResolveInstance`, commits `7743a99`/`4ae4e30`), the same bug class described below.
 - **Fork & Branch:** This guide additionally tracks work rebased onto that revision and pushed to `fork` (`S-Borkowski/ForgePact`) as **`release/v1.3.17`** — the version is 1.3.17, not 1.3.16, precisely because upstream had already shipped 1.3.16 by the time this branch was rebased onto it. See `release-notes-v1.3.17.md`. The branch has since grown a second release, **1.3.18** (`release-notes-v1.3.18.md`: the map-reveal pack pass and the Pet Quest Collector); the branch name is kept as-is because the open PR to origin tracks it.
 - **Source Availability:** Full application source is present (Python control panel `src/forgepact.py`, C++20 native mod plugin `plugin/ModuleMain.cpp`, modified YYToolkit patches `yytoolkit-modified/`, build scripts `plugin_build/build.bat` and `build_release.py`, Python contract tests `tests/`, and reverse-engineering research notes `docs/`).
-- **CI / Pipeline Availability:** `notify-hub.yml` (push to `main`, bumps the hub's submodule pointer), `notify-hub-release.yml` (fires on a published release, skips prereleases), `forgepact-tag.yml` (`workflow_dispatch`, tags a release and leaves a draft — no build CI; see "Tagging a release (forgepact-tag.yml)" below for what a build half would require) and `ai-review.yml` (opt-in AI code review of a pull request — add the `ai-review` label or comment `@claude review`; never automatic). `ai-review.yml` needs two things, not one: the `CLAUDE_CODE_OAUTH_TOKEN` repository secret (from `claude setup-token`, authenticating against a Claude subscription rather than a separately-billed API key) **and** the [Claude GitHub App](https://github.com/apps/claude) installed on the repository. Missing the app fails the run at the OIDC-to-app-token exchange with `401 Unauthorized`, "Claude Code is not installed on this repository", before any review happens — the secret being correct does not help. Verification is otherwise conducted locally via Python unittest test suites and static build audits.
+- **CI / Pipeline Availability:** `notify-hub.yml` (push to `main`, bumps the hub's submodule pointer), `notify-hub-release.yml` (fires on a published release, skips prereleases), `forgepact-tag.yml` (`workflow_dispatch`, tags a release, leaves a draft, and dispatches the build), `forgepact-release.yml` (`workflow_dispatch` against `main` with a `tag` input; fetches the pinned toolchain, compiles and packages the tagged tree, and uploads the zip to that tag's draft — see "Tagging a release (forgepact-tag.yml)" below, "The build half (forgepact-release.yml)") and `ai-review.yml` (opt-in AI code review of a pull request — add the `ai-review` label or comment `@claude review`; never automatic). `ai-review.yml` needs two things, not one: the `CLAUDE_CODE_OAUTH_TOKEN` repository secret (from `claude setup-token`, authenticating against a Claude subscription rather than a separately-billed API key) **and** the [Claude GitHub App](https://github.com/apps/claude) installed on the repository. Missing the app fails the run at the OIDC-to-app-token exchange with `401 Unauthorized`, "Claude Code is not installed on this repository", before any review happens — the secret being correct does not help. Verification is otherwise conducted locally via Python unittest test suites and static build audits.
 - **Purpose & Scope:** Standalone offline control panel and native runtime hook plugin providing runtime modifiers for Hero Siege single-player sessions. Controls monster density, special content spawns (Rift Portals, Battlefields, Cursed Orbs, Chaos Tower, Shadow Realm, etc.), drop rate multipliers and gated drop families (Keys, Relics, Angelic/Unholy uniques), gameplay mods (relic drop pool filter excluding maxed 10/10 relics, orb pickup radius, pet-driven quest item collection), player/combat stat scaling, full map reveal (fog, plus an optional pass that makes each new zone's spawners create their packs on arrival so monsters appear on the revealed map), and custom forge mechanics (Headhunter, Tyrant's Crown, Beacon, Item Editor base stat export) without permanently altering save files or the base game executable. Integrated with `hs-game-sdk`.
 - **Fork Branch vs. This Guide:** `release/v1.3.17` (`fork`) carries the Mods tab (relic filter, orb pickup, the Headhunter/Tyrant's Crown/Beacon/Map Reveal relocation), the build-order packaging guard, the stall watchdog, the `SafeF()` crash guard, and a second, complementary `VALUE_REF` player-resolution fix (`HhUsableInstance`, used by orb pickup and the relic filter's `HhResolveLocalPlayer` calls — distinct from upstream's `HhResolveInstance`, which fixed the same bug class for the Headhunter kill/steal path only). All covered by `tests/test_relic_filter_contract.py` (updated to match the merge) and documented in Known Limitations items 4-9 below; none are optional cleanup, all were needed to reach a working build.
 
@@ -157,12 +157,28 @@ To add or modify a gameplay modifier or runtime command:
 
 ### Build & Development Prerequisites
 - **Python:** Python 3.10+ (standard `py` launcher on Windows).
-- **C++ Compiler:** Microsoft Visual C++ (MSVC) from Visual Studio 2022 / Build Tools supporting `/std:c++20`.
-- **YYToolkit Headers:** YYToolkit C++ headers (`YYToolkit/`, `Aurie/`, `FunctionWrapper/`, and `YYTK_Shared_Types.cpp`) located in `plugin_build/include/`.
+- **C++ Compiler:** Microsoft Visual C++ (MSVC) supporting `/std:c++20`. `build.bat` finds it
+  itself, in order: an already-initialised `vcvars` environment (`VSCMD_VER` defined and `cl`
+  on `PATH`), then `vswhere -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64`
+  (what finds VS 18.9 Enterprise on the `forgepact-release.yml` runner, `windows-2025-vs2026`,
+  which none of the four legacy hardcoded paths below it match), then those four hardcoded
+  paths (VS 18 BuildTools, VS 18 Community, VS 2022 Community, VS 2022 BuildTools) as a last
+  resort. No manual setup needed if any of the three applies.
+- **YYToolkit Headers and third-party binaries:** the `YYToolkit/`, `Aurie/`, `FunctionWrapper/`
+  include trees, `YYTK_Shared_Types.cpp` (all under `plugin_build/include/`), and
+  `modfiles_shipped/{AurieCore.dll,AuriePatcher.exe,YYToolkit.dll,HSOfflineTrackerProducer.dll}`.
+  `py tools/fetch_toolchain.py` places all eleven pinned files, downloading each from a pinned
+  commit or release and verifying its SHA-256 before writing anything (all-or-nothing: one bad
+  hash writes nothing at all). `--verify-only` checks what's already there without downloading;
+  `--force` replaces a hand-placed file that differs from the pin (the common case: a
+  maintainer's own CRLF `Aurie/shared.hpp` copied in before this tool existed). See
+  `tools/toolchain-pins.json` for exactly where each file comes from, and "The build half
+  (forgepact-release.yml)" below for the full pin table.
 - **hs-game-sdk:** required by **both** builds, not just the plugin. `build.bat` compiles against `hs-game-sdk/cpp/include` (`/I ..\..\hs-game-sdk\cpp\include`), and since 2026-09-14 `build_release.py` also puts `hs-game-sdk/python` on PyInstaller's analysis path — the panel imports `hs_game_sdk` for the Satanic Zone buff/debuff pool, and a package built without it ships that section empty. Building from inside a full toolkit checkout (ForgePact sits next to `hs-game-sdk/`) needs no extra setup; building ForgePact standalone means checking the hub out alongside it.
 - **Python Packages (Optional / Packaging):**
   - `pyinstaller` (required for running `build_release.py`).
   - `pywebview` (optional; if installed, panel launches in a native desktop window, otherwise falls back to the default web browser).
+  - `requirements-build.txt` pins the exact versions CI builds with (`pyinstaller==6.22.2`, `pywebview==6.2.1`); `py -3 -m pip install -r requirements-build.txt` reproduces them locally when matching a CI-built zip.
 
 ---
 
@@ -171,7 +187,7 @@ To add or modify a gameplay modifier or runtime command:
 | Command | Working Directory | Shell / Platform | Prerequisites | Expected Result | Side Effects | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `py src/forgepact.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Launches local control panel HTTP server (`http://127.0.0.1:8766`). | Opens web browser / desktop window; watches for game process | Verified |
-| `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Executes all 361 Python contract tests (including the three native behavior harnesses, which skip without a C++ toolchain). | Read-only test execution; all tests pass | Verified 2026-09-16 |
+| `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Executes all 418 Python contract tests (including the three native behavior harnesses, which skip without a C++ toolchain). | Read-only test execution; all tests pass | Verified 2026-09-16 |
 | `py tools/perf_panel.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Times the panel's two per-poll costs - the boot count and the process scan - against reference copies of the pre-1.3.20 implementations, and exits non-zero if either regressed below its floor. No game, no network. `--log-mb`, `--iterations`, `--min-speedup`. | Writes and deletes a synthetic log in a temp directory | Verified 2026-09-15 |
 | `py tools/cut_release.py --check --expect <version>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Reports the version at every site and fails if they disagree, or if the release notes are missing and `--allow-missing-notes` was not given. `py tools/cut_release.py <version>` moves them. `--allow-missing-notes` (only `--check`; only used by `forgepact-tag.yml`) reports a missing notes file without failing. **Do not hand-edit the version sites** - a mismatch here is the signal, not a nuisance. Touches no git, runs no build, stages no DLL. | `--check` is read-only; a bump rewrites two files | Verified 2026-09-16 |
 | `py tools/forgepact_tag.py --tag <version> --existing <tags…>` | `ForgePact/` | PowerShell / CMD (Git Bash for the real examples below) | Python 3.10+ | Checks a typed tag/version against the existing `v*` tags and the tree, and prints `version=`, `tag=`, `bump=`, `previous=`. Refuses a taken tag, a downgrade against the highest tag, a version below the tree, or a malformed input. | Read-only | Verified 2026-09-16 |
@@ -179,6 +195,8 @@ To add or modify a gameplay modifier or runtime command:
 | `plugin_build\build.bat` / `plugin_build\build.bat release` | `ForgePact/` | CMD / PowerShell (Windows x64) | MSVC v143+ (VS 2022), YYToolkit headers in `plugin_build\include\` | Compiles `BloodPactPlugin_ship.dll` with `/DFORGEPACT_RELEASE`. Equivalent commands - `build.bat` only special-cases `dev`; anything else (including no argument) takes this branch. | Generates `plugin_build\BloodPactPlugin_ship.dll` and `obj_ship\` | Verified 2026-09-10 |
 | `plugin_build\build.bat dev` | `ForgePact/` | CMD / PowerShell (Windows x64) | MSVC v143+ (VS 2022), YYToolkit headers in `plugin_build\include\` | Compiles `BloodPactPlugin_rel.dll` (research build with inspection commands, and `satmods` diagnostics). | Generates `plugin_build\BloodPactPlugin_rel.dll` and `obj_dev\` | Verified 2026-09-10 |
 | `py build_release.py` | `ForgePact/` | PowerShell / CMD | PyInstaller installed, matching `BloodPactPlugin_ship.dll` | Builds complete release bundle in `dist/ForgePact/`. | Terminates existing `ForgePact.exe` processes; generates onefile executable | Inspected |
+| `py tools/fetch_toolchain.py [--verify-only] [--force]` | `ForgePact/` | PowerShell / CMD | Python 3.10+, network (unless `--verify-only`) | Fetches/verifies the eleven pinned headers and third-party binaries in `tools/toolchain-pins.json` (all-or-nothing: one bad hash writes nothing and exits 1). `--verify-only` hashes what's on disk and downloads nothing; an empty root always fails it. `--force` replaces a hand-placed file that differs from the pin. | Writes under `plugin_build/include/` and `modfiles_shipped/` (both gitignored) | Verified 2026-09-16 |
+| `py tools/release_ci.py package --root . --version <v> --out <dir> --info k=v ...` | `ForgePact/` | PowerShell / CMD | Python 3.10+, `dist/ForgePact/` already built | Zips `dist/ForgePact/` into `ForgePact-<v>.zip` under a `ForgePact-<v>/` root (the shape `tools/build_catalog.py` expects), with a generated `SHA256SUMS.txt` and `BUILD-INFO.json` (`live_gameplay_verified` always `false`). Also writes `ForgePact-<v>.zip.sha256`. Refuses if `dist/ForgePact/` is incomplete or its version disagrees with `--version`. | Writes `--out` | Verified 2026-09-16 |
 
 *Status notes:* Commands marked **Verified** have been executed and validated in the current environment. Commands marked **Inspected** have been audited against build script source declarations and compiler flags.
 
@@ -994,23 +1012,30 @@ Run in this order; the order is the guardrail.
    notes and in this file.
 2. From `ForgePact/`: `py -m unittest discover -s tests` - green.
 3. From `ForgePact/`: `py tools/cut_release.py --check --expect 1.3.20`.
-4. From `ForgePact/`: `plugin_build\build.bat release` - compiles
-   `BloodPactPlugin_ship.dll` with `/DFORGEPACT_RELEASE` and auto-stages it.
-5. Confirm the staged DLL matches; `build_release.py`'s guard aborts otherwise
-   (Known Limitations item 4 - the most common "build keeps failing" report).
-6. From `ForgePact/`: `py build_release.py`.
-7. Sanity-check the bundle: launch `dist\ForgePact\ForgePact.exe`, confirm the
-   panel reports 1.3.20, confirm Properties -> Details shows the stamped version
-   resource (the first release where that exists), confirm the World tab's Satanic
-   Zone section has rows, and confirm the Mods tab toggles still send.
-8. Start the game once with the shipped DLL and confirm `out.txt`'s
-   `BloodPact plugin loaded` line carries 1.3.20, matching the panel.
-9. Tag and publish per "Tagging a release (forgepact-tag.yml)" below:
-   1. Run Actions > ForgePact tag on `main`.
-   2. Open the draft release it leaves and upload the zip.
-   3. Review the composed body, and rewrite any section under the
-      generated-notes banner into player language.
-   4. Publish, which fires `notify-hub-release.yml`.
+4. Tag it: Run Actions > ForgePact tag on `main`, per "Tagging a release
+   (forgepact-tag.yml)" below. This bumps the version if needed, pushes the
+   tag, leaves a **draft** release carrying the composed notes, and starts
+   "ForgePact release" against that tag.
+5. Wait for the "ForgePact release" run to finish (~15 minutes).
+6. Download `ForgePact-1.3.20.zip` from the draft, check it against the
+   `.zip.sha256` asset, install from it, and run the **CI build launch gate**
+   (see "The build half (forgepact-release.yml)" below). Record the row in
+   that section's table before doing anything else.
+7. **Fallback, only if CI is unavailable:** build locally instead --
+   `plugin_build\build.bat release` (compiles and auto-stages
+   `BloodPactPlugin_ship.dll`), confirm the staged DLL matches
+   (`build_release.py`'s guard aborts otherwise; Known Limitations item 4 -
+   the most common "build keeps failing" report), `py build_release.py`,
+   sanity-check the bundle (panel reports 1.3.20, Properties -> Details shows
+   the stamped version resource, the World tab's Satanic Zone section has
+   rows, the Mods tab toggles still send), start the game once with the
+   shipped DLL and confirm `out.txt`'s `BloodPact plugin loaded` line carries
+   1.3.20, then zip it by hand (the CI shape: root `ForgePact-1.3.20/`) and
+   upload it to the draft yourself before running the same launch gate
+   against that upload.
+8. Review the draft's composed body, and rewrite any section under the
+   generated-notes banner into player language.
+9. Publish. That fires `notify-hub-release.yml`.
 10. HS-Offline-Launcher is **not** part of this release; see its own guide.
 
 ---
@@ -1018,12 +1043,13 @@ Run in this order; the order is the guardrail.
 ## Tagging a release (forgepact-tag.yml)
 
 `forgepact-tag.yml` (`workflow_dispatch`, "ForgePact tag" in the Actions tab)
-automates everything up to a draft release: type a version (`1.3.21` or
+automates everything up to a running build: type a version (`1.3.21` or
 `v1.3.21`), and it checks the tag is one this repository can actually
 release, moves the version to match with `tools/cut_release.py`, pushes the
-tag, and leaves a **draft** release whose body `tools/forgepact_tag.py`
-composes. It never builds, uploads or publishes — see "Why there is no build
-half" below.
+tag, leaves a **draft** release whose body `tools/forgepact_tag.py`
+composes, and starts "ForgePact release" (`forgepact-release.yml`) against
+that tag. It still never publishes — see "The build is dispatched, never
+inlined" and "The build half (forgepact-release.yml)" below.
 
 ### How to run it
 
@@ -1096,11 +1122,18 @@ newest-first means the cut lands on the oldest skipped version, never on the
 version players are actually updating to. This is a known, accepted
 trade-off; the hub is not changed and notes are not trimmed to fit.
 
-### It never builds, uploads or publishes
+### The build is dispatched, never inlined
 
-No `build_release.py`, no `build.bat`, no `upload-artifact`, no
-`gh release upload`, no `gh workflow run`, no `--draft=false`, no
-`gh release edit`. Publishing the draft is a human act at
+`forgepact-tag.yml` itself still never builds, uploads or publishes: no
+`build_release.py`, no `build.bat`, no `upload-artifact`, no
+`gh release upload`, no `--draft=false`, no `gh release edit` anywhere in
+this workflow's own steps. The one exception to "never touches the build" is
+the dispatch itself — a `gh workflow run forgepact-release.yml --ref main
+-f tag="$TAG" -f dry_run=false` step named "Start the build", right after the
+draft is created, needing `actions: write` for the same documented reason the
+hub's tagger does (starting another workflow run with `GITHUB_TOKEN` is
+normally blocked; `workflow_dispatch` is one of the two exceptions). Publishing
+the draft stays a human act at
 `https://github.com/falorfrozen-cmd/ForgePact/releases`, and it is what fires
 `notify-hub-release.yml`.
 
@@ -1124,24 +1157,108 @@ hand from the composed notes (they are still in the job's logs and in
 `tools/forgepact_tag.py --compose-notes` if needed). There is no retry
 machinery.
 
-### Why there is no build half
+### The build half (forgepact-release.yml)
 
 `modfiles_shipped/` tracks only `.keep`, so `build_release.py`'s own guard —
-`ERROR: modfiles_shipped is incomplete` — stops a CI checkout immediately,
-and `plugin_build/include/` (the YYToolkit headers the plugin compiles
-against) is gitignored. A build half would need all of the following, which
-is a requirement list, not a plan for this change:
+`ERROR: modfiles_shipped is incomplete` — used to stop a CI checkout
+immediately, and `plugin_build/include/` (the YYToolkit/Aurie headers the
+plugin compiles against) is gitignored. `forgepact-release.yml` is what fills
+both gaps: `tools/fetch_toolchain.py` places the pinned headers and binaries
+(all-or-nothing, verified by SHA-256), and the workflow runs on a Windows
+runner with MSVC.
 
-1. Pinned Aurie binaries (`AurieCore.dll`, `AuriePatcher.exe`), with
-   checksums.
-2. The **modified** `YYToolkit.dll` (`yytoolkit-modified/NOTICE.md`), built
-   from a pinned commit or stored as a pinned artifact.
-3. Matching headers in `plugin_build/include/` (`plugin/BUILD.md`;
-   `/DYYTK_DEFINE_INTERNAL=1`).
-4. A Windows runner with **MSVC** v143.
-5. `hs-game-sdk` checked out alongside ForgePact (`build.bat` includes it;
-   `build_release.py` needs `../hs-game-sdk/python`), which means the hub.
-6. PyInstaller.
+**Trigger shape, and why it differs from the hub's.** `hub-tag.yml` dispatches
+`hub-release.yml --ref "$TAG"` — against the tag itself, because every guard
+in that workflow is keyed on `github.ref`. `forgepact-release.yml` is
+dispatched against **`main`**, with the tag passed as a `tag` **input**
+instead, for two reasons: a tag cut before this workflow existed (every
+version through v1.3.20) carries none of it — no `forgepact-release.yml`, no
+fetch script, no vswhere-aware compiler discovery — so `--ref v1.3.20` could
+not run at all; and a fix made to the build workflow could never apply to an
+already-tagged version otherwise. Every guard is keyed on the validated `tag`
+input, never on `github.ref`, so the hub's "dispatched against a branch skips
+its tag guards" failure class cannot occur here — a test pins that the
+workflow refuses to run unless `github.ref_name == main`. It also takes a
+`dry_run` input (default `true`, like `hub-release.yml`) and an optional
+`hub_ref` input (default `main`) that lets a rebuild reproduce an earlier
+one's `hs-game-sdk` snapshot.
+
+**Two draft guards, not one.** Every run requires exactly one release on the
+tag, and it must be a draft — checked once as the first step (before any
+checkout of the tag, so a bad tag or an already-published release fails fast
+on a cheap step) and again immediately before `gh release upload`, because a
+human can publish the draft during the build's ~15 minutes. `--clobber` on
+the upload is only safe because of those two guards; it exists so re-running
+a draft's build replaces its assets. The messages distinguish "no release —
+run ForgePact tag first", "already published — refusing to replace a
+published release's assets", and "more than one".
+
+**What comes from the tag, what comes from `main`, and the compile-line
+guard.** The plugin and panel source, `build_release.py`, `tools/cut_release.py`,
+`tests/` and the compile line all come from the **tag** (checked out into
+`ForgePact/`). The pins, the fetch/package scripts and `build.bat`'s compiler
+discovery come from **`main`**'s own checkout (`forgepact-ci/`), because a
+tagged tree's `build.bat` cannot find MSVC on this runner. So the CI job
+copies `main`'s `plugin_build\build.bat` over the tag's own copy — but only
+after `tools/release_ci.py compile-line` proves the two files' `cl ` line and
+their `set "FLAGS=…"` / `set "OUTPUT=…"` lines are byte-identical. If they are
+not, the job fails rather than silently compiling something other than what
+the tag says it ships. Discovery may differ between the two files; what gets
+compiled may not.
+
+**The pin table**, from `tools/toolchain-pins.json`:
+
+| File | Source | Commit / release | SHA-256 (prefix) | Provenance |
+| --- | --- | --- | --- | --- |
+| `YYToolkit/YYTK_Shared*.hpp`, `.cpp` (5 files) | `AurieFramework/YYToolkit`, `ExamplePlugin/include/` | commit `5a95e46` (tag v4.0.1) | `6d6666f1…`, `ab64a23e…`, `bec19a3f…`, `93531e2d…`, `7d3ad542…` | YYToolkit v4.0.1, unmodified |
+| `FunctionWrapper/FunctionWrapper.hpp` | `AurieFramework/YYToolkit`, same commit | commit `5a95e46` | `e72e263d…` | YYToolkit v4.0.1, unmodified |
+| `Aurie/shared.hpp` | `AurieFramework/Aurie`, `Aurie/source/framework/shared.hpp` | commit `5c4839e` (tag v2.0.2) | `c830652f…` | **Aurie v2.0.2's own header — not YYToolkit v4.0.1's bundled `include/Aurie/shared.hpp`**, which is a different (older, 1.x) header; players run AurieCore 2.0.2, so this is the one that has to match |
+| `modfiles_shipped/AurieCore.dll` | `AurieFramework/Aurie` release | v2.0.2 | `18e3a1de…` | Aurie Framework, unmodified |
+| `modfiles_shipped/AuriePatcher.exe` | `AurieFramework/Aurie` release | v2.0.2 | `4d3aec43…` | Aurie Framework, unmodified |
+| `modfiles_shipped/YYToolkit.dll` | `falorfrozen-cmd/ForgePact` release zip | `ForgePact-1.3.16.zip` (v1.3.16) | `bb113eef…` | Modified YYToolkit (`yytoolkit-modified/NOTICE.md`); byte-identical in every release v1.3.1 through v1.3.16, so extracting it from the published v1.3.16 zip ships exactly what has already been launched against the game, rather than a fresh CI build against a different MSVC that nobody has run |
+| `modfiles_shipped/HSOfflineTrackerProducer.dll` | same v1.3.16 zip | v1.3.16 | `36608aa0…` | HS-Offline-Tracker's live sensor (optional); a 2026-09-07-or-earlier build, present in every release since v1.3.10 |
+
+**hs-game-sdk comes from the hub's `main`, sparse-checked-out**, not from any
+hub commit whose `ForgePact` gitlink happens to equal the tagged commit — at
+dispatch time that commit usually does not exist yet (the bot's version-bump
+push never fires `notify-hub.yml`, and a human merge's bump PR is often still
+open). The resolved hub commit SHA is recorded in `BUILD-INFO.json`
+(`hub_commit`) and the job summary. Local manual builds already use whatever
+hub checkout the maintainer has, normally `main`, so this matches existing
+practice; an incompatible SDK fails the contract tests or the compile rather
+than shipping.
+
+**CI DLLs are not byte-identical to a local build**, even from the same
+source: the runner's MSVC (VS 18.9 on `windows-2025-vs2026`) is not
+necessarily the same `cl` version as a maintainer's machine. `BUILD-INFO.json`
+records `cl_version` for exactly this reason — a launch-gate regression that
+does not reproduce locally is a place to look.
+
+**Dispatch-failure recovery.** If `forgepact-tag.yml`'s "Start the build" step
+fails, the draft exists with no build behind it — recovery is running
+"ForgePact release" by hand from the Actions tab with the same `tag` and
+`dry_run=false`.
+
+**Refusals this workflow enforces, besides the two draft guards:** it never
+contains `gh release create`, `gh release edit`, `--draft=false`, `--latest`
+or `gh workflow run` — a test asserts none of those five appear anywhere in
+the file — and no job in it carries `actions: write`, since it starts nothing
+else.
+
+#### CI build launch gate
+
+Before publishing **any** CI-built zip — not only the first — a human
+downloads `ForgePact-X.Y.Z.zip` from the draft, checks it against the
+`.zip.sha256` asset, extracts it, installs with "Install Mod Plugin" from that
+folder, launches the game, and confirms three things: `out.txt`'s
+`BloodPact plugin loaded` line carries X.Y.Z, the panel shows X.Y.Z, and one
+player-build smoke command responds (e.g. `orbpickup 1` then `orbpickup 0`
+printing its stat line, or `hhlabel` printing `callback ok`). Record a row
+here before pressing Publish.
+
+| tag | run URL | zip sha256 | installed from zip | out.txt boot line + version | panel version | mod smoke check | launch gate result | date | tester |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| v1.3.20 | | | | | | | | | |
 
 ---
 
@@ -1235,3 +1352,6 @@ is a requirement list, not a plan for this change:
 - Release Notes: `../../../ForgePact/release-notes-v*.md` (one per shipped version, v1.3.1 onward; preferred source for every version bump, see Representative Change Workflow §6)
 - Tag & Release-Notes Composition Tool: `../../../ForgePact/tools/forgepact_tag.py` (plans a tag, composes a draft release body from whatever notes files exist)
 - Tag Workflow: `../../../ForgePact/.github/workflows/forgepact-tag.yml` (see "Tagging a release (forgepact-tag.yml)" above)
+- Build Workflow: `../../../ForgePact/.github/workflows/forgepact-release.yml` (see "The build half (forgepact-release.yml)" above)
+- Toolchain Pins & Fetcher: `../../../ForgePact/tools/toolchain-pins.json`, `../../../ForgePact/tools/fetch_toolchain.py` (all-or-nothing, SHA-256-verified headers/binaries)
+- Release CI Helpers: `../../../ForgePact/tools/release_ci.py` (tag normalisation, the `build.bat` compile-line contract, and zip packaging — `tag`, `compile-line`, `package` subcommands)
