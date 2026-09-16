@@ -630,6 +630,14 @@ re-run by itself on subsequent pushes. The action additionally requires the
 requester to have write access and rejects bot actors, so automation cannot
 start a review by applying the label.
 
+Concurrency is declared on the job, not the workflow, and its group is only
+shared by a real request. Every comment and every label starts a run of this
+workflow, and at workflow level those runs joined the pull request's group
+before the job's `if` rejected them -- so an ordinary "thanks" comment cancelled
+a review already in progress. Unrequested events now get a group unique to their
+own run. `tests/test_ai_review_workflow.py` pins that, pins the opt-in triggers,
+and fails if the two written-out copies of the request predicate drift apart.
+
 ### Tool notifications
 
 The push notifier is installed in all ten tool repositories, keyed to each
