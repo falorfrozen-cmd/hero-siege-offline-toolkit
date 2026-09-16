@@ -1664,6 +1664,64 @@ class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
             )
         )
 
+    # PR #59 review: the reused-PID branch must ask the raw PID set, like its
+    # sibling does. An unopenable parent (a SYSTEM service) that existed at
+    # `pre` is absent from `pre_snap`, so checking `pre_snap` made its child
+    # look like a real orphan once an openable process reused that PID.
+    def test_reused_pid_of_unopenable_pre_parent_is_not_admitted(self):
+        proc = {"pid": 100, "ppid": 50, "creation": 500, "image": "python.exe"}
+        post_snap = {50: {"pid": 50, "ppid": 1, "creation": 900, "image": "x.exe"}}
+        self.assertFalse(
+            self.hook._is_orphan_admissible(proc, post_snap, {}, {50}, {50})
+        )
+
+    # Positive pair: the same reused PID, when nothing held it at `pre`, still
+    # means the launcher was born and died inside the call -- admitted.
+    def test_reused_pid_of_parent_born_during_call_is_admitted(self):
+        proc = {"pid": 100, "ppid": 50, "creation": 500, "image": "python.exe"}
+        post_snap = {50: {"pid": 50, "ppid": 1, "creation": 900, "image": "x.exe"}}
+        self.assertTrue(
+            self.hook._is_orphan_admissible(proc, post_snap, {}, {50}, set())
+        )
+
+    # PR #59 review: an empty `pre` snapshot (a failed Toolhelp32 call) must not
+    # become a baseline, or every live process on the machine looks new at
+    # `post`. `cmd_pre` writes nothing, so `cmd_post` takes its no-baseline path.
+    def test_empty_pre_snapshot_is_not_used_as_baseline(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        payload = {"session_id": "s", "tool_use_id": "call1"}
+        everything = {7: {"pid": 7, "ppid": 3, "creation": 5, "image": "node.exe"}}
+        with mock.patch.dict(os.environ, {"HSTK_PROC_LEDGER_DIR": tmp}):
+            with mock.patch.object(self.hook, "snapshot", return_value=({}, set())):
+                self.hook.cmd_pre(payload)
+            sdir = self.hook._session_dir("s")
+            self.assertFalse((sdir / "pre-call1.json").exists())
+            with mock.patch.object(self.hook, "snapshot", return_value=(everything, {7})):
+                self.hook.cmd_post(payload)
+            self.assertEqual(json.loads((sdir / "post-call1.json").read_text()), {})
+
+    # Positive pair: a non-empty `pre` snapshot is still written as the baseline.
+    def test_nonempty_pre_snapshot_is_written(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        procs = {7: {"pid": 7, "ppid": 3, "creation": 5, "image": "node.exe"}}
+        with mock.patch.dict(os.environ, {"HSTK_PROC_LEDGER_DIR": tmp}):
+            with mock.patch.object(self.hook, "snapshot", return_value=(procs, {7})):
+                self.hook.cmd_pre({"session_id": "s", "tool_use_id": "call1"})
+            self.assertTrue((self.hook._session_dir("s") / "pre-call1.json").exists())
+
+    # PR #59 review: without an explicit restype, ctypes truncates the HANDLE
+    # these calls return to a c_int, so a real INVALID_HANDLE_VALUE (-1 as a
+    # c_int) never equals the pointer-width constant and the failure guard in
+    # `_iter_processes` cannot fire.
+    @unittest.skipUnless(sys.platform == "win32", "Win32 ctypes prototypes")
+    def test_handle_returning_calls_use_pointer_width_restype(self):
+        from ctypes import wintypes
+
+        self.assertIs(self.hook.kernel32.CreateToolhelp32Snapshot.restype, wintypes.HANDLE)
+        self.assertIs(self.hook.kernel32.OpenProcess.restype, wintypes.HANDLE)
+
     # R2-1: rule (b)'s image check must accept every Python interpreter name
     # the hook-invocation matcher itself already accepts (`python[0-9.]*w?.exe`),
     # plus `py.exe`/`pyw.exe` -- not just the literal `python.exe`/`pythonw.exe`

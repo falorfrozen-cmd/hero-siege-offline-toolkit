@@ -256,6 +256,16 @@ if shell32 is not None:
     shell32.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
     kernel32.LocalFree.argtypes = [ctypes.c_void_p]
     kernel32.LocalFree.restype = ctypes.c_void_p
+    # HANDLE-returning calls need a pointer-width restype: the c_int default
+    # truncates INVALID_HANDLE_VALUE to -1, which never equals the constant
+    # above, so a failed snapshot would slip past its guard.
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
 
 
 def _argv(cmdline):
@@ -455,7 +465,7 @@ class UNICODE_STRING(ctypes.Structure):
 def _iter_processes():
     """Yield (pid, ppid, image_name) for every process Toolhelp32 can see."""
     snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-    if snap == INVALID_HANDLE_VALUE or snap == 0:
+    if not snap or snap == INVALID_HANDLE_VALUE:
         return
     try:
         entry = PROCESSENTRY32W()
@@ -983,8 +993,10 @@ def _is_orphan_admissible(proc, post_snap, pre_snap, post_raw_pids, pre_raw_pids
         if _valid_parent(proc, parent):
             return False  # a live, valid parent -- not an orphan at all
         # Openable, but its creation postdates the child: the original PPID
-        # died and this PID has already been reused by something else.
-        return parent_pid not in pre_snap
+        # died and this PID has already been reused by something else. Ask the
+        # raw set, as below: an unopenable parent at `pre` is absent from
+        # `pre_snap` but still existed.
+        return parent_pid not in pre_raw_pids
     if parent_pid in post_raw_pids:
         return False  # exists at post, just unopenable -- not an orphan
     return parent_pid not in pre_raw_pids
@@ -1129,6 +1141,12 @@ def cmd_pre(payload):
         return 0
     sdir = _session_dir(session)
     procs, raw_pids = snapshot()
+    if not procs:
+        # An empty snapshot is a failed read, never a real machine state (this
+        # hook's own process is always in it). Written as a baseline it would
+        # make every live process look new at `post`; leaving no file sends
+        # `cmd_post` down its "no usable baseline" path instead.
+        return 0
     _write_pre_snapshot(sdir / f"pre-{tool_use_id}.json", procs, raw_pids)
     return 0
 
