@@ -140,7 +140,8 @@ To add or modify a gameplay modifier or runtime command:
      ```
   - The packaging guard requires `plugin_build\BloodPactPlugin_ship.dll` to exist and confirms that `modfiles_shipped\BloodPactPlugin.dll` matches it. A missing or stale staged plugin stops packaging so the Install button cannot ship an older DLL.
 6. **Write Release Notes (`release-notes-vX.Y.Z.md`, preferred but no longer a gate on tagging):**
-   - Every version with player-visible changes should still get a `release-notes-vX.Y.Z.md` file at the ForgePact repo root, written in the PR that makes the change (`v1.3.1` through `v1.3.20` are the existing precedent). This is the **preferred source**: it is player language, written by whoever made the change, while the change is fresh.
+   - Every version with player-visible changes should still get a `release-notes-vX.Y.Z.md` file at the ForgePact repo root, written in the PR that makes the change. This is the **preferred source**: it is player language, written by whoever made the change, while the change is fresh.
+   - **The files are temporary: delete them once the release that carries them is published** — the tagged version's own file and every skipped version it rolled up. The published release page is then the record (git history keeps the file), and `forgepact_tag.py --compose-notes` only reads versions newer than the previous tag, so a published version's file is never read again. Only unpublished versions' notes should be at the repo root; v1.3.1–v1.3.16's were deleted on that basis (ForgePact#27).
    - It is no longer a prerequisite to tagging or releasing. `forgepact-tag.yml` composes the draft release body from whatever notes files exist at tag time — the tagged version's own file if it exists, otherwise GitHub's generated notes under a "rewrite for players before publishing" banner, plus every skipped version's own file concatenated in newest-first order. See "Tagging a release (forgepact-tag.yml)" below for the full composition rules. `cut_release.py --check` still fails on a missing notes file by default; only `--allow-missing-notes`, which only the tag workflow passes, relaxes that.
    - If the top file is missing at tag time, the draft's top section is generated notes under that banner, and it **must be rewritten into player language before publishing** — generated notes are pull-request titles, not something written for a player deciding whether to update.
    - Player-facing only, in plain language — what was broken and what changed *for the player*, not internal refactors, build-script fixes, or debugging history (that belongs in this instructions.md, e.g. Known Limitations, not in release notes). Match the tone of the existing files: name the symptom before the fix ("Tyrant's Crown and Monster Rarity did nothing in 1.3.14" before explaining why), and give a measured before/after number when one exists.
@@ -1036,7 +1037,10 @@ Run in this order; the order is the guardrail.
 8. Review the draft's composed body, and rewrite any section under the
    generated-notes banner into player language.
 9. Publish. That fires `notify-hub-release.yml`.
-10. HS-Offline-Launcher is **not** part of this release; see its own guide.
+10. In a PR, delete the `release-notes-v*.md` files this release carried
+    (for 1.3.20: 1.3.17, 1.3.18, 1.3.19 and 1.3.20) — the release page is
+    now their record. See Representative Change Workflow §6.
+11. HS-Offline-Launcher is **not** part of this release; see its own guide.
 
 ---
 
@@ -1349,7 +1353,7 @@ here before pressing Publish.
 - Live Plugin IPC Driver: `../../../ForgePact/tools/ipc.ps1` (send a command to the running game, print only the reply)
 - Ghidra Symbol Importer: `../../../ForgePact/tools/ghidra/ImportSymbols.java` (name the stripped game binary from its own script table)
 - Out-of-Process Freeze Probe: `../../../tools/freeze_probe.ps1` (toolkit root, not ForgePact-specific)
-- Release Notes: `../../../ForgePact/release-notes-v*.md` (one per shipped version, v1.3.1 onward; preferred source for every version bump, see Representative Change Workflow §6)
+- Release Notes: `../../../ForgePact/release-notes-v*.md` (one per not-yet-published version, deleted once published; preferred source for every version bump, see Representative Change Workflow §6)
 - Tag & Release-Notes Composition Tool: `../../../ForgePact/tools/forgepact_tag.py` (plans a tag, composes a draft release body from whatever notes files exist)
 - Tag Workflow: `../../../ForgePact/.github/workflows/forgepact-tag.yml` (see "Tagging a release (forgepact-tag.yml)" above)
 - Build Workflow: `../../../ForgePact/.github/workflows/forgepact-release.yml` (see "The build half (forgepact-release.yml)" above)
