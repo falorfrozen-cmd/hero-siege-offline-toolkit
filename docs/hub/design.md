@@ -34,7 +34,7 @@ falorfrozen-cmd/<tool>  ──release──►  GitHub Releases (unchanged, ten 
 Five of the ten tools are hardened loopback web applications that refuse to be
 framed — `hero-siege-item-editor/hs_item_editor_gui.py:7808` sets
 `frame-ancestors 'none'` and `X-Frame-Options: DENY`, and
-`HS-Offline-Launcher/src/hs_offline_launcher.py:846` does the same plus an HMAC
+`HS-Offline-Launcher/src/hs_offline_launcher.py` does the same plus an HMAC
 API token bound per process. Two more (`HSSaveEditor`, `hs-stat-forge`) are
 Tkinter and cannot be embedded in a webview at all.
 

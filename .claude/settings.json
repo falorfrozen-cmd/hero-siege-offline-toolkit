@@ -16,6 +16,10 @@
           {
             "type": "command",
             "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/hub_frontend_tests.py\""
+          },
+          {
+            "type": "command",
+            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py\""
           }
         ]
       }

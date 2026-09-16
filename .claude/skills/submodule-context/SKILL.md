@@ -13,8 +13,9 @@ documentation updates and without the module's guide ever being read.
 
 These guides are **not optional background**. They carry workflow, test
 commands, packaging guardrails and release rules that no amount of reading the
-source reveals. ForgePact, for instance, treats a player-visible change with no
-`release-notes-vX.Y.Z.md` file as an incomplete change — nothing in the code
+source reveals. ForgePact, for instance, expects a player-visible change to
+carry its `release-notes-vX.Y.Z.md` in the same PR, because `forgepact-tag.yml`
+composes the draft release body from those files — nothing in the plugin code
 says that.
 
 ## What to read
