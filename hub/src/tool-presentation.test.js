@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { identity, selectTools, quickTools, presentation, terminalPhases } from './tool-presentation.js';
-import { createActionGate } from './action-gate.js';
+import { createActionGate, operationKey, ToolBusyError } from './action-gate.js';
 const catalog = JSON.parse(readFileSync(new URL('../../catalog/catalog.json', import.meta.url))).tools;
 const base = { ...catalog[0], installed_version: null, update_available: false, running_pid: null, running_elsewhere: false, favorite: false };
 test('every catalog tool has a distinct icon and survives the default view exactly once', () => {
@@ -61,21 +61,59 @@ test('duplicate launch/card clicks invoke a command once, independent tools can 
   let calls = 0;
   let finish;
   const task = () => { calls++; return new Promise(resolve => { finish = resolve; }); };
-  const first = gate.run('tool', task);
-  const second = gate.run('tool', task);
+  const first = gate.run('tool', 'launch', task);
+  const second = gate.run('tool', 'launch', task);
   assert.equal(first, second);
-  await gate.run('other', async () => 123);
+  await gate.run('other', 'launch', async () => 123);
   assert.equal(calls, 1);
   finish('done');
   assert.equal(await first, 'done');
   assert.deepEqual(changes.at(-1), []);
-  await gate.run('tool', async () => { calls++; });
+  await gate.run('tool', 'launch', async () => { calls++; });
   assert.equal(calls, 2);
 });
 test('failed commands unlock both surfaces and allow retry', async () => {
   let active;
   const gate = createActionGate(ids => { active = ids; });
-  await assert.rejects(gate.run('tool', () => { throw new Error('Refused'); }), /Refused/);
+  await assert.rejects(gate.run('tool', 'launch', () => { throw new Error('Refused'); }), /Refused/);
   assert.deepEqual(active, []);
-  assert.equal(await gate.run('tool', async () => 'retry'), 'retry');
+  assert.equal(await gate.run('tool', 'launch', async () => 'retry'), 'retry');
+});
+
+test('rollback during an install is refused, keeps the install locked, and works after it settles', async () => {
+  let active, finish;
+  const calls = [];
+  const gate = createActionGate(ids => { active = ids; });
+  const install = gate.run('tool', 'install_tool', () => {
+    calls.push('install');
+    return new Promise(resolve => { finish = resolve; });
+  });
+  const rollback = () => { calls.push('rollback'); return 'rolled back'; };
+  await assert.rejects(gate.run('tool', 'rollback_tool', rollback), ToolBusyError);
+  assert.deepEqual(calls, ['install']);
+  assert.deepEqual(active, ['tool']);
+  assert.equal(gate.run('tool', 'install_tool', () => assert.fail('duplicate install')), install);
+  finish('installed');
+  assert.equal(await install, 'installed');
+  assert.deepEqual(active, []);
+  assert.equal(await gate.run('tool', 'rollback_tool', rollback), 'rolled back');
+  assert.deepEqual(calls, ['install', 'rollback']);
+});
+
+test('same command with different launch arguments is not reported as the pending launch', async () => {
+  const gate = createActionGate();
+  const key = operationKey('launch_tool', { id: 'tool', fromSource: false });
+  const launch = gate.run('tool', key, () => 'launched installed copy');
+  await assert.rejects(gate.run('tool', operationKey('launch_tool', { id: 'tool', fromSource: true }),
+    () => assert.fail('source launch must wait')), ToolBusyError);
+  assert.equal(await launch, 'launched installed copy');
+});
+
+test('identical IPC arguments coalesce regardless of property order', async () => {
+  const gate = createActionGate();
+  const a = operationKey('launch_tool', { id: 'tool', fromSource: true });
+  const b = operationKey('launch_tool', { fromSource: true, id: 'tool' });
+  const first = gate.run('tool', a, () => 'launched');
+  assert.equal(gate.run('tool', b, () => assert.fail('duplicate launch')), first);
+  assert.equal(await first, 'launched');
 });

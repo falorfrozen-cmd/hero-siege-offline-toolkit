@@ -452,15 +452,21 @@ the updated ToolView arrives. Staged/downloaded events never claim an install
 finished. Requirements say "Requires game closed/running" rather than implying
 they describe the current game state.
 
-`action-gate.js` coalesces pending mutations by tool id. Repeated clicks on a
-shortcut and its card share one operation until it settles, including the gap
-before a progress event. Different tools can proceed independently; failures
-unlock the controls and still use the existing persistent toast. Backend
-interlocks, hashes, signatures, update and rollback rules are unchanged.
+`action-gate.js` permits one pending mutation per tool. Repeated requests with
+the same command and arguments share its promise, including the gap before a
+progress event. A different command or different launch options reject with a
+visible busy error instead of silently sharing the first operation's result.
+Different tools proceed independently; failures unlock the controls. Rollback
+and mutating overflow actions also disable during pending commands or active
+install progress. Backend interlocks, hashes, signatures, update and rollback
+rules are unchanged.
 
 Overflow menus support Arrow Up/Down, Home/End and Escape. They move above a
 control when necessary to stay within the viewport. Escape restores focus to
-the trigger; clicking or tabbing outside closes them. Navigation and primary
+the trigger; clicking or tabbing outside closes them. A capture-phase scroll
+listener closes a menu when its containing page scrolls; scrolling inside a
+height-constrained menu keeps it open. The listener is removed when the menu
+closes or its card unmounts. Navigation and primary
 controls have accessible names, statuses combine text and color, and reduced
 motion disables decorative transitions/spinners.
 
@@ -764,6 +770,13 @@ checks a test cannot make, and because three of them found defects.
 
 ### Workshop interface verification — 2026-09-17
 
+These checks were automated, not a request for a human to click through the
+window. Browser-preview checks used browser automation; the native debug window
+used the Tauri MCP bridge at `127.0.0.1:9223`, window label `hub`. Favorites and
+theme changes were checked in the isolated profile's `state.json` as well as
+the DOM. The reproducible bridge regression script added below makes the
+method explicit for the review follow-up.
+
 | Check | Outcome |
 | --- | --- |
 | `npm run check` | Production frontend bundle: no compiler warnings. 30 Node tests, 115 Rust unit tests and 9 local HTTP installation tests passed. The 2 opt-in real-release download tests were not run. |
@@ -788,7 +801,12 @@ line so its dot stays beside the label.
 
 The application extracted from the new NSIS installer was tested outside the
 source tree with an isolated profile and synthetic installed-version/favorite
-fixtures. All ten cards, three full quick-launch cards, unstar/re-star persistence,
+fixtures. This was automated with `agent-browser` over CDP on the real release
+WebView2, not a browser-only replica. The temporary debugging port was supplied
+only to the test process; the release does not include the MCP bridge. Pixel
+measurements came from `getBoundingClientRect()` assertions, not visual estimates,
+and favorite persistence was asserted by parsing the profile's `state.json`.
+All ten cards, three full quick-launch cards, unstar/re-star persistence,
 quick-card details, overflow keyboard navigation, search and both layouts passed.
 Installed and uninstalled labels had identical footer offsets; dots were within
 0.01 px of the first label line's center. The version row remained 12.34 px tall
@@ -801,6 +819,49 @@ the existing view-budget test at 274 ms against its 200 ms limit; running the
 Rust suite sequentially passed all 115 unit and 9 local HTTP installation tests.
 No runtime code or timing thresholds were changed. The two opt-in real-release
 download tests were not run.
+
+### PR #64 review follow-up — 2026-09-17
+
+`hub/scripts/verify-review-ui.mjs` drives the actual Tauri debug window through
+the MCP bridge and fails on a failed assertion. It writes a JSON result file
+with check names, measured rectangles and the rejected command's result.
+Run it only with an isolated offline profile: ForgePact installed version
+`1.3.15`, previous `1.3.14`, a synthetic install path inside that profile, and
+favorites `['forgepact']`. Set `first_run_done: true` and `check_on_launch: false`.
+Launch the app with temporary `LOCALAPPDATA` and `WEBVIEW2_USER_DATA_FOLDER`
+values so the user's normal settings are untouched. The script verifies that
+the connected native window's install path matches the supplied fixture.
+
+From `hub/`, with that profile and a dev app started by `npm start`:
+
+```powershell
+npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start --port 9223
+# Resolve the CLI entry file from the installed @hypothesi/tauri-mcp-cli package.
+# Direct Node invocation preserves JavaScript quotes on Windows.
+node scripts/verify-review-ui.mjs <tauri-mcp-cli/dist/index.js> <isolated-state.json> <results.json>
+npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp webview-screenshot --window-id hub --file-path review.png --format png
+```
+
+The optional final argument `layout` or `actions` runs just that group for a
+focused rerun; omit it to run both. This verification used the two groups
+separately against the same native window and isolated profile: 12 layout
+assertions and 11 action assertions passed (both include the fixture check).
+
+The install and rollback IPC calls in the race test are intercepted with
+controllable promises; no tool is downloaded, replaced or rolled back. Other
+IPC stays real, including favorite writes and progress events. Interception
+is removed in `finally`. This validates frontend ordering and feedback, not
+an additional end-to-end installation test of the unchanged Rust backend.
+
+| Check | Outcome |
+| --- | --- |
+| Command gate regression tests | Same command/arguments share one result; different commands or launch options reject; a conflict preserves the original lock; rollback works after install settles. |
+| Scroll regression | MCP click + scroll confirms `main.scrollTop` changes and the menu closes in quick launch, grid and list. A constrained menu actually scrolls internally and stays open; Escape still restores focus. |
+| Native action race | A pending Update disables Roll back; calling rollback directly rejects with `ToolBusyError`, shows the error toast and never reaches IPC. An identical request shares the install; rollback invokes its own command after settlement. |
+| Backend-started progress | A real `install-progress` event disables detail rollback and mutating menu items even without a pending frontend request. Read-only actions stay enabled; a terminal event restores the mutating controls. |
+| Native persistence | Star/unstar HSCraftSim uses real IPC and the script reads the isolated `state.json` after each click. |
+| Geometry | Native DOM rectangles verify the dot/label alignment and reserved version space. Measurements are machine assertions, not screenshot estimates. |
+| Automated suites | Production frontend build passed without warnings; all 33 Node tests and 5 release-development-tooling checks passed. The Rust backend is unchanged; its earlier 115 unit and 9 local HTTP results above remain the backend evidence. |
 
 #### Stop kills a tree
 

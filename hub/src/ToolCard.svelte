@@ -16,6 +16,7 @@
   const progress = $derived(progressFor(tool.id));
   const state = $derived(presentation(tool, progress));
   const pending = $derived(pendingFor(tool.id));
+  const mutating = $derived(pending || state.inFlight);
   const requirements = $derived([
     tool.requires.admin ? 'Requires Administrator' : '',
     tool.requires.game_closed ? 'Requires game closed' : '',
@@ -44,6 +45,16 @@
     menuOpen = false;
     if (restore) menuButton?.focus();
   }
+  $effect(() => {
+    if (!menuOpen) return;
+    const onScroll = (event) => {
+      // main's scroll event does not bubble. Capture it, but let a long menu
+      // scroll internally without dismissing itself.
+      if (!menuPanel?.contains(event.target)) closeMenu();
+    };
+    window.addEventListener('scroll', onScroll, true);
+    return () => window.removeEventListener('scroll', onScroll, true);
+  });
   function menuKey(event) {
     if (event.key === 'Escape') { event.preventDefault(); closeMenu(true); }
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
@@ -86,9 +97,9 @@
             <button role="menuitem" onclick={() => overflow('open_path', { path: tool.install_path })}>Open folder</button>
             <button role="menuitem" onclick={() => details('verify')}>Verify files</button>
           {/if}
-          {#if tool.can_roll_back}<button role="menuitem" disabled={pending} onclick={() => overflow('rollback_tool')}>Roll back</button>{/if}
-          {#if tool.source_available}<button role="menuitem" disabled={pending} onclick={() => overflow('launch_tool', { fromSource: true })}>Run from source</button>{/if}
-          {#if tool.installed_version}<button role="menuitem" class="danger" disabled={pending} onclick={() => overflow('uninstall_tool')}>Uninstall</button>{/if}
+          {#if tool.can_roll_back}<button role="menuitem" disabled={mutating} onclick={() => overflow('rollback_tool')}>Roll back</button>{/if}
+          {#if tool.source_available}<button role="menuitem" disabled={mutating} onclick={() => overflow('launch_tool', { fromSource: true })}>Run from source</button>{/if}
+          {#if tool.installed_version}<button role="menuitem" class="danger" disabled={mutating} onclick={() => overflow('uninstall_tool')}>Uninstall</button>{/if}
         </div>
       {/if}
     </div>

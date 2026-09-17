@@ -8,7 +8,7 @@ import { invoke, listen, native } from './bridge.js';
 import { createProgressRows } from './progress-rows.js';
 import { createHubCheck, checkAll } from './hub-check.js';
 import { terminalPhases } from './tool-presentation.js';
-import { createActionGate } from './action-gate.js';
+import { createActionGate, operationKey, ToolBusyError } from './action-gate.js';
 
 let view = $state(null);
 let loading = $state(true);
@@ -270,7 +270,14 @@ const toolMutations = new Set(['launch_tool', 'stop_tool', 'install_tool', 'unin
 export function pendingFor(id) { return pendingIds.includes(id); }
 
 export async function act(command, args) {
-  return commandGate.run(toolMutations.has(command) ? args?.id : null, () => perform(command, args));
+  try {
+    return await commandGate.run(toolMutations.has(command) ? args?.id : null,
+      operationKey(command, args), () => perform(command, args));
+  } catch (e) {
+    // A conflict is rejected before perform(), which reports backend errors.
+    if (e instanceof ToolBusyError) notify('error', e.message);
+    throw e;
+  }
 }
 
 async function perform(command, args) {

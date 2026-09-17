@@ -36,7 +36,7 @@ how to work on the code; it deliberately does not restate the reasoning.
 | `ToolCard.svelte` | One tool: icon, requirements, status, shared primary action, star and keyboard-accessible overflow menu. |
 | `ToolAction.svelte`, `tool-presentation.js` | Shared action/status rendering; display-only names, categories and search. |
 | `ToolIcon.svelte`, `Icon.svelte` | Original SVG tool artwork and interface glyphs. |
-| `action-gate.js` | Coalesces pending per-tool commands across cards, shortcuts and details. |
+| `action-gate.js` | Allows one pending mutation per tool, coalesces identical requests and rejects conflicting commands/options with a busy error. |
 | `ToolDetail.svelte` | One tool in full, including *Verify files*. |
 | `Updates.svelte`, `Downloads.svelte`, `Game.svelte`, `Settings.svelte`, `About.svelte`, `FirstRun.svelte` | The other screens. |
 | `TitleBar.svelte`, `StatusBar.svelte`, `Toasts.svelte` | Window chrome and notices. |

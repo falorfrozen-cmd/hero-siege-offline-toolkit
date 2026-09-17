@@ -6,7 +6,7 @@
   import ToolIcon from './ToolIcon.svelte';
   import ToolAction from './ToolAction.svelte';
   import { identity } from './tool-presentation.js';
-  import { tool as findTool, act, bytes } from './library.svelte.js';
+  import { tool as findTool, act, bytes, pendingFor, progressFor, isTerminal } from './library.svelte.js';
 
   let { id, action = null, onback } = $props();
 
@@ -14,6 +14,13 @@
   let verifying = $state(false);
 
   const tool = $derived(findTool(id));
+  const progress = $derived(progressFor(id));
+  const mutating = $derived(pendingFor(id) || !!(progress && !isTerminal(progress.phase)));
+
+  async function rollback() {
+    if (mutating) return;
+    try { await act('rollback_tool', { id }); } catch { /* act reports the failure. */ }
+  }
 
   async function verify() {
     verifying = true;
@@ -111,7 +118,8 @@
       <button type="button" onclick={() => act('open_path', { path: tool.install_path })}>Open folder</button>
     {/if}
     {#if tool.can_roll_back}
-      <button type="button" onclick={() => act('rollback_tool', { id })}>Roll back</button>
+      <button type="button" onclick={rollback} disabled={mutating}
+        title={mutating ? 'Wait for the current operation to finish.' : 'Restore the previous version'}>Roll back</button>
     {/if}
     <button type="button" onclick={() => act('open_url', { url: tool.notes_url })}>Release page</button>
   </div>
