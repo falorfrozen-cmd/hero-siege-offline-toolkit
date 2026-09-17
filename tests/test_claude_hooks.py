@@ -19,6 +19,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -66,6 +67,13 @@ import test from 'node:test';
 import assert from 'node:assert';
 test('passes', () => { assert.equal(1, 1); });
 """
+
+
+def _normalize_node_timing(text):
+    """`node --test`'s own output embeds each run's wall-clock time, which
+    genuinely differs between two invocations of the same test -- an
+    equivalence check must not fail on that noise."""
+    return re.sub(r"\(\d+\.\d+ms\)|duration_ms \d+\.\d+", "<t>", text)
 
 
 def _git(*args, cwd):
@@ -821,19 +829,19 @@ class TestLeftoverProcesses(HookTestCase):
 
     def test_command_quoting_unexpanded_hook_path_is_still_reported(self):
         self._assert_hook_path_mention_is_still_reported(
-            "$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py"
+            "$CLAUDE_PROJECT_DIR/.claude/hooks/post_tool_use.py"
         )
 
     def test_command_quoting_forward_slash_hook_path_is_still_reported(self):
         root = str(self.rig.root).replace("\\", "/")
         self._assert_hook_path_mention_is_still_reported(
-            f"{root}/.claude/hooks/decompiled_output.py"
+            f"{root}/.claude/hooks/post_tool_use.py"
         )
 
     def test_command_quoting_backslash_hook_path_is_still_reported(self):
         root = str(self.rig.root).replace("\\", "/")
         self._assert_hook_path_mention_is_still_reported(
-            f"{root}/.claude/hooks/decompiled_output.py".replace("/", "\\")
+            f"{root}/.claude/hooks/post_tool_use.py".replace("/", "\\")
         )
 
     # F1's positive pair, and the round-2 N4 replacement for the deleted
@@ -857,7 +865,7 @@ class TestLeftoverProcesses(HookTestCase):
         # body so the test controls how long the chain lives.
         pidfile = Path(self.ledger_dir) / "wrapper_pidfile"
         self.rig.write(
-            ".claude/hooks/decompiled_output.py",
+            ".claude/hooks/post_tool_use.py",
             "import os\n"
             "open(os.environ['HSTK_TEST_PIDFILE'], 'w').write(str(os.getpid()))\n"
             "import time; time.sleep(60)\n",
@@ -868,7 +876,7 @@ class TestLeftoverProcesses(HookTestCase):
         environ.update(self.env)
         environ["HSTK_TEST_PIDFILE"] = str(pidfile)
         wrapper = subprocess.Popen(
-            [bash, "-c", 'py -3 "$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py"'],
+            [bash, "-c", 'py -3 "$CLAUDE_PROJECT_DIR/.claude/hooks/post_tool_use.py"'],
             cwd=self.rig.root,
             env=environ,
         )
@@ -1321,19 +1329,19 @@ class TestLeftoverProcessesHookMatch(unittest.TestCase):
         cases = [
             (
                 "bash.exe",
-                r'"C:\Program Files\Git\bin\bash.exe" -c "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py\""',
+                r'"C:\Program Files\Git\bin\bash.exe" -c "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post_tool_use.py\""',
             ),
             (
                 "bash.exe",
-                r'"C:\Program Files\Git\bin\..\usr\bin\bash.exe" -c "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py\""',
+                r'"C:\Program Files\Git\bin\..\usr\bin\bash.exe" -c "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post_tool_use.py\""',
             ),
             (
                 "py.exe",
-                r"C:\WINDOWS\py.exe -3 C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/decompiled_output.py",
+                r"C:\WINDOWS\py.exe -3 C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/post_tool_use.py",
             ),
             (
                 "python.exe",
-                r"C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/decompiled_output.py",
+                r"C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/post_tool_use.py",
             ),
         ]
         for image, cmdline in cases:
@@ -1350,11 +1358,11 @@ class TestLeftoverProcessesHookMatch(unittest.TestCase):
         cases = [
             (
                 "bash.exe",
-                "bash.exe -c \"source x && eval 'echo $CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py'\"",
+                "bash.exe -c \"source x && eval 'echo $CLAUDE_PROJECT_DIR/.claude/hooks/post_tool_use.py'\"",
             ),
             (
                 "py.exe",
-                'py.exe -3 -c "import time" C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/decompiled_output.py',
+                'py.exe -3 -c "import time" C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/post_tool_use.py',
             ),
             (
                 "python.exe",
@@ -1362,7 +1370,7 @@ class TestLeftoverProcessesHookMatch(unittest.TestCase):
             ),
             (
                 "python.exe",
-                r'python.exe -c "..." bash.exe -c "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py\""',
+                r'python.exe -c "..." bash.exe -c "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post_tool_use.py\""',
             ),
         ]
         for image, cmdline in cases:
@@ -1454,7 +1462,7 @@ class TestLeftoverProcessesHookMatch(unittest.TestCase):
         commands, scripts = self.hook._configured_hooks(self.claude_dir, [project_dir])
         cmdline = (
             r"C:\WINDOWS\pyw.exe -3 "
-            r"C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/decompiled_output.py"
+            r"C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/post_tool_use.py"
         )
         self.assertTrue(self.hook._is_hook_invocation("pyw.exe", cmdline, commands, scripts))
 
@@ -1467,7 +1475,7 @@ class TestLeftoverProcessesHookMatch(unittest.TestCase):
         commands, scripts = self.hook._configured_hooks(self.claude_dir, [project_dir])
         cmdline = (
             r"C:\WINDOWS\pythonw.exe -3 "
-            r"C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/decompiled_output.py"
+            r"C:/Users/Administrator/PycharmProjects/hero-siege-offline-toolkit/.claude/hooks/post_tool_use.py"
         )
         self.assertFalse(
             self.hook._is_hook_invocation("pythonw.exe", cmdline, commands, scripts)
@@ -1757,7 +1765,7 @@ class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
         }
         outer_bash_line = (
             r'"C:\Program Files\Git\bin\bash.exe" -c '
-            r'"py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py\""'
+            r'"py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post_tool_use.py\""'
         )
         cmdlines = {10: outer_bash_line}
         with mock.patch.object(self.hook, "_command_line", return_value=None):
@@ -1859,6 +1867,344 @@ class TestLeftoverProcessesAdmissionRules(unittest.TestCase):
     # values come back `None` rather than one succeeding and the other not.
     def test_process_identity_of_invalid_pid_is_none(self):
         self.assertEqual(self.hook._process_identity(0), (None, None))
+
+
+class TestPostToolUseDispatcher(HookTestCase):
+    """`.claude/hooks/post_tool_use.py`: one process running the four tree
+    checks (and gating `leftover_processes`' `post` step) instead of five
+    independent `py -3` launches. Each pair here mirrors the positive/negative
+    shape this file opens with -- a clean tree stays silent, and each check's
+    own violation still blocks when reached through the dispatcher, not just
+    when the check runs standalone.
+    """
+
+    HOOK = "post_tool_use.py"
+
+    # -- negative control -----------------------------------------------
+
+    def test_clean_tree_is_silent(self):
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "")
+
+    # -- one positive control per check, run through the dispatcher -----
+
+    def test_catalog_violation_blocks_through_it(self):
+        self.rig.write("tools/minisign.py", "import sys\nprint('BAD SIGNATURE')\nsys.exit(1)\n")
+        self.rig.write("catalog/catalog.json", "changed\n")
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("catalog/catalog.json no longer verifies", result.stderr)
+
+    def test_tauri_violation_blocks_through_it(self):
+        self.rig.write(
+            "hub/src-tauri/src/bad.rs",
+            "#[tauri::command(async)]\n"
+            "fn wrong(app: AppHandle) -> Result<(), String> {\n"
+            "    let _ = tauri::async_runtime::block_on(thing.check());\n"
+            "    Ok(())\n}\n",
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("Tauri command rules violated", result.stderr)
+
+    def test_hub_frontend_violation_blocks_through_it(self):
+        self.rig.write("hub/src/thing.js", "export const a = 2;\n")
+        self.rig.write(
+            "hub/src/thing.test.js",
+            "import test from 'node:test';\n"
+            "import assert from 'node:assert';\n"
+            "test('fails', () => { assert.equal(1, 2); });\n",
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("hub's frontend tests fail", result.stderr)
+
+    def test_decompiled_output_violation_blocks_through_it(self):
+        self.rig.write("docs/notes.md", "clean line\n    iVar1 = FUN_00b489070(param_1);\n")
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("Decompiled or disassembled game source", result.stderr)
+
+    # -- tool_name gating (the two old matchers folded into one) --------
+
+    def test_edit_tool_runs_the_tree_checks(self):
+        self.rig.write(
+            "hub/src-tauri/src/bad.rs",
+            "#[tauri::command(async)]\n"
+            "fn wrong(app: AppHandle) -> Result<(), String> {\n"
+            "    let _ = tauri::async_runtime::block_on(thing.check());\n"
+            "    Ok(())\n}\n",
+        )
+        result = self.rig.run(self.HOOK, payload={"tool_name": "Edit"})
+        self.assertEqual(result.returncode, 2, result.stderr)
+
+    def test_read_tool_runs_nothing(self):
+        self.rig.write(
+            "hub/src-tauri/src/bad.rs",
+            "#[tauri::command(async)]\n"
+            "fn wrong(app: AppHandle) -> Result<(), String> {\n"
+            "    let _ = tauri::async_runtime::block_on(thing.check());\n"
+            "    Ok(())\n}\n",
+        )
+        result = self.rig.run(self.HOOK, payload={"tool_name": "Read"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_malformed_stdin_still_runs_the_tree_checks(self):
+        """A `tool_name` the dispatcher cannot read runs the tree checks
+        anyway -- the fail-safe direction the old per-tool matcher also took
+        (it does not see a malformed payload as excluding anything)."""
+        environ = dict(os.environ)
+        environ.pop("HSTK_SKIP_HOOKS", None)
+        result = subprocess.run(
+            [sys.executable, str(self.rig.root / ".claude" / "hooks" / self.HOOK)],
+            cwd=self.rig.root,
+            input="{not json",
+            capture_output=True,
+            text=True,
+            env=environ,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)  # clean tree
+
+    def test_skip_hooks_silences_the_tree_checks(self):
+        self.rig.write(
+            "hub/src-tauri/src/bad.rs",
+            "#[tauri::command(async)]\n"
+            "fn wrong(app: AppHandle) -> Result<(), String> {\n"
+            "    let _ = tauri::async_runtime::block_on(thing.check());\n"
+            "    Ok(())\n}\n",
+        )
+        result = self.rig.run(self.HOOK, env={"HSTK_SKIP_HOOKS": "1"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    # -- a crash in one check must not mask, or block for, the others ---
+
+    def test_crash_in_one_check_does_not_mask_a_real_violation(self):
+        self.rig.write(
+            ".claude/hooks/hub_frontend_tests.py",
+            "def check(payload, tree):\n    raise RuntimeError('boom')\n",
+        )
+        self.rig.write(
+            "hub/src-tauri/src/bad.rs",
+            "#[tauri::command(async)]\n"
+            "fn wrong(app: AppHandle) -> Result<(), String> {\n"
+            "    let _ = tauri::async_runtime::block_on(thing.check());\n"
+            "    Ok(())\n}\n",
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 2, result.stderr)  # the real violation still blocks
+        self.assertIn("hub_frontend_tests crashed", result.stderr)
+        self.assertIn("RuntimeError", result.stderr)
+        self.assertIn("Tauri command rules violated", result.stderr)
+
+    def test_crash_alone_is_non_blocking(self):
+        """A check's own bug is an error (rc 1), not a block (rc 2) -- it must
+        never gain the enforcement power of a real finding."""
+        self.rig.write(
+            ".claude/hooks/hub_frontend_tests.py",
+            "def check(payload, tree):\n    raise RuntimeError('boom')\n",
+        )
+        result = self.rig.run(self.HOOK)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("hub_frontend_tests crashed", result.stderr)
+
+
+@unittest.skipUnless(sys.platform == "win32", "leftover_processes.py is Windows-only")
+class TestPostToolUseDispatcherLeftoverGating(HookTestCase):
+    """The dispatcher's own tool_name gating for `leftover_processes`' `post`
+    step, which used to be a second, independently-matched PostToolUse entry.
+    """
+
+    HOOK = "post_tool_use.py"
+
+    def setUp(self):
+        super().setUp()
+        self.ledger_dir = tempfile.mkdtemp(prefix="hstk-ledger-dispatch-")
+        self.addCleanup(shutil.rmtree, self.ledger_dir, ignore_errors=True)
+        self.env = {
+            "HSTK_PROC_LEDGER_DIR": self.ledger_dir,
+            "HSTK_PROC_SESSION_ROOT_PID": str(os.getpid()),
+            "CLAUDE_PROJECT_DIR": str(self.rig.root),
+        }
+
+    def _run(self, tool_name, call):
+        payload = {
+            "session_id": "s",
+            "tool_use_id": call,
+            "hook_event_name": "PostToolUse",
+            "tool_name": tool_name,
+            "tool_input": {},
+        }
+        return self.rig.run(self.HOOK, payload=payload, env=self.env)
+
+    def _post_file(self, call):
+        return Path(self.ledger_dir) / "s" / f"post-{call}.json"
+
+    def test_monitor_runs_leftover_post_and_skips_tree_checks(self):
+        result = self._run("Monitor", "c_monitor")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self._post_file("c_monitor").exists())
+
+    def test_bash_runs_both(self):
+        self.rig.write(
+            "hub/src-tauri/src/bad.rs",
+            "#[tauri::command(async)]\n"
+            "fn wrong(app: AppHandle) -> Result<(), String> {\n"
+            "    let _ = tauri::async_runtime::block_on(thing.check());\n"
+            "    Ok(())\n}\n",
+        )
+        result = self._run("Bash", "c_bash")
+        self.assertEqual(result.returncode, 2, result.stderr)  # the tree check still blocks
+        self.assertTrue(self._post_file("c_bash").exists())
+
+    def test_edit_skips_leftover_post(self):
+        result = self._run("Edit", "c_edit")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self._post_file("c_edit").exists())
+
+
+class TestDispatcherEquivalence(HookTestCase):
+    """Permanent equivalence check, not a one-off measurement: the four tree
+    checks run independently (settings.json's old topology, the order it ran
+    them in) must produce byte-identical stderr and the same exit code as
+    running them through `post_tool_use.py`. This is what keeps the
+    `check(payload, tree)` refactor and the dispatcher's own concatenation
+    from drifting silently apart from what each script's standalone `main()`
+    still does.
+    """
+
+    ORDER = (
+        "catalog_signature.py",
+        "tauri_command_guard.py",
+        "hub_frontend_tests.py",
+        "decompiled_output.py",
+    )
+
+    def _run_originals(self, payload=None, env=None):
+        out, rc = "", 0
+        for hook in self.ORDER:
+            result = self.rig.run(hook, payload=payload, env=env)
+            self.assertEqual(result.stdout, "", (hook, result.stdout))
+            out += result.stderr
+            rc = max(rc, result.returncode)
+        return rc, out
+
+    def _run_dispatcher(self, payload=None, env=None):
+        result = self.rig.run("post_tool_use.py", payload=payload, env=env)
+        self.assertEqual(result.stdout, "", result.stdout)
+        return result.returncode, result.stderr
+
+    def _assert_equivalent(self, payload=None, env=None):
+        rc_o, err_o = self._run_originals(payload, env)
+        rc_p, err_p = self._run_dispatcher(payload, env)
+        self.assertEqual(
+            (rc_o, _normalize_node_timing(err_o)), (rc_p, _normalize_node_timing(err_p))
+        )
+        return rc_o
+
+    def test_clean_tree_is_equivalent(self):
+        self.assertEqual(self._assert_equivalent(), 0)
+
+    def test_all_violations_at_once_is_equivalent(self):
+        self.rig.write(
+            "hub/src-tauri/src/bad.rs",
+            "#[tauri::command]\nfn bad(app: AppHandle) {\n"
+            "    tauri::async_runtime::block_on(x());\n}\n",
+        )
+        self.rig.write("hub/src/thing.js", "export const a = 2;\n")
+        self.rig.write(
+            "hub/src/thing.test.js",
+            "import test from 'node:test';\n"
+            "import assert from 'node:assert';\n"
+            "test('fails', () => { assert.equal(1, 2); });\n",
+        )
+        self.rig.write("catalog/catalog.json", "changed\r\n")
+        self.rig.write("tools/minisign.py", "import sys\nprint('BAD SIGNATURE')\nsys.exit(1)\n")
+        self.rig.write("docs/notes.md", "clean line\n    iVar1 = FUN_00b489070(param_1);\n")
+        self.rig.write("docs/new note.md", "pushglb.v self.thing\n")
+        self.assertEqual(self._assert_equivalent(), 2)
+
+    def test_hstk_skip_hooks_is_equivalent(self):
+        self.rig.write(
+            "hub/src-tauri/src/bad.rs",
+            "#[tauri::command]\nfn bad(app: AppHandle) {\n"
+            "    tauri::async_runtime::block_on(x());\n}\n",
+        )
+        self.assertEqual(self._assert_equivalent(env={"HSTK_SKIP_HOOKS": "1"}), 0)
+
+    def test_malformed_stdin_is_equivalent(self):
+        environ = dict(os.environ)
+        environ.pop("HSTK_SKIP_HOOKS", None)
+        out_o, rc_o = "", 0
+        for hook in self.ORDER:
+            result = subprocess.run(
+                [sys.executable, str(self.rig.root / ".claude" / "hooks" / hook)],
+                cwd=self.rig.root, input="{not json",
+                capture_output=True, text=True, env=environ,
+            )
+            out_o += result.stderr
+            rc_o = max(rc_o, result.returncode)
+        result_p = subprocess.run(
+            [sys.executable, str(self.rig.root / ".claude" / "hooks" / "post_tool_use.py")],
+            cwd=self.rig.root, input="{not json",
+            capture_output=True, text=True, env=environ,
+        )
+        self.assertEqual((rc_o, out_o), (result_p.returncode, result_p.stderr))
+
+
+class TestDispatcherEquivalenceInSubmodules(HookTestCase):
+    """The submodule-scanning half of the equivalence claim: a listing inside
+    a dirty submodule, and a submodule whose pointer moved but whose own tree
+    is clean (the case `TreeState.dirty_submodules` must not over- or
+    under-report against `decompiled_output.py`'s own `dirty_submodules`).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.origin = Path(tempfile.mkdtemp(prefix="hstk-sub-equiv-"))
+        self.addCleanup(shutil.rmtree, self.origin, ignore_errors=True)
+        _git("init", "-q", cwd=self.origin)
+        _git("config", "user.email", "t@example.com", cwd=self.origin)
+        _git("config", "user.name", "T", cwd=self.origin)
+        (self.origin / "docs").mkdir()
+        (self.origin / "docs" / "research.md").write_bytes(b"clean\n")
+        _git("add", "-A", cwd=self.origin)
+        _git("commit", "-qm", "base", cwd=self.origin)
+        try:
+            _git(
+                "-c", "protocol.file.allow=always",
+                "submodule", "add", "-q", self.origin.as_uri(), "ForgePact",
+                cwd=self.rig.root,
+            )
+            _git("commit", "-qm", "add submodule", cwd=self.rig.root)
+        except subprocess.CalledProcessError as exc:
+            raise unittest.SkipTest(f"git submodule add unavailable: {exc.stderr}")
+        self.sub = self.rig.root / "ForgePact"
+
+    ORDER = TestDispatcherEquivalence.ORDER
+
+    def _assert_equivalent(self):
+        out_o, rc_o = "", 0
+        for hook in self.ORDER:
+            result = self.rig.run(hook)
+            out_o += result.stderr
+            rc_o = max(rc_o, result.returncode)
+        result_p = self.rig.run("post_tool_use.py")
+        self.assertEqual((rc_o, out_o), (result_p.returncode, result_p.stderr))
+        return rc_o
+
+    def test_listing_inside_dirty_submodule_is_equivalent(self):
+        (self.sub / "docs" / "research.md").write_bytes(
+            b"the collect path:\n\n    iVar1 = FUN_00b489070(param_1);\n"
+        )
+        self.assertEqual(self._assert_equivalent(), 2)
+
+    def test_submodule_pointer_moved_but_clean_is_equivalent(self):
+        (self.sub / "docs" / "research.md").write_bytes(b"clean v2\n")
+        _git("-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-qam", "bump", cwd=self.sub)
+        self.assertEqual(self._assert_equivalent(), 0)
 
 
 if __name__ == "__main__":

@@ -20,21 +20,19 @@ you do the checking inline.
 | `/workorder plan <task>` | step 0 → step 1 only | the plan, reviewed and handed back |
 | `/workorder resume <slug>` | steps 2 → 5 | `PASS`, or a cap |
 
-**`plan` is not a degraded run — it is a checkpoint.** It exists so a plan can be
-read, argued with and revised before any code is written, and so the work can be
-picked up in a *different session* later. Stop cleanly when it is asked for:
-write the workorder, summarise it, print the exact `resume` command, and spawn
-nothing else. Do not start implementing because the plan looks obviously
-correct — the reason the user asked for a plan is that they intend to decide
-that themselves.
+**`plan` is not a degraded run — it is a checkpoint.** It exists so a plan can
+be read, argued with and revised before any code is written, and picked up in a
+*different session* later. Stop cleanly when asked for it: write the workorder,
+summarise it, print the exact `resume` command, and spawn nothing else. Do not
+start implementing because the plan looks correct — the user asked for a plan
+because they intend to decide that themselves.
 
 **`resume` is the test of whether the plan was real.** A new session has none of
-the planning conversation: not the alternatives that were weighed, not the thing
-someone said in passing, not the reason a path was abandoned. The workorder file
-is the only channel. So on resume, read it and check it can actually carry the
-work alone — if a step depends on context that is not written down, that is a
-`PLAN-DEFECT` before the implementer is ever spawned, and it is far cheaper to
-catch here than three steps in.
+the planning conversation — not the alternatives weighed, not something said in
+passing, not why a path was abandoned. The workorder files are the only
+channel, so on resume, check they can carry the work alone: a step that depends
+on context not written down is a `PLAN-DEFECT` before the implementer is ever
+spawned, far cheaper to catch here than three steps in.
 
 That constraint is a feature. A plan that cannot survive a fresh session was
 never a plan; it was a conversation someone was still holding in their head.
@@ -63,15 +61,14 @@ or would ship a bug that is expensive to find later.
 
 ### Step 0.5 — triage the starting tier
 
-**Do this before spawning anything.** The escalation ladder in step 2 is a
-recovery mechanism, not a router: using it as the router means discovering a
-hard problem by failing at it twice, which is the most expensive way to learn
-something you could have read off the request.
+**Do this before spawning anything.** The escalation ladder in step 2 recovers
+from a wrong tier, not a router — using it as the router discovers a hard
+problem by failing at it twice, the most expensive way to learn something
+readable off the request.
 
-Triage on **observable properties of the task**, never on a model's own sense of
-how confident it feels. A model that cannot solve something is also poorly
-calibrated about whether it can, so self-assessed confidence is the least
-reliable signal in this system. These are checkable:
+Triage on **observable properties of the task**, never a model's own
+confidence — a model that cannot solve something is also poorly calibrated
+about whether it can. These are checkable:
 
 | The change… | Start at |
 |---|---|
@@ -100,10 +97,10 @@ before spawning the implementer if any of these hold:
 - more than **one submodule**, unless the change is a single contract they must
   agree on.
 
-The panel-and-launcher pass was 116 criteria, 9 findings, 2 submodules and
-1,524 lines. It reached the cap with seven items still open and had to be closed
-by hand, outside the phase separation. Nothing about its individual findings was
-too hard; there were simply too many sharing one budget.
+The panel-and-launcher pass — 116 criteria, 9 findings, 2 submodules, 1,524
+lines — hit this cap with seven items still open, closed by hand outside the
+phase separation: too many findings sharing one budget, none individually
+hard.
 
 Recommend splitting into one workorder per independent finding, or per
 submodule. Say it and let the user decide — a plan this size is usually
@@ -112,20 +109,27 @@ deliberate, and the warning is worth more than a refusal.
 ### Step 1 — plan
 
 Spawn `planner` at the tier triage chose, with the request and the repository
-context. It writes `.claude/workorders/<slug>-plan.md` and returns `PLAN-READY`
-— or `ADVICE-NEEDED`, if the research hit one decision it cannot settle, which
-routes to "Consultation" below and does not count as a replan.
+context. It writes `.claude/workorders/<slug>-plan.md` (frontmatter, `## State`,
+`## Goal`, `## Out of scope`, `## Acceptance criteria`, `## Steps`) and
+`<slug>-context.md` (`## Context the implementer needs` by stable `###`
+subsection, `## Needs human judgement`, `## Log`), and returns `PLAN-READY` —
+or `ADVICE-NEEDED` if the research hit one decision it cannot settle (see
+"Consultation" below; not a replan). Nine existing single-file plans stay
+valid, same sections in one `-plan.md` — locate a section with
+`grep -n '^## \|^### '`, never assume the split.
 
-`*-plan.md` is gitignored at any depth, which is deliberate — `AGENTS.md`
+Both files are gitignored at any depth (legacy plans too) — `AGENTS.md`
 § "Documentation & Instructions Maintenance" wants the plan to stay on the
 author's machine and the durable reasoning folded into `docs/` or the module's
 `instructions.md` once the work lands.
 
-Read the workorder yourself before continuing. If `## Acceptance criteria`
-contains anything that is not a runnable command or a checkable file, send it
-back now — an unrunnable criterion costs a full implement round to discover.
-If it has a `## Needs human judgement` section, show that to the user and get an
-answer before spawning the implementer.
+Read the plan file, `## Needs human judgement` and `## Log` yourself — grep
+`## Context the implementer needs` for what you need rather than reading it
+front-to-back. If `## Acceptance criteria` contains anything that is not a
+runnable command or a checkable file, send it back now — an unrunnable
+criterion costs a full implement round to discover. If `## Needs human
+judgement` is non-empty, show it to the user and get an answer before spawning
+the implementer.
 
 **In `plan` mode, stop here.** Report:
 
@@ -144,23 +148,31 @@ Then stop. Spawn nothing further, and do not begin implementing.
 **Entering here from `resume`?** Do two things first, because this session did
 not write the plan and knows nothing it does not say:
 
-1. **Read the workorder in full**, `## Log` included, and re-run the step 0.5
-   triage against it. Triage is a property of the task, not of the session that
-   did it, so it reaches the same row — but a plan written a week ago may
-   describe a task the repository has since moved under.
+1. **Read the plan file in full, `## Needs human judgement` and all of `## Log`**
+   — the one point the driver reads the whole Log, to re-count replans and
+   consultations. Grep `## Context` for what step 2 needs rather than reading
+   it whole. Re-run the step 0.5 triage — it's a property of the task, not the
+   session, so it reaches the same row, but the repository may have moved
+   under a week-old plan.
 2. **Check it is self-sufficient.** Every step must be actionable from the file
    alone. A step that assumes a decision made only in conversation, names a file
    that no longer exists, or says "as discussed" is a `PLAN-DEFECT` now — cheaper
    to route back before an implementer has spent a round discovering it.
 
-Spawn `implementer` with the workorder path. Three outcomes:
+Snapshot before spawning: `py -3 .claude/skills/workorder/round_delta.py
+snapshot <slug> <round>`, recorded in `## State` › `round base:` — step 3
+diffs against it, and every later round repeats this before re-entering.
+
+Spawn `implementer` with the plan and context paths. Three outcomes:
 
 - **`IMPL-DONE`** → go to step 3.
-- **`ADVICE-NEEDED`** → see "Consultation" below. This is not a failure and does
-  not count against any cap; it is the cheap path that exists so one hard
-  decision does not cost a whole escalated phase.
-- **`PLAN-DEFECT`** → append the evidence block to the workorder's `## Log`,
-  increment nothing, and re-spawn `planner` with it. This is the loop working.
+- **`ADVICE-NEEDED`** → see "Consultation" below — not a failure, doesn't count
+  against any cap; the cheap path so one hard decision doesn't cost a whole
+  escalated phase.
+- **`PLAN-DEFECT`** → append the evidence to the context file's `## Log` under
+  the round's `### Round <n>` heading, increment nothing, and spawn `planner`
+  fresh (a replan is always fresh — see "Re-entering a phase" below). This is
+  the loop working.
 
   **Escalate the planner's model as it fails, rather than only counting.** A
   `PLAN-DEFECT` is the pipeline telling you this problem is harder than the tier
@@ -172,16 +184,32 @@ Spawn `implementer` with the workorder path. Three outcomes:
   | 2nd | `model: fable` | cheaper reasoning has now demonstrably failed twice on the same problem |
   | 3rd | — stop, ask the user | a goal that survives two replans is usually not well posed |
 
-  Spend the money where it has been earned, not where it was guessed. Planning
-  is the lowest-token-volume phase in this pipeline — a plan is a few thousand
-  output tokens against an implementation's hundred thousand — so one Fable
-  replan costs less than the implement round it saves, and far less than the
-  live game session a wrong mechanism model costs.
+  Spend money where it's earned, not guessed: planning is the lowest-
+  token-volume phase (a few thousand output tokens against an implementation's
+  hundred thousand), so one Fable replan costs less than the implement round
+  it saves, and far less than a wrong mechanism model's live game session.
 
-  Record the escalation in the `## Log` (`planner escalated to fable after 2nd
-  PLAN-DEFECT`). If Fable's plan also fails, that is a strong signal the problem
-  is under-specified rather than difficult, and it is worth saying so to the
-  user explicitly when you stop.
+  Record the escalation under the round's heading in the context file's
+  `## Log` (`planner escalated to fable after 2nd PLAN-DEFECT`). A Fable
+  failure signals the problem is under-specified, not difficult — say so to
+  the user when you stop.
+
+### Re-entering a phase: resume, or fresh spawn
+
+Record each phase agent's `agentId` in `## State` › `agents:`. Same-phase,
+same-tier re-entry — an answered `ADVICE-NEEDED`, an `IMPL-DEFECT`, or the
+implementer once its own `PLAN-DEFECT` is fixed — is a `SendMessage` to that
+agent id (ToolSearch `select:SendMessage` if deferred), naming the `## Log`
+heading and pasting nothing else: the send is what keeps the context, not a
+claim the driver makes about it.
+
+Spawn fresh when: the tier changes; it's a planner replan (always fresh — the
+point is a fresh look at what the earlier plan assumed, and a resumed planner
+is that assumption's own context); the agent id doesn't resolve (`/workorder
+resume` in a new session) or the send fails; or it's already been resumed
+twice. A fresh implementer or planner gets a `PROGRESS SO FAR` block (steps
+done, files touched, what's half-finished) instead of history. `verifier` and
+every reviewer are **always fresh** — independence is their value.
 
 ### Consultation — one hard decision, not a whole escalated phase
 
@@ -193,22 +221,23 @@ exactly the door its design closes. An uncertain verifier reports `UNATTEMPTED`.
 
 Note the mechanism, because it constrains the shape: an agent cannot spawn
 another agent. The phase returns its question to you, you spawn `consultant`
-with it, and you re-spawn the phase with the answer appended to the workorder's
-`## Log`. The phase keeps its own context and its progress — that is the whole
-point, and it is what makes this cheaper than escalating the phase, which throws
-away everything done so far.
+with it, and append the answer to `## Log` under `### Decisions` — verbatim, so
+the next round does not re-ask a question already paid for and a later reader
+knows which decisions were made at which tier. Then re-enter the phase per
+"Re-entering a phase" above: same tier, so this is a resume, which is what
+makes a consultation cheaper than escalating the phase and throwing away
+everything done so far.
 
 **Refuse a malformed question.** The request must carry `QUESTION`, `WHAT I
-WOULD DO WITHOUT HELP`, `WHY I AM UNSURE` and `CONTEXT`. If the second field is
-empty, send it back rather than forwarding it. An asker that has not formed a
-view has not thought about the problem, and answering that is how a consultation
-quietly becomes delegation — the weaker model stops deciding anything and the
-pipeline pays two tiers for one phase.
+WOULD DO WITHOUT HELP`, `WHY I AM UNSURE` and `CONTEXT`. An empty second field
+goes back unforwarded — an asker with no view has not thought about the
+problem, and answering it turns consultation into delegation: the weaker model
+stops deciding and the pipeline pays two tiers for one phase.
 
 **Spawn `consultant` at `opus`** by default. For a question in the `fable` rows
 of the triage table, pass `model: fable` — one focused question with a short
-answer is the cheapest place in this entire pipeline to buy the strongest model,
-far cheaper than running a whole phase there.
+answer is the cheapest place in this pipeline to buy the strongest model, far
+cheaper than running a whole phase there.
 
 **Cap: 2 consultations per round.** A third is a signal, not a quota to spend:
 triage was wrong, so escalate the *phase* — re-spawn it one tier up with
@@ -218,21 +247,26 @@ answers one at a time. Record that you did, and why.
 If `consultant` returns `ESCALATE`, do that immediately without waiting for the
 cap.
 
-Append every answer to the `## Log` verbatim. The next round must not re-ask a
-question that has already been paid for, and a later reader needs to know which
-decisions were made at which tier.
-
 ### Step 3 — verify, in parallel
 
-Spawn `verifier` **and** every applicable domain reviewer in a single message so
-they run concurrently. Wall-clock is one agent; only tokens add up.
+Run `py -3 .claude/skills/workorder/round_delta.py delta <slug> <round>`
+against step 2's snapshot to see what this round touched. Exit 3 means the
+snapshot is missing or unreadable — treat everything as changed.
 
-Give each the workorder path and tell it to read the change itself — never
-paste the implementer's transcript.
+- **Round 0:** spawn every applicable reviewer (table's first column) plus
+  `verifier` — when in doubt, run it, cheap even when clean.
+- **Round ≥ 1:** spawn `verifier` always, plus every applicable reviewer
+  `BLOCKING` last round or matching the delta (table's second column). Record
+  a skip as `<name>=clean@round<n>, not re-run` in `## State`, reported the
+  same way in step 5. Run everything if `delta` exited 3.
 
-**Tell them how to read it, because `git diff` alone under-reports.** It shows
-neither untracked files nor the index, and a reviewer that cannot see a
-newly-added file is reviewing half the change:
+**Reviewers get no workorder path** — paste `## Goal`, `## Out of scope`, the
+diff commands below, and this round's paths (whole change on round 0, delta
+after). `instrument-blindness-reviewer` also gets the context file's path and
+the `###` heading(s) recording the research finding. Never paste the
+implementer's transcript.
+
+**`git diff` alone under-reports**, missing untracked files and the index:
 
 ```bash
 git status --porcelain -uall     # untracked, named individually
@@ -241,36 +275,34 @@ git -C <submodule> status --porcelain -uall
 git -C <submodule> diff HEAD     # the hub's diff shows only the pointer
 ```
 
-Which reviewers apply:
+| Reviewer | Applicable when the change touches | Re-run on round ≥ 1 when the delta contains |
+|---|---|---|
+| `docs-sync-reviewer` | always | anything other than test files |
+| `decompile-output-guard` | `docs/`, research notes, decompiler-read comments | any `.md .cpp .hpp .py .rs .ts .js` file (tests included) — never skipped for any other reason; a legal finding is always blocking |
+| `sdk-contract-reviewer` | `hs-game-sdk/`, `tests/cpp/`, any relic/item/stat scanner, any live `CInstance` or decoded save tree | its own table's paths |
+| `tauri-command-reviewer` | `hub/src-tauri/src/`, the updater, anything the hub's interface reads | its own table's paths |
+| `instrument-blindness-reviewer` | `ForgePact/plugin`, a hook install, a call through a resolved pointer, a research finding in `docs/` | `ForgePact/plugin/**`, hook/installer code under `hs-game-sdk/**`, any `*-research.md`, any `docs/submodules/*/instructions.md`, any other doc recording a measured result, or delta text matching `Rva\|GetModuleHandle\|MmCreateHook\|HookOneScript\|InstallScriptHook` |
 
-| Run when the change touches | Reviewer |
-|---|---|
-| always | `verifier` (mechanical), `docs-sync-reviewer` |
-| `docs/`, research notes, comments written while reading a decompiler | `decompile-output-guard` |
-| `hs-game-sdk/`, `tests/cpp/`, any relic/item/stat scanner, any live `CInstance` or decoded save tree | `sdk-contract-reviewer` |
-| `hub/src-tauri/src/`, the updater, anything the hub's interface reads | `tauri-command-reviewer` |
-| `ForgePact/plugin`, a hook install, a call through a resolved pointer, a research finding in `docs/` | `instrument-blindness-reviewer` |
+A re-run reviewer reads the delta paths; round 0 reads the whole change.
+`decompile-output-guard` on round ≥ 1 reads every line added since it last
+passed, plus the whole contents of any file added since.
 
-When in doubt, run it. A reviewer that finds nothing costs one spawn; a bug
-class that ships costs a live session.
-
-**Require the severity label in the dispatch.** Tell each reviewer to mark every
-finding `BLOCKING` or `NON-BLOCKING` and to lead with "no blocking findings"
-when that is the case. Their own files carry the rule; restating it in the
-dispatch is what makes an unlabelled report obviously incomplete rather than
-something you have to classify yourself afterwards.
+**Require the severity label.** Every finding is `BLOCKING` or `NON-BLOCKING`,
+leading with "no blocking findings" when true — restate this in the dispatch so
+an unlabelled report is obviously incomplete, not something to classify
+yourself.
 
 ### Step 4 — route the verdicts
 
 Merge everything into one decision:
 
 **A round is for defects, not for improvements.** Every reviewer labels each
-finding `BLOCKING` or `NON-BLOCKING`, and only the blocking ones spend a round.
-This is not a nicety: the panel-and-launcher pass hit the cap on a round whose
-instrument reviewer opened with *"nothing here blocks shipping"* and then listed
-five follow-ups and three nits. Those cost the workorder its last round and shut
-down eight findings that were already green. A cap that counts polish as failure
-turns "the reviewers found something worth doing" into "the pipeline stops".
+finding `BLOCKING` or `NON-BLOCKING`; only blocking ones spend a round. The
+panel-and-launcher pass hit the cap on a round whose instrument reviewer opened
+*"nothing here blocks shipping"* and then listed five follow-ups and three nits
+— costing the workorder its last round and shutting down eight findings already
+green. A cap that counts polish as failure turns "found something worth doing"
+into "the pipeline stops".
 
 The line, when a reviewer's label looks wrong to you:
 
@@ -291,11 +323,13 @@ The line, when a reviewer's label looks wrong to you:
   **Do not spend a round on it** — the implementer cannot fix a criterion that
   is not broken — and do not quietly upgrade it to `PASS`. Set `status: PASS
   (pending <what)` in the workorder so the gap survives the session.
-- **Any `IMPL-DEFECT`, or any BLOCKING reviewer finding** → append all of it to
-  the workorder's `## Log`, bump `round:`, and re-spawn `implementer`. Send the
-  **evidence**, not a summary: the failing command and its real output, the
-  reviewer's `path:line`. A defect report the implementer has to re-derive
-  wastes the round you spent finding it.
+- **Any `IMPL-DEFECT`, or any BLOCKING reviewer finding** → append it to the
+  context file's `## Log` under a new `### Round <n>` heading, bump `round:` in
+  `## State`, snapshot the new round (step 2), and re-enter the implementer per
+  "Re-entering a phase" — normally a resume, same tier, pointed at that
+  heading. Send the **evidence** in the Log entry, not the message: the failing
+  command and its real output, the reviewer's `path:line`. A defect report the
+  implementer has to re-derive wastes the round you spent finding it.
 
   Carry the round's non-blocking findings along **as context, not as work** —
   the implementer may fix one cheaply while it is already in that file, and
@@ -305,13 +339,13 @@ The line, when a reviewer's label looks wrong to you:
   user with everything tried so far. Ping-ponging past three means the pipeline
   has lost the thread and more rounds will not find it.
 
-  **At the cap, split — do not raise.** The cap exists because three failed
-  rounds mean the pipeline has lost the thread, and that reasoning does not
-  change because the plan is large. So the recovery is a *new* workorder
-  carrying only the still-open findings, with its own fresh three rounds, not a
-  fourth round on this one. Say which findings are closed, so the split does not
-  re-litigate work that already passed. Raising the cap in place buys more of
-  the thing that was not working.
+  **At the cap, split — never close it by hand.** Three failed rounds mean the
+  pipeline lost the thread, regardless of plan size or how close it looks to
+  done. Finishing it yourself makes the driver the implementer at the wrong
+  tier (see "Driver discipline" below) — the failure this cap exists to
+  prevent, not a shortcut past it. Open a *new* workorder with only the
+  still-open findings and its own fresh three rounds; say which findings are
+  already closed so the split does not re-litigate passed work.
 - **Any `PLAN-DEFECT`** → back to step 1, under the replan cap.
 - **Anything under `UNATTEMPTED` that needs a human** — a live game session, a
   rebuild, eyes on a window — → stop and ask. Never record an unchecked
@@ -322,14 +356,48 @@ The line, when a reviewer's label looks wrong to you:
 Set `status: PASS` in the workorder and tell the user:
 
 - what changed, and the acceptance criteria with their **real** output;
-- every reviewer that ran and what it concluded, including the clean ones;
+- every reviewer that ran and what it concluded, including the clean ones, and
+  every reviewer skipped this round as `clean@round<n>, not re-run`;
 - anything left under `NOT DONE` or `Needs human judgement`;
 - how many rounds it took, and what each round caught. That last line is how
   the pipeline earns its keep or shows it is not.
 
 Then fold what is still true out of the workorder and into the document that
 describes the result — `docs/hub/design.md`, a `docs/adr/` entry, or the
-submodule's `instructions.md`. Leave the plan file where it is; it is ignored.
+submodule's `instructions.md`. Leave both workorder files where they are; they
+are ignored.
+
+## Driver discipline
+
+**The driver never implements.** Its tool use is limited to: reading the
+workorder, `round_delta.py`, `git status`/`git diff` for a dispatch, `Edit` on
+`## State`/`## Log`, `Agent`, `SendMessage`, `AskUserQuestion`. Running builds
+or tests, or editing source, makes it the implementer at the wrong tier and the
+largest context in the pipeline — stop and dispatch instead. Measured: the
+driver that closed a capped workorder by hand made 236 Bash calls and 47 edits
+at a median 425K-token context, reading 157M cached tokens for that resume.
+
+**Workflow mode — opt-in, unproven.** `/workorder resume <slug> workflow`, or
+"use a workflow," runs steps 2-4 as a script instead of driver turns — offer it
+as unproven, not yet carried one real workorder end to end:
+
+```
+Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
+           args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
+                   reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... } } })
+```
+
+`reviewers` is a map, not a list — one entry per applicable reviewer from the
+round-0 set, each valued `'never'` (round 0) so the script knows to read the
+whole change rather than a delta.
+
+It loops implement → `round_delta.py` → verify + delta-scoped reviewers →
+route (3-round cap, a haiku scribe for Log/State, the reviewer table above as
+code), returning to the driver on `PASS`, `PASS-PENDING-HUMAN`, `PLAN-DEFECT`,
+`ADVICE-NEEDED`, a human-needed `UNATTEMPTED`, or the cap. Replans,
+consultations, human questions and the step 5 report stay with the driver;
+every re-entry inside is a fresh spawn (no resume) — what it removes is the
+driver's own turns.
 
 ## Two rules that make this work rather than just look like it works
 
@@ -350,25 +418,22 @@ Set in each agent's frontmatter: `planner` opus, `implementer` sonnet,
 opus. Override for one run by passing `model` on the Agent call.
 
 **Tier aliases, not pinned version IDs.** `opus` means the current generation of
-that tier, which is the contract wanted here: the tier is the design decision,
-the version is not. Pinning `claude-opus-5` across eight agent files would buy
-reproducibility the pipeline does not need — the acceptance criteria are
-mechanical, so a model change that breaks something fails a *test*, not a review
-— and cost a stale-ID sweep every generation, ending in a retired model that
-breaks the agent outright. This is not the `*Rva*` case from `AGENTS.md`: an
-alias is a documented moving pointer, not a constant whose meaning silently
-moved underneath it.
+that tier — the design decision, not the version. Pinning `claude-opus-5`
+across eight files buys reproducibility this pipeline does not need (a broken
+model fails a *test*, not a review) and costs a stale-ID sweep every
+generation. Not the `*Rva*` case from `AGENTS.md`: an alias is a documented
+moving pointer, not a constant whose meaning silently moved underneath it.
 
 **When to reach for `fable` yourself,** beyond the automatic escalation above:
 
 - The plan must establish an **unknown** game mechanism, not verify a suspected
-  one — the "which of 34 candidates does X" shape, where a wrong mechanism model
-  has historically cost whole sessions rather than one round.
+  one — the "which of 34 candidates does X" shape, where a wrong mechanism
+  model has cost whole sessions rather than one round.
 - The change falls in the class `AGENTS.md` § "Don't Suspend the Game's Own
-  Runtime" warns about, where the failure mode inverts and the blast radius is
-  the player's session.
+  Runtime" warns about — the failure mode inverts, and the blast radius is the
+  player's session.
 
-Do **not** reach for it on a routine change, and do not put it on the
-implementer or a reviewer. Those run at high token volume on every change, where
-2× is real money for no measured gain; the planner is the one phase cheap enough
-that the upgrade is nearly free.
+Do **not** reach for it on a routine change, or put it on the implementer or a
+reviewer — those run at high token volume where 2× is real money for no
+measured gain; the planner is the one phase cheap enough for the upgrade to be
+nearly free.

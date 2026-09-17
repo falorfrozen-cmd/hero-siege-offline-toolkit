@@ -15,33 +15,12 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|Bash|PowerShell|NotebookEdit",
+        "matcher": "Edit|Write|Bash|PowerShell|NotebookEdit|Monitor",
         "hooks": [
           {
             "type": "command",
-            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/catalog_signature.py\""
-          },
-          {
-            "type": "command",
-            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/tauri_command_guard.py\""
-          },
-          {
-            "type": "command",
-            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/hub_frontend_tests.py\""
-          },
-          {
-            "type": "command",
-            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decompiled_output.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "Bash|PowerShell|Monitor",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/leftover_processes.py\" post",
-            "timeout": 30
+            "command": "py -3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post_tool_use.py\"",
+            "timeout": 60
           }
         ]
       }

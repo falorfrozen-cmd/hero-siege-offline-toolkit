@@ -21,40 +21,34 @@ import sys
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import SKIP_HINT, changed_paths, repo_root, skip_requested  # noqa: E402
+from _common import SKIP_HINT, TreeState, repo_root, skip_requested  # noqa: E402
 
 WATCHED_DIR = "hub/src"
 
 
-def main() -> int:
-    try:
-        json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-    if skip_requested():
-        return 0
-
-    root = repo_root()
-    if root is None:
-        return 0
-
+def check(payload, tree: TreeState) -> tuple[int, str]:
+    """(rc, message) for one call. `payload` is unused -- this check keys off
+    the working tree, never off which tool ran -- and is accepted only so
+    every check shares one call shape with the dispatcher. A non-blocking
+    `rc=0` message (node could not be run) is still returned, not just a
+    blocking one; `main()` prints it either way."""
+    root = tree.root
     touched = [
         rel
-        for rel in changed_paths(root, WATCHED_DIR)
+        for rel in tree.changed_paths(root, WATCHED_DIR)
         if PurePosixPath(rel).parent == PurePosixPath(WATCHED_DIR)
         and rel.endswith(".js")
     ]
     if not touched:
-        return 0
+        return 0, ""
 
     src = root / WATCHED_DIR
     try:
         tests = sorted(p.name for p in src.iterdir() if p.name.endswith(".test.js"))
     except OSError:
-        return 0
+        return 0, ""
     if not tests:
-        return 0
+        return 0, ""
 
     try:
         run = subprocess.run(
@@ -66,26 +60,40 @@ def main() -> int:
     except OSError as error:
         # node absent from PATH, or a .cmd shim that cannot be exec'd directly
         # (nvm/fnm on Windows). Not a test failure; do not block on it.
-        print(f"hub frontend tests skipped: could not run node ({error})", file=sys.stderr)
-        return 0
+        return 0, f"hub frontend tests skipped: could not run node ({error})"
 
     if run.returncode == 0:
+        return 0, ""
+
+    return 2, "\n".join(
+        [
+            "The hub's frontend tests fail. Changed: " + ", ".join(sorted(touched)),
+            "",
+            (run.stdout or "").strip()[-4000:],
+            (run.stderr or "").strip()[-2000:],
+            "",
+            SKIP_HINT,
+        ]
+    )
+
+
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        payload = None
+
+    if skip_requested():
         return 0
 
-    print(
-        "\n".join(
-            [
-                "The hub's frontend tests fail. Changed: " + ", ".join(sorted(touched)),
-                "",
-                (run.stdout or "").strip()[-4000:],
-                (run.stderr or "").strip()[-2000:],
-                "",
-                SKIP_HINT,
-            ]
-        ),
-        file=sys.stderr,
-    )
-    return 2
+    root = repo_root()
+    if root is None:
+        return 0
+
+    rc, message = check(payload, TreeState(root))
+    if message:
+        print(message, file=sys.stderr)
+    return rc
 
 
 if __name__ == "__main__":
