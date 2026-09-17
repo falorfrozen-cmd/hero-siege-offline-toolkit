@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-13T11:07:37Z",
+  "generated": "2026-09-17T15:19:32Z",
   "tools": [
     {
       "id": "forgepact",
@@ -8,9 +8,9 @@
       "summary": "Offline gameplay modifiers: density, spawns, drop rates, map reveal.",
       "repo": "falorfrozen-cmd/ForgePact",
       "submodule": "ForgePact",
-      "version": "1.3.16",
-      "tag": "v1.3.16",
-      "published": "2026-09-10T06:24:46Z",
+      "version": "1.4.1",
+      "tag": "v1.4.1",
+      "published": "2026-09-17T15:18:54Z",
       "license": "AGPL-3.0",
       "requires": {
         "admin": false,
@@ -20,12 +20,12 @@
       },
       "artifact": {
         "kind": "zip",
-        "name": "ForgePact-1.3.16.zip",
-        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.3.16/ForgePact-1.3.16.zip",
-        "size": 20975420,
-        "sha256": "e0bbe3a087af20c4a89137db386e06e3421316286bd2a076a4982f02869d1516",
+        "name": "ForgePact-1.4.1.zip",
+        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.4.1/ForgePact-1.4.1.zip",
+        "size": 17386764,
+        "sha256": "bb433d09646ca2567357c16155576e8ef5cd5d697caee3902f2e8be7d80aa497",
         "sha256_source": "published+verified",
-        "strip_prefix": "ForgePact-1.3.16/"
+        "strip_prefix": "ForgePact-1.4.1/"
       },
       "launch": {
         "exe": "ForgePact.exe",
@@ -44,8 +44,8 @@
           "timeout_s": 20
         }
       },
-      "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.3.16",
-      "notes": "# ForgePact 1.3.16\n\n## Headhunter fixes\n\nHeadhunter could stay inactive even with the plugin correctly installed and its\nkill callbacks firing. On the inspected Steam build, the bundled YYToolkit's\nplayer lookup read an incompatible room layout and failed to find the player.\nForgePact now uses the game's own instance resolver for this lookup and checks\nthat it returned the intended live player. It also accepts the typed instance\nIDs returned by the current runner.\n\n- Failed player lookups or buff calls no longer permanently consume a monster's\n  Headhunter trigger. Successful deliveries still prevent duplicate buffs from\n  multiple death callbacks.\n- A separate monster-death callback provides a fallback when the usual kill or\n  visual death-effect callback is unavailable.\n- Combat activity summaries are logged automatically to help diagnose failures.\n\nThe panel executable is unchanged. The corrected `BloodPactPlugin.dll` is included\nin this package; existing settings are retained.\n\n## Verification\n\n48 automated test methods passed, including 27 native C++ dispatch scenarios.\nThe full release-mode plugin compiled, and the packaged panel passed its\nWebView2/UI/API startup check with an isolated profile. The player lookup and\nidentity checks also passed against the actual game functions executed in an\nisolated memory copy.\n\n**Live combat with this corrected DLL has not yet been verified.** These results\nverify the observed lookup failure and its replacement, not every gameplay path\nor every Hero Siege build.\n\n## How to update\n\n1. Close Hero Siege and the old ForgePact window.\n2. Download and extract `ForgePact-1.3.16.zip`. Keep the whole folder together.\n3. Open `ForgePact.exe` from the new folder, check Game Location, and click\n   **Install Mod Plugin**.\n4. Start Hero Siege again and enable Headhunter as usual.\n\nOpening the new panel alone does not update the installed plugin. The game must\nbe restarted after installation to load the new DLL.",
+      "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.4.1",
+      "notes": "# ForgePact 1.4.1\n\nA clearer control panel with the offline launcher built in.\n\n## New\n\n- **HS Offline Launcher is built into ForgePact.** Press **Launch Modded Game**\n  to start the selected game with Steam set up automatically. No separate\n  launcher installation is needed. Launch progress and errors stay visible in\n  Setup, and repeated clicks cannot launch another copy while a request runs.\n\n## Changed\n\n- **Disabled Monster Density stays visibly off.** Reopening the panel or\n  adjusting another slider no longer makes it look enabled. Its saved\n  multiplier is retained for the next time you enable it.\n\n- **A simpler sidebar.** Removed the fixed Map Reveal, Headhunter and Pet Quest\n  Collector shortcuts, which could be mistaken for a list of enabled mods.\n  All three settings remain available in the Mods tab.\n\n- **Gameplay Mods and Drop Rates are better aligned.** Enabled Map Reveal now\n  uses the same border as other enabled mods, and the Pet Quest Collector card\n  stays compact. Drop Rates fills both columns from the first row, including\n  when searching or showing only modified settings.\n\n- **Missing plugin files are easier to fix.** Source users can run\n  `Prepare-Plugin.bat` before installing. An incomplete installation now shows\n  a warning on every tab, even when the game is open, and sent commands are no\n  longer labelled as already applied.\n\n- **The ForgePact anvil is complete again.** Its upper-left surface no longer\n  looks cut out, including at compact sidebar sizes.\n\n- **Find settings by their icons.** Gold, key families, portals, Chaos Pillars,\n  Chaos Tower, character stats and gameplay mods now have matching icons next\n  to their names. Satanic Zone choices have effect icons too. Labels and\n  checkmarks stay visible, and the artwork works offline at any display scale.\n\n- **The whole panel has a new layout.** A sidebar brings Setup, Modifiers,\n  World, Loot and Mods together, with the Toolkit's bronze anvil, consistent\n  cards and readable switches. Narrow windows use top tabs. Search Modifiers\n  and Loot or show only modified settings. Sliders now have minus/plus buttons;\n  exact values remain editable with the keyboard. Full setting explanations\n  are available under **How it works**.\n\n- **Saving is easier to follow.** The header shows saving, saved and connection\n  errors. Rapid changes are saved in order, and interrupted saves read back\n  the stored settings where possible. Saved decimal values no longer snap to\n  the slider step when the panel refreshes. Existing preferences are retained.\n\n- **Satanic Zone Mods is easier to choose from.** Positive and negative modifiers\n  now use readable, clickable cards with checkmarks. Search by name or effect,\n  show only enabled or disabled modifiers, and see how many are selected. The\n  panel explains the minimum of 3 positive / 2 negative choices before you try\n  to remove one. Enable a whole column or restore both pools to their defaults.\n  Your existing selections stay intact, changes save automatically, and the\n  layout adapts to narrow windows. The game rules are unchanged.\n\n## How to update\n\nDownload and extract the complete release, then reopen ForgePact. Your existing\nsettings are retained. Source users can run `Prepare-Plugin.bat` if plugin files\nare missing before using **Install Mod Plugin**.\n\nUse ForgePact only with an offline / EAC-disabled copy of Hero Siege.",
       "guide": "docs/submodules/ForgePact/instructions.md",
       "source_launch": {
         "cmd": "py",
