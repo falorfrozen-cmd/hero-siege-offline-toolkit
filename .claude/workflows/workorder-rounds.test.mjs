@@ -132,6 +132,39 @@ test('when the scribe cannot write, the evidence travels in the next dispatch', 
   assert.match(prompts[1], /REAL-OUTPUT-42/)
 })
 
+test('omitted repoRoot produces the exact commands as before', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
+  await run({ ...BASE, submodules: ['ForgePact'] }, reply)
+  assert.equal(prompts['snapshot:r0'],
+    'Run exactly: py -3 .claude/skills/workorder/round_delta.py snapshot zz 0  — then report its exit code and output. Edit nothing.')
+  assert.ok(prompts['delta:r0'].startsWith(
+    'Run exactly: py -3 .claude/skills/workorder/round_delta.py delta zz 0  — report its exit code'))
+  assert.ok(prompts['docs-sync-reviewer:r0'].includes(
+    'Read the whole change: git status --porcelain -uall ; git diff HEAD ; git -C ForgePact status --porcelain -uall ; git -C ForgePact diff HEAD'))
+})
+
+test('a set repoRoot rewrites the delta command and every diff command', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
+  await run({ ...BASE, repoRoot: '/repo root', submodules: ['ForgePact'] }, reply)
+  assert.ok(prompts['snapshot:r0'].includes('snapshot zz 0 --root "/repo root"'))
+  assert.ok(prompts['delta:r0'].includes('delta zz 0 --root "/repo root"'))
+  assert.ok(prompts['docs-sync-reviewer:r0'].includes(
+    'Read the whole change: git -C "/repo root" status --porcelain -uall ; git -C "/repo root" diff HEAD ; ' +
+    'git -C "/repo root/ForgePact" status --porcelain -uall ; git -C "/repo root/ForgePact" diff HEAD'))
+})
+
+test('submodules combine with repoRoot; an already-absolute entry is left alone', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
+  await run({ ...BASE, repoRoot: 'C:/repo', submodules: ['C:/other/ForgePact', 'HSCraftSim'] }, reply)
+  assert.ok(prompts['docs-sync-reviewer:r0'].includes(
+    'git -C "C:/other/ForgePact" status --porcelain -uall ; git -C "C:/other/ForgePact" diff HEAD ; ' +
+    'git -C "C:/repo/HSCraftSim" status --porcelain -uall ; git -C "C:/repo/HSCraftSim" diff HEAD'))
+  assert.ok(!prompts['docs-sync-reviewer:r0'].includes('C:/repo/C:/other'))
+})
+
 test('missing arguments are refused', async () => {
   const { result } = await run({ slug: 'zz' }, standard())
   assert.equal(result.outcome, 'BAD-ARGS')

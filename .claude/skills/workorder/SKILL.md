@@ -387,12 +387,18 @@ as unproven, not yet carried one real workorder end to end:
 ```
 Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
-                   reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... } } })
+                   reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... }, repoRoot } })
 ```
 
 `reviewers` is a map, not a list — one entry per applicable reviewer from the
 round-0 set, each valued `'never'` (round 0) so the script knows to read the
 whole change rather than a delta.
+
+`repoRoot` is optional and only needed when the driver session's own checkout
+is not the repository the work happens in (a driver running from a worktree
+while the change lands in another checkout) — pass the work's absolute repo
+root and the script points `round_delta.py --root` and every `git -C` diff
+command at it instead of defaulting to the driver's own CWD.
 
 It loops implement → `round_delta.py` → verify + delta-scoped reviewers →
 route (3-round cap, a haiku scribe for Log/State, the reviewer table above as
