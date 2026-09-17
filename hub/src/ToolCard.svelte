@@ -1,468 +1,162 @@
 <script>
-  // One tool, as the Library grid draws it: mark, name, one line, a state chip,
-  // one primary button, and an overflow menu for everything else.
-  import { art } from './skin.svelte.js';
-  import { act, progressFor, bytes, setFavorite, isTerminal } from './library.svelte.js';
-
-  let { tool, onopen } = $props();
-
+  import { tick } from 'svelte';
+  import { act, progressFor, bytes, setFavorite, pendingFor } from './library.svelte.js';
+  import { identity, presentation } from './tool-presentation.js';
+  import ToolIcon from './ToolIcon.svelte';
+  import ToolAction from './ToolAction.svelte';
+  import Icon from './Icon.svelte';
+  let { tool, onopen, list = false } = $props();
   let menuOpen = $state(false);
-  let hovered = $state('');
-  let working = $state(false);
-
+  let menuPosition = $state({ left: 0, top: 0 });
+  let starWorking = $state(false);
+  let menuAnchor;
+  let menuButton;
+  let menuPanel = $state();
+  const meta = $derived(identity(tool));
   const progress = $derived(progressFor(tool.id));
-
-  const PHASE_LABEL = {
-    started: 'Starting',
-    downloading: 'Downloading',
-    verifying: 'Verifying',
-    extracting: 'Extracting',
-    activating: 'Installing',
-  };
-
-  /**
-   * Is an install still running?
-   *
-   * `install_tool` now runs the install before it resolves, so this card's own
-   * click is covered by `working`. This is for the installs it did not start:
-   * Update all, and the auto-install that follows a launch check. Both drive
-   * this card's progress bar, and without this the button stayed live under a
-   * download already running against the same staging directory.
-   *
-   * `isTerminal` rather than a list written out here. This card once carried
-   * its own copy of that list, which is how it went on showing *Verifying*
-   * for a download that had finished and been staged: the phase was terminal
-   * and this line had never heard of it.
-   */
-  const inFlight = $derived(progress !== null && !isTerminal(progress.phase));
-
-  /**
-   * The version this card should claim, which is not always the one the backend
-   * has told us about yet.
-   *
-   * `done` is emitted before `library-changed` reaches the frontend, and in that
-   * gap the tool view still says nothing is installed -- so the card flashed
-   * "Not installed" and an Install button between finishing an install and
-   * being told it had finished. The version off the `done` event closes it.
-   */
-  const justInstalled = $derived(progress?.phase === 'done' ? progress.version : null);
-  const installedVersion = $derived(tool.installed_version ?? justInstalled);
-  const failed = $derived(progress?.phase === 'failed' ? progress : null);
-
-  /**
-   * The state chip. Order matters: a tool that is both running and has an
-   * update should say Running, because that is what the player can act on.
-   */
-  const chip = $derived.by(() => {
-    if (inFlight) {
-      const label = PHASE_LABEL[progress.phase] ?? 'Working';
-      const pct =
-        progress.phase === 'downloading' && progress.total
-          ? ` ${Math.min(100, Math.round((progress.received / progress.total) * 100))}%`
-          : '';
-      return { text: label + pct, tone: 'busy' };
-    }
-    // An install that fails does so on a worker thread, long after the click
-    // returned, so nothing else in the interface would mention it.
-    if (failed) return { text: 'Install failed', tone: 'failed' };
-    // Both can be true now: a tool found by its install path has a PID the hub
-    // can stop but did not start. Say the more informative of the two.
-    if (tool.running_elsewhere) return { text: 'Running (outside the hub)', tone: 'running' };
-    if (tool.running_pid) return { text: 'Running', tone: 'running' };
-    if (tool.staged) return { text: `Staged — ${tool.version}`, tone: 'staged' };
-    // `update_available` was computed from the version on disk before this
-    // install; suppress it until the backend catches up, or the card offers to
-    // install again what it has just installed.
-    if (tool.update_available && !justInstalled) {
-      return { text: `${tool.installed_version} → ${tool.version}`, tone: 'update' };
-    }
-    if (installedVersion) return { text: `v${installedVersion}`, tone: 'ok' };
-    return { text: 'Not installed', tone: 'idle' };
-  });
-
-  const primary = $derived.by(() => {
-    if (inFlight) {
-      return {
-        label: PHASE_LABEL[progress.phase] ?? 'Working',
-        icon: 'install',
-        command: null,
-      };
-    }
-    if (tool.running_pid && tool.can_stop) {
-      return {
-        label: 'Stop',
-        icon: 'stop',
-        command: 'stop_tool',
-        why: tool.running_elsewhere
-          ? 'Not started by the hub, but running from the copy the hub installed, so the hub can still stop it.'
-          : '',
-      };
-    }
-    // Running, but elevated under an unelevated hub. Windows refuses the
-    // terminate every time, so Stop would be a button that cannot work.
-    if (tool.running_pid) {
-      return {
-        label: 'Running',
-        icon: 'stop',
-        command: null,
-        why: 'Started with Administrator rights, which the hub does not have. Close it from its own window.',
-      };
-    }
-    // Up, but with no PID the hub can act on -- only its health endpoint
-    // answered, so the running copy is not the one the hub installed. Offering
-    // Launch here just hits the tool's own single-instance lock.
-    if (tool.running_elsewhere) {
-      return {
-        label: 'Running',
-        icon: 'play',
-        command: null,
-        why: 'Something is already answering on the port this tool uses, and it is not the copy the hub installed. Close it from its own window.',
-      };
-    }
-    if (tool.update_available && !justInstalled) {
-      return { label: 'Update', icon: 'install', command: 'install_tool' };
-    }
-    if (installedVersion) {
-      return {
-        label: tool.artifact.kind === 'html' ? 'Open' : 'Launch',
-        icon: 'play',
-        command: 'launch_tool',
-      };
-    }
-    if (tool.artifact.kind === 'nsis') return { label: 'Get it', icon: 'install', command: 'open_release' };
-    return { label: failed ? 'Try again' : 'Install', icon: 'install', command: 'install_tool' };
-  });
-
-  async function runPrimary() {
-    if (!primary.command) return;
-    working = true;
-    try {
-      if (primary.command === 'open_release') {
-        await act('open_url', { url: tool.notes_url });
-      } else {
-        await act(primary.command, { id: tool.id });
-      }
-    } catch {
-      // The error is already on the shared banner; the card just stops spinning.
-    } finally {
-      working = false;
-    }
-  }
-
-  /**
-   * Star or unstar.
-   *
-   * Deliberately not routed through `working`: that disables the primary
-   * button, and a star has nothing to do with whether this tool can be
-   * launched. The flag itself comes back on the next view rather than being
-   * toggled here, so what the star shows is what was actually written.
-   */
+  const state = $derived(presentation(tool, progress));
+  const pending = $derived(pendingFor(tool.id));
+  const requirements = $derived([
+    tool.requires.admin ? 'Requires Administrator' : '',
+    tool.requires.game_closed ? 'Requires game closed' : '',
+    tool.requires.game_running ? 'Requires game running' : '',
+  ].filter(Boolean));
   async function toggleStar() {
-    try {
-      await setFavorite(tool.id, !tool.favorite);
-    } catch {
-      /* shown on the banner */
+    if (starWorking) return;
+    starWorking = true;
+    try { await setFavorite(tool.id, !tool.favorite); } catch { /* shared toast */ }
+    finally { starWorking = false; }
+  }
+  async function toggleMenu() {
+    menuOpen = !menuOpen;
+    if (menuOpen) {
+      const button = menuButton.getBoundingClientRect();
+      menuPosition = { left: Math.max(8, button.right - 190), top: button.bottom + 5 };
+      await tick();
+      if (!menuOpen || !menuPanel) return;
+      const height = menuPanel.getBoundingClientRect().height;
+      menuPosition = { left: Math.min(menuPosition.left, innerWidth - 198),
+        top: button.bottom + height + 12 > innerHeight ? Math.max(8, button.top - height - 5) : button.bottom + 5 };
+      menuPanel.querySelector('button')?.focus({ preventScroll: true });
     }
   }
-
-  async function overflow(command, args = {}) {
+  function closeMenu(restore = false) {
     menuOpen = false;
-    working = true;
-    try {
-      await act(command, { id: tool.id, ...args });
-    } catch {
-      /* shown on the banner */
-    } finally {
-      working = false;
+    if (restore) menuButton?.focus();
+  }
+  function menuKey(event) {
+    if (event.key === 'Escape') { event.preventDefault(); closeMenu(true); }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault();
+      const buttons = [...menuPanel.querySelectorAll('button:not(:disabled)')];
+      const index = buttons.indexOf(document.activeElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+        : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
     }
   }
+  async function overflow(command, args = {}) {
+    closeMenu(true);
+    try { await act(command, { id: tool.id, ...args }); } catch { /* shared toast */ }
+  }
+  function details(action = null) { closeMenu(); onopen?.(tool.id, action); }
 </script>
 
-<article class="card skin skin-chip" class:starred={tool.favorite} style="--skin-src:url({art('chip_dark')})">
-  <!-- The star and the overflow menu, on the title's line and outside `.body`.
-       Outside because `.body` is itself a button, and a button inside a button
-       is not something the browser will give you two separate clicks on. Both
-       are borderless: they are glyphs next to a heading, not controls of the
-       same weight as the primary button below. -->
+<svelte:window onclick={(e) => { if (menuOpen && !menuAnchor?.contains(e.target)) closeMenu(); }}
+  onkeydown={(e) => { if (menuOpen && e.key === 'Escape') closeMenu(true); }} onresize={() => closeMenu()} />
+
+<article class="card" class:list class:starred={tool.favorite} data-tool-id={tool.id}>
   <div class="corner">
-    <button
-      class="glyph star"
-      type="button"
-      aria-pressed={tool.favorite}
+    <button class="glyph star" type="button" aria-pressed={tool.favorite} disabled={starWorking}
       aria-label={tool.favorite ? `Unstar ${tool.name}` : `Star ${tool.name}`}
-      title={tool.favorite ? 'Starred — kept at the top of the Library' : 'Star this to keep it at the top of the Library'}
-      onmouseenter={() => (hovered = 'star')}
-      onmouseleave={() => (hovered = '')}
-      onclick={toggleStar}
-    >
-      <img src={art(`star_${tool.favorite ? 'on' : 'off'}${hovered === 'star' ? '_hover' : ''}`)} alt="" />
+      title={tool.favorite ? 'Remove from quick launch' : 'Add to quick launch'} onclick={toggleStar}>
+      <Icon name="star" size={15}/>
     </button>
-
-    <div class="menu-anchor">
-      <button
-        class="glyph more"
-        type="button"
-        aria-label="More actions for {tool.name}"
-        aria-expanded={menuOpen}
-        onclick={() => (menuOpen = !menuOpen)}
-        onmouseenter={() => (hovered = 'more')}
-        onmouseleave={() => (hovered = '')}
-      >
-        <img src={art(hovered === 'more' ? 'dots_hover' : 'dots')} alt="" />
-      </button>
-
+    <div class="menu-anchor" bind:this={menuAnchor}
+      onfocusout={(e) => { if (!menuAnchor?.contains(e.relatedTarget)) closeMenu(); }}>
+      <button class="glyph" type="button" bind:this={menuButton}
+        aria-label="More actions for {tool.name}" aria-expanded={menuOpen} aria-haspopup="menu"
+        onclick={toggleMenu}><Icon name="more" size={18}/></button>
       {#if menuOpen}
-        <!-- A click anywhere else closes it; without this the menu survives a
-             click on another card and two can be open at once. -->
-        <button class="scrim" type="button" aria-label="Close menu" onclick={() => (menuOpen = false)}></button>
-        <ul class="menu skin skin-panel" style="--skin-src:url({art('panel')})">
-          <li><button type="button" onclick={() => overflow('open_url', { url: tool.notes_url })}>Release notes</button></li>
-          <!-- The backend builds this from HUB_REPO. Composing it here meant
-               the interface held an opinion about which repository the hub came
-               from, and held a stale one. -->
-          {#if tool.guide_url}
-            <li><button type="button" onclick={() => overflow('open_url', { url: tool.guide_url })}>Developer guide</button></li>
-          {/if}
+        <div class="menu" role="menu" aria-label="Actions for {tool.name}" tabindex="-1" bind:this={menuPanel} onkeydown={menuKey} style="left:{menuPosition.left}px;top:{menuPosition.top}px">
+          <button role="menuitem" onclick={() => details()}>Tool details</button>
+          <button role="menuitem" onclick={() => overflow('open_url', { url: tool.notes_url })}>Release notes</button>
+          {#if tool.guide_url}<button role="menuitem" onclick={() => overflow('open_url', { url: tool.guide_url })}>Developer guide</button>{/if}
           {#if tool.install_path}
-            <li><button type="button" onclick={() => overflow('open_path', { path: tool.install_path })}>Open folder</button></li>
-            <li><button type="button" onclick={() => onopen?.(tool.id, 'verify')}>Verify files</button></li>
+            <button role="menuitem" onclick={() => overflow('open_path', { path: tool.install_path })}>Open folder</button>
+            <button role="menuitem" onclick={() => details('verify')}>Verify files</button>
           {/if}
-          {#if tool.can_roll_back}
-            <li><button type="button" onclick={() => overflow('rollback_tool')}>Roll back</button></li>
-          {/if}
-          {#if tool.source_available}
-            <li><button type="button" onclick={() => overflow('launch_tool', { fromSource: true })}>Run from source</button></li>
-          {/if}
-          {#if tool.installed_version}
-            <li><button class="danger" type="button" onclick={() => overflow('uninstall_tool')}>Uninstall</button></li>
-          {/if}
-        </ul>
+          {#if tool.can_roll_back}<button role="menuitem" disabled={pending} onclick={() => overflow('rollback_tool')}>Roll back</button>{/if}
+          {#if tool.source_available}<button role="menuitem" disabled={pending} onclick={() => overflow('launch_tool', { fromSource: true })}>Run from source</button>{/if}
+          {#if tool.installed_version}<button role="menuitem" class="danger" disabled={pending} onclick={() => overflow('uninstall_tool')}>Uninstall</button>{/if}
+        </div>
       {/if}
     </div>
   </div>
-
-  <button class="body" type="button" onclick={() => onopen?.(tool.id)}>
-    <h3>{tool.name}</h3>
-    <p class="summary">{tool.summary}</p>
-    <div class="chips">
-      <span class="chip {chip.tone}">{chip.text}</span>
-      {#if tool.requires.admin}
-        <span class="chip warn" title="Windows will ask for Administrator when this runs">Administrator</span>
-      {/if}
-      {#if tool.requires.game_closed}
-        <span class="chip warn" title="Close Hero Siege before using this">Game closed</span>
-      {/if}
-      {#if tool.requires.game_running}
-        <span class="chip warn" title="Hero Siege must be running for this to attach">Game running</span>
-      {/if}
-    </div>
+  <button class="body" type="button" onclick={() => details()} aria-label="Details for {tool.name}">
+    <ToolIcon name={meta.icon} size={52}/>
+    <span class="copy">
+      <strong title={tool.name}>{meta.title}</strong>
+      <span class="summary" title={tool.summary}>{meta.summary}</span>
+    </span>
   </button>
-
-  {#if progress?.phase === 'downloading' && progress.total}
-    <div class="bar" role="progressbar" aria-valuenow={progress.received} aria-valuemax={progress.total}>
-      <span style="width:{(progress.received / progress.total) * 100}%"></span>
-    </div>
-    <p class="counted">{bytes(progress.received)} of {bytes(progress.total)}</p>
-  {:else if progress?.phase === 'verifying'}
-    <p class="counted verifying">Checking SHA-256…</p>
+  {#if requirements.length}
+    <p class="requirements" title={requirements.join(' · ')}>{requirements.join(' · ')}</p>
   {/if}
-
   <footer>
-    <!-- `primary.command` is null when the button is a status rather than an
-         action: mid-install, or running outside the hub. Guarding only the
-         click handler was not enough -- it left a button that looked live and
-         did nothing when pressed. -->
-    <button
-      class="primary skin skin-button"
-      type="button"
-      disabled={working || !primary.command}
-      onmouseenter={() => (hovered = 'primary')}
-      onmouseleave={() => (hovered = '')}
-      onclick={runPrimary}
-      title={primary.why ?? ''}
-      style="--skin-src:url({art(hovered === 'primary' ? 'button_hover' : 'button')})"
-    >
-      <img src={art(hovered === 'primary' ? `${primary.icon}_hover` : primary.icon)} alt="" />
-      {primary.label}
-    </button>
+    <span class="status {state.chip.tone}" title={state.installed ? `Installed v${state.installed}${tool.update_available ? ' · Latest v' + tool.version : ''}` : state.chip.text}>
+      <i aria-hidden="true"></i><span class="status-label">{state.chip.text}</span>
+      <small class="version">{state.installed ? `v${state.installed}` : ''}</small>
+    </span>
+    <ToolAction {tool} compact={list}/>
   </footer>
+  {#if state.inFlight}
+    <div class="progress">
+      {#if progress?.phase === 'downloading' && progress.total}
+        <progress max={progress.total} value={Math.min(progress.received, progress.total)} aria-label="Downloading {tool.name}"></progress>
+        <span>{bytes(progress.received)} / {bytes(progress.total)}</span>
+      {:else}<span>{state.chip.text}{progress?.phase === 'verifying' ? ' · Checking SHA-256' : '…'}</span>{/if}
+    </div>
+  {/if}
 </article>
 
 <style>
-  /* The nine-slice border already draws 11px of inset on every side, so the
-     padding here is only what is left of the 14px the card wants inside it. */
-  .card {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    padding: 3px 3px 1px;
-    min-height: 178px;
-  }
-  .body {
-    flex: 1;
-    text-align: left;
-    background: none;
-    border: none;
-    color: inherit;
-    padding: 0;
-    cursor: pointer;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  h3 {
-    margin: 0;
-    /* Room for the two glyphs sharing this line. */
-    padding-right: 48px;
-    font-size: 14.5px;
-    /* Stated rather than inherited, because `.corner` is centred against it. */
-    line-height: 20px;
-    color: var(--bone-13);
-    letter-spacing: 0.02em;
-  }
-
-  /* The star and the overflow menu, on the title's line.
-     14px is where the content starts: the nine-slice border draws 11px of inset
-     and `.card` adds 3px of padding inside it, so this lines up with the
-     heading's own box rather than floating over the frame. Its height is the
-     heading's line box, so `align-items: center` centres both glyphs on the
-     title however long the name is. */
-  /* `.card`'s 11px of nine-slice border is drawn as a *border*, and an
-     absolutely positioned child is placed against the padding box -- inside
-     that border, not outside it. So these offsets are `.card`'s padding alone;
-     `top: 14px` put the glyphs 11px below the title, which is what the border
-     is thick.
-
-     Deliberately no `z-index`: being positioned is already enough to paint it
-     over `.body`, which is not, and a stacking context here would trap the
-     menu's `z-index: 11` inside this 42px box -- where the next card's own
-     glyphs would then paint over the open menu. */
-  .corner {
-    position: absolute;
-    top: 3px;
-    right: 3px;
-    height: 20px;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-  }
-  .glyph {
-    width: 22px;
-    height: 22px;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    display: grid;
-    place-items: center;
-    opacity: 0.5;
-  }
-  .glyph img { width: 16px; height: 16px; }
-  .glyph:hover, .card.starred .star { opacity: 1; }
-  .glyph[aria-expanded='true'] { opacity: 1; }
-  .glyph:focus-visible { outline: 1px solid var(--edge-7); opacity: 1; }
-  .summary {
-    margin: 0;
-    font-size: 12px;
-    line-height: 1.45;
-    color: var(--bone-5);
-    flex: 1;
-  }
-  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
-  .chip {
-    font-size: 10.5px;
-    letter-spacing: 0.04em;
-    padding: 2px 8px;
-    border-radius: 999px;
-    border: 1px solid var(--edge-4);
-    color: var(--bone-8);
-    white-space: nowrap;
-  }
-  .chip.ok { color: var(--bone-10); }
-  .chip.idle { color: var(--dim-2); }
-  .chip.update { color: var(--gold-2); border-color: var(--edge-2b); }
-  .chip.running { color: var(--arcane); border-color: color-mix(in srgb, var(--arcane) 45%, var(--edge-4)); }
-  .chip.staged { color: var(--rar-angelic); border-color: var(--edge-2b); }
-  .chip.busy { color: var(--arcane); }
-  .chip.failed { color: var(--rar-satanic); border-color: color-mix(in srgb, var(--rar-satanic) 50%, var(--edge-4)); }
-  .chip.warn { color: var(--bone-6); border-style: dashed; }
-
-  .bar {
-    height: 4px;
-    border-radius: 999px;
-    background: var(--ground-8);
-    overflow: hidden;
-    margin: 10px 0 4px;
-  }
-  .bar span {
-    display: block;
-    height: 100%;
-    background: linear-gradient(90deg, var(--arcane), var(--gold-1));
-    transition: width 140ms linear;
-  }
-  .counted { margin: 0 0 4px; font-size: 10.5px; color: var(--bone-4); }
-  .counted.verifying { margin-top: 10px; color: var(--arcane); }
-
-  /* One control, full width. The overflow menu used to sit here as a 38px
-     bordered square, which read as a second button of equal weight beside the
-     primary one -- and was visibly taller than it, because the button sprite
-     insets its plate 7/64 from the top and bottom while a plain CSS border does
-     not. Moving it up to the title line settles both. */
-  footer { display: flex; margin-top: 10px; }
-  .primary {
-    flex: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-    color: var(--bone-12);
-    font-size: 12.5px;
-    letter-spacing: 0.03em;
-    /* The sprite insets its plate 7/64 from the top and bottom, so the label
-       needs less vertical room than the 13px border would suggest. */
-    padding: 0 2px;
-    min-height: 38px;
-    cursor: pointer;
-  }
-  .primary:disabled { opacity: 0.55; cursor: default; }
-  .primary img { width: 15px; height: 15px; }
-
+  .card { position: relative; min-width: 0; display: flex; flex-direction: column; padding: 14px; border: 1px solid var(--edge-2); background: linear-gradient(125deg, var(--surface), var(--ground-4)); border-radius: 10px; transition: border-color 150ms; }
+  .card:hover, .card:focus-within { border-color: var(--edge-4); }
+  .corner { position: absolute; right: 9px; top: 9px; display: flex; gap: 1px; }
+  .glyph { display: grid; place-items: center; width: 26px; height: 26px; border: none; background: transparent; color: var(--bone-4); border-radius: 5px; cursor: pointer; }
+  .glyph:hover, .glyph[aria-expanded='true'] { background: var(--ground-8); color: var(--bone-14); }
+  .starred .star { color: var(--accent); }
+  .starred .star :global(svg) { fill: var(--accent-soft); }
+  .body { display: flex; align-items: center; gap: 13px; min-width: 0; flex: 1; padding: 12px 0 0; margin: 0; background: none; border: 0; text-align: left; color: inherit; cursor: pointer; border-radius: 5px; }
+  .copy { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  strong { color: var(--bone-13); font-size: 14px; font-weight: 600; line-height: 1.35; }
+  .summary { font-size: 11.5px; color: var(--bone-5); line-height: 1.5; }
+  .requirements { font-size: 10px; line-height: 1.4; color: var(--bone-3); margin: 9px 0 0; }
+  footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 11px; }
+  .status { display: grid; grid-template-columns: 7px minmax(0, 1fr); column-gap: 7px; row-gap: 3px; color: var(--bone-5); font-size: 11px; line-height: 1.3; min-width: 0; }
+  .status i { grid-column: 1; grid-row: 1; align-self: start; margin-top: calc((1.3em - 7px) / 2); width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .status-label { grid-column: 2; grid-row: 1; }
+  /* Reserve the version line even when absent, so status labels never jump. */
+  .status .version { grid-column: 2; grid-row: 2; min-height: 1.3em; font-size: 9.5px; line-height: 1.3; color: var(--bone-3); }
+  .status.running { color: var(--success); }
+  .status.update, .status.staged { color: var(--gold-2); }
+  .status.failed { color: var(--rar-satanic); }
+  .status.busy { color: var(--arcane); }
+  .progress { margin-top: 10px; font-size: 10px; color: var(--bone-5); }
+  progress { width: 100%; height: 4px; display: block; margin-bottom: 4px; accent-color: var(--accent); }
   .menu-anchor { position: relative; }
-
-  .scrim {
-    position: fixed;
-    inset: 0;
-    background: none;
-    border: none;
-    cursor: default;
-    z-index: 10;
-  }
-  /* Downwards now that its button is at the top of the card. Upwards from here
-     would put the menu over the title it belongs to, or off the top of the
-     first row entirely. */
-  .menu {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 6px);
-    z-index: 11;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    min-width: 176px;
-  }
-  .menu button {
-    display: block;
-    width: 100%;
-    text-align: left;
-    background: none;
-    border: none;
-    color: var(--bone-10);
-    font-size: 12px;
-    padding: 7px 10px;
-    border-radius: 7px;
-    cursor: pointer;
-  }
-  .menu button:hover { background: var(--ground-9); color: var(--bone-14); }
-  .menu button.danger:hover { background: color-mix(in srgb, var(--rar-satanic) 25%, var(--ground-9)); }
+  .menu { position: fixed; width: 190px; max-height: calc(100dvh - 16px); overflow-y: auto; padding: 5px; z-index: 20; background: var(--ground-7); border: 1px solid var(--edge-4); box-shadow: 0 12px 30px #0008; border-radius: 8px; }
+  .menu button { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--bone-10); padding: 8px 10px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+  .menu button:hover, .menu button:focus-visible { background: var(--ground-9); color: var(--bone-14); }
+  .menu button:disabled { opacity: .5; }
+  .menu .danger { color: var(--rar-satanic); }
+  .list { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(240px, .7fr); gap: 0 24px; padding: 12px 76px 12px 16px; }
+  .list .body { padding: 0; grid-row: span 2; }
+  .list .body :global(svg) { width: 45px; height: 45px; }
+  .list .corner { top: calc(50% - 13px); }
+  .list footer { margin: 0; }
+  .list .requirements { grid-column: 2; grid-row: 2; margin-top: 5px; }
+  .list .progress { grid-column: 1 / -1; }
+  @media (max-width: 700px) { .list { display: flex; padding: 16px; } .list .corner { top: 8px; } .list footer { margin-top: 12px; } }
 </style>

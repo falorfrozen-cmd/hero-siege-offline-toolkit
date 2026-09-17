@@ -3,6 +3,9 @@
   // said, what it needs, where it is on disk, and exactly which bytes were
   // verified.
   import { art } from './skin.svelte.js';
+  import ToolIcon from './ToolIcon.svelte';
+  import ToolAction from './ToolAction.svelte';
+  import { identity } from './tool-presentation.js';
   import { tool as findTool, act, bytes } from './library.svelte.js';
 
   let { id, action = null, onback } = $props();
@@ -50,11 +53,13 @@
   <button class="back" type="button" onclick={onback}>← Library</button>
 
   <header>
+    <ToolIcon name={identity(tool).icon} size={68}/>
     <div>
       <h2>{tool.name}</h2>
       <p class="sub">{tool.summary}</p>
     </div>
     <span class="version">v{tool.version}</span>
+    <ToolAction {tool}/>
   </header>
 
   {#if requirements.length}
@@ -145,7 +150,8 @@
   }
   .back:hover { color: var(--bone-10); }
 
-  header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+  header { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+  header > div { flex: 1; min-width: 180px; }
   h2 { margin: 0; font-size: 19px; color: var(--bone-14); }
   .sub { margin: 4px 0 0; font-size: 12.5px; color: var(--bone-5); }
   .version { font-size: 13px; color: var(--gold-2); }

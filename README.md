@@ -38,6 +38,10 @@ fix.
 It knows which tools need Administrator and which need the game closed, and says
 so on the card rather than letting you find out by failing.
 
+The library includes tool search (Ctrl+K), category and installation filters,
+grid/list views, and full quick-launch cards with star and action controls. Its graphite and
+copper interface uses a distinct original icon for every tool.
+
 ### What you need
 
 - **Windows 10 or 11**, 64-bit. The hub itself is Windows-only; the Steam Deck

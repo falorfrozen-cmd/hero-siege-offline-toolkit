@@ -1,28 +1,7 @@
-/* Nine-slice, the way these sprites were drawn to be used.
- *
- * The panel, chip and button marks are 64x64 with a 10-ish pixel corner
- * treatment: a rounded stroke, and on the panel four gold corner ticks. Painted
- * as `background-image` at `background-size: 100% 100%` they stretch, so a
- * 620px-wide panel gets a 100px corner radius and the gold ticks become bars.
- *
- * `border-image` slices instead: the corners stay their drawn size and only the
- * edges and centre stretch. `fill` keeps the centre, which carries the sprite's
- * vertical gradient.
- *
- * The sprite itself comes in as `--skin-src` so a hover state can swap it
- * without a second class. */
-.skin {
-  background: none;
-  border-style: solid;
-  border-color: transparent;
-  border-width: var(--skin-border);
-  border-image: var(--skin-src) var(--skin-slice) fill / var(--skin-border) / 0 stretch;
-}
-
-.skin-panel { --skin-slice: 22; --skin-border: 17px; }
-.skin-chip { --skin-slice: 14; --skin-border: 11px; }
-.skin-button { --skin-slice: 18; --skin-border: 13px; }
-
-/* `border-image` draws no radius of its own, so a focus ring or a hover
- * background under one of these needs the same corner the sprite has. */
-.skin-panel, .skin-chip, .skin-button { border-radius: 12px; }
+/* Keep the existing component hooks; paint surfaces with theme tokens rather
+   than stretching decorative sprites. Border widths preserve their insets. */
+.skin-panel, .skin-chip, .skin-button { border-image: none; border-style: solid; border-color: transparent; border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1px var(--edge-2); }
+.skin-panel { border-width: 17px; }
+.skin-chip { border-width: 11px; }
+.skin-button { border-width: 10px 13px; background: var(--ground-7); }
+.skin-button:hover:not(:disabled) { background: var(--ground-9); box-shadow: 0 0 0 1px var(--edge-7); }

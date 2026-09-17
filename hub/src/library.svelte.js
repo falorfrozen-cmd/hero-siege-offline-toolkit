@@ -7,6 +7,8 @@
 import { invoke, listen, native } from './bridge.js';
 import { createProgressRows } from './progress-rows.js';
 import { createHubCheck, checkAll } from './hub-check.js';
+import { terminalPhases } from './tool-presentation.js';
+import { createActionGate } from './action-gate.js';
 
 let view = $state(null);
 let loading = $state(true);
@@ -161,7 +163,7 @@ export function staged() {
  * - `downloaded` downloaded and nothing more was asked for (auto-download with
  *                auto-install off). Not `staged`: nothing is waiting.
  */
-export const TERMINAL_PHASES = ['done', 'failed', 'staged', 'downloaded'];
+export const TERMINAL_PHASES = terminalPhases;
 
 export function isTerminal(phase) {
   return TERMINAL_PHASES.includes(phase);
@@ -184,6 +186,7 @@ export async function refresh() {
 
 /** Library's and Updates' button: the catalog, then the hub through `hubCheck` (see `checkAll`). */
 export async function checkForUpdates() {
+  if (checking) return;
   checking = true;
   try {
     const next = await checkAll({ invoke, hubCheck, notify });
@@ -227,6 +230,8 @@ export async function checkHubUpdate() {
 export async function saveSettings(next) {
   try {
     await invoke('set_settings', { settings: next });
+    // Browser preview has no library-changed event (same as setFavorite).
+    if (!native) await refresh();
   } catch (e) {
     notify('error', e?.message ?? e);
   }
@@ -258,8 +263,17 @@ export async function saveSettings(next) {
  * a caller here is already awaiting and will report itself.
  */
 const awaitingInstall = new Set();
+let pendingIds = $state([]);
+const commandGate = createActionGate((ids) => { pendingIds = ids; });
+const toolMutations = new Set(['launch_tool', 'stop_tool', 'install_tool', 'uninstall_tool', 'rollback_tool']);
+
+export function pendingFor(id) { return pendingIds.includes(id); }
 
 export async function act(command, args) {
+  return commandGate.run(toolMutations.has(command) ? args?.id : null, () => perform(command, args));
+}
+
+async function perform(command, args) {
   const tracked = command === 'install_tool' && args?.id ? args.id : null;
   if (tracked) awaitingInstall.add(tracked);
   try {
