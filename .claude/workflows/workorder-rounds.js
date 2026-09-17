@@ -19,13 +19,24 @@ export const meta = {
 //   implementerModel,                   // 'sonnet' | 'opus', from step 0.5 triage
 //   round,                              // the round to start at (State's `round:`)
 //   reviewers: { '<name>': 'never' | 'clean' | 'blocking' },   // applicable reviewers and their last verdict
-//   submodules: ['ForgePact', ...],     // dirs whose own diff the reviewers must read
+//   submodules: ['ForgePact', ...],     // dirs whose own diff the reviewers must read, relative to repoRoot
+//   repoRoot,                           // absolute path to the repo under change, when it isn't this driver's CWD
 // }
 
 const A = args || {}
 const ROUND_CAP = 3
 const SLUG = A.slug
+const REPO_ROOT = A.repoRoot || ''
+// A submodule entry that is already absolute (drive letter, POSIX root, or
+// UNC) is used as-is rather than joined under repoRoot, so a caller that
+// already resolved one submodule's path does not get `C:/a/b/C:/c/d`.
+const isAbsolutePath = p => /^([a-zA-Z]:[\\/]|[\\/]{1,2})/.test(p)
+const underRoot = p => isAbsolutePath(p) ? p : `${REPO_ROOT.replace(/[\\/]+$/, '')}/${p.replace(/^[\\/]+/, '')}`
+// `--root` and `-C` targets are double-quoted only in repoRoot mode -- the
+// path may contain spaces (this machine's paths do), and quoting a value
+// that is never used (repoRoot absent) would change today's exact strings.
 const DELTA = `py -3 .claude/skills/workorder/round_delta.py`
+const DELTA_ROOT_ARG = REPO_ROOT ? ` --root "${REPO_ROOT}"` : ''
 const MODELS = { 'instrument-blindness-reviewer': 'opus' }
 
 const isTest = p => /(^|\/)tests?\//.test(p) || /\.test\.[jt]sx?$/.test(p) || /(^|\/)test_[^/]+\.py$/.test(p)
@@ -96,8 +107,13 @@ const scribe = (n, what, payload) => agent(
   `If a '### Round ${n}' heading already exists, append under it. DATA: ${JSON.stringify(payload)}`,
   { label: `scribe:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', schema: SCRIBE_SCHEMA })
 
-const diffCommands = ['git status --porcelain -uall', 'git diff HEAD']
-  .concat((A.submodules || []).flatMap(s => [`git -C ${s} status --porcelain -uall`, `git -C ${s} diff HEAD`])).join(' ; ')
+const diffCommands = (REPO_ROOT
+  ? [`git -C "${REPO_ROOT}" status --porcelain -uall`, `git -C "${REPO_ROOT}" diff HEAD`]
+  : ['git status --porcelain -uall', 'git diff HEAD'])
+  .concat((A.submodules || []).flatMap(s => {
+    const target = REPO_ROOT ? `"${underRoot(s)}"` : s
+    return [`git -C ${target} status --porcelain -uall`, `git -C ${target} diff HEAD`]
+  })).join(' ; ')
 
 let reviewerState = { ...A.reviewers }
 let carried = null // evidence for the next implementer when the scribe could not write it
@@ -105,7 +121,7 @@ const rounds = []
 
 for (let n = A.round || 0; n < ROUND_CAP; n++) {
   const snap = await agent(
-    `Run exactly: ${DELTA} snapshot ${SLUG} ${n}  — then report its exit code and output. Edit nothing.`,
+    `Run exactly: ${DELTA} snapshot ${SLUG} ${n}${DELTA_ROOT_ARG}  — then report its exit code and output. Edit nothing.`,
     { label: `snapshot:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', schema: DELTA_SCHEMA })
 
   const impl = await agent(
@@ -121,7 +137,7 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
   }
 
   const delta = await agent(
-    `Run exactly: ${DELTA} delta ${SLUG} ${n}  — report its exit code and every path it printed (one per line) in 'paths'. ` +
+    `Run exactly: ${DELTA} delta ${SLUG} ${n}${DELTA_ROOT_ARG}  — report its exit code and every path it printed (one per line) in 'paths'. ` +
     `Then, only over those paths that still exist, run two greps and report booleans: instrumentContent = any match of ` +
     `'Rva|GetModuleHandle|MmCreateHook|HookOneScript|InstallScriptHook'; sdkContent = any match of 'CInstance|relicLevel|ItemStatStruct|ItemDefinitionStruct'. Edit nothing.`,
     { label: `delta:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', schema: DELTA_SCHEMA })
