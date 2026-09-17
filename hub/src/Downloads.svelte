@@ -17,7 +17,8 @@
   };
 </script>
 
-<aside>
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape') onclose?.(); }}/>
+<aside aria-label="Downloads">
   <header>
     <h3>Downloads</h3>
     <button type="button" onclick={onclose} aria-label="Close">×</button>
@@ -43,10 +44,11 @@
 
 <style>
   aside {
-    width: 268px;
+    position: absolute; right: 0; top: 0; bottom: 0; z-index: 25;
+    width: min(320px, 100%); box-shadow: -12px 0 30px #0005;
     flex: 0 0 auto;
     border-left: 1px solid var(--edge-2);
-    background: color-mix(in srgb, var(--ground-2) 88%, transparent);
+    background: var(--ground-3);
     padding: 14px;
     overflow: auto;
   }
