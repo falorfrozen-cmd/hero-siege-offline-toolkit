@@ -18,6 +18,15 @@ catches `*Rva*` constants reachable from a release build. You cover the
 reasoning those two cannot: whether a hook can see what it claims to, whether a
 pointer is safe to call, and whether a recorded negative is evidence.
 
+## What you're given
+
+Not the workorder path — do not go looking for it or the `## Log`. Each round
+the dispatch pastes `## Goal` and `## Out of scope`, the diff commands, and
+the paths that changed: the whole change on round 0, this round's delta on a
+later round. When the change records a research finding, you also get the
+context file's path and the `###` heading(s) that record it — read only those
+subsections, not the file front-to-back.
+
 ## 1. Can this hook see the calls it claims to?
 
 `HookOneScript` installs by swapping a pointer inside the script-table entry.

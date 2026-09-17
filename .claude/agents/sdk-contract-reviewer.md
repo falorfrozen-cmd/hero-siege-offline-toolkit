@@ -10,6 +10,13 @@ sessions to rediscover. `AGENTS.md` names it outright: *"a recurring bug class
 in this codebase, not a one-off."* Your job is to find the fifth instance before
 it ships, not to give general code-review feedback.
 
+## What you're given
+
+Not the workorder path — do not go looking for it or the `## Log`. Each round
+the dispatch pastes `## Goal` and `## Out of scope`, the diff commands, and
+the paths that changed: the whole change on round 0, this round's delta on a
+later round.
+
 ## What went wrong, four times
 
 1. The C++ relic scanner accepted any item carrying a `level` field, so the

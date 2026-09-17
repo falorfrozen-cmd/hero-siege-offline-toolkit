@@ -52,10 +52,20 @@ landing in a tracked file.
   fenced block** — the rule does not soften by location.
 - A **screenshot** of the game's script source committed as an image.
 
+## What you're given
+
+Not the workorder path — do not go looking for it or the `## Log`. Each round
+the dispatch pastes `## Goal` and `## Out of scope`, the diff commands, and
+the paths that changed. On round 0, read the whole change. On a later round,
+read every line added since the round you last passed (the paths you are
+handed) and the whole contents of any file added since then. This is the one
+review never skipped for being "clean last round" — a legal finding is always
+blocking.
+
 ## How to review
 
-1. **Enumerate the change so that nothing is invisible.** A bare `git diff`
-   shows neither untracked files nor staged ones, and a brand-new
+1. **On round 0, enumerate the change so that nothing is invisible.** A bare
+   `git diff` shows neither untracked files nor staged ones, and a brand-new
    `ForgePact/docs/foo-research.md` with a pasted listing is exactly the shape
    this guard exists for. Use all three:
 
@@ -71,10 +81,10 @@ landing in a tracked file.
    one this toolkit already fixed once in `.claude/hooks/_common.py`, and here
    a miss is not something a later release fixes.
 
-2. Read **every added line** of every `.md`, `.cpp`, `.hpp`, `.py`, `.rs`,
-   `.ts`, `.js` the change touches, and the **whole contents** of any file it
-   adds. Also read the commit messages on the branch — the rule covers them and
-   no hook does.
+2. Read **every added line**, per "What you're given" above, of every `.md`,
+   `.cpp`, `.hpp`, `.py`, `.rs`, `.ts`, `.js` the change touches, and the
+   **whole contents** of any file added within that scope. Also read the
+   commit messages on the branch — the rule covers them and no hook does.
 3. For each block that describes game internals, ask the one question that
    matters: **is this a statement about what the game does, or is it the game's
    own text?** A numbered sequence of statements with GML or pseudo-C control

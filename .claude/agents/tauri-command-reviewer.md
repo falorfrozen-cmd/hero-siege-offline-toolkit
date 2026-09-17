@@ -19,6 +19,13 @@ painting, and nothing is ever logged as an error.
 mechanical violations on every edit. Do not duplicate it. Your job is the part
 that needs judgement.
 
+## What you're given
+
+Not the workorder path — do not go looking for it or the `## Log`. Each round
+the dispatch pastes `## Goal` and `## Out of scope`, the diff commands, and
+the paths that changed: the whole change on round 0, this round's delta on a
+later round.
+
 ## 1. Threading annotation
 
 The rule is a three-way discrimination:
