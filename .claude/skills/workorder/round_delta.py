@@ -3,10 +3,12 @@
 
 `snapshot` records a content hash for every changed or untracked path in the
 hub, plus the same inside every initialized submodule listed in
-`.gitmodules`, so a later `delta` call can name exactly the paths a round
-touched. The driver takes a snapshot right before spawning or resuming the
-implementer for a round, then diffs against it once the round returns, and
-hands a re-run reviewer only that delta instead of the whole cumulative diff.
+`.gitmodules`, plus each of those repos' own HEAD sha, so a later `delta`
+call can name exactly the paths a round touched -- including ones the round
+committed rather than left dirty. The driver takes a snapshot right before
+spawning or resuming the implementer for a round, then diffs against it once
+the round returns, and hands a re-run reviewer only that delta instead of the
+whole cumulative diff.
 
 The property this exists to give: a file that was already dirty *before* the
 round started, and that the round never touched, must not appear in the
@@ -14,6 +16,14 @@ round's delta merely because it is not clean. That is why state is a content
 hash keyed by path rather than "is this path dirty" -- an unchanged dirty file
 hashes the same in both snapshots and drops out of the diff, the same as a
 file the round touched and then reverted byte-for-byte.
+
+A second property, added after the first shipped blind to it: a file that was
+clean at snapshot time, then edited *and committed* during the round, is
+clean again by the time `delta` runs -- `git status` alone cannot see it. So
+`delta` also compares each repo's recorded HEAD against its current one and,
+when they differ, walks `git diff --name-only` between them (or the whole
+tree, when the recorded HEAD was unborn) to recover exactly those paths. See
+"Snapshot format v2" below.
 
 Usage:
 
@@ -24,10 +34,23 @@ Usage:
 repo instead. Snapshots live at
 `<root>/.claude/workorders/.rounds/<slug>/round-<round>.json`.
 
+Snapshot format v2 (JSON):
+
+    {"version": 2,
+     "heads": {"": "<hub HEAD sha, or '' when unborn>",
+               "<submodule dir>": "<its HEAD sha>", ...},
+     "files": {"<path>": "<sha1 of working bytes> | deleted", ...}}
+
+`heads` has the hub under the key `""` and one key per initialized submodule
+(the same set `_submodule_dirs` yields). `files` is what the v1 snapshot was
+in full: a content hash per changed/untracked path.
+
 Exit codes: 0 on success (state or delta printed); 2 on a usage error (bad
-slug/round, missing command); 3 when `delta` cannot find or read its
-snapshot -- the driver then treats everything as changed, which is the safe
-default this instrument's blindness must fail into.
+slug/round, missing command); 3 when `delta` cannot trust its snapshot --
+missing, unreadable, a pre-commit-tracking v1 snapshot, a repo present now
+with no recorded head, or a recorded head git can no longer diff from. The
+driver then treats everything as changed, which is the safe default this
+instrument's blindness must fail into.
 """
 
 import argparse
@@ -155,16 +178,68 @@ def compute_state(root):
     return state
 
 
+def _repo_head(repo_root):
+    """This repo's HEAD sha, or `''` for an unborn HEAD (no commits yet).
+
+    Uses a raw `subprocess.run` rather than `_run_git` -- `rev-parse HEAD` on
+    an unborn branch exits non-zero, which is an expected outcome here, not
+    the "git command failed" case `main`'s `CalledProcessError` handler
+    reports.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(repo_root), capture_output=True,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.decode("utf-8", "surrogateescape").strip()
+
+
+def compute_heads(root):
+    """`{"": hub HEAD, "<submodule dir>": its HEAD, ...}`."""
+    heads = {"": _repo_head(root)}
+    for sub_dir in _submodule_dirs(root):
+        heads[sub_dir] = _repo_head(root / sub_dir)
+    return heads
+
+
+def _committed_paths(repo_root, recorded_head):
+    """Paths whose content differs between `recorded_head` and this repo's
+    current HEAD, or `None` if git cannot answer that (the recorded head's
+    object is gone).
+
+    `recorded_head == ""` means the repo was unborn at snapshot time -- there
+    is nothing to diff against, so every path in the current HEAD's tree is
+    "committed" relative to that empty starting point.
+    """
+    if recorded_head == "":
+        args = ["git", "ls-tree", "-r", "--name-only", "-z", "HEAD"]
+    else:
+        args = ["git", "diff", "--name-only", "-z", "--no-renames",
+                 recorded_head, "HEAD"]
+    result = subprocess.run(args, cwd=str(repo_root), capture_output=True)
+    if result.returncode != 0:
+        return None
+    raw = result.stdout.decode("utf-8", "surrogateescape")
+    tokens = raw.split("\0")
+    if tokens and tokens[-1] == "":
+        tokens.pop()
+    return tokens
+
+
 def _snapshot_path(root, slug, round_):
     return root / ".claude" / "workorders" / ".rounds" / slug / f"round-{round_}.json"
 
 
 def cmd_snapshot(root, slug, round_):
-    state = compute_state(root)
+    snapshot = {
+        "version": 2,
+        "heads": compute_heads(root),
+        "files": compute_state(root),
+    }
     path = _snapshot_path(root, slug, round_)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        json.dump(state, fh, indent=2, sort_keys=True)
+        json.dump(snapshot, fh, indent=2, sort_keys=True)
         fh.write("\n")
     name = path.relative_to(root).as_posix()
     print(name)
@@ -180,20 +255,74 @@ def cmd_delta(root, slug, round_):
               file=sys.stderr)
         return 3
     try:
-        before = json.loads(raw)
+        snapshot = json.loads(raw)
     except json.JSONDecodeError as exc:
         print(f"round_delta: snapshot missing or unreadable: {path} ({exc})",
               file=sys.stderr)
         return 3
-    if not isinstance(before, dict):
+    if not isinstance(snapshot, dict):
         print(f"round_delta: snapshot missing or unreadable: {path} (not an object)",
               file=sys.stderr)
         return 3
+    if snapshot.get("version") != 2:
+        print(f"round_delta: snapshot is not version 2 (a v1 flat snapshot "
+              f"predates commit tracking): {path}", file=sys.stderr)
+        return 3
+    before_heads = snapshot.get("heads")
+    before_files = snapshot.get("files")
+    if not isinstance(before_heads, dict) or not isinstance(before_files, dict):
+        print(f"round_delta: snapshot missing or unreadable: {path} (malformed v2 snapshot)",
+              file=sys.stderr)
+        return 3
+
+    sub_dirs = set(_submodule_dirs(root))
+    committed = set()
+    current_heads = compute_heads(root)
+    # The symmetric case of "no recorded head" below: a repo the snapshot knew
+    # that is gone now (a submodule deinitialized mid-round) cannot be diffed,
+    # so its changes would silently drop out. Fail into "run everything".
+    for key in before_heads:
+        if key not in current_heads:
+            print(f"round_delta: {key or '<hub>'} was recorded in the snapshot but is "
+                  f"not an initialized repo now: {path}", file=sys.stderr)
+            return 3
+    for key, current_head in current_heads.items():
+        if key not in before_heads:
+            where = key or "<hub>"
+            print(f"round_delta: {where} has no recorded head in snapshot: {path}",
+                  file=sys.stderr)
+            return 3
+        recorded_head = before_heads[key]
+        if current_head == recorded_head:
+            continue
+        repo_root = root if key == "" else root / key
+        paths = _committed_paths(repo_root, recorded_head)
+        if paths is None:
+            where = key or "<hub>"
+            print(f"round_delta: git cannot diff {where} from its recorded "
+                  f"head {recorded_head!r}: {path}", file=sys.stderr)
+            return 3
+        if key == "":
+            for p in paths:
+                if p in sub_dirs or p.startswith(_ROUNDS_PREFIX):
+                    continue
+                committed.add(p)
+        else:
+            for p in paths:
+                committed.add(f"{key}/{p}")
 
     after = compute_state(root)
-    changed = sorted(
-        p for p in (before.keys() | after.keys()) if before.get(p) != after.get(p)
-    )
+    candidates = before_files.keys() | after.keys() | committed
+    changed = []
+    for p in sorted(candidates):
+        was = before_files.get(p)
+        if was is None:
+            if p in after or p in committed:
+                changed.append(p)
+            continue
+        current = after[p] if p in after else _hash_path(root / p)
+        if current != was:
+            changed.append(p)
     for p in changed:
         print(p)
     return 0

@@ -250,8 +250,11 @@ cap.
 ### Step 3 — verify, in parallel
 
 Run `py -3 .claude/skills/workorder/round_delta.py delta <slug> <round>`
-against step 2's snapshot to see what this round touched. Exit 3 means the
-snapshot is missing or unreadable — treat everything as changed.
+against step 2's snapshot to see what this round touched — it records each
+repo's HEAD too, so work the implementer commits mid-round is in the delta,
+not only what it leaves dirty. Exit 3 means the snapshot is missing,
+unreadable, or a recorded head can no longer be trusted — treat everything as
+changed.
 
 - **Round 0:** spawn every applicable reviewer (table's first column) plus
   `verifier` — when in doubt, run it, cheap even when clean.
