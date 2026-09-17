@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
-  import { art } from './skin.svelte.js';
+  import Icon from './Icon.svelte';
+  import ToolIcon from './ToolIcon.svelte';
   import {
     connect, library, status, updates, staged, busy, hubUpdate,
   } from './library.svelte.js';
@@ -19,7 +20,6 @@
   let route = $state('library');
   let openTool = $state(null);
   let drawerOpen = $state(false);
-  let hovered = $state('');
 
   const view = $derived(library());
   const state = $derived(status());
@@ -61,7 +61,7 @@
   }
 </script>
 
-<div class="shell" style="background-image:url({art('backdrop')})">
+<div class="shell">
   <TitleBar />
 
   {#if state.loading}
@@ -70,16 +70,20 @@
     <FirstRun />
   {:else}
     <div class="body">
-      <nav class="sidebar">
+      <nav class="sidebar" aria-label="Main navigation">
+        <button class="brand" type="button" onclick={() => show('library')} aria-label="Hero Siege Toolkit library">
+          <ToolIcon name="anvil" size={76}/>
+          <span class="wordmark">HERO SIEGE<small>TOOLKIT</small></span>
+        </button>
         {#each sections as section (section.id)}
           <button
             type="button"
+            aria-label={section.label}
             class:active={route === section.id && !openTool}
-            onmouseenter={() => (hovered = section.id)}
-            onmouseleave={() => (hovered = '')}
+            aria-current={route === section.id && !openTool ? 'page' : undefined}
             onclick={() => show(section.id)}
           >
-            <img src={art(hovered === section.id || route === section.id ? `${section.icon}_hover` : section.icon)} alt="" />
+            <Icon name={section.icon} size={20}/>
             <span>{section.label}</span>
             {#if section.id === 'updates' && pendingCount}
               <em class="count">{pendingCount}</em>
@@ -94,16 +98,22 @@
         <button
           type="button"
           class="drawer-toggle"
+          aria-label="Downloads"
+          aria-expanded={drawerOpen}
           class:lit={busy().length > 0}
           onclick={() => (drawerOpen = !drawerOpen)}
         >
-          <img src={art(busy().length ? 'install_hover' : 'install')} alt="" />
+          <Icon name="download" size={20}/>
           <span>Downloads</span>
           {#if busy().length}<em class="count">{busy().length}</em>{/if}
         </button>
+        <p class="credit">
+          <span>Created by <b>ST4H</b></span>
+          <span>UI Design by <b>Falor</b></span>
+        </p>
       </nav>
 
-      <main>
+      <main id="main-content">
         {#if openTool}
           <ToolDetail id={openTool.id} action={openTool.action} onback={() => (openTool = null)} />
         {:else if route === 'library'}
@@ -134,68 +144,29 @@
 </div>
 
 <style>
-  .shell {
-    /* The docked notice bar has to clear both of these, and TitleBar and the
-       sidebar read them too, so they are declared once here rather than
-       repeated as literals in three components. */
-    --titlebar-h: 42px;
-    --sidebar-w: 168px;
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    background-size: cover;
-    background-position: center;
-    overflow: hidden;
-  }
-  .body { flex: 1; display: flex; min-height: 0; }
-
-  .sidebar {
-    width: var(--sidebar-w);
-    flex: 0 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 12px 8px;
-    border-right: 1px solid var(--edge-2);
-    background: color-mix(in srgb, var(--ground-2) 72%, transparent);
-  }
-  .sidebar button {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    background: none;
-    border: 1px solid transparent;
-    border-radius: 9px;
-    color: var(--bone-6);
-    font-size: 12.5px;
-    letter-spacing: 0.03em;
-    padding: 8px 10px;
-    cursor: pointer;
-    text-align: left;
-  }
-  .sidebar button:hover { color: var(--bone-11); background: var(--ground-6); }
-  .sidebar button.active {
-    color: var(--bone-13);
-    background: var(--ground-7);
-    border-color: var(--edge-4);
-  }
-  .sidebar img { width: 17px; height: 17px; flex: 0 0 auto; }
-  .sidebar span { flex: 1; }
-  .grow { flex: 1; }
-  .count {
-    font-style: normal;
-    font-size: 10.5px;
-    min-width: 18px;
-    text-align: center;
-    padding: 1px 5px;
-    border-radius: 999px;
-    background: var(--gold-1);
-    color: var(--ground-1);
-  }
-  .count.staged { background: var(--edge-8); color: var(--bone-14); }
+  .shell { --titlebar-h: 34px; --sidebar-w: 190px; display: flex; flex-direction: column; height: 100dvh; background: var(--ground-1); overflow: hidden; }
+  .body { position: relative; flex: 1; display: flex; min-height: 0; }
+  .sidebar { width: var(--sidebar-w); flex: 0 0 auto; display: flex; flex-direction: column; gap: 5px; padding: 12px 12px 0; border-right: 1px solid var(--edge-2); background: var(--ground-2); }
+  .sidebar button { display: flex; align-items: center; gap: 12px; background: none; border: 1px solid transparent; border-radius: 7px; color: var(--bone-6); font-size: 13px; padding: 12px; cursor: pointer; text-align: left; }
+  .sidebar button:hover { color: var(--bone-13); background: var(--ground-6); }
+  .sidebar button.active { color: var(--bone-13); background: var(--accent-soft); border-color: var(--edge-7); }
+  .sidebar button.active :global(svg) { color: var(--accent); }
+  .sidebar button > span { flex: 1; }
+  .sidebar .brand { flex-direction: column; gap: 8px; align-items: center; text-align: center; padding: 4px 0 28px; margin-bottom: 14px; border-radius: 0; }
+  .sidebar .brand:hover { background: transparent; }
+  .wordmark { font-family: Georgia, serif; color: var(--gold-2); font-size: 18px; letter-spacing: .04em; font-weight: 700; }
+  .wordmark small { display: block; margin-top: 8px; font-family: 'Segoe UI', sans-serif; font-size: 10px; font-weight: 500; letter-spacing: .43em; padding-left: .43em; color: var(--accent); }
+  .grow { flex: 1; min-height: 20px; }
+  .count { font-style: normal; font-size: 10px; min-width: 19px; text-align: center; padding: 2px 5px; border-radius: 20px; background: var(--accent); color: var(--accent-ink); }
+  .count.staged { background: var(--ground-9); color: var(--gold-2); }
+  .sidebar .drawer-toggle { border-top: 1px solid var(--edge-2); border-radius: 0; padding-top: 17px; padding-bottom: 17px; }
   .drawer-toggle.lit { color: var(--arcane); }
-
-  main { flex: 1; min-width: 0; overflow: auto; padding: 18px 22px 22px; }
+  .credit { display: grid; gap: 5px; margin: 0; padding: 15px 10px; border-top: 1px solid var(--edge-2); color: var(--bone-3); font-size: 10px; line-height: 1.4; }
+  .credit b { font-weight: 500; color: var(--bone-6); }
+  main { flex: 1; min-width: 0; overflow: auto; padding: 25px 28px; scrollbar-gutter: stable; }
   .centred { display: grid; place-items: center; color: var(--bone-5); }
-
+  @media (min-width: 1500px) { .shell { --sidebar-w: 218px; } main { padding: 32px 36px; } .sidebar { padding-top: 25px; } }
+  @media (max-width: 1040px) { .shell { --sidebar-w: 166px; } main { padding: 22px 20px; } .sidebar { padding-left: 8px; padding-right: 8px; } .sidebar button { padding: 11px 9px; gap: 9px; font-size: 12px; } .wordmark { font-size: 16px; } }
+  @media (max-height: 700px) { .sidebar .brand { flex-direction: row; padding: 0 3px 18px; gap: 4px; margin-bottom: 6px; } .brand :global(svg) { width: 40px; height: 50px; } .wordmark { font-size: 12px; } .wordmark small { font-size: 8px; margin-top: 5px; } }
+  @media (max-width: 700px) { .shell { --sidebar-w: 62px; } .sidebar button { justify-content: center; padding: 11px; } .sidebar button > span, .sidebar .wordmark, .credit { display: none; } .sidebar .brand { padding: 0 0 14px; } .brand :global(svg) { width: 40px; height: 48px; } .sidebar button { position: relative; } .count { position: absolute; right: -3px; top: 0; } main { padding: 18px 14px; } }
 </style>

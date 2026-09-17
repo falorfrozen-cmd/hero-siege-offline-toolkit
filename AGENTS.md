@@ -10,44 +10,40 @@ When developing, modifying, testing, or investigating code within any submodule 
 ## Some of These Rules Are Enforced, Not Just Written
 
 [`.claude/`](.claude/README.md) carries the subset of this file that a machine
-can check or run, so those rules stop depending on whether the right section was
-read first. Four `PostToolUse` hooks (the catalog signature, the Tauri command
-threading rules, the hub's frontend tests, and decompiled output reaching a
-tracked file) and a `Stop` hook that reports processes this session started and
-left running, five review agents (`sdk-contract-reviewer`,
-`tauri-command-reviewer`, `decompile-output-guard`, `docs-sync-reviewer`,
-`instrument-blindness-reviewer`), three phase agents that run a change through
-plan → implement → verify at three different model tiers (`planner`,
-`implementer`, `verifier`), a `consultant` a phase can put one hard decision to
-without escalating the whole phase, and three skills (`/catalog-rebuild`,
-`/workorder`
-which drives those phases and routes defects back to the phase that caused them,
-and a `submodule-context` skill that loads the guide named above). MCP servers
-are in [`.mcp.json`](.mcp.json).
+can check or run, so those rules stop depending on whether the right section
+was read first. One dispatcher, `.claude/hooks/post_tool_use.py`, now runs the
+four `PostToolUse` checks (the catalog signature, the Tauri command threading
+rules, the hub's frontend tests, and decompiled output reaching a tracked
+file), plus a `Stop` hook that reports processes this session started and left
+running, five review agents (`sdk-contract-reviewer`, `tauri-command-reviewer`,
+`decompile-output-guard`, `docs-sync-reviewer`, `instrument-blindness-reviewer`),
+three phase agents that run a change through plan → implement → verify at
+three different model tiers (`planner`, `implementer`, `verifier`), a
+`consultant` a phase can put one hard decision to without escalating the whole
+phase, and three skills: `/catalog-rebuild`, `/workorder` (drives those phases
+and routes defects back to the phase that caused them), and
+`submodule-context` (loads the guide named above). MCP servers are in
+[`.mcp.json`](.mcp.json).
 
-The phase split exists because the expensive failures in this file are not
-planning failures — they are an implementer meeting something the plan did not
-anticipate and writing something plausible instead of stopping. So the
-`implementer` is required to return `PLAN-DEFECT` with evidence rather than
-improvise, and the `verifier` runs the acceptance criteria and reports what they
-actually printed rather than judging whether the code looks right. Both rules
-are this file's "evidence before assertions" applied to a handover.
+The phase split exists so an implementer that meets something the plan did not
+anticipate returns `PLAN-DEFECT` with evidence instead of improvising, and the
+verifier reports what the acceptance criteria actually printed instead of
+judging whether the code looks right — this file's "evidence before
+assertions" applied to a handover.
 
-A phase that is merely *stuck* on one decision has a cheaper move than failing:
-`ADVICE-NEEDED` puts that question to the `consultant` and resumes with the
-answer, keeping its context and its progress. It must state what it would do
-unaided, so the answer confirms or corrects a position rather than replacing the
-thinking — a consultation that skips that field is a handoff wearing a question
-mark, and the driver sends it back. Which problems start a tier higher is
-decided up front from **observable properties of the task** (does it introduce
-concurrency, must it establish an unknown mechanism, does it change how a hook
-attaches), never from a model's self-reported confidence: a model that cannot
-solve something is also badly calibrated about whether it can, which is the same
-reason this file does not accept an unproven negative.
+A phase merely *stuck* on one decision uses `ADVICE-NEEDED` to put that
+question to the `consultant` and resume with the answer, stating what it would
+do unaided so the reply confirms or corrects a position rather than replacing
+the thinking; which problems start a tier higher is decided from observable
+properties of the task, never a model's self-reported confidence, because a
+model that cannot solve something is also badly calibrated about whether it
+can.
 
 If a hook blocks an edit, it is quoting a rule from this file — read what it
 printed rather than working around it. If you add a rule here that is
 mechanically checkable, add the check too; `.claude/README.md` says how.
+
+Story and evidence: [docs/agents/rules-enforced.md](docs/agents/rules-enforced.md)
 
 ## Offer `/workorder` When the Work Has Shape, and Respect "Plan Only"
 
@@ -170,35 +166,24 @@ edit-verify loop expensive. Before or alongside mod development:
 - Reserve full rebuild + in-game relaunch cycles for final confirmation once
   the baseline/target tests above already pass against the faster loop.
 
-**This was not respected closely enough during Pet Quest Collector's Phase 0
-research (2026-09-10)**: candidate interaction hooks were added and tested
-one small batch at a time - a named script, then five more named scripts,
-then seven anonymous closures on one object, then two builtins, then nine
-more anonymous closures on a second object - each round costing its own
-rebuild, DLL swap, full game relaunch, and a live collect from the tester.
-Several of those rounds could have been one round: `hs-game-sdk`'s static
-name/hierarchy search (`grep` over `scripts.hpp`/`objects.hpp`, or the
-Python/C++ bindings) can enumerate *every* plausibly-relevant script or
-object *before* touching the game at all, and costs nothing to run
-repeatedly. When a live research session's goal is "find which of several
-unknown candidates does X" (not "verify one already-suspected mechanism"):
+When the goal is "find which of several unknown candidates does X," exhaust
+the static search before any live session, then hook every candidate it turns
+up in one build behind one research command — each rebuild/relaunch/live-collect
+round is expensive, and several such rounds have turned out to be one round
+done broad enough the first time:
 - Exhaust the static search first: every name matching the concept (by
   substring, by shared object/parent, by shared event) across
-  `scripts.hpp`/`objects.hpp`, not just the one name the plan or a prior
-  guess assumed. Read `hs-game-sdk`'s existing research docs
-  (`ForgePact/docs/*-research.md`) for the technique already proven there -
-  e.g. "every script-table entry inside `<object>`'s own Create event" found
-  every anonymous closure GameMaker split out of that object, cheaply, with
-  no live session.
-- Hook every candidate that search turns up in the *same* build, gated
-  together behind one research command, before asking for a single relaunch.
-  A hook that turns out irrelevant costs one `HookOneScript`/`HookBuiltin`
-  call and a few log lines - far cheaper than a round trip that could have
-  included it.
+  `scripts.hpp`/`objects.hpp`, not just the one name a prior guess assumed.
+  Read `hs-game-sdk`'s existing research docs (`ForgePact/docs/*-research.md`)
+  for a technique already proven there.
+- Hook every candidate the search turns up in the *same* build, gated behind
+  one research command, before asking for a single relaunch.
 - Only fall back to a narrower, more expensive technique (e.g. hooking hot
   builtins instead of named scripts) after the broad static-search round has
-  been exhausted and come back empty, and even then, hook every plausible
-  builtin candidate at once rather than one per relaunch.
+  been exhausted and come back empty, and even then hook every plausible
+  candidate at once rather than one per relaunch.
+
+Story and evidence: [docs/agents/limit-rebuilds-reruns.md](docs/agents/limit-rebuilds-reruns.md)
 
 ## Drive a Tauri App Yourself Instead of Asking Someone to Click It
 
@@ -207,13 +192,16 @@ The same "build the fast loop first" rule applies to the Tauri submodules
 frontend compiling, and the alternative to verifying it should not be asking a
 human to click it and describe what happened.
 
-`hub/src-tauri` carries `tauri-plugin-mcp-bridge`, **behind
-`#[cfg(debug_assertions)]`**, listening on `127.0.0.1:9223`. A debug build can
-therefore be clicked, screenshotted, queried and measured from a terminal. The
+`hub/src-tauri` carries `tauri-plugin-mcp-bridge` as an **optional dependency
+behind a non-default `mcp-bridge` feature, registered under
+`#[cfg(all(debug_assertions, feature = "mcp-bridge"))]`**, listening on
+`127.0.0.1:9223`. `npm start` turns the feature on, so a dev build can be
+clicked, screenshotted, queried and measured from a terminal, while `tauri
+build` — what the release workflow runs — does not even compile the crate. The
 gate is not a detail: the bridge can invoke any command in the application, so
-a release build must never start one. Copy that arrangement — including the
+a release build must never carry one. Copy that arrangement — the feature, the
 `cfg` and the loopback bind — into any other Tauri submodule that wants this,
-rather than shipping a listener.
+rather than shipping a listener. `tests/test_hub_release_dev_tooling.py` pins it.
 
 ```bash
 npm start                                                     # in hub/, wait for :9223
@@ -221,6 +209,12 @@ npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start --port 9223
 npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp webview-screenshot --window-id hub --file-path shot.png --format png
 npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp webview-interact  --window-id hub --action click --selector "button[aria-label='Star ForgePact']"
 ```
+
+No single wait in that sequence should block one tool call for more than
+about four minutes — poll for the port with a capped, re-issued check (or
+`Monitor`, where available) instead of blocking longer. The Bash tool's own
+ceiling is 10 minutes, and a poll loop that reaches it returns nothing, so a
+longer block risks a dead, timed-out wait rather than a finished one.
 
 Four things cost an afternoon to work out and none are visible from the code.
 Each one makes the bridge *look* broken while it is working fine:
@@ -266,13 +260,10 @@ window instead of a hook.
 
 ## Clean Up the Processes You Started Before Ending a Reply
 
-A session in this repository routinely starts real processes: `npm start` in
-`hub/` for the section above (a Tauri debug build plus its MCP bridge), `cargo`,
-`npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start`, a
-`run_in_background` shell, a `Monitor` task, a test or game launch. Left
-running past the reply that started them, these are exactly how a machine's
-memory fills up over a long day — one process at a time, none of them
-individually alarming.
+A session routinely starts real processes — `npm start` in `hub/`, `cargo`,
+a `tauri-mcp driver-session`, a `run_in_background` shell, a `Monitor` task, a
+test or game launch — and one left running past the reply that started it is
+how a machine's memory fills up over a long day, one process at a time.
 
 So: before ending a reply, stop what you started. Kill background shells
 through the tool that owns them. A dev server leaves more than its own PID —
@@ -304,27 +295,23 @@ name — `taskkill /IM node.exe` takes out every session's MCP servers along
 with the one you meant. And check with a command that the process is actually
 gone; do not assume a kill succeeded.
 
-`.claude/hooks/leftover_processes.py` backs this up: a `Stop` hook reports
-whatever it can attribute to this session's own tool calls and is still alive
-when a reply ends, once per process. It never kills anything — reporting is
-all it does. A quiet hook is "not observed", not proof that nothing leaked; it
-can only see what its own ledger recorded, so the rule above is still yours to
-follow, not something to wait for the hook to catch. When it cannot track a
-session at all — no `claude.exe` ancestor, or unreadable hook settings — it
-says so with a visible warning instead of staying silently blind.
+`.claude/hooks/leftover_processes.py` backs this up with a `Stop` hook that
+reports (never kills) whatever it can attribute to this session and is still
+alive when a reply ends; a quiet hook means "not observed", not "nothing
+leaked", so the rule above is still yours to follow rather than the hook's to
+catch.
+
+Story and evidence: [docs/agents/clean-up-processes.md](docs/agents/clean-up-processes.md)
 
 ## Prove the Instrument Before Trusting a Negative Result
 
-The batching advice above is necessary but was not sufficient, and the reason
-is worth its own rule. The same Pet Quest Collector research went on to spend
-several more sessions on a *false negative*: 34 hooked call sites reporting
-**0 calls** across multiple confirmed, observed collects. The conclusion drawn
-- "the game does not call any of these" - was wrong. `HookOneScript` installs
-by swapping a pointer inside the script-table entry, and this game's compiled
-GML calls another script with a direct `call rel32` bound at compile time,
-which never reads that table. **Every one of those zeros measured the
-instrument, not the game** (`ForgePact/docs/pet-quest-collector-c-research.md`,
-"The hooks were blind"). Two whole mechanisms were abandoned on that evidence.
+The batching advice above is necessary but was not sufficient. The same Pet
+Quest Collector research spent several more sessions on a *false negative*:
+34 hooked call sites reported 0 calls across confirmed, observed collects,
+because `HookOneScript`'s table-swap hook never saw this build's compiled GML
+calling another script by a direct `call rel32` — every zero measured the
+instrument, not the game, and two whole mechanisms were abandoned on that
+evidence.
 
 So, before a "0 calls" / "no effect" / "never fires" result is allowed to
 close a line of investigation:
@@ -338,33 +325,28 @@ close a line of investigation:
   latter whenever a table-based hook reports zero, before concluding anything
   about the game.
 
-**The same blindness is a shipping bug, not only a research one.** A
-table-only hook prints "HOOK INSTALLED" and then silently changes nothing on
-the paths compiled GML actually uses - a feature that reports armed and does
-nothing. Origin's review of ForgePact PR #2 found direct native callers for
-`StatMovementSpeed`, `StatAttackSpeed`, `DropRelic`, `DropMonsterGold` and
-`DropGold`, so stat scaling, drop multipliers and the max-level relic filter
-were all in that state. `ForgePact`'s `HookOneScript` therefore installs
-**both** - the table swap and an inline detour at the function's own address -
-and hands the hook body the trampoline. `HookOneScriptTable` still exists for
-exactly one purpose: `citrace nativetrace` needs a deliberately table-only
-hook to compare against, and that comparison is what proved the problem.
+The same blindness is a shipping bug, not only a research one: a table-only
+hook prints "HOOK INSTALLED" and then silently changes nothing on the paths
+compiled GML actually uses, which is a feature that reports armed and does
+nothing (origin's review of ForgePact PR #2 found several stat/drop hooks in
+exactly that state). `HookOneScript` therefore installs **both** a table swap
+and an inline detour at the function's own address, and hands the hook body
+the trampoline; `HookOneScriptTable` survives only as the deliberately blind
+baseline `citrace nativetrace` compares against.
 
 The general rule: **put the interception in the installer, not in whichever
 call sites a review happened to verify.** Fixing the five named functions
 would have left every other gameplay hook, and every future one, blind.
 
-**And the rule applies to every installer, including a shared one.** Origin's
-review of hub PR #3 found `hs-game-sdk`'s own `HeroSiege::Hooks::InstallScriptHook`
-- the API other submodules are told to adopt - still table-only, and worse,
-overwriting the saved original with the hook itself on a second install, so a
-hook body forwarding through that pointer would recurse into itself. The shared
-installer now does what ForgePact's does: both routes, trampoline as the
-original, detour attempted only on the first install, and a result that *says*
-`TableOnly` with a reason rather than reporting plain success.
-`InstallScriptHookTableOnly` is the deliberately-limited variant, named so the
-limitation is visible at the call site. A correction landing in one submodule is
-not done until the shared SDK that other submodules copy has it too.
+And the rule applies to every installer, including a shared one: origin's
+review of hub PR #3 found `hs-game-sdk`'s own shared `InstallScriptHook` — the
+API other submodules are told to adopt — still table-only, and worse,
+overwriting the saved original on a second install. It now installs both
+routes too, attempts the detour only on the first install, and reports
+`TableOnly` with a reason rather than plain success; a correction landing in
+one submodule is not done until the shared SDK that others copy has it too.
+
+Story and evidence: [docs/agents/prove-the-instrument.md](docs/agents/prove-the-instrument.md)
 
 ## Check a Permission Where It Is Used, Not Where It Is Convenient
 
@@ -373,13 +355,11 @@ not done until the shared SDK that other submodules copy has it too.
 a flag that a step-time consumer reads cannot be validated at `EVENT_FRAME`:
 whatever the consumer did this frame, it already did.
 
-Map reveal's pack pass learned this the expensive way. Its "lie about
-distance" permission was invalidated in `OnFrame` when the zone changed, which
-looked correct and passed its tests, but the creators consuming that
-permission ran earlier in the same frame — so the first call in a new zone
-still got the previous zone's answer, which is exactly the call that leaves a
-spawner inert. Two rounds of adding more identity tracking at `OnFrame` could
-not have fixed it; only moving the check to the consumer did.
+Map reveal's pack pass validated a step-time permission at `EVENT_FRAME`,
+which passed its own tests but ran after the consumer that read it, so the
+first call in a new zone still got the previous zone's answer — the exact
+call that leaves a spawner inert; only moving the check to the consumer fixed
+it.
 
 - **Validate at the point of use**, with the thing being acted on. The
   question "may I do this to *this* object" is usually answerable from the
@@ -398,6 +378,8 @@ not have fixed it; only moving the check to the consumer did.
   fact; a mislabeled negative costs more sessions than the one that produced
   it.
 
+Story and evidence: [docs/agents/check-a-permission.md](docs/agents/check-a-permission.md)
+
 ## Never Call an Address You Resolved by Hand
 
 Reading a function's address in Ghidra is a legitimate research step (see the
@@ -407,21 +389,11 @@ and the constant then names whatever bytes happen to sit at that offset. A
 *read* through a stale address returns garbage; a *call* through one transfers
 control into arbitrary code on a player's machine.
 
-This toolkit has now hit that defect twice:
-
-- **`relicgate`** used a fixed RVA inside `DropItem`. On the current build that
-  address is not inside `DropItem` at all. The feature had been silently dead
-  for an unknown number of releases; it is now a no-op that says so
-  (`SetRelicGate`).
-- **Pet Quest Collector** shipped `PetQuestCollectOne` calling
-  `GetModuleHandleA(nullptr) + 0xB489070` - the runtime's call-a-method-value
-  dispatcher, measured live and correct for exactly that build - validating
-  neither the module, nor the bytes, nor the build. It survived one release
-  before review caught it. Removing it took three attempts, and the second one
-  (reading the callable off the value's own `CScriptRef`) failed for the same
-  underlying reason as the first, which is why the struct bullet below exists.
-  What works is `script_execute` through `CallBuiltinEx` - name-resolved,
-  layout-free, confirmed live by the quest counter advancing.
+This toolkit has shipped this defect twice: a `relicgate` RVA inside
+`DropItem` that silently stopped being inside `DropItem`, and a Pet Quest
+Collector call through `GetModuleHandleA(nullptr) + 0xB489070` that validated
+neither the module, the bytes, nor the build and survived one release before
+review caught it.
 
 So, before a pointer is called or dereferenced in code that reaches a player:
 
@@ -431,34 +403,22 @@ So, before a pointer is called or dereferenced in code that reaches a player:
   covers nearly everything.
 - **Otherwise let the runtime do the work, still by name.** `CallBuiltinEx`
   supplies `self` and `other` to any builtin, so the runtime's own dispatcher
-  can be handed a value whose internals you never inspect. This is how the Pet
-  Quest Collector ends up invoking an anonymous method value
-  (`script_execute`, `self` = the item, `other` = `Loot_Manager_obj`): no
-  address, and no struct layout either.
-- **Only then resolve off a runtime struct YYToolkit defines** - `CScriptRef`,
-  `CScript`, `CInstance`, `RValue` - and treat that as an assumption to be
-  measured, not a fact. **A struct layout is the quiet version of a hardcoded
-  address.** Both are "a layout someone wrote down"; the address fails loudly
-  and the field silently returns a plausible zero. This is not hypothetical:
-  the fix for the Pet Quest Collector's hardcoded address was *itself* a
-  `CScriptRef` read, and it shipped broken, because on this game's runner
-  `m_Questpickup` is not a `CScriptRef` at all (`m_ObjectKind = 0`, both
-  callable fields zero, `method_get_index` returns nothing - while a sibling
-  variable on the same instance resolves fine). If you do read a struct,
-  **find a positive control on the same target first**: something the plugin
-  already proves works on this runtime, whose value you can compare against.
+  resolves a value whose internals you never inspect — no address, no struct
+  layout.
+- **Only then resolve off a runtime struct YYToolkit defines** (`CScriptRef`,
+  `CScript`, `CInstance`, `RValue`), and treat that as an assumption to
+  measure, not a fact: a struct layout is the quiet version of a hardcoded
+  address, since it fails silently (a plausible zero) instead of loudly.
+  **Find a positive control on the same target first** — something already
+  proven to work on this runtime, whose value you can compare against.
 - **A measured address is a research finding, not an implementation.** Keep it
   in `docs/` and behind `#ifndef FORGEPACT_RELEASE`, where a wrong value costs
-  a session. `citrace collect`'s `native` path is the pattern: the old shape
-  stays runnable as an A/B check against the shipped one, and nothing else
-  uses it.
+  a session, not a release; `citrace collect`'s `native` path is the pattern.
 - **If an address genuinely cannot be avoided, validate it and refuse.**
   Confirm the target is committed, executable, and inside the intended
-  module's image (`AddrIsExecutableInModule` - `VirtualQuery`,
-  `AllocationBase`, `PAGE_EXECUTE*`) before calling, and on failure disable
-  the feature with a message the way `SetRelicGate` does. Never fall through
-  to the call. Count the refusal so it surfaces in a `stat` command instead
-  of as silence.
+  module's image (`AddrIsExecutableInModule`) before calling, and on failure
+  disable the feature with a message instead of falling through to the call.
+  Count the refusal so it surfaces in a `stat` command instead of as silence.
 
 `ForgePact/tests/test_release_hook_contract.py`'s
 `test_player_binary_calls_no_hand_resolved_game_address` enforces this
@@ -468,16 +428,11 @@ literal. Extend that test rather than working around it.
 
 A corollary, learned from the same investigation: when a call shape is
 rejected, record *what was supplied* alongside the result. Nine name-resolved
-invoke shapes were written off as "measured negative" before a later round
-established that the callee wanted one argument and a specific `self`, neither
-of which those nine had passed - the notes say so themselves
-(`ForgePact/docs/pet-quest-collector-c-research.md`, "This explains every C0.2
-access violation"). **One of those nine is now the shipped mechanism.** Three
-rounds went into inventing call machinery while the working answer sat in a
-table of already-implemented paths, mislabelled. That is the "not observed" vs
-"does not happen" distinction from the section above, applied to call
-signatures - and the cost of getting it wrong is not one wasted session, it is
-every session that trusts the label afterwards.
+invoke shapes were written off as a measured negative before a later round
+found the callee just wanted one argument and a specific `self`, neither of
+which those nine had passed — one of those nine is now the shipped mechanism,
+so a rejected call shape is a labelling problem to revisit, not a settled
+dead end.
 
 Finally, make a refusal say why. `InvokeMethodValue` logs one line naming the
 field that failed, and `petquest 0` reports which route actually ran plus a
@@ -485,6 +440,8 @@ field that failed, and `petquest 0` reports which route actually ran plus a
 and did nothing". Those two outputs turned a hypothesis that would have cost a
 research session into two launches. A mod that fails silently is a mod nobody
 can debug from a bug report.
+
+Story and evidence: [docs/agents/never-call-resolved-address.md](docs/agents/never-call-resolved-address.md)
 
 ## Don't Suspend the Game's Own Runtime
 
@@ -501,27 +458,19 @@ or wholesale deactivating instances — anything whose contract is "suspend the
 world and give it back unchanged". They are a different risk class, and the
 reasons are structural rather than a matter of implementation quality:
 
-- **The failure mode inverts.** Ordinary mods fail by doing nothing (a dead
-  `relicgate`, a collect that never fires). A suspension feature fails by
-  leaving the player's session stuck, or by letting the game save while its own
-  state is half-removed. When a design needs a panic hotkey, a watchdog and a
-  fail-open path on every branch before it can ship, that machinery is the
-  signal, not the mitigation.
+- **The failure mode inverts.** Ordinary mods fail by doing nothing; a
+  suspension feature instead leaves the session stuck or lets the game save
+  mid-removal — needing a panic hotkey, a watchdog and a fail-open path on
+  every branch before it can ship is the signal, not the mitigation.
 - **The precise instruments are unavailable on this build.** YYToolkit's
-  per-event hook (`EVENT_OBJECT_CALL`) is deliberately disabled in the
-  YYToolkit this project ships — it crash-looped on Season 10 — and
+  per-event hook is deliberately disabled (it crash-looped on Season 10) and
   named-script hooks are structurally blind against this YYC build's direct
-  calls (see the section above). What remains is blunt, whole-subtree
-  instance deactivation, with the widest possible blast radius.
-- **The claim cannot be verified.** "Everything stops" is a statement about
-  every timer, DoT, cooldown and internal counter in the game, including the
-  ones nobody has enumerated. Contract tests can pin the mod's own structure;
-  they cannot establish that. A miss surfaces as a buff that quietly expired or
-  a cooldown that quietly advanced — wrongness a player reports months later as
-  "the mod broke my character".
+  calls, leaving only blunt, whole-subtree instance deactivation.
+- **The claim cannot be verified.** "Everything stops" covers every timer,
+  DoT, cooldown and internal counter, including ones nobody has enumerated;
+  contract tests can pin the mod's own structure but not that.
 - **It taxes every future game patch.** Anything that has to know the game's
-  full object or UI surface (which windows count as a menu, which objects are
-  actors) is upkeep on someone else's release schedule.
+  full object or UI surface is upkeep on someone else's release schedule.
 
 The worked example is `ForgePact/docs/menu-pause-plan.md` — a complete design
 for "pause the world while a menu is open", researched to the point where the
@@ -532,6 +481,8 @@ belongs in the submodule's Known Limitations with the acceptance recorded.
 
 Prefer the alternatives: read-only tooling outside the game, a change to one
 value the game is about to use, or leaving the behaviour alone.
+
+Story and evidence: [docs/agents/dont-suspend-runtime.md](docs/agents/dont-suspend-runtime.md)
 
 ## Documentation & Instructions Maintenance
 
@@ -567,60 +518,39 @@ When developing, modifying, testing, or reverse-engineering game logic, hooks, d
 - Avoid declaring raw string literals or magic numbers for game scripts, asset indices, object types, and stat keys when equivalent constants exist in `hs-game-sdk`.
 - If game updates shift asset or script indices, regenerate the SDK bindings using `tools/extract_and_generate_sdk.py`.
 
-**Identify a thing by what it is, not by a field it happens to carry.** Origin's
-review of hub PR #3 found the C++ relic scanner accepting any item with a level
-field, so the ordinary item `{b:15, c:8, level:100}` came back as maxed relic 15
-- and `ForgePact`'s `RelicFilterMod` calls that scanner directly, so an unrelated
-item could suppress a real relic drop. Level-shaped fields are everywhere in this
-game's item structs (`p` is a star upgrade count, stacks carry
-`amount`/`count`/`qty`), so "has a level" identifies nothing. Use the documented
-positive signal instead - rarity tier 16, or the relic-specific `relicLevel` field
-(`docs/RUNTIME_DATA_MODELS.md`) - and read the value only from the fields
-documented to hold it. The same applies to shape: a bare number is only a
-`relic id -> level` entry inside a container that is specifically a relic table,
-never in a general inventory.
+**Identify a thing by what it is, not by a field it happens to carry.** A C++
+relic scanner once accepted any item with a level field and so misread an
+ordinary item as a maxed relic (hub PR #3) — level-shaped fields are
+everywhere in this game's structs, so use the documented positive signal
+instead (rarity tier 16, the relic-specific `relicLevel` field,
+`docs/RUNTIME_DATA_MODELS.md`) and read the value only from the fields
+documented to hold it.
 
 **Accept the kinds the runtime actually produces, and never let a kind check
-decide whether the work happens at all.** `GetOwnedRelicLevels` opened with
-`player.m_Kind != VALUE_OBJECT -> return {}`, but this runner resolves the local
-player as `VALUE_REF` (kind 15, `docs/RUNTIME_DATA_MODELS.md` §1). So the scan
-returned an empty map for every player, and because an empty maxed set means
-"nothing to hold back", ForgePact's relic filter armed, hooked, logged
-`hook installed -> ON`, and then let every relic through (reported 2026-09-14).
-This is a **recurring bug class in this codebase, not a one-off**: `orbpickup`
-logged `seen=176993 noplayer=176993`, the relic filter's own arming step never
-fired, and upstream had already fixed the same class in the Headhunter
-kill/steal path (`HhResolveInstance`, shipped in 1.3.16) — each found
-separately, each costing a live session. That is why the kinds now live in a
-named `IsInstanceHandle` predicate instead of one more inline comparison. Every accessor involved
-(`variable_instance_exists`, `variable_instance_get`) takes a reference straight
-through, so the kind was never load-bearing; it only decided whether anything
-ran. A feature that reports itself ON while doing nothing is the expensive
-shape of this bug: prefer a log line that names what it *did* ("holding back N")
-over one that names what it *is*.
+decide whether the work happens at all.** A relic scan that rejected anything
+but `VALUE_OBJECT` returned nothing for every player, because this runner
+resolves the local player as `VALUE_REF` — a recurring bug class in this
+codebase (also hit in `orbpickup` and upstream's Headhunter path), and the
+reason kind checks now live in a named `IsInstanceHandle` predicate rather
+than deciding whether the work happens at all. Prefer a log line that names
+what a feature *did* ("holding back N") over one that names what it *is*,
+since "reports itself ON while doing nothing" is this bug's expensive shape.
 
 **A stub that cannot represent the failing input cannot catch the bug.** Nine
-C++ SDK tests passed over that dead scanner because
-`tests/cpp/stubs/YYToolkit/YYTK_Shared.hpp` did not define `VALUE_REF` at all
-and `FakePlayer()` only ever built a `VALUE_OBJECT` - the test double had
-quietly narrowed the world to the half that worked. When a stub stands in for a
-runtime surface, its enums and shapes are part of the contract under test: give
-it the values the real runtime returns, then assert the two paths agree on one
-shared fixture rather than asserting each is separately non-empty. Keep a
-negative control alongside (an undefined player still scans nothing), so
+C++ SDK tests missed that dead scanner because the test double didn't define
+the kind the real runtime returns at all. When a stub stands in for a runtime
+surface, give it the values the real runtime returns, assert both bindings
+agree on one shared fixture, and keep a negative control alongside so
 widening what is accepted cannot quietly become accepting anything.
 
-**When two language bindings answer the same question, test them against the same
-fixture - and make the contract itself comparable.** The Python scanner was
-already correct while the C++ one was not, and nothing caught the divergence
-because only Python had tests. Adding one shared fixture was still not enough:
-origin's second review found the *opposite* gap on the same pair - C++ accepted
-`cls` and read numeric arrays out of `relic_levels`, Python did neither - because
-a single flat fixture cannot cover a contract. So the accepted fields, limits and
-container names are now declared as **enumerable constants in both bindings**
-(`kRelicTierFields` / `RELIC_TIER_FIELDS` and friends), the C++ test harness
-prints them, and `tests/test_cpp_sdk.py` asserts the two lists match field for
-field. Editing one side now fails a test rather than drifting.
+**When two language bindings answer the same question, test them against the
+same fixture — and make the contract itself comparable.** A single flat
+fixture still missed a divergence where C++ and Python each accepted fields
+the other didn't, so the accepted fields, limits and container names are now
+declared as enumerable constants in both bindings, and a test asserts the two
+lists match field for field.
+
+Story and evidence: [docs/agents/hs-game-sdk-usage.md](docs/agents/hs-game-sdk-usage.md)
 
 Where the two genuinely cannot match - C++ reads named variables off a live
 `CInstance` and cannot enumerate a struct's keys, Python walks a whole decoded

@@ -32,8 +32,11 @@ how to work on the code; it deliberately does not restate the reasoning.
 | --- | --- |
 | `main.js` | Mounts `App`, and carries the bail-out panel for a frontend that fails to start. |
 | `App.svelte` | The shell: sidebar, routing between screens, `connect()` on mount. |
-| `Library.svelte` | The grid, its filters, and the *Starred* row above the rest. |
-| `ToolCard.svelte` | One tool: state chip, one primary button, and the star + overflow glyphs on the title line. |
+| `Library.svelte` | Search, category/status filters, grid/list layouts, all ten tools in one list and full-card quick launch. |
+| `ToolCard.svelte` | One tool: icon, requirements, status, shared primary action, star and keyboard-accessible overflow menu. |
+| `ToolAction.svelte`, `tool-presentation.js` | Shared action/status rendering; display-only names, categories and search. |
+| `ToolIcon.svelte`, `Icon.svelte` | Original SVG tool artwork and interface glyphs. |
+| `action-gate.js` | Allows one pending mutation per tool, coalesces identical requests and rejects conflicting commands/options with a busy error. |
 | `ToolDetail.svelte` | One tool in full, including *Verify files*. |
 | `Updates.svelte`, `Downloads.svelte`, `Game.svelte`, `Settings.svelte`, `About.svelte`, `FirstRun.svelte` | The other screens. |
 | `TitleBar.svelte`, `StatusBar.svelte`, `Toasts.svelte` | Window chrome and notices. |
@@ -41,7 +44,7 @@ how to work on the code; it deliberately does not restate the reasoning.
 | `hub-update.svelte.js` | The hub's own updater, kept apart from the tools' catalog. |
 | `hub-check.js` | The runes-free state for `check_hub_update` -- checking/current/available/failed -- so `node --test` can run it; tested by `hub-check.test.js`. `library.svelte.js` copies it into `$state`. `checkAll` is the general catalog-then-hub check, so every manual hub check updates the same state. |
 | `bridge.js` | The only file that knows whether Tauri is underneath. |
-| `skin.svelte.js`, `skin.css`, `theme.css` | Sprites and the three skins, adopted from HS-Offline-Tracker. |
+| `skin.svelte.js`, `skin.css`, `theme.css` | Legacy sprite lookups, CSS surfaces and the Obsidian/Ember/Void palettes. |
 
 ### `src-tauri/src/` — the Rust side
 
@@ -128,8 +131,10 @@ fails if that creeps back.
 
 ### Driving the running window
 
-A debug build starts an MCP bridge on `127.0.0.1:9223` — behind
-`#[cfg(debug_assertions)]`, because it can invoke any command the app has:
+`npm start` starts an MCP bridge on `127.0.0.1:9223` — an optional dependency
+behind the `mcp-bridge` feature (which only `npm start` passes) and
+`#[cfg(debug_assertions)]`, because it can invoke any command the app has. A
+release build does not compile it:
 
 ```bash
 npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start --port 9223
@@ -201,10 +206,9 @@ points back at itself. To build for a fork:
   to its own gradient as `url(#p)`. Unquoted inside a CSS `url(...)` those close
   the token early and the sprite silently does not paint — while working fine in
   an `<img src>`, which is what makes it easy to miss. `svg()` encodes all three.
-- **These are nine-slice marks.** Painted as `background-image` they stretch;
-  `skin.css` uses `border-image` with a slice. A button's sprite insets its
-  plate 7/64 from the top and bottom, so a plain CSS border of the same height
-  next to one looks taller than it.
+- **Library artwork is inline SVG.** `ToolIcon.svelte` uses `$props.id()` for
+  unique gradients when a tool appears in both quick launch and the grid.
+  Legacy `.skin-*` classes now use CSS surfaces with their existing insets.
 - **A signature failure is usually a stale worktree, not a signing problem.**
   `.gitattributes` marks the catalog and its signature `-text`; a checkout that
   rewrote `catalog.json` with CRLF is a catalog the hub refuses to load.

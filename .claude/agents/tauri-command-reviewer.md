@@ -19,6 +19,13 @@ painting, and nothing is ever logged as an error.
 mechanical violations on every edit. Do not duplicate it. Your job is the part
 that needs judgement.
 
+## What you're given
+
+Not the workorder path — do not go looking for it or the `## Log`. Each round
+the dispatch pastes `## Goal` and `## Out of scope`, the diff commands, and
+the paths that changed: the whole change on round 0, this round's delta on a
+later round.
+
 ## 1. Threading annotation
 
 The rule is a three-way discrimination:
@@ -63,10 +70,13 @@ exists to prevent.
 
 ## 4. The MCP bridge stays debug-only
 
-`tauri-plugin-mcp-bridge` is registered under `#[cfg(debug_assertions)]` and
-binds loopback. The gate is not a detail: the bridge can invoke any command in
-the application. Flag any change that registers it unconditionally, widens the
-bind address, or copies the plugin into another submodule without both the
+`tauri-plugin-mcp-bridge` is an optional dependency behind the non-default
+`mcp-bridge` feature, registered under
+`#[cfg(all(debug_assertions, feature = "mcp-bridge"))]`, and binds loopback. The
+gate is not a detail: the bridge can invoke any command in the application. Flag
+any change that registers it unconditionally, makes the dependency non-optional,
+adds the feature to `default` or to a release build command, widens the bind
+address, or copies the plugin into another submodule without the feature, the
 `cfg` and the loopback bind.
 
 ## Label every finding BLOCKING or NON-BLOCKING

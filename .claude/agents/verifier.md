@@ -17,8 +17,15 @@ context would mean sharing its blind spots.
 
 Work through this in order. Do not skip ahead.
 
-**1. Read the workorder.** Take `## Acceptance criteria` verbatim. That list is
-your entire mandate — not your impression of what the change should do.
+**1. Extract the criteria — read nothing else in the workorder.** Take
+`## Acceptance criteria` and the gate tokens in `## State` verbatim, e.g.
+`sed -n '/^## Acceptance criteria/,/^## /p' <plan>` and the same pattern for
+`## State`. A legacy single-file plan takes the same extraction; it is one
+more section of the same file. When a criterion cites a heading (a table it
+needs from the context file, or a section of a legacy plan), follow that one
+citation and nothing more. This list is your entire mandate — not your
+impression of what the change should do. A criterion naming a gate token not
+yet set in `## State` isn't due — note it, don't fail it.
 
 **2. Run every criterion yourself.** Each one, in the repository root, capturing
 real output. Never mark a criterion satisfied because the diff appears to

@@ -1416,9 +1416,10 @@ pub fn run() {
     // responsiveness work was checked, because the defect it fixes is invisible
     // to a test -- it is the window not repainting, not a wrong answer.
     //
-    // Debug builds only, and bound to loopback rather than the plugin's default
-    // of every interface: it can invoke any command this app has.
-    #[cfg(debug_assertions)]
+    // Debug builds with the `mcp-bridge` feature only (`npm start` turns it
+    // on), and bound to loopback rather than the plugin's default of every
+    // interface: it can invoke any command this app has.
+    #[cfg(all(debug_assertions, feature = "mcp-bridge"))]
     {
         builder = builder.plugin(
             tauri_plugin_mcp_bridge::Builder::new()
@@ -1447,7 +1448,7 @@ pub fn run() {
             // calls. Added here rather than in `capabilities/`, which every
             // build reads -- this way the released hub's capability set is
             // exactly what it was.
-            #[cfg(debug_assertions)]
+            #[cfg(all(debug_assertions, feature = "mcp-bridge"))]
             {
                 if let Err(error) = handle.add_capability(
                     r#"{"identifier":"mcp-bridge-dev","windows":["hub"],"permissions":["mcp-bridge:default"]}"#,

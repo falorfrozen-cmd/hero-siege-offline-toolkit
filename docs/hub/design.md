@@ -401,96 +401,83 @@ installed hub updates itself to.
 
 ## The interface
 
-1180×760, `decorations: false`, custom title bar. `theme.css` is copied verbatim
-from HS-Offline-Tracker and the three skins (`obsidian`, `ember`, `void`) come
-with it.
+1180×760 by default, with a 960×640 minimum and a custom title bar. The
+workshop theme uses graphite surfaces, copper controls and original SVG tool
+icons. Obsidian, Ember and Void remain selectable; persisted theme ids did not
+change. All interface artwork is local and original, with no external fonts,
+image downloads or new runtime dependencies.
 
 | Screen | What it is for |
 | --- | --- |
-| Library | The grid. Card per tool: name, one line, state chip, one primary button, and a star plus an overflow menu on the title's line. |
-| Updates | Everything with a newer release, *Update all*, and the staged queue with its reasons. |
-| Game | Whether Hero Siege and EAC are running — so the interlocks are legible rather than mysterious — and a way to start the game through HS Offline Launcher. |
-| Settings | Work offline, check on launch, auto-download, auto-install (nested), skin, developer mode. |
-| About | Versions, the catalog's signature, the log, the toolkit's Discord, and the hub's own updater. |
-| Downloads drawer | Per-file progress with *Verifying* as a step of its own. |
+| Library | Search, categories, installation status, grid/list layouts, quick launch and ten tool cards. |
+| Tool details | Full catalog name, requirements, primary action, installed files and release notes. |
+| Updates | Newer releases, Update all, and the staged queue with its reasons. |
+| Game | Hero Siege and EAC state and the offline launcher. |
+| Settings | Network policy, update policy, appearance and developer mode. |
+| About | Versions, signature, log, community link and the hub updater. |
+| Downloads drawer | Overlay with download and verification progress; does not squeeze the library. |
 | First run | What the hub will contact, before it contacts it. |
 
-### Starred tools
+### Finding and pinning tools
 
-A star on each card, persisted in `state.json` as a set of ids, lifts that tool
-into a **Starred** row above the rest of the grid. Ten tools is enough that the
-two or three anyone actually uses are worth putting first, and short enough that
-hiding the others would be worse than ordering them.
+`tool-presentation.js` contains display-only identities: short names, category,
+summary, icon and library ordering. Rust's catalog and ToolView remain the source
+of install permissions, versions and update state. An unknown catalog id still
+renders with its catalog name, summary and a fallback icon.
 
-Three things follow from it being a set of ids and not an ordering:
+Search matches every query word against the full name, short name, id, category
+and description. Category and installation filters intersect with search.
+Ctrl+K focuses search; Escape clears it. The list/grid preference is stored in
+localStorage under `hub:library-layout`, without changing the disk-state schema.
+All tools remain in the library, including tools duplicated in quick launch.
 
-- The starred row is catalog order with the rest taken out, so starring never
-  has to decide what a tool ranks *against*.
-- A star for an id that later leaves the catalog matches nothing and draws
-  nothing. It is not an error and it leaves no hole.
-- The split is applied **after** the filter, not instead of it. A star says
-  where a card sits, not that it ignores what the reader asked to see — so
-  *Updates* with one starred tool waiting shows that one on top, and shows
-  nothing at all if the starred tool is current.
+The existing star writes the same `favorites` ids in `state.json`. Quick launch
+shows all matching favorites; with none selected, it shows up to three matching
+installed/running tools. Quick launch respects search and both filters. Clearing
+an empty result restores the entire catalog. All ten tools use the same full
+card under All tools, without a separate utilities section. Quick launch reuses
+that card, including its description, star toggle and overflow menu, and follows
+the grid/list preference. The status dot aligns with the first label line; a
+reserved version row keeps labels in place when a version appears or disappears.
+At narrow widths the grids use fewer columns and the main content scrolls
+independently of navigation and status.
 
-`set_favorite` refuses to star an id the catalog does not have, so a stale
-frontend cannot write one; unstarring is allowed for any id, because a tool that
-has since left the catalog must still be removable. A click that changes nothing
-returns without writing `state.json` or rebuilding the view.
+### Actions and keyboard navigation
 
-### One button on a card, and two glyphs
+`ToolAction.svelte` is shared by cards, quick launch and tool details. The
+`presentation()` helper retains the prior action precedence: in-flight,
+controllable running process, elevated/external running process, update, launch,
+external installer, install. Completion events bridge the short interval before
+the updated ToolView arrives. Staged/downloaded events never claim an install
+finished. Requirements say "Requires game closed/running" rather than implying
+they describe the current game state.
 
-The star and the overflow menu share the title's line, right-aligned and
-borderless; the primary button below has the footer to itself.
+`action-gate.js` permits one pending mutation per tool. Repeated requests with
+the same command and arguments share its promise, including the gap before a
+progress event. A different command or different launch options reject with a
+visible busy error instead of silently sharing the first operation's result.
+Different tools proceed independently; failures unlock the controls. Rollback
+and mutating overflow actions also disable during pending commands or active
+install progress. Backend interlocks, hashes, signatures, update and rollback
+rules are unchanged.
 
-The overflow menu used to sit in that footer as a 38px bordered square, and it
-read as a second control of equal weight beside *Install* — which it is not; it
-is a place to put the six things a card cannot show. It was also visibly taller
-than the button next to it, because `skin-button`'s sprite insets its plate
-7/64 from the top and bottom while a plain CSS border does not, so two elements
-of identical height looked mismatched.
+Overflow menus support Arrow Up/Down, Home/End and Escape. They move above a
+control when necessary to stay within the viewport. Escape restores focus to
+the trigger; clicking or tabbing outside closes them. A capture-phase scroll
+listener closes a menu when its containing page scrolls; scrolling inside a
+height-constrained menu keeps it open. The listener is removed when the menu
+closes or its card unmounts. Navigation and primary
+controls have accessible names, statuses combine text and color, and reduced
+motion disables decorative transitions/spinners.
 
-The two glyphs are the same weight: `more` is the one icon drawn without
-`icon()`'s disc, because a circle around one of a pair reads as a border --
-the border that was just taken off the button around it.
+### Art and surfaces
 
-The two are drawn to the same weight. The overflow glyph is the one icon in
-`skin.svelte.js` without `icon()`'s disc behind it: a circle around one of a
-pair beside a heading reads as a border — the border that was just taken off
-the button around it.
-
-`.corner`'s offsets are `.card`'s **padding**, not its padding plus its border.
-An absolutely positioned child is placed against the padding box, so counting
-the 11px nine-slice border into `top` put the glyphs exactly that far below the
-title. The fix is checkable rather than eyeballed: the heading's client rect and
-`.corner`'s are now the same box, top and bottom.
-
-Both glyphs sit outside `.body`. `.body` is itself a button — the whole card
-opens the detail view — and a button inside a button does not give you two
-separate clicks. `.corner` is positioned but carries **no `z-index`**: being
-positioned is enough to paint it over `.body`, and a stacking context there
-would trap the open menu's `z-index` inside a 42px box, where the next card's
-glyphs would paint over it.
-
-### Two things about the sprites
-
-`skin.svelte.js` is HS-Offline-Tracker's, with two deliberate differences and
-two bugs fixed that are worth knowing about because both fail *silently*:
-
-- The Tracker imports two PNGs for its backdrop and app mark; the hub draws both
-  as SVG. The root `.gitignore` bans `*.png` (it exists to keep extracted game
-  sprites out of the repository), and a hub whose art is entirely generated needs
-  no exception to it. The six icon squares Tauri demands are the only PNGs, and
-  `hub/.gitignore` re-includes exactly those.
-- `encodeURIComponent` does not encode `(` or `)`, and every sprite refers to its
-  own gradient as `url(#p)`. Unquoted inside a CSS `url(...)`, those parentheses
-  close the token early and the sprite does not paint — while working perfectly
-  in an `<img src>`, which is what makes it easy to miss.
-- These are nine-slice marks. Painted as `background-image` at
-  `background-size: 100% 100%` they stretch, so a 620px panel gets a 100px corner
-  radius and its gold corner ticks become bars. `skin.css` uses `border-image`
-  with a slice instead; the sprite comes in as `--skin-src` so a hover state can
-  swap it without a second class.
+`ToolIcon.svelte` draws the ten tool icons as inline SVG with instance-unique
+gradient ids; `Icon.svelte` draws navigation and control glyphs. Both remain crisp
+at Windows display scaling. `theme.css` supplies shared colors and controls.
+`skin.css` retains the old component hooks and inset widths, but paints simple
+CSS surfaces instead of nine-slice borders. Legacy sprite lookups remain for
+secondary screens in `skin.svelte.js`; new artwork needs no PNG exception.
 
 ### Developer mode
 
@@ -507,12 +494,17 @@ throws where the hub works: `set_favorite` is the newest one.
 
 ### Driving the running window
 
-`tauri-plugin-mcp-bridge` is a dependency of `src-tauri`, started **only** under
-`#[cfg(debug_assertions)]`, bound to `127.0.0.1:9223`, with a dev-only capability
-naming the `hub` window. So a debug build can be clicked, screenshotted and
+`tauri-plugin-mcp-bridge` is an optional dependency of `src-tauri`, behind a
+non-default `mcp-bridge` feature that only `npm start` enables, started **only**
+under `#[cfg(all(debug_assertions, feature = "mcp-bridge"))]`, bound to
+`127.0.0.1:9223`, with a dev-only capability
+naming the `hub` window. So an `npm start` build can be clicked, screenshotted and
 queried from a terminal instead of by hand.
 
-The `cfg` is the whole point. The bridge can invoke any command this application
+The gate is the whole point, and it is two gates on purpose: the `cfg` alone
+kept the bridge from starting in a release but still compiled the crate into
+every one, one careless edit from shipping a listener. With the feature, `tauri
+build` never compiles it (`tests/test_hub_release_dev_tooling.py`). The bridge can invoke any command this application
 has, over a socket, with no authentication — which is exactly what makes it
 useful for verifying an interface change and exactly why a release build must
 never start one.
@@ -775,6 +767,101 @@ checks a test cannot make, and because three of them found defects.
 | Card controls after the move | Heading and `.corner` measured to the same client rect (198.3–218.3), both glyphs centred on it; menu opens downward and paints over the card below it; primary button has the footer to itself (2026-09-13) |
 | First canonical installer candidate | Extracted the actual NSIS application, verified its updater signature and manifest, opened it in an isolated WebView2 profile; all ten tools appeared, offline first run and favorites persisted, and the Steam Deck editor installed from its real release (2026-09-15) |
 | Manual hub update check after packaging | **Found a defect before publication:** the catalog refreshed but the hub check stayed on `Checking...`. Async Tauri commands nested `block_on` inside the runtime. Converted both updater commands to async/await and bounded the metadata check to 30 seconds. The 1.0.1 candidate resolves a missing release JSON, logs the error, restores the button, and retains the installed tool and favorite after restart (2026-09-15) |
+
+### Workshop interface verification — 2026-09-17
+
+These checks were automated, not a request for a human to click through the
+window. Browser-preview checks used browser automation; the native debug window
+used the Tauri MCP bridge at `127.0.0.1:9223`, window label `hub`. Favorites and
+theme changes were checked in the isolated profile's `state.json` as well as
+the DOM. The reproducible bridge regression script added below makes the
+method explicit for the review follow-up.
+
+| Check | Outcome |
+| --- | --- |
+| `npm run check` | Production frontend bundle: no compiler warnings. 30 Node tests, 115 Rust unit tests and 9 local HTTP installation tests passed. The 2 opt-in real-release download tests were not run. |
+| Cold browser session | First-run offline choice opens the library; search, empty-state clearing, category/status filters, detail/back, grid/list, all five screens and Downloads work. No browser page errors in the fresh session. |
+| Responsive grid | 1920×1080, 1366×768, 1280×720, 1180×760, 1024×768, 960×640 and 390×844: all ten tools/icons present, no document or main-panel horizontal overflow. Narrow/short layouts use internal vertical scrolling. |
+| Keyboard and menus | Ctrl+K focuses search; Escape clears search. Overflow takes focus, supports arrow navigation, restores trigger focus on Escape, and stays inside the viewport on the final utility card in both grid and list. Downloads closes on Escape. Reduced-motion mode reports 0s transitions. |
+| Real WebView2 window | Default 1180×760 and minimum 960×640 render all ten tools without horizontal overflow. Star HSCraftSim produces a shortcut and writes its id to `state.json`; unstar removes it. Original favorites restored. |
+| Appearance persistence | Void and Ember update the native window's accent; the selected theme is persisted in `state.json`. Original Obsidian selection restored. |
+| Command behavior | Tests cover controllable/elevated/external processes, updates, HTML and NSIS actions, progress, failed/staged/downloaded installs, and repeated clicks on duplicate shortcuts. Runtime/backend code, catalog, signatures and player data were not edited for this redesign. |
+
+The first full check hit Windows' running-executable lock; rerunning with the
+source app closed passed. A stale hot-reloaded style also obscured the first
+menu check; a fresh dev-server/browser session and the production build both
+use the fixed-position, viewport-clamped menu. Verification above is against
+that fresh session, not the stale one.
+
+### UI feedback revision 2 — 2026-09-17
+
+Quick launch now reuses full ToolCard instances, All tools contains all ten
+tools without a separate compact section, and every status reserves a version
+line so its dot stays beside the label.
+
+The application extracted from the new NSIS installer was tested outside the
+source tree with an isolated profile and synthetic installed-version/favorite
+fixtures. This was automated with `agent-browser` over CDP on the real release
+WebView2, not a browser-only replica. The temporary debugging port was supplied
+only to the test process; the release does not include the MCP bridge. Pixel
+measurements came from `getBoundingClientRect()` assertions, not visual estimates,
+and favorite persistence was asserted by parsing the profile's `state.json`.
+All ten cards, three full quick-launch cards, unstar/re-star persistence,
+quick-card details, overflow keyboard navigation, search and both layouts passed.
+Installed and uninstalled labels had identical footer offsets; dots were within
+0.01 px of the first label line's center. The version row remained 12.34 px tall
+when empty. At 1920x1080, 1366x768, 1280x720, 960x640 and 390x844 there was no
+horizontal overflow. The release WebView reported no page errors and both
+creator/design credits remained visible at desktop widths.
+
+Frontend production build and 30 Node tests passed. The parallel Rust run hit
+the existing view-budget test at 274 ms against its 200 ms limit; running the
+Rust suite sequentially passed all 115 unit and 9 local HTTP installation tests.
+No runtime code or timing thresholds were changed. The two opt-in real-release
+download tests were not run.
+
+### PR #64 review follow-up — 2026-09-17
+
+`hub/scripts/verify-review-ui.mjs` drives the actual Tauri debug window through
+the MCP bridge and fails on a failed assertion. It writes a JSON result file
+with check names, measured rectangles and the rejected command's result.
+Run it only with an isolated offline profile: ForgePact installed version
+`1.3.15`, previous `1.3.14`, a synthetic install path inside that profile, and
+favorites `['forgepact']`. Set `first_run_done: true` and `check_on_launch: false`.
+Launch the app with temporary `LOCALAPPDATA` and `WEBVIEW2_USER_DATA_FOLDER`
+values so the user's normal settings are untouched. The script verifies that
+the connected native window's install path matches the supplied fixture.
+
+From `hub/`, with that profile and a dev app started by `npm start`:
+
+```powershell
+npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp driver-session start --port 9223
+# Resolve the CLI entry file from the installed @hypothesi/tauri-mcp-cli package.
+# Direct Node invocation preserves JavaScript quotes on Windows.
+node scripts/verify-review-ui.mjs <tauri-mcp-cli/dist/index.js> <isolated-state.json> <results.json>
+npx -y -p @hypothesi/tauri-mcp-cli tauri-mcp webview-screenshot --window-id hub --file-path review.png --format png
+```
+
+The optional final argument `layout` or `actions` runs just that group for a
+focused rerun; omit it to run both. This verification used the two groups
+separately against the same native window and isolated profile: 12 layout
+assertions and 11 action assertions passed (both include the fixture check).
+
+The install and rollback IPC calls in the race test are intercepted with
+controllable promises; no tool is downloaded, replaced or rolled back. Other
+IPC stays real, including favorite writes and progress events. Interception
+is removed in `finally`. This validates frontend ordering and feedback, not
+an additional end-to-end installation test of the unchanged Rust backend.
+
+| Check | Outcome |
+| --- | --- |
+| Command gate regression tests | Same command/arguments share one result; different commands or launch options reject; a conflict preserves the original lock; rollback works after install settles. |
+| Scroll regression | MCP click + scroll confirms `main.scrollTop` changes and the menu closes in quick launch, grid and list. A constrained menu actually scrolls internally and stays open; Escape still restores focus. |
+| Native action race | A pending Update disables Roll back; calling rollback directly rejects with `ToolBusyError`, shows the error toast and never reaches IPC. An identical request shares the install; rollback invokes its own command after settlement. |
+| Backend-started progress | A real `install-progress` event disables detail rollback and mutating menu items even without a pending frontend request. Read-only actions stay enabled; a terminal event restores the mutating controls. |
+| Native persistence | Star/unstar HSCraftSim uses real IPC and the script reads the isolated `state.json` after each click. |
+| Geometry | Native DOM rectangles verify the dot/label alignment and reserved version space. Measurements are machine assertions, not screenshot estimates. |
+| Automated suites | Production frontend build passed without warnings; all 33 Node tests and 5 release-development-tooling checks passed. The Rust backend is unchanged; its earlier 115 unit and 9 local HTTP results above remain the backend evidence. |
 
 #### Stop kills a tree
 

@@ -6,47 +6,57 @@ user-invocable: false
 
 # Read the module's guide first
 
-`AGENTS.md` opens with this rule and `CLAUDE.md` repeats it, because on
-2026-09-14 an agent fixed two ForgePact bugs, opened both pull requests, and
-only then found `AGENTS.md` — so the change went up for review with no
-documentation updates and without the module's guide ever being read.
+`AGENTS.md` and `CLAUDE.md` both open with this rule, because on 2026-09-14 an
+agent fixed two ForgePact bugs and opened both PRs without ever reading
+`AGENTS.md` or the module's guide.
 
-These guides are **not optional background**. They carry workflow, test
-commands, packaging guardrails and release rules that no amount of reading the
+These guides are **not optional background** — they carry workflow, test
+commands, packaging guardrails and release rules no amount of reading the
 source reveals. ForgePact, for instance, expects a player-visible change to
 carry its `release-notes-vX.Y.Z.md` in the same PR, because `forgepact-tag.yml`
-composes the draft release body from those files — nothing in the plugin code
-says that.
+composes the draft release body from those files.
 
 ## What to read
 
 | Working in | Read |
 |---|---|
-| Any submodule | `docs/submodules/<submodule-name>/instructions.md` |
+| Any submodule | `docs/submodules/<submodule-name>/instructions.md` — by section, below |
 | `hub/` (not a submodule) | `hub/instructions.md`, then `docs/hub/design.md` |
 | `hs-game-sdk/`, or any runtime value | `docs/submodules/hs-game-sdk/instructions.md` and `docs/RUNTIME_DATA_MODELS.md` |
 | Anything catalog-shaped | `docs/hub/catalog-schema.md` |
 | Unsure which module owns something | the index at `docs/submodules/README.md` |
+
+### Read a guide by section
+
+`grep -n '^## \|^### ' <guide>` first — the same role has a different heading per
+module (ForgePact's `Command Reference` = `hero-siege-item-editor`'s `Setup,
+Build, Run, & Test Commands`), and a guide may skip a role it has no use for
+(only ForgePact and `hs-stat-forge` package a binary). **Always read**:
+overview/metadata, the change workflow (if any), platforms & prerequisites,
+the command reference, packaging guardrails (if any), maintenance triggers,
+and the repository-layout entries for your files. **Always grep** the
+symbols you're changing and read every match — Known Limitations especially.
+Data formats, release/tagging and long narratives (ForgePact's Performance
+Pass is 47KB) are on demand only.
 
 A submodule may also carry its own `instructions.md` in its working directory.
 Each submodule additionally carries its own `AGENTS.md` and `CLAUDE.md`
 pointing back to the superproject, because a submodule checkout is a separate
 repository and inherits nothing from this one.
 
-Submodules are frequently **not checked out** in a given worktree. If the
-directory is empty, the guide under `docs/submodules/` is still present and is
-still the thing to read — say that the source is unavailable rather than
-guessing at it, or run `git submodule update --init <path>`.
+Submodules are frequently **not checked out**. If the directory is empty, the
+guide under `docs/submodules/` is still there and still the thing to read —
+say the source is unavailable rather than guessing, or run `git submodule
+update --init <path>`.
 
 ## What the guides commit you to
 
 Each guide's command tables are marked `Verified`, `Inspected` or `Blocked`.
 Prefer a `Verified` command verbatim — working directory, shell and
-prerequisites are part of it, and several of these tools are Windows-only and
+prerequisites are part of it, and several tools here are Windows-only and
 expect PowerShell.
 
-Two rules from `AGENTS.md` apply to every module and are worth holding
-alongside the guide:
+Two `AGENTS.md` rules apply to every module:
 
 - **Update the docs in the same change.** When you change a feature, workflow,
   architecture or dependency, update that module's `instructions.md` and any
@@ -60,7 +70,6 @@ alongside the guide:
 
 ## Related
 
-For changes to the SDK bindings or anything reading runtime values, the
-`sdk-contract-reviewer` agent covers the recurring identity/kind/stub bug class.
-For `hub/src-tauri/`, the `tauri-command-reviewer` agent covers the command
-threading rules.
+`sdk-contract-reviewer` covers the identity/kind/stub bug class for SDK
+bindings; `tauri-command-reviewer` covers command threading for
+`hub/src-tauri/`.

@@ -95,3 +95,8 @@ Thumbs.db
 # are running. What was actually built is recorded in docs/hub/ and the
 # decisions in docs/adr/. Keep the plan on your own machine.
 *-plan.md
+
+# Workorder context files and round snapshots, for the same reason: working
+# notes for the run, not documentation of the change.
+.claude/workorders/*-context.md
+.claude/workorders/.rounds/

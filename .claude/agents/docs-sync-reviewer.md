@@ -19,15 +19,22 @@ Stale documentation in this repository is not cosmetic. The submodule guides
 carry workflows, packaging guardrails and release rules that no amount of
 reading the code reveals, and they are read later as settled fact.
 
+## What you're given
+
+Not the workorder path — do not go looking for it or the `## Log`. Each round
+the dispatch pastes `## Goal` and `## Out of scope`, the diff commands, and
+the paths that changed: the whole change on round 0, this round's delta on a
+later round.
+
 ## What to check, in order
 
-**1. The module's own guide.** For every submodule the change touches, read
-`docs/submodules/<name>/instructions.md`. Does the change alter an entry point,
-a build or test command, a dependency, a workflow step, a known limitation, or
-the architecture the guide describes? Then the guide is now wrong.
-
-Pay attention to the guide's tables — several modules keep a verification table
-or a command reference that a new command silently falsifies by omission.
+**1. The module's own guide.** For every submodule the change touches, `grep
+-n '^## \|^### '` `docs/submodules/<name>/instructions.md`, then grep it for
+the commands, symbols, file names and section titles the change touches. Read
+those matching sections plus the command reference, maintenance triggers, and
+any verification table — not the guide front-to-back. Does the change alter an
+entry point, a command, a dependency, a workflow step, a known limitation, or
+the architecture those sections describe? Then the guide is now wrong.
 
 **2. ForgePact release notes.** `docs/submodules/ForgePact/instructions.md` §6
 says a player-visible change should add its `release-notes-vX.Y.Z.md` at the

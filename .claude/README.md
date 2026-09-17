@@ -2,27 +2,50 @@
 
 `AGENTS.md` holds this repository's rules in prose. This directory holds the
 subset that a machine can enforce or execute, so they stop depending on whether
-an agent happened to read the right section of a long file first.
+an agent happened to read the right section of a long file first. `AGENTS.md`
+itself states each rule plus one sentence of why; the dated incident or review
+finding that made a rule worth writing lives in `docs/agents/<section>.md`,
+linked from the rule, so it stops being loaded into every subagent's context
+on every turn.
 
 Everything here is committed on purpose. Only `settings.local.json`
 (per-machine overrides) is gitignored.
 
 ## Hooks — `settings.json` + `hooks/`
 
-The four `PostToolUse` hooks below exit 0 silently when nothing is wrong, and
-exit 2 with an explanation when something is. `leftover_processes.py` is
-different in shape — it runs on `PreToolUse` and `PostToolUse` to keep a
-ledger, and its blocking behavior lives at `Stop` — but the exit-0-quiet,
-exit-2-explains contract is the same one. They all run through `py -3`; on a
-non-Windows machine change that to `python3` in `settings.json`.
+`settings.json` fires one `PostToolUse` command per call,
+`.claude/hooks/post_tool_use.py`, which runs the four checks below in-process
+against one shared `git status` (`_common.TreeState`, its explicit injection
+point) instead of launching a separate `py -3`, and its own `git status`, per
+check. Each check keeps its own `check(payload, tree) -> (rc, message)`
+body and its own standalone `main()`, so `py -3
+.claude/hooks/decompiled_output.py` still behaves exactly as it did before the
+dispatcher existed; `tests/test_claude_hooks.py`'s `TestDispatcherEquivalence`
+proves the two paths agree. A crash in one check is caught and reported as its
+own non-blocking line rather than masking, or blocking for, the others. Every
+check exits 0 silently when nothing is wrong and 2 with an explanation when
+something is. They all run through `py -3`; on a non-Windows machine change
+that to `python3` in `settings.json`.
 
-| Hook | Fires when | Catches |
+| Check | Fires when | Catches |
 |---|---|---|
 | `catalog_signature.py` | `catalog/` differs from HEAD | `catalog/catalog.json` no longer verifying against its minisign signature, with CRLF called out by name when that is the cause |
 | `tauri_command_guard.py` | a `.rs` under `hub/src-tauri/src/` differs from HEAD | `block_on` inside a `#[tauri::command]`, and `#[tauri::command(async)]` on an `async fn` |
 | `hub_frontend_tests.py` | a top-level `hub/src/*.js` differs from HEAD | the hub's frontend tests failing |
 | `decompiled_output.py` | any changed text file, in the hub **or in a dirty submodule** | Ghidra/IDA symbols, GameMaker VM pseudo-variables, GML positional arguments and bytecode mnemonics reaching a tracked file |
-| `leftover_processes.py` | `PreToolUse`/`PostToolUse` on `Bash`/`PowerShell`/`Monitor`, and `Stop` | processes this session's tool calls started that are still alive when a reply ends |
+
+`leftover_processes.py` stays its own process at `PreToolUse` and `Stop` —
+different in shape from the four above, as before — but its `post` half now
+runs *inside* the dispatcher (imported lazily, so an Edit/Write call that
+never needs it skips the load) instead of as a fifth hook entry, and runs
+first, before the dispatcher spawns any git child of its own, since its
+snapshot is time-sensitive. See "a per-call ledger" below.
+
+**Adding a check now:** give it a `check(payload, tree: TreeState) -> (rc,
+message)` function, add its module name to `post_tool_use.py`'s
+`TREE_CHECKS` tuple, keep a standalone `main()` for its own CLI, and add a
+positive/negative pair to both the check's own test class and
+`TestDispatcherEquivalence` in `tests/test_claude_hooks.py`.
 
 **The first four key off the working tree, not the tool payload**, and that is the
 single most important thing to preserve when editing them. A payload-shaped
@@ -73,15 +96,16 @@ by a rebuild this session never saw the path of.
 
 ### `leftover_processes.py` — a per-call ledger, not a descendant walk
 
-Unlike the other four, this hook keys off the **live process table**, not the
-working tree, because what it is guarding against — a `cargo` build or a
-detached `npm` script still running after the reply ends — never touches a
-file. It runs three times per tool call and once per reply: `pre` snapshots
-every live process before a `Bash`/`PowerShell`/`Monitor` call, `post`
-snapshots again afterward and admits whatever that call can be blamed for into
-a per-session ledger file, and `Stop` reports whichever ledger entries are
-still alive and have not been reported before. A process is identified by
-`(pid, creation time)`, never PID alone, because Windows reuses PIDs quickly.
+Unlike the tree checks above, this one keys off the **live process table**,
+not the working tree, because what it is guarding against — a `cargo` build
+or a detached `npm` script still running after the reply ends — never touches
+a file. `pre` runs as its own process, snapshotting every live process before
+a `Bash`/`PowerShell`/`Monitor` call; `post` now runs inside
+`post_tool_use.py` rather than as its own process, admitting whatever that
+call can be blamed for into a per-session ledger file; `Stop` — still its own
+process, once per reply — reports whichever ledger entries are still alive
+and have not been reported before. A process is identified by `(pid, creation
+time)`, never PID alone, because Windows reuses PIDs quickly.
 
 Three simpler designs were rejected, and are worth recording so nobody
 re-proposes them:
@@ -483,10 +507,16 @@ can correct it for free.
 
 **Consultation, mid-phase.** A phase can return `ADVICE-NEEDED` with one narrow
 question; the driver spawns `consultant` (opus, read-only, `fable` for the
-hardest rows), then re-spawns the phase with the answer. The phase keeps its
-context and its progress, so one hard decision costs one short answer instead of
-re-running the whole phase at a higher tier. An agent cannot spawn another
-agent, so this is a return-and-redispatch through the driver rather than a call.
+hardest rows), then re-enters the phase with the answer appended to the
+workorder's `## Log`. Same-phase, same-tier re-entry is a `SendMessage` to
+that phase's own agent id (recorded in `## State` › `agents:` when it was
+spawned) — the send is what actually keeps its context and progress, not a
+claim the driver makes about it. A fresh spawn happens only when that is not
+possible (the id does not resolve, or the agent has already been resumed
+twice), and carries a `PROGRESS SO FAR` block instead. Either way, one hard
+decision costs one short answer rather than re-running the whole phase at a
+higher tier. An agent cannot spawn another agent, so this is a
+return-and-redispatch through the driver rather than a call.
 
 The guardrail is one required field: **`WHAT I WOULD DO WITHOUT HELP`**. The
 consultant confirms or corrects a position, which is fast and precise, instead
@@ -560,6 +590,20 @@ class that has recurred here. Wall-clock is one agent; only tokens add up.
 | `docs-sync-reviewer` | sonnet | which `instructions.md`, README, index entry, ADR or `release-notes-vX.Y.Z.md` the change just made wrong |
 | `instrument-blindness-reviewer` | opus | table-only hook installs, hand-resolved addresses, struct-layout assumptions, and negatives recorded without a positive control |
 
+**Delta-scoped from round 1 on.** No reviewer is given the workorder path —
+each dispatch pastes `## Goal`, `## Out of scope`, the diff commands, and the
+paths this round touched, found with
+`.claude/skills/workorder/round_delta.py` (`snapshot <slug> <round>` before
+the round, `delta <slug> <round>` after; exit 3 means the snapshot is missing
+or unreadable, and everything is treated as changed). Round 0 runs every
+applicable reviewer against the whole change. Round ≥ 1 runs `verifier`
+always, plus every reviewer that was `BLOCKING` last round or whose own
+trigger paths (stated in that reviewer's file) appear in the delta; a
+reviewer skipped this way is recorded as `clean@round<n>, not re-run`.
+`decompile-output-guard` is the one exception to being skippable — a legal
+finding is always blocking, so it re-reads every added line every round
+regardless of the delta.
+
 `sdk-contract-reviewer` covers four separate rediscoveries of one defect;
 `tauri-command-reviewer` covers three shipped hangs; `instrument-blindness-reviewer`
 covers 34 hooks reporting zero calls against a game that was calling them. Each
@@ -597,9 +641,24 @@ an action anyone invokes.
 returns a verdict to whoever spawned it, so the routing — `PLAN-DEFECT` back to
 the planner, `IMPL-DEFECT` back to the implementer — lives in the driver. Two
 caps keep that loop from burning tokens on a problem it has lost: **2 replans**
-and **3 implement→verify rounds**, then it stops and asks a human. The
-workorder file itself is `.claude/workorders/<slug>-plan.md`, gitignored by the
-existing `*-plan.md` rule, which matches at any depth.
+and **3 implement→verify rounds**, then it stops and asks a human.
+
+A workorder is two files: `.claude/workorders/<slug>-plan.md` (frontmatter,
+`## State`, `## Goal`, `## Out of scope`, `## Acceptance criteria`,
+`## Steps` — what everyone who touches the workorder reads) and
+`<slug>-context.md` (`## Context the implementer needs` by stable `###`
+subsection, `## Needs human judgement`, `## Log` — read by section, only when
+a step or a reviewer is pointed at it). `## State` carries `round:`, `phase:`,
+`gates:` (the tokens a conditional criterion or step names, instead of
+"while the Log lacks X"), `round base:` (the `round_delta.py` snapshot for
+this round), `agents:` (each phase's agent id, for the resume mechanism
+above), `reviewers:`, `open defects:` and `decisions in force:`. The nine plans written before this
+split stay valid — same sections, single-file — located with
+`grep -n '^## \|^### '` rather than assumed; nothing routes on which shape it
+finds. Both files, and the `.claude/workorders/.rounds/` round snapshots, are
+gitignored at any depth, for the reason `AGENTS.md` § "Documentation &
+Instructions Maintenance" gives: they are working notes for the run, and what
+is still true once the work lands belongs in `docs/` instead.
 
 Three rules exist because the first real run — the panel-and-launcher
 performance pass — hit the cap with seven items open and had to be finished by
@@ -631,6 +690,25 @@ conversation that produced it. Context isolation is *not* one of the benefits �
 planner and implementer are already separate subagents with separate contexts
 either way.
 
+**A fourth mode, opt-in and unproven — say so when offering it:**
+`/workorder resume <slug> workflow`, or the user saying "use a workflow," runs
+the implement → verify → route rounds (steps 2–4) as
+`.claude/workflows/workorder-rounds.js` instead of driver turns: a fresh
+implementer each round, `verifier` plus the delta-scoped reviewers above, and
+a haiku scribe that writes the Log and State entries, looping under the same
+3-round cap. It returns to the driver on anything needing judgement — `PASS`,
+`PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, a human-needed
+`UNATTEMPTED`, or the cap — so replans, consultations, human questions and the
+step-5 report stay with the driver either way. What it trades away: every
+re-entry inside the script is a fresh spawn, never the `SendMessage` resume
+above, because the script has no agent id to send to. What it buys is the
+driver's own tool calls for those rounds, not spent —
+`skills/workorder/SKILL.md` § "Driver discipline" records the measured cost of
+a driver that does that work itself.
+`.claude/workflows/workorder-rounds.test.mjs`
+(`node --test`) dry-runs its routing against stub agents, unproven meaning it
+has not yet carried one real workorder end to end.
+
 That makes the split a forcing function rather than just a workflow: a plan that
 cannot survive a fresh session was never a plan, it was a conversation someone
 was still holding in their head. `resume` checks for exactly that before
@@ -655,9 +733,11 @@ it. Suggest, wait, and drop it if the answer is no.
 in step: some tools (the desktop `manage_window` actions) return a version error
 against an older plugin.
 
-The bridge only exists in a **debug** build — it is registered under
-`#[cfg(debug_assertions)]` because it can invoke any command in the application.
-Start the hub with `npm start` in `hub/` and wait for `:9223` before expecting
+The bridge only exists in a **debug** build with the `mcp-bridge` feature — an
+optional dependency registered under
+`#[cfg(all(debug_assertions, feature = "mcp-bridge"))]`, because it can invoke
+any command in the application. A bare `cargo run` or `tauri dev` does not start
+it. Start the hub with `npm start` in `hub/` (which passes `--features mcp-bridge`) and wait for `:9223` before expecting
 `tauri-hub` to connect. `AGENTS.md` § "Drive a Tauri App Yourself Instead of
 Asking Someone to Click It" has the rest, including the window label (`hub`, not
 the `main` every tool defaults to).
@@ -715,12 +795,16 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Two suites cover this directory, and both run with the rest:
+Four suites cover this directory. Three are Python and run automatically
+under the first command below; the workflow script's own routing is
+JavaScript and runs separately, under Node:
 
 ```bash
 py -3 -m unittest discover -s tests
-py -3 -m unittest tests.test_claude_hooks -v     # the hooks actually block
-py -3 -m unittest tests.test_claude_agents -v    # the definitions are well-formed
+py -3 -m unittest tests.test_claude_hooks -v      # the hooks actually block
+py -3 -m unittest tests.test_claude_agents -v     # the definitions are well-formed
+py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py sees only this round's changes
+node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 
 `test_claude_agents.py` enforces the two rules on this page that a machine can
@@ -728,6 +812,10 @@ check: every agent pins `model:` to a known tier alias, and no frontmatter
 carries an unquoted ` #` that would silently truncate the value. Both are
 invisible in a diff and neither had a check before. It self-tests its own
 parser, for the same reason everything else here does.
+
+`test_claude_workorder.py` drives `round_delta.py` as the subprocess
+`settings.json` and the driver actually invoke, not by importing its
+functions — the same discipline `test_claude_hooks.py` uses for the hooks.
 
 Every test there is a **pair**: a positive control proving the hook fires on a
 real violation, and a negative control proving it stays quiet on a clean tree.

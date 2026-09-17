@@ -45,7 +45,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import SKIP_HINT, changed_paths, repo_root, skip_requested  # noqa: E402
+from _common import SKIP_HINT, TreeState, repo_root, skip_requested  # noqa: E402
 
 WATCHED_DIR = "hub/src-tauri/src"
 
@@ -134,21 +134,13 @@ def inspect(rel: str, source: str) -> list[str]:
     return problems
 
 
-def main() -> int:
-    try:
-        json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-    if skip_requested():
-        return 0
-
-    root = repo_root()
-    if root is None:
-        return 0
-
+def check(payload, tree: TreeState) -> tuple[int, str]:
+    """(rc, message) for one call. `payload` is unused -- this check keys off
+    the working tree, never off which tool ran -- and is accepted only so
+    every check shares one call shape with the dispatcher."""
+    root = tree.root
     problems = []
-    for rel in changed_paths(root, WATCHED_DIR):
+    for rel in tree.changed_paths(root, WATCHED_DIR):
         if not rel.endswith(".rs"):
             continue
         path = root / rel
@@ -161,19 +153,34 @@ def main() -> int:
         problems.extend(inspect(rel, source))
 
     if not problems:
+        return 0, ""
+
+    return 2, "\n\n".join(
+        [
+            "Tauri command rules violated (hub/instructions.md, 'Adding a command'):",
+            *problems,
+            SKIP_HINT,
+        ]
+    )
+
+
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        payload = None
+
+    if skip_requested():
         return 0
 
-    print(
-        "\n\n".join(
-            [
-                "Tauri command rules violated (hub/instructions.md, 'Adding a command'):",
-                *problems,
-                SKIP_HINT,
-            ]
-        ),
-        file=sys.stderr,
-    )
-    return 2
+    root = repo_root()
+    if root is None:
+        return 0
+
+    rc, message = check(payload, TreeState(root))
+    if message:
+        print(message, file=sys.stderr)
+    return rc
 
 
 if __name__ == "__main__":
