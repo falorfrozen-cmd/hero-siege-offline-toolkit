@@ -594,8 +594,11 @@ class that has recurred here. Wall-clock is one agent; only tokens add up.
 each dispatch pastes `## Goal`, `## Out of scope`, the diff commands, and the
 paths this round touched, found with
 `.claude/skills/workorder/round_delta.py` (`snapshot <slug> <round>` before
-the round, `delta <slug> <round>` after; exit 3 means the snapshot is missing
-or unreadable, and everything is treated as changed). Round 0 runs every
+the round, `delta <slug> <round>` after; the snapshot also records each
+repo's HEAD, so work the implementer commits mid-round lands in the delta too,
+not only what it leaves dirty; exit 3 means the snapshot is missing,
+unreadable, or a recorded head can no longer be trusted, and everything is
+treated as changed). Round 0 runs every
 applicable reviewer against the whole change. Round ≥ 1 runs `verifier`
 always, plus every reviewer that was `BLOCKING` last round or whose own
 trigger paths (stated in that reviewer's file) appear in the delta; a
