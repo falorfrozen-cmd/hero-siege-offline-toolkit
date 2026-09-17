@@ -85,7 +85,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import SKIP_HINT, changed_entries, repo_root, skip_requested  # noqa: E402
+from _common import SKIP_HINT, TreeState, repo_root, skip_requested  # noqa: E402
 
 # Text we might plausibly paste a listing into. A binary or an asset cannot
 # carry this accident, and reading every changed `.png` would cost real time.
@@ -139,29 +139,6 @@ SIGNATURES = (
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
-def submodule_dirs(root: Path) -> list[str]:
-    """Submodule paths from `.gitmodules`, in declaration order."""
-    try:
-        text = (root / ".gitmodules").read_bytes().decode("utf-8", "replace")
-    except OSError:
-        return []
-    return re.findall(r"^\s*path\s*=\s*(.+?)\s*$", text, re.MULTILINE)
-
-
-def dirty_submodules(root: Path) -> list[str]:
-    """Submodules whose own working tree differs from their HEAD.
-
-    The hub reports these as one changed pointer, so this is the only way to
-    reach the files inside them -- and `ForgePact/docs/` is where the risk is.
-    """
-    changed = {path for _, path in changed_entries(root, ".")}
-    return [
-        rel
-        for rel in submodule_dirs(root)
-        if rel in changed and (root / rel / ".git").exists()
-    ]
-
-
 def read_text(path: Path) -> str | None:
     try:
         return path.read_bytes().decode("utf-8", "replace")
@@ -170,7 +147,7 @@ def read_text(path: Path) -> str | None:
         return None
 
 
-def added_lines(tree: Path, status: str, rel: str) -> list[tuple[int, str]]:
+def added_lines(subroot: Path, status: str, rel: str) -> list[tuple[int, str]]:
     """(line number, text) for the lines this change adds to `rel`.
 
     An untracked file is new in its entirety. For anything git already knows
@@ -178,14 +155,14 @@ def added_lines(tree: Path, status: str, rel: str) -> list[tuple[int, str]]:
     see the module docstring for why whole-file matching was unusable.
     """
     if status.startswith("?"):
-        source = read_text(tree / rel)
+        source = read_text(subroot / rel)
         if source is None:
             return []
         return list(enumerate(source.splitlines(), start=1))
 
     out = subprocess.run(
         ["git", "diff", "HEAD", "--unified=0", "--no-color", "--", rel],
-        cwd=tree,
+        cwd=subroot,
         capture_output=True,
         check=False,
     )
@@ -225,23 +202,60 @@ def inspect(display: str, lines: list[tuple[int, str]]) -> list[str]:
     return problems
 
 
-def scan(tree: Path, prefix: str, skip_excluded: bool) -> list[str]:
-    """Every line added to a watched file under one git working tree."""
+def scan(tree: TreeState, subroot: Path, prefix: str, skip_excluded: bool) -> list[str]:
+    """Every line added to a watched file under one git working tree.
+
+    `tree` is the shared `_common.TreeState`; `subroot` is `tree.root` for the
+    hub scan or `tree.root / rel` for a dirty submodule's own scan -- either
+    way `tree.changed_entries` answers from its memoised status instead of
+    running a fresh `git status` per call.
+    """
     problems = []
-    for status, rel in changed_entries(tree, "."):
+    for status, rel in tree.changed_entries(subroot, "."):
         if skip_excluded and rel.startswith(EXCLUDED_PREFIXES):
             continue
         if not rel.endswith(WATCHED_SUFFIXES):
             continue
-        problems.extend(inspect(prefix + rel, added_lines(tree, status, rel)))
+        problems.extend(inspect(prefix + rel, added_lines(subroot, status, rel)))
     return problems
+
+
+def check(payload, tree: TreeState) -> tuple[int, str]:
+    """(rc, message) for one call. `payload` is unused -- this check keys off
+    the working tree, never off which tool ran -- and is accepted only so
+    every check shares one call shape with the dispatcher."""
+    root = tree.root
+    problems = scan(tree, root, "", skip_excluded=True)
+    for rel in tree.dirty_submodules():
+        problems.extend(scan(tree, root / rel, f"{rel}/", skip_excluded=False))
+
+    if not problems:
+        return 0, ""
+
+    return 2, "\n\n".join(
+        [
+            "Decompiled or disassembled game source may be reaching a "
+            "tracked file\n"
+            "(AGENTS.md, 'Legal: Decompiled Output Never Reaches Any "
+            "Origin'):",
+            *problems,
+            "Reading a script body locally is fine. Committing it is not, "
+            "in any repository\n"
+            "here -- every submodule's own origin included. Write up what "
+            "you learned in\n"
+            "your own words instead: names, indices, measured behaviour "
+            "and offsets are\n"
+            "interoperability facts and stay welcome.",
+            SKIP_HINT,
+        ]
+    )
 
 
 def main() -> int:
     try:
-        json.load(sys.stdin)
+        payload = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
-        pass
+        payload = None
 
     if skip_requested():
         return 0
@@ -250,34 +264,10 @@ def main() -> int:
     if root is None:
         return 0
 
-    problems = scan(root, "", skip_excluded=True)
-    for rel in dirty_submodules(root):
-        problems.extend(scan(root / rel, f"{rel}/", skip_excluded=False))
-
-    if not problems:
-        return 0
-
-    print(
-        "\n\n".join(
-            [
-                "Decompiled or disassembled game source may be reaching a "
-                "tracked file\n"
-                "(AGENTS.md, 'Legal: Decompiled Output Never Reaches Any "
-                "Origin'):",
-                *problems,
-                "Reading a script body locally is fine. Committing it is not, "
-                "in any repository\n"
-                "here -- every submodule's own origin included. Write up what "
-                "you learned in\n"
-                "your own words instead: names, indices, measured behaviour "
-                "and offsets are\n"
-                "interoperability facts and stay welcome.",
-                SKIP_HINT,
-            ]
-        ),
-        file=sys.stderr,
-    )
-    return 2
+    rc, message = check(payload, TreeState(root))
+    if message:
+        print(message, file=sys.stderr)
+    return rc
 
 
 if __name__ == "__main__":
