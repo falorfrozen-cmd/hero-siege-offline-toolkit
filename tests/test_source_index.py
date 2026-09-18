@@ -313,7 +313,13 @@ class CLITests(unittest.TestCase):
 
 @unittest.skipUnless(MODULE_MAIN.is_file(), "ForgePact/plugin/ModuleMain.cpp not present in this checkout")
 class ModuleMainSmokeTest(unittest.TestCase):
-    def test_regions_count_and_find_pp_backing_id_check(self):
+    # FrameCallback is the release build's EVENT_FRAME callback and has been in
+    # ModuleMain.cpp since ForgePact's first source commit, so it exists at
+    # whatever pointer the hub records. Do not point this at a function that
+    # lives only on an unmerged ForgePact branch.
+    TARGET = "FrameCallback"
+
+    def test_regions_count_and_find_frame_callback(self):
         lines = si.read_lines(MODULE_MAIN)
         clean = si.strip_comments_and_literals(lines)
         guarded = si.compute_guarded_lines(clean, si.DEFAULT_GUARD)
@@ -322,12 +328,12 @@ class ModuleMainSmokeTest(unittest.TestCase):
 
         self.assertGreaterEqual(len(regions), 90, f"only {len(regions)} regions found")
 
-        region_hits, func_hits = si.do_find(regions, functions, "PpBackingIdCheck")
-        self.assertTrue(func_hits, "expected a function match for PpBackingIdCheck")
+        region_hits, func_hits = si.do_find(regions, functions, self.TARGET)
+        self.assertTrue(func_hits, f"expected a function match for {self.TARGET}")
         start, end = func_hits[0]["start"], func_hits[0]["end"]
         defining_line = next(
             i for i, l in enumerate(lines, start=1)
-            if "PpBackingIdCheck" in l and l.strip().startswith(("static", "void"))
+            if self.TARGET in l and l.strip().startswith(("static", "void"))
         )
         self.assertTrue(start <= defining_line <= end,
                          f"range {start}-{end} does not contain defining line {defining_line}")
