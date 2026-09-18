@@ -127,7 +127,9 @@ gate token from `## State`.
 ## Steps
 Preconditions common to every step (branch, CRLF, do-not-revert) as
 imperatives, first. Then the ordered steps; a step that depends on context
-names the subsection: `ctx: "<### heading>"`.
+names the subsection: `ctx: "<### heading>"`. Every path is relative to this
+checkout's root — never an absolute path into another checkout's copy of a
+submodule.
 ```
 
 `.claude/workorders/<slug>-context.md`:

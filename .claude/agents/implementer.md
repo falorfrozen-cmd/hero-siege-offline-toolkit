@@ -19,7 +19,9 @@ after an `IMPL-DEFECT`.
 
 Do not `Read` a file already in your context unless it changed since (your own
 `Edit` isn't a reason; a `Bash` command that rewrote it is). Use `offset`/
-`limit` on a file over ~500 lines when you need one region.
+`limit` on a file over ~500 lines when you need one region. Every path in the
+workorder is relative to this checkout's root — never resolve one against
+another checkout's copy of a submodule.
 
 ## The one thing that makes this pipeline work
 

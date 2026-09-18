@@ -108,6 +108,16 @@ deliberate, and the warning is worth more than a refusal.
 
 ### Step 1 — plan
 
+If the request touches a submodule not initialized in this checkout, run
+`py -3 .claude/skills/workorder/ensure_submodule.py <module>` first — it gives
+this checkout its own submodule gitdir, so two linked worktrees never share
+one, and the planner's own "Load the module's guide" step needs files inside
+it either way. From here, all work on that module — reading, editing,
+building, committing, the work branch — stays in this checkout's copy; if the
+script names unpushed work sitting in the main checkout, bring it across with
+the `git -C <module> fetch` command it prints. Removing this worktree later
+needs `git worktree remove --force` once it carries a submodule.
+
 Spawn `planner` at the tier triage chose, with the request and the repository
 context. It writes `.claude/workorders/<slug>-plan.md` (frontmatter, `## State`,
 `## Goal`, `## Out of scope`, `## Acceptance criteria`, `## Steps`) and
@@ -145,16 +155,19 @@ Then stop. Spawn nothing further, and do not begin implementing.
 
 ### Step 2 — implement
 
-**Entering here from `resume`?** Do two things first, because this session did
-not write the plan and knows nothing it does not say:
+**Entering here from `resume`?** Do three things first, because this session
+did not write the plan and knows nothing it does not say:
 
-1. **Read the plan file in full, `## Needs human judgement` and all of `## Log`**
+1. **Repeat the submodule check from Step 1**, against the plan's `module:`
+   field — a week-old plan may name a module this fresh checkout hasn't
+   initialized.
+2. **Read the plan file in full, `## Needs human judgement` and all of `## Log`**
    — the one point the driver reads the whole Log, to re-count replans and
    consultations. Grep `## Context` for what step 2 needs rather than reading
    it whole. Re-run the step 0.5 triage — it's a property of the task, not the
    session, so it reaches the same row, but the repository may have moved
    under a week-old plan.
-2. **Check it is self-sufficient.** Every step must be actionable from the file
+3. **Check it is self-sufficient.** Every step must be actionable from the file
    alone. A step that assumes a decision made only in conversation, names a file
    that no longer exists, or says "as discussed" is a `PLAN-DEFECT` now — cheaper
    to route back before an implementer has spent a round discovering it.
@@ -269,13 +282,16 @@ after). `instrument-blindness-reviewer` also gets the context file's path and
 the `###` heading(s) recording the research finding. Never paste the
 implementer's transcript.
 
-**`git diff` alone under-reports**, missing untracked files and the index:
+**Diff from the round base, never from `HEAD`** — implementers commit during
+the round, so `git diff HEAD` is empty afterwards. Take each repo's base sha
+from `round_delta.py heads <slug> <round>` (or `## State` › `round base:`):
 
 ```bash
 git status --porcelain -uall     # untracked, named individually
-git diff HEAD                    # working tree and index
+git log --oneline <base>..HEAD   # this round's commits
+git diff <base>                  # working tree vs base: committed and uncommitted
 git -C <submodule> status --porcelain -uall
-git -C <submodule> diff HEAD     # the hub's diff shows only the pointer
+git -C <submodule> diff <its base>   # the hub's diff shows only the pointer
 ```
 
 | Reviewer | Applicable when the change touches | Re-run on round ≥ 1 when the delta contains |
@@ -380,33 +396,39 @@ largest context in the pipeline — stop and dispatch instead. Measured: the
 driver that closed a capped workorder by hand made 236 Bash calls and 47 edits
 at a median 425K-token context, reading 157M cached tokens for that resume.
 
-**Workflow mode — opt-in, unproven.** `/workorder resume <slug> workflow`, or
-"use a workflow," runs steps 2-4 as a script instead of driver turns — offer it
-as unproven, not yet carried one real workorder end to end:
+**Workflow mode is the default way steps 2–4 run.** `/workorder <task>` and
+`/workorder resume <slug>` call it — the user's own invocation is the opt-in
+the Workflow tool requires, so don't ask again. It carried
+`prospect-idcheck-pin-hardening` through three rounds to `PASS` on
+2026-09-17.
 
 ```
 Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
-                   reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... }, repoRoot } })
+                   reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
+                   submodules: ['<dir>', ...], researchHeadings, baseHeads, repoRoot } })
 ```
 
-`reviewers` is a map, not a list — one entry per applicable reviewer from the
-round-0 set, each valued `'never'` (round 0) so the script knows to read the
-whole change rather than a delta.
+`reviewers`/`submodules` are as in Step 3. `researchHeadings` names the
+context file's `###` heading(s) for `instrument-blindness-reviewer`.
+`baseHeads` is `{ '.': sha, '<submodule>': sha }`, copied from `## State` ›
+`round base:`, so a `never` reviewer reads the whole change from the
+workorder's own start rather than a later round's snapshot. `repoRoot` is
+only an escape hatch for a workorder deliberately run against another
+checkout; the default is absent now that Step 1's `ensure_submodule.py` gives
+this checkout its own submodule copy.
 
-`repoRoot` is optional and only needed when the driver session's own checkout
-is not the repository the work happens in (a driver running from a worktree
-while the change lands in another checkout) — pass the work's absolute repo
-root and the script points `round_delta.py --root` and every `git -C` diff
-command at it instead of defaulting to the driver's own CWD.
-
-It loops implement → `round_delta.py` → verify + delta-scoped reviewers →
-route (3-round cap, a haiku scribe for Log/State, the reviewer table above as
-code), returning to the driver on `PASS`, `PASS-PENDING-HUMAN`, `PLAN-DEFECT`,
-`ADVICE-NEEDED`, a human-needed `UNATTEMPTED`, or the cap. Replans,
+It loops implement → verify+reviewers → route as code (same 3-round cap,
+scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,
+`PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED` or `CAP`. One launch may cover
+several rounds; `PLAN-DEFECT` means relaunching after the replan. Replans,
 consultations, human questions and the step 5 report stay with the driver;
-every re-entry inside is a fresh spawn (no resume) — what it removes is the
-driver's own turns.
+every re-entry inside is a fresh spawn (no resume) — measured no worse than a
+resumed implementer.
+
+**Fall back to driver turns** (steps 2–4 by hand, above) when the Workflow
+tool is unavailable, the launch fails, or the user says "driver mode" or "no
+workflow".
 
 ## Two rules that make this work rather than just look like it works
 
