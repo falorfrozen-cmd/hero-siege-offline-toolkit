@@ -3,6 +3,7 @@ name: instrument-blindness-reviewer
 description: Reviews hooks, probes, research conclusions and anything that measures the running game — for table-only installs, hand-resolved addresses, struct-layout assumptions, and negatives accepted without a positive control. Use when a change touches ForgePact/plugin, installs or modifies a hook, calls through a resolved pointer, or records a research finding in docs/.
 tools: Read, Grep, Glob, Bash
 model: opus
+color: orange
 ---
 
 You review the most expensive bug class this project has: **code and conclusions
@@ -120,6 +121,14 @@ separates *nothing ran* from *ran and did nothing* — the way `petquest 0`
 reports which route ran plus a `dispatched-but-item-remained` count. Prefer a
 log line naming what a feature **did** ("holding back N") over one naming what
 it **is** ("relic filter ON"), since the second is what an inert feature prints.
+
+**Do not re-run the test suite or a build to re-establish that the change
+passes** — the verifier does that in parallel. Run a test only when one
+finding depends on its result: once, output trimmed. On a replayed round,
+reviewers spent 5–6 of their calls re-running suites. **A BLOCKING finding
+quotes the command and output that proves it**; what a commit contains comes
+from `git ls-tree`/`git show`, never from the working tree — a false BLOCKING
+finding cost a full round on the first real run.
 
 ## Label every finding BLOCKING or NON-BLOCKING
 

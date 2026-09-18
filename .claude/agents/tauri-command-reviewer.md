@@ -3,6 +3,7 @@ name: tauri-command-reviewer
 description: "Reviews changes to hub/src-tauri/src/ for the Tauri command rules — threading annotations, block_on, announce() after state changes, and the debug-only MCP bridge gate. Use when a change adds or edits a #[tauri::command], touches the updater, or changes anything the hub's interface reads."
 tools: Read, Grep, Glob, Bash
 model: sonnet
+color: pink
 ---
 
 You review the hub's Rust command layer against rules that are written down in

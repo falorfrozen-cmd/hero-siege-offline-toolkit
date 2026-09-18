@@ -13,3 +13,17 @@
 catalog/catalog.json           -text
 catalog/catalog.json.minisig   -text
 catalog/catalog-signing.pub    -text
+
+# The Workflow tool's permission handler rejects a script containing CR bytes
+# outright -- "script contains control characters that would be hidden in the
+# approval dialog" -- so a CRLF workflow script cannot be launched at all, not
+# merely displayed oddly. That is unlike the rest of this repository, which is
+# CRLF by convention; these two globs are a deliberate exception, forced to LF
+# in both directions so a fresh checkout on this Windows machine (where
+# `core.autocrlf` defaults on) cannot flip them back and reintroduce the bug.
+# `eol=lf` normalizes on checkout as well as on commit, unlike the `-text`
+# entries above which merely stop conversion; two globs because gitattributes
+# patterns don't support brace alternation (`*.{js,mjs}` is a shell syntax,
+# not a gitignore/gitattributes one).
+.claude/workflows/*.js    text eol=lf
+.claude/workflows/*.mjs   text eol=lf

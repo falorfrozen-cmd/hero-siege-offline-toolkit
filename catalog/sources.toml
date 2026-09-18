@@ -338,3 +338,30 @@ ports = []
 [tool.source_launch]
 cmd = "py"
 args = ["-3", "hs_statforge.py"]
+
+# ---------------------------------------------------------------------------
+
+[[tool]]
+id = "hero-siege-codex"
+name = "Hero Siege Codex"
+summary = "Explore items, classes, creatures, and the world."
+repo = "falorfrozen-cmd/hero-siege-codex"
+license = "NOASSERTION"
+guide = "docs/tools/hero-siege-codex.md"
+# Toolkit owns this portable tree; the standalone setup is a separate download.
+asset_pattern = '^HeroSiegeItemCodex-[0-9]+\.[0-9]+\.[0-9]+-Windows-x64-Portable\.zip$'
+kind = "zip"
+
+[tool.requires]
+admin = false
+game_closed = false
+game_running = false
+windows_only = true
+
+[tool.launch]
+exe = "hero-siege-item-codex.exe"
+args = []
+elevate = false
+ports = []
+
+# Release-only integration: no submodule, source_launch or HTTP health endpoint.
