@@ -368,6 +368,7 @@ from .player import (
     GENERAL_CONTAINER_FIELDS,
     RELIC_CONTAINER_FIELDS,
 )
+from .item_type import ItemType
 from .mod_registry import ModDefinition, ModRegistry, GLOBAL_MOD_REGISTRY
 
 __version__ = "1.1.0"
@@ -421,6 +422,7 @@ __all__ = [
     "RELIC_ONLY_FIELD",
     "GENERAL_CONTAINER_FIELDS",
     "RELIC_CONTAINER_FIELDS",
+    "ItemType",
     "ModDefinition",
     "ModRegistry",
     "GLOBAL_MOD_REGISTRY",
@@ -1101,6 +1103,7 @@ inline RValue GetArrayElement(YYTKInterface* yytk, const RValue& arrayVal, int i
 #include "hooks.hpp"
 #include "player.hpp"
 #include "satanic_zone.hpp"
+#include "item_type.hpp"
 
 namespace HeroSiege {
     inline constexpr int32_t BUFF_ANGELIC_CHANCE = 332;
@@ -1200,6 +1203,7 @@ export * from './scripts';
 export * from './rooms';
 export * from './stats';
 export * from './satanic_zone';
+export * from './item_type';
 '''
     (ts_dir / "index.ts").write_text(index_content, encoding="utf-8")
 

@@ -7,6 +7,7 @@
 #include "hooks.hpp"
 #include "player.hpp"
 #include "satanic_zone.hpp"
+#include "item_type.hpp"
 
 namespace HeroSiege {
     inline constexpr int32_t BUFF_ANGELIC_CHANCE = 332;
