@@ -1,0 +1,9 @@
+{
+  "ForgePact": [
+    "plugin_build/include",
+    "modfiles_shipped/AurieCore.dll",
+    "modfiles_shipped/AuriePatcher.exe",
+    "modfiles_shipped/YYToolkit.dll",
+    "modfiles_shipped/HSOfflineTrackerProducer.dll"
+  ]
+}
