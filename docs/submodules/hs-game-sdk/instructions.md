@@ -41,6 +41,7 @@ hs-game-sdk/
 │   │   ├── stats.py            # StatId enum, proc bundles (116/117/118), buff IDs (332)
 │   │   ├── structs.py          # Dataclasses: ItemDefinitionStruct, ItemStatStruct, etc.
 │   │   ├── player.py           # EquipmentSlot enums, PlayerEquipment, container scanners
+│   │   ├── item_type.py        # ItemType IntEnum: the item instance's itemType class (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
 │   ├── pyproject.toml
@@ -54,6 +55,7 @@ hs-game-sdk/
 │       ├── yytk_helpers.hpp    # Typed helper wrappers for YYTKInterface
 │       ├── hooks.hpp           # InstallScriptHook: table swap + inline detour, repeat-safe
 │       ├── player.hpp          # Player discovery; relic scanners (positive ID only)
+│       ├── item_type.hpp       # HeroSiege::Items::ItemType + enumerable kItemTypes (hand-written, no YYToolkit)
 │       ├── satanic_zone.hpp    # HeroSiege::SatanicZone::kBuffs/kDebuffs, generated from curated/satanic_zone.json
 │       └── hs_game_sdk.hpp     # Main aggregate header
 ├── ts/                         # TypeScript / ESM SDK for web and UI modules
@@ -63,6 +65,7 @@ hs-game-sdk/
 │   │   ├── rooms.ts
 │   │   ├── stats.ts
 │   │   ├── player.ts
+│   │   ├── item_type.ts        # ItemType enum + enumerable ITEM_TYPES (hand-written)
 │   │   ├── satanic_zone.ts     # SATANIC_BUFFS/SATANIC_DEBUFFS, generated from curated/satanic_zone.json
 │   │   └── index.ts
 │   └── package.json
@@ -164,6 +167,77 @@ checks can be `static_assert`ed). TypeScript mirrors the Python names in camelCa
 
 ---
 
+## Item class: `ItemType`
+
+`ItemType` names the value an item **instance** carries in its `itemType` field — the
+field ForgePact already reads off live item structs, and the one `s_ItemInstanceStruct`
+carries alongside its definition, info and stat structs (`HSCraftSim/RESEARCH.md` § 2).
+It does **not** describe the item *definition* struct's `c` field: HSCraftSim treats `c`
+as a 0/1 unique flag, and `docs/RUNTIME_DATA_MODELS.md` labels it a rarity tier. Do not
+match `ItemType` against `c`.
+
+| Binding | Enum | Enumerable companion |
+| --- | --- | --- |
+| Python | `from hs_game_sdk import ItemType` (`IntEnum`, UPPER_SNAKE) | iterate the enum |
+| C++ | `HeroSiege::Items::ItemType` (`enum class : int32_t`, PascalCase) in `<hs_game_sdk/item_type.hpp>` | `HeroSiege::Items::kItemTypes` — `(std::string_view name, ItemType)` pairs |
+| TypeScript | `ItemType` (`export enum`, PascalCase) from `@hero-siege/sdk` | `ITEM_TYPES` — readonly `{ name, value }` array |
+
+`item_type.hpp` is self-contained (standard headers only, no YYToolkit), so any plugin can
+include it on its own; `hs_game_sdk.hpp` pulls it in too.
+
+| Value | Python | C++ / TS | Source |
+| --- | --- | --- | --- |
+| 0 | `HELMET` | `Helmet` | R |
+| 1 | `BODY` | `Body` | R |
+| 2 | `BOOTS` | `Boots` | R |
+| 3 | `WEAPON` | `Weapon` | R |
+| 4 | `GLOVES` | `Gloves` | R |
+| 5 | `AMULET` | `Amulet` | R |
+| 6 | `SHIELD` | `Shield` | R (`RUNTIME_DATA_MODELS.md` gives 6 a different label on `c`) |
+| 7 | `RING` | `Ring` | R |
+| 8 | `BELT` | `Belt` | R (`RUNTIME_DATA_MODELS.md` gives 8 a different label on `c`) |
+| 10 | `CHARM` | `Charm` | R (`RUNTIME_DATA_MODELS.md` gives 10 a different label on `c`) |
+| 11 | `CONSUMABLE` | `Consumable` | R + V (catalog row `(11, 23)` Infernal Codex) |
+| 12 | `KEY` | `Key` | R + V (`(12, 8)` Angelic Key) + D ("Dungeon Keys `12`") |
+| 13 | `TAROT` | `Tarot` | R + V (`(13, 24)` The Wheel of Fortune) |
+| 14 | `MATERIAL` | `Material` | R + V (`(14, 69)` Infernal Codex Page) |
+| 15 | `SOCKETABLE` | `Socketable` | R + V (`(15, 82)` Exan Jewel) — runes, gems and jewels |
+| 16 | `RELIC` | `Relic` | R + S (`RELIC_RARITY_TIER` / `kRelicRarityTier`, matched against `itemType`) + D ("Relics `16`") |
+| 18 | `POTION` | `Potion` | R |
+| 19 | `OTHER` | `Other` | R |
+
+Sources:
+- **R** — `HSCraftSim/RESEARCH.md` § 2, the "Item types (= catalog `cls`)" list, which names
+  all 18 values.
+- **V** — the same paragraph's "Verified" list: `(itemType, itemId)` pairs cross-checked
+  against Item Editor catalog rows `(cls, b)`. HSCraftSim's `data/README.md` documents the
+  catalog's `cls` column as the crafting `itemType`.
+- **S** — already in this SDK: the relic contract in `player.py` / `player.hpp` identifies a
+  relic by tier 16 read from `itemType` among other fields. `tests/test_item_type_parity.py`
+  asserts `ItemType.RELIC == RELIC_RARITY_TIER`; the relic contract itself is unchanged.
+- **D** — `docs/RUNTIME_DATA_MODELS.md` § 3, the `LoadDrops` drop categories.
+
+The integers **9** and **17** appear in no source and have no member. Do not add one without
+evidence. **No row has been read from a live item instance on this runner yet**, including
+14: every Source above is the research note or a catalog cross-check, not a runtime
+measurement. When a live read confirms a value, mark its row "measured in-game" with the date.
+Only 14 is planned to be confirmed by an in-game read (ForgePact's
+move-materials-to-bag work); the other values rest on the research note above, so treat a
+live mismatch as a finding to record here, not a typo.
+
+The three declarations are hand-written, not generated, and nothing derives one from another:
+that is what makes `tests/test_item_type_parity.py` a real check rather than a tautology. It
+parses `item_type.hpp` and `item_type.ts` as text (runs in any checkout), imports
+`item_type.ts` under `node --experimental-transform-types` (skips without `node` ≥ 22.7), and checks
+no binding declares 9 or 17. `tests/test_cpp_sdk.py`'s
+`test_compiled_item_type_table_matches_python` compares the *compiled* `kItemTypes`, printed by
+the harness as `ITEM_TYPE <Name> <value>` lines, against the Python enum. A `curated/*.json` +
+generator was considered and not used: with one generated source, the parity test would compare
+a file with itself, and for 18 stable constants the extra artifact costs more than the drift it
+prevents — revisit if the table grows.
+
+---
+
 ## Integration Workflow Across Submodules
 
 ### 1. Python Submodules (`hero-siege-item-editor`, `HSSaveEditor`, etc.)
@@ -173,7 +247,7 @@ py -3 -m pip install -e hs-game-sdk/python
 ```
 Or import directly:
 ```python
-from hs_game_sdk import GameObject, GameScript, StatId, PROC_FAMILIES, ItemDefinitionStruct
+from hs_game_sdk import GameObject, GameScript, StatId, PROC_FAMILIES, ItemDefinitionStruct, ItemType
 ```
 
 ### 2. C++ Submodules (`ForgePact/plugin`, `HS-Offline-Tracker/aurie-producer`)
@@ -186,13 +260,14 @@ using namespace HeroSiege;
 void ExampleHook() {
     auto obj = Objects::GameObject::Enemy_Parent_obj;
     std::string_view script = Scripts::gml_Script_DropItem;
+    auto material = Items::ItemType::Material;  // itemType 14
 }
 ```
 
 ### 3. TypeScript Submodules (`HSCraftSim`, `HS-Offline-Tracker` UI)
 Import from the module:
 ```typescript
-import { GameObject, GameScripts, StatId } from '@hero-siege/sdk';
+import { GameObject, GameScripts, StatId, ItemType } from '@hero-siege/sdk';
 ```
 
 ---
@@ -205,6 +280,7 @@ import { GameObject, GameScripts, StatId } from '@hero-siege/sdk';
 | `py -3 tools/generate_satanic_zone_sdk.py` | Workspace Root | Regenerate `satanic_zone.py`/`.hpp`/`.ts` from `hs-game-sdk/curated/satanic_zone.json` (hand-edited, not extracted) | Verified 2026-09-10 |
 | `py -3 -m unittest discover -s tests` | Workspace Root | Run the SDK test suite. Passes in a clean checkout; extraction- and compiler-dependent suites skip (see below) | Verified 2026-09-12 |
 | `py -3 -m unittest tests.test_cpp_sdk -v` | Workspace Root | Compile and run the C++ relic/hook behavioural tests against the stubbed YYToolkit surface | Verified 2026-09-12 |
+| `py -3 -m unittest tests.test_item_type_parity -v` | Workspace Root | Check the Python, C++ and TypeScript `ItemType` declarations match value for value, and the aggregates match their generator templates | Verified 2026-09-19 (12 tests OK, node v24) |
 | `py -3 -m pip install -e hs-game-sdk/python` | Workspace Root | Install Python SDK in development mode | Verified |
 
 ### Which tests need a game install, and which do not
@@ -223,6 +299,7 @@ contributor can be assumed to have:
 | `test_object_hierarchy.py` → `TestObjectsJsonMatchesBindings` | `hs-game-sdk/data/` | skips |
 | `test_extractor_layout.py` | nothing (builds a synthetic `data.win`) | always runs |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
+| `test_item_type_parity.py` | nothing (parses the tracked bindings); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`) |
 
 `test_extractor_layout.py` is how the OBJT offsets stay verifiable without the
 game: it writes a tiny GameMaker IFF file by hand, with each field at its
@@ -369,6 +446,13 @@ re-run it; regeneration is idempotent, so a second run must produce no diff.
 
 `satanic_zone.py`/`.hpp`/`.ts` are the exception: they belong to
 `tools/generate_satanic_zone_sdk.py` and are regenerated from `curated/satanic_zone.json`.
+
+"Every file" is broader than the code, though: `player.py`/`.hpp`/`.ts`, `hooks.hpp`,
+`mod_registry.py` and `item_type.py`/`.hpp`/`.ts` are hand-written, and the generator neither
+writes nor deletes them. Edit those in place. They still have to be wired into the aggregates
+through the templates — `init_content`, `main_header` and `index_content` all include
+`item_type` now, and `tests/test_item_type_parity.py` fails if a committed aggregate stops
+matching its template.
 
 ---
 
