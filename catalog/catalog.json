@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-17T15:19:32Z",
+  "generated": "2026-09-18T07:33:40Z",
   "tools": [
     {
       "id": "forgepact",
@@ -444,6 +444,41 @@
           "hs_statforge.py"
         ]
       }
+    },
+    {
+      "id": "hero-siege-codex",
+      "name": "Hero Siege Codex",
+      "summary": "Explore items, classes, creatures, and the world.",
+      "repo": "falorfrozen-cmd/hero-siege-codex",
+      "submodule": "",
+      "version": "0.5.0",
+      "tag": "v0.5.0",
+      "published": "2026-09-18T07:31:12Z",
+      "license": "NOASSERTION",
+      "requires": {
+        "admin": false,
+        "game_closed": false,
+        "game_running": false,
+        "windows_only": true
+      },
+      "artifact": {
+        "kind": "zip",
+        "name": "HeroSiegeItemCodex-0.5.0-Windows-x64-Portable.zip",
+        "url": "https://github.com/falorfrozen-cmd/hero-siege-codex/releases/download/v0.5.0/HeroSiegeItemCodex-0.5.0-Windows-x64-Portable.zip",
+        "size": 24214478,
+        "sha256": "131cd681591dd234475c08fc3fabf81e05d85234db5d4bcc13d66b41306a6514",
+        "sha256_source": "published+verified",
+        "strip_prefix": ""
+      },
+      "launch": {
+        "exe": "hero-siege-item-codex.exe",
+        "args": [],
+        "elevate": false,
+        "ports": []
+      },
+      "notes_url": "https://github.com/falorfrozen-cmd/hero-siege-codex/releases/tag/v0.5.0",
+      "notes": "First public test edition of **Hero Siege Codex** for Hero Siege Toolkit.\n\nExplore items, classes, creatures, and the world in the offline Scholar's Index interface. Includes 1,990 equipment entries, 167 relics, 89 stat descriptions, 24 classes, 325 creature entries, 217 Ether nodes and 200 quests.\n\n- **Toolkit:** refresh the library, search for Hero Siege Codex and select Install. Toolkit manages the Portable ZIP and checks the signed catalog's SHA-256.\n- **Standalone portable:** extract `HeroSiegeItemCodex-0.5.0-Windows-x64-Portable.zip` and run `hero-siege-item-codex.exe`.\n- **Standalone setup:** run `HeroSiegeItemCodex-0.5.0-Setup.exe` to install for your Windows account and register entry links.\n- Use **Ctrl+O** to open shared entry links in either edition.\n\nWindows x64 with Microsoft Edge WebView2. No running game, administrator access or website account is required. The packaged archive works offline; external links require internet.\n\nThis is a **public test build**, not a claim of complete current-game coverage. See `TEST_RESULTS.md` in the ZIP for checks and remaining tester coverage. The EXE is unsigned. The existing desktop build is distributed unchanged; website snapshot `888939603820819ab321222f34fc27744c54e3d5`, desktop version `0.5.0`.\n\nReport problems through this repository's Issues using the in-app **Report an issue** details. Checksums are supplied in `SHA256SUMS.txt`; dependency notices and provenance are inside the ZIP.",
+      "guide": "docs/tools/hero-siege-codex.md"
     }
   ],
   "warnings": []
