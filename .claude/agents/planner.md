@@ -228,3 +228,15 @@ Exhaust the static search *first*. A question a `grep` over `scripts.hpp` and
   the module's Known Limitations.
 - **A correction in one submodule is not done until the shared SDK has it
   too.** A fix to a copy of an installer or scanner covers `hs-game-sdk` too.
+- **Never plan work in a checkout other than the one this session runs in.**
+  `Edit` and `Write` are refused outside the session's own checkout (`git
+  rev-parse --show-toplevel`), so a `repoRoot:` pointing anywhere else is a
+  plan whose every edit step is unrunnable — one such plan cost an implementer
+  57 of its 142 turns patching files through the shell instead. When the
+  request names another checkout ("main checkout", a path outside this one)
+  because unpushed or uncommitted work lives there, write no steps: set
+  `status: BLOCKED` and put the two ways forward under `## Needs human
+  judgement` — the user opens the session in that checkout, or the work is
+  brought here first (`git -C <module> fetch "<main checkout>/<module>"
+  <branch>` for a submodule's unpushed branch). Which one is the user's call,
+  not a consultant's.

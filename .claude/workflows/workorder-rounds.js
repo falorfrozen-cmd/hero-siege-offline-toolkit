@@ -21,9 +21,13 @@ export const meta = {
 //   reviewers: { '<name>': 'never' | 'clean' | 'blocking' },   // applicable reviewers and their last verdict
 //   submodules: ['ForgePact', ...],     // dirs whose own diff the reviewers must read, relative to repoRoot
 //   researchHeadings,                   // '###' heading(s) in the context file recording a research finding, for instrument-blindness-reviewer
-//   repoRoot,                           // absolute path to the repo under change, when it isn't this driver's CWD
+//   repoRoot,                           // still accepted, and nothing passes it: it re-points the git commands agents are
+//                                       // handed, never where Edit lands, so it cannot make another checkout workable
+//                                       // (SKILL.md Step 0.25)
 //   baseHeads,                          // { '.': sha, 'ForgePact': sha, ... }, copied from '## State' > 'round base:'
 //                                       // -- the WORKORDER's own starting heads, for a reviewer that has never run
+//   priorFindings,                      // { '<name>': [{ where, problem }, ...] } for a reviewer entering as 'blocking',
+//                                       // copied from the Log -- a fresh launch has no memory of what it found
 // }
 
 const A = args || {}
@@ -207,7 +211,35 @@ const scribe = (n, block, state) => agent(
   `Paste both blocks verbatim with the Edit tool. Do not reword, relabel, merge lists, or change any count in a heading.`,
   { label: `scribe:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', schema: SCRIBE_SCHEMA })
 
+// --- 2d: a reviewer is told what not to spend calls on ----------------------
+//
+// All three measured 2026-09-18 on one run (forgepact-closure-names-current-game):
+// docs-sync-reviewer ran 40 turns in round 0, about 20 of them proving each
+// Out-of-scope item had been left untouched -- which the verifier's criteria
+// already do; in round 1, handed a one-file delta but not its own finding, it
+// re-read the whole round-0 commit to work out what it had said (46 calls);
+// and the verifier, given no context path and no way to open one cited
+// heading, read the whole context file, implementer's Log included.
+const OUT_OF_SCOPE_NOTE = 'The Out-of-scope list is there so you do not report those items as missing. ' +
+  'Do not spend calls proving each one was left untouched -- the verifier\'s criteria do that; report one only if the diff you are reading shows it touched.'
+const RERUN_NOTE = 'Earlier rounds reviewed the rest of the change: judge what this diff changes and what it newly invalidates, and do not re-read earlier commits.'
+// `ask` differs when nothing changed: there is no diff to judge a fix from,
+// and the finding lives in exactly the earlier commits RERUN_NOTE fences off.
+const priorNote = (found, ask) => (found && found.length)
+  ? `Your previous BLOCKING finding${found.length > 1 ? 's' : ''}: ${found.map(f => `[${f.where}] ${f.problem}`).join(' || ')}\n${ask}\n`
+  : ''
+const PRIOR_ASK = 'Say first, from this diff, whether each is resolved.'
+const NOTHING_CHANGED_SCOPE = 'This is a re-run, and nothing changed this round: there is no new diff. Re-check only your previous finding, against the tree as it stands.'
+// Single-quoted heading: inside double quotes Bash runs a backticked word as a
+// command, and workorder headings are full of backticks. A legacy single-file
+// plan keeps its cited sections in the plan itself.
+const SECTION_CMD = file => `\`py -3 .claude/skills/workorder/section.py "${file}" '<heading>'\``
+const VERIFIER_CONTEXT_NOTE = A.contextPath !== A.planPath
+  ? ` Context file: ${A.contextPath} -- open it only for a heading a criterion cites, with ${SECTION_CMD(A.contextPath)}; never read it whole, its '## Log' is the implementer's reasoning.`
+  : ` This is a single-file plan: open a section a criterion cites with ${SECTION_CMD(A.planPath)} rather than reading on past the criteria; its '## Log' is the implementer's reasoning.`
+
 let reviewerState = { ...A.reviewers }
+const lastFindings = { ...(A.priorFindings || {}) } // reviewer -> its BLOCKING findings from the round before
 let carried = null // evidence for the next implementer when the scribe could not write it
 let lastVerifier = null // the previous round's full verifier result, reused when nothing changed
 let firstHeads = null // this invocation's first usable snapshot heads, for a `never` reviewer's base when args.baseHeads is absent
@@ -226,7 +258,12 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
 
   const impl = await agent(
     `Workorder: ${A.planPath}${A.contextPath !== A.planPath ? ` (context file: ${A.contextPath})` : ''}. This is round ${n}. ` +
-    (n > (A.round || 0) || carried ? `You are re-entered after a defect: read '## Log' > '### Round ${n - 1}' for the evidence before anything else. ` : '') +
+    // Any round past 0 follows a defect round -- '## State' only bumps `round:`
+    // after one -- including the first round of a fresh launch, which has no
+    // memory of it (the gap priorFindings closes for reviewers).
+    (n > 0 || carried ? `You are re-entered after a defect: read '## Log' > '### Round ${n - 1}'` +
+      (n > 0 ? `, and '### Round ${n}' if it is already there (this round was relaunched after a replan or a consultation, and that entry is the newer evidence),` : '') +
+      ` for the evidence before anything else. ` : '') +
     (carried ? `The scribe could not write the evidence, so it is here verbatim: ${JSON.stringify(carried)} ` : '') +
     `Return your usual verdict; put the PLAN-DEFECT evidence block or the ADVICE-NEEDED request, verbatim, in 'evidence'/'question'.`,
     { label: `implementer:r${n}`, phase: 'Implement', agentType: 'implementer', model: A.implementerModel || 'sonnet', schema: IMPL_SCHEMA })
@@ -256,7 +293,12 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
   // to confirm or withdraw. A fresh invocation has no previous verdict to
   // reuse, so it still verifies.
   const prev = rounds.length ? rounds[rounds.length - 1] : null
-  const nothingChanged = deltaUsable && delta.paths.length === 0 && !!prev && prev.verifier === 'PASS' && !!lastVerifier
+  // An empty delta is a fact about the round; reusing the verifier's verdict is
+  // a decision that also needs a previous PASS from this same launch. A fresh
+  // launch, or a round after an IMPL-DEFECT, can have the first without the
+  // second -- and its reviewers still have no diff to be pointed at.
+  const emptyDelta = deltaUsable && delta.paths.length === 0
+  const nothingChanged = emptyDelta && !!prev && prev.verifier === 'PASS' && !!lastVerifier
 
   // A reviewer that has never run, or was blocking, always runs. A clean one
   // runs when its trigger matches the delta — or when the delta is unusable.
@@ -265,17 +307,21 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
   const skipped = Object.keys(reviewerState).filter(name => !toRun.includes(name))
   log(`round ${n}: delta ${deltaUsable ? delta.paths.length + ' paths' : 'UNUSABLE -> all reviewers'}; running ${toRun.join(', ') || 'none'}; not re-run: ${skipped.join(', ') || 'none'}${nothingChanged ? '; nothing changed -> previous PASS stands, verifier not re-run' : ''}`)
 
-  const scope = name => reviewerState[name] === 'never' || !deltaUsable
-    ? (baseHeadsForNever ? `Read the whole change. ${wholeChangeScope(baseHeadsForNever)}` : `${HEADS_UNKNOWN} Read the whole change: ${diffCommands}`)
-    : (roundHeadsUsable ? `This is a re-run. ${rerunScope(roundHeads, delta.paths)}` : `${HEADS_UNKNOWN} This is a re-run. Read only these paths changed this round (use the same commands restricted to them): ${delta.paths.join(', ')}`)
-  const nothingChangedNote = nothingChanged
+  const wholeScope = () => baseHeadsForNever ? `Read the whole change. ${wholeChangeScope(baseHeadsForNever)}` : `${HEADS_UNKNOWN} Read the whole change: ${diffCommands}`
+  const deltaScope = () => (roundHeadsUsable ? `This is a re-run. ${rerunScope(roundHeads, delta.paths)}` : `${HEADS_UNKNOWN} This is a re-run. Read only these paths changed this round (use the same commands restricted to them): ${delta.paths.join(', ')}.`) + ` ${RERUN_NOTE}`
+  const scope = name => {
+    if (reviewerState[name] === 'never' || !deltaUsable) return wholeScope()
+    return emptyDelta ? NOTHING_CHANGED_SCOPE : deltaScope()
+  }
+  const nothingChangedNote = emptyDelta
     ? `Nothing changed this round: the implementer reports your previous BLOCKING finding does not hold. Its report: ${String(impl.report).slice(0, 1500)}\nConfirm the finding with the command and output that proves it, or withdraw it.\n`
     : ''
   const results = await parallel([
-    () => nothingChanged ? Promise.resolve(lastVerifier) : agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.`,
+    () => nothingChanged ? Promise.resolve(lastVerifier) : agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${VERIFIER_CONTEXT_NOTE}`,
       { label: `verifier:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA }),
     ...toRun.map(name => () => agent(
-      `You are reviewing a change. You are NOT given the workorder; this is its intent:\n${A.goalExcerpt}\n${scope(name)}\n${nothingChangedNote}` +
+      `You are reviewing a change. You are NOT given the workorder; this is its intent:\n${A.goalExcerpt}\n${OUT_OF_SCOPE_NOTE}\n${scope(name)}\n` +
+      `${reviewerState[name] === 'blocking' ? priorNote(lastFindings[name], emptyDelta ? 'This is the finding the implementer disputes.' : PRIOR_ASK) + nothingChangedNote : ''}` +
       (name === 'instrument-blindness-reviewer' && A.researchHeadings ? `Research findings to check are recorded in ${A.contextPath} under: ${A.researchHeadings}. Read only those subsections.\n` : '') +
       `The verifier runs the acceptance criteria in parallel: do not re-run test suites or builds; run one targeted test only if a finding depends on its result. ` +
       `Mark every finding BLOCKING or NON-BLOCKING; set plan_defect only when no implementation of the plan as written could satisfy its Goal -- a missing assert, pin or sentence the plan did not forbid goes to the implementer, not plan_defect; lead the summary with "no blocking findings" when true.`,
@@ -291,7 +337,10 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
     return { outcome: 'AGENT-FAILED', round: n, detail: `no result from: ${[!verifier && 'verifier', ...missing].filter(Boolean).join(', ')}`, rounds }
   }
 
-  for (const { name, r } of reviews) reviewerState[name] = r.blocking.length ? 'blocking' : 'clean'
+  for (const { name, r } of reviews) {
+    reviewerState[name] = r.blocking.length ? 'blocking' : 'clean'
+    lastFindings[name] = r.blocking
+  }
   const blocking = reviews.flatMap(({ name, r }) => r.blocking.map(f => ({ reviewer: name, ...f })))
   const nonBlocking = reviews.flatMap(({ name, r }) => r.non_blocking.map(f => ({ reviewer: name, ...f })))
   const planDefect = verifier.verdict === 'PLAN-DEFECT' || reviews.some(x => x.r.plan_defect)
