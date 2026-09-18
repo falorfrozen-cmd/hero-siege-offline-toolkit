@@ -25,6 +25,7 @@ if str(SDK_PY_PATH) not in sys.path:
 
 from hs_game_sdk import (  # noqa: E402
     GENERAL_CONTAINER_FIELDS,
+    ItemType,
     MAX_SCAN_DEPTH,
     MAX_SCANNED_ARRAY_LENGTH,
     MAXED_RELIC_LEVEL,
@@ -231,6 +232,23 @@ class TestCppSdkBehaviour(unittest.TestCase):
         ]:
             with self.subTest(contract=label):
                 self.assertEqual(self._contract_fields(label), [str(python_value)])
+
+    def test_compiled_item_type_table_matches_python(self):
+        """The compiled kItemTypes, not the header text tests/test_item_type_parity.py parses.
+
+        C++ names are PascalCase and Python's UPPER_SNAKE; every name is one
+        word, so they compare case-insensitively with underscores removed.
+        """
+        cpp = [
+            (m.group(1), int(m.group(2)))
+            for m in re.finditer(r"^ITEM_TYPE (\w+) (-?\d+)$", self.output, re.MULTILINE)
+        ]
+        self.assertTrue(cpp, f"harness printed no ITEM_TYPE lines:\n{self.output}")
+        self.assertEqual(len(cpp), len(ItemType), cpp)
+        self.assertEqual(
+            {name.replace("_", "").upper(): value for name, value in cpp},
+            {member.name.replace("_", "").upper(): member.value for member in ItemType},
+        )
 
 
 if __name__ == "__main__":

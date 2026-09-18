@@ -61,6 +61,7 @@ from .player import (
     GENERAL_CONTAINER_FIELDS,
     RELIC_CONTAINER_FIELDS,
 )
+from .item_type import ItemType
 from .mod_registry import ModDefinition, ModRegistry, GLOBAL_MOD_REGISTRY
 
 __version__ = "1.1.0"
@@ -114,6 +115,7 @@ __all__ = [
     "RELIC_ONLY_FIELD",
     "GENERAL_CONTAINER_FIELDS",
     "RELIC_CONTAINER_FIELDS",
+    "ItemType",
     "ModDefinition",
     "ModRegistry",
     "GLOBAL_MOD_REGISTRY",

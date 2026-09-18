@@ -199,9 +199,11 @@ git add <submodule> && git commit -m "Update submodule reference"
 `hs-game-sdk` is an integral component of the toolkit providing GameMaker objects (6,016), scripts (6,254), assets, stat IDs, and runtime struct models directly to all toolkit submodules.
 
 ### Structure & Modules
-* **Python (`hs-game-sdk/python`)**: `hs_game_sdk` package with `GameObject`, `GameScript`, `GameRoom`, `StatId`, `ItemDefinitionStruct`, `ItemStatStruct`.
-* **C++ Headers (`hs-game-sdk/cpp/include/hs_game_sdk`)**: Strongly-typed enums, constexpr script names, and YYToolkit wrappers (`hs_game_sdk.hpp`, `yytk_helpers.hpp`).
-* **TypeScript (`hs-game-sdk/ts`)**: `@hero-siege/sdk` with typed object ID mappings and stat constants for web modules.
+* **Python (`hs-game-sdk/python`)**: `hs_game_sdk` package with `GameObject`, `GameScript`, `GameRoom`, `StatId`, `ItemDefinitionStruct`, `ItemStatStruct`, and the item-class `ItemType` enum.
+* **C++ Headers (`hs-game-sdk/cpp/include/hs_game_sdk`)**: Strongly-typed enums, constexpr script names, and YYToolkit wrappers (`hs_game_sdk.hpp`, `yytk_helpers.hpp`), plus `HeroSiege::Items::ItemType` and its enumerable `kItemTypes` (`item_type.hpp`).
+* **TypeScript (`hs-game-sdk/ts`)**: `@hero-siege/sdk` with typed object ID mappings and stat constants for web modules, plus `ItemType` and `ITEM_TYPES`.
+
+`ItemType` is the value an item instance carries in its `itemType` field (e.g. `ItemType.MATERIAL == 14`). The three bindings are hand-written and `tests/test_item_type_parity.py` asserts they match value for value; see [`docs/submodules/hs-game-sdk/instructions.md`](docs/submodules/hs-game-sdk/instructions.md#item-class-itemtype) for each value's source.
 
 ### Extraction & Re-generation
 Extract symbols and generate SDK bindings from a local Hero Siege installation:

@@ -17,6 +17,7 @@
 
 #include <hs_game_sdk/player.hpp>
 #include <hs_game_sdk/hooks.hpp>
+#include <hs_game_sdk/item_type.hpp>
 
 using YYTK::CInstance;
 using YYTK::FakeStruct;
@@ -378,6 +379,19 @@ static void PrintContract() {
 }
 
 // ---------------------------------------------------------------------------
+// The item class, printed one member per line so tests/test_cpp_sdk.py can
+// assert the compiled kItemTypes equals the Python ItemType member for member.
+// ---------------------------------------------------------------------------
+
+static void PrintItemTypes() {
+    using namespace HeroSiege::Items;
+    for (const auto& [name, value] : kItemTypes) {
+        std::printf("ITEM_TYPE %.*s %d\n", static_cast<int>(name.size()), name.data(),
+                    static_cast<int>(value));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Hook installer.
 // ---------------------------------------------------------------------------
 
@@ -585,6 +599,7 @@ int main() {
     TestRelicIdentification();
     TestCrossLanguageCases();
     PrintContract();
+    PrintItemTypes();
     TestHookInstaller();
 
     if (g_failures == 0) {
