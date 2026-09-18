@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-17T15:19:32Z",
+  "generated": "2026-09-18T16:08:58Z",
   "tools": [
     {
       "id": "forgepact",
@@ -8,9 +8,9 @@
       "summary": "Offline gameplay modifiers: density, spawns, drop rates, map reveal.",
       "repo": "falorfrozen-cmd/ForgePact",
       "submodule": "ForgePact",
-      "version": "1.4.1",
-      "tag": "v1.4.1",
-      "published": "2026-09-17T15:18:54Z",
+      "version": "1.4.2",
+      "tag": "v1.4.2",
+      "published": "2026-09-18T15:44:18Z",
       "license": "AGPL-3.0",
       "requires": {
         "admin": false,
@@ -20,12 +20,12 @@
       },
       "artifact": {
         "kind": "zip",
-        "name": "ForgePact-1.4.1.zip",
-        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.4.1/ForgePact-1.4.1.zip",
-        "size": 17386764,
-        "sha256": "bb433d09646ca2567357c16155576e8ef5cd5d697caee3902f2e8be7d80aa497",
+        "name": "ForgePact-1.4.2.zip",
+        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.4.2/ForgePact-1.4.2.zip",
+        "size": 17385074,
+        "sha256": "8cf98fbe9e50f452cc64337fb6215ec9fb15c0e1d1d111fcd21439e0679066c2",
         "sha256_source": "published+verified",
-        "strip_prefix": "ForgePact-1.4.1/"
+        "strip_prefix": "ForgePact-1.4.2/"
       },
       "launch": {
         "exe": "ForgePact.exe",
@@ -44,8 +44,8 @@
           "timeout_s": 20
         }
       },
-      "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.4.1",
-      "notes": "# ForgePact 1.4.1\n\nA clearer control panel with the offline launcher built in.\n\n## New\n\n- **HS Offline Launcher is built into ForgePact.** Press **Launch Modded Game**\n  to start the selected game with Steam set up automatically. No separate\n  launcher installation is needed. Launch progress and errors stay visible in\n  Setup, and repeated clicks cannot launch another copy while a request runs.\n\n## Changed\n\n- **Disabled Monster Density stays visibly off.** Reopening the panel or\n  adjusting another slider no longer makes it look enabled. Its saved\n  multiplier is retained for the next time you enable it.\n\n- **A simpler sidebar.** Removed the fixed Map Reveal, Headhunter and Pet Quest\n  Collector shortcuts, which could be mistaken for a list of enabled mods.\n  All three settings remain available in the Mods tab.\n\n- **Gameplay Mods and Drop Rates are better aligned.** Enabled Map Reveal now\n  uses the same border as other enabled mods, and the Pet Quest Collector card\n  stays compact. Drop Rates fills both columns from the first row, including\n  when searching or showing only modified settings.\n\n- **Missing plugin files are easier to fix.** Source users can run\n  `Prepare-Plugin.bat` before installing. An incomplete installation now shows\n  a warning on every tab, even when the game is open, and sent commands are no\n  longer labelled as already applied.\n\n- **The ForgePact anvil is complete again.** Its upper-left surface no longer\n  looks cut out, including at compact sidebar sizes.\n\n- **Find settings by their icons.** Gold, key families, portals, Chaos Pillars,\n  Chaos Tower, character stats and gameplay mods now have matching icons next\n  to their names. Satanic Zone choices have effect icons too. Labels and\n  checkmarks stay visible, and the artwork works offline at any display scale.\n\n- **The whole panel has a new layout.** A sidebar brings Setup, Modifiers,\n  World, Loot and Mods together, with the Toolkit's bronze anvil, consistent\n  cards and readable switches. Narrow windows use top tabs. Search Modifiers\n  and Loot or show only modified settings. Sliders now have minus/plus buttons;\n  exact values remain editable with the keyboard. Full setting explanations\n  are available under **How it works**.\n\n- **Saving is easier to follow.** The header shows saving, saved and connection\n  errors. Rapid changes are saved in order, and interrupted saves read back\n  the stored settings where possible. Saved decimal values no longer snap to\n  the slider step when the panel refreshes. Existing preferences are retained.\n\n- **Satanic Zone Mods is easier to choose from.** Positive and negative modifiers\n  now use readable, clickable cards with checkmarks. Search by name or effect,\n  show only enabled or disabled modifiers, and see how many are selected. The\n  panel explains the minimum of 3 positive / 2 negative choices before you try\n  to remove one. Enable a whole column or restore both pools to their defaults.\n  Your existing selections stay intact, changes save automatically, and the\n  layout adapts to narrow windows. The game rules are unchanged.\n\n## How to update\n\nDownload and extract the complete release, then reopen ForgePact. Your existing\nsettings are retained. Source users can run `Prepare-Plugin.bat` if plugin files\nare missing before using **Install Mod Plugin**.\n\nUse ForgePact only with an offline / EAC-disabled copy of Hero Siege.",
+      "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.4.2",
+      "notes": "# ForgePact 1.4.2\n\nChaos Tower and Shadow Realm rate settings above x1 work again on the current game version. This release requires the current game version.\n\n## Fixed\n\n- **Chaos Tower and Shadow Realm multipliers above x1 had no effect on the\n  current game version.** Each could still appear only once per run, exactly\n  as if the setting were left at x1. A game update renamed the internal names\n  ForgePact uses to reset each mechanic's once-per-run limit, so the reset\n  could no longer attach and the game's own limit took over. ForgePact 1.4.2\n  uses the current game version's names. Confirmed in-game: with the rates\n  raised, one run showed many Chaos Towers and at least two Shadow Realms.\n\n  This fix only works on the current game version. If you are still on the\n  previous game version, 1.4.2 cannot attach the reset there, so Chaos Tower\n  and Shadow Realm rates above x1 have no effect. Stay on 1.4.1 until you\n  update the game.\n\n## How to update\n\nDownload and extract the complete release, then reopen ForgePact. Your existing\nsettings are retained. Source users can run `Prepare-Plugin.bat` if plugin files\nare missing before using **Install Mod Plugin**. This change is in the plugin,\nso pressing **Install Mod Plugin** matters - updating only the panel leaves the\nold plugin in place.\n\nUse ForgePact only with an offline / EAC-disabled copy of Hero Siege.",
       "guide": "docs/submodules/ForgePact/instructions.md",
       "source_launch": {
         "cmd": "py",
@@ -444,6 +444,41 @@
           "hs_statforge.py"
         ]
       }
+    },
+    {
+      "id": "hero-siege-codex",
+      "name": "Hero Siege Codex",
+      "summary": "Explore items, classes, creatures, and the world.",
+      "repo": "falorfrozen-cmd/hero-siege-codex",
+      "submodule": "",
+      "version": "0.5.0",
+      "tag": "v0.5.0",
+      "published": "2026-09-18T07:31:12Z",
+      "license": "NOASSERTION",
+      "requires": {
+        "admin": false,
+        "game_closed": false,
+        "game_running": false,
+        "windows_only": true
+      },
+      "artifact": {
+        "kind": "zip",
+        "name": "HeroSiegeItemCodex-0.5.0-Windows-x64-Portable.zip",
+        "url": "https://github.com/falorfrozen-cmd/hero-siege-codex/releases/download/v0.5.0/HeroSiegeItemCodex-0.5.0-Windows-x64-Portable.zip",
+        "size": 24214478,
+        "sha256": "131cd681591dd234475c08fc3fabf81e05d85234db5d4bcc13d66b41306a6514",
+        "sha256_source": "published+verified",
+        "strip_prefix": ""
+      },
+      "launch": {
+        "exe": "hero-siege-item-codex.exe",
+        "args": [],
+        "elevate": false,
+        "ports": []
+      },
+      "notes_url": "https://github.com/falorfrozen-cmd/hero-siege-codex/releases/tag/v0.5.0",
+      "notes": "First public test edition of **Hero Siege Codex** for Hero Siege Toolkit.\n\nExplore items, classes, creatures, and the world in the offline Scholar's Index interface. Includes 1,990 equipment entries, 167 relics, 89 stat descriptions, 24 classes, 325 creature entries, 217 Ether nodes and 200 quests.\n\n- **Toolkit:** refresh the library, search for Hero Siege Codex and select Install. Toolkit manages the Portable ZIP and checks the signed catalog's SHA-256.\n- **Standalone portable:** extract `HeroSiegeItemCodex-0.5.0-Windows-x64-Portable.zip` and run `hero-siege-item-codex.exe`.\n- **Standalone setup:** run `HeroSiegeItemCodex-0.5.0-Setup.exe` to install for your Windows account and register entry links.\n- Use **Ctrl+O** to open shared entry links in either edition.\n\nWindows x64 with Microsoft Edge WebView2. No running game, administrator access or website account is required. The packaged archive works offline; external links require internet.\n\nThis is a **public test build**, not a claim of complete current-game coverage. See `TEST_RESULTS.md` in the ZIP for checks and remaining tester coverage. The EXE is unsigned. The existing desktop build is distributed unchanged; website snapshot `888939603820819ab321222f34fc27744c54e3d5`, desktop version `0.5.0`.\n\nReport problems through this repository's Issues using the in-app **Report an issue** details. Checksums are supplied in `SHA256SUMS.txt`; dependency notices and provenance are inside the ZIP.",
+      "guide": "docs/tools/hero-siege-codex.md"
     }
   ],
   "warnings": []

@@ -88,7 +88,17 @@ came to exist.
 runtime inserts a `managed` flag right after `visible`, which pushes every later field
 4 bytes further than the pre-2022.5 layout most references describe. Offsets relative
 to an object's record pointer, as measured against `data.win`
-(`2fc37b1b…`, GEN8 bytecode version 17, `UILR`/`PSEM`/`PSYS`/`FEAT` chunks present):
+(`2fc37b1b…`, GEN8 bytecode version 17, `UILR`/`PSEM`/`PSYS`/`FEAT` chunks present).
+**Reverified against `07D864C91EFE…` on 2026-09-17** (hub `4539e68`,
+`hs-game-sdk/data/manifest.json` records the full hash): the game had been
+patched, the extractor ran with this layout unchanged, a second run produced no
+diff, it still yields 6,016 object records, and the regenerated closure names
+matched the method values read off live instances in ForgePact's prospect window
+session (`anon@1065/2806/3657@gml_Object_UI_Prospect_obj_Create_0`). That is a
+check of the extractor's output, not a field-by-field re-measurement of every
+anchor below. The patch renumbered every closure (`anon@N`) and shifted sprite and
+mask indices, so code that spells a closure name as a literal goes stale with each
+game update (see the ForgePact guide's Maintenance Triggers):
 
 | Offset | Field | Notes |
 | --- | --- | --- |
@@ -191,7 +201,7 @@ import { GameObject, GameScripts, StatId } from '@hero-siege/sdk';
 
 | Command | Working Directory | Purpose | Verification Status |
 | --- | --- | --- | --- |
-| `py -3 tools/extract_and_generate_sdk.py --game-bin "<path-to-game-bin>"` | Workspace Root | Re-extract symbols from `data.win` and regenerate all SDK bindings | Verified |
+| `py -3 tools/extract_and_generate_sdk.py --game-bin "<path-to-game-bin>"` | Workspace Root | Re-extract symbols from `data.win` and regenerate all SDK bindings | Verified 2026-09-17 (hub `4539e68`, `data.win` `07D864C91EFE…`, default game path; idempotent) |
 | `py -3 tools/generate_satanic_zone_sdk.py` | Workspace Root | Regenerate `satanic_zone.py`/`.hpp`/`.ts` from `hs-game-sdk/curated/satanic_zone.json` (hand-edited, not extracted) | Verified 2026-09-10 |
 | `py -3 -m unittest discover -s tests` | Workspace Root | Run the SDK test suite. Passes in a clean checkout; extraction- and compiler-dependent suites skip (see below) | Verified 2026-09-12 |
 | `py -3 -m unittest tests.test_cpp_sdk -v` | Workspace Root | Compile and run the C++ relic/hook behavioural tests against the stubbed YYToolkit surface | Verified 2026-09-12 |

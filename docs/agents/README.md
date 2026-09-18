@@ -10,7 +10,6 @@ a link back to the section it backs.
 |---|---|
 | [`Some of These Rules Are Enforced, Not Just Written`](../../AGENTS.md#some-of-these-rules-are-enforced-not-just-written) | [rules-enforced.md](rules-enforced.md) |
 | [`Limit Rebuilds & Reruns During Development`](../../AGENTS.md#limit-rebuilds--reruns-during-development) | [limit-rebuilds-reruns.md](limit-rebuilds-reruns.md) |
-| [`Clean Up the Processes You Started Before Ending a Reply`](../../AGENTS.md#clean-up-the-processes-you-started-before-ending-a-reply) | [clean-up-processes.md](clean-up-processes.md) |
 | [`Prove the Instrument Before Trusting a Negative Result`](../../AGENTS.md#prove-the-instrument-before-trusting-a-negative-result) | [prove-the-instrument.md](prove-the-instrument.md) |
 | [`Check a Permission Where It Is Used, Not Where It Is Convenient`](../../AGENTS.md#check-a-permission-where-it-is-used-not-where-it-is-convenient) | [check-a-permission.md](check-a-permission.md) |
 | [`Never Call an Address You Resolved by Hand`](../../AGENTS.md#never-call-an-address-you-resolved-by-hand) | [never-call-resolved-address.md](never-call-resolved-address.md) |

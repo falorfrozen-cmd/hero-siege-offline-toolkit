@@ -400,7 +400,7 @@ mod tests {
         let loaded = loaded();
         assert_eq!(loaded.source, Source::Embedded);
         assert_eq!(loaded.catalog.schema, SCHEMA);
-        assert_eq!(loaded.catalog.tools.len(), 10);
+        assert_eq!(loaded.catalog.tools.len(), 11);
     }
 
     #[test]

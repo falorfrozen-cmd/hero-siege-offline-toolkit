@@ -34,13 +34,6 @@ that to `python3` in `settings.json`.
 | `hub_frontend_tests.py` | a top-level `hub/src/*.js` differs from HEAD | the hub's frontend tests failing |
 | `decompiled_output.py` | any changed text file, in the hub **or in a dirty submodule** | Ghidra/IDA symbols, GameMaker VM pseudo-variables, GML positional arguments and bytecode mnemonics reaching a tracked file |
 
-`leftover_processes.py` stays its own process at `PreToolUse` and `Stop` —
-different in shape from the four above, as before — but its `post` half now
-runs *inside* the dispatcher (imported lazily, so an Edit/Write call that
-never needs it skips the load) instead of as a fifth hook entry, and runs
-first, before the dispatcher spawns any git child of its own, since its
-snapshot is time-sensitive. See "a per-call ledger" below.
-
 **Adding a check now:** give it a `check(payload, tree: TreeState) -> (rc,
 message)` function, add its module name to `post_tool_use.py`'s
 `TREE_CHECKS` tuple, keep a standalone `main()` for its own CLI, and add a
@@ -93,378 +86,6 @@ and teach everyone to set `HSTK_SKIP_HOOKS`.
 The catalog hook keys off the working tree rather than off which tool ran,
 because a catalog can be rewritten by `Edit`, by a build script under `Bash`, or
 by a rebuild this session never saw the path of.
-
-### `leftover_processes.py` — a per-call ledger, not a descendant walk
-
-Unlike the tree checks above, this one keys off the **live process table**,
-not the working tree, because what it is guarding against — a `cargo` build
-or a detached `npm` script still running after the reply ends — never touches
-a file. `pre` runs as its own process, snapshotting every live process before
-a `Bash`/`PowerShell`/`Monitor` call; `post` now runs inside
-`post_tool_use.py` rather than as its own process, admitting whatever that
-call can be blamed for into a per-session ledger file; `Stop` — still its own
-process, once per reply — reports whichever ledger entries are still alive
-and have not been reported before. A process is identified by `(pid, creation
-time)`, never PID alone, because Windows reuses PIDs quickly.
-
-Three simpler designs were rejected, and are worth recording so nobody
-re-proposes them:
-
-- **Walking every live descendant of the session's `claude.exe` at `Stop`.**
-  This session's own MCP servers are exactly such descendants, and without
-  command lines the only way to tell them apart from something like a
-  `tauri-mcp driver-session` (which should be reported) is name matching on
-  "mcp" — which the driver-session's own name defeats. It also cannot see a
-  `Start-Process`-style detached child whose launcher has already exited,
-  since no descendant walk from a living ancestor reaches it.
-- **Attributing every orphan (dead parent) created since the session
-  started.** Multiple sessions run at once on this machine, and timing alone
-  cannot tell one session's orphan from another's — reporting a process a
-  different session started is exactly what this hook must never do.
-- **Reading another process's environment for a session marker.** That means
-  `ReadProcessMemory` against a PEB layout this hook does not own, for a
-  reporting tool that does not need it.
-
-`stop_hook_active` is the loop guard: a hook that blocks Stop again while
-`stop_hook_active` is true never lets the reply end. Every leftover is
-reported at most once per ledger, in a `reported.json` next to it, so a dev
-server the user asked to keep running does not re-block every later reply —
-`AGENTS.md`'s "verify with a command" covers a process Claude claimed to kill
-but did not.
-
-Two environment variables, both documented in the hook's own docstring:
-`HSTK_PROC_LEDGER_DIR` (default `%TEMP%/hstk-leftover-processes`, deliberately
-never inside the repository, since `decompiled_output.py` scans every
-untracked file and a ledger under the worktree would dirty `git status` on
-every tool call) and `HSTK_PROC_SESSION_ROOT_PID` (overrides the nearest
-`claude.exe` ancestor lookup; exists for tests).
-
-**It never kills anything.** No `TerminateProcess`, no `kill`, no `taskkill`
-run by the hook itself — it only prints what it found and suggests the command
-a human or the reply should run.
-
-**Known limitation, not observed to have happened yet:** if a whole parent
-chain back to a ledger entry dies between two observations — `cargo` exits
-while the `hub.exe` it started survives, with neither `post` nor `stop` having
-run in between — the survivor cannot be attributed and will not be reported.
-`AGENTS.md`'s "check with a command" is the backstop for exactly this gap.
-
-**Known limitation, not observed (R1-A):** rule (b) (orphan admission) is
-narrowed to `DETACHED_ORPHAN_IMAGES`, so a detached dev tool outside that
-allowlist — an unusual build helper, say — is still missed by rule (b),
-silently, the same as any other process that rule was never going to
-attribute in the first place. See "Live checks" below for the incident that
-motivated the narrowing. One allowlisted process is expected to show up: `git
-fsmonitor--daemon run --detach` (seen 2026-09-16), which git starts detached
-when `core.fsmonitor` is on. It is a shared, long-lived watcher that git
-restarts on demand, so say so rather than treating it as a leak.
-
-**Round 2 (2026-09-16), four small fixes on top of round 1:** rule (b)'s image
-check now accepts every Python interpreter name the hook-invocation matcher
-itself already recognises (`python[0-9.]*w?.exe`, plus `py.exe`/`pyw.exe`)
-through one shared helper (`_is_python_interpreter_image`), not the three
-literal names `DETACHED_ORPHAN_IMAGES` used to carry on its own, so a
-versioned interpreter (`python3.exe`, `python3.14.exe`) is admitted the same
-way `python.exe` always was (R2-1). `_load_snapshot_file`, `_load_pre_snapshot`
-and `_read_reported_marker` now tolerate a hand-corrupted ledger or marker file
-being the wrong shape throughout — a top-level list instead of a `{pid:
-entry}` map, an entry that is not itself a dict, a missing or non-int `pid`/
-`creation`/`ppid`, or a JSON `Infinity` that used to raise `OverflowError` out
-of `int()` (including inside `_load_pre_snapshot`'s own `raw_pids` loop, not
-only `reported.json`'s marker) — skipping what cannot be trusted instead of
-crashing `post`/`stop` (R2-2). The CLI-level
-`test_detached_orphan_with_dev_tool_image_is_admitted` duplicated
-`test_orphan_started_during_call_is_reported` byte for byte and added no
-coverage once R2-1 had its own unit-level pattern tests, so it was deleted
-rather than kept as a second copy (R2-3).
-
-**R2-4, fixed for real this round:** the first attempt at closing a PID-reuse
-race in `_capture_new` — discard a captured command line whose `_creation_time`
-no longer matched the pid's `new_procs` entry — left the discarded pid out of
-`cmdlines` entirely. `_is_hook_chain`'s own `cmdlines and cur in cmdlines` check
-then fell through to a fresh `_command_line(cur)` read for exactly that pid,
-which is the recycled line the discard was meant to prevent from ever being
-read at all — so R2-4 as shipped in round 2 did nothing. `_capture_new` now
-reads a pid's creation time and command line through one handle
-(`_process_identity`), and stores `None` — a real dict key, not a missing one —
-for a pid whose creation no longer matches. `_is_hook_chain` treats membership
-in `cmdlines` as authoritative even when the stored value is `None`, so the
-recycled line is never re-read. Proven by
-`test_hook_chain_does_not_reread_line_discarded_on_creation_mismatch`, which
-fails against the pre-fix hook (one re-read, chain returns `True`) and passes
-against this one (zero re-reads, chain returns `False`).
-
-**Known limitation, not observed:** `_is_hook_chain`'s fallback
-`_command_line(cur)` read — for a pid that is *not* a key in `cmdlines` at all
-(an ancestor that predates the call, or any hop walked at Stop through
-`_extend_ledger_with_live_descendants`, which passes no `cmdlines`) — is still
-not tied to creation time the way `_process_identity`'s reads are. If a PID
-were recycled into exactly a configured hook's command line there, a real
-leftover could be hidden, which is the unsafe direction; this has not been
-observed and would need a reuse into exactly a hook invocation's own command
-line to happen.
-
-Two more identity safeguards, each added after a live report misattributed
-something and each proven by its own paired test in
-`TestLeftoverProcessesAdmissionRules`:
-
-- A PPID this hook cannot `OpenProcess` (a SYSTEM service, a protected
-  process) is still counted as alive by consulting the raw, unfiltered
-  Toolhelp32 PID list, not only the openable snapshot — otherwise an
-  unopenable-but-live parent (`svchost.exe` under `dllhost.exe`/`audiodg.exe`)
-  is indistinguishable from a dead one and its child looks like an orphan.
-- Rule (c)'s "parent already has a ledger entry" check requires a *live*
-  occupant of that PID to match the ledger entry's creation time exactly, not
-  merely postdate it — `entry.creation <= proc.creation` is true for any later
-  process once the ledger entry is dead, reused PID or not.
-
-#### The structural hook matcher (F1)
-
-A concurrent sibling `PostToolUse` hook spawns its own `bash -> bash -> py ->
-python` chain during a call's window, which reaches the session root through
-processes otherwise indistinguishable from a real leftover. Excluding it needs
-to tell "this hop is actually running one of this repo's `.claude/hooks/*`
-scripts" apart from "this hop's command line merely mentions one" — a
-distinction two earlier versions of this check got wrong. The first matched
-any command line containing the substring `.claude/hooks/` anywhere, which
-also matched a Bash tool call that merely *talked about* that path and hid its
-own `py`/`python` and every wrapping shell from the ledger (live A/B
-confirmed). A second version narrowed the substring to the unexpanded
-`$CLAUDE_PROJECT_DIR/.claude/hooks/...` fragment plus its two expanded
-slash-style spellings — still a substring search. Calling that matcher's own
-function directly against the three spellings (R1-B item 3: not itself a live
-A/B — no real process tree was involved, just the pure function) found it
-still hid all three whenever `CLAUDE_PROJECT_DIR` happened to be in
-forward-slash form, because the fragment itself is a substring of a mention
-that never invokes anything. The *replacement* matcher below was the one
-actually put through a live A/B, against real hook processes — see the citation
-after "This depends on two facts" below.
-
-The replacement parses each hop's command line the way the OS itself split
-it — `CommandLineToArgvW` via `ctypes` — and asks a narrower, shape-specific
-question instead of a substring search:
-
-- A shell hop (`bash.exe`/`sh.exe`): its `-c` argument, once parsed, equals
-  one of the `command` strings configured in `.claude/settings.json` **or**
-  `.claude/settings.local.json`, exactly.
-- A `py`/`python` hop — any image `_is_python_interpreter_image` recognises
-  (`py.exe`/`pyw.exe`, the two launchers, or `python[0-9.]*w?.exe`, an
-  interpreter itself): its first non-flag argument — after the version
-  selector, such as `-3`, only when the launcher itself (`py.exe`/`pyw.exe`)
-  carries one, never on a bare `python*.exe` interpreter where `-3` is an
-  option instead — is, once normalised (quotes stripped, backslashes to
-  forward slashes, `posixpath.normpath`, lower case), one of the script paths
-  those same `command` strings invoke. `-c`, `-m`, or any other leading
-  interpreter flag is deliberately never a match — an unusual flag makes the
-  hook over-report a real leftover, the safe direction, rather than hide one.
-
-This depends on two facts a 45 s read-only poll of two live sessions measured
-directly (2026-09-16): every configured hook ran as a four-hop
-`bash -> bash -> py -> python` chain, both bash hops' `-c` argument was the
-configured `command` string verbatim (checked against `CommandLineToArgvW`'s
-own parse), and the `py`/`python` hops showed the expanded path with forward
-slashes — the spelling of `CLAUDE_PROJECT_DIR` itself is never assumed,
-only normalised before comparing. Only `.claude/settings.json` and
-`.claude/settings.local.json` are read; a user-level (`~/.claude/settings.json`)
-or plugin-provided hook is not, which stays in the over-report direction (its
-chain is never excluded, so it can only be reported as a leftover it is not,
-never hidden). `_configured_hooks` never raises on an unreadable file or an
-oddly shaped `hooks` block — see "Fail-open" below.
-
-**Live A/B (round-0 reviewer, 2026-09-16 ~15:03):** the replacement matcher
-above was checked against a real, running session — 166/166 of that session's
-own real hook processes matched, and 0/8 deliberately non-hook probe processes
-did, where the substring-based matcher it replaced hid all 8 of those probes.
-This is the citation R1-B item 3 asked to add here, in place of calling the
-earlier paragraph's direct function call against three spellings a "live A/B"
-— it never ran against a real process tree.
-
-**F2 — capturing before anything slow.** `cmd_post`'s admission walk used to
-run after `_load_ledger` parsed every `post-*.json` in the session directory —
-hundreds of files, tens of milliseconds each — by which point a short-lived
-sibling hook hop had often already exited, so its command line read back
-`None` and the structural matcher above had nothing to match against. Measured
-before the fix (2026-09-16, 357 files, 4,089 entries): a mean of 10.7 ledger
-entries per call, almost all sibling `bash.exe`/`py.exe`/`python.exe`/`git.exe`
-hops that had already exited by the time they were checked. The fix captures
-each new pid's command line and liveness (`_capture_new`) immediately after
-diffing against `pre`, before the ledger load or any admission rule runs, and
-the captured line is what `_is_hook_chain` checks first (R1-B item 1: kept for
-a since-exited hop too, whenever the line itself was readable, not only for a
-hop still alive at capture time — the docstring said this from the start, the
-code did not until R1-B).
-
-Growth has not been observed after the fix, in two separate live measurements
-(2026-09-16): a mean of 0.059 entries per file at 14:47 (34 files, 12+ separate
-`Bash` calls after the final edit) and a mean of 0.353 across 99 files at
-round-0 verification. Attributed to the liveness filter plus this early
-capture together, not proven as a controlled before/after of one change in
-isolation — see the recorded runs under "Live checks" below.
-
-#### Fail-open, and what a session cannot see (F3/F4)
-
-Both of the notes below go through `systemMessage` on stdout — the one channel
-[the hooks docs](https://code.claude.com/docs/en/hooks) (fetched 2026-09-16)
-say is shown to the user and that `Stop` does not discard — alongside the same
-text on stderr. Plain stderr at exit 0 goes to Claude Code's debug log only,
-never the transcript, so the hook's previous no-root stderr note was invisible
-on every path that did not also report a leftover, which is most of them.
-
-- **`no hook commands found in .claude/settings.json or
-  .claude/settings.local.json`**: `_configured_hooks` found nothing to match
-  against — the matcher above then cannot recognise any sibling hook chain, so
-  leftovers may be over-reported. Shown **once per session**, not on every
-  reply while the configuration stays broken (the user's own call), tracked in
-  its own `hookwarn-reported.json` next to `reported.json`.
-- **`found no claude.exe ancestor`**: at `stop`, this is
-  `no claude.exe ancestor at Stop; not tracking this session`, said directly
-  every time that lookup fails. At `post`, the call records nothing but leaves
-  a `noroot-<tool_use_id>.json` marker; a later `stop` whose own lookup does
-  succeed counts those markers and reports `N PostToolUse call(s) found no
-  claude.exe ancestor and recorded nothing` once per newly blind call, in
-  `noroot-reported.json` — the same report-once shape `reported.json` already
-  uses for a leftover process.
-
-#### The liveness gate's proof (F5)
-
-`stop`'s liveness check trusts `GetExitCodeProcess` (`STILL_ACTIVE`) over
-Toolhelp32 membership alone, since a just-terminated PID can still appear in a
-snapshot for a brief window after it exits. This was previously unconfirmed,
-not because the gate was wrong but because the CLI-level flaky test that
-motivated it kept passing in local runs even with the gate removed —
-Toolhelp32Snapshot does not list an exited process on demand in that test's
-own timing, so it could not exercise the stale case either way, and a result
-like that has to be written down as "not observed", never as "proven".
-`TestLeftoverProcessesStaleToolhelp` proves it instead at unit level: a
-fabricated ledger entry plus a stubbed `snapshot()`/`_command_line` that still
-"sees" the pid, with `_is_still_active` stubbed both ways. Removing the gate
-(`sed 's/if not _is_still_active(pid):/if False:/'`, run against an
-`HSTK_HOOK_UNDER_TEST_DIR` copy so the live hook is
-never touched) turns that test's pass into `FAILED (failures=1)`.
-
-#### A/B without touching the live hook
-
-Auto mode denies overwriting the live hook, and editing it mid-session changes
-every hook call for the rest of that session. `HSTK_HOOK_UNDER_TEST_DIR` is
-the accepted way around both: when set, `HookRig` and `_load_hook_module` in
-`tests/test_claude_hooks.py` load hook scripts from that directory instead of
-the repository's `.claude/hooks/` (`settings.json` is still always copied from
-the repository, since F1 compares against it byte for byte). This is how F1's
-negatives are proven to fail against the pre-fix hook (`git show <rev>:...`
-into a scratch directory) and how F5's gate is proven to fail against a
-mutant, without ever writing to `.claude/hooks/leftover_processes.py` itself
-mid-session.
-
-### Live checks
-
-**Live positive control — run this by hand in a real session; it cannot be a
-checkbox, because it needs a live session to end a reply:**
-
-1. In a Bash tool call, run
-   `powershell -NoProfile -Command "Start-Process py -ArgumentList '-3','-c','\"import time; time.sleep(600)\"'"`,
-   which is detached and orphaned. The inner `\"...\"` is required: Windows
-   PowerShell 5.1's `Start-Process` joins `-ArgumentList` with spaces without
-   quoting, so an unquoted code string reaches Python as `-c import`, which
-   exits at once with `SyntaxError`. Confirm the sleeper is alive, then let
-   the reply end. Expect one Stop block naming `py.exe` and its `python.exe`
-   child.
-2. Kill that process, then send a trivial message. Expect no report.
-3. Confirm no MCP `node.exe` and no process belonging to a second, separately
-   open session was listed.
-4. If step 1 shows nothing, look for a visible warning naming
-   `no claude.exe ancestor at Stop` (F4's `systemMessage`, not a stderr-only
-   note — see "Fail-open" above) before concluding there was no leak — that
-   warning means the session-root lookup failed inside the hook, which is a
-   defect in the lookup, not evidence nothing leaked.
-
-Record the result here, with the date, next to the runs below.
-
-**Recorded result (2026-09-16, one session):** step 1 blocked exactly once,
-naming `py.exe` and its `python.exe` child and nothing else -- no MCP
-`node.exe`. After `taskkill /T` the next two replies ended with no report.
-The first attempt measured nothing: it hit exactly the unquoted-`-ArgumentList`
-failure step 1 above warns about, so the sleeper never lived and the hook's
-silence proved nothing until the code string was quoted and the sleeper's
-liveness confirmed first. **Still not observed:** step 3, a second
-concurrently open session's processes staying out of the report — do not
-treat cross-session attribution as field proven until that is recorded here
-with its date.
-
-**Recorded result (2026-09-16 13:28, second run, separate session):** step 1
-blocked exactly once, naming only `py.exe` 658720 and its `python.exe` 658676
--- no MCP `node.exe`, and nothing from the "forgepact-ci-build" session, which
-had its last activity at 13:31 and was running builds and an implementer
-subagent around that time. The detached sleeper was attributed even though
-`Start-Process` orphaned it. The sleeper was deliberately left alive, and the
-next reply ended with no report, which confirms report-once. Step 2's
-"killed, then silent" variant was not repeated in this run. This is a positive
-cross-session observation but a weak one: it was not confirmed that the other
-session started a process inside the sleeper's exact call window.
-
-**Live negative control, 2026-09-16 10:51 and 11:00 (recorded, not yet
-positive):** the hook went live in its own driver session as soon as
-`settings.json` changed, ahead of any planned live check. The first Stop, with
-several background agents running, blocked and reported 12 processes; 11 were
-false positives -- the hook's own concurrent sibling `PostToolUse` hook chains
-and their `conhost.exe`s, all dead by the time they were checked. A second
-Stop reported 8 more: a still-running background verifier's own acceptance
-run, correctly attributed but not actually left behind. Both runs are false
-positives this hook must not repeat, not evidence the mechanism works; they
-are the reason rules (a)-(c) now also exclude any chain running a
-`.claude/hooks/*` script and any `conhost.exe` reached through the Stop-time
-ledger extension, and why the report and `AGENTS.md`'s section both say a
-background task of this session still working is a reason to leave a process,
-not a leftover. The one plausible true positive that day, a `vctip.exe` from a
-C++ build, could not be killed with `taskkill` under auto mode's workload
-classifier -- see `AGENTS.md`'s section for what to do instead (tell the user,
-name the PID).
-
-**F2 measured live (2026-09-16, driver session, workorder round 0):** 12
-separate `Bash` tool calls (`true`) after the final edit to the hook, then the
-criterion's own measurement script against this session's ledger directory.
-34 `post-toolu_*.json` files were written after that edit, mean 0.059 entries
-per file -- against the pre-fix baseline of a mean of 10.7 entries per call
-(357 files, 4,089 entries, same date). Round-0 verification re-measured the
-same way against a larger sample and found a mean of 0.353 across 99 files --
-still well under the 10.7 baseline, growth not observed after the change in
-either run. This is attributed to `_capture_new` reading each new pid's
-command line before `_load_ledger`/the admission walk, together with the
-liveness filter it feeds; neither run isolates the two as a controlled
-before/after of one change alone.
-
-**R1-A (rule (b) narrowed to `DETACHED_ORPHAN_IMAGES`):** live, 2026-09-16
-15:05, before this round's fix. A Stop in this hook's own driver session
-reported two `DiscordSystemHelper.exe` PIDs (182872, 183060, started
-15:04:14) as leftovers. `Discord.exe` (179524) had just (re)started at
-15:04:08, and each helper's own parent was a short-lived launcher already
-dead by the time it was checked -- so the helpers were orphans whose launcher
-happened to be born and die inside this session's own tool-call window, and
-rule (b) admitted them exactly as designed. This is the accepted "another
-session's orphan, rarely" risk the rule's docstring already named, just from
-an image nobody's tool calls start rather than another session's. The report
-suggested `taskkill` against the user's own Discord; it was not run.
-`DETACHED_ORPHAN_IMAGES` bounds rule (b) to images a session plausibly starts
-itself, so this shape no longer reaches it -- see `_is_orphan_admissible`'s
-docstring for the list and its limitation.
-
-**F2 re-measured live (2026-09-16, round 1, after this round's `_capture_new`
-and `_is_orphan_admissible` changes):** 13 separate `Bash` tool calls (`true`)
-after the final edit to the hook this round, then the same measurement
-script. 34 `post-toolu_*.json` files were written after that edit, mean 0.029
-entries per file -- still well under the 10.7 baseline, growth still not
-observed after round 1's changes.
-
-**F2 re-measured live (2026-09-16, round 2, after the R2-1/R2-2/R2-4 fixes
-above -- none of which touch `_capture_new`'s early-capture ordering, so this
-is mainly a check that nothing in this round regressed it):** 12 separate
-`Bash` tool calls (`true`) after the final edit to the hook this round, then
-the same measurement script. 35 `post-toolu_*.json` files were written after
-that edit, mean 0.057 entries per file -- still well under the 10.7 baseline,
-growth still not observed after round 2's changes.
-
-**Not yet re-run after this round's changes:** the live positive control
-(steps 1-3 above), and a check that the `systemMessage` note from a blind
-`Stop` actually shows in the desktop app.
 
 ## Agents — `agents/`
 
@@ -575,8 +196,9 @@ ours to choose. If you run the session on Haiku, the phases still run at their
 own pinned tiers; only the routing between them gets cheaper.
 
 Note one hard limit behind the tiers: Haiku 4.5 has a 200K context where the
-others have 1M. It is comfortable for acceptance criteria plus a diff, which is
-all the verifier is given, and that is part of why the verifier's job is scoped
+others have 1M. It is comfortable for acceptance criteria plus the one context
+section a criterion cites, which is all the verifier opens, and that is part of
+why the verifier's job is scoped
 to what it can execute rather than to reviewing the change.
 
 **Domain reviewers run in parallel**, are read-only, and each covers one bug
@@ -594,8 +216,11 @@ class that has recurred here. Wall-clock is one agent; only tokens add up.
 each dispatch pastes `## Goal`, `## Out of scope`, the diff commands, and the
 paths this round touched, found with
 `.claude/skills/workorder/round_delta.py` (`snapshot <slug> <round>` before
-the round, `delta <slug> <round>` after; exit 3 means the snapshot is missing
-or unreadable, and everything is treated as changed). Round 0 runs every
+the round, `delta <slug> <round>` after; the snapshot also records each
+repo's HEAD, so work the implementer commits mid-round lands in the delta too,
+not only what it leaves dirty; exit 3 means the snapshot is missing,
+unreadable, or a recorded head can no longer be trusted, and everything is
+treated as changed). Round 0 runs every
 applicable reviewer against the whole change. Round ≥ 1 runs `verifier`
 always, plus every reviewer that was `BLOCKING` last round or whose own
 trigger paths (stated in that reviewer's file) appear in the delta; a
@@ -603,6 +228,13 @@ reviewer skipped this way is recorded as `clean@round<n>, not re-run`.
 `decompile-output-guard` is the one exception to being skippable — a legal
 finding is always blocking, so it re-reads every added line every round
 regardless of the delta.
+
+The diff commands a reviewer actually gets differ by mode. In workflow mode
+(the default — "Skills" below), they are per-repo and read from
+`round_delta.py heads`'s recorded base commits rather than `HEAD`, because a
+`HEAD`-relative diff after the round's own commits is empty; the driver-mode
+fallback still reads `git status --porcelain -uall` / `git diff HEAD` per
+repo, as `skills/workorder/SKILL.md` § "Step 3 — verify" states.
 
 `sdk-contract-reviewer` covers four separate rediscoveries of one defect;
 `tauri-command-reviewer` covers three shipped hangs; `instrument-blindness-reviewer`
@@ -664,12 +296,17 @@ Three rules exist because the first real run — the panel-and-launcher
 performance pass — hit the cap with seven items open and had to be finished by
 hand, outside the phase separation:
 
-- **Only `BLOCKING` findings spend a round.** Every reviewer labels each finding
-  `BLOCKING` or `NON-BLOCKING`. That run reached its cap on a round whose
-  instrument reviewer opened with *"nothing here blocks shipping"* and then
-  listed eight improvements — polish consumed the last round and stopped eight
-  findings that were already green. Non-blocking findings ride along as context
-  and surface in the final report.
+- **Only `BLOCKING` findings spend a round.** Every reviewer returns `blocking`
+  findings, `non_blocking` findings, and a separate `plan_defect` flag for the
+  round — set only when no implementation of the plan as written could satisfy
+  its Goal; a missing assert, pin, or sentence the plan didn't forbid is a
+  `BLOCKING` finding for the implementer, not a defect in the plan, so an
+  implementer's own oversight cannot route back to the planner as a costly
+  replan. That run reached its cap on a round whose instrument reviewer opened
+  with *"nothing here blocks shipping"* and then listed eight improvements —
+  polish consumed the last round and stopped eight findings that were already
+  green. Non-blocking findings ride along as context and surface in the final
+  report.
 - **At the cap, split rather than raise.** The recovery is a new workorder
   carrying only the still-open findings, with its own fresh three rounds. The
   cap means the pipeline lost the thread, and that does not become untrue
@@ -679,6 +316,85 @@ hand, outside the phase separation:
   findings, or one submodule, the driver says so before spawning. That run was
   116 criteria, 9 findings, 2 submodules, 1,524 lines — no individual finding
   was too hard, there were simply too many sharing one budget.
+
+**Each worktree gets its own submodule checkout.** Step 1 (and `resume`) run
+`py -3 .claude/skills/workorder/ensure_submodule.py <module>` before planning
+starts, whenever the workorder's module is a submodule not yet initialized in
+this checkout. Without it, a linked worktree that never initializes the
+submodule silently falls back to reading and writing the MAIN checkout's copy
+— which is what happened to `prospect-idcheck-pin-hardening`'s ForgePact work
+on 2026-09-17, and is exactly why two worktrees could not work the same
+submodule at the same time. The script gives this checkout its own gitdir
+(`git submodule update --init --reference <main>/<module> --dissociate`,
+proven cheap here: the module's own object store measured 14MB), then prints
+the module's new HEAD and git dir, and — only when a main-checkout copy exists
+to reference — the exact command to bring unpushed work across:
+`git -C <module> fetch "<main>/<module>" <branch>`. It never touches the main
+checkout and never creates or switches branches; it only checks out the
+commit the gitlink already names, and a second run is a no-op
+(`already initialized: <module> @ <sha>`). From there, all work on that
+module — reading, editing, building, committing, the work branch — stays in
+this checkout's own copy, never another checkout's. Removing a worktree that
+has initialized a submodule this way needs `git worktree remove --force`
+("working trees containing submodules cannot be moved or removed").
+
+**A workorder cannot be run against another checkout, and the driver stops
+rather than trying** (`SKILL.md` Step 0.25). A session opened in a worktree
+has every `Edit` and `Write` outside that worktree refused by the harness — a
+guard on the user's main working copy. `forgepact-closure-names-current-game`
+(2026-09-18) was planned against the main checkout on request, because the
+unpushed branch and five deliberately uncommitted guide lines lived there; its
+implementer met the refusal, and instead of returning `PLAN-DEFECT` routed
+every edit through scratch byte-patch scripts: 57 of 142 turns, 9.4M of 22.6M
+tokens, a 31M-token round against a 15M budget. The driver now names the two
+ways forward instead — open the session in that checkout, or bring the work
+here — `planner.md` refuses to write such a plan (`status: BLOCKED`),
+`implementer.md` makes the refusal a `PLAN-DEFECT`, and the audit's R15 fails
+any run that carried on after it. The script's `repoRoot` argument only ever
+re-pointed the git commands agents are handed, never where `Edit` lands, which
+is why it looked like an escape hatch and was not one.
+
+**`.claude/skills/workorder/section.py <file> '<heading>'` prints one section
+of a workorder file** — heading to the next heading of the same or a higher
+level, fenced code ignored by CommonMark's rule, CRLF and LF alike. The
+heading is single-quoted because headings carry backticks, which Bash runs as
+a command inside double quotes. A citation matches the way planners write
+them, strictest first and a looser tier only when it names one heading: the
+exact text, then the text with backticks ignored, then a prefix (`ctx: "Code
+and test sites"` for a heading that goes on in parentheses — and the way to
+cite a heading with an apostrophe, which would end the single quotes: stop
+before it). Exit 3 lists the
+file's headings, 4 names an ambiguous one, 5 refuses a file with an unclosed
+fence rather than printing to its end, and 6 refuses `## Log` and everything
+under it unless `--log` is passed — the Log is also left out of the listing
+and cut from a level-1 section. It is how the verifier follows a criterion's
+citation into the context file without reading the rest, whose `## Log` is the
+implementer's reasoning; an implementer or the driver reading a round's entry
+passes `--log`. That same run's verifier had no context path in its dispatch
+and no command for a `###` heading; it spent eight calls looking and then read
+the whole file (audit R2, which now also catches a `cat`/`sed`/`Get-Content`
+of a context file, since `Read` is not the only way in). The workflow now
+passes the path and the command — the plan's own path for a legacy single-file
+plan.
+
+**It also provisions each module's local-only build prerequisites**, on both
+the fresh-init path and an already-initialized one.
+`.claude/skills/workorder/local_prereqs.json` lists, per module, paths a
+`.gitignore`d build step needs that no `git submodule update` can produce
+because they were never committed anywhere — for ForgePact,
+`plugin_build/include/` (the YYToolkit/Aurie/FunctionWrapper headers plus
+`YYTK_Shared_Types.cpp`) and the four DLLs/EXE under `modfiles_shipped/`.
+Proven on the real repo: a freshly-initialized linked worktree's own
+`plugin_build\build.bat dev` failed until `plugin_build/include/` was copied
+across by hand, then passed in 25s and produced a byte-size-identical DLL.
+The script copies each listed path from the main checkout's copy of the
+module when it exists there and is missing here — checked again on every run,
+not only a fresh init, since the manifest or the main checkout can gain an
+entry after this worktree's module was already set up — never overwriting a
+path that already exists here, never copying anything the manifest doesn't
+list, and rejecting (not copying) an entry that is absolute or contains `..`.
+A run in the main checkout itself provisions nothing, since that IS where the
+files already live.
 
 It has three modes: `/workorder <task>` runs everything, `/workorder plan
 <task>` stops after the plan, and `/workorder resume <slug>` picks up at
@@ -690,24 +406,90 @@ conversation that produced it. Context isolation is *not* one of the benefits �
 planner and implementer are already separate subagents with separate contexts
 either way.
 
-**A fourth mode, opt-in and unproven — say so when offering it:**
-`/workorder resume <slug> workflow`, or the user saying "use a workflow," runs
-the implement → verify → route rounds (steps 2–4) as
-`.claude/workflows/workorder-rounds.js` instead of driver turns: a fresh
-implementer each round, `verifier` plus the delta-scoped reviewers above, and
-a haiku scribe that writes the Log and State entries, looping under the same
-3-round cap. It returns to the driver on anything needing judgement — `PASS`,
-`PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, a human-needed
-`UNATTEMPTED`, or the cap — so replans, consultations, human questions and the
-step-5 report stay with the driver either way. What it trades away: every
-re-entry inside the script is a fresh spawn, never the `SendMessage` resume
-above, because the script has no agent id to send to. What it buys is the
-driver's own tool calls for those rounds, not spent —
-`skills/workorder/SKILL.md` § "Driver discipline" records the measured cost of
-a driver that does that work itself.
-`.claude/workflows/workorder-rounds.test.mjs`
-(`node --test`) dry-runs its routing against stub agents, unproven meaning it
-has not yet carried one real workorder end to end.
+**Workflow mode is the default way steps 2–4 run.** `/workorder <task>` (after
+the plan is approved) and `/workorder resume <slug>` call
+`.claude/workflows/workorder-rounds.js` instead of driver turns — the user's
+own `/workorder` invocation is the opt-in the Workflow tool requires, so the
+skill does not ask again. **Driver mode — steps 2–4 as the driver's own turns,
+above — is the documented fallback**, used when the Workflow tool is
+unavailable, the launch fails, or the user says "driver mode" or "no
+workflow". This replaces "opt-in and unproven": it carried
+`prospect-idcheck-pin-hardening` through three rounds to `PASS` on
+2026-09-17 (fresh sonnet implementer 73–88 turns / 9–10.6M tokens per round,
+verifier 2–3M, nine haiku utility agents 1.8M total —
+`skills/workorder/SKILL.md` § "Driver discipline" has the matching cost for
+the same work done by hand).
+
+Per round the script snapshots (`round_delta.py snapshot`), reads back that
+snapshot's recorded per-repo base commits (`round_delta.py heads`), spawns a
+fresh implementer at the triaged tier, then runs `verifier` plus the
+delta-scoped reviewers above in parallel — each pointed at a `git -C <repo>
+diff <sha>` built from those heads rather than `git diff HEAD`, since
+implementers commit mid-round and a `HEAD`-relative diff taken afterward is
+empty (measured 2026-09-17: every reviewer had to rediscover the round's own
+commits by hand, at 23–59 turns instead of the usual 6–17). A reviewer that
+has never run reads the whole change from `args.baseHeads` (the workorder's
+own starting heads, copied from `## State` › `round base:`) when given, else
+the round's own first snapshot; a re-run reviewer reads only the round's
+delta paths, split per repo from that round's own heads. If heads could not
+be obtained at all, the script falls back to the old `HEAD`-relative commands
+and says so loudly in the dispatch, rather than reading nothing silently.
+`round_delta.py heads <slug> <round>` prints `<key>\t<sha>` per repo (`.` for
+the hub, the submodule dir otherwise; an empty sha for an unborn head),
+refusing (exit 3) for exactly the reasons `delta` refuses a snapshot outright
+— missing, unreadable, not version 2 — and nothing else, since `heads` never
+touches the working tree the way `delta`'s own live-repo checks do. The delta
+agent's own content greps now run from the repository root explicitly and
+report `files_checked`/`files_missing`, so a path missing because the greps
+ran in the wrong directory (previously invisible) is distinguishable from one
+deleted this round.
+
+A haiku scribe still records each round, but composes nothing: the exact
+markdown — the `### Round <n>` Log entry, `BLOCKING (<k>)`/`NON-BLOCKING (<k>)`
+lists with the counts in the headings themselves, and the replacement
+`## State` lines — is built in the script, and the scribe's only job is to
+paste it verbatim. This is the fix for a measured relabel: a scribe once
+turned a round's own `1 BLOCKING` + `5 NON-BLOCKING` verdict into six
+`BLOCKING` findings, caught only because the driver happened to read it by
+hand; counts baked into the headings make that kind of relabel visible on
+sight instead.
+
+```
+Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
+           args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
+                   reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
+                   submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings } })
+```
+
+`reviewers` is a map, one entry per applicable round-0 reviewer, valued
+`'never'`. `submodules` names the dirs whose own diff the reviewers must
+read, relative to `repoRoot`. `researchHeadings` names the context file's
+`###` heading(s) `instrument-blindness-reviewer` should read. `baseHeads` is
+`{ '.': sha, '<submodule>': sha, ... }`, copied from `## State` ›
+`round base:`. `priorFindings` is `{ '<reviewer>': [{ where, problem }] }` for
+a reviewer entering as `blocking`, copied by the driver on a fresh launch from
+the most recent `### Round <n>` Log entry that carries a `BLOCKING (k)` list;
+between rounds of one launch the script carries it itself. A
+re-run reviewer that was blocking is handed its own finding and asked whether
+the delta resolves it, every re-run is told earlier rounds reviewed the rest,
+and every reviewer is told the Out-of-scope list is not a checklist — a
+`docs-sync-reviewer` given none of the three ran 40 turns twice, once policing
+scope the verifier already checks and once re-deriving a one-file delta's
+history. `repoRoot` is still accepted and nothing passes it; see "A workorder
+cannot be run against another checkout" above.
+
+It returns to the driver on anything needing judgement — `PASS`,
+`PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED` or `CAP`
+— so replans, consultations, human questions and the step-5 report stay with
+the driver either way, and one launch may cover several rounds (a
+`PLAN-DEFECT` hand-back means relaunching after the replan). What it still
+trades away: every re-entry inside the script is a fresh spawn, never the
+`SendMessage` resume above, because the script has no agent id to send to —
+measured, on this one real run, as no worse than a resumed implementer (a
+resumed round-1 implementer cost 14.6M tokens at 304K context per turn;
+losing the resume cost nothing). `.claude/workflows/workorder-rounds.test.mjs`
+(`node --test`, 23 cases, each with its own control) dry-runs the routing
+above against stub agents.
 
 That makes the split a forcing function rather than just a workflow: a plan that
 cannot survive a fresh session was never a plan, it was a conversation someone
@@ -719,6 +501,107 @@ Because the skill cannot invoke itself (`disable-model-invocation: true` — thr
 agent spawns is the wrong answer to a typo), `AGENTS.md` § "Offer `/workorder`
 When the Work Has Shape" carries the trigger list that makes Claude *suggest*
 it. Suggest, wait, and drop it if the answer is no.
+
+**Step 5 audits the run's own cost.** The report step runs `py -3
+tools/workorder_audit.py --latest` and prints every `FAIL` line verbatim
+beside the round summary — a workorder that passes its acceptance criteria and
+still breaks a cost/behavior rule says so, instead of merging on the strength
+of the criteria alone.
+
+### `tools/workorder_audit.py` — did this run actually save time and tokens
+
+Before this tool existed, "did a `/workorder` run save time and tokens, and
+did it break a rule" was answered by one-off transcript scripts run by hand,
+once per question. This makes that judgement runnable and repeatable, against
+the same rules this page states above (batching, per-role budgets, plan/context
+scope, driver discipline, replans, round budgets):
+
+```
+py -3 tools/workorder_audit.py [--latest | --session <id-prefix>]
+    [--projects-dir DIR] [--project NAME] [--json]
+```
+
+It streams — never loads whole — a session's transcripts: the driver's own
+`~/.claude/projects/<project>/<session>.jsonl`, ad-hoc subagents at
+`<session>/subagents/agent-*.jsonl`, and workflow-mode round agents at
+`<session>/subagents/workflows/wf_*/agent-*.jsonl`, each paired with a
+sibling `.meta.json` carrying `agentType` and a label (a workflow label reads
+like `implementer:r1`). `--project` defaults to the mangled name Claude Code
+derives from the current working directory (every non-alphanumeric character
+becomes `-`); `--projects-dir`/`--project` exist so tests never touch the real
+`~/.claude/projects`.
+
+Per agent it reports turns (deduped by `message.id`), tokens (input +
+cache-creation + cache-read, summed over assistant turns), output tokens,
+context per turn, peak context, wall minutes, the longest single tool call,
+and KB of `Read` results by kind (plan, context file, `instructions.md`,
+source). It prints one table, then fifteen rules as `PASS`/`FAIL` with
+evidence (the agent, the time, the command or path), then each role's numbers
+against the pre-update averages as a percentage; `--json` emits the same as
+one object.
+
+| Rule | Checks |
+|---|---|
+| R1 reviewer-reads-workorder | a reviewer `Read`/grep of a `-plan.md` (`instrument-blindness-reviewer` may read a `-context.md`) |
+| R2 verifier-scope | a verifier whole-file `Read` of a `-context.md` or of an oversized plan, or a shell read (`cat`, `sed`, `head`, `Get-Content`, … as a command, not as part of a slug) of a `-context.md`, or `section.py` run with `--log` — `section.py` without it and a heading `grep` are the sanctioned routes; the reader list is a heuristic drawn from real transcripts, not a fence |
+| R3 guide-whole | an agent whose `instructions.md` `Read` results exceed a KB budget |
+| R4 batching | an implementer's share of small-sequential-shell-call runs over budget |
+| R5 blocking-call | a tool call over the time budget — except `Agent`/`Task`, which dispatch a subagent and are meant to block for minutes |
+| R6 planner-rewrite | a planner `Write` to a plan/context path already written earlier in the session |
+| R7 / R8 / R9 reviewer- / implementer- / verifier-budget | turns, tokens, or (implementer only) context-per-turn over that role's budget |
+| R10 driver-discipline | a driver shell command that builds or tests, a driver `Edit`/`Write` outside `.claude/workorders/`, or too many driver turns in one round — judged only while it is driving: one window per `/workorder` invocation, from the invocation to the first message the user types after that invocation's last pipeline agent finished (a phase agent, a reviewer, anything in a workflow run — an ad-hoc agent asked for later does not hold it open; harness-written `user` records are not the user), or to the next invocation, so a build the user asks for afterwards, or between two workorders, is not the driver's violation |
+| R11 replans | two or more planner runs in one session |
+| R12 plan-size | a plan or context file whose planner-authored part is over its KB budget, from the `Read` calls that touched it — `## Log` is not counted, being what the scribe, implementer and driver append while the rounds run |
+| R13 round-budget | a round's total subagent tokens over budget |
+| R14 reviewer-reruns-suite | a reviewer running test suites or builds more than twice (the two reviewers told to build and test are exempt) |
+| R15 edit-guard-workaround | a subagent whose `Edit`/`Write` was refused by the harness's worktree guard ("is in the base repo checkout") and which then made more than five further tool calls (its own return not counted) instead of returning `PLAN-DEFECT` — unless an edit of the same repo-relative path then landed inside a worktree, which is a mistyped path corrected, not a workaround (a same-named scratch copy is the workaround) |
+
+Every budget is a named module-level constant in the tool itself
+(`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
+on), each with a comment naming the measurement it was set from — read those
+constants for the current number rather than one copied here, since
+re-measuring is exactly what this tool exists to make cheap. Exit code is 0
+when every rule passes, 1 when any rule fails, 2 on a usage error.
+
+Tests (`tests/test_workorder_audit.py`) build synthetic transcripts in a temp
+directory; every rule has both a failing fixture and a passing control, plus
+coverage for message-id dedupe, workflow-subdirectory discovery, and the exit
+codes.
+
+### `tools/source_index.py` — go to the range, don't grep around
+
+Generic, stdlib-only, read-only index for one large C/C++ file, built against
+the banner-comment and `#ifndef <guard>` research-span style
+`ForgePact/plugin/ModuleMain.cpp` already uses:
+
+```
+py -3 tools/source_index.py <file> [--regions] [--functions]
+                                    [--find NAME] [--at LINE]
+                                    [--guard MACRO] [--json]
+```
+
+`--regions` (the default) prints one line per banner-delimited region —
+`start-end  KB  [R]  title`; `[R]` marks a region that sits inside an
+`#ifndef FORGEPACT_RELEASE` (or `--guard`-named) span, at any nesting depth.
+`--functions` finds file-scope function definitions with a brace-matching
+heuristic (its own docstring lists what it misses: templates, a body on the
+signature line, anything not at brace depth 0). `--find NAME` returns every
+region and function whose name contains `NAME`, with ranges, so the next call
+is a `Read` with `offset`/`limit` instead of another grep chain. `--at LINE`
+returns the region and function containing a line. It only ever prints
+identifiers and banner titles from the file it is given, never the file's own
+text.
+
+`implementer.md` is the rule that sends the implementer here: for a source
+file over 2,000 lines, run `source_index.py --find <name>` first and `Read`
+only the range it prints, instead of an exploratory grep chain. Measured
+against the file it was built for (`ForgePact/plugin/ModuleMain.cpp`, 997KB /
+18,144 lines): `--regions` prints 94 regions in about 6KB.
+
+Tests (`tests/test_source_index.py`) cover a synthetic fixture (banners,
+nested guard spans, a function inside and outside a guard, `--find`, `--at`)
+plus a smoke test against the real `ModuleMain.cpp`, skipped when the file is
+absent — as it is in a worktree with the ForgePact submodule uninitialized.
 
 ## MCP servers — `../.mcp.json`
 
@@ -795,7 +678,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Four suites cover this directory. Three are Python and run automatically
+Six suites cover this page's tooling. Five are Python and run automatically
 under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
@@ -803,9 +686,23 @@ JavaScript and runs separately, under Node:
 py -3 -m unittest discover -s tests
 py -3 -m unittest tests.test_claude_hooks -v      # the hooks actually block
 py -3 -m unittest tests.test_claude_agents -v     # the definitions are well-formed
-py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py sees only this round's changes
+py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py + ensure_submodule.py, one round/submodule at a time
+py -3 -m unittest tests.test_claude_workorder_section -v  # section.py, plus the sentences in agents/ and SKILL.md that carry the same lesson
+py -3 -m unittest tests.test_workorder_audit -v   # workorder_audit.py's rules, each with a failing fixture and a passing control
+py -3 -m unittest tests.test_source_index -v      # source_index.py against a synthetic fixture, plus a real-ModuleMain.cpp smoke test
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
+
+**`.claude/workflows/*.js` and `*.mjs` must stay LF.** `.gitattributes` forces
+`text eol=lf` on both globs: the Workflow tool's permission handler refuses to
+schedule a script containing any CR byte at all — "script contains control
+characters that would be hidden in the approval dialog" — so a CRLF
+`workorder-rounds.js` could never be launched, independent of whether its
+content was otherwise correct, which is almost certainly why workflow mode had
+never carried a workorder end to end before 2026-09-17. That is the opposite
+of the rest of this repository, which is CRLF by convention; check with `file`
+after editing either script rather than assuming the checkout's usual
+`core.autocrlf` behavior carried over.
 
 `test_claude_agents.py` enforces the two rules on this page that a machine can
 check: every agent pins `model:` to a known tier alias, and no frontmatter
@@ -813,9 +710,15 @@ carries an unquoted ` #` that would silently truncate the value. Both are
 invisible in a diff and neither had a check before. It self-tests its own
 parser, for the same reason everything else here does.
 
-`test_claude_workorder.py` drives `round_delta.py` as the subprocess
-`settings.json` and the driver actually invoke, not by importing its
-functions — the same discipline `test_claude_hooks.py` uses for the hooks.
+`test_claude_workorder.py` drives `round_delta.py` and `ensure_submodule.py`
+as the subprocesses the driver and the workflow script actually invoke, not by
+importing their functions — the same discipline `test_claude_hooks.py` uses
+for the hooks. Its submodule fixtures prove a linked worktree gets its own
+gitdir and that a commit made there stays invisible to the main checkout's
+copy until fetched across by hand, and that the prerequisites manifest copies
+exactly what it lists — once, never overwriting an existing path, never
+touching one the manifest doesn't name — and stays a no-op run from the main
+checkout itself.
 
 Every test there is a **pair**: a positive control proving the hook fires on a
 real violation, and a negative control proving it stays quiet on a clean tree.
