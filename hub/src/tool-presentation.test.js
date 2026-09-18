@@ -5,8 +5,15 @@ import { identity, selectTools, quickTools, presentation, terminalPhases } from 
 import { createActionGate, operationKey, ToolBusyError } from './action-gate.js';
 const catalog = JSON.parse(readFileSync(new URL('../../catalog/catalog.json', import.meta.url))).tools;
 const base = { ...catalog[0], installed_version: null, update_available: false, running_pid: null, running_elsewhere: false, favorite: false };
-test('every catalog tool has a distinct icon and survives the default view exactly once', () => {
-  assert.equal(new Set(catalog.map((t) => identity(t).icon)).size, catalog.length);
+test('known icons stay distinct and catalog-only tools survive the default view exactly once', () => {
+  // Remote catalog additions must work before a new Toolkit binary supplies an icon.
+  const branded = catalog.filter(t => identity(t).category !== 'other');
+  assert.equal(new Set(branded.map(t => identity(t).icon)).size, branded.length);
+  for (const tool of catalog.filter(t => identity(t).category === 'other')) {
+    assert.equal(identity(tool).icon, 'cube');
+    assert.equal(identity(tool).title, tool.name);
+    assert.equal(identity(tool).summary, tool.summary);
+  }
   const shown = selectTools(catalog);
   assert.deepEqual(new Set(shown.map(t => t.id)), new Set(catalog.map(t => t.id)));
   const future = { ...base, id: 'new-tool', name: 'A future tool' };
