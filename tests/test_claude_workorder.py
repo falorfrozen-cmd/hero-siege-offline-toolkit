@@ -755,6 +755,10 @@ class TestEnsureSubmoduleLinkedWorktree(unittest.TestCase):
 
         sub_in_wt = self.repos.worktree / "Sub"
         (sub_in_wt / "new.txt").write_bytes(b"from worktree\n")
+        # ensure_submodule clones this module fresh, so it has none of the
+        # identity the fixture set up elsewhere; CI has no global one.
+        _git("config", "user.email", "t@example.com", cwd=sub_in_wt)
+        _git("config", "user.name", "T", cwd=sub_in_wt)
         _git("add", "-A", cwd=sub_in_wt)
         _git("commit", "-qm", "worktree-only commit", cwd=sub_in_wt)
 
