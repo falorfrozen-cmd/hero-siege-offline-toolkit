@@ -85,9 +85,19 @@ BLOCKING_CALL_MAX_SECONDS = 240
 BLOCKING_EXEMPT_TOOLS = {"Agent", "Task"}
 
 # R12: no plan/context should carry the implementation (see planner.md rule);
-# these are size smells, not hard limits on what a plan may describe.
+# these are size smells, not hard limits on what a plan may describe. Only
+# the bytes the planner authored count: `## Log` is appended by the scribe,
+# the implementer and the driver while the rounds run, so measuring it failed
+# every multi-round run for the pipeline's own bookkeeping (measured
+# 2026-09-18: an 11.7KB context file audited as 29.3KB, 18.3KB of it Log).
 PLAN_MAX_KB = 30.0
 CONTEXT_MAX_KB = 20.0
+LOG_HEADING_RE = re.compile(rb"^## Log[ \t]*$")
+H2_RE = re.compile(rb"^## ")
+# A fence closes only on the same character, a run at least as long as the
+# opener, and nothing after it -- the rule `section.py` uses, so the two
+# agree on what is structure and what is quoted markdown.
+FENCE_RE = re.compile(rb"^ {0,3}(`{3,}|~{3,})(.*)$")
 
 # R13: §1 first workflow-mode run measured ~21M tokens per round.
 ROUND_MAX_TOKENS = 15_000_000
@@ -100,6 +110,11 @@ DRIVER_BUILD_TEST_PATTERNS = (
     r"\bpytest\b", r"\bnpm\s", r"\bnode --test\b",
 )
 DRIVER_ALLOWED_EDIT_PREFIX = ".claude/workorders/"
+# R10 judges the driver only while it is driving: from the first `/workorder`
+# invocation to the first human message after the last subagent finished.
+# Measured 2026-09-18: a user's "build the release plugin" request, typed
+# after the workorder had passed, failed R10 for the run it followed.
+WORKORDER_COMMAND_MARKER = "<command-name>/workorder</command-name>"
 
 # R14: the reviewer replay on 2026-09-18 (same change, fixed dispatch) showed
 # docs-sync and instrument-blindness each re-running test suites 5-6 times --
@@ -108,6 +123,32 @@ DRIVER_ALLOWED_EDIT_PREFIX = ".claude/workorders/"
 # test are exempt.
 REVIEWER_MAX_TEST_RUNS = 2
 REVIEWER_TEST_RUN_EXEMPT = {"sdk-contract-reviewer", "tauri-command-reviewer"}
+
+# R15: a session opened in a git worktree has every `Edit`/`Write` outside
+# that worktree refused by the harness. Measured 2026-09-18 on a plan whose
+# `repoRoot` was the main checkout: the implementer met the refusal three
+# times and routed every edit through scratch byte-patch scripts instead --
+# ~57 of its 142 turns and ~9.4M of its 22.6M tokens, plus a guard protecting
+# the user's primary working copy bypassed. A refusal is a PLAN-DEFECT; the
+# follow-up allowance covers gathering that verdict's evidence, nothing more.
+WORKTREE_GUARD_MARKER = "is in the base repo checkout"
+GUARD_REFUSAL_MAX_FOLLOWUP_CALLS = 5
+RETURN_TOOL = "StructuredOutput"
+
+# R2: `Read` is not the only way to open a file. The verifier's one sanctioned
+# route into the context file is `section.py`, which refuses the Log unless
+# it is passed `--log` -- which `verifier.md` forbids, so that is flagged too.
+# The reader list is a heuristic, not a fence: it names the commands seen in
+# real transcripts. Each must stand as a command token -- `head` inside the
+# slug `forgepact-head-label-hook-context.md` is a path, not a reader.
+CONTEXT_SHELL_READ_RE = re.compile(
+    r"(?<![\w./\\-])(cat|type|sed|awk|head|tail|less|more|Get-Content|gc)\s+[^|;&\n]*-context\.md", re.IGNORECASE)
+SECTION_LOG_FLAG_RE = re.compile(r"section\.py\b[^|;&\n]*(?<!\S)--log\b", re.IGNORECASE)
+
+# R10: the agents a `/workorder` invocation itself spawns. Only these keep
+# its window open -- an ad-hoc agent the user asks for afterwards is
+# conversation, like the message that asked for it.
+PIPELINE_AGENT_TYPES = {"planner", "implementer", "verifier", "consultant", "workflow-subagent"}
 
 REVIEWER_TYPES = {
     "docs-sync-reviewer",
@@ -170,6 +211,42 @@ def _tool_result_text(content) -> str:
     return str(content)
 
 
+# What the harness writes as a `user` record with no `origin`, in transcripts
+# that otherwise carry one: none of these is the user speaking.
+HARNESS_USER_PREFIXES = ("<task-notification>", "<ci-monitor-event>", "<local-command-stdout>",
+                         "<local-command-stderr>", "[Request interrupted")
+
+
+def _user_message_candidate(rec: dict, content) -> Optional[tuple]:
+    """(text, origin kind or None) for a `user` record that could be the user
+    typing, else None. Tool results, skill expansions (`isMeta`) and
+    compaction summaries never are."""
+    if rec.get("isMeta") or rec.get("isCompactSummary"):
+        return None
+    if isinstance(content, list):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            return None
+        text = _tool_result_text(content)
+    elif isinstance(content, str):
+        text = content
+    else:
+        return None
+    origin = rec.get("origin")
+    kind = origin.get("kind") if isinstance(origin, dict) else None
+    return text, (kind or None)
+
+
+def _human_messages(candidates: list) -> list:
+    """[(ts, text)] the user typed. A transcript that records `origin.kind`
+    anywhere is believed: only `human` counts, and its origin-less records
+    (CI monitor events, interrupts, local command output) are the harness. A
+    transcript from before `origin` existed falls back to the record's shape."""
+    if any(kind for _, _, kind in candidates):
+        return [(t, text) for t, text, kind in candidates if kind == "human"]
+    return [(t, text) for t, text, _ in candidates
+            if not text.lstrip().startswith(HARNESS_USER_PREFIXES)]
+
+
 def iter_jsonl(path: Path) -> Iterator[dict]:
     """Stream a transcript line by line; never load the whole file as one
     string. Malformed lines are skipped rather than aborting the audit."""
@@ -194,6 +271,7 @@ class ToolCall:
     ts_end: Optional[datetime] = None
     result_bytes: int = 0
     is_error: bool = False
+    guard_refused: bool = False  # the harness refused it: target outside the session's worktree
 
     @property
     def duration_seconds(self) -> Optional[float]:
@@ -244,6 +322,7 @@ class AgentTranscript:
     tool_calls: list = field(default_factory=list)      # ToolCall, in order
     read_kb: dict = field(default_factory=lambda: defaultdict(float))  # kind -> KB
     write_paths: list = field(default_factory=list)     # (path, ts) for Write calls
+    human_messages: list = field(default_factory=list)  # (ts, text) typed by the user, in order
     ts_first: Optional[datetime] = None
     ts_last: Optional[datetime] = None
 
@@ -301,6 +380,7 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
         round=round_, workflow_id=workflow_id, is_driver=is_driver,
     )
     pending: dict = {}  # tool_use_id -> ToolCall
+    user_candidates: list = []  # (ts, text, origin kind), resolved once the whole transcript is read
 
     for rec in iter_jsonl(path):
         rec_type = rec.get("type")
@@ -351,6 +431,9 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
         elif rec_type == "user":
             message = rec.get("message") or {}
             content = message.get("content")
+            candidate = _user_message_candidate(rec, content)
+            if candidate is not None and ts is not None:
+                user_candidates.append((ts, *candidate))
             if not isinstance(content, list):
                 continue
             for block in content:
@@ -364,12 +447,14 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
                 call.ts_end = ts
                 call.result_bytes = len(text.encode("utf-8", errors="replace"))
                 call.is_error = bool(block.get("is_error"))
+                call.guard_refused = call.name in EDIT_TOOLS and WORKTREE_GUARD_MARKER in text
                 if call.name == "Read":
                     fp = call.tool_input.get("file_path")
                     if fp:
                         kind = read_kind(fp)
                         agent.read_kb[kind] += call.result_bytes / 1024.0
 
+    agent.human_messages = _human_messages(user_candidates)
     return agent
 
 
@@ -517,6 +602,13 @@ def rule_r2_verifier_scope(session: Session) -> RuleResult:
         if agent.agent_type != "verifier":
             continue
         for call in agent.tool_calls:
+            if call.name in SHELL_TOOLS:
+                cmd = _cmd_text(call)
+                if CONTEXT_SHELL_READ_RE.search(cmd):
+                    evidence.append(f"{agent.label} shell read of a context file at {call.ts_start}: {cmd[:120]}")
+                if SECTION_LOG_FLAG_RE.search(cmd):
+                    evidence.append(f"{agent.label} passed --log to section.py at {call.ts_start}: {cmd[:120]}")
+                continue
             if call.name != "Read":
                 continue
             fp = str(call.tool_input.get("file_path", ""))
@@ -663,11 +755,50 @@ def rule_r9_verifier_budget(session: Session) -> RuleResult:
     return RuleResult("R9", "verifier-budget", passed=not evidence, evidence=evidence)
 
 
+def _workorder_windows(session: Session) -> list:
+    """[(start, end), ...]: the spans in which the driver is driving a
+    workorder; None on a side means unbounded. One span per `/workorder`
+    invocation: it starts there and ends at the first human message, other
+    than another `/workorder`, typed after the last pipeline agent that
+    invocation started had finished (a phase agent, a reviewer, anything in a
+    workflow run; an ad-hoc agent the user asks for later does not hold it
+    open) -- what the user asks for once the pipeline has
+    reported is conversation, not driving -- or at the next invocation,
+    whichever comes first. One span for the whole session was not enough:
+    with two workorders in a session, everything the user asked for between
+    them still counted. A session with no invocation on record is judged
+    whole, as before."""
+    human = session.driver.human_messages
+    starts = [t for t, text in human if WORKORDER_COMMAND_MARKER in text]
+    if not starts:
+        return [(None, None)]
+    pipeline = PIPELINE_AGENT_TYPES | REVIEWER_TYPES
+    subagents = [a for a in all_subagents(session)
+                 if a.ts_first and a.ts_last and (a.workflow_id or a.agent_type in pipeline)]
+    windows = []
+    for i, start in enumerate(starts):
+        nxt = starts[i + 1] if i + 1 < len(starts) else None
+        mine = [a.ts_last for a in subagents if a.ts_first >= start and (nxt is None or a.ts_first < nxt)]
+        after = max(mine, default=start)
+        end = next((t for t, text in human
+                    if t > after and WORKORDER_COMMAND_MARKER not in text), None)
+        if nxt is not None and (end is None or end > nxt):
+            end = nxt
+        windows.append((start, end))
+    return windows
+
+
 def rule_r10_driver_discipline(session: Session) -> RuleResult:
     evidence = []
     driver = session.driver
     patterns = [re.compile(p, re.IGNORECASE) for p in DRIVER_BUILD_TEST_PATTERNS]
+    windows = _workorder_windows(session)
     for call in driver.tool_calls:
+        # A call with no timestamp cannot be placed, so it is judged, as it
+        # was before there were windows.
+        ts = call.ts_start
+        if ts is not None and not any((s is None or ts >= s) and (e is None or ts < e) for s, e in windows):
+            continue
         if call.name in SHELL_TOOLS:
             cmd = _cmd_text(call)
             if any(p.search(cmd) for p in patterns):
@@ -729,18 +860,52 @@ def _plan_context_paths(session: Session) -> dict:
     return paths
 
 
+def authored_and_log_kb(data: bytes) -> tuple[float, float]:
+    """(planner-authored KB, `## Log` KB). The Log section runs from its
+    heading to the next `## ` heading or the end of the file -- last in a
+    context file, not necessarily last in a legacy single-file plan."""
+    log_start = log_end = None
+    fence = None
+    offset = 0
+    for raw in data.splitlines(keepends=True):
+        line = raw.rstrip(b"\r\n")
+        f = FENCE_RE.match(line)
+        if f and fence is None and f.group(1)[:1] == b"`" and b"`" in f.group(2):
+            f = None  # inline ```code``` opening a prose line, not a fence
+        if f:
+            run, rest = f.group(1), f.group(2)
+            if fence is None:
+                fence = run
+            elif run[:1] == fence[:1] and len(run) >= len(fence) and not rest.strip():
+                fence = None
+        elif fence is None:
+            if log_start is None:
+                if LOG_HEADING_RE.match(line):
+                    log_start = offset
+            elif H2_RE.match(line):
+                log_end = offset
+                break
+        offset += len(raw)
+    if log_start is None:
+        return len(data) / 1024.0, 0.0
+    log_bytes = (log_end if log_end is not None else len(data)) - log_start
+    return (len(data) - log_bytes) / 1024.0, log_bytes / 1024.0
+
+
 def rule_r12_plan_size(session: Session) -> RuleResult:
     evidence = []
     for fp in sorted(_plan_context_paths(session).values()):
         p = Path(fp)
         if not p.is_file():
             continue
-        kb = p.stat().st_size / 1024.0
+        try:
+            kb, log_kb = authored_and_log_kb(p.read_bytes())
+        except OSError:
+            continue
         low = fp.replace("\\", "/").lower()
-        if low.endswith("-plan.md") and kb > PLAN_MAX_KB:
-            evidence.append(f"{fp}: {kb:.1f}KB (> {PLAN_MAX_KB}KB)")
-        elif low.endswith("-context.md") and kb > CONTEXT_MAX_KB:
-            evidence.append(f"{fp}: {kb:.1f}KB (> {CONTEXT_MAX_KB}KB)")
+        budget = PLAN_MAX_KB if low.endswith("-plan.md") else CONTEXT_MAX_KB
+        if kb > budget:
+            evidence.append(f"{fp}: {kb:.1f}KB authored (> {budget}KB; its ## Log, {log_kb:.1f}KB, is not counted)")
     return RuleResult("R12", "plan-size", passed=not evidence, evidence=evidence)
 
 
@@ -772,6 +937,49 @@ def rule_r14_reviewer_reruns_suite(session: Session) -> RuleResult:
     return RuleResult("R14", "reviewer-reruns-suite", passed=not evidence, evidence=evidence)
 
 
+WORKTREE_DIR_MARKER = "/.claude/worktrees/"
+
+
+def _same_file_edit_landed(refused: ToolCall, later: ToolCall) -> bool:
+    """Did `later` make the refused edit where it belongs: inside a worktree,
+    at the same repo-relative path? A same-named file anywhere else is not a
+    correction -- the real run wrote `release-notes-v1.4.2.md` to its
+    scratchpad and `cp`'d it over the main checkout's, which is the
+    workaround itself."""
+    if later.name not in EDIT_TOOLS or later.guard_refused or later.is_error:
+        return False
+    norm = lambda c: str(c.tool_input.get("file_path", "")).replace("\\", "/").lower()
+    was, now = norm(refused), norm(later)
+    if not was or WORKTREE_DIR_MARKER not in now:
+        return False
+    tail = now.split(WORKTREE_DIR_MARKER, 1)[1].split("/", 1)  # [worktree name, repo-relative path]
+    return len(tail) == 2 and bool(tail[1]) and was.endswith("/" + tail[1])
+
+
+def rule_r15_edit_guard_workaround(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_subagents(session):
+        calls = agent.tool_calls
+        # A refusal the agent answered by making the same edit inside its own
+        # worktree (it mistyped the path; the guard's message names the right
+        # one) is the guard working, not a workaround.
+        refused = [i for i, c in enumerate(calls)
+                   if c.guard_refused and not any(_same_file_edit_landed(c, later) for later in calls[i + 1:])]
+        if not refused:
+            continue
+        # The agent's own return is a tool call in workflow mode; it is how
+        # the PLAN-DEFECT travels, not work done after the refusal.
+        followups = sum(1 for c in calls[refused[0] + 1:] if c.name != RETURN_TOOL)
+        if followups > GUARD_REFUSAL_MAX_FOLLOWUP_CALLS:
+            first = calls[refused[0]]
+            evidence.append(
+                f"{agent.label}: {first.name} of {first.tool_input.get('file_path', '?')} refused by the "
+                f"worktree guard at {first.ts_start} ({len(refused)} refusal(s)), then {followups} more tool "
+                f"calls (a refusal is a PLAN-DEFECT; allowance {GUARD_REFUSAL_MAX_FOLLOWUP_CALLS})"
+            )
+    return RuleResult("R15", "edit-guard-workaround", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -787,6 +995,7 @@ ALL_RULES = [
     rule_r12_plan_size,
     rule_r13_round_budget,
     rule_r14_reviewer_reruns_suite,
+    rule_r15_edit_guard_workaround,
 ]
 
 

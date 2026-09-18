@@ -196,8 +196,9 @@ ours to choose. If you run the session on Haiku, the phases still run at their
 own pinned tiers; only the routing between them gets cheaper.
 
 Note one hard limit behind the tiers: Haiku 4.5 has a 200K context where the
-others have 1M. It is comfortable for acceptance criteria plus a diff, which is
-all the verifier is given, and that is part of why the verifier's job is scoped
+others have 1M. It is comfortable for acceptance criteria plus the one context
+section a criterion cites, which is all the verifier opens, and that is part of
+why the verifier's job is scoped
 to what it can execute rather than to reviewing the change.
 
 **Domain reviewers run in parallel**, are read-only, and each covers one bug
@@ -337,6 +338,45 @@ this checkout's own copy, never another checkout's. Removing a worktree that
 has initialized a submodule this way needs `git worktree remove --force`
 ("working trees containing submodules cannot be moved or removed").
 
+**A workorder cannot be run against another checkout, and the driver stops
+rather than trying** (`SKILL.md` Step 0.25). A session opened in a worktree
+has every `Edit` and `Write` outside that worktree refused by the harness — a
+guard on the user's main working copy. `forgepact-closure-names-current-game`
+(2026-09-18) was planned against the main checkout on request, because the
+unpushed branch and five deliberately uncommitted guide lines lived there; its
+implementer met the refusal, and instead of returning `PLAN-DEFECT` routed
+every edit through scratch byte-patch scripts: 57 of 142 turns, 9.4M of 22.6M
+tokens, a 31M-token round against a 15M budget. The driver now names the two
+ways forward instead — open the session in that checkout, or bring the work
+here — `planner.md` refuses to write such a plan (`status: BLOCKED`),
+`implementer.md` makes the refusal a `PLAN-DEFECT`, and the audit's R15 fails
+any run that carried on after it. The script's `repoRoot` argument only ever
+re-pointed the git commands agents are handed, never where `Edit` lands, which
+is why it looked like an escape hatch and was not one.
+
+**`.claude/skills/workorder/section.py <file> '<heading>'` prints one section
+of a workorder file** — heading to the next heading of the same or a higher
+level, fenced code ignored by CommonMark's rule, CRLF and LF alike. The
+heading is single-quoted because headings carry backticks, which Bash runs as
+a command inside double quotes. A citation matches the way planners write
+them, strictest first and a looser tier only when it names one heading: the
+exact text, then the text with backticks ignored, then a prefix (`ctx: "Code
+and test sites"` for a heading that goes on in parentheses — and the way to
+cite a heading with an apostrophe, which would end the single quotes: stop
+before it). Exit 3 lists the
+file's headings, 4 names an ambiguous one, 5 refuses a file with an unclosed
+fence rather than printing to its end, and 6 refuses `## Log` and everything
+under it unless `--log` is passed — the Log is also left out of the listing
+and cut from a level-1 section. It is how the verifier follows a criterion's
+citation into the context file without reading the rest, whose `## Log` is the
+implementer's reasoning; an implementer or the driver reading a round's entry
+passes `--log`. That same run's verifier had no context path in its dispatch
+and no command for a `###` heading; it spent eight calls looking and then read
+the whole file (audit R2, which now also catches a `cat`/`sed`/`Get-Content`
+of a context file, since `Read` is not the only way in). The workflow now
+passes the path and the command — the plan's own path for a legacy single-file
+plan.
+
 **It also provisions each module's local-only build prerequisites**, on both
 the fresh-init path and an already-initialized one.
 `.claude/skills/workorder/local_prereqs.json` lists, per module, paths a
@@ -418,7 +458,7 @@ sight instead.
 Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
-                   submodules: ['<dir>', ...], researchHeadings, baseHeads, repoRoot } })
+                   submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings } })
 ```
 
 `reviewers` is a map, one entry per applicable round-0 reviewer, valued
@@ -426,10 +466,17 @@ Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
 read, relative to `repoRoot`. `researchHeadings` names the context file's
 `###` heading(s) `instrument-blindness-reviewer` should read. `baseHeads` is
 `{ '.': sha, '<submodule>': sha, ... }`, copied from `## State` ›
-`round base:`. `repoRoot` is now only an escape hatch for a workorder deliberately
-run against another checkout — the default is absent, since Step 1's
-`ensure_submodule.py` above already gives this checkout its own submodule
-copy.
+`round base:`. `priorFindings` is `{ '<reviewer>': [{ where, problem }] }` for
+a reviewer entering as `blocking`, copied by the driver on a fresh launch from
+the most recent `### Round <n>` Log entry that carries a `BLOCKING (k)` list;
+between rounds of one launch the script carries it itself. A
+re-run reviewer that was blocking is handed its own finding and asked whether
+the delta resolves it, every re-run is told earlier rounds reviewed the rest,
+and every reviewer is told the Out-of-scope list is not a checklist — a
+`docs-sync-reviewer` given none of the three ran 40 turns twice, once policing
+scope the verifier already checks and once re-deriving a one-file delta's
+history. `repoRoot` is still accepted and nothing passes it; see "A workorder
+cannot be run against another checkout" above.
 
 It returns to the driver on anything needing judgement — `PASS`,
 `PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED` or `CAP`
@@ -488,7 +535,7 @@ Per agent it reports turns (deduped by `message.id`), tokens (input +
 cache-creation + cache-read, summed over assistant turns), output tokens,
 context per turn, peak context, wall minutes, the longest single tool call,
 and KB of `Read` results by kind (plan, context file, `instructions.md`,
-source). It prints one table, then thirteen rules as `PASS`/`FAIL` with
+source). It prints one table, then fifteen rules as `PASS`/`FAIL` with
 evidence (the agent, the time, the command or path), then each role's numbers
 against the pre-update averages as a percentage; `--json` emits the same as
 one object.
@@ -496,16 +543,18 @@ one object.
 | Rule | Checks |
 |---|---|
 | R1 reviewer-reads-workorder | a reviewer `Read`/grep of a `-plan.md` (`instrument-blindness-reviewer` may read a `-context.md`) |
-| R2 verifier-scope | a verifier whole-file `Read` of a `-context.md`, or of an oversized plan |
+| R2 verifier-scope | a verifier whole-file `Read` of a `-context.md` or of an oversized plan, or a shell read (`cat`, `sed`, `head`, `Get-Content`, … as a command, not as part of a slug) of a `-context.md`, or `section.py` run with `--log` — `section.py` without it and a heading `grep` are the sanctioned routes; the reader list is a heuristic drawn from real transcripts, not a fence |
 | R3 guide-whole | an agent whose `instructions.md` `Read` results exceed a KB budget |
 | R4 batching | an implementer's share of small-sequential-shell-call runs over budget |
 | R5 blocking-call | a tool call over the time budget — except `Agent`/`Task`, which dispatch a subagent and are meant to block for minutes |
 | R6 planner-rewrite | a planner `Write` to a plan/context path already written earlier in the session |
 | R7 / R8 / R9 reviewer- / implementer- / verifier-budget | turns, tokens, or (implementer only) context-per-turn over that role's budget |
-| R10 driver-discipline | a driver shell command that builds or tests, a driver `Edit`/`Write` outside `.claude/workorders/`, or too many driver turns in one round |
+| R10 driver-discipline | a driver shell command that builds or tests, a driver `Edit`/`Write` outside `.claude/workorders/`, or too many driver turns in one round — judged only while it is driving: one window per `/workorder` invocation, from the invocation to the first message the user types after that invocation's last pipeline agent finished (a phase agent, a reviewer, anything in a workflow run — an ad-hoc agent asked for later does not hold it open; harness-written `user` records are not the user), or to the next invocation, so a build the user asks for afterwards, or between two workorders, is not the driver's violation |
 | R11 replans | two or more planner runs in one session |
-| R12 plan-size | a plan or context file over its KB budget, from the `Read` calls that touched it |
+| R12 plan-size | a plan or context file whose planner-authored part is over its KB budget, from the `Read` calls that touched it — `## Log` is not counted, being what the scribe, implementer and driver append while the rounds run |
 | R13 round-budget | a round's total subagent tokens over budget |
+| R14 reviewer-reruns-suite | a reviewer running test suites or builds more than twice (the two reviewers told to build and test are exempt) |
+| R15 edit-guard-workaround | a subagent whose `Edit`/`Write` was refused by the harness's worktree guard ("is in the base repo checkout") and which then made more than five further tool calls (its own return not counted) instead of returning `PLAN-DEFECT` — unless an edit of the same repo-relative path then landed inside a worktree, which is a mistyped path corrected, not a workaround (a same-named scratch copy is the workaround) |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
@@ -638,6 +687,7 @@ py -3 -m unittest discover -s tests
 py -3 -m unittest tests.test_claude_hooks -v      # the hooks actually block
 py -3 -m unittest tests.test_claude_agents -v     # the definitions are well-formed
 py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py + ensure_submodule.py, one round/submodule at a time
+py -3 -m unittest tests.test_claude_workorder_section -v  # section.py, plus the sentences in agents/ and SKILL.md that carry the same lesson
 py -3 -m unittest tests.test_workorder_audit -v   # workorder_audit.py's rules, each with a failing fixture and a passing control
 py -3 -m unittest tests.test_source_index -v      # source_index.py against a synthetic fixture, plus a real-ModuleMain.cpp smoke test
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing

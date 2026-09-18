@@ -317,6 +317,135 @@ test('the scribe payload is the verbatim block with separate BLOCKING/NON-BLOCKI
   assert.ok(!/BLOCKING \(6\)/.test(prompts['scribe:r0']), 'must not merge blocking and non-blocking into one count')
 })
 
+// --- 2d: a reviewer is told what not to spend calls on ----------------------
+
+test('a reviewer is told the Out-of-scope list is not a checklist; the verifier is not', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
+  await run(BASE, reply)
+  assert.match(prompts['docs-sync-reviewer:r0'], /Do not spend calls proving each one was left untouched/)
+  assert.doesNotMatch(prompts['verifier:r0'], /Out-of-scope list/, 'proving scope is exactly the verifier\'s job')
+})
+
+test('a blocking reviewer gets its own finding back next round; a clean one that re-runs does not', async () => {
+  let docsSeen = 0
+  const prompts = {}
+  const reply = (label, prompt) => {
+    prompts[label] = prompt
+    return standard({
+      snapshot: HEADS([{ repo: '.', sha: 'SHA' }]),
+      delta: DELTA(['README.md']),
+      'docs-sync-reviewer': () => (docsSeen++ === 0
+        ? { ...CLEAN, blocking: [{ where: 'notes.md:3', problem: 'TAGLINE-CLAIMS-A-FIX', evidence: 'x' }] } : CLEAN),
+    })(label)
+  }
+  const { result } = await run(BASE, reply)
+  assert.equal(result.round, 1)
+  assert.doesNotMatch(prompts['docs-sync-reviewer:r0'], /previous BLOCKING finding/, 'round 0 has no previous finding')
+  assert.doesNotMatch(prompts['docs-sync-reviewer:r0'], /do not re-read earlier commits/, 'a reviewer that has never run reads the whole change')
+  assert.match(prompts['docs-sync-reviewer:r1'], /Your previous BLOCKING finding: \[notes\.md:3\] TAGLINE-CLAIMS-A-FIX/)
+  assert.match(prompts['docs-sync-reviewer:r1'], /do not re-read earlier commits/)
+  // decompile-output-guard re-runs on a .md delta but was clean: nothing to hand back.
+  assert.ok(prompts['decompile-output-guard:r1'], 'control: the clean reviewer did re-run')
+  assert.doesNotMatch(prompts['decompile-output-guard:r1'], /previous BLOCKING finding/)
+  assert.match(prompts['decompile-output-guard:r1'], /do not re-read earlier commits/)
+})
+
+test('a fresh launch hands a blocking reviewer the findings the driver copied from the Log', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard({ delta: DELTA(['README.md']) })(label) }
+  const state = {
+    ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking', 'decompile-output-guard': 'clean' },
+    priorFindings: {
+      'docs-sync-reviewer': [{ where: 'a.md', problem: 'FIRST' }, { where: 'b.md', problem: 'SECOND' }],
+      // A stale entry for a reviewer that has since gone clean: the gate is its state, not the entry.
+      'decompile-output-guard': [{ where: 'c.md', problem: 'STALE-CLEARED' }],
+    },
+  }
+  await run(state, reply)
+  assert.match(prompts['docs-sync-reviewer:r1'], /Your previous BLOCKING findings: \[a\.md\] FIRST \|\| \[b\.md\] SECOND/)
+  assert.ok(prompts['decompile-output-guard:r1'], 'control: the clean reviewer did re-run')
+  assert.doesNotMatch(prompts['decompile-output-guard:r1'], /previous BLOCKING finding|STALE-CLEARED|FIRST/)
+  // No priorFindings passed: the dispatch degrades to what it was, it does not invent one.
+  const bare = {}
+  await run({ ...state, priorFindings: undefined }, (label, prompt) => { bare[label] = prompt; return standard({ delta: DELTA(['README.md']) })(label) })
+  assert.doesNotMatch(bare['docs-sync-reviewer:r1'], /previous BLOCKING finding/)
+})
+
+test('the verifier is given the context path and the one command that opens a cited heading', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
+  await run(BASE, reply)
+  assert.ok(prompts['verifier:r0'].includes(`section.py "c.md" '<heading>'`), 'single-quoted: a heading with backticks survives Bash')
+  assert.match(prompts['verifier:r0'], /never read it whole/)
+  // A legacy single-file plan keeps its cited sections in the plan itself.
+  await run({ ...BASE, contextPath: 'p.md' }, reply)
+  assert.ok(prompts['verifier:r0'].includes(`section.py "p.md" '<heading>'`))
+  assert.doesNotMatch(prompts['verifier:r0'], /Context file:/)
+})
+
+test('when nothing changed, the blocking reviewer is not pointed at a diff that does not exist', async () => {
+  let docsSeen = 0
+  const prompts = {}
+  const reply = (label, prompt) => {
+    prompts[label] = prompt
+    return standard({
+      snapshot: HEADS([{ repo: '.', sha: 'SHA' }]),
+      delta: DELTA([]),
+      'docs-sync-reviewer': () => (docsSeen++ === 0 ? { ...CLEAN, blocking: [{ where: 'a', problem: 'DISPUTED', evidence: 'x' }] } : CLEAN),
+    })(label)
+  }
+  await run(BASE, reply)
+  const p = prompts['docs-sync-reviewer:r1']
+  assert.match(p, /nothing changed this round: there is no new diff/)
+  assert.match(p, /\[a\] DISPUTED\nThis is the finding the implementer disputes\./)
+  assert.doesNotMatch(p, /do not re-read earlier commits|from this diff/, 'the finding lives in the earlier commits')
+  assert.match(p, /Confirm the finding with the command and output that proves it, or withdraw it/)
+})
+
+test('a fresh launch past round 0 tells the implementer it is re-entered; round 0 does not', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
+  await run({ ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' } }, reply)
+  assert.match(prompts['implementer:r1'], /re-entered after a defect: read '## Log' > '### Round 0'/)
+  // A relaunch after a PLAN-DEFECT raised in round 1 itself keeps `round: 1`,
+  // and the newer evidence is under that round's own heading.
+  assert.match(prompts['implementer:r1'], /and '### Round 1' if it is already there/)
+  assert.match(prompts['implementer:r1'], /newer evidence\), for the evidence before anything else\. Return your usual verdict/)
+  await run(BASE, reply)
+  assert.doesNotMatch(prompts['implementer:r0'], /re-entered after a defect/)
+})
+
+test('an empty delta on a fresh launch gives the blocking reviewer no phantom diff either', async () => {
+  // `nothingChanged` (verifier reuse) needs a previous PASS from this launch;
+  // the reviewer's wording must not.
+  const prompts = {}
+  const reply = (label, prompt) => {
+    prompts[label] = prompt
+    return standard({ snapshot: HEADS([{ repo: '.', sha: 'SHA' }]), delta: DELTA([]) })(label)
+  }
+  const state = {
+    ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking', 'decompile-output-guard': 'never' },
+    priorFindings: { 'docs-sync-reviewer': [{ where: 'a', problem: 'FIRST' }] },
+  }
+  const { calls } = await run(state, reply)
+  assert.ok(calls.includes('verifier:r1'), 'no previous verdict to reuse: the verifier still runs')
+  const p = prompts['docs-sync-reviewer:r1']
+  assert.match(p, /nothing changed this round: there is no new diff/)
+  assert.match(p, /\[a\] FIRST\nThis is the finding the implementer disputes\./)
+  assert.doesNotMatch(p, /from this diff|do not re-read earlier commits|This is a re-run\.  /)
+  // A reviewer that has never run made no finding to dispute, and reads the whole change.
+  assert.doesNotMatch(prompts['decompile-output-guard:r1'], /previous BLOCKING finding|Nothing changed this round/)
+  assert.match(prompts['decompile-output-guard:r1'], /Read the whole change/)
+})
+
+test('the path list ends before the re-run note when the round base is unknown', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard({ delta: DELTA(['a.md', 'b.md']) })(label) }
+  await run({ ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'clean' } }, reply)
+  assert.ok(prompts['docs-sync-reviewer:r1'].includes('restricted to them): a.md, b.md. Earlier rounds reviewed'))
+})
+
 // --- 2c: delta greps run in the repository ----------------------------------
 
 test('the delta dispatch runs the content greps from the repo root', async () => {

@@ -50,6 +50,33 @@ A single-file fix, a typo, a question: just do it. The pipeline costs three
 agent spawns minimum. Use it when the change spans files, touches a submodule,
 or would ship a bug that is expensive to find later.
 
+### Step 0.25 — the work must be in this checkout
+
+Before triage, in every mode: does the request — or, on `resume`, the plan's
+`repoRoot:` line — put the work in a checkout other than this session's own
+(`git rev-parse --show-toplevel`)? "Main checkout", a path outside this one,
+a branch that exists only over there. If so, **stop and say so; spawn
+nothing.** A session opened in a worktree has every `Edit` and `Write` outside
+it refused by the harness, so no implementer can carry such a plan out as
+written. The one that tried (`forgepact-closure-names-current-game`,
+2026-09-18) patched files through shell scripts instead: 57 of 142 implementer
+turns, a 31M-token round against a 15M budget, and a guard on the user's main
+working copy bypassed along the way.
+
+Offer the two ways forward and let the user pick:
+
+- **open the session in that checkout** and run `/workorder` there — right
+  when the state that matters is uncommitted (a dirty guide, a stash, an
+  unstaged gitlink);
+- **bring the work here** — `git -C <module> fetch "<main checkout>/<module>"
+  <branch>` carries an unpushed submodule branch across (Step 1's
+  `ensure_submodule.py` prints it, filled in, the first time it initializes
+  the module here); a hub branch is `git merge --ff-only <branch>` away, the
+  object store being shared.
+
+`tools/workorder_audit.py` R15 fails any run in which an agent met that
+refusal and kept going.
+
 ### Step 0.5 — triage the starting tier
 
 **Do this before spawning anything.** The escalation ladder in step 2 recovers
@@ -157,8 +184,9 @@ did not write the plan and knows nothing it does not say:
 2. **Read the plan file in full, `## Needs human judgement` and all of `## Log`**
    — the one point the driver reads the whole Log, to re-count replans and
    consultations. Grep `## Context` for what step 2 needs rather than reading
-   it whole. Re-run the step 0.5 triage — a task property, not a session one,
-   though the repo may have moved under a week-old plan.
+   it whole. Re-run the step 0.25 checkout check against the plan's
+   `repoRoot:` and preconditions, then the step 0.5 triage — a task property,
+   not a session one, though the repo may have moved under a week-old plan.
 3. **Check it is self-sufficient.** Every step must be actionable from the file
    alone. A step that assumes a decision made only in conversation, names a file
    that no longer exists, or says "as discussed" is a `PLAN-DEFECT` now — cheaper
@@ -270,7 +298,21 @@ changed.
 diff commands below, and this round's paths (whole change on round 0, delta
 after). `instrument-blindness-reviewer` also gets the context file's path and
 the `###` heading(s) recording the research finding. Never paste the
-implementer's transcript.
+implementer's transcript. Two sentences go with the paste, both measured on
+one `docs-sync-reviewer` that ran 40 turns twice:
+
+- **Out of scope is a list of things not to report as missing, not a list to
+  police.** Say so. Proving each item was left untouched is the verifier's
+  criteria, and took about 20 of that reviewer's round-0 calls.
+- **A re-run reviewer that was `BLOCKING` gets its own finding back** — the
+  `where` and `problem`, from the round's Log entry — with "confirm from this
+  diff whether it is resolved; earlier rounds reviewed the rest". Handed a
+  one-file delta and not told what it had found, it re-read the whole
+  round-0 commit to work that out.
+
+**The verifier gets the plan path and the context path**, and the reminder
+that the context file is opened one cited heading at a time with
+`section.py`, never whole.
 
 **Diff from the round base, never from `HEAD`** — implementers commit during
 the round, so `git diff HEAD` is empty afterwards. Take each repo's base sha
@@ -406,17 +448,24 @@ the Workflow tool requires, so don't ask again. It carried
 Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
-                   submodules: ['<dir>', ...], researchHeadings, baseHeads, repoRoot } })
+                   submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings } })
 ```
 
 `reviewers`/`submodules` are as in Step 3. `researchHeadings` names the
 context file's `###` heading(s) for `instrument-blindness-reviewer`.
 `baseHeads` is `{ '.': sha, '<submodule>': sha }`, copied from `## State` ›
 `round base:`, so a `never` reviewer reads the whole change from the
-workorder's own start rather than a later round's snapshot. `repoRoot` is
-only an escape hatch for a workorder deliberately run against another
-checkout; the default is absent now that Step 1's `ensure_submodule.py` gives
-this checkout its own submodule copy.
+workorder's own start rather than a later round's snapshot. `priorFindings`
+is `{ '<reviewer>': [{ where, problem }, ...] }` for each reviewer entering as
+`blocking`, copied from the most recent `### Round <n>` Log entry that carries
+a `BLOCKING (k)` list (an entry written for an implementer's `PLAN-DEFECT` or
+`ADVICE-NEEDED` has none, so that is the round before it) — a fresh launch
+has no memory of what that reviewer found, and a reviewer not told re-derives
+the whole change to find out (measured: 46 calls on a one-file delta). Rounds
+inside one launch carry it themselves. The script still accepts a `repoRoot`,
+and nothing here passes it: it re-points the git commands agents are handed,
+never where `Edit` lands, so it cannot make another checkout workable — Step
+0.25 stops that case before it gets here.
 
 It loops implement → verify+reviewers → route as code (same 3-round cap,
 scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,
