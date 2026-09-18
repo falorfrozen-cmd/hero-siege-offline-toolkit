@@ -80,6 +80,25 @@ def user_tool_result(offset, tool_use_id, content, is_error=False):
     }
 
 
+def user_text(offset, text, origin_kind="human", is_meta=False, as_blocks=False):
+    """A `user` record that is not a tool result: a typed message
+    (`origin.kind == "human"`), a task notification, or -- with
+    `origin_kind=None` -- an older transcript that carries no `origin`."""
+    rec = {
+        "type": "user",
+        "timestamp": ts(offset),
+        "message": {"content": [{"type": "text", "text": text}] if as_blocks else text},
+    }
+    if origin_kind:
+        rec["origin"] = {"kind": origin_kind}
+    if is_meta:
+        rec["isMeta"] = True
+    return rec
+
+
+WORKORDER_CMD = "<command-message>workorder</command-message>\n<command-name>/workorder</command-name>\n<command-args>resume zz</command-args>"
+
+
 def turn(offset, idx, **kw):
     """One assistant text-only turn with a fresh message id."""
     return assistant_text(offset, f"msg-{idx:04d}", **kw)
@@ -358,6 +377,32 @@ class R2Tests(TempDirMixin, unittest.TestCase):
         b = SessionBuilder(self.tmp_path).driver([turn(0, 0)]).subagent("verifier", "verifier:r0", records)
         _, results = b.evaluate()
         self.assertTrue(get_rule(results, "R2").passed)
+
+    def _verifier_shell(self, command):
+        records = tool_turn(0, 0, "Bash", {"command": command}, result="x")
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 0)]).subagent("verifier", "verifier:r0", records)
+        _, results = b.evaluate()
+        return get_rule(results, "R2")
+
+    def test_fail_context_file_opened_through_the_shell(self):
+        # `Read` is not the only way in; the Log leaks just as well through cat.
+        for command in ('cat "C:/x/foo-context.md"', "cd C:/x && sed -n '1,400p' foo-context.md",
+                        "Get-Content C:\\x\\foo-context.md | Select-Object -First 300",
+                        "git status && head -50 a/foo-context.md",
+                        # The sanctioned tool with the one flag verifier.md forbids.
+                        "py -3 .claude/skills/workorder/section.py C:/x/foo-context.md --log '## Log'"):
+            with self.subTest(command=command):
+                self.assertFalse(self._verifier_shell(command).passed)
+
+    def test_pass_the_sanctioned_routes_into_a_context_file(self):
+        for command in ('py -3 .claude/skills/workorder/section.py "C:/x/foo-context.md" "Syntax check"',
+                        "grep -n '^## \\|^### ' C:/x/foo-context.md",
+                        "cat C:/x/notes.md; py -3 .claude/skills/workorder/section.py C:/x/foo-context.md 'A'",
+                        # A reader's name inside the slug or the worktree's name is a path, not a command.
+                        "py -3 .claude/skills/workorder/section.py \".claude/workorders/forgepact-head-label-hook-context.md\" 'A'",
+                        "py -3 .claude/skills/workorder/section.py \"C:/r/.claude/worktrees/no-more-leaks-1a2b/.claude/workorders/relic-type-check-context.md\" 'A'"):
+            with self.subTest(command=command):
+                self.assertTrue(self._verifier_shell(command).passed)
 
 
 # --------------------------------------------------------------------------
@@ -640,6 +685,122 @@ class R10Tests(TempDirMixin, unittest.TestCase):
         _, results = b.evaluate()
         self.assertTrue(get_rule(results, "R10").passed)
 
+    # --- the driver is judged only while it is driving ----------------------
+    #
+    # Shape of the real session that prompted this (2026-09-18): chat, then
+    # `/workorder`, rounds at 100-200s, the workflow's task notification, the
+    # driver's report, and only then the user's "build the release plugin".
+
+    BUILD = {"command": "cmd /c build.bat release"}
+
+    def _windowed(self, driver_records):
+        return SessionBuilder(self.tmp_path).driver(driver_records).workflow_agent(
+            "wf_a", "implementer", "implementer:r0", self._round_window_turns(9000, 100, 200))
+
+    def test_fail_build_while_the_workorder_is_running(self):
+        records = [user_text(50, WORKORDER_CMD)] + tool_turn(150, 0, "PowerShell", self.BUILD)
+        _, results = self._windowed(records).evaluate()
+        self.assertFalse(get_rule(results, "R10").passed)
+
+    def test_fail_build_in_the_report_step_before_the_user_speaks_again(self):
+        # A task notification is a `user` record too; it must not close the
+        # window, or the driver's own post-round checking would go unjudged.
+        records = ([user_text(50, WORKORDER_CMD),
+                    user_text(210, "<task-notification>done</task-notification>", origin_kind="task-notification")]
+                   + tool_turn(220, 0, "PowerShell", self.BUILD))
+        _, results = self._windowed(records).evaluate()
+        self.assertFalse(get_rule(results, "R10").passed)
+
+    def test_pass_build_the_user_asked_for_after_the_workorder_ended(self):
+        records = ([user_text(50, WORKORDER_CMD),
+                    user_text(210, "<task-notification>done</task-notification>", origin_kind="task-notification"),
+                    user_text(300, "build the release plugin for the in-game check")]
+                   + tool_turn(310, 0, "PowerShell", self.BUILD))
+        _, results = self._windowed(records).evaluate()
+        self.assertTrue(get_rule(results, "R10").passed)
+
+    def test_pass_shell_work_before_the_workorder_was_invoked(self):
+        records = (tool_turn(10, 0, "Bash", {"command": "npm test"})
+                   + [user_text(50, WORKORDER_CMD, as_blocks=True)])
+        _, results = self._windowed(records).evaluate()
+        self.assertTrue(get_rule(results, "R10").passed)
+
+    def test_fail_a_message_typed_mid_round_does_not_close_the_window(self):
+        records = ([user_text(50, WORKORDER_CMD), user_text(150, "we will do the in-game check first")]
+                   + tool_turn(160, 0, "PowerShell", self.BUILD))
+        _, results = self._windowed(records).evaluate()
+        self.assertFalse(get_rule(results, "R10").passed)
+
+    def test_fail_a_second_workorder_invocation_keeps_the_window_open(self):
+        records = ([user_text(50, WORKORDER_CMD), user_text(300, WORKORDER_CMD)]
+                   + tool_turn(310, 0, "PowerShell", self.BUILD))
+        _, results = self._windowed(records).evaluate()
+        self.assertFalse(get_rule(results, "R10").passed)
+
+    def test_pass_what_the_user_asked_for_between_two_workorders(self):
+        # One window per invocation. With a single session-wide window the
+        # second workorder's subagents kept the first one's window open, and
+        # everything asked for in between still counted.
+        records = ([user_text(50, WORKORDER_CMD), user_text(300, "build the release plugin")]
+                   + tool_turn(310, 0, "PowerShell", self.BUILD)
+                   + [user_text(400, WORKORDER_CMD)])
+        b = self._windowed(records).workflow_agent(
+            "wf_b", "implementer", "implementer:r0", self._round_window_turns(9100, 500, 600))
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R10").passed)
+
+    def test_fail_build_during_the_second_of_two_workorders(self):
+        records = ([user_text(50, WORKORDER_CMD), user_text(300, "thanks"), user_text(400, WORKORDER_CMD)]
+                   + tool_turn(550, 0, "PowerShell", self.BUILD))
+        b = self._windowed(records).workflow_agent(
+            "wf_b", "implementer", "implementer:r0", self._round_window_turns(9100, 500, 600))
+        _, results = b.evaluate()
+        self.assertFalse(get_rule(results, "R10").passed)
+
+    def test_fail_harness_records_without_origin_do_not_close_the_window(self):
+        # Real transcripts that carry `origin` also hold origin-less `user`
+        # records the harness wrote. None is the user speaking, so the
+        # driver's own build after them is still the driver's.
+        for text in ("<ci-monitor-event>checks passed</ci-monitor-event>", "[Request interrupted by user]",
+                     "<local-command-stdout>ok</local-command-stdout>", "/model"):
+            with self.subTest(text=text):
+                records = ([user_text(50, WORKORDER_CMD), user_text(210, text, origin_kind=None)]
+                           + tool_turn(220, 0, "PowerShell", self.BUILD))
+                _, results = self._windowed(records).evaluate()
+                self.assertFalse(get_rule(results, "R10").passed)
+
+    def test_pass_an_adhoc_agent_the_user_asks_for_later_does_not_reopen_the_window(self):
+        records = ([user_text(50, WORKORDER_CMD), user_text(300, "have an agent look at the launcher, then build")]
+                   + tool_turn(500, 0, "PowerShell", self.BUILD))
+        b = self._windowed(records).subagent("Explore", "Look at the launcher", self._round_window_turns(9200, 310, 400))
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R10").passed)
+
+    def test_fail_a_pipeline_agent_outside_a_workflow_still_holds_the_window(self):
+        # Driver mode: phases are plain Agent calls, not workflow agents.
+        records = ([user_text(50, WORKORDER_CMD)] + tool_turn(450, 0, "PowerShell", self.BUILD))
+        b = self._windowed(records).subagent("verifier", "Verify round 0", self._round_window_turns(9200, 310, 400))
+        _, results = b.evaluate()
+        self.assertFalse(get_rule(results, "R10").passed)
+
+    def test_a_call_with_no_timestamp_is_judged_not_a_crash(self):
+        use, res = tool_turn(0, 0, "PowerShell", self.BUILD)
+        del use["timestamp"]
+        del res["timestamp"]
+        _, results = self._windowed([use, res, user_text(50, WORKORDER_CMD)]).evaluate()
+        self.assertFalse(get_rule(results, "R10").passed)
+
+    def test_transcripts_without_origin_fall_back_to_the_record_shape(self):
+        records = ([user_text(50, WORKORDER_CMD, origin_kind=None),
+                    user_text(210, "<task-notification>done</task-notification>", origin_kind=None),
+                    user_text(215, "Base directory for this skill: x", origin_kind=None, is_meta=True)]
+                   + tool_turn(220, 0, "PowerShell", self.BUILD))
+        _, results = self._windowed(records).evaluate()
+        self.assertFalse(get_rule(results, "R10").passed, "neither a notification nor a skill expansion is the user speaking")
+        records = records[:3] + [user_text(216, "now build it", origin_kind=None)] + records[3:]
+        _, results = self._windowed(records).evaluate()
+        self.assertTrue(get_rule(results, "R10").passed)
+
 
 # --------------------------------------------------------------------------
 # R11 replans
@@ -700,6 +861,50 @@ class R12Tests(TempDirMixin, unittest.TestCase):
         b = SessionBuilder(self.tmp_path).driver([turn(0, 0)]).subagent("verifier", "verifier:r0", records)
         _, results = b.evaluate()
         self.assertTrue(get_rule(results, "R12").passed)
+
+    # --- only what the planner authored counts -------------------------------
+
+    def _context_result(self, body: bytes):
+        real_ctx = self.tmp_path / "foo-context.md"
+        real_ctx.write_bytes(body)
+        records = tool_turn(0, 0, "Read", {"file_path": str(real_ctx), "offset": 1, "limit": 5}, result="x")
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 0)]).subagent("implementer", "impl", records)
+        _, results = b.evaluate()
+        return get_rule(results, "R12")
+
+    def test_pass_context_file_whose_bulk_is_the_pipelines_own_log(self):
+        # 12KB authored + 18KB of round Log, CRLF as this worktree writes it.
+        body = (b"## Context the implementer needs\r\n" + b"c" * (12 * 1024)
+                + b"\r\n## Log\r\n\r\n### Round 0\r\n" + b"l" * (18 * 1024))
+        self.assertTrue(self._context_result(body).passed)
+
+    def test_fail_authored_part_over_budget_whatever_the_log_holds(self):
+        body = (b"## Context the implementer needs\n" + b"c" * (21 * 1024)
+                + b"\n## Log\n" + b"l" * 1024)
+        r = self._context_result(body)
+        self.assertFalse(r.passed)
+        self.assertIn("authored", r.evidence[0])
+
+    def test_fail_a_heading_that_only_starts_with_log_is_not_the_log(self):
+        body = b"## Logistics\n" + b"c" * (21 * 1024)
+        self.assertFalse(self._context_result(body).passed)
+
+    def test_log_in_the_middle_of_a_legacy_plan_is_cut_out_not_everything_after_it(self):
+        authored, log = wa.authored_and_log_kb(
+            b"## Goal\n" + b"g" * 1024 + b"\n## Log\n" + b"l" * 2048 + b"\n## Steps\n" + b"s" * 4096)
+        self.assertAlmostEqual(log, 2.0, delta=0.05)
+        self.assertAlmostEqual(authored, 5.0, delta=0.05)
+
+    def test_a_fenced_log_heading_in_the_authored_part_hides_nothing(self):
+        body = (b"## Context the implementer needs\n```markdown\n## Log\n```\n" + b"c" * (21 * 1024)
+                + b"\n## Needs human judgement\nx\n## Log\n### Round 0\nl\n")
+        self.assertFalse(self._context_result(body).passed)
+
+    def test_a_fenced_h2_inside_the_log_does_not_end_the_log(self):
+        # Four backticks quoting three: only the matching run closes it.
+        body = (b"## Context the implementer needs\nshort\n## Log\n### Round 0\n````\n```\n## Summary of test output\n```\n"
+                + b"l" * (30 * 1024) + b"\n````\n")
+        self.assertTrue(self._context_result(body).passed)
 
     def test_pass_missing_file_is_silently_skipped(self):
         # The referenced worktree no longer exists -- must not crash or fail.
@@ -762,6 +967,108 @@ class R14Tests(TempDirMixin, unittest.TestCase):
     def test_pass_a_non_reviewer_running_tests_is_not_this_rule(self):
         _, results = self._reviewer("implementer", wa.REVIEWER_MAX_TEST_RUNS + 4).evaluate()
         self.assertTrue(get_rule(results, "R14").passed)
+
+
+# --------------------------------------------------------------------------
+# R15 edit-guard-workaround
+# --------------------------------------------------------------------------
+
+# The harness's own words, 2026-09-18, for an Edit into the main checkout from
+# a session opened in a worktree.
+GUARD_REFUSAL = (
+    "This session is running in an isolated git worktree at `C:\\repo\\.claude\\worktrees\\wt`, but "
+    "`C:\\repo\\ForgePact\\plugin\\ModuleMain.cpp` is in the base repo checkout. Edits there do not land on "
+    "this session's branch and may corrupt the user's primary working copy. Use the worktree path instead: "
+    "`C:\\repo\\.claude\\worktrees\\wt\\ForgePact\\plugin\\ModuleMain.cpp`"
+)
+
+
+class R15Tests(TempDirMixin, unittest.TestCase):
+    MAIN = {"file_path": "C:/repo/ForgePact/plugin/ModuleMain.cpp", "old_string": "a", "new_string": "b"}
+
+    def _implementer(self, records):
+        return SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).workflow_agent(
+            "wf_a", "implementer", "implementer:r0", records)
+
+    def _shell_calls(self, count, start_idx):
+        records = []
+        for i in range(count):
+            records += tool_turn(100 + i * 30, start_idx + i, "Bash", {"command": f"py patch_bytes.py {i}"}, result="replaced 1")
+        return records
+
+    def test_fail_refused_edit_then_the_work_carries_on_through_the_shell(self):
+        records = (tool_turn(0, 0, "Edit", self.MAIN, result=GUARD_REFUSAL)
+                   + self._shell_calls(wa.GUARD_REFUSAL_MAX_FOLLOWUP_CALLS + 1, 1))
+        _, results = self._implementer(records).evaluate()
+        r = get_rule(results, "R15")
+        self.assertFalse(r.passed)
+        self.assertIn("implementer:r0", r.evidence[0])
+        self.assertIn("ModuleMain.cpp", r.evidence[0])
+
+    def test_pass_refused_edit_then_plan_defect_within_the_allowance(self):
+        # The whole allowance, then the return: the return is how the
+        # PLAN-DEFECT travels, so it is not one of the calls being rationed.
+        records = (tool_turn(0, 0, "Edit", self.MAIN, result=GUARD_REFUSAL)
+                   + self._shell_calls(wa.GUARD_REFUSAL_MAX_FOLLOWUP_CALLS, 1)
+                   + tool_turn(900, 50, "StructuredOutput", {"verdict": "PLAN-DEFECT"}, result="ok"))
+        _, results = self._implementer(records).evaluate()
+        self.assertTrue(get_rule(results, "R15").passed)
+
+    def test_pass_a_mistyped_path_corrected_into_the_worktree(self):
+        # The guard's message names the right path; an agent that takes it and
+        # carries on with Edit has worked around nothing.
+        here = {**self.MAIN, "file_path": "C:\\repo\\.claude\\worktrees\\wt\\ForgePact\\plugin\\ModuleMain.cpp"}
+        records = (tool_turn(0, 0, "Edit", self.MAIN, result=GUARD_REFUSAL)
+                   + tool_turn(10, 1, "Edit", here, result="The file has been updated.")
+                   + self._shell_calls(40, 2))
+        _, results = self._implementer(records).evaluate()
+        self.assertTrue(get_rule(results, "R15").passed)
+
+    def test_fail_a_scratch_copy_with_the_same_name_is_the_workaround_not_a_correction(self):
+        # The real run: refused, wrote the file to its scratchpad, cp'd it over.
+        scratch = {"file_path": "C:/Temp/claude/scratchpad/ModuleMain.cpp", "content": "x"}
+        records = (tool_turn(0, 0, "Edit", self.MAIN, result=GUARD_REFUSAL)
+                   + tool_turn(10, 1, "Write", scratch, result="File created successfully")
+                   + self._shell_calls(40, 2))
+        _, results = self._implementer(records).evaluate()
+        self.assertFalse(get_rule(results, "R15").passed)
+
+    def test_fail_a_same_named_file_elsewhere_in_the_worktree_is_not_a_correction(self):
+        refused = {**self.MAIN, "file_path": "C:/repo/ForgePact/README.md"}
+        other = {**self.MAIN, "file_path": "C:/repo/.claude/worktrees/wt/hub/README.md"}
+        records = (tool_turn(0, 0, "Edit", refused, result=GUARD_REFUSAL)
+                   + tool_turn(10, 1, "Edit", other, result="The file has been updated.")
+                   + self._shell_calls(40, 2))
+        _, results = self._implementer(records).evaluate()
+        self.assertFalse(get_rule(results, "R15").passed)
+
+    def test_fail_the_retry_in_the_worktree_did_not_land_either(self):
+        # What the real run did: the worktree had no such file, the retry
+        # errored, and the patch scripts followed.
+        here = {**self.MAIN, "file_path": "C:/repo/.claude/worktrees/wt/ForgePact/plugin/ModuleMain.cpp"}
+        use, res = tool_turn(10, 1, "Edit", here, result="<tool_use_error>File does not exist.</tool_use_error>")
+        res["message"]["content"][0]["is_error"] = True
+        records = tool_turn(0, 0, "Edit", self.MAIN, result=GUARD_REFUSAL) + [use, res] + self._shell_calls(40, 2)
+        _, results = self._implementer(records).evaluate()
+        self.assertFalse(get_rule(results, "R15").passed)
+
+    def test_pass_many_calls_and_no_refusal(self):
+        records = tool_turn(0, 0, "Edit", self.MAIN, result="The file has been updated.") + self._shell_calls(40, 1)
+        _, results = self._implementer(records).evaluate()
+        self.assertTrue(get_rule(results, "R15").passed)
+
+    def test_pass_the_guard_text_in_a_shell_result_is_not_a_refusal(self):
+        # e.g. an agent grepping a transcript, or this test file, for the text.
+        records = tool_turn(0, 0, "Bash", {"command": "grep -rn 'base repo checkout' ."}, result=GUARD_REFUSAL) + self._shell_calls(40, 1)
+        _, results = self._implementer(records).evaluate()
+        self.assertTrue(get_rule(results, "R15").passed)
+
+    def test_the_followup_count_starts_at_the_first_refusal(self):
+        records = (self._shell_calls(40, 100)
+                   + tool_turn(2000, 0, "Write", {"file_path": "C:/repo/ForgePact/x.md", "content": "x"}, result=GUARD_REFUSAL)
+                   + tool_turn(2030, 1, "StructuredOutput", {"verdict": "PLAN-DEFECT"}, result="ok"))
+        _, results = self._implementer(records).evaluate()
+        self.assertTrue(get_rule(results, "R15").passed, "calls made before the refusal are not a workaround")
 
 
 class CliTests(TempDirMixin, unittest.TestCase):

@@ -24,6 +24,22 @@ Do not `Read` a file already in your context unless it changed since (your own
 workorder is relative to this checkout's root — never resolve one against
 another checkout's copy of a submodule.
 
+**A refused edit is a verdict, not an obstacle.** In a session opened in a git
+worktree the harness refuses every `Edit` and `Write` outside that worktree —
+the refusal reads "… is in the base repo checkout. Edits there do not land on
+this session's branch and may corrupt the user's primary working copy". A plan
+whose steps can only be carried out over there is a `PLAN-DEFECT`: return it
+with the refusal as `EVIDENCE`, after at most five read-only calls to show
+which steps are affected. (Mistyped a path that does exist in this worktree?
+The refusal names the right one: make the edit there and carry on — that is
+the guard working.) Never route the edit through `Bash` instead — a
+patch script, `sed -i`, a heredoc, a redirect into the file. Measured on the
+workorder that prompted this rule: 57 of an implementer's 142 turns and 9.4M of
+its 22.6M tokens went into byte-patch scripts, CRLF re-checks and diff
+re-reads standing in for `Edit`, around a guard that exists to protect the
+user's main working copy. `tools/workorder_audit.py` R15 fails a run that
+carries on after that refusal.
+
 ## The one thing that makes this pipeline work
 
 **You may return `PLAN-DEFECT`, and you should, the moment the plan stops
@@ -145,9 +161,21 @@ genuinely balanced", not "I would prefer someone else confirm this."
    with `Monitor` instead, or a `Bash` poll capped at 240s and re-issued.
 
 6. **Run each acceptance criterion as you satisfy it** and keep the real
-   output. You will be asked for it. On success, keep test and build output to
-   its tail; run the full output only when something fails and you need to
-   trace it.
+   output. You will be asked for it. Send a suite's or a build's output to a
+   scratch file once and read that — `… > "<scratch>/suite.txt" 2>&1; echo
+   EXIT=$?; grep -E '^(Ran|OK|FAILED|FAIL:|ERROR:)' "<scratch>/suite.txt"`,
+   `<scratch>` being your session's scratchpad directory written out in full
+   (a shell variable does not survive into the next call) — rather than
+   piping it to `tail`, finding the tail was the wrong slice, and
+   running the whole suite again for a different one (measured: the same
+   suite three times in a row, to read one run's result).
+
+   **Re-entered after a defect, re-run only what the defect touches**: the
+   failed criteria, any criterion that reads a file you changed this round,
+   and the suite once if code changed. The verifier runs every criterion
+   after you, from scratch, so a full sweep from you is the same work paid
+   twice — measured: a two-sentence release-notes fix re-ran all 23 criteria,
+   the suite four times and both syntax checks, 41 turns for a one-file delta.
 
 7. **Match the surrounding code.** Comment density, naming, error style, test
    layout — a change that reads as foreign is a change the reader distrusts.
