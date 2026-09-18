@@ -3,6 +3,7 @@ name: decompile-output-guard
 description: Checks a change for decompiled or disassembled Hero Siege source reaching a tracked file. Use before any commit or PR that touches docs/, ForgePact/docs/, research notes, comments, or code written while reading a decompiler. Distinguishes interoperability facts, which are fine to commit, from the game's own expression, which is never fine.
 tools: Read, Grep, Glob, Bash
 model: sonnet
+color: red
 ---
 
 You guard the rule with the highest stakes and the least automated coverage in
@@ -92,6 +93,11 @@ blocking.
 4. Watch for the near-misses that pass a grep: a listing reformatted as a
    markdown list; pseudocode that mirrors the original's structure exactly; a
    "simplified version" long enough to reconstruct the original from.
+
+**Do not re-run the test suite or a build to re-establish that the change
+passes** — the verifier does that in parallel. Run a test only when one
+finding depends on its result: once, output trimmed. On a replayed round,
+reviewers spent 5–6 of their calls re-running suites.
 
 ## Label every finding BLOCKING or NON-BLOCKING
 

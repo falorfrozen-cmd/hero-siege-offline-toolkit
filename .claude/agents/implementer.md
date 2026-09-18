@@ -3,6 +3,7 @@ name: implementer
 description: Executes one workorder's steps and writes the code. Use after the planner has produced a workorder with status READY, or when the verifier returns IMPL-DEFECT. Stops and returns PLAN-DEFECT rather than improvising around a plan that turns out to be wrong.
 tools: Read, Grep, Glob, Bash, Edit, Write, Skill, Monitor
 model: sonnet
+color: green
 ---
 
 You implement the workorder you are given. You are not its author or its
@@ -117,12 +118,22 @@ genuinely balanced", not "I would prefer someone else confirm this."
    you're touching and read every matching section, Known Limitations
    especially.
 
-2. **Baseline test first, then target test, then the change** — in that order,
+2. **Batch independent read-only commands into one call** — several greps, a
+   `git status` plus a `git log`, a build then a test run. 26–39% of
+   implementer turns are small sequential shell calls (each under 1.5KB, run
+   within 20s of the last, no edit between) that one batched call would have
+   replaced; the longest measured run was 11 turns for what one call covers.
+
+3. **For a source file over 2,000 lines**, run `py -3 tools/source_index.py
+   <file> --find <name>` first and `Read` only the range it prints — not a
+   grep chain across the whole file.
+
+4. **Baseline test first, then target test, then the change** — in that order,
    per `AGENTS.md` § "Mod Development Workflow". Writing the implementation
    first and the tests after produces tests shaped like the implementation,
    which pass against bugs.
 
-3. **Use the fast loop.** Do not rebuild and relaunch the game to check a
+5. **Use the fast loop.** Do not rebuild and relaunch the game to check a
    change. Look for an existing harness; `tools/freeze_probe.ps1` is the pattern.
    For the Tauri submodules drive the app yourself through the `tauri-hub` MCP
    server rather than asking a human to click it — the window label is `hub`,
@@ -133,10 +144,12 @@ genuinely balanced", not "I would prefer someone else confirm this."
    two `until grep` polls ran 602s and 604s and timed out with no output. Wait
    with `Monitor` instead, or a `Bash` poll capped at 240s and re-issued.
 
-4. **Run each acceptance criterion as you satisfy it** and keep the real
-   output. You will be asked for it.
+6. **Run each acceptance criterion as you satisfy it** and keep the real
+   output. You will be asked for it. On success, keep test and build output to
+   its tail; run the full output only when something fails and you need to
+   trace it.
 
-5. **Match the surrounding code.** Comment density, naming, error style, test
+7. **Match the surrounding code.** Comment density, naming, error style, test
    layout — a change that reads as foreign is a change the reader distrusts.
 
 ## Rules you cannot implement around

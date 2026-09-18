@@ -180,6 +180,32 @@ test('submodules combine with repoRoot; an already-absolute entry is left alone'
   assert.ok(!prompts['docs-sync-reviewer:r0'].includes('C:/repo/C:/other'))
 })
 
+// The plan_defect clause a reviewer is dispatched with must be the exact
+// SKILL.md § "SKILL.md" (a) rule (SPEC.md § 4) -- a plan-shaped defect is one
+// no implementation of the plan could have satisfied, not merely a finding
+// the plan happened not to spell out. Pinned here so the two cannot drift:
+// a reviewer following a looser sentence would route an implementer's own
+// missing assert back as a costly replan instead of a normal fix.
+test('the reviewer dispatch states the narrow plan_defect rule', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
+  await run(BASE, reply)
+  assert.match(prompts['docs-sync-reviewer:r0'],
+    /set plan_defect only when no implementation of the plan as written could satisfy its Goal/)
+  assert.match(prompts['docs-sync-reviewer:r0'],
+    /a missing assert, pin or sentence the plan did not forbid goes to the implementer, not plan_defect/)
+})
+
+// Measured on a replayed round: given a correct diff, reviewers still spent
+// 5-6 calls each re-running test suites the verifier runs in parallel.
+test('the reviewer dispatch tells reviewers not to re-run suites or builds', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
+  await run(BASE, reply)
+  assert.match(prompts['instrument-blindness-reviewer:r0'], /do not re-run test suites or builds/)
+  assert.doesNotMatch(prompts['verifier:r0'], /do not re-run test suites or builds/, 'the verifier is the one that runs them')
+})
+
 test('missing arguments are refused', async () => {
   const { result } = await run({ slug: 'zz' }, standard())
   assert.equal(result.outcome, 'BAD-ARGS')

@@ -264,7 +264,8 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
     ...toRun.map(name => () => agent(
       `You are reviewing a change. You are NOT given the workorder; this is its intent:\n${A.goalExcerpt}\n${scope(name)}\n` +
       (name === 'instrument-blindness-reviewer' && A.researchHeadings ? `Research findings to check are recorded in ${A.contextPath} under: ${A.researchHeadings}. Read only those subsections.\n` : '') +
-      `Mark every finding BLOCKING or NON-BLOCKING; set plan_defect when the defect is in the plan rather than the code; lead the summary with "no blocking findings" when true.`,
+      `The verifier runs the acceptance criteria in parallel: do not re-run test suites or builds; run one targeted test only if a finding depends on its result. ` +
+      `Mark every finding BLOCKING or NON-BLOCKING; set plan_defect only when no implementation of the plan as written could satisfy its Goal -- a missing assert, pin or sentence the plan did not forbid goes to the implementer, not plan_defect; lead the summary with "no blocking findings" when true.`,
       { label: `${name}:r${n}`, phase: 'Verify', agentType: name, model: MODELS[name], schema: REVIEW_SCHEMA })
       .then(r => ({ name, r }))),
   ])

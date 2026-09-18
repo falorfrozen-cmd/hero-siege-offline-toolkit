@@ -674,12 +674,17 @@ Three rules exist because the first real run — the panel-and-launcher
 performance pass — hit the cap with seven items open and had to be finished by
 hand, outside the phase separation:
 
-- **Only `BLOCKING` findings spend a round.** Every reviewer labels each finding
-  `BLOCKING` or `NON-BLOCKING`. That run reached its cap on a round whose
-  instrument reviewer opened with *"nothing here blocks shipping"* and then
-  listed eight improvements — polish consumed the last round and stopped eight
-  findings that were already green. Non-blocking findings ride along as context
-  and surface in the final report.
+- **Only `BLOCKING` findings spend a round.** Every reviewer returns `blocking`
+  findings, `non_blocking` findings, and a separate `plan_defect` flag for the
+  round — set only when no implementation of the plan as written could satisfy
+  its Goal; a missing assert, pin, or sentence the plan didn't forbid is a
+  `BLOCKING` finding for the implementer, not a defect in the plan, so an
+  implementer's own oversight cannot route back to the planner as a costly
+  replan. That run reached its cap on a round whose instrument reviewer opened
+  with *"nothing here blocks shipping"* and then listed eight improvements —
+  polish consumed the last round and stopped eight findings that were already
+  green. Non-blocking findings ride along as context and surface in the final
+  report.
 - **At the cap, split rather than raise.** The recovery is a new workorder
   carrying only the still-open findings, with its own fresh three rounds. The
   cap means the pipeline lost the thread, and that does not become untrue
@@ -710,6 +715,25 @@ module — reading, editing, building, committing, the work branch — stays in
 this checkout's own copy, never another checkout's. Removing a worktree that
 has initialized a submodule this way needs `git worktree remove --force`
 ("working trees containing submodules cannot be moved or removed").
+
+**It also provisions each module's local-only build prerequisites**, on both
+the fresh-init path and an already-initialized one.
+`.claude/skills/workorder/local_prereqs.json` lists, per module, paths a
+`.gitignore`d build step needs that no `git submodule update` can produce
+because they were never committed anywhere — for ForgePact,
+`plugin_build/include/` (the YYToolkit/Aurie/FunctionWrapper headers plus
+`YYTK_Shared_Types.cpp`) and the four DLLs/EXE under `modfiles_shipped/`.
+Proven on the real repo: a freshly-initialized linked worktree's own
+`plugin_build\build.bat dev` failed until `plugin_build/include/` was copied
+across by hand, then passed in 25s and produced a byte-size-identical DLL.
+The script copies each listed path from the main checkout's copy of the
+module when it exists there and is missing here — checked again on every run,
+not only a fresh init, since the manifest or the main checkout can gain an
+entry after this worktree's module was already set up — never overwriting a
+path that already exists here, never copying anything the manifest doesn't
+list, and rejecting (not copying) an entry that is absolute or contains `..`.
+A run in the main checkout itself provisions nothing, since that IS where the
+files already live.
 
 It has three modes: `/workorder <task>` runs everything, `/workorder plan
 <task>` stops after the plan, and `/workorder resume <slug>` picks up at
@@ -796,7 +820,7 @@ trades away: every re-entry inside the script is a fresh spawn, never the
 measured, on this one real run, as no worse than a resumed implementer (a
 resumed round-1 implementer cost 14.6M tokens at 304K context per turn;
 losing the resume cost nothing). `.claude/workflows/workorder-rounds.test.mjs`
-(`node --test`, 22 cases, each with its own control) dry-runs the routing
+(`node --test`, 23 cases, each with its own control) dry-runs the routing
 above against stub agents.
 
 That makes the split a forcing function rather than just a workflow: a plan that
@@ -809,6 +833,105 @@ Because the skill cannot invoke itself (`disable-model-invocation: true` — thr
 agent spawns is the wrong answer to a typo), `AGENTS.md` § "Offer `/workorder`
 When the Work Has Shape" carries the trigger list that makes Claude *suggest*
 it. Suggest, wait, and drop it if the answer is no.
+
+**Step 5 audits the run's own cost.** The report step runs `py -3
+tools/workorder_audit.py --latest` and prints every `FAIL` line verbatim
+beside the round summary — a workorder that passes its acceptance criteria and
+still breaks a cost/behavior rule says so, instead of merging on the strength
+of the criteria alone.
+
+### `tools/workorder_audit.py` — did this run actually save time and tokens
+
+Before this tool existed, "did a `/workorder` run save time and tokens, and
+did it break a rule" was answered by one-off transcript scripts run by hand,
+once per question. This makes that judgement runnable and repeatable, against
+the same rules this page states above (batching, per-role budgets, plan/context
+scope, driver discipline, replans, round budgets):
+
+```
+py -3 tools/workorder_audit.py [--latest | --session <id-prefix>]
+    [--projects-dir DIR] [--project NAME] [--json]
+```
+
+It streams — never loads whole — a session's transcripts: the driver's own
+`~/.claude/projects/<project>/<session>.jsonl`, ad-hoc subagents at
+`<session>/subagents/agent-*.jsonl`, and workflow-mode round agents at
+`<session>/subagents/workflows/wf_*/agent-*.jsonl`, each paired with a
+sibling `.meta.json` carrying `agentType` and a label (a workflow label reads
+like `implementer:r1`). `--project` defaults to the mangled name Claude Code
+derives from the current working directory (every non-alphanumeric character
+becomes `-`); `--projects-dir`/`--project` exist so tests never touch the real
+`~/.claude/projects`.
+
+Per agent it reports turns (deduped by `message.id`), tokens (input +
+cache-creation + cache-read, summed over assistant turns), output tokens,
+context per turn, peak context, wall minutes, the longest single tool call,
+and KB of `Read` results by kind (plan, context file, `instructions.md`,
+source). It prints one table, then thirteen rules as `PASS`/`FAIL` with
+evidence (the agent, the time, the command or path), then each role's numbers
+against the pre-update averages as a percentage; `--json` emits the same as
+one object.
+
+| Rule | Checks |
+|---|---|
+| R1 reviewer-reads-workorder | a reviewer `Read`/grep of a `-plan.md` (`instrument-blindness-reviewer` may read a `-context.md`) |
+| R2 verifier-scope | a verifier whole-file `Read` of a `-context.md`, or of an oversized plan |
+| R3 guide-whole | an agent whose `instructions.md` `Read` results exceed a KB budget |
+| R4 batching | an implementer's share of small-sequential-shell-call runs over budget |
+| R5 blocking-call | a tool call over the time budget — except `Agent`/`Task`, which dispatch a subagent and are meant to block for minutes |
+| R6 planner-rewrite | a planner `Write` to a plan/context path already written earlier in the session |
+| R7 / R8 / R9 reviewer- / implementer- / verifier-budget | turns, tokens, or (implementer only) context-per-turn over that role's budget |
+| R10 driver-discipline | a driver shell command that builds or tests, a driver `Edit`/`Write` outside `.claude/workorders/`, or too many driver turns in one round |
+| R11 replans | two or more planner runs in one session |
+| R12 plan-size | a plan or context file over its KB budget, from the `Read` calls that touched it |
+| R13 round-budget | a round's total subagent tokens over budget |
+
+Every budget is a named module-level constant in the tool itself
+(`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
+on), each with a comment naming the measurement it was set from — read those
+constants for the current number rather than one copied here, since
+re-measuring is exactly what this tool exists to make cheap. Exit code is 0
+when every rule passes, 1 when any rule fails, 2 on a usage error.
+
+Tests (`tests/test_workorder_audit.py`) build synthetic transcripts in a temp
+directory; every rule has both a failing fixture and a passing control, plus
+coverage for message-id dedupe, workflow-subdirectory discovery, and the exit
+codes.
+
+### `tools/source_index.py` — go to the range, don't grep around
+
+Generic, stdlib-only, read-only index for one large C/C++ file, built against
+the banner-comment and `#ifndef <guard>` research-span style
+`ForgePact/plugin/ModuleMain.cpp` already uses:
+
+```
+py -3 tools/source_index.py <file> [--regions] [--functions]
+                                    [--find NAME] [--at LINE]
+                                    [--guard MACRO] [--json]
+```
+
+`--regions` (the default) prints one line per banner-delimited region —
+`start-end  KB  [R]  title`; `[R]` marks a region that sits inside an
+`#ifndef FORGEPACT_RELEASE` (or `--guard`-named) span, at any nesting depth.
+`--functions` finds file-scope function definitions with a brace-matching
+heuristic (its own docstring lists what it misses: templates, a body on the
+signature line, anything not at brace depth 0). `--find NAME` returns every
+region and function whose name contains `NAME`, with ranges, so the next call
+is a `Read` with `offset`/`limit` instead of another grep chain. `--at LINE`
+returns the region and function containing a line. It only ever prints
+identifiers and banner titles from the file it is given, never the file's own
+text.
+
+`implementer.md` is the rule that sends the implementer here: for a source
+file over 2,000 lines, run `source_index.py --find <name>` first and `Read`
+only the range it prints, instead of an exploratory grep chain. Measured
+against the file it was built for (`ForgePact/plugin/ModuleMain.cpp`, 997KB /
+18,144 lines): `--regions` prints 94 regions in about 6KB.
+
+Tests (`tests/test_source_index.py`) cover a synthetic fixture (banners,
+nested guard spans, a function inside and outside a guard, `--find`, `--at`)
+plus a smoke test against the real `ModuleMain.cpp`, skipped when the file is
+absent — as it is in a worktree with the ForgePact submodule uninitialized.
 
 ## MCP servers — `../.mcp.json`
 
@@ -885,7 +1008,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Four suites cover this directory. Three are Python and run automatically
+Six suites cover this page's tooling. Five are Python and run automatically
 under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
@@ -894,6 +1017,8 @@ py -3 -m unittest discover -s tests
 py -3 -m unittest tests.test_claude_hooks -v      # the hooks actually block
 py -3 -m unittest tests.test_claude_agents -v     # the definitions are well-formed
 py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py + ensure_submodule.py, one round/submodule at a time
+py -3 -m unittest tests.test_workorder_audit -v   # workorder_audit.py's rules, each with a failing fixture and a passing control
+py -3 -m unittest tests.test_source_index -v      # source_index.py against a synthetic fixture, plus a real-ModuleMain.cpp smoke test
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 
@@ -919,7 +1044,10 @@ as the subprocesses the driver and the workflow script actually invoke, not by
 importing their functions — the same discipline `test_claude_hooks.py` uses
 for the hooks. Its submodule fixtures prove a linked worktree gets its own
 gitdir and that a commit made there stays invisible to the main checkout's
-copy until fetched across by hand.
+copy until fetched across by hand, and that the prerequisites manifest copies
+exactly what it lists — once, never overwriting an existing path, never
+touching one the manifest doesn't name — and stays a no-op run from the main
+checkout itself.
 
 Every test there is a **pair**: a positive control proving the hook fires on a
 real violation, and a negative control proving it stays quiet on a clean tree.
