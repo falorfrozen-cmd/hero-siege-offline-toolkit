@@ -47,6 +47,14 @@ Behavior:
 - Never touches the main checkout's module, never creates or switches
   branches -- it only checks out the commit `.gitmodules`/the gitlink
   already names.
+- In a linked worktree, also provisions this module's local-only build
+  prerequisites (`.claude/skills/workorder/local_prereqs.json`) -- files a
+  `.gitignore`'d build step needs but no `git submodule update` can produce,
+  because they were never committed anywhere. Runs after a fresh init AND on
+  the already-initialized path, copying only a listed path that exists in
+  the main checkout's copy and is missing here; never overwrites, never
+  copies anything unlisted. A run in the main checkout itself provisions
+  nothing, since that IS where those files already live.
 
 Exit codes: 0 on success (already-initialized or freshly initialized); 1 on
 a git failure (stderr carries git's own message); 2 when `<module>` is not a
@@ -54,9 +62,13 @@ path `.gitmodules` declares.
 """
 
 import argparse
+import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+PREREQS_MANIFEST = Path(".claude") / "skills" / "workorder" / "local_prereqs.json"
 
 
 def _run_git(args, cwd):
@@ -149,6 +161,78 @@ def _main_worktree_root(root):
     return root
 
 
+def _load_prereqs_manifest(root, module):
+    """Prerequisite paths (relative to the module root) that
+    `local_prereqs.json` lists for `module`. A missing manifest, an entry
+    that fails to parse, or a manifest that just doesn't mention this module
+    all mean "no prerequisites" rather than an error -- most modules have
+    none, and the manifest is optional precisely so they don't need an empty
+    entry. The manifest is a tracked file, so `root` (this checkout, worktree
+    or not) always carries the same copy the main checkout does."""
+    # The checkout's own copy first; failing that, the one beside this script
+    # -- so running a newer script against a checkout that predates the
+    # manifest still provisions, instead of reporting success having done
+    # nothing (measured: exactly that happened in this script's first real run).
+    manifest_path = root / PREREQS_MANIFEST
+    if not manifest_path.exists():
+        manifest_path = Path(__file__).resolve().parent / PREREQS_MANIFEST.name
+    if not manifest_path.exists():
+        return []
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    entries = data.get(module) if isinstance(data, dict) else None
+    return entries if isinstance(entries, list) else []
+
+
+def _is_safe_prereq_entry(entry):
+    """An entry must stay inside the module directory: reject anything
+    absolute (POSIX `/...` or a Windows drive letter) or that walks out via a
+    `..` segment, checked after normalizing back-slashes so a Windows-typed
+    entry is not misread as one path segment."""
+    if not isinstance(entry, str) or not entry:
+        return False
+    normalized = entry.replace("\\", "/")
+    if normalized.startswith("/") or (len(normalized) > 1 and normalized[1] == ":"):
+        return False
+    return ".." not in normalized.split("/")
+
+
+def provision_local_prereqs(root, module_root, main_module_root, normalized):
+    """Copy every prerequisite `local_prereqs.json` lists for `normalized`
+    from the main checkout's copy of the module into this one, when it
+    exists there and is missing here (SPEC.md § 5). These are local-only,
+    git-ignored build inputs (`plugin_build/include`, the shipped mod DLLs) a
+    linked worktree's own `git submodule update --init` cannot produce --
+    they were never committed anywhere for it to check out. Never overwrites
+    an existing path here, never copies anything the manifest does not list,
+    and rejects an unsafe entry instead of copying it -- one bad entry never
+    stops the rest from being provisioned."""
+    entries = _load_prereqs_manifest(root, normalized)
+    if not entries:
+        # Say so: a silent no-op reads as "prerequisites handled".
+        print(f"prerequisites: none listed for {normalized}")
+    for entry in entries:
+        if not _is_safe_prereq_entry(entry):
+            print(f"ensure_submodule: rejected prerequisite (unsafe path): {entry}",
+                  file=sys.stderr)
+            continue
+        dest = module_root / entry
+        if dest.exists():
+            continue
+        src = main_module_root / entry
+        if not src.exists():
+            print(f"prerequisite not in main checkout: {entry}")
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir():
+            shutil.copytree(src, dest)
+        else:
+            shutil.copy2(src, dest)
+        print(f"copied prerequisite: {entry}")
+
+
 def cmd_ensure(root, module):
     normalized = module.replace("\\", "/").rstrip("/")
     if normalized not in _gitmodule_paths(root):
@@ -157,14 +241,20 @@ def cmd_ensure(root, module):
         return 2
 
     module_root = root / normalized
-    if (module_root / ".git").exists():
-        sha = _repo_head(module_root)
-        print(f"already initialized: {normalized} @ {sha}")
-        return 0
-
     main_root = _main_worktree_root(root)
     is_linked_worktree = main_root.resolve() != root.resolve()
     main_module_root = main_root / normalized
+
+    if (module_root / ".git").exists():
+        sha = _repo_head(module_root)
+        print(f"already initialized: {normalized} @ {sha}")
+        # Re-checked on every run, not only a fresh init: the manifest can
+        # gain an entry, or a prerequisite can appear in the main checkout,
+        # after this worktree's module was already initialized.
+        if is_linked_worktree:
+            provision_local_prereqs(root, module_root, main_module_root, normalized)
+        return 0
+
     reference_main = is_linked_worktree and (main_module_root / ".git").exists()
 
     if reference_main:
@@ -189,6 +279,11 @@ def cmd_ensure(root, module):
         branch = _current_branch(main_module_root) or _repo_head(main_module_root)
         print(f'bring unpushed work across: '
               f'git -C {normalized} fetch "{main_module_root}" {branch}')
+    # A fresh init in the main checkout itself has no separate main copy to
+    # provision from -- `is_linked_worktree` is false there, so this is the
+    # "main checkout run copies nothing" case from the same predicate above.
+    if is_linked_worktree:
+        provision_local_prereqs(root, module_root, main_module_root, normalized)
     return 0
 
 
