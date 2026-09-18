@@ -278,6 +278,13 @@ does not re-run by itself on later pushes; request again for a fresh review.
 A comment trigger only works once the workflow is on `main`, because GitHub runs
 `issue_comment` workflows from the default branch.
 
+Anything after `@claude review` in the comment is passed to the reviewer as the
+requester's instructions and takes precedence over the default scope, e.g.
+`@claude review only plugin/` or `@claude review skip the release notes`. The
+reviewer passes them on to every agent it launches, reads only the permitted
+paths with a `git diff` pathspec when they narrow the scope, and states the scope
+it reviewed. The label carries no instructions and always requests a full review.
+
 It needs two things, not one:
 
 - the `CLAUDE_CODE_OAUTH_TOKEN` repository secret, from `claude setup-token`,
