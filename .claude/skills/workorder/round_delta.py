@@ -29,10 +29,21 @@ Usage:
 
     round_delta.py snapshot <slug> <round> [--root PATH]
     round_delta.py delta    <slug> <round> [--root PATH]
+    round_delta.py heads    <slug> <round> [--root PATH]
 
 `--root` defaults to `git rev-parse --show-toplevel`; tests pass a throwaway
 repo instead. Snapshots live at
 `<root>/.claude/workorders/.rounds/<slug>/round-<round>.json`.
+
+`heads` prints that snapshot's recorded heads, one `<key>\t<sha>` line per
+repo -- `.` for the hub, the submodule dir otherwise, an unborn head printing
+an empty sha -- so the driver can build reviewers' read commands (base heads
+for a `never`-run reviewer, this round's heads for a re-run one) without
+re-deriving them. It only checks the snapshot's own shape: it exits 3 for
+exactly the reasons `delta` refuses to trust a snapshot at all (missing /
+unreadable / not version 2 / malformed), never for the live-repo checks
+`delta` layers on top (a recorded head git can no longer diff from, a repo
+that came or went) -- those don't apply to a plain read of what was recorded.
 
 Snapshot format v2 (JSON):
 
@@ -45,12 +56,13 @@ Snapshot format v2 (JSON):
 (the same set `_submodule_dirs` yields). `files` is what the v1 snapshot was
 in full: a content hash per changed/untracked path.
 
-Exit codes: 0 on success (state or delta printed); 2 on a usage error (bad
-slug/round, missing command); 3 when `delta` cannot trust its snapshot --
-missing, unreadable, a pre-commit-tracking v1 snapshot, a repo present now
-with no recorded head, or a recorded head git can no longer diff from. The
-driver then treats everything as changed, which is the safe default this
-instrument's blindness must fail into.
+Exit codes: 0 on success (state, delta or heads printed); 2 on a usage error
+(bad slug/round, missing command); 3 when the snapshot cannot be trusted at
+all -- missing, unreadable, a pre-commit-tracking v1 snapshot, or malformed
+(both `delta` and `heads`), plus, for `delta` only, a repo present now with no
+recorded head or a recorded head git can no longer diff from. The driver then
+treats everything as changed, which is the safe default this instrument's
+blindness must fail into.
 """
 
 import argparse
@@ -246,34 +258,57 @@ def cmd_snapshot(root, slug, round_):
     return 0
 
 
-def cmd_delta(root, slug, round_):
-    path = _snapshot_path(root, slug, round_)
+def _load_snapshot(path):
+    """Read and validate a v2 snapshot at `path`.
+
+    Returns `(snapshot, None)` on success, or `(None, message)` -- a
+    stderr-ready reason -- on failure. Shared between `delta` and `heads`:
+    both refuse for exactly these reasons (missing/unreadable, not JSON, not
+    an object, not version 2, or a malformed v2 shape); the extra live-repo
+    checks in `cmd_delta` below are its own, since `heads` never touches the
+    working tree at all.
+    """
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
-        print(f"round_delta: snapshot missing or unreadable: {path} ({exc})",
-              file=sys.stderr)
-        return 3
+        return None, f"snapshot missing or unreadable: {path} ({exc})"
     try:
         snapshot = json.loads(raw)
     except json.JSONDecodeError as exc:
-        print(f"round_delta: snapshot missing or unreadable: {path} ({exc})",
-              file=sys.stderr)
-        return 3
+        return None, f"snapshot missing or unreadable: {path} ({exc})"
     if not isinstance(snapshot, dict):
-        print(f"round_delta: snapshot missing or unreadable: {path} (not an object)",
-              file=sys.stderr)
-        return 3
+        return None, f"snapshot missing or unreadable: {path} (not an object)"
     if snapshot.get("version") != 2:
-        print(f"round_delta: snapshot is not version 2 (a v1 flat snapshot "
-              f"predates commit tracking): {path}", file=sys.stderr)
+        return None, (f"snapshot is not version 2 (a v1 flat snapshot "
+                       f"predates commit tracking): {path}")
+    heads = snapshot.get("heads")
+    files = snapshot.get("files")
+    if not isinstance(heads, dict) or not isinstance(files, dict):
+        return None, f"snapshot missing or unreadable: {path} (malformed v2 snapshot)"
+    return snapshot, None
+
+
+def cmd_heads(root, slug, round_):
+    path = _snapshot_path(root, slug, round_)
+    snapshot, error = _load_snapshot(path)
+    if error:
+        print(f"round_delta: {error}", file=sys.stderr)
         return 3
-    before_heads = snapshot.get("heads")
-    before_files = snapshot.get("files")
-    if not isinstance(before_heads, dict) or not isinstance(before_files, dict):
-        print(f"round_delta: snapshot missing or unreadable: {path} (malformed v2 snapshot)",
-              file=sys.stderr)
+    heads = snapshot["heads"]
+    for key in sorted(heads, key=lambda k: (k != "", k)):
+        printed_key = "." if key == "" else key
+        print(f"{printed_key}\t{heads[key]}")
+    return 0
+
+
+def cmd_delta(root, slug, round_):
+    path = _snapshot_path(root, slug, round_)
+    snapshot, error = _load_snapshot(path)
+    if error:
+        print(f"round_delta: {error}", file=sys.stderr)
         return 3
+    before_heads = snapshot["heads"]
+    before_files = snapshot["files"]
 
     sub_dirs = set(_submodule_dirs(root))
     committed = set()
@@ -341,7 +376,7 @@ def _validate_round(parser, value):
 def build_parser():
     parser = argparse.ArgumentParser(prog="round_delta.py")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("snapshot", "delta"):
+    for name in ("snapshot", "delta", "heads"):
         p = sub.add_parser(name)
         p.add_argument("slug")
         p.add_argument("round")
@@ -366,6 +401,8 @@ def main(argv=None):
     try:
         if args.command == "snapshot":
             return cmd_snapshot(root, args.slug, args.round)
+        if args.command == "heads":
+            return cmd_heads(root, args.slug, args.round)
         return cmd_delta(root, args.slug, args.round)
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode("utf-8", "surrogateescape") if exc.stderr else ""
