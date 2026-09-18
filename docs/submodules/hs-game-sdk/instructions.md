@@ -218,7 +218,10 @@ Sources:
 - **D** — `docs/RUNTIME_DATA_MODELS.md` § 3, the `LoadDrops` drop categories.
 
 The integers **9** and **17** appear in no source and have no member. Do not add one without
-evidence. Only 14 is planned to be confirmed by an in-game read (ForgePact's
+evidence. **No row has been read from a live item instance on this runner yet**, including
+14: every Source above is the research note or a catalog cross-check, not a runtime
+measurement. When a live read confirms a value, mark its row "measured in-game" with the date.
+Only 14 is planned to be confirmed by an in-game read (ForgePact's
 move-materials-to-bag work); the other values rest on the research note above, so treat a
 live mismatch as a finding to record here, not a typo.
 
@@ -244,7 +247,7 @@ py -3 -m pip install -e hs-game-sdk/python
 ```
 Or import directly:
 ```python
-from hs_game_sdk import GameObject, GameScript, StatId, PROC_FAMILIES, ItemDefinitionStruct
+from hs_game_sdk import GameObject, GameScript, StatId, PROC_FAMILIES, ItemDefinitionStruct, ItemType
 ```
 
 ### 2. C++ Submodules (`ForgePact/plugin`, `HS-Offline-Tracker/aurie-producer`)
@@ -257,13 +260,14 @@ using namespace HeroSiege;
 void ExampleHook() {
     auto obj = Objects::GameObject::Enemy_Parent_obj;
     std::string_view script = Scripts::gml_Script_DropItem;
+    auto material = Items::ItemType::Material;  // itemType 14
 }
 ```
 
 ### 3. TypeScript Submodules (`HSCraftSim`, `HS-Offline-Tracker` UI)
 Import from the module:
 ```typescript
-import { GameObject, GameScripts, StatId } from '@hero-siege/sdk';
+import { GameObject, GameScripts, StatId, ItemType } from '@hero-siege/sdk';
 ```
 
 ---
