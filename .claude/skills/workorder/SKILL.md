@@ -358,6 +358,9 @@ The line, when a reviewer's label looks wrong to you:
   prevent, not a shortcut past it. Open a *new* workorder with only the
   still-open findings and its own fresh three rounds, saying which findings
   are already closed so the split doesn't re-litigate passed work.
+- **Empty delta after a PASS** (the implementer confirmed a finding does not
+  hold and changed nothing) → the previous PASS stands; re-run only the
+  reviewers that were BLOCKING, to confirm with evidence or withdraw.
 - **Any `PLAN-DEFECT`** — from implementer, verifier, or a reviewer finding
   labelled that way — → back to step 1, under the replan cap.
 - **Anything under `UNATTEMPTED` that needs a human** — a live game session, a

@@ -209,6 +209,7 @@ const scribe = (n, block, state) => agent(
 
 let reviewerState = { ...A.reviewers }
 let carried = null // evidence for the next implementer when the scribe could not write it
+let lastVerifier = null // the previous round's full verifier result, reused when nothing changed
 let firstHeads = null // this invocation's first usable snapshot heads, for a `never` reviewer's base when args.baseHeads is absent
 const rounds = []
 
@@ -244,25 +245,37 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
     `Then, from the repository root (run: cd ${deltaRoot} first, not wherever your shell already is), over only those paths that still exist, run ` +
     `grep -lE "Rva|GetModuleHandle|MmCreateHook|HookOneScript|InstallScriptHook" -- <paths> and report any match as instrumentContent; run ` +
     `grep -lE "CInstance|relicLevel|ItemStatStruct|ItemDefinitionStruct" -- <paths> and report any match as sdkContent. ` +
-    `Report files_checked and files_missing: a path missing because it was deleted this round is normal, a path missing because you ran the greps from the wrong directory is not — if more than half the paths are missing, treat the delta as unusable and return exit_code 3 so every reviewer re-runs. Edit nothing.`,
+    `Report files_checked and files_missing: a path missing because it was deleted this round is normal, a path missing because you ran the greps from the wrong directory is not — if more than half the paths are missing, treat the delta as unusable and return exit_code 3 so every reviewer re-runs. ` +
+    `An empty path list with exit code 0 is a valid answer — the round changed nothing; report it exactly as printed and stop, do not investigate. Edit nothing.`,
     { label: `delta:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', schema: DELTA_SCHEMA })
   const deltaUsable = !!(snap && snap.exit_code === 0 && delta && delta.exit_code === 0)
+  // Measured 2026-09-18: a round whose only "fix" was confirming a false
+  // BLOCKING finding changed nothing, and still paid a full verifier run
+  // (47 turns, 1.9M). Criteria cannot have changed if the tree did not, so
+  // the previous PASS stands and only the reviewers that were BLOCKING run,
+  // to confirm or withdraw. A fresh invocation has no previous verdict to
+  // reuse, so it still verifies.
+  const prev = rounds.length ? rounds[rounds.length - 1] : null
+  const nothingChanged = deltaUsable && delta.paths.length === 0 && !!prev && prev.verifier === 'PASS' && !!lastVerifier
 
   // A reviewer that has never run, or was blocking, always runs. A clean one
   // runs when its trigger matches the delta — or when the delta is unusable.
   const toRun = Object.keys(reviewerState).filter(name =>
     reviewerState[name] !== 'clean' || !deltaUsable || (TRIGGERS[name] || (() => true))(delta))
   const skipped = Object.keys(reviewerState).filter(name => !toRun.includes(name))
-  log(`round ${n}: delta ${deltaUsable ? delta.paths.length + ' paths' : 'UNUSABLE -> all reviewers'}; running ${toRun.join(', ') || 'none'}; not re-run: ${skipped.join(', ') || 'none'}`)
+  log(`round ${n}: delta ${deltaUsable ? delta.paths.length + ' paths' : 'UNUSABLE -> all reviewers'}; running ${toRun.join(', ') || 'none'}; not re-run: ${skipped.join(', ') || 'none'}${nothingChanged ? '; nothing changed -> previous PASS stands, verifier not re-run' : ''}`)
 
   const scope = name => reviewerState[name] === 'never' || !deltaUsable
     ? (baseHeadsForNever ? `Read the whole change. ${wholeChangeScope(baseHeadsForNever)}` : `${HEADS_UNKNOWN} Read the whole change: ${diffCommands}`)
     : (roundHeadsUsable ? `This is a re-run. ${rerunScope(roundHeads, delta.paths)}` : `${HEADS_UNKNOWN} This is a re-run. Read only these paths changed this round (use the same commands restricted to them): ${delta.paths.join(', ')}`)
+  const nothingChangedNote = nothingChanged
+    ? `Nothing changed this round: the implementer reports your previous BLOCKING finding does not hold. Its report: ${String(impl.report).slice(0, 1500)}\nConfirm the finding with the command and output that proves it, or withdraw it.\n`
+    : ''
   const results = await parallel([
-    () => agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.`,
+    () => nothingChanged ? Promise.resolve(lastVerifier) : agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.`,
       { label: `verifier:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA }),
     ...toRun.map(name => () => agent(
-      `You are reviewing a change. You are NOT given the workorder; this is its intent:\n${A.goalExcerpt}\n${scope(name)}\n` +
+      `You are reviewing a change. You are NOT given the workorder; this is its intent:\n${A.goalExcerpt}\n${scope(name)}\n${nothingChangedNote}` +
       (name === 'instrument-blindness-reviewer' && A.researchHeadings ? `Research findings to check are recorded in ${A.contextPath} under: ${A.researchHeadings}. Read only those subsections.\n` : '') +
       `The verifier runs the acceptance criteria in parallel: do not re-run test suites or builds; run one targeted test only if a finding depends on its result. ` +
       `Mark every finding BLOCKING or NON-BLOCKING; set plan_defect only when no implementation of the plan as written could satisfy its Goal -- a missing assert, pin or sentence the plan did not forbid goes to the implementer, not plan_defect; lead the summary with "no blocking findings" when true.`,
@@ -270,6 +283,7 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
       .then(r => ({ name, r }))),
   ])
   const verifier = results[0]
+  if (verifier) lastVerifier = verifier
   const reviews = results.slice(1).filter(Boolean)
   const missing = toRun.filter(name => !reviews.find(x => x.name === name && x.r))
   // A reviewer that died is "not observed", never "clean".

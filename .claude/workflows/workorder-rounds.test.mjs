@@ -113,6 +113,32 @@ test('PLAN-DEFECT and ADVICE-NEEDED hand back to the driver without verifying', 
   }
 })
 
+test('an empty delta after a PASS skips the verifier and re-runs only the blocking reviewer', async () => {
+  let docsSeen = 0
+  const { result, calls } = await run(BASE, standard({
+    delta: DELTA([]),
+    'docs-sync-reviewer': () => (docsSeen++ === 0 ? { ...CLEAN, blocking: [{ where: 'a', problem: 'claimed', evidence: 'x' }] } : CLEAN),
+  }))
+  assert.equal(result.outcome, 'PASS')
+  assert.equal(result.round, 1)
+  assert.ok(!calls.includes('verifier:r1'), 'nothing changed: the round-0 PASS stands')
+  assert.ok(calls.includes('docs-sync-reviewer:r1'), 'the blocking reviewer confirms or withdraws')
+  assert.ok(!calls.includes('decompile-output-guard:r1') && !calls.includes('instrument-blindness-reviewer:r1'))
+})
+
+test('an empty delta on a fresh invocation still runs the verifier', async () => {
+  const state = { ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' } }
+  const { calls } = await run(state, standard({ delta: DELTA([]) }))
+  assert.ok(calls.includes('verifier:r1'), 'no previous verdict to reuse')
+})
+
+test('the delta dispatch says an empty result is a valid answer', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
+  await run(BASE, reply)
+  assert.match(prompts['delta:r0'], /An empty path list with exit code 0 is a valid answer/)
+})
+
 test('a blocking finding spends a round; a non-blocking one does not', async () => {
   let r = await run(BASE, standard({ 'docs-sync-reviewer': { ...CLEAN, non_blocking: [{ where: 'a', problem: 'nit', evidence: '' }] } }))
   assert.equal(r.result.outcome, 'PASS')

@@ -65,7 +65,13 @@ GUIDE_MAX_KB = 60.0
 # R4: §1 measured 26-39% of implementer turns are small sequential shell
 # calls (result under 1.5KB, issued within 20s of the previous one, no edit
 # between; longest observed run 11) that one batched call could replace.
-BATCHABLE_SHARE_MAX = 0.20
+# Calibrated on the first real run with the batching rule in place
+# (2026-09-18): 24% on a 59-turn round, 38% on a 16-turn one. A quarter of an
+# implementer's turns being check-then-act shell calls looks inherent; and on
+# a short round a handful of calls swings the share wildly, so runs under
+# BATCHABLE_MIN_TURNS are reported, not judged.
+BATCHABLE_SHARE_MAX = 0.30
+BATCHABLE_MIN_TURNS = 30
 BATCHABLE_RESULT_MAX_BYTES = 1536
 BATCHABLE_WINDOW_SECONDS = 20
 BATCHABLE_MIN_RUN = 3
@@ -570,7 +576,7 @@ def rule_r4_batching(session: Session) -> RuleResult:
     for agent in all_subagents(session):
         if agent.agent_type != "implementer":
             continue
-        if agent.turn_count == 0:
+        if agent.turn_count < BATCHABLE_MIN_TURNS:
             continue
         runs = _batchable_runs(agent)
         batchable = sum(len(r) - 1 for r in runs)

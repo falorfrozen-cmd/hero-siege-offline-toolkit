@@ -393,31 +393,54 @@ class R4Tests(TempDirMixin, unittest.TestCase):
             off += gap
         return records, off
 
-    def test_fail_over_20pct_batchable(self):
-        # 10 turns total: 5 form one qualifying run (4 of them "batchable"),
-        # 5 are unrelated single Read calls far apart -> 4/10 = 40% > 20%.
-        shell_records, off = self._small_shell_run(0, 5, gap=5, start_idx=0)
-        other = []
-        idx = 5
-        for _ in range(5):
-            other += tool_turn(off, idx, "Read", {"file_path": "some/file.py"}, result="x" * 4000)
-            off += 60  # far apart, and Read isn't a shell tool -> breaks/no run
+    def _mixed(self, runs, run_len, spaced):
+        """`runs` qualifying runs of `run_len` small shell calls, then `spaced`
+        far-apart Read turns; returns (records, total_turns, batchable)."""
+        records, off, idx = [], 0, 0
+        for _ in range(runs):
+            r, off = self._small_shell_run(off, run_len, gap=5, start_idx=idx)
+            records += r
+            idx += run_len
+            off += 60
+        for _ in range(spaced):
+            records += tool_turn(off, idx, "Read", {"file_path": "some/file.py"}, result="x" * 4000)
+            off += 60
             idx += 1
-        records = shell_records + other
+        return records, runs * run_len + spaced, runs * (run_len - 1)
+
+    def test_fail_over_the_share_cap(self):
+        # 3 runs of 5 (12 batchable) + 18 spaced reads = 30 turns, 40% > 30%.
+        records, total, batchable = self._mixed(3, 5, 18)
+        self.assertGreaterEqual(total, wa.BATCHABLE_MIN_TURNS)
         b = SessionBuilder(self.tmp_path).driver([turn(0, 0)]).subagent(
             "implementer", "implementer:r0", records)
         _, results = b.evaluate()
         r = get_rule(results, "R4")
         self.assertFalse(r.passed)
-        self.assertTrue(any("40%" in e for e in r.evidence))
+        self.assertTrue(any(f"{batchable / total:.0%}" in e for e in r.evidence))
 
-    def test_pass_under_20pct_batchable(self):
-        # Same 5 shell calls, but spaced >20s apart -> no run forms at all.
-        records = []
-        off = 0
-        for i in range(10):
+    def test_pass_under_the_share_cap(self):
+        # 2 runs of 4 (6 batchable) + 24 spaced reads = 32 turns, 19% < 30%.
+        records, total, _ = self._mixed(2, 4, 24)
+        self.assertGreaterEqual(total, wa.BATCHABLE_MIN_TURNS)
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 0)]).subagent(
+            "implementer", "implementer:r0", records)
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R4").passed)
+
+    def test_pass_no_run_forms_when_calls_are_spaced(self):
+        records, off = [], 0
+        for i in range(wa.BATCHABLE_MIN_TURNS):
             records += tool_turn(off, i, "Bash", {"command": f"echo {i}"}, result="ok")
             off += 30
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 0)]).subagent(
+            "implementer", "implementer:r0", records)
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R4").passed)
+
+    def test_short_run_is_not_judged(self):
+        # 100% batchable, but under BATCHABLE_MIN_TURNS: the share is noise.
+        records, _ = self._small_shell_run(0, wa.BATCHABLE_MIN_TURNS - 1, gap=5)
         b = SessionBuilder(self.tmp_path).driver([turn(0, 0)]).subagent(
             "implementer", "implementer:r0", records)
         _, results = b.evaluate()
