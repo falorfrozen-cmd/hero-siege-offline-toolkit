@@ -228,7 +228,7 @@ live mismatch as a finding to record here, not a typo.
 The three declarations are hand-written, not generated, and nothing derives one from another:
 that is what makes `tests/test_item_type_parity.py` a real check rather than a tautology. It
 parses `item_type.hpp` and `item_type.ts` as text (runs in any checkout), imports
-`item_type.ts` under `node --experimental-transform-types` (skips without `node`), and checks
+`item_type.ts` under `node --experimental-transform-types` (skips without `node` ≥ 22.7), and checks
 no binding declares 9 or 17. `tests/test_cpp_sdk.py`'s
 `test_compiled_item_type_table_matches_python` compares the *compiled* `kItemTypes`, printed by
 the harness as `ITEM_TYPE <Name> <value>` lines, against the Python enum. A `curated/*.json` +
@@ -299,7 +299,7 @@ contributor can be assumed to have:
 | `test_object_hierarchy.py` → `TestObjectsJsonMatchesBindings` | `hs-game-sdk/data/` | skips |
 | `test_extractor_layout.py` | nothing (builds a synthetic `data.win`) | always runs |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
-| `test_item_type_parity.py` | nothing (parses the tracked bindings); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips without `node` on `PATH` |
+| `test_item_type_parity.py` | nothing (parses the tracked bindings); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`) |
 
 `test_extractor_layout.py` is how the OBJT offsets stay verifiable without the
 game: it writes a tiny GameMaker IFF file by hand, with each field at its

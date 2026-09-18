@@ -165,6 +165,14 @@ class TestItemTypeTypeScript(unittest.TestCase):
         node = shutil.which("node")
         if node is None:
             self.skipTest("node is not on PATH")
+        # --experimental-transform-types (TS enums) arrived in Node 22.7; an older node rejects
+        # the flag, which says nothing about item_type.ts, so that is a skip, not a failure.
+        version = subprocess.run(
+            [node, "--version"], capture_output=True, text=True, timeout=30,
+        ).stdout.strip()
+        match = re.match(r"v(\d+)\.(\d+)", version)
+        if match is None or (int(match.group(1)), int(match.group(2))) < (22, 7):
+            self.skipTest(f"node {version or '?'} predates --experimental-transform-types (22.7)")
         script = (
             f"import({json.dumps(TS_SOURCE.as_uri())}).then(m => console.log(JSON.stringify("
             "{enum: Object.entries(m.ItemType).filter(([k]) => isNaN(Number(k))),"
