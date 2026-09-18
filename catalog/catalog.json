@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-18T16:08:58Z",
+  "generated": "2026-09-18T20:44:04Z",
   "tools": [
     {
       "id": "forgepact",
@@ -8,9 +8,9 @@
       "summary": "Offline gameplay modifiers: density, spawns, drop rates, map reveal.",
       "repo": "falorfrozen-cmd/ForgePact",
       "submodule": "ForgePact",
-      "version": "1.4.2",
-      "tag": "v1.4.2",
-      "published": "2026-09-18T15:44:18Z",
+      "version": "1.4.3",
+      "tag": "v1.4.3",
+      "published": "2026-09-18T20:43:28Z",
       "license": "AGPL-3.0",
       "requires": {
         "admin": false,
@@ -20,12 +20,12 @@
       },
       "artifact": {
         "kind": "zip",
-        "name": "ForgePact-1.4.2.zip",
-        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.4.2/ForgePact-1.4.2.zip",
-        "size": 17385074,
-        "sha256": "8cf98fbe9e50f452cc64337fb6215ec9fb15c0e1d1d111fcd21439e0679066c2",
+        "name": "ForgePact-1.4.3.zip",
+        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.4.3/ForgePact-1.4.3.zip",
+        "size": 17391025,
+        "sha256": "c6386b20bfacc79d31eb7798c70ad958f954eac8f01c5640cbed7766c15179bf",
         "sha256_source": "published+verified",
-        "strip_prefix": "ForgePact-1.4.2/"
+        "strip_prefix": "ForgePact-1.4.3/"
       },
       "launch": {
         "exe": "ForgePact.exe",
@@ -44,8 +44,8 @@
           "timeout_s": 20
         }
       },
-      "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.4.2",
-      "notes": "# ForgePact 1.4.2\n\nChaos Tower and Shadow Realm rate settings above x1 work again on the current game version. This release requires the current game version.\n\n## Fixed\n\n- **Chaos Tower and Shadow Realm multipliers above x1 had no effect on the\n  current game version.** Each could still appear only once per run, exactly\n  as if the setting were left at x1. A game update renamed the internal names\n  ForgePact uses to reset each mechanic's once-per-run limit, so the reset\n  could no longer attach and the game's own limit took over. ForgePact 1.4.2\n  uses the current game version's names. Confirmed in-game: with the rates\n  raised, one run showed many Chaos Towers and at least two Shadow Realms.\n\n  This fix only works on the current game version. If you are still on the\n  previous game version, 1.4.2 cannot attach the reset there, so Chaos Tower\n  and Shadow Realm rates above x1 have no effect. Stay on 1.4.1 until you\n  update the game.\n\n## How to update\n\nDownload and extract the complete release, then reopen ForgePact. Your existing\nsettings are retained. Source users can run `Prepare-Plugin.bat` if plugin files\nare missing before using **Install Mod Plugin**. This change is in the plugin,\nso pressing **Install Mod Plugin** matters - updating only the panel leaves the\nold plugin in place.\n\nUse ForgePact only with an offline / EAC-disabled copy of Hero Siege.",
+      "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.4.3",
+      "notes": "# ForgePact 1.4.3\n\nBosses stay normal with the Monster Rarity sliders up, ForgePact's log file no\nlonger keeps every session forever, and ForgePact's own kill drops are placed more\nsafely.\n\n## Fixed\n\n- **Monster Rarity could turn a boss Rare or Ancient.** The Rare and Ancient\n  sliders are meant for ordinary monsters, but they had no check for bosses,\n  so a boss could be raised like any other monster, with that tier's extra\n  health and affixes on top of its own. Bosses are now always left alone;\n  ordinary monsters are raised exactly as before. (A player reported an\n  Anubis at about 4.5M HP instead of about 500k with 20% Rare and 20% Ancient\n  set. We have not reproduced that number, but a boss could clearly be\n  raised when it should not have been.)\n- **`bp_ipc\\out.txt` kept every session forever.** ForgePact only ever added\n  to its log, so it could reach several megabytes. Now, when you start the\n  game and the log is over 2 MB, the old one is kept as `out.prev.txt` and a\n  fresh `out.txt` begins, replacing any older `out.prev.txt`, so old logs no\n  longer pile up. The log still grows while you play and is only trimmed at\n  the next start, so one very long session can still make it large. The\n  previous log is always kept, which is the one you need after a crash.\n- **The panel could miss a quick restart.** With auto-apply on, the panel\n  re-sends your saved settings whenever the game starts. It noticed a restart\n  by counting startup lines in `out.txt`, which a fresh log could fool if you\n  closed and reopened the game within a few seconds. It now also checks\n  whether the log file itself changed.\n\n## Changed\n\n- **ForgePact's own kill drops are placed before the game finishes the kill.**\n  The Angelic / Unholy drop and the Tyrant's Crown / Headhunter drop used to be\n  placed after the game had already handled the monster's death, still using\n  that monster. They are now rolled and placed while the monster is still\n  there. Drop rates and what can drop are unchanged. This removes a possible\n  source of crashes; it is not a confirmed fix. Players reported crashes with\n  the Angelic / Unholy slider at x100 on 1.4.1, but we could not reproduce\n  them: 1.4.1 and 1.4.3 each gave 30 drops from 30 kills without crashing.\n\n## Reporting a problem\n\nPlease attach both `bp_ipc\\out.txt` and `bp_ipc\\out.prev.txt`, and say which\nForgePact settings you had on.\n\n## How to update\n\nDownload and extract the complete release, then reopen ForgePact. Your existing\nsettings are retained. Source users can run `Prepare-Plugin.bat` if plugin files\nare missing before using **Install Mod Plugin**. This release changes both the\nplugin and the panel, so pressing **Install Mod Plugin** matters - updating only\nthe panel leaves the old plugin in place.\n\nUse ForgePact only with an offline / EAC-disabled copy of Hero Siege.",
       "guide": "docs/submodules/ForgePact/instructions.md",
       "source_launch": {
         "cmd": "py",
