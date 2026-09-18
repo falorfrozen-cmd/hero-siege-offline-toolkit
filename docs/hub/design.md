@@ -640,6 +640,15 @@ one of them, so the request is the trigger instead:
 - add the **`ai-review`** label in the pull request sidebar, or
 - comment **`@claude review`** on the pull request.
 
+Anything written after `@claude review` in the comment is passed to the reviewer
+as the requester's instructions, and takes precedence over the default scope —
+`@claude review only hub/src-tauri`, or `@claude review skip the catalog JSON`.
+The reviewer is told to pass them on to every agent it launches, to read only the
+permitted paths with a `git diff` pathspec instead of `gh pr diff` when they
+narrow the scope, and to state the scope it reviewed. The label carries no
+instructions and always requests a full review. The comment reaches the shell
+only through an environment variable, never through `${{ }}` in the script.
+
 Either works again later for a fresh review after pushing; the label does not
 re-run by itself on subsequent pushes. The action additionally requires the
 requester to have write access and rejects bot actors, so automation cannot
