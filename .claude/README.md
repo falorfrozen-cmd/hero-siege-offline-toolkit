@@ -607,6 +607,13 @@ reviewer skipped this way is recorded as `clean@round<n>, not re-run`.
 finding is always blocking, so it re-reads every added line every round
 regardless of the delta.
 
+The diff commands a reviewer actually gets differ by mode. In workflow mode
+(the default — "Skills" below), they are per-repo and read from
+`round_delta.py heads`'s recorded base commits rather than `HEAD`, because a
+`HEAD`-relative diff after the round's own commits is empty; the driver-mode
+fallback still reads `git status --porcelain -uall` / `git diff HEAD` per
+repo, as `skills/workorder/SKILL.md` § "Step 3 — verify" states.
+
 `sdk-contract-reviewer` covers four separate rediscoveries of one defect;
 `tauri-command-reviewer` covers three shipped hangs; `instrument-blindness-reviewer`
 covers 34 hooks reporting zero calls against a game that was calling them. Each
@@ -667,12 +674,17 @@ Three rules exist because the first real run — the panel-and-launcher
 performance pass — hit the cap with seven items open and had to be finished by
 hand, outside the phase separation:
 
-- **Only `BLOCKING` findings spend a round.** Every reviewer labels each finding
-  `BLOCKING` or `NON-BLOCKING`. That run reached its cap on a round whose
-  instrument reviewer opened with *"nothing here blocks shipping"* and then
-  listed eight improvements — polish consumed the last round and stopped eight
-  findings that were already green. Non-blocking findings ride along as context
-  and surface in the final report.
+- **Only `BLOCKING` findings spend a round.** Every reviewer returns `blocking`
+  findings, `non_blocking` findings, and a separate `plan_defect` flag for the
+  round — set only when no implementation of the plan as written could satisfy
+  its Goal; a missing assert, pin, or sentence the plan didn't forbid is a
+  `BLOCKING` finding for the implementer, not a defect in the plan, so an
+  implementer's own oversight cannot route back to the planner as a costly
+  replan. That run reached its cap on a round whose instrument reviewer opened
+  with *"nothing here blocks shipping"* and then listed eight improvements —
+  polish consumed the last round and stopped eight findings that were already
+  green. Non-blocking findings ride along as context and surface in the final
+  report.
 - **At the cap, split rather than raise.** The recovery is a new workorder
   carrying only the still-open findings, with its own fresh three rounds. The
   cap means the pipeline lost the thread, and that does not become untrue
@@ -682,6 +694,46 @@ hand, outside the phase separation:
   findings, or one submodule, the driver says so before spawning. That run was
   116 criteria, 9 findings, 2 submodules, 1,524 lines — no individual finding
   was too hard, there were simply too many sharing one budget.
+
+**Each worktree gets its own submodule checkout.** Step 1 (and `resume`) run
+`py -3 .claude/skills/workorder/ensure_submodule.py <module>` before planning
+starts, whenever the workorder's module is a submodule not yet initialized in
+this checkout. Without it, a linked worktree that never initializes the
+submodule silently falls back to reading and writing the MAIN checkout's copy
+— which is what happened to `prospect-idcheck-pin-hardening`'s ForgePact work
+on 2026-09-17, and is exactly why two worktrees could not work the same
+submodule at the same time. The script gives this checkout its own gitdir
+(`git submodule update --init --reference <main>/<module> --dissociate`,
+proven cheap here: the module's own object store measured 14MB), then prints
+the module's new HEAD and git dir, and — only when a main-checkout copy exists
+to reference — the exact command to bring unpushed work across:
+`git -C <module> fetch "<main>/<module>" <branch>`. It never touches the main
+checkout and never creates or switches branches; it only checks out the
+commit the gitlink already names, and a second run is a no-op
+(`already initialized: <module> @ <sha>`). From there, all work on that
+module — reading, editing, building, committing, the work branch — stays in
+this checkout's own copy, never another checkout's. Removing a worktree that
+has initialized a submodule this way needs `git worktree remove --force`
+("working trees containing submodules cannot be moved or removed").
+
+**It also provisions each module's local-only build prerequisites**, on both
+the fresh-init path and an already-initialized one.
+`.claude/skills/workorder/local_prereqs.json` lists, per module, paths a
+`.gitignore`d build step needs that no `git submodule update` can produce
+because they were never committed anywhere — for ForgePact,
+`plugin_build/include/` (the YYToolkit/Aurie/FunctionWrapper headers plus
+`YYTK_Shared_Types.cpp`) and the four DLLs/EXE under `modfiles_shipped/`.
+Proven on the real repo: a freshly-initialized linked worktree's own
+`plugin_build\build.bat dev` failed until `plugin_build/include/` was copied
+across by hand, then passed in 25s and produced a byte-size-identical DLL.
+The script copies each listed path from the main checkout's copy of the
+module when it exists there and is missing here — checked again on every run,
+not only a fresh init, since the manifest or the main checkout can gain an
+entry after this worktree's module was already set up — never overwriting a
+path that already exists here, never copying anything the manifest doesn't
+list, and rejecting (not copying) an entry that is absolute or contains `..`.
+A run in the main checkout itself provisions nothing, since that IS where the
+files already live.
 
 It has three modes: `/workorder <task>` runs everything, `/workorder plan
 <task>` stops after the plan, and `/workorder resume <slug>` picks up at
@@ -693,24 +745,83 @@ conversation that produced it. Context isolation is *not* one of the benefits �
 planner and implementer are already separate subagents with separate contexts
 either way.
 
-**A fourth mode, opt-in and unproven — say so when offering it:**
-`/workorder resume <slug> workflow`, or the user saying "use a workflow," runs
-the implement → verify → route rounds (steps 2–4) as
-`.claude/workflows/workorder-rounds.js` instead of driver turns: a fresh
-implementer each round, `verifier` plus the delta-scoped reviewers above, and
-a haiku scribe that writes the Log and State entries, looping under the same
-3-round cap. It returns to the driver on anything needing judgement — `PASS`,
-`PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, a human-needed
-`UNATTEMPTED`, or the cap — so replans, consultations, human questions and the
-step-5 report stay with the driver either way. What it trades away: every
-re-entry inside the script is a fresh spawn, never the `SendMessage` resume
-above, because the script has no agent id to send to. What it buys is the
-driver's own tool calls for those rounds, not spent —
-`skills/workorder/SKILL.md` § "Driver discipline" records the measured cost of
-a driver that does that work itself.
-`.claude/workflows/workorder-rounds.test.mjs`
-(`node --test`) dry-runs its routing against stub agents, unproven meaning it
-has not yet carried one real workorder end to end.
+**Workflow mode is the default way steps 2–4 run.** `/workorder <task>` (after
+the plan is approved) and `/workorder resume <slug>` call
+`.claude/workflows/workorder-rounds.js` instead of driver turns — the user's
+own `/workorder` invocation is the opt-in the Workflow tool requires, so the
+skill does not ask again. **Driver mode — steps 2–4 as the driver's own turns,
+above — is the documented fallback**, used when the Workflow tool is
+unavailable, the launch fails, or the user says "driver mode" or "no
+workflow". This replaces "opt-in and unproven": it carried
+`prospect-idcheck-pin-hardening` through three rounds to `PASS` on
+2026-09-17 (fresh sonnet implementer 73–88 turns / 9–10.6M tokens per round,
+verifier 2–3M, nine haiku utility agents 1.8M total —
+`skills/workorder/SKILL.md` § "Driver discipline" has the matching cost for
+the same work done by hand).
+
+Per round the script snapshots (`round_delta.py snapshot`), reads back that
+snapshot's recorded per-repo base commits (`round_delta.py heads`), spawns a
+fresh implementer at the triaged tier, then runs `verifier` plus the
+delta-scoped reviewers above in parallel — each pointed at a `git -C <repo>
+diff <sha>` built from those heads rather than `git diff HEAD`, since
+implementers commit mid-round and a `HEAD`-relative diff taken afterward is
+empty (measured 2026-09-17: every reviewer had to rediscover the round's own
+commits by hand, at 23–59 turns instead of the usual 6–17). A reviewer that
+has never run reads the whole change from `args.baseHeads` (the workorder's
+own starting heads, copied from `## State` › `round base:`) when given, else
+the round's own first snapshot; a re-run reviewer reads only the round's
+delta paths, split per repo from that round's own heads. If heads could not
+be obtained at all, the script falls back to the old `HEAD`-relative commands
+and says so loudly in the dispatch, rather than reading nothing silently.
+`round_delta.py heads <slug> <round>` prints `<key>\t<sha>` per repo (`.` for
+the hub, the submodule dir otherwise; an empty sha for an unborn head),
+refusing (exit 3) for exactly the reasons `delta` refuses a snapshot outright
+— missing, unreadable, not version 2 — and nothing else, since `heads` never
+touches the working tree the way `delta`'s own live-repo checks do. The delta
+agent's own content greps now run from the repository root explicitly and
+report `files_checked`/`files_missing`, so a path missing because the greps
+ran in the wrong directory (previously invisible) is distinguishable from one
+deleted this round.
+
+A haiku scribe still records each round, but composes nothing: the exact
+markdown — the `### Round <n>` Log entry, `BLOCKING (<k>)`/`NON-BLOCKING (<k>)`
+lists with the counts in the headings themselves, and the replacement
+`## State` lines — is built in the script, and the scribe's only job is to
+paste it verbatim. This is the fix for a measured relabel: a scribe once
+turned a round's own `1 BLOCKING` + `5 NON-BLOCKING` verdict into six
+`BLOCKING` findings, caught only because the driver happened to read it by
+hand; counts baked into the headings make that kind of relabel visible on
+sight instead.
+
+```
+Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
+           args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
+                   reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
+                   submodules: ['<dir>', ...], researchHeadings, baseHeads, repoRoot } })
+```
+
+`reviewers` is a map, one entry per applicable round-0 reviewer, valued
+`'never'`. `submodules` names the dirs whose own diff the reviewers must
+read, relative to `repoRoot`. `researchHeadings` names the context file's
+`###` heading(s) `instrument-blindness-reviewer` should read. `baseHeads` is
+`{ '.': sha, '<submodule>': sha, ... }`, copied from `## State` ›
+`round base:`. `repoRoot` is now only an escape hatch for a workorder deliberately
+run against another checkout — the default is absent, since Step 1's
+`ensure_submodule.py` above already gives this checkout its own submodule
+copy.
+
+It returns to the driver on anything needing judgement — `PASS`,
+`PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED` or `CAP`
+— so replans, consultations, human questions and the step-5 report stay with
+the driver either way, and one launch may cover several rounds (a
+`PLAN-DEFECT` hand-back means relaunching after the replan). What it still
+trades away: every re-entry inside the script is a fresh spawn, never the
+`SendMessage` resume above, because the script has no agent id to send to —
+measured, on this one real run, as no worse than a resumed implementer (a
+resumed round-1 implementer cost 14.6M tokens at 304K context per turn;
+losing the resume cost nothing). `.claude/workflows/workorder-rounds.test.mjs`
+(`node --test`, 23 cases, each with its own control) dry-runs the routing
+above against stub agents.
 
 That makes the split a forcing function rather than just a workflow: a plan that
 cannot survive a fresh session was never a plan, it was a conversation someone
@@ -722,6 +833,105 @@ Because the skill cannot invoke itself (`disable-model-invocation: true` — thr
 agent spawns is the wrong answer to a typo), `AGENTS.md` § "Offer `/workorder`
 When the Work Has Shape" carries the trigger list that makes Claude *suggest*
 it. Suggest, wait, and drop it if the answer is no.
+
+**Step 5 audits the run's own cost.** The report step runs `py -3
+tools/workorder_audit.py --latest` and prints every `FAIL` line verbatim
+beside the round summary — a workorder that passes its acceptance criteria and
+still breaks a cost/behavior rule says so, instead of merging on the strength
+of the criteria alone.
+
+### `tools/workorder_audit.py` — did this run actually save time and tokens
+
+Before this tool existed, "did a `/workorder` run save time and tokens, and
+did it break a rule" was answered by one-off transcript scripts run by hand,
+once per question. This makes that judgement runnable and repeatable, against
+the same rules this page states above (batching, per-role budgets, plan/context
+scope, driver discipline, replans, round budgets):
+
+```
+py -3 tools/workorder_audit.py [--latest | --session <id-prefix>]
+    [--projects-dir DIR] [--project NAME] [--json]
+```
+
+It streams — never loads whole — a session's transcripts: the driver's own
+`~/.claude/projects/<project>/<session>.jsonl`, ad-hoc subagents at
+`<session>/subagents/agent-*.jsonl`, and workflow-mode round agents at
+`<session>/subagents/workflows/wf_*/agent-*.jsonl`, each paired with a
+sibling `.meta.json` carrying `agentType` and a label (a workflow label reads
+like `implementer:r1`). `--project` defaults to the mangled name Claude Code
+derives from the current working directory (every non-alphanumeric character
+becomes `-`); `--projects-dir`/`--project` exist so tests never touch the real
+`~/.claude/projects`.
+
+Per agent it reports turns (deduped by `message.id`), tokens (input +
+cache-creation + cache-read, summed over assistant turns), output tokens,
+context per turn, peak context, wall minutes, the longest single tool call,
+and KB of `Read` results by kind (plan, context file, `instructions.md`,
+source). It prints one table, then thirteen rules as `PASS`/`FAIL` with
+evidence (the agent, the time, the command or path), then each role's numbers
+against the pre-update averages as a percentage; `--json` emits the same as
+one object.
+
+| Rule | Checks |
+|---|---|
+| R1 reviewer-reads-workorder | a reviewer `Read`/grep of a `-plan.md` (`instrument-blindness-reviewer` may read a `-context.md`) |
+| R2 verifier-scope | a verifier whole-file `Read` of a `-context.md`, or of an oversized plan |
+| R3 guide-whole | an agent whose `instructions.md` `Read` results exceed a KB budget |
+| R4 batching | an implementer's share of small-sequential-shell-call runs over budget |
+| R5 blocking-call | a tool call over the time budget — except `Agent`/`Task`, which dispatch a subagent and are meant to block for minutes |
+| R6 planner-rewrite | a planner `Write` to a plan/context path already written earlier in the session |
+| R7 / R8 / R9 reviewer- / implementer- / verifier-budget | turns, tokens, or (implementer only) context-per-turn over that role's budget |
+| R10 driver-discipline | a driver shell command that builds or tests, a driver `Edit`/`Write` outside `.claude/workorders/`, or too many driver turns in one round |
+| R11 replans | two or more planner runs in one session |
+| R12 plan-size | a plan or context file over its KB budget, from the `Read` calls that touched it |
+| R13 round-budget | a round's total subagent tokens over budget |
+
+Every budget is a named module-level constant in the tool itself
+(`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
+on), each with a comment naming the measurement it was set from — read those
+constants for the current number rather than one copied here, since
+re-measuring is exactly what this tool exists to make cheap. Exit code is 0
+when every rule passes, 1 when any rule fails, 2 on a usage error.
+
+Tests (`tests/test_workorder_audit.py`) build synthetic transcripts in a temp
+directory; every rule has both a failing fixture and a passing control, plus
+coverage for message-id dedupe, workflow-subdirectory discovery, and the exit
+codes.
+
+### `tools/source_index.py` — go to the range, don't grep around
+
+Generic, stdlib-only, read-only index for one large C/C++ file, built against
+the banner-comment and `#ifndef <guard>` research-span style
+`ForgePact/plugin/ModuleMain.cpp` already uses:
+
+```
+py -3 tools/source_index.py <file> [--regions] [--functions]
+                                    [--find NAME] [--at LINE]
+                                    [--guard MACRO] [--json]
+```
+
+`--regions` (the default) prints one line per banner-delimited region —
+`start-end  KB  [R]  title`; `[R]` marks a region that sits inside an
+`#ifndef FORGEPACT_RELEASE` (or `--guard`-named) span, at any nesting depth.
+`--functions` finds file-scope function definitions with a brace-matching
+heuristic (its own docstring lists what it misses: templates, a body on the
+signature line, anything not at brace depth 0). `--find NAME` returns every
+region and function whose name contains `NAME`, with ranges, so the next call
+is a `Read` with `offset`/`limit` instead of another grep chain. `--at LINE`
+returns the region and function containing a line. It only ever prints
+identifiers and banner titles from the file it is given, never the file's own
+text.
+
+`implementer.md` is the rule that sends the implementer here: for a source
+file over 2,000 lines, run `source_index.py --find <name>` first and `Read`
+only the range it prints, instead of an exploratory grep chain. Measured
+against the file it was built for (`ForgePact/plugin/ModuleMain.cpp`, 997KB /
+18,144 lines): `--regions` prints 94 regions in about 6KB.
+
+Tests (`tests/test_source_index.py`) cover a synthetic fixture (banners,
+nested guard spans, a function inside and outside a guard, `--find`, `--at`)
+plus a smoke test against the real `ModuleMain.cpp`, skipped when the file is
+absent — as it is in a worktree with the ForgePact submodule uninitialized.
 
 ## MCP servers — `../.mcp.json`
 
@@ -798,7 +1008,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Four suites cover this directory. Three are Python and run automatically
+Six suites cover this page's tooling. Five are Python and run automatically
 under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
@@ -806,9 +1016,22 @@ JavaScript and runs separately, under Node:
 py -3 -m unittest discover -s tests
 py -3 -m unittest tests.test_claude_hooks -v      # the hooks actually block
 py -3 -m unittest tests.test_claude_agents -v     # the definitions are well-formed
-py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py sees only this round's changes
+py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py + ensure_submodule.py, one round/submodule at a time
+py -3 -m unittest tests.test_workorder_audit -v   # workorder_audit.py's rules, each with a failing fixture and a passing control
+py -3 -m unittest tests.test_source_index -v      # source_index.py against a synthetic fixture, plus a real-ModuleMain.cpp smoke test
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
+
+**`.claude/workflows/*.js` and `*.mjs` must stay LF.** `.gitattributes` forces
+`text eol=lf` on both globs: the Workflow tool's permission handler refuses to
+schedule a script containing any CR byte at all — "script contains control
+characters that would be hidden in the approval dialog" — so a CRLF
+`workorder-rounds.js` could never be launched, independent of whether its
+content was otherwise correct, which is almost certainly why workflow mode had
+never carried a workorder end to end before 2026-09-17. That is the opposite
+of the rest of this repository, which is CRLF by convention; check with `file`
+after editing either script rather than assuming the checkout's usual
+`core.autocrlf` behavior carried over.
 
 `test_claude_agents.py` enforces the two rules on this page that a machine can
 check: every agent pins `model:` to a known tier alias, and no frontmatter
@@ -816,9 +1039,15 @@ carries an unquoted ` #` that would silently truncate the value. Both are
 invisible in a diff and neither had a check before. It self-tests its own
 parser, for the same reason everything else here does.
 
-`test_claude_workorder.py` drives `round_delta.py` as the subprocess
-`settings.json` and the driver actually invoke, not by importing its
-functions — the same discipline `test_claude_hooks.py` uses for the hooks.
+`test_claude_workorder.py` drives `round_delta.py` and `ensure_submodule.py`
+as the subprocesses the driver and the workflow script actually invoke, not by
+importing their functions — the same discipline `test_claude_hooks.py` uses
+for the hooks. Its submodule fixtures prove a linked worktree gets its own
+gitdir and that a commit made there stays invisible to the main checkout's
+copy until fetched across by hand, and that the prerequisites manifest copies
+exactly what it lists — once, never overwriting an existing path, never
+touching one the manifest doesn't name — and stays a no-op run from the main
+checkout itself.
 
 Every test there is a **pair**: a positive control proving the hook fires on a
 real violation, and a negative control proving it stays quiet on a clean tree.

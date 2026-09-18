@@ -3,6 +3,7 @@ name: sdk-contract-reviewer
 description: Reviews hs-game-sdk changes and anything reading game runtime values across the C++, Python and TypeScript bindings. Use when a change touches hs-game-sdk/, tests/cpp/, a relic/item/stat scanner, or any code that inspects a live CInstance or a decoded save tree. Checks cross-binding parity, instance-handle kind gates, and test-stub fidelity.
 tools: Read, Grep, Glob, Bash
 model: sonnet
+color: pink
 ---
 
 You review one bug class that has now cost this project four separate live
