@@ -302,5 +302,53 @@ class TheReviewRunsToTheEnd(unittest.TestCase):
         self.assertTrue(-1 < started < review < check, (started, review, check))
 
 
+TRIGGER = "@claude review"
+
+
+class TheRequestCarriesItsInstructions(unittest.TestCase):
+    """Text after `@claude review` reaches the reviewer as scope instructions."""
+
+    def test_the_slice_skips_exactly_the_trigger_phrase(self):
+        body = step_body(workflow_text(), "Read the request")
+        self.assertIsNotNone(body, "request step not found")
+        self.assertIn('instructions="${COMMENT_BODY:%d}"' % len(TRIGGER), body)
+
+    def test_the_comment_reaches_the_shell_only_through_the_environment(self):
+        # `${{ github.event.comment.body }}` inside `run:` would be spliced
+        # into the script before bash parses it: a comment could run commands.
+        body = step_body(workflow_text(), "Read the request")
+        self.assertIsNotNone(body)
+        env, _, script = body.partition("        run: |\n")
+        self.assertIn("COMMENT_BODY: ${{ github.event.comment.body }}", env)
+        self.assertNotIn("${{", script)
+
+    def test_the_output_delimiter_cannot_be_guessed(self):
+        # A fixed heredoc delimiter lets a comment containing it end the
+        # output early and write further step outputs.
+        body = step_body(workflow_text(), "Read the request") or ""
+        self.assertIn('delim="EOF_$(openssl rand -hex 16)"', body)
+
+    def test_the_prompt_carries_the_notes(self):
+        step = review_step(workflow_text()) or ""
+        self.assertIn("${{ steps.request.outputs.notes }}", step)
+
+    def test_the_request_is_read_before_the_review(self):
+        text = workflow_text()
+        request = text.find("- name: Read the request")
+        review = text.find("- uses: anthropics/claude-code-action@")
+        self.assertTrue(-1 < request < review, (request, review))
+
+    def test_the_reviewer_can_read_a_subset_of_the_change(self):
+        tools = allowed_tools(workflow_text()) or set()
+        for tool in ("Read", "Grep", "Glob", "Bash(git diff:*)"):
+            self.assertIn(tool, tools)
+
+    def test_the_pull_request_head_is_checked_out(self):
+        self.assertIn(
+            "ref: refs/pull/${{ github.event.pull_request.number || github.event.issue.number }}/head",
+            workflow_text(),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
