@@ -1,10 +1,10 @@
 # Hero Siege Offline Toolkit
 
-Ten offline/single-player tools for Hero Siege, created by **Falor**, and one
+Eleven offline/single-player tools for Hero Siege, created by **Falor**, and one
 application that installs and runs all of them.
 
 Simulate Cube crafting, edit items and characters, adjust offline gameplay,
-track your runs, or launch the game offline.
+track your runs, browse the Codex reference archive, or launch the game offline.
 
 > These tools are intended for offline / single-player use only. Back up your
 > saves before editing them.
@@ -16,7 +16,7 @@ track your runs, or launch the game offline.
 **[Download the latest release →](https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit/releases/latest)**
 
 One window that installs, launches and updates every tool below. Getting the
-toolkit no longer means visiting ten GitHub pages, downloading ten
+toolkit no longer means visiting separate GitHub pages, downloading
 differently-named archives, and having no way to hear that any of them shipped a
 fix.
 
@@ -40,7 +40,8 @@ so on the card rather than letting you find out by failing.
 
 The library includes tool search (Ctrl+K), category and installation filters,
 grid/list views, and full quick-launch cards with star and action controls. Its graphite and
-copper interface uses a distinct original icon for every tool.
+copper interface uses original tool icons, with a standard fallback for newly
+added catalog entries.
 
 ### What you need
 
@@ -50,7 +51,7 @@ copper interface uses a distinct original icon for every tool.
   edit game memory do, and the hub asks Windows for it per launch rather than
   running elevated itself.
 - **Windows will warn you about the download.** There is no code-signing
-  certificate for this project, or for any of the ten tools. Choose *More info →
+  certificate for this project or its tools. Choose *More info →
   Run anyway*. The hash pinning described above is what stands in for a
   certificate, and you can see each pinned hash in the hub's detail view for a
   tool.
@@ -75,10 +76,13 @@ tool on its own.
 | [HS Value Scanner](https://github.com/falorfrozen-cmd/HS-ValueEditor) | Find and modify in-game values such as Magic Find, movement speed and stacked item counts. | [Release](https://github.com/falorfrozen-cmd/HS-ValueEditor/releases/latest) | [Guide](docs/submodules/HS-ValueEditor/instructions.md) |
 | [HS Offline Loot Forge](https://github.com/falorfrozen-cmd/Hs-Offline-Loot-Forge) | Assist with target farming through offline runtime loot adjustments. | [Release](https://github.com/falorfrozen-cmd/Hs-Offline-Loot-Forge/releases/latest) | [Guide](docs/submodules/Hs-Offline-Loot-Forge/instructions.md) |
 | [HS Steam Deck Save Editor](https://github.com/falorfrozen-cmd/HSSaveEditor-SteamDeck-) | Edit saves through a browser-based interface built for Steam Deck. | [Release](https://github.com/falorfrozen-cmd/HSSaveEditor-SteamDeck-/releases/latest) | [Guide](docs/submodules/HSSaveEditor-SteamDeck-/instructions.md) |
+| [Hero Siege Codex](https://github.com/falorfrozen-cmd/hero-siege-codex) | Explore items, classes, creatures, and the world in an offline reference archive. | [Release](https://github.com/falorfrozen-cmd/hero-siege-codex/releases/latest) | [Guide](docs/tools/hero-siege-codex.md) |
 
 Each tool is maintained and released in its own repository, and the hub does not
 change how any of them work. Supported game builds are documented by each
-project.
+project. Codex is a release-only integration and has no source submodule.
+Existing Toolkit 1.0.5 users can refresh the library while online to see it
+under All or search; a Toolkit application upgrade is not required.
 
 ---
 

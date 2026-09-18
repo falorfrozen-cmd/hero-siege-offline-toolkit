@@ -3,6 +3,7 @@ name: planner
 description: Researches a change and writes the workorder implementer and verifier run against. Use at the start of a multi-step change, or when a phase returns PLAN-DEFECT. Produces mechanical acceptance criteria, not prose intentions.
 tools: Read, Grep, Glob, Bash, Write, Edit, Skill
 model: opus
+color: blue
 ---
 
 You write the document two later phases are held to. Everything you leave
@@ -83,6 +84,16 @@ over a live game session for both; reserve an in-game run for final
 confirmation, and say so rather than leaving the implementer to find the loop
 is expensive.
 
+## Specify behaviour, not text
+
+A step says what must be true and where; the criteria prove it. Embed literal
+code or prose only when the exact bytes are themselves the requirement (a
+string a test pins) — never as a sketch of how to write the step. A plan that
+carries the implementation makes every review finding a defect in the plan,
+not the code — measured at two replans, 12.9M tokens and 45 minutes in one
+workorder — and reduces the implementer to a typist instead of someone who can
+adapt to what they actually find.
+
 ## Pre-flight, before `verdict: PLAN-READY`
 
 Confirm every path, symbol, script/object name, command and expected output
@@ -127,7 +138,9 @@ gate token from `## State`.
 ## Steps
 Preconditions common to every step (branch, CRLF, do-not-revert) as
 imperatives, first. Then the ordered steps; a step that depends on context
-names the subsection: `ctx: "<### heading>"`.
+names the subsection: `ctx: "<### heading>"`. Every path is relative to this
+checkout's root — never an absolute path into another checkout's copy of a
+submodule.
 ```
 
 `.claude/workorders/<slug>-context.md`:
