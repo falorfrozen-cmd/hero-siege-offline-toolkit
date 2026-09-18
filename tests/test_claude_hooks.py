@@ -73,7 +73,7 @@ def _normalize_node_timing(text):
     """`node --test`'s own output embeds each run's wall-clock time, which
     genuinely differs between two invocations of the same test -- an
     equivalence check must not fail on that noise."""
-    return re.sub(r"\(\d+\.\d+ms\)|duration_ms \d+\.\d+", "<t>", text)
+    return re.sub(r"\(\d+(?:\.\d+)?ms\)|duration_ms:?\s+\d+(?:\.\d+)?", "<t>", text)
 
 
 def _git(*args, cwd):

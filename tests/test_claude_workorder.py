@@ -237,6 +237,9 @@ class TestSubmodulePrefixing(RoundDeltaTestCase):
         except subprocess.CalledProcessError as exc:
             raise unittest.SkipTest(f"git submodule add unavailable: {exc.stderr}")
         self.sub = self.repo.root / "Sub"
+        # A clone does not inherit its origin's local Git identity.
+        _git("config", "user.email", "t@example.com", cwd=self.sub)
+        _git("config", "user.name", "T", cwd=self.sub)
 
     # Negative control: a clean, registered submodule contributes nothing.
     def test_clean_submodule_is_not_in_the_delta(self):
