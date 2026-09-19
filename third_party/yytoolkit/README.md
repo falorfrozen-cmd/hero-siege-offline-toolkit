@@ -23,8 +23,10 @@ source and no binary - only what turns upstream into our build:
 > [launch gate](#launch-gate) for exactly what each session does and does not
 > cover (the no-hint-file path, the verbose-dump control, in-game mod
 > behaviour and the error-report path with a plugin loaded are all still
-> open). Players still receive the previous DLL until the
-> [follow-ups](#follow-ups-in-the-submodule-repos) land.
+> open). ForgePact's and HS-Offline-Tracker's own pin-moving pull requests
+> have merged - see [follow-ups](#follow-ups-in-the-submodule-repos) - but
+> neither has cut a release carrying the new pin, so players still receive
+> the previous DLL.
 
 ## Why this exists
 
@@ -513,8 +515,10 @@ file); launch C (`YYTK_RI_VERBOSE=1`); a second distinct error message;
 game build; a second machine or toolset. A launch with a plugin loaded
 followed this one - see
 [Second launch results](#second-launch-results-2026-09-19-plugin-loaded) for
-what it covered and what it still did not. The ForgePact and
-HS-Offline-Tracker pins have not moved - players still receive `bb113eef…`.
+what it covered and what it still did not. ForgePact's and HS-Offline-Tracker's
+own pin-moving pull requests have since merged - the pins point at this
+series now - but neither has cut a release carrying that pin, so players
+still receive `bb113eef…`.
 
 Optional control for 0003's refusal path (NOT RUN): a throwaway plugin that
 registers `EVENT_OBJECT_CALL` ten times should get ten `AURIE_UNAVAILABLE`
@@ -592,7 +596,8 @@ log proves nothing, and the lag observation still rests on the first launch
 alone, YYToolkit-only. Not exercised: gameplay with mods active, the Tracker
 app reading the producer's output, launch A (no hint file), launch C
 (`YYTK_RI_VERBOSE=1`), any refusal path, a second distinct error message.
-The ForgePact and HS-Offline-Tracker pins have not moved - players still
+ForgePact's and HS-Offline-Tracker's own pin-moving pull requests have since
+merged, but neither has cut a release carrying the new pin, so players still
 receive `bb113eef…`.
 
 ## How to change the series
@@ -697,44 +702,39 @@ patch regenerated against the new commit.
 The hub `.gitignore` bans `*.dll`, so no binary is committed here, and this
 directory's own patch series changes nothing a player receives by itself -
 only a submodule's pin decides that. Both carriers of the DLL are submodule
-repositories, and both follow-ups below have been written and committed on
-their own local branches. **Neither branch is merged to its origin and
-neither has shipped in a release** - see
+repositories, and both follow-ups below have merged to their own default
+branches and shipped in the hub's own submodule gitlinks - see
 ["Where the binary is published"](#where-the-binary-is-published) below for
-what still has to happen first:
+what still has to happen before a player receives the new DLL:
 
-- **ForgePact** - moved the `modfiles_shipped/YYToolkit.dll` pin in
-  `tools/toolchain-pins.json` from the v1.3.16 release-zip member to the hub
-  release asset URL named below, with the `hs.1` sha256 and a provenance
-  string naming this series and the hub commit it was built from; rewrote
-  `yytoolkit-modified/NOTICE.md` to point here and list every patch, deleting
-  the two whole-file copies it used to carry; ships that notice and
+- **ForgePact** (PR 53, merged) - moved the `modfiles_shipped/YYToolkit.dll`
+  pin in `tools/toolchain-pins.json` from the v1.3.16 release-zip member to
+  the hub release asset URL named below, with the `hs.1` sha256 and a
+  provenance string naming this series and the hub commit it was built from;
+  rewrote `yytoolkit-modified/NOTICE.md` to point here and list every patch,
+  deleting the two whole-file copies it used to carry; ships that notice and
   `YYToolkit-BUILD-INFO.json` in the packaged release zip; carries its own
-  release notes for the version bump. Also deleted the panel's
-  `KNOWN_RI_CACHE` table of hand-measured RVAs - harmless once 0001 treats
-  the hint file as a scan hint rather than a hook address, but no longer
-  needed either.
-- **HS-Offline-Tracker** - replaced the git-tracked
+  release notes for the version bump (1.4.4, not yet tagged or released).
+  Also deleted the panel's `KNOWN_RI_CACHE` table of hand-measured RVAs -
+  harmless once 0001 treats the hint file as a scan hint rather than a hook
+  address, but no longer needed either.
+- **HS-Offline-Tracker** (PR 3, merged) - replaced the git-tracked
   `aurie-loader/YYToolkit.dll` with the `hs.1` build, replaced the same
   notice pair, added the notice and `YYToolkit-BUILD-INFO.json` to the
-  bundle resources `tauri.conf.json` packages, and bumped its version.
+  bundle resources `tauri.conf.json` packages, and bumped its version (0.1.3,
+  not yet tagged or released).
 
 Both install to `mods/aurie/YYToolkit.dll` with overwrite semantics, so the
-two have to open, merge and release together. The launch gate above now
-carries a plugin-loaded row (2026-09-19); what is still open is the owner's
-confirmation, plus the items that second launch did not exercise (gameplay
-with mods active, the error-report path with a plugin loaded). Until then,
-players still receive the previous DLL. The notice files these branches
-rewrote describe this series, which is now published as a library release
-(see ["Where the binary is published"](#where-the-binary-is-published)
-below) - but a published library release is not a shipped tool release, and
-neither pull request has merged.
-
-Once ForgePact's pin-moving branch above has merged to its default branch and
-the hub's own ForgePact gitlink is bumped past it, delete the "legacy" branch
-of `ForgePactPinMatchesThisSeries` in `tests/test_yytoolkit_patch_series.py`
-in that same hub change, so that only the "migrated" state passes from then
-on.
+two have to release together. The launch gate above carries a plugin-loaded
+row (2026-09-19); what is still open is the owner's confirmation, plus the
+items that second launch did not exercise (gameplay with mods active, the
+error-report path with a plugin loaded), and the two version bumps above
+being tagged and released - the owner's call, not this workorder's. Until a
+release ships, players still receive the previous DLL. The notice files
+these branches rewrote describe this series, which is published as a
+library release (see
+["Where the binary is published"](#where-the-binary-is-published) below) -
+but a published library release is not a shipped tool release.
 
 ### Where the binary is published
 
@@ -752,16 +752,16 @@ sha256, and ForgePact's own `py tools/fetch_toolchain.py --root <empty dir>
 --force` fetched and verified all eleven pins - including
 `modfiles_shipped/YYToolkit.dll` from that URL - into an empty directory, so nothing already on disk could satisfy a pin.
 
-Publishing the release is not the same as shipping the DLL to players.
-Neither submodule pull request has merged, the hub's own ForgePact and
-HS-Offline-Tracker gitlinks have not moved past them, no tool release has
+Publishing the release is not the same as shipping the DLL to players. Both
+submodule pull requests have merged and the hub's own ForgePact and
+HS-Offline-Tracker gitlinks have moved past them, but no tool release has
 been cut from either, and players keep receiving the DLL described under
 [Why this exists](#why-this-exists). The live launch gate above still
-carries only the two sessions recorded there (2026-09-19); what those two
-pull requests wait on is unchanged by publishing the library release - the
-maintainer's decision, with the items the second launch left unexercised
-(gameplay with mods active, the error-report path with a plugin loaded) in
-view.
+carries only the two sessions recorded there (2026-09-19); whether and when
+to tag and release ForgePact 1.4.4 and HS-Offline-Tracker 0.1.3 is unchanged
+by publishing the library release - the maintainer's decision, with the
+items the second launch left unexercised (gameplay with mods active, the
+error-report path with a plugin loaded) in view.
 
 The tag name is deliberate. On the hub repository `hub-v*` is reserved for
 builds of the hub application: pushing such a tag starts `hub-release.yml`,

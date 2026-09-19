@@ -437,15 +437,12 @@ Offsets: +0x18 is the RValue kind; calling convention is __fastcall.
 
     # -- added lines only -------------------------------------------------
     #
-    # The first version of this hook matched whole file contents, and five
-    # matches already sit in committed files (two in
-    # ForgePact/docs/pet-quest-collector-c-research.md, two in
-    # dungeon-key-research.md, one in the vendored YYToolkit under
-    # HS-Offline-Tracker/aurie-loader/yytoolkit-modified/ -- an open,
-    # unmerged pull request on the Tracker repository will replace that
-    # copy with a notice and a provenance record and remove this fifth
-    # match once it merges and the hub's submodule pointer moves).
-    # Appending a paragraph to any of them made every subsequent tool call
+    # The first version of this hook matched whole file contents, and
+    # matches already sit in committed files
+    # (ForgePact/docs/pet-quest-collector-c-research.md and
+    # ForgePact/plugin/ModuleMain.cpp -- see GrandfatheredWholeFileInventory
+    # below, which keeps this inventory honest instead of restating a count).
+    # Appending a paragraph to either of them made every subsequent tool call
     # exit 2 until someone set HSTK_SKIP_HOOKS=1 -- the exact outcome the
     # docstring says it avoids. These two tests are a pair: the hook must
     # stop wedging, and grandfathering must not become a loophole.
@@ -536,6 +533,124 @@ class TestDecompiledOutputInSubmodules(HookTestCase):
         )
         result = self.rig.run(self.HOOK)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class GrandfatheredWholeFileInventory(unittest.TestCase):
+    """Pins the whole-file-match inventory `decompiled_output.py`'s own
+    docstring and the comment above `TestDecompiledOutput`'s "added lines
+    only" tests describe in prose, to a checked fact -- see the hook's
+    "Added lines only, and why that is not a loophole" section. Runs the
+    hook's own `SIGNATURES`, via its own `inspect`, over whole file contents
+    (not added lines: the claim is about what already sits in committed
+    files, which is exactly what the hook itself no longer reads) of the
+    hub tree at HEAD (excluding `EXCLUDED_PREFIXES`) plus ForgePact and
+    HS-Offline-Tracker at the revisions the hub's own gitlinks record.
+
+    Skips, never fails, when a submodule is not checked out or its object
+    store lacks the recorded revision -- mirroring
+    tests/test_yytoolkit_patch_series.py's ForgePactPinRealRevisionControls.
+    The hub tree's own share of the inventory is asserted separately and
+    never skips, so a hub-only checkout (CI) still checks it.
+    A change here means the docstring/comment prose must change with it, and
+    both cite this test by name instead of repeating a number that has
+    already been wrong twice for two different reasons.
+    """
+
+    #: Measured 2026-09-19 against hub origin/main 3758af0, ForgePact
+    #: f5a3515, HS-Offline-Tracker 9da9569.
+    EXPECTED = frozenset({
+        "ForgePact/docs/pet-quest-collector-c-research.md",
+        "ForgePact/plugin/ModuleMain.cpp",
+    })
+
+    SUBMODULES = ("ForgePact", "HS-Offline-Tracker")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.hook = _load_hook_module("decompiled_output")
+
+    def _recorded_revision(self, sub):
+        result = subprocess.run(
+            ["git", "ls-tree", "HEAD", sub], cwd=REPO, capture_output=True, text=True)
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        fields = result.stdout.split()
+        return fields[2] if len(fields) >= 3 else None
+
+    def _matches(self, display, blob_bytes):
+        text = blob_bytes.decode("utf-8", "replace")
+        lines = list(enumerate(text.splitlines(), start=1))
+        return bool(self.hook.inspect(display, lines))
+
+    def _scan_hub_tree(self):
+        found = set()
+        listing = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", "HEAD"],
+            cwd=REPO, capture_output=True, text=True, check=True)
+        for rel in listing.stdout.splitlines():
+            if rel.startswith(self.hook.EXCLUDED_PREFIXES):
+                continue
+            if not rel.endswith(self.hook.WATCHED_SUFFIXES):
+                continue
+            blob = subprocess.run(
+                ["git", "show", f"HEAD:{rel}"], cwd=REPO, capture_output=True)
+            if blob.returncode != 0:
+                continue
+            if self._matches(rel, blob.stdout):
+                found.add(rel)
+        return found
+
+    def _scan_submodule(self, sub):
+        subroot = REPO / sub
+        if not (subroot / ".git").exists():
+            self.skipTest(f"{sub}/ is not checked out")
+        rev = self._recorded_revision(sub)
+        if not rev:
+            self.skipTest(f"could not read the {sub} gitlink with `git ls-tree HEAD {sub}`")
+        listing = subprocess.run(
+            ["git", "-C", str(subroot), "ls-tree", "-r", "--name-only", rev],
+            capture_output=True, text=True)
+        if listing.returncode != 0:
+            self.skipTest(
+                f"{sub}'s local object store does not have {rev[:12]} (the hub's recorded "
+                f"gitlink); fetch it there to run this control")
+        found = set()
+        for rel in listing.stdout.splitlines():
+            if not rel.endswith(self.hook.WATCHED_SUFFIXES):
+                continue
+            blob = subprocess.run(
+                ["git", "-C", str(subroot), "show", f"{rev}:{rel}"], capture_output=True)
+            if blob.returncode != 0:
+                continue
+            display = f"{sub}/{rel}"
+            if self._matches(display, blob.stdout):
+                found.add(display)
+        return found
+
+    def test_the_hub_tree_itself_carries_no_whole_file_match(self):
+        # Needs no submodule, so it runs -- and can fail -- in a hub-only
+        # checkout such as CI, where the combined test below skips before
+        # its assertion is reached.
+        expected_in_hub = {p for p in self.EXPECTED
+                           if not p.startswith(tuple(f"{s}/" for s in self.SUBMODULES))}
+        found = self._scan_hub_tree()
+        self.assertEqual(
+            found, expected_in_hub,
+            f"whole-file decompiled-output signature matches in the hub tree: "
+            f"{sorted(found)}; expected: {sorted(expected_in_hub)}")
+
+    def test_the_grandfathered_inventory_is_exactly_two_paths(self):
+        found = self._scan_hub_tree()
+        for sub in self.SUBMODULES:
+            found |= self._scan_submodule(sub)
+        self.assertEqual(
+            found, self.EXPECTED,
+            f"decompiled_output.py's docstring and the comment above "
+            f"TestDecompiledOutput's \"added lines only\" tests both cite an exact "
+            f"inventory of whole-file matches already sitting in committed files. "
+            f"Found: {sorted(found)}; expected: {sorted(self.EXPECTED)}. If this "
+            f"genuinely changed, update the docstring and the comment together with "
+            f"this EXPECTED set, citing this test by name rather than a bare count.")
 
 
 class TestPostToolUseDispatcher(HookTestCase):

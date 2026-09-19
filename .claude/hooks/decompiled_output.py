@@ -28,18 +28,17 @@ something a later release fixes.
 The rule is about *introducing* game source, so this reads the lines a change
 adds, never the whole file.
 
-The first version matched whole file contents, and it was unusable. Five
-matches already sit in committed files -- two in
-`ForgePact/docs/pet-quest-collector-c-research.md`, two in
-`ForgePact/docs/dungeon-key-research.md`, one in the vendored YYToolkit at
-`HS-Offline-Tracker/aurie-loader/yytoolkit-modified/`. Some are legitimate
-(`AGENTS.md` explicitly keeps measured addresses in `docs/` as research
-findings), and one is third-party code that was never ours to police (a
-pending change -- an open pull request on the Tracker repository, carrying
-the hub's `third_party/yytoolkit/` series that replaces that vendored copy
-with a notice and a provenance record -- removes this fifth match once it
-merges and the hub's submodule pointer moves). With whole-file matching,
-appending a single paragraph to any of those dirties the tree and every
+The first version matched whole file contents, and it was unusable. Matches
+already sit in committed files -- `ForgePact/docs/pet-quest-collector-c-research.md`
+and `ForgePact/plugin/ModuleMain.cpp`, both legitimate
+(`AGENTS.md` explicitly keeps measured addresses and GML positional
+arguments named in `docs/` and research write-ups as interoperability
+facts). `tests/test_claude_hooks.py`'s `GrandfatheredWholeFileInventory`
+keeps this inventory honest -- it re-scans the hub tree plus ForgePact and
+HS-Offline-Tracker at their recorded gitlinks with this hook's own
+`SIGNATURES`, so a change to either submodule's tree fails a test instead of
+leaving a stale number here. With whole-file matching, appending a single
+paragraph to either of those two files dirties the tree and every
 subsequent tool call exits 2 until someone sets `HSTK_SKIP_HOOKS=1` -- which
 is exactly the outcome this file's own notes say it must avoid. A hook that
 fires on work it cannot help with does not protect the rule; it trains

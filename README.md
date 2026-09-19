@@ -259,8 +259,9 @@ producer both loaded) — the startup fault did not reproduce in either
 session and lag was not observed in the first; the second confirmed both
 plugins initialize and the plugin-to-runner interface works, but gameplay
 with mods active and the error-report path with a plugin loaded are still
-unexercised, and neither submodule's branch has merged, so the tools still
-distribute the earlier DLL until their own repositories move to it —
+unexercised. Both submodules' pull requests have merged and their pins now
+point at this series, but neither has cut a release carrying it, so players
+still receive the earlier DLL until one does —
 see the directory's [README](third_party/yytoolkit/README.md) for the full
 launch-gate record,
 [ADR 0002](docs/adr/0002-modified-yytoolkit-is-a-patch-series-in-the-hub.md)

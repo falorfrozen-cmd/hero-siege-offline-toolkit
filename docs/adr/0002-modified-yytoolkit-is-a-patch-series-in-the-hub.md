@@ -187,3 +187,13 @@ own ForgePact and HS-Offline-Tracker gitlinks have not moved, no tool release
 has shipped the new DLL, and players still receive the earlier one. Publishing
 the library release does not change any of that
 (`third_party/yytoolkit/README.md`, "Where the binary is published").
+
+**Added 2026-09-19, a hub follow-up the same day.** Both follow-up pull
+requests named above have merged (ForgePact PR 53, HS-Offline-Tracker PR 3),
+and the hub's own submodule gitlinks have been bumped past them (ForgePact
+`f5a3515`, HS-Offline-Tracker `9da9569`). The `ensure_ri_cache` consequence
+recorded above is therefore discharged: ForgePact's merged pull request
+deleted the `KNOWN_RI_CACHE` table. No tool release has been cut from
+either repository, so no player has received the new DLL yet — tagging and
+releasing ForgePact 1.4.4 and HS-Offline-Tracker 0.1.3 remains the owner's
+decision, not this ADR's.
