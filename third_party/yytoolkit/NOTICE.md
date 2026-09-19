@@ -111,8 +111,9 @@ Before this series, the toolkit distributed one modified `YYToolkit.dll`:
 `bb113eefc9a5d485231ced1dc85d773dbc6b762ee680214851c56541359ad297`, the same
 file in every ForgePact release from v1.3.1 to v1.3.16 (per ForgePact's
 development guide) and in HS-Offline-Tracker's `aurie-loader/` (verified by
-hash). Until the ForgePact and HS-Offline-Tracker repositories move to a build
-of this series, that is still the file players receive.
+hash). Both repositories' default branches now build from this series, but
+neither has cut a release carrying that build; until one does, that is still
+the file players receive.
 
 The notice that accompanied it listed two changes - a disk cache for the runner
 interface, and the ExecuteIt hook not being installed - and stated that
