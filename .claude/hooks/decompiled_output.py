@@ -28,8 +28,8 @@ something a later release fixes.
 The rule is about *introducing* game source, so this reads the lines a change
 adds, never the whole file.
 
-The first version matched whole file contents, and it was unusable. Two
-matches already sit in committed files -- `ForgePact/docs/pet-quest-collector-c-research.md`
+The first version matched whole file contents, and it was unusable. Matches
+already sit in committed files -- `ForgePact/docs/pet-quest-collector-c-research.md`
 and `ForgePact/plugin/ModuleMain.cpp`, both legitimate
 (`AGENTS.md` explicitly keeps measured addresses and GML positional
 arguments named in `docs/` and research write-ups as interoperability

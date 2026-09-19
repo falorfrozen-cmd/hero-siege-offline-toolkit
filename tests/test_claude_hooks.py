@@ -437,7 +437,7 @@ Offsets: +0x18 is the RValue kind; calling convention is __fastcall.
 
     # -- added lines only -------------------------------------------------
     #
-    # The first version of this hook matched whole file contents, and two
+    # The first version of this hook matched whole file contents, and
     # matches already sit in committed files
     # (ForgePact/docs/pet-quest-collector-c-research.md and
     # ForgePact/plugin/ModuleMain.cpp -- see GrandfatheredWholeFileInventory
