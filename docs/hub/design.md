@@ -627,7 +627,7 @@ a `catalog` release.
 | `TAURI_SIGNING_PRIVATE_KEY` | `hub-release.yml` | The installer builds but its updates can never be verified. |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | `hub-release.yml` | Only if the key has one. |
 | `HUB_DISPATCH_TOKEN` | each tool repository | Release notification fails visibly. Configure the secret and rerun the notifier; there is no scheduled fallback. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | `ai-review.yml`, here and in `ForgePact` | The review run fails to authenticate. Nothing else is affected, because no other workflow uses it and review is opt-in. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `ai-review.yml`, here and in `ForgePact` and `HS-Offline-Tracker` | The review run fails to authenticate. Nothing else is affected, because no other workflow uses it and review is opt-in. |
 
 `CLAUDE_CODE_OAUTH_TOKEN` is not an API key and spends no API billing. It comes
 from `claude setup-token`, authenticates against a Claude subscription, and is
@@ -642,7 +642,8 @@ because the action exchanges the workflow's OIDC token for an app token before
 it does anything else. Without the app that exchange returns `401 Unauthorized`
 with "Claude Code is not installed on this repository", and the job fails having
 reviewed nothing — a secret that is present and correct does not save it. Install
-the app once for the organisation and grant it both repositories. This was
+the app once for the organisation and grant it every repository that carries
+the workflow. This was
 learned the direct way: ForgePact's first review run failed on exactly that,
 with the secret already in place.
 
