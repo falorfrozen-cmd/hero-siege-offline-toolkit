@@ -460,7 +460,7 @@ Record a row here before pressing Publish.
 
 | tag | run URL | zip sha256 matches SHA256SUMS | installed from | app starts, About shows tagged version | Game Link installs loader + producer | superseded-loader upgrade exercised | producer events arrive | date | tester |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| v0.1.3 | | | | | | | | | |
+| v0.1.3 | [35462601672](https://github.com/falorfrozen-cmd/HS-Offline-Tracker/actions/runs/35462601672) | yes — `14402ef8…`, matching `SHA256SUMS-0.1.3.txt` (also reads cleanly in `unzip -t`, Python `zipfile` and .NET `ZipFile`) | the v0.1.3 draft's portable zip | pass | pass | pass (`YYToolkit.dll` → `51a393d7…`) | pass | 2026-09-19 | owner |
 
 ### The 1.4.4 / 0.1.3 ordering constraint
 
