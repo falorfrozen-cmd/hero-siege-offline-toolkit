@@ -750,7 +750,7 @@ that release's asset URL for `YYToolkit.dll` and the `hs.1` sha256, and the
 URL now resolves: an anonymous `GET` returns HTTP 200 with the expected
 sha256, and ForgePact's own `py tools/fetch_toolchain.py --root <empty dir>
 --force` fetched and verified all eleven pins - including
-`modfiles_shipped/YYToolkit.dll` from that URL - against a fresh checkout.
+`modfiles_shipped/YYToolkit.dll` from that URL - into an empty directory, so nothing already on disk could satisfy a pin.
 
 Publishing the release is not the same as shipping the DLL to players.
 Neither submodule pull request has merged, the hub's own ForgePact and

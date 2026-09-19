@@ -1355,7 +1355,7 @@ the old one back. Until then, `origin`'s pin table row above, and the
 said to be. The hub release the pin names now exists and is published (not
 marked `--latest`), and the asset URL resolves (verified 2026-09-19: `py
 tools/fetch_toolchain.py --root <empty dir> --force` fetched and verified all
-eleven pins, this one included, against a fresh checkout) — but publishing
+eleven pins, this one included, into an empty directory) — but publishing
 that release does not merge this pull request or move `origin`'s pin table
 row.
 
