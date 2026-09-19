@@ -1,0 +1,97 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hero Siege Offline Toolkit <noreply@example.invalid>
+Date: Sat, 19 Sep 2026 12:00:00 +0000
+Subject: [PATCH 6/7] Build Release|x64 optimised, and name the patch series in
+ the log
+
+Why: Upstream's Release|x64 configuration has compiled with optimisation
+disabled since commit 9fae796 (the same commit that added the stack trace
+to the error report), so every hook, every interface call a plugin makes
+per frame and the whole error-report path run as unoptimised STL code.
+The YYToolkit.dll this toolkit distributed from ForgePact v1.3.1 to
+v1.3.16 was not built that way: its string pooling, section set and size
+match a plain "cl /O2" build, which its NOTICE never recorded. This
+patch makes the optimisation level an explicit, reviewable part of the
+series instead of a property of whoever ran the compiler: MaxSpeed,
+whole-program optimisation off (the distributed DLL had none), and the
+exception model stated rather than inherited: HkYYError's frame holds C++
+objects, and if the runner's YYError leaves it by unwinding they rely on
+it. Whether it returns or unwinds is NOT verified - patch 0005's
+returned= / dropped= counters are what the first launch reads it from.
+It also writes one line at the top of YYToolkit.log naming this build and
+the series revision, so a log can always be matched to its source - the
+absence of exactly that is how a binary with undocumented changes stayed
+in distribution.
+
+Evidence: YYToolkit.vcxproj Release|x64 has Optimization=Disabled at the
+pinned commit; upstream history shows the change in 9fae796 with no
+stated reason. A plain "cl /O2 /std:c++latest /MD /LD /EHsc" build of the
+previously documented tree is 894,976 bytes against the distributed
+904,192; without /O2 it is 1,180,160. NOT verified: why upstream turned
+optimisation off, and whether an optimised build of THIS series behaves
+identically in game - that is what the launch gate in the hub README is
+for. No frame-time effect of the optimisation level has been measured.
+
+Fails-safe: A build-configuration change cannot fall back at run time.
+If an optimised build misbehaves, drop this patch from the series: every
+other patch builds and passes its host tests at upstream's setting too.
+
+Log-markers: "Hero Siege patch series"
+
+Upstream-status: not submitted. Upstream's setting is deliberate; this is
+a Hero Siege distribution choice.
+
+diff --git a/YYToolkit/YYToolkit.vcxproj b/YYToolkit/YYToolkit.vcxproj
+index 1d750a8..213d08b 100644
+--- a/YYToolkit/YYToolkit.vcxproj
++++ b/YYToolkit/YYToolkit.vcxproj
+@@ -49,7 +49,7 @@
+     <ConfigurationType>DynamicLibrary</ConfigurationType>
+     <UseDebugLibraries>false</UseDebugLibraries>
+     <PlatformToolset>v143</PlatformToolset>
+-    <WholeProgramOptimization>true</WholeProgramOptimization>
++    <WholeProgramOptimization>false</WholeProgramOptimization>
+     <CharacterSet>Unicode</CharacterSet>
+   </PropertyGroup>
+   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+@@ -140,7 +140,8 @@
+       <LanguageStandard>stdcpplatest</LanguageStandard>
+       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+       <AdditionalIncludeDirectories>$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+-      <Optimization>Disabled</Optimization>
++      <Optimization>MaxSpeed</Optimization>
++      <ExceptionHandling>Sync</ExceptionHandling>
+       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+       <AdditionalOptions>/d1trimfile:"$(SolutionDir)\" %(AdditionalOptions)</AdditionalOptions>
+     </ClCompile>
+diff --git a/YYToolkit/source/ModuleMain.cpp b/YYToolkit/source/ModuleMain.cpp
+index d95a652..ae6bdce 100644
+--- a/YYToolkit/source/ModuleMain.cpp
++++ b/YYToolkit/source/ModuleMain.cpp
+@@ -3,6 +3,9 @@
+ using namespace Aurie;
+ using namespace YYTK;
+ 
++// Revision of the Hero Siege patch series this binary was built from.
++static const char* const g_HeroSiegeSeriesRevision = "hs.1";
++
+ EXPORTED void ModuleOperationCallback(
+ 	IN AurieModule* AffectedModule,
+ 	IN AurieModuleOperationType OperationType,
+@@ -49,6 +52,16 @@ EXPORTED AurieStatus ModulePreinitialize(
+ 	CmpCreateConsole();
+ 	CmpCreateLogFile("YYToolkit.log");
+ 
++	// This is not upstream's binary. Say so first, so every log names the
++	// source that produced it: upstream v4.0.1 plus the patch series kept in
++	// hero-siege-offline-toolkit under third_party/yytoolkit. Whoever changes
++	// the series bumps the revision.
++	CmWriteLogOutput(
++		"[hs] YYToolkit %d.%d.%d, Hero Siege patch series %s (hero-siege-offline-toolkit, third_party/yytoolkit)",
++		YYTK_MAJOR, YYTK_MINOR, YYTK_PATCH,
++		g_HeroSiegeSeriesRevision
++	);
++
+ 	AurieStatus last_status = AURIE_SUCCESS;
+ 
+ 	last_status = ObCreateInterface(

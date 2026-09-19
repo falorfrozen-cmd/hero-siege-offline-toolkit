@@ -1,0 +1,2042 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hero Siege Offline Toolkit <noreply@example.invalid>
+Date: Sat, 19 Sep 2026 12:00:00 +0000
+Subject: [PATCH 4/7] Validate the_functions candidates instead of trusting the
+ first mov
+
+Why: On Hero Siege (GameMaker YYC x64) a fresh build of v4.0.1 dies during
+stage 2 init, before the game window is usable. YYC::GmpFindFunctionsArrayX64
+returns the first 7-byte "mov r64, [mem]" in Code_Function_Find without ever
+looking at what it loads, and YkDetermineFunctionEntrySize then dereferences
+that value twice, unguarded. Inferred from the log (there is no dump): on this
+runner the first such mov most likely loads some other global. The shipped
+binary carried a candidate filter for exactly this, but its source is lost;
+this is an original re-implementation, not a reconstruction of it. The global
+is now positively identified before anything trusts it: it lies in the game
+image and holds an aligned pointer, the first 8 entries parse under ONE layout
+(24 byte referential or 80 byte embedded) with a terminated graphic ASCII name
+and a routine that is executable game image code, and the game's own
+Code_Function_Find agrees on at least one of those names and contradicts none.
+All matching RIP-relative movs are candidates, each distinct one is looked at
+once, the first valid one wins. VM::GmpFindFunctionsArray validates the same
+way (lowest valid one wins), since stage 2 falls back to it the moment the YYC
+variant fails, also on a YYC game; it gets the same RIP-relative filter and
+ZydisCalcAbsoluteAddress status check, so a mov that is not RIP-relative no
+longer shows up as a candidate at address 0. Both finders hand their
+candidates to one function, GmpiSelectFunctionsArray, which is the code the
+host test runs. YkDetermineFunctionEntrySize reads through guarded copies, so
+both of its call sites are safe on their own, and each of its refusals now
+says which check failed. The x86 variant is left as upstream.
+
+Evidence: evidence/fresh-build-crash.YYToolkit.log ends at line 736 with
+"[...Interface.cpp:454] YYC::GmpFindFunctionsArray() => AURIE_SUCCESS,
+0x00007FF7E35B6B80" and never prints the "m_FunctionEntrySize" line that
+follows at Interface.cpp:463; CmWriteLogOutput flushes every line
+(Console.cpp:76-77), and the only code in between is
+YkDetermineFunctionEntrySize (Interface.cpp:132-146). The shipped DLL has the
+strings "GmpFindFunctionsArrayX64() rejected candidate 0x%p" / "accepted
+candidate 0x%p" (shipped-strings.txt:2404-2405) and breadcrumbs bracketing
+that same call (:2121-2122). Host test hs-tests/fnarray_validation_test.cpp:
+118 checks pass. A vtable-bearing object and a struct that starts like one
+entry are rejected although the unpatched layout rule takes both. The
+candidate choice is tested through the shipped function, not a model of it:
+order versus address, a rejected candidate below the valid one, a candidate
+listed twice, nothing valid, an empty and a missing list. 16 single-line
+mutations of GmpiSelectFunctionsArray and GmpiIsSearchWorthRepeating each
+fail the test (an unmutated control passes). For the validator itself the
+first round measured eleven of twelve mutations failing a check; the validator
+is unchanged since, the twelfth is noted below. NOT verified: the fault site is
+inferred, there is no crash dump or fault address. What the wrongly picked
+global is, how many candidates this exe has, and whether the real mov lies
+within the window (widened from 0x200 to at most 0x400 bytes, clamped to
+readable memory, still capped by GmpDisassemble's 0xFF instructions without a
+LEA) are unknown until the first launch. Verified by reading only, because it
+needs Zydis: which instructions become candidates (the RIP-relative filter and
+the ZydisCalcAbsoluteAddress status check in both finders), and that each
+finder writes its OUT parameter only after the selection succeeded. ASSUMED:
+the first 8 builtins of this runner all have a routine inside the game image;
+a search that failed three times does not start to succeed later. Not in the
+test's reach: removing the VirtualQuery pre-check in front of
+ReadProcessMemory changes no observable result on Windows 11 26200
+(ReadProcessMemory alone also failed on a guard page and left it armed); it
+stays as belt and braces. GmpDisassemble's use of an uninitialised record
+after a failed decode is upstream behaviour and is not changed here. The other
+stage 2 finders use the same first-match heuristic and were never reached by
+the fresh build, so their behaviour on this game is unknown.
+
+Fails-safe: No candidate passes => one rejection line per distinct candidate
+with its reason, one summary line, AURIE_OBJECT_NOT_FOUND, and the OUT
+parameter untouched (m_FunctionsArray stays nullptr). The VM fallback then
+rejects the same candidates again under its own prefix and adds its own
+summary line, and init ends with "Failed to determine function array size!"
+and the VM finder's status, not a fault. No read in the validator can fault:
+every read is a VirtualQuery region walk followed by ReadProcessMemory on the
+current process, names are validated in a local copy, and guard pages are
+refused untouched. The validator takes a referential table whose names are
+merely readable, while YkDetermineFunctionEntrySize (upstream rule, unchanged)
+wants entry 0's name inside a section called .rdata or its routine inside
+.text. If the two disagree, a finder succeeds and the size is still 0: the
+"YkDetermineFunctionEntrySize() refused" line then names the pointers and the
+section bounds (or the section lookup that failed), and the error no longer
+carries a success status, it is AURIE_MODULE_INTERNAL_ERROR. Log volume is
+bounded per stage 2 attempt by the scan windows (at most 0x400 / 7 candidates
+for the YYC finder plus 0x200 / 7 for the VM finder, each reason capped at
+1024 characters). ModuleMain.cpp enters stage 2 again for every module that
+is initialized while it is incomplete, so a failed search is repeated: at
+most 3 times in full, each repetition announced by a "Functions array search
+attempt" line, after that one "Functions array search not repeated" line per
+further entry. Whether Aurie still delivers those callbacks once YYTK's own
+ModuleInitialize has failed is NOT verified. Nothing runs per frame, no lock
+and no file is involved.
+
+Log-markers: "GmpFindFunctionsArrayX64() rejected candidate"
+Log-markers: "GmpFindFunctionsArrayX64() accepted candidate"
+Log-markers: "GmpFindFunctionsArrayX64() => none of"
+Log-markers: "GmpFindFunctionsArrayX64() refused to disassemble"
+Log-markers: "VM::GmpFindFunctionsArray() rejected candidate"
+Log-markers: "VM::GmpFindFunctionsArray() accepted candidate"
+Log-markers: "VM::GmpFindFunctionsArray() refused to disassemble"
+Log-markers: "VM::GmpFindFunctionsArray() => none of"
+Log-markers: "VM::GmpFindFunctionsArray() => no candidate in"
+Log-markers: "YkDetermineFunctionEntrySize() refused"
+Log-markers: "names confirmed by Code_Function_Find"
+Log-markers: "Functions array search not repeated"
+Log-markers: "Functions array search attempt"
+
+Upstream-status: not submitted. Upstream v4.0.1 has the unvalidated first-match pick in both finders and the unguarded dereferences; later upstream history was not available offline and was not checked.
+
+diff --git a/YYToolkit/hs-tests/fnarray_validation_test.cpp b/YYToolkit/hs-tests/fnarray_validation_test.cpp
+new file mode 100644
+index 0000000..2938f65
+--- /dev/null
++++ b/YYToolkit/hs-tests/fnarray_validation_test.cpp
+@@ -0,0 +1,790 @@
++// Host test for source/YYTK/Module Internals/GameMaker/Generic/FunctionsArrayValidation.hpp
++//
++// No game, no framework, no YYTK headers. This executable's own image plays the role
++// of the game image: its functions are the "builtin routines", its string literals are
++// the "name literals", its globals are the "the_functions" candidates.
++//
++// Build and run (x64 developer prompt), from the YYToolkit directory:
++//   cl /nologo /std:c++latest /EHsc /W4 hs-tests\fnarray_validation_test.cpp && fnarray_validation_test.exe
++//
++// Prints one line per check, returns non-zero if any check failed.
++// Every predicate has a positive and a negative control, so that neither
++// "rejects everything" nor "accepts everything" can pass.
++
++#include "../source/YYTK/Module Internals/GameMaker/Generic/FunctionsArrayValidation.hpp"
++
++#include <cstdio>
++#include <cstdlib>
++
++using namespace YYTK::FunctionsArrayValidation;
++
++#ifdef _WIN64
++static_assert(sizeof(ReferentialEntryLayout) == 24);
++static_assert(sizeof(EmbeddedEntryLayout) == 80);
++#endif // _WIN64
++
++// ===== Bookkeeping =====
++
++static int g_CheckCount = 0;
++static int g_FailureCount = 0;
++
++static void Check(
++	IN bool Condition,
++	IN const char* Description
++)
++{
++	g_CheckCount++;
++	if (!Condition)
++		g_FailureCount++;
++
++	printf("%s  %s\n", Condition ? "PASS" : "FAIL", Description);
++}
++
++static bool Contains(
++	IN const std::string& Haystack,
++	IN const char* Needle
++)
++{
++	return Haystack.find(Needle) != std::string::npos;
++}
++
++// ===== The fake game =====
++
++constexpr size_t TABLE_ENTRY_COUNT = 12;
++
++// "Builtin routines": executable, inside this image
++static int RoutineA() { return 1; }
++static int RoutineB() { return 2; }
++static int RoutineC() { return 3; }
++static int RoutineD() { return 4; }
++
++static void* GetRoutine(
++	IN size_t Index
++)
++{
++	switch (Index % 4)
++	{
++	case 0: return reinterpret_cast<void*>(&RoutineA);
++	case 1: return reinterpret_cast<void*>(&RoutineB);
++	case 2: return reinterpret_cast<void*>(&RoutineC);
++	}
++
++	return reinterpret_cast<void*>(&RoutineD);
++}
++
++// "Name literals": readable, inside this image. Deliberately not real GameMaker names,
++// nothing in the validator may depend on which builtin sits where.
++static const char* g_DefaultNames[TABLE_ENTRY_COUNT] =
++{
++	"fn_alpha", "fn_bravo", "fn_charlie", "fn_delta", "fn_echo", "fn_foxtrot",
++	"fn_golf", "fn_hotel", "fn_india", "fn_juliett", "fn_kilo", "fn_lima"
++};
++
++// What the fake Code_Function_Find answers with
++enum FinderMode
++{
++	FINDER_EXACT,			// The index of the first entry with that name, like a real lookup
++	FINDER_KNOWS_NOTHING,	// Always -1
++	FINDER_OFF_BY_ONE,		// The index after the right one, which holds another name
++	FINDER_SCRIPT_RANGE,	// 100000 + the right index, as if every name was a script
++	FINDER_ONLY_ENTRY_FIVE,	// -1 for everything but entry 5
++	FINDER_FAR_AWAY			// An index way past the end of the table
++};
++
++static const char* const* g_FinderNames = g_DefaultNames;
++static FinderMode g_FinderMode = FINDER_EXACT;
++static int g_FinderCallCount = 0;
++
++static bool FakeCodeFunctionFind(
++	IN const char* Name,
++	OUT int* Index
++)
++{
++	g_FinderCallCount++;
++	*Index = -1;
++
++	int found_index = -1;
++	for (size_t i = 0; i < TABLE_ENTRY_COUNT; i++)
++	{
++		if (!strcmp(g_FinderNames[i], Name))
++		{
++			found_index = static_cast<int>(i);
++			break;
++		}
++	}
++
++	if (found_index < 0)
++		return false;
++
++	switch (g_FinderMode)
++	{
++	case FINDER_EXACT:
++		*Index = found_index;
++		break;
++	case FINDER_KNOWS_NOTHING:
++		break;
++	case FINDER_OFF_BY_ONE:
++		*Index = found_index + 1;
++		break;
++	case FINDER_SCRIPT_RANGE:
++		*Index = 100000 + found_index;
++		break;
++	case FINDER_ONLY_ENTRY_FIVE:
++		if (found_index == 5)
++			*Index = 5;
++		break;
++	case FINDER_FAR_AWAY:
++		*Index = 90000;
++		break;
++	}
++
++	// The real one does not return anything meaningful either
++	return true;
++}
++
++static void SetFinder(
++	IN FinderMode Mode,
++	IN const char* const* Names
++)
++{
++	g_FinderMode = Mode;
++	g_FinderNames = Names;
++	g_FinderCallCount = 0;
++}
++
++// Candidates: globals of this image, like the_functions is a global of the runner
++static void* g_Candidate = nullptr;
++static void* g_CandidateSlots[6] = {};
++alignas(8) static unsigned char g_MisalignedStorage[32] = {};
++
++static void BuildReferentialTable(
++	OUT ReferentialEntryLayout* Table,
++	IN const char* const* Names
++)
++{
++	for (size_t i = 0; i < TABLE_ENTRY_COUNT; i++)
++	{
++		Table[i].m_Name = Names[i];
++		Table[i].m_Routine = GetRoutine(i);
++		Table[i].m_ArgumentCount = static_cast<int32_t>(i);
++		Table[i].m_UsageCount = 0;
++	}
++}
++
++static void BuildEmbeddedTable(
++	OUT EmbeddedEntryLayout* Table,
++	IN const char* const* Names
++)
++{
++	memset(Table, 0, sizeof(EmbeddedEntryLayout) * TABLE_ENTRY_COUNT);
++	for (size_t i = 0; i < TABLE_ENTRY_COUNT; i++)
++	{
++		strncpy_s(Table[i].m_Name, Names[i], _TRUNCATE);
++		Table[i].m_Routine = GetRoutine(i);
++		Table[i].m_ArgumentCount = static_cast<int32_t>(i);
++	}
++}
++
++static bool Validate(
++	IN void* Candidate,
++	OUT size_t& EntrySize,
++	OUT std::string& Reason
++)
++{
++	return GmpiValidateFunctionsArray(
++		reinterpret_cast<uintptr_t>(Candidate),
++		GetModuleHandleW(nullptr),
++		FakeCodeFunctionFind,
++		EntrySize,
++		Reason
++	);
++}
++
++// One committed read-write page directly followed by reserved (unreadable) address space.
++// The reservation is big enough that entry 90000 of a table on that page still lands in it.
++constexpr size_t EDGE_PAGE_RESERVATION = 8 * 1024 * 1024;
++
++struct EdgePage
++{
++	unsigned char* Base;
++	unsigned char* End;
++	size_t Size;
++};
++
++static EdgePage AllocateEdgePage()
++{
++	SYSTEM_INFO system_info = {};
++	GetSystemInfo(&system_info);
++
++	EdgePage page = {};
++	page.Size = system_info.dwPageSize;
++	page.Base = static_cast<unsigned char*>(VirtualAlloc(nullptr, EDGE_PAGE_RESERVATION, MEM_RESERVE, PAGE_NOACCESS));
++	if (!page.Base || !VirtualAlloc(page.Base, page.Size, MEM_COMMIT, PAGE_READWRITE))
++	{
++		printf("FAIL  could not allocate an edge page, giving up\n");
++		exit(2);
++	}
++
++	page.End = page.Base + page.Size;
++	return page;
++}
++
++// Something an unvalidated "first 7-byte mov" can very well load instead of the_functions
++struct PolymorphicDecoy
++{
++	virtual ~PolymorphicDecoy() {}
++	virtual int Touch() { return m_Value; }
++
++	int m_Value = 7;
++	void* m_Padding[64] = {};
++};
++
++// First qword points at a readable literal in the image, second one at code in the image:
++// exactly one plausible referential entry, and then nothing.
++struct SingleEntryDecoy
++{
++	const char* m_Text;
++	void* m_Callback;
++	uint64_t m_Counters[64];
++};
++
++// The rule this validator replaces, as a baseline: YkDetermineFunctionEntrySize settles for
++// "the first pointer-sized value of entry 0 points into the image". Test-only, and only ever
++// pointed at memory this test owns.
++static bool WeakRuleAccepts(
++	IN void* Candidate
++)
++{
++	void* first_entry = *static_cast<void**>(Candidate);
++	if (!first_entry)
++		return false;
++
++	return GmpiIsReadableImageAddress(*static_cast<uintptr_t*>(first_entry), GetModuleHandleW(nullptr));
++}
++
++// ===== Tests =====
++
++static void TestNamePredicate()
++{
++	char exactly_full[64];
++	memset(exactly_full, 'a', sizeof(exactly_full));
++
++	char longest_valid[64];
++	memset(longest_valid, 'a', sizeof(longest_valid));
++	longest_valid[63] = '\0';
++
++	Check(GmpiIsFunctionName("abs", 4), "name: 'abs' is a function name");
++	Check(GmpiIsFunctionName("@@NewGMLArray@@", 16), "name: punctuation is graphic ASCII too");
++	Check(GmpiIsFunctionName(longest_valid, sizeof(longest_valid)), "name: 63 characters plus terminator fit an embedded name");
++	Check(!GmpiIsFunctionName("", 1), "name: empty is rejected");
++	Check(!GmpiIsFunctionName(exactly_full, sizeof(exactly_full)), "name: 64 characters without a terminator are rejected");
++	Check(!GmpiIsFunctionName("abcd", 4), "name: terminator outside of the given size is rejected");
++	Check(!GmpiIsFunctionName("ab cd", 6), "name: space is rejected");
++	Check(!GmpiIsFunctionName("ab\x01" "cd", 6), "name: control character is rejected");
++	Check(!GmpiIsFunctionName("ab\x7F" "cd", 6), "name: DEL is rejected");
++	Check(!GmpiIsFunctionName("ab\xE9" "cd", 6), "name: byte above 0x7F is rejected");
++}
++
++static void TestReasonCap()
++{
++	std::string short_reason = "short";
++	GmpiCapReasonLength(short_reason, 16);
++	Check(short_reason == "short", "reason cap: a short reason is left alone");
++
++	std::string long_reason(5000, 'x');
++	GmpiCapReasonLength(long_reason, MAXIMUM_REASON_LENGTH);
++	Check(long_reason.size() == MAXIMUM_REASON_LENGTH, "reason cap: a long reason is cut to the maximum");
++	Check(long_reason.compare(long_reason.size() - 3, 3, "...") == 0, "reason cap: a cut reason says so");
++	Check(MAXIMUM_REASON_LENGTH + 512 < 4096, "reason cap: leaves room in CmpParseVa's 4096 byte buffer");
++}
++
++static void TestGuardedReads()
++{
++	EdgePage page = AllocateEdgePage();
++	memset(page.Base, 0x5A, page.Size);
++
++	// Spans
++	Check(GmpiGetReadableSpan(reinterpret_cast<uintptr_t>(page.Base), 64) == 64, "span: fully inside a committed page");
++	Check(GmpiGetReadableSpan(reinterpret_cast<uintptr_t>(page.End - 16), 64) == 16, "span: stops at the reserved page, counted from the address and not from the region base");
++	Check(GmpiGetReadableSpan(reinterpret_cast<uintptr_t>(page.End), 64) == 0, "span: reserved memory is not readable");
++	Check(GmpiGetReadableSpan(0, 64) == 0, "span: null is not readable");
++	Check(GmpiGetReadableSpan(UINTPTR_MAX - 4, 64) == 0, "span: end of the address space is not readable and does not wrap");
++	Check(GmpiGetReadableSpan(reinterpret_cast<uintptr_t>(page.Base), 0) == 0, "span: nothing wanted, nothing reported");
++
++	// A range that straddles two regions with different protections is one span
++	EdgePage split = AllocateEdgePage();
++	VirtualAlloc(split.End, split.Size, MEM_COMMIT, PAGE_READONLY);
++	Check(GmpiGetReadableSpan(reinterpret_cast<uintptr_t>(split.End - 8), 16) == 16, "span: walks across two readable regions");
++
++	// Copies
++	unsigned char buffer[64];
++	memset(buffer, 0, sizeof(buffer));
++	Check(GmpiCopyMemory(reinterpret_cast<uintptr_t>(page.End - 16), 16, buffer) && buffer[0] == 0x5A && buffer[15] == 0x5A && buffer[16] == 0,
++		"copy: the last 16 bytes of a page are copied");
++
++	memset(buffer, 0, sizeof(buffer));
++	Check(!GmpiCopyMemory(reinterpret_cast<uintptr_t>(page.End - 16), 17, buffer) && buffer[0] == 0,
++		"copy: one byte into the reserved page fails, without a fault and without a partial copy");
++	Check(!GmpiCopyMemory(0, 8, buffer), "copy: null fails");
++	Check(!GmpiCopyMemory(reinterpret_cast<uintptr_t>(page.Base), 0, buffer), "copy: size 0 fails");
++	Check(!GmpiCopyMemory(reinterpret_cast<uintptr_t>(page.Base), 8, nullptr), "copy: no buffer fails");
++
++	// Protections
++	DWORD old_protection = 0;
++	MEMORY_BASIC_INFORMATION region;
++
++	Check(GmpiQueryRegion(reinterpret_cast<uintptr_t>(page.Base), region) && GmpiIsRegionReadable(region) && !GmpiIsRegionExecutable(region),
++		"region: PAGE_READWRITE is readable and not executable");
++	Check(!GmpiQueryRegion(reinterpret_cast<uintptr_t>(page.End), region), "region: reserved memory is refused");
++
++	VirtualProtect(page.Base, page.Size, PAGE_NOACCESS, &old_protection);
++	Check(!GmpiQueryRegion(reinterpret_cast<uintptr_t>(page.Base), region), "region: PAGE_NOACCESS is refused");
++	Check(!GmpiCopyMemory(reinterpret_cast<uintptr_t>(page.Base), 8, buffer), "copy: PAGE_NOACCESS fails without a fault");
++
++	VirtualProtect(page.Base, page.Size, PAGE_READWRITE | PAGE_GUARD, &old_protection);
++	Check(!GmpiQueryRegion(reinterpret_cast<uintptr_t>(page.Base), region), "region: a guard page is refused");
++	Check(!GmpiCopyMemory(reinterpret_cast<uintptr_t>(page.Base), 8, buffer), "copy: a guard page fails without a fault");
++	VirtualQuery(page.Base, &region, sizeof(region));
++	Check((region.Protect & PAGE_GUARD) != 0, "copy: the guard page is still armed afterwards");
++
++	VirtualProtect(page.Base, page.Size, PAGE_EXECUTE, &old_protection);
++	Check(GmpiQueryRegion(reinterpret_cast<uintptr_t>(page.Base), region) && !GmpiIsRegionReadable(region) && GmpiIsRegionExecutable(region),
++		"region: PAGE_EXECUTE is executable and NOT readable");
++	Check(GmpiGetReadableSpan(reinterpret_cast<uintptr_t>(page.Base), 8) == 0, "span: PAGE_EXECUTE is not readable");
++
++	VirtualProtect(page.Base, page.Size, PAGE_EXECUTE_READ, &old_protection);
++	Check(GmpiQueryRegion(reinterpret_cast<uintptr_t>(page.Base), region) && GmpiIsRegionReadable(region) && GmpiIsRegionExecutable(region),
++		"region: PAGE_EXECUTE_READ is both");
++
++	VirtualFree(page.Base, 0, MEM_RELEASE);
++	VirtualFree(split.Base, 0, MEM_RELEASE);
++}
++
++static void TestImagePredicates()
++{
++	const LPCVOID this_image = GetModuleHandleW(nullptr);
++	const LPCVOID other_image = GetModuleHandleW(L"kernel32.dll");
++	const uintptr_t own_routine = reinterpret_cast<uintptr_t>(GetRoutine(0));
++	const uintptr_t foreign_routine = reinterpret_cast<uintptr_t>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "VirtualQuery"));
++	int stack_variable = 0;
++
++	EdgePage page = AllocateEdgePage();
++	DWORD old_protection = 0;
++	VirtualProtect(page.Base, page.Size, PAGE_EXECUTE_READ, &old_protection);
++
++	Check(other_image && foreign_routine, "image: kernel32 is there to serve as the foreign image");
++
++	Check(GmpiIsExecutableImageAddress(own_routine, this_image), "image: own function is executable image code");
++	Check(!GmpiIsExecutableImageAddress(own_routine, other_image), "image: own function is not part of another image");
++	Check(!GmpiIsExecutableImageAddress(foreign_routine, this_image), "image: a kernel32 function is not part of this image");
++	Check(GmpiIsExecutableImageAddress(foreign_routine, nullptr) == false, "image: no image base matches nothing");
++	Check(!GmpiIsExecutableImageAddress(reinterpret_cast<uintptr_t>(&g_Candidate), this_image), "image: own data is not executable");
++	Check(!GmpiIsExecutableImageAddress(reinterpret_cast<uintptr_t>(page.Base), this_image), "image: executable private memory is not image code");
++	Check(!GmpiIsExecutableImageAddress(0, this_image), "image: null is not executable image code");
++
++	Check(GmpiIsReadableImageAddress(reinterpret_cast<uintptr_t>(g_DefaultNames[0]), this_image), "image: own string literal is readable image memory");
++	Check(GmpiIsReadableImageAddress(reinterpret_cast<uintptr_t>(&g_Candidate), this_image), "image: own global is readable image memory");
++	Check(!GmpiIsReadableImageAddress(reinterpret_cast<uintptr_t>(&stack_variable), this_image), "image: the stack is not image memory");
++	Check(!GmpiIsReadableImageAddress(reinterpret_cast<uintptr_t>(page.Base), this_image), "image: private memory is not image memory");
++
++	VirtualFree(page.Base, 0, MEM_RELEASE);
++}
++
++static void TestAcceptedTables()
++{
++	size_t entry_size = 0;
++	std::string reason;
++
++	// (b) referential layout on the heap
++	ReferentialEntryLayout* referential_table = new ReferentialEntryLayout[TABLE_ENTRY_COUNT];
++	BuildReferentialTable(referential_table, g_DefaultNames);
++	g_Candidate = referential_table;
++
++	SetFinder(FINDER_EXACT, g_DefaultNames);
++	Check(Validate(&g_Candidate, entry_size, reason) && entry_size == 24, "accept: referential table is accepted with entry size 24");
++	Check(Contains(reason, "entry 0 is 'fn_alpha'") && Contains(reason, "8 of 8"), "accept: the summary names entry 0 and the confirmed count");
++	Check(g_FinderCallCount == 8, "accept: the game was asked about each sampled name once");
++	printf("      -> %s\n", reason.c_str());
++
++	// Only one name known to the game is enough, as long as nothing contradicts
++	SetFinder(FINDER_ONLY_ENTRY_FIVE, g_DefaultNames);
++	Check(Validate(&g_Candidate, entry_size, reason) && Contains(reason, "1 of 8"), "accept: one confirmed name and no contradiction is enough");
++
++	// A name registered twice: the game reports the first one for both
++	char duplicate_name[] = "fn_bravo";
++	const char* names_with_duplicate[TABLE_ENTRY_COUNT];
++	memcpy(names_with_duplicate, g_DefaultNames, sizeof(names_with_duplicate));
++	names_with_duplicate[3] = duplicate_name;
++	BuildReferentialTable(referential_table, names_with_duplicate);
++
++	SetFinder(FINDER_EXACT, names_with_duplicate);
++	Check(Validate(&g_Candidate, entry_size, reason) && entry_size == 24, "accept: a duplicate name resolving to the other entry is not a contradiction");
++
++	// (c) embedded layout
++	EmbeddedEntryLayout* embedded_table = new EmbeddedEntryLayout[TABLE_ENTRY_COUNT];
++	BuildEmbeddedTable(embedded_table, g_DefaultNames);
++	g_Candidate = embedded_table;
++
++	SetFinder(FINDER_EXACT, g_DefaultNames);
++	Check(Validate(&g_Candidate, entry_size, reason) && entry_size == 80, "accept: embedded table is accepted with entry size 80");
++	printf("      -> %s\n", reason.c_str());
++
++	// (i) a name literal whose terminator is the very last readable byte
++	EdgePage page = AllocateEdgePage();
++	const char edge_name[] = "fn_edge";
++	char* edge_name_address = reinterpret_cast<char*>(page.End - sizeof(edge_name));
++	memcpy(edge_name_address, edge_name, sizeof(edge_name));
++
++	const char* names_with_edge[TABLE_ENTRY_COUNT];
++	memcpy(names_with_edge, g_DefaultNames, sizeof(names_with_edge));
++	names_with_edge[3] = edge_name_address;
++	BuildReferentialTable(referential_table, names_with_edge);
++	g_Candidate = referential_table;
++
++	SetFinder(FINDER_EXACT, names_with_edge);
++	Check(Validate(&g_Candidate, entry_size, reason) && entry_size == 24, "accept: a name ending on the last byte before an unreadable page");
++
++	// (j) the same name without its terminator: nothing readable is left to find one in
++	memset(edge_name_address, 'x', sizeof(edge_name));
++	Check(!Validate(&g_Candidate, entry_size, reason) && entry_size == 0, "reject: an unterminated name running into an unreadable page, without a fault");
++	Check(Contains(reason, "entry 3 has a name that is not a terminated graphic ASCII string"), "reject: ...and the reason names the entry");
++	printf("      -> %s\n", reason.c_str());
++
++	VirtualFree(page.Base, 0, MEM_RELEASE);
++	delete[] embedded_table;
++	delete[] referential_table;
++}
++
++static void TestRejectedCandidates()
++{
++	size_t entry_size = 0;
++	std::string reason;
++
++	ReferentialEntryLayout* referential_table = new ReferentialEntryLayout[TABLE_ENTRY_COUNT];
++	BuildReferentialTable(referential_table, g_DefaultNames);
++	SetFinder(FINDER_EXACT, g_DefaultNames);
++
++	// Positive control for this whole block: the table everything below is derived from is fine
++	g_Candidate = referential_table;
++	Check(Validate(&g_Candidate, entry_size, reason), "control: the table the rejections are derived from is accepted");
++
++	// (e) null
++	g_Candidate = nullptr;
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "does not hold an aligned pointer"), "reject: a null global");
++
++	// (a) scalars, the kind of global a stack cookie or a counter is
++	g_Candidate = reinterpret_cast<void*>(static_cast<uintptr_t>(0x1122334455667788ull));
++	Check(!Validate(&g_Candidate, entry_size, reason), "reject: an aligned scalar pointing nowhere, without a fault");
++	printf("      -> %s\n", reason.c_str());
++
++	g_Candidate = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(referential_table) + 1);
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "does not hold an aligned pointer"), "reject: an odd value, even though it points into a valid table");
++
++	// The candidate itself
++	Check(!Validate(nullptr, entry_size, reason), "reject: a null candidate");
++	Check(!Validate(reinterpret_cast<void*>(UINTPTR_MAX - 7), entry_size, reason), "reject: a candidate at the end of the address space");
++
++	void** heap_global = new void*(referential_table);
++	Check(!Validate(heap_global, entry_size, reason) && Contains(reason, "not readable game image memory"), "reject: a valid table behind a global that is not in the image");
++	delete heap_global;
++
++	void* table_pointer = referential_table;
++	memcpy(g_MisalignedStorage + 1, &table_pointer, sizeof(table_pointer));
++	Check(!Validate(g_MisalignedStorage + 1, entry_size, reason) && Contains(reason, "not pointer-aligned"), "reject: a valid table behind a misaligned global");
++
++	memcpy(g_MisalignedStorage + 8, &table_pointer, sizeof(table_pointer));
++	Check(Validate(g_MisalignedStorage + 8, entry_size, reason), "control: the same storage is accepted at an aligned offset");
++
++	// Nothing to check against
++	g_Candidate = referential_table;
++	Check(!GmpiValidateFunctionsArray(reinterpret_cast<uintptr_t>(&g_Candidate), GetModuleHandleW(nullptr), nullptr, entry_size, reason),
++		"reject: no Code_Function_Find to ask");
++	Check(!GmpiValidateFunctionsArray(reinterpret_cast<uintptr_t>(&g_Candidate), nullptr, FakeCodeFunctionFind, entry_size, reason),
++		"reject: no image to compare against");
++	Check(!GmpiValidateFunctionsArray(reinterpret_cast<uintptr_t>(&g_Candidate), GetModuleHandleW(L"kernel32.dll"), FakeCodeFunctionFind, entry_size, reason),
++		"reject: a valid table of another image");
++
++	// (d) an object with a vtable. The baseline rule takes it, which is what makes this a control worth having.
++	PolymorphicDecoy* polymorphic_decoy = new PolymorphicDecoy();
++	g_Candidate = polymorphic_decoy;
++	SetFinder(FINDER_EXACT, g_DefaultNames);
++	Check(WeakRuleAccepts(&g_Candidate), "baseline: the unpatched layout rule takes a vtable-bearing object for a referential table");
++	Check(!Validate(&g_Candidate, entry_size, reason) && entry_size == 0, "reject: a vtable-bearing object");
++	Check(g_FinderCallCount == 0, "reject: ...and the game was never asked about its 'names'");
++	printf("      -> %s\n", reason.c_str());
++	Check(polymorphic_decoy->Touch() == 7, "reject: ...and the object is untouched");
++
++	// One plausible entry followed by garbage
++	SingleEntryDecoy* single_entry_decoy = new SingleEntryDecoy();
++	memset(single_entry_decoy, 0, sizeof(*single_entry_decoy));
++	single_entry_decoy->m_Text = g_DefaultNames[0];
++	single_entry_decoy->m_Callback = GetRoutine(0);
++	g_Candidate = single_entry_decoy;
++	SetFinder(FINDER_EXACT, g_DefaultNames);
++	Check(WeakRuleAccepts(&g_Candidate), "baseline: the unpatched layout rule takes a struct that starts like one entry");
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "entry 1"), "reject: a struct that starts like one entry, at entry 1");
++	Check(g_FinderCallCount == 0, "reject: ...and the game was never asked about it");
++
++	// (h) routines that are not code of the image
++	g_Candidate = referential_table;
++	referential_table[6].m_Routine = referential_table;
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "entry 6 ('fn_golf') has a routine that is not executable game image code"),
++		"reject: a routine on the heap");
++
++	referential_table[6].m_Routine = &g_Candidate;
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "entry 6"), "reject: a routine pointing at data of the image");
++
++	referential_table[6].m_Routine = reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "VirtualQuery"));
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "entry 6"), "reject: a routine in another image");
++
++	referential_table[6].m_Routine = nullptr;
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "entry 6"), "reject: a null routine");
++
++	referential_table[6].m_Routine = GetRoutine(6);
++	Check(Validate(&g_Candidate, entry_size, reason), "control: accepted again once the routine is restored");
++
++	// (f) (g) what the game says
++	SetFinder(FINDER_OFF_BY_ONE, g_DefaultNames);
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "Code_Function_Find places entry 0 ('fn_alpha') at index 1, which holds another name"),
++		"reject: the game contradicts the table");
++
++	SetFinder(FINDER_KNOWS_NOTHING, g_DefaultNames);
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "confirmed none"), "reject: the game knows none of the names");
++	printf("      -> %s\n", reason.c_str());
++
++	SetFinder(FINDER_SCRIPT_RANGE, g_DefaultNames);
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "confirmed none"), "reject: the game takes every name for a script");
++
++	// An embedded name that fills all 64 bytes
++	EmbeddedEntryLayout* embedded_table = new EmbeddedEntryLayout[TABLE_ENTRY_COUNT];
++	BuildEmbeddedTable(embedded_table, g_DefaultNames);
++	g_Candidate = embedded_table;
++	SetFinder(FINDER_EXACT, g_DefaultNames);
++	Check(Validate(&g_Candidate, entry_size, reason) && entry_size == 80, "control: the embedded table is accepted");
++	memset(embedded_table[2].m_Name, 'z', sizeof(embedded_table[2].m_Name));
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "as embedded: entry 2"), "reject: an embedded name without a terminator");
++
++	// A table that ends early, right in front of an unreadable page
++	EdgePage page = AllocateEdgePage();
++	ReferentialEntryLayout* short_table = reinterpret_cast<ReferentialEntryLayout*>(page.End - (sizeof(ReferentialEntryLayout) * 5));
++	memcpy(short_table, referential_table, sizeof(ReferentialEntryLayout) * 5);
++	g_Candidate = short_table;
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "as referential: entry 5 is not readable"), "reject: a table of 5 entries in front of an unreadable page, without a fault");
++	printf("      -> %s\n", reason.c_str());
++
++	// The game points way past a table that is otherwise fine
++	ReferentialEntryLayout* edge_table = reinterpret_cast<ReferentialEntryLayout*>(page.End - (sizeof(ReferentialEntryLayout) * TABLE_ENTRY_COUNT));
++	memcpy(edge_table, referential_table, sizeof(ReferentialEntryLayout) * TABLE_ENTRY_COUNT);
++	g_Candidate = edge_table;
++	SetFinder(FINDER_EXACT, g_DefaultNames);
++	Check(Validate(&g_Candidate, entry_size, reason), "control: the table in front of the unreadable page is accepted");
++	SetFinder(FINDER_FAR_AWAY, g_DefaultNames);
++	Check(!Validate(&g_Candidate, entry_size, reason) && Contains(reason, "at index 90000, which is not readable"), "reject: the game reports an index past the mapped table, without a fault");
++
++	// (k) protections on the table itself
++	DWORD old_protection = 0;
++	SetFinder(FINDER_EXACT, g_DefaultNames);
++
++	VirtualProtect(page.Base, page.Size, PAGE_NOACCESS, &old_protection);
++	Check(!Validate(&g_Candidate, entry_size, reason), "reject: the table is PAGE_NOACCESS, without a fault");
++
++	VirtualProtect(page.Base, page.Size, PAGE_READWRITE | PAGE_GUARD, &old_protection);
++	Check(!Validate(&g_Candidate, entry_size, reason), "reject: the table is a guard page, without a fault");
++
++	MEMORY_BASIC_INFORMATION region = {};
++	VirtualQuery(page.Base, &region, sizeof(region));
++	Check((region.Protect & PAGE_GUARD) != 0, "reject: ...and the guard is still armed");
++
++	VirtualProtect(page.Base, page.Size, PAGE_READWRITE, &old_protection);
++	Check(Validate(&g_Candidate, entry_size, reason), "control: the very same table is accepted once it is readable again");
++
++	VirtualFree(page.Base, 0, MEM_RELEASE);
++	delete[] embedded_table;
++	delete single_entry_decoy;
++	delete polymorphic_decoy;
++	delete[] referential_table;
++}
++
++// What the reporter of GmpiSelectFunctionsArray was told
++struct SelectionLog
++{
++	size_t ReportCount;
++	size_t AcceptedCount;
++	size_t RejectedCount;
++	size_t EmptyTextCount;
++	uintptr_t Reported[16];
++};
++
++static size_t ReportCountOf(
++	IN const SelectionLog& Log,
++	IN uintptr_t Candidate
++)
++{
++	size_t hits = 0;
++	for (size_t i = 0; i < Log.ReportCount && i < 16; i++)
++	{
++		if (Log.Reported[i] == Candidate)
++			hits++;
++	}
++
++	return hits;
++}
++
++// Runs the very function both finders hand their candidates to
++static bool Select(
++	IN const uintptr_t* Candidates,
++	IN size_t CandidateCount,
++	IN bool PreferLowest,
++	OUT FunctionsArraySelection& Selection,
++	OUT SelectionLog& Log
++)
++{
++	memset(&Log, 0, sizeof(Log));
++
++	// Whatever was in there before must not survive a failure
++	memset(&Selection, 0xCC, sizeof(Selection));
++
++	return GmpiSelectFunctionsArray(
++		Candidates,
++		CandidateCount,
++		GetModuleHandleW(nullptr),
++		FakeCodeFunctionFind,
++		PreferLowest,
++		[&Log, Candidates](size_t Index, uintptr_t Candidate, bool Accepted, size_t EntrySize, const std::string& Text)
++		{
++			if (Log.ReportCount < 16)
++				Log.Reported[Log.ReportCount] = Candidate;
++
++			Log.ReportCount++;
++
++			// A finder looks up the instruction by Index, so it has to be the index of this very candidate
++			if (Candidates[Index] != Candidate)
++				Log.RejectedCount += 1000;
++
++			if (Accepted && EntrySize)
++				Log.AcceptedCount++;
++
++			if (!Accepted && !EntrySize)
++				Log.RejectedCount++;
++
++			if (Text.empty())
++				Log.EmptyTextCount++;
++		},
++		Selection
++	);
++}
++
++// The candidate choice of both finders: GmpFindFunctionsArrayX64 takes the first valid one (PreferLowest false),
++// VM::GmpFindFunctionsArray the valid one lowest in memory (PreferLowest true). Never a fallback.
++// What this cannot reach is the part of the finders that needs Zydis: which instructions become candidates.
++static void TestSelection()
++{
++	ReferentialEntryLayout* referential_table = new ReferentialEntryLayout[TABLE_ENTRY_COUNT];
++	EmbeddedEntryLayout* embedded_table = new EmbeddedEntryLayout[TABLE_ENTRY_COUNT];
++	PolymorphicDecoy* polymorphic_decoy = new PolymorphicDecoy();
++	BuildReferentialTable(referential_table, g_DefaultNames);
++	BuildEmbeddedTable(embedded_table, g_DefaultNames);
++	SetFinder(FINDER_EXACT, g_DefaultNames);
++
++	// Slots are elements of one array, so a higher index is a higher address
++	g_CandidateSlots[0] = reinterpret_cast<void*>(static_cast<uintptr_t>(0x1122334455667788ull));
++	g_CandidateSlots[1] = nullptr;
++	g_CandidateSlots[2] = polymorphic_decoy;
++	g_CandidateSlots[3] = referential_table;
++	g_CandidateSlots[4] = embedded_table;
++	g_CandidateSlots[5] = referential_table;
++
++	const uintptr_t slot0 = reinterpret_cast<uintptr_t>(&g_CandidateSlots[0]);
++	const uintptr_t slot1 = reinterpret_cast<uintptr_t>(&g_CandidateSlots[1]);
++	const uintptr_t slot2 = reinterpret_cast<uintptr_t>(&g_CandidateSlots[2]);
++	const uintptr_t slot3 = reinterpret_cast<uintptr_t>(&g_CandidateSlots[3]);
++	const uintptr_t slot4 = reinterpret_cast<uintptr_t>(&g_CandidateSlots[4]);
++	const uintptr_t slot5 = reinterpret_cast<uintptr_t>(&g_CandidateSlots[5]);
++
++	FunctionsArraySelection selection;
++	SelectionLog log;
++
++	// Wrong ones first (one of them twice), then a valid one high in memory, then a valid one lower in memory
++	const uintptr_t mixed[] = { slot0, slot1, slot0, slot2, slot4, slot3 };
++
++	// First valid wins
++	Check(Select(mixed, 6, false, selection, log) && selection.Candidate == slot4 && selection.CandidateIndex == 4 && selection.EntrySize == 80,
++		"select first: three wrong candidates are skipped, the first valid one in list order wins");
++	Check(log.ReportCount == 4 && log.RejectedCount == 3 && log.AcceptedCount == 1 && selection.ExaminedCount == 4,
++		"select first: three rejections and one acceptance are reported, each under its own index");
++	Check(ReportCountOf(log, slot0) == 1, "select first: a candidate that is listed twice is reported once");
++	Check(ReportCountOf(log, slot4) == 1, "control: the winner is among the reported ones");
++	Check(ReportCountOf(log, slot3) == 0, "select first: nothing behind the winner is looked at");
++	Check(log.EmptyTextCount == 0, "select first: every report carries a reason or a summary");
++
++	// Lowest valid wins, and a rejected candidate never counts as "lowest"
++	Check(Select(mixed, 6, true, selection, log) && selection.Candidate == slot3 && selection.CandidateIndex == 5 && selection.EntrySize == 24,
++		"select lowest: the valid candidate lowest in memory wins, although three rejected ones lie below it");
++	Check(log.ReportCount == 5 && log.RejectedCount == 3 && log.AcceptedCount == 2 && selection.ExaminedCount == 5,
++		"select lowest: every distinct candidate is looked at and reported once");
++
++	// Order, not address, decides in the first mode; address, not order, in the other
++	const uintptr_t low_then_high[] = { slot3, slot4 };
++	const uintptr_t high_then_low[] = { slot4, slot3 };
++	Check(Select(low_then_high, 2, false, selection, log) && selection.Candidate == slot3 && selection.CandidateIndex == 0,
++		"select first: the lower valid candidate wins when it comes first");
++	Check(Select(high_then_low, 2, false, selection, log) && selection.Candidate == slot4 && selection.CandidateIndex == 0,
++		"select first: the higher valid candidate wins when it comes first");
++	Check(Select(low_then_high, 2, true, selection, log) && selection.Candidate == slot3 && selection.CandidateIndex == 0 && selection.EntrySize == 24,
++		"select lowest: the lower valid candidate wins when it comes first");
++	Check(Select(high_then_low, 2, true, selection, log) && selection.Candidate == slot3 && selection.CandidateIndex == 1 && selection.EntrySize == 24,
++		"select lowest: the lower valid candidate wins when it comes last");
++
++	// A valid candidate that is listed twice is still validated and reported once
++	const uintptr_t valid_twice[] = { slot5, slot0, slot5 };
++	Check(Select(valid_twice, 3, true, selection, log) && selection.Candidate == slot5 && selection.CandidateIndex == 0,
++		"select lowest: a rejected candidate below the only valid one does not win");
++	Check(log.AcceptedCount == 1 && log.RejectedCount == 1 && log.ReportCount == 2, "select lowest: a valid candidate that is listed twice is reported once");
++
++	// Without a valid one there is no winner, not the least bad one
++	const uintptr_t all_wrong[] = { slot2, slot0, slot1, slot2 };
++	Check(!Select(all_wrong, 4, false, selection, log) && !selection.Candidate && !selection.CandidateIndex && !selection.EntrySize,
++		"select first: nothing is selected if nothing is valid, and what the selection held before is gone");
++	Check(log.ReportCount == 3 && log.RejectedCount == 3 && log.AcceptedCount == 0 && selection.ExaminedCount == 3,
++		"select first: ...but every distinct candidate was reported with its rejection");
++	Check(!Select(all_wrong, 4, true, selection, log) && !selection.Candidate && !selection.EntrySize && selection.ExaminedCount == 3,
++		"select lowest: nothing is selected if nothing is valid");
++
++	// Nothing to choose from
++	Check(!Select(mixed, 0, false, selection, log) && !selection.Candidate && !selection.ExaminedCount && !log.ReportCount,
++		"select first: an empty list selects nothing and reports nothing");
++	Check(!Select(nullptr, 6, true, selection, log) && !selection.Candidate && !selection.ExaminedCount && !log.ReportCount,
++		"select lowest: no list selects nothing, without a fault");
++
++	// Control: the same call selects again as soon as there is something valid
++	Check(Select(low_then_high, 1, false, selection, log) && selection.Candidate == slot3 && log.ReportCount == 1,
++		"control: a list of one valid candidate is selected");
++
++	delete polymorphic_decoy;
++	delete[] embedded_table;
++	delete[] referential_table;
++}
++
++static void TestSearchRepetition()
++{
++	Check(GmpiIsSearchWorthRepeating(0), "repeat: the first search is always run");
++	Check(GmpiIsSearchWorthRepeating(MAXIMUM_FAILED_SEARCHES - 1), "repeat: the last allowed search is run");
++	Check(!GmpiIsSearchWorthRepeating(MAXIMUM_FAILED_SEARCHES), "repeat: after the maximum of failed searches it is not repeated");
++	Check(!GmpiIsSearchWorthRepeating(SIZE_MAX), "repeat: ...and never again after that");
++	Check(MAXIMUM_FAILED_SEARCHES >= 1 && MAXIMUM_FAILED_SEARCHES <= 8, "repeat: the maximum allows at least one search and keeps the log short");
++}
++
++int main()
++{
++	TestNamePredicate();
++	TestReasonCap();
++	TestGuardedReads();
++	TestImagePredicates();
++	TestAcceptedTables();
++	TestRejectedCandidates();
++	TestSelection();
++	TestSearchRepetition();
++
++	printf("%d checks, %d failed\n", g_CheckCount, g_FailureCount);
++	return g_FailureCount ? 1 : 0;
++}
+diff --git a/YYToolkit/source/YYTK/Module Interface/Interface.cpp b/YYToolkit/source/YYTK/Module Interface/Interface.cpp
+index 41e155a..8791103 100644
+--- a/YYToolkit/source/YYTK/Module Interface/Interface.cpp	
++++ b/YYToolkit/source/YYTK/Module Interface/Interface.cpp	
+@@ -1,8 +1,15 @@
+ #include "Interface.hpp"
++#include "../Module Internals/GameMaker/Generic/FunctionsArrayValidation.hpp"
+ using namespace Aurie;
+ 
+ namespace YYTK
+ {
++	// How many times stage 2 has failed to find the functions array (or its entry size) so far.
++	// Stage 2 runs again for every module that is initialized while it is incomplete (ModuleMain.cpp),
++	// and every failed search logs one line per distinct candidate, so it is not repeated forever.
++	// Only touched from YYTKInterfaceImpl::Create, just like m_SecondInitComplete.
++	static size_t g_FailedFunctionsArraySearches = 0;
++
+ 	void YYTKInterfaceImpl::YkExtractFunctionEntry(
+ 		IN size_t Index, 
+ 		OUT std::string& FunctionName, 
+@@ -134,16 +141,65 @@ namespace YYTK
+ 		if (!m_FunctionsArray)
+ 			return 0;
+ 
+-		RFunction* first_entry = *m_FunctionsArray;
++		// Both finders only hand out validated pointers, but this function must not depend on that:
++		// it is called twice in stage 2, and a fault here takes the game down without a log line.
++		// So both dereferences work on copies, and a failed copy is "unknown size", which the
++		// caller already turns into an error status.
++		RFunction* first_entry = nullptr;
++		if (!GmpCopyMemoryGuarded(m_FunctionsArray, sizeof(first_entry), &first_entry))
++		{
++			CmWriteLogOutput(
++				"[%s:%d] YkDetermineFunctionEntrySize() refused: m_FunctionsArray 0x%p is not readable",
++				__FILE__,
++				__LINE__,
++				m_FunctionsArray
++			);
++
++			return 0;
++		}
++
+ 		if (!first_entry)
++		{
++			CmWriteLogOutput(
++				"[%s:%d] YkDetermineFunctionEntrySize() refused: m_FunctionsArray 0x%p holds a null pointer",
++				__FILE__,
++				__LINE__,
++				m_FunctionsArray
++			);
++
+ 			return 0;
++		}
++
++		// ASSUMED: a real table is longer than the 80 bytes of one RFunction, no matter the layout.
++		// If it is not, this copy fails instead of reading past its end.
++		RFunction first_entry_copy = {};
++		if (!GmpCopyMemoryGuarded(first_entry, sizeof(first_entry_copy), &first_entry_copy))
++		{
++			CmWriteLogOutput(
++				"[%s:%d] YkDetermineFunctionEntrySize() refused: first entry 0x%p is not readable",
++				__FILE__,
++				__LINE__,
++				first_entry
++			);
++
++			return 0;
++		}
+ 
+ 		// This is either an ASCII string that I just interpreted as a pointer,
+ 		// or it's a real pointer into somewhere in the main executable's .rdata section.
+ 		// If it's the latter, we know sizeof(RFunction) == 24.
+-		const char* potential_reference = first_entry->ReferentialEntry.m_Name;
++		const char* potential_reference = first_entry_copy.ReferentialEntry.m_Name;
+ 		if (!potential_reference)
++		{
++			CmWriteLogOutput(
++				"[%s:%d] YkDetermineFunctionEntrySize() refused: first entry 0x%p starts with 8 zero bytes, that is neither a name nor a pointer to one",
++				__FILE__,
++				__LINE__,
++				first_entry
++			);
++
+ 			return 0;
++		}
+ 
+ 		AurieStatus last_status = AURIE_SUCCESS;
+ 
+@@ -158,7 +214,16 @@ namespace YYTK
+ 		);
+ 
+ 		if (!AurieSuccess(last_status))
++		{
++			CmWriteLogOutput(
++				"[%s:%d] YkDetermineFunctionEntrySize() refused: no .rdata section in the game image (%s)",
++				__FILE__,
++				__LINE__,
++				AurieStatusToString(last_status)
++			);
++
+ 			return 0;
++		}
+ 
+ 		// Get the offset and size of the .text section
+ 		uint64_t text_offset = 0;
+@@ -171,7 +236,16 @@ namespace YYTK
+ 		);
+ 
+ 		if (!AurieSuccess(last_status))
++		{
++			CmWriteLogOutput(
++				"[%s:%d] YkDetermineFunctionEntrySize() refused: no .text section in the game image (%s)",
++				__FILE__,
++				__LINE__,
++				AurieStatusToString(last_status)
++			);
++
+ 			return 0;
++		}
+ 
+ 		// The section base is returned relative to the module base
+ 		text_offset += reinterpret_cast<uint64_t>(GetModuleHandleA(nullptr));
+@@ -187,7 +261,7 @@ namespace YYTK
+ 
+ 		char* text_section_start = reinterpret_cast<char*>(text_offset);
+ 		char* text_section_end = reinterpret_cast<char*>(text_offset + text_size);
+-		char* routine = reinterpret_cast<char*>(first_entry->FullEntry.m_Routine);
++		char* routine = reinterpret_cast<char*>(first_entry_copy.FullEntry.m_Routine);
+ 
+ 		// The routine should be somewhere in the .text section
+ 		// If it's not, it's definitely not RFunctionStringFull (or the structure is corrupt)
+@@ -196,6 +270,21 @@ namespace YYTK
+ 			return sizeof(RFunctionStringFull);
+ 
+ 		// Unknown size - possibly wrong runner architecture?
++		// The finders accept a referential table whose names are merely readable, this function wants them
++		// in a section called .rdata. If the two ever disagree, this line is the one that says so.
++		CmWriteLogOutput(
++			"[%s:%d] YkDetermineFunctionEntrySize() refused: first entry 0x%p has neither a name pointer (0x%p) in .rdata (0x%p to 0x%p) nor a routine (0x%p) in .text (0x%p to 0x%p)",
++			__FILE__,
++			__LINE__,
++			first_entry,
++			potential_reference,
++			rdata_section_start,
++			rdata_section_end,
++			routine,
++			text_section_start,
++			text_section_end
++		);
++
+ 		return 0;
+ 	}
+ 
+@@ -442,6 +531,31 @@ namespace YYTK
+ 			// We can either do that by calling "code_is_compiled",
+ 			// or by checking if the YYC-only version of GmpFindFunctionsArray succeeds.
+ 
++			// Both finders log every candidate they turn down, and this stage runs again for every module
++			// that is initialized while it is incomplete. Try a few times, then stop repeating the search.
++			if (!FunctionsArrayValidation::GmpiIsSearchWorthRepeating(g_FailedFunctionsArraySearches))
++			{
++				CmWriteLogOutput(
++					"[%s:%d] Functions array search not repeated: it already failed %lld times, see the first failure above",
++					__FILE__,
++					__LINE__,
++					static_cast<long long>(g_FailedFunctionsArraySearches)
++				);
++
++				return AURIE_OBJECT_NOT_FOUND;
++			}
++
++			// Anything the finders log below this line belongs to a repeated search, not to more candidates
++			if (g_FailedFunctionsArraySearches)
++			{
++				CmWriteLogOutput(
++					"[%s:%d] Functions array search attempt %lld, the ones before failed",
++					__FILE__,
++					__LINE__,
++					static_cast<long long>(g_FailedFunctionsArraySearches + 1)
++				);
++			}
++
+ 			// First we assume the runner is YYC, and look for the functions array
+ 			last_status = YYC::GmpFindFunctionsArray(
+ 				m_RunnerInterface,
+@@ -491,6 +605,13 @@ namespace YYTK
+ 				// Check if we succeeded this time (VM)
+ 				if (!AurieSuccess(last_status) || !m_FunctionEntrySize)
+ 				{
++					g_FailedFunctionsArraySearches++;
++
++					// A finder may have succeeded while the entry size is still unknown (YkDetermineFunctionEntrySize
++					// logged why). That is a failure all the same, don't print and return a success status for it.
++					if (AurieSuccess(last_status))
++						last_status = AURIE_MODULE_INTERNAL_ERROR;
++
+ 					this->PrintError(
+ 						__FILE__,
+ 						__LINE__,
+diff --git a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/FunctionsArrayValidation.hpp b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/FunctionsArrayValidation.hpp
+new file mode 100644
+index 0000000..a03520f
+--- /dev/null
++++ b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/FunctionsArrayValidation.hpp	
+@@ -0,0 +1,562 @@
++#ifndef YYTK_FUNCTIONS_ARRAY_VALIDATION_H_
++#define YYTK_FUNCTIONS_ARRAY_VALIDATION_H_
++
++// Positive identification of the runner's "RFunction* the_functions" global.
++//
++// This header depends on nothing but the Windows and the standard headers, so that
++// hs-tests/fnarray_validation_test.cpp can exercise it in a plain executable,
++// whose own image then plays the role of the game image. No game is needed.
++//
++// Everything in here has internal linkage on purpose. The names are generic enough
++// (regions, spans, snapshots) that another translation unit may want its own.
++
++#include <Windows.h>
++#include <cstdint>
++#include <cstring>
++#include <string>
++
++#ifndef IN
++#define IN
++#endif // IN
++
++#ifndef OUT
++#define OUT
++#endif // OUT
++
++namespace YYTK
++{
++	namespace FunctionsArrayValidation
++	{
++		namespace
++		{
++			// How many entries from the start of the table have to parse.
++			// ASSUMED, not measured: a real table holds every builtin the runner registers,
++			// so it has way more entries than this, and none of the first few is a placeholder
++			// without a routine. If that is wrong for some runner, the real table is rejected
++			// with a reason that names the entry, and initialization fails with a status.
++			constexpr size_t SAMPLE_COUNT = 8;
++
++			// Size of the buffer a name is copied into, terminator included.
++			// Names end up in log lines, and CmpParseVa formats those into a 4096 byte buffer
++			// with vsprintf_s, which terminates the process on overflow. Keep this small.
++			constexpr size_t NAME_BUFFER_SIZE = 256;
++
++			// Upper bound for a reason string, for the same reason as above
++			constexpr size_t MAXIMUM_REASON_LENGTH = 1024;
++
++			// How many times the whole search may fail before stage 2 stops repeating it.
++			// Stage 2 is entered again for every module that gets initialized while it is incomplete
++			// (ModuleMain.cpp), and a failed search logs one line per distinct candidate, per finder.
++			// ASSUMED: a search that failed this often does not start to succeed later.
++			constexpr size_t MAXIMUM_FAILED_SEARCHES = 3;
++
++			// Code_Function_Find reports builtins below this value, scripts and
++			// extension functions at or above it (see GetNamedRoutinePointer).
++			constexpr int BUILTIN_INDEX_LIMIT = 100000;
++
++			// Same signature as YYRunnerInterface::Code_Function_Find
++			using FunctionFinder = bool(*)(
++				IN const char* Name,
++				OUT int* Index
++			);
++
++			// Mirrors of RFunctionStringRef and RFunctionStringFull (Tool.hpp).
++			// YYC-Functions.cpp static_asserts that they match in size and field offsets.
++			struct ReferentialEntryLayout
++			{
++				const char* m_Name;
++				void* m_Routine;
++				int32_t m_ArgumentCount;
++				int32_t m_UsageCount;
++			};
++
++			struct EmbeddedEntryLayout
++			{
++				char m_Name[64];
++				void* m_Routine;
++				int32_t m_ArgumentCount;
++				int32_t m_UsageCount;
++			};
++
++			// Our own copy of one entry, no matter what layout it came from
++			struct FunctionEntrySnapshot
++			{
++				char Name[NAME_BUFFER_SIZE];
++				uintptr_t Routine;
++			};
++
++			// What GmpiSelectFunctionsArray settled on. All zero if nothing was selected.
++			struct FunctionsArraySelection
++			{
++				// Address of the global, not of the table
++				uintptr_t Candidate;
++				// Index into the list the candidate came from
++				size_t CandidateIndex;
++				size_t EntrySize;
++				// How many distinct candidates were looked at, the selected one included
++				size_t ExaminedCount;
++			};
++
++			// Fails for everything that cannot be touched without consequences:
++			// unmapped or reserved memory, PAGE_NOACCESS, and guard pages
++			// (touching a guard page raises an exception and disarms the guard).
++			inline bool GmpiQueryRegion(
++				IN uintptr_t Address,
++				OUT MEMORY_BASIC_INFORMATION& Region
++			)
++			{
++				memset(&Region, 0, sizeof(Region));
++
++				if (!VirtualQuery(reinterpret_cast<LPCVOID>(Address), &Region, sizeof(Region)))
++					return false;
++
++				if (Region.State != MEM_COMMIT)
++					return false;
++
++				if (Region.Protect & (PAGE_GUARD | PAGE_NOACCESS))
++					return false;
++
++				return true;
++			}
++
++			// "Not PAGE_NOACCESS" is not the same thing as readable:
++			// PAGE_EXECUTE and a protection of 0 are neither.
++			inline bool GmpiIsRegionReadable(
++				IN const MEMORY_BASIC_INFORMATION& Region
++			)
++			{
++				switch (Region.Protect & 0xFF)
++				{
++				case PAGE_READONLY:
++				case PAGE_READWRITE:
++				case PAGE_WRITECOPY:
++				case PAGE_EXECUTE_READ:
++				case PAGE_EXECUTE_READWRITE:
++				case PAGE_EXECUTE_WRITECOPY:
++					return true;
++				}
++
++				return false;
++			}
++
++			inline bool GmpiIsRegionExecutable(
++				IN const MEMORY_BASIC_INFORMATION& Region
++			)
++			{
++				switch (Region.Protect & 0xFF)
++				{
++				case PAGE_EXECUTE:
++				case PAGE_EXECUTE_READ:
++				case PAGE_EXECUTE_READWRITE:
++				case PAGE_EXECUTE_WRITECOPY:
++					return true;
++				}
++
++				return false;
++			}
++
++			// Every section of a loaded image shares the image base as its allocation base,
++			// so this needs neither section names nor the PE headers.
++			inline bool GmpiIsRegionInImage(
++				IN const MEMORY_BASIC_INFORMATION& Region,
++				IN LPCVOID ImageBase
++			)
++			{
++				return ImageBase && Region.Type == MEM_IMAGE && Region.AllocationBase == ImageBase;
++			}
++
++			inline bool GmpiIsReadableImageAddress(
++				IN uintptr_t Address,
++				IN LPCVOID ImageBase
++			)
++			{
++				MEMORY_BASIC_INFORMATION region;
++				return GmpiQueryRegion(Address, region) && GmpiIsRegionReadable(region) && GmpiIsRegionInImage(region, ImageBase);
++			}
++
++			inline bool GmpiIsExecutableImageAddress(
++				IN uintptr_t Address,
++				IN LPCVOID ImageBase
++			)
++			{
++				MEMORY_BASIC_INFORMATION region;
++				return GmpiQueryRegion(Address, region) && GmpiIsRegionExecutable(region) && GmpiIsRegionInImage(region, ImageBase);
++			}
++
++			// Returns how many bytes starting at Address are committed and readable, up to MaximumSize.
++			// One VirtualQuery per region, not per byte or per page.
++			inline size_t GmpiGetReadableSpan(
++				IN uintptr_t Address,
++				IN size_t MaximumSize
++			)
++			{
++				size_t span = 0;
++				while (Address && span < MaximumSize)
++				{
++					const uintptr_t cursor = Address + span;
++					if (cursor < Address)
++						break;
++
++					MEMORY_BASIC_INFORMATION region;
++					if (!GmpiQueryRegion(cursor, region) || !GmpiIsRegionReadable(region))
++						break;
++
++					// VirtualQuery rounds BaseAddress down to the page and measures RegionSize from
++					// there, so what is left for us is counted from the cursor, not from the base.
++					const uintptr_t region_end = reinterpret_cast<uintptr_t>(region.BaseAddress) + region.RegionSize;
++					if (region_end <= cursor)
++						break;
++
++					const size_t available = region_end - cursor;
++					const size_t wanted = MaximumSize - span;
++					span += (available < wanted) ? available : wanted;
++				}
++
++				return span;
++			}
++
++			// Copies memory that may not be mapped at all. Never faults.
++			inline bool GmpiCopyMemory(
++				IN uintptr_t Address,
++				IN size_t Size,
++				OUT PVOID Buffer
++			)
++			{
++				if (!Address || !Size || !Buffer)
++					return false;
++
++				// The whole range has to be readable right now, so that nothing that is known
++				// to be a guard page or PAGE_NOACCESS is ever handed to a read.
++				// MEASURED with the host test on Windows 11 (26200): ReadProcessMemory on its own also
++				// fails on a guard page and leaves it armed. That is not documented behaviour, so this
++				// check stays, but the test cannot tell the two apart.
++				if (GmpiGetReadableSpan(Address, Size) != Size)
++					return false;
++
++				// The copy itself is done by the OS, which fails instead of faulting
++				// if another thread pulled the page from under us in the meantime.
++				// That race is ASSUMED to be possible, it was never observed.
++				SIZE_T bytes_read = 0;
++				if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(Address), Buffer, Size, &bytes_read))
++					return false;
++
++				return bytes_read == Size;
++			}
++
++			// Checks OUR OWN copy of a name: terminated within Size bytes, not empty, graphic ASCII only.
++			// Buffer is never game memory, so this is a plain loop.
++			inline bool GmpiIsFunctionName(
++				IN const char* Buffer,
++				IN size_t Size
++			)
++			{
++				for (size_t i = 0; i < Size; i++)
++				{
++					const unsigned char current = static_cast<unsigned char>(Buffer[i]);
++					if (current == '\0')
++						return i != 0;
++
++					// No spaces, no control characters, nothing above 0x7E
++					if (current < 0x21 || current > 0x7E)
++						return false;
++				}
++
++				return false;
++			}
++
++			// Keeps a reason short enough to be logged, see MAXIMUM_REASON_LENGTH
++			inline void GmpiCapReasonLength(
++				IN OUT std::string& Reason,
++				IN size_t MaximumLength
++			)
++			{
++				if (MaximumLength < 3 || Reason.size() <= MaximumLength)
++					return;
++
++				Reason.resize(MaximumLength - 3);
++				Reason += "...";
++			}
++
++			// Returns nullptr if the entry was copied into Entry, otherwise why it was not.
++			inline const char* GmpiSnapshotFunctionEntry(
++				IN uintptr_t ArrayBase,
++				IN size_t EntrySize,
++				IN size_t Index,
++				OUT FunctionEntrySnapshot& Entry
++			)
++			{
++				memset(&Entry, 0, sizeof(Entry));
++
++				const uintptr_t entry_address = ArrayBase + (EntrySize * Index);
++				if (entry_address < ArrayBase)
++					return "is outside of the address space";
++
++				if (EntrySize == sizeof(ReferentialEntryLayout))
++				{
++					ReferentialEntryLayout raw_entry = {};
++					if (!GmpiCopyMemory(entry_address, sizeof(raw_entry), &raw_entry))
++						return "is not readable";
++
++					Entry.Routine = reinterpret_cast<uintptr_t>(raw_entry.m_Routine);
++
++					// A literal may sit right before an unmapped page, so only take what is there.
++					// The last byte of Entry.Name is never written, which keeps it terminated for logging.
++					const uintptr_t name_address = reinterpret_cast<uintptr_t>(raw_entry.m_Name);
++					const size_t name_span = GmpiGetReadableSpan(name_address, sizeof(Entry.Name) - 1);
++					if (!name_span || !GmpiCopyMemory(name_address, name_span, Entry.Name))
++						return "has a name pointer that is not readable";
++
++					if (!GmpiIsFunctionName(Entry.Name, name_span))
++					{
++						Entry.Name[0] = '\0';
++						return "has a name that is not a terminated graphic ASCII string";
++					}
++
++					return nullptr;
++				}
++
++				if (EntrySize == sizeof(EmbeddedEntryLayout))
++				{
++					EmbeddedEntryLayout raw_entry = {};
++					if (!GmpiCopyMemory(entry_address, sizeof(raw_entry), &raw_entry))
++						return "is not readable";
++
++					// The name is embedded, so it is checked in our own copy of the entry
++					Entry.Routine = reinterpret_cast<uintptr_t>(raw_entry.m_Routine);
++					if (!GmpiIsFunctionName(raw_entry.m_Name, sizeof(raw_entry.m_Name)))
++						return "has a name that is not a terminated graphic ASCII string";
++
++					memcpy(Entry.Name, raw_entry.m_Name, sizeof(raw_entry.m_Name));
++					return nullptr;
++				}
++
++				return "has an unsupported size";
++			}
++
++			// Checks the first SAMPLE_COUNT entries of the table at ArrayBase under one layout.
++			// On success Summary describes what was found, on failure Reason says what was not.
++			inline bool GmpiCheckFunctionsArrayLayout(
++				IN uintptr_t ArrayBase,
++				IN size_t EntrySize,
++				IN LPCVOID ImageBase,
++				IN FunctionFinder Finder,
++				OUT std::string& Summary,
++				OUT std::string& Reason
++			)
++			{
++				FunctionEntrySnapshot entries[SAMPLE_COUNT];
++
++				// Structure first. The game is only ever asked about names
++				// that come from a table which parses from start to end.
++				for (size_t i = 0; i < SAMPLE_COUNT; i++)
++				{
++					const char* failure = GmpiSnapshotFunctionEntry(ArrayBase, EntrySize, i, entries[i]);
++					if (failure)
++					{
++						Reason = "entry " + std::to_string(i) + " " + failure;
++						return false;
++					}
++
++					// Builtins are implemented by the runner itself
++					if (!GmpiIsExecutableImageAddress(entries[i].Routine, ImageBase))
++					{
++						Reason = "entry " + std::to_string(i) + " ('" + entries[i].Name + "') has a routine that is not executable game image code";
++						return false;
++					}
++				}
++
++				// Then ask the game where it thinks these names live.
++				// At least one has to agree, and none may contradict.
++				size_t confirmed_count = 0;
++				for (size_t i = 0; i < SAMPLE_COUNT; i++)
++				{
++					// The name passed in is our own, validated and terminated copy
++					int reported_index = -1;
++					Finder(entries[i].Name, &reported_index);
++
++					// Unknown to the game, or shadowed by a script / extension function: tells us nothing
++					if (reported_index < 0 || reported_index >= BUILTIN_INDEX_LIMIT)
++						continue;
++
++					if (static_cast<size_t>(reported_index) == i)
++					{
++						confirmed_count++;
++						continue;
++					}
++
++					// A name registered twice is fine, as long as the entry
++					// the game points us at really carries that name.
++					FunctionEntrySnapshot reported_entry;
++					const char* failure = GmpiSnapshotFunctionEntry(ArrayBase, EntrySize, static_cast<size_t>(reported_index), reported_entry);
++					if (failure || strcmp(reported_entry.Name, entries[i].Name))
++					{
++						Reason = "Code_Function_Find places entry " + std::to_string(i) + " ('" + entries[i].Name + "') at index " +
++							std::to_string(reported_index) + ", which " + (failure ? failure : "holds another name");
++						return false;
++					}
++
++					confirmed_count++;
++				}
++
++				if (!confirmed_count)
++				{
++					Reason = "Code_Function_Find confirmed none of the sampled names (entry 0 is '" + std::string(entries[0].Name) + "')";
++					return false;
++				}
++
++				Summary = "entry 0 is '" + std::string(entries[0].Name) + "', " + std::to_string(confirmed_count) + " of " +
++					std::to_string(SAMPLE_COUNT) + " names confirmed by Code_Function_Find";
++				return true;
++			}
++
++			// Candidate is the address of a global that is *supposed* to be "RFunction* the_functions".
++			// Nothing about it is trusted, and nothing reachable from it is dereferenced directly.
++			// Returns true and the entry size if it is, false and the reason if it is not.
++			inline bool GmpiValidateFunctionsArray(
++				IN uintptr_t Candidate,
++				IN LPCVOID ImageBase,
++				IN FunctionFinder Finder,
++				OUT size_t& EntrySize,
++				OUT std::string& Reason
++			)
++			{
++				EntrySize = 0;
++				Reason.clear();
++
++				if (!Finder || !ImageBase)
++				{
++					Reason = "there is nothing to check it against";
++					return false;
++				}
++
++				// the_functions is a global of the runner
++				if (!GmpiIsReadableImageAddress(Candidate, ImageBase))
++				{
++					Reason = "global is not readable game image memory";
++					return false;
++				}
++
++				if (Candidate % alignof(void*))
++				{
++					Reason = "global is not pointer-aligned";
++					return false;
++				}
++
++				// This is the value upstream dereferenced blindly
++				uintptr_t array_base = 0;
++				if (!GmpiCopyMemory(Candidate, sizeof(array_base), &array_base))
++				{
++					Reason = "global could not be read";
++					return false;
++				}
++
++				if (!array_base || (array_base % alignof(void*)))
++				{
++					Reason = "global does not hold an aligned pointer";
++					return false;
++				}
++
++				// The table has to parse from start to end under ONE layout.
++				// A table that parses as referential cannot parse as embedded, since
++				// pointer bytes are not graphic ASCII, so the order does not matter.
++				std::string referential_reason;
++				if (GmpiCheckFunctionsArrayLayout(array_base, sizeof(ReferentialEntryLayout), ImageBase, Finder, Reason, referential_reason))
++				{
++					EntrySize = sizeof(ReferentialEntryLayout);
++					return true;
++				}
++
++				std::string embedded_reason;
++				if (GmpiCheckFunctionsArrayLayout(array_base, sizeof(EmbeddedEntryLayout), ImageBase, Finder, Reason, embedded_reason))
++				{
++					EntrySize = sizeof(EmbeddedEntryLayout);
++					return true;
++				}
++
++				Reason = "as referential: " + referential_reason + "; as embedded: " + embedded_reason;
++				GmpiCapReasonLength(Reason, MAXIMUM_REASON_LENGTH);
++
++				return false;
++			}
++
++			// Goes through Candidates in the order given and picks the one that is the functions array.
++			// A value that shows up more than once is looked at (and reported) once, the first time.
++			// Reporter is told about every candidate that was looked at:
++			//   Reporter(size_t Index, uintptr_t Candidate, bool Accepted, size_t EntrySize, const std::string& Text)
++			// where Text is the reason for a rejected candidate, and the summary for an accepted one.
++			//
++			// PreferLowest == false: the first valid candidate wins, nothing behind it is looked at.
++			// PreferLowest == true:  every distinct candidate is looked at, the valid one lowest in memory wins.
++			//
++			// There is no "least bad" pick. If no candidate is valid this returns false,
++			// and nothing but ExaminedCount is set in Selection.
++			template <typename TReporter>
++			inline bool GmpiSelectFunctionsArray(
++				IN const uintptr_t* Candidates,
++				IN size_t CandidateCount,
++				IN LPCVOID ImageBase,
++				IN FunctionFinder Finder,
++				IN bool PreferLowest,
++				IN TReporter&& Reporter,
++				OUT FunctionsArraySelection& Selection
++			)
++			{
++				memset(&Selection, 0, sizeof(Selection));
++
++				if (!Candidates)
++					return false;
++
++				bool is_anything_selected = false;
++				for (size_t i = 0; i < CandidateCount; i++)
++				{
++					// Quadratic, but the list is bounded by the caller's scan window (a few hundred bytes of code)
++					bool is_duplicate = false;
++					for (size_t k = 0; k < i && !is_duplicate; k++)
++						is_duplicate = (Candidates[k] == Candidates[i]);
++
++					if (is_duplicate)
++						continue;
++
++					size_t entry_size = 0;
++					std::string text;
++					const bool is_accepted = GmpiValidateFunctionsArray(
++						Candidates[i],
++						ImageBase,
++						Finder,
++						entry_size,
++						text
++					);
++
++					Selection.ExaminedCount++;
++					Reporter(i, Candidates[i], is_accepted, entry_size, text);
++
++					if (!is_accepted)
++						continue;
++
++					if (!is_anything_selected || Candidates[i] < Selection.Candidate)
++					{
++						is_anything_selected = true;
++						Selection.Candidate = Candidates[i];
++						Selection.CandidateIndex = i;
++						Selection.EntrySize = entry_size;
++					}
++
++					if (!PreferLowest)
++						break;
++				}
++
++				return is_anything_selected;
++			}
++
++			// Stage 2 asks this before it runs both finders again, see MAXIMUM_FAILED_SEARCHES
++			inline bool GmpiIsSearchWorthRepeating(
++				IN size_t FailedSearchCount
++			)
++			{
++				return FailedSearchCount < MAXIMUM_FAILED_SEARCHES;
++			}
++		}
++	}
++}
++
++#endif // YYTK_FUNCTIONS_ARRAY_VALIDATION_H_
+diff --git a/YYToolkit/source/YYTK/Module Internals/GameMaker/VM/VM-Functions.cpp b/YYToolkit/source/YYTK/Module Internals/GameMaker/VM/VM-Functions.cpp
+index 79ca023..df119e0 100644
+--- a/YYToolkit/source/YYTK/Module Internals/GameMaker/VM/VM-Functions.cpp	
++++ b/YYToolkit/source/YYTK/Module Internals/GameMaker/VM/VM-Functions.cpp	
+@@ -1,4 +1,5 @@
+ #include "../../Module Internals.hpp"
++#include "../Generic/FunctionsArrayValidation.hpp"
+ 
+ using namespace Aurie;
+ 
+@@ -14,10 +15,28 @@ namespace YYTK
+ 			if (!Interface.Code_Function_Find)
+ 				return AURIE_MODULE_INTERNAL_ERROR;
+ 
++			// GmpDisassemble reads whatever it is pointed at, so only hand it bytes that are there
++			const size_t scan_size = GmpGetReadableSpan(
++				reinterpret_cast<LPCVOID>(Interface.Code_Function_Find),
++				0x200
++			);
++
++			if (!scan_size)
++			{
++				CmWriteLogOutput(
++					"[%s:%d] VM::GmpFindFunctionsArray() refused to disassemble Code_Function_Find at 0x%p: not readable",
++					__FILE__,
++					__LINE__,
++					reinterpret_cast<PVOID>(Interface.Code_Function_Find)
++				);
++
++				return AURIE_MODULE_INTERNAL_ERROR;
++			}
++
+ 			// Disassemble this function
+ 			std::vector<TargettedInstruction> instructions = GmpDisassemble(
+ 				Interface.Code_Function_Find,
+-				0x200,
++				scan_size,
+ 				0xFF
+ 			);
+ 
+@@ -26,7 +45,7 @@ namespace YYTK
+ 			// In VM, this technique results in finding the Extension array, 
+ 			// since Extension_Function_GetId is inlined into Code_Function_Find...
+ 
+-			std::vector<RFunction**> potential_function_arrays;
++			std::vector<uintptr_t> potential_function_arrays;
+ 			for (auto& instruction : instructions)
+ 			{
+ 				// The instruction has to be a mov
+@@ -71,33 +90,96 @@ namespace YYTK
+ 				if (!second_operand.mem.disp.has_displacement)
+ 					continue;
+ 
++				// A global is addressed relative to RIP. Anything else depends on a register value
++				// we don't have, and would show up below as a candidate at address 0.
++				if (second_operand.mem.base != ZYDIS_REGISTER_RIP)
++					continue;
++
+ 				// Calculate the absolute address
+ 				ZyanU64 call_address = 0;
+-				ZydisCalcAbsoluteAddress(
++				if (!ZYAN_SUCCESS(ZydisCalcAbsoluteAddress(
+ 					&instruction.RawForm.info,
+ 					&second_operand,
+ 					instruction.RawForm.runtime_address,
+ 					&call_address
+-				);
++				)))
++				{
++					continue;
++				}
+ 
+-				// It's a pointer to a pointer, we dereference it once to   
+-				// get the actual pointer to the first element in the array
+-				potential_function_arrays.push_back(reinterpret_cast<RFunction**>(call_address));
++				// It's a pointer to a pointer. It is only a candidate here, nothing dereferences it directly.
++				// Bounded by the scan size: there is room for at most 0x200 / 7 of them.
++				potential_function_arrays.push_back(static_cast<uintptr_t>(call_address));
+ 			}
+ 
+ 			if (potential_function_arrays.empty())
++			{
++				CmWriteLogOutput(
++					"[%s:%d] VM::GmpFindFunctionsArray() => no candidate in %lld instructions (0x%llX readable bytes)",
++					__FILE__,
++					__LINE__,
++					static_cast<long long>(instructions.size()),
++					static_cast<unsigned long long>(scan_size)
++				);
++
+ 				return AURIE_OBJECT_NOT_FOUND;
++			}
+ 
+-			// Return the lowest one in memory
+-			// TODO: Figure out how to actually do this
+-			RFunction** lowest_in_memory = reinterpret_cast<RFunction**>(MAXULONG_PTR);
+-			for (auto& array_pointer : potential_function_arrays)
++			// Upstream returned the lowest candidate in memory without looking at it, and its caller
++			// dereferences whatever comes back. This function is also what stage 2 falls back to right
++			// after the YYC variant fails, on a YYC game too, so it must not hand out anything unproven.
++			// Keep the preference for the lowest one, but only among candidates that are provably the array.
++			// The choice itself is made by code the host test runs as well, every distinct candidate is logged once.
++			FunctionsArrayValidation::FunctionsArraySelection selection = {};
++			bool is_array_found = FunctionsArrayValidation::GmpiSelectFunctionsArray(
++				potential_function_arrays.data(),
++				potential_function_arrays.size(),
++				GetModuleHandleW(nullptr),
++				Interface.Code_Function_Find,
++				true,
++				[](size_t Index, uintptr_t Candidate, bool Accepted, size_t EntrySize, const std::string& Text)
++				{
++					UNREFERENCED_PARAMETER(Index);
++
++					if (!Accepted)
++					{
++						CmWriteLogOutput(
++							"[%s:%d] VM::GmpFindFunctionsArray() rejected candidate 0x%p: %s",
++							__FILE__,
++							__LINE__,
++							reinterpret_cast<PVOID>(Candidate),
++							Text.c_str()
++						);
++
++						return;
++					}
++
++					CmWriteLogOutput(
++						"[%s:%d] VM::GmpFindFunctionsArray() accepted candidate 0x%p (entry size %lld): %s",
++						__FILE__,
++						__LINE__,
++						reinterpret_cast<PVOID>(Candidate),
++						static_cast<long long>(EntrySize),
++						Text.c_str()
++					);
++				},
++				selection
++			);
++
++			// FunctionsArray is left untouched, the caller gets a status instead of a pointer it would fault on
++			if (!is_array_found)
+ 			{
+-				if (reinterpret_cast<uintptr_t>(lowest_in_memory) > reinterpret_cast<uintptr_t>(array_pointer))
+-					lowest_in_memory = array_pointer;
++				CmWriteLogOutput(
++					"[%s:%d] VM::GmpFindFunctionsArray() => none of %lld distinct candidate(s) is the functions array",
++					__FILE__,
++					__LINE__,
++					static_cast<long long>(selection.ExaminedCount)
++				);
++
++				return AURIE_OBJECT_NOT_FOUND;
+ 			}
+ 
+-			*FunctionsArray = lowest_in_memory;
++			*FunctionsArray = reinterpret_cast<RFunction**>(selection.Candidate);
+ 			return AURIE_SUCCESS;
+ 		}
+ 	}
+diff --git a/YYToolkit/source/YYTK/Module Internals/GameMaker/YYC/YYC-Functions.cpp b/YYToolkit/source/YYTK/Module Internals/GameMaker/YYC/YYC-Functions.cpp
+index f655d08..444f006 100644
+--- a/YYToolkit/source/YYTK/Module Internals/GameMaker/YYC/YYC-Functions.cpp	
++++ b/YYToolkit/source/YYTK/Module Internals/GameMaker/YYC/YYC-Functions.cpp	
+@@ -1,9 +1,45 @@
+ #include "../../Module Internals.hpp"
++#include "../Generic/FunctionsArrayValidation.hpp"
++#include <cstddef>
+ 
+ using namespace Aurie;
+ 
+ namespace YYTK
+ {
++	// ===== the_functions candidate validation =====
++	// The logic lives in FunctionsArrayValidation.hpp, which knows nothing about YYTK types
++	// so that it can be tested without the game. Make sure it has the same idea of an entry.
++	static_assert(sizeof(FunctionsArrayValidation::ReferentialEntryLayout) == sizeof(RFunctionStringRef));
++	static_assert(offsetof(FunctionsArrayValidation::ReferentialEntryLayout, m_Name) == offsetof(RFunctionStringRef, m_Name));
++	static_assert(offsetof(FunctionsArrayValidation::ReferentialEntryLayout, m_Routine) == offsetof(RFunctionStringRef, m_Routine));
++	static_assert(sizeof(FunctionsArrayValidation::EmbeddedEntryLayout) == sizeof(RFunctionStringFull));
++	static_assert(offsetof(FunctionsArrayValidation::EmbeddedEntryLayout, m_Name) == offsetof(RFunctionStringFull, m_Name));
++	static_assert(offsetof(FunctionsArrayValidation::EmbeddedEntryLayout, m_Routine) == offsetof(RFunctionStringFull, m_Routine));
++
++	size_t GmpGetReadableSpan(
++		IN LPCVOID Address,
++		IN size_t MaximumSize
++	)
++	{
++		return FunctionsArrayValidation::GmpiGetReadableSpan(
++			reinterpret_cast<uintptr_t>(Address),
++			MaximumSize
++		);
++	}
++
++	bool GmpCopyMemoryGuarded(
++		IN LPCVOID Address,
++		IN size_t Size,
++		OUT PVOID Buffer
++	)
++	{
++		return FunctionsArrayValidation::GmpiCopyMemory(
++			reinterpret_cast<uintptr_t>(Address),
++			Size,
++			Buffer
++		);
++	}
++
+ 	namespace YYC
+ 	{
+ 		AurieStatus GmpFindFunctionsArrayX86(
+@@ -81,16 +117,41 @@ namespace YYTK
+ 			if (!Interface.Code_Function_Find)
+ 				return AURIE_MODULE_INTERNAL_ERROR;
+ 
++			// GmpDisassemble reads whatever it is pointed at, so only hand it bytes that are there.
++			// Upstream looked at 0x200 bytes. Every candidate is validated now, so looking further
++			// can only add candidates behind the ones upstream would have seen.
++			const size_t scan_size = GmpGetReadableSpan(
++				reinterpret_cast<LPCVOID>(Interface.Code_Function_Find),
++				0x400
++			);
++
++			if (!scan_size)
++			{
++				CmWriteLogOutput(
++					"[%s:%d] GmpFindFunctionsArrayX64() refused to disassemble Code_Function_Find at 0x%p: not readable",
++					__FILE__,
++					__LINE__,
++					reinterpret_cast<PVOID>(Interface.Code_Function_Find)
++				);
++
++				return AURIE_MODULE_INTERNAL_ERROR;
++			}
++
+ 			// Disassemble this function
+ 			std::vector<TargettedInstruction> instructions = GmpDisassemble(
+ 				Interface.Code_Function_Find,
+-				0x200,
++				scan_size,
+ 				0xFF
+ 			);
+ 
+-			// It just so happens the first 7-byte long MOV  
+-			// instruction references the the_functions array.
++			// Upstream assumed the first 7-byte long MOV references the the_functions array.
++			// MEASURED on Hero Siege: the log of an unpatched build ends with the line that prints
++			// this function's result. INFERRED from that (there is no crash dump): the first MOV
++			// loads some other global there, and dereferencing it is what kills the process.
++			// So every such MOV is a candidate, and the first one that is provably the array wins.
+ 			// It usually looks like mov <64bit register>, [the_functions]
++			std::vector<uintptr_t> candidates;
++			std::vector<ZyanU64> candidate_instructions;
+ 			for (auto& instruction : instructions)
+ 			{
+ 				// The instruction has to be a mov
+@@ -135,21 +196,88 @@ namespace YYTK
+ 				if (!second_operand.mem.disp.has_displacement)
+ 					continue;
+ 
++				// A global is addressed relative to RIP.
++				// Anything else depends on a register value we don't have.
++				if (second_operand.mem.base != ZYDIS_REGISTER_RIP)
++					continue;
++
+ 				// Calculate the absolute address
+ 				ZyanU64 call_address = 0;
+-				ZydisCalcAbsoluteAddress(
++				if (!ZYAN_SUCCESS(ZydisCalcAbsoluteAddress(
+ 					&instruction.RawForm.info,
+ 					&second_operand,
+ 					instruction.RawForm.runtime_address,
+ 					&call_address
+-				);
++				)))
++				{
++					continue;
++				}
+ 
+-				// It's a pointer to a pointer, we dereference it once to   
+-				// get the actual pointer to the first element in the array
+-				*FunctionsArray = reinterpret_cast<RFunction**>(call_address);
++				// It's a pointer to a pointer. It is only a candidate here, nothing dereferences it directly.
++				// Bounded by the scan size: there is room for at most 0x400 / 7 of them.
++				candidates.push_back(static_cast<uintptr_t>(call_address));
++				candidate_instructions.push_back(instruction.RawForm.runtime_address);
++			}
++
++			// The choice itself (every distinct candidate once, in order, first valid one wins, no fallback)
++			// is made by code the host test runs as well. One log line per candidate that was looked at:
++			// the same global is often loaded more than once, and GmpDisassemble may hand out
++			// the same instruction twice after a failed decode.
++			FunctionsArrayValidation::FunctionsArraySelection selection = {};
++			bool is_array_found = FunctionsArrayValidation::GmpiSelectFunctionsArray(
++				candidates.data(),
++				candidates.size(),
++				GetModuleHandleW(nullptr),
++				Interface.Code_Function_Find,
++				false,
++				[&candidate_instructions](size_t Index, uintptr_t Candidate, bool Accepted, size_t EntrySize, const std::string& Text)
++				{
++					if (!Accepted)
++					{
++						CmWriteLogOutput(
++							"[%s:%d] GmpFindFunctionsArrayX64() rejected candidate 0x%p (mov at 0x%p): %s",
++							__FILE__,
++							__LINE__,
++							reinterpret_cast<PVOID>(Candidate),
++							reinterpret_cast<PVOID>(candidate_instructions[Index]),
++							Text.c_str()
++						);
++
++						return;
++					}
++
++					CmWriteLogOutput(
++						"[%s:%d] GmpFindFunctionsArrayX64() accepted candidate 0x%p (mov at 0x%p, entry size %lld): %s",
++						__FILE__,
++						__LINE__,
++						reinterpret_cast<PVOID>(Candidate),
++						reinterpret_cast<PVOID>(candidate_instructions[Index]),
++						static_cast<long long>(EntrySize),
++						Text.c_str()
++					);
++				},
++				selection
++			);
++
++			if (is_array_found)
++			{
++				*FunctionsArray = reinterpret_cast<RFunction**>(selection.Candidate);
+ 				return AURIE_SUCCESS;
+ 			}
+ 
++			// Never fall back to an unvalidated candidate. FunctionsArray is left untouched,
++			// and the caller gets a status instead of a pointer it would fault on.
++			// GmpDisassemble may stop before the end of the window (0xFF instructions without a LEA),
++			// so say how far it got. If the real MOV is further in, this line is how one can tell.
++			CmWriteLogOutput(
++				"[%s:%d] GmpFindFunctionsArrayX64() => none of %lld distinct candidate(s) is the functions array (%lld instructions, 0x%llX readable bytes)",
++				__FILE__,
++				__LINE__,
++				static_cast<long long>(selection.ExaminedCount),
++				static_cast<long long>(instructions.size()),
++				static_cast<unsigned long long>(scan_size)
++			);
++
+ 			return AURIE_OBJECT_NOT_FOUND;
+ 		}
+ 
+diff --git a/YYToolkit/source/YYTK/Module Internals/Module Internals.hpp b/YYToolkit/source/YYTK/Module Internals/Module Internals.hpp
+index 646ce39..30f039e 100644
+--- a/YYToolkit/source/YYTK/Module Internals/Module Internals.hpp	
++++ b/YYToolkit/source/YYTK/Module Internals/Module Internals.hpp	
+@@ -84,6 +84,20 @@ namespace YYTK
+ 		IN LPCVOID Address
+ 	);
+ 
++	// Returns how many bytes starting at Address can be read right now, up to MaximumSize.
++	// Never touches the memory in question.
++	size_t GmpGetReadableSpan(
++		IN LPCVOID Address,
++		IN size_t MaximumSize
++	);
++
++	// Copies memory that may not be mapped at all. Returns false instead of faulting.
++	bool GmpCopyMemoryGuarded(
++		IN LPCVOID Address,
++		IN size_t Size,
++		OUT PVOID Buffer
++	);
++
+ 	Aurie::AurieStatus GmpGetRunnerInterface(
+ 		OUT YYRunnerInterface& Interface
+ 	);

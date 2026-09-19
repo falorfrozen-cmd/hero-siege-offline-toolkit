@@ -1,0 +1,2163 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hero Siege Offline Toolkit <noreply@example.invalid>
+Date: Sat, 19 Sep 2026 12:00:00 +0000
+Subject: [PATCH 1/7] runner interface: rank pages, keep a scan hint on disk
+
+Why: Hero Siege is a GameMaker YYC x64 build whose .text is at least 190 MB (the interface chain sits at RVA 0xB5557E2; the section size itself was not read), and upstream finds the RunnerInterface chain by disassembling that section page by page, first to last, on every launch, behind a "Please wait ... up to a minute" message. The modified DLL this toolkit shipped avoided that with a cache file next to the executable, but on a cache hit it planted the mid-function hook at an address read straight from that file, checking nothing but the executable's size. A stale or hand-edited file therefore patched game code at an arbitrary address, and stayed wrong on every later launch. This patch re-creates the intent as original code: a byte-level lea/mov-to-stack density ranker decides which pages the UNCHANGED upstream page scan visits first (every other page still follows, each page once), and <exe>.yytkcache is demoted to a hint whose chain RVA only selects the pages scanned first (the page it names and the page before it). The hook address is never read back from disk; acceptance and MmCreateMidfunctionHook placement always come from the upstream scan of bytes mapped in this process. Every launch that reaches the ranked scan says in one line whether the ranking found the chain ("RI pre-filter hit") or the chain was only reached in the address-order remainder ("RI pre-filter miss"), so a ranker that ranks the wrong pages cannot pass for one that works.
+
+Evidence: evidence/fresh-build-crash.YYToolkit.log:1 (base 0x00007FF7D2F80000), :3 (cache hit at offset 0xB555351, no scan), :17 (first chain instruction 0x7ff7de4d57e2, i.e. RVA 0xB5557E2), :17-219 (100 lea/store pairs using 48 8D 0D, 48 89 4C 24 xx, 48 89 4D xx, 48 89 8D xx xx xx xx and one interrupting mov edx - the encodings the host test reproduces). The unchecked hook placement is documented/Generic-RunnerInterfaceNew.cpp:450-476. ForgePact/src/forgepact.py:268-290 (ensure_ri_cache) is a second writer of the same file: three decimal numbers keyed on the size, written by Python with CRLF, compared on token 1 only - so the legacy line stays readable and the 6 number line survives it. YYToolkit/hs-tests/ri_scan_test.cpp: 166 checks pass, also under /fsanitize=address. YYToolkit/hs-tests/ri_memory_test.cpp: 42 checks pass against real VirtualAlloc regions (reserved tail, PAGE_NOACCESS hole, guard page, PAGE_EXECUTE page, decommitted page, wrap-around; not run under /fsanitize=address); the same run read a PAGE_EXECUTE page on this x64 host without a fault, which the allow-list refuses all the same. 12 single-line mutations of the two helper headers (the ModRM mask, the gap limit at 5/6/8, each 32-bit identity limit, the ranked-visit boundary, the page before the hint, the preferred count, the region walk, PAGE_EXECUTE allowed, the guard test removed) each fail at least one check. NOT verified: no launch of the game was made with this patch; how long the scan takes with or without the pre-filter (no log has timed either, and the byte pass still pages all of .text in on a cold launch); whether the ranker ranks this game's chain page among its 64 (the "RI pre-filter hit" line of the first launch without a hint is what shows it); whether any build's chain crosses a page boundary (the page-before-the-hint rule is REASONED from upstream's 88..103 test, not reproduced); whether Internal::PpiGetModuleSectionBounds reports the virtual or the raw size (hence the bounds and VirtualQuery checks instead of trust); whether the PE CheckSum is non-zero on this game; whether Aurie's MmCreateMidfunctionHook validates its target, or can itself return AURIE_OBJECT_NOT_FOUND (Aurie's source is not in the tree, hence the WasChainAccepted out-parameter instead of reading a page miss out of the status); the Win32 configuration.
+
+Fails-safe: Nothing read from the file can place the hook. Unreadable, empty, garbage, overlong, signed, hexadecimal or truncated lines, and a chain RVA outside .text, log one "RI scan hint miss" line and fall through to the ranked scan. A key mismatch (size, TimeDateStamp, SizeOfImage, CheckSum from the mapped headers; the file is never hashed) is only logged - the hinted pages are still tried, because the scan validates them. A hint without the chain costs two pages of disassembly, then the ranked scan runs over all remaining pages. The page before the hinted one is scanned first, in upstream's order, so a stale or hand-edited hint that names the page a chain continues on cannot get the middle of that chain accepted as its start and then written back as a matching hint (upstream itself has the same weakness when fewer than four pairs sit on the first page; that is unchanged). If the chain is accepted on a hinted page but the hook cannot be created, one "RI scan hint hook failed" line says so and the status is returned at once - the rest of .text is not disassembled for a hook that would be attempted at the same place, and the failure is never reported as a hint miss. If the PE headers cannot be queried, .text exceeds SizeOfImage, or .text is not committed memory whose protection is on an allow-list of readable protections from start to end (PAGE_EXECUTE alone is refused), hint and pre-filter are both refused with one line and the scan runs in upstream's order. Pages the ranker misses are still scanned, in address order, after the ranked ones, and the "RI pre-filter miss" line then names the page and the visit it was found at; pages linked by a run that crosses a page boundary keep their address order, as upstream would see them. If no page holds the chain, "RI scan found no chain" says how many were scanned. The file is rewritten only when the stored line differs, never when the size of the executable is unknown, and not atomically on purpose: a half-written file is merely a bad hint. The path is queried with a growing buffer (no MAX_PATH truncation) and never logged. Also guards upstream's (iterator - 1) dereference when sub rsp is the last decoded instruction, and sets m_RunnerInterfaceBase before the hook can fire (reset to 0 if the hook cannot be created). Residual: visiting pages in another order changes which site wins if more than one site in .text passes upstream's 88..103 lea test (upstream's own TODO) - the hinted pages and the ranked pages are both seen before the rest; the legacy-compatible line keeps an older, unvalidating DLL trusting token 2 until that DLL is replaced.
+
+Log-markers: "RI scan hint hit"
+Log-markers: "RI scan hint miss"
+Log-markers: "RI scan hint key mismatch"
+Log-markers: "RI scan hint refused"
+Log-markers: "RI scan hint written"
+Log-markers: "RI scan hint not written"
+Log-markers: "RI scan hint unchanged"
+Log-markers: "RI scan hint hook failed"
+Log-markers: "RI pre-filter ranked"
+Log-markers: "RI pre-filter hit"
+Log-markers: "RI pre-filter miss"
+Log-markers: "RI scan found no chain"
+
+Upstream-status: not submitted. Upstream v4.0.1 has the plain first-to-last page scan and no hint file.
+
+diff --git a/YYToolkit/hs-tests/ri_memory_test.cpp b/YYToolkit/hs-tests/ri_memory_test.cpp
+new file mode 100644
+index 0000000..073f146
+--- /dev/null
++++ b/YYToolkit/hs-tests/ri_memory_test.cpp
+@@ -0,0 +1,150 @@
++// Host test for Generic-RunnerInterfaceMemory.hpp - needs neither the game nor Aurie/Zydis, but it
++// does need Windows: the helper is run against real VirtualAlloc regions.
++//
++// From a "x64 Native Tools" prompt, in this directory:
++//     cl /nologo /std:c++latest /EHsc /W4 ri_memory_test.cpp && ri_memory_test.exe
++//
++// Prints one line per check and returns non-zero if any check failed.
++// Every predicate has at least one input it must accept and one it must refuse.
++
++#include "../source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceMemory.hpp"
++
++#include <cstdio>
++
++using namespace YYTK::RiScan;
++
++static int g_ChecksRun = 0;
++static int g_ChecksFailed = 0;
++
++static void Check(
++	IN bool Condition,
++	IN const char* Name
++)
++{
++	g_ChecksRun++;
++	if (!Condition)
++		g_ChecksFailed++;
++
++	std::printf("%s  %s\n", Condition ? "ok  " : "FAIL", Name);
++}
++
++static size_t GetPageSize()
++{
++	SYSTEM_INFO system_info = {};
++	GetSystemInfo(&system_info);
++	return system_info.dwPageSize;
++}
++
++static uint64_t AddressOf(
++	IN const void* Pointer,
++	IN size_t Offset = 0
++)
++{
++	return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(Pointer)) + Offset;
++}
++
++// Reads one byte, and says if that raised an exception. Not a check - see its caller.
++static bool CanReadByte(
++	IN const void* Pointer
++)
++{
++	__try
++	{
++		volatile uint8_t byte = *static_cast<const volatile uint8_t*>(Pointer);
++		(void)byte;
++		return true;
++	}
++	__except (EXCEPTION_EXECUTE_HANDLER)
++	{
++		return false;
++	}
++}
++
++static void TestProtections()
++{
++	Check(IsReadableProtection(PAGE_READONLY), "protect: PAGE_READONLY is readable");
++	Check(IsReadableProtection(PAGE_READWRITE), "protect: PAGE_READWRITE is readable");
++	Check(IsReadableProtection(PAGE_WRITECOPY), "protect: PAGE_WRITECOPY is readable");
++	Check(IsReadableProtection(PAGE_EXECUTE_READ), "protect: PAGE_EXECUTE_READ is readable (what .text is mapped as)");
++	Check(IsReadableProtection(PAGE_EXECUTE_READWRITE), "protect: PAGE_EXECUTE_READWRITE is readable (a page a hook was written to)");
++	Check(IsReadableProtection(PAGE_EXECUTE_WRITECOPY), "protect: PAGE_EXECUTE_WRITECOPY is readable");
++	Check(IsReadableProtection(PAGE_READONLY | PAGE_NOCACHE), "protect: a modifier does not take read access away");
++	Check(IsReadableProtection(PAGE_EXECUTE_READ | PAGE_WRITECOMBINE), "protect: ...neither does PAGE_WRITECOMBINE");
++
++	Check(!IsReadableProtection(0), "protect: 0 (no access information) is refused");
++	Check(!IsReadableProtection(PAGE_NOACCESS), "protect: PAGE_NOACCESS is refused");
++	Check(!IsReadableProtection(PAGE_EXECUTE), "protect: PAGE_EXECUTE is refused - not denied is not the same as readable");
++	Check(!IsReadableProtection(PAGE_READWRITE | PAGE_GUARD), "protect: a guard page is refused, whatever is below the guard");
++	Check(!IsReadableProtection(PAGE_EXECUTE_READ | PAGE_GUARD), "protect: ...an executable one too");
++	Check(!IsReadableProtection(PAGE_NOCACHE), "protect: a modifier alone is refused");
++	Check(!IsReadableProtection(PAGE_READONLY | PAGE_READWRITE), "protect: two protections at once are refused");
++}
++
++static void TestRanges()
++{
++	const size_t page_size = GetPageSize();
++
++	// Four pages reserved, the first three committed: [RW][RW][RW][reserved]
++	BYTE* block = static_cast<BYTE*>(VirtualAlloc(nullptr, 4 * page_size, MEM_RESERVE, PAGE_NOACCESS));
++	const bool is_committed = block && VirtualAlloc(block, 3 * page_size, MEM_COMMIT, PAGE_READWRITE);
++
++	Check(is_committed, "range: the test could set up its memory (every check below needs it)");
++	if (!is_committed)
++		return;
++
++	Check(IsRangeReadable(AddressOf(block), 3 * page_size), "range: three committed read-write pages are readable");
++	Check(IsRangeReadable(AddressOf(block), 1), "range: the first byte alone is readable");
++	Check(IsRangeReadable(AddressOf(block, (3 * page_size) - 1), 1), "range: the last committed byte alone is readable");
++	Check(IsRangeReadable(AddressOf(block, page_size / 2), 2 * page_size), "range: a range starting inside a page is readable");
++
++	Check(!IsRangeReadable(AddressOf(block), (3 * page_size) + 1), "range: one byte of reserved tail is refused");
++	Check(!IsRangeReadable(AddressOf(block), 4 * page_size), "range: a reserved page at the end is refused");
++	Check(!IsRangeReadable(AddressOf(block, 3 * page_size), 1), "range: a range that is reserved memory only is refused");
++	Check(!IsRangeReadable(AddressOf(block), 0), "range: an empty range is refused");
++	Check(!IsRangeReadable(UINT64_MAX - 0x10, 0x100), "range: a range that wraps around is refused");
++	Check(!IsRangeReadable(0, page_size), "range: the null page is refused");
++
++	DWORD old_protection = 0;
++
++	// Several readable regions in a row: [RW][RO][RW] is three regions, and the walk has to cross them
++	Check(VirtualProtect(block + page_size, page_size, PAGE_READONLY, &old_protection) != 0, "range: (setup) the middle page became read-only");
++	Check(IsRangeReadable(AddressOf(block), 3 * page_size), "range: three regions with different readable protections are readable");
++
++	// A hole in the middle: the first region is fine and the range is no longer than three pages,
++	// so only a walk that really looks at every region can refuse this
++	Check(VirtualProtect(block + page_size, page_size, PAGE_NOACCESS, &old_protection) != 0, "range: (setup) the middle page became PAGE_NOACCESS");
++	Check(!IsRangeReadable(AddressOf(block), 3 * page_size), "range: a PAGE_NOACCESS hole in the middle is refused");
++	Check(IsRangeReadable(AddressOf(block), page_size), "range: ...the page before the hole is still readable");
++	Check(IsRangeReadable(AddressOf(block, 2 * page_size), page_size), "range: ...and so is the page after it");
++	Check(!IsRangeReadable(AddressOf(block, page_size - 1), 2), "range: one byte into the hole is refused");
++
++	// VirtualQuery does not touch the page, so the guard stays armed however often it is asked
++	Check(VirtualProtect(block + page_size, page_size, PAGE_READWRITE | PAGE_GUARD, &old_protection) != 0, "range: (setup) the middle page became a guard page");
++	Check(!IsRangeReadable(AddressOf(block), 3 * page_size), "range: a guard page in the middle is refused");
++	Check(!IsRangeReadable(AddressOf(block), 3 * page_size), "range: ...and still is when asked again");
++
++	Check(VirtualProtect(block + page_size, page_size, PAGE_EXECUTE, &old_protection) != 0, "range: (setup) the middle page became PAGE_EXECUTE");
++	Check(!IsRangeReadable(AddressOf(block), 3 * page_size), "range: a PAGE_EXECUTE page in the middle is refused");
++
++	// Not a check: what this host does with a read of that PAGE_EXECUTE page, for the record.
++	// IsReadableProtection refuses the protection either way.
++	std::printf("info  reading a PAGE_EXECUTE page on this host %s\n", CanReadByte(block + page_size) ? "did not fault" : "faulted");
++
++	Check(VirtualProtect(block + page_size, page_size, PAGE_EXECUTE_READ, &old_protection) != 0, "range: (setup) the middle page became PAGE_EXECUTE_READ");
++	Check(IsRangeReadable(AddressOf(block), 3 * page_size), "range: read-write, execute-read, read-write is readable again");
++
++	// Decommitted memory in the middle
++	Check(VirtualFree(block + page_size, page_size, MEM_DECOMMIT) != 0, "range: (setup) the middle page was decommitted");
++	Check(!IsRangeReadable(AddressOf(block), 3 * page_size), "range: a decommitted page in the middle is refused");
++
++	VirtualFree(block, 0, MEM_RELEASE);
++}
++
++int main()
++{
++	TestProtections();
++	TestRanges();
++
++	std::printf("%d checks, %d failed\n", g_ChecksRun, g_ChecksFailed);
++	return g_ChecksFailed ? 1 : 0;
++}
+diff --git a/YYToolkit/hs-tests/ri_scan_test.cpp b/YYToolkit/hs-tests/ri_scan_test.cpp
+new file mode 100644
+index 0000000..f7aca54
+--- /dev/null
++++ b/YYToolkit/hs-tests/ri_scan_test.cpp
+@@ -0,0 +1,605 @@
++// Host test for Generic-RunnerInterfaceScan.hpp - needs neither the game nor Aurie/Zydis/Windows.
++//
++// From a "x64 Native Tools" prompt, in this directory:
++//     cl /nologo /std:c++latest /EHsc /W4 ri_scan_test.cpp && ri_scan_test.exe
++//
++// Prints one line per check and returns non-zero if any check failed.
++// Every predicate has at least one input it must accept and one it must refuse.
++
++#include "../source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp"
++
++#include <cstdio>
++#include <initializer_list>
++#include <sstream>
++
++using namespace YYTK::RiScan;
++
++static int g_ChecksRun = 0;
++static int g_ChecksFailed = 0;
++
++static void Check(
++	IN bool Condition,
++	IN const char* Name
++)
++{
++	g_ChecksRun++;
++	if (!Condition)
++		g_ChecksFailed++;
++
++	std::printf("%s  %s\n", Condition ? "ok  " : "FAIL", Name);
++}
++
++using ByteBuffer = std::vector<uint8_t>;
++
++static void Append(
++	IN OUT ByteBuffer& Buffer,
++	IN std::initializer_list<int> Bytes
++)
++{
++	for (const int byte : Bytes)
++		Buffer.push_back(static_cast<uint8_t>(byte));
++}
++
++// lea rcx, [rip+disp32]
++static void AppendLea(IN OUT ByteBuffer& Buffer)
++{
++	Append(Buffer, { 0x48, 0x8D, 0x0D, 0x10, 0x32, 0x54, 0x00 });
++}
++
++// mov [rsp+60h], rcx
++static void AppendStoreRspDisp8(IN OUT ByteBuffer& Buffer)
++{
++	Append(Buffer, { 0x48, 0x89, 0x4C, 0x24, 0x60 });
++}
++
++// mov [rbp-80h], rcx
++static void AppendStoreRbpDisp8(IN OUT ByteBuffer& Buffer)
++{
++	Append(Buffer, { 0x48, 0x89, 0x4D, 0x80 });
++}
++
++// mov [rbp+248h], rcx
++static void AppendStoreRbpDisp32(IN OUT ByteBuffer& Buffer)
++{
++	Append(Buffer, { 0x48, 0x89, 0x8D, 0x48, 0x02, 0x00, 0x00 });
++}
++
++// mov [rsp], rcx - no displacement, never part of the chain
++static void AppendStoreRspNoDisp(IN OUT ByteBuffer& Buffer)
++{
++	Append(Buffer, { 0x48, 0x89, 0x0C, 0x24 });
++}
++
++// mov edx, 320h - the instruction that interrupts the real chain
++static void AppendMovEdx(IN OUT ByteBuffer& Buffer)
++{
++	Append(Buffer, { 0xBA, 0x20, 0x03, 0x00, 0x00 });
++}
++
++// A chain shaped like the one this game builds: rsp-relative stores first, then rbp-relative ones
++// with a short and a long displacement, and one "mov edx" between a lea and its store.
++static ByteBuffer MakeChain(IN size_t PairCount)
++{
++	ByteBuffer chain;
++
++	for (size_t pair = 0; pair < PairCount; pair++)
++	{
++		AppendLea(chain);
++
++		if (pair == 7)
++			AppendMovEdx(chain);
++
++		if (pair < 4)
++			AppendStoreRspDisp8(chain);
++		else if (pair < 20)
++			AppendStoreRbpDisp8(chain);
++		else
++			AppendStoreRbpDisp32(chain);
++	}
++
++	return chain;
++}
++
++// PageCount pages of int3 padding, which holds neither a lea nor a store.
++static ByteBuffer MakeText(
++	IN size_t PageCount,
++	IN size_t PageSize
++)
++{
++	return ByteBuffer(PageCount * PageSize, static_cast<uint8_t>(0xCC));
++}
++
++static void Place(
++	IN OUT ByteBuffer& Text,
++	IN size_t Offset,
++	IN const ByteBuffer& Bytes
++)
++{
++	for (size_t index = 0; index < Bytes.size() && (Offset + index) < Text.size(); index++)
++		Text[Offset + index] = Bytes[index];
++}
++
++static bool IsSameOrder(
++	IN const std::vector<size_t>& Actual,
++	IN std::initializer_list<size_t> Expected
++)
++{
++	return Actual == std::vector<size_t>(Expected);
++}
++
++static bool Parse(
++	IN const char* Text,
++	OUT HintLine& Line
++)
++{
++	std::istringstream stream(Text);
++	return ParseHintLine(stream, Line);
++}
++
++static void TestInstructionMatchers()
++{
++	const ByteBuffer lea_rcx = { 0x48, 0x8D, 0x0D, 0x01, 0x02, 0x03, 0x04 };
++	const ByteBuffer lea_r8 = { 0x4C, 0x8D, 0x05, 0x01, 0x02, 0x03, 0x04 };
++	const ByteBuffer lea_rsp_relative = { 0x48, 0x8D, 0x4C, 0x24, 0x60, 0xCC, 0xCC };
++	const ByteBuffer lea_32bit = { 0x8D, 0x0D, 0x01, 0x02, 0x03, 0x04, 0xCC };
++	const ByteBuffer mov_load = { 0x48, 0x8B, 0x0D, 0x01, 0x02, 0x03, 0x04 };
++
++	Check(IsRipRelativeLea(lea_rcx.data(), lea_rcx.size(), 0), "lea: accepts lea rcx, [rip+disp32]");
++	Check(IsRipRelativeLea(lea_r8.data(), lea_r8.size(), 0), "lea: accepts lea r8, [rip+disp32]");
++	Check(!IsRipRelativeLea(lea_rsp_relative.data(), lea_rsp_relative.size(), 0), "lea: refuses lea rcx, [rsp+60h]");
++	Check(!IsRipRelativeLea(lea_32bit.data(), lea_32bit.size(), 0), "lea: refuses a lea without REX.W");
++	Check(!IsRipRelativeLea(mov_load.data(), mov_load.size(), 0), "lea: refuses mov rcx, [rip+disp32]");
++	Check(!IsRipRelativeLea(lea_rcx.data(), lea_rcx.size() - 1, 0), "lea: refuses a lea cut off by the end of the buffer");
++	Check(!IsRipRelativeLea(lea_rcx.data(), lea_rcx.size(), lea_rcx.size()), "lea: refuses an offset at the end of the buffer");
++	Check(!IsRipRelativeLea(lea_rcx.data(), lea_rcx.size(), SIZE_MAX), "lea: refuses an offset far past the buffer");
++
++	// mod=00 with any rm but 101 is NOT rip-relative, and such a lea is shorter than 7 bytes -
++	// taking it for one would swallow the bytes that follow it
++	const ByteBuffer lea_register_indirect = { 0x48, 0x8D, 0x01, 0x48, 0x8D, 0x0D, 0x01 };
++	const ByteBuffer lea_sib_absolute = { 0x48, 0x8D, 0x04, 0x25, 0x01, 0x02, 0x03, 0x04 };
++	const ByteBuffer lea_rbp_disp32 = { 0x48, 0x8D, 0x8D, 0x01, 0x02, 0x03, 0x04 };
++	const ByteBuffer lea_register_form = { 0x48, 0x8D, 0xC5, 0x01, 0x02, 0x03, 0x04 };
++	Check(!IsRipRelativeLea(lea_register_indirect.data(), lea_register_indirect.size(), 0), "lea: refuses lea rax, [rcx] (mod=00, rm=001)");
++	Check(!IsRipRelativeLea(lea_sib_absolute.data(), lea_sib_absolute.size(), 0), "lea: refuses lea rax, [disp32] (mod=00, rm=100 with a SIB byte)");
++	Check(!IsRipRelativeLea(lea_rbp_disp32.data(), lea_rbp_disp32.size(), 0), "lea: refuses lea rcx, [rbp+disp32] (mod=10, rm=101)");
++	Check(!IsRipRelativeLea(lea_register_form.data(), lea_register_form.size(), 0), "lea: refuses mod=11 with rm=101");
++
++	const ByteBuffer store_rsp8 = { 0x48, 0x89, 0x4C, 0x24, 0x60 };
++	const ByteBuffer store_rbp8 = { 0x48, 0x89, 0x4D, 0x80 };
++	const ByteBuffer store_rbp32 = { 0x48, 0x89, 0x8D, 0x48, 0x02, 0x00, 0x00 };
++	const ByteBuffer store_rsp32 = { 0x48, 0x89, 0x8C, 0x24, 0x00, 0x01, 0x00, 0x00 };
++	const ByteBuffer store_r8 = { 0x4C, 0x89, 0x45, 0x90 };
++	const ByteBuffer store_rsp_no_disp = { 0x48, 0x89, 0x0C, 0x24, 0xCC, 0xCC, 0xCC, 0xCC };
++	const ByteBuffer store_register = { 0x48, 0x89, 0xC8, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC };
++	const ByteBuffer store_rip_relative = { 0x48, 0x89, 0x0D, 0x01, 0x02, 0x03, 0x04, 0xCC };
++	const ByteBuffer store_rbx = { 0x48, 0x89, 0x4B, 0x10, 0xCC, 0xCC, 0xCC, 0xCC };
++	const ByteBuffer store_indexed = { 0x48, 0x89, 0x4C, 0x8C, 0x60, 0xCC, 0xCC, 0xCC };
++	const ByteBuffer load_rbp8 = { 0x48, 0x8B, 0x4D, 0x80, 0xCC, 0xCC, 0xCC, 0xCC };
++	const ByteBuffer store_r13 = { 0x49, 0x89, 0x4D, 0x80, 0xCC, 0xCC, 0xCC, 0xCC };
++
++	Check(GetStackStoreLength(store_rsp8.data(), store_rsp8.size(), 0) == 5, "store: mov [rsp+disp8], rcx is 5 bytes");
++	Check(GetStackStoreLength(store_rbp8.data(), store_rbp8.size(), 0) == 4, "store: mov [rbp+disp8], rcx is 4 bytes");
++	Check(GetStackStoreLength(store_rbp32.data(), store_rbp32.size(), 0) == 7, "store: mov [rbp+disp32], rcx is 7 bytes");
++	Check(GetStackStoreLength(store_rsp32.data(), store_rsp32.size(), 0) == 8, "store: mov [rsp+disp32], rcx is 8 bytes");
++	Check(GetStackStoreLength(store_r8.data(), store_r8.size(), 0) == 4, "store: mov [rbp+disp8], r8 is 4 bytes");
++	Check(GetStackStoreLength(store_rsp_no_disp.data(), store_rsp_no_disp.size(), 0) == 0, "store: refuses mov [rsp], rcx");
++	Check(GetStackStoreLength(store_register.data(), store_register.size(), 0) == 0, "store: refuses mov rax, rcx");
++	Check(GetStackStoreLength(store_rip_relative.data(), store_rip_relative.size(), 0) == 0, "store: refuses mov [rip+disp32], rcx");
++	Check(GetStackStoreLength(store_rbx.data(), store_rbx.size(), 0) == 0, "store: refuses mov [rbx+10h], rcx");
++	Check(GetStackStoreLength(store_indexed.data(), store_indexed.size(), 0) == 0, "store: refuses mov [rsp+rcx*4+60h], rcx");
++	Check(GetStackStoreLength(load_rbp8.data(), load_rbp8.size(), 0) == 0, "store: refuses mov rcx, [rbp-80h]");
++	Check(GetStackStoreLength(store_r13.data(), store_r13.size(), 0) == 0, "store: refuses mov [r13-80h], rcx");
++	Check(GetStackStoreLength(store_rbp32.data(), 5, 0) == 0, "store: refuses a disp32 store cut off by the end of the buffer");
++	Check(GetStackStoreLength(store_rsp8.data(), 3, 0) == 0, "store: refuses a buffer too short to hold any store");
++	Check(GetStackStoreLength(store_rsp8.data(), store_rsp8.size(), store_rsp8.size()) == 0, "store: refuses an offset at the end of the buffer");
++}
++
++static void TestPairRuns()
++{
++	const ByteBuffer chain = MakeChain(100);
++	size_t run_end = 0;
++
++	Check(MeasurePairRun(chain.data(), chain.size(), 0, run_end) == 100, "run: the 100 pair chain counts as 100 pairs");
++	Check(run_end == chain.size(), "run: the run ends where the chain ends");
++
++	// The chain holds a mov edx between a lea and its store (pair 7) - without the gap it would stop there
++	Check(MeasurePairRun(chain.data(), chain.size(), 1, run_end) == 0, "run: refuses to start on something that is not a lea");
++
++	ByteBuffer gap_before_lea;
++	AppendLea(gap_before_lea);
++	AppendStoreRbpDisp8(gap_before_lea);
++	AppendMovEdx(gap_before_lea);
++	AppendLea(gap_before_lea);
++	AppendStoreRbpDisp8(gap_before_lea);
++	Check(MeasurePairRun(gap_before_lea.data(), gap_before_lea.size(), 0, run_end) == 2, "run: a 5 byte instruction before a lea does not end the run");
++
++	ByteBuffer wide_gap;
++	AppendLea(wide_gap);
++	AppendStoreRbpDisp8(wide_gap);
++	Append(wide_gap, { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 });
++	AppendLea(wide_gap);
++	AppendStoreRbpDisp8(wide_gap);
++	Check(MeasurePairRun(wide_gap.data(), wide_gap.size(), 0, run_end) == 1, "run: 8 bytes of something else end the run");
++	Check(run_end == 11, "run: the run that was ended stops after its last store");
++
++	// The gap limit itself, from both sides and for both places a gap can be
++	const auto make_gapped_pairs = [](size_t GapBeforeLea, size_t GapBeforeStore) -> ByteBuffer
++		{
++			ByteBuffer pairs;
++			AppendLea(pairs);
++			AppendStoreRbpDisp8(pairs);
++			pairs.insert(pairs.end(), GapBeforeLea, static_cast<uint8_t>(0x90));
++			AppendLea(pairs);
++			pairs.insert(pairs.end(), GapBeforeStore, static_cast<uint8_t>(0x90));
++			AppendStoreRbpDisp8(pairs);
++			return pairs;
++		};
++
++	const ByteBuffer lea_gap_6 = make_gapped_pairs(6, 0);
++	const ByteBuffer lea_gap_7 = make_gapped_pairs(7, 0);
++	const ByteBuffer lea_gap_8 = make_gapped_pairs(8, 0);
++	const ByteBuffer store_gap_6 = make_gapped_pairs(0, 6);
++	const ByteBuffer store_gap_7 = make_gapped_pairs(0, 7);
++	const ByteBuffer store_gap_8 = make_gapped_pairs(0, 8);
++	const ByteBuffer both_gaps_7 = make_gapped_pairs(7, 7);
++
++	Check(MeasurePairRun(lea_gap_6.data(), lea_gap_6.size(), 0, run_end) == 2, "run: 6 bytes before a lea do not end the run");
++	Check(MeasurePairRun(lea_gap_7.data(), lea_gap_7.size(), 0, run_end) == 2, "run: exactly 7 bytes before a lea do not end the run");
++	Check(run_end == lea_gap_7.size(), "run: ...and the run ends after the second store");
++	Check(MeasurePairRun(lea_gap_8.data(), lea_gap_8.size(), 0, run_end) == 1, "run: 8 bytes before a lea end the run");
++	Check(MeasurePairRun(store_gap_6.data(), store_gap_6.size(), 0, run_end) == 2, "run: 6 bytes before a store do not end the run");
++	Check(MeasurePairRun(store_gap_7.data(), store_gap_7.size(), 0, run_end) == 2, "run: exactly 7 bytes before a store do not end the run");
++	Check(run_end == store_gap_7.size(), "run: ...and the run ends after the second store");
++	Check(MeasurePairRun(store_gap_8.data(), store_gap_8.size(), 0, run_end) == 1, "run: 8 bytes before a store end the run");
++	Check(MeasurePairRun(both_gaps_7.data(), both_gaps_7.size(), 0, run_end) == 2, "run: 7 bytes before the lea and 7 before its store do not end the run");
++
++	ByteBuffer lonely_lea;
++	AppendLea(lonely_lea);
++	Append(lonely_lea, { 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC });
++	Check(MeasurePairRun(lonely_lea.data(), lonely_lea.size(), 0, run_end) == 0, "run: a lea without a store is no pair");
++
++	// No read past the end: every truncation of the chain has to give a sane, never growing count.
++	// (Build with /fsanitize=address to have the reads themselves checked.)
++	bool is_truncation_sane = true;
++	uint32_t previous_count = 100;
++	for (size_t cut = 0; cut <= 64; cut++)
++	{
++		const ByteBuffer truncated(chain.begin(), chain.end() - static_cast<std::ptrdiff_t>(cut));
++		const uint32_t count = MeasurePairRun(truncated.data(), truncated.size(), 0, run_end);
++
++		if (count > previous_count || run_end > truncated.size())
++			is_truncation_sane = false;
++
++		previous_count = count;
++	}
++	Check(is_truncation_sane, "run: a chain cut off anywhere in its last 64 bytes never counts past the buffer");
++	Check(previous_count < 100, "run: a chain cut off by 64 bytes counts fewer pairs (the check above can fail)");
++}
++
++static void TestPageRanking()
++{
++	constexpr size_t page_size = 0x1000;
++
++	// Baseline: the chain where this game has it - 0x7E2 into a page, entirely inside it
++	{
++		ByteBuffer text = MakeText(8, page_size);
++		Place(text, (5 * page_size) + 0x7E2, MakeChain(100));
++		Check(IsSameOrder(RankPages(text.data(), text.size(), 8, page_size), { 5 }), "rank: the page with the 100 pair chain is the only ranked page");
++	}
++
++	// Dense before sparse, no matter the address
++	{
++		ByteBuffer text = MakeText(8, page_size);
++		Place(text, (2 * page_size) + 0x100, MakeChain(10));
++		Place(text, (5 * page_size) + 0x7E2, MakeChain(100));
++		Place(text, (7 * page_size) + 0x020, MakeChain(40));
++		Check(IsSameOrder(RankPages(text.data(), text.size(), 8, page_size), { 5, 7, 2 }), "rank: longest run first (100, 40, 10 pairs)");
++		Check(IsSameOrder(RankPages(text.data(), text.size(), 8, page_size, 2), { 5, 7 }), "rank: the page limit keeps the longest runs");
++	}
++
++	// Equal runs keep address order
++	{
++		ByteBuffer text = MakeText(8, page_size);
++		Place(text, (6 * page_size) + 0x300, MakeChain(30));
++		Place(text, (1 * page_size) + 0x300, MakeChain(30));
++		Check(IsSameOrder(RankPages(text.data(), text.size(), 8, page_size), { 1, 6 }), "rank: equal runs stay in address order");
++	}
++
++	// Negative controls: nothing in these may be ranked
++	{
++		ByteBuffer text = MakeText(8, page_size);
++		Place(text, (3 * page_size) + 0x10, MakeChain(3));
++		Check(RankPages(text.data(), text.size(), 8, page_size).empty(), "rank: a 3 pair run is not ranked");
++	}
++	{
++		ByteBuffer text = MakeText(8, page_size);
++		ByteBuffer no_disp_chain;
++		for (int pair = 0; pair < 100; pair++)
++		{
++			AppendLea(no_disp_chain);
++			AppendStoreRspNoDisp(no_disp_chain);
++		}
++		Place(text, (3 * page_size) + 0x10, no_disp_chain);
++		Check(RankPages(text.data(), text.size(), 8, page_size).empty(), "rank: 100 lea / mov [rsp], rcx pairs are not ranked");
++	}
++	{
++		// A fixed linear congruential sequence, so that the run is the same on every host
++		ByteBuffer text(8 * page_size);
++		uint32_t state = 0x2545F491;
++		for (uint8_t& byte : text)
++		{
++			state = (state * 1664525u) + 1013904223u;
++			byte = static_cast<uint8_t>(state >> 24);
++		}
++		Check(RankPages(text.data(), text.size(), 8, page_size).empty(), "rank: pseudo-random bytes are not ranked");
++	}
++	{
++		const ByteBuffer text = MakeText(8, page_size);
++		Check(RankPages(text.data(), text.size(), 8, page_size).empty(), "rank: padding is not ranked");
++		Check(RankPages(nullptr, text.size(), 8, page_size).empty(), "rank: no buffer, no pages");
++		Check(RankPages(text.data(), text.size(), 8, 0).empty(), "rank: a page size of 0 is refused");
++		Check(RankPages(text.data(), text.size(), 0, page_size).empty(), "rank: a page count of 0 is refused");
++	}
++
++	// A chain across a page boundary: both pages, the one it starts on first
++	{
++		ByteBuffer text = MakeText(8, page_size);
++		Place(text, (3 * page_size) + 0xF00, MakeChain(100));
++		Check(IsSameOrder(RankPages(text.data(), text.size(), 8, page_size), { 3, 4 }), "rank: a chain across a boundary ranks both pages, first page first");
++	}
++
++	// The link rule: a longer run on the page a chain continues on must not pull that page in front
++	{
++		ByteBuffer text = MakeText(8, page_size);
++		Place(text, (3 * page_size) + 0xF80, MakeChain(30));
++		Place(text, (4 * page_size) + 0x800, MakeChain(50));
++		Check(IsSameOrder(RankPages(text.data(), text.size(), 8, page_size), { 3, 4 }), "rank: the page a run starts on comes before the page it continues on");
++	}
++	{
++		// Same two runs, but the shorter one ends before the boundary: now the longer run does win
++		ByteBuffer text = MakeText(8, page_size);
++		Place(text, (3 * page_size) + 0x100, MakeChain(30));
++		Place(text, (4 * page_size) + 0x800, MakeChain(50));
++		Check(IsSameOrder(RankPages(text.data(), text.size(), 8, page_size), { 4, 3 }), "rank: without a run across the boundary the longer run comes first");
++	}
++
++	// The page size really is a parameter
++	{
++		ByteBuffer text = MakeText(16, 256);
++		Place(text, (5 * 256) + 0x10, MakeChain(10));
++		const std::vector<size_t> ranked = RankPages(text.data(), text.size(), 16, 256);
++		Check(!ranked.empty() && ranked.front() == 5, "rank: 256 byte pages are ranked by 256 byte pages");
++	}
++
++	// A chain running into the end of the buffer, and a page count smaller than the buffer
++	{
++		ByteBuffer text = MakeText(2, page_size);
++		Place(text, (2 * page_size) - 0x40, MakeChain(100));
++		Check(IsSameOrder(RankPages(text.data(), text.size(), 2, page_size), { 1 }), "rank: a chain cut off by the end of the buffer ranks its page");
++		Check(RankPages(text.data(), text.size(), 1, page_size).empty(), "rank: a page past the page count is never returned");
++	}
++}
++
++static std::vector<size_t> Order(
++	IN std::initializer_list<size_t> PreferredPages,
++	IN size_t PageCount,
++	IN std::initializer_list<size_t> SkippedPages,
++	OUT size_t& PreferredVisitCount
++)
++{
++	return BuildPageVisitOrder(
++		std::vector<size_t>(PreferredPages),
++		PageCount,
++		std::vector<size_t>(SkippedPages),
++		PreferredVisitCount
++	);
++}
++
++static void TestVisitOrder()
++{
++	size_t preferred = 99;
++
++	Check(IsSameOrder(Order({ 5, 2 }, 8, {}, preferred), { 5, 2, 0, 1, 3, 4, 6, 7 }), "order: preferred pages first, then the rest in address order");
++	Check(preferred == 2, "order: ...and both preferred pages are counted as leading the order");
++	Check(IsSameOrder(Order({}, 4, {}, preferred), { 0, 1, 2, 3 }), "order: nothing preferred gives upstream's order");
++	Check(preferred == 0, "order: ...and no page is counted as preferred");
++	Check(IsSameOrder(Order({ 5, 2 }, 8, { 5 }, preferred), { 2, 0, 1, 3, 4, 6, 7 }), "order: a skipped page is left out, even if preferred");
++	Check(preferred == 1, "order: ...and a preferred page that was skipped is not counted");
++	Check(IsSameOrder(Order({ 5, 2 }, 8, { 6 }, preferred), { 5, 2, 0, 1, 3, 4, 7 }), "order: a skipped page is left out of the rest");
++	Check(IsSameOrder(Order({ 5, 2 }, 8, { 4, 5 }, preferred), { 2, 0, 1, 3, 6, 7 }), "order: both pages scanned for a hint are left out");
++	Check(preferred == 1, "order: ...and only the preferred page that is left is counted");
++	Check(IsSameOrder(Order({ 9, 2, 2, 100 }, 4, {}, preferred), { 2, 0, 1, 3 }), "order: repeated and out of range preferred pages are dropped");
++	Check(preferred == 1, "order: ...and dropped preferred pages are not counted");
++	Check(IsSameOrder(Order({ 1 }, 4, { 100 }, preferred), { 1, 0, 2, 3 }), "order: a skipped page out of range changes nothing");
++	Check(IsSameOrder(Order({ 1 }, 4, { 0, 1, 2, 3 }, preferred), {}), "order: every page skipped leaves nothing to visit");
++	Check(preferred == 0, "order: ...and nothing is counted");
++	Check(Order({ 1 }, 0, {}, preferred).empty() && preferred == 0, "order: no pages, no order");
++
++	// "Did the ranking bring the page to the front?" - decides between the pre-filter hit and miss lines
++	Check(IsVisitIndexRanked(0, 2), "ranked: the first visit of two ranked pages is a ranked one");
++	Check(IsVisitIndexRanked(1, 2), "ranked: the last ranked visit is a ranked one");
++	Check(!IsVisitIndexRanked(2, 2), "ranked: the first visit after the ranked pages is not");
++	Check(!IsVisitIndexRanked(0, 0), "ranked: nothing is ranked if no ranked page leads the order");
++	Check(!IsVisitIndexRanked(SIZE_MAX, 64), "ranked: a visit far down the address-order remainder is not");
++
++	// The two ends of the same question, through the order itself: page 5 is ranked, page 6 is not
++	{
++		const std::vector<size_t> order = Order({ 5, 2 }, 8, {}, preferred);
++		const size_t visit_of_page_5 = static_cast<size_t>(std::find(order.begin(), order.end(), size_t(5)) - order.begin());
++		const size_t visit_of_page_6 = static_cast<size_t>(std::find(order.begin(), order.end(), size_t(6)) - order.begin());
++		Check(IsVisitIndexRanked(visit_of_page_5, preferred), "ranked: a chain on a ranked page is reported as a hit");
++		Check(!IsVisitIndexRanked(visit_of_page_6, preferred), "ranked: a chain on an unranked page is reported as a miss");
++	}
++
++	// The pages scanned for a hint
++	Check(IsSameOrder(BuildHintVisitOrder(5, 8), { 4, 5 }), "hint order: the page before the hinted one is scanned first");
++	Check(IsSameOrder(BuildHintVisitOrder(0, 8), { 0 }), "hint order: page 0 has no page before it");
++	Check(IsSameOrder(BuildHintVisitOrder(7, 8), { 6, 7 }), "hint order: the last page is a valid hint");
++	Check(BuildHintVisitOrder(8, 8).empty(), "hint order: a page past the section is refused");
++	Check(BuildHintVisitOrder(SIZE_MAX, 8).empty(), "hint order: a huge page is refused");
++	Check(BuildHintVisitOrder(0, 0).empty(), "hint order: no pages, no order");
++
++	// A stale hint that names the page a chain CONTINUES on must see the page it starts on first -
++	// the same order the ranking gives those two pages, and the one upstream scans them in.
++	{
++		constexpr size_t page_size = 0x1000;
++		ByteBuffer text = MakeText(8, page_size);
++		Place(text, (3 * page_size) + 0xF80, MakeChain(100));
++
++		size_t continuation_page = 0;
++		const bool is_on_page_4 = GetPageOfRva(0x1000 + (4 * page_size) + 0x10, 0x1000, 8 * page_size, page_size, continuation_page) && continuation_page == 4;
++		Check(is_on_page_4, "hint order: an rva past the boundary names the page the chain continues on");
++		Check(BuildHintVisitOrder(continuation_page, 8) == RankPages(text.data(), text.size(), 8, page_size), "hint order: ...and the hint scans the same pages, in the same order, as the ranking (3, then 4)");
++		Check(BuildHintVisitOrder(continuation_page, 8).front() == 3, "hint order: ...starting with the page the chain starts on");
++	}
++}
++
++static void TestBounds()
++{
++	Check(IsSectionInsideImage(0x1000, 0x5000, 0x10000), "bounds: a section in the middle of the image is inside");
++	Check(IsSectionInsideImage(0x1000, 0xF000, 0x10000), "bounds: a section ending with the image is inside");
++	Check(!IsSectionInsideImage(0x1000, 0xF001, 0x10000), "bounds: a section one byte too long is outside");
++	Check(!IsSectionInsideImage(0x10001, 0x10, 0x10000), "bounds: a section starting past the image is outside");
++	Check(!IsSectionInsideImage(UINT64_MAX - 1, 0x10, 0x10000), "bounds: an offset + size that wraps around is outside");
++	Check(!IsSectionInsideImage(0x1000, UINT64_MAX, 0x10000), "bounds: a size that wraps around is outside");
++	Check(!IsSectionInsideImage(0x1000, 0, 0x10000), "bounds: an empty section is refused");
++
++	size_t page = 0;
++	Check(GetPageOfRva(0x1000, 0x1000, 0x5000, 0x1000, page) && page == 0, "page: the first byte of the section is page 0");
++	Check(GetPageOfRva(0x5FFF, 0x1000, 0x5000, 0x1000, page) && page == 4, "page: the last byte of the section is the last page");
++	Check(GetPageOfRva(0xB5557E2, 0x1000, 0xC000000, 0x1000, page) && page == 0xB554, "page: rva 0xB5557E2 of a section at 0x1000 is page 0xB554");
++	Check(!GetPageOfRva(0xFFF, 0x1000, 0x5000, 0x1000, page), "page: an rva below the section is refused");
++	Check(!GetPageOfRva(0x6000, 0x1000, 0x5000, 0x1000, page), "page: the first rva past the section is refused");
++	Check(!GetPageOfRva(UINT64_MAX, 0x1000, 0x5000, 0x1000, page), "page: a huge rva is refused");
++	Check(!GetPageOfRva(0, 0x1000, 0x5000, 0x1000, page), "page: rva 0 is refused");
++	Check(!GetPageOfRva(0x2000, 0x1000, 0x5000, 0, page), "page: a page size of 0 is refused");
++}
++
++static void TestHintLines()
++{
++	HintLine line;
++
++	// The line the documented build left behind on the 281751552 byte executable
++	Check(Parse("281751552 190141265 190142434\n", line), "hint: a legacy 3 number line is read");
++	Check(line.ExeSize == 281751552 && line.HookRva == 190141265 && line.ChainRva == 190142434, "hint: the legacy numbers come back as written");
++	Check(!line.HasImageIdentity, "hint: a legacy line has no image identity");
++
++	// What ForgePact's ensure_ri_cache pre-seeds (Python writes it with CRLF on Windows)
++	Check(Parse("282105856 190392081 190393250\r\n", line) && line.ChainRva == 190393250 && !line.HasImageIdentity, "hint: a pre-seeded CRLF line is read as a legacy line");
++
++	Check(Parse("281751552 190141265 190142434 1755000000 303000000 0\n", line), "hint: a 6 number line is read");
++	Check(line.HasImageIdentity && line.TimeDateStamp == 1755000000 && line.SizeOfImage == 303000000 && line.CheckSum == 0, "hint: the image identity comes back as written");
++
++	Check(Parse("1 2 3 4\n", line) && !line.HasImageIdentity, "hint: 4 numbers are a legacy line");
++	Check(Parse("1 2 3 4 5\n", line) && !line.HasImageIdentity, "hint: 5 numbers are a legacy line");
++	Check(Parse("1 2 3 4 5 6 7\n", line) && line.HasImageIdentity && line.CheckSum == 6, "hint: numbers after the sixth are ignored");
++	Check(Parse("1 2 3 4 x 6\n", line) && !line.HasImageIdentity && line.ChainRva == 3, "hint: a malformed identity leaves a legacy line");
++	Check(Parse("1 2 3 4294967296 5 6\n", line) && !line.HasImageIdentity, "hint: an identity field over 32 bits leaves a legacy line");
++	Check(Parse("1 2 3 4 4294967296 6\n", line) && !line.HasImageIdentity && line.ChainRva == 3, "hint: a SizeOfImage over 32 bits leaves a legacy line");
++	Check(Parse("1 2 3 4 5 4294967296\n", line) && !line.HasImageIdentity && line.ChainRva == 3, "hint: a CheckSum over 32 bits leaves a legacy line");
++	Check(Parse("1 2 3 4294967295 4294967295 4294967295\n", line) && line.HasImageIdentity && line.SizeOfImage == UINT32_MAX && line.CheckSum == UINT32_MAX, "hint: all three identity fields may be exactly 32 bits");
++	Check(Parse("1 2 3 4294967295 5 6\n", line) && line.HasImageIdentity, "hint: an identity field of exactly 32 bits is fine");
++	Check(Parse("  1\t2   3  \n", line) && line.ExeSize == 1 && line.HookRva == 2 && line.ChainRva == 3, "hint: blanks and tabs separate numbers");
++	Check(Parse("1 2 3", line) && line.ChainRva == 3, "hint: a line without a newline is read");
++	Check(Parse("1 2 3\n4 5 6\n", line) && !line.HasImageIdentity, "hint: only the first line is read");
++	Check(Parse("18446744073709551615 2 3\n", line) && line.ExeSize == UINT64_MAX, "hint: the largest 64-bit number is read");
++
++	// A file cut off while it was written still parses - and is then refused for being outside .text
++	size_t page = 0;
++	Check(Parse("281751552 190141265 1901", line) && line.ChainRva == 1901, "hint: a cut off third number still parses");
++	Check(!GetPageOfRva(line.ChainRva, 0x1000, 0xC000000, 0x1000, page), "hint: ...and its rva is refused for lying outside .text");
++
++	Check(!Parse("", line), "hint: an empty file is refused");
++	Check(!Parse("\n281751552 190141265 190142434\n", line), "hint: an empty first line is refused");
++	Check(!Parse("hello world foo\n", line), "hint: words are refused");
++	Check(!Parse("1 2\n", line), "hint: 2 numbers are refused");
++	Check(!Parse("-1 2 3\n", line), "hint: a negative number is refused");
++	Check(!Parse("+1 2 3\n", line), "hint: a signed number is refused");
++	Check(!Parse("0x10 2 3\n", line), "hint: a hexadecimal number is refused");
++	Check(!Parse("12abc 2 3\n", line), "hint: a number with a tail is refused");
++	Check(!Parse("1.5 2 3\n", line), "hint: a fraction is refused");
++	Check(!Parse("18446744073709551616 2 3\n", line), "hint: 2^64 is refused");
++	Check(!Parse("111111111111111111111 2 3\n", line), "hint: a 21 digit number is refused");
++	Check(!Parse("1 2 \x01\x02\x03\n", line), "hint: binary garbage is refused");
++	Check(line.ExeSize == 0 && line.HookRva == 0 && line.ChainRva == 0, "hint: a refused line leaves nothing behind");
++
++	const std::string long_line = std::string(300, '1') + " 2 3\n";
++	Check(!Parse(long_line.c_str(), line), "hint: an overlong line is refused");
++	const std::string padded_line = "1 2 3" + std::string(300, ' ') + "\n";
++	Check(!Parse(padded_line.c_str(), line), "hint: a line padded past the limit is refused");
++
++	// Writing
++	HintLine fresh;
++	fresh.ExeSize = 281751552;
++	fresh.HookRva = 190141265;
++	fresh.ChainRva = 190142434;
++	fresh.HasImageIdentity = true;
++	fresh.TimeDateStamp = 1755000000;
++	fresh.SizeOfImage = 303000000;
++	fresh.CheckSum = 0;
++
++	Check(FormatHintLine(fresh) == "281751552 190141265 190142434 1755000000 303000000 0\n", "format: 6 numbers, single blanks, one newline");
++
++	HintLine read_back;
++	Check(Parse(FormatHintLine(fresh).c_str(), read_back) && IsSameHintLine(fresh, read_back), "format: what is written is read back as the same line");
++
++	HintLine legacy = fresh;
++	legacy.HasImageIdentity = false;
++	Check(FormatHintLine(legacy) == "281751552 190141265 190142434\n", "format: a line without identity is the legacy form");
++
++	HintLine largest;
++	largest.ExeSize = UINT64_MAX;
++	Check(FormatHintLine(largest) == "18446744073709551615 0 0\n", "format: the largest number and 0 are written in full");
++
++	// "Does the file already say this?" - decides whether the file is rewritten
++	HintLine other = fresh;
++	Check(IsSameHintLine(fresh, other), "same: identical lines are the same");
++	other = fresh; other.ExeSize++;
++	Check(!IsSameHintLine(fresh, other), "same: another size is another line");
++	other = fresh; other.HookRva++;
++	Check(!IsSameHintLine(fresh, other), "same: another hook rva is another line");
++	other = fresh; other.ChainRva++;
++	Check(!IsSameHintLine(fresh, other), "same: another chain rva is another line");
++	other = fresh; other.TimeDateStamp++;
++	Check(!IsSameHintLine(fresh, other), "same: another timestamp is another line");
++	other = fresh; other.SizeOfImage++;
++	Check(!IsSameHintLine(fresh, other), "same: another image size is another line");
++	other = fresh; other.CheckSum++;
++	Check(!IsSameHintLine(fresh, other), "same: another checksum is another line");
++	Check(!IsSameHintLine(fresh, legacy), "same: a legacy line is not the 6 number line (it gets upgraded)");
++	other = legacy; other.TimeDateStamp = 77;
++	Check(IsSameHintLine(legacy, other), "same: identity fields of legacy lines are not compared");
++
++	// The key - for the log only
++	other = fresh; other.HookRva = 1; other.ChainRva = 2;
++	Check(DoesHintKeyMatch(other, fresh), "key: matches no matter what the rvas are");
++	Check(DoesHintKeyMatch(legacy, fresh), "key: a legacy line matches on the size alone");
++	other = fresh; other.ExeSize++;
++	Check(!DoesHintKeyMatch(other, fresh), "key: another size is a mismatch");
++	other = legacy; other.ExeSize++;
++	Check(!DoesHintKeyMatch(other, fresh), "key: a legacy line with another size is a mismatch");
++	other = fresh; other.TimeDateStamp++;
++	Check(!DoesHintKeyMatch(other, fresh), "key: another timestamp is a mismatch");
++	other = fresh; other.SizeOfImage++;
++	Check(!DoesHintKeyMatch(other, fresh), "key: another image size is a mismatch");
++	other = fresh; other.CheckSum++;
++	Check(!DoesHintKeyMatch(other, fresh), "key: another checksum is a mismatch");
++	Check(!DoesHintKeyMatch(fresh, legacy), "key: a stored identity cannot match an unknown one");
++
++	// A mismatched key must not cost the hint its page: the page only depends on the rva and .text
++	other = fresh; other.ExeSize = 1; other.TimeDateStamp = 2;
++	Check(!DoesHintKeyMatch(other, fresh) && GetPageOfRva(other.ChainRva, 0x1000, 0xC000000, 0x1000, page) && page == 0xB554, "key: a mismatched line still names its page");
++}
++
++int main()
++{
++	TestInstructionMatchers();
++	TestPairRuns();
++	TestPageRanking();
++	TestVisitOrder();
++	TestBounds();
++	TestHintLines();
++
++	std::printf("%d checks, %d failed\n", g_ChecksRun, g_ChecksFailed);
++	return g_ChecksFailed ? 1 : 0;
++}
+diff --git a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceMemory.hpp b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceMemory.hpp
+new file mode 100644
+index 0000000..d150948
+--- /dev/null
++++ b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceMemory.hpp	
+@@ -0,0 +1,99 @@
++#ifndef YYTK_GENERIC_RUNNERINTERFACEMEMORY_H_
++#define YYTK_GENERIC_RUNNERINTERFACEMEMORY_H_
++
++// The one helper of the runner interface scan that asks Windows about memory.
++//
++// Only standard and Windows headers are included - no Aurie, no Zydis - so that
++// YYToolkit/hs-tests/ri_memory_test.cpp can run it against real VirtualAlloc regions on a build host,
++// without the game. It is kept out of Generic-RunnerInterfaceScan.hpp, which stays free of Windows.
++
++#include <cstddef>
++#include <cstdint>
++#include <Windows.h>
++
++#ifndef IN
++#define IN
++#endif
++
++#ifndef OUT
++#define OUT
++#endif
++
++namespace YYTK
++{
++	namespace RiScan
++	{
++		// True if Protect (as VirtualQuery reports it) is one of the protections that grant read access.
++		//
++		// An allow-list on purpose. "Not PAGE_NOACCESS and not PAGE_GUARD" is NOT the same as readable:
++		// PAGE_EXECUTE passes that test, and so would any protection this code has never heard of.
++		// MEASURED on one x64 host: a PAGE_EXECUTE page can in fact be read. That is a property of the
++		// processor, not a promise of the API, so it is refused here - which only costs the shortcut.
++		inline bool IsReadableProtection(
++			IN DWORD Protect
++		)
++		{
++			// Touching a guard page raises an exception, whatever the protection below it is
++			if (Protect & PAGE_GUARD)
++				return false;
++
++			// The low byte is the protection itself, PAGE_NOCACHE and PAGE_WRITECOMBINE are modifiers
++			switch (Protect & 0xFF)
++			{
++			case PAGE_READONLY:
++			case PAGE_READWRITE:
++			case PAGE_WRITECOPY:
++			case PAGE_EXECUTE_READ:
++			case PAGE_EXECUTE_READWRITE:
++			case PAGE_EXECUTE_WRITECOPY:
++				return true;
++			}
++
++			return false;
++		}
++
++		// True if every byte of [Base, Base + Size) lies in committed memory whose protection grants
++		// read access. The answer is a snapshot: nothing keeps another thread from changing it afterwards.
++		inline bool IsRangeReadable(
++			IN uint64_t Base,
++			IN size_t Size
++		)
++		{
++			const uint64_t range_end = Base + Size;
++			if (!Size || range_end < Base)
++				return false;
++
++			// A section is a handful of regions. The bound only exists so that this loop provably ends.
++			size_t regions_left = 0x10000;
++			uint64_t cursor = Base;
++
++			while (cursor < range_end)
++			{
++				if (!regions_left--)
++					return false;
++
++				MEMORY_BASIC_INFORMATION region = {};
++				if (!VirtualQuery(reinterpret_cast<LPCVOID>(static_cast<uintptr_t>(cursor)), &region, sizeof(region)))
++					return false;
++
++				if (region.State != MEM_COMMIT)
++					return false;
++
++				if (!IsReadableProtection(region.Protect))
++					return false;
++
++				// The region is walked to its end, which is not where the range ends: a region that is
++				// big enough by its size alone may still start before the range and stop inside it.
++				const uint64_t region_end = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(region.BaseAddress)) + region.RegionSize;
++				if (region_end <= cursor)
++					return false;
++
++				cursor = region_end;
++			}
++
++			return true;
++		}
++	}
++}
++
++#endif // YYTK_GENERIC_RUNNERINTERFACEMEMORY_H_
+diff --git a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceNew.cpp b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceNew.cpp
+index 76f4ab8..b9a86ba 100644
+--- a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceNew.cpp	
++++ b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceNew.cpp	
+@@ -1,4 +1,8 @@
+ #include "../../Module Internals.hpp"
++#include "Generic-RunnerInterfaceScan.hpp"
++#include "Generic-RunnerInterfaceMemory.hpp"
++#include <fstream>
++#include <string>
+ 
+ #define PAGE_SIZE 0x1000
+ #define PAGE_SHIFT 12L
+@@ -241,12 +245,273 @@ namespace YYTK
+ #endif
+ 	}
+ 
+-	// Used if GmpGetRunnerInterface fails in x64.
+-	AurieStatus GmpCreateHookOnInterfaceCreation(
++	// ===== The scan hint =====
++	// "<game executable>.yytkcache" holds one line (see RiScan::HintLine for the format) that a previous
++	// launch - or ForgePact's control panel, which pre-seeds the legacy three numbers - left behind.
++	//
++	// NOTHING in that file is trusted. Its chain rva only picks the pages of .text that get scanned first
++	// (the page it names and the one before it, see RiScan::BuildHintVisitOrder); its hook rva is never
++	// turned into an address. Whether a page holds the chain, and where the hook goes, is decided by
++	// GmpScanPagesForRunnerInterfaceX64 alone, from the bytes mapped in this process.
++	// A stale, truncated or hand-edited file therefore costs two pages of disassembly, which is also
++	// why the file is written in place: a half-written one is merely a bad hint.
++	//
++	// What a hint CAN still change is which site wins if more than one site in .text passes upstream's
++	// 88..103 lea test, because the hinted pages are seen before all others. One such case is known
++	// and closed (the page a chain continues on is never scanned without the page it starts on).
++	// Whether this game has any other such site was NOT measured; upstream carries the same TODO.
++
++	// Decides if anything but upstream's first-to-last scan may be done, and fills in the image identity
++	// (from the headers MAPPED in this process - the executable file is never opened or hashed for it).
++	// Returns nullptr if it may, or the reason why it may not.
++	static const char* GmpQueryScanShortcutRefusal(
++		IN uint64_t TextBase,
++		IN uint64_t TextSectionOffset,
++		IN size_t TextSectionSize,
++		OUT RiScan::HintLine& CurrentLine
++	)
++	{
++		void* nt_header_ptr = nullptr;
++		AurieStatus last_status = Internal::PpiGetNtHeader(
++			GetModuleHandleW(nullptr),
++			nt_header_ptr
++		);
++
++		if (!AurieSuccess(last_status) || !nt_header_ptr)
++			return "the PE headers of the game could not be queried";
++
++		const PIMAGE_NT_HEADERS nt_header = static_cast<PIMAGE_NT_HEADERS>(nt_header_ptr);
++		if (nt_header->Signature != IMAGE_NT_SIGNATURE)
++			return "the PE headers of the game do not carry the PE signature";
++
++		CurrentLine.HasImageIdentity = true;
++		CurrentLine.TimeDateStamp = nt_header->FileHeader.TimeDateStamp;
++		CurrentLine.SizeOfImage = nt_header->OptionalHeader.SizeOfImage;
++		CurrentLine.CheckSum = nt_header->OptionalHeader.CheckSum;
++
++		// What PpiGetModuleSectionBounds reports as the size (virtual or raw) was NOT verified, so the
++		// bounds are checked against the image instead of being believed.
++		if (!RiScan::IsSectionInsideImage(TextSectionOffset, TextSectionSize, CurrentLine.SizeOfImage))
++			return "the bounds of .text exceed SizeOfImage";
++
++		if (!RiScan::IsRangeReadable(TextBase, TextSectionSize))
++			return ".text is not committed, readable memory from start to end";
++
++		return nullptr;
++	}
++
++	// Builds the path of the hint file and reads the size of the game executable, which the legacy
++	// format is keyed on. HintPath stays empty, and ExeSize 0, for whatever could not be found out.
++	static void GmpLocateRunnerInterfaceHint(
++		OUT fs::path& HintPath,
++		OUT uint64_t& ExeSize
++	)
++	{
++		HintPath.clear();
++		ExeSize = 0;
++
++		// GetModuleFileNameW truncates instead of failing, so the buffer grows until the path fits.
++		// Windows hands out at most 32767 characters, so the last size tried (33280) always fits one.
++		for (size_t capacity = MAX_PATH; capacity <= 0x10000; capacity *= 2)
++		{
++			std::wstring buffer(capacity, L'\0');
++
++			const DWORD length = GetModuleFileNameW(
++				nullptr,
++				buffer.data(),
++				static_cast<DWORD>(buffer.size())
++			);
++
++			if (!length)
++				return;
++
++			if (length >= buffer.size())
++				continue;
++
++			buffer.resize(length);
++			HintPath = buffer;
++			break;
++		}
++
++		if (HintPath.empty())
++			return;
++
++		std::error_code file_size_error;
++		const uintmax_t exe_size = fs::file_size(HintPath, file_size_error);
++
++		if (!file_size_error)
++			ExeSize = static_cast<uint64_t>(exe_size);
++
++		HintPath += L".yytkcache";
++	}
++
++	// Reads the hint file and turns its chain rva into a page of .text. True if there is a page to try.
++	// Says in one log line why there is none. No line carries the path - it can be longer than the
++	// log's format buffer, and it names the user's folders.
++	static bool GmpReadRunnerInterfaceHint(
++		IN const fs::path& HintPath,
++		IN const RiScan::HintLine& CurrentLine,
++		IN uint64_t TextSectionOffset,
++		IN size_t TextSectionSize,
++		OUT bool& HasStoredLine,
++		OUT RiScan::HintLine& StoredLine,
++		OUT size_t& HintedPage
++	)
++	{
++		HasStoredLine = false;
++		StoredLine = {};
++		HintedPage = 0;
++
++		if (HintPath.empty())
++		{
++			CmWriteLogOutput(
++				"[%s:%d] GmpReadRunnerInterfaceHint() => RI scan hint miss: the path of the game executable could not be queried",
++				__FILE__,
++				__LINE__
++			);
++
++			return false;
++		}
++
++		std::ifstream hint_file(HintPath);
++		if (!hint_file)
++		{
++			CmWriteLogOutput(
++				"[%s:%d] GmpReadRunnerInterfaceHint() => RI scan hint miss: no hint file could be opened (expected on the first launch)",
++				__FILE__,
++				__LINE__
++			);
++
++			return false;
++		}
++
++		if (!RiScan::ParseHintLine(hint_file, StoredLine))
++		{
++			CmWriteLogOutput(
++				"[%s:%d] GmpReadRunnerInterfaceHint() => RI scan hint miss: the hint file does not start with three decimal numbers",
++				__FILE__,
++				__LINE__
++			);
++
++			return false;
++		}
++
++		HasStoredLine = true;
++
++		if (!RiScan::GetPageOfRva(StoredLine.ChainRva, TextSectionOffset, TextSectionSize, PAGE_SIZE, HintedPage))
++		{
++			CmWriteLogOutput(
++				"[%s:%d] GmpReadRunnerInterfaceHint() => RI scan hint miss: the chain rva 0x%llX of the hint lies outside .text",
++				__FILE__,
++				__LINE__,
++				StoredLine.ChainRva
++			);
++
++			return false;
++		}
++
++		// The key is for the log only. The page scan validates the page no matter who wrote the line,
++		// so a mismatch must not throw the hint away - it would only cost a full scan for nothing.
++		if (!RiScan::DoesHintKeyMatch(StoredLine, CurrentLine))
++		{
++			CmWriteLogOutput(
++				"[%s:%d] GmpReadRunnerInterfaceHint() => RI scan hint key mismatch: stored size/timestamp/image/checksum %llu/%llu/%llu/%llu, this executable %llu/%llu/%llu/%llu. Its page is tried anyway.",
++				__FILE__,
++				__LINE__,
++				StoredLine.ExeSize,
++				StoredLine.TimeDateStamp,
++				StoredLine.SizeOfImage,
++				StoredLine.CheckSum,
++				CurrentLine.ExeSize,
++				CurrentLine.TimeDateStamp,
++				CurrentLine.SizeOfImage,
++				CurrentLine.CheckSum
++			);
++		}
++
++		return true;
++	}
++
++	// Leaves the hint file alone if it already says what this launch found, and rewrites it otherwise.
++	static void GmpUpdateRunnerInterfaceHint(
++		IN const fs::path& HintPath,
++		IN bool HasStoredLine,
++		IN const RiScan::HintLine& StoredLine,
++		IN const RiScan::HintLine& CurrentLine
++	)
++	{
++		if (HasStoredLine && RiScan::IsSameHintLine(StoredLine, CurrentLine))
++		{
++			CmWriteLogOutput(
++				"[%s:%d] GmpUpdateRunnerInterfaceHint() => RI scan hint unchanged, file left alone",
++				__FILE__,
++				__LINE__
++			);
++
++			return;
++		}
++
++		// Legacy readers (older modified builds, ForgePact's panel) key on the size.
++		// A line without it would be worse for them than no line.
++		if (HintPath.empty() || !CurrentLine.ExeSize)
++		{
++			CmWriteLogOutput(
++				"[%s:%d] GmpUpdateRunnerInterfaceHint() => RI scan hint not written: the path or the size of the game executable is unknown",
++				__FILE__,
++				__LINE__
++			);
++
++			return;
++		}
++
++		std::ofstream hint_file(HintPath, std::ios::out | std::ios::trunc);
++		if (hint_file)
++		{
++			hint_file << RiScan::FormatHintLine(CurrentLine);
++			hint_file.flush();
++		}
++
++		if (!hint_file)
++		{
++			CmWriteLogOutput(
++				"[%s:%d] GmpUpdateRunnerInterfaceHint() => RI scan hint not written: the file could not be opened or written, the next launch scans again",
++				__FILE__,
++				__LINE__
++			);
++
++			return;
++		}
++
++		CmWriteLogOutput(
++			"[%s:%d] GmpUpdateRunnerInterfaceHint() => RI scan hint written for chain rva 0x%llX (%s)",
++			__FILE__,
++			__LINE__,
++			CurrentLine.ChainRva,
++			HasStoredLine ? "replacing a line that said something else" : "no usable line was stored"
++		);
++	}
++
++	// The page scan of GmpCreateHookOnInterfaceCreation, visiting the pages of .text in the order given
++	// instead of first to last. What gets accepted, and where the hook goes, is decided in here and
++	// nowhere else. Returns AURIE_OBJECT_NOT_FOUND if none of the pages holds the chain.
++	//
++	// A failure does not say by its status which of the two it is - MmCreateMidfunctionHook's status is
++	// handed on as it comes, and whether that can be AURIE_OBJECT_NOT_FOUND too was NOT verified (Aurie's
++	// source is not in this tree). WasChainAccepted tells them apart: it is true as soon as a page passed
++	// every test and the hook was attempted, and AcceptedVisitIndex is then the index of that page in
++	// PageVisitOrder. A caller must not read "the chain is not on these pages" out of the status alone.
++	static AurieStatus GmpScanPagesForRunnerInterfaceX64(
++		IN uint64_t TextBase,
++		IN const std::vector<size_t>& PageVisitOrder,
+ 		OPTIONAL OUT PVOID* Rip,
+-		IN AurieMidHookFunction Handler
++		IN AurieMidHookFunction Handler,
++		OUT bool& WasChainAccepted,
++		OUT size_t& AcceptedVisitIndex
+ 	)
+ 	{
++		WasChainAccepted = false;
++		AcceptedVisitIndex = 0;
++
+ 		// Scan the memory for this pattern:
+ 		/*
+ 
+@@ -316,43 +581,11 @@ namespace YYTK
+ 		*/
+ 
+ 		AurieStatus last_status = AURIE_SUCCESS;
+-		uint64_t text_section_offset = 0;
+-		size_t text_section_size = 0;
+-
+-		// Query the game's base address
+-		const uint64_t game_base = reinterpret_cast<uint64_t>(GetModuleHandleW(nullptr));
+-
+-		// Get the .text section address for the game executable
+-		last_status = Internal::PpiGetModuleSectionBounds(
+-			GetModuleHandleW(nullptr),
+-			".text",
+-			text_section_offset,
+-			text_section_size
+-		);
+-
+-		if (!AurieSuccess(last_status))
+-			return last_status;
+ 
+-		CmWriteOutput(
+-			CM_LIGHTAQUA,
+-			"Please wait while the game is being disassembled. This can take up to a minute on slower hardware."
+-		);
+-
+-		size_t code_pages = ADDRESS_AND_SIZE_TO_SPAN_PAGES(
+-			game_base + text_section_offset,
+-			text_section_size
+-		);
+-
+-		CmWriteLogOutput(
+-			"[%s:%d] GmpCreateHookOnInterfaceCreation() => .text section spans %lld pages",
+-			__FILE__,
+-			__LINE__,
+-			code_pages
+-		);
+-
+-		for (size_t page_num = 0; page_num < code_pages; page_num++)
++		for (size_t visit_index = 0; visit_index < PageVisitOrder.size(); visit_index++)
+ 		{
+-			PVOID page_base = reinterpret_cast<PVOID>(game_base + text_section_offset + (page_num * PAGE_SIZE));
++			const size_t page_num = PageVisitOrder[visit_index];
++			PVOID page_base = reinterpret_cast<PVOID>(TextBase + (page_num * PAGE_SIZE));
+ 
+ 			// Disassemble the ENTIRE game
+ 			auto instructions_in_the_current_page = GmpDisassemble(
+@@ -516,6 +749,20 @@ namespace YYTK
+ 				continue;
+ 			}
+ 
++			// The instruction after the sub is read through (iterator - 1) below, which does not exist
++			// if the sub is the very last instruction that was decoded before the chain.
++			if (last_rsp_sub_iterator == pre_ri_instructions.rbegin())
++			{
++				CmWriteLogOutput(
++					"[%s:%d] GmpCreateHookOnInterfaceCreation() => nothing was decoded between the last sub rsp and the chain on page %zu, page skipped",
++					__FILE__,
++					__LINE__,
++					page_num
++				);
++
++				continue;
++			}
++
+ 			// Get the actual instruction
+ 			const auto& last_rsp_sub = *last_rsp_sub_iterator;
+ 			// Get the instruction just after the sub rsp (iterator is reversed, so -1 instead of +1)
+@@ -543,6 +790,13 @@ namespace YYTK
+ 			// Hooking the call instruction will cause the game to hang, idfk why.
+ 			const PVOID bp_address = reinterpret_cast<PVOID>(instruction_just_after.RawForm.runtime_address);
+ 
++			// From here on a failure is a hook that could not be created, not a page without the chain
++			WasChainAccepted = true;
++			AcceptedVisitIndex = visit_index;
++
++			// The handler walks the chain from this base, so it has to be in place before the hook can fire
++			g_ModuleInterface.m_RunnerInterfaceBase = runner_interface_instructions_base;
++
+ 			last_status = MmCreateMidfunctionHook(
+ 				g_ArSelfModule,
+ 				"RunnerInterface",
+@@ -560,16 +814,276 @@ namespace YYTK
+ 
+ 			// If we failed, return the error code.
+ 			if (!AurieSuccess(last_status))
++			{
++				// No hook, so no base either
++				g_ModuleInterface.m_RunnerInterfaceBase = 0;
+ 				return last_status;
++			}
+ 
+ 			// Else return the RIP if needed
+ 			if (Rip)
+ 				*Rip = bp_address;
+ 
+-			g_ModuleInterface.m_RunnerInterfaceBase = runner_interface_instructions_base;
+ 			return AURIE_SUCCESS;
+ 		}
+ 
+ 		return AURIE_OBJECT_NOT_FOUND;
+ 	}
++
++	// Used if GmpGetRunnerInterface fails in x64.
++	AurieStatus GmpCreateHookOnInterfaceCreation(
++		OPTIONAL OUT PVOID* Rip,
++		IN AurieMidHookFunction Handler
++	)
++	{
++		AurieStatus last_status = AURIE_SUCCESS;
++		uint64_t text_section_offset = 0;
++		size_t text_section_size = 0;
++
++		// Query the game's base address
++		const uint64_t game_base = reinterpret_cast<uint64_t>(GetModuleHandleW(nullptr));
++
++		// Get the .text section address for the game executable
++		last_status = Internal::PpiGetModuleSectionBounds(
++			GetModuleHandleW(nullptr),
++			".text",
++			text_section_offset,
++			text_section_size
++		);
++
++		if (!AurieSuccess(last_status))
++			return last_status;
++
++		const uint64_t text_base = game_base + text_section_offset;
++
++		size_t code_pages = ADDRESS_AND_SIZE_TO_SPAN_PAGES(
++			text_base,
++			text_section_size
++		);
++
++		CmWriteLogOutput(
++			"[%s:%d] GmpCreateHookOnInterfaceCreation() => .text section spans %lld pages",
++			__FILE__,
++			__LINE__,
++			code_pages
++		);
++
++		// Everything that is not upstream's first-to-last order (the hinted page, the byte pass of the
++		// pre-filter) is only done if .text provably lies inside the mapped, readable image.
++		RiScan::HintLine current_line = {};
++		const char* refusal_reason = GmpQueryScanShortcutRefusal(
++			text_base,
++			text_section_offset,
++			text_section_size,
++			current_line
++		);
++
++		if (refusal_reason)
++		{
++			CmWriteLogOutput(
++				"[%s:%d] GmpCreateHookOnInterfaceCreation() => RI scan hint refused, pre-filter refused: %s. Scanning every page in order.",
++				__FILE__,
++				__LINE__,
++				refusal_reason
++			);
++		}
++
++		const bool is_shortcut_allowed = (refusal_reason == nullptr);
++
++		// Pass 1 - the page a hint file names, if there is one.
++		fs::path hint_path = {};
++		RiScan::HintLine stored_line = {};
++		bool has_stored_line = false;
++		bool has_hinted_page = false;
++		size_t hinted_page = 0;
++
++		if (is_shortcut_allowed)
++		{
++			GmpLocateRunnerInterfaceHint(hint_path, current_line.ExeSize);
++
++			has_hinted_page = GmpReadRunnerInterfaceHint(
++				hint_path,
++				current_line,
++				text_section_offset,
++				text_section_size,
++				has_stored_line,
++				stored_line,
++				hinted_page
++			);
++		}
++
++		PVOID hook_address = nullptr;
++		bool is_chain_found = false;
++		bool was_chain_accepted = false;
++		size_t accepted_visit_index = 0;
++
++		// The pages pass 1 scans, which pass 2 then leaves out
++		std::vector<size_t> hint_visit_order = {};
++
++		if (has_hinted_page)
++		{
++			// The page before the hinted one is scanned as well, and first - a hint must not get the
++			// page a chain continues on scanned without the page it starts on, as the pairs left on
++			// that page can still pass upstream's test and the middle of the chain would become its
++			// start. REASONED from that test, NOT reproduced: the one build whose chain was located
++			// (rva 0xB5557E2) has it inside a single page, which says nothing about the next build.
++			hint_visit_order = RiScan::BuildHintVisitOrder(hinted_page, code_pages);
++
++			last_status = GmpScanPagesForRunnerInterfaceX64(
++				text_base,
++				hint_visit_order,
++				&hook_address,
++				Handler,
++				was_chain_accepted,
++				accepted_visit_index
++			);
++
++			if (AurieSuccess(last_status))
++			{
++				is_chain_found = true;
++
++				CmWriteLogOutput(
++					"[%s:%d] GmpCreateHookOnInterfaceCreation() => RI scan hint hit: the scan of page %zu found the chain at rva 0x%llX (the hint said 0x%llX, page %zu), %zu of %zu pages scanned",
++					__FILE__,
++					__LINE__,
++					hint_visit_order[accepted_visit_index],
++					g_ModuleInterface.m_RunnerInterfaceBase - game_base,
++					stored_line.ChainRva,
++					hinted_page,
++					accepted_visit_index + 1,
++					code_pages
++				);
++			}
++			else if (was_chain_accepted)
++			{
++				// The chain IS on these pages, so this is not a miss and scanning the rest of .text
++				// could not help: the hook would be attempted at the same place again.
++				CmWriteLogOutput(
++					"[%s:%d] GmpCreateHookOnInterfaceCreation() => RI scan hint hook failed: the chain is on page %zu but the hook could not be created there (%s), the other pages are not scanned",
++					__FILE__,
++					__LINE__,
++					hint_visit_order[accepted_visit_index],
++					AurieStatusToString(last_status)
++				);
++
++				return last_status;
++			}
++			else
++			{
++				CmWriteLogOutput(
++					"[%s:%d] GmpCreateHookOnInterfaceCreation() => RI scan hint miss: no chain on hinted page %zu or the page before it (%zu scanned), scanning the other pages",
++					__FILE__,
++					__LINE__,
++					hinted_page,
++					hint_visit_order.size()
++				);
++			}
++		}
++
++		// Pass 2 - every page not scanned yet, exactly once: the ranked ones first, then the rest in order.
++		if (!is_chain_found)
++		{
++			CmWriteOutput(
++				CM_LIGHTAQUA,
++				"Please wait while the game is being disassembled. This can take up to a minute on slower hardware."
++			);
++
++			std::vector<size_t> ranked_pages = {};
++
++			if (is_shortcut_allowed)
++			{
++				// ASSUMED to be much cheaper than disassembling the same bytes, as it is one forward pass
++				// that mostly compares a single byte. NOT measured: on a cold launch it still has to page
++				// all of .text in from disk, which no log of this game has timed yet.
++				ranked_pages = RiScan::RankPages(
++					reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(text_base)),
++					text_section_size,
++					code_pages,
++					PAGE_SIZE
++				);
++
++				CmWriteLogOutput(
++					"[%s:%d] GmpCreateHookOnInterfaceCreation() => RI pre-filter ranked %zu of %zu pages to be scanned first",
++					__FILE__,
++					__LINE__,
++					ranked_pages.size(),
++					code_pages
++				);
++			}
++
++			// How many of the ranked pages really lead the order (pass 1 may have scanned some already)
++			size_t ranked_visit_count = 0;
++
++			const std::vector<size_t> page_visit_order = RiScan::BuildPageVisitOrder(
++				ranked_pages,
++				code_pages,
++				hint_visit_order,
++				ranked_visit_count
++			);
++
++			last_status = GmpScanPagesForRunnerInterfaceX64(
++				text_base,
++				page_visit_order,
++				&hook_address,
++				Handler,
++				was_chain_accepted,
++				accepted_visit_index
++			);
++
++			// Whether the ranking did anything is said here, in so many words, on every launch that gets
++			// this far. "ranked N pages" followed by success looks the same whether the chain was on the
++			// first ranked page or on the last page of the address-order remainder.
++			if (is_shortcut_allowed && was_chain_accepted)
++			{
++				const bool is_ranked_hit = RiScan::IsVisitIndexRanked(accepted_visit_index, ranked_visit_count);
++
++				CmWriteLogOutput(
++					is_ranked_hit ?
++						"[%s:%d] GmpCreateHookOnInterfaceCreation() => RI pre-filter hit: chain on page %zu, which was visit %zu of %zu (%zu ranked pages led the order)" :
++						"[%s:%d] GmpCreateHookOnInterfaceCreation() => RI pre-filter miss: chain on page %zu was not among the ranked pages, found in address order at visit %zu of %zu (%zu ranked pages led the order)",
++					__FILE__,
++					__LINE__,
++					page_visit_order[accepted_visit_index],
++					accepted_visit_index + 1,
++					page_visit_order.size(),
++					ranked_visit_count
++				);
++			}
++
++			if (!AurieSuccess(last_status))
++			{
++				if (!was_chain_accepted)
++				{
++					CmWriteLogOutput(
++						"[%s:%d] GmpCreateHookOnInterfaceCreation() => RI scan found no chain: %zu pages scanned in this pass, %zu for the hint before it",
++						__FILE__,
++						__LINE__,
++						page_visit_order.size(),
++						hint_visit_order.size()
++					);
++				}
++
++				return last_status;
++			}
++		}
++
++		if (Rip)
++			*Rip = hook_address;
++
++		if (is_shortcut_allowed)
++		{
++			// Both come from the page scan that just ran - neither was read from the file
++			current_line.HookRva = reinterpret_cast<uint64_t>(hook_address) - game_base;
++			current_line.ChainRva = g_ModuleInterface.m_RunnerInterfaceBase - game_base;
++
++			GmpUpdateRunnerInterfaceHint(
++				hint_path,
++				has_stored_line,
++				stored_line,
++				current_line
++			);
++		}
++
++		return AURIE_SUCCESS;
++	}
+ }
+\ No newline at end of file
+diff --git a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp
+new file mode 100644
+index 0000000..5815fd6
+--- /dev/null
++++ b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp	
+@@ -0,0 +1,608 @@
++#ifndef YYTK_GENERIC_RUNNERINTERFACESCAN_H_
++#define YYTK_GENERIC_RUNNERINTERFACESCAN_H_
++
++// Pure helpers for the runner interface scan in Generic-RunnerInterfaceNew.cpp.
++//
++// Only standard headers are included - no Aurie, no Zydis, no Windows - so that
++// YYToolkit/hs-tests/ri_scan_test.cpp can compile and exercise every function in here on a build
++// host, without the game. Nothing in this file touches memory it was not handed, a file, or a global.
++
++#include <cstddef>
++#include <cstdint>
++#include <algorithm>
++#include <istream>
++#include <string>
++#include <vector>
++
++#ifndef IN
++#define IN
++#endif
++
++#ifndef OUT
++#define OUT
++#endif
++
++namespace YYTK
++{
++	namespace RiScan
++	{
++		// ===== Page ranking =====
++		// The runner interface is built by a long run of
++		//     lea r64, [rip+disp32]
++		//     mov [rbp|rsp+disp], r64
++		// pairs (see the comment block in GmpScanPagesForRunnerInterfaceX64). The functions below find
++		// such runs by looking at raw bytes. They decide NOTHING about which site gets hooked: they only
++		// pick the order in which the unchanged page scan visits pages, and every page stays in that order.
++
++		// The encoded length of "lea r64, [rip+disp32]": REX.W, 8D, ModRM, disp32.
++		constexpr size_t g_RipRelativeLeaLength = 7;
++
++		// True if Code[Offset] starts a "lea r64, [rip+disp32]".
++		inline bool IsRipRelativeLea(
++			IN const uint8_t* Code,
++			IN size_t CodeSize,
++			IN size_t Offset
++		)
++		{
++			if (Offset >= CodeSize || (CodeSize - Offset) < g_RipRelativeLeaLength)
++				return false;
++
++			// REX.W, optionally with REX.R for r8-r15 as the destination
++			if (Code[Offset] != 0x48 && Code[Offset] != 0x4C)
++				return false;
++
++			if (Code[Offset + 1] != 0x8D)
++				return false;
++
++			// ModRM: mod=00 rm=101 is [rip+disp32], the reg field is free
++			return (Code[Offset + 2] & 0xC7) == 0x05;
++		}
++
++		// The length of a "mov [rbp|rsp+disp8|disp32], r64" starting at Code[Offset], or 0 if there is none.
++		inline size_t GetStackStoreLength(
++			IN const uint8_t* Code,
++			IN size_t CodeSize,
++			IN size_t Offset
++		)
++		{
++			// The shortest form (REX.W, 89, ModRM, disp8) is 4 bytes, and byte 4 is read for the SIB check
++			if (Offset >= CodeSize || (CodeSize - Offset) < 4)
++				return 0;
++
++			// REX.W, optionally with REX.R. REX.B or REX.X would turn the base into r13/r12 or add an index.
++			if (Code[Offset] != 0x48 && Code[Offset] != 0x4C)
++				return 0;
++
++			if (Code[Offset + 1] != 0x89)
++				return 0;
++
++			const uint8_t mod_field = static_cast<uint8_t>(Code[Offset + 2] >> 6);
++			const uint8_t rm_field = static_cast<uint8_t>(Code[Offset + 2] & 0x07);
++
++			// mod=01 carries a disp8, mod=10 a disp32.
++			// mod=00 is either no displacement or rip-relative, mod=11 is register to register.
++			size_t length = 0;
++			if (mod_field == 1)
++				length = 4;
++			else if (mod_field == 2)
++				length = 7;
++			else
++				return 0;
++
++			if (rm_field == 4)
++			{
++				// rm=100 means a SIB byte follows. 0x24 is "base=rsp, no index" - the only form wanted.
++				if (Code[Offset + 3] != 0x24)
++					return 0;
++
++				length++;
++			}
++			else if (rm_field != 5)
++			{
++				// rm=101 with mod=01|10 is rbp. Anything else is some other register.
++				return 0;
++			}
++
++			if ((CodeSize - Offset) < length)
++				return 0;
++
++			return length;
++		}
++
++		// Up to this many bytes of something else may sit next to a pair without ending the run.
++		// The comment block in the .cpp shows a 5 byte "mov edx, 320h" between a lea and its store.
++		constexpr size_t g_MaximumPairGap = 7;
++
++		// Counts the lea/store pairs of the run starting at Code[Offset], which has to be a lea.
++		// RunEnd receives the offset just past the last store that was counted.
++		inline uint32_t MeasurePairRun(
++			IN const uint8_t* Code,
++			IN size_t CodeSize,
++			IN size_t Offset,
++			OUT size_t& RunEnd
++		)
++		{
++			uint32_t pair_count = 0;
++			size_t cursor = Offset;
++			RunEnd = Offset;
++
++			while (true)
++			{
++				// Find the lea - right at the cursor for the first pair, within the gap for the ones after it
++				const size_t maximum_lea_gap = pair_count ? g_MaximumPairGap : 0;
++				size_t lea_offset = cursor;
++				bool is_lea_found = false;
++
++				for (size_t gap = 0; gap <= maximum_lea_gap; gap++)
++				{
++					if (IsRipRelativeLea(Code, CodeSize, cursor + gap))
++					{
++						lea_offset = cursor + gap;
++						is_lea_found = true;
++						break;
++					}
++				}
++
++				if (!is_lea_found)
++					break;
++
++				// Find the store of that lea
++				const size_t store_search_start = lea_offset + g_RipRelativeLeaLength;
++				size_t store_offset = 0;
++				size_t store_length = 0;
++
++				for (size_t gap = 0; gap <= g_MaximumPairGap; gap++)
++				{
++					store_length = GetStackStoreLength(Code, CodeSize, store_search_start + gap);
++					if (store_length)
++					{
++						store_offset = store_search_start + gap;
++						break;
++					}
++				}
++
++				if (!store_length)
++					break;
++
++				pair_count++;
++				cursor = store_offset + store_length;
++				RunEnd = cursor;
++			}
++
++			return pair_count;
++		}
++
++		// The page scan looks for four lea/mov pairs in a row, so a shorter run can never be accepted by it.
++		constexpr uint32_t g_MinimumRankedPairs = 4;
++
++		// One linear pass over the bytes, no disassembly. Returns the pages that hold the longest lea/store
++		// runs, longest run first; equal runs keep address order, which is the order upstream scans in.
++		//
++		// A run that crosses a page boundary links its pages: whenever a later page of such a run is
++		// returned, the earlier pages of that run are returned right before it. Upstream always sees the
++		// page a run starts on before the pages it continues on, and the ranking must not change that.
++		//
++		// Roughly MaximumRankedPages pages are returned (a linked group is never cut in half).
++		inline std::vector<size_t> RankPages(
++			IN const uint8_t* Text,
++			IN size_t TextSize,
++			IN size_t PageCount,
++			IN size_t PageSize,
++			IN size_t MaximumRankedPages = 64
++		)
++		{
++			std::vector<size_t> ranked_pages = {};
++
++			if (!Text || !TextSize || !PageCount || !PageSize)
++				return ranked_pages;
++
++			// The longest run touching each page, and whether a run reaches the page from the one before it
++			std::vector<uint32_t> longest_run(PageCount, 0);
++			std::vector<bool> continues_previous_page(PageCount, false);
++
++			size_t offset = 0;
++			while (offset < TextSize)
++			{
++				if (!IsRipRelativeLea(Text, TextSize, offset))
++				{
++					offset++;
++					continue;
++				}
++
++				size_t run_end = offset;
++				const uint32_t pair_count = MeasurePairRun(Text, TextSize, offset, run_end);
++
++				if (pair_count < g_MinimumRankedPairs)
++				{
++					offset++;
++					continue;
++				}
++
++				const size_t first_page = offset / PageSize;
++				const size_t last_page = (run_end - 1) / PageSize;
++
++				for (size_t page = first_page; page <= last_page && page < PageCount; page++)
++				{
++					longest_run[page] = (std::max)(longest_run[page], pair_count);
++
++					if (page != first_page)
++						continues_previous_page[page] = true;
++				}
++
++				// run_end is past offset, as at least four pairs were counted
++				offset = run_end;
++			}
++
++			std::vector<size_t> candidate_pages = {};
++			for (size_t page = 0; page < PageCount; page++)
++			{
++				if (longest_run[page])
++					candidate_pages.push_back(page);
++			}
++
++			std::stable_sort(
++				candidate_pages.begin(),
++				candidate_pages.end(),
++				[&longest_run](size_t First, size_t Second) -> bool
++				{
++					return longest_run[First] > longest_run[Second];
++				}
++			);
++
++			std::vector<bool> is_page_returned(PageCount, false);
++
++			for (const size_t candidate : candidate_pages)
++			{
++				if (ranked_pages.size() >= MaximumRankedPages)
++					break;
++
++				// Walk back to the page the linked group starts on
++				size_t group_start = candidate;
++				while (group_start > 0 && continues_previous_page[group_start])
++					group_start--;
++
++				for (size_t page = group_start; page <= candidate; page++)
++				{
++					if (is_page_returned[page])
++						continue;
++
++					is_page_returned[page] = true;
++					ranked_pages.push_back(page);
++				}
++			}
++
++			return ranked_pages;
++		}
++
++		// The full visit order: the preferred pages first, then every other page in address order.
++		// Each page below PageCount appears exactly once, except the SkippedPages, which do not appear
++		// at all. Preferred pages that are out of range, skipped or repeated are dropped.
++		// PreferredVisitCount receives how many entries at the front of the order are preferred pages,
++		// which can be fewer than PreferredPages holds.
++		inline std::vector<size_t> BuildPageVisitOrder(
++			IN const std::vector<size_t>& PreferredPages,
++			IN size_t PageCount,
++			IN const std::vector<size_t>& SkippedPages,
++			OUT size_t& PreferredVisitCount
++		)
++		{
++			std::vector<size_t> visit_order = {};
++			std::vector<bool> is_page_handled(PageCount, false);
++			PreferredVisitCount = 0;
++
++			for (const size_t page : SkippedPages)
++			{
++				if (page < PageCount)
++					is_page_handled[page] = true;
++			}
++
++			for (const size_t page : PreferredPages)
++			{
++				if (page >= PageCount || is_page_handled[page])
++					continue;
++
++				is_page_handled[page] = true;
++				visit_order.push_back(page);
++			}
++
++			PreferredVisitCount = visit_order.size();
++
++			for (size_t page = 0; page < PageCount; page++)
++			{
++				if (!is_page_handled[page])
++					visit_order.push_back(page);
++			}
++
++			return visit_order;
++		}
++
++		// True if the page visited at VisitIndex of a BuildPageVisitOrder order is one of its preferred
++		// pages, ie. the ranking is what brought it to the front. False means the page was only reached
++		// in the address-order remainder, where the ranking saved nothing.
++		inline bool IsVisitIndexRanked(
++			IN size_t VisitIndex,
++			IN size_t PreferredVisitCount
++		)
++		{
++			return VisitIndex < PreferredVisitCount;
++		}
++
++		// The pages scanned for a hint that names HintedPage: the page before it, then the page itself.
++		//
++		// A chain can start near the end of one page and continue on the next. Upstream always sees the
++		// page a chain starts on first, and accepts the true start there. A scan of only the page it
++		// continues on could accept the middle of the chain as its start (the pairs left over can still
++		// pass upstream's 88..103 test), so a hint never gets to show the scan a page without the page
++		// before it. Empty if HintedPage is not below PageCount.
++		inline std::vector<size_t> BuildHintVisitOrder(
++			IN size_t HintedPage,
++			IN size_t PageCount
++		)
++		{
++			std::vector<size_t> visit_order = {};
++
++			if (HintedPage >= PageCount)
++				return visit_order;
++
++			if (HintedPage > 0)
++				visit_order.push_back(HintedPage - 1);
++
++			visit_order.push_back(HintedPage);
++			return visit_order;
++		}
++
++		// True if [SectionOffset, SectionOffset + SectionSize) is not empty and lies inside an image
++		// that is ImageSize bytes big. Written so that no addition can wrap around.
++		inline bool IsSectionInsideImage(
++			IN uint64_t SectionOffset,
++			IN uint64_t SectionSize,
++			IN uint64_t ImageSize
++		)
++		{
++			if (!SectionSize)
++				return false;
++
++			if (SectionOffset > ImageSize)
++				return false;
++
++			return SectionSize <= (ImageSize - SectionOffset);
++		}
++
++		// Turns an rva into the index of the section page it lies on. False if it is outside the section.
++		inline bool GetPageOfRva(
++			IN uint64_t Rva,
++			IN uint64_t SectionOffset,
++			IN uint64_t SectionSize,
++			IN size_t PageSize,
++			OUT size_t& Page
++		)
++		{
++			Page = 0;
++
++			if (!PageSize)
++				return false;
++
++			if (Rva < SectionOffset || (Rva - SectionOffset) >= SectionSize)
++				return false;
++
++			Page = static_cast<size_t>((Rva - SectionOffset) / PageSize);
++			return true;
++		}
++
++		// ===== The scan hint line =====
++		// One line of decimal numbers separated by blanks:
++		//     <exe file size> <hook rva> <chain rva>[ <TimeDateStamp> <SizeOfImage> <CheckSum>]
++		// The first three are the legacy form, which older modified builds wrote and which
++		// ForgePact's control panel pre-seeds. The last three come from the mapped PE headers.
++		struct HintLine
++		{
++			uint64_t ExeSize = 0;
++			// Kept ONLY so that a stored line can be compared with a fresh one.
++			// It must never be turned into an address - the page scan finds the hook address.
++			uint64_t HookRva = 0;
++			// Picks the page that is scanned first, nothing else.
++			uint64_t ChainRva = 0;
++			bool HasImageIdentity = false;
++			uint64_t TimeDateStamp = 0;
++			uint64_t SizeOfImage = 0;
++			uint64_t CheckSum = 0;
++		};
++
++		// Strict unsigned decimal: digits only, no sign, no prefix, no overflow.
++		inline bool ParseDecimal(
++			IN const std::string& Token,
++			OUT uint64_t& Value
++		)
++		{
++			Value = 0;
++
++			// 18446744073709551615 has 20 digits
++			if (Token.empty() || Token.size() > 20)
++				return false;
++
++			uint64_t value = 0;
++			for (const char character : Token)
++			{
++				if (character < '0' || character > '9')
++					return false;
++
++				const uint64_t digit = static_cast<uint64_t>(character - '0');
++
++				if (value > (UINT64_MAX - digit) / 10)
++					return false;
++
++				value = (value * 10) + digit;
++			}
++
++			Value = value;
++			return true;
++		}
++
++		// Reads the first line of Stream. False unless it starts with three decimal numbers.
++		// Anything that is not a complete, well-formed image identity leaves the line a legacy one.
++		inline bool ParseHintLine(
++			IN std::istream& Stream,
++			OUT HintLine& Line
++		)
++		{
++			Line = {};
++
++			// Six 20-digit numbers and their separators fit with room to spare. A longer line is not ours.
++			constexpr size_t maximum_line_length = 192;
++
++			std::vector<std::string> tokens = {};
++			std::string current_token = {};
++			size_t characters_read = 0;
++
++			while (true)
++			{
++				const int character = Stream.get();
++				const bool is_end_of_line = (character == std::char_traits<char>::eof()) || (character == '\n');
++
++				if (!is_end_of_line)
++				{
++					characters_read++;
++					if (characters_read > maximum_line_length)
++						return false;
++				}
++
++				if (is_end_of_line || character == ' ' || character == '\t' || character == '\r')
++				{
++					if (!current_token.empty())
++					{
++						tokens.push_back(current_token);
++						current_token.clear();
++					}
++
++					if (is_end_of_line)
++						break;
++
++					continue;
++				}
++
++				current_token.push_back(static_cast<char>(character));
++			}
++
++			if (tokens.size() < 3)
++				return false;
++
++			if (!ParseDecimal(tokens[0], Line.ExeSize) ||
++				!ParseDecimal(tokens[1], Line.HookRva) ||
++				!ParseDecimal(tokens[2], Line.ChainRva))
++			{
++				Line = {};
++				return false;
++			}
++
++			if (tokens.size() < 6)
++				return true;
++
++			uint64_t timestamp = 0, image_size = 0, checksum = 0;
++			if (!ParseDecimal(tokens[3], timestamp) ||
++				!ParseDecimal(tokens[4], image_size) ||
++				!ParseDecimal(tokens[5], checksum))
++			{
++				return true;
++			}
++
++			// All three are 32-bit fields in the PE headers
++			if (timestamp > UINT32_MAX || image_size > UINT32_MAX || checksum > UINT32_MAX)
++				return true;
++
++			Line.HasImageIdentity = true;
++			Line.TimeDateStamp = timestamp;
++			Line.SizeOfImage = image_size;
++			Line.CheckSum = checksum;
++
++			return true;
++		}
++
++		// The text ParseHintLine reads back, newline included. Digits are produced by hand,
++		// so that no stream locale can put a thousands separator into a number.
++		inline std::string FormatHintLine(
++			IN const HintLine& Line
++		)
++		{
++			const auto append_decimal = [](std::string& Text, uint64_t Value) -> void
++				{
++					char digits[20] = {};
++					size_t digit_count = 0;
++
++					do
++					{
++						digits[digit_count++] = static_cast<char>('0' + (Value % 10));
++						Value /= 10;
++					} while (Value);
++
++					while (digit_count)
++						Text.push_back(digits[--digit_count]);
++				};
++
++			std::string text = {};
++			append_decimal(text, Line.ExeSize);
++			text.push_back(' ');
++			append_decimal(text, Line.HookRva);
++			text.push_back(' ');
++			append_decimal(text, Line.ChainRva);
++
++			if (Line.HasImageIdentity)
++			{
++				text.push_back(' ');
++				append_decimal(text, Line.TimeDateStamp);
++				text.push_back(' ');
++				append_decimal(text, Line.SizeOfImage);
++				text.push_back(' ');
++				append_decimal(text, Line.CheckSum);
++			}
++
++			text.push_back('\n');
++			return text;
++		}
++
++		// True if both lines would be written as the same text.
++		inline bool IsSameHintLine(
++			IN const HintLine& First,
++			IN const HintLine& Second
++		)
++		{
++			if (First.ExeSize != Second.ExeSize ||
++				First.HookRva != Second.HookRva ||
++				First.ChainRva != Second.ChainRva ||
++				First.HasImageIdentity != Second.HasImageIdentity)
++			{
++				return false;
++			}
++
++			if (!First.HasImageIdentity)
++				return true;
++
++			return First.TimeDateStamp == Second.TimeDateStamp &&
++				First.SizeOfImage == Second.SizeOfImage &&
++				First.CheckSum == Second.CheckSum;
++		}
++
++		// True if Stored was written for the executable Current describes, as far as Stored can tell:
++		// a legacy line only knows the file size. The answer is for the log - it must NOT be used to
++		// throw a hint away, because the page scan validates the hinted page no matter who wrote the line.
++		inline bool DoesHintKeyMatch(
++			IN const HintLine& Stored,
++			IN const HintLine& Current
++		)
++		{
++			if (Stored.ExeSize != Current.ExeSize)
++				return false;
++
++			if (!Stored.HasImageIdentity)
++				return true;
++
++			if (!Current.HasImageIdentity)
++				return false;
++
++			return Stored.TimeDateStamp == Current.TimeDateStamp &&
++				Stored.SizeOfImage == Current.SizeOfImage &&
++				Stored.CheckSum == Current.CheckSum;
++		}
++	}
++}
++
++#endif // YYTK_GENERIC_RUNNERINTERFACESCAN_H_

@@ -22,6 +22,7 @@ This directory serves as the centralized repository for development, architectur
 | **Hero Siege Codex** | Release-only *(no submodule)* | [Codex Integration](../tools/hero-siege-codex.md) | Ready | Offline item, class, creature and world reference archive. |
 | **Runtime Data Models** | `docs/` | [Runtime Data Models & Cheat-Sheet](../RUNTIME_DATA_MODELS.md) | Ready | Reverse-engineered Season 10 memory models, player instance structs, equipment slots, and drop tables. |
 | **Toolkit Hub** | `hub/` *(not a submodule)* | [Hub Instructions](../../hub/instructions.md) · [design](../hub/design.md) · [catalog schema](../hub/catalog-schema.md) | Ready | Tauri 2 + Svelte 5 desktop app that installs, launches and updates every tool above from a signed, hash-pinned catalog. |
+| **Modified YYToolkit** | `third_party/yytoolkit/` *(not a submodule)* | [Guide](../../third_party/yytoolkit/README.md) · [notice](../../third_party/yytoolkit/NOTICE.md) · [ADR 0002](../adr/0002-modified-yytoolkit-is-a-patch-series-in-the-hub.md) | Built and host-tested; **not yet launched against the game** | The source of truth for the toolkit's modified `YYToolkit.dll`: one pinned upstream commit (`upstream.json`), a documented patch series (`patches/`, order in `patches/series`) and the build tool `tools/build_yytoolkit.py`. AGPL-3.0 aggregate; no binary is committed. ForgePact and HS-Offline-Tracker still distribute the earlier DLL until their own follow-up PRs land. |
 
 ---
 
@@ -32,7 +33,7 @@ Submodule development instructions adhere to the following authoring principles:
 1. **Evidence-Backed Verification:** Every architecture claim, dependency version, and file path must be verified directly against repository source files, configuration manifests, build scripts, or unit test declarations. Unverified claims must be explicitly marked.
 2. **Deterministic Command Metadata:** Commands in the reference tables specify exact working directories, shells, prerequisites, side effects, and verification statuses (`Verified`, `Inspected`, or `Blocked`).
 3. **Safety & Fail-Closed Operations:** Guides document offline-only constraints, anti-cheat isolation (EAC disabled), non-destructive save handling, and atomic backup/restoration mechanisms.
-4. **Modified Upstream Provenance:** Modifications to third-party or upstream dependencies (such as Aurie or YYToolkit) must document exact change locations, compilation flags, and AGPL-3.0 compliance notices.
+4. **Modified Upstream Provenance:** Modifications to third-party or upstream dependencies (such as Aurie or YYToolkit) must document exact change locations, compilation flags, and AGPL-3.0 compliance notices. For YYToolkit that means one patch per change under [`third_party/yytoolkit/patches/`](../../third_party/yytoolkit/patches), each carrying its `Why` / `Evidence` / `Fails-safe` / `Log-markers` / `Upstream-status` header — never a replaced whole file, and never a binary built from a tree that is not the pinned upstream commit plus that series. A guide that describes a distributed binary states what is known about *that* binary, including what its notice leaves out.
 5. **No Decompiled Game Code:** Research notes document measured runtime *behavior* (what a function does, observed crash signatures, memory layout) and reference game objects/scripts by the names and indices in `hs-game-sdk` — never by pasting decompiled or disassembled Hero Siege source. See "Legal: No Decompiled Code in Any Origin" in the root [`AGENTS.md`](../../AGENTS.md) for the full rule and what is/isn't safe to commit.
 6. **Standard Outline Structure:**
    - Module Overview & Metadata
@@ -51,7 +52,9 @@ Submodule development instructions adhere to the following authoring principles:
 
 When working with submodules utilizing `YYToolkit` (such as `ForgePact` and `HS-Offline-Tracker`):
 - Attempt retrieval of upstream `YYToolkit` documentation and API references via the `context7` MCP server when available.
-- Treat local modified sources (e.g., `ForgePact/yytoolkit-modified/` and `HS-Offline-Tracker/aurie-loader/yytoolkit-modified/`) and repository header definitions as authoritative over upstream documentation.
+- Treat the hub's patch series in [`third_party/yytoolkit/`](../../third_party/yytoolkit/README.md) (pinned upstream commit + `patches/` in `patches/series` order) and the repository header definitions as authoritative over upstream documentation. Upstream's documentation describes behaviour the series changes: `CreateCallback(EVENT_OBJECT_CALL)` is refused with `AURIE_UNAVAILABLE`, the functions array is validated before use, a repeated `YYError` message is counted rather than re-reported, and `Release|x64` is built optimised.
+- The submodules' `yytoolkit-modified/` directories (`ForgePact/yytoolkit-modified/`, `HS-Offline-Tracker/aurie-loader/yytoolkit-modified/`) are **not** the source of truth. They hold two whole-file copies and a `NOTICE.md` for the DLL those tools still distribute (SHA-256 `bb113eef…`), and that notice is incomplete: strings in that binary show changes it does not list, and the source for them was not kept. See [`docs/agents/yytoolkit-provenance.md`](../agents/yytoolkit-provenance.md).
+- The plugin-facing headers (`YYTK_Shared*.hpp`, `FunctionWrapper.hpp`) are unmodified upstream at the pinned commit, and the series does not touch them, so a plugin still compiles against upstream's headers.
 
 ---
 

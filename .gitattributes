@@ -27,3 +27,19 @@ catalog/catalog-signing.pub    -text
 # not a gitignore/gitattributes one).
 .claude/workflows/*.js    text eol=lf
 .claude/workflows/*.mjs   text eol=lf
+
+# The modified YYToolkit is kept as a patch series against upstream's blobs,
+# which are LF. `git apply` compares context lines byte for byte, so a patch
+# that `core.autocrlf` rewrote to CRLF on checkout stops applying -- and says
+# "patch does not apply", not "line endings". Same class of bug as the catalog
+# above: invisible on the machine that wrote the file, fatal on a fresh clone.
+# The patches are LF throughout: `tools/build_yytoolkit.py` refuses a series
+# file or a patch that contains any CR byte, so a converted checkout fails with
+# a message that names the cause instead of reaching `git apply`. `-text` on
+# the patches only stops git converting them in either direction, as for the
+# catalog; it is not room for a CR. The series file is forced to LF, and the
+# AGPL text is left untouched because third_party/yytoolkit/LICENSE must keep
+# upstream's blob id, which tests pin.
+third_party/yytoolkit/patches/*.patch   -text
+third_party/yytoolkit/patches/series    text eol=lf
+third_party/yytoolkit/LICENSE           -text
