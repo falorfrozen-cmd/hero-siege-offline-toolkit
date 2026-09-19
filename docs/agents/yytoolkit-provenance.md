@@ -39,8 +39,10 @@ whether the filter was always needed may depend on the game build.
   / `WriteFile` to a hardcoded absolute path under the builder's user profile,
   present in every distributed copy.
 - **An import of `VirtualQuery`** that nothing in the documented source calls.
-- **The lea/mov page pre-filter**, which is in the committed
-  `Generic-RunnerInterfaceNew.cpp` but was never listed in the notice.
+- **The lea/mov page pre-filter**, which *was* in the committed
+  `Generic-RunnerInterfaceNew.cpp` (since deleted from ForgePact's tree, see
+  `docs/submodules/ForgePact/instructions.md`'s repository map) but was never
+  listed in the notice.
 - **A build without `UNICODE`**: it imports `SetWindowLongPtrA`, while
   upstream's project is Unicode. The notice did not mention it.
 - **An absolute `__FILE__` string under the builder's user profile**, which
