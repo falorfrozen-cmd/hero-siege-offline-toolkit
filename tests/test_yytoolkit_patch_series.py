@@ -35,10 +35,15 @@ What is pinned, in the order of the test classes:
     upstream's blob;
   - the directory holds text only, the hub docs point at it, and
     `series_revision` is the literal patch 0006 compiles into the DLL;
-  - when `ForgePact/` is checked out, its own `tools/toolchain-pins.json` pins
-    `modfiles_shipped/YYToolkit.dll` at the sha256 this README's "How to
-    build" section declares for the series -- skips, saying why, when the
-    submodule is absent (hub CI runs without it).
+  - when `ForgePact/` is checked out, its own `tools/toolchain-pins.json`
+    pins `modfiles_shipped/YYToolkit.dll` at either this series' sha256 (the
+    README's "How to build" section) as a plain hub-release pin, or the
+    pre-migration sha256 (NOTICE.md's "About the previously distributed
+    binary") in its original zip-member form -- anything else is drifted and
+    fails. The legacy state is temporary: it is accepted only until
+    ForgePact's own pin-moving change merges and the hub's gitlink is bumped
+    past it, at which point that branch of the check is deleted. Skips,
+    saying why, when the submodule is absent (hub CI runs without it).
 
 Checks that a one-sided test would pass while doing nothing come in pairs. The
 message, marker, chain, legal, address and path rules each also run on a
@@ -67,6 +72,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -1145,11 +1151,112 @@ class SeriesRevision(SeriesCase):
                 f"update the expected build result and the revision there when the series changes")
 
 
+#: A pin whose sha256 matches the series and carries neither zip-member key is
+#: a plain file pin fetched straight from a GitHub release asset of the HUB
+#: repository (not ForgePact's own releases, which is where the legacy pin's
+#: zip lived).
+HUB_RELEASE_URL_MARKER = "/hero-siege-offline-toolkit/releases/download/"
+
+#: 64 lowercase hex characters, not glued to more hex on either side -- a
+#: sha256 in hex, and never a sha1/commit id (those are shorter).
+SHA256_TOKEN = re.compile(r"(?<![0-9a-fA-F])[0-9a-f]{64}(?![0-9a-fA-F])")
+
+
+def classify_forgepact_yytoolkit_pin(
+    entry: Dict[str, object], series_sha: str, legacy_sha: str
+) -> Tuple[str, str]:
+    """Classify one `modfiles_shipped/YYToolkit.dll` entry from ForgePact's
+    `tools/toolchain-pins.json` against the two pins that entry has ever
+    legitimately held. Pure function: no filesystem, no git -- a synthetic
+    `entry` dict exercises every branch (see
+    `ClassifyForgePactYYToolkitPinControls` below).
+
+    "migrated": `sha256` equals `series_sha`, the entry is a plain file pin
+    (neither a `"member"` nor an `"archive_sha256"` key) and its `url` is a
+    release asset of the HUB repository (contains `HUB_RELEASE_URL_MARKER`).
+    This is ForgePact's own change that moves the pin, once merged.
+
+    "legacy": `sha256` equals `legacy_sha` and the entry is in zip-member
+    form (has both `"member"` and `"archive_sha256"`) -- the pre-migration
+    state: the recorded ForgePact revision predates ForgePact's pin move.
+
+    Anything else is "drifted", with a reason naming precisely what is
+    wrong: a third hash; the series hash still in zip-member form or not on
+    a hub release URL; the legacy hash presented as a plain hub-release pin;
+    or a missing `sha256`.
+    """
+    sha = entry.get("sha256")
+    is_plain_pin = "member" not in entry and "archive_sha256" not in entry
+    is_zip_member_pin = "member" in entry and "archive_sha256" in entry
+    url = str(entry.get("url", ""))
+    on_hub_release = HUB_RELEASE_URL_MARKER in url
+
+    if not sha:
+        return "drifted", "the entry has no \"sha256\" key"
+
+    if sha == series_sha:
+        if not is_plain_pin:
+            return "drifted", (
+                f"sha256 {sha} matches the series hash, but the entry is not a plain file pin "
+                f"(it carries \"member\" and/or \"archive_sha256\"); a migrated pin has neither")
+        if not on_hub_release:
+            return "drifted", (
+                f"sha256 {sha} matches the series hash as a plain file pin, but its url {url!r} "
+                f"is not a hub release asset (expected one containing "
+                f"{HUB_RELEASE_URL_MARKER!r})")
+        return "migrated", f"sha256 {sha} matches the series hash, plain file pin, hub release url"
+
+    if sha == legacy_sha:
+        if not is_zip_member_pin:
+            return "drifted", (
+                f"sha256 {sha} matches the legacy (pre-migration) hash, but the entry is not in "
+                f"zip-member form (it needs both \"member\" and \"archive_sha256\"); the legacy "
+                f"pin is a zip-member pin, never a plain hub-release pin")
+        return "legacy", f"sha256 {sha} matches the legacy hash, zip-member form"
+
+    return "drifted", (
+        f"sha256 {sha} is neither the series hash ({series_sha}) nor the legacy hash "
+        f"({legacy_sha})")
+
+
+def notice_legacy_yytoolkit_sha(notice_text: str, series_sha: str) -> str:
+    """The one sha256 in NOTICE.md that is not the series hash: the
+    previously distributed DLL's, under "About the previously distributed
+    binary". Asserts there is exactly one, so a second, unrelated 64-hex
+    string added to NOTICE.md later can never silently widen what
+    `classify_forgepact_yytoolkit_pin` accepts as "legacy"."""
+    others = sorted({m.group(0) for m in SHA256_TOKEN.finditer(notice_text)} - {series_sha})
+    if len(others) != 1:
+        raise AssertionError(
+            f"third_party/yytoolkit/NOTICE.md must contain exactly one sha256 other than the "
+            f"series hash ({series_sha}) -- the previously distributed DLL's, under \"About the "
+            f"previously distributed binary\". Found {len(others)}: {others}")
+    return others[0]
+
+
 class ForgePactPinMatchesThisSeries(SeriesCase):
     """ADR 0002: the hub cannot change what a player receives - only a
     submodule's own pin does that, and it drifts silently unless something
-    reads both sides. Hub CI has no submodules, so this is opt-in: it skips,
-    saying why, when ForgePact/ is not checked out."""
+    reads both sides. Hub CI has no submodules, so
+    `test_forgepact_pin_is_migrated_or_legacy` is opt-in: it skips, saying
+    why, when ForgePact/ is not checked out.
+
+    Two pin states pass here, not one: "migrated" (the pin points at this
+    series' hub release asset) and "legacy" (the pin is still the
+    previously distributed DLL, in its original zip-member form). That is
+    deliberate, not a loophole. The hub's ForgePact gitlink can only move
+    past the commit that moves the pin AFTER ForgePact's own pull request
+    doing that has merged to ForgePact's default branch - the hub's pointer
+    automation accepts only default-branch commits - so a plain, correct
+    `git submodule update --init ForgePact` on an in-flight hub branch
+    legitimately produces "legacy", not "migrated", until then.
+
+    The "legacy" branch of this check is TEMPORARY. Delete it - and this
+    paragraph - in the same hub change that bumps the ForgePact gitlink past
+    the commit that moves the pin, so that only "migrated" passes from that
+    point on. third_party/yytoolkit/README.md's "Follow-ups in the submodule
+    repos" section carries the same instruction.
+    """
 
     #: `Expected result for `hs.1`: **950,784 bytes, sha256\n`<hex>`**` in the
     #: "How to build" section - the one place this README states the sha256 a
@@ -1157,31 +1264,201 @@ class ForgePactPinMatchesThisSeries(SeriesCase):
     EXPECTED_SHA = re.compile(
         r"Expected result for `[^`]+`:\s*\*\*[\d,]+ bytes, sha256\s*\n`([0-9a-f]{64})`\*\*")
 
-    def test_forgepact_pin_matches_the_readme(self):
-        pins_path = ROOT / "ForgePact" / "tools" / "toolchain-pins.json"
-        if not pins_path.is_file():
-            self.skipTest(f"{pins_path.relative_to(ROOT).as_posix()} is not present -- "
-                          f"ForgePact/ is not checked out (hub CI runs without submodules)")
-        match = self.EXPECTED_SHA.search(self.readme)
-        self.assertIsNotNone(
-            match, "third_party/yytoolkit/README.md's \"How to build\" section no longer "
-                   "states an expected sha256 for a build of this series; this test has "
-                   "nothing to compare ForgePact's pin against")
-        expected = match.group(1)
-        pins = json.loads(pins_path.read_text(encoding="utf-8"))
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        match = cls.EXPECTED_SHA.search(cls.readme)
+        if match is None:
+            raise AssertionError(
+                "third_party/yytoolkit/README.md's \"How to build\" section no longer states "
+                "an expected sha256 for a build of this series; this test has nothing to "
+                "classify ForgePact's pin against")
+        cls.series_sha = match.group(1)
+        cls.legacy_sha = notice_legacy_yytoolkit_sha(cls.notice, cls.series_sha)
+
+    def _single_yytoolkit_entry(self, pins: dict) -> dict:
         entries = [f for f in pins.get("files", [])
                    if f.get("dest", "").endswith("modfiles_shipped/YYToolkit.dll")]
         self.assertEqual(
             len(entries), 1,
             f"expected exactly one modfiles_shipped/YYToolkit.dll entry in "
             f"ForgePact/tools/toolchain-pins.json; found {len(entries)}")
-        actual = entries[0].get("sha256")
-        self.assertEqual(
-            actual, expected,
-            f"ForgePact/tools/toolchain-pins.json pins modfiles_shipped/YYToolkit.dll at "
-            f"sha256 {actual}, but third_party/yytoolkit/README.md's \"How to build\" "
-            f"section declares {expected} for this series. ForgePact's pin and this series "
-            f"have drifted -- move one to match the other.")
+        return entries[0]
+
+    def test_forgepact_pin_is_migrated_or_legacy(self):
+        pins_path = ROOT / "ForgePact" / "tools" / "toolchain-pins.json"
+        if not pins_path.is_file():
+            self.skipTest(f"{pins_path.relative_to(ROOT).as_posix()} is not present -- "
+                          f"ForgePact/ is not checked out (hub CI runs without submodules)")
+        pins = json.loads(pins_path.read_text(encoding="utf-8"))
+        entry = self._single_yytoolkit_entry(pins)
+        state, reason = classify_forgepact_yytoolkit_pin(entry, self.series_sha, self.legacy_sha)
+        self.assertNotEqual(
+            state, "drifted",
+            f"ForgePact/tools/toolchain-pins.json's modfiles_shipped/YYToolkit.dll pin is "
+            f"drifted: {reason}")
+
+
+class ClassifyForgePactYYToolkitPinControls(unittest.TestCase):
+    """Unit-level controls for `classify_forgepact_yytoolkit_pin`, entirely
+    synthetic -- no filesystem, so these never move when the real hashes in
+    third_party/yytoolkit/README.md or NOTICE.md do
+    (`ForgePactPinRealRevisionControls` below exercises the same function
+    against real ForgePact history instead)."""
+
+    SERIES = "1" * 64
+    LEGACY = "2" * 64
+
+    MIGRATED_ENTRY = {
+        "dest": "modfiles_shipped/YYToolkit.dll",
+        "url": "https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit/releases/"
+               "download/yytoolkit-v4.0.1-hs.1/YYToolkit.dll",
+        "sha256": SERIES,
+        "provenance": "modified YYToolkit, built from the hub's third_party/yytoolkit/ series",
+    }
+    LEGACY_ENTRY = {
+        "dest": "modfiles_shipped/YYToolkit.dll",
+        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.3.16/"
+               "ForgePact-1.3.16.zip",
+        "archive_sha256": "3" * 64,
+        "member": "ForgePact-1.3.16/modfiles/YYToolkit.dll",
+        "sha256": LEGACY,
+    }
+
+    def classify(self, entry: dict) -> Tuple[str, str]:
+        return classify_forgepact_yytoolkit_pin(entry, self.SERIES, self.LEGACY)
+
+    def test_migrated_pin_is_accepted(self):
+        state, reason = self.classify(self.MIGRATED_ENTRY)
+        self.assertEqual(state, "migrated", reason)
+
+    def test_legacy_pin_is_accepted(self):
+        state, reason = self.classify(self.LEGACY_ENTRY)
+        self.assertEqual(state, "legacy", reason)
+
+    # -- negative controls: each must classify "drifted" and say why --
+
+    def test_a_third_hash_is_drifted(self):
+        entry = dict(self.MIGRATED_ENTRY, sha256="4" * 64)
+        state, reason = self.classify(entry)
+        self.assertEqual(state, "drifted")
+        self.assertIn("neither the series hash", reason)
+
+    def test_series_hash_in_zip_member_form_is_drifted(self):
+        entry = dict(self.LEGACY_ENTRY, sha256=self.SERIES)
+        state, reason = self.classify(entry)
+        self.assertEqual(state, "drifted")
+        self.assertIn("not a plain file pin", reason)
+
+    def test_series_hash_off_a_hub_release_is_drifted(self):
+        entry = dict(self.MIGRATED_ENTRY,
+                     url="https://github.com/falorfrozen-cmd/ForgePact/releases/download/"
+                         "v1.3.17/YYToolkit.dll")
+        state, reason = self.classify(entry)
+        self.assertEqual(state, "drifted")
+        self.assertIn("not a hub release asset", reason)
+
+    def test_legacy_hash_as_a_plain_hub_release_pin_is_drifted(self):
+        entry = dict(self.MIGRATED_ENTRY, sha256=self.LEGACY)
+        state, reason = self.classify(entry)
+        self.assertEqual(state, "drifted")
+        self.assertIn("not in zip-member form", reason)
+
+    def test_missing_sha256_is_drifted(self):
+        entry = {k: v for k, v in self.MIGRATED_ENTRY.items() if k != "sha256"}
+        state, reason = self.classify(entry)
+        self.assertEqual(state, "drifted")
+        self.assertIn("sha256", reason)
+
+
+class ForgePactPinRealRevisionControls(SeriesCase):
+    """Controls `classify_forgepact_yytoolkit_pin` against real ForgePact
+    revisions, read with `git show` -- the ForgePact working tree is never
+    touched. Skips (never fails) whenever the object these need is not
+    available locally: this class proves the classifier against real
+    history, it does not require a network fetch."""
+
+    FORGEPACT_DIR = ROOT / "ForgePact"
+    #: The branch ForgePact's still-unmerged pin-move change lives on
+    #: (third_party/yytoolkit/README.md, "Follow-ups in the submodule
+    #: repos"). A branch name, not a commit id, so it never goes stale here.
+    MIGRATED_BRANCH = "claude/yytoolkit-hs1-distribution"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        match = ForgePactPinMatchesThisSeries.EXPECTED_SHA.search(cls.readme)
+        cls.series_sha = match.group(1) if match else None
+        cls.legacy_sha = (notice_legacy_yytoolkit_sha(cls.notice, cls.series_sha)
+                          if cls.series_sha else None)
+
+    def _forgepact_checked_out(self) -> bool:
+        return (self.FORGEPACT_DIR / ".git").exists()
+
+    def _read_pins_at(self, rev: str) -> Optional[dict]:
+        result = subprocess.run(
+            ["git", "-C", str(self.FORGEPACT_DIR), "show", f"{rev}:tools/toolchain-pins.json"],
+            capture_output=True, text=True)
+        if result.returncode != 0:
+            return None
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return None
+
+    def _single_entry(self, pins: dict) -> dict:
+        entries = [f for f in pins.get("files", [])
+                   if f.get("dest", "").endswith("modfiles_shipped/YYToolkit.dll")]
+        self.assertEqual(len(entries), 1, entries)
+        return entries[0]
+
+    def _recorded_gitlink(self) -> Optional[str]:
+        # The revision a plain `git submodule update --init ForgePact` checks
+        # out - deliberately NOT `git -C ForgePact rev-parse HEAD`, which
+        # reads the working tree's own checkout and can be ahead of what the
+        # hub commit actually records (exactly the discrepancy this test
+        # class exists to catch).
+        result = subprocess.run(["git", "ls-tree", "HEAD", "ForgePact"],
+                                cwd=ROOT, capture_output=True, text=True)
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        fields = result.stdout.split()
+        return fields[2] if len(fields) >= 3 else None
+
+    def test_the_recorded_gitlink_is_not_drifted(self):
+        if not self._forgepact_checked_out():
+            self.skipTest("ForgePact/ is not checked out")
+        rev = self._recorded_gitlink()
+        if not rev:
+            self.skipTest("could not read the ForgePact gitlink with `git ls-tree HEAD ForgePact`")
+        pins = self._read_pins_at(rev)
+        if pins is None:
+            self.skipTest(f"ForgePact's local object store does not have {rev[:12]} (the hub's "
+                          f"recorded gitlink); fetch it there to run this control")
+        entry = self._single_entry(pins)
+        state, reason = classify_forgepact_yytoolkit_pin(entry, self.series_sha, self.legacy_sha)
+        self.assertNotEqual(
+            state, "drifted",
+            f"the hub's recorded ForgePact gitlink ({rev[:12]}) -- what a plain `git submodule "
+            f"update --init ForgePact` checks out, i.e. the repository owner's reproduction -- "
+            f"pins YYToolkit.dll in a way that is neither migrated nor legacy: {reason}")
+
+    def test_the_forgepact_migrated_branch_head_is_migrated(self):
+        if not self._forgepact_checked_out():
+            self.skipTest("ForgePact/ is not checked out")
+        check = subprocess.run(
+            ["git", "-C", str(self.FORGEPACT_DIR), "rev-parse", "--verify", "--quiet",
+             self.MIGRATED_BRANCH],
+            capture_output=True, text=True)
+        if check.returncode != 0:
+            self.skipTest(f"ForgePact branch {self.MIGRATED_BRANCH!r} does not exist locally")
+        pins = self._read_pins_at(self.MIGRATED_BRANCH)
+        if pins is None:
+            self.skipTest(f"{self.MIGRATED_BRANCH!r} exists locally but tools/toolchain-pins.json "
+                          f"could not be read at it")
+        entry = self._single_entry(pins)
+        state, reason = classify_forgepact_yytoolkit_pin(entry, self.series_sha, self.legacy_sha)
+        self.assertEqual(state, "migrated", reason)
 
 
 @unittest.skipIf(shutil.which("git") is None, "git is not on PATH")

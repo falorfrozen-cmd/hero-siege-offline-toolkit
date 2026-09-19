@@ -727,6 +727,12 @@ with mods active, the error-report path with a plugin loaded). Until then,
 players still receive the previous DLL, and the notice files these branches
 rewrote describe unpublished work, not what ships.
 
+Once ForgePact's pin-moving branch above has merged to its default branch and
+the hub's own ForgePact gitlink is bumped past it, delete the "legacy" branch
+of `ForgePactPinMatchesThisSeries` in `tests/test_yytoolkit_patch_series.py`
+in that same hub change, so that only the "migrated" state passes from then
+on.
+
 ### Where the binary is published
 
 The built DLL's intended distribution point is a hub GitHub release tagged
