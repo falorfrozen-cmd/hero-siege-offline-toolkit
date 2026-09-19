@@ -300,6 +300,53 @@ test('missing heads (exit_code 3) produce the loud fallback', async () => {
 
 // --- 2b: the scribe pastes, it does not compose -----------------------------
 
+// Pinned 2026-09-19 after an unrestricted scribe acted on a round's findings
+// instead of only recording them (tools/workorder_audit.py R16). Every
+// scribe dispatch -- the round-end one, and the one written when the
+// implementer returns something other than IMPL-DONE -- must run as the
+// restricted `scribe` agent type, never the implementer's.
+test('every scribe dispatch runs as the restricted scribe agent type with the required prompt guardrails', async () => {
+  const SCRIBE_STRINGS = [
+    'Do not act on any finding in it: record it only.',
+    'Edit nothing except these two files.',
+    'Never run git',
+    'If either file cannot be read, do not create it',
+    'relative to your current working directory',
+  ]
+  const check = (dispatches, label) => {
+    const d = dispatches[label]
+    assert.ok(d, `no dispatch captured for ${label}`)
+    assert.equal(d.opts.agentType, 'scribe')
+    assert.equal(d.opts.model, 'haiku')
+    for (const s of SCRIBE_STRINGS) assert.ok(d.prompt.includes(s), `${label} prompt missing: ${JSON.stringify(s)}`)
+  }
+
+  // The round-end scribe, dispatched after a normal (non-terminal) round.
+  {
+    const dispatches = {}
+    const reply = (label, prompt, opts) => {
+      if (label.startsWith('scribe') || label.startsWith('implementer')) dispatches[label] = { prompt, opts }
+      return standard({
+        verifier: () => ({ verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] }),
+      })(label)
+    }
+    await run(BASE, reply)
+    check(dispatches, 'scribe:r0')
+    assert.equal(dispatches['implementer:r0'].opts.agentType, 'implementer', 'control: the implementer keeps its own agent type')
+  }
+
+  // The scribe dispatched for an implementer's non-IMPL-DONE verdict.
+  {
+    const dispatches = {}
+    const reply = (label, prompt, opts) => {
+      if (label.startsWith('scribe') || label.startsWith('implementer')) dispatches[label] = { prompt, opts }
+      return standard({ implementer: { verdict: 'PLAN-DEFECT', report: '', evidence: 'ev', progress_so_far: '' } })(label)
+    }
+    await run(BASE, reply)
+    check(dispatches, 'scribe:r0')
+  }
+})
+
 test('the scribe payload is the verbatim block with separate BLOCKING/NON-BLOCKING headings and counts', async () => {
   const nb = i => ({ where: `w${i}`, problem: `p${i}`, evidence: `e${i}` })
   const prompts = {}

@@ -473,7 +473,13 @@ scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,
 several rounds; `PLAN-DEFECT` means relaunching after the replan. Replans,
 consultations, human questions and the step 5 report stay with the driver;
 every re-entry inside is a fresh spawn (no resume) — measured no worse than a
-resumed implementer.
+resumed implementer. The scribe runs as the restricted `scribe` agent type
+(`Read`, `Edit` only), never the unrestricted `workflow-subagent` every other
+Record-phase agent here still is; `tools/workorder_audit.py` R16 fails a run
+whose scribe edited outside `.claude/workorders/`, ran `git add`/`git commit`,
+wrote a file through a shell command (a redirect/heredoc, `tee`, a
+PowerShell content cmdlet, ...) instead, or — for the restricted `scribe`
+type — ran any shell command at all.
 
 **Fall back to driver turns** (steps 2–4 by hand, above) when the Workflow
 tool is unavailable, the launch fails, or the user says "driver mode" or "no

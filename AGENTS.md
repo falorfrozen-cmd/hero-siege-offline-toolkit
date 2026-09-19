@@ -19,7 +19,9 @@ file), five review agents (`sdk-contract-reviewer`, `tauri-command-reviewer`,
 three phase agents that run a change through plan → implement → verify at
 three different model tiers (`planner`, `implementer`, `verifier`), a
 `consultant` a phase can put one hard decision to without escalating the whole
-phase, and three skills: `/catalog-rebuild`, `/workorder` (drives those phases
+phase, a `scribe` that pastes a round's precomputed Log/State text into a
+workorder's own files with `Read`/`Edit` only, and three skills:
+`/catalog-rebuild`, `/workorder` (drives those phases
 and routes defects back to the phase that caused them), and
 `submodule-context` (loads the guide named above). MCP servers are in
 [`.mcp.json`](.mcp.json).

@@ -27,13 +27,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import posixpath
 import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
+from typing import Iterable, Iterator, List, Optional
 
 # --------------------------------------------------------------------------
 # Budgets. Each constant names the section 1 measurement it is drawn from
@@ -134,6 +135,61 @@ REVIEWER_TEST_RUN_EXEMPT = {"sdk-contract-reviewer", "tauri-command-reviewer"}
 WORKTREE_GUARD_MARKER = "is in the base repo checkout"
 GUARD_REFUSAL_MAX_FOLLOWUP_CALLS = 5
 RETURN_TOOL = "StructuredOutput"
+
+# R16: measured 2026-09-19 (run wf_95c37e59-d40, workorder
+# forgepact-prospect-materials-to-bag, round 1, session 42eeea81): the
+# `Record`-phase scribe -- an unrestricted `workflow-subagent` labelled
+# `scribe:r1` -- read reviewer/implementer findings next to the harness's
+# relayed user message and acted on them instead of only recording them. It
+# resolved the prompt's *relative* `.claude/workorders/...` paths against the
+# user's home directory (creating files there, never touching the real
+# workorder), edited `ForgePact/plugin/ModuleMain.cpp` and a docs file, and
+# ran `git add`/`git commit` on both ForgePact and the hub's ForgePact
+# pointer -- with no build, test or review. A scribe may only `Edit`/`Write`
+# inside its own `.claude/workorders/`, and must never touch git.
+#
+# Round 1, measured 2026-09-19 on this very workorder's own session
+# (141e6fb2, workflow wf_a2bac07a-62e): a second unrestricted `scribe:r1`
+# repeated the incident on a route the git check above never sees at all --
+# it tried `Write .claude/agents/scribe.md` (refused, not read), then
+# overwrote the file anyway with a Bash heredoc (`cat > ... << 'EOF'`). Two
+# more checks close that gap: any scribe's shell command with a file-write
+# shape FAILs regardless of target (a scribe has no legitimate reason to
+# write through a shell -- its two edits go through the `Edit` tool), and the
+# restricted `scribe` agent type's `tools:` line carries no shell at all, so
+# *any* shell call from that type is a live disproof of the restriction.
+SCRIBE_ALLOWED_EDIT_PREFIX = ".claude/workorders/"
+# Any git subcommand that is not on this read-only allow-list counts: `push`
+# after the incident's `add`/`commit` is what would have made it
+# unrecoverable, and `reset`/`checkout`/`restore`/`stash`/`merge`/`tag`/
+# `submodule` write just as surely. Block by default, allow only reads.
+GIT_READ_ONLY_SUBCOMMANDS = frozenset({
+    "status", "diff", "log", "show", "rev-parse", "ls-files", "ls-tree",
+    "cat-file", "blame", "grep", "describe", "merge-base", "shortlog",
+})
+# `git`, then any global options (`-C <path>`, `-c k=v`, `--no-pager`,
+# `--git-dir=...`), then the subcommand word.
+GIT_SUBCOMMAND_RE = re.compile(
+    r"\bgit\b((?:\s+(?:-C\s+(?:\"[^\"]+\"|'[^']+'|\S+)|-c\s+\S+|--[\w-]+(?:=\S+)?))*)\s+([A-Za-z][\w-]*)",
+    re.IGNORECASE)
+
+
+def _git_mutations(cmd: str) -> List[str]:
+    """Every git subcommand in `cmd` that is not a known read-only one."""
+    return [m.group(2).lower() for m in GIT_SUBCOMMAND_RE.finditer(cmd)
+            if m.group(2).lower() not in GIT_READ_ONLY_SUBCOMMANDS]
+
+SHELL_WRITE_VERB_RE = re.compile(
+    r"\b(tee|cp|mv|rm)\b|\bsed\s+-i\w*\b|"
+    r"\b(Set-Content|Add-Content|Out-File|New-Item|Copy-Item|Move-Item|Remove-Item)\b",
+    re.IGNORECASE)
+PY_FILE_WRITE_RE = re.compile(r"open\([^)\n]*?[\"'][wxa][b]?[\"']|\.write_text\(|\.write_bytes\(")
+_NON_WRITE_REDIRECT_TARGETS = {"/dev/null", "$null", "nul"}
+# `[ \t]*`, not `\s*`, between the redirect and its target: the planner's
+# prototype matched a `>` at the end of an email address straight through the
+# following newline into the next line's text as the "target" -- a false hit
+# in a commit message, harmless there but the wrong shape to build on.
+REDIRECT_WRITE_RE = re.compile(r"(?<![\-=])>{1,2}(?!&|=)[ \t]*(\"[^\"\n]+\"|'[^'\n]+'|[^\s|;&\n]+)")
 
 # R2: `Read` is not the only way to open a file. The verifier's one sanctioned
 # route into the context file is `section.py`, which refuses the Log unless
@@ -325,6 +381,7 @@ class AgentTranscript:
     human_messages: list = field(default_factory=list)  # (ts, text) typed by the user, in order
     ts_first: Optional[datetime] = None
     ts_last: Optional[datetime] = None
+    cwd: Optional[str] = None  # first non-empty top-level "cwd" this transcript's records carry
 
     @property
     def turn_count(self) -> int:
@@ -386,6 +443,10 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
         rec_type = rec.get("type")
         ts_raw = rec.get("timestamp")
         ts = parse_ts(ts_raw) if ts_raw else None
+        if agent.cwd is None:
+            rec_cwd = rec.get("cwd")
+            if rec_cwd:
+                agent.cwd = rec_cwd
         if ts is not None:
             if agent.ts_first is None or ts < agent.ts_first:
                 agent.ts_first = ts
@@ -980,6 +1041,92 @@ def rule_r15_edit_guard_workaround(session: Session) -> RuleResult:
     return RuleResult("R15", "edit-guard-workaround", passed=not evidence, evidence=evidence)
 
 
+def _is_scribe(agent: AgentTranscript) -> bool:
+    if agent.agent_type == "scribe":
+        return True
+    role, _round = parse_label(agent.label)
+    return role == "scribe"
+
+
+SCRIBE_ALLOWED_EDIT_SUFFIX = SCRIBE_ALLOWED_EDIT_PREFIX.rstrip("/")  # ".claude/workorders"
+
+
+def _scribe_edit_allowed(file_path: str, cwd: Optional[str], anchor: Optional[str] = None) -> bool:
+    """Relative and under `.claude/workorders/`, or absolute and under
+    `<cwd>/.claude/workorders/` -- with `<cwd>` itself allowed to already
+    *be* a `.claude/workorders` directory (measured on the real 2026-09-19
+    session: a clean scribe from an earlier workorder in the same session ran
+    with its `cwd` already scoped to `.claude/workorders`, not the repo
+    root, and edited its own two files directly inside it). A stray write to
+    a *different* directory that happens to contain `.claude/workorders/`
+    (the real run's home-directory files) is still a violation -- it is
+    judged against this transcript's own `cwd`, not a bare substring test
+    (that is R10's weaker fallback, used here only when no `cwd` was recorded
+    at all)."""
+    low = str(file_path).replace("\\", "/").lower()
+    if cwd:
+        norm_cwd = cwd.replace("\\", "/").rstrip("/").lower()
+        # The workorder directory is anchored on the session's own checkout
+        # (the driver's `cwd`) when it is known, so a scribe running from the
+        # wrong directory cannot make that directory its own allowed root.
+        root = (anchor or cwd).replace("\\", "/").rstrip("/").lower()
+        if root == SCRIBE_ALLOWED_EDIT_SUFFIX or root.endswith("/" + SCRIBE_ALLOWED_EDIT_SUFFIX):
+            base = root
+        else:
+            base = root + "/" + SCRIBE_ALLOWED_EDIT_SUFFIX
+        # A relative path is resolved against this transcript's own `cwd`
+        # too: `.claude/workorders/x` written from a home directory lands in
+        # the home directory, the incident's own spelling.
+        is_abs = low.startswith("/") or re.match(r"^[a-z]:/", low) is not None
+        full = low if is_abs else posixpath.normpath(norm_cwd + "/" + low)
+        return full.startswith(base + "/")
+    if low.startswith(SCRIBE_ALLOWED_EDIT_PREFIX):
+        return True
+    return f"/{SCRIBE_ALLOWED_EDIT_PREFIX}" in low
+
+
+def _shell_write_evidence(cmd: str) -> bool:
+    """True if `cmd` writes a file through the shell -- a write verb/cmdlet,
+    a Python file write, or an output redirect whose target is not one of
+    the null-device spellings. Not flagged: `2>&1`/`>&2` fd duplication,
+    `>=`/`->`/`=>` operators, `| head`/`| grep`/`| tail`, and heredoc *input*
+    (`<<`)."""
+    if SHELL_WRITE_VERB_RE.search(cmd) or PY_FILE_WRITE_RE.search(cmd):
+        return True
+    for m in REDIRECT_WRITE_RE.finditer(cmd):
+        target = m.group(1).strip("\"'")
+        if target.lower() not in _NON_WRITE_REDIRECT_TARGETS:
+            return True
+    return False
+
+
+def rule_r16_scribe_scope(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_subagents(session):
+        if not _is_scribe(agent):
+            continue
+        tag = f"{agent.label} [{agent.workflow_id}]" if agent.workflow_id else agent.label
+        restricted = agent.agent_type == "scribe"
+        for call in agent.tool_calls:
+            if call.name in EDIT_TOOLS:
+                fp = str(call.tool_input.get("file_path", ""))
+                if not _scribe_edit_allowed(fp, agent.cwd, getattr(session.driver, "cwd", None)):
+                    evidence.append(f"{tag} {call.name} outside {SCRIBE_ALLOWED_EDIT_PREFIX} at {call.ts_start}: {fp}")
+            elif call.name in SHELL_TOOLS:
+                cmd = _cmd_text(call)
+                if restricted:
+                    evidence.append(
+                        f"{tag} {call.name} shell call by restricted scribe type at {call.ts_start}: {cmd[:120]}")
+                    continue
+                mutations = _git_mutations(cmd)
+                if mutations:
+                    evidence.append(
+                        f"{tag} {call.name} ran git {'/'.join(dict.fromkeys(mutations))} at {call.ts_start}: {cmd[:120]}")
+                elif _shell_write_evidence(cmd):
+                    evidence.append(f"{tag} {call.name} shell write at {call.ts_start}: {cmd[:120]}")
+    return RuleResult("R16", "scribe-scope", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -996,6 +1143,7 @@ ALL_RULES = [
     rule_r13_round_budget,
     rule_r14_reviewer_reruns_suite,
     rule_r15_edit_guard_workaround,
+    rule_r16_scribe_scope,
 ]
 
 
