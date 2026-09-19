@@ -382,7 +382,7 @@ publishes anything.
 `workflow_dispatch` only, with `tag` (required) and `dry_run` (boolean,
 default `true`). Started automatically by the tag workflow's last step, or
 run by hand to refill an existing draft or re-run a build against the same
-tag. Refuses to run off `main`, then checks — once before any checkout, and
+tag. Refuses to run off any branch but `main`, then checks — once before any checkout, and
 again immediately before the upload, since a human can publish the draft
 while this job is still building — that the tag has exactly one release and
 it is still a draft. Between those two guards it checks out **the tag
