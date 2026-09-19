@@ -724,8 +724,11 @@ two have to open, merge and release together. The launch gate above now
 carries a plugin-loaded row (2026-09-19); what is still open is the owner's
 confirmation, plus the items that second launch did not exercise (gameplay
 with mods active, the error-report path with a plugin loaded). Until then,
-players still receive the previous DLL, and the notice files these branches
-rewrote describe unpublished work, not what ships.
+players still receive the previous DLL. The notice files these branches
+rewrote describe this series, which is now published as a library release
+(see ["Where the binary is published"](#where-the-binary-is-published)
+below) - but a published library release is not a shipped tool release, and
+neither pull request has merged.
 
 Once ForgePact's pin-moving branch above has merged to its default branch and
 the hub's own ForgePact gitlink is bumped past it, delete the "legacy" branch
@@ -735,21 +738,30 @@ on.
 
 ### Where the binary is published
 
-The built DLL's intended distribution point is a hub GitHub release tagged
-`yytoolkit-v4.0.1-hs.1` - draft first, `--latest=false` so the updater's
-`releases/latest/download/latest.json` read is unaffected - carrying
-`YYToolkit.dll`, `YYToolkit.dll.sha256`, `YYToolkit-BUILD-INFO.json`, a
-deterministic zip of this directory, and `NOTICE.md`. ForgePact's pin above
-already names that release's asset URL for `YYToolkit.dll` and the `hs.1`
-sha256, and HS-Offline-Tracker's replaced binary already matches it by hash
-- but **the release does not exist yet.** The live launch gate above now
-carries a plugin-loaded row (2026-09-19); what creating the release still
-waits on is the maintainer's decision to publish, with the items the second
-launch left unexercised (gameplay with mods active, the error-report path
-with a plugin loaded) in view. Until then, the asset URL above resolves
-nowhere, both submodule branches are open pull requests that are not merged,
-and players keep receiving the DLL described under
-[Why this exists](#why-this-exists).
+The built DLL's distribution point is a hub GitHub release tagged
+`yytoolkit-v4.0.1-hs.1` - **published, not a draft**, cut with `--latest=false`
+so the updater's `releases/latest/download/latest.json` read is unaffected:
+the repository's latest release is still `hub-v1.0.5`. The tag points at the
+hub commit named in the DLL's own `YYToolkit-BUILD-INFO.json`, and the release
+carries five assets - `YYToolkit.dll`, `YYToolkit.dll.sha256`,
+`YYToolkit-BUILD-INFO.json`, the deterministic source zip BUILD-INFO's
+`source` field names, and `NOTICE.md`. ForgePact's pin above already names
+that release's asset URL for `YYToolkit.dll` and the `hs.1` sha256, and the
+URL now resolves: an anonymous `GET` returns HTTP 200 with the expected
+sha256, and ForgePact's own `py tools/fetch_toolchain.py --root <empty dir>
+--force` fetched and verified all eleven pins - including
+`modfiles_shipped/YYToolkit.dll` from that URL - against a fresh checkout.
+
+Publishing the release is not the same as shipping the DLL to players.
+Neither submodule pull request has merged, the hub's own ForgePact and
+HS-Offline-Tracker gitlinks have not moved past them, no tool release has
+been cut from either, and players keep receiving the DLL described under
+[Why this exists](#why-this-exists). The live launch gate above still
+carries only the two sessions recorded there (2026-09-19); what those two
+pull requests wait on is unchanged by publishing the library release - the
+maintainer's decision, with the items the second launch left unexercised
+(gameplay with mods active, the error-report path with a plugin loaded) in
+view.
 
 The tag name is deliberate. On the hub repository `hub-v*` is reserved for
 builds of the hub application: pushing such a tag starts `hub-release.yml`,

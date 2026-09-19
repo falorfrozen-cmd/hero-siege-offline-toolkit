@@ -176,17 +176,18 @@ Measured on 2026-09-19, on one machine (VS 2022 Build Tools 17.14,
   repositories: ForgePact through `tools/toolchain-pins.json`, the Tracker
   through a git-tracked `aurie-loader/YYToolkit.dll`. Both install to
   `mods/aurie/YYToolkit.dll` with overwrite semantics, so their follow-up PRs
-  have to land together. **Recorded 2026-09-19: both follow-ups have been
-  written and committed on a local branch in each submodule
+  have to land together. **Recorded 2026-09-19: both follow-ups are open as
+  pull requests on their own submodule
   (`claude/yytoolkit-hs1-distribution`)** — the pin moved to sha256
   `51a393d7e5291ad76bdb85b9f44faf5178b6b20e0ce8432fa26bdaf9e21eadf8`, and the
-  notice pair rewritten to point here — **but neither branch is opened as a
-  pull request, neither is merged to its `origin`, and the hub release that
-  would carry the binary does not exist yet** (gated on the live launch gate
-  and the owner's decision; see `third_party/yytoolkit/README.md`, "Where the
-  binary is published"). Until all of that happens, the two
-  `yytoolkit-modified/NOTICE.md` files on `origin` remain the statement for
-  what is distributed, and they remain incomplete.
+  notice pair rewritten to point here — **but neither is merged to its
+  `origin`.** **Also recorded 2026-09-19, later the same day: the hub release
+  that carries the binary now exists and is published** (`yytoolkit-v4.0.1-hs.1`,
+  not marked `--latest`; see `third_party/yytoolkit/README.md`, "Where the
+  binary is published"), and ForgePact's pin resolves against it. Publishing
+  that release is not the same as shipping it: until both pull requests
+  merge, the two `yytoolkit-modified/NOTICE.md` files on `origin` remain the
+  statement for what is distributed, and they remain incomplete.
 
 ## The rule this produced
 

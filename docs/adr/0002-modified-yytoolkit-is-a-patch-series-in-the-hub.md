@@ -175,3 +175,15 @@ that row of the launch gate; publishing still needs the owner's decision on
 which account creates the release, plus the items that second launch left
 unexercised (gameplay with mods active, the error-report path with a plugin
 loaded) (`third_party/yytoolkit/README.md`, "Where the binary is published").
+
+**Added 2026-09-19, later the same day.** The hub GitHub release named above
+now exists and is published (`yytoolkit-v4.0.1-hs.1`, `--latest=false`, so the
+repository's latest release is still `hub-v1.0.5`). ForgePact's pin resolves
+against it: an anonymous `GET` on the asset URL returns HTTP 200 with the
+expected sha256, and ForgePact's own toolchain fetcher verified all eleven
+pins, including the DLL, from it. That is the library release only. Both
+follow-up pull requests above are still open and neither is merged, the hub's
+own ForgePact and HS-Offline-Tracker gitlinks have not moved, no tool release
+has shipped the new DLL, and players still receive the earlier one. Publishing
+the library release does not change any of that
+(`third_party/yytoolkit/README.md`, "Where the binary is published").
