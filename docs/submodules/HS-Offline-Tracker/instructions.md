@@ -6,8 +6,8 @@
 - **Reviewed Git Revision:** `1ceda0eeff9b2043d2919f4369bb5096189192a1` (Tag: `v0.1.2`, Branch: `main`)
 - **Revision Date:** `Sun Sep 6 05:25:45 2026 +0300`
 - **Commit Message:** `fix: a re-picked alert sound plays, and listed weapons make a card`
-- **Source Availability:** Full application source is present (Svelte 5 / Vite 8 frontend, Rust / Tauri 2 desktop shell, C++20 Aurie producer module, C++20 native bridge prototype, demo fixtures, and Node.js workflow scripts). **The exception is the bundled `aurie-loader/YYToolkit.dll`:** on `origin` the repository carries a notice and two whole-file copies for it, which do not account for everything in that binary; the source of truth for the toolkit's modified YYToolkit is the hub's patch series, [`third_party/yytoolkit/`](../../../third_party/yytoolkit/README.md) — see "Bundled Loader & Modified YYToolkit" below. A branch that replaces the binary and that notice pair (`claude/yytoolkit-hs1-distribution`) has been written and committed locally, but it is **not merged to `origin` and not published**.
-- **CI / Pipeline Availability:** `notify-hub.yml` (push to `main`, notifies the hub of a new pointer) and `notify-hub-release.yml` (fires on a published release). Neither builds, tests or packages anything — there is no build, test or release workflow — so validation is otherwise conducted locally via npm, Cargo, and CMake / CTest suites.
+- **Source Availability:** Full application source is present (Svelte 5 / Vite 8 frontend, Rust / Tauri 2 desktop shell, C++20 Aurie producer module, C++20 native bridge prototype, demo fixtures, and Node.js workflow scripts). **The exception is the bundled `aurie-loader/YYToolkit.dll`:** on `origin` the repository carries a notice and two whole-file copies for it, which do not account for everything in that binary; the source of truth for the toolkit's modified YYToolkit is the hub's patch series, [`third_party/yytoolkit/`](../../../third_party/yytoolkit/README.md) — see "Bundled Loader & Modified YYToolkit" below. A branch that replaces the binary and that notice pair (`claude/yytoolkit-hs1-distribution`) is open as a pull request on this repository, but it is **not merged to `origin` and not published**.
+- **CI / Pipeline Availability:** No build or test CI; validation is conducted locally via npm, Cargo, and CMake / CTest suites. GitHub Actions carries only automation: `notify-hub.yml` / `notify-hub-release.yml` tell the hub about new commits and releases, and `ai-review.yml` runs an opt-in AI code review (see [AI Code Review](#ai-code-review-ai-reviewyml)).
 - **Purpose & Scope:** Standalone offline-first session journal, rarity drop alert engine, run history recorder, and compact always-on-top overlay for Hero Siege offline/single-player gameplay. Consumes versioned NDJSON event streams from local files or named pipes and monitors local read-only character save files.
 
 ---
@@ -253,7 +253,7 @@ All event streams delivered via named pipe (`\\.\pipe\HSOfflineTrackerBridge_<pi
   2. `Hooks.cpp`: the `ExecuteIt` hook (`EVENT_OBJECT_CALL`) is not installed; `EVENT_FRAME` via `HkPresent` is unaffected. The notice's reason — the hook causing `Unable to find any instance for object index` — is contradicted by ForgePact's own research notes, which record the same error with the hook removed. What stands is that no plugin in this toolkit consumes `EVENT_OBJECT_CALL`, and that project notes record the per-event hook crash-looping on Season 10 (not re-measured since).
 - **What the notice leaves out:** strings in the binary show a candidate filter in `YYC::GmpFindFunctionsArrayX64` whose source was not kept, a startup breadcrumb tracer that writes to a hardcoded absolute path under the builder's user profile, and an import of `VirtualQuery` with no caller in the documented source; the page pre-filter in the committed `Generic-RunnerInterfaceNew.cpp` was never listed either. Whether there are further changes that left no string cannot be determined without the lost source. So the notice is **not** full corresponding source for this DLL, and nothing else is. Detail and evidence: the note under the pin table in [ForgePact's guide](../ForgePact/instructions.md) and [`docs/agents/yytoolkit-provenance.md`](../../agents/yytoolkit-provenance.md).
 - **The replacement lives in the hub:** [`third_party/yytoolkit/`](../../../third_party/yytoolkit/README.md) — upstream v4.0.1 (`5a95e46`) plus a documented patch series, built by `tools/build_yytoolkit.py`. Built, host-tested, and **launched twice against the game** (2026-09-19): first YYToolkit alone, no plugin loaded — the startup fault did not reproduce and lag was not observed in that session — then a second, idle session with the Tracker producer and ForgePact's `BloodPactPlugin` both loaded alongside it, where both initialized and an IPC smoke test exercised the plugin-to-runner interface, but no gameplay was played. This is two short sessions on one machine, not a settled fix, and the error-report path with a plugin loaded is still unexercised — see the hub README's "Launch gate", "First launch results (2026-09-19)" and "Second launch results (2026-09-19, plugin loaded)" for the full record. `origin` still bundles `bb113eef…`.
-- **Written locally, not merged or published, to land together with ForgePact's:** branch `claude/yytoolkit-hs1-distribution` replaces the tracked `aurie-loader/YYToolkit.dll` with the `hs.1` build (sha256 `51a393d7e5291ad76bdb85b9f44faf5178b6b20e0ce8432fa26bdaf9e21eadf8`); rewrites `aurie-loader/yytoolkit-modified/NOTICE.md` to point at the hub directory and deletes the two `.cpp` copies, keeping `YYToolkit-BUILD-INFO.json` beside it; updates `THIRD_PARTY_NOTICES.md`; bundles the notice and BUILD-INFO as resources in `src-tauri/tauri.conf.json`; bumps the version to 0.1.3; and adds `scripts/verify-loader.mjs` (wired into `npm run check` as `npm run loader:verify`) so a mismatch between a manifest hash and a file under `aurie-loader/` fails the check by name. That branch has not been opened as a pull request against `origin`. Both tools install to `mods/aurie/YYToolkit.dll` and overwrite it — the Game Link installer copies whenever the contents differ, ForgePact copies unconditionally — so a release of only one of them lets the other put the old DLL back; both merge and release together. The launch gate now carries a plugin-loaded row (2026-09-19); what remains is the owner's confirmation, plus gameplay with mods active and the error-report path with a plugin loaded, both still unexercised (`third_party/yytoolkit/README.md`, "Where the binary is published").
+- **Open as a pull request, not merged or published, to land together with ForgePact's:** branch `claude/yytoolkit-hs1-distribution` replaces the tracked `aurie-loader/YYToolkit.dll` with the `hs.1` build (sha256 `51a393d7e5291ad76bdb85b9f44faf5178b6b20e0ce8432fa26bdaf9e21eadf8`); rewrites `aurie-loader/yytoolkit-modified/NOTICE.md` to point at the hub directory and deletes the two `.cpp` copies, keeping `YYToolkit-BUILD-INFO.json` beside it; updates `THIRD_PARTY_NOTICES.md`; bundles the notice and BUILD-INFO as resources in `src-tauri/tauri.conf.json`; bumps the version to 0.1.3; and adds `scripts/verify-loader.mjs` (wired into `npm run check` as `npm run loader:verify`) so a mismatch between a manifest hash and a file under `aurie-loader/` fails the check by name. That branch has not been opened as a pull request against `origin`. Both tools install to `mods/aurie/YYToolkit.dll` and overwrite it — the Game Link installer copies whenever the contents differ, ForgePact copies unconditionally — so a release of only one of them lets the other put the old DLL back; both merge and release together. The launch gate now carries a plugin-loaded row (2026-09-19); what remains is the owner's confirmation, plus gameplay with mods active and the error-report path with a plugin loaded, both still unexercised (`third_party/yytoolkit/README.md`, "Where the binary is published").
 
 ### Research Prototype: Native Bridge (`bridge-native/`)
 - **Status:** Experimental research sensor without Aurie or YYToolkit dependencies; **not bundled** in end-user installers.
@@ -297,6 +297,33 @@ All event streams delivered via named pipe (`\\.\pipe\HSOfflineTrackerBridge_<pi
 5. **Character Save Snapshot Ignored:**
    - *Cause:* The save file was mid-write or failed XOR / zlib integrity validation.
    - *Resolution:* Normal fail-closed behavior. The tracker waits until the game produces two identical, valid file snapshots before updating session totals.
+
+---
+
+## AI Code Review (`ai-review.yml`)
+
+`.github/workflows/ai-review.yml` runs an AI code review of a pull request and
+posts findings as inline comments. It is the hub's workflow with only the
+repository name changed, and is **opt-in, never automatic**: add the
+`ai-review` label, or comment `@claude review` on the pull request. Text after
+the phrase is passed to the reviewer as scoping instructions
+(`@claude review only src-tauri`); the label always requests a full review and
+does not re-run by itself on later pushes. A comment trigger only works once the
+workflow is on `main`, because GitHub runs `issue_comment` workflows from the
+default branch.
+
+It needs the `CLAUDE_CODE_OAUTH_TOKEN` repository secret (from
+`claude setup-token`) **and** the [Claude GitHub App](https://github.com/apps/claude)
+installed on this repository; without the app the run fails with
+`401 Unauthorized` before reviewing anything, whatever the secret.
+
+The request predicate is written out twice (job `if` and concurrency group);
+change both together. Everything else about the workflow's shape -- the full
+`--allowedTools` list, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, the step that
+fails a run which posted nothing -- is explained in the hub's
+[`docs/hub/design.md`](../../hub/design.md) under "Asking for a review" and
+pinned for the hub's copy by `tests/test_ai_review_workflow.py`. Change them
+here and in the hub together.
 
 ---
 
