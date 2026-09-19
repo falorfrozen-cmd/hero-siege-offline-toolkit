@@ -184,7 +184,7 @@ To modify or extend an event handler or user interface feature (for example, add
 | `npm start` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js, Rust >= 1.88 | Launches Tauri v2 desktop application in development mode with hot reloading. | Opens Dashboard and Overlay windows | Inspected |
 | `npm test` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js, Rust >= 1.88 | Executes `node scripts/test.mjs`, running all Rust unit tests in `src-tauri`. | Read-only test execution | Inspected |
 | `npm run check` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js, Rust >= 1.88 | Executes `npm run build && npm test && npm run tools:test && npm run loader:verify`. | Compiles `dist/` and runs tests | Inspected |
-| `npm run tools:test` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js >= 20.19 | Collects `tests/*.test.mjs` and hands them to `node --test` as explicit paths (`scripts/test-tools.mjs`); covers `set-version.mjs`, `fetch-producer-sdk.mjs`, `tracker-tag.mjs` and `package-release.mjs`. | Read-only test execution | Inspected |
+| `npm run tools:test` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js >= 20.19 | Collects `tests/*.test.mjs` and hands them to `node --test` as explicit paths (`scripts/test-tools.mjs`); covers `set-version.mjs`, `fetch-producer-sdk.mjs`, `tracker-tag.mjs` and `package-release.mjs`, and pins the shape of the three release workflows themselves (`tests/workflows.test.mjs`). | Read-only test execution | Inspected |
 | `npm run loader:verify` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js >= 20.19 | Executes `node scripts/verify-loader.mjs`; fails by name if a file under `aurie-loader/` disagrees with `loader-manifest.json`. | Read-only check | Inspected |
 | `npm run ver` / `npm run ver -- --check --expect <version>` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js >= 20.19 | Executes `node scripts/set-version.mjs`; with no argument bumps to the next patch, with a version bumps every declared site, with `--check` verifies all sites agree (and, with `--expect`, agree on that exact version). | Rewrites `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and `package-lock.json` when bumping; read-only under `--check` | Inspected |
 | `npm run demo` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js >= 20.19 | Executes `node scripts/replay-demo.mjs`, appending `fixtures/demo-session.ndjson` to `events.ndjson`. | Appends lines to `%LOCALAPPDATA%\HS Offline Tracker\events.ndjson` | Inspected |
@@ -276,7 +276,7 @@ All event streams delivered via named pipe (`\\.\pipe\HSOfflineTrackerBridge_<pi
 - **Native C++ Smoke Tests:**
   - `hsot_counter_validation_smoke`: Verifies GML argument validation logic for gold, XP, and kills.
   - `hsot_aurie_code_gate_smoke`: Validates PE header parsing and SHA-256 `.text` fingerprinting.
-  - `hsot_protocol_smoke`: Validates NDJSON serialization and Protocol v1 envelope compliance.
+  - `hsot_aurie_protocol_smoke`: Validates NDJSON serialization and Protocol v1 envelope compliance. (bridge-native's own suite has a separate `hsot_protocol_smoke`.)
 - **Offline Protocol Replay:** `npm run demo` feeds `fixtures/demo-session.ndjson` to the live UI without requiring a game instance.
 
 ### 2. Live-Game Dependent Checks (**Unverified in automated pipelines**)
@@ -439,7 +439,9 @@ and About shows the tagged version; **Game Link installs the loader and the
 producer into a test game installation** and
 `mods/aurie/HSOfflineTrackerProducer.dll` appears; **the superseded-loader
 update path runs against a real existing installation** — a copy already
-carrying `bb113eef…` is upgraded to the pinned build, and a copy with an
+carrying `bb113eef…` is upgraded to the pinned build — the installed
+`mods/aurie/YYToolkit.dll` then hashes to `51a393d7…`, the `YYToolkit.dll`
+entry in `aurie-loader/loader-manifest.json` — and a copy with an
 unrecognised hash is left alone (`src-tauri/src/lib.rs`,
 `classify_loader_file` / `LoaderFileState`; unit-tested with positive and
 negative controls, but never yet exercised live); and the producer's events
@@ -467,8 +469,9 @@ release older than the one carrying the pinned build, after installing
 Tracker 0.1.3, gets the older loader put back (the Tracker's next Install
 recovers it, but only when a player presses it). Whether Tracker 0.1.3 is
 published before, or together with, a ForgePact release that carries the
-pinned build is the owner's call, not decided here — check it as part of
-the launch gate above.
+pinned build was decided by the owner on 2026-09-19: **ForgePact 1.4.4 is
+published first**, and Tracker 0.1.3 after it (or at the latest together
+with it) — check that it has been, as part of the launch gate above.
 
 ---
 
