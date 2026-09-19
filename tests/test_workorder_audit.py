@@ -1071,6 +1071,186 @@ class R15Tests(TempDirMixin, unittest.TestCase):
         self.assertTrue(get_rule(results, "R15").passed, "calls made before the refusal are not a workaround")
 
 
+# --------------------------------------------------------------------------
+# R16 scribe-scope
+# --------------------------------------------------------------------------
+
+def with_cwd(records, cwd="C:\\repo"):
+    """Sets the top-level `cwd` real transcripts carry (COST-GATE-SPEC.md /
+    the R16 plan's "How R16 decides" section) on every record a helper
+    returned, so `parse_transcript` can capture it."""
+    for rec in records:
+        rec["cwd"] = cwd
+    return records
+
+
+class R16Tests(TempDirMixin, unittest.TestCase):
+    SOURCE_EDIT = {"file_path": "C:/repo/ForgePact/plugin/ModuleMain.cpp", "old_string": "a", "new_string": "b"}
+    HOME_WRITE = {"file_path": "C:\\Users\\Administrator\\.claude\\workorders\\zz-context.md", "content": "x"}
+    OK_CONTEXT_EDIT = {"file_path": "C:\\repo\\.claude\\workorders\\zz-context.md", "old_string": "a", "new_string": "b"}
+    OK_PLAN_EDIT = {"file_path": "C:\\repo\\.claude\\workorders\\zz-plan.md", "old_string": "a", "new_string": "b"}
+    OK_CONTEXT_EDIT_REL = {"file_path": ".claude/workorders/zz-context.md", "old_string": "a", "new_string": "b"}
+    OK_PLAN_EDIT_REL = {"file_path": ".claude/workorders/zz-plan.md", "old_string": "a", "new_string": "b"}
+
+    def _scribe(self, records, label="scribe:r1", agent_type="workflow-subagent", wf_id="wf_95c37e59-d40"):
+        return SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).workflow_agent(
+            wf_id, agent_type, label, with_cwd(records))
+
+    def test_fail_the_real_evidence_sequence(self):
+        # Modeled on the 2026-09-19 run: failed Reads of a home-directory
+        # workorder path, a Write that creates one there, three Edits of
+        # ForgePact source and docs, then git add + git commit.
+        records = (
+            tool_turn(0, 0, "Read", {"file_path": "C:\\Users\\Administrator\\.claude\\workorders\\zz-context.md"},
+                      result="<tool_use_error>File does not exist.</tool_use_error>")
+            + tool_turn(10, 1, "Write", self.HOME_WRITE, result="File created successfully")
+            + tool_turn(20, 2, "Edit", self.SOURCE_EDIT, result="The file has been updated.")
+            + tool_turn(30, 3, "Edit", {"file_path": "C:/repo/ForgePact/docs/prospect-window-research.md",
+                                         "old_string": "a", "new_string": "b"}, result="The file has been updated.")
+            + tool_turn(40, 4, "Bash", {"command": "git add ForgePact && git commit -m 'fix(ForgePact): x'"}, result="ok")
+            + tool_turn(50, 5, "StructuredOutput", {"written": True, "note": ""}, result="ok")
+        )
+        _, results = self._scribe(records).evaluate()
+        r = get_rule(results, "R16")
+        self.assertFalse(r.passed)
+        joined = " ".join(r.evidence)
+        self.assertIn("scribe:r1", joined)
+        self.assertIn("wf_95c37e59-d40", joined)
+        self.assertIn("ModuleMain.cpp", joined)
+        self.assertIn("git commit", joined)
+        for line in r.evidence:
+            self.assertIn("wf_95c37e59-d40", line)
+
+    def test_fail_home_directory_write_alone(self):
+        records = tool_turn(0, 0, "Write", self.HOME_WRITE, result="File created successfully")
+        _, results = self._scribe(records).evaluate()
+        self.assertFalse(get_rule(results, "R16").passed)
+
+    def test_fail_source_edit_alone(self):
+        records = tool_turn(0, 0, "Edit", self.SOURCE_EDIT, result="The file has been updated.")
+        _, results = self._scribe(records).evaluate()
+        self.assertFalse(get_rule(results, "R16").passed)
+
+    def test_fail_git_add_and_commit_chained_after_cd_in_bash(self):
+        records = tool_turn(0, 0, "Bash", {
+            "command": "cd /c/repo/ForgePact && git add docs/x.md && git commit -m x"}, result="ok")
+        _, results = self._scribe(records).evaluate()
+        self.assertFalse(get_rule(results, "R16").passed)
+
+    def test_fail_git_dash_c_commit_in_powershell(self):
+        records = tool_turn(0, 0, "PowerShell", {"command": 'git -C "C:\\repo\\ForgePact" commit -m x'}, result="ok")
+        _, results = self._scribe(records).evaluate()
+        self.assertFalse(get_rule(results, "R16").passed)
+
+    def test_fail_scribe_identified_by_agent_type_not_just_label(self):
+        records = tool_turn(0, 0, "Edit", self.SOURCE_EDIT, result="The file has been updated.")
+        _, results = self._scribe(records, label="scribe:r2", agent_type="scribe").evaluate()
+        self.assertFalse(get_rule(results, "R16").passed)
+
+    def test_pass_reads_and_edits_only_its_own_workorder_files(self):
+        records = (tool_turn(0, 0, "Read", {"file_path": "C:\\repo\\.claude\\workorders\\zz-context.md"}, result="...")
+                   + tool_turn(10, 1, "Read", {"file_path": "C:\\repo\\.claude\\workorders\\zz-plan.md"}, result="...")
+                   + tool_turn(20, 2, "Edit", self.OK_CONTEXT_EDIT, result="The file has been updated.")
+                   + tool_turn(30, 3, "Edit", self.OK_PLAN_EDIT, result="The file has been updated.")
+                   + tool_turn(40, 4, "StructuredOutput", {"written": True, "note": ""}, result="ok"))
+        _, results = self._scribe(records).evaluate()
+        self.assertTrue(get_rule(results, "R16").passed)
+
+    def test_pass_relative_workorder_paths(self):
+        records = (tool_turn(0, 0, "Edit", self.OK_CONTEXT_EDIT_REL, result="The file has been updated.")
+                   + tool_turn(10, 1, "Edit", self.OK_PLAN_EDIT_REL, result="The file has been updated."))
+        _, results = self._scribe(records).evaluate()
+        self.assertTrue(get_rule(results, "R16").passed)
+
+    def test_pass_read_only_git(self):
+        records = (tool_turn(0, 0, "Bash", {"command": "git status"}, result="ok")
+                   + tool_turn(10, 1, "Bash", {"command": "git diff HEAD"}, result="ok"))
+        _, results = self._scribe(records).evaluate()
+        self.assertTrue(get_rule(results, "R16").passed)
+
+    def test_pass_implementer_editing_source_and_committing_is_not_this_rule(self):
+        records = (tool_turn(0, 0, "Edit", self.SOURCE_EDIT, result="The file has been updated.")
+                   + tool_turn(10, 1, "Bash", {"command": "git add ForgePact && git commit -m x"}, result="ok"))
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).workflow_agent(
+            "wf_a", "implementer", "implementer:r0", with_cwd(records))
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R16").passed)
+
+    # --- round 1: shell-side writes, the route the git-only check missed ---
+
+    def test_fail_bash_heredoc_overwrites_scribe_md(self):
+        # The measured shape: `wf_a2bac07a-62e` `scribe:r1` overwrote
+        # `.claude/agents/scribe.md` with a Bash heredoc after its `Write`
+        # was refused for not having read the file first.
+        cmd = (
+            "cat > /c/repo/.claude/agents/scribe.md << 'EOF'\n"
+            "---\n"
+            "name: scribe\n"
+            "tools: Read, Edit\n"
+            "model: haiku\n"
+            "---\n"
+            "EOF"
+        )
+        records = tool_turn(0, 0, "Bash", {"command": cmd}, result="ok")
+        _, results = self._scribe(records).evaluate()
+        r = get_rule(results, "R16")
+        self.assertFalse(r.passed)
+        joined = " ".join(r.evidence)
+        self.assertIn("Bash", joined)
+        self.assertIn("scribe.md", joined)
+        self.assertIn("wf_95c37e59-d40", joined)
+
+    def test_fail_powershell_set_content_write(self):
+        records = tool_turn(0, 0, "PowerShell", {
+            "command": "Set-Content -Path .claude/agents/scribe.md -Value 'x'"}, result="ok")
+        _, results = self._scribe(records).evaluate()
+        self.assertFalse(get_rule(results, "R16").passed)
+
+    def test_fail_tee_pipe_write(self):
+        records = tool_turn(0, 0, "Bash", {"command": "echo x | tee .claude/agents/scribe.md"}, result="ok")
+        _, results = self._scribe(records).evaluate()
+        self.assertFalse(get_rule(results, "R16").passed)
+
+    def test_fail_python_open_write_mode(self):
+        records = tool_turn(0, 0, "Bash", {
+            "command": "py -3 -c \"open('.claude/agents/scribe.md', 'w').write('x')\""}, result="ok")
+        _, results = self._scribe(records).evaluate()
+        self.assertFalse(get_rule(results, "R16").passed)
+
+    def test_fail_restricted_scribe_type_runs_any_shell_at_all(self):
+        # tools: Read, Edit has no shell tool at all, so any shell call from
+        # the restricted `scribe` agent type disproves the restriction --
+        # even a read-only one that the git/write checks would let through.
+        records = tool_turn(0, 0, "Bash", {"command": "git status"}, result="ok")
+        _, results = self._scribe(records, label="scribe:r2", agent_type="scribe").evaluate()
+        self.assertFalse(get_rule(results, "R16").passed)
+
+    def test_pass_cd_and_tail_of_its_own_files(self):
+        # The real wf_8314c0d6-acc scribe:r1 shape (session 42eeea81).
+        records = tool_turn(0, 0, "Bash", {
+            "command": 'cd "C:\\repo" && tail -20 ".\\.claude\\workorders\\zz-plan.md"'}, result="...")
+        _, results = self._scribe(records).evaluate()
+        self.assertTrue(get_rule(results, "R16").passed)
+
+    def test_pass_fd_duplication_and_null_redirects_and_pipe_to_head(self):
+        records = tool_turn(0, 0, "Bash", {
+            "command": "node --test .claude/workflows/workorder-rounds.test.mjs 2>&1 2>/dev/null | head -5"},
+            result="ok")
+        _, results = self._scribe(records).evaluate()
+        self.assertTrue(get_rule(results, "R16").passed)
+
+    def test_pass_python_heredoc_that_only_reads_with_a_ge_comparison(self):
+        cmd = (
+            "python3 << 'EOF'\n"
+            "n = 11\n"
+            "assert n >= 11\n"
+            "EOF"
+        )
+        records = tool_turn(0, 0, "Bash", {"command": cmd}, result="ok")
+        _, results = self._scribe(records).evaluate()
+        self.assertTrue(get_rule(results, "R16").passed)
+
+
 class CliTests(TempDirMixin, unittest.TestCase):
     def test_exit_0_when_all_pass(self):
         records = tool_turn(0, 0, "Bash", {"command": "echo hi"}, result="hi")

@@ -101,6 +101,7 @@ next one a document rather than a conversation. They are driven by
 | `implementer` | sonnet | executes the steps; returns `PLAN-DEFECT` with evidence rather than improvising around a plan that turns out to be wrong |
 | `verifier` | haiku | runs the acceptance criteria and reports what they actually printed; read-only, and judges nothing it cannot execute |
 | `consultant` | opus | answers **one** narrow question from a phase that hit a decision above its tier, then stops; never implements, plans or reviews |
+| `scribe` | haiku | pastes a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Edit` only; spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
 
 Why these tiers: planning carries the most judgement that is written down
 nowhere, so it gets the strongest model. Implementation is *not* the easy part —
@@ -454,6 +455,23 @@ turned a round's own `1 BLOCKING` + `5 NON-BLOCKING` verdict into six
 hand; counts baked into the headings make that kind of relabel visible on
 sight instead.
 
+It runs as the restricted `scribe` agent type (`.claude/agents/scribe.md`,
+`Read`/`Edit` only), not the unrestricted `workflow-subagent` every other
+Record-phase agent here still is. On 2026-09-19 an unrestricted scribe read
+the harness's relayed user message next to a round's findings and acted on
+it instead of only recording it — resolving the prompt's relative paths
+against the user's home directory, editing ForgePact source and docs, and
+running `git add`/`git commit` on both ForgePact and the hub's ForgePact
+pointer, with no build, test or review. A second, later run repeated the
+incident on a route the git check alone never sees: a scribe whose `Write`
+was refused overwrote the same file anyway with a Bash heredoc.
+`tools/workorder_audit.py` R16 fails a run whose scribe edited outside
+`.claude/workorders/`, touched git, wrote a file through a shell command
+(a redirect or heredoc, `tee`, a PowerShell content cmdlet, a Python file
+write), or — for the restricted `scribe` agent type specifically — ran any
+shell command at all, since its `tools:` line carries no shell to run one
+with.
+
 ```
 Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
@@ -488,7 +506,7 @@ trades away: every re-entry inside the script is a fresh spawn, never the
 measured, on this one real run, as no worse than a resumed implementer (a
 resumed round-1 implementer cost 14.6M tokens at 304K context per turn;
 losing the resume cost nothing). `.claude/workflows/workorder-rounds.test.mjs`
-(`node --test`, 23 cases, each with its own control) dry-runs the routing
+(`node --test`, 36 cases, each with its own control) dry-runs the routing
 above against stub agents.
 
 That makes the split a forcing function rather than just a workflow: a plan that
@@ -535,7 +553,7 @@ Per agent it reports turns (deduped by `message.id`), tokens (input +
 cache-creation + cache-read, summed over assistant turns), output tokens,
 context per turn, peak context, wall minutes, the longest single tool call,
 and KB of `Read` results by kind (plan, context file, `instructions.md`,
-source). It prints one table, then fifteen rules as `PASS`/`FAIL` with
+source). It prints one table, then sixteen rules as `PASS`/`FAIL` with
 evidence (the agent, the time, the command or path), then each role's numbers
 against the pre-update averages as a percentage; `--json` emits the same as
 one object.
@@ -555,6 +573,7 @@ one object.
 | R13 round-budget | a round's total subagent tokens over budget |
 | R14 reviewer-reruns-suite | a reviewer running test suites or builds more than twice (the two reviewers told to build and test are exempt) |
 | R15 edit-guard-workaround | a subagent whose `Edit`/`Write` was refused by the harness's worktree guard ("is in the base repo checkout") and which then made more than five further tool calls (its own return not counted) instead of returning `PLAN-DEFECT` — unless an edit of the same repo-relative path then landed inside a worktree, which is a mistyped path corrected, not a workaround (a same-named scratch copy is the workaround) |
+| R16 scribe-scope | a scribe (`agentType: "scribe"`, or the `scribe` role a workflow label like `scribe:r1` parses to) whose `Edit`/`Write` landed outside its own `.claude/workorders/`, judged against the transcript's own `cwd` rather than a bare substring test; which ran `git add`/`git commit` in any shell command; which wrote a file through a shell command instead (a redirect or heredoc, `tee`, a PowerShell content cmdlet, `cp`/`mv`/`rm`/`sed -i`, a Python file write) whatever the target path; or, for the restricted `scribe` agent type, ran any shell command at all |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
