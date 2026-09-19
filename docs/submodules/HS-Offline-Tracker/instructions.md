@@ -407,7 +407,13 @@ tests. It then runs, on the checked-out tag: `npm ci`, `npm run tools:test`,
 `bundle.resources` entry of `tauri.conf.json` placed at its declared
 destination, so a newly bundled resource cannot be forgotten), copies the
 NSIS setup alongside it, and writes one `SHA256SUMS-<version>.txt` listing
-both under the names GitHub will actually serve.
+both under the names GitHub will actually serve. Before anything is kept or
+uploaded, the step "The zip opens in an independent reader" opens the zip
+with .NET's `ZipFile` and reads every entry. The packager's own tests read
+zips with a reader that shares the writer's idea of the layout, and the
+first v0.1.3 draft's zip passed them while every real unzip tool rejected it
+(the end record's comment length was written over the top half of the
+central-directory offset; HS-Offline-Tracker PR #7).
 
 On a dry run (the default for a manual run) those three files are kept only
 as a downloadable workflow artifact and the draft is left alone. Otherwise
