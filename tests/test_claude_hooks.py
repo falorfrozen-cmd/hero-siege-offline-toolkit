@@ -549,6 +549,8 @@ class GrandfatheredWholeFileInventory(unittest.TestCase):
     Skips, never fails, when a submodule is not checked out or its object
     store lacks the recorded revision -- mirroring
     tests/test_yytoolkit_patch_series.py's ForgePactPinRealRevisionControls.
+    The hub tree's own share of the inventory is asserted separately and
+    never skips, so a hub-only checkout (CI) still checks it.
     A change here means the docstring/comment prose must change with it, and
     both cite this test by name instead of repeating a number that has
     already been wrong twice for two different reasons.
@@ -624,6 +626,18 @@ class GrandfatheredWholeFileInventory(unittest.TestCase):
             if self._matches(display, blob.stdout):
                 found.add(display)
         return found
+
+    def test_the_hub_tree_itself_carries_no_whole_file_match(self):
+        # Needs no submodule, so it runs -- and can fail -- in a hub-only
+        # checkout such as CI, where the combined test below skips before
+        # its assertion is reached.
+        expected_in_hub = {p for p in self.EXPECTED
+                           if not p.startswith(tuple(f"{s}/" for s in self.SUBMODULES))}
+        found = self._scan_hub_tree()
+        self.assertEqual(
+            found, expected_in_hub,
+            f"whole-file decompiled-output signature matches in the hub tree: "
+            f"{sorted(found)}; expected: {sorted(expected_in_hub)}")
 
     def test_the_grandfathered_inventory_is_exactly_two_paths(self):
         found = self._scan_hub_tree()
