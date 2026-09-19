@@ -1326,21 +1326,27 @@ v4.0.1 (`5a95e46`) plus seven documented patches, built by
 `tools/build_yytoolkit.py`. As of this note it has been built and host-tested
 on one machine, its log markers checked in the DLL (with a negative control:
 `verify-dll --dll` run against `bb113eef…` fails, naming the markers that file
-lacks), and **launched once against the game — YYToolkit alone, no ForgePact
-plugin loaded** (2026-09-19): the startup fault did not reproduce in that one
-session, and lag was not observed either, but neither is settled from one
-session on one machine, and **no launch has yet loaded a ForgePact plugin
-against this series** (see `third_party/yytoolkit/README.md`, "Launch gate"
-and "First launch results (2026-09-19)", for the full record). Moving this
-row to a build of that series is written and committed on a local branch
-(`claude/yytoolkit-hs1-distribution`) — **not opened as a pull request, not
-merged to `origin`, and not published** — which points
-`modfiles_shipped/YYToolkit.dll` at a hub release asset URL for sha256
+lacks), and **launched twice against the game** (2026-09-19): first YYToolkit
+alone, no plugin loaded — the startup fault did not reproduce in that
+session, and lag was not observed either — then a second, idle session with
+ForgePact's `BloodPactPlugin` (v1.4.4, built locally) and the
+HS-Offline-Tracker producer both loaded alongside it: both initialized, and
+an IPC smoke test exercised the plugin-to-runner interface, but no gameplay
+was played, so the error-report path with a plugin loaded is still
+unexercised (see `third_party/yytoolkit/README.md`, "Launch gate", "First
+launch results (2026-09-19)" and "Second launch results (2026-09-19, plugin
+loaded)", for the full record). Neither is settled from two short sessions on
+one machine. Moving this row to a build of that series is written and
+committed on a local branch (`claude/yytoolkit-hs1-distribution`) — **not
+opened as a pull request, not merged to `origin`, and not published** — which
+points `modfiles_shipped/YYToolkit.dll` at a hub release asset URL for sha256
 `51a393d7e5291ad76bdb85b9f44faf5178b6b20e0ce8432fa26bdaf9e21eadf8` and
 rewrites `yytoolkit-modified/NOTICE.md` to point at the hub series. That
-branch has to land together with HS-Offline-Tracker's equivalent, and only
-after a launch with a ForgePact plugin loaded passes the launch gate and the
-owner confirms (`third_party/yytoolkit/README.md`, "Where the binary is
+branch has to land together with HS-Offline-Tracker's equivalent. A launch
+with a ForgePact plugin loaded has now passed that row of the launch gate;
+what remains is the owner's confirmation, plus gameplay with mods active and
+the error-report path with a plugin loaded, both still unexercised
+(`third_party/yytoolkit/README.md`, "Where the binary is
 published"): both tools install to `mods/aurie/YYToolkit.dll` with overwrite
 semantics (`src/forgepact.py` copies unconditionally), so whichever installs
 last wins, and shipping the new DLL in only one of them lets the other put
@@ -1472,7 +1478,7 @@ here before pressing Publish.
 - **Game Executable Updates:** When a new Season 10 patch releases, verify that spawner object names, GML function names, and `LoadDrops` drop family indices remain valid. The player build contains **no raw game addresses** to re-verify (Known Limitations item 11) — everything resolves by name or off a YYToolkit struct — so a new build should surface as named lookups failing, not as a crash. Player-build closure names (`anon@N@...`) come from `HeroSiege::Scripts` constants, so regenerating hs-game-sdk after a patch that moves one surfaces it as a compile error and a failing `test_player_build_closure_names_all_match_the_sdk`, instead of a silent runtime name-lookup failure. The dev-only `kCiCallMethodFnRva` does need re-verifying before anyone runs `citrace collect confirm native`; `citrace dispatchdump` / `citrace symdump` in the research build are the tools for re-locating it.
   - **Closure names move with every game patch.** The player build now spells them through `HeroSiege::Scripts` constants (above), so a regeneration surfaces as a compile error rather than a silent hook. Done (2026-09-18): player names now match hub `4539e68`'s SDK, regenerated for the current game build (`data.win` `07D864C9…`) - e.g. `GenerateItemHash@anon@4645` is `GenerateItemHash@anon@4791` there - on ForgePact branch `fix/closure-names-current-game`, merged into `feat/prospect-window-research`. The 25 research-only `citrace` closure literals moved with them; the seven `Quest_Object_Parent_obj` and ten `Profile_Manager_obj` closures were mapped by ordinal position within their Create event (equal counts, monotone offset growth), so the `m_Quest*` method-name labels the research code attaches carry over by inference only, not observed on the current build. `test_citrace_closure_hooks_cover_every_sdk_closure_of_their_objects` now fails the next regeneration loudly (naming which closures exist and which are hooked) instead of drifting silently. ForgePact's release CI (`forgepact-release.yml`) builds against hub `main`'s SDK, so hub #74 (the SDK regeneration) and this fix must land together - merging one without the other breaks the release build one way or the other. `prospectprobe`'s table already uses SDK constants.
 - **YYToolkit Header / Binary Sync:** Any rebuild of `YYToolkit.dll` requires recompiling `BloodPactPlugin` against matching headers in `plugin_build\include\` to prevent vtable mismatch crashes. Because the plugin now reads `CScriptRef` directly (under `/DYYTK_DEFINE_INTERNAL=1`), a header update also has to keep those layouts truthful — the headers' own `static_assert(sizeof(YYObjectBase) == 0x88)` is the compile-time check, and `petquest stat`'s `REFUSED (structural)` line is the runtime one.
-  - The hub's `third_party/yytoolkit/` series is pinned to the same upstream commit as these headers (`5a95e46`, tag v4.0.1) and touches none of the plugin-facing files (`YYToolkit/source/YYTK/Shared/`, `ExamplePlugin/`), so a DLL built from it is meant to keep working with a plugin compiled against the unmodified pinned headers. One behaviour does change for a plugin: `CreateCallback(EVENT_OBJECT_CALL)` returns `AURIE_UNAVAILABLE` instead of succeeding with a callback that never fires. `BloodPactPlugin` registers `EVENT_FRAME` only, so this is not expected to affect it — not observed live, because that DLL has not been launched.
+  - The hub's `third_party/yytoolkit/` series is pinned to the same upstream commit as these headers (`5a95e46`, tag v4.0.1) and touches none of the plugin-facing files (`YYToolkit/source/YYTK/Shared/`, `ExamplePlugin/`), so a DLL built from it is meant to keep working with a plugin compiled against the unmodified pinned headers. One behaviour does change for a plugin: `CreateCallback(EVENT_OBJECT_CALL)` returns `AURIE_UNAVAILABLE` instead of succeeding with a callback that never fires. `BloodPactPlugin` registers `EVENT_FRAME` only, so this is not expected to affect it — observed live on 2026-09-19: `BloodPactPlugin` v1.4.4 loaded and initialized against a build of this series, `EVENT_FRAME` kept firing (it drives the plugin's IPC poll), and zero `REFUSED EVENT_OBJECT_CALL` lines were logged in that idle session (see `third_party/yytoolkit/README.md`, "Second launch results (2026-09-19, plugin loaded)").
 - **Dependency Upgrades (YYToolkit):** A change to the distributed YYToolkit — a new upstream version, a fix, a build flag — is made in the hub, not here: move the pin in `third_party/yytoolkit/upstream.json`, refresh or add patches under `third_party/yytoolkit/patches/` (each with its mandatory header), and rebuild with `tools/build_yytoolkit.py`; that directory's README has the procedure and the launch gate. What has to survive an upstream bump is the whole of `patches/series`, not "the disk cache and the `ExecuteIt` change" — that two-item list described the old notice, and the old notice did not describe the binary. Never rebuild `YYToolkit.dll` from `yytoolkit-modified/` or from any tree that is not the pinned commit plus the series.
 - **Moving the `YYToolkit.dll` pin (written locally, not merged or published):** a branch, `claude/yytoolkit-hs1-distribution`, that (1) repoints `tools/toolchain-pins.json` at the hub release asset for a launch-gated build of the hub series, with its SHA-256 and the hub commit as provenance — the pin count stays eleven; (2) rewrites `yytoolkit-modified/NOTICE.md` to point at the hub directory and deletes the two whole-file copies in the same commit; (3) corrects `CREDITS.md` and `README.md`, which used to say "one modified source file"; (4) ships the notice and `YYToolkit-BUILD-INFO.json` with the binary — `build_release.py` now copies both into `modfiles/` alongside `README.md`, `CREDITS.md` and `LICENSE`; (5) carries `release-notes-v1.4.4.md`, naming what was and was not launch-tested rather than claiming a settled fix; (6) deletes `ensure_ri_cache`'s hand-measured RVA table from `src/forgepact.py`, which patch `0001` made unnecessary. It has not been opened as a pull request against `origin`, and it lands together with HS-Offline-Tracker's equivalent branch only after the launch gate carries a plugin-loaded row and the owner confirms — see `third_party/yytoolkit/README.md`, "Where the binary is published". Update the pin-table row and the repository-map entries in this guide once it merges.
 

@@ -120,22 +120,31 @@ Measured on 2026-09-19, on one machine (VS 2022 Build Tools 17.14,
   proved nothing — this is the same rule as
   ["Prove the Instrument"](../../AGENTS.md#prove-the-instrument-before-trusting-a-negative-result),
   applied to a build instead of a hook.
-- **Launched once against the game, 2026-09-19** — YYToolkit alone, no
-  ForgePact or Tracker plugin loaded, one session (menu, about two minutes in
-  Chaos Tower). The startup fault did not reproduce on that build and that
-  machine, and lag was not observed either. Full record, including what that
-  one session does and does not cover: `third_party/yytoolkit/README.md`,
-  "Launch gate" and "First launch results (2026-09-19)".
+- **Launched twice against the game, 2026-09-19.** First, YYToolkit alone, no
+  plugin loaded, one session (menu, about two minutes in Chaos Tower): the
+  startup fault did not reproduce on that build and that machine, and lag was
+  not observed either. Second, an idle session with ForgePact's
+  `BloodPactPlugin` (v1.4.4) and the HS-Offline-Tracker producer both loaded
+  alongside it: both initialized, and an IPC smoke test exercised the
+  plugin-to-runner interface, but no gameplay was played. Full record,
+  including what each session does and does not cover:
+  `third_party/yytoolkit/README.md`, "Launch gate", "First launch results
+  (2026-09-19)" and "Second launch results (2026-09-19, plugin loaded)".
 
 ## What is not known
 
-- **The new DLL has been launched once, without a plugin.** The startup fault
-  did not reproduce in that one session (2026-09-19, YYToolkit alone). The
-  build tool still writes `live_gameplay_verified: false` and always will —
-  that field records nothing about a launch, by design; the launch gate in
-  `third_party/yytoolkit/README.md` is the record instead. Not yet run: a
-  launch with a plugin loaded, the no-hint-file path, the verbose-dump
-  control, a second game build or machine.
+- **The new DLL has been launched twice: once without a plugin, once with
+  two.** The startup fault did not reproduce in the first session (2026-09-19,
+  YYToolkit alone). The second session (2026-09-19) loaded ForgePact's
+  `BloodPactPlugin` and the HS-Offline-Tracker producer alongside it; both
+  initialized, and an IPC smoke test exercised the plugin-to-runner
+  interface, but it was an idle session — no gameplay, so the error-report
+  path with a plugin loaded is still unexercised. The build tool still writes
+  `live_gameplay_verified: false` and always will — that field records
+  nothing about a launch, by design; the launch gate in
+  `third_party/yytoolkit/README.md` is the record instead. Not yet run: the
+  no-hint-file path, the verbose-dump control, gameplay with mods active, a
+  second game build or machine.
 - **The lag was observed once, not measured as fixed.** An earlier session
   observed vanilla smooth, offline without mods smooth, and YYToolkit alone
   lagging, with about 142 caught game errors in about two minutes, each

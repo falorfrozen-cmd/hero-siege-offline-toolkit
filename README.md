@@ -253,10 +253,14 @@ py -3 tools/build_yytoolkit.py all --upstream C:\src\YYToolkit
 That exports the pinned commit, applies the series, builds `Release|x64`, runs
 the host tests and checks that every log line the patches declare is in the
 DLL. It never launches the game. The series has been built, host-tested and
-**launched once against the game** (2026-09-19, YYToolkit alone, no plugin
-loaded) — the startup fault did not reproduce and lag was not observed in
-that one session, but no plugin has been loaded against it yet, so the tools
-still distribute the earlier DLL until their own repositories move to it —
+**launched twice against the game** (2026-09-19: first YYToolkit alone, then
+a second, idle session with ForgePact's plugin and the HS-Offline-Tracker
+producer both loaded) — the startup fault did not reproduce in either
+session and lag was not observed in the first; the second confirmed both
+plugins initialize and the plugin-to-runner interface works, but gameplay
+with mods active and the error-report path with a plugin loaded are still
+unexercised, and neither submodule's branch has merged, so the tools still
+distribute the earlier DLL until their own repositories move to it —
 see the directory's [README](third_party/yytoolkit/README.md) for the full
 launch-gate record,
 [ADR 0002](docs/adr/0002-modified-yytoolkit-is-a-patch-series-in-the-hub.md)

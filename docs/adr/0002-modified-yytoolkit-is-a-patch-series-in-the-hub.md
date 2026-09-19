@@ -141,13 +141,17 @@ Honestly stated, because it is a real cost:
   `yytoolkit-modified/NOTICE.md` files remain the statement for it. The hub's
   guides now say those notices are incomplete rather than implying otherwise.
 - **As of this decision the series has been built, host-tested, and launched
-  once against the game (2026-09-19, YYToolkit alone, no plugin loaded).** In
-  that one session the startup fault did not reproduce, and lag was not
-  observed either; neither is settled as fixed from one session on one
-  machine. A launch with a plugin loaded, the no-hint-file path, the
-  verbose-dump control, and a second machine or game build are still open.
-  The launch gate in the directory's README is where the record and what
-  remains open both live, and it is a person's step.
+  twice against the game (2026-09-19): first YYToolkit alone, no plugin
+  loaded, then a second, idle session with ForgePact's plugin and the
+  HS-Offline-Tracker producer both loaded.** In the first session the startup
+  fault did not reproduce, and lag was not observed either; in the second,
+  both plugins initialized and an IPC smoke test exercised the
+  plugin-to-runner interface, but no gameplay was played. Neither is settled
+  as fixed from one or two short sessions on one machine. The no-hint-file
+  path, the verbose-dump control, gameplay with mods active, the
+  error-report path with a plugin loaded, and a second machine or game build
+  are still open. The launch gate in the directory's README is where the
+  record and what remains open both live, and it is a person's step.
 - **If a build is ever attached to a hub GitHub release, that release must be
   created with `--latest=false`.** The hub's updater reads
   `releases/latest/download/latest.json`, so any other release becoming
@@ -166,6 +170,8 @@ branches move each pin to a build of this series (sha256
 the `ensure_ri_cache` table. **Neither branch is opened as a pull request,
 neither is merged to its `origin`, and no hub GitHub release carries the
 binary yet** — the decision above still holds, and players still receive the
-earlier DLL. Publishing needs a launch with a plugin loaded to pass the
-launch gate and the owner's decision on which account creates the release
-(`third_party/yytoolkit/README.md`, "Where the binary is published").
+earlier DLL. A second launch (2026-09-19) has now loaded a plugin and passed
+that row of the launch gate; publishing still needs the owner's decision on
+which account creates the release, plus the items that second launch left
+unexercised (gameplay with mods active, the error-report path with a plugin
+loaded) (`third_party/yytoolkit/README.md`, "Where the binary is published").

@@ -14,13 +14,17 @@ source and no binary - only what turns upstream into our build:
 | [`tools/build_yytoolkit.py`](../../tools/build_yytoolkit.py) | Pin + series -> DLL, host tests, marker check, provenance files. |
 
 > **State on 2026-09-19:** built, host-tested, marker-checked, and now
-> **launched once against the game** - YYToolkit alone (no ForgePact or
-> Tracker plugin loaded), one session, menu plus about two minutes in Chaos
-> Tower. The startup crash did not reproduce on this build and this machine,
-> and lag was not observed either; see the [launch gate](#launch-gate) for
-> exactly what that one session does and does not cover (a plugin loaded, the
-> no-hint-file path and the verbose-dump control are all still open). Players
-> still receive the previous DLL until the [follow-ups](#follow-ups-in-the-submodule-repos) land.
+> **launched twice against the game** - first YYToolkit alone (no plugin
+> loaded), one session, menu plus about two minutes in Chaos Tower; then a
+> second, idle session with ForgePact's `BloodPactPlugin` (v1.4.4) and the
+> HS-Offline-Tracker producer both loaded alongside it, exercised only with
+> an IPC smoke test, no gameplay. The startup crash did not reproduce in
+> either session, and lag was not observed in the first; see the
+> [launch gate](#launch-gate) for exactly what each session does and does not
+> cover (the no-hint-file path, the verbose-dump control, in-game mod
+> behaviour and the error-report path with a plugin loaded are all still
+> open). Players still receive the previous DLL until the
+> [follow-ups](#follow-ups-in-the-submodule-repos) land.
 
 ## Why this exists
 
@@ -352,16 +356,21 @@ Outputs, all in `<work>\o\` (the tool never copies the DLL anywhere else):
 | Marker check, negative control | `verify-dll --dll <previously distributed DLL>` | Fails, naming the markers it lacks | Verified | 2026-09-19 |
 | First launch against the game | checklist below | Reached town; stage 1 and stage 2 both OK. Scope: YYToolkit alone, no plugin loaded, one launch on the existing legacy hint line (see [First launch results](#first-launch-results-2026-09-19)) | Verified | 2026-09-19 |
 | Lag measurement | 0005's cost and summary lines, plus play | ~2 min in Chaos Tower, "no lags whatsoever"; 133 caught errors (1 distinct), 132 handled in 0.252 ms total (see [First launch results](#first-launch-results-2026-09-19)) | Observed once | 2026-09-19 |
-| First launch with a plugin loaded (ForgePact or the Tracker producer) | checklist below | - | NOT RUN | - |
+| First launch with a plugin loaded (ForgePact or the Tracker producer) | checklist below | Both loaded and initialized (ForgePact's `BloodPactPlugin` v1.4.4, the Tracker producer); one idle session, IPC smoke test only, no gameplay (see [Second launch results](#second-launch-results-2026-09-19-plugin-loaded)) | Verified | 2026-09-19 |
 | Launch A (no hint file) | checklist below | - | NOT RUN | - |
 | Launch C (`YYTK_RI_VERBOSE=1`) | checklist below | - | NOT RUN | - |
 
 No submodule pin should move to a build of this series until the "First
 launch against the game" and "Lag measurement" rows above carry a date, the
-game build, the DLL's sha256 and the kept logs. The one launch recorded here
-ran YYToolkit alone; no plugin has been loaded against this series yet (see
-the three NOT RUN rows above), so neither the ForgePact nor the
-HS-Offline-Tracker pin has moved.
+game build, the DLL's sha256 and the kept logs - both do. A second launch,
+2026-09-19, added the plugin-loaded row: ForgePact's `BloodPactPlugin` and
+the HS-Offline-Tracker producer both loaded and initialized in one idle
+session (see
+[Second launch results](#second-launch-results-2026-09-19-plugin-loaded)).
+Launch A (no hint file) and launch C (`YYTK_RI_VERBOSE=1`) are still NOT RUN
+(see the two rows above), and neither session exercised gameplay with mods
+active or the error-report path (0005) with a plugin loaded, so neither the
+ForgePact nor the HS-Offline-Tracker pin has moved.
 
 **Launches.** Copy `<work>\o\YYToolkit.dll` over `mods\aurie\YYToolkit.dll` in an
 offline install and keep the old file. Both tools' installers overwrite that
@@ -388,7 +397,7 @@ each `YYToolkit.log`.
 | 0002 (A, B) | One `RI init summary: 202 instructions walked ..., 100 stores emulated, 0 refused, 512 stack rows of which 25 are non-zero, interface at rsp+0x60, the chain ended on the rsp-relative lea` ending `YYTK_RI_VERBOSE is not set - ... (its value has 0 characters)`. The numbers come from one measured build; other numbers on another game build are not by themselves a failure. | A summary saying the chain did NOT end on the rsp-relative lea (0007 then refuses the interface, see its row). The dump present without the variable. | Matched exactly: the predicted numbers, `YYTK_RI_VERBOSE` reported not set. |
 | 0002 (C) | About 723 dump lines, then `RI init summary: ... YYTK_RI_VERBOSE is 1 - the full dump is above (its value has 1 characters)` (2 characters when set with cmd's `set X=1 && game`). | Still `not set` although the launcher was given the variable: the launcher does not hand its environment on. `set, but to something other than 1 - the dump stays off`: the wrong value arrived. | NOT RUN. `YYTK_RI_VERBOSE` was not set this launch. |
 | 0007 | No `REFUSED to publish the runner interface` line, and the summary says `0 refused`. | `REFUSED to publish the runner interface: <reason> (N stores refused ...)` followed by stage 2 failing with a status: the walk misread this game build - run once with `YYTK_RI_VERBOSE=1` and keep the dump. A fault instead of a status after that line means the "zeroed interface fails cleanly" reading of the source is wrong - record it. | Matched: `0 refused`, no `REFUSED` line. The refusal path is still not observed on any launch. |
-| 0003 | Exactly once, before `HkPreinitialize() => AURIE_SUCCESS` and `Stage 1 init OK!`: `HkPreinitialize() => ExecuteIt hook NOT installed by design (YYTK_HOOK_EXECUTEIT=0): ... ExecuteIt lookup => AURIE_SUCCESS, 0x<non-null>`. Zero `REFUSED EVENT_OBJECT_CALL` lines with only ForgePact and the Tracker producer loaded. This patch is unrelated to the startup crash - stage 1 already succeeded in the crash log. | The suffix ` - lookup FAILED, init continues, but crash-report frames may be mislabelled Code_Execute`. Any `REFUSED EVENT_OBJECT_CALL from '<leaf>.dll'` line: it names the plugin that registered the event. | Matched: exactly one such line, before `Stage 1 init OK!`. Zero `REFUSED EVENT_OBJECT_CALL` lines - expected here, since no plugin was loaded to register the event; this row is not yet exercised with a plugin present. |
+| 0003 | Exactly once, before `HkPreinitialize() => AURIE_SUCCESS` and `Stage 1 init OK!`: `HkPreinitialize() => ExecuteIt hook NOT installed by design (YYTK_HOOK_EXECUTEIT=0): ... ExecuteIt lookup => AURIE_SUCCESS, 0x<non-null>`. Zero `REFUSED EVENT_OBJECT_CALL` lines with only ForgePact and the Tracker producer loaded. This patch is unrelated to the startup crash - stage 1 already succeeded in the crash log. | The suffix ` - lookup FAILED, init continues, but crash-report frames may be mislabelled Code_Execute`. Any `REFUSED EVENT_OBJECT_CALL from '<leaf>.dll'` line: it names the plugin that registered the event. | Matched: exactly one such line, before `Stage 1 init OK!`. Zero `REFUSED EVENT_OBJECT_CALL` lines - expected here, since no plugin was loaded to register the event; this row is not yet exercised with a plugin present. **Second launch, 2026-09-19 (ForgePact's `BloodPactPlugin` v1.4.4 and the Tracker producer both loaded):** now exercised - `YYToolkit.log.hs1-plugin-check` is 43 lines again and carries the same single `ExecuteIt hook NOT installed by design` line before `Stage 2 init OK!`, and zero `REFUSED EVENT_OBJECT_CALL` lines with both plugins loaded and initialized, because neither plugin in this session registers `EVENT_OBJECT_CALL`. See [Second launch results](#second-launch-results-2026-09-19-plugin-loaded). |
 | 0004 | One or more `GmpFindFunctionsArrayX64() rejected candidate 0x... (mov at 0x...): <reason>`, then exactly one `GmpFindFunctionsArrayX64() accepted candidate 0x...` carrying `entry size 24` and `names confirmed by Code_Function_Find`, then `m_FunctionEntrySize = 24`. If the accept is for the first mov with no rejection before it, the inferred crash cause is wrong - record that. Count `Functions array search attempt` / `not repeated` lines (zero of both: stage 2 was entered once). | The log ending right after the finder line (the original crash shape). `m_FunctionEntrySize = 0` with `YkDetermineFunctionEntrySize() refused: ...`. `GmpFindFunctionsArrayX64() => none of N distinct candidate(s) ...` then `VM::GmpFindFunctionsArray() => none of` (or `=> no candidate in`) and `Failed to determine function array size! (AURIE_OBJECT_NOT_FOUND)`; 255 instructions in that line means the disassembler cap ended the scan. `... entry N ('name') has a routine that is not executable game image code`: the first-8-builtins assumption is wrong. Any `VM::GmpFindFunctionsArray() rejected candidate 0x0000000000000000`. | Three rejections then one accept (`entry size 24`, 8 of 8 names confirmed); zero `attempt`/`not repeated` lines. The previous binary's notes assumed four rejections - this exe shows three. See [First launch results](#first-launch-results-2026-09-19) for what the first rejection reason confirms about the fault site. |
 | 0005 | `[hs] YYError hook install: MmCreateHook => AURIE_SUCCESS`. At the first caught error, `[hs] game symbol table: built in ... builtins=A accepted of S slots (K outside the game image; walk ended on <reason>)` with A in the hundreds or thousands, ending on `a null routine` or `a name the runner does not know`. Every full report ends with `[hs] YYError report cost: report #N (... bytes, written) \| total X ms \| stacktrace capture ... \| ...`. `[hs] YYError summary: total=T distinct=D/32 reports=R report_failures=0 ...`: expect T in the hundreds while R stays near D, and `count_only_ms` small next to `report_ms_total`. Record T, R, `report_ms_total`, `report_ms_max`, `variants=`, `returned=`, `dropped=`. | `NO builtin symbol was accepted: this is what the wrong functions array looks like`. `builtin walk stopped at slot N` with a small N. `build attempt N of 2 refused after X ms: <reason>` or `given up`. `dropped=` above 0 with `[hs] YYError: Aurie returned no trampoline`. `truncated=` or `unexpandable=` above 0. `expired=` or `stale=` above 0: a report took longer than 30 s. `[hs] YYError summary unavailable`. **The silent one:** no `[hs] YYError` line beyond the install line. No error was raised in this session, so the ledger, the report path and the count-only path were not exercised - the row measures nothing and the run does not count toward the launch gate. A quiet log is not "the lag is gone". Re-run until `[hs] YYError summary: total=` appears at least once. | Not silent: install OK, table built in 6.189 ms (8,893 symbols), one full report, `total=133 distinct=1/32 reports=1 report_failures=0 report_ms_total=527.405 repeats=132 variants=132 count_only_ms=0.252 returned=0 dropped=0 runner_ms=0.000`. See [First launch results](#first-launch-results-2026-09-19) for the report-cost breakdown and the `returned=`/`dropped=` reading. |
 
@@ -498,14 +507,14 @@ comparison is not controlled for everything that differed between the two
 DLLs (the old binary also differed in compiler version and in whatever else
 was lost with its source).
 
-**Still not run or not observed.** Any launch with a plugin loaded
-(ForgePact's `BloodPactPlugin`, the Tracker producer) - the plugin ABI
-headers are untouched by the series, but no plugin has been loaded against a
-build of it yet; launch A (no hint file); launch C (`YYTK_RI_VERBOSE=1`); a
-second distinct error message; 0007's refusal path and 0003's optional
-refusal control below; a different game build; a second machine or toolset.
-The ForgePact and HS-Offline-Tracker pins have not moved - players still
-receive `bb113eef…`.
+**Still not run or not observed, after this launch.** Launch A (no hint
+file); launch C (`YYTK_RI_VERBOSE=1`); a second distinct error message;
+0007's refusal path and 0003's optional refusal control below; a different
+game build; a second machine or toolset. A launch with a plugin loaded
+followed this one - see
+[Second launch results](#second-launch-results-2026-09-19-plugin-loaded) for
+what it covered and what it still did not. The ForgePact and
+HS-Offline-Tracker pins have not moved - players still receive `bb113eef…`.
 
 Optional control for 0003's refusal path (NOT RUN): a throwaway plugin that
 registers `EVENT_OBJECT_CALL` ten times should get ten `AURIE_UNAVAILABLE`
@@ -519,6 +528,72 @@ DLL in the same kind of session. Both are now in hand for one session - see
 "First launch results" above. Write "not observed" rather than "fixed" for a
 single session, and treat a second session the same way before calling
 anything settled.
+
+### Second launch results, 2026-09-19 (plugin loaded)
+
+**Setup.** `mods/aurie` held three files: the hs.1 `YYToolkit.dll` (sha256
+`51a393d7…`, the same build as the first launch), `BloodPactPlugin.dll` built
+locally from ForgePact's local branch at version 1.4.4 with
+`plugin_build\build.bat release` (970,240 bytes, sha256
+`24020eac387d90a0c1b385a4f855e504f3cee42352bae8cdf1bcdb0e15e7372a`; built
+against the seven YYTK/Aurie headers, each verified byte-for-byte against the
+sha256 pins in `ForgePact/tools/toolchain-pins.json` - i.e. the unmodified
+v4.0.1 plugin ABI headers), and `HSOfflineTrackerProducer.dll` (150,016
+bytes, sha256
+`36608aa041b31e23f35fbf010554715657d14269c61c541e717fde76a481b14e`, the build
+ForgePact's pins name). Launched through ForgePact's offline launcher module;
+its safety blocker returned empty. One idle session: menu only, five IPC
+commands, no gameplay.
+
+**Module load (`aurie.log`).** All three modules mapped `AURIE_SUCCESS`, then
+`[info] [BloodPact] BloodPact plugin initialized successfully.` - only the
+usual `Module '...' compiler configuration could not be verified. Assuming
+'Release'.` notes for `YYToolkit.dll` and the producer (not for
+`BloodPactPlugin.dll`).
+
+**Startup (`YYToolkit.log`, 43 lines again).** Line 1 is the 0006 identity
+line. 0003 logged exactly one `ExecuteIt hook NOT installed by design` line
+before `Stage 1 init OK!`, and - now exercised with two plugins loaded and
+initialized - zero `REFUSED EVENT_OBJECT_CALL` lines: this is the 0003
+checklist observation the first launch could not make, because no plugin was
+loaded then; neither plugin in this session registers that event. 0002/0007's
+`RI init summary:` line carried the same predicted numbers as the first
+launch (202 instructions, 100 stores, `0 refused`, 512 stack rows of which 25
+non-zero, interface at `rsp+0x60`), and no `REFUSED to publish the runner
+interface` line - 0007's refusal path is still not observed. 0004 rejected
+three candidates before accepting one (`entry size 24`, 8 of 8 names
+confirmed), matching the first launch; zero `Functions array search attempt` /
+`not repeated` lines. Stage 1 and Stage 2 both ended `AURIE_SUCCESS`.
+0001 took the hint-file path differently from the first launch: `RI scan hint
+hit: the scan of page 46420 found the chain at rva 0xB5557E2 ..., 2 of 51925
+pages scanned`, then `GmpUpdateRunnerInterfaceHint() => RI scan hint
+unchanged, file left alone` - confirmed by reading the log directly. The
+first launch found a pre-existing legacy 3-token hint line and rewrote it to
+the current 6-token form (`RI scan hint written ... (replacing a line that
+said something else)`); this second launch found the file already in that
+6-token form, matching on exe size/timestamp/image/checksum, and left it
+alone - the first live observation of the `unchanged` marker on this series.
+No Failed or purged lines.
+
+**Plugin output (`bp_ipc/out.txt`).** `==== BloodPact plugin loaded ====
+v1.4.4` followed by `HOOK INSTALLED` lines for the plugin's hooks. IPC smoke
+through `ForgePact\tools\ipc.ps1`, five commands, each answered in about one
+second: `ping` -> `pong (YYTK 4.0.1)`; `orbpickup stat`; `orbpickup 10` ->
+a pulled-from-480px response naming a live player object and 2 globe
+objects; `orbpickup stat` again (state changed from the previous call); and
+`orbpickup 0` -> `OFF`. So plugin -> YYToolkit interface calls (named-routine
+lookup, builtin calls, instance access, `EVENT_FRAME` dispatch that drives
+the IPC poll) work on this DLL.
+
+**Still not observed in this launch.** Any `[hs] YYError` summary or report
+line - nobody played, the session was idle apart from the IPC commands, so
+the error-report path (0005) was not exercised with plugins loaded; a quiet
+log proves nothing, and the lag observation still rests on the first launch
+alone, YYToolkit-only. Not exercised: gameplay with mods active, the Tracker
+app reading the producer's output, launch A (no hint file), launch C
+(`YYTK_RI_VERBOSE=1`), any refusal path, a second distinct error message.
+The ForgePact and HS-Offline-Tracker pins have not moved - players still
+receive `bb113eef…`.
 
 ## How to change the series
 
@@ -557,14 +632,19 @@ patch regenerated against the new commit.
 
 ## Known limitations and what is not measured
 
-- **Launched once, YYToolkit alone.** On 2026-09-19 the built DLL ran one
-  session against the game with no plugin loaded; the startup crash did not
-  reproduce and lag was not observed - see
-  [Launch gate](#launch-gate) and
-  [First launch results](#first-launch-results-2026-09-19). Every "fixes"
-  claim in the patch messages beyond that one session - with a plugin loaded,
-  on the no-hint-file path, with the verbose dump on, on a different game
-  build or machine - is still a design intent, not a measured result.
+- **Launched twice, both sessions short.** On 2026-09-19 the built DLL ran a
+  first session against the game with no plugin loaded (the startup crash did
+  not reproduce and lag was not observed) and a second, idle session with
+  ForgePact's `BloodPactPlugin` and the HS-Offline-Tracker producer both
+  loaded alongside it (both initialized, and an IPC smoke test exercised the
+  plugin-to-runner interface) - see [Launch gate](#launch-gate),
+  [First launch results](#first-launch-results-2026-09-19) and
+  [Second launch results](#second-launch-results-2026-09-19-plugin-loaded).
+  Not exercised in either session: gameplay with mods active, the
+  error-report path (0005) with a plugin loaded, the no-hint-file path, the
+  verbose dump, a different game build or machine. Every "fixes" claim in the
+  patch messages beyond what those two sessions measured is still a design
+  intent, not a measured result.
 - **Lag candidates this series does not fully address, or has only partly
   measured:** the console YYToolkit allocates (synchronous console writes if
   the runner prints each error) and plugin-side per-call allocations in
@@ -587,21 +667,28 @@ patch regenerated against the new commit.
   `documented/...` in the `Evidence:` fields, and
   `%LOCALAPPDATA%\hstk\yytoolkit-evidence\YYToolkit.log.hs1-first-launch-full`
   (the first launch's full log, cited under
-  [First launch results](#first-launch-results-2026-09-19)) name files kept on
-  the researcher's machine. They are not committed because they carry
-  build-host and user-profile paths, and this directory holds no logs (a test
-  enforces both). Each can be re-derived: the first is the `YYToolkit.log` of
-  an unpatched v4.0.1 build with the two previously documented files applied,
-  launched against the game; the second is a strings listing of the
-  `bb113eef...` DLL; the third is the two whole-file copies in the
-  submodules' `yytoolkit-modified/` directories; the fourth is this series's
-  own DLL (see [How to build](#how-to-build) for its size and hash) launched
-  the same way - YYToolkit alone, an existing legacy hint file, one session in
-  Chaos Tower. The line numbers in the citations hold for those local copies
-  only. The counts taken from them (736 log lines, 723 of them dump; 202 /
-  100 / 512 / 25; `rsp+0x60`; 133 / 1 / 132 / 527.383 ms) are repeated in the
-  patch messages and in this guide, so the launch gate can be read without
-  the files.
+  [First launch results](#first-launch-results-2026-09-19)), plus
+  `YYToolkit.log.hs1-plugin-check`, `aurie.log.hs1-plugin-check`,
+  `bp_ipc-out.hs1-plugin-check.txt` and `install-before-plugin-check.txt` in
+  the same directory (the second launch's logs, cited under
+  [Second launch results](#second-launch-results-2026-09-19-plugin-loaded)),
+  name files kept on the researcher's machine. They are not committed because
+  they carry build-host and user-profile paths, and this directory holds no
+  logs (a test enforces both). Each can be re-derived: the first is the
+  `YYToolkit.log` of an unpatched v4.0.1 build with the two previously
+  documented files applied, launched against the game; the second is a
+  strings listing of the `bb113eef...` DLL; the third is the two whole-file
+  copies in the submodules' `yytoolkit-modified/` directories; the fourth is
+  this series's own DLL (see [How to build](#how-to-build) for its size and
+  hash) launched the same way - YYToolkit alone, an existing legacy hint
+  file, one session in Chaos Tower; the plugin-check files are the same DLL
+  launched a second time with ForgePact's `BloodPactPlugin` and the
+  HS-Offline-Tracker producer both installed alongside it, one idle session,
+  IPC smoke commands only. The line numbers in the citations hold for those
+  local copies only. The counts taken from them (736 log lines, 723 of them
+  dump; 202 / 100 / 512 / 25; `rsp+0x60`; 133 / 1 / 132 / 527.383 ms) are
+  repeated in the patch messages and in this guide, so the launch gate can be
+  read without the files.
 - Per-patch residuals are listed in the sections above and in full in each
   patch's `Fails-safe:` field.
 
@@ -633,8 +720,10 @@ what still has to happen first:
   bundle resources `tauri.conf.json` packages, and bumped its version.
 
 Both install to `mods/aurie/YYToolkit.dll` with overwrite semantics, so the
-two have to open, merge and release together, and only after the launch gate
-above carries a plugin-loaded row and the owner has confirmed. Until then,
+two have to open, merge and release together. The launch gate above now
+carries a plugin-loaded row (2026-09-19); what is still open is the owner's
+confirmation, plus the items that second launch did not exercise (gameplay
+with mods active, the error-report path with a plugin loaded). Until then,
 players still receive the previous DLL, and the notice files these branches
 rewrote describe unpublished work, not what ships.
 
@@ -647,9 +736,12 @@ The built DLL's intended distribution point is a hub GitHub release tagged
 deterministic zip of this directory, and `NOTICE.md`. ForgePact's pin above
 already names that release's asset URL for `YYToolkit.dll` and the `hs.1`
 sha256, and HS-Offline-Tracker's replaced binary already matches it by hash
-- but **the release does not exist yet.** Creating it needs the live launch
-gate above to carry a plugin-loaded row and a decision on which GitHub
-account publishes it (the hub's `origin` and the account that prepared this
-series are not the same one); until both, the asset URL above resolves
-nowhere, neither submodule branch is opened as a pull request, and players
-keep receiving the DLL described under [Why this exists](#why-this-exists).
+- but **the release does not exist yet.** The live launch gate above now
+carries a plugin-loaded row (2026-09-19); what creating the release still
+needs is a decision on which GitHub account publishes it (the hub's `origin`
+and the account that prepared this series are not the same one), plus the
+items the second launch left unexercised (gameplay with mods active, the
+error-report path with a plugin loaded). Until then, the asset URL above
+resolves nowhere, neither submodule branch is opened as a pull request, and
+players keep receiving the DLL described under
+[Why this exists](#why-this-exists).
