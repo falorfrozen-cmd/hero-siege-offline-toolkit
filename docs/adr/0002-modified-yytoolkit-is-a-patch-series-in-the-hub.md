@@ -140,11 +140,14 @@ Honestly stated, because it is a real cost:
 - **Until then the earlier DLL stays in distribution**, and the submodules'
   `yytoolkit-modified/NOTICE.md` files remain the statement for it. The hub's
   guides now say those notices are incomplete rather than implying otherwise.
-- **As of this decision the series has been built and host-tested, and has
-  never been launched against the game.** Whether it gets past the startup
-  fault and whether it changes the in-play lag are not measured; the launch
-  gate in the directory's README is the step that measures them, and it is a
-  person's step.
+- **As of this decision the series has been built, host-tested, and launched
+  once against the game (2026-09-19, YYToolkit alone, no plugin loaded).** In
+  that one session the startup fault did not reproduce, and lag was not
+  observed either; neither is settled as fixed from one session on one
+  machine. A launch with a plugin loaded, the no-hint-file path, the
+  verbose-dump control, and a second machine or game build are still open.
+  The launch gate in the directory's README is where the record and what
+  remains open both live, and it is a person's step.
 - **If a build is ever attached to a hub GitHub release, that release must be
   created with `--latest=false`.** The hub's updater reads
   `releases/latest/download/latest.json`, so any other release becoming

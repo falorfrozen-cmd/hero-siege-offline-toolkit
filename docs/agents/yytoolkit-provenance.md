@@ -120,23 +120,43 @@ Measured on 2026-09-19, on one machine (VS 2022 Build Tools 17.14,
   proved nothing — this is the same rule as
   ["Prove the Instrument"](../../AGENTS.md#prove-the-instrument-before-trusting-a-negative-result),
   applied to a build instead of a hook.
+- **Launched once against the game, 2026-09-19** — YYToolkit alone, no
+  ForgePact or Tracker plugin loaded, one session (menu, about two minutes in
+  Chaos Tower). The startup fault did not reproduce on that build and that
+  machine, and lag was not observed either. Full record, including what that
+  one session does and does not cover: `third_party/yytoolkit/README.md`,
+  "Launch gate" and "First launch results (2026-09-19)".
 
 ## What is not known
 
-- **The new DLL has never been launched against the game.** The build tool
-  writes `live_gameplay_verified: false` and cannot write anything else.
-  Whether the series gets past the startup fault is not measured.
-- **The lag is not measured either.** Another session observed vanilla smooth,
-  offline without mods smooth, and YYToolkit alone lagging, with about 142
-  caught game errors in about two minutes, each producing a full stack-trace
-  report. It is structurally certain from upstream's source that
-  `GmResolveGameSymbolFromAddress` rebuilds a map of every script and builtin
-  once per stack *frame* of every one of those reports. How much that costs on
-  this game is unknown. Patch `0005` caches the table, reports each distinct
-  message once (32 tracked; further ones rate-limited to one report per 30 s),
-  counts repeats in O(1), and writes cost lines so that the first launch
-  measures it rather than assuming it. A session in which no error is raised
-  measures nothing, and a quiet log is not evidence that the lag is gone.
+- **The new DLL has been launched once, without a plugin.** The startup fault
+  did not reproduce in that one session (2026-09-19, YYToolkit alone). The
+  build tool still writes `live_gameplay_verified: false` and always will —
+  that field records nothing about a launch, by design; the launch gate in
+  `third_party/yytoolkit/README.md` is the record instead. Not yet run: a
+  launch with a plugin loaded, the no-hint-file path, the verbose-dump
+  control, a second game build or machine.
+- **The lag was observed once, not measured as fixed.** An earlier session
+  observed vanilla smooth, offline without mods smooth, and YYToolkit alone
+  lagging, with about 142 caught game errors in about two minutes, each
+  producing a full stack-trace report on the previous DLL. It is structurally
+  certain from upstream's source that `GmResolveGameSymbolFromAddress`
+  rebuilds a map of every script and builtin once per stack *frame* of every
+  one of those reports. Patch `0005` caches the table, reports each distinct
+  message once (32 tracked; further ones rate-limited to one report per
+  30 s), counts repeats in O(1), and writes cost lines so a launch measures
+  it rather than assuming it. The first launch of this series (2026-09-19,
+  YYToolkit alone, ~2 minutes in Chaos Tower) logged 133 caught errors — the
+  same order of magnitude — of which only one was a distinct message: its
+  full report cost 527 ms, almost all of it spent symbolising YYToolkit's own
+  stack frames rather than the 0.018 ms the cached game-symbol table cost,
+  and the other 132 repeats cost 0.252 ms combined. The person playing
+  reported "no lags whatsoever." That is one session on one machine, not a
+  controlled comparison (the old DLL also differed in compiler version and in
+  whatever else its lost source held), and it raised no second distinct
+  message to compare against — so "not observed" is the correct word here,
+  not "fixed." Full numbers: `third_party/yytoolkit/README.md`, "First launch
+  results (2026-09-19)."
 - **Other lag candidates are neither addressed nor measured:** the console
   YYToolkit allocates (synchronous writes, if the runner prints each error to
   it), and plugin-side per-call allocations in `CallBuiltinEx`. Upstream's

@@ -252,10 +252,13 @@ py -3 tools/build_yytoolkit.py all --upstream C:\src\YYToolkit
 
 That exports the pinned commit, applies the series, builds `Release|x64`, runs
 the host tests and checks that every log line the patches declare is in the
-DLL. It never launches the game. The series has been built and host-tested but
-**not yet launched against the game**, and the tools still distribute the
-earlier DLL until their own repositories move to it — see the directory's
-[README](third_party/yytoolkit/README.md),
+DLL. It never launches the game. The series has been built, host-tested and
+**launched once against the game** (2026-09-19, YYToolkit alone, no plugin
+loaded) — the startup fault did not reproduce and lag was not observed in
+that one session, but no plugin has been loaded against it yet, so the tools
+still distribute the earlier DLL until their own repositories move to it —
+see the directory's [README](third_party/yytoolkit/README.md) for the full
+launch-gate record,
 [ADR 0002](docs/adr/0002-modified-yytoolkit-is-a-patch-series-in-the-hub.md)
 for why it is a patch series, and
 [`docs/agents/yytoolkit-provenance.md`](docs/agents/yytoolkit-provenance.md)

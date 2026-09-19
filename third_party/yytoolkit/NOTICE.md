@@ -89,10 +89,13 @@ records.
 
 ## State of verification on 2026-09-19
 
-Built, host-tested (7 of 7) and checked for every log line the patches declare.
-**This binary has not yet been launched against the game.** That it fixes the
-startup crash, or the in-play lag, is not measured. The directory's `README.md`
-carries the launch gate and its result once there is one.
+Built, host-tested (7 of 7) and checked for every log line the patches
+declare. **Launched once against the game, YYToolkit alone (no plugin
+loaded).** In that one session the startup crash did not reproduce and lag
+was not observed; neither is a settled fix from one session on one machine,
+and no launch has yet loaded a ForgePact or HS-Offline-Tracker plugin against
+this DLL. The directory's `README.md` carries the launch gate and the full
+record ("First launch results (2026-09-19)").
 
 ## About the previously distributed binary
 
