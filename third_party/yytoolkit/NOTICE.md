@@ -95,7 +95,7 @@ Launch 1, YYToolkit alone (no plugin loaded): startup completed; about two
 minutes of play logged 133 caught game errors (one distinct message, one
 full report, the rest counted only), and the player saw no lag. Launch 2,
 with ForgePact's `BloodPactPlugin` v1.4.4 (built locally) and the
-HS-Offline-Tracker producer both loaded: all modules loaded, every patch's
+HS-Offline-Tracker producer both loaded: all modules loaded, the plugin's
 hooks installed, no `REFUSED EVENT_OBJECT_CALL` line, and a few IPC commands
 answered. That second session was idle, so it exercised neither the
 error-report path with plugins loaded nor in-game mod behaviour. Neither
