@@ -7,7 +7,7 @@
 - **Revision Date:** `Sun Sep 6 05:25:45 2026 +0300`
 - **Commit Message:** `fix: a re-picked alert sound plays, and listed weapons make a card`
 - **Source Availability:** Full application source is present (Svelte 5 / Vite 8 frontend, Rust / Tauri 2 desktop shell, C++20 Aurie producer module, C++20 native bridge prototype, modified YYToolkit loader sources, demo fixtures, and Node.js workflow scripts).
-- **CI / Pipeline Availability:** **Not available** (no GitHub Actions or external CI configurations exist in the repository; validation is conducted locally via npm, Cargo, and CMake / CTest suites).
+- **CI / Pipeline Availability:** No build or test CI; validation is conducted locally via npm, Cargo, and CMake / CTest suites. GitHub Actions carries only automation: `notify-hub.yml` / `notify-hub-release.yml` tell the hub about new commits and releases, and `ai-review.yml` runs an opt-in AI code review (see [AI Code Review](#ai-code-review-ai-reviewyml)).
 - **Purpose & Scope:** Standalone offline-first session journal, rarity drop alert engine, run history recorder, and compact always-on-top overlay for Hero Siege offline/single-player gameplay. Consumes versioned NDJSON event streams from local files or named pipes and monitors local read-only character save files.
 
 ---
@@ -294,6 +294,33 @@ All event streams delivered via named pipe (`\\.\pipe\HSOfflineTrackerBridge_<pi
 5. **Character Save Snapshot Ignored:**
    - *Cause:* The save file was mid-write or failed XOR / zlib integrity validation.
    - *Resolution:* Normal fail-closed behavior. The tracker waits until the game produces two identical, valid file snapshots before updating session totals.
+
+---
+
+## AI Code Review (`ai-review.yml`)
+
+`.github/workflows/ai-review.yml` runs an AI code review of a pull request and
+posts findings as inline comments. It is the hub's workflow with only the
+repository name changed, and is **opt-in, never automatic**: add the
+`ai-review` label, or comment `@claude review` on the pull request. Text after
+the phrase is passed to the reviewer as scoping instructions
+(`@claude review only src-tauri`); the label always requests a full review and
+does not re-run by itself on later pushes. A comment trigger only works once the
+workflow is on `main`, because GitHub runs `issue_comment` workflows from the
+default branch.
+
+It needs the `CLAUDE_CODE_OAUTH_TOKEN` repository secret (from
+`claude setup-token`) **and** the [Claude GitHub App](https://github.com/apps/claude)
+installed on this repository; without the app the run fails with
+`401 Unauthorized` before reviewing anything, whatever the secret.
+
+The request predicate is written out twice (job `if` and concurrency group);
+change both together. Everything else about the workflow's shape -- the full
+`--allowedTools` list, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, the step that
+fails a run which posted nothing -- is explained in the hub's
+[`docs/hub/design.md`](../../hub/design.md) under "Asking for a review" and
+pinned for the hub's copy by `tests/test_ai_review_workflow.py`. Change them
+here and in the hub together.
 
 ---
 
