@@ -7,7 +7,7 @@
 - **Revision Date:** `Sun Sep 6 05:25:45 2026 +0300`
 - **Commit Message:** `fix: a re-picked alert sound plays, and listed weapons make a card`
 - **Source Availability:** Full application source is present (Svelte 5 / Vite 8 frontend, Rust / Tauri 2 desktop shell, C++20 Aurie producer module, C++20 native bridge prototype, demo fixtures, and Node.js workflow scripts). **The exception is the bundled `aurie-loader/YYToolkit.dll`:** the source of truth for the toolkit's modified YYToolkit is the hub's patch series, [`third_party/yytoolkit/`](../../../third_party/yytoolkit/README.md) — see "Bundled Loader & Modified YYToolkit" below. The pull request that replaced the binary and the old notice pair with a build of that series has merged to `origin`, but **no Tracker release has shipped it yet** (the hub library release its pin names is itself published — see "Bundled Loader & Modified YYToolkit" below for the distinction).
-- **CI / Pipeline Availability:** No build or test CI; validation is conducted locally via npm, Cargo, and CMake / CTest suites. GitHub Actions carries only automation: `notify-hub.yml` / `notify-hub-release.yml` tell the hub about new commits and releases, and `ai-review.yml` runs an opt-in AI code review (see [AI Code Review](#ai-code-review-ai-reviewyml)).
+- **CI / Pipeline Availability:** No CI runs on every push or pull request — that validation is still local, via `npm run check` (frontend build, Rust tests, the Node tool tests, loader verification) and `aurie-producer/build.ps1`'s CMake / CTest suite. A **release**, though, is built and tested entirely in CI: `tracker-release.yml` checks out the tag, builds and CTests the producer from the pinned headers, builds the frontend and Tauri bundle, and runs the same local checks before anything reaches a draft — see [Tagging a release (tracker-tag.yml)](#tagging-a-release-tracker-tagyml) below. GitHub Actions otherwise carries automation: `notify-hub.yml` / `notify-hub-release.yml` tell the hub about new commits and releases, and `ai-review.yml` runs an opt-in AI code review (see [AI Code Review](#ai-code-review-ai-reviewyml)).
 - **Purpose & Scope:** Standalone offline-first session journal, rarity drop alert engine, run history recorder, and compact always-on-top overlay for Hero Siege offline/single-player gameplay. Consumes versioned NDJSON event streams from local files or named pipes and monitors local read-only character save files.
 
 ---
@@ -52,7 +52,8 @@
   - `tauri.mjs`: Tauri CLI invocation wrapper injecting cargo bin directory into the process `PATH`.
   - `test.mjs`: Direct launcher for `cargo test` supporting working directories with spaces.
   - `replay-demo.mjs`: Deterministic offline protocol stream replayer for UI and sound validation.
-  - `generate-alerts.mjs`, `set-version.mjs`: Procedural sound generation and version synchronization.
+  - `generate-alerts.mjs`, `set-version.mjs`: Procedural sound generation and version synchronization (`set-version.mjs` also drives `--check`, the version-agreement check every version site shares).
+  - `fetch-producer-sdk.mjs`, `package-release.mjs`, `tracker-tag.mjs`, `test-tools.mjs`, `verify-loader.mjs`: release-mechanism tooling — pinned AGPL-3.0 header fetch/verify, release packaging (portable zip, NSIS setup, checksum file), tag planning and notes composition, the `tools:test` file collector, and loader-manifest verification; see [Tagging a release (tracker-tag.yml)](#tagging-a-release-tracker-tagyml) below.
 - `fixtures/`: `demo-session.ndjson` protocol test fixture.
 - `PROTOCOL.md`: Authoritative Protocol v1 specification for UTF-8 NDJSON records.
 
@@ -182,7 +183,10 @@ To modify or extend an event handler or user interface feature (for example, add
 | `npm run build` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js >= 20.19 | Compiles Svelte 5 frontend into static assets in `dist/`. | Overwrites `dist/` contents | Inspected |
 | `npm start` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js, Rust >= 1.88 | Launches Tauri v2 desktop application in development mode with hot reloading. | Opens Dashboard and Overlay windows | Inspected |
 | `npm test` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js, Rust >= 1.88 | Executes `node scripts/test.mjs`, running all Rust unit tests in `src-tauri`. | Read-only test execution | Inspected |
-| `npm run check` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js, Rust >= 1.88 | Executes `npm run build && npm test`. | Compiles `dist/` and runs tests | Inspected |
+| `npm run check` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js, Rust >= 1.88 | Executes `npm run build && npm test && npm run tools:test && npm run loader:verify`. | Compiles `dist/` and runs tests | Inspected |
+| `npm run tools:test` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js >= 20.19 | Collects `tests/*.test.mjs` and hands them to `node --test` as explicit paths (`scripts/test-tools.mjs`); covers `set-version.mjs`, `fetch-producer-sdk.mjs`, `tracker-tag.mjs` and `package-release.mjs`, and pins the shape of the three release workflows themselves (`tests/workflows.test.mjs`). | Read-only test execution | Inspected |
+| `npm run loader:verify` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js >= 20.19 | Executes `node scripts/verify-loader.mjs`; fails by name if a file under `aurie-loader/` disagrees with `loader-manifest.json`. | Read-only check | Inspected |
+| `npm run ver` / `npm run ver -- --check --expect <version>` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js >= 20.19 | Executes `node scripts/set-version.mjs`; with no argument bumps to the next patch, with a version bumps every declared site, with `--check` verifies all sites agree (and, with `--expect`, agree on that exact version). | Rewrites `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and `package-lock.json` when bumping; read-only under `--check` | Inspected |
 | `npm run demo` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js >= 20.19 | Executes `node scripts/replay-demo.mjs`, appending `fixtures/demo-session.ndjson` to `events.ndjson`. | Appends lines to `%LOCALAPPDATA%\HS Offline Tracker\events.ndjson` | Inspected |
 | `npm run package` (or `npm run release`) | `HS-Offline-Tracker/` | PowerShell / Bash (Windows x64) | Node.js, Rust >= 1.88, WiX/NSIS | Builds release binaries and NSIS installer bundle in `src-tauri/target/release/bundle/nsis/`. | Generates release binaries and installer | Inspected |
 | `npm run generate:sounds` | `HS-Offline-Tracker/` | PowerShell / Bash | Node.js >= 20.19 | Executes `node scripts/generate-alerts.mjs` to synthesize procedural alert audio. | Updates audio assets in `src/assets/sounds/` | Inspected |
@@ -272,7 +276,7 @@ All event streams delivered via named pipe (`\\.\pipe\HSOfflineTrackerBridge_<pi
 - **Native C++ Smoke Tests:**
   - `hsot_counter_validation_smoke`: Verifies GML argument validation logic for gold, XP, and kills.
   - `hsot_aurie_code_gate_smoke`: Validates PE header parsing and SHA-256 `.text` fingerprinting.
-  - `hsot_protocol_smoke`: Validates NDJSON serialization and Protocol v1 envelope compliance.
+  - `hsot_aurie_protocol_smoke`: Validates NDJSON serialization and Protocol v1 envelope compliance. (bridge-native's own suite has a separate `hsot_protocol_smoke`.)
 - **Offline Protocol Replay:** `npm run demo` feeds `fixtures/demo-session.ndjson` to the live UI without requiring a game instance.
 
 ### 2. Live-Game Dependent Checks (**Unverified in automated pipelines**)
@@ -329,12 +333,155 @@ here and in the hub together.
 
 ---
 
+## Tagging a release (tracker-tag.yml)
+
+Ported from ForgePact's own tag workflow — same shape, same reasoning,
+rewritten for this repository's Node tooling and its `v` prefix (see
+`docs/submodules/ForgePact/instructions.md`, "Tagging a release
+(forgepact-tag.yml)"). Run it from **Actions > Tracker tag > Run workflow**,
+giving it the tag to cut (for example `v0.1.4`). It refuses to run off any
+branch but `main`, then reads the existing `v*` tags from the remote and
+hands them to `scripts/tracker-tag.mjs`'s plan mode, which is the one place
+that decides whether a tag can be created — a refusal exits non-zero having
+printed nothing to stdout, so nothing downstream ever has a version to act
+on. Five refusals, in order: the tag is the wrong shape (not three plain
+numbers with an optional leading `v`); it already exists as a tag; it is
+below the highest existing `v*` tag (which would point `releases/latest`
+backwards); it is below what `main`'s own tree already holds; or — checked
+separately in the workflow, since a draft release never creates its tag and
+so is invisible to the first two git-based checks — the version already has
+a release of any kind, drafts included.
+
+Once the plan is accepted, the workflow: composes the draft's body with
+`tracker-tag.mjs --compose-notes` from the tagged version's own
+`release-notes-vX.Y.Z.md`, concatenating any lower, still-unreleased
+version's notes newest-first ahead of it, or falling back to GitHub's own
+generated notes under a banner demanding a rewrite when no notes file
+exists; bumps the version across every site `scripts/set-version.mjs`
+declares only when the tree does not already match, committing and pushing
+that bump straight to `main` **before** the tag is created (that push is
+made by `github-actions[bot]` with `GITHUB_TOKEN`, so it does **not** fire
+`notify-hub.yml` — the hub's submodule-pointer bump waits for the next
+ordinary human merge to notice it); re-checks the version fields agree;
+pushes the tag; and leaves a **draft** release (`gh release create --draft`)
+titled and bodied from the composed notes. Its last step dispatches
+`tracker-release.yml` against `main` — never against the tag it just
+pushed, so a build fix can still reach an already-tagged version — with
+`dry_run=false`, and writes a job summary telling the human what is left:
+wait for that run, download the zip and run the launch gate below, rewrite
+any generated section in the notes, then Publish.
+
+The typed `tag` input reaches a shell only through `env:`, never
+interpolated into a `run:` line. Job permissions: `contents: write` (the
+bump, the tag, the draft) and `actions: write` (dispatching the build);
+`contents: read` at the top. This workflow never builds anything and never
+publishes anything.
+
+### The build half (tracker-release.yml)
+
+`workflow_dispatch` only, with `tag` (required) and `dry_run` (boolean,
+default `true`). Started automatically by the tag workflow's last step, or
+run by hand to refill an existing draft or re-run a build against the same
+tag. Refuses to run off any branch but `main`, then checks — once before any checkout, and
+again immediately before the upload, since a human can publish the draft
+while this job is still building — that the tag has exactly one release and
+it is still a draft. Between those two guards it checks out **the tag
+itself**, not `main`: unlike ForgePact's build job, there is no second
+checkout for pins or a compiler-discovery shim, because this mechanism's
+first tag (`v0.1.3`) is cut only after the tooling has already merged, so
+the tag's own tree already carries the pins, the fetch script and the
+packager (see the workflow's own header comment).
+
+That checked-out tree needs
+`aurie-producer/build/bin/Release/HSOfflineTrackerProducer.dll` before
+`tauri build` can bundle it — see "Bundled Loader & Modified YYToolkit"
+above for why a fresh checkout does not have it. The job fetches the seven
+pinned, AGPL-3.0 third-party headers with `scripts/fetch-producer-sdk.mjs`
+(which verifies every hash before writing any of them), builds
+`aurie-producer/` for x64 Release with CMake via `build.ps1`, and runs its
+CTest suite — the repository's first automated run of the three C++ smoke
+tests. It then runs, on the checked-out tag: `npm ci`, `npm run tools:test`,
+`npm test`, `npm run loader:verify`, `npm run build`, and `npm run package`
+(the Tauri bundle). `scripts/package-release.mjs` then assembles
+`hs-offline-tracker-<version>-portable.zip` (no wrapping directory, every
+`bundle.resources` entry of `tauri.conf.json` placed at its declared
+destination, so a newly bundled resource cannot be forgotten), copies the
+NSIS setup alongside it, and writes one `SHA256SUMS-<version>.txt` listing
+both under the names GitHub will actually serve.
+
+On a dry run (the default for a manual run) those three files are kept only
+as a downloadable workflow artifact and the draft is left alone. Otherwise
+they are uploaded to the draft with `gh release upload --clobber`. The
+workflow contains no `gh release create`, no `gh release edit`, no
+`--draft=false`, no `--latest`, and no `gh workflow run`; no job in it
+carries `actions: write` — publishing stays a human act. Runner:
+`windows-latest`. Toolchain: Node 22 via `actions/setup-node`, Rust via
+`dtolnay/rust-toolchain@stable` with `swatinem/rust-cache@v2` scoped to
+`src-tauri`.
+
+**Tracker notes cleanup (`tracker-notes-cleanup.yml`).** Fires on
+`release: [published]` (prereleases are skipped) or by hand with a `tag`.
+Refuses a tag that is not exactly one published release — a draft's notes
+are still being reviewed, so deleting them would lose that text — then
+deletes the notes files `tracker-tag.mjs --published-notes` names for the
+published version (its own `release-notes-vX.Y.Z.md` and any lower version
+it rolled up), and commits and pushes the deletion straight to `main` as
+`github-actions[bot]`, retrying over a concurrent merge by rebasing and
+replaying.
+
+#### CI build launch gate
+
+CI now builds, CTests and packages the release artefacts, but nothing in
+that pipeline has run against the real game. Before pressing Publish on any
+tag — not only the first — a human downloads the zip from the draft, checks
+its sha256 against `SHA256SUMS-<version>.txt`, and confirms: the app starts
+and About shows the tagged version; **Game Link installs the loader and the
+producer into a test game installation** and
+`mods/aurie/HSOfflineTrackerProducer.dll` appears; **the superseded-loader
+update path runs against a real existing installation** — a copy already
+carrying `bb113eef…` is upgraded to the pinned build — the installed
+`mods/aurie/YYToolkit.dll` then hashes to `51a393d7…`, the `YYToolkit.dll`
+entry in `aurie-loader/loader-manifest.json` — and a copy with an
+unrecognised hash is left alone (`src-tauri/src/lib.rs`,
+`classify_loader_file` / `LoaderFileState`; unit-tested with positive and
+negative controls, but never yet exercised live); and the producer's events
+actually arrive — a gold/XP/kill delta or a drop appears in the dashboard.
+Also check, at v0.1.3, whether ForgePact has published a release carrying
+the same pinned loader yet — see "The 1.4.4 / 0.1.3 ordering constraint"
+below; both tools overwrite `mods/aurie/YYToolkit.dll`, so an older
+ForgePact release installed afterwards can put the superseded DLL back.
+Record a row here before pressing Publish.
+
+| tag | run URL | zip sha256 matches SHA256SUMS | installed from | app starts, About shows tagged version | Game Link installs loader + producer | superseded-loader upgrade exercised | producer events arrive | date | tester |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| v0.1.3 | | | | | | | | | |
+
+### The 1.4.4 / 0.1.3 ordering constraint
+
+Both tools install to `mods/aurie/YYToolkit.dll` and overwrite it, so
+whichever installs last wins: the Tracker's Game Link installer classifies
+the existing copy by sha256 and replaces only a `Missing` or `Superseded`
+one, while ForgePact's panel copies unconditionally. ForgePact's newest
+*published* release, up to and including v1.4.3, still ships the older
+`bb113eef…` build — its `main` moved to the pinned `hs.1` build at 1.4.4,
+but 1.4.4 has not been tagged or released. A player who installs a ForgePact
+release older than the one carrying the pinned build, after installing
+Tracker 0.1.3, gets the older loader put back (the Tracker's next Install
+recovers it, but only when a player presses it). Whether Tracker 0.1.3 is
+published before, or together with, a ForgePact release that carries the
+pinned build was decided by the owner on 2026-09-19: **ForgePact 1.4.4 is
+published first**, and Tracker 0.1.3 after it (or at the latest together
+with it) — check that it has been, as part of the launch gate above.
+
+---
+
 ## Known Gaps & Maintenance Triggers
 
 - **Live Magic Find Reading:** Currently disabled (`kMagicFindRouteNamed.enabled = false`) in `aurie-producer/src/module.cpp` because `StatMagicFind` and `ReturnSpecificStat` crash Season 10 runtime builds. Magic Find is updated only via room/vitals events.
 - **Game Update Fingerprints:** New game patches require updating `aurie-producer/profiles/` with new `.text` SHA-256 fingerprints, or verifying that adaptive profile fallbacks correctly resolve argument positions.
 - **YYToolkit Context7 Integration:** Upstream YYToolkit references must be reviewed against the hub's patch series in `third_party/yytoolkit/` (the full list is `patches/series`, not the two files this repository copies). The series leaves the plugin-facing shared headers untouched, so the producer still compiles against unmodified v4.0.1 headers; the one API-visible difference is that `CreateCallback(EVENT_OBJECT_CALL)` is refused with `AURIE_UNAVAILABLE`.
 - **Changing or upgrading the bundled YYToolkit:** done in the hub — move the pin in `third_party/yytoolkit/upstream.json`, refresh or add a documented patch, rebuild with `tools/build_yytoolkit.py`, pass the launch gate in that directory's README — and only then replace the binary here. Never rebuild `YYToolkit.dll` from `aurie-loader/yytoolkit-modified/`: a fresh build of that documented tree did not get the game started (its log stops between the functions-array lookup and the entry-size line; likely fault site inferred from the log, no crash dump).
+- **A player-visible change carries its `release-notes-vX.Y.Z.md` in the same pull request.** `tracker-tag.yml` composes a release's draft body from whatever notes file already exists for the version being tagged; with none, the draft falls back to GitHub's own generated notes under a banner demanding a rewrite before publishing (see "Tagging a release (tracker-tag.yml)" above). This mirrors ForgePact's own release convention and the rule this repository's `AGENTS.md` states for the module guide generally ("documentation is part of the change"); it is recorded **here**, not in the Tracker's own `AGENTS.md`, because that file forbids adding rules to itself ("Module rules belong in that `instructions.md`").
 
 ---
 
