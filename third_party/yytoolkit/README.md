@@ -608,20 +608,48 @@ patch regenerated against the new commit.
 ## Follow-ups in the submodule repos
 
 The hub `.gitignore` bans `*.dll`, so no binary is committed here, and this
-change alters nothing a player receives. Both carriers of the DLL are submodule
-repositories:
+directory's own patch series changes nothing a player receives by itself -
+only a submodule's pin decides that. Both carriers of the DLL are submodule
+repositories, and both follow-ups below have been written and committed on
+their own local branches. **Neither branch is merged to its origin and
+neither has shipped in a release** - see
+["Where the binary is published"](#where-the-binary-is-published) below for
+what still has to happen first:
 
-- **ForgePact** - pins the DLL in `tools/toolchain-pins.json` and carries
-  `yytoolkit-modified/NOTICE.md`. Follow-up PR: move the pin and its sha256,
-  rewrite that notice to point here and list every patch, ship the notice and
-  BUILD-INFO in the release zip, add release notes. The panel's
-  `KNOWN_RI_CACHE` table of hand-measured RVAs is harmless with 0001 (the file
-  is only a hint) and can be deleted; its delete-when-unknown branch also
-  removes the hint before every panel launch on builds the table does not know.
-- **HS-Offline-Tracker** - carries a git-tracked `aurie-loader/YYToolkit.dll`
-  and a copy of the same notice. Follow-up PR: replace both.
+- **ForgePact** - moved the `modfiles_shipped/YYToolkit.dll` pin in
+  `tools/toolchain-pins.json` from the v1.3.16 release-zip member to the hub
+  release asset URL named below, with the `hs.1` sha256 and a provenance
+  string naming this series and the hub commit it was built from; rewrote
+  `yytoolkit-modified/NOTICE.md` to point here and list every patch, deleting
+  the two whole-file copies it used to carry; ships that notice and
+  `YYToolkit-BUILD-INFO.json` in the packaged release zip; carries its own
+  release notes for the version bump. Also deleted the panel's
+  `KNOWN_RI_CACHE` table of hand-measured RVAs - harmless once 0001 treats
+  the hint file as a scan hint rather than a hook address, but no longer
+  needed either.
+- **HS-Offline-Tracker** - replaced the git-tracked
+  `aurie-loader/YYToolkit.dll` with the `hs.1` build, replaced the same
+  notice pair, added the notice and `YYToolkit-BUILD-INFO.json` to the
+  bundle resources `tauri.conf.json` packages, and bumped its version.
 
-Both install to `mods/aurie/YYToolkit.dll` with overwrite semantics, so the two
-must move together, after the launch gate. Until they land, players still
-receive the previous DLL, and those two notice files remain the (incomplete)
-statement for it.
+Both install to `mods/aurie/YYToolkit.dll` with overwrite semantics, so the
+two have to open, merge and release together, and only after the launch gate
+above carries a plugin-loaded row and the owner has confirmed. Until then,
+players still receive the previous DLL, and the notice files these branches
+rewrote describe unpublished work, not what ships.
+
+### Where the binary is published
+
+The built DLL's intended distribution point is a hub GitHub release tagged
+`yytoolkit-v4.0.1-hs.1` - draft first, `--latest=false` so the updater's
+`releases/latest/download/latest.json` read is unaffected - carrying
+`YYToolkit.dll`, `YYToolkit.dll.sha256`, `YYToolkit-BUILD-INFO.json`, a
+deterministic zip of this directory, and `NOTICE.md`. ForgePact's pin above
+already names that release's asset URL for `YYToolkit.dll` and the `hs.1`
+sha256, and HS-Offline-Tracker's replaced binary already matches it by hash
+- but **the release does not exist yet.** Creating it needs the live launch
+gate above to carry a plugin-loaded row and a decision on which GitHub
+account publishes it (the hub's `origin` and the account that prepared this
+series are not the same one); until both, the asset URL above resolves
+nowhere, neither submodule branch is opened as a pull request, and players
+keep receiving the DLL described under [Why this exists](#why-this-exists).

@@ -437,12 +437,15 @@ Offsets: +0x18 is the RValue kind; calling convention is __fastcall.
 
     # -- added lines only -------------------------------------------------
     #
-    # The first version of this hook matched whole file contents, and five
+    # The first version of this hook matched whole file contents, and four
     # matches already sit in committed files (two in
     # ForgePact/docs/pet-quest-collector-c-research.md, two in
-    # dungeon-key-research.md, one in the vendored YYToolkit). Appending a
-    # paragraph to any of them made every subsequent tool call exit 2 until
-    # someone set HSTK_SKIP_HOOKS=1 -- the exact outcome the docstring says it
+    # dungeon-key-research.md). A fifth, in the vendored YYToolkit under
+    # HS-Offline-Tracker/aurie-loader/yytoolkit-modified/, is gone -- that
+    # directory now holds a notice and a provenance record, not the
+    # whole-file copy that matched. Appending a paragraph to any of the
+    # remaining files made every subsequent tool call exit 2 until someone
+    # set HSTK_SKIP_HOOKS=1 -- the exact outcome the docstring says it
     # avoids. These two tests are a pair: the hook must stop wedging, and
     # grandfathering must not become a loophole.
 

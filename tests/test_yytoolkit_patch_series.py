@@ -34,7 +34,11 @@ What is pinned, in the order of the test classes:
   - the NOTICE says what an AGPL modification notice has to, and `LICENSE` is
     upstream's blob;
   - the directory holds text only, the hub docs point at it, and
-    `series_revision` is the literal patch 0006 compiles into the DLL.
+    `series_revision` is the literal patch 0006 compiles into the DLL;
+  - when `ForgePact/` is checked out, its own `tools/toolchain-pins.json` pins
+    `modfiles_shipped/YYToolkit.dll` at the sha256 this README's "How to
+    build" section declares for the series -- skips, saying why, when the
+    submodule is absent (hub CI runs without it).
 
 Checks that a one-sided test would pass while doing nothing come in pairs. The
 message, marker, chain, legal, address and path rules each also run on a
@@ -1139,6 +1143,45 @@ class SeriesRevision(SeriesCase):
                 f"`{literal}`", text,
                 f"{path.relative_to(ROOT).as_posix()} does not name series revision `{literal}`; "
                 f"update the expected build result and the revision there when the series changes")
+
+
+class ForgePactPinMatchesThisSeries(SeriesCase):
+    """ADR 0002: the hub cannot change what a player receives - only a
+    submodule's own pin does that, and it drifts silently unless something
+    reads both sides. Hub CI has no submodules, so this is opt-in: it skips,
+    saying why, when ForgePact/ is not checked out."""
+
+    #: `Expected result for `hs.1`: **950,784 bytes, sha256\n`<hex>`**` in the
+    #: "How to build" section - the one place this README states the sha256 a
+    #: build of the pinned series is expected to produce.
+    EXPECTED_SHA = re.compile(
+        r"Expected result for `[^`]+`:\s*\*\*[\d,]+ bytes, sha256\s*\n`([0-9a-f]{64})`\*\*")
+
+    def test_forgepact_pin_matches_the_readme(self):
+        pins_path = ROOT / "ForgePact" / "tools" / "toolchain-pins.json"
+        if not pins_path.is_file():
+            self.skipTest(f"{pins_path.relative_to(ROOT).as_posix()} is not present -- "
+                          f"ForgePact/ is not checked out (hub CI runs without submodules)")
+        match = self.EXPECTED_SHA.search(self.readme)
+        self.assertIsNotNone(
+            match, "third_party/yytoolkit/README.md's \"How to build\" section no longer "
+                   "states an expected sha256 for a build of this series; this test has "
+                   "nothing to compare ForgePact's pin against")
+        expected = match.group(1)
+        pins = json.loads(pins_path.read_text(encoding="utf-8"))
+        entries = [f for f in pins.get("files", [])
+                   if f.get("dest", "").endswith("modfiles_shipped/YYToolkit.dll")]
+        self.assertEqual(
+            len(entries), 1,
+            f"expected exactly one modfiles_shipped/YYToolkit.dll entry in "
+            f"ForgePact/tools/toolchain-pins.json; found {len(entries)}")
+        actual = entries[0].get("sha256")
+        self.assertEqual(
+            actual, expected,
+            f"ForgePact/tools/toolchain-pins.json pins modfiles_shipped/YYToolkit.dll at "
+            f"sha256 {actual}, but third_party/yytoolkit/README.md's \"How to build\" "
+            f"section declares {expected} for this series. ForgePact's pin and this series "
+            f"have drifted -- move one to match the other.")
 
 
 @unittest.skipIf(shutil.which("git") is None, "git is not on PATH")

@@ -158,3 +158,14 @@ Honestly stated, because it is a real cost:
   unnecessary** once the new DLL is what players run: patch `0001` treats
   `<exe>.yytkcache` as a scan hint and never as a hook address. Deleting the
   table is a ForgePact follow-up.
+
+**Added 2026-09-19.** Both follow-up PRs named above have been written and
+committed — ForgePact's and HS-Offline-Tracker's own `claude/yytoolkit-hs1-distribution`
+branches move each pin to a build of this series (sha256
+`51a393d7e5291ad76bdb85b9f44faf5178b6b20e0ce8432fa26bdaf9e21eadf8`) and delete
+the `ensure_ri_cache` table. **Neither branch is opened as a pull request,
+neither is merged to its `origin`, and no hub GitHub release carries the
+binary yet** — the decision above still holds, and players still receive the
+earlier DLL. Publishing needs a launch with a plugin loaded to pass the
+launch gate and the owner's decision on which account creates the release
+(`third_party/yytoolkit/README.md`, "Where the binary is published").

@@ -28,18 +28,19 @@ something a later release fixes.
 The rule is about *introducing* game source, so this reads the lines a change
 adds, never the whole file.
 
-The first version matched whole file contents, and it was unusable. Five
+The first version matched whole file contents, and it was unusable. Four
 matches already sit in committed files -- two in
 `ForgePact/docs/pet-quest-collector-c-research.md`, two in
-`ForgePact/docs/dungeon-key-research.md`, one in the vendored YYToolkit at
-`HS-Offline-Tracker/aurie-loader/yytoolkit-modified/`. Some are legitimate
-(`AGENTS.md` explicitly keeps measured addresses in `docs/` as research
-findings), and one is third-party code that was never ours to police. With
-whole-file matching, appending a single paragraph to any of those dirties the
-tree and every subsequent tool call exits 2 until someone sets
-`HSTK_SKIP_HOOKS=1` -- which is exactly the outcome this file's own notes say
-it must avoid. A hook that fires on work it cannot help with does not protect
-the rule; it trains people to turn the rule off.
+`ForgePact/docs/dungeon-key-research.md`. (A fifth, in the vendored YYToolkit
+at `HS-Offline-Tracker/aurie-loader/yytoolkit-modified/`, was third-party code
+that was never ours to police; that directory now holds a notice and a
+provenance record instead of the whole-file copy that matched.) The remaining
+matches are legitimate -- `AGENTS.md` explicitly keeps measured addresses in
+`docs/` as research findings. With whole-file matching, appending a single
+paragraph to any of those dirties the tree and every subsequent tool call
+exits 2 until someone sets `HSTK_SKIP_HOOKS=1` -- which is exactly the outcome
+this file's own notes say it must avoid. A hook that fires on work it cannot
+help with does not protect the rule; it trains people to turn the rule off.
 
 An untracked file has no committed half, so all of it is "added" and all of it
 is read.
