@@ -90,12 +90,19 @@ records.
 ## State of verification on 2026-09-19
 
 Built, host-tested (7 of 7) and checked for every log line the patches
-declare. **Launched once against the game, YYToolkit alone (no plugin
-loaded).** In that one session the startup crash did not reproduce and lag
-was not observed; neither is a settled fix from one session on one machine,
-and no launch has yet loaded a ForgePact or HS-Offline-Tracker plugin against
-this DLL. The directory's `README.md` carries the launch gate and the full
-record ("First launch results (2026-09-19)").
+declare. **Launched twice against the game, both sessions on 2026-09-19.**
+Launch 1, YYToolkit alone (no plugin loaded): startup completed; about two
+minutes of play logged 133 caught game errors (one distinct message, one
+full report, the rest counted only), and the player saw no lag. Launch 2,
+with ForgePact's `BloodPactPlugin` v1.4.4 (built locally) and the
+HS-Offline-Tracker producer both loaded: all modules loaded, every patch's
+hooks installed, no `REFUSED EVENT_OBJECT_CALL` line, and a few IPC commands
+answered. That second session was idle, so it exercised neither the
+error-report path with plugins loaded nor in-game mod behaviour. Neither
+launch is a settled fix from one session on one machine. The directory's
+`README.md` carries the launch gate and the full record ("First launch
+results (2026-09-19)" and "Second launch results (2026-09-19, plugin
+loaded)").
 
 ## About the previously distributed binary
 
