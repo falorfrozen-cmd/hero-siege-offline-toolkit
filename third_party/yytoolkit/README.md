@@ -738,10 +738,17 @@ already names that release's asset URL for `YYToolkit.dll` and the `hs.1`
 sha256, and HS-Offline-Tracker's replaced binary already matches it by hash
 - but **the release does not exist yet.** The live launch gate above now
 carries a plugin-loaded row (2026-09-19); what creating the release still
-needs is a decision on which GitHub account publishes it (the hub's `origin`
-and the account that prepared this series are not the same one), plus the
-items the second launch left unexercised (gameplay with mods active, the
-error-report path with a plugin loaded). Until then, the asset URL above
-resolves nowhere, neither submodule branch is opened as a pull request, and
-players keep receiving the DLL described under
+waits on is the maintainer's decision to publish, with the items the second
+launch left unexercised (gameplay with mods active, the error-report path
+with a plugin loaded) in view. Until then, the asset URL above resolves
+nowhere, both submodule branches are open pull requests that are not merged,
+and players keep receiving the DLL described under
 [Why this exists](#why-this-exists).
+
+The tag name is deliberate. On the hub repository `hub-v*` is reserved for
+builds of the hub application: pushing such a tag starts `hub-release.yml`,
+and the release it produces is the one the updater expects to find as
+"latest". (ForgePact tags its own releases `v*`, in its own repository.) A
+release that only carries this DLL is neither, so it follows the precedent
+the `catalog` release already sets here: its own tag, outside `hub-v*`,
+never marked latest.
