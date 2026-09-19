@@ -1168,6 +1168,51 @@ class R16Tests(TempDirMixin, unittest.TestCase):
         _, results = self._scribe(records).evaluate()
         self.assertTrue(get_rule(results, "R16").passed)
 
+    def test_fail_any_git_write_not_just_add_and_commit(self):
+        # Review of PR #111: `push` is what would have made the incident
+        # unrecoverable; the rest write as surely. Each alone must fail.
+        for cmd in ("git push origin HEAD", "git reset --hard HEAD~1", "git checkout -- ForgePact",
+                    "git restore docs/x.md", "git stash", "git merge main", "git tag v1",
+                    "git submodule update", 'git -C "C:\\repo\\ForgePact" push',
+                    "git -c user.name=x --no-pager commit -m x"):
+            with self.subTest(cmd=cmd):
+                records = tool_turn(0, 0, "Bash", {"command": cmd}, result="ok")
+                _, results = self._scribe(records).evaluate()
+                r = get_rule(results, "R16")
+                self.assertFalse(r.passed)
+                self.assertIn("ran git", " ".join(r.evidence))
+
+    def test_pass_other_read_only_git(self):
+        records = tool_turn(0, 0, "Bash", {
+            "command": "git log --oneline -3 && git show HEAD && git rev-parse HEAD && git -C ForgePact ls-files"},
+            result="ok")
+        _, results = self._scribe(records).evaluate()
+        self.assertTrue(get_rule(results, "R16").passed)
+
+    def test_fail_relative_workorder_path_resolved_against_a_home_cwd(self):
+        # Review of PR #111: the relative spelling of the incident -- the
+        # right-looking path, written from the wrong directory.
+        records = with_cwd(tool_turn(0, 0, "Edit", self.OK_CONTEXT_EDIT_REL, result="The file has been updated."),
+                           cwd="C:\\Users\\Administrator")
+        # The session's own checkout (the driver's cwd) is C:\repo; the scribe
+        # ran from the home directory, so its relative write landed there.
+        b = SessionBuilder(self.tmp_path).driver(with_cwd([turn(0, 9000)])).workflow_agent(
+            "wf_95c37e59-d40", "workflow-subagent", "scribe:r1", records)
+        _, results = b.evaluate()
+        self.assertFalse(get_rule(results, "R16").passed)
+        # Control: the same relative edit from the checkout itself passes.
+        ok = with_cwd(tool_turn(0, 0, "Edit", self.OK_CONTEXT_EDIT_REL, result="The file has been updated."))
+        b2 = SessionBuilder(self.tmp_path / "ok").driver(with_cwd([turn(0, 9000)])).workflow_agent(
+            "wf_95c37e59-d40", "workflow-subagent", "scribe:r1", ok)
+        _, results2 = b2.evaluate()
+        self.assertTrue(get_rule(results2, "R16").passed)
+
+    def test_fail_relative_path_escaping_with_dotdot(self):
+        records = tool_turn(0, 0, "Edit", {"file_path": ".claude/workorders/../../ForgePact/x.cpp",
+                                           "old_string": "a", "new_string": "b"}, result="ok")
+        _, results = self._scribe(records).evaluate()
+        self.assertFalse(get_rule(results, "R16").passed)
+
     def test_pass_implementer_editing_source_and_committing_is_not_this_rule(self):
         records = (tool_turn(0, 0, "Edit", self.SOURCE_EDIT, result="The file has been updated.")
                    + tool_turn(10, 1, "Bash", {"command": "git add ForgePact && git commit -m x"}, result="ok"))

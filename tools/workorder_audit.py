@@ -27,13 +27,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import posixpath
 import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
+from typing import Iterable, Iterator, List, Optional
 
 # --------------------------------------------------------------------------
 # Budgets. Each constant names the section 1 measurement it is drawn from
@@ -158,8 +159,25 @@ RETURN_TOOL = "StructuredOutput"
 # restricted `scribe` agent type's `tools:` line carries no shell at all, so
 # *any* shell call from that type is a live disproof of the restriction.
 SCRIBE_ALLOWED_EDIT_PREFIX = ".claude/workorders/"
-GIT_MUTATE_RE = re.compile(
-    r"\bgit\b\s*(?:-C\s+(?:\"[^\"]+\"|'[^']+'|\S+)\s*)?\s*\b(add|commit)\b", re.IGNORECASE)
+# Any git subcommand that is not on this read-only allow-list counts: `push`
+# after the incident's `add`/`commit` is what would have made it
+# unrecoverable, and `reset`/`checkout`/`restore`/`stash`/`merge`/`tag`/
+# `submodule` write just as surely. Block by default, allow only reads.
+GIT_READ_ONLY_SUBCOMMANDS = frozenset({
+    "status", "diff", "log", "show", "rev-parse", "ls-files", "ls-tree",
+    "cat-file", "blame", "grep", "describe", "merge-base", "shortlog",
+})
+# `git`, then any global options (`-C <path>`, `-c k=v`, `--no-pager`,
+# `--git-dir=...`), then the subcommand word.
+GIT_SUBCOMMAND_RE = re.compile(
+    r"\bgit\b((?:\s+(?:-C\s+(?:\"[^\"]+\"|'[^']+'|\S+)|-c\s+\S+|--[\w-]+(?:=\S+)?))*)\s+([A-Za-z][\w-]*)",
+    re.IGNORECASE)
+
+
+def _git_mutations(cmd: str) -> List[str]:
+    """Every git subcommand in `cmd` that is not a known read-only one."""
+    return [m.group(2).lower() for m in GIT_SUBCOMMAND_RE.finditer(cmd)
+            if m.group(2).lower() not in GIT_READ_ONLY_SUBCOMMANDS]
 
 SHELL_WRITE_VERB_RE = re.compile(
     r"\b(tee|cp|mv|rm)\b|\bsed\s+-i\w*\b|"
@@ -1033,7 +1051,7 @@ def _is_scribe(agent: AgentTranscript) -> bool:
 SCRIBE_ALLOWED_EDIT_SUFFIX = SCRIBE_ALLOWED_EDIT_PREFIX.rstrip("/")  # ".claude/workorders"
 
 
-def _scribe_edit_allowed(file_path: str, cwd: Optional[str]) -> bool:
+def _scribe_edit_allowed(file_path: str, cwd: Optional[str], anchor: Optional[str] = None) -> bool:
     """Relative and under `.claude/workorders/`, or absolute and under
     `<cwd>/.claude/workorders/` -- with `<cwd>` itself allowed to already
     *be* a `.claude/workorders` directory (measured on the real 2026-09-19
@@ -1046,15 +1064,24 @@ def _scribe_edit_allowed(file_path: str, cwd: Optional[str]) -> bool:
     (that is R10's weaker fallback, used here only when no `cwd` was recorded
     at all)."""
     low = str(file_path).replace("\\", "/").lower()
-    if low.startswith(SCRIBE_ALLOWED_EDIT_PREFIX):
-        return True
     if cwd:
         norm_cwd = cwd.replace("\\", "/").rstrip("/").lower()
-        if norm_cwd == SCRIBE_ALLOWED_EDIT_SUFFIX or norm_cwd.endswith("/" + SCRIBE_ALLOWED_EDIT_SUFFIX):
-            base = norm_cwd
+        # The workorder directory is anchored on the session's own checkout
+        # (the driver's `cwd`) when it is known, so a scribe running from the
+        # wrong directory cannot make that directory its own allowed root.
+        root = (anchor or cwd).replace("\\", "/").rstrip("/").lower()
+        if root == SCRIBE_ALLOWED_EDIT_SUFFIX or root.endswith("/" + SCRIBE_ALLOWED_EDIT_SUFFIX):
+            base = root
         else:
-            base = norm_cwd + "/" + SCRIBE_ALLOWED_EDIT_SUFFIX
-        return low.startswith(base + "/")
+            base = root + "/" + SCRIBE_ALLOWED_EDIT_SUFFIX
+        # A relative path is resolved against this transcript's own `cwd`
+        # too: `.claude/workorders/x` written from a home directory lands in
+        # the home directory, the incident's own spelling.
+        is_abs = low.startswith("/") or re.match(r"^[a-z]:/", low) is not None
+        full = low if is_abs else posixpath.normpath(norm_cwd + "/" + low)
+        return full.startswith(base + "/")
+    if low.startswith(SCRIBE_ALLOWED_EDIT_PREFIX):
+        return True
     return f"/{SCRIBE_ALLOWED_EDIT_PREFIX}" in low
 
 
@@ -1083,7 +1110,7 @@ def rule_r16_scribe_scope(session: Session) -> RuleResult:
         for call in agent.tool_calls:
             if call.name in EDIT_TOOLS:
                 fp = str(call.tool_input.get("file_path", ""))
-                if not _scribe_edit_allowed(fp, agent.cwd):
+                if not _scribe_edit_allowed(fp, agent.cwd, getattr(session.driver, "cwd", None)):
                     evidence.append(f"{tag} {call.name} outside {SCRIBE_ALLOWED_EDIT_PREFIX} at {call.ts_start}: {fp}")
             elif call.name in SHELL_TOOLS:
                 cmd = _cmd_text(call)
@@ -1091,8 +1118,10 @@ def rule_r16_scribe_scope(session: Session) -> RuleResult:
                     evidence.append(
                         f"{tag} {call.name} shell call by restricted scribe type at {call.ts_start}: {cmd[:120]}")
                     continue
-                if GIT_MUTATE_RE.search(cmd):
-                    evidence.append(f"{tag} {call.name} ran git add/commit at {call.ts_start}: {cmd[:120]}")
+                mutations = _git_mutations(cmd)
+                if mutations:
+                    evidence.append(
+                        f"{tag} {call.name} ran git {'/'.join(dict.fromkeys(mutations))} at {call.ts_start}: {cmd[:120]}")
                 elif _shell_write_evidence(cmd):
                     evidence.append(f"{tag} {call.name} shell write at {call.ts_start}: {cmd[:120]}")
     return RuleResult("R16", "scribe-scope", passed=not evidence, evidence=evidence)
