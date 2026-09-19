@@ -540,8 +540,8 @@ the screenshot alone.
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `.github/workflows/catalog.yml` | `repository_dispatch: release-published/submodule-updated`, manual | Rebuilds and re-signs the catalog, then **opens a pull request**. Publishes nothing. |
-| `.github/workflows/catalog-publish.yml` | push to `main` touching `catalog/`, manual | Verifies the signature and uploads the catalog to the `catalog` release tag. |
+| `.github/workflows/catalog.yml` | `repository_dispatch: release-published/submodule-updated`, manual | Rebuilds and re-signs the catalog, opens a pull request, then merges it through `tools/merge_catalog_pr.py` and dispatches `catalog-publish.yml` when it validates. |
+| `.github/workflows/catalog-publish.yml` | push to `main` touching `catalog/`, dispatch from `catalog.yml`, manual | Verifies the signature and uploads the catalog to the `catalog` release tag. |
 | `.github/workflows/hub-tag.yml` | manual, with the tag typed in | Checks the tag is one this repository can release, moves the version to match, tags it, then dispatches the release against the tag. Publishes nothing. |
 | `.github/workflows/hub-release.yml` | `hub-v*` tag, dispatch, manual dry run | Tests, builds, signs, and uploads the hub plus `latest.json` to a **draft** release. |
 | `.github/workflows/ai-review.yml` | the `ai-review` label, or a `@claude review` comment | Reviews the pull request and posts findings as inline comments. Opt-in only. |
@@ -550,6 +550,23 @@ the screenshot alone.
 The catalog workflow opens a pull request rather than pushing, matching the rule
 `submodule-dispatch.yml` already set: an event anyone can fire should not move
 the default branch.
+
+It then merges that pull request itself, as `submodule-dispatch.yml` does for
+pointer bumps, because a tool release marked latest should reach installed hubs
+without anyone clicking merge. Before this, a regenerated catalog (ForgePact
+1.4.3, PR #98) sat open while every hub kept reporting 1.4.2. What makes the
+automatic merge safe is that the run which merges is the run which built,
+signed, verified and tested the catalog: `tools/merge_catalog_pr.py` only
+confirms the PR is still the bot's `catalog/regenerate` branch at that exact
+head commit, touches nothing but `catalog/catalog.json` and its `.minisig`, and
+is clean. Any other state leaves the PR open for a person, and the job log
+names the reason.
+
+The merge is made with `GITHUB_TOKEN`, and GitHub starts no workflows from a
+push made with that token, so `catalog-publish.yml`'s `push` trigger never
+fires for it. `catalog.yml` therefore dispatches `catalog-publish.yml`
+explicitly after a merge. Drop that step and catalogs merge but never publish,
+which looks exactly like the bug the merge was added to fix.
 
 Proposing and publishing are separate workflows because they answer to different
 events. Publishing was once a step inside the regenerate job, conditioned on the
@@ -705,7 +722,8 @@ are operational.
 
 `notify-hub-release.yml` supplies the second notification in each tool
 repository: a published stable release sends `release-published`, which
-rebuilds the catalog from the latest published release. A manual run from
+rebuilds the catalog from the latest published release and, when the rebuilt
+catalog validates, merges and publishes it. A manual run from
 Actions sends the same notification without creating or editing a release.
 Prerelease publication is ignored. Missing credentials fail the notifier
 rather than pretending an absent nightly job will recover it.

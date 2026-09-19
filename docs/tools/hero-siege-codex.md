@@ -36,6 +36,6 @@ After publishing, run Catalog from GitHub Actions with `only=hero-siege-codex`, 
 gh workflow run catalog.yml --repo falorfrozen-cmd/hero-siege-offline-toolkit --ref main -f only=hero-siege-codex
 ```
 
-Review and merge the generated catalog PR after its checks pass. Catalog publish uploads the signed pair. The other ten tool entries must remain unchanged. Publishing only the Codex release does not notify Toolkit clients; no sender workflow/token is configured in the distribution repository.
+The run merges the generated catalog PR itself when it validates and then dispatches Catalog publish, which uploads the signed pair; if the PR stays open, the job log says why — review and merge it by hand. The other ten tool entries must remain unchanged. Publishing only the Codex release does not notify Toolkit clients; no sender workflow/token is configured in the distribution repository.
 
 Never select the Setup EXE or the standalone setup ZIP as this tool's artifact, and do not add a made-up HTTP health endpoint. `catalog/sources.toml` is the package rule; `tools/build_catalog.py` verifies its archive and checksum before signing.

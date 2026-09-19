@@ -46,6 +46,10 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      checks: read
+      statuses: read
+      # To start catalog-publish.yml after an automatic merge; see below.
+      actions: write
     steps:
       - uses: actions/checkout@v4
 
@@ -141,6 +145,7 @@ jobs:
       # rule for cross-repository events and there is no reason this one gets an
       # exception: an event anyone can fire should not move the default branch.
       - name: Open a pull request
+        id: catalog_pr
         if: steps.changed.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
@@ -157,7 +162,12 @@ jobs:
             One or more tools published a release, so `catalog/catalog.json` was
             rebuilt and re-signed.
 
-            What to check before merging:
+            The run that opened this merges it automatically when it is still
+            the exact commit that run signed, verified and tested, changes
+            nothing but the catalog pair, and is clean. If you are reading this
+            on an open PR, one of those did not hold — the job log says which.
+
+            What to check before merging by hand:
 
             - the version and `sha256` moved for the tools you expected, and no
               others
@@ -172,3 +182,30 @@ jobs:
             is what installed hubs fetch.
           labels: catalog
           delete-branch: true
+
+      # A tool release marked latest should reach installed hubs without a
+      # person in the loop, the same way submodule-dispatch.yml merges pointer
+      # PRs. Everything this run could get wrong has already failed the job
+      # above (signature, tests); the script only confirms the PR is still that
+      # exact commit and nothing else.
+      - name: Validate and merge only this catalog PR
+        id: merge
+        if: steps.catalog_pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.catalog_pr.outputs.pull-request-number }}
+          HEAD_SHA: ${{ steps.catalog_pr.outputs.pull-request-head-sha }}
+        run: |
+          python tools/merge_catalog_pr.py \
+            --pull-request "$PR_NUMBER" --head "$HEAD_SHA" \
+            --merge --output "$GITHUB_OUTPUT"
+
+      # A push made with GITHUB_TOKEN starts no workflows, so the merge above
+      # does not trigger catalog-publish.yml's `push` — without this step the
+      # catalog would merge and never reach the tag installed hubs fetch.
+      # workflow_dispatch is one of the events GITHUB_TOKEN is allowed to fire.
+      - name: Publish the merged catalog
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run catalog-publish.yml --ref main
