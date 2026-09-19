@@ -1,0 +1,232 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hero Siege Offline Toolkit <noreply@example.invalid>
+Date: Sat, 19 Sep 2026 12:00:00 +0000
+Subject: [PATCH 7/7] runner interface: refuse to publish an interface the walk
+ did not find
+
+Why: GmpRunnerInterfaceHook replays the game's interface-construction
+chain into a private 4-page copy of the stack and then copies the runner
+interface out of it. Upstream does neither step with a check: each store
+goes to base + whatever displacement the instruction carries (its own
+comment says "let's pray the stack isn't this big"), and the final copy
+runs from offset 0 even when the walk never reached the rsp-relative lea
+that says where the interface is. On a game build whose chain the walk
+misreads, that is a heap write outside the buffer followed by a runner
+interface made of whatever bytes were there - and stage 2 then calls
+through it. Every store and the final copy are now checked against the
+buffer, and the interface is published only if the walk ended on the
+closing lea, the interface lies inside the buffer and no store of the
+chain was refused.
+
+Evidence: v4.0.1 Generic-RunnerInterfaceNew.cpp: the stores at the
+"case ZYDIS_REGISTER_RSP / RBP" switch and the unconditional memcpy after
+the loop. Found by review of patch 0002 of this series, which introduced
+the is_chain_end_found flag but only used it to word a log line. The
+frame measured on Hero Siege (rsp = rbp - 0x100, stores from rsp+0x60 to
+rbp+0x248, 100 stores) fits the buffer with room to spare, so on that
+build this patch changes nothing but the summary line. That a zeroed
+interface ends stage 2 in a status rather than a fault is read from
+source: both functions-array finders return AURIE_MODULE_INTERNAL_ERROR
+on a null Code_Function_Find (YYC-Functions.cpp, VM-Functions.cpp) - it
+has NOT been observed, because no launch has produced a refusal.
+YYToolkit/hs-tests/ri_dump_test.cpp: 16 new checks of the bounds
+predicate, including the measured offsets as the positive control and
+INT64_MIN / INT64_MAX and a one-byte overhang as negative controls.
+
+Fails-safe: A refusal leaves m_RunnerInterface zeroed, writes one line
+naming which of the three conditions failed and how many stores were
+refused, and still signals the waiting stage 2, which then fails with a
+status instead of calling through garbage. The hook runs once per launch,
+so this is one line. The "RI init summary:" line gains the refused-store
+count, so a run that published the interface shows "0 refused".
+
+Log-markers: "REFUSED to publish the runner interface"
+
+Upstream-status: not submitted. Upstream v4.0.1 has neither check.
+
+diff --git a/YYToolkit/hs-tests/ri_dump_test.cpp b/YYToolkit/hs-tests/ri_dump_test.cpp
+index 17fd320..87f7ca0 100644
+--- a/YYToolkit/hs-tests/ri_dump_test.cpp
++++ b/YYToolkit/hs-tests/ri_dump_test.cpp
+@@ -107,10 +107,42 @@ static void TestRowCount()
+ 	Check(CountNonZeroRows(edges.data(), 0, row_size) == 0, "rows: no bytes, no rows");
+ }
+ 
++static void TestInsideBuffer()
++{
++	// The hook's private stack is 4 pages, its bases sit 2 pages in, a store is 8 bytes
++	constexpr size_t buffer_size = 4 * 0x1000;
++	constexpr int64_t base = 2 * 0x1000;
++	constexpr size_t store = sizeof(uint64_t);
++
++	// The frame measured on Hero Siege: rsp = rbp - 0x100, stores from rsp+0x60 up to rbp+0x248
++	Check(IsInsideBuffer(base - 0x100 + 0x60, store, buffer_size), "bounds: the measured first store is inside");
++	Check(IsInsideBuffer(base + 0x248, store, buffer_size), "bounds: the measured last store is inside");
++
++	Check(IsInsideBuffer(0, store, buffer_size), "bounds: the first 8 bytes are inside");
++	Check(IsInsideBuffer(buffer_size - store, store, buffer_size), "bounds: the last 8 bytes are inside");
++	Check(!IsInsideBuffer(buffer_size - store + 1, store, buffer_size), "bounds: one byte past the end is refused");
++	Check(!IsInsideBuffer(buffer_size, store, buffer_size), "bounds: a store at the end is refused");
++	Check(!IsInsideBuffer(-1, store, buffer_size), "bounds: one byte before the start is refused");
++	Check(!IsInsideBuffer(base - 3 * 0x1000, store, buffer_size), "bounds: a displacement of -3 pages is refused");
++	Check(!IsInsideBuffer(base + 2 * 0x1000, store, buffer_size), "bounds: a displacement of +2 pages is refused");
++
++	// Extremes must not wrap into an accepted offset
++	Check(!IsInsideBuffer(INT64_MIN, store, buffer_size), "bounds: INT64_MIN is refused");
++	Check(!IsInsideBuffer(INT64_MAX, store, buffer_size), "bounds: INT64_MAX is refused");
++
++	// The copy of the whole interface is one large access
++	Check(IsInsideBuffer(base - 0x100 + 0x60, 0x800, buffer_size), "bounds: a large copy from the measured offset is inside");
++	Check(!IsInsideBuffer(buffer_size - 0x7FF, 0x800, buffer_size), "bounds: a large copy that overhangs by one byte is refused");
++	Check(!IsInsideBuffer(0, buffer_size + 1, buffer_size), "bounds: an access larger than the buffer is refused");
++	Check(IsInsideBuffer(0, buffer_size, buffer_size), "bounds: an access of exactly the buffer is inside");
++	Check(!IsInsideBuffer(0, 0, buffer_size), "bounds: an empty access is refused");
++}
++
+ int main()
+ {
+ 	TestDumpGate();
+ 	TestRowCount();
++	TestInsideBuffer();
+ 
+ 	std::printf("%d checks, %d failed\n", g_ChecksRun, g_ChecksFailed);
+ 	return g_ChecksFailed ? 1 : 0;
+diff --git a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceNew.cpp b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceNew.cpp
+index 47cb3d1..c63c927 100644
+--- a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceNew.cpp	
++++ b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceNew.cpp	
+@@ -186,11 +186,19 @@ namespace YYTK
+ 		BYTE* new_rbp = reinterpret_cast<BYTE*>(new_stack + (2 * PAGE_SIZE));
+ 		BYTE* new_rsp = reinterpret_cast<BYTE*>(new_stack + (2 * PAGE_SIZE) + delta_rsp_rbp);
+ 
++		// The same two bases as offsets into new_stack, so that a store or the final copy can be
++		// checked against the buffer before it happens. Upstream "prays" the frame fits; a walk that
++		// starts on the wrong instruction, or a frame this build did not expect, must not become a
++		// heap write or a runner interface copied from somewhere else.
++		const int64_t new_rbp_offset = 2 * PAGE_SIZE;
++		const int64_t new_rsp_offset = new_rbp_offset + delta_rsp_rbp;
++
+ 		int64_t rsp_offset_to_runner_interface = 0;
+ 
+ 		// What the summary line reports in place of the dump
+ 		size_t instructions_walked = 0;
+ 		size_t stores_emulated = 0;
++		size_t stores_refused = 0;
+ 		bool is_chain_end_found = false;
+ 
+ 		// Loop disassemble
+@@ -275,24 +283,62 @@ namespace YYTK
+ 					continue;
+ 				}
+ 
++				int64_t store_offset = 0;
++				bool is_stack_store = true;
++
+ 				switch (current_instruction.operands[0].mem.base)
+ 				{
+ 				case ZYDIS_REGISTER_RSP:
+-					*reinterpret_cast<uint64_t*>(new_rsp + current_instruction.operands[0].mem.disp.value) = last_saved_value;
+-					stores_emulated++;
++					store_offset = new_rsp_offset + current_instruction.operands[0].mem.disp.value;
+ 					break;
+ 				case ZYDIS_REGISTER_RBP:
+-					*reinterpret_cast<uint64_t*>(new_rbp + current_instruction.operands[0].mem.disp.value) = last_saved_value;
+-					stores_emulated++;
++					store_offset = new_rbp_offset + current_instruction.operands[0].mem.disp.value;
++					break;
++				default:
++					is_stack_store = false;
+ 					break;
+ 				}
++
++				if (is_stack_store)
++				{
++					if (RiScan::IsInsideBuffer(store_offset, sizeof(uint64_t), KERNEL_STACK_SIZE))
++					{
++						*reinterpret_cast<uint64_t*>(new_stack + store_offset) = last_saved_value;
++						stores_emulated++;
++					}
++					else
++					{
++						stores_refused++;
++					}
++				}
+ 			}
+ 
+ 			current_rip += current_instruction.info.length;
+ 		}
+ 
+-		// Copy out everything
+-		memcpy(&g_ModuleInterface.m_RunnerInterface, new_rsp + rsp_offset_to_runner_interface, sizeof(YYRunnerInterface));
++		// Copy out everything - but only what the walk actually found. Without the closing
++		// rsp-relative lea the offset is still 0 and the bytes there are not an interface; stage 2
++		// would then call through them. Left zeroed, both functions-array finders see a null
++		// Code_Function_Find and stage 2 ends in a status instead.
++		const int64_t interface_offset = new_rsp_offset + rsp_offset_to_runner_interface;
++		const bool is_interface_inside = RiScan::IsInsideBuffer(interface_offset, sizeof(YYRunnerInterface), KERNEL_STACK_SIZE);
++		const bool is_interface_published = is_chain_end_found && is_interface_inside && !stores_refused;
++
++		if (is_interface_published)
++		{
++			memcpy(&g_ModuleInterface.m_RunnerInterface, new_stack + interface_offset, sizeof(YYRunnerInterface));
++		}
++		else
++		{
++			CmWriteLogOutput(
++				"[%s:%d] GmpRunnerInterfaceHook() => REFUSED to publish the runner interface: %s (%zu stores refused as outside the private stack). Stage 2 will fail with a status.",
++				__FILE__, __LINE__,
++				!is_chain_end_found ? "the walk did not end on the rsp-relative lea" :
++				!is_interface_inside ? "the interface would lie outside the private stack" :
++				"a store of the chain fell outside the private stack",
++				stores_refused
++			);
++		}
+ 
+ 		GmpWriteInterfaceDump(is_dump_requested, "[%s:%d] New RSP: %llx", __FILE__, __LINE__, new_rsp);
+ 		GmpWriteInterfaceDump(is_dump_requested, "[%s:%d] New RBP: %llx", __FILE__, __LINE__, new_rbp);
+@@ -327,12 +373,13 @@ namespace YYTK
+ 			dump_request_text = "set, but to something other than 1 - the dump stays off";
+ 
+ 		CmWriteLogOutput(
+-			"[%s:%d] GmpRunnerInterfaceHook() => RI init summary: %zu instructions walked from 0x%llX, %zu stores emulated, %zu stack rows of which %zu are non-zero, interface at rsp%c0x%llX, the chain %s. YYTK_RI_VERBOSE is %s (its value has %zu characters).",
++			"[%s:%d] GmpRunnerInterfaceHook() => RI init summary: %zu instructions walked from 0x%llX, %zu stores emulated, %zu refused, %zu stack rows of which %zu are non-zero, interface at rsp%c0x%llX, the chain %s. YYTK_RI_VERBOSE is %s (its value has %zu characters).",
+ 			__FILE__,
+ 			__LINE__,
+ 			instructions_walked,
+ 			g_ModuleInterface.m_RunnerInterfaceBase,
+ 			stores_emulated,
++			stores_refused,
+ 			static_cast<size_t>(KERNEL_STACK_SIZE / stack_row_size),
+ 			RiScan::CountNonZeroRows(new_stack, KERNEL_STACK_SIZE, stack_row_size),
+ 			is_offset_negative ? '-' : '+',
+diff --git a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp
+index e146244..12fd9be 100644
+--- a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp	
++++ b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp	
+@@ -690,6 +690,26 @@ namespace YYTK
+ 
+ 			return non_zero_rows;
+ 		}
++
++		// True if [Offset, Offset + AccessSize) lies inside a buffer of BufferSize bytes.
++		// The hook walks game code it did not write and replays each store into a private
++		// copy of the stack; a displacement it did not expect must be skipped, not written.
++		// Offset is signed because it is a base inside the buffer plus a displacement read
++		// from an instruction, and either may be negative.
++		inline bool IsInsideBuffer(
++			IN int64_t Offset,
++			IN size_t AccessSize,
++			IN size_t BufferSize
++		)
++		{
++			if (Offset < 0 || !AccessSize)
++				return false;
++
++			if (AccessSize > BufferSize)
++				return false;
++
++			return static_cast<uint64_t>(Offset) <= (BufferSize - AccessSize);
++		}
+ 	}
+ }
+ 

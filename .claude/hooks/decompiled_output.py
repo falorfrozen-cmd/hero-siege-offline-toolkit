@@ -34,12 +34,16 @@ matches already sit in committed files -- two in
 `ForgePact/docs/dungeon-key-research.md`, one in the vendored YYToolkit at
 `HS-Offline-Tracker/aurie-loader/yytoolkit-modified/`. Some are legitimate
 (`AGENTS.md` explicitly keeps measured addresses in `docs/` as research
-findings), and one is third-party code that was never ours to police. With
-whole-file matching, appending a single paragraph to any of those dirties the
-tree and every subsequent tool call exits 2 until someone sets
-`HSTK_SKIP_HOOKS=1` -- which is exactly the outcome this file's own notes say
-it must avoid. A hook that fires on work it cannot help with does not protect
-the rule; it trains people to turn the rule off.
+findings), and one is third-party code that was never ours to police (a
+pending change -- an open pull request on the Tracker repository, carrying
+the hub's `third_party/yytoolkit/` series that replaces that vendored copy
+with a notice and a provenance record -- removes this fifth match once it
+merges and the hub's submodule pointer moves). With whole-file matching,
+appending a single paragraph to any of those dirties the tree and every
+subsequent tool call exits 2 until someone sets `HSTK_SKIP_HOOKS=1` -- which
+is exactly the outcome this file's own notes say it must avoid. A hook that
+fires on work it cannot help with does not protect the rule; it trains
+people to turn the rule off.
 
 An untracked file has no committed half, so all of it is "added" and all of it
 is read.

@@ -10,10 +10,15 @@ Story and evidence behind `AGENTS.md` § ["Don't Suspend the Game's Own Runtime"
   signal, not the mitigation.
 - **The precise instruments are unavailable on this build.** YYToolkit's
   per-event hook (`EVENT_OBJECT_CALL`) is deliberately disabled in the
-  YYToolkit this project ships — it crash-looped on Season 10 — and
+  YYToolkit this project ships — it crash-looped on Season 10, per project
+  notes that have not been re-measured since — and
   named-script hooks are structurally blind against this YYC build's direct
   calls (see the section above). What remains is blunt, whole-subtree
-  instance deactivation, with the widest possible blast radius.
+  instance deactivation, with the widest possible blast radius. In the hub's
+  patch series the off state is
+  `third_party/yytoolkit/patches/0003-executeit-hook-off-by-design.patch`: a
+  named build switch, one init log line, and a registration that is refused
+  with `AURIE_UNAVAILABLE` rather than accepted and never fired.
 - **The claim cannot be verified.** "Everything stops" is a statement about
   every timer, DoT, cooldown and internal counter in the game, including the
   ones nobody has enumerated. Contract tests can pin the mod's own structure;

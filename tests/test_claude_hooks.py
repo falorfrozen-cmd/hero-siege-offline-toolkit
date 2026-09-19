@@ -440,11 +440,15 @@ Offsets: +0x18 is the RValue kind; calling convention is __fastcall.
     # The first version of this hook matched whole file contents, and five
     # matches already sit in committed files (two in
     # ForgePact/docs/pet-quest-collector-c-research.md, two in
-    # dungeon-key-research.md, one in the vendored YYToolkit). Appending a
-    # paragraph to any of them made every subsequent tool call exit 2 until
-    # someone set HSTK_SKIP_HOOKS=1 -- the exact outcome the docstring says it
-    # avoids. These two tests are a pair: the hook must stop wedging, and
-    # grandfathering must not become a loophole.
+    # dungeon-key-research.md, one in the vendored YYToolkit under
+    # HS-Offline-Tracker/aurie-loader/yytoolkit-modified/ -- an open,
+    # unmerged pull request on the Tracker repository will replace that
+    # copy with a notice and a provenance record and remove this fifth
+    # match once it merges and the hub's submodule pointer moves).
+    # Appending a paragraph to any of them made every subsequent tool call
+    # exit 2 until someone set HSTK_SKIP_HOOKS=1 -- the exact outcome the
+    # docstring says it avoids. These two tests are a pair: the hook must
+    # stop wedging, and grandfathering must not become a loophole.
 
     LEGACY = "Old finding\n\n    iVar1 = FUN_00b489070(param_1);\n"
 

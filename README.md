@@ -236,6 +236,38 @@ Then launch the game and reproduce the freeze; Ctrl+C when done. See
 [ForgePact's instructions](docs/submodules/ForgePact/instructions.md) for a
 worked example (Known Limitations, stall watchdog section).
 
+## Modified YYToolkit
+
+ForgePact and HS Offline Tracker load their plugins through a modified
+[YYToolkit](https://github.com/AurieFramework/YYToolkit) (AGPL-3.0). Its source
+of truth is [`third_party/yytoolkit/`](third_party/yytoolkit): one pinned
+upstream commit, a patch series in which every patch states why it exists, what
+backs it and how it fails safe, and the AGPL notice. No binary is committed;
+[`tools/build_yytoolkit.py`](tools/build_yytoolkit.py) builds one from a local
+clone of upstream, outside the repository:
+
+```powershell
+py -3 tools/build_yytoolkit.py all --upstream C:\src\YYToolkit
+```
+
+That exports the pinned commit, applies the series, builds `Release|x64`, runs
+the host tests and checks that every log line the patches declare is in the
+DLL. It never launches the game. The series has been built, host-tested and
+**launched twice against the game** (2026-09-19: first YYToolkit alone, then
+a second, idle session with ForgePact's plugin and the HS-Offline-Tracker
+producer both loaded) — the startup fault did not reproduce in either
+session and lag was not observed in the first; the second confirmed both
+plugins initialize and the plugin-to-runner interface works, but gameplay
+with mods active and the error-report path with a plugin loaded are still
+unexercised, and neither submodule's branch has merged, so the tools still
+distribute the earlier DLL until their own repositories move to it —
+see the directory's [README](third_party/yytoolkit/README.md) for the full
+launch-gate record,
+[ADR 0002](docs/adr/0002-modified-yytoolkit-is-a-patch-series-in-the-hub.md)
+for why it is a patch series, and
+[`docs/agents/yytoolkit-provenance.md`](docs/agents/yytoolkit-provenance.md)
+for what went wrong with the binary it replaces.
+
 ## Context7 MCP
 
 For AI-assisted development — retrieving `YYToolkit` API documentation across
@@ -260,7 +292,9 @@ Why something went the way it did is recorded next to the thing it describes —
 [`docs/hub/design.md`](docs/hub/design.md) for the hub,
 [`docs/adr/`](docs/adr) for decisions that outlived the discussion,
 [`docs/RUNTIME_DATA_MODELS.md`](docs/RUNTIME_DATA_MODELS.md) for the runtime
-item and stat structs, and each submodule's `instructions.md` for the tool
+item and stat structs, the patch headers in
+[`third_party/yytoolkit/patches/`](third_party/yytoolkit/patches) for each
+change to YYToolkit, and each submodule's `instructions.md` for the tool
 itself.
 
 Planning documents are deliberately **not** kept here; `*-plan.md` is in

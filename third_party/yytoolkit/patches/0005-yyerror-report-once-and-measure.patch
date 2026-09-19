@@ -1,0 +1,3036 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hero Siege Offline Toolkit <noreply@example.invalid>
+Date: Sat, 19 Sep 2026 12:00:00 +0000
+Subject: [PATCH 5/7] HkYYError: report each distinct error once, count
+ repeats, and measure the cost
+
+Why: Hero Siege (GameMaker YYC x64) raises errors through YYError that the runner catches and carries on from, by the hundred per session. Upstream HkYYError answers every one with a full report: std::stacktrace, a symbol for every frame, the Aurie module list and a log write - and GmResolveGameSymbolFromAddress rebuilds its whole symbol map (every script, every builtin function with one by-name runner lookup each, every builtin variable) once per game frame of every one of those stacktraces, in a Release|x64 configuration that compiles with optimisation disabled. The shipped build lags in play, and this is the structurally certain suspect. This patch keeps the diagnostics and removes the repetition: the symbol table is built once and kept (GmPrepareGameSymbolTable: local unique_ptr, published with InterlockedCompareExchangePointer, the loser frees its copy, at most 2 build attempts and each in a different report, never kept with zero usable scripts, builtin walk capped at 0x10000 slots and skipped when no functions array is known, m_Functions/m_Name null-checked). The functions array has no readable length, so the builtin walk always looks at one slot past the last entry at the least, and upstream's YkExtractFunctionEntry builds a std::string from whatever name pointer that slot holds; each slot is therefore judged from its own two pointers BEFORE its name is read (GameSymbolWalk.hpp): a referenced name must point into the game image and be terminated within 256 bytes and before the image ends, otherwise the walk stops at that slot and one line says so; a routine outside the image is left out of the table but does not end the walk. A fixed ledger of 32 messages plus one shared overflow slot gives the first sighting of a message one full report, written verbatim through the new CmWriteLogOutputRaw (no CmpParseVa pass, so no 4096-byte cut-off and no '%' re-expansion), and makes every repeat a count-only path - one pass over the text and at most 32 compares, no stacktrace, no symbol lookup, no file write, no heap for messages under 1 KB. Two messages are "the same" if they match after every run of decimal digits is folded to '#'; the summary's variants= counter reports how often the digits really differed. A record is marked reported only after the log stream accepted the report; a failed report is counted and retried once; the log is asked whether it can take a report (CmLogIsWritable) before one is built; a report whose builder never came back expires after 30 s and is counted as failed, and if its finish turns up after all it is counted (stale=, stale_written=), its time goes into the totals and, if it was written, its record is marked reported. The original YYError is called on every path, always last, and always as ("%s", text): upstream passes the expanded text in the format slot, which expands any '%' in it a second time against arguments that are not there. BANNER DECISION: the "YYToolkit is loaded..." banner is appended only on the call that really wrote a report; every other call hands the runner exactly the text it would get with no YYToolkit loaded. Known limitation that follows: a fatal error whose text was already reported shows no banner and gets no fresh stacktrace - report #N for that text plus the last summary line is the diagnostic. The trampoline is cached only once it is non-null, a thread_local guard forwards re-entrant calls at once, and the status of the YYError MmCreateHook, which upstream discards, is logged once.
+
+Evidence: Read from source, NOT measured: upstream Hooks.cpp:158-261 builds the report on every call and looks the trampoline up by name every time; Generic.cpp:26-101 declares the symbol map locally and refills it on every call, called per frame from Hooks.cpp:212; Interface.cpp:13-22 copies a referenced m_Name into a std::string before its caller can test anything about the slot; Generic.cpp:216 decrements upper_bound() unconditionally (undefined when it is begin()); Hooks.cpp:251 passes the finished report to CmWriteLogOutput as a printf format and Console.cpp:14-18 replaces anything of 4096 bytes or more with "<string too long to print>"; Hooks.cpp:258-260 passes the expanded message as the format; Hooks.cpp:357-363 never tests the MmCreateHook(YYError) status; YYToolkit.vcxproj:143 has Optimization Disabled for Release|x64. Reported from the field, not re-measured here: about 142 full reports in about two minutes of play on the previously shipped build, game lagging but running; the recorded message is "Unable to find any instance for object index '257087'" and the game continues after it (ForgePact/docs/S10-special-content-notes.md:1245-1252 in the hub). Verified on the build host: Release|x64 builds with 0 errors and the same warnings as pristine (C4244 x2 in Generic.cpp/Hooks.cpp, MSB8029), Release|Win32 compiles too; in the built DLL each declared marker occurs, and "[hs] YYError summary: total=" and "[hs] YYError report cost" occur exactly once each, in the format string of their own line and nowhere else. YYToolkit/hs-tests/yyerror_ledger_test.cpp passes 94 checks (table fills then overflow slot still reports; the overflow slot does not re-report its last message after the interval, keeps "reported" per message, and defers to a report in flight; repeat takes the count-only path; failed report retried once then counted; lost report expires; a late finish is counted, timed and marks only its own record; MostFrequent; both text fallbacks through a heap stand-in that refuses to grow and a format vsnprintf cannot expand - MEASURED: the build host's UCRT returns -1 for "%ls" with an unconvertible wide character; '%' forwards byte-identical through a stub trampoline; bounded gate refuses instead of waiting; summary schedule) and YYToolkit/hs-tests/game_symbol_walk_test.cpp passes 36 (a slot of leftovers is refused without its name pointer being read - the pointer used cannot be read, so reading it would crash the run; name bounded by the image end and by the length limit; routine outside the image kept out of the table; the three script-refusal causes told apart; a walk that accepted nothing is flagged). Both include the shipped headers, not copies, and 20 mutations of those headers, each applied alone to a scratch copy, each make a run fail (among them: drop the same-as-last-overflow-report test, drop the overflow m_Reported reset, ignore a report in flight in the overflow path, invert MostFrequent, leave stale ticks out, mark a stale record regardless of Written, do not flag truncation, make the image end inclusive, do not bound the name read by the image end, report "all rejected" as "none returned"), while the unmutated headers pass. NOT verified, and what the first live run is for: what a report costs on Hero Siege and whether the reports are what makes the game lag (each report ends with a "[hs] YYError report cost" line: total, stacktrace capture, game symbols over game frames only, other symbols, symbol table build, module list, log write; HkPresent writes an "[hs] YYError summary: total=" line at most once per 30 s and only when a counter moved); what the slot after the last builtin holds on Hero Siege's runner, and whether every builtin name there lies in the game image (the "built in" line prints builtins=A accepted of S slots and what the walk ended on; a "builtin walk stopped at slot" line means a slot was refused); whether the message's number varies (variants=); whether the runner's YYError returns or unwinds through the hook (returned=, dropped=, runner_ms=); whether the runner prints each error to the console YYToolkit allocates; the cost of std::stacktrace_entry::description(); what MmGetHookTrampoline returns for a missing hook.
+
+Fails-safe: ORDER: the builtin walk reads m_FunctionsArray, so in the series this patch applies after the functions-array candidate filter; it stays out of HkPreinitialize and stacks with the ExecuteIt patch in either order. If no functions array is known the builtin walk is skipped and the build line says so. A wrong array is no longer only bounded by the 0x10000-slot cap: a slot whose name pointer is outside the game image, or not terminated inside it, ends the walk unread with one "[hs] game symbol table: builtin walk stopped at slot N: <reason>" line, and a walk that read slots and accepted no symbol is called out in the build line as what the wrong functions array looks like. INHERITED and not fixed: the slot itself is still read unchecked, as upstream reads it; and if a real builtin name of some runner lay outside the image the walk would stop there and later builtin frames would be labelled with the nearest earlier symbol - the line names the slot. If the symbol table cannot be built, one line gives the reason and what was supplied (NT header unreadable; m_GetScriptData unknown; no slot returned a script; scripts returned but 0 usable; C++ exception - with script_slots_walked, the first GetScriptData status, scripts_returned and scripts_rejected), the report is still written with the C++ runtime's frame descriptions, one more attempt is made in a later report, then one line says it was given up. Ledger synchronisation is a bounded spin-only gate, never an OS lock, so nothing can be orphaned at process exit into a hang: a caller that cannot get in takes the count-only path and is counted (busy=); if the gate stays shut for 5 summary checks in a row one "[hs] YYError summary unavailable" line says so and checks drop to one per second. If the log cannot take a report (never opened, or an error latched) the report is not built at all, the attempt is counted under report_failures= and the message is given up after the usual two attempts - no line can say so, there being no log. If a report throws or the log stream refuses it, one line says so, report_failures= moves and the message is retried once. With the ledger full a new message still gets a report from the overflow slot, at most one per 30 s. If the runner's text had to be cut (heap refused) or its format could not be expanded, one line per kind says so once and truncated=/unexpandable= count them. If Aurie has no trampoline the error is counted (dropped=) and dropped with one line (upstream would call a null pointer) and the lookup is retried on the next error. No diagnostic failure can stop the forward: everything before it is inside try/catch, and no gate is held across a runner call, a report, a log write or the trampoline. A wild read is not a C++ exception in this /EHsc build, which is why the slot check exists instead of a catch. No flag file, no console change, no lock in Console.cpp: logging stays as thread-unsafe as upstream (inherited, stated in a comment). The summary is written from HkPresent only, so errors in the last 30 s before exit may never be summarised.
+
+Log-markers: "[hs] YYError summary: total="
+Log-markers: "[hs] YYError report cost"
+Log-markers: "[hs] YYError hook install"
+Log-markers: "[hs] game symbol table: built in"
+Log-markers: "[hs] game symbol table: build attempt"
+Log-markers: "[hs] game symbol table: builtin walk stopped at slot"
+Log-markers: "[hs] game symbol table: given up"
+Log-markers: "[hs] YYError summary unavailable"
+Log-markers: "[hs] YYError report #"
+Log-markers: "[hs] YYError: Aurie returned no trampoline"
+Log-markers: "[hs] YYError message truncated"
+Log-markers: "[hs] YYError message not expanded"
+
+Upstream-status: not submitted. Upstream v4.0.1 (5a95e46) has the per-call report, the per-frame symbol map rebuild, the unchecked name read in the builtin walk, the format-slot forward and the unchecked begin() decrement described above.
+
+diff --git a/YYToolkit/YYToolkit.vcxproj b/YYToolkit/YYToolkit.vcxproj
+index b7b7b00..1d750a8 100644
+--- a/YYToolkit/YYToolkit.vcxproj
++++ b/YYToolkit/YYToolkit.vcxproj
+@@ -179,6 +179,8 @@
+     <ClInclude Include="include\Zydis\Zydis.h" />
+     <ClInclude Include="resource.h" />
+     <ClInclude Include="source\YYTK\Module Interface\Interface.hpp" />
++    <ClInclude Include="source\YYTK\Module Internals\GameMaker\Generic\GameSymbolWalk.hpp" />
++    <ClInclude Include="source\YYTK\Module Internals\Hooks\YYErrorLedger.hpp" />
+     <ClInclude Include="source\YYTK\Module Internals\Module Internals.hpp" />
+     <ClInclude Include="source\YYTK\Shared\YYTK_Shared.hpp" />
+     <ClInclude Include="source\YYTK\Shared\YYTK_Shared_Base.hpp" />
+diff --git a/YYToolkit/hs-tests/game_symbol_walk_test.cpp b/YYToolkit/hs-tests/game_symbol_walk_test.cpp
+new file mode 100644
+index 0000000..e3cae08
+--- /dev/null
++++ b/YYToolkit/hs-tests/game_symbol_walk_test.cpp
+@@ -0,0 +1,204 @@
++// Host test for the game symbol table's slot checks (Hero Siege patch series). No game, no YYToolkit, no framework.
++//
++// Build and run, from a Visual Studio x64 developer prompt:
++//   cl /nologo /std:c++latest /EHsc /W4 game_symbol_walk_test.cpp && game_symbol_walk_test.exe
++//
++// One line per check. Exit code 0 only if every check passed.
++// Every predicate is checked both ways: a case where it must hold, and a control where it must not.
++//
++// The "game image" here is a byte buffer, and a "slot" is two values handed to the judge. A pointer
++// that must not be read is given a value that cannot be read (0x10): if the judge touched it, this
++// test would not fail a check, it would crash - which fails the run just as well.
++
++#include "../source/YYTK/Module Internals/GameMaker/Generic/GameSymbolWalk.hpp"
++
++#include <cstdio>
++#include <cstring>
++
++using namespace YYTK;
++
++static int g_Checks = 0;
++static int g_Failures = 0;
++
++static void Check(
++	bool Condition,
++	const char* Name
++)
++{
++	g_Checks++;
++	if (!Condition)
++		g_Failures++;
++
++	printf("%s  %s\n", Condition ? "PASS" : "FAIL", Name);
++}
++
++// ===== A stand-in for the game image =====
++
++constexpr size_t FAKE_IMAGE_SIZE = 64;
++
++// The image is the first FAKE_IMAGE_SIZE bytes. What follows it is memory that is NOT the image,
++// and it starts with a terminator on purpose: a judge that read past the image's end would find it.
++static char g_Memory[FAKE_IMAGE_SIZE * 2];
++
++static uintptr_t ImageBase()
++{
++	return reinterpret_cast<uintptr_t>(&g_Memory[0]);
++}
++
++static uintptr_t ImageEnd()
++{
++	return ImageBase() + FAKE_IMAGE_SIZE;
++}
++
++static void BuildFakeImage()
++{
++	memset(g_Memory, 'x', sizeof(g_Memory));
++	g_Memory[FAKE_IMAGE_SIZE] = '\0';
++
++	// "abs" at offset 4, a ten-character name at offset 16. The last four bytes of the image stay 'x':
++	// a name there runs into the end of the image without a terminator.
++	memcpy(&g_Memory[4], "abs", 4);
++	memcpy(&g_Memory[16], "draw_self_", 11);
++}
++
++// ===== Tests =====
++
++static void TestAddressInsideImage()
++{
++	Check(GmSymbolAddressInsideImage(ImageBase(), ImageBase(), ImageEnd()),
++		"inside: the image's first byte is inside it");
++	Check(GmSymbolAddressInsideImage(ImageEnd() - 1, ImageBase(), ImageEnd()),
++		"inside: the image's last byte is inside it");
++	Check(!GmSymbolAddressInsideImage(ImageEnd(), ImageBase(), ImageEnd()),
++		"inside control: one past the last byte is NOT inside it");
++	Check(!GmSymbolAddressInsideImage(ImageBase() - 1, ImageBase(), ImageEnd()),
++		"inside control: one before the first byte is NOT inside it");
++	Check(!GmSymbolAddressInsideImage(0, ImageBase(), ImageEnd()),
++		"inside control: a null pointer is NOT inside it");
++}
++
++static void TestReferentialSlot()
++{
++	const uintptr_t routine_inside = ImageBase() + 40;
++	const char* const unreadable = reinterpret_cast<const char*>(static_cast<uintptr_t>(0x10));
++	size_t name_length = 99;
++
++	Check(GmSymbolJudgeReferentialSlot(&g_Memory[4], routine_inside, ImageBase(), ImageEnd(), GAME_SYMBOL_MAX_NAME_LENGTH, name_length) == GAME_SYMBOL_SLOT_READABLE
++		&& name_length == 3 && memcmp(&g_Memory[4], "abs", name_length) == 0,
++		"baseline: a real entry (name in the image, terminated) is readable, and its length is reported");
++
++	name_length = 99;
++	Check(GmSymbolJudgeReferentialSlot(unreadable, 0, ImageBase(), ImageEnd(), GAME_SYMBOL_MAX_NAME_LENGTH, name_length) == GAME_SYMBOL_SLOT_NULL_ROUTINE
++		&& name_length == 0,
++		"end of array: a null routine ends the walk as upstream does, and the name pointer is never touched");
++
++	Check(GmSymbolJudgeReferentialSlot(unreadable, routine_inside, ImageBase(), ImageEnd(), GAME_SYMBOL_MAX_NAME_LENGTH, name_length) == GAME_SYMBOL_SLOT_NAME_OUTSIDE_IMAGE,
++		"target: a slot of leftovers (non-null routine, wild name pointer) is refused WITHOUT reading the name");
++	Check(GmSymbolJudgeReferentialSlot(nullptr, routine_inside, ImageBase(), ImageEnd(), GAME_SYMBOL_MAX_NAME_LENGTH, name_length) == GAME_SYMBOL_SLOT_NAME_OUTSIDE_IMAGE,
++		"target: a null name with a non-null routine is refused too");
++	Check(GmSymbolJudgeReferentialSlot(&g_Memory[FAKE_IMAGE_SIZE], routine_inside, ImageBase(), ImageEnd(), GAME_SYMBOL_MAX_NAME_LENGTH, name_length) == GAME_SYMBOL_SLOT_NAME_OUTSIDE_IMAGE,
++		"target: a name pointer that is exactly the image's end is outside it");
++
++	static const char name_elsewhere[] = "abs";
++	Check(GmSymbolJudgeReferentialSlot(name_elsewhere, routine_inside, ImageBase(), ImageEnd(), GAME_SYMBOL_MAX_NAME_LENGTH, name_length) == GAME_SYMBOL_SLOT_NAME_OUTSIDE_IMAGE,
++		"control: the very same name text, stored outside the image, is refused - it is the address that is judged");
++
++	name_length = 99;
++	Check(GmSymbolJudgeReferentialSlot(&g_Memory[FAKE_IMAGE_SIZE - 4], routine_inside, ImageBase(), ImageEnd(), GAME_SYMBOL_MAX_NAME_LENGTH, name_length) == GAME_SYMBOL_SLOT_NAME_UNTERMINATED
++		&& name_length == 0,
++		"bound: a name that runs into the image's end is unterminated - the terminator just past the end was not read");
++
++	Check(GmSymbolJudgeReferentialSlot(&g_Memory[16], routine_inside, ImageBase(), ImageEnd(), 5, name_length) == GAME_SYMBOL_SLOT_NAME_UNTERMINATED,
++		"bound: a ten-character name is unterminated under a limit of 5");
++	Check(GmSymbolJudgeReferentialSlot(&g_Memory[16], routine_inside, ImageBase(), ImageEnd(), 11, name_length) == GAME_SYMBOL_SLOT_READABLE && name_length == 10,
++		"bound control: the same name is readable once the limit covers its terminator");
++
++	// The routine is not part of the verdict: a mod may have pointed a real entry at its own code.
++	Check(GmSymbolJudgeReferentialSlot(&g_Memory[4], 0x10, ImageBase(), ImageEnd(), GAME_SYMBOL_MAX_NAME_LENGTH, name_length) == GAME_SYMBOL_SLOT_READABLE,
++		"a routine outside the image does not make a slot unreadable: the walk never reads through it");
++}
++
++static void TestRoutineBelongsInTable()
++{
++	Check(GmSymbolRoutineBelongsInTable(ImageBase() + 40, ImageBase(), ImageEnd()),
++		"table: a routine inside the image gets a place in the table");
++	Check(!GmSymbolRoutineBelongsInTable(ImageEnd() + 40, ImageBase(), ImageEnd()),
++		"table control: a routine outside the image does not - the table could never resolve to it");
++	Check(!GmSymbolRoutineBelongsInTable(0, ImageBase(), ImageEnd()),
++		"table control: a null routine does not");
++}
++
++static void TestWalkEnd()
++{
++	Check(GmSymbolWalkEndFromVerdict(GAME_SYMBOL_SLOT_NULL_ROUTINE) == GAME_SYMBOL_WALK_NULL_ROUTINE
++		&& GmSymbolWalkEndFromVerdict(GAME_SYMBOL_SLOT_NAME_OUTSIDE_IMAGE) == GAME_SYMBOL_WALK_NAME_OUTSIDE_IMAGE
++		&& GmSymbolWalkEndFromVerdict(GAME_SYMBOL_SLOT_NAME_UNTERMINATED) == GAME_SYMBOL_WALK_NAME_UNTERMINATED,
++		"walk end: each refusing verdict maps to its own end");
++
++	Check(GmSymbolWalkWasStopped(GAME_SYMBOL_WALK_NAME_OUTSIDE_IMAGE) && GmSymbolWalkWasStopped(GAME_SYMBOL_WALK_NAME_UNTERMINATED),
++		"stopped: a refused slot is reported as a stopped walk (it gets its own log line)");
++	Check(!GmSymbolWalkWasStopped(GAME_SYMBOL_WALK_NULL_ROUTINE) && !GmSymbolWalkWasStopped(GAME_SYMBOL_WALK_UNKNOWN_NAME)
++		&& !GmSymbolWalkWasStopped(GAME_SYMBOL_WALK_SLOT_CAP) && !GmSymbolWalkWasStopped(GAME_SYMBOL_WALK_SKIPPED),
++		"stopped control: the ends upstream relies on, the cap and a skipped walk are not");
++
++	Check(strcmp(GmSymbolWalkEndText(GAME_SYMBOL_WALK_NAME_OUTSIDE_IMAGE), GmSymbolWalkEndText(GAME_SYMBOL_WALK_NAME_UNTERMINATED)) != 0
++		&& strcmp(GmSymbolWalkEndText(GAME_SYMBOL_WALK_NULL_ROUTINE), GmSymbolWalkEndText(GAME_SYMBOL_WALK_UNKNOWN_NAME)) != 0
++		&& strcmp(GmSymbolWalkEndText(GAME_SYMBOL_WALK_SKIPPED), GmSymbolWalkEndText(GAME_SYMBOL_WALK_SLOT_CAP)) != 0,
++		"walk end: different ends are worded differently in the log");
++	Check(strstr(GmSymbolWalkEndText(GAME_SYMBOL_WALK_NAME_OUTSIDE_IMAGE), "outside the game image") != nullptr,
++		"walk end: the refusal says the pointer was outside the game image");
++}
++
++static void TestBuiltinWalkLooksWrong()
++{
++	Check(GmSymbolBuiltinWalkLooksWrong(GAME_SYMBOL_WALK_NULL_ROUTINE, 1, 0),
++		"wrong array: one slot walked, null routine, nothing accepted - flagged");
++	Check(GmSymbolBuiltinWalkLooksWrong(GAME_SYMBOL_WALK_UNKNOWN_NAME, 1, 0),
++		"wrong array: one slot walked, name unknown to the runner, nothing accepted - flagged");
++	Check(GmSymbolBuiltinWalkLooksWrong(GAME_SYMBOL_WALK_NAME_OUTSIDE_IMAGE, 1, 0),
++		"wrong array: first slot refused, nothing accepted - flagged");
++	Check(!GmSymbolBuiltinWalkLooksWrong(GAME_SYMBOL_WALK_NULL_ROUTINE, 1500, 1499),
++		"wrong array control: a walk that accepted symbols is not flagged");
++	Check(!GmSymbolBuiltinWalkLooksWrong(GAME_SYMBOL_WALK_SKIPPED, 0, 0),
++		"wrong array control: a walk that was skipped is not flagged as wrong - it says 'skipped' instead");
++}
++
++static void TestScriptRefusal()
++{
++	Check(GmSymbolJudgeScriptWalk(true, 5000, 4990) == GAME_SYMBOL_SCRIPTS_USABLE,
++		"scripts baseline: usable scripts mean no refusal");
++	Check(GmSymbolJudgeScriptWalk(true, 1, 1) == GAME_SYMBOL_SCRIPTS_USABLE,
++		"scripts baseline: one usable script is enough");
++
++	Check(GmSymbolJudgeScriptWalk(false, 0, 0) == GAME_SYMBOL_SCRIPTS_NO_LOOKUP_ROUTINE,
++		"refusal: Script_Data never located is its own reason");
++	Check(GmSymbolJudgeScriptWalk(true, 0, 0) == GAME_SYMBOL_SCRIPTS_NONE_RETURNED,
++		"refusal: Script_Data known but nothing returned is its own reason");
++	Check(GmSymbolJudgeScriptWalk(true, 5000, 0) == GAME_SYMBOL_SCRIPTS_ALL_REJECTED,
++		"refusal: thousands returned and every one rejected is its own reason - a layout question, not a timing one");
++	Check(GmSymbolJudgeScriptWalk(true, 5000, 0) != GmSymbolJudgeScriptWalk(true, 0, 0),
++		"refusal control: 'all rejected' is NOT reported as 'none returned'");
++
++	const char* const no_lookup = GmSymbolScriptRefusalText(GAME_SYMBOL_SCRIPTS_NO_LOOKUP_ROUTINE);
++	const char* const none_returned = GmSymbolScriptRefusalText(GAME_SYMBOL_SCRIPTS_NONE_RETURNED);
++	const char* const all_rejected = GmSymbolScriptRefusalText(GAME_SYMBOL_SCRIPTS_ALL_REJECTED);
++	Check(strcmp(no_lookup, none_returned) != 0 && strcmp(none_returned, all_rejected) != 0 && strcmp(no_lookup, all_rejected) != 0,
++		"refusal: the three reasons are three different sentences in the log");
++	Check(strstr(no_lookup, "m_GetScriptData") != nullptr && strstr(all_rejected, "0 were usable") != nullptr && strstr(none_returned, "no slot returned") != nullptr,
++		"refusal: each sentence names its own cause");
++}
++
++int main()
++{
++	BuildFakeImage();
++
++	TestAddressInsideImage();
++	TestReferentialSlot();
++	TestRoutineBelongsInTable();
++	TestWalkEnd();
++	TestBuiltinWalkLooksWrong();
++	TestScriptRefusal();
++
++	printf("\n%d check(s), %d failure(s)\n", g_Checks, g_Failures);
++	return g_Failures ? 1 : 0;
++}
+diff --git a/YYToolkit/hs-tests/yyerror_ledger_test.cpp b/YYToolkit/hs-tests/yyerror_ledger_test.cpp
+new file mode 100644
+index 0000000..c4d648d
+--- /dev/null
++++ b/YYToolkit/hs-tests/yyerror_ledger_test.cpp
+@@ -0,0 +1,607 @@
++// Host test for the YYError bookkeeping (Hero Siege patch series). No game, no YYToolkit, no framework.
++//
++// Build and run, from a Visual Studio x64 developer prompt:
++//   cl /nologo /std:c++latest /EHsc /W4 yyerror_ledger_test.cpp && yyerror_ledger_test.exe
++//
++// One line per check. Exit code 0 only if every check passed.
++// Every predicate is checked both ways: a case where it must hold, and a control where it must not.
++
++#include "../source/YYTK/Module Internals/Hooks/YYErrorLedger.hpp"
++
++#include <cstdarg>
++#include <cstdio>
++#include <cstring>
++#include <new>
++#include <string>
++#include <type_traits>
++
++using namespace YYTK::Hooks;
++
++static int g_Checks = 0;
++static int g_Failures = 0;
++
++static void Check(
++	bool Condition,
++	const char* Name
++)
++{
++	g_Checks++;
++	if (!Condition)
++		g_Failures++;
++
++	printf("%s  %s\n", Condition ? "PASS" : "FAIL", Name);
++}
++
++// ===== Helpers =====
++
++static YYErrorSignature SignatureOf(
++	const std::string& Text
++)
++{
++	return YYErrorComputeSignature(Text.c_str(), Text.size());
++}
++
++static YYErrorDisposition Feed(
++	YYErrorLedger& Ledger,
++	const std::string& Text,
++	uint64_t NowMs,
++	uint64_t& ReportNumber
++)
++{
++	return Ledger.Classify(SignatureOf(Text), NowMs, ReportNumber);
++}
++
++// A message made of letters only, so that digit folding cannot merge two of them.
++static std::string DistinctMessage(
++	size_t Index
++)
++{
++	std::string text = "distinct message ";
++	text.push_back(static_cast<char>('a' + (Index % 26)));
++	text.push_back(static_cast<char>('a' + ((Index / 26) % 26)));
++	return text;
++}
++
++// Stands in for the runner's YYError: printf-style, records what it was given and what that expands to.
++static int g_StubCalls = 0;
++static std::string g_StubFormat;
++static std::string g_StubExpansion;
++
++static void StubTrampoline(
++	const char* Format,
++	...
++)
++{
++	char expansion[4096] = {};
++
++	va_list arguments;
++	va_start(arguments, Format);
++	vsnprintf(expansion, sizeof(expansion), Format, arguments);
++	va_end(arguments);
++
++	g_StubCalls++;
++	g_StubFormat = Format;
++	g_StubExpansion = expansion;
++}
++
++// Stands in for the std::string HkYYError expands long messages into. It can be told to refuse
++// to grow, which is the one way to reach the truncation fallback without exhausting the heap.
++struct TestHeapBuffer
++{
++	std::string m_Storage;
++	bool m_RefuseToGrow = false;
++
++	void resize(size_t Size)
++	{
++		if (m_RefuseToGrow)
++			throw std::bad_alloc();
++
++		m_Storage.resize(Size);
++	}
++
++	char* data() { return m_Storage.data(); }
++	size_t size() const { return m_Storage.size(); }
++	const char* c_str() const { return m_Storage.c_str(); }
++};
++
++// Fills the table with reported messages, so that whatever comes next lands in the overflow slot.
++static void FillTable(
++	YYErrorLedger& Ledger,
++	uint64_t NowMs
++)
++{
++	for (size_t i = 0; i < YYERROR_MAX_DISTINCT; i++)
++	{
++		uint64_t report_number = 0;
++		Feed(Ledger, DistinctMessage(i), NowMs, report_number);
++		Ledger.FinishReport(report_number, true, 1);
++	}
++}
++
++template <typename THeapBuffer>
++static YYErrorText Expand(
++	char* StackBuffer,
++	size_t StackBufferSize,
++	THeapBuffer& HeapBuffer,
++	const char* Format,
++	...
++)
++{
++	va_list arguments;
++	va_start(arguments, Format);
++	const YYErrorText text = YYErrorExpandMessage(StackBuffer, StackBufferSize, HeapBuffer, Format, arguments);
++	va_end(arguments);
++
++	return text;
++}
++
++// ===== Tests =====
++
++static void TestSignature()
++{
++	const YYErrorSignature first = SignatureOf("Unable to find any instance for object index '257087'");
++	const YYErrorSignature other_number = SignatureOf("Unable to find any instance for object index '12'");
++	const YYErrorSignature other_word = SignatureOf("Unable to find any instance for object indey '257087'");
++
++	Check(first.m_Folded == other_number.m_Folded && first.m_FoldedLength == other_number.m_FoldedLength,
++		"signature: messages differing only in a number fold to one signature");
++	Check(first.m_Exact != other_number.m_Exact,
++		"signature: ...while their exact hashes still differ (that is what 'variants' counts)");
++	Check(first.m_Folded != other_word.m_Folded,
++		"signature control: a differing letter keeps the signatures apart");
++	Check(SignatureOf("value 0x1A").m_Folded != SignatureOf("value 0x1B").m_Folded,
++		"signature control: hexadecimal letters are not folded");
++	Check(SignatureOf("a1b").m_Folded != SignatureOf("ab").m_Folded,
++		"signature control: a digit run folds to '#', it does not vanish");
++	Check(SignatureOf("").m_FoldedLength == 0 && SignatureOf("77777").m_FoldedLength == 1,
++		"signature: folded length counts a digit run once");
++}
++
++static void TestFirstSightingAndRepeats()
++{
++	YYErrorLedger ledger = {};
++	uint64_t report_number = 0;
++
++	Check(Feed(ledger, "alpha failed", 0, report_number) == YYERROR_WRITE_REPORT && report_number == 1,
++		"baseline: the first sighting of a message earns full report #1");
++	Check(!ledger.m_Records[0].m_Reported,
++		"control: the record is NOT marked reported while the report has only been asked for");
++	Check(ledger.FinishReport(report_number, true, 500) && ledger.m_Records[0].m_Reported,
++		"the record is marked reported once the report was really written");
++
++	bool every_repeat_was_cheap = true;
++	for (int i = 0; i < 1000; i++)
++	{
++		uint64_t repeat_number = 99;
++		if (Feed(ledger, "alpha failed", 10 + i, repeat_number) != YYERROR_REPEAT || repeat_number != 0)
++			every_repeat_was_cheap = false;
++	}
++
++	Check(every_repeat_was_cheap,
++		"target: 1000 repeats all take the count-only path (YYERROR_REPEAT, no report number)");
++	Check(ledger.m_Counters.m_ReportAttempts == 1 && ledger.m_Counters.m_ReportsWritten == 1 && ledger.m_RecordCount == 1,
++		"target: those repeats asked for no further report and took no further record");
++	Check(ledger.m_Counters.m_TotalErrors == 1001 && ledger.m_Counters.m_Repeats == 1000 && ledger.m_Records[0].m_Count == 1001,
++		"target: ...but every one of them was counted");
++	Check(ledger.m_Counters.m_TextVariants == 0,
++		"control: byte-identical repeats are not counted as variants");
++
++	Check(Feed(ledger, "alpha failed", 2000, report_number) == YYERROR_REPEAT,
++		"repeat again (setup for the next two checks)");
++
++	uint64_t other_number = 0;
++	Check(Feed(ledger, "beta failed", 2001, other_number) == YYERROR_WRITE_REPORT && other_number == 2,
++		"control: a different message is NOT a repeat - it earns report #2");
++	ledger.FinishReport(other_number, true, 100);
++
++	YYErrorLedger numbered = {};
++	Feed(numbered, "object index '100001' missing", 0, report_number);
++	numbered.FinishReport(report_number, true, 1);
++	Check(Feed(numbered, "object index '100002' missing", 1, report_number) == YYERROR_REPEAT && numbered.m_Counters.m_TextVariants == 1,
++		"a repeat that differs only in its number is a repeat, and is counted as a variant");
++
++	Check(ledger.m_Counters.m_ReportTicksTotal == 600 && ledger.m_Counters.m_ReportTicksMax == 500,
++		"report cost: total and maximum are accumulated from FinishReport");
++}
++
++static void TestDeferred()
++{
++	YYErrorLedger ledger = {};
++	uint64_t first_number = 0;
++	uint64_t second_number = 0;
++
++	Feed(ledger, "alpha failed", 0, first_number);
++
++	Check(Feed(ledger, "beta failed", 1, second_number) == YYERROR_DEFERRED && second_number == 0,
++		"a new message is deferred while another report is in flight");
++	Check(Feed(ledger, "alpha failed", 2, second_number) == YYERROR_DEFERRED,
++		"the in-flight message itself is deferred too: it is not 'reported' yet");
++
++	ledger.FinishReport(first_number, true, 1);
++
++	Check(Feed(ledger, "beta failed", 3, second_number) == YYERROR_WRITE_REPORT && second_number == 2,
++		"control: once the report is finished, the deferred message gets its own");
++	Check(ledger.m_Counters.m_Deferred == 2,
++		"deferred sightings are counted");
++}
++
++static void TestFailedReportIsRetriedOnce()
++{
++	YYErrorLedger ledger = {};
++	uint64_t report_number = 0;
++
++	Check(Feed(ledger, "gamma failed", 0, report_number) == YYERROR_WRITE_REPORT,
++		"failed report: first attempt is asked for");
++	ledger.FinishReport(report_number, false, 10);
++
++	Check(Feed(ledger, "gamma failed", 1, report_number) == YYERROR_WRITE_REPORT && report_number == 2,
++		"failed report: the next sighting retries it (attempt 2)");
++	ledger.FinishReport(report_number, false, 10);
++
++	Check(Feed(ledger, "gamma failed", 2, report_number) == YYERROR_REPEAT && report_number == 0,
++		"failed report: after two failures it is given up on and only counted");
++	Check(ledger.m_Counters.m_ReportFailures == 2 && ledger.m_Counters.m_ReportsWritten == 0 && !ledger.m_Records[0].m_Reported,
++		"failed report: both failures are counted, and the record was never marked reported");
++
++	YYErrorLedger healthy = {};
++	Feed(healthy, "gamma failed", 0, report_number);
++	healthy.FinishReport(report_number, true, 10);
++	Check(Feed(healthy, "gamma failed", 1, report_number) == YYERROR_REPEAT && healthy.m_Counters.m_ReportAttempts == 1 && healthy.m_Counters.m_ReportFailures == 0,
++		"control: a report that was written is not retried and counts no failure");
++}
++
++static void TestTableFillsThenOverflowSlot()
++{
++	YYErrorLedger ledger = {};
++	uint64_t report_number = 0;
++
++	bool every_distinct_message_reported = true;
++	for (size_t i = 0; i < YYERROR_MAX_DISTINCT; i++)
++	{
++		if (Feed(ledger, DistinctMessage(i), 1000, report_number) != YYERROR_WRITE_REPORT)
++			every_distinct_message_reported = false;
++
++		ledger.FinishReport(report_number, true, 1);
++	}
++
++	Check(every_distinct_message_reported && ledger.m_RecordCount == YYERROR_MAX_DISTINCT,
++		"table: each of the first YYERROR_MAX_DISTINCT distinct messages earns a report");
++
++	Check(Feed(ledger, "late arrival one", 1000, report_number) == YYERROR_WRITE_OVERFLOW_REPORT && report_number == YYERROR_MAX_DISTINCT + 1,
++		"overflow: with the table full, a brand new message STILL earns a full report");
++	ledger.FinishReport(report_number, true, 1);
++
++	Check(ledger.m_RecordCount == YYERROR_MAX_DISTINCT && ledger.m_Counters.m_Distinct == YYERROR_MAX_DISTINCT,
++		"overflow: the table did not grow");
++	Check(Feed(ledger, "late arrival one", 1001, report_number) == YYERROR_OVERFLOW_SUPPRESSED && report_number == 0,
++		"overflow: the same late message again is only counted");
++	Check(Feed(ledger, "late arrival two", 1002, report_number) == YYERROR_OVERFLOW_SUPPRESSED,
++		"overflow control: a second new message inside the interval is only counted (output stays bounded)");
++	Check(Feed(ledger, "late arrival two", 1000 + YYERROR_OVERFLOW_REPORT_INTERVAL_MS - 1, report_number) == YYERROR_OVERFLOW_SUPPRESSED,
++		"overflow control: ...right up to the last millisecond of the interval");
++	Check(Feed(ledger, "late arrival two", 1000 + YYERROR_OVERFLOW_REPORT_INTERVAL_MS, report_number) == YYERROR_WRITE_OVERFLOW_REPORT,
++		"overflow: once the interval has passed, a new late message earns a report again");
++	ledger.FinishReport(report_number, true, 1);
++
++	Check(Feed(ledger, DistinctMessage(3), 1003, report_number) == YYERROR_REPEAT,
++		"control: a message that is in the table is still a plain repeat when the table is full");
++	Check(ledger.m_Counters.m_OverflowHits == 5 && ledger.m_Counters.m_OverflowSuppressed == 3,
++		"overflow: hits and suppressed hits are counted");
++
++	Check(YYErrorWantsReport(YYERROR_WRITE_REPORT) && YYErrorWantsReport(YYERROR_WRITE_OVERFLOW_REPORT),
++		"dispositions: both kinds of report request take the report path");
++	Check(!YYErrorWantsReport(YYERROR_REPEAT) && !YYErrorWantsReport(YYERROR_DEFERRED)
++		&& !YYErrorWantsReport(YYERROR_OVERFLOW_SUPPRESSED) && !YYErrorWantsReport(YYERROR_BUSY),
++		"dispositions control: everything else takes the count-only path");
++
++	// A log that refuses every write must not turn each overflow error into a report attempt.
++	YYErrorLedger refusing = {};
++	for (size_t i = 0; i < YYERROR_MAX_DISTINCT; i++)
++	{
++		Feed(refusing, DistinctMessage(i), 0, report_number);
++		refusing.FinishReport(report_number, true, 1);
++	}
++
++	Feed(refusing, "late arrival one", 0, report_number);
++	refusing.FinishReport(report_number, false, 1);
++	Check(Feed(refusing, "late arrival one", 1, report_number) == YYERROR_OVERFLOW_SUPPRESSED,
++		"overflow: a FAILED overflow report is not retried before the interval has passed");
++	Check(Feed(refusing, "late arrival one", YYERROR_OVERFLOW_REPORT_INTERVAL_MS, report_number) == YYERROR_WRITE_OVERFLOW_REPORT,
++		"overflow control: ...and is retried after it, because it was never really reported");
++}
++
++static void TestOverflowSlotRemembersItsLastReport()
++{
++	YYErrorLedger ledger = {};
++	uint64_t report_number = 0;
++	FillTable(ledger, 0);
++
++	Feed(ledger, "late arrival one", 0, report_number);
++	ledger.FinishReport(report_number, true, 1);
++
++	// Every check below is made AFTER the interval, so the time limit is not what suppresses.
++	const uint64_t after_interval = YYERROR_OVERFLOW_REPORT_INTERVAL_MS;
++	Check(Feed(ledger, "late arrival one", after_interval, report_number) == YYERROR_OVERFLOW_SUPPRESSED && report_number == 0,
++		"overflow: the message the slot reported last is NOT reported again once the interval has passed");
++	Check(Feed(ledger, "late arrival one", after_interval * 100, report_number) == YYERROR_OVERFLOW_SUPPRESSED,
++		"overflow: ...however long after - one repeating late message costs one report, not one per interval");
++	Check(Feed(ledger, "late arrival two", after_interval, report_number) == YYERROR_WRITE_OVERFLOW_REPORT,
++		"overflow control: at that same time a DIFFERENT late message does earn a report");
++
++	// "Reported" belongs to the message, not to the slot: this report fails...
++	ledger.FinishReport(report_number, false, 1);
++	Check(!ledger.m_Records[YYERROR_OVERFLOW_SLOT].m_Reported,
++		"overflow: the slot does not stay 'reported' on the strength of the PREVIOUS message's report");
++	Check(Feed(ledger, "late arrival two", after_interval * 2, report_number) == YYERROR_WRITE_OVERFLOW_REPORT,
++		"overflow: ...so the message whose report failed is retried after the interval");
++	ledger.FinishReport(report_number, true, 1);
++	Check(Feed(ledger, "late arrival two", after_interval * 3, report_number) == YYERROR_OVERFLOW_SUPPRESSED,
++		"overflow control: once that retry was written, the message is suppressed like any reported one");
++}
++
++static void TestOverflowDefersToReportInFlight()
++{
++	// The table is full, and its last message's first report failed - so that message still earns one.
++	YYErrorLedger ledger = {};
++	uint64_t report_number = 0;
++	for (size_t i = 0; i < YYERROR_MAX_DISTINCT; i++)
++	{
++		Feed(ledger, DistinctMessage(i), 0, report_number);
++		ledger.FinishReport(report_number, i + 1 < YYERROR_MAX_DISTINCT, 1);
++	}
++
++	const uint64_t later = YYERROR_OVERFLOW_REPORT_INTERVAL_MS * 10;
++	uint64_t in_flight_number = 0;
++	Check(Feed(ledger, DistinctMessage(YYERROR_MAX_DISTINCT - 1), later, in_flight_number) == YYERROR_WRITE_REPORT,
++		"overflow deferral (setup): a table message's retry is now in flight");
++
++	const size_t in_flight_record = ledger.m_InFlightRecord;
++	Check(Feed(ledger, "late arrival one", later + 1, report_number) == YYERROR_DEFERRED && report_number == 0,
++		"overflow deferral: a new late message, with the interval long past, is deferred while a report is in flight");
++	Check(ledger.m_ReportInFlight && ledger.m_InFlightReportNumber == in_flight_number && ledger.m_InFlightRecord == in_flight_record,
++		"overflow deferral: ...and the report in flight was left exactly as it was");
++	Check(ledger.FinishReport(in_flight_number, true, 1) && ledger.m_Records[in_flight_record].m_Reported,
++		"overflow deferral: the in-flight report's own finish is still accepted, for its own record");
++	Check(Feed(ledger, "late arrival one", later + 2, report_number) == YYERROR_WRITE_OVERFLOW_REPORT,
++		"overflow deferral control: with nothing in flight, the same late message earns its report");
++}
++
++static void TestMostFrequent()
++{
++	YYErrorLedger ledger = {};
++	uint64_t report_number = 0;
++
++	Check(ledger.MostFrequent() == nullptr,
++		"most frequent control: an empty ledger has none");
++
++	for (int i = 0; i < 3; i++)
++	{
++		if (YYErrorWantsReport(Feed(ledger, "alpha failed", i, report_number)))
++			ledger.FinishReport(report_number, true, 1);
++	}
++	for (int i = 0; i < 5; i++)
++	{
++		if (YYErrorWantsReport(Feed(ledger, "beta failed", 10 + i, report_number)))
++			ledger.FinishReport(report_number, true, 1);
++	}
++
++	const YYErrorRecord* most_frequent = ledger.MostFrequent();
++	Check(most_frequent == &ledger.m_Records[1] && most_frequent->m_Count == 5 && most_frequent->m_ReportNumber == 2,
++		"most frequent: the record seen most often is returned, with the number of its report");
++
++	for (int i = 0; i < 3; i++)
++		Feed(ledger, "alpha failed", 20 + i, report_number);
++
++	most_frequent = ledger.MostFrequent();
++	Check(most_frequent == &ledger.m_Records[0] && most_frequent->m_Count == 6 && most_frequent->m_ReportNumber == 1,
++		"most frequent control: once another record overtakes it, that one is returned instead");
++}
++
++static void TestLostReportExpires()
++{
++	YYErrorLedger ledger = {};
++	uint64_t lost_number = 0;
++	uint64_t report_number = 0;
++
++	Feed(ledger, "alpha failed", 5000, lost_number);
++	// ...and FinishReport is never called: the builder's thread is gone.
++
++	Check(Feed(ledger, "beta failed", 5000 + YYERROR_REPORT_EXPIRY_MS - 1, report_number) == YYERROR_DEFERRED,
++		"expiry control: just before the expiry time, the in-flight report still defers others");
++	Check(Feed(ledger, "beta failed", 4000, report_number) == YYERROR_DEFERRED,
++		"expiry control: a clock reading older than the in-flight stamp does not read as expired");
++	Check(Feed(ledger, "beta failed", 5000 + YYERROR_REPORT_EXPIRY_MS, report_number) == YYERROR_WRITE_REPORT,
++		"expiry: a report whose builder never came back stops blocking the others");
++	Check(ledger.m_Counters.m_ExpiredReports == 1 && ledger.m_Counters.m_ReportFailures == 1,
++		"expiry: the lost report is counted as expired and as a failure");
++	Check(!ledger.FinishReport(lost_number, true, 7000) && ledger.m_ReportInFlight && ledger.m_InFlightReportNumber == report_number
++		&& ledger.m_Counters.m_StaleFinishes == 1,
++		"stale finish: a late finish for the expired report does not finish the one in flight, and is counted");
++	Check(ledger.m_Counters.m_StaleWritten == 1 && ledger.m_Records[0].m_Reported && !ledger.m_Records[1].m_Reported,
++		"stale finish: it WAS written, so its own record is marked reported - and only its own");
++	Check(ledger.m_Counters.m_ReportsWritten == 0 && ledger.m_Counters.m_ReportFailures == 1,
++		"stale finish: the failure counted at expiry stands; stale_written is what says the report exists");
++	Check(ledger.FinishReport(report_number, true, 1) && !ledger.m_ReportInFlight,
++		"expiry control: the finish that matches the report in flight is accepted");
++	Check(ledger.m_Counters.m_ReportTicksTotal == 7001 && ledger.m_Counters.m_ReportTicksMax == 7000,
++		"stale finish: the slowest report's time is in the totals, not left out of them");
++	Check(Feed(ledger, "alpha failed", 5000 + YYERROR_REPORT_EXPIRY_MS + 1, report_number) == YYERROR_REPEAT,
++		"stale finish: the message whose report turned up late is a plain repeat from then on");
++
++	// Control: a late finish that says NOT written marks nothing.
++	YYErrorLedger unwritten = {};
++	Feed(unwritten, "alpha failed", 0, lost_number);
++	Feed(unwritten, "beta failed", YYERROR_REPORT_EXPIRY_MS, report_number);
++	unwritten.FinishReport(lost_number, false, 1);
++	unwritten.FinishReport(report_number, true, 1);
++	Check(unwritten.m_Counters.m_StaleFinishes == 1 && unwritten.m_Counters.m_StaleWritten == 0 && !unwritten.m_Records[0].m_Reported,
++		"stale finish control: a late finish that was NOT written marks no record reported");
++	Check(Feed(unwritten, "alpha failed", YYERROR_REPORT_EXPIRY_MS + 1, report_number) == YYERROR_WRITE_REPORT,
++		"stale finish control: ...so that message is retried");
++
++	// Control: the record was given a new attempt in the meantime; the old number no longer speaks for it.
++	YYErrorLedger retried = {};
++	uint64_t second_attempt = 0;
++	Feed(retried, "alpha failed", 0, lost_number);
++	Check(Feed(retried, "alpha failed", YYERROR_REPORT_EXPIRY_MS, second_attempt) == YYERROR_WRITE_REPORT && second_attempt == 2,
++		"stale finish (setup): the expired message gets its second attempt");
++	Check(!retried.FinishReport(lost_number, true, 1) && !retried.m_Records[0].m_Reported && retried.m_InFlightReportNumber == second_attempt,
++		"stale finish control: a late finish for attempt 1 does not speak for the record while attempt 2 is in flight");
++}
++
++static void TestForwarding()
++{
++	const char* with_percent = "100% of %s went wrong at %d%%, see %n";
++	const char* plain = "Unable to find any instance for object index '257087'";
++
++	g_StubCalls = 0;
++	Check(YYErrorForward(StubTrampoline, with_percent) && g_StubCalls == 1,
++		"forward: the original routine is called exactly once");
++	Check(g_StubExpansion == with_percent,
++		"target: a message containing '%' reaches the runner byte-identical");
++	Check(g_StubFormat == "%s",
++		"forward: the text travels as an argument of \"%s\", never in the format slot");
++
++	YYErrorForward(StubTrampoline, plain);
++	Check(g_StubExpansion == plain,
++		"forward: a message without '%' reaches the runner byte-identical too");
++
++	// What upstream does: the text goes in the format slot. "%%" is the one '%' sequence that is
++	// safe to run through printf with no arguments, and it is enough to show the text changes.
++	StubTrampoline("progress 100%% done");
++	Check(g_StubExpansion != "progress 100%% done",
++		"control: the same stub DOES see a difference when text is passed in the format slot");
++
++	g_StubCalls = 0;
++	Check(!YYErrorForward(nullptr, plain) && g_StubCalls == 0,
++		"forward control: with no routine, nothing is called and the caller is told");
++}
++
++static void TestExpansion()
++{
++	char stack_buffer[64];
++	std::string heap_buffer;
++
++	YYErrorText text = Expand(stack_buffer, sizeof(stack_buffer), heap_buffer, "object index '%d' in %s", 257087, "room");
++	Check(std::string(text.m_Text, text.m_Length) == "object index '257087' in room" && text.m_Text == stack_buffer,
++		"expand: a short message is expanded in the stack buffer (no heap)");
++
++	const std::string long_argument(300, 'x');
++	text = Expand(stack_buffer, sizeof(stack_buffer), heap_buffer, "<%s>", long_argument.c_str());
++	Check(text.m_Length == 302 && text.m_Text != stack_buffer && text.m_Fallback == YYERROR_TEXT_COMPLETE && std::string(text.m_Text) == "<" + long_argument + ">",
++		"expand control: a message too long for the stack buffer is expanded in full on the heap");
++
++	text = Expand(stack_buffer, sizeof(stack_buffer), heap_buffer, nullptr);
++	Check(text.m_Length == 0 && text.m_Text[0] == '\0',
++		"expand: a null format yields an empty, terminated message");
++
++	const std::string exactly_fits(sizeof(stack_buffer) - 1, 'y');
++	text = Expand(stack_buffer, sizeof(stack_buffer), heap_buffer, "%s", exactly_fits.c_str());
++	Check(text.m_Text == stack_buffer && text.m_Length == sizeof(stack_buffer) - 1 && text.m_Fallback == YYERROR_TEXT_COMPLETE,
++		"expand: a message that exactly fills the stack buffer stays there, complete");
++}
++
++static void TestExpansionFallbacks()
++{
++	char small_buffer[8];
++
++	// Too long for the stack, and the heap refuses: the caller must be told the text is cut.
++	TestHeapBuffer refusing_heap;
++	refusing_heap.m_RefuseToGrow = true;
++	YYErrorText text = Expand(small_buffer, sizeof(small_buffer), refusing_heap, "%s", "0123456789");
++	Check(text.m_Fallback == YYERROR_TEXT_TRUNCATED && text.m_Text == small_buffer && text.m_Length == sizeof(small_buffer) - 1
++		&& std::string(text.m_Text) == "0123456",
++		"fallback: heap refused - the text is the terminated, cut stack copy, and is flagged TRUNCATED");
++
++	TestHeapBuffer willing_heap;
++	text = Expand(small_buffer, sizeof(small_buffer), willing_heap, "%s", "0123456789");
++	Check(text.m_Fallback == YYERROR_TEXT_COMPLETE && text.m_Text != small_buffer && std::string(text.m_Text, text.m_Length) == "0123456789",
++		"fallback control: the same message with a willing heap is complete and NOT flagged");
++
++	// A wide string the C locale cannot convert makes vsnprintf give up (MEASURED on the build host's
++	// UCRT: it returns -1). The format's own text is handed on, and the caller must be told that too.
++	char stack_buffer[64];
++	std::string heap_buffer;
++	const wchar_t unconvertible[] = { static_cast<wchar_t>(0x4E2D), 0 };
++	text = Expand(stack_buffer, sizeof(stack_buffer), heap_buffer, "bad %ls here", unconvertible);
++	Check(text.m_Fallback == YYERROR_TEXT_FORMAT_UNEXPANDABLE && std::string(text.m_Text, text.m_Length) == "bad %ls here",
++		"fallback: a format vsnprintf cannot expand is handed on as it stands, and is flagged UNEXPANDABLE");
++
++	text = Expand(stack_buffer, sizeof(stack_buffer), heap_buffer, "bad %ls here", L"ok");
++	Check(text.m_Fallback == YYERROR_TEXT_COMPLETE && std::string(text.m_Text, text.m_Length) == "bad ok here",
++		"fallback control: the same format with a convertible argument expands and is NOT flagged");
++}
++
++static void TestGate()
++{
++	YYErrorGate gate = {};
++	YYErrorLedger ledger = {};
++	uint64_t report_number = 0;
++
++	Check(gate.TryEnter(100),
++		"gate: a free gate is entered");
++	Check(!gate.TryEnter(100) && gate.m_Misses.load() == 1,
++		"gate control: a held gate refuses after a bounded spin instead of waiting, and counts the miss");
++
++	Check(YYErrorClassifyGated(gate, ledger, 100, SignatureOf("alpha failed"), 0, report_number) == YYERROR_BUSY
++		&& report_number == 0 && ledger.m_Counters.m_TotalErrors == 0 && gate.m_Misses.load() == 2,
++		"gate: a caller that cannot get in takes the count-only path and leaves the ledger untouched");
++
++	gate.Leave();
++
++	Check(YYErrorClassifyGated(gate, ledger, 100, SignatureOf("alpha failed"), 0, report_number) == YYERROR_WRITE_REPORT
++		&& ledger.m_Counters.m_TotalErrors == 1,
++		"gate control: once the gate is free, the same call is classified normally");
++	Check(gate.TryEnter(0),
++		"gate: the gated classify left the gate free behind it");
++}
++
++static void TestSummarySchedule()
++{
++	Check(YYErrorSummaryIsDue(5, 0, 0, 0),
++		"summary: the first activity is summarised at once");
++
++	const uint64_t next_allowed = YYErrorNextSummaryMs(1000, YYERROR_SUMMARY_INTERVAL_MS);
++	Check(next_allowed == 1000 + YYERROR_SUMMARY_INTERVAL_MS,
++		"summary: the next line is allowed one interval after the last");
++
++	Check(!YYErrorSummaryIsDue(9, 5, next_allowed - 1, next_allowed),
++		"summary control: counters changed, but the interval has not passed - no line");
++	Check(YYErrorSummaryIsDue(9, 5, next_allowed, next_allowed),
++		"summary: counters changed and the interval has passed - one line");
++	Check(!YYErrorSummaryIsDue(9, 9, next_allowed + 86400000, next_allowed),
++		"summary control: nothing changed since the last line - no line, however long ago it was");
++	Check(YYErrorNextSummaryMs(UINT64_MAX - 5, YYERROR_SUMMARY_INTERVAL_MS) == UINT64_MAX,
++		"summary: the schedule saturates instead of wrapping");
++
++	// The ledger could not be entered when the line was due: look again after the retry delay, not every frame.
++	const uint64_t retry_at = YYErrorNextSummaryMs(next_allowed, YYERROR_SUMMARY_RETRY_MS);
++	Check(!YYErrorSummaryIsDue(9, 5, retry_at - 1, retry_at),
++		"summary control: after a refused attempt, the frames before the retry time do not try again");
++	Check(YYErrorSummaryIsDue(9, 5, retry_at, retry_at) && retry_at - next_allowed < YYERROR_SUMMARY_INTERVAL_MS,
++		"summary: the retry comes after the retry delay, well inside one interval");
++}
++
++int main()
++{
++	static_assert(std::is_trivially_destructible_v<YYErrorLedger>, "the ledger must have no destructor to run at process exit");
++	static_assert(std::is_trivially_destructible_v<YYErrorGate>, "the gate must have no destructor to run at process exit");
++
++	TestSignature();
++	TestFirstSightingAndRepeats();
++	TestDeferred();
++	TestFailedReportIsRetriedOnce();
++	TestTableFillsThenOverflowSlot();
++	TestOverflowSlotRemembersItsLastReport();
++	TestOverflowDefersToReportInFlight();
++	TestMostFrequent();
++	TestLostReportExpires();
++	TestForwarding();
++	TestExpansion();
++	TestExpansionFallbacks();
++	TestGate();
++	TestSummarySchedule();
++
++	printf("\n%d check(s), %d failure(s)\n", g_Checks, g_Failures);
++	return g_Failures ? 1 : 0;
++}
+diff --git a/YYToolkit/source/YYTK/Module Interface/Interface.hpp b/YYToolkit/source/YYTK/Module Interface/Interface.hpp
+index f2c664d..abfe519 100644
+--- a/YYToolkit/source/YYTK/Module Interface/Interface.hpp	
++++ b/YYToolkit/source/YYTK/Module Interface/Interface.hpp	
+@@ -156,6 +156,57 @@ namespace YYTK
+ 
+ 		size_t YkDetermineFunctionEntrySize();
+ 
++		// Whether YkExtractFunctionEntry has an array to read - it dereferences both pointers unchecked.
++		// Not virtual, and this header is private to the DLL: the plugin-facing interface is unchanged.
++		bool YkHasFunctionsArray() const
++		{
++			return m_FunctionsArray && *m_FunctionsArray && m_FunctionEntrySize;
++		}
++
++		// A raw look at one slot of the functions array, for a caller that has to judge the slot
++		// BEFORE YkExtractFunctionEntry builds a std::string from whatever its name pointer holds.
++		// Reads the slot itself and nothing it points to. NameReference stays null when the name
++		// is embedded in the slot (RFunctionStringFull). Returns false if there is no array to look at.
++		bool YkPeekFunctionEntry(
++			IN size_t Index,
++			OUT bool& NameIsReference,
++			OUT const char*& NameReference,
++			OUT TRoutine& Routine
++		)
++		{
++			NameIsReference = false;
++			NameReference = nullptr;
++			Routine = nullptr;
++
++			if (!YkHasFunctionsArray())
++				return false;
++
++			RFunction* functions_array = *m_FunctionsArray;
++			if (m_FunctionEntrySize == sizeof(RFunctionStringRef))
++			{
++				const RFunctionStringRef& function_entry = functions_array->GetIndexReferential(Index);
++
++				NameIsReference = true;
++				NameReference = function_entry.m_Name;
++				Routine = function_entry.m_Routine;
++				return true;
++			}
++
++			if (m_FunctionEntrySize == sizeof(RFunctionStringFull))
++			{
++				Routine = functions_array->GetIndexFull(Index).m_Routine;
++				return true;
++			}
++
++			return false;
++		}
++
++		// Whether GetScriptData has a runner routine to call at all.
++		bool YkHasScriptDataRoutine() const
++		{
++			return m_GetScriptData != nullptr;
++		}
++
+ 		// === Interface Functions ===
+ 		virtual Aurie::AurieStatus Create() override final;
+ 
+diff --git a/YYToolkit/source/YYTK/Module Internals/Console/Console.cpp b/YYToolkit/source/YYTK/Module Internals/Console/Console.cpp
+index 4a2cb55..2dbdee7 100644
+--- a/YYToolkit/source/YYTK/Module Internals/Console/Console.cpp	
++++ b/YYToolkit/source/YYTK/Module Internals/Console/Console.cpp	
+@@ -77,6 +77,37 @@ namespace YYTK
+ 		g_LogFile.flush();
+ 	}
+ 
++	bool CmLogIsWritable()
++	{
++		// A stream that never opened (read-only game directory) or that has latched an error (full
++		// disk) takes nothing more. HkYYError asks BEFORE it builds a report, so that a log which
++		// cannot take the report does not cost the game thread a stacktrace and a symbol pass for it.
++		return g_LogFile.is_open() && g_LogFile.good();
++	}
++
++	bool CmWriteLogOutputRaw(
++		IN std::string_view Text
++	)
++	{
++		// Text goes out verbatim. CmWriteLogOutput treats what it is given as a printf format and
++		// re-expands it into a 4096-byte buffer: a '%' in the text is undefined behaviour there, and
++		// anything of 4096 bytes or more is replaced by "<string too long to print>". A YYError
++		// report carries the runner's own message, and nothing keeps it shorter than that.
++		//
++		// INHERITED: like CmWriteLogOutput, this writes to g_LogFile with no synchronisation.
++		// Upstream's logging is not thread-safe, and no lock is added here on purpose: a lock in
++		// the logger is one more thing a thread can be holding when ExitProcess stops it.
++		if (!CmLogIsWritable())
++			return false;
++
++		g_LogFile.write(Text.data(), static_cast<std::streamsize>(Text.size()));
++		g_LogFile.put('\n');
++		g_LogFile.flush();
++
++		// Callers use this to decide whether the text really reached the log.
++		return g_LogFile.good();
++	}
++
+ 	void CmpCloseLogFile()
+ 	{
+ 		g_LogFile.close();
+diff --git a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/GameSymbolWalk.hpp b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/GameSymbolWalk.hpp
+new file mode 100644
+index 0000000..a65757a
+--- /dev/null
++++ b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/GameSymbolWalk.hpp	
+@@ -0,0 +1,242 @@
++#ifndef YYTK_GAME_SYMBOL_WALK_H_
++#define YYTK_GAME_SYMBOL_WALK_H_
++
++// Decisions the game symbol table build makes about what it reads (Hero Siege patch series).
++//
++// The runner's functions array carries no length we can read, so the builtin walk always looks
++// at one slot past the last real entry at the least. Upstream builds a std::string from whatever
++// name pointer that slot holds before anything has looked at it. The checks in this header are
++// what stands between the walk and that pointer, and they are also what words the log lines,
++// so that a walk which ended early or a table that was refused says which of its causes it was.
++//
++// Plain logic: addresses come in as numbers, nothing here knows a YYToolkit or Aurie type.
++// YYToolkit/hs-tests/game_symbol_walk_test.cpp exercises it on the build host, without a game.
++//
++// Only standard headers are included, on purpose - keep it that way, or the host test stops compiling.
++
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++
++#ifndef IN
++#define IN
++#endif
++#ifndef OUT
++#define OUT
++#endif
++
++namespace YYTK
++{
++	// Longer than any builtin function name. ASSUMED: runners that embed the name in the slot
++	// give it 64 bytes, so a referenced name four times that long is taken to be no name at all.
++	constexpr size_t GAME_SYMBOL_MAX_NAME_LENGTH = 256;
++
++	// ImageEnd is one past the last byte (base + SizeOfImage).
++	inline bool GmSymbolAddressInsideImage(
++		IN uintptr_t Address,
++		IN uintptr_t ImageBase,
++		IN uintptr_t ImageEnd
++	)
++	{
++		return Address >= ImageBase && Address < ImageEnd;
++	}
++
++	enum GameSymbolSlotVerdict : int32_t
++	{
++		// The name may be read (NameLength says how much of it) and looked up in the runner.
++		GAME_SYMBOL_SLOT_READABLE = 0,
++		// A null routine: how the walk normally ends, as in upstream. The name is not looked at.
++		GAME_SYMBOL_SLOT_NULL_ROUTINE,
++		// The name pointer does not point into the game image: this is not an entry of the array.
++		GAME_SYMBOL_SLOT_NAME_OUTSIDE_IMAGE,
++		// It does, but no terminator follows within the limit or before the image ends.
++		GAME_SYMBOL_SLOT_NAME_UNTERMINATED
++	};
++
++	// Judges one slot of a functions array whose entries REFERENCE their name (RFunctionStringRef),
++	// from the two pointers stored in the slot itself. Name is dereferenced only once it is known to
++	// point into the image, and never past the image's end.
++	//
++	// The test is structural: YkDetermineFunctionEntrySize already takes "the first name lies in the
++	// image's .rdata" as its proof that names are references, and this asks the same of every slot.
++	// ASSUMED, not measured: every real builtin name of Hero Siege's runner lies in the game image.
++	// If one does not, the walk stops there and the log line says at which slot.
++	//
++	// The ROUTINE is deliberately not part of this verdict: the walk never reads through it, so a
++	// routine outside the image is no danger - see GmSymbolRoutineBelongsInTable.
++	inline GameSymbolSlotVerdict GmSymbolJudgeReferentialSlot(
++		IN const char* Name,
++		IN uintptr_t Routine,
++		IN uintptr_t ImageBase,
++		IN uintptr_t ImageEnd,
++		IN size_t MaximumNameLength,
++		OUT size_t& NameLength
++	)
++	{
++		NameLength = 0;
++
++		if (!Routine)
++			return GAME_SYMBOL_SLOT_NULL_ROUTINE;
++
++		const uintptr_t name_address = reinterpret_cast<uintptr_t>(Name);
++		if (!GmSymbolAddressInsideImage(name_address, ImageBase, ImageEnd))
++			return GAME_SYMBOL_SLOT_NAME_OUTSIDE_IMAGE;
++
++		size_t readable = static_cast<size_t>(ImageEnd - name_address);
++		if (readable > MaximumNameLength)
++			readable = MaximumNameLength;
++
++		const void* terminator = memchr(Name, '\0', readable);
++		if (!terminator)
++			return GAME_SYMBOL_SLOT_NAME_UNTERMINATED;
++
++		NameLength = static_cast<size_t>(static_cast<const char*>(terminator) - Name);
++		return GAME_SYMBOL_SLOT_READABLE;
++	}
++
++	// Whether a routine is worth a place in the table. GmResolveGameSymbolFromAddress only ever
++	// resolves addresses inside the game image, so a key outside it can name nothing; it is left out
++	// and counted. The walk goes on: a slot whose NAME the runner knows is a real entry, whoever
++	// its routine belongs to (a mod may have pointed it at its own code).
++	inline bool GmSymbolRoutineBelongsInTable(
++		IN uintptr_t Routine,
++		IN uintptr_t ImageBase,
++		IN uintptr_t ImageEnd
++	)
++	{
++		return Routine && GmSymbolAddressInsideImage(Routine, ImageBase, ImageEnd);
++	}
++
++	// How the builtin walk came to an end.
++	enum GameSymbolWalkEnd : int32_t
++	{
++		// No functions array is known, so no slot was read.
++		GAME_SYMBOL_WALK_SKIPPED = 0,
++		// The two ends upstream relies on.
++		GAME_SYMBOL_WALK_NULL_ROUTINE,
++		GAME_SYMBOL_WALK_UNKNOWN_NAME,
++		// The ends this series adds: the slot did not look like an entry, and its name was NOT read.
++		GAME_SYMBOL_WALK_NAME_OUTSIDE_IMAGE,
++		GAME_SYMBOL_WALK_NAME_UNTERMINATED,
++		// The array never ended by itself.
++		GAME_SYMBOL_WALK_SLOT_CAP
++	};
++
++	inline GameSymbolWalkEnd GmSymbolWalkEndFromVerdict(
++		IN GameSymbolSlotVerdict Verdict
++	)
++	{
++		switch (Verdict)
++		{
++		case GAME_SYMBOL_SLOT_NULL_ROUTINE:
++			return GAME_SYMBOL_WALK_NULL_ROUTINE;
++		case GAME_SYMBOL_SLOT_NAME_OUTSIDE_IMAGE:
++			return GAME_SYMBOL_WALK_NAME_OUTSIDE_IMAGE;
++		case GAME_SYMBOL_SLOT_NAME_UNTERMINATED:
++			return GAME_SYMBOL_WALK_NAME_UNTERMINATED;
++		default:
++			// A readable slot does not end the walk; what the runner says about its name may.
++			return GAME_SYMBOL_WALK_UNKNOWN_NAME;
++		}
++	}
++
++	// True for the ends that mean "this slot was refused", as opposed to "the array was over".
++	inline bool GmSymbolWalkWasStopped(
++		IN GameSymbolWalkEnd End
++	)
++	{
++		return End == GAME_SYMBOL_WALK_NAME_OUTSIDE_IMAGE || End == GAME_SYMBOL_WALK_NAME_UNTERMINATED;
++	}
++
++	inline const char* GmSymbolWalkEndText(
++		IN GameSymbolWalkEnd End
++	)
++	{
++		switch (End)
++		{
++		case GAME_SYMBOL_WALK_SKIPPED:
++			return "skipped: no functions array is known";
++		case GAME_SYMBOL_WALK_NULL_ROUTINE:
++			return "a null routine";
++		case GAME_SYMBOL_WALK_UNKNOWN_NAME:
++			return "a name the runner does not know";
++		case GAME_SYMBOL_WALK_NAME_OUTSIDE_IMAGE:
++			return "name pointer outside the game image";
++		case GAME_SYMBOL_WALK_NAME_UNTERMINATED:
++			return "name not terminated inside the game image";
++		case GAME_SYMBOL_WALK_SLOT_CAP:
++			return "the slot cap - the array never ended by itself";
++		}
++
++		return "unknown";
++	}
++
++	// A walk that read slots and kept nothing is what the WRONG functions array looks like: its
++	// first entry has a null routine, or a name the runner does not know. Reading "1 slot walked"
++	// as healthy is exactly the mistake the log line has to prevent.
++	inline bool GmSymbolBuiltinWalkLooksWrong(
++		IN GameSymbolWalkEnd End,
++		IN int SlotsWalked,
++		IN int BuiltinsAccepted
++	)
++	{
++		if (End == GAME_SYMBOL_WALK_SKIPPED)
++			return false;
++
++		return SlotsWalked > 0 && BuiltinsAccepted == 0;
++	}
++
++	// Why a table without a single usable script is refused. The three causes call for three
++	// different investigations, so they do not share a sentence.
++	enum GameSymbolScriptRefusal : int32_t
++	{
++		// There is at least one usable script: no refusal.
++		GAME_SYMBOL_SCRIPTS_USABLE = 0,
++		// YYToolkit never located Script_Data: no slot could even be asked for.
++		GAME_SYMBOL_SCRIPTS_NO_LOOKUP_ROUTINE,
++		// Script_Data is known and returned nothing at all - what a build made too early would look like.
++		GAME_SYMBOL_SCRIPTS_NONE_RETURNED,
++		// Scripts came back, and every one had a null m_Functions or m_Name - what a CScript layout
++		// that does not match this runner would look like.
++		GAME_SYMBOL_SCRIPTS_ALL_REJECTED
++	};
++
++	inline GameSymbolScriptRefusal GmSymbolJudgeScriptWalk(
++		IN bool LookupRoutineKnown,
++		IN int ScriptsReturned,
++		IN int ScriptsUsable
++	)
++	{
++		if (ScriptsUsable > 0)
++			return GAME_SYMBOL_SCRIPTS_USABLE;
++
++		if (!LookupRoutineKnown)
++			return GAME_SYMBOL_SCRIPTS_NO_LOOKUP_ROUTINE;
++
++		if (ScriptsReturned <= 0)
++			return GAME_SYMBOL_SCRIPTS_NONE_RETURNED;
++
++		return GAME_SYMBOL_SCRIPTS_ALL_REJECTED;
++	}
++
++	inline const char* GmSymbolScriptRefusalText(
++		IN GameSymbolScriptRefusal Refusal
++	)
++	{
++		switch (Refusal)
++		{
++		case GAME_SYMBOL_SCRIPTS_USABLE:
++			return "scripts are usable";
++		case GAME_SYMBOL_SCRIPTS_NO_LOOKUP_ROUTINE:
++			return "m_GetScriptData is unknown - YYToolkit never located the runner's Script_Data, so no script could be asked for";
++		case GAME_SYMBOL_SCRIPTS_NONE_RETURNED:
++			return "no slot returned a script - Script_Data is known but gave nothing (a build made before the scripts exist would look like this)";
++		case GAME_SYMBOL_SCRIPTS_ALL_REJECTED:
++			return "scripts were returned but 0 were usable - every one had a null m_Functions or m_Name (a CScript layout that does not match this runner would look like this)";
++		}
++
++		return "unknown";
++	}
++}
++
++#endif // YYTK_GAME_SYMBOL_WALK_H_
+diff --git a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic.cpp b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic.cpp
+index d3aeedc..92f074c 100644
+--- a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic.cpp	
++++ b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic.cpp	
+@@ -1,62 +1,187 @@
+ #include "../../Module Internals.hpp"
++#include "GameSymbolWalk.hpp"
++#include <format>
++#include <map>
++#include <memory>
++#include <string>
+ using namespace Aurie;
+ 
+ namespace YYTK
+ {
+ 	// ===== Shared, non-GameMaker-reliant code =====
+ 
+-	std::string GmResolveGameSymbolFromAddress(
+-		IN LPCVOID Address
++	// ===== Game symbol table (Hero Siege patch series) =====
++	// Everything GmResolveGameSymbolFromAddress needs to name an address inside the game image.
++	// Upstream gathered all of it again on every call - that is, once per game frame of every
++	// stacktrace of every YYError: every script, every builtin function (each with a by-name
++	// lookup in the runner), every builtin variable. Here it is gathered once and kept.
++	// MEASURED: nothing yet. What one build costs on Hero Siege is what the
++	// "[hs] game symbol table" log line is there to tell us.
++	struct GameSymbolTable
++	{
++		uintptr_t m_ImageBase = 0;
++		uintptr_t m_ImageEnd = 0;
++		size_t m_ScriptCount = 0;
++		std::string m_GameName;
++		std::map<uintptr_t, std::string> m_Symbols;
++	};
++
++	// Both walks normally end on their own: the script walk when the runner returns no script,
++	// the builtin walk on a null routine or on a name the runner does not know. Neither array
++	// carries a length we can read, so these only stop a walk that has run away.
++	// ASSUMED: no game comes anywhere near them.
++	// The caps bound how FAR a walk goes. What makes the one slot past the end of the functions
++	// array safe to look at is the slot check in GameSymbolWalk.hpp, not the cap.
++	constexpr int GAME_SYMBOL_MAX_SCRIPT_SLOTS = 0x100000;
++	constexpr int GAME_SYMBOL_MAX_BUILTIN_SLOTS = 0x10000;
++	constexpr LONG GAME_SYMBOL_MAX_BUILD_ATTEMPTS = 2;
++
++	// Published once with a compare-exchange and never written again, so readers need no lock,
++	// and no lock is ever held while the builder calls into the runner.
++	// Deliberately never freed: YYError can still fire while the process is tearing down.
++	static PVOID volatile g_GameSymbolTable = nullptr;
++	static volatile LONG g_GameSymbolTableBuildAttempts = 0;
++	static volatile LONG64 g_GameSymbolTableBuildTicks = 0;
++	static volatile LONG g_GameSymbolTableGaveUpLogged = 0;
++
++	// What the two walks were given and what they kept. The log lines are written from this, so
++	// that a refusal or a short walk says what was supplied and not only that it happened.
++	struct GameSymbolBuildStats
++	{
++		bool m_ScriptLookupKnown = false;
++		AurieStatus m_FirstScriptStatus = AURIE_SUCCESS;
++		int m_ScriptSlotsWalked = 0;
++		int m_ScriptsReturned = 0;
++		int m_ScriptsRejected = 0;
++
++		GameSymbolWalkEnd m_BuiltinWalkEnd = GAME_SYMBOL_WALK_SKIPPED;
++		int m_BuiltinSlotsWalked = 0;
++		int m_BuiltinsAccepted = 0;
++		int m_BuiltinsOutsideImage = 0;
++	};
++
++	// Returns null, with Refusal set to the reason, if no usable table could be built. May throw.
++	static std::unique_ptr<GameSymbolTable> GmpBuildGameSymbolTable(
++		OUT const char*& Refusal,
++		OUT GameSymbolBuildStats& Stats
+ 	)
+ 	{
++		Refusal = nullptr;
++		Stats = {};
++
+ 		// Try to get the NT header
+-		const uintptr_t address = reinterpret_cast<uintptr_t>(Address);
+ 		void* image_base = GetModuleHandleW(nullptr);
+ 		void* nt_header_ptr = 0;
+-		if (!AurieSuccess(Internal::PpiGetNtHeader(image_base, nt_header_ptr)))
+-			return "";
++		if (!AurieSuccess(Internal::PpiGetNtHeader(image_base, nt_header_ptr)) || !nt_header_ptr)
++		{
++			Refusal = "the NT header of the game image could not be read";
++			return nullptr;
++		}
+ 
+ 		PIMAGE_NT_HEADERS nt_header = static_cast<PIMAGE_NT_HEADERS>(nt_header_ptr);
+-		if (address < reinterpret_cast<uintptr_t>(image_base))
+-			return "";
+ 
+-		if (address > reinterpret_cast<uintptr_t>(image_base) + nt_header->OptionalHeader.SizeOfImage)
+-			return "";
++		// Owned here until it is handed back, so a throw half way through frees it instead of leaking it.
++		std::unique_ptr<GameSymbolTable> table = std::make_unique<GameSymbolTable>();
++		table->m_ImageBase = reinterpret_cast<uintptr_t>(image_base);
++		table->m_ImageEnd = table->m_ImageBase + nt_header->OptionalHeader.SizeOfImage;
+ 
+-		std::map<uintptr_t, std::string> symbols;
++		std::map<uintptr_t, std::string>& symbols = table->m_Symbols;
+ 		AurieStatus last_status = AURIE_SUCCESS;
+ 
+ 		// Push all scripts...
++		Stats.m_ScriptLookupKnown = g_ModuleInterface.YkHasScriptDataRoutine();
++
+ 		int script_index = 0;
+-		while (AurieSuccess(last_status))
++		while (AurieSuccess(last_status) && script_index < GAME_SYMBOL_MAX_SCRIPT_SLOTS)
+ 		{
+ 			CScript* current_script = nullptr;
+ 			last_status = g_ModuleInterface.GetScriptData(script_index++, current_script);
+ 
++			if (script_index == 1)
++				Stats.m_FirstScriptStatus = last_status;
++
+ 			if (!current_script)
+ 				continue;
+ 
++			Stats.m_ScriptsReturned++;
++
++			// Upstream dereferences m_Functions, and builds a std::string from m_Name, unchecked.
++			if (!current_script->m_Functions || !current_script->m_Name)
++			{
++				Stats.m_ScriptsRejected++;
++				continue;
++			}
++
+ 			symbols.insert({ reinterpret_cast<uintptr_t>(current_script->m_Functions->m_ScriptFunction), current_script->m_Name });
++			table->m_ScriptCount++;
+ 		}
++		Stats.m_ScriptSlotsWalked = script_index;
+ 
+ 		// Push all built-in function entries...
+-		last_status = AURIE_SUCCESS;
++		// YkExtractFunctionEntry reads the functions array without checking that there is one, so
++		// the walk is skipped if it was never located. It also depends on the array being the
++		// RIGHT one: in this patch series, the functions-array candidate filter has to be applied first.
++		const bool walk_builtin_functions = g_ModuleInterface.YkHasFunctionsArray();
++		Stats.m_BuiltinWalkEnd = walk_builtin_functions ? GAME_SYMBOL_WALK_SLOT_CAP : GAME_SYMBOL_WALK_SKIPPED;
++
+ 		int builtin_func_index = 0;
+-		while (AurieSuccess(last_status))
++		while (walk_builtin_functions && builtin_func_index < GAME_SYMBOL_MAX_BUILTIN_SLOTS)
+ 		{
+-			std::string function_name;
++			const int slot_index = builtin_func_index++;
++
++			// The array has no length, so sooner or later this is a slot past its end. Look at the
++			// slot's own two pointers first: upstream's YkExtractFunctionEntry builds a std::string
++			// from the name pointer straight away, and on a slot of leftovers that is a wild read
++			// which no catch(...) in this /EHsc build would ever see.
++			// INHERITED and not fixed here: the slot itself is still read unchecked, as upstream reads it.
++			bool name_is_reference = false;
++			const char* name_reference = nullptr;
+ 			TRoutine function_ptr = nullptr;
+-			int32_t argument_count = 0;
++			if (!g_ModuleInterface.YkPeekFunctionEntry(slot_index, name_is_reference, name_reference, function_ptr))
++			{
++				Stats.m_BuiltinWalkEnd = GAME_SYMBOL_WALK_SKIPPED;
++				break;
++			}
+ 
+-			g_ModuleInterface.YkExtractFunctionEntry(
+-				builtin_func_index++,
+-				function_name,
+-				function_ptr,
+-				argument_count
+-			);
++			std::string function_name;
++			if (name_is_reference)
++			{
++				size_t name_length = 0;
++				const GameSymbolSlotVerdict verdict = GmSymbolJudgeReferentialSlot(
++					name_reference,
++					reinterpret_cast<uintptr_t>(function_ptr),
++					table->m_ImageBase,
++					table->m_ImageEnd,
++					GAME_SYMBOL_MAX_NAME_LENGTH,
++					name_length
++				);
++
++				if (verdict != GAME_SYMBOL_SLOT_READABLE)
++				{
++					Stats.m_BuiltinWalkEnd = GmSymbolWalkEndFromVerdict(verdict);
++					break;
++				}
+ 
+-			if (!function_ptr)
+-				break;
++				function_name.assign(name_reference, name_length);
++			}
++			else
++			{
++				if (!function_ptr)
++				{
++					Stats.m_BuiltinWalkEnd = GAME_SYMBOL_WALK_NULL_ROUTINE;
++					break;
++				}
++
++				// The name is embedded in the slot: extracting it copies at most 64 bytes out of
++				// the slot itself and follows no pointer.
++				int32_t argument_count = 0;
++				g_ModuleInterface.YkExtractFunctionEntry(
++					slot_index,
++					function_name,
++					function_ptr,
++					argument_count
++				);
++			}
+ 
+ 			// If we go out-of-bounds, this will return an error status, since the function name won't exist.
+ 			int sanity_check_index = 0;
+@@ -65,10 +190,23 @@ namespace YYTK
+ 				&sanity_check_index
+ 			);
+ 
+-			// Insert if we got a valid function
+-			if (AurieSuccess(last_status))
+-				symbols.insert({ reinterpret_cast<uintptr_t>(function_ptr), function_name });
++			if (!AurieSuccess(last_status))
++			{
++				Stats.m_BuiltinWalkEnd = GAME_SYMBOL_WALK_UNKNOWN_NAME;
++				break;
++			}
++
++			// A real entry. Its routine only gets a place in the table if the table can ever resolve to it.
++			if (!GmSymbolRoutineBelongsInTable(reinterpret_cast<uintptr_t>(function_ptr), table->m_ImageBase, table->m_ImageEnd))
++			{
++				Stats.m_BuiltinsOutsideImage++;
++				continue;
++			}
++
++			symbols.insert({ reinterpret_cast<uintptr_t>(function_ptr), function_name });
++			Stats.m_BuiltinsAccepted++;
+ 		}
++		Stats.m_BuiltinSlotsWalked = builtin_func_index;
+ 
+ 		// Push all GV and SV functions
+ 		last_status = AURIE_SUCCESS;
+@@ -81,7 +219,7 @@ namespace YYTK
+ 				variable_information
+ 			);
+ 
+-			if (!variable_information)
++			if (!variable_information || !variable_information->m_Name)
+ 				continue;
+ 
+ 			if (variable_information->m_GetVariable)
+@@ -208,14 +346,187 @@ namespace YYTK
+ 		if (g_ModuleInterface.m_ExceptionRIP)
+ 			symbols.insert({ reinterpret_cast<uintptr_t>(g_ModuleInterface.m_ExceptionRIP), "Extension_PrePrepare" });
+ 
++		// A runner interface entry this runner does not have is a null pointer, and lands on key 0.
++		// Left in, it would become the "nearest symbol" of every address below the first real one.
++		symbols.erase(0);
++
++		// A table without a single usable script is never kept: keeping it would label game code with
++		// the nearest builtin for the whole session. WHY there is none has three different causes,
++		// and the refusal names the one it was (GmSymbolJudgeScriptWalk).
++		const GameSymbolScriptRefusal script_refusal = GmSymbolJudgeScriptWalk(
++			Stats.m_ScriptLookupKnown,
++			Stats.m_ScriptsReturned,
++			static_cast<int>(table->m_ScriptCount)
++		);
++
++		if (script_refusal != GAME_SYMBOL_SCRIPTS_USABLE)
++		{
++			Refusal = GmSymbolScriptRefusalText(script_refusal);
++			return nullptr;
++		}
+ 
+ 		std::wstring game_name_wstring;
+ 		MdGetImageFilename(g_ArInitialImage, game_name_wstring);
+ 
+ 		const std::string game_name_utf8(game_name_wstring.begin(), game_name_wstring.end());
+-		const auto symbol = --symbols.upper_bound(address);
++		table->m_GameName = game_name_utf8;
++
++		return table;
++	}
++
++	bool GmPrepareGameSymbolTable(
++		OUT int64_t& BuildTicks
++	)
++	{
++		BuildTicks = 0;
++
++		if (g_GameSymbolTable)
++			return true;
++
++		if (g_GameSymbolTableBuildAttempts >= GAME_SYMBOL_MAX_BUILD_ATTEMPTS)
++		{
++			// A build that failed twice is not going to succeed on the next error either, and
++			// trying again every time is the very cost this table exists to remove.
++			if (!InterlockedExchange(&g_GameSymbolTableGaveUpLogged, 1))
++			{
++				CmWriteLogOutput(
++					"[hs] game symbol table: given up after %d build attempts - stack frames inside the game image will be described without script names.",
++					static_cast<int>(GAME_SYMBOL_MAX_BUILD_ATTEMPTS)
++				);
++			}
++
++			return false;
++		}
++
++		// Two threads can both pass the check above; only so many of them get a turn.
++		const LONG attempt = InterlockedIncrement(&g_GameSymbolTableBuildAttempts);
++		if (attempt > GAME_SYMBOL_MAX_BUILD_ATTEMPTS)
++			return g_GameSymbolTable != nullptr;
++
++		LARGE_INTEGER build_start = {}, build_end = {}, frequency = {};
++		QueryPerformanceCounter(&build_start);
++
++		std::unique_ptr<GameSymbolTable> built_table;
++		const char* refusal = nullptr;
++		GameSymbolBuildStats stats = {};
++		try
++		{
++			built_table = GmpBuildGameSymbolTable(refusal, stats);
++		}
++		catch (...)
++		{
++			built_table.reset();
++			refusal = "a C++ exception was thrown while the symbols were being collected";
++		}
++
++		QueryPerformanceCounter(&build_end);
++		QueryPerformanceFrequency(&frequency);
++
++		BuildTicks = build_end.QuadPart - build_start.QuadPart;
++		InterlockedExchangeAdd64(&g_GameSymbolTableBuildTicks, BuildTicks);
++
++		const double build_milliseconds = static_cast<double>(BuildTicks) * 1000.0 / static_cast<double>(frequency.QuadPart);
++
++		// A slot that did not look like an entry was refused, and its name was never read. Said on
++		// its own line, whether or not a table came of the build: it is the one end of the walk
++		// that upstream would not have survived.
++		if (GmSymbolWalkWasStopped(stats.m_BuiltinWalkEnd))
++		{
++			CmWriteLogOutput(
++				"[hs] game symbol table: builtin walk stopped at slot %d: %s. The slot's name was not read; %d builtin symbol(s) were accepted before it.",
++				stats.m_BuiltinSlotsWalked - 1,
++				GmSymbolWalkEndText(stats.m_BuiltinWalkEnd),
++				stats.m_BuiltinsAccepted
++			);
++		}
++
++		if (!built_table)
++		{
++			CmWriteLogOutput(
++				"[hs] game symbol table: build attempt %d of %d refused after %.3f ms: %s."
++				" Supplied: script_slots_walked=%d, first GetScriptData status=%s, scripts_returned=%d, scripts_rejected=%d (null m_Functions or m_Name).",
++				static_cast<int>(attempt),
++				static_cast<int>(GAME_SYMBOL_MAX_BUILD_ATTEMPTS),
++				build_milliseconds,
++				refusal ? refusal : "no reason given",
++				stats.m_ScriptSlotsWalked,
++				AurieStatusToString(stats.m_FirstScriptStatus),
++				stats.m_ScriptsReturned,
++				stats.m_ScriptsRejected
++			);
++
++			return g_GameSymbolTable != nullptr;
++		}
++
++		const size_t symbol_count = built_table->m_Symbols.size();
++		const size_t script_count = built_table->m_ScriptCount;
++
++		// Publish. If another thread got there first, keep theirs; ours is freed when built_table goes out of scope.
++		const bool published = !InterlockedCompareExchangePointer(&g_GameSymbolTable, built_table.get(), nullptr);
++
++		// Straight away, before anything that can throw: from here on the table belongs to everybody.
++		if (published)
++			built_table.release();
++
++		// "accepted" is what went into the table; "slots" is only how far the walk looked. A walk
++		// that looked and kept nothing is called out, because a bare slot count reads as healthy.
++		const bool builtin_walk_looks_wrong = GmSymbolBuiltinWalkLooksWrong(
++			stats.m_BuiltinWalkEnd,
++			stats.m_BuiltinSlotsWalked,
++			stats.m_BuiltinsAccepted
++		);
++
++		CmWriteLogOutput(
++			"[hs] game symbol table: built in %.3f ms (attempt %d of %d) - %zu symbols, scripts=%zu usable of %d returned (%d rejected, %d slots),"
++			" builtins=%d accepted of %d slots (%d outside the game image; walk ended on %s)%s%s",
++			build_milliseconds,
++			static_cast<int>(attempt),
++			static_cast<int>(GAME_SYMBOL_MAX_BUILD_ATTEMPTS),
++			symbol_count,
++			script_count,
++			stats.m_ScriptsReturned,
++			stats.m_ScriptsRejected,
++			stats.m_ScriptSlotsWalked,
++			stats.m_BuiltinsAccepted,
++			stats.m_BuiltinSlotsWalked,
++			stats.m_BuiltinsOutsideImage,
++			GmSymbolWalkEndText(stats.m_BuiltinWalkEnd),
++			builtin_walk_looks_wrong ? " - NO builtin symbol was accepted: this is what the wrong functions array looks like, and builtin frames will be labelled with the nearest script" : "",
++			published ? "." : ". Another thread published its table first; this copy was dropped."
++		);
++
++		return true;
++	}
++
++	void GmQueryGameSymbolTableInfo(
++		OUT GameSymbolTableInfo& Info
++	)
++	{
++		Info.m_Published = (g_GameSymbolTable != nullptr);
++		Info.m_BuildAttempts = g_GameSymbolTableBuildAttempts;
++		Info.m_BuildTicks = g_GameSymbolTableBuildTicks;
++	}
++
++	std::string GmResolveGameSymbolFromAddress(
++		IN LPCVOID Address
++	)
++	{
++		const GameSymbolTable* table = static_cast<const GameSymbolTable*>(g_GameSymbolTable);
++		if (!table)
++			return "";
++
++		const uintptr_t address = reinterpret_cast<uintptr_t>(Address);
++		if (address < table->m_ImageBase || address > table->m_ImageEnd)
++			return "";
++
++		// The nearest symbol at or below the address. If every symbol lies above it there is none,
++		// and upstream's unconditional decrement would step off the front of the map.
++		auto symbol = table->m_Symbols.upper_bound(address);
++		if (symbol == table->m_Symbols.begin())
++			return "";
++		--symbol;
+ 
+-		return std::format("{}!{}+0x{:X}", game_name_utf8, symbol->second, address - symbol->first);
++		return std::format("{}!{}+0x{:X}", table->m_GameName, symbol->second, address - symbol->first);
+ 	}
+ 
+ 	std::vector<TargettedInstruction> GmpDisassemble(
+diff --git a/YYToolkit/source/YYTK/Module Internals/Hooks/Hooks.cpp b/YYToolkit/source/YYTK/Module Internals/Hooks/Hooks.cpp
+index 6450d20..c78e2f7 100644
+--- a/YYToolkit/source/YYTK/Module Internals/Hooks/Hooks.cpp	
++++ b/YYToolkit/source/YYTK/Module Internals/Hooks/Hooks.cpp	
+@@ -1,5 +1,9 @@
+ #include "../Module Internals.hpp"
++#include "YYErrorLedger.hpp"
++#include <cstdarg>
++#include <format>
+ #include <stacktrace>
++#include <string>
+ using namespace Aurie;
+ 
+ namespace YYTK
+@@ -14,6 +18,447 @@ namespace YYTK
+ 			return reinterpret_cast<T>(MmGetHookTrampoline(g_ArSelfModule, Name));
+ 		}
+ 
++		// ===== YYError bookkeeping (Hero Siege patch series) =====
++		// Hero Siege raises errors through YYError that it then carries on from, by the hundred
++		// (REPORTED from a session on the previously shipped build: 142 full reports in about two
++		// minutes of play, with the game lagging but running).
++		// Upstream wrote a full, symbolised report for every one of them. Here the first sighting
++		// of a message gets that report and every later one is counted; see YYErrorLedger.hpp.
++		//
++		// What a report costs, and whether the reports were what made the game lag, is NOT
++		// measured yet. Hence the two kinds of log line below: every report ends with its own
++		// "[hs] YYError report cost" line, and HkPresent writes an "[hs] YYError summary: total=..." line.
++		// Each of those two prefixes occurs in the binary ONLY in the format string of its own line,
++		// so finding one in the DLL, or in a log, proves that line and nothing else.
++
++		// How long a caller may spin for the ledger before it gives up and only counts.
++		// ASSUMED to be far below a millisecond; the gate is held for at most
++		// YYERROR_MAX_DISTINCT compares. The "busy" figure in the summary says how often it was not enough.
++		constexpr uint32_t YYERROR_GATE_SPIN_LIMIT = 4000;
++		// Finishing a report is off the hot path, and losing it costs a report: try harder.
++		constexpr uint32_t YYERROR_GATE_FINISH_SPIN_LIMIT = 400000;
++		// MdpGetNextModule's status is ignored by upstream's module walk; this ends it regardless.
++		constexpr size_t YYERROR_MAX_LISTED_MODULES = 256;
++
++		static YYErrorGate g_YYErrorGate = {};
++		// Touched only by whoever is inside g_YYErrorGate.
++		static YYErrorLedger g_YYErrorLedger = {};
++
++		// Moves whenever a counter the summary prints has moved: on every HkYYError call, and again
++		// when a report is finished. It is what tells HkPresent, without entering the gate, that
++		// there is something new to summarise.
++		static volatile LONG64 g_YYErrorActivity = 0;
++		// The schedule of the summary line. Read anywhere; always stored whole (interlocked).
++		static volatile LONG64 g_YYErrorSummarisedActivity = 0;
++		static volatile LONG64 g_YYErrorNextSummaryMs = 0;
++		static volatile LONG g_YYErrorSummaryGateMisses = 0;
++		static volatile LONG g_YYErrorGateStuckLogged = 0;
++
++		// Measurements taken outside the gate, hence interlocked.
++		static volatile LONG64 g_YYErrorCalls = 0;
++		static volatile LONG64 g_YYErrorReentered = 0;
++		static volatile LONG64 g_YYErrorCountOnlyTicks = 0;
++		static volatile LONG64 g_YYErrorReturned = 0;
++		static volatile LONG64 g_YYErrorRunnerTicks = 0;
++		// Errors that could not be handed to the runner at all, because Aurie had no trampoline.
++		static volatile LONG64 g_YYErrorDropped = 0;
++		static volatile LONG g_YYErrorNoTrampolineLogged = 0;
++		// Messages that are not the runner's full text; see YYErrorTextFallback. One log line per kind.
++		static volatile LONG64 g_YYErrorTextTruncated = 0;
++		static volatile LONG64 g_YYErrorTextUnexpandable = 0;
++		static volatile LONG g_YYErrorTextTruncatedLogged = 0;
++		static volatile LONG g_YYErrorTextUnexpandableLogged = 0;
++
++		// Cached like the other hooks cache theirs, except that a null is never kept: the first
++		// error can arrive before Aurie has the trampoline registered, and a cached null would
++		// then be called for the rest of the session.
++		static PVOID volatile g_YYErrorTrampoline = nullptr;
++
++		struct YYErrorReportCost
++		{
++			int64_t m_CaptureTicks;
++			int64_t m_SymbolTableTicks;
++			int64_t m_GameSymbolTicks;
++			int64_t m_OtherSymbolTicks;
++			int64_t m_ModuleListTicks;
++			size_t m_GameFrames;
++			size_t m_OtherFrames;
++		};
++
++		static int64_t HkpQueryTicks()
++		{
++			LARGE_INTEGER counter = {};
++			QueryPerformanceCounter(&counter);
++			return counter.QuadPart;
++		}
++
++		static double HkpTicksToMilliseconds(
++			IN int64_t Ticks
++		)
++		{
++			// The frequency is fixed at boot, so racing first calls store the same value.
++			static volatile LONG64 ticks_per_second = 0;
++			if (!ticks_per_second)
++			{
++				LARGE_INTEGER frequency = {};
++				QueryPerformanceFrequency(&frequency);
++				InterlockedExchange64(&ticks_per_second, frequency.QuadPart ? frequency.QuadPart : 1);
++			}
++
++			return static_cast<double>(Ticks) * 1000.0 / static_cast<double>(ticks_per_second);
++		}
++
++		static std::string HkpBuildYYErrorReport(
++			IN std::string_view RunnerMessage,
++			IN uint64_t ReportNumber,
++			IN bool FromOverflowSlot,
++			OUT YYErrorReportCost& Cost
++		)
++		{
++			Cost = {};
++
++			// Message header. Upstream calls every one of these "a fatal game error"; on Hero Siege
++			// most are not, and that wording has already sent one investigation the wrong way.
++			std::string report = std::format(
++				"\n"
++				"The runner raised an error through YYError (full report #{}).\n"
++				"YYToolkit cannot tell whether the game catches it - treat it as fatal only if the game closed right after.\n"
++				"Later errors with the same text (digit runs ignored) are only counted; see the periodic YYError summary lines.\n",
++				ReportNumber
++			);
++
++			if (FromOverflowSlot)
++			{
++				report.append(
++					std::format(
++						"All {} ledger entries are taken. This report comes from the shared overflow slot, which writes at most one per {} s.\n",
++						YYERROR_MAX_DISTINCT,
++						YYERROR_OVERFLOW_REPORT_INTERVAL_MS / 1000
++					)
++				);
++			}
++
++			report.append(
++				"\n"
++				"Runner-given error information:\n"
++			);
++
++			// Append the runner-provided information
++			report.append(RunnerMessage);
++
++			// Stacktrace header
++			report.append(
++				"\n\n"
++				"Stacktrace:\n"
++				" #\tRetAddr         \tCall Site\n"
++			);
++
++			// Capture stacktrace
++			const int64_t capture_start = HkpQueryTicks();
++			const auto stacktrace = std::stacktrace::current();
++			Cost.m_CaptureTicks = HkpQueryTicks() - capture_start;
++
++			// Once per report at most, not once per frame. If this call is the one that builds
++			// the table, its time is reported on its own, apart from the per-frame lookups.
++			GmPrepareGameSymbolTable(Cost.m_SymbolTableTicks);
++
++			// Log all functions in the trace
++			size_t function_index = 0;
++			for (const auto& entry : stacktrace)
++			{
++				const void* frame_address = entry.native_handle();
++
++				// description will be empty for anything outside the game image.
++				const int64_t resolve_start = HkpQueryTicks();
++				std::string description = GmResolveGameSymbolFromAddress(frame_address);
++				const int64_t resolve_end = HkpQueryTicks();
++
++				if (description.empty())
++				{
++					// Not a game frame: the failed lookup is charged here too, so that
++					// "game symbols" covers game frames and nothing else.
++					description = entry.description();
++					Cost.m_OtherSymbolTicks += HkpQueryTicks() - resolve_start;
++					Cost.m_OtherFrames++;
++				}
++				else
++				{
++					Cost.m_GameSymbolTicks += resolve_end - resolve_start;
++					Cost.m_GameFrames++;
++				}
++
++				report.append(
++					std::format("{:02}\t{:016X}\t{}\n",
++						function_index,
++						reinterpret_cast<uint64_t>(frame_address),
++						description
++					)
++				);
++				function_index++;
++			}
++
++			// More information
++			report.append("\n");
++			report.append("YYTK Version: ");
++			report.append(YYTK_VERSION_STRING);
++			report.append("\n");
++			report.append("Aurie Module List:\n");
++
++			// Loop all modules - this is undocumented and plugins should not use this, but we do.
++			const int64_t modules_start = HkpQueryTicks();
++			AurieModule* current_module = g_ArSelfModule;
++			size_t listed_modules = 0;
++			do
++			{
++				// The method doesn't modify module_name unless it succeeds.
++				std::wstring module_name = L"<unknown>";
++				MdGetImageFilename(current_module, module_name);
++
++				// Convert to UTF-8
++				const std::string module_name_utf8(module_name.begin(), module_name.end());
++
++				const uint64_t module_address = reinterpret_cast<uint64_t>(Internal::MdpGetModuleBaseAddress(current_module));
++				report.append(std::format("- {:016X} {}\n", module_address, module_name_utf8));
++
++				// Go to the next module
++				Internal::MdpGetNextModule(current_module, current_module);
++			} while (current_module != g_ArSelfModule && ++listed_modules < YYERROR_MAX_LISTED_MODULES);
++			Cost.m_ModuleListTicks = HkpQueryTicks() - modules_start;
++
++			return report;
++		}
++
++		// Returns whether the report really reached the log. May throw.
++		static bool HkpWriteYYErrorReport(
++			IN std::string_view RunnerMessage,
++			IN uint64_t ReportNumber,
++			IN bool FromOverflowSlot,
++			IN int64_t EntryTicks
++		)
++		{
++			YYErrorReportCost cost = {};
++			const std::string report = HkpBuildYYErrorReport(RunnerMessage, ReportNumber, FromOverflowSlot, cost);
++
++			const int64_t write_start = HkpQueryTicks();
++			const bool written = CmWriteLogOutputRaw(report);
++			const int64_t write_end = HkpQueryTicks();
++
++			// The whole point of the ledger is a guess about where the time goes. Write the answer down.
++			// "total" runs from the entry of HkYYError to the end of the log write; this line itself is not in it.
++			try
++			{
++				CmWriteLogOutput(
++					"[hs] YYError report cost: report #%llu (%zu bytes, %s) | total %.3f ms | stacktrace capture %.3f ms"
++					" | game symbols %.3f ms over %zu game frame(s) | other symbols %.3f ms over %zu other frame(s)"
++					" | symbol table build %.3f ms in this report | module list %.3f ms | log write %.3f ms",
++					ReportNumber,
++					report.size(),
++					written ? "written" : "NOT written: the log stream refused it",
++					HkpTicksToMilliseconds(write_end - EntryTicks),
++					HkpTicksToMilliseconds(cost.m_CaptureTicks),
++					HkpTicksToMilliseconds(cost.m_GameSymbolTicks),
++					cost.m_GameFrames,
++					HkpTicksToMilliseconds(cost.m_OtherSymbolTicks),
++					cost.m_OtherFrames,
++					HkpTicksToMilliseconds(cost.m_SymbolTableTicks),
++					HkpTicksToMilliseconds(cost.m_ModuleListTicks),
++					HkpTicksToMilliseconds(write_end - write_start)
++				);
++			}
++			catch (...)
++			{
++				// The report itself is out; losing its cost line must not make it count as lost.
++			}
++
++			return written;
++		}
++
++		static void HkpWriteYYErrorSummary(
++			IN const YYErrorCounters& Counters,
++			IN uint64_t TopReportNumber,
++			IN uint64_t TopCount
++		)
++		{
++			GameSymbolTableInfo symbol_table = {};
++			GmQueryGameSymbolTableInfo(symbol_table);
++
++			// Cumulative since the game started.
++			// total = every HkYYError call; total - busy - reentered of them went through the ledger.
++			// report_failures, expired, stale, busy, dropped, truncated and unexpandable should read 0
++			// in a healthy session; they are here so that a ledger which has quietly stopped reporting,
++			// or a text that is not the runner's, shows up in the log.
++			// stale = finishes of reports that had already expired (each was counted under expired and
++			// report_failures when it expired); stale_written = how many of those are in the log after
++			// all. Their time IS in report_ms_total/report_ms_max: a report that slow is the finding.
++			// returned/runner_ms only move if the runner's YYError returns to us instead of unwinding
++			// through us - which of the two it does is NOT known, and this is how we find out.
++			// dropped is the other reason returned can stand still: Aurie gave no trampoline, so the
++			// runner's YYError was never called. Read returned= together with dropped=.
++			CmWriteLogOutput(
++				"[hs] YYError summary: total=%lld distinct=%llu/%zu reports=%llu report_failures=%llu overflow_hits=%llu"
++				" report_ms_total=%.3f report_ms_max=%.3f symtab_build_ms=%.3f (%s, %d attempt(s))"
++				" | repeats=%llu variants=%llu deferred=%llu overflow_suppressed=%llu expired=%llu stale=%llu stale_written=%llu"
++				" busy=%llu reentered=%lld truncated=%lld unexpandable=%lld"
++				" count_only_ms=%.3f returned=%lld dropped=%lld runner_ms=%.3f top=report#%llu x%llu",
++				static_cast<long long>(g_YYErrorCalls),
++				Counters.m_Distinct,
++				YYERROR_MAX_DISTINCT,
++				Counters.m_ReportsWritten,
++				Counters.m_ReportFailures,
++				Counters.m_OverflowHits,
++				HkpTicksToMilliseconds(Counters.m_ReportTicksTotal),
++				HkpTicksToMilliseconds(Counters.m_ReportTicksMax),
++				HkpTicksToMilliseconds(symbol_table.m_BuildTicks),
++				symbol_table.m_Published ? "built" : "not built",
++				symbol_table.m_BuildAttempts,
++				Counters.m_Repeats,
++				Counters.m_TextVariants,
++				Counters.m_Deferred,
++				Counters.m_OverflowSuppressed,
++				Counters.m_ExpiredReports,
++				Counters.m_StaleFinishes,
++				Counters.m_StaleWritten,
++				static_cast<unsigned long long>(g_YYErrorGate.m_Misses.load()),
++				static_cast<long long>(g_YYErrorReentered),
++				static_cast<long long>(g_YYErrorTextTruncated),
++				static_cast<long long>(g_YYErrorTextUnexpandable),
++				HkpTicksToMilliseconds(g_YYErrorCountOnlyTicks),
++				static_cast<long long>(g_YYErrorReturned),
++				static_cast<long long>(g_YYErrorDropped),
++				HkpTicksToMilliseconds(g_YYErrorRunnerTicks),
++				TopReportNumber,
++				TopCount
++			);
++		}
++
++		// The text about to be keyed, reported and forwarded is not the runner's full text. Counted
++		// every time, said once per kind. The text itself is NOT put in the line: CmWriteLogOutput
++		// re-expands what it is given into a fixed 4096-byte buffer.
++		static void HkpNoteYYErrorTextFallback(
++			IN YYErrorTextFallback Fallback
++		)
++		{
++			if (Fallback == YYERROR_TEXT_COMPLETE)
++				return;
++
++			const bool truncated = (Fallback == YYERROR_TEXT_TRUNCATED);
++			InterlockedIncrement64(truncated ? &g_YYErrorTextTruncated : &g_YYErrorTextUnexpandable);
++
++			if (InterlockedExchange(truncated ? &g_YYErrorTextTruncatedLogged : &g_YYErrorTextUnexpandableLogged, 1))
++				return;
++
++			try
++			{
++				if (truncated)
++				{
++					CmWriteLogOutput(
++						"[hs] YYError message truncated: the runner's text is longer than %zu bytes and the heap refused a copy of it,"
++						" so the ledger, the report and the runner itself get its first %zu bytes. Said once; truncated= in the summary counts them.",
++						YYERROR_STACK_BUFFER_SIZE - 1,
++						YYERROR_STACK_BUFFER_SIZE - 1
++					);
++				}
++				else
++				{
++					CmWriteLogOutput(
++						"[hs] YYError message not expanded: vsnprintf refused the runner's format, so the format itself, specifiers and all,"
++						" is what the ledger, the report and the runner get. Said once; unexpandable= in the summary counts them."
++					);
++				}
++			}
++			catch (...)
++			{
++			}
++		}
++
++		// Called once per frame from HkPresent. While nothing has moved since the last summary
++		// line, it costs two loads and a compare, and writes nothing.
++		static void HkpYYErrorSummaryTick()
++		{
++			const uint64_t activity = static_cast<uint64_t>(g_YYErrorActivity);
++			if (activity == static_cast<uint64_t>(g_YYErrorSummarisedActivity))
++				return;
++
++			const uint64_t now_ms = GetTickCount64();
++			if (!YYErrorSummaryIsDue(activity, static_cast<uint64_t>(g_YYErrorSummarisedActivity), now_ms, static_cast<uint64_t>(g_YYErrorNextSummaryMs)))
++				return;
++
++			// Copy inside the gate; format and write outside it.
++			if (!g_YYErrorGate.TryEnter(YYERROR_GATE_SPIN_LIMIT))
++			{
++				// Look again in a second, not on the next frame: spinning every frame for a gate that
++				// stays shut would be a per-frame cost of our own making.
++				InterlockedExchange64(&g_YYErrorNextSummaryMs, static_cast<LONG64>(YYErrorNextSummaryMs(now_ms, YYERROR_SUMMARY_RETRY_MS)));
++
++				// A gate that never opens again means its holder is gone for good. Nothing is
++				// classified or summarised from then on, so say so - once - rather than go quiet.
++				if (InterlockedIncrement(&g_YYErrorSummaryGateMisses) >= YYERROR_SUMMARY_GATE_MISS_LIMIT &&
++					!InterlockedExchange(&g_YYErrorGateStuckLogged, 1))
++				{
++					try
++					{
++						CmWriteLogOutput(
++							"[hs] YYError summary unavailable: the ledger gate stayed shut for %d checks in a row, so its holder is presumed gone."
++							" Errors are still forwarded to the runner, but no longer reported or counted per message. total=%lld busy=%llu",
++							static_cast<int>(YYERROR_SUMMARY_GATE_MISS_LIMIT),
++							static_cast<long long>(g_YYErrorCalls),
++							static_cast<unsigned long long>(g_YYErrorGate.m_Misses.load())
++						);
++					}
++					catch (...)
++					{
++					}
++				}
++
++				return;
++			}
++
++			InterlockedExchange(&g_YYErrorSummaryGateMisses, 0);
++
++			// Somebody else may have written the line while we were getting in.
++			const bool still_due = YYErrorSummaryIsDue(
++				activity,
++				static_cast<uint64_t>(g_YYErrorSummarisedActivity),
++				now_ms,
++				static_cast<uint64_t>(g_YYErrorNextSummaryMs)
++			);
++
++			YYErrorCounters counters = {};
++			uint64_t top_report_number = 0;
++			uint64_t top_count = 0;
++			if (still_due)
++			{
++				counters = g_YYErrorLedger.m_Counters;
++
++				const YYErrorRecord* most_frequent = g_YYErrorLedger.MostFrequent();
++				if (most_frequent)
++				{
++					top_report_number = most_frequent->m_ReportNumber;
++					top_count = most_frequent->m_Count;
++				}
++
++				// Whatever arrives from here on is not in the copy. "activity" was read before the
++				// copy was taken, so it will differ from it again: that is owed the next line.
++				InterlockedExchange64(&g_YYErrorSummarisedActivity, static_cast<LONG64>(activity));
++				InterlockedExchange64(&g_YYErrorNextSummaryMs, static_cast<LONG64>(YYErrorNextSummaryMs(now_ms, YYERROR_SUMMARY_INTERVAL_MS)));
++			}
++
++			g_YYErrorGate.Leave();
++
++			if (!still_due)
++				return;
++
++			try
++			{
++				HkpWriteYYErrorSummary(counters, top_report_number, top_count);
++			}
++			catch (...)
++			{
++				// A summary line is never worth taking the game down for. The counters are
++				// cumulative, so the next line carries everything this one would have.
++			}
++		}
++
+ 		LRESULT WINAPI HkWndProc(
+ 			IN HWND WindowHandle,
+ 			IN UINT Message,
+@@ -58,6 +503,9 @@ namespace YYTK
+ 			// decltype apparently doesn't work in x86 bruh
+ 			static auto original_function = GetHookTrampoline<decltype(&HkPresent)>("Present");
+ 
++			// Writes the YYError summary line once it is owed, even if the errors have stopped coming.
++			HkpYYErrorSummaryTick();
++
+ 			FunctionWrapper<HRESULT(IDXGISwapChain*, UINT, UINT)> func_wrapper(
+ 				original_function,
+ 				_this,
+@@ -159,105 +607,174 @@ namespace YYTK
+ 			IN const char* Format,
+ 			IN ...
+ 		)
+-		{	
++		{
++			const int64_t entry_ticks = HkpQueryTicks();
++
+ 			// Parse Format and va_args to get the runner-provided information.
+-			std::string runner_provided_info_formatted;
+-			{
+-				va_list list, copy_of_list;
+-				va_start(list, Format);
+-				va_copy(copy_of_list, list);
++			// The common case fits the stack buffer, so a repeat allocates nothing.
++			char stack_buffer[YYERROR_STACK_BUFFER_SIZE];
++			std::string heap_buffer;
++
++			va_list arguments;
++			va_start(arguments, Format);
++			const YYErrorText runner_message = YYErrorExpandMessage(
++				stack_buffer,
++				sizeof(stack_buffer),
++				heap_buffer,
++				Format,
++				arguments
++			);
++			va_end(arguments);
+ 
+-				// Compute the required size. We use a copy of "list" to prevent the internal stack pointer from being moved.
+-				const int size_required = vsnprintf(nullptr, 0, Format, copy_of_list) + 1;
++			InterlockedIncrement64(&g_YYErrorCalls);
++			InterlockedIncrement64(&g_YYErrorActivity);
+ 
+-				va_end(copy_of_list);
++			HkpNoteYYErrorTextFallback(runner_message.m_Fallback);
+ 
+-				// Allocate memory for the formatted string
+-				char* formatted_cstring = static_cast<char*>(MmAllocateMemory(g_ArSelfModule, size_required));
+-				vsnprintf(formatted_cstring, size_required, Format, list);
+-				va_end(list);
++			// An error raised on this thread while it is already in here - by the runner calls the
++			// symbol table makes, say - is forwarded at once. It is counted, and nothing more.
++			// (thread_local asks nothing new of this DLL. ASSUMED from how MSVC implements them, not
++			// measured: upstream's function-local statics, such as HkPresent's trampoline, are already
++			// guarded through a thread_local epoch.)
++			thread_local bool inside_diagnostics = false;
+ 
+-				runner_provided_info_formatted = formatted_cstring;
++			YYErrorDisposition disposition = YYERROR_BUSY;
++			bool report_written = false;
+ 
+-				MmFreeMemory(g_ArSelfModule, formatted_cstring);
+-				formatted_cstring = nullptr;
++			if (inside_diagnostics)
++			{
++				InterlockedIncrement64(&g_YYErrorReentered);
+ 			}
+-
+-			// Message header
+-			std::string yytk_crash_message =
+-				"\n"
+-				"A fatal game error has occured.\n"
+-				"Runner caught the exception; the exception_unhandled_handler callback has not been invoked.\n"
+-				"\n"
+-				"Runner-given error information:\n";
+-
+-			// Append the runner-provided information
+-			yytk_crash_message.append(runner_provided_info_formatted);
+-
+-			// Stacktrace header
+-			yytk_crash_message.append(
+-				"\n\n"
+-				"Stacktrace:\n"
+-				" #\tRetAddr         \tCall Site\n"
+-			);
+-
+-			// Capture stacktrace
+-			const auto stacktrace = std::stacktrace::current();
+-
+-			// Log all functions in the trace
+-			size_t function_index = 0;
+-			for (auto& entry : stacktrace)
++			else
+ 			{
+-				// description will be empty if resolve_game_symbol fails.
+-				std::string description = GmResolveGameSymbolFromAddress(stacktrace._To_voidptr_array()[function_index]);
+-				if (description.empty())
+-					description = entry.description();
+-
+-				yytk_crash_message.append(
+-					std::format("{:02}\t{:016X}\t{}\n", 
+-						function_index, 
+-						reinterpret_cast<uint64_t>(stacktrace._To_voidptr_array()[function_index]),
+-						description
+-					)
++				inside_diagnostics = true;
++
++				// Look the message up. For a repeat, this is all the work there is: one pass over
++				// the text and at most YYERROR_MAX_DISTINCT compares. No stacktrace, no symbols, no file write.
++				uint64_t report_number = 0;
++				disposition = YYErrorClassifyGated(
++					g_YYErrorGate,
++					g_YYErrorLedger,
++					YYERROR_GATE_SPIN_LIMIT,
++					YYErrorComputeSignature(runner_message.m_Text, runner_message.m_Length),
++					GetTickCount64(),
++					report_number
+ 				);
+-				function_index++;
++
++				// First sighting: the full report, stacktrace and all.
++				if (YYErrorWantsReport(disposition))
++				{
++					try
++					{
++						// Asked BEFORE the report is built. A log that cannot take it (read-only game
++						// directory, full disk) would otherwise cost the game thread a stacktrace, a
++						// symbol pass and a module walk per attempt, for a report nobody can read.
++						// No line can say so - there is no log. FinishReport(false) below counts the
++						// failure, and the ledger gives the message up after the usual two attempts.
++						report_written = CmLogIsWritable() && HkpWriteYYErrorReport(
++							std::string_view(runner_message.m_Text, runner_message.m_Length),
++							report_number,
++							disposition == YYERROR_WRITE_OVERFLOW_REPORT,
++							entry_ticks
++						);
++					}
++					catch (...)
++					{
++						// Diagnostics must never stop the runner from getting its error.
++						// FinishReport(false) below counts it, and it is tried once more.
++						report_written = false;
++
++						try
++						{
++							CmWriteLogOutput(
++								"[hs] YYError report #%llu could not be built: a C++ exception was thrown. Counted as a report failure.",
++								report_number
++							);
++						}
++						catch (...)
++						{
++						}
++					}
++
++					// Only now is the message marked as reported - if it was. Should this miss the gate,
++					// the ledger expires the report by itself (YYERROR_REPORT_EXPIRY_MS) and counts it as failed.
++					if (g_YYErrorGate.TryEnter(YYERROR_GATE_FINISH_SPIN_LIMIT))
++					{
++						g_YYErrorLedger.FinishReport(report_number, report_written, HkpQueryTicks() - entry_ticks);
++						g_YYErrorGate.Leave();
++
++						// The report counters have moved since this call was first counted.
++						InterlockedIncrement64(&g_YYErrorActivity);
++					}
++				}
++
++				inside_diagnostics = false;
+ 			}
+-			
+-			// More information
+-			yytk_crash_message.append("\n");
+-			yytk_crash_message.append("YYTK Version: ");
+-			yytk_crash_message.append(YYTK_VERSION_STRING);
+-			yytk_crash_message.append("\n");
+-			yytk_crash_message.append("Aurie Module List:\n");
+ 
+-			// Loop all modules - this is undocumented and plugins should not use this, but we do.
+-			AurieModule* current_module = g_ArSelfModule;
+-			do
++			// The banner says that something has been logged, so it goes out only on the call that
++			// logged something. Every other call hands the runner exactly the text it would have
++			// had with no YYToolkit loaded. (Upstream appends it every time, having logged every time.)
++			const char* forwarded_text = runner_message.m_Text;
++			std::string message_with_banner;
++			if (report_written)
+ 			{
+-				// The method doesn't modify module_name unless it succeeds.
+-				std::wstring module_name = L"<unknown>";
+-				MdGetImageFilename(current_module, module_name);
+-
+-				// Convert to UTF-8
+-				const std::string module_name_utf8(module_name.begin(), module_name.end());
++				try
++				{
++					message_with_banner.assign(runner_message.m_Text, runner_message.m_Length);
++					message_with_banner.append("\r\n\r\n********************************************\r\n");
++					message_with_banner.append("YYToolkit is loaded. Relevant information has been logged to YYToolkit.log in the game directory.\r\n");
++					message_with_banner.append("Please provide the entire log file to aid in debugging.\r\n");
++					message_with_banner.append("********************************************\r\n");
++
++					forwarded_text = message_with_banner.c_str();
++				}
++				catch (...)
++				{
++					// The runner gets its message without the banner.
++					forwarded_text = runner_message.m_Text;
++				}
++			}
+ 
+-				const uint64_t module_address = reinterpret_cast<uint64_t>(Internal::MdpGetModuleBaseAddress(current_module));
+-				yytk_crash_message.append(std::format("- {:016X} {}\n", module_address, module_name_utf8));
++			const int64_t forward_ticks = HkpQueryTicks();
++			if (!YYErrorWantsReport(disposition))
++				InterlockedExchangeAdd64(&g_YYErrorCountOnlyTicks, forward_ticks - entry_ticks);
+ 
+-				// Go to the next module
+-				Internal::MdpGetNextModule(current_module, current_module);
+-			} while (current_module != g_ArSelfModule);
++			YYErrorRoutine original_function = reinterpret_cast<YYErrorRoutine>(static_cast<PVOID>(g_YYErrorTrampoline));
++			if (!original_function)
++			{
++				original_function = GetHookTrampoline<YYErrorRoutine>("YYError");
++				if (original_function)
++					InterlockedExchangePointer(&g_YYErrorTrampoline, reinterpret_cast<PVOID>(original_function));
++			}
+ 
+-			CmWriteLogOutput(yytk_crash_message);
+-			
+-			std::string yytk_info = "\r\n\r\n********************************************\r\n";
+-			yytk_info.append("YYToolkit is loaded. Relevant information has been logged to YYToolkit.log in the game directory.\r\n");
+-			yytk_info.append("Please provide the entire log file to aid in debugging.\r\n");
+-			yytk_info.append("********************************************\r\n");
++			// The original is called on every path, and always last. Upstream puts the expanded text
++			// in the format slot, where a '%' in it gets expanded a second time; see YYErrorForward.
++			if (!YYErrorForward(original_function, forwarded_text))
++			{
++				// No trampoline means no original to reach: the runner interface entry is this very
++				// hook. Upstream would call the null pointer. Asked for again on the next error.
++				// Said once, counted every time: without dropped=, a session that drops every error
++				// reads in the summary exactly like a runner that unwinds through the hook (returned=0).
++				InterlockedIncrement64(&g_YYErrorDropped);
++				InterlockedIncrement64(&g_YYErrorActivity);
++
++				if (!InterlockedExchange(&g_YYErrorNoTrampolineLogged, 1))
++				{
++					try
++					{
++						CmWriteLogOutput("[hs] YYError: Aurie returned no trampoline for the hook, so the runner's own YYError cannot be reached. The error was counted and dropped. Said once; dropped= in the summary counts them.");
++					}
++					catch (...)
++					{
++					}
++				}
++
++				return;
++			}
+ 
+-			return GetHookTrampoline<decltype(&HkYYError)>("YYError")(
+-				(runner_provided_info_formatted + yytk_info).c_str()
+-			);
++			// Only reached if the runner's YYError returns instead of unwinding through us.
++			InterlockedExchangeAdd64(&g_YYErrorRunnerTicks, HkpQueryTicks() - forward_ticks);
++			InterlockedIncrement64(&g_YYErrorReturned);
+ 		}
+ 
+ 		AurieStatus HkPreinitialize()
+@@ -414,6 +931,13 @@ namespace YYTK
+ 				nullptr
+ 			);
+ 
++			// Upstream discards this status. If the hook did not go in, there will be no report,
++			// no summary and no banner all session - and without this line, nothing to say why.
++			CmWriteLogOutput(
++				"[hs] YYError hook install: MmCreateHook => %s",
++				AurieStatusToString(last_status)
++			);
++
+ 			g_OriginalWindowProc = reinterpret_cast<WNDPROC>(SetWindowLongPtr(
+ 				WindowHandle,
+ 				GWLP_WNDPROC,
+diff --git a/YYToolkit/source/YYTK/Module Internals/Hooks/YYErrorLedger.hpp b/YYToolkit/source/YYTK/Module Internals/Hooks/YYErrorLedger.hpp
+new file mode 100644
+index 0000000..7b3c799
+--- /dev/null
++++ b/YYToolkit/source/YYTK/Module Internals/Hooks/YYErrorLedger.hpp	
+@@ -0,0 +1,582 @@
++#ifndef YYTK_YYERROR_LEDGER_H_
++#define YYTK_YYERROR_LEDGER_H_
++
++// Bookkeeping for HkYYError (Hero Siege patch series).
++//
++// Hero Siege raises errors through YYError that the game then carries on from, over and over.
++// Upstream YYToolkit answers every one of them with a full, symbolised report. The pieces in this
++// header decide which calls still earn that report and which are only counted, and they hold the
++// rule for handing the text back to the runner.
++//
++// Everything here is plain logic: no clock, no file, no YYToolkit or Aurie type. The caller brings
++// the time and does the I/O. That is what lets YYToolkit/hs-tests/yyerror_ledger_test.cpp exercise
++// it on the build host, without a game.
++//
++// Only standard headers are included, on purpose - keep it that way, or the host test stops compiling.
++
++#include <atomic>
++#include <cstdarg>
++#include <cstddef>
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++#include <string>
++
++#if defined(_M_X64) || defined(_M_IX86)
++#include <intrin.h>
++#endif
++
++#ifndef IN
++#define IN
++#endif
++#ifndef OUT
++#define OUT
++#endif
++
++namespace YYTK
++{
++	namespace Hooks
++	{
++		// How many distinct messages can each earn a full report. One more record, the overflow
++		// slot, is shared by every message that arrives after the table has filled up.
++		constexpr size_t YYERROR_MAX_DISTINCT = 32;
++		constexpr size_t YYERROR_OVERFLOW_SLOT = YYERROR_MAX_DISTINCT;
++
++		// A report that could not be written is tried once more, then given up on.
++		constexpr uint8_t YYERROR_MAX_REPORT_ATTEMPTS = 2;
++
++		// The overflow slot cannot tell its messages apart, so it is limited by time instead.
++		constexpr uint64_t YYERROR_OVERFLOW_REPORT_INTERVAL_MS = 30000;
++
++		// A report whose builder never came back (its thread is gone, or it could not get the gate
++		// to say it was done) stops blocking other reports after this long.
++		constexpr uint64_t YYERROR_REPORT_EXPIRY_MS = 30000;
++
++		// The summary line is written at most this often.
++		constexpr uint64_t YYERROR_SUMMARY_INTERVAL_MS = 30000;
++		// If the ledger cannot be entered when a summary is due, look again after this long...
++		constexpr uint64_t YYERROR_SUMMARY_RETRY_MS = 1000;
++		// ...and after this many refusals in a row, say once that the ledger is out of reach.
++		constexpr long YYERROR_SUMMARY_GATE_MISS_LIMIT = 5;
++
++		// Messages up to this size are expanded on the stack, so a repeat allocates nothing.
++		constexpr size_t YYERROR_STACK_BUFFER_SIZE = 1024;
++
++		using YYErrorRoutine = void(*)(
++			IN const char* Format,
++			IN ...
++		);
++
++		// ===== Forwarding =====
++
++		// The runner's YYError is printf-style, and by the time we forward, the text is already
++		// expanded. It therefore always travels as an argument: put in the format slot (which is
++		// what upstream does), any '%' in it would be expanded a second time, against arguments
++		// that are not there.
++		// Returns false, without calling anything, if there is no routine to call.
++		inline bool YYErrorForward(
++			IN YYErrorRoutine Original,
++			IN const char* ExpandedText
++		)
++		{
++			if (!Original)
++				return false;
++
++			Original("%s", ExpandedText ? ExpandedText : "");
++			return true;
++		}
++
++		// ===== Message expansion =====
++
++		// The text handed on is not always what the runner would have produced. When it is not,
++		// the caller is told which way it fell short, so that it can say so in the log.
++		enum YYErrorTextFallback : int32_t
++		{
++			// The full expansion.
++			YYERROR_TEXT_COMPLETE = 0,
++			// Too long for the stack buffer, and the heap refused: the text is cut at the buffer's size.
++			YYERROR_TEXT_TRUNCATED,
++			// vsnprintf could not expand the format: the text is the format itself, specifiers and all.
++			YYERROR_TEXT_FORMAT_UNEXPANDABLE
++		};
++
++		struct YYErrorText
++		{
++			// Always terminated. Points into the caller's stack buffer or heap buffer.
++			const char* m_Text;
++			size_t m_Length;
++			YYErrorTextFallback m_Fallback;
++		};
++
++		// Expands Format/Arguments the way the runner would. Does not throw.
++		// THeapBuffer is std::string in YYToolkit. It is a parameter only so that the host test can
++		// bring one that refuses to grow; it needs resize(), data(), size() and c_str().
++		template <typename THeapBuffer>
++		inline YYErrorText YYErrorExpandMessage(
++			OUT char* StackBuffer,
++			IN size_t StackBufferSize,
++			OUT THeapBuffer& HeapBuffer,
++			IN const char* Format,
++			IN va_list Arguments
++		)
++		{
++			YYErrorText text = { StackBuffer, 0, YYERROR_TEXT_COMPLETE };
++			StackBuffer[0] = '\0';
++
++			if (!Format)
++				return text;
++
++			// vsnprintf consumes its va_list, and a second pass may be needed.
++			va_list copy_of_arguments;
++			va_copy(copy_of_arguments, Arguments);
++			const int size_required = vsnprintf(StackBuffer, StackBufferSize, Format, copy_of_arguments);
++			va_end(copy_of_arguments);
++
++			if (size_required < 0)
++			{
++				// The format could not be expanded. Its own text is the closest thing left.
++				snprintf(StackBuffer, StackBufferSize, "%s", Format);
++				text.m_Length = strlen(StackBuffer);
++				text.m_Fallback = YYERROR_TEXT_FORMAT_UNEXPANDABLE;
++				return text;
++			}
++
++			if (static_cast<size_t>(size_required) < StackBufferSize)
++			{
++				text.m_Length = static_cast<size_t>(size_required);
++				return text;
++			}
++
++			// Too long for the stack. vsnprintf has left a terminated, truncated copy behind,
++			// which is what the caller gets if the heap refuses.
++			text.m_Length = StackBufferSize - 1;
++			text.m_Fallback = YYERROR_TEXT_TRUNCATED;
++			try
++			{
++				HeapBuffer.resize(static_cast<size_t>(size_required) + 1);
++
++				va_copy(copy_of_arguments, Arguments);
++				vsnprintf(HeapBuffer.data(), HeapBuffer.size(), Format, copy_of_arguments);
++				va_end(copy_of_arguments);
++
++				HeapBuffer.resize(static_cast<size_t>(size_required));
++
++				text.m_Text = HeapBuffer.c_str();
++				text.m_Length = HeapBuffer.size();
++				text.m_Fallback = YYERROR_TEXT_COMPLETE;
++			}
++			catch (...)
++			{
++				text.m_Text = StackBuffer;
++			}
++
++			return text;
++		}
++
++		// ===== Message signature =====
++
++		struct YYErrorSignature
++		{
++			// FNV-1a over the text with every run of decimal digits folded to a single '#'.
++			// This is what decides whether two messages are "the same".
++			uint64_t m_Folded;
++			size_t m_FoldedLength;
++			// FNV-1a over the exact bytes. Only used to count how often the digits really differ.
++			uint64_t m_Exact;
++		};
++
++		// Why digits are folded: the one Hero Siege message on record embeds a number
++		// ("Unable to find any instance for object index '257087'"). Whether that number changes
++		// from one error to the next is NOT measured. If it does, keying on the exact text would
++		// give every error its own full report and the ledger would do nothing; folding makes the
++		// cheap path hold either way, and the "variants" counter in the summary reports which it was.
++		// The price: two messages that differ only in a number share one report (the first one's).
++		inline YYErrorSignature YYErrorComputeSignature(
++			IN const char* Text,
++			IN size_t Length
++		)
++		{
++			constexpr uint64_t fnv_offset_basis = 0xCBF29CE484222325ULL;
++			constexpr uint64_t fnv_prime = 0x100000001B3ULL;
++
++			YYErrorSignature signature = { fnv_offset_basis, 0, fnv_offset_basis };
++			bool inside_digits = false;
++
++			for (size_t i = 0; i < Length; i++)
++			{
++				const unsigned char character = static_cast<unsigned char>(Text[i]);
++
++				signature.m_Exact ^= character;
++				signature.m_Exact *= fnv_prime;
++
++				const bool is_digit = (character >= '0' && character <= '9');
++				if (is_digit && inside_digits)
++					continue;
++
++				inside_digits = is_digit;
++				signature.m_Folded ^= is_digit ? static_cast<unsigned char>('#') : character;
++				signature.m_Folded *= fnv_prime;
++				signature.m_FoldedLength++;
++			}
++
++			return signature;
++		}
++
++		// ===== The ledger =====
++
++		enum YYErrorDisposition : int32_t
++		{
++			// Build and write a full report, then call FinishReport with the number handed out.
++			YYERROR_WRITE_REPORT = 0,
++			// The same, for a message that arrived after the table had filled up (the overflow slot).
++			YYERROR_WRITE_OVERFLOW_REPORT,
++			// Known message, already reported (or given up on after two failures): count only.
++			YYERROR_REPEAT,
++			// Would have earned a report, but one is being built right now: count only, try next time.
++			YYERROR_DEFERRED,
++			// The table is full, and the overflow slot reported this same message last time or
++			// reported anything too recently: count only.
++			YYERROR_OVERFLOW_SUPPRESSED,
++			// The ledger could not be entered (see YYErrorGate): count only. Never returned by
++			// YYErrorLedger::Classify itself.
++			YYERROR_BUSY
++		};
++
++		// Everything that does not want a report is the count-only path.
++		inline bool YYErrorWantsReport(
++			IN YYErrorDisposition Disposition
++		)
++		{
++			return Disposition == YYERROR_WRITE_REPORT || Disposition == YYERROR_WRITE_OVERFLOW_REPORT;
++		}
++
++		struct YYErrorRecord
++		{
++			uint64_t m_Signature;
++			uint64_t m_ExactHash;
++			uint64_t m_Count;
++			// Number of the latest report attempt made for this record.
++			uint64_t m_ReportNumber;
++			size_t m_FoldedLength;
++			uint8_t m_Attempts;
++			// Set by FinishReport(Written = true) and by nothing else: a record is never "reported"
++			// on the strength of a report somebody merely intended to write.
++			bool m_Reported;
++		};
++
++		struct YYErrorCounters
++		{
++			uint64_t m_TotalErrors;
++			uint64_t m_Distinct;
++			uint64_t m_ReportAttempts;
++			uint64_t m_ReportsWritten;
++			uint64_t m_ReportFailures;
++			uint64_t m_Repeats;
++			uint64_t m_Deferred;
++			uint64_t m_OverflowHits;
++			uint64_t m_OverflowSuppressed;
++			// Counted sightings whose exact text differed from the first sighting's: the digits varied.
++			uint64_t m_TextVariants;
++			uint64_t m_ExpiredReports;
++			// Finishes that arrived for a report the ledger had already expired (and counted as failed)...
++			uint64_t m_StaleFinishes;
++			// ...and how many of those had really been written: that report is in the log after all.
++			uint64_t m_StaleWritten;
++			// Caller's clock (QueryPerformanceCounter ticks in YYToolkit), hook entry to report written.
++			// Stale finishes are included: a report slow enough to expire is the one worth knowing about.
++			int64_t m_ReportTicksTotal;
++			int64_t m_ReportTicksMax;
++		};
++
++		// Plain data, so a static one is constant-initialised and has no destructor to run while
++		// the process is tearing down (YYError can still fire then). Not synchronised: see YYErrorGate.
++		struct YYErrorLedger
++		{
++			// The last record is the overflow slot.
++			YYErrorRecord m_Records[YYERROR_MAX_DISTINCT + 1];
++			size_t m_RecordCount;
++			YYErrorCounters m_Counters;
++
++			bool m_ReportInFlight;
++			size_t m_InFlightRecord;
++			uint64_t m_InFlightReportNumber;
++			uint64_t m_InFlightSinceMs;
++			uint64_t m_OverflowNextReportMs;
++
++			// The work done here is bounded by YYERROR_MAX_DISTINCT compares, whatever the game
++			// does: no allocation, no I/O, nothing that depends on the number of scripts or frames.
++			YYErrorDisposition Classify(
++				IN const YYErrorSignature& Signature,
++				IN uint64_t NowMs,
++				OUT uint64_t& ReportNumber
++			)
++			{
++				ReportNumber = 0;
++				m_Counters.m_TotalErrors++;
++
++				// Without this, one lost FinishReport would defer every later report for good -
++				// a ledger that says it is working and reports nothing.
++				// (Two threads can read the clock and then enter in the opposite order, so NowMs
++				// may be slightly older than the in-flight stamp; that must not read as "expired".)
++				if (m_ReportInFlight && NowMs >= m_InFlightSinceMs && (NowMs - m_InFlightSinceMs) >= YYERROR_REPORT_EXPIRY_MS)
++				{
++					m_Counters.m_ExpiredReports++;
++					m_Counters.m_ReportFailures++;
++					m_ReportInFlight = false;
++				}
++
++				size_t record_index = m_RecordCount;
++				for (size_t i = 0; i < m_RecordCount; i++)
++				{
++					if (m_Records[i].m_Signature == Signature.m_Folded && m_Records[i].m_FoldedLength == Signature.m_FoldedLength)
++					{
++						record_index = i;
++						break;
++					}
++				}
++
++				// Never seen, and there is still room: remember it.
++				bool first_sighting = false;
++				if (record_index == m_RecordCount && m_RecordCount < YYERROR_MAX_DISTINCT)
++				{
++					YYErrorRecord& new_record = m_Records[m_RecordCount++];
++					new_record = {};
++					new_record.m_Signature = Signature.m_Folded;
++					new_record.m_FoldedLength = Signature.m_FoldedLength;
++					new_record.m_ExactHash = Signature.m_Exact;
++
++					m_Counters.m_Distinct = m_RecordCount;
++					first_sighting = true;
++				}
++
++				if (record_index < YYERROR_MAX_DISTINCT)
++				{
++					YYErrorRecord& record = m_Records[record_index];
++					record.m_Count++;
++
++					if (!first_sighting && record.m_ExactHash != Signature.m_Exact)
++						m_Counters.m_TextVariants++;
++
++					if (record.m_Reported || record.m_Attempts >= YYERROR_MAX_REPORT_ATTEMPTS)
++					{
++						m_Counters.m_Repeats++;
++						return YYERROR_REPEAT;
++					}
++
++					if (m_ReportInFlight)
++					{
++						m_Counters.m_Deferred++;
++						return YYERROR_DEFERRED;
++					}
++
++					record.m_Attempts++;
++					ReportNumber = BeginReport(record_index, NowMs);
++					return YYERROR_WRITE_REPORT;
++				}
++
++				// The table is full and this message is not in it. It must not go unreported just
++				// for arriving late - the error that finally closes the game may well be a new one.
++				YYErrorRecord& overflow = m_Records[YYERROR_OVERFLOW_SLOT];
++				overflow.m_Count++;
++				m_Counters.m_OverflowHits++;
++
++				const bool same_as_last_report =
++					overflow.m_Reported &&
++					overflow.m_Signature == Signature.m_Folded &&
++					overflow.m_FoldedLength == Signature.m_FoldedLength;
++
++				if (same_as_last_report || NowMs < m_OverflowNextReportMs)
++				{
++					m_Counters.m_OverflowSuppressed++;
++					return YYERROR_OVERFLOW_SUPPRESSED;
++				}
++
++				if (m_ReportInFlight)
++				{
++					m_Counters.m_Deferred++;
++					return YYERROR_DEFERRED;
++				}
++
++				overflow.m_Signature = Signature.m_Folded;
++				overflow.m_FoldedLength = Signature.m_FoldedLength;
++				overflow.m_ExactHash = Signature.m_Exact;
++				overflow.m_Reported = false;
++
++				// Moved on at the attempt, not at the success, so a log that refuses every write
++				// cannot turn each overflow error into a full report attempt.
++				m_OverflowNextReportMs = NowMs + YYERROR_OVERFLOW_REPORT_INTERVAL_MS;
++
++				ReportNumber = BeginReport(YYERROR_OVERFLOW_SLOT, NowMs);
++				return YYERROR_WRITE_OVERFLOW_REPORT;
++			}
++
++			// Written = the report really reached the log. Returns false if ReportNumber is not the
++			// report in flight: it expired in the meantime, and was counted as a failure then.
++			// Such a stale finish never touches the report that IS in flight. Its time still goes
++			// into the totals, and if it was written after all, its record is marked reported -
++			// unless that record has been given another attempt since (m_ReportNumber moved on).
++			bool FinishReport(
++				IN uint64_t ReportNumber,
++				IN bool Written,
++				IN int64_t ElapsedTicks
++			)
++			{
++				if (ElapsedTicks > 0)
++				{
++					m_Counters.m_ReportTicksTotal += ElapsedTicks;
++					if (ElapsedTicks > m_Counters.m_ReportTicksMax)
++						m_Counters.m_ReportTicksMax = ElapsedTicks;
++				}
++
++				if (!m_ReportInFlight || m_InFlightReportNumber != ReportNumber)
++				{
++					m_Counters.m_StaleFinishes++;
++
++					if (Written && ReportNumber)
++					{
++						m_Counters.m_StaleWritten++;
++
++						for (size_t i = 0; i < m_RecordCount; i++)
++						{
++							if (m_Records[i].m_ReportNumber == ReportNumber)
++								m_Records[i].m_Reported = true;
++						}
++
++						// Not part of m_RecordCount. Its signature only ever changes together with
++						// its report number, so a match still means "the message that report was for".
++						if (m_Records[YYERROR_OVERFLOW_SLOT].m_ReportNumber == ReportNumber)
++							m_Records[YYERROR_OVERFLOW_SLOT].m_Reported = true;
++					}
++
++					return false;
++				}
++
++				if (Written)
++				{
++					m_Records[m_InFlightRecord].m_Reported = true;
++					m_Counters.m_ReportsWritten++;
++				}
++				else
++				{
++					m_Counters.m_ReportFailures++;
++				}
++
++				m_ReportInFlight = false;
++				return true;
++			}
++
++			// The tracked record seen most often, so the summary can point at its report. Overflow slot excluded.
++			const YYErrorRecord* MostFrequent() const
++			{
++				const YYErrorRecord* most_frequent = nullptr;
++				for (size_t i = 0; i < m_RecordCount; i++)
++				{
++					if (!most_frequent || m_Records[i].m_Count > most_frequent->m_Count)
++						most_frequent = &m_Records[i];
++				}
++
++				return most_frequent;
++			}
++
++		private:
++			uint64_t BeginReport(
++				IN size_t RecordIndex,
++				IN uint64_t NowMs
++			)
++			{
++				m_ReportInFlight = true;
++				m_InFlightRecord = RecordIndex;
++				m_InFlightSinceMs = NowMs;
++				m_InFlightReportNumber = ++m_Counters.m_ReportAttempts;
++				m_Records[RecordIndex].m_ReportNumber = m_InFlightReportNumber;
++
++				return m_InFlightReportNumber;
++			}
++		};
++
++		// ===== Synchronisation =====
++
++		// YYError has to be assumed callable on any thread. The ledger is guarded by this gate
++		// rather than by an OS lock, because of how the process ends: ExitProcess stops every
++		// other thread wherever it stands, and a lock held by one of them is never released.
++		// Anything that waits on such a lock hangs the game on its way out. This gate never
++		// waits: it spins a bounded number of times and then reports failure, and whoever fails
++		// to get in takes the count-only path and is counted here. A gate orphaned at exit
++		// therefore costs later callers their bookkeeping, and nothing else.
++		struct YYErrorGate
++		{
++			std::atomic<uint32_t> m_Held;
++			std::atomic<uint64_t> m_Misses;
++
++			bool TryEnter(
++				IN uint32_t SpinLimit
++			)
++			{
++				for (uint32_t i = 0; i <= SpinLimit; i++)
++				{
++					uint32_t expected = 0;
++					if (m_Held.compare_exchange_strong(expected, 1))
++						return true;
++
++#if defined(_M_X64) || defined(_M_IX86)
++					_mm_pause();
++#endif
++				}
++
++				m_Misses.fetch_add(1);
++				return false;
++			}
++
++			void Leave()
++			{
++				m_Held.store(0);
++			}
++		};
++
++		// Classify, but only if the gate lets us in.
++		inline YYErrorDisposition YYErrorClassifyGated(
++			IN OUT YYErrorGate& Gate,
++			IN OUT YYErrorLedger& Ledger,
++			IN uint32_t SpinLimit,
++			IN const YYErrorSignature& Signature,
++			IN uint64_t NowMs,
++			OUT uint64_t& ReportNumber
++		)
++		{
++			ReportNumber = 0;
++			if (!Gate.TryEnter(SpinLimit))
++				return YYERROR_BUSY;
++
++			const YYErrorDisposition disposition = Ledger.Classify(Signature, NowMs, ReportNumber);
++			Gate.Leave();
++
++			return disposition;
++		}
++
++		// ===== Summary scheduling =====
++
++		// Activity is a count of YYError calls; SummarisedActivity is its value when the last
++		// summary line was written. A line is owed only if something happened since, and is
++		// written only once the interval since the previous line has passed.
++		inline bool YYErrorSummaryIsDue(
++			IN uint64_t Activity,
++			IN uint64_t SummarisedActivity,
++			IN uint64_t NowMs,
++			IN uint64_t NextAllowedMs
++		)
++		{
++			return Activity != SummarisedActivity && NowMs >= NextAllowedMs;
++		}
++
++		inline uint64_t YYErrorNextSummaryMs(
++			IN uint64_t NowMs,
++			IN uint64_t IntervalMs
++		)
++		{
++			// Saturating: a wrapped sum would make every frame "due".
++			return (NowMs > UINT64_MAX - IntervalMs) ? UINT64_MAX : NowMs + IntervalMs;
++		}
++	}
++}
++
++#endif // YYTK_YYERROR_LEDGER_H_
+diff --git a/YYToolkit/source/YYTK/Module Internals/Module Internals.hpp b/YYToolkit/source/YYTK/Module Internals/Module Internals.hpp
+index 30f039e..5c37740 100644
+--- a/YYToolkit/source/YYTK/Module Internals/Module Internals.hpp	
++++ b/YYToolkit/source/YYTK/Module Internals/Module Internals.hpp	
+@@ -43,6 +43,15 @@ namespace YYTK
+ 		IN ...
+ 	);
+ 
++	// Whether the log file is open and has no error latched. Same (absent) synchronisation as the writers.
++	bool CmLogIsWritable();
++
++	// Writes Text and a newline verbatim: no printf pass (so '%' is safe), no CmpParseVa length limit.
++	// Returns whether the log stream accepted it.
++	bool CmWriteLogOutputRaw(
++		IN std::string_view Text
++	);
++
+ 	void CmpCloseLogFile();
+ 
+ 	void CmpSetTextColor(
+@@ -80,6 +89,27 @@ namespace YYTK
+ 
+ 	// Shared, directly GM related
+ 
++	struct GameSymbolTableInfo
++	{
++		bool m_Published;
++		int32_t m_BuildAttempts;
++		// QueryPerformanceCounter ticks spent in all build attempts together.
++		int64_t m_BuildTicks;
++	};
++
++	// Builds the table GmResolveGameSymbolFromAddress reads, unless it exists already or has been
++	// given up on (at most two attempts are ever made). Returns whether a table is available.
++	// BuildTicks is what this very call spent building, 0 if it built nothing.
++	bool GmPrepareGameSymbolTable(
++		OUT int64_t& BuildTicks
++	);
++
++	void GmQueryGameSymbolTableInfo(
++		OUT GameSymbolTableInfo& Info
++	);
++
++	// Lookup only - it never builds anything. Empty if Address is outside the game image,
++	// or if GmPrepareGameSymbolTable has not produced a table.
+ 	std::string GmResolveGameSymbolFromAddress(
+ 		IN LPCVOID Address
+ 	);
