@@ -200,7 +200,7 @@ include it on its own; `hs_game_sdk.hpp` pulls it in too.
 | 11 | `CONSUMABLE` | `Consumable` | R + V (catalog row `(11, 23)` Infernal Codex) |
 | 12 | `KEY` | `Key` | R + V (`(12, 8)` Angelic Key) + D ("Dungeon Keys `12`") |
 | 13 | `TAROT` | `Tarot` | R + V (`(13, 24)` The Wheel of Fortune) |
-| 14 | `MATERIAL` | `Material` | R + V (`(14, 69)` Infernal Codex Page) |
+| 14 | `MATERIAL` | `Material` | R + V (`(14, 69)` Infernal Codex Page) + M (measured in-game 2026-09-19) |
 | 15 | `SOCKETABLE` | `Socketable` | R + V (`(15, 82)` Exan Jewel) — runes, gems and jewels |
 | 16 | `RELIC` | `Relic` | R + S (`RELIC_RARITY_TIER` / `kRelicRarityTier`, matched against `itemType`) + D ("Relics `16`") |
 | 18 | `POTION` | `Potion` | R |
@@ -216,14 +216,22 @@ Sources:
   relic by tier 16 read from `itemType` among other fields. `tests/test_item_type_parity.py`
   asserts `ItemType.RELIC == RELIC_RARITY_TIER`; the relic contract itself is unchanged.
 - **D** — `docs/RUNTIME_DATA_MODELS.md` § 3, the `LoadDrops` drop categories.
+- **M** — measured in-game, 2026-09-19: ForgePact research build `8c56ca7`'s
+  `prospectprobe stackmove` route read `itemType` off a live item twice in the same
+  session — the Prospect Cube grid cell's `nodeFingerprint` (a Mallet Fragment)
+  resolved through the game's own `GetItemFromFingerprint(fp, 0)`, called by name,
+  and the existing stack `InventoryGridCanAddToStack` returned for that same
+  material — and both reported `itemType = 14`, matching
+  `HeroSiege::Items::ItemType::Material`. One material type, this row only; see
+  `ForgePact/docs/prospect-window-research.md` (Stage C, `M-identity`/`M-shapes`)
+  and ForgePact issue #52.
 
 The integers **9** and **17** appear in no source and have no member. Do not add one without
-evidence. **No row has been read from a live item instance on this runner yet**, including
-14: every Source above is the research note or a catalog cross-check, not a runtime
-measurement. When a live read confirms a value, mark its row "measured in-game" with the date.
-Only 14 is planned to be confirmed by an in-game read (ForgePact's
-move-materials-to-bag work); the other values rest on the research note above, so treat a
-live mismatch as a finding to record here, not a typo.
+evidence. Row 14 is measured in-game (Source M above); **no other row has been read from a
+live item instance on this runner yet**: every other Source above is the research note or a
+catalog cross-check, not a runtime measurement. When a live read confirms another value, mark
+its row "measured in-game" with the date the same way. The other values rest on the research
+note above, so treat a live mismatch on one of them as a finding to record here, not a typo.
 
 The three declarations are hand-written, not generated, and nothing derives one from another:
 that is what makes `tests/test_item_type_parity.py` a real check rather than a tautology. It
@@ -280,7 +288,7 @@ import { GameObject, GameScripts, StatId, ItemType } from '@hero-siege/sdk';
 | `py -3 tools/generate_satanic_zone_sdk.py` | Workspace Root | Regenerate `satanic_zone.py`/`.hpp`/`.ts` from `hs-game-sdk/curated/satanic_zone.json` (hand-edited, not extracted) | Verified 2026-09-10 |
 | `py -3 -m unittest discover -s tests` | Workspace Root | Run the SDK test suite. Passes in a clean checkout; extraction- and compiler-dependent suites skip (see below) | Verified 2026-09-12 |
 | `py -3 -m unittest tests.test_cpp_sdk -v` | Workspace Root | Compile and run the C++ relic/hook behavioural tests against the stubbed YYToolkit surface | Verified 2026-09-12 |
-| `py -3 -m unittest tests.test_item_type_parity -v` | Workspace Root | Check the Python, C++ and TypeScript `ItemType` declarations match value for value, and the aggregates match their generator templates | Verified 2026-09-19 (12 tests OK, node v24) |
+| `py -3 -m unittest tests.test_item_type_parity -v` | Workspace Root | Check the Python, C++ and TypeScript `ItemType` declarations match value for value, the aggregates match their generator templates, and this guide's value table claims "measured in-game" for row 14 only | Verified 2026-09-20 (14 tests OK, node v24) |
 | `py -3 -m pip install -e hs-game-sdk/python` | Workspace Root | Install Python SDK in development mode | Verified |
 
 ### Which tests need a game install, and which do not
@@ -299,7 +307,7 @@ contributor can be assumed to have:
 | `test_object_hierarchy.py` → `TestObjectsJsonMatchesBindings` | `hs-game-sdk/data/` | skips |
 | `test_extractor_layout.py` | nothing (builds a synthetic `data.win`) | always runs |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
-| `test_item_type_parity.py` | nothing (parses the tracked bindings); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`) |
+| `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
 
 `test_extractor_layout.py` is how the OBJT offsets stay verifiable without the
 game: it writes a tiny GameMaker IFF file by hand, with each field at its
