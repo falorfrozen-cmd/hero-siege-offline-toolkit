@@ -15,6 +15,19 @@ narrow and stated in full here:
   saw it" from "the game saw it". Neither route is better; they answer
   different halves of the question.
 
+* **Each route's delivery signal is read, because each route has exactly one.**
+  `SendInput` returns how many records the system accepted; `PostMessageW`
+  returns whether the message was queued at all, and nothing acknowledges it
+  afterwards. A posted message is refused on precisely the cases that matter to
+  this measurement -- a UIPI integrity mismatch (the game launched elevated for
+  Aurie injection while this process is not), a window destroyed part way
+  through a sequence, a full message queue -- so an unread BOOL would report
+  "N of N action(s) sent" having delivered nothing, and the live procedure's
+  `keyboard_check` reading false would then measure the instrument rather than
+  the game (`AGENTS.md` § "Prove the Instrument Before Trusting a Negative
+  Result"). A refusal stops the sequence, is counted in `records_rejected`, and
+  names the message and the error code.
+
 * **Nothing is sent unless the target is a window of a running game process.**
   The gate is `procs.gate()`, the window is `capture.resolve_game_window()`,
   and for `send_input` the foreground window is compared against the game's
@@ -118,6 +131,15 @@ BUTTON_MESSAGES = {
     "right": (WM_RBUTTONDOWN, WM_RBUTTONUP),
 }
 
+#: Names for the one place a message number would be unreadable: the line that
+#: reports a post the system refused.
+MESSAGE_NAMES = {
+    WM_KEYDOWN: "WM_KEYDOWN", WM_KEYUP: "WM_KEYUP",
+    WM_MOUSEMOVE: "WM_MOUSEMOVE", WM_LBUTTONDOWN: "WM_LBUTTONDOWN",
+    WM_LBUTTONUP: "WM_LBUTTONUP", WM_RBUTTONDOWN: "WM_RBUTTONDOWN",
+    WM_RBUTTONUP: "WM_RBUTTONUP",
+}
+
 MK_LBUTTON = 0x0001
 MK_RBUTTON = 0x0002
 
@@ -214,10 +236,23 @@ def _send_input(records: list[INPUT]) -> int:
     return int(user32().SendInput(len(records), array, ctypes.sizeof(INPUT)))
 
 
-def _post_message(hwnd: int, message: int, wparam: int, lparam: int) -> bool:
-    return bool(user32().PostMessageW(_handle(hwnd), ctypes.c_uint(int(message)),
-                                      ctypes.c_size_t(int(wparam)),
-                                      ctypes.c_ssize_t(int(lparam))))
+def _post_message(hwnd: int, message: int, wparam: int,
+                  lparam: int) -> tuple[bool, int]:
+    """`(queued, the error code when it was not)`.
+
+    The BOOL is this route's whole delivery signal, so it is returned rather
+    than dropped, and `GetLastError` with it: `ERROR_ACCESS_DENIED` (5) is a
+    UIPI integrity mismatch and `ERROR_NOT_ENOUGH_QUOTA` (1816) a full queue,
+    two different machines that both look like "the game ignored it".
+    `set_last_error(0)` first so the code read back belongs to this call and
+    not to whatever ran before it.
+    """
+    ctypes.set_last_error(0)
+    queued = bool(user32().PostMessageW(_handle(hwnd),
+                                        ctypes.c_uint(int(message)),
+                                        ctypes.c_size_t(int(wparam)),
+                                        ctypes.c_ssize_t(int(lparam))))
+    return queued, (0 if queued else ctypes.get_last_error())
 
 
 def _get_foreground_window() -> int:
@@ -540,6 +575,30 @@ def inject(actions: Any, *, route: str = ROUTE_SEND_INPUT,
         rejected += max(0, len(records) - accepted)
         return ""
 
+    def post(message: int, wparam: int, lparam: int) -> str:
+        """Post one message, and read whether the system took it.
+
+        Same contract as `emit`: "" or why the sequence stopped. The BOOL is
+        the only answer this route ever gets -- see the module docstring for
+        the three ways it comes back false while everything else looks healthy
+        -- so a refusal is counted and stops the rest of the sequence rather
+        than being posted over.
+        """
+        nonlocal rejected, sent
+        sent += 1
+        answer = WIN32["PostMessageW"](hwnd, message, wparam, lparam)
+        # The real call answers `(queued, error)`. A replaced table entry may
+        # answer with a bare bool, and that is read as a reading too: a test
+        # that wants the failure path says so by returning false.
+        queued, error = (answer if isinstance(answer, tuple)
+                         else (bool(answer), 0))
+        if queued:
+            return ""
+        rejected += 1
+        name = MESSAGE_NAMES.get(message, hex(message))
+        return (f"PostMessageW({name}) failed with error {error}; it and the "
+                f"rest of the sequence did not reach hwnd {hwnd}.")
+
     lost = ""
     for entry in plan:
         lost = ""
@@ -547,9 +606,9 @@ def inject(actions: Any, *, route: str = ROUTE_SEND_INPUT,
         if kind == "wait":
             WIN32["sleep"](entry["ms"] / 1000.0)
         elif kind in ("key", "key_down", "key_up"):
-            lost = _do_key(entry, hwnd, route, emit)
+            lost = _do_key(entry, route, emit, post)
         else:
-            lost = _do_pointer(entry, hwnd, route, geometry, emit)
+            lost = _do_pointer(entry, route, geometry, emit, post)
         if lost:
             break
         done += 1
@@ -560,7 +619,9 @@ def inject(actions: Any, *, route: str = ROUTE_SEND_INPUT,
     if lost:
         detail += " " + lost
     if rejected:
-        detail += (f" SendInput rejected {rejected} of {sent} record(s); the "
+        api, noun = (("SendInput", "record") if route == ROUTE_SEND_INPUT
+                     else ("PostMessageW", "message"))
+        detail += (f" {api} rejected {rejected} of {sent} {noun}(s); the "
                    "events that carried them did not reach the game.")
     return results.ok(
         tool, **report, foreground_after=foreground_after, actions_done=done,
@@ -569,8 +630,9 @@ def inject(actions: Any, *, route: str = ROUTE_SEND_INPUT,
         elapsed_s=round(time.monotonic() - started, 3), detail=detail)
 
 
-def _do_key(entry: dict[str, Any], hwnd: int, route: str,
-            emit: Callable[[list[INPUT]], str]) -> str:
+def _do_key(entry: dict[str, Any], route: str,
+            emit: Callable[[list[INPUT]], str],
+            post: Callable[[int, int, int], str]) -> str:
     """One key action. Returns "" or why the sequence stopped."""
     vk = entry["vk"]
     scan = int(WIN32["MapVirtualKeyW"](vk, MAPVK_VK_TO_VSC))
@@ -594,17 +656,20 @@ def _do_key(entry: dict[str, Any], hwnd: int, route: str,
     # scan code, 24 extended, 30 previous key state, 31 transition (a key-up).
     down = 1 | (scan << 16) | ((1 << 24) if extended else 0)
     if press:
-        WIN32["PostMessageW"](hwnd, WM_KEYDOWN, vk, down)
+        lost = post(WM_KEYDOWN, vk, down)
+        if lost:
+            return lost
     if press and release:
         WIN32["sleep"](entry["hold_ms"] / 1000.0)
     if release:
-        WIN32["PostMessageW"](hwnd, WM_KEYUP, vk, down | (1 << 30) | (1 << 31))
+        return post(WM_KEYUP, vk, down | (1 << 30) | (1 << 31))
     return ""
 
 
-def _do_pointer(entry: dict[str, Any], hwnd: int, route: str,
+def _do_pointer(entry: dict[str, Any], route: str,
                 geometry: dict[str, Any],
-                emit: Callable[[list[INPUT]], str]) -> str:
+                emit: Callable[[list[INPUT]], str],
+                post: Callable[[int, int, int], str]) -> str:
     """One `click` or `move`. Returns "" or why the sequence stopped."""
     click = entry["type"] == "click"
     button = entry.get("button", "left")
@@ -624,10 +689,11 @@ def _do_pointer(entry: dict[str, Any], hwnd: int, route: str,
 
     x, y = entry["client_point"]
     lparam = ((y & 0xFFFF) << 16) | (x & 0xFFFF)
-    WIN32["PostMessageW"](hwnd, WM_MOUSEMOVE, 0, lparam)
-    if not click:
-        return ""
+    lost = post(WM_MOUSEMOVE, 0, lparam)
+    if lost or not click:
+        return lost
     down, up = BUTTON_MESSAGES[button]
-    WIN32["PostMessageW"](hwnd, down, BUTTON_KEYSTATE[button], lparam)
-    WIN32["PostMessageW"](hwnd, up, 0, lparam)
-    return ""
+    lost = post(down, BUTTON_KEYSTATE[button], lparam)
+    if lost:
+        return lost
+    return post(up, 0, lparam)

@@ -65,13 +65,20 @@ class FakeWin32:
     """Every call the module can make, recorded rather than performed."""
 
     def __init__(self, foreground=(HWND,), raise_succeeds=True, dpi=96,
-                 accepted=None):
+                 accepted=None, post_queued=True, post_error=0):
         self.foreground = list(foreground)
         self.raise_succeeds = raise_succeeds
         self.dpi = dpi
         #: How many records SendInput claims to have accepted; None means
         #: "all of them", which is what a healthy machine reports.
         self.accepted = accepted
+        #: Whether PostMessageW queues the message, and the error code it
+        #: reports when it does not. A stub that can only answer "queued"
+        #: cannot catch a route that never reads the answer, and this route's
+        #: refusals are the interesting machines: 5 is ERROR_ACCESS_DENIED,
+        #: what an elevated game's window gives a process that is not.
+        self.post_queued = post_queued
+        self.post_error = post_error
         self.sent = []
         self.posted = []
         self.slept = []
@@ -116,7 +123,7 @@ class FakeWin32:
 
     def post_message(self, hwnd, message, wparam, lparam):
         self.posted.append((hwnd, message, wparam, lparam))
-        return True
+        return self.post_queued, (0 if self.post_queued else self.post_error)
 
     def sleep(self, seconds):
         self.slept.append(seconds)
@@ -487,12 +494,16 @@ class PostMessageTests(InputTestCase):
         self.assertTrue(self.win32.posted[0][3] & (1 << 24))
 
     def test_a_posted_click_is_move_down_up_in_client_coordinates(self):
-        self.inject([{"type": "click", "x": 100, "y": 50}],
-                    route="post_message")
+        report = self.inject([{"type": "click", "x": 100, "y": 50}],
+                             route="post_message")
         messages = [message for _, message, _, _ in self.win32.posted]
         self.assertEqual(messages, [0x0200, 0x0201, 0x0202])
         for _, _, _, lparam in self.win32.posted:
             self.assertEqual(lparam, (50 << 16) | 100)
+        self.assertEqual(report["records_sent"], 3,
+                         "on this route a record is a posted message")
+        self.assertEqual(report["records_rejected"], 0)
+        self.assertTrue(report["complete"])
 
     def test_a_posted_screen_space_click_is_converted_back_to_client(self):
         self.inject([{"type": "click", "x": 100 + ORIGIN_X,
@@ -502,6 +513,60 @@ class PostMessageTests(InputTestCase):
             self.assertEqual(lparam, (50 << 16) | 100,
                              "a posted message always carries client "
                              "coordinates, whatever the caller supplied")
+
+    def test_a_post_the_system_refused_stops_the_sequence_and_says_so(self):
+        """The mirror of the `SendInput` rejection test, on the route whose
+        positive controls never exercise delivery.
+
+        `PostMessageW` returns FALSE having queued nothing on a UIPI integrity
+        mismatch (the game elevated for Aurie injection, this process not), on
+        a window destroyed part way through, and on a full message queue.
+        Unread, all three come back `complete: true` with "N of N action(s)
+        sent" -- and the live procedure's `keyboard_check` of false would then
+        be measuring this tool, not the game.
+        """
+        self.win32.post_queued = False
+        self.win32.post_error = 5  # ERROR_ACCESS_DENIED
+        report = self.inject([{"type": "click", "x": 100, "y": 50},
+                              {"type": "key", "vk": VK_SHIFT}],
+                             route="post_message")
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(len(self.win32.posted), 1,
+                         "the refused move ends it; nothing after is posted")
+        self.assertEqual(report["actions_done"], 0)
+        self.assertEqual(report["actions_total"], 2)
+        self.assertEqual(report["records_sent"], 1)
+        self.assertEqual(report["records_rejected"], 1)
+        self.assertFalse(report["complete"])
+        self.assertIn("PostMessageW(WM_MOUSEMOVE)", report["detail"])
+        self.assertIn("error 5", report["detail"])
+        self.assertNotIn("SendInput", report["detail"],
+                         "the route that failed is the one named")
+
+    def test_a_refused_key_down_is_not_followed_by_a_key_up(self):
+        self.win32.post_queued = False
+        self.win32.post_error = 1816  # ERROR_NOT_ENOUGH_QUOTA
+        report = self.inject([{"type": "key", "vk": VK_SHIFT}],
+                             route="post_message")
+        self.assertEqual([message for _, message, _, _ in self.win32.posted],
+                         [0x0100], "no WM_KEYUP for a WM_KEYDOWN that was "
+                                   "never queued")
+        self.assertEqual(self.win32.slept, [],
+                         "and no hold, because there is nothing being held")
+        self.assertIn("PostMessageW(WM_KEYDOWN)", report["detail"])
+        self.assertIn("1816", report["detail"])
+        self.assertFalse(report["complete"])
+
+    def test_a_bare_true_from_a_replaced_entry_is_read_as_queued(self):
+        """`emit`'s rule applied to this route: an answer that is not the real
+        call's `(queued, error)` shape still counts as a reading taken, so a
+        stub cannot manufacture a refusal that never happened."""
+        with patch.dict(hs_input.WIN32, {"PostMessageW": lambda *args: True}):
+            report = self.inject([{"type": "key_down", "vk": VK_SHIFT}],
+                                 route="post_message")
+        self.assertTrue(report["complete"], report)
+        self.assertEqual(report["records_rejected"], 0)
+        self.assertEqual(report["records_sent"], 1)
 
 
 # --------------------------------------------------------------------------

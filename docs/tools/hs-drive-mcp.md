@@ -153,6 +153,21 @@ the foreground; `post_message` puts messages straight on the window's queue,
 touches no OS key state, and needs no foreground. A runner that polls the
 device state sees the first and not the second.
 
+`records_sent` and `records_rejected` count whichever unit the route deals in —
+`SendInput` records on `send_input`, posted messages on `post_message` — and
+both routes read their own delivery signal, because each has exactly one.
+`SendInput` reports how many records the system accepted; `PostMessageW`
+reports only whether the message was queued, and it answers false without
+queueing anything on a UIPI integrity mismatch (the game launched elevated,
+this process not), on a window destroyed part way through a sequence, and on a
+full message queue. Any refusal stops the rest of the sequence, counts in
+`records_rejected`, clears `complete`, and puts the message name and the
+`GetLastError` code in `detail` — `PostMessageW(WM_KEYDOWN) failed with error
+5`. Without that reading the route would answer `complete: true` having
+delivered nothing, and a `keyboard_check` of false afterwards would be
+measuring this tool rather than the game (`AGENTS.md` § "Prove the Instrument
+Before Trusting a Negative Result").
+
 `hs_saves_restore` and `hs_stop_game` are the only tools with
 `destructiveHint: true`, and that is asserted rather than assumed: they are the
 two that can take away something that was not theirs — the live save directory,
@@ -821,10 +836,10 @@ The rows below belong to `hs-drive-mcp-charselect`, the workorder that added
 
 | # | Check | Command | Result |
 | --- | --- | --- | --- |
-| A1 (charselect) | `hs_input`: the baseline refusals with nothing injected, both routes; scan-code down/up with the extended bit; the absolute-mouse conversion; the foreground permission re-proved before every send; the posted-message `lParam` bits; every limit | `py -3 -m unittest tests.test_hs_drive_mcp_input -v` | `OK`, 38 tests, no skips — 2026-09-20. Every Win32 call goes through the module's `WIN32` table, which the fixture replaces wholesale, so the assertions read the `INPUT` records that would have been injected rather than a return code |
+| A1 (charselect) | `hs_input`: the baseline refusals with nothing injected, both routes; scan-code down/up with the extended bit; the absolute-mouse conversion; the foreground permission re-proved before every send; the posted-message `lParam` bits; a post the system refuses, which stops the sequence and names the message and error code; every limit | `py -3 -m unittest tests.test_hs_drive_mcp_input -v` | `OK`, 41 tests, no skips — 2026-09-20. Every Win32 call goes through the module's `WIN32` table, which the fixture replaces wholesale, so the assertions read the `INPUT` records that would have been injected rather than a return code |
 | A7 (charselect) | Thirteen tools over the real stdio transport, `hs_input` among them with `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: false` | `py -3 -m unittest tests.test_hs_drive_mcp_server -v` | `OK`, 23 tests, no skips — 2026-09-20. The twelve-tool assertion is kept under its old name as the baseline: a later workorder registering its own tool must not quietly drop one |
 | A8 (charselect) | Release boundary still holds with `input.py` present: it imports no MCP SDK, and the no-stdout/no-listener pattern still has no match | `py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 7 tests — 2026-09-20. One skip, `test_no_shipped_build_input_mentions_the_server`, because `HS-Offline-Launcher/` is not checked out in this worktree; it is environmental and predates this change |
-| F1 (charselect) | Whole root suite after `hs_input` | `py -3 -m unittest discover -s tests` | `Ran 885 tests in 149.476s`, `OK (skipped=10)` — 2026-09-20. All ten skips are environmental (three uninitialized submodules, `hs-game-sdk/data` gitignored, one non-Windows branch); the 40 tests added here skip nowhere |
+| F1 (charselect) | Whole root suite after `hs_input` | `py -3 -m unittest discover -s tests` | `Ran 888 tests in 154.174s`, `OK (skipped=10)` — 2026-09-20. All ten skips are environmental (three uninitialized submodules, `hs-game-sdk/data` gitignored, one non-Windows branch); the 43 tests added here skip nowhere |
 | — (charselect) | `hs_input` **called** over a real stdio session, game closed — registered is not the same as callable | one-off client, the same argv `.mcp.json` carries | 2026-09-20: `list_tools` returned 13 tools including `hs_input`, schema properties `actions`, `require_foreground`, `route`. `{"actions":[{"type":"key","vk":16,"hold_ms":100}]}` → a refusal envelope, `reason: game_not_running`, `is_error: false`. `{"actions":[{"type":"key","vk":0}]}` → `reason: invalid_input`, detail `action 0 vk must be between 1 and 254, not 0`. `route: "sendinput"` → `is_error: true`, an SDK `Literal` validation error before any code here ran (see the note under the token table) |
 | B (charselect) | The plugin half: the `menuprobe` contract, the research document, and both builds | `py -m unittest discover -s tests` and `plugin_build\build.bat dev` / `release`, in `ForgePact/` | `Ran 606 tests in 32.216s`, `OK (skipped=2)` — 2026-09-20; both skips are `HS-Offline-Launcher/` not being checked out. Both builds exit 0; `BloodPactPlugin_rel.dll` contains `menuprobe` and not `command unavailable in player build`, and `BloodPactPlugin_ship.dll` the reverse |
 | C (charselect) | **The live session** — the four candidates measured against the real game, each behind its own positive control | owner-run, `ForgePact/docs/character-select-research.md` § Live procedure | **not run — 2026-09-20.** Deferred to a later session by the owner. Every row of that document's § Results is empty, and its § Decision reads `finding: pending` / `shipRoute: pending`. Nothing here has measured whether injected input reaches this game |
