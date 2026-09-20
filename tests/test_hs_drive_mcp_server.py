@@ -415,5 +415,62 @@ class SelfCheckSummaryTests(unittest.TestCase):
                         "run, so `healthy` would rest on nothing")
 
 
+@unittest.skipIf(SKIP_REASON is not None, SKIP_REASON or "")
+class UnknownArgumentTests(unittest.TestCase):
+    """What the SDK does with an argument name no tool declares.
+
+    This pins a measured property of `mcp==2.2.0`, not of this server, and it
+    exists because the behaviour is silent: a live run on 2026-09-20 called
+    `hs_ipc_tail` with `n=5` instead of `lines=5` and got the default 40 lines
+    back with nothing saying an argument had been dropped.
+    `ArgModelBase` sets `ConfigDict(arbitrary_types_allowed=True)` and never
+    sets `extra`, so pydantic's default `extra="ignore"` applies and the key is
+    gone before any tool body runs -- which is why no fix belongs in
+    `tools/hs_drive_mcp/`. See `docs/tools/hs-drive-mcp.md` Known limitations.
+
+    If a later `mcp` release starts refusing unknown arguments, this test fails
+    and the documented limitation should be deleted -- that is the point of
+    pinning it rather than only writing it down.
+    """
+
+    def _metadata(self):
+        from mcp.server.mcpserver.utilities.func_metadata import func_metadata
+
+        def toy_tail(lines: int = 40) -> dict:
+            """Mirrors `hs_ipc_tail`'s real signature."""
+            return {"lines": lines}
+
+        return func_metadata(toy_tail)
+
+    def test_an_unknown_argument_is_dropped_and_the_default_substituted(self):
+        metadata = self._metadata()
+        self.assertEqual(metadata.validate_arguments({"lines": 5}), {"lines": 5},
+                         "the declared name must still work, or this test is "
+                         "measuring a broken fixture rather than the SDK")
+        self.assertEqual(metadata.validate_arguments({"n": 5}), {"lines": 40},
+                         "an unknown argument is dropped and the default "
+                         "substituted; see this class's docstring")
+        self.assertEqual(metadata.validate_arguments({"lines": 5, "n": 99}),
+                         {"lines": 5})
+        self.assertEqual(metadata.validate_arguments({"LINES": 5}), {"lines": 40},
+                         "the drop is case-sensitive")
+
+    def test_the_published_schema_does_not_forbid_extra_properties(self):
+        schema = self._metadata().arg_model.model_json_schema()
+        self.assertEqual(set(schema["properties"]), {"lines"})
+        self.assertNotIn("additionalProperties", schema,
+                         "were this false, a client could reject the typo "
+                         "itself and the limitation would not need documenting")
+
+    def test_the_limitation_is_documented_where_a_caller_would_look(self):
+        text = (ROOT / "docs" / "tools" / "hs-drive-mcp.md").read_text(
+            encoding="utf-8")
+        limitations = text.split("## Known limitations", 1)
+        self.assertEqual(len(limitations), 2, "the section was renamed")
+        self.assertIn("hs_ipc_tail(n=5)", limitations[1],
+                      "the worked example is what makes this findable")
+        self.assertIn("extra='ignore'", limitations[1])
+
+
 if __name__ == "__main__":
     unittest.main()

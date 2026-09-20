@@ -606,6 +606,39 @@ rather than by falling back to another launcher:
 
 ## Known limitations
 
+- **A mistyped argument name is silently ignored, and you get the default
+  instead.** `hs_ipc_tail(n=5)` returns the default 40 lines rather than
+  refusing, because the parameter is called `lines`. Measured 2026-09-20 during
+  the live run and then traced: this is the MCP SDK, not this server.
+  `mcp.server.mcpserver.utilities.func_metadata.ArgModelBase` sets
+  `ConfigDict(arbitrary_types_allowed=True)` and never sets `extra`, so
+  pydantic's default `extra='ignore'` applies; `validate_arguments` drops the
+  unknown key at `model_validate`, and `model_dump_one_level` enumerates
+  declared fields only. Every tool here registers through `@server.tool(...)`
+  → `Tool.from_function` → `func_metadata`, so all twelve behave identically
+  and **no code in `tools/hs_drive_mcp/` can see the dropped key** — by the
+  time a tool body runs, the evidence is gone. Reproduced on a toy signature
+  mirroring `hs_ipc_tail`: `{"lines": 5}` → `lines=5`, `{"n": 5}` → `lines=40`,
+  `{"lines": 5, "n": 99}` → `lines=5`, `{"LINES": 5}` → `lines=40` (it is
+  case-sensitive too). The published input schemas carry no
+  `additionalProperties: false`, so a client is not told either — arguably the
+  real gap, and not reachable from here.
+
+  Not fixable at the tool layer, each measured rather than assumed: `**kwargs`
+  does not act as a catch-all (`func_metadata` turns `**rest` into a
+  *required* field, so every ordinary call then fails validation);
+  `func_metadata(func, skip_names, structured_output)` takes no `extra` or
+  config parameter; and `Tool.from_function(...)` takes no input-schema
+  parameter, so `additionalProperties: false` cannot be published. The one
+  hook that exists is `MCPServer.middleware`, which can refuse a message
+  before any handler sees it — but the SDK's own docstring calls it
+  "Provisional - the signature may change in a 2.x minor release", and it
+  would mean wrapping the whole request path to catch a typo. If this is ever
+  enforced, that middleware is the single place to do it; **not** twelve tool
+  bodies, none of which can. Until then: check the parameter names in
+  `## Tools` above, and treat a suspiciously default-looking answer as a
+  possible misspelling.
+
 - **Nothing here can select a character or enter a zone, and most ForgePact
   gameplay commands only act once one is loaded.** After `hs_launch` the game
   sits at its main menu. Static research on 2026-09-20 found no
@@ -662,7 +695,7 @@ rather than by falling back to another launcher:
 | --- | --- | --- | --- |
 | A1 | Dependencies install and are pinned | `py -3 -m pip install -r tools/hs_drive_mcp/requirements.txt` | exit 0; `mcp==2.2.0` and `Pillow==12.1.0` both found — 2026-09-20 |
 | A2 | `.mcp.json` entry | parsed in `tests.test_hs_drive_mcp_release_boundary` | `command: py`, `args: ["-3","-m","tools.hs_drive_mcp"]`, no `url`/`type` — 2026-09-20 |
-| A3/A4/A7 | Tool surface over stdio, self-check, status, `healthy` semantics | `py -3 -m unittest tests.test_hs_drive_mcp_server -v` | `OK`, 17 tests, no skips — all twelve tools listed, `screenshot_screen` `pass`, `ipc_ping` `skipped` ("the game is not running") — 2026-09-20 |
+| A3/A4/A7 | Tool surface over stdio, self-check, status, `healthy` semantics | `py -3 -m unittest tests.test_hs_drive_mcp_server -v` | `OK`, 17 tests, no skips — all twelve tools listed, `screenshot_screen` `pass`, `ipc_ping` `skipped` ("the game is not running") — 2026-09-20. **Pre-change row:** measured against the round-0 tree, whose `hs_selfcheck` still carried `ipc_ping`; the registry is six checks since PD2 removed it, so read this row as evidence from the pre-change tree. |
 | A5 | Engine pin, inert import, missing-source refusal | `py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v` | `OK`, 8 tests, no skips — 2026-09-20 |
 | A6 | No stdout, no listener, no shell | `Select-String -Path tools/hs_drive_mcp/*.py -Pattern 'shell=True\|os\.system\(\|socket\.\|\.bind\(\|HTTPServer\|uvicorn\|streamable\|^\s*print\('` | no matches — 2026-09-20 |
 | B1–B10 | Save backup and restore, the wiped-directory recovery case and its negative control | `py -3 -m unittest tests.test_hs_drive_mcp_saves -v` | `OK`, 36 tests, no skips — 2026-09-20 |
@@ -670,14 +703,14 @@ rather than by falling back to another launcher:
 | C7 | Whole root suite, with the first six tools | `py -3 -m unittest discover -s tests` | `Ran 741 tests`, `OK (skipped=9)` — all nine skips pre-existing in other suites — 2026-09-20 (superseded by the F3 row below) |
 | C7 | This change touches no submodule | `git -C ForgePact status --porcelain`, `git -C HS-Offline-Launcher status --porcelain` | both printed nothing — 2026-09-20. (An unrelated ` M HS-Offline-Tracker` gitlink drift predates this work; `git diff --stat 589246f HEAD` touches no submodule.) |
 | — | Self-check on this machine, first five checks | `hs_selfcheck` over stdio | all five `pass` (137 files, 48 characters in the live dir; snapshot sees own PID; EAC `stopped`) — 2026-09-20 |
-| — | Self-check on this machine, all seven | `hs_selfcheck` over stdio, in `tests.test_hs_drive_mcp_server` | six `pass` including `screenshot_screen`; `ipc_ping` `skipped` naming "the game is not running", with no game up. `summary.healthy` therefore rests on three proven positive controls — 2026-09-20 |
+| — | Self-check on this machine, all seven (pre-change) | `hs_selfcheck` over stdio, in `tests.test_hs_drive_mcp_server` | six `pass` including `screenshot_screen`; `ipc_ping` `skipped` naming "the game is not running", with no game up. `summary.healthy` therefore rests on three proven positive controls — 2026-09-20. **Pre-change row:** measured against the round-0 tree, whose `hs_selfcheck` still carried `ipc_ping`; the registry is six checks since PD2 removed it, so read this row as evidence from the pre-change tree. |
 | C1–C6 | Launch through ForgePact's engine, the three readiness phases, `WM_CLOSE`, and `TerminateProcess`'s three conditions with its negative control | `py -3 -m unittest tests.test_hs_drive_mcp_launch -v` | `OK`, 29 tests, no skips — 2026-09-20 |
 | D1–D6 | The IPC channel: ASCII/CRLF/no BOM, append-not-overwrite, byte-delta reply, `not_consumed`, the gate, `bp_ipc` resolution, `tail` | `py -3 -m unittest tests.test_hs_drive_mcp_ipc -v` | `OK`, 27 tests, no skips — runs in full on CI too, since it needs neither Windows nor a submodule — 2026-09-20 |
 | E1–E3 | Window resolution and its three refusals, both capture methods, the flat-image warning with a negative control, the downscaled transport copy, the image block | `py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v` | `OK`, 33 tests, no skips — 2026-09-20 |
 | — | Real screen capture on this machine (positive control) | `PositiveControlTests` in that suite, and `hs_selfcheck`'s `screenshot_screen` | 2560×1440, more than 4 distinct pixel values, `pass` — 2026-09-20 |
 | F3 | Whole root suite, after the six new tools | `py -3 -m unittest discover -s tests` | `Ran 831 tests`, `OK (skipped=9)` — the same nine pre-existing skips in other suites; the 90 added here skip nowhere on this machine — 2026-09-20 |
 | F3 | This change touches no submodule | `git -C ForgePact status --porcelain`, `git -C HS-Offline-Launcher status --porcelain` | both printed nothing — 2026-09-20 |
-| — | The six new tools over a real stdio session, with the game **closed** (fixture save/backup/screenshot directories) | one-off client script; the same argv `.mcp.json` carries | `list_tools` returned all twelve. `hs_selfcheck`: six `pass`, `ipc_ping` `skipped` ("the game is not running"), `healthy: true` on three proven controls. `hs_ipc_tail`: `exists: true`, `bytes_total: 34256` against the real `bp_ipc\out.txt`. `hs_command ["ping"]`: refused `game_not_running`. `hs_screenshot("screen")`: `text` + `image` blocks, 2560×1440 file, `transport_width: 1280`, not flat. `hs_stop_game`: `exited: true`, `pids_closed: []`, `forced: false` — 2026-09-20 |
+| — | The six new tools over a real stdio session, with the game **closed** (fixture save/backup/screenshot directories) | one-off client script; the same argv `.mcp.json` carries | `list_tools` returned all twelve. `hs_selfcheck`: six `pass`, `ipc_ping` `skipped` ("the game is not running"), `healthy: true` on three proven controls. `hs_ipc_tail`: `exists: true`, `bytes_total: 34256` against the real `bp_ipc\out.txt`. `hs_command ["ping"]`: refused `game_not_running`. `hs_screenshot("screen")`: `text` + `image` blocks, 2560×1440 file, `transport_width: 1280`, not flat. `hs_stop_game`: `exited: true`, `pids_closed: []`, `forced: false` — 2026-09-20. **Pre-change row:** measured against the round-0 tree, whose `hs_selfcheck` still carried `ipc_ping`; the registry is six checks since PD2 removed it, so read this row as evidence from the pre-change tree. |
 | F4 | Live sequence: `hs_selfcheck` → `hs_saves_backup` → `hs_launch` → `hs_screenshot` → `hs_command ping` → `hs_stop_game` → `hs_saves_inspect` → `hs_saves_restore` | owner-run, over a real MCP stdio session against `py -3 -m tools.hs_drive_mcp` at the repo root | **pass — 2026-09-20**, against Hero Siege 7.0.13.0 with BloodPact v1.4.4 / YYTK 4.0.1. `hs_selfcheck`: six `pass`, `ipc_ping` `skipped` ("the game is not running"), `healthy: true`. `hs_saves_backup("pre-test")`: `20260920T180727Z_pre-test`, 137 files, 1289192 bytes. `hs_launch()`: `phase: plugin_ready`, `ready: true`, pid 45852, `elapsed_s: 19.342`, `launch.phase: verified`, `plugin_reply` ending `pong (YYTK 4.0.1)`. `hs_command(["ping"])`: `consumed: true`, reply `pong (YYTK 4.0.1)`, `elapsed_s: 0.874`, `pending_before` and `pending_left` both false, `out.txt` 34863 → 34930 bytes. `hs_stop_game()`: `exited: true`, `pids_closed: [45852]`, `forced: false`, `windows_found: 1`, `elapsed_s: 1.051`. `hs_saves_inspect`: `changed`, `added` and `missing` all empty — the session never loaded a character, so the game rewrote nothing on exit. `hs_saves_restore`: `restored: 137`, equal to the manifest's count, with its own `pre_restore_backup_id: 20260920T181317Z_pre-restore` and `moved_extras: 0`; `hs_saves_inspect` afterwards clean. Since the restored bytes were identical, the write itself was confirmed by mtime: `controls2.ini` went from the live copy's 2026-09-20 20:07:39 back to the backup's 2026-09-19 15:14:21. Measured against the round-0 tree, whose `hs_selfcheck` still carried `ipc_ping`; the registry is six checks since PD2 removed it, so read this row as evidence from the pre-change tree. |
 | F4 | Capture in `windowed` — `hs_screenshot("game")` with both `capture_method`s | owner-run, display mode set from the game's own Options menu | **pass — 2026-09-20**, a 1920×1080 client on a 2560×1440 screen. `grab_bbox`: 1936×1119, the frame with its title bar, `warning` empty. `grab_window`: 1920×1080, the client area, `warning` empty. Both show the main menu, confirmed by eye. Files `...180805854313Z_asis-bbox.png` and `...180806142006Z_asis-window.png` |
 | F4 | Capture in `borderless` — the same two calls | owner-run | **pass — 2026-09-20** (the game spells it "Windowed fullscreen"). Both methods returned 2560×1440 with `warning` empty, showing the Video options page itself. Files `...180946903053Z_borderless-bbox.png` and `...180947123396Z_borderless-window.png` |
@@ -694,6 +727,7 @@ rather than by falling back to another launcher:
 | H4 | Negative control for H2/H3: the same tests with `ipc.PENDING_WAIT_SHARE` patched to `1.0`, which is exactly the pre-fix accounting | one-off script, `unittest` loader + `patch.object` | 2 of 3 failed, and the refusal then read "did not take this command within the **0.0 s** that were this command's own wait (of a 0.3 s budget)" — the tests measure the split, not something else — 2026-09-20 |
 | H5 | Whole root suite after the budget fix | `py -3 -m unittest discover -s tests` | `Ran 842 tests in 139.390s`, `OK (skipped=9)` — the same nine pre-existing skips; the four added here skip nowhere on this machine — 2026-09-20 |
 | C1 | `hs-drive` connects in a fresh session | `/mcp` in a new Claude Code session at the repo root | **pass**, owner-run 2026-09-20: listed as connected. The working-directory assumption holds — `args: ["-3", "-m", "tools.hs_drive_mcp"]` resolves as a namespace package from the repo root, so no absolute-path fallback and no `os.chdir` were needed. Note the session must *start* at the repo root: a session already running when this entry was added does not pick it up, and shows the server as absent rather than failed. |
+| — | Unknown arguments are dropped by the SDK, not by this server (Known limitations) | `py -3 -m unittest tests.test_hs_drive_mcp_server -v` | `OK`, 21 tests, no skips. `UnknownArgumentTests` pins it on a toy signature mirroring `hs_ipc_tail`: `{"n": 5}` → `lines=40`, `{"LINES": 5}` → `lines=40`, no `additionalProperties` in the published schema. The pin is inverted on purpose — if a later `mcp` release starts refusing unknown arguments it **fails**, and that failure is the signal to delete the limitation. Whole suite: `Ran 845 tests in 147.299s`, `OK (skipped=9)` — 2026-09-20 |
 
 ## What is deliberately not here
 
