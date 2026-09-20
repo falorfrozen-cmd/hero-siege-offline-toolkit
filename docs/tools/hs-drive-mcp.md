@@ -628,6 +628,8 @@ observed events: every zero measured the instrument, not the game. The same
 trap is open here — `hs_status` reporting `not_running` is indistinguishable
 from a process snapshot that never worked.
 
+This server has since produced that shape twice in its own Python — `hs_selfcheck` computing `healthy` from `fail == 0`, so an all-`skipped` run reported healthy, and `hs_input` reporting a refused `PostMessageW` as delivered. Both are written up in [`docs/agents/prove-the-instrument.md`](../agents/prove-the-instrument.md) § "The same shape outside C++, in a Python MCP server", together with what they have in common: a test double that could not represent the failing return. Read it before adding a check or a tool here.
+
 | Check | Passes when | Skipped when |
 | --- | --- | --- |
 | `engine_import` | The engine loads and every `ENGINE_SYMBOLS` name resolves | never — a missing source is `fail`, naming the path |

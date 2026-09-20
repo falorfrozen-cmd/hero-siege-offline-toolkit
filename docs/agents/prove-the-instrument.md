@@ -40,3 +40,66 @@ original, detour attempted only on the first install, and a result that *says*
 `InstallScriptHookTableOnly` is the deliberately-limited variant, named so the
 limitation is visible at the call site. A correction landing in one submodule is
 not done until the shared SDK that other submodules copy has it too.
+
+## The same shape outside C++, in a Python MCP server (hs-drive)
+
+Everything above is a C++ hook, which is a problem for this rule's reach: a
+reader writing a host-side Python tool reads `HookOneScript`,
+`InstallScriptHook` and `citrace nativetrace` and reasonably concludes the
+section is about hooks. It is not. The `hs-drive` MCP server produced the
+same shape **twice**, in ordinary Python, with no hook anywhere near it.
+
+- **`hs_selfcheck` reported itself healthy while blind.** `checks.py`
+  computed `healthy = counts["fail"] == 0`, so a run in which every check
+  *skipped* reported `healthy: true` - and `healthy` is the field a caller
+  branches on. The fix marks `process_snapshot` and `backup_roundtrip` as
+  declared positive controls and requires them to have **passed**, not
+  merely not-failed; the summary now carries `positive_controls` and
+  `positive_controls_proven` so the difference is visible rather than
+  inferred (`tools/hs_drive_mcp/checks.py`, `register(...,
+  positive_control=True)`; pinned by
+  `tests/test_hs_drive_mcp_server.py::SelfCheckSummaryTests`, which covers
+  an all-skipped run, a single skipped control, an empty registry, and a
+  raising check reported as `fail` rather than `skipped`).
+- **`hs_input` reported a refused keystroke as delivered.** The
+  `post_message` route returned a bare `bool(PostMessageW(...))`, every call
+  site ignored it, `ctypes.get_last_error()` was never read although the
+  library was opened `use_last_error=True`, and the sent/rejected counters
+  were incremented only on the `SendInput` path - so a post refused by a
+  UIPI mismatch, a destroyed window or `ERROR_NOT_ENOUGH_QUOTA` replied
+  `records_sent: 0, records_rejected: 0, complete: true`. A refusal now
+  stops the rest of the sequence, counts, clears `complete` and names the
+  message and the error code (`tools/hs_drive_mcp/input.py`, pinned by
+  `tests/test_hs_drive_mcp_input.py`).
+
+The second one is why this matters to research and not only to shipping: the
+route's positive controls in the character-select procedure are a human
+holding a key and a human clicking a button, and **neither exercises the
+posted route's delivery path**. Had it stayed, the live session would have
+recorded that candidate as "not observed" about the *game* when nothing had
+ever left the MCP process - a zero that measured the instrument, which is
+this rule's opening paragraph in a different language.
+
+### What the two have in common: a test double that could not represent the failing return
+
+`AGENTS.md` § "HS Game SDK Usage" already states this for input kinds - "a
+stub that cannot represent the failing input cannot catch the bug", learned
+when a C++ test double did not define the `RValue` kind the real runtime
+returns. Both instances here are the same rule pointed at a **return value**
+instead: `hs_input`'s fake `post_message` returned a hardcoded `True`, so no
+test could express a refusal; `hs_selfcheck`'s summary counted `skipped` as
+not-a-failure, so no test could express "ran nothing". The failing case was
+not missed, it was *unrepresentable*.
+
+And both were found by a **reviewer**, neither by a test. Both suites were
+green throughout: they asserted the field was present and well-typed, never
+that it was *earned*. So the operational form of the rule, for whoever is
+writing the tests rather than reading them afterwards, is:
+
+> **Ask what your green would look like if the thing under test did
+> nothing.** If the answer is "the same", the test is measuring the
+> instrument.
+
+That is the question a test author does not naturally ask about their own
+instrument, which is why two rounds of review caught what two test suites
+did not.
