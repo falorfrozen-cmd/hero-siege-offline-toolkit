@@ -230,8 +230,15 @@ def verify_backup(directory: Path) -> tuple[str, str] | None:
 # --------------------------------------------------------------------------
 
 def backup(label: str, gate: Gate, is_link: Callable[[Path], bool] | None = None,
+           source: Path | None = None, root: Path | None = None,
            tool: str = "hs_saves_backup") -> dict[str, Any]:
-    """Snapshot the whole live directory. Gate, inventory, copy, verify, manifest."""
+    """Snapshot the whole live directory. Gate, inventory, copy, verify, manifest.
+
+    `source`/`root` are explicit rather than read from the environment so that
+    `hs_selfcheck`'s round trip can drive these exact functions against a
+    fixture without mutating process-wide state that another tool call is
+    reading at the same moment.
+    """
     is_link = default_is_link if is_link is None else is_link
 
     if not isinstance(label, str) or not LABEL_PATTERN.match(label):
@@ -244,7 +251,7 @@ def backup(label: str, gate: Gate, is_link: Callable[[Path], bool] | None = None
     if refusal:
         return refusal
 
-    source = save_dir()
+    source = save_dir() if source is None else Path(source)
     if not source.is_dir():
         return results.refuse(
             tool, "save_dir_missing",
@@ -271,7 +278,7 @@ def backup(label: str, gate: Gate, is_link: Callable[[Path], bool] | None = None
         return refusal
 
     stamp, created = _utc_stamp()
-    root = backup_root()
+    root = backup_root() if root is None else Path(root)
     root.mkdir(parents=True, exist_ok=True)
     directory = _free_directory(root, f"{stamp}_{label}")
     store = directory / FILES_DIR
@@ -329,6 +336,7 @@ def backup(label: str, gate: Gate, is_link: Callable[[Path], bool] | None = None
 
 def restore(backup_id: str, confirm_backup_id: str, remove_extra: bool = False,
             gate: Gate | None = None, is_link: Callable[[Path], bool] | None = None,
+            source: Path | None = None, root: Path | None = None,
             tool: str = "hs_saves_restore") -> dict[str, Any]:
     """Put a verified backup back, after backing up what is there now."""
     is_link = default_is_link if is_link is None else is_link
@@ -349,14 +357,15 @@ def restore(backup_id: str, confirm_backup_id: str, remove_extra: bool = False,
     if refusal:
         return refusal
 
-    directory = backup_root() / backup_id
+    root = backup_root() if root is None else Path(root)
+    directory = root / backup_id
     problem = verify_backup(directory)
     if problem:
         return results.refuse(tool, problem[0], problem[1])
     manifest = read_manifest(directory)
     assert manifest is not None  # verify_backup would have refused
 
-    source = save_dir()
+    source = save_dir() if source is None else Path(source)
     if not source.is_dir():
         return results.refuse(
             tool, "save_dir_missing",
@@ -364,7 +373,8 @@ def restore(backup_id: str, confirm_backup_id: str, remove_extra: bool = False,
 
     # Everything currently live is backed up before a single byte is written,
     # and that backup is verified the same way the chosen one just was.
-    pre = backup(PRE_RESTORE_LABEL, gate=gate, is_link=is_link, tool=tool)
+    pre = backup(PRE_RESTORE_LABEL, gate=gate, is_link=is_link,
+                 source=source, root=root, tool=tool)
     if results.is_refusal(pre):
         return results.refuse(
             tool, "pre_restore_backup_failed",
@@ -471,12 +481,12 @@ def _move_extras(source: Path, pre_directory: Path, known: set[str],
 # Read-only views
 # --------------------------------------------------------------------------
 
-def list_backups(limit: int = 20, offset: int = 0,
+def list_backups(limit: int = 20, offset: int = 0, root: Path | None = None,
                  tool: str = "hs_saves_list") -> dict[str, Any]:
     """Newest first. A directory without a manifest lists as `incomplete`."""
     limit = max(1, min(100, int(limit)))
     offset = max(0, int(offset))
-    root = backup_root()
+    root = backup_root() if root is None else Path(root)
     directories: Iterable[Path] = []
     if root.is_dir():
         directories = sorted((p for p in root.iterdir() if p.is_dir()),
@@ -516,10 +526,11 @@ def list_backups(limit: int = 20, offset: int = 0,
 
 
 def inspect_backup(backup_id: str, is_link: Callable[[Path], bool] | None = None,
+                   source: Path | None = None, root: Path | None = None,
                    tool: str = "hs_saves_inspect") -> dict[str, Any]:
     """The manifest, plus how the live directory differs from it right now."""
     is_link = default_is_link if is_link is None else is_link
-    directory = backup_root() / backup_id
+    directory = (backup_root() if root is None else Path(root)) / backup_id
     if not directory.is_dir():
         return results.refuse(
             tool, "backup_incomplete", f"No backup directory at {directory}.")
@@ -529,7 +540,7 @@ def inspect_backup(backup_id: str, is_link: Callable[[Path], bool] | None = None
             tool, "backup_incomplete",
             f"{directory} has no readable {MANIFEST_NAME}.")
 
-    source = save_dir()
+    source = save_dir() if source is None else Path(source)
     live: dict[str, Path] = {}
     if source.is_dir():
         files, _, _ = _inventory(source, is_link)
