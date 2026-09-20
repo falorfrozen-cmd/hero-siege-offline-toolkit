@@ -1,7 +1,7 @@
 """The process gate, and the machine snapshot `hs_status` reports.
 
-The gate is tri-state on purpose. `processes()` raises `OSError` when the
-Windows snapshot cannot be created or read, and the engine's own
+The gate never guesses. `processes()` raises `OSError` when the Windows
+snapshot cannot be created or read, and the engine's own
 `launch_safety_blocker()` turns that into "launch was blocked" rather than
 into "nothing is running" -- the same fail direction is kept here.
 `AGENTS.md` § "Check a Permission Where It Is Used" spells out why: a sentinel
@@ -9,6 +9,14 @@ that means *unknown* must never compare equal to a real value, and the save
 tools ask this gate before they write. So `unknown` refuses exactly as hard as
 `running` does, and the only state that lets a write through is a snapshot
 that was actually taken and actually contained no game.
+
+For the same reason the gate has **four** states rather than three: a checkout
+without `ForgePact/` has no engine to take a snapshot with, which is neither
+`unknown` in the Win32 sense nor anything a `sc` query could answer. It is
+`engine_missing`, it refuses just as hard, and it names the one command that
+fixes it. `game_state()` still reports the tri-state `hs_status` was specified
+against; the extra state exists so a refusal cannot name a subsystem that was
+never reached.
 
 Matching is by image name alone. ForgePact's panel additionally matches the
 full image path, because a Steam copy and an offline copy can be open at the
@@ -22,6 +30,7 @@ any logic.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -33,6 +42,21 @@ RUNNING = "running"
 NOT_RUNNING = "not_running"
 UNKNOWN = "unknown"
 
+#: A fourth gate state, and deliberately not a fourth `game_state()`.
+#:
+#: "the snapshot failed" and "there is no engine to take a snapshot with" are
+#: different machine states with different fixes -- one is a Win32 failure, the
+#: other is `git submodule update --init ForgePact`. Collapsing them into
+#: `unknown` made the save tools refuse with a detail naming a Win32 call that
+#: was never attempted, while `hs_status`, which asks the bridge directly,
+#: correctly said `engine_source_missing`. Two tools disagreeing about one
+#: machine is the bug; both refuse either way, but a refusal that names the
+#: wrong subsystem costs a session.
+ENGINE_MISSING = "engine_missing"
+
+#: What a gate may return. Only `not_running` lets a write through.
+GATE_STATES = (RUNNING, NOT_RUNNING, UNKNOWN, ENGINE_MISSING)
+
 
 def _snapshot(engine: Any) -> list[tuple[int, str]] | None:
     """Process rows, or None when the snapshot itself failed."""
@@ -42,35 +66,76 @@ def _snapshot(engine: Any) -> list[tuple[int, str]] | None:
         return None
 
 
-def game_rows(engine: Any = None) -> list[tuple[int, str]] | None:
-    """Rows whose image name is the game, or None when unknown."""
+def _readings(engine: Any = None) -> tuple[str, str, list[tuple[int, str]]]:
+    """(state, why, matching rows). The one place the distinction is made."""
     if engine is None:
-        engine = launcher_bridge.load()
+        try:
+            engine = launcher_bridge.load()
+        except Exception as exc:  # noqa: BLE001 - an unimportable engine is a state
+            return UNKNOWN, (
+                f"{launcher_bridge.ENGINE_RELPATH} could not be imported "
+                f"({type(exc).__name__}: {exc}), so whether the game is running "
+                "is unknown."), []
     if results.is_refusal(engine):
-        return None
+        return ENGINE_MISSING, engine["detail"], []
+    if os.name != "nt":
+        # The engine's processes() returns [] off Windows rather than raising.
+        # Reading that as "not running" would be the sentinel-equals-real-value
+        # bug this module's docstring says it does not have.
+        return UNKNOWN, (
+            f"the Windows process table cannot be read on os.name {os.name!r}, "
+            "so whether the game is running is unknown."), []
     rows = _snapshot(engine)
     if rows is None:
-        return None
-    return [(pid, name) for pid, name in rows if str(name).lower() == GAME_IMAGE]
+        return UNKNOWN, (
+            "the Windows process snapshot could not be created or read, so "
+            "whether the game is running is unknown."), []
+    matches = [(int(pid), str(name)) for pid, name in rows
+               if str(name).lower() == GAME_IMAGE]
+    if matches:
+        return RUNNING, (f"{len(matches)} {GAME_IMAGE} process(es) are live: "
+                         f"{[pid for pid, _ in matches]}."), matches
+    return NOT_RUNNING, (f"the process snapshot returned {len(rows)} rows and "
+                         f"none of them is {GAME_IMAGE}."), []
+
+
+def game_state_detail(engine: Any = None) -> tuple[str, str]:
+    """The gate state and, in words, how it was arrived at."""
+    state, why, _ = _readings(engine)
+    return state, why
+
+
+def game_rows(engine: Any = None) -> list[tuple[int, str]] | None:
+    """Rows whose image name is the game, or None when the state is not known."""
+    state, _, matches = _readings(engine)
+    return matches if state in (RUNNING, NOT_RUNNING) else None
 
 
 def game_state(engine: Any = None) -> str:
-    """`running` | `not_running` | `unknown`. Never guesses in either direction."""
-    rows = game_rows(engine)
-    if rows is None:
-        return UNKNOWN
-    return RUNNING if rows else NOT_RUNNING
+    """`running` | `not_running` | `unknown` -- the tri-state `hs_status` reports.
+
+    `engine_missing` collapses to `unknown` here on purpose: `hs_status` asks
+    the bridge for the engine before it ever reaches this function and returns
+    `engine_source_missing` itself, so this field keeps the shape its callers
+    and its acceptance criterion were written against.
+    """
+    state, _, _ = _readings(engine)
+    return UNKNOWN if state == ENGINE_MISSING else state
 
 
 def game_pids(engine: Any = None) -> list[int]:
-    """PIDs of every running game image; empty when running or unknown is false."""
+    """PIDs of every running game image; empty unless the state is `running`."""
     rows = game_rows(engine)
     return [] if rows is None else [int(pid) for pid, _ in rows]
 
 
 def gate() -> str:
-    """The callable the save tools inject. A named function, so a test can see it."""
-    return game_state()
+    """The callable the save tools inject.
+
+    Returns one of `GATE_STATES` -- four, not three, so a refusal can name the
+    subsystem that actually failed. A named function, so a test can see it.
+    """
+    return game_state_detail()[0]
 
 
 def status(tool: str = "hs_status") -> dict[str, Any]:

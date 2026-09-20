@@ -125,20 +125,34 @@ def default_is_link(path: Path) -> bool:
 # --------------------------------------------------------------------------
 
 def _gate_refusal(tool: str, gate: Gate, when: str) -> dict[str, Any] | None:
-    """Ask the gate. `unknown` refuses; it is never read as "not running"."""
+    """Ask the gate. Only `not_running` proceeds; every other answer refuses.
+
+    Each answer refuses under its own token. A gate that cannot answer because
+    `ForgePact/src/offline_launcher.py` is absent has not failed a Win32 call,
+    and saying so would send the reader to the wrong subsystem: a clone without
+    `--recursive` is fixed by one `git submodule update`, not by anything about
+    process snapshots.
+    """
     state = gate()
     if state == "running":
         return results.refuse(
             tool, "game_running",
             f"Hero_Siege.exe is running ({when}). Close the game first: it "
             "rewrites hs2saves on exit, so anything done now is undone then.")
-    if state != "not_running":
+    if state == "not_running":
+        return None
+    if state == "engine_missing":
         return results.refuse(
-            tool, "game_state_unknown",
-            f"The Windows process snapshot could not be read ({when}), so "
-            "whether the game is running is unknown. Refusing rather than "
-            "assuming it is closed.")
-    return None
+            tool, "engine_source_missing",
+            f"{launcher_bridge.ENGINE_RELPATH} is not in this checkout, so "
+            f"whether the game is running cannot be determined ({when}). Run "
+            "`git submodule update --init ForgePact` in the toolkit checkout. "
+            "Nothing was read or written.")
+    return results.refuse(
+        tool, "game_state_unknown",
+        f"The Windows process snapshot could not be read ({when}), so "
+        "whether the game is running is unknown. Refusing rather than "
+        "assuming it is closed.")
 
 
 def _inventory(source: Path, is_link: Callable[[Path], bool]) -> tuple[list[Path], list[str], int]:
@@ -231,6 +245,7 @@ def verify_backup(directory: Path) -> tuple[str, str] | None:
 
 def backup(label: str, gate: Gate, is_link: Callable[[Path], bool] | None = None,
            source: Path | None = None, root: Path | None = None,
+           require_characters: bool = True,
            tool: str = "hs_saves_backup") -> dict[str, Any]:
     """Snapshot the whole live directory. Gate, inventory, copy, verify, manifest.
 
@@ -238,6 +253,15 @@ def backup(label: str, gate: Gate, is_link: Callable[[Path], bool] | None = None
     `hs_selfcheck`'s round trip can drive these exact functions against a
     fixture without mutating process-wide state that another tool call is
     reading at the same moment.
+
+    `require_characters` guards against backing up a directory the *caller
+    guessed at* -- a mis-set `HS_DRIVE_SAVE_DIR` with no `herosiege*.hss` in it
+    is not a save directory. It is turned off for the pre-restore backup, whose
+    target was not guessed but chosen by the restore, and which has to work on
+    a directory that has been wiped or corrupted. That is the case
+    `hs_saves_restore` exists for, and refusing it made the tool inert exactly
+    where it was needed. The size ceiling is not relaxed with it: that is the
+    guard against a path pointing somewhere enormous, and it still applies.
     """
     is_link = default_is_link if is_link is None else is_link
 
@@ -259,7 +283,7 @@ def backup(label: str, gate: Gate, is_link: Callable[[Path], bool] | None = None
             "saves live somewhere else.")
 
     files, skipped, total = _inventory(source, is_link)
-    if not any(entry.match(CHARACTER_GLOB) for entry in files):
+    if require_characters and not any(entry.match(CHARACTER_GLOB) for entry in files):
         return results.refuse(
             tool, "no_character_saves",
             f"{source} holds no {CHARACTER_GLOB} file, so it is not a Hero "
@@ -374,7 +398,7 @@ def restore(backup_id: str, confirm_backup_id: str, remove_extra: bool = False,
     # Everything currently live is backed up before a single byte is written,
     # and that backup is verified the same way the chosen one just was.
     pre = backup(PRE_RESTORE_LABEL, gate=gate, is_link=is_link,
-                 source=source, root=root, tool=tool)
+                 source=source, root=root, require_characters=False, tool=tool)
     if results.is_refusal(pre):
         return results.refuse(
             tool, "pre_restore_backup_failed",

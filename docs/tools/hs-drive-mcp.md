@@ -137,10 +137,10 @@ Tokens this server can return today:
 
 | Token | Meaning |
 | --- | --- |
-| `engine_source_missing` | `ForgePact/src/offline_launcher.py` is not in this checkout. |
+| `engine_source_missing` | `ForgePact/src/offline_launcher.py` is not in this checkout, so there is no engine to take a process snapshot with. The save tools return this too, not `game_state_unknown`: a clone without `--recursive` is fixed by `git submodule update --init ForgePact`, and a refusal naming a Win32 call that was never attempted sends the reader to the wrong subsystem. |
 | `forgepact_config_missing` | `game_exe` is not set in `%LOCALAPPDATA%\Hero_Siege\forgepact.json`. |
 | `game_running` | A `hero_siege.exe` process is live. |
-| `game_state_unknown` | The Windows process snapshot failed, so whether the game is running is unknown. |
+| `game_state_unknown` | The process snapshot was attempted and failed — or could not be attempted on this platform — so whether the game is running is unknown. |
 | `save_dir_missing` | No directory at the resolved save path. |
 | `no_character_saves` | The directory holds no `herosiege*.hss`, so it is not a save directory. |
 | `save_dir_too_large` | Over the 256 MB ceiling — almost always a mis-set `HS_DRIVE_SAVE_DIR`. |
@@ -159,12 +159,22 @@ a second spelling: `game_not_running`, `bp_ipc_missing`, `invalid_command`,
 ## The process gate
 
 `procs.game_state()` is tri-state: `running`, `not_running`, or `unknown` when
-the engine's `processes()` raised `OSError`. `unknown` refuses every gated
-tool exactly as hard as `running` does. That is `AGENTS.md` § "Check a
-Permission Where It Is Used" applied here — a sentinel meaning *unknown* must
-never compare equal to a real value — and it matches the engine's own fail
-direction, where a failed snapshot makes `launch_safety_blocker()` say the
-launch was blocked.
+the engine's `processes()` raised `OSError` or the platform has no Windows
+process table to read. `unknown` refuses every gated tool exactly as hard as
+`running` does. That is `AGENTS.md` § "Check a Permission Where It Is Used"
+applied here — a sentinel meaning *unknown* must never compare equal to a real
+value — and it matches the engine's own fail direction, where a failed snapshot
+makes `launch_safety_blocker()` say the launch was blocked.
+
+The **gate** the save tools ask has a fourth state, `engine_missing`, which
+`game_state()` collapses to `unknown` so `hs_status` keeps the shape it was
+specified against. It exists because "the snapshot failed" and "there is no
+engine to take a snapshot with" have different fixes, and a refusal that names
+the wrong one costs a session: without it, a checkout missing `ForgePact/`
+refused every save operation with a detail about a Win32 call that was never
+attempted, while `hs_status` — which asks the bridge directly — correctly said
+`engine_source_missing` about the same machine. Two tools disagreeing about one
+machine state is the bug; both still refuse.
 
 Matching is by image name. ForgePact's panel additionally matches the full
 image path, because a Steam copy and an offline copy can be open at once; this
@@ -219,6 +229,16 @@ Four rules hold everywhere:
    backup is refused or fails verification, the restore refuses
    `pre_restore_backup_failed` and the live directory is untouched.
 
+`hs_saves_backup` refuses a directory holding no `herosiege*.hss` — that check
+guards against backing up a directory the caller *guessed at*, almost always a
+mis-set `HS_DRIVE_SAVE_DIR`. The pre-restore backup does **not** apply it: its
+target was chosen by the restore rather than guessed, and it has to work on a
+directory that has been wiped or corrupted. That is the case
+`hs_saves_restore` exists for, and requiring a character save there made the
+tool refuse exactly when it was needed. The 256 MB ceiling is not relaxed with
+it; that guard is about a path pointing somewhere enormous and still applies to
+both.
+
 ## `hs_selfcheck` — proving the instrument
 
 `AGENTS.md` § "Prove the Instrument Before Trusting a Negative Result" exists
@@ -240,6 +260,16 @@ A check whose code raised is `fail` with the exception name, never `skipped`.
 "we looked and it broke" must not be confusable. `checks.py` is a registry, so
 the game workorder appends `screenshot_screen` and `ipc_ping` with
 `register()` rather than editing any logic there.
+
+`summary.healthy` is **not** "nothing failed". It requires every check
+registered with `positive_control=True` — `process_snapshot` and
+`backup_roundtrip` today — to have *passed*. A run where everything was
+skipped has zero failures and has proved nothing, and `healthy` is the field a
+caller branches on; a self-check that reports itself armed while blind is the
+one failure this tool cannot delegate. `summary` also carries
+`positive_controls` and `positive_controls_proven` so the difference is
+visible, not inferred. A check added with `register(name, fn)` and no flag
+counts toward `failed` but never props `healthy` up.
 
 ## The engine is ForgePact's, imported
 
@@ -304,12 +334,13 @@ rather than by falling back to another launcher:
 | --- | --- | --- | --- |
 | A1 | Dependencies install and are pinned | `py -3 -m pip install -r tools/hs_drive_mcp/requirements.txt` | exit 0; `mcp==2.2.0` and `Pillow==12.1.0` both found — 2026-09-20 |
 | A2 | `.mcp.json` entry | parsed in `tests.test_hs_drive_mcp_release_boundary` | `command: py`, `args: ["-3","-m","tools.hs_drive_mcp"]`, no `url`/`type` — 2026-09-20 |
-| A3/A4/A7 | Tool surface over stdio, self-check, status | `py -3 -m unittest tests.test_hs_drive_mcp_server -v` | `OK`, 9 tests, no skips — 2026-09-20 |
+| A3/A4/A7 | Tool surface over stdio, self-check, status, `healthy` semantics | `py -3 -m unittest tests.test_hs_drive_mcp_server -v` | `OK`, 16 tests, no skips — 2026-09-20 |
 | A5 | Engine pin, inert import, missing-source refusal | `py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v` | `OK`, 8 tests, no skips — 2026-09-20 |
 | A6 | No stdout, no listener, no shell | `Select-String -Path tools/hs_drive_mcp/*.py -Pattern 'shell=True\|os\.system\(\|socket\.\|\.bind\(\|HTTPServer\|uvicorn\|streamable\|^\s*print\('` | no matches — 2026-09-20 |
-| B1–B10 | Save backup and restore | `py -3 -m unittest tests.test_hs_drive_mcp_saves -v` | `OK`, 24 tests, no skips — 2026-09-20 |
+| B1–B10 | Save backup and restore, including the wiped-directory recovery case | `py -3 -m unittest tests.test_hs_drive_mcp_saves -v` | `OK`, 30 tests, no skips — 2026-09-20 |
 | C6 | Release boundary | `py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 6 tests, no skips — 2026-09-20 |
-| C7 | Whole root suite; submodules clean | `py -3 -m unittest discover -s tests` | see the Changing section — 2026-09-20 |
+| C7 | Whole root suite | `py -3 -m unittest discover -s tests` | `Ran 734 tests`, `OK (skipped=9)` — all nine skips pre-existing in other suites — 2026-09-20 |
+| C7 | This change touches no submodule | `git -C ForgePact status --porcelain`, `git -C HS-Offline-Launcher status --porcelain` | both printed nothing — 2026-09-20. (An unrelated ` M HS-Offline-Tracker` gitlink drift predates this work; `git diff --stat 589246f HEAD` touches no submodule.) |
 | — | Self-check on this machine | `hs_selfcheck` over stdio | all five checks `pass` (137 files, 48 characters in the live dir; snapshot sees own PID; EAC `stopped`) — 2026-09-20 |
 | C1 | `hs-drive` connects in a fresh session | `/mcp` in a new Claude Code session at the repo root | **not yet run** — owner-run; the working-directory assumption above is unconfirmed |
 

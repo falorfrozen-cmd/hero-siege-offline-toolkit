@@ -23,7 +23,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.hs_drive_mcp import saves  # noqa: E402
+from tools.hs_drive_mcp import launcher_bridge, procs, saves  # noqa: E402
 
 FIXTURE = {
     "herosiege1.hss": b"character one\x00\x01",
@@ -107,6 +107,41 @@ class BaselineRefusalTests(SaveToolBase):
         self.assert_nothing_happened(
             saves.restore("anything", "anything", gate=self.gate), "game_state_unknown")
 
+    def test_a_checkout_without_forgepact_refuses_by_the_right_name(self):
+        """The real gate, with the engine source absent.
+
+        `unknown` and `engine_missing` both refuse, so a test that only checked
+        "did it refuse" would pass against the bug. What was wrong was the
+        *name*: the save tools blamed a Win32 snapshot that was never
+        attempted, while `hs_status`, asking the bridge directly, said
+        `engine_source_missing` about the same machine.
+        """
+        absent = self.root / "ForgePact" / "src" / "offline_launcher.py"
+        with patch.object(launcher_bridge, "_LOADED", {}), \
+             patch.object(launcher_bridge, "ENGINE_PATH", absent):
+            self.assertEqual(procs.gate(), "engine_missing")
+            made = saves.backup("nochain", gate=procs.gate)
+            done = saves.restore("anything", "anything", gate=procs.gate)
+
+        for result in (made, done):
+            self.assertTrue(result["refused"], result)
+            self.assertEqual(result["reason"], "engine_source_missing")
+            self.assertIn("ForgePact/src/offline_launcher.py", result["detail"])
+            self.assertIn("git submodule update --init ForgePact", result["detail"])
+        self.assertEqual(self.backup_ids(), [])
+        self.assertEqual(tree(self.live), FIXTURE)
+
+    def test_the_status_tri_state_still_hides_the_fourth_state(self):
+        """`game_state` keeps the three values hs_status was specified against."""
+        absent = self.root / "ForgePact" / "src" / "offline_launcher.py"
+        with patch.object(launcher_bridge, "_LOADED", {}), \
+             patch.object(launcher_bridge, "ENGINE_PATH", absent):
+            state, why = procs.game_state_detail()
+            self.assertEqual(state, "engine_missing")
+            self.assertIn("offline_launcher.py", why)
+            self.assertEqual(procs.game_state(), "unknown")
+            self.assertEqual(procs.game_pids(), [])
+
 
 class RoundTripTests(SaveToolBase):
     """B3 -- the target: back up, damage the directory, restore it."""
@@ -128,6 +163,60 @@ class RoundTripTests(SaveToolBase):
         for name, data in FIXTURE.items():
             self.assertEqual((self.live / name).read_bytes(), data, name)
         self.assertEqual((self.live / "extra.hss").read_bytes(), b"added after the backup")
+
+    def test_a_wiped_save_directory_can_still_be_restored(self):
+        """The recovery case: the reason this tool exists at all.
+
+        The pre-restore backup runs over a directory with no `herosiege*.hss`
+        left in it. Requiring one there made `hs_saves_restore` refuse
+        `pre_restore_backup_failed` precisely when a player had lost their
+        characters -- a feature that reports a reason and does nothing.
+        """
+        made = saves.backup("target", gate=self.gate)
+        for path in sorted(self.live.iterdir()):
+            if path.suffix == ".hss":
+                path.unlink()
+        self.assertEqual([p.name for p in self.live.iterdir()], ["shop.ini"])
+
+        done = saves.restore(made["backup_id"], made["backup_id"], gate=self.gate)
+        self.assertFalse(done["refused"], done)
+        self.assertEqual(tree(self.live), FIXTURE)
+
+        pre = json.loads((self.backups / done["pre_restore_backup_id"]
+                          / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual([entry["name"] for entry in pre["files"]], ["shop.ini"])
+
+    def test_an_entirely_empty_save_directory_can_still_be_restored(self):
+        made = saves.backup("target", gate=self.gate)
+        for path in sorted(self.live.iterdir()):
+            path.unlink()
+
+        done = saves.restore(made["backup_id"], made["backup_id"], gate=self.gate)
+        self.assertFalse(done["refused"], done)
+        self.assertEqual(tree(self.live), FIXTURE)
+
+        pre = json.loads((self.backups / done["pre_restore_backup_id"]
+                          / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(pre["files"], [])
+
+    def test_a_plain_backup_of_a_wiped_directory_is_still_refused(self):
+        """The relaxation is for the pre-restore backup only, not for backup()."""
+        for path in sorted(self.live.iterdir()):
+            if path.suffix == ".hss":
+                path.unlink()
+        result = saves.backup("wiped", gate=self.gate)
+        self.assertTrue(result["refused"], result)
+        self.assertEqual(result["reason"], "no_character_saves")
+
+    def test_the_size_ceiling_still_applies_to_the_pre_restore_backup(self):
+        """`require_characters=False` relaxes one guard, and only that one."""
+        made = saves.backup("target", gate=self.gate)
+        with patch.object(saves, "MAX_SOURCE_BYTES", 4):
+            done = saves.restore(made["backup_id"], made["backup_id"], gate=self.gate)
+        self.assertTrue(done["refused"], done)
+        self.assertEqual(done["reason"], "pre_restore_backup_failed")
+        self.assertIn("save_dir_too_large", done["detail"])
+        self.assertEqual(tree(self.live), FIXTURE)
 
 
 class ExtraFileTests(SaveToolBase):

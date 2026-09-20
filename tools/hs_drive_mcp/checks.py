@@ -34,16 +34,28 @@ STATUSES = ("pass", "fail", "skipped")
 
 CheckFn = Callable[[], tuple[str, str]]
 
-_REGISTRY: list[tuple[str, CheckFn]] = []
+_REGISTRY: list[tuple[str, CheckFn, bool]] = []
 
 
-def register(name: str, run: CheckFn) -> None:
-    """Append a check. Used by this module, and by the game workorder's."""
-    _REGISTRY.append((name, run))
+def register(name: str, run: CheckFn, positive_control: bool = False) -> None:
+    """Append a check. Used by this module, and by the game workorder's.
+
+    `positive_control=True` marks a check that points the instrument at
+    something already known to be there. Those are the checks `summary.healthy`
+    requires to have *passed*, not merely not failed -- a run where every check
+    was skipped must never report healthy, because "reports itself armed while
+    doing nothing" is the exact shape `AGENTS.md` § "Prove the Instrument"
+    exists to catch, and this tool is the thing a caller trusts to catch it.
+    """
+    _REGISTRY.append((name, run, positive_control))
 
 
-def registered() -> list[tuple[str, CheckFn]]:
+def registered() -> list[tuple[str, CheckFn, bool]]:
     return list(_REGISTRY)
+
+
+def positive_controls() -> list[str]:
+    return [name for name, _, control in _REGISTRY if control]
 
 
 def _not_windows() -> str | None:
@@ -68,7 +80,9 @@ def check_engine_import() -> tuple[str, str]:
     return "pass", (
         f"{launcher_bridge.ENGINE_RELPATH} loaded; all "
         f"{len(launcher_bridge.ENGINE_SYMBOLS)} pinned names resolve "
-        f"(upstream revision {getattr(engine, 'UPSTREAM_REVISION', '?')[:7]}).")
+        # str() first: a non-string constant here would raise TypeError and
+        # report engine_import as failing for a reason that is not the one.
+        f"(upstream revision {str(getattr(engine, 'UPSTREAM_REVISION', '?'))[:7]}).")
 
 
 def check_process_snapshot() -> tuple[str, str]:
@@ -170,16 +184,19 @@ def check_backup_roundtrip() -> tuple[str, str]:
 
 
 register("engine_import", check_engine_import)
-register("process_snapshot", check_process_snapshot)
+# Both of these point the instrument at something certainly present -- this
+# server's own process, and a fixture it just wrote. They are what `healthy`
+# is allowed to rest on.
+register("process_snapshot", check_process_snapshot, positive_control=True)
 register("eac_service", check_eac_service)
 register("save_dir", check_save_dir)
-register("backup_roundtrip", check_backup_roundtrip)
+register("backup_roundtrip", check_backup_roundtrip, positive_control=True)
 
 
 def run_checks(tool: str = "hs_selfcheck") -> dict[str, Any]:
     """Run every registered check. One failing check never stops the rest."""
     rows: list[dict[str, str]] = []
-    for name, run in registered():
+    for name, run, _ in registered():
         try:
             status, detail = run()
         except Exception as exc:  # noqa: BLE001 - a raised check is a fail, not a crash
@@ -189,6 +206,12 @@ def run_checks(tool: str = "hs_selfcheck") -> dict[str, Any]:
         rows.append({"name": name, "status": status, "detail": detail})
 
     counts = {status: sum(1 for row in rows if row["status"] == status) for status in STATUSES}
+    controls = positive_controls()
+    proven = [row["name"] for row in rows
+              if row["name"] in controls and row["status"] == "pass"]
+    # Not `failed == 0`: a run where every check was skipped has zero failures
+    # and has proved nothing, and `healthy` is the field a caller branches on.
+    healthy = bool(controls) and len(proven) == len(controls) and counts["fail"] == 0
     return results.ok(
         tool,
         checks=rows,
@@ -197,7 +220,11 @@ def run_checks(tool: str = "hs_selfcheck") -> dict[str, Any]:
             "passed": counts["pass"],
             "failed": counts["fail"],
             "skipped": counts["skipped"],
-            "healthy": counts["fail"] == 0,
-            "note": "a skipped check is not a pass; read its detail for the reason.",
+            "positive_controls": controls,
+            "positive_controls_proven": proven,
+            "healthy": healthy,
+            "note": ("healthy requires every positive control to have passed, "
+                     "not merely not failed: a skipped check is not a pass, and "
+                     "an all-skipped run has proved nothing."),
         },
     )

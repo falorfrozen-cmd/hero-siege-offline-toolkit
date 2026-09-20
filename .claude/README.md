@@ -708,7 +708,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Ten suites cover this page's tooling. Nine are Python and run automatically
+Eleven suites cover this page's tooling. Ten are Python and run automatically
 under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 

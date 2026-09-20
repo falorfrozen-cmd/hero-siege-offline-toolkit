@@ -233,5 +233,89 @@ class StatusCompositionTests(unittest.TestCase):
         self.assertFalse(report["bp_ipc_exists"])
 
 
+class SelfCheckSummaryTests(unittest.TestCase):
+    """`summary.healthy` must never be true on a run that proved nothing.
+
+    This is the instrument reporting on itself, so it is the one place where
+    "armed but blind" cannot be caught by anything downstream. It needs neither
+    Windows nor the SDK -- the registry is replaced with stub checks -- so it
+    runs everywhere, including on the CI image where the real checks would all
+    be skipped.
+    """
+
+    @staticmethod
+    def registry(*rows):
+        from tools.hs_drive_mcp import checks
+        entries = [(name, (lambda s=status, d=detail: (s, d)), control)
+                   for name, status, detail, control in rows]
+        return patch.object(checks, "_REGISTRY", entries)
+
+    def run_with(self, *rows):
+        from tools.hs_drive_mcp import checks
+        with self.registry(*rows):
+            return checks.run_checks()
+
+    def test_an_all_skipped_run_is_not_healthy(self):
+        report = self.run_with(
+            ("process_snapshot", "skipped", "not Windows", True),
+            ("backup_roundtrip", "skipped", "not Windows", True),
+            ("save_dir", "skipped", "no directory", False))
+        self.assertEqual(report["summary"]["failed"], 0)
+        self.assertFalse(report["summary"]["healthy"],
+                         "a run that proved nothing reported itself healthy")
+        self.assertEqual(report["summary"]["positive_controls_proven"], [])
+
+    def test_a_skipped_positive_control_alone_is_enough_to_withhold_healthy(self):
+        report = self.run_with(
+            ("process_snapshot", "pass", "saw own pid", True),
+            ("backup_roundtrip", "skipped", "no temp space", True),
+            ("save_dir", "pass", "137 files", False))
+        self.assertEqual(report["summary"]["failed"], 0)
+        self.assertFalse(report["summary"]["healthy"])
+        self.assertEqual(report["summary"]["positive_controls_proven"],
+                         ["process_snapshot"])
+
+    def test_every_control_passing_and_nothing_failing_is_healthy(self):
+        report = self.run_with(
+            ("process_snapshot", "pass", "saw own pid", True),
+            ("backup_roundtrip", "pass", "byte-identical", True),
+            ("eac_service", "skipped", "not Windows", False))
+        self.assertTrue(report["summary"]["healthy"])
+        self.assertEqual(report["summary"]["positive_controls"],
+                         ["process_snapshot", "backup_roundtrip"])
+
+    def test_a_failure_anywhere_withholds_healthy(self):
+        report = self.run_with(
+            ("process_snapshot", "pass", "saw own pid", True),
+            ("backup_roundtrip", "pass", "byte-identical", True),
+            ("engine_import", "fail", "no such file", False))
+        self.assertFalse(report["summary"]["healthy"])
+
+    def test_a_registry_with_no_positive_control_is_never_healthy(self):
+        report = self.run_with(("save_dir", "pass", "137 files", False))
+        self.assertFalse(report["summary"]["healthy"],
+                         "nothing was pointed at a known-present target")
+
+    def test_a_raising_check_is_a_fail_naming_the_exception(self):
+        from tools.hs_drive_mcp import checks
+
+        def explode():
+            raise RuntimeError("the instrument broke")
+
+        with patch.object(checks, "_REGISTRY",
+                          [("process_snapshot", explode, True)]):
+            report = checks.run_checks()
+        row = report["checks"][0]
+        self.assertEqual(row["status"], "fail",
+                         "a check that raised must never be reported as skipped")
+        self.assertIn("RuntimeError", row["detail"])
+        self.assertFalse(report["summary"]["healthy"])
+
+    def test_the_real_registry_marks_the_two_positive_controls(self):
+        from tools.hs_drive_mcp import checks
+        self.assertEqual(checks.positive_controls(),
+                         ["process_snapshot", "backup_roundtrip"])
+
+
 if __name__ == "__main__":
     unittest.main()
