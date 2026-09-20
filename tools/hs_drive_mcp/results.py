@@ -5,15 +5,17 @@ A refusal is a normal, successful tool result carrying `refused: true` and a
 reaches the caller as a protocol error with a stack trace attached, which is
 exactly the shape a model cannot act on; a token it can branch on is the point.
 
-`REASONS` is the vocabulary this workorder defines. `RESERVED_REASONS` are the
-tokens the follow-on hs-drive-mcp-game workorder will add; they are listed
-here so nobody invents a second spelling for one of them.
+`REASONS` is the whole vocabulary. It is spelled as two tuples because the two
+halves were defined by two workorders -- `CORE_REASONS` by the one that built
+the status, self-check and save tools, `GAME_REASONS` by the one that added
+launch, IPC and screenshot -- and keeping the split visible is what stops a
+third workorder inventing `not_running` beside `game_not_running`.
 """
 from __future__ import annotations
 
 from typing import Any
 
-REASONS = (
+CORE_REASONS = (
     "engine_source_missing",
     "engine_import_failed",
     "forgepact_config_missing",
@@ -32,7 +34,13 @@ REASONS = (
     "invalid_label",
 )
 
-RESERVED_REASONS = (
+#: Added by `hs-drive-mcp-game` for launch, IPC and screenshot. Each one names
+#: a state a caller can act on: the inverse of `game_running` for the tools
+#: that need a live game, the two ways `bp_ipc\` can be unusable, and the two
+#: refusals that exist to stop this server doing something it should not --
+#: `not_launched_here` (never terminate a process this server did not start)
+#: and `mod_chain_incomplete` (never launch an unmodded copy and call it ready).
+GAME_REASONS = (
     "game_not_running",
     "bp_ipc_missing",
     "invalid_command",
@@ -42,7 +50,14 @@ RESERVED_REASONS = (
     "not_launched_here",
     "launcher_refused",
     "mod_chain_incomplete",
+    # Not on that workorder's reserved list, and added rather than borrowed:
+    # "the imaging library this server pins is not installed" is not
+    # `invalid_command`, and telling a caller its arguments were wrong when the
+    # install is incomplete sends it to fix the one thing that is fine.
+    "capture_unavailable",
 )
+
+REASONS = CORE_REASONS + GAME_REASONS
 
 
 def ok(tool: str, **fields: Any) -> dict[str, Any]:

@@ -41,18 +41,31 @@ ENGINE_SOURCE = ROOT / "ForgePact" / "src" / "offline_launcher.py"
 SERVER_ARGV = ["-3", "-m", "tools.hs_drive_mcp"]
 
 EXPECTED_TOOLS = {
+    # hs-drive-mcp-core
     "hs_status", "hs_selfcheck", "hs_saves_backup",
     "hs_saves_restore", "hs_saves_list", "hs_saves_inspect",
+    # hs-drive-mcp-game
+    "hs_launch", "hs_wait_ready", "hs_stop_game",
+    "hs_command", "hs_ipc_tail", "hs_screenshot",
 }
 
+#: Two tools can take away something that was not theirs: a restore overwrites
+#: the live save directory, and a forced stop terminates a process. Everything
+#: else writes only files of its own.
+EXPECTED_DESTRUCTIVE = {"hs_saves_restore", "hs_stop_game"}
+
 EXPECTED_CHECKS = [
-    "engine_import", "process_snapshot", "eac_service", "save_dir", "backup_roundtrip",
+    "engine_import", "process_snapshot", "eac_service", "save_dir",
+    "backup_roundtrip", "screenshot_screen", "ipc_ping",
 ]
 
 #: `save_dir` is left out on purpose: it reports on whatever directory the
 #: environment points at, which is a fixture here, so it is asserted by name
-#: below rather than by its status.
-MUST_PASS_ON_WINDOWS = ["engine_import", "process_snapshot", "eac_service", "backup_roundtrip"]
+#: below rather than by its status. `ipc_ping` is left out because it needs the
+#: modded game to be running; it is asserted by the pairing of its status and
+#: its detail instead.
+MUST_PASS_ON_WINDOWS = ["engine_import", "process_snapshot", "eac_service",
+                        "backup_roundtrip", "screenshot_screen"]
 
 SKIP_REASON = None
 if os.name != "nt":
@@ -110,8 +123,9 @@ class StdioSurfaceTests(unittest.TestCase):
                 checked = await session.call_tool("hs_selfcheck")
                 return listed.tools, checked
 
-    def test_the_six_tools_of_this_workorder_are_registered(self):
+    def test_all_twelve_tools_are_registered(self):
         self.assertEqual({tool.name for tool in self.tools}, EXPECTED_TOOLS)
+        self.assertEqual(len(self.tools), 12)
 
     def test_every_tool_carries_a_title_and_both_behaviour_hints(self):
         destructive = []
@@ -125,7 +139,7 @@ class StdioSurfaceTests(unittest.TestCase):
                                   f"{tool.name} does not set destructiveHint")
             if hints["destructiveHint"]:
                 destructive.append(tool.name)
-        self.assertEqual(destructive, ["hs_saves_restore"])
+        self.assertEqual(set(destructive), EXPECTED_DESTRUCTIVE)
 
     def test_the_selfcheck_reports_every_instrument_by_name(self):
         self.assertFalse(self.selfcheck.is_error, self.selfcheck)
@@ -142,6 +156,19 @@ class StdioSurfaceTests(unittest.TestCase):
         for name in MUST_PASS_ON_WINDOWS:
             self.assertEqual(rows[name]["status"], "pass",
                              f"{name}: {rows[name]['detail']}")
+
+    def test_the_plugin_ping_is_skipped_for_the_stated_reason_or_answers_pong(self):
+        """`ipc_ping` cannot be pinned to one status: it depends on whether the
+        game happens to be running. What can be pinned is that its status and
+        its detail agree -- "we did not look" says why, "we looked" says what
+        came back, and a `fail` is reported here rather than passed over."""
+        row = {r["name"]: r for r in self.selfcheck.structured_content["checks"]}["ipc_ping"]
+        if row["status"] == "skipped":
+            self.assertIn("not running", row["detail"])
+        elif row["status"] == "pass":
+            self.assertIn("pong", row["detail"].lower())
+        else:
+            self.fail(f"ipc_ping failed against a running game: {row['detail']}")
 
 
 @unittest.skipIf(SKIP_REASON is not None, SKIP_REASON or "")
@@ -311,10 +338,14 @@ class SelfCheckSummaryTests(unittest.TestCase):
         self.assertIn("RuntimeError", row["detail"])
         self.assertFalse(report["summary"]["healthy"])
 
-    def test_the_real_registry_marks_the_two_positive_controls(self):
+    def test_the_real_registry_marks_every_positive_control(self):
         from tools.hs_drive_mcp import checks
         self.assertEqual(checks.positive_controls(),
-                         ["process_snapshot", "backup_roundtrip"])
+                         ["process_snapshot", "backup_roundtrip",
+                          "screenshot_screen"])
+        self.assertNotIn("ipc_ping", checks.positive_controls(),
+                         "a check that needs the game running cannot be what "
+                         "`healthy` rests on: it is usually skipped")
 
 
 if __name__ == "__main__":

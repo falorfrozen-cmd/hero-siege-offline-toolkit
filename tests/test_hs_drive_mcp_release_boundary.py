@@ -88,11 +88,16 @@ class McpConfigTests(unittest.TestCase):
         self.assertTrue((PACKAGE / "__main__.py").is_file())
         self.assertTrue((PACKAGE / "server.py").is_file())
 
-    def test_the_game_workorders_modules_are_not_here_yet(self):
-        # Empty stubs would make `hs-drive-mcp-game` look partly done.
-        for name in ("ipc.py", "capture.py"):
-            self.assertFalse((PACKAGE / name).exists(),
-                             f"{name} belongs to the hs-drive-mcp-game workorder")
+    def test_every_module_the_tools_are_built_on_is_present(self):
+        # This assertion is the inverse of the one it replaces. Until
+        # `hs-drive-mcp-game` landed, these three files were asserted *absent*,
+        # because an empty stub would have made that workorder look partly done.
+        # Now the twelve tools depend on them, and a missing one would leave
+        # `server.py` failing to import -- which a stdio client reports as a
+        # server that will not start, naming nothing.
+        for name in ("ipc.py", "capture.py", "launch.py"):
+            self.assertTrue((PACKAGE / name).is_file(),
+                            f"{name} is missing; the game tools import it")
 
 
 class PackageSurfaceTests(unittest.TestCase):

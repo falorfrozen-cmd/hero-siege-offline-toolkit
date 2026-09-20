@@ -17,21 +17,26 @@ logger below, and nothing in this package writes to stdout.
 """
 from __future__ import annotations
 
+import json
 import logging
 import sys
-from typing import Annotated, Any
+from pathlib import Path
+from typing import Annotated, Any, Literal
 
-from mcp.server.mcpserver import MCPServer
-from mcp.types import ToolAnnotations
+from mcp.server.mcpserver import Image, MCPServer
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
-from . import checks, procs, saves
+from . import capture, checks, ipc, launch, procs, saves
 
 INSTRUCTIONS = (
     "Order for a verified test run: hs_selfcheck -> hs_saves_backup -> "
-    "(hs_launch -> hs_command / hs_screenshot -> hs_stop_game, once installed) "
-    "-> hs_saves_inspect -> hs_saves_restore. Every refusal carries `reason`; "
-    "a `skipped` self-check is not a pass."
+    "hs_launch -> hs_command / hs_screenshot -> hs_stop_game -> "
+    "hs_saves_inspect -> hs_saves_restore. Every refusal carries `reason`; "
+    "a `skipped` self-check is not a pass. hs_launch and hs_wait_ready report a "
+    "`phase` and a `ready` flag: `process_running` is not `plugin_ready`, and "
+    "most gameplay commands act only once a character is loaded, which a human "
+    "still has to do."
 )
 
 # stderr only. On stdio, stdout is the protocol channel.
@@ -45,6 +50,20 @@ server = MCPServer("hs_drive", instructions=INSTRUCTIONS)
 def _read_only(title: str) -> ToolAnnotations:
     return ToolAnnotations(title=title, read_only_hint=True, destructive_hint=False,
                            idempotent_hint=True, open_world_hint=False)
+
+
+def _acts(title: str, *, destructive: bool = False,
+          idempotent: bool = False) -> ToolAnnotations:
+    """A tool that changes something. `destructive` is claimed sparingly.
+
+    Only two tools here can take something away that was not theirs:
+    `hs_saves_restore` overwrites the live save directory, and `hs_stop_game`
+    can terminate a process. Everything else writes only files of its own --
+    a backup, a screenshot, one line into `cmd.txt`.
+    """
+    return ToolAnnotations(title=title, read_only_hint=False,
+                           destructive_hint=destructive, idempotent_hint=idempotent,
+                           open_world_hint=False)
 
 
 @server.tool(
@@ -190,6 +209,203 @@ def hs_saves_inspect(
     Refusals: `invalid_backup_id`, `backup_incomplete`.
     """
     return saves.inspect_backup(backup_id)
+
+
+@server.tool(
+    name="hs_launch",
+    title="Launch the modded Hero Siege",
+    description=(
+        "Launch the ForgePact-modded game through ForgePact's own embedded "
+        "HS Offline Launcher engine and wait until the plugin answers. Refuses "
+        "unless the mod chain is complete. Persists nothing."),
+    annotations=_acts("Launch the modded Hero Siege"),
+)
+def hs_launch(
+    exe_path: Annotated[str | None, Field(
+        description="Override the executable for this one call. Nothing is "
+                    "written to ForgePact's configuration. Leave unset to use "
+                    "the path the ForgePact panel already knows.")] = None,
+    wait_for_plugin: Annotated[bool, Field(
+        description="Wait for the BloodPact plugin to answer a ping, not just "
+                    "for the process to exist.")] = True,
+    timeout_s: Annotated[int, Field(
+        description="Total budget for the process and plugin wait.",
+        ge=5, le=600)] = 90,
+) -> dict[str, Any]:
+    """Launch, then report one of five readiness phases.
+
+    `phase` is `plugin_ready` (driveable), `process_running` (up, but the plugin
+    did not answer or `bp_ipc\\` is absent), `timeout_waiting_for_plugin`,
+    `timeout_waiting_for_process` or `process_exited`. `ready` is the single
+    flag that says whether a command would be answered; `ok` only says the tool
+    ran. The game starts at its main menu: most gameplay commands act once a
+    character is loaded, which nothing here can do.
+
+    Refusals: `engine_source_missing`, `engine_import_failed`,
+    `forgepact_config_missing`, `mod_chain_incomplete`, `launcher_refused`,
+    `game_state_unknown`.
+    """
+    return launch.hs_launch(exe_path=exe_path, wait_for_plugin=wait_for_plugin,
+                            timeout_s=float(timeout_s))
+
+
+@server.tool(
+    name="hs_wait_ready",
+    title="Wait until Hero Siege can be driven",
+    description=(
+        "Poll until a Hero Siege process exists and, unless asked otherwise, "
+        "until the BloodPact plugin consumes a ping. For a game a human "
+        "started. Sends one ping; starts nothing."),
+    annotations=_acts("Wait until Hero Siege can be driven", idempotent=True),
+)
+def hs_wait_ready(
+    timeout_s: Annotated[int, Field(
+        description="Total budget for the wait.", ge=5, le=600)] = 90,
+    require_plugin: Annotated[bool, Field(
+        description="Require the plugin's ping to be consumed. With this false "
+                    "the tool reports the process only, and says so.")] = True,
+) -> dict[str, Any]:
+    """The same poll as `hs_launch`, without launching anything.
+
+    Refusals: `engine_source_missing`, `engine_import_failed`,
+    `game_state_unknown`.
+    """
+    return launch.hs_wait_ready(timeout_s=float(timeout_s),
+                                require_plugin=require_plugin)
+
+
+@server.tool(
+    name="hs_stop_game",
+    title="Close Hero Siege",
+    description=(
+        "Post WM_CLOSE to every visible game window -- the same thing pressing "
+        "X does, so the game writes its saves on the way out -- and wait for "
+        "the process to exit. force=true terminates, and only a process this "
+        "server launched."),
+    annotations=_acts("Close Hero Siege", destructive=True, idempotent=True),
+)
+def hs_stop_game(
+    force: Annotated[bool, Field(
+        description="If the graceful close times out, terminate the process. "
+                    "Refused unless this server's own hs_launch started it.")] = False,
+    timeout_s: Annotated[int, Field(
+        description="How long to wait for the exit before reporting or forcing.",
+        ge=1, le=300)] = 30,
+) -> dict[str, Any]:
+    """Close the game and report `exited`, `pids_closed` and `forced`.
+
+    `TerminateProcess` is reachable only with `force=true`, only for a PID this
+    server started in this process, and only after the graceful wait has already
+    timed out. A process this server did not start is refused, because killing
+    one can lose whatever it had not written yet.
+
+    Refusals: `not_launched_here`.
+    """
+    return launch.hs_stop_game(force=force, timeout_s=float(timeout_s))
+
+
+@server.tool(
+    name="hs_command",
+    title="Send a ForgePact command",
+    description=(
+        "Write command lines to the BloodPact plugin's cmd.txt and return "
+        "exactly what the plugin appended to out.txt. Try `ping` first; a "
+        "player build accepts only its own command list and says so."),
+    annotations=_acts("Send a ForgePact command"),
+)
+def hs_command(
+    lines: Annotated[list[str], Field(
+        description="One command per entry, e.g. [\"ping\"] or "
+                    "[\"droprate 2\", \"stat\"]. ASCII only, no line breaks, "
+                    "at most 64 lines and 4096 bytes.")],
+    timeout_s: Annotated[int, Field(
+        description="How long to wait for the plugin to consume cmd.txt.",
+        ge=1, le=120)] = 10,
+    queue: Annotated[bool, Field(
+        description="With the game closed, leave the command in cmd.txt for "
+                    "the plugin to run at its next start instead of refusing.")] = False,
+) -> dict[str, Any]:
+    """Send commands and return the reply, as the bytes appended by this command.
+
+    The reply is a byte delta of `out.txt`, not its last lines: the plugin
+    appends to that file continuously. `consumed` says whether the game read the
+    command at all.
+
+    Refusals: `invalid_command`, `game_not_running`, `game_state_unknown`,
+    `forgepact_config_missing`, `bp_ipc_missing`, `not_consumed`.
+    """
+    return ipc.send(lines, timeout_s=float(timeout_s), queue=queue)
+
+
+@server.tool(
+    name="hs_ipc_tail",
+    title="Read the plugin's log",
+    description=(
+        "Return the last lines of the plugin's out.txt, including its load "
+        "banner. Reads only."),
+    annotations=_read_only("Read the plugin's log"),
+)
+def hs_ipc_tail(
+    lines: Annotated[int, Field(
+        description="How many trailing lines to return.", ge=1, le=500)] = 40,
+) -> dict[str, Any]:
+    """The tail of `out.txt`, with `exists` and `bytes_total`.
+
+    An absent `out.txt` reports `exists: false` and carries no `lines` key at
+    all: an empty list there would read as a plugin that answered nothing.
+
+    Refusals: `forgepact_config_missing`, `bp_ipc_missing`.
+    """
+    return ipc.tail(lines)
+
+
+@server.tool(
+    name="hs_screenshot",
+    title="Screenshot the game or the screen",
+    description=(
+        "Capture the game window (or the whole primary screen) to a PNG and "
+        "return it as an image, so a human can confirm from the transcript what "
+        "the game was actually showing. A capture with only one pixel value is "
+        "reported as such rather than passed off as a picture."),
+    annotations=_acts("Screenshot the game or the screen", idempotent=True),
+)
+def hs_screenshot(
+    target: Annotated[Literal["game", "screen"], Field(
+        description="`game` for the largest visible game window, `screen` for "
+                    "the primary monitor. `screen` is the positive control: it "
+                    "captures something certainly present.")] = "game",
+    method: Annotated[Literal["grab_bbox", "grab_window"], Field(
+        description="`grab_bbox` grabs the screen region the window occupies; "
+                    "`grab_window` asks the window for its own contents. Which "
+                    "works depends on the game's display mode.")] = "grab_bbox",
+    label: Annotated[str, Field(
+        description="Optional suffix for the file name.", max_length=40)] = "",
+) -> CallToolResult:
+    """Return the result envelope as text and structured output, plus the PNG.
+
+    Two content blocks, envelope first: a client with structured output reads
+    `structuredContent`, one without reads the same JSON as text, and both then
+    see the image. The file on disk keeps full resolution; only the copy in the
+    message is downscaled.
+
+    Refusals: `capture_unavailable`, `invalid_command`, `game_not_running`,
+    `game_state_unknown`, `no_visible_window_for_pid`, `window_minimized`.
+    """
+    payload = capture.screenshot(target=target, method=method,
+                                 label="".join(character for character in label
+                                               if character.isalnum() or character in "._-"))
+    blocks: list[Any] = []
+    if payload.get("ok"):
+        try:
+            data, width, height = capture.transport_image(Path(payload["path"]))
+        except (OSError, ValueError) as exc:  # noqa: BLE001 - reported, not raised
+            payload["transport_error"] = f"{type(exc).__name__}: {exc}"
+        else:
+            payload["transport_width"] = width
+            payload["transport_height"] = height
+            blocks.append(Image(data=data, format="png").to_image_content())
+    blocks.insert(0, TextContent(type="text", text=json.dumps(payload, indent=2)))
+    return CallToolResult(content=blocks, structured_content=payload)
 
 
 def main() -> None:

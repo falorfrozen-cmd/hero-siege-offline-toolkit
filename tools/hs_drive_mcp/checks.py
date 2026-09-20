@@ -27,7 +27,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-from . import launcher_bridge, results, saves
+from . import capture, ipc, launch, launcher_bridge, procs, results, saves
 
 #: A check returns (status, detail). status is one of these three.
 STATUSES = ("pass", "fail", "skipped")
@@ -183,6 +183,66 @@ def check_backup_roundtrip() -> tuple[str, str]:
         "byte-identical through the real backup and restore paths.")
 
 
+def check_screenshot_screen() -> tuple[str, str]:
+    """Positive control: capture the primary screen, which is certainly there.
+
+    A flat *game* capture is uninterpretable on its own -- exclusive fullscreen
+    may capture black, and so may a broken instrument. This check separates the
+    two before anyone has to reason about one: if the desktop captures with more
+    than one pixel value, Pillow and the display are working, and a flat game
+    capture is about the game's window.
+    """
+    reason = _not_windows()
+    if reason:
+        return "skipped", reason.replace("reads the Windows process table",
+                                         "captures the Windows desktop")
+    available, why = capture.pillow_status()
+    if not available:
+        return "skipped", why
+    image = capture.grab_bbox(None)
+    colours = image.convert("RGB").getcolors(maxcolors=4)
+    distinct = "more than 4" if colours is None else str(len(colours))
+    if capture.is_flat(image):
+        return "fail", (
+            f"a {image.width}x{image.height} capture of the primary screen has "
+            "only 1 distinct pixel value, so this machine cannot capture at "
+            "all and no screenshot from it means anything.")
+    return "pass", (
+        f"a {image.width}x{image.height} capture of the primary screen holds "
+        f"{distinct} distinct pixel values, so a flat game capture would be "
+        "about the game's window rather than about this instrument.")
+
+
+def check_ipc_ping() -> tuple[str, str]:
+    """The plugin's own positive control -- when there is a game to ask.
+
+    Deliberately **not** registered as a positive control: it can only run with
+    the modded game up, and a check that is usually skipped cannot be what
+    `summary.healthy` rests on. `skipped` here says "there was nothing to ask",
+    which is different from the instrument failing.
+    """
+    reason = _not_windows()
+    if reason:
+        return "skipped", reason.replace("reads the Windows process table",
+                                         "pings a running Windows process")
+    state, why = procs.gate()
+    if state != procs.RUNNING:
+        return "skipped", (f"the game is not running ({state}: {why}), so the "
+                           "plugin could not be pinged")
+    sent = ipc.send([launch.PING], timeout_s=10.0, tool="hs_selfcheck")
+    if results.is_refusal(sent):
+        return "fail", (f"the game is running but a ping was refused "
+                        f"({sent['reason']}): {sent['detail']}")
+    reply = str(sent.get("reply", ""))
+    if launch.PONG not in reply.lower():
+        return "fail", (
+            "the plugin consumed a ping but did not answer with pong; out.txt "
+            f"gained {sent.get('out_bytes_after', 0) - sent.get('out_bytes_before', 0)}"
+            f" byte(s): {reply.strip()!r}")
+    return "pass", (f"the running plugin consumed a ping and answered "
+                    f"{reply.strip()!r}")
+
+
 register("engine_import", check_engine_import)
 # Both of these point the instrument at something certainly present -- this
 # server's own process, and a fixture it just wrote. They are what `healthy`
@@ -191,6 +251,12 @@ register("process_snapshot", check_process_snapshot, positive_control=True)
 register("eac_service", check_eac_service)
 register("save_dir", check_save_dir)
 register("backup_roundtrip", check_backup_roundtrip, positive_control=True)
+# The third control: the desktop is as certainly present as this process and the
+# fixture, so a screenshot tool that cannot capture it is blind rather than
+# unlucky. `ipc_ping` is not one -- it needs a running game, and a control that
+# is usually skipped would make `healthy` mean "nothing was checked".
+register("screenshot_screen", check_screenshot_screen, positive_control=True)
+register("ipc_ping", check_ipc_ping)
 
 
 def run_checks(tool: str = "hs_selfcheck") -> dict[str, Any]:

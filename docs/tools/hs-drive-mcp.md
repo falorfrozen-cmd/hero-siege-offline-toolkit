@@ -3,8 +3,16 @@
 `tools/hs_drive_mcp/` is a developer-only stdio MCP server. It lets a Claude
 Code session ask whether Hero Siege is running, whether EasyAntiCheat is
 inactive and whether the modded copy is installed; prove its own instruments
-work; and back up and restore the player's `hs2saves\` directory without ever
-being able to lose a file.
+work; back up and restore the player's `hs2saves\` directory without ever being
+able to lose a file; launch the ForgePact-modded game through ForgePact's own
+launch engine and wait until the BloodPact plugin answers; send any ForgePact
+command and read back exactly the plugin's reply; screenshot the game window;
+and close the game politely enough that its exit-time save write completes.
+
+What it cannot do is play the game. There is no synthetic input of any kind, and
+the game comes up at its main menu — **most ForgePact gameplay commands act only
+once a character is loaded**, which still takes a human click. See "Known
+limitations".
 
 Nothing here ships to a player. It is a Python package under `tools/`, the way
 `freeze_probe.ps1` and `source_index.py` are — imported by no binary, named in
@@ -34,10 +42,10 @@ py -3 -m pip install -r tools/hs_drive_mcp/requirements.txt
 ```
 
 Two pins, and only two. `mcp==2.2.0` pulls `pydantic`, `anyio`, `httpx`,
-`starlette`, `pywin32` and the rest of its own tree. `Pillow==12.1.0` is not
-used by anything in this workorder — it is pinned now so the follow-on
-screenshot tooling adds no dependency to an install that has already been
-verified.
+`starlette`, `pywin32` and the rest of its own tree. `Pillow==12.1.0` is what
+`hs_screenshot` captures and downscales with; `PIL.ImageGrab.grab` on this pin
+accepts both `all_screens=` and `window=`, which is why both capture methods
+exist.
 
 **`mcp` 2.x is not `mcp` 1.x.** The widely-copied
 `from mcp.server.fastmcp import FastMCP` is the 1.x API and raises
@@ -95,15 +103,15 @@ everything this server writes.
 | --- | --- | --- |
 | `HS_DRIVE_SAVE_DIR` | `%LOCALAPPDATA%\Hero_Siege\hs2saves` | The live save directory. Also covers an install whose saves sit directly in `%LOCALAPPDATA%\Hero_Siege`; nothing auto-detects that layout. |
 | `HS_DRIVE_BACKUP_DIR` | `%LOCALAPPDATA%\HSDriveMcp\save-backups` | Where backups accumulate. |
+| `HS_DRIVE_SCREENSHOT_DIR` | `%LOCALAPPDATA%\HSDriveMcp\screenshots` | Where `hs_screenshot` writes its full-resolution PNGs. |
 
-Every test sets both. That is the whole reason they exist: a suite that ran
-against the owner's real saves would be one mistake away from a bug report
-nobody can undo.
+Every test sets the ones it can reach. That is the whole reason they exist: a
+suite that ran against the owner's real saves would be one mistake away from a
+bug report nobody can undo.
 
 ## Tools
 
-Six now; the follow-on workorder adds six more. One tool per action, `hs_`
-prefixed, with annotations on every one.
+Twelve. One tool per action, `hs_` prefixed, with annotations on every one.
 
 | Tool | Hints | Inputs | Returns |
 | --- | --- | --- | --- |
@@ -113,16 +121,33 @@ prefixed, with annotations on every one.
 | `hs_saves_restore` | **destructive** | `backup_id`, `confirm_backup_id`, `remove_extra=false` | `restored`, `files`, `pre_restore_backup_id`, `moved_extras`, `extras_not_moved` |
 | `hs_saves_list` | read-only | `limit` 1–100 = 20, `offset` | `total`, `count`, `has_more`, `next_offset`, `backups[]` |
 | `hs_saves_inspect` | read-only | `backup_id` | `manifest`, `changed[]`, `added[]`, `missing[]` |
+| `hs_launch` | writes | `exe_path=null`, `wait_for_plugin=true`, `timeout_s` 5–600 = 90 | `phase`, `ready`, `plugin`, `plugin_reply`, `pid`, `pids`, `launch`, `exe_path`, `exe_path_override`, `launched_here`, `launch_message`, `elapsed_s` |
+| `hs_wait_ready` | writes (one ping) | `timeout_s` 5–600 = 90, `require_plugin=true` | the same readiness fields, without the launch ones |
+| `hs_stop_game` | **destructive** | `force=false`, `timeout_s` 1–300 = 30 | `exited`, `pids_closed`, `forced`, `terminated`, `windows_found`, `errors`, `game_state` |
+| `hs_command` | writes | `lines[]`, `timeout_s` 1–120 = 10, `queue=false` | `consumed`, `reply`, `reply_lines`, `queued`, `pending_before`, `pending_left`, `out_bytes_before`, `out_bytes_after`, `rotated`, `sent`, `wrote_bytes`, `aborted` |
+| `hs_ipc_tail` | read-only | `lines` 1–500 = 40 | `exists`, `lines[]`, `bytes_total`, `requested`, `truncated`, `path` |
+| `hs_screenshot` | writes | `target` `game`\|`screen` = `game`, `method` `grab_bbox`\|`grab_window` = `grab_bbox`, `label` | `path`, `width`, `height`, `bbox`, `capture_method`, `hwnd`, `pid`, `flat`, `warning`, `bytes_written`, `transport_width`, `transport_height` — **plus** a JSON text block and a PNG image block |
 
-`hs_saves_restore` is the only tool with `destructiveHint: true`, and that is
-asserted rather than assumed.
+`hs_saves_restore` and `hs_stop_game` are the only tools with
+`destructiveHint: true`, and that is asserted rather than assumed: they are the
+two that can take away something that was not theirs — the live save directory,
+and a process. Everything else writes only files of its own.
+
+`hs_screenshot` is also the only tool that does not return a plain dict. It
+returns a `CallToolResult` carrying the envelope twice — as `structuredContent`
+and as a JSON text block, first, so a client without structured output reads the
+same thing — and then the image. The file on disk keeps its full resolution;
+only the copy in the message is downscaled (to 1280 px wide).
 
 Server `instructions`, which a client shows to the model:
 
 > Order for a verified test run: `hs_selfcheck` → `hs_saves_backup` →
-> (`hs_launch` → `hs_command` / `hs_screenshot` → `hs_stop_game`, once
-> installed) → `hs_saves_inspect` → `hs_saves_restore`. Every refusal carries
-> `reason`; a `skipped` self-check is not a pass.
+> `hs_launch` → `hs_command` / `hs_screenshot` → `hs_stop_game` →
+> `hs_saves_inspect` → `hs_saves_restore`. Every refusal carries `reason`; a
+> `skipped` self-check is not a pass. `hs_launch` and `hs_wait_ready` report a
+> `phase` and a `ready` flag: `process_running` is not `plugin_ready`, and most
+> gameplay commands act only once a character is loaded, which a human still has
+> to do.
 
 ## The result envelope
 
@@ -153,11 +178,16 @@ Tokens this server can return today:
 | `pre_restore_backup_failed` | The restore could not first back up what is live, so it did not start. |
 | `confirmation_mismatch` | `confirm_backup_id` did not equal `backup_id`. |
 | `invalid_label` | A backup label outside `^[A-Za-z0-9._-]{1,40}$`. |
-
-Reserved for the `hs-drive-mcp-game` workorder, listed here so nobody invents
-a second spelling: `game_not_running`, `bp_ipc_missing`, `invalid_command`,
-`not_consumed`, `no_visible_window_for_pid`, `window_minimized`,
-`not_launched_here`, `launcher_refused`, `mod_chain_incomplete`.
+| `mod_chain_incomplete` | One of the four install facts is false — the exe carries no `.aurie` section, or `AurieCore.dll`, `YYToolkit.dll` or `BloodPactPlugin.dll` is missing. The detail names which. The engine refused before starting anything. |
+| `launcher_refused` | ForgePact's launch engine refused for any of its own reasons — the game is already running, EAC is active or unreadable, `steam_api64.dll` is missing, a launch is already in progress. `error` carries the engine's message verbatim. |
+| `game_not_running` | A tool that needs a live game did not find one. `hs_command` accepts `queue=true` to leave the command for the next start instead. |
+| `bp_ipc_missing` | `<game>\bin\bp_ipc\` does not exist. The plugin creates it at load, so the modded game has never run. |
+| `invalid_command` | Something about the call cannot be sent or done: non-ASCII, an embedded line break, over 64 lines, over 4096 bytes, or a `target`/`method` that is not one of the documented values. |
+| `not_consumed` | `cmd.txt` was still on disk when the timeout expired, so the plugin never read it. The command is deliberately **left** there; the plugin runs a pending file at its next start. `aborted` says so when the wait stopped early because the process disappeared. |
+| `no_visible_window_for_pid` | The game is running but owns no visible top-level window — usually a window that has not appeared yet. |
+| `window_minimized` | The game's only visible window is minimized, so capturing its rectangle would photograph whatever is behind it. |
+| `not_launched_here` | `force=true` on a PID this server's own `hs_launch` did not start. Killing a process someone else started can lose whatever it had not written. |
+| `capture_unavailable` | Pillow is not importable, so nothing can be captured. Not `invalid_command`: the arguments were fine and the install is not. |
 
 ## The process gate
 
@@ -197,6 +227,149 @@ Matching is by image name. ForgePact's panel additionally matches the full
 image path, because a Steam copy and an offline copy can be open at once; this
 server reports `game_pids` and leaves that distinction to the caller instead
 of guessing which one was meant.
+
+## Launching: ForgePact's engine, not a second copy of it
+
+`hs_launch` calls `ForgePact/src/offline_launcher.py::launch_game(path,
+validate_extra=…)` and does none of that work itself. The engine owns the PE
+validation, the already-running and anti-cheat checks (three times, around the
+Steam start), the `steam_api64.dll` lookup, the `SteamAppId`/`SteamGameId`
+environment, the `Popen`, and a delayed check that reports "the game exited
+during startup". Owner decision, 2026-09-20: *"For launcher use forgepact."*
+
+This server supplies the two things that engine deliberately leaves to its
+caller:
+
+- **The path**, from `forgepact.json` (see "The engine is ForgePact's" below).
+  `exe_path` overrides it for one call and **persists nothing** — a test
+  compares a fixture `%LOCALAPPDATA%` tree byte for byte across a launch to keep
+  that true.
+- **The plugin preflight**, as the `validate_extra` callable the engine invokes
+  inside its own validation. Doing it there rather than here is what makes
+  "`Popen` was never reached" true by construction rather than by inspection:
+  the engine refuses first, and this server only has to translate the refusal —
+  `mod_chain_incomplete` when the preflight is what failed, `launcher_refused`
+  for everything else, with `error` carrying the engine's words. The preflight
+  object remembers its own verdict, so the two are told apart by what happened
+  rather than by matching the engine's wording.
+
+### Readiness is three answers, and they are never merged
+
+| `phase` | `ready` | What it means |
+| --- | --- | --- |
+| `plugin_ready` | true | A `ping` was consumed and answered. The game is driveable. |
+| `process_running` | true only with `require_plugin=false` | The process exists. With `plugin: "no_bp_ipc"` the channel is not there at all; with `plugin: "not_checked"` nobody asked. |
+| `timeout_waiting_for_plugin` | false | The process is up and nothing consumed `cmd.txt`: the plugin is not loaded. |
+| `timeout_waiting_for_process` | false | No `hero_siege.exe` appeared. |
+| `process_exited` | false | It was there and went away; the detail carries the engine's own `launch_status()` message, which names a startup exit. |
+
+`ok` says the tool ran; `ready` says whether a command would be answered. A
+launch that ended at `timeout_waiting_for_plugin` is `ok: true, ready: false` —
+nothing was refused, and nothing is ready either. Reporting that as success is
+the "armed but blind" shape `AGENTS.md` § "Prove the Instrument Before Trusting a
+Negative Result" exists to catch, and the plugin's `ping`/`pong` is the positive
+control that separates the two.
+
+The plugin wait hands `ipc.send` an `abort` callback that watches the process
+gate, because the longest wait here is for a plugin that is still loading and a
+wait that cannot notice the game died would burn its whole 90 s budget after a
+startup crash and then report a timeout — sending the reader to the wrong
+subsystem. ForgePact's own `wait_for_plugin_ready` stops on the same condition.
+
+### Stopping: `WM_CLOSE`, and almost never anything else
+
+`hs_stop_game` posts `WM_CLOSE` to every visible top-level window of every game
+PID. That is the user pressing X: the game runs its own exit path and **writes
+its saves**, which is what makes `hs_saves_inspect` after a session meaningful
+(`docs/submodules/HSSaveEditor/instructions.md` § "Process Boundaries").
+
+`TerminateProcess` is reachable only when all three of these hold: `force=true`,
+the PID is in the set this server's own `hs_launch` started **in this process**,
+and the graceful wait has already timed out. Any other PID is
+`not_launched_here` — `AGENTS.md` § "Drive a Tauri App Yourself" ("never kill a
+process you did not start") applied to a game instead of a dev server. The
+launched set is in memory on purpose: a PID from an earlier run of this server
+has no claim on whatever process wears that number now.
+
+Nothing here pauses, freezes, time-scales or restores runtime state.
+`AGENTS.md` § "Don't Suspend the Game's Own Runtime" was checked against this
+whole workorder; `WM_CLOSE` is a request the game is free to handle its own way,
+which is the opposite of taking its loop away.
+
+## The command channel
+
+ForgePact's IPC is two files in `<dir of game_exe>\bp_ipc\`, created by the
+plugin at load. `hs_command` and `hs_ipc_tail` are the MCP counterparts of
+`ForgePact/tools/ipc.ps1` and run the same algorithm:
+
+- `cmd.txt` — one command per line, polled every few frames. The plugin reads
+  it, **deletes it**, then runs each line. Written as plain ASCII with CRLF
+  endings and **no BOM**: the plugin reads raw bytes and splits on newlines, so a
+  UTF-8 BOM corrupts the first command instead of failing visibly. Limits are 64
+  lines and 4096 bytes; a line break inside one entry is `invalid_command`
+  rather than a silent split into commands the caller never wrote.
+- `out.txt` — append-only, and appended to by other features while a command
+  runs. The reply is therefore the **byte delta** after the pre-send length, not
+  the last N lines. After consumption the size is polled every 150 ms until it
+  has been unchanged four times running (bounded by the timeout plus 10 s),
+  because a big command appends for a while after `cmd.txt` disappears. If
+  `out.txt` *shrank* — the plugin rotates it to `out.prev.txt` at load when it is
+  over 2 MB — the offset is stale, so the whole file is read and `rotated: true`
+  says the reply may carry more than this command's output.
+
+Two deliberate differences from `ipc.ps1`, both because a model rather than a
+person is driving:
+
+1. **A pending `cmd.txt` is appended to, not overwritten.** `ipc.ps1` overwrites
+   with a warning a person reads; nothing reads a warning here, and silently
+   dropping a command the caller believes was sent is the worse failure.
+   `pending_before: true` reports that it happened.
+2. **An unconsumed command is a refusal token**, `not_consumed`, with the
+   timeout in the detail — and the file is left in place, because the plugin
+   runs a pending file at its next start. That is also what `queue=true` is for:
+   with the game closed it writes the command and returns immediately instead of
+   refusing `game_not_running`. `unknown` refuses either way — a queued command
+   against a game that might be running is a command that might run immediately.
+
+The server does not allow-list commands; it forwards them and returns the reply.
+A **player (release) plugin build** accepts only `kPlayerCommands` and answers
+anything else with `command unavailable in player build: <cmd>`, which arrives as
+the reply rather than as a refusal. A research build (`plugin_build\build.bat
+dev`) accepts far more. `ping` → `pong (YYTK a.b.c)` is the channel's positive
+control and what the `ipc_ping` self-check and the readiness probe both use.
+
+`hs_ipc_tail` reports `exists: false` and **no `lines` key at all** when
+`out.txt` is absent. An empty list there would read as "the plugin answered
+nothing", which is a different machine state with a different fix.
+
+## Screenshots
+
+`hs_screenshot` identifies the window by PID, never by window class: the
+GameMaker class name is unverified for this build and `procs.game_pids()`
+already answers the question. Of the visible, non-minimized top-level windows of
+those PIDs, the largest by area is the game — a splash or tool window is
+smaller. Minimized is its own refusal, because a minimized window still has a
+rectangle and would otherwise capture whatever is behind it.
+
+Two capture methods, both reported as `capture_method` so a later reader knows
+which produced a given file:
+
+| `capture_method` | Call | Notes |
+| --- | --- | --- |
+| `grab_bbox` (default) | `ImageGrab.grab(bbox=…, all_screens=True)` | The screen region the window occupies. `all_screens` is on only when a bbox is given, because window rectangles are in virtual-desktop coordinates — a monitor left of the primary one has negative x. |
+| `grab_window` | `ImageGrab.grab(window=hwnd)` | Asks the window for its own contents. |
+| — | `ImageGrab.grab()` | What `target="screen"` uses: the primary monitor, and this module's positive control. |
+
+**A capture whose every pixel is the same value comes back with `warning:
+"image_is_flat"` and says so in `detail`.** A picture of nothing and a picture of
+a dark game are the same bytes; the difference is this warning. That is why
+`target="screen"` exists as a control — a flat *game* capture beside a non-flat
+*screen* capture localises the problem to the window rather than to Pillow — and
+why `screenshot_screen` is a registered positive control rather than a
+convenience.
+
+Files land in `%LOCALAPPDATA%\HSDriveMcp\screenshots\<UTC stamp>[_label].png` at
+full resolution and nothing prunes them.
 
 ## Saves: what the tools guarantee
 
@@ -301,16 +474,23 @@ from a process snapshot that never worked.
 | `eac_service` | `eac_service_status()` is not `unknown` | non-Windows |
 | `save_dir` | The live directory exists and holds ≥ 1 `herosiege*.hss` (count in `detail`) | never |
 | `backup_roundtrip` | A temp fixture backs up, is damaged, and restores byte-identical through the real `saves` functions | never |
+| `screenshot_screen` | A capture of the primary screen holds more than one distinct pixel value | non-Windows, or Pillow not importable |
+| `ipc_ping` | The running plugin consumes a `ping` and answers `pong` within 10 s | the game is not running (the detail says so) |
 
 A check whose code raised is `fail` with the exception name, never `skipped`.
 `skipped` always carries its reason in `detail`, because "we did not look" and
-"we looked and it broke" must not be confusable. `checks.py` is a registry, so
-the game workorder appends `screenshot_screen` and `ipc_ping` with
-`register()` rather than editing any logic there.
+"we looked and it broke" must not be confusable. `checks.py` is a registry, which
+is how `screenshot_screen` and `ipc_ping` were added with two `register()` calls
+and no change to any logic there.
+
+`ipc_ping` is deliberately **not** a positive control: it can only run with the
+modded game up, and a check that is usually skipped cannot be what `healthy`
+rests on. When the game *is* running it is a real one, and a `fail` there means
+the game is running without the plugin loaded.
 
 `summary.healthy` is **not** "nothing failed". It requires every check
-registered with `positive_control=True` — `process_snapshot` and
-`backup_roundtrip` today — to have *passed*. A run where everything was
+registered with `positive_control=True` — `process_snapshot`,
+`backup_roundtrip` and `screenshot_screen` — to have *passed*. A run where everything was
 skipped has zero failures and has proved nothing, and `healthy` is the field a
 caller branches on; a self-check that reports itself armed while blind is the
 one failure this tool cannot delegate. `summary` also carries
@@ -354,6 +534,27 @@ rather than by falling back to another launcher:
 
 ## Known limitations
 
+- **Nothing here can select a character or enter a zone, and most ForgePact
+  gameplay commands only act once one is loaded.** After `hs_launch` the game
+  sits at its main menu. Static research on 2026-09-20 found no
+  name-resolvable route to character select that could be trusted without a live
+  research round, and this server has no synthetic keyboard or mouse input by
+  design, so an in-game verification still needs a human to load a character
+  once — after which every tool here works against that session. A third,
+  research-shaped workorder (`hs-drive-mcp-charselect`) is where that belongs.
+- **Exclusive fullscreen may capture flat.** Which of `grab_bbox` and
+  `grab_window` returns a real image depends on the game's display mode; the
+  measurement is in the Verification table below, per mode. A flat result is
+  always reported as such (`warning: "image_is_flat"`) rather than passed off as
+  a picture. If both methods come back flat in a mode, the workaround is to run
+  the game windowed or borderless while driving it.
+- **Screenshots accumulate too**, at full resolution, under
+  `%LOCALAPPDATA%\HSDriveMcp\screenshots\`. Nothing prunes them, for the same
+  reason nothing prunes backups: no tool in this server has removal as its
+  effect.
+- **A forced stop is not available for a game you started yourself.** That is
+  the point of `not_launched_here`, not an oversight. Close it from its own
+  window.
 - **Backups accumulate and nothing prunes them.** Removal is deliberately out
   of scope — no tool in this server has removal as its effect. Each backup is
   about 1.5 MB, and a restore writes two (the pre-restore one, plus whatever
@@ -381,25 +582,41 @@ rather than by falling back to another launcher:
 | --- | --- | --- | --- |
 | A1 | Dependencies install and are pinned | `py -3 -m pip install -r tools/hs_drive_mcp/requirements.txt` | exit 0; `mcp==2.2.0` and `Pillow==12.1.0` both found — 2026-09-20 |
 | A2 | `.mcp.json` entry | parsed in `tests.test_hs_drive_mcp_release_boundary` | `command: py`, `args: ["-3","-m","tools.hs_drive_mcp"]`, no `url`/`type` — 2026-09-20 |
-| A3/A4/A7 | Tool surface over stdio, self-check, status, `healthy` semantics | `py -3 -m unittest tests.test_hs_drive_mcp_server -v` | `OK`, 16 tests, no skips — 2026-09-20 |
+| A3/A4/A7 | Tool surface over stdio, self-check, status, `healthy` semantics | `py -3 -m unittest tests.test_hs_drive_mcp_server -v` | `OK`, 17 tests, no skips — all twelve tools listed, `screenshot_screen` `pass`, `ipc_ping` `skipped` ("the game is not running") — 2026-09-20 |
 | A5 | Engine pin, inert import, missing-source refusal | `py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v` | `OK`, 8 tests, no skips — 2026-09-20 |
 | A6 | No stdout, no listener, no shell | `Select-String -Path tools/hs_drive_mcp/*.py -Pattern 'shell=True\|os\.system\(\|socket\.\|\.bind\(\|HTTPServer\|uvicorn\|streamable\|^\s*print\('` | no matches — 2026-09-20 |
 | B1–B10 | Save backup and restore, the wiped-directory recovery case and its negative control | `py -3 -m unittest tests.test_hs_drive_mcp_saves -v` | `OK`, 36 tests, no skips — 2026-09-20 |
 | C6 | Release boundary, including the mechanical no-deletion check | `py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 7 tests, no skips — 2026-09-20 |
-| C7 | Whole root suite | `py -3 -m unittest discover -s tests` | `Ran 741 tests`, `OK (skipped=9)` — all nine skips pre-existing in other suites — 2026-09-20 |
+| C7 | Whole root suite, with the first six tools | `py -3 -m unittest discover -s tests` | `Ran 741 tests`, `OK (skipped=9)` — all nine skips pre-existing in other suites — 2026-09-20 (superseded by the F3 row below) |
 | C7 | This change touches no submodule | `git -C ForgePact status --porcelain`, `git -C HS-Offline-Launcher status --porcelain` | both printed nothing — 2026-09-20. (An unrelated ` M HS-Offline-Tracker` gitlink drift predates this work; `git diff --stat 589246f HEAD` touches no submodule.) |
-| — | Self-check on this machine | `hs_selfcheck` over stdio | all five checks `pass` (137 files, 48 characters in the live dir; snapshot sees own PID; EAC `stopped`) — 2026-09-20 |
-| C1 | `hs-drive` connects in a fresh session | `/mcp` in a new Claude Code session at the repo root | **not yet run** — owner-run; the working-directory assumption above is unconfirmed |
+| — | Self-check on this machine, first five checks | `hs_selfcheck` over stdio | all five `pass` (137 files, 48 characters in the live dir; snapshot sees own PID; EAC `stopped`) — 2026-09-20 |
+| — | Self-check on this machine, all seven | `hs_selfcheck` over stdio, in `tests.test_hs_drive_mcp_server` | six `pass` including `screenshot_screen`; `ipc_ping` `skipped` naming "the game is not running", with no game up. `summary.healthy` therefore rests on three proven positive controls — 2026-09-20 |
+| C1–C6 | Launch through ForgePact's engine, the three readiness phases, `WM_CLOSE`, and `TerminateProcess`'s three conditions with its negative control | `py -3 -m unittest tests.test_hs_drive_mcp_launch -v` | `OK`, 29 tests, no skips — 2026-09-20 |
+| D1–D6 | The IPC channel: ASCII/CRLF/no BOM, append-not-overwrite, byte-delta reply, `not_consumed`, the gate, `bp_ipc` resolution, `tail` | `py -3 -m unittest tests.test_hs_drive_mcp_ipc -v` | `OK`, 27 tests, no skips — runs in full on CI too, since it needs neither Windows nor a submodule — 2026-09-20 |
+| E1–E3 | Window resolution and its three refusals, both capture methods, the flat-image warning with a negative control, the downscaled transport copy, the image block | `py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v` | `OK`, 33 tests, no skips — 2026-09-20 |
+| — | Real screen capture on this machine (positive control) | `PositiveControlTests` in that suite, and `hs_selfcheck`'s `screenshot_screen` | 2560×1440, more than 4 distinct pixel values, `pass` — 2026-09-20 |
+| F3 | Whole root suite, after the six new tools | `py -3 -m unittest discover -s tests` | `Ran 831 tests`, `OK (skipped=9)` — the same nine pre-existing skips in other suites; the 90 added here skip nowhere on this machine — 2026-09-20 |
+| F3 | This change touches no submodule | `git -C ForgePact status --porcelain`, `git -C HS-Offline-Launcher status --porcelain` | both printed nothing — 2026-09-20 |
+| — | The six new tools over a real stdio session, with the game **closed** (fixture save/backup/screenshot directories) | one-off client script; the same argv `.mcp.json` carries | `list_tools` returned all twelve. `hs_selfcheck`: six `pass`, `ipc_ping` `skipped` ("the game is not running"), `healthy: true` on three proven controls. `hs_ipc_tail`: `exists: true`, `bytes_total: 34256` against the real `bp_ipc\out.txt`. `hs_command ["ping"]`: refused `game_not_running`. `hs_screenshot("screen")`: `text` + `image` blocks, 2560×1440 file, `transport_width: 1280`, not flat. `hs_stop_game`: `exited: true`, `pids_closed: []`, `forced: false` — 2026-09-20 |
+| F4 | Live sequence: `hs_selfcheck` → `hs_saves_backup` → `hs_launch` → `hs_screenshot` → `hs_command ping` → `hs_stop_game` → `hs_saves_inspect` → `hs_saves_restore` | owner-run from a Claude Code session with `hs-drive` connected | **not yet run** — owner-run against the real modded install; the independent manual save copy it needs already exists at `C:\Users\stann\HeroSiege-manual-save-backup\hs2saves-20260920-pre-hs-drive` |
+| F4 | Capture in `windowed` — `hs_screenshot("game")` with both `capture_method`s | owner-run, display mode set from the game's own Options menu | **not yet run** — record which method returned a non-flat image, any `warning`, and the file path |
+| F4 | Capture in `borderless` — the same two calls | owner-run | **not yet run** — as above |
+| F4 | Capture in `exclusive_fullscreen` — the same two calls | owner-run | **not yet run** — if both are flat, the documented workaround (already in Known limitations) is to run the game windowed or borderless while driving it |
+| C1 | `hs-drive` connects in a fresh session | `/mcp` in a new Claude Code session at the repo root | **pass**, owner-run 2026-09-20: listed as connected. The working-directory assumption holds — `args: ["-3", "-m", "tools.hs_drive_mcp"]` resolves as a namespace package from the repo root, so no absolute-path fallback and no `os.chdir` were needed. Note the session must *start* at the repo root: a session already running when this entry was added does not pick it up, and shows the server as absent rather than failed. |
 
-## Planned in `hs-drive-mcp-game`
+## What is deliberately not here
 
-The follow-on workorder adds six tools, bringing the surface to twelve:
-`hs_launch`, `hs_wait_ready`, `hs_stop_game`, `hs_command`, `hs_ipc_tail` and
-`hs_screenshot`. It also appends `screenshot_screen` and `ipc_ping` to the
-`checks.py` registry and creates `ipc.py` and `capture.py`, which is why this
-workorder leaves neither behind even as an empty stub — a stub would make that
-work look partly done. Character select is a third, research-shaped workorder
-described there.
+- **Character select, and anything that needs one.** See "Known limitations".
+- **Synthetic keyboard or mouse input**, of any kind, by any route. Nothing in
+  this server presses a key.
+- **Pause, freeze, time-scale, save-state or forced state restore** —
+  `AGENTS.md` § "Don't Suspend the Game's Own Runtime", and
+  `ForgePact/docs/menu-pause-plan.md` § 0 for the worked example of why.
+- **Installing, removing or building the plugin, or patching the exe.** The
+  server assumes an installed modded copy and refuses `mod_chain_incomplete`
+  otherwise. Those are the ForgePact panel's job.
+- **Reading game memory, `itemstats.json`, or hooking anything.**
+- **Video capture, multi-monitor stitching, OCR of screenshots.**
 
 ## Changing any of this
 
@@ -407,6 +624,9 @@ described there.
 py -3 -m unittest tests.test_hs_drive_mcp_server -v            # the surface a client sees
 py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v     # the ForgePact pin
 py -3 -m unittest tests.test_hs_drive_mcp_saves -v             # the fail-closed save contract
+py -3 -m unittest tests.test_hs_drive_mcp_launch -v            # launch, readiness, WM_CLOSE, force
+py -3 -m unittest tests.test_hs_drive_mcp_ipc -v               # the bp_ipc command channel
+py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v        # window resolution and capture
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # nothing shipped knows it exists
 py -3 -m unittest discover -s tests                            # all of the above, plus the rest
 ```
@@ -416,3 +636,10 @@ envelope refuses an unknown token outright), its annotations in `server.py`,
 its row in the Tools table above, and its name to the expected set in
 `tests/test_hs_drive_mcp_server.py`. Adding a self-check means one
 `checks.register(...)` call and a row in the table above.
+
+`server.py` is still the only module that imports the MCP SDK — `ipc.py`,
+`capture.py` and `launch.py` import none of it, which is what lets the IPC suite
+run on CI with neither the SDK nor a submodule present. The release-boundary
+suite asserts that, and it also asserts that these three modules *exist*: until
+this workorder landed it asserted the opposite, because an empty stub would have
+made the work look partly done.

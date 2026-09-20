@@ -708,8 +708,8 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Eleven suites cover this page's tooling. Ten are Python and run automatically
-under the first command below; the workflow script's own routing is
+Fourteen suites cover this page's tooling. Thirteen are Python and run
+automatically under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
 ```bash
@@ -723,17 +723,24 @@ py -3 -m unittest tests.test_source_index -v      # source_index.py against a sy
 py -3 -m unittest tests.test_hs_drive_mcp_server -v            # the hs-drive tool surface, over a real stdio session
 py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v     # ENGINE_SYMBOLS still resolve, and importing the engine starts nothing
 py -3 -m unittest tests.test_hs_drive_mcp_saves -v             # the fail-closed save backup/restore contract
+py -3 -m unittest tests.test_hs_drive_mcp_launch -v            # launch through ForgePact's engine, readiness, WM_CLOSE vs TerminateProcess
+py -3 -m unittest tests.test_hs_drive_mcp_ipc -v               # the bp_ipc command channel, against a fake consumer
+py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v        # window resolution, both capture methods, the flat-image warning
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 
-Those four stay green on CI's `ubuntu-latest` runner, where neither Windows,
+Those seven stay green on CI's `ubuntu-latest` runner, where neither Windows,
 the SDK, nor any submodule is present — but only the parts that need one skip.
-The engine-bridge suite skips wholesale; the server suite skips its stdio and
-`hs_status` classes but still runs `SelfCheckSummaryTests`, which drives
-`run_checks` over a stub registry and so needs nothing; the release-boundary
-suite skips only its submodule check; and the saves suite runs in full,
-against fixtures. Each skip names its reason.
+The engine-bridge, launch and screenshot suites skip wholesale (launching a
+process, enumerating windows and grabbing the screen are Windows-only); the
+server suite skips its stdio and `hs_status` classes but still runs
+`SelfCheckSummaryTests`, which drives `run_checks` over a stub registry and so
+needs nothing; the release-boundary suite skips only its submodule check; and
+the saves and IPC suites run in full, against fixtures — the IPC one because
+its gate is injected and its whole channel is two files in a temporary
+directory, which is deliberate: it covers the rules most likely to be broken by
+an edit somewhere else. Each skip names its reason.
 
 **`.claude/workflows/*.js` and `*.mjs` must stay LF.** `.gitattributes` forces
 `text eol=lf` on both globs: the Workflow tool's permission handler refuses to
