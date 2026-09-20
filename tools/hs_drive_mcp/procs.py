@@ -25,8 +25,8 @@ caller rather than guessing which one the caller meant.
 
 `status()` lives here rather than in `server.py` because it is a snapshot of
 this machine's process, anti-cheat and install state -- `server.py` stays
-registration only, so the game workorder can add tools there without touching
-any logic.
+registration only, which is how the launch, IPC and screenshot tools were added
+there without touching any logic.
 """
 from __future__ import annotations
 

@@ -4,6 +4,8 @@
 # `from mcp.server.fastmcp import FastMCP` raises ModuleNotFoundError here by
 # design. The wheel also carries the stdio test client the root suite uses.
 mcp==2.2.0
-# Unused by this workorder. Pinned now so the follow-on screenshot tooling in
-# hs-drive-mcp-game adds no dependency to an already-verified install.
+# What `capture.py` grabs, inspects and downscales with: ImageGrab for the
+# screen and window captures, Image for the flat-image check and the transport
+# copy. Pinned because a capture that silently changes shape between versions
+# is a screenshot nobody can trust.
 Pillow==12.1.0

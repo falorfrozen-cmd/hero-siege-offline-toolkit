@@ -48,14 +48,15 @@ ENGINE_PATH = REPO_ROOT / "ForgePact" / "src" / "offline_launcher.py"
 #: message knows which checkout is incomplete.
 ENGINE_RELPATH = "ForgePact/src/offline_launcher.py"
 
-#: The engine surface this server depends on. Nine are called or read today
+#: The engine surface this server depends on. Ten are called or read by name
 #: (`processes`, `eac_service_status`, `validate_game`, `_exe_facts`,
 #: `launch_status`, `launch_safety_blocker`, `UPSTREAM_REVISION`,
-#: `UPSTREAM_DEFINITIONS`, plus the module itself); the remaining six --
-#: `launch_game`, `start_steam_if_needed`, `find_steam_runtime`,
-#: `eac_is_inactive`, `LAUNCH_LOCK`, `APP_ID` -- are what `hs-drive-mcp-game`
-#: will use, pinned now so a rename is caught by the suite rather than by that
-#: workorder's first launch attempt.
+#: `UPSTREAM_DEFINITIONS`, `launch_game` -- `launch.py` calls that one -- plus
+#: the module itself). The remaining five -- `start_steam_if_needed`,
+#: `find_steam_runtime`, `eac_is_inactive`, `LAUNCH_LOCK`, `APP_ID` -- this
+#: server never names, and they are pinned anyway because `launch_game` uses
+#: them internally: a rename there breaks the launch path just as completely,
+#: and would otherwise surface as a live launch failure rather than a test.
 #: `tests/test_hs_drive_mcp_engine_bridge.py` asserts every one is still
 #: defined in the engine, so a ForgePact bump that renames one fails here
 #: instead of at a tool call.

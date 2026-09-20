@@ -627,7 +627,7 @@ absent — as it is in a worktree with the ForgePact submodule uninitialized.
 | Server | For |
 |---|---|
 | `tauri-hub` | driving a running debug hub through its bridge on `127.0.0.1:9223` |
-| `hs-drive` | reporting whether Hero Siege is running, and backing up / restoring `hs2saves\` — a local stdio server in `tools/hs_drive_mcp/` |
+| `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, graceful close) — a local stdio server in `tools/hs_drive_mcp/` |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
 | `github` | releases, dispatches and pointer PRs across the eleven repositories |
 

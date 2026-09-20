@@ -129,8 +129,12 @@ it can invoke any command the app has. The window label is `hub`, not `main`;
 
 A second, unrelated MCP server, `hs-drive`, sits beside it in `.mcp.json`. It
 is a local stdio server in `tools/hs_drive_mcp/` that reports whether Hero
-Siege is running and backs up or restores the save directory, refusing with a
-named reason unless the game is provably closed — see
+Siege is running, backs up or restores the save directory, launches the
+ForgePact-modded game through ForgePact's own launcher engine, sends ForgePact
+commands over `bp_ipc` and reads the plugin's reply back, screenshots the game
+window, and closes the game gracefully — every tool refusing with a named
+reason rather than guessing, and the save tools refusing unless the game is
+provably closed. See
 [`docs/tools/hs-drive-mcp.md`](docs/tools/hs-drive-mcp.md). Nothing about it
 ships to a player.
 

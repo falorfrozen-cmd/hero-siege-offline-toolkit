@@ -16,9 +16,9 @@ against a fixture and compares bytes.
 Two statuses are deliberately distinct. `skipped` always carries its reason,
 and a check whose code raised is `fail` with the exception name -- never
 `skipped`, because "we did not look" and "we looked and it broke" are the two
-answers that must not be confused. The registry is a list so the follow-on
-hs-drive-mcp-game workorder appends `screenshot_screen` and `ipc_ping` with
-`register()` instead of editing anything here.
+answers that must not be confused. The registry is a list so a later check is
+appended with `register()` instead of by editing anything here, which is how
+`screenshot_screen` and `ipc_ping` were added.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ _REGISTRY: list[tuple[str, CheckFn, bool]] = []
 
 
 def register(name: str, run: CheckFn, positive_control: bool = False) -> None:
-    """Append a check. Used by this module, and by the game workorder's.
+    """Append a check, from this module or any other.
 
     `positive_control=True` marks a check that points the instrument at
     something already known to be there. Those are the checks `summary.healthy`
