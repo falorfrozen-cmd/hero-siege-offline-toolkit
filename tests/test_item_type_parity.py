@@ -35,6 +35,7 @@ from hs_game_sdk import RELIC_RARITY_TIER, ItemType  # noqa: E402
 CPP_HEADER = SDK_ROOT / "cpp" / "include" / "hs_game_sdk" / "item_type.hpp"
 TS_SOURCE = SDK_ROOT / "ts" / "src" / "item_type.ts"
 GENERATOR = ROOT / "tools" / "extract_and_generate_sdk.py"
+GUIDE = ROOT / "docs" / "submodules" / "hs-game-sdk" / "instructions.md"
 
 # The pinned table. A change here is a change to the SDK's contract, not a
 # refactor: every binding has to follow it.
@@ -201,6 +202,35 @@ class TestNoUnevidencedMembers(unittest.TestCase):
             for value in UNEVIDENCED_VALUES:
                 with self.subTest(binding=binding, value=value):
                     self.assertNotIn(value, list(values))
+
+
+class TestGuideRecordsTheMeasuredRow(unittest.TestCase):
+    """docs/submodules/hs-game-sdk/instructions.md's ItemType value table must say
+    only what has actually been read from a live item instance - not more, and,
+    once a row is measured, not less either.
+
+    Every table row in the guide opens with a bare integer cell (`| 14 |`); the
+    ItemType value table is the only table in the file shaped that way, so a
+    per-line scan for that prefix is enough without extracting the section first.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = GUIDE.read_text(encoding="utf-8")
+
+    def test_only_row_fourteen_is_measured_in_game(self):
+        measured = set()
+        for line in self.text.splitlines():
+            match = re.match(r"^\| (\d+) \|", line)
+            if match and "measured in-game" in line:
+                measured.add(int(match.group(1)))
+        self.assertEqual(measured, {14})
+
+    def test_the_blanket_unmeasured_claim_is_gone(self):
+        self.assertNotIn(
+            "No row has been read from a live item instance on this runner yet",
+            self.text,
+        )
 
 
 class TestAggregatesMatchGeneratorTemplates(unittest.TestCase):
