@@ -1,6 +1,6 @@
 ---
 name: submodule-context
-description: Load a submodule's development guide before working in it. Use whenever a task touches ForgePact/, HS-Offline-Launcher/, HS-Offline-Tracker/, HS-ValueEditor/, HSCraftSim/, HSSaveEditor/, HSSaveEditor-SteamDeck-/, Hs-Offline-Loot-Forge/, hero-siege-item-editor/, hs-stat-forge/, hs-game-sdk/ or hub/ — before reading their source, planning a change, or answering a question about how one of them works.
+description: Load a submodule's development guide before working in it. Use whenever a task touches ForgePact/, HS-Offline-Launcher/, HS-Offline-Tracker/, HS-ValueEditor/, HSCraftSim/, HSSaveEditor/, HSSaveEditor-SteamDeck-/, Hs-Offline-Loot-Forge/, hero-siege-item-editor/, hs-stat-forge/, hs-game-sdk/, hub/ or third_party/yytoolkit/ (the modified YYToolkit's patch series, including any question about the distributed YYToolkit.dll or a submodule's yytoolkit-modified/ copy) — before reading their source, planning a change, or answering a question about how one of them works.
 user-invocable: false
 ---
 
@@ -23,6 +23,7 @@ composes the draft release body from those files.
 | Any submodule | `docs/submodules/<submodule-name>/instructions.md` — by section, below |
 | `hub/` (not a submodule) | `hub/instructions.md`, then `docs/hub/design.md` |
 | `hs-game-sdk/`, or any runtime value | `docs/submodules/hs-game-sdk/instructions.md` and `docs/RUNTIME_DATA_MODELS.md` |
+| `third_party/yytoolkit/` (not a submodule), `tools/build_yytoolkit.py`, or anything about the distributed `YYToolkit.dll` — including `ForgePact/yytoolkit-modified/` and `HS-Offline-Tracker/aurie-loader/yytoolkit-modified/`, which are **not** the source of truth | `third_party/yytoolkit/README.md`, then the header of every patch you touch (`Why` / `Evidence` / `Fails-safe` / `Log-markers` / `Upstream-status`); `docs/adr/0002-modified-yytoolkit-is-a-patch-series-in-the-hub.md` for why it is a series |
 | Anything catalog-shaped | `docs/hub/catalog-schema.md` |
 | Unsure which module owns something | the index at `docs/submodules/README.md` |
 

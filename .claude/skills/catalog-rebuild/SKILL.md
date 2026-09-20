@@ -13,7 +13,8 @@ resolved against each repository's latest GitHub **release**, and signed with
 minisign.
 
 Normally CI does this — `catalog.yml` rebuilds on a `release-published` or
-`submodule-updated` dispatch and opens a pull request. Rebuild by hand when a
+`submodule-updated` dispatch, opens a pull request, and merges and publishes it
+itself when it validates (`tools/merge_catalog_pr.py`). Rebuild by hand when a
 release was published from a repository whose notifier is not installed or
 whose `HUB_DISPATCH_TOKEN` has lapsed, because nothing else will pick it up.
 

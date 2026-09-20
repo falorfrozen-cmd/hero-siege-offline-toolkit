@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-18T16:08:58Z",
+  "generated": "2026-09-19T19:22:54Z",
   "tools": [
     {
       "id": "forgepact",
@@ -8,9 +8,9 @@
       "summary": "Offline gameplay modifiers: density, spawns, drop rates, map reveal.",
       "repo": "falorfrozen-cmd/ForgePact",
       "submodule": "ForgePact",
-      "version": "1.4.2",
-      "tag": "v1.4.2",
-      "published": "2026-09-18T15:44:18Z",
+      "version": "1.4.4",
+      "tag": "v1.4.4",
+      "published": "2026-09-19T18:26:35Z",
       "license": "AGPL-3.0",
       "requires": {
         "admin": false,
@@ -20,12 +20,12 @@
       },
       "artifact": {
         "kind": "zip",
-        "name": "ForgePact-1.4.2.zip",
-        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.4.2/ForgePact-1.4.2.zip",
-        "size": 17385074,
-        "sha256": "8cf98fbe9e50f452cc64337fb6215ec9fb15c0e1d1d111fcd21439e0679066c2",
+        "name": "ForgePact-1.4.4.zip",
+        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.4.4/ForgePact-1.4.4.zip",
+        "size": 17423524,
+        "sha256": "a94db141896ef025f0e39241c329957b691f280adc9dd72574193aa81453fcad",
         "sha256_source": "published+verified",
-        "strip_prefix": "ForgePact-1.4.2/"
+        "strip_prefix": "ForgePact-1.4.4/"
       },
       "launch": {
         "exe": "ForgePact.exe",
@@ -44,8 +44,8 @@
           "timeout_s": 20
         }
       },
-      "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.4.2",
-      "notes": "# ForgePact 1.4.2\n\nChaos Tower and Shadow Realm rate settings above x1 work again on the current game version. This release requires the current game version.\n\n## Fixed\n\n- **Chaos Tower and Shadow Realm multipliers above x1 had no effect on the\n  current game version.** Each could still appear only once per run, exactly\n  as if the setting were left at x1. A game update renamed the internal names\n  ForgePact uses to reset each mechanic's once-per-run limit, so the reset\n  could no longer attach and the game's own limit took over. ForgePact 1.4.2\n  uses the current game version's names. Confirmed in-game: with the rates\n  raised, one run showed many Chaos Towers and at least two Shadow Realms.\n\n  This fix only works on the current game version. If you are still on the\n  previous game version, 1.4.2 cannot attach the reset there, so Chaos Tower\n  and Shadow Realm rates above x1 have no effect. Stay on 1.4.1 until you\n  update the game.\n\n## How to update\n\nDownload and extract the complete release, then reopen ForgePact. Your existing\nsettings are retained. Source users can run `Prepare-Plugin.bat` if plugin files\nare missing before using **Install Mod Plugin**. This change is in the plugin,\nso pressing **Install Mod Plugin** matters - updating only the panel leaves the\nold plugin in place.\n\nUse ForgePact only with an offline / EAC-disabled copy of Hero Siege.",
+      "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.4.4",
+      "notes": "# ForgePact 1.4.4\n\nThe mod loader (`YYToolkit.dll`) that ForgePact installs is rebuilt from source\nthis project can fully account for, instead of a binary whose original source\nwas lost.\n\n## Fixed\n\n- **The mod loader is rebuilt from source this project can fully account\n  for.** Every ForgePact release from 1.3.1 through 1.4.3 shipped\n  a `YYToolkit.dll` built by a previous maintainer whose original source was\n  never kept — the notice that shipped with it described two changes, but the\n  binary itself contained more than that, and a fresh build of the two files\n  that *were* kept crashed during startup and never got the game running.\n  1.4.4 instead ships a `YYToolkit.dll` built from a documented set of changes\n  to the published YYToolkit project that anyone can read and rebuild\n  themselves; a `YYToolkit-BUILD-INFO.json` file installed beside the DLL\n  records exactly what went into the copy you have.\n\n  **Checked so far (2026-09-19, one machine, one game build):** with the new\n  loader by itself, the game starts, and a roughly two-minute Chaos Tower\n  session that raised 133 of the game's own caught errors ran with no lag\n  seen, where the previous loader lagged heavily in the same content. With\n  ForgePact 1.4.4's plugin and the HS Offline Tracker producer also loaded on\n  the new loader, the game starts, the plugin loads and installs its hooks,\n  and a handful of panel commands — a ping, and the globe/orb pickup option\n  switched on, read back, and switched off again — answered normally.\n\n  **Not yet checked:** playing with mods switched on for any real length of\n  time on the new loader; whether the lag improvement holds once the plugin\n  is loaded (the lag observation above was made with the loader alone); and\n  other machines or game builds. This file will be corrected if any of that\n  turns up a problem.\n\n## How to update\n\nDownload and extract the complete release, then reopen ForgePact. Your existing\nsettings are retained. Source users can run `Prepare-Plugin.bat` if plugin files\nare missing before using **Install Mod Plugin**. This change is in the mod\nloader, so pressing **Install Mod Plugin** matters — updating only the panel\nleaves the old `YYToolkit.dll` in place.\n\nUse ForgePact only with an offline / EAC-disabled copy of Hero Siege.",
       "guide": "docs/submodules/ForgePact/instructions.md",
       "source_launch": {
         "cmd": "py",
@@ -110,9 +110,9 @@
       "summary": "Loot journal, drop alerts and an always-on-top run overlay.",
       "repo": "falorfrozen-cmd/HS-Offline-Tracker",
       "submodule": "HS-Offline-Tracker",
-      "version": "0.1.2",
-      "tag": "v0.1.2",
-      "published": "2026-09-07T07:11:07Z",
+      "version": "0.1.3",
+      "tag": "v0.1.3",
+      "published": "2026-09-19T19:22:31Z",
       "license": "MIT",
       "requires": {
         "admin": false,
@@ -122,10 +122,10 @@
       },
       "artifact": {
         "kind": "zip",
-        "name": "hs-offline-tracker-0.1.2-portable.zip",
-        "url": "https://github.com/falorfrozen-cmd/HS-Offline-Tracker/releases/download/v0.1.2/hs-offline-tracker-0.1.2-portable.zip",
-        "size": 7205395,
-        "sha256": "1eec96004e861e2454ec2e97d50d610a02f6adc83342e9aee5ea2630cf821465",
+        "name": "hs-offline-tracker-0.1.3-portable.zip",
+        "url": "https://github.com/falorfrozen-cmd/HS-Offline-Tracker/releases/download/v0.1.3/hs-offline-tracker-0.1.3-portable.zip",
+        "size": 14446858,
+        "sha256": "14402ef8e4ef24e8eace9b840c9abc12497450d4b5c528d681e905dfa416a484",
         "sha256_source": "published+verified",
         "strip_prefix": ""
       },
@@ -135,8 +135,8 @@
         "elevate": false,
         "ports": []
       },
-      "notes_url": "https://github.com/falorfrozen-cmd/HS-Offline-Tracker/releases/tag/v0.1.2",
-      "notes": "Install the sensor from Settings without ForgePact, and drops that carry their real names.\n\n## What is new\n\n**The tracker can set up the mod loader itself.** Settings > Game link > Install now installs Aurie/YYToolkit when the game does not already carry it, then places the sensor. Before patching it makes a verified clean backup (`Hero_Siege.exe.aurie_backup`), and the patched file must come out as that exact clean file plus one added loader section or the whole thing is rolled back. Previously you had to install ForgePact first; now either one works, and installing both is still fine.\n\n**Drops show the item's real name.** Weapons share their ids across weapon types, and the sensor never sent the weapon type, so every weapon in the timeline read \"Weapon #N\". The sensor now reads the weapon type and the game's own display name and sends both.\n\n**A re-picked alert sound actually plays.** A custom sound was always stored under the same filename, so the window kept playing the first file you picked even after switching or going back to Default. The file's identity is now part of its address, so a new pick is heard immediately.\n\n**Listed weapons make a card again.** Lists match by name; weapons had no name on the wire, so nothing matched. Known items now use the name table's spelling, unknown ones keep whatever the game sent.\n\n**Also:** a \"Pick Hero_Siege.exe...\" button for a game the tracker has never seen; the install refuses to run while the game is open; and EasyAntiCheat files are reported rather than treated as a blocker, since offline copies ship stubbed ones.\n\n## Install\n\nRun the setup, open Settings > Game link, press Install, then start Hero Siege. If the game folder has no mod loader the tracker installs one for you. The portable zip is the same program without an installer; keep the `producer` and `aurie-loader` folders next to the exe.\n\n## Notes\n\nMagic find is still not shown: the game's stat routine cannot be observed on this build without destabilising it. The sensor only reads; it never writes to the game.\n\n## Files\n\n| File | What it is |\n| --- | --- |\n| `HS Offline Tracker_0.1.2_x64-setup.exe` | Installer, carries the sensor and the loader |\n| `hs-offline-tracker-0.1.2-portable.zip` | Portable build, no installer |\n| `SHA256SUMS-0.1.2.txt` | Checksums for the two files above |",
+      "notes_url": "https://github.com/falorfrozen-cmd/HS-Offline-Tracker/releases/tag/v0.1.3",
+      "notes": "# HS Offline Tracker 0.1.3\n\nA cleaner mod loader, and an existing install now keeps it up to date.\n\n## What is new\n\n**The bundled mod loader is replaced with a documented build.** The Tracker ships YYToolkit, the loader that lets the live sensor run inside the game. The copy it used to ship was an older, undocumented build, the same one ForgePact shipped, and nobody could say exactly what was in it. It is now a build made from a published, documented set of changes. A small record of exactly what it was built from now ships next to it.\n\n**Updating the Tracker now updates the loader in your game folder too.** Before, the loader was installed once and never touched again: a newer Tracker brought a newer loader, but the old one stayed in your game folder, and \"Reinstall live sensor\" said it worked while changing nothing. Settings > Game link now tells you when the installed loader is an older build, and Reinstall live sensor replaces it. A loader it does not recognise, for example a newer one from another tool, is left alone and reported, never overwritten.\n\n**Every build is checked before it ships.** The mod loader files in a release are now checked against a list of their expected fingerprints, so a wrong or incomplete file stops the release instead of reaching you as a sensor that silently refuses to start.\n\n## Install\n\nRun the setup, open Settings > Game link, press Install, then start Hero Siege. If the game folder has no mod loader, the Tracker installs one for you. If it has the older one, Settings says so, and Reinstall live sensor brings it up to date. The portable zip is the same program without an installer; keep the `producer` and `aurie-loader` folders next to the exe.\n\n## Notes\n\nIf you also use ForgePact, use version 1.4.4 or newer: it ships the same loader. Both tools install the loader into the same place, so installing an older ForgePact after this puts the old loader back. Reinstall live sensor fixes that.\n\nMagic find is still not shown: the game's stat routine cannot be observed on this build without destabilising it. The sensor only reads; it never writes to the game.\n\n## Files\n\n| File | What it is |\n| --- | --- |\n| `HS Offline Tracker_0.1.3_x64-setup.exe` | Installer, carries the sensor and the loader |\n| `hs-offline-tracker-0.1.3-portable.zip` | Portable build, no installer |\n| `SHA256SUMS-0.1.3.txt` | Checksums for the two files above |",
       "guide": "docs/submodules/HS-Offline-Tracker/instructions.md",
       "source_launch": {
         "cmd": "npm",

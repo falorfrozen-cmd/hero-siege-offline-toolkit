@@ -1,0 +1,577 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hero Siege Offline Toolkit <noreply@example.invalid>
+Date: Sat, 19 Sep 2026 12:00:00 +0000
+Subject: [PATCH 3/7] Leave the ExecuteIt hook out by design, and say so
+
+Why: Hero Siege (GameMaker YYC x64) runs with a YYToolkit whose ExecuteIt detour was removed, but nothing showed it. CreateCallback(EVENT_OBJECT_CALL) still returned AURIE_SUCCESS for a callback that could never fire, YYToolkit.log read the same with the hook on or off, and a game patch that broke the ExecuteIt byte pattern would have stopped the whole toolkit from loading for an address that only labels crash-report frames. This makes the off state a named build switch (YYTK_HOOK_EXECUTEIT, default 0, in the DLL-private ObjectCallGate.hpp), a runtime flag raised only beside a successful MmCreateHook, one init log line, and an AURIE_UNAVAILABLE refusal whose logging stops after 8 lines.
+
+Evidence: HkExecuteIt only dispatches EVENT_OBJECT_CALL (Hooks.cpp:122-156) and that event is dispatched nowhere else; m_CodeExecute has one reader, GmResolveGameSymbolFromAddress (Generic.cpp:206); upstream CreateCallback validates no trigger (Interface.cpp:1307-1327). No plugin in the toolkit registers EVENT_OBJECT_CALL (ForgePact registers EVENT_FRAME only). Project notes (hub AGENTS.md, "Don't Suspend the Game's Own Runtime") record the hook crash-looping on Season 10; ForgePact/docs/S10-special-content-notes.md section "YYToolkit'in olumcul hatasi BIZDEN DEGIL" records the blamed error occurring with the hook removed. Built here: Release x64 with 0 errors and no new warnings, in both YYTK_HOOK_EXECUTEIT=0 and =1; the =0 DLL contains all four log markers and the =1 DLL does not contain the "NOT installed" line; hs-tests/ObjectCallGateTest.cpp passes 45 checks, and fails 7 of them when the limiter is mutated to an off-by-one. NOT verified: anything in the running game - the init line, the refusal lines and the AURIE_UNAVAILABLE return were never observed live. NOT measured: whether the hook is harmful on Season 10 (not observed either way), and what the detour costs per call. ASSUMED: CreateCallback can be reached from more than one thread, which is why the counter is atomic; the callback list itself stays unguarded as it is upstream.
+
+Fails-safe: The flag defaults to false and only a successful MmCreateHook raises it, so every failure mode refuses the registration instead of accepting a dead callback. A failed ExecuteIt lookup no longer aborts stage 1: m_CodeExecute stays nullptr and the init line says that crash-report frames may be mislabelled Code_Execute. If the owner of a routine cannot be resolved the refusal line says <unknown>; the plugin-supplied AurieModule pointer is never dereferenced. The refusal counter sticks at UINT32_MAX instead of wrapping, so logging cannot start again. A third-party plugin that treats a failed EVENT_OBJECT_CALL registration as fatal now fails to load where it used to load and do nothing - that is intended and logged. With YYTK_HOOK_EXECUTEIT=1 the upstream behavior returns, including upstream's FWCodeEvent parameter-order mismatch (shared header says int, RValue*; the dispatched wrapper is RValue*, INT) - do not consume the event without fixing that first.
+
+Log-markers: "ExecuteIt hook NOT installed by design"
+Log-markers: "REFUSED EVENT_OBJECT_CALL"
+Log-markers: "further refusals will not be logged"
+Log-markers: "crash-report frames may be mislabelled Code_Execute"
+
+Upstream-status: not submitted. Upstream v4.0.1 always installs the hook, treats a failed ExecuteIt lookup as fatal, and accepts every trigger in CreateCallback. The shared headers are untouched, so their CreateCallback comment does not list AURIE_UNAVAILABLE - the fork documentation has to.
+
+diff --git a/YYToolkit/hs-tests/ObjectCallGateTest.cpp b/YYToolkit/hs-tests/ObjectCallGateTest.cpp
+new file mode 100644
+index 0000000..c911f35
+--- /dev/null
++++ b/YYToolkit/hs-tests/ObjectCallGateTest.cpp
+@@ -0,0 +1,240 @@
++// Host test for source/YYTK/Module Interface/ObjectCallGate.hpp - needs no game and no YYToolkit build.
++//
++// Build + run (x64 developer prompt, from the YYToolkit folder):
++//   cl /nologo /std:c++latest /EHsc /W4 hs-tests\ObjectCallGateTest.cpp && ObjectCallGateTest.exe
++//
++// Prints one line per check, and returns non-zero if any check failed.
++// Every predicate has a positive control (it says yes where it has to) and a
++// negative control (it says no where it has to), so a predicate that is stuck
++// at one answer can't pass.
++
++#include "../source/YYTK/Module Interface/ObjectCallGate.hpp"
++
++#include <cstdio>
++#include <thread>
++#include <vector>
++
++using namespace YYTK::ObjectCallGate;
++
++static int g_FailedChecks = 0;
++static int g_TotalChecks = 0;
++
++static void Check(
++	IN bool Condition,
++	IN const char* Description
++)
++{
++	g_TotalChecks++;
++	if (!Condition)
++		g_FailedChecks++;
++
++	printf("[%s] %s\n", Condition ? "PASS" : "FAIL", Description);
++}
++
++// What CreateCallback() does with one refused registration, minus the actual output.
++struct RefusalOutcome
++{
++	uint32_t Number = 0;
++	bool Logged = false;
++	bool LastLogged = false;
++};
++
++static RefusalOutcome RefuseOnce(
++	IN OUT std::atomic<uint32_t>& RefusalCount
++)
++{
++	RefusalOutcome outcome;
++	outcome.Number = CountRefusal(RefusalCount);
++	outcome.Logged = ShouldLogRefusal(outcome.Number);
++	outcome.LastLogged = outcome.Logged && IsLastLoggedRefusal(outcome.Number);
++	return outcome;
++}
++
++static void TestBuildSwitch()
++{
++	// The test is compiled without /DYYTK_HOOK_EXECUTEIT, so this is the shipped default.
++	Check(YYTK_HOOK_EXECUTEIT == 0, "switch: YYTK_HOOK_EXECUTEIT defaults to 0 (hook off)");
++	Check(max_logged_refusals == 8, "switch: at most 8 refusals are logged");
++}
++
++static void TestLimiterArithmetic()
++{
++	// Positive control: numbers 1..8 are logged.
++	bool first_eight_logged = true;
++	for (uint32_t number = 1; number <= 8; number++)
++		first_eight_logged = first_eight_logged && ShouldLogRefusal(number);
++	Check(first_eight_logged, "limiter+: refusals 1..8 are logged");
++
++	// Negative controls: 0 (no refusal), 9 and everything after it are silent.
++	Check(!ShouldLogRefusal(0), "limiter-: number 0 (no refusal happened) is not logged");
++	Check(!ShouldLogRefusal(9), "limiter-: refusal 9 is silent");
++	Check(!ShouldLogRefusal(10), "limiter-: refusal 10 is silent");
++	Check(!ShouldLogRefusal(1000000), "limiter-: refusal 1000000 is silent");
++	Check(!ShouldLogRefusal(UINT32_MAX), "limiter-: refusal UINT32_MAX is silent");
++
++	// The "further refusals are silent" suffix belongs to number 8, and to nothing else.
++	Check(IsLastLoggedRefusal(8), "last+: refusal 8 is the last logged one");
++	Check(!IsLastLoggedRefusal(7), "last-: refusal 7 is not the last logged one");
++	Check(!IsLastLoggedRefusal(9), "last-: refusal 9 is not the last logged one");
++	Check(!IsLastLoggedRefusal(0), "last-: number 0 is not the last logged one");
++	Check(!IsLastLoggedRefusal(1), "last-: refusal 1 is not the last logged one");
++}
++
++static void TestRefusalSequence()
++{
++	std::atomic<uint32_t> refusal_count = 0;
++
++	uint32_t logged = 0;
++	uint32_t last_logged = 0;
++	uint32_t last_logged_number = 0;
++	bool numbers_are_sequential = true;
++	bool every_call_was_counted = true;
++	bool logged_only_first_eight = true;
++
++	for (uint32_t call = 1; call <= 100; call++)
++	{
++		const RefusalOutcome outcome = RefuseOnce(refusal_count);
++
++		// A refusal is never turned into "not a refusal" by the limiter - number 0 means no refusal.
++		every_call_was_counted = every_call_was_counted && (outcome.Number != 0);
++		numbers_are_sequential = numbers_are_sequential && (outcome.Number == call);
++		logged_only_first_eight = logged_only_first_eight && (outcome.Logged == (call <= 8));
++
++		if (outcome.Logged)
++			logged++;
++
++		if (outcome.LastLogged)
++		{
++			last_logged++;
++			last_logged_number = outcome.Number;
++		}
++	}
++
++	Check(every_call_was_counted, "sequence+: all 100 refused registrations were counted as refusals");
++	Check(numbers_are_sequential, "sequence+: refusal numbers run 1, 2, 3, ...");
++	Check(refusal_count.load() == 100, "sequence+: the counter says 100 after 100 refusals");
++	Check(logged == 8, "sequence+: exactly 8 of 100 refusals were logged");
++	Check(logged_only_first_eight, "sequence-: calls 9..100 were silent, calls 1..8 were not");
++	Check(last_logged == 1 && last_logged_number == 8, "sequence+: exactly one refusal carries the 'further refusals' suffix, and it is number 8");
++}
++
++static void TestSaturation()
++{
++	// Positive control: just below the top, the counter still counts.
++	std::atomic<uint32_t> refusal_count = UINT32_MAX - 1;
++	const RefusalOutcome reaching_top = RefuseOnce(refusal_count);
++	Check(reaching_top.Number == UINT32_MAX && refusal_count.load() == UINT32_MAX, "saturation+: UINT32_MAX - 1 counts up to UINT32_MAX");
++	Check(!reaching_top.Logged, "saturation-: that refusal is silent");
++
++	// Negative control: at the top it must not wrap to 0, because 1..8 would be logged all over again.
++	bool stayed_silent = true;
++	for (int i = 0; i < 20; i++)
++	{
++		const RefusalOutcome outcome = RefuseOnce(refusal_count);
++		stayed_silent = stayed_silent && !outcome.Logged && !outcome.LastLogged && outcome.Number == UINT32_MAX;
++	}
++	Check(stayed_silent, "saturation-: 20 refusals at UINT32_MAX stay silent");
++	Check(refusal_count.load() == UINT32_MAX, "saturation-: the counter did not wrap around");
++}
++
++static void TestConcurrentRefusals()
++{
++	constexpr uint32_t thread_count = 4;
++	constexpr uint32_t refusals_per_thread = 5000;
++
++	std::atomic<uint32_t> refusal_count = 0;
++	std::atomic<uint32_t> logged = 0;
++	std::atomic<uint32_t> last_logged = 0;
++	std::atomic<uint32_t> silent = 0;
++
++	std::vector<std::thread> threads;
++	for (uint32_t i = 0; i < thread_count; i++)
++	{
++		threads.emplace_back(
++			[&]()
++			{
++				for (uint32_t call = 0; call < refusals_per_thread; call++)
++				{
++					const RefusalOutcome outcome = RefuseOnce(refusal_count);
++					if (outcome.Logged)
++						logged++;
++					else
++						silent++;
++					if (outcome.LastLogged)
++						last_logged++;
++				}
++			}
++		);
++	}
++
++	for (auto& thread : threads)
++		thread.join();
++
++	Check(refusal_count.load() == thread_count * refusals_per_thread, "threads+: 4 threads x 5000 refusals were all counted");
++	Check(logged.load() == 8, "threads+: exactly 8 refusals were logged across all threads");
++	Check(last_logged.load() == 1, "threads+: exactly one refusal carried the 'further refusals' suffix");
++	Check(silent.load() == thread_count * refusals_per_thread - 8, "threads-: the other 19992 refusals were silent");
++}
++
++static void TestNarrowImageName()
++{
++	// Positive controls
++	Check(NarrowImageName(L"C:\\Games\\Hero Siege\\mods\\aurie\\ForgePact.dll") == "ForgePact.dll", "name+: only the file name is kept (backslashes)");
++	Check(NarrowImageName(L"C:/Games/mods/aurie/Plugin.dll") == "Plugin.dll", "name+: only the file name is kept (forward slashes)");
++	Check(NarrowImageName(L"Plugin.dll") == "Plugin.dll", "name+: a bare file name is kept as it is");
++	Check(NarrowImageName(L"C:\\x\\100%s%n.dll") == "100%s%n.dll", "name+: percent signs survive (the name is an argument, never a format)");
++
++	// Negative controls
++	Check(NarrowImageName(L"C:\\Users\\SomeUser\\mods\\Plugin.dll").find("SomeUser") == std::string::npos, "name-: the folder part (user profile) is dropped");
++	Check(NarrowImageName(L"") == "<unknown>", "name-: an empty path is <unknown>");
++	Check(NarrowImageName(L"C:\\mods\\") == "<unknown>", "name-: a path without a file name is <unknown>");
++	Check(NarrowImageName(L"C:\\mods\\Eklenti\x015F\x0131.dll") == "Eklenti??.dll", "name-: non-ASCII characters become '?'");
++	Check(NarrowImageName(L"C:\\mods\\a\tb\n.dll") == "a?b?.dll", "name-: control characters become '?'");
++
++	const std::wstring long_name = L"C:\\mods\\" + std::wstring(500, L'A') + L".dll";
++	const std::string narrowed_long_name = NarrowImageName(long_name);
++	Check(narrowed_long_name.size() == max_image_name_length, "name-: an overlong name is cut to max_image_name_length");
++	Check(narrowed_long_name.ends_with("..."), "name-: a cut name ends in '...'");
++
++	const std::wstring exact_name = std::wstring(max_image_name_length, L'B');
++	Check(NarrowImageName(exact_name) == std::string(max_image_name_length, 'B'), "name+: a name of exactly max_image_name_length is not cut");
++}
++
++static void LocalRoutine()
++{
++}
++
++static void TestDescribeRoutineOwner()
++{
++	// Positive controls: a routine in this executable, and one in a system DLL.
++	const std::string own_name = DescribeRoutineOwner(reinterpret_cast<PVOID>(&LocalRoutine));
++	printf("       (own image reported as '%s')\n", own_name.c_str());
++	Check(own_name != "<unknown>" && own_name.ends_with(".exe"), "owner+: a routine in this executable is attributed to an .exe");
++	Check(own_name.find('\\') == std::string::npos && own_name.find('/') == std::string::npos, "owner+: the reported name carries no folder");
++
++	const HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
++	const PVOID kernel32_routine = kernel32 ? reinterpret_cast<PVOID>(GetProcAddress(kernel32, "GetTickCount")) : nullptr;
++	const std::string kernel32_name = DescribeRoutineOwner(kernel32_routine);
++	printf("       (kernel32 routine reported as '%s')\n", kernel32_name.c_str());
++	Check(kernel32_routine != nullptr && _stricmp(kernel32_name.c_str(), "kernel32.dll") == 0, "owner+: a routine in kernel32 is attributed to kernel32.dll");
++
++	// Negative controls: addresses that are in no image at all.
++	int stack_variable = 0;
++	Check(DescribeRoutineOwner(nullptr) == "<unknown>", "owner-: nullptr is <unknown>");
++	Check(DescribeRoutineOwner(&stack_variable) == "<unknown>", "owner-: a stack address is <unknown>");
++	Check(DescribeRoutineOwner(reinterpret_cast<PVOID>(static_cast<uintptr_t>(0x10))) == "<unknown>", "owner-: an unmapped address is <unknown>");
++}
++
++int main()
++{
++	TestBuildSwitch();
++	TestLimiterArithmetic();
++	TestRefusalSequence();
++	TestSaturation();
++	TestConcurrentRefusals();
++	TestNarrowImageName();
++	TestDescribeRoutineOwner();
++
++	printf("%d checks, %d failed\n", g_TotalChecks, g_FailedChecks);
++	return g_FailedChecks == 0 ? 0 : 1;
++}
+diff --git a/YYToolkit/source/YYTK/Module Interface/Interface.cpp b/YYToolkit/source/YYTK/Module Interface/Interface.cpp
+index ce6d390..41e155a 100644
+--- a/YYToolkit/source/YYTK/Module Interface/Interface.cpp	
++++ b/YYToolkit/source/YYTK/Module Interface/Interface.cpp	
+@@ -1311,6 +1311,44 @@ namespace YYTK
+ 		IN int32_t Priority
+ 	)
+ 	{
++		// EVENT_OBJECT_CALL is only ever dispatched from Hooks::HkExecuteIt.
++		// If that hook isn't installed, the callback would be accepted here and then
++		// never be called - so refuse it, and put the name of whoever asked in the log.
++		if (Trigger == EVENT_OBJECT_CALL && !m_ObjectCallHookInstalled)
++		{
++			// Every refusal is counted, but only the first few are written out: each one is a
++			// flushed file write, and nothing stops a plugin from retrying the registration every frame.
++			const uint32_t refusal_number = ObjectCallGate::CountRefusal(m_ObjectCallRefusals);
++
++			if (ObjectCallGate::ShouldLogRefusal(refusal_number))
++			{
++				const std::string owner_name = ObjectCallGate::DescribeRoutineOwner(Routine);
++				const bool is_last_logged = ObjectCallGate::IsLastLoggedRefusal(refusal_number);
++
++				CmWriteLogOutput(
++					"[%s:%d] CreateCallback() => REFUSED EVENT_OBJECT_CALL from '%s' (module 0x%p, routine 0x%p), refusal %u: "
++					"the ExecuteIt hook is not installed in this build, so the callback would never be called. "
++					"Returning AURIE_UNAVAILABLE%s",
++					__FILE__,
++					__LINE__,
++					owner_name.c_str(),
++					Module,
++					Routine,
++					refusal_number,
++					is_last_logged ? " - further refusals will not be logged" : ""
++				);
++
++				CmWriteWarning(
++					"%s asked for EVENT_OBJECT_CALL, which this YYToolkit build does not provide (ExecuteIt is not hooked). "
++					"The callback was NOT registered.%s",
++					owner_name.c_str(),
++					is_last_logged ? " Further refusals will not be shown." : ""
++				);
++			}
++
++			return AURIE_UNAVAILABLE;
++		}
++
+ 		if (YkCallbackExists(Module, Routine))
+ 			return AURIE_OBJECT_ALREADY_EXISTS;
+ 
+diff --git a/YYToolkit/source/YYTK/Module Interface/Interface.hpp b/YYToolkit/source/YYTK/Module Interface/Interface.hpp
+index dff17c5..f2c664d 100644
+--- a/YYToolkit/source/YYTK/Module Interface/Interface.hpp	
++++ b/YYToolkit/source/YYTK/Module Interface/Interface.hpp	
+@@ -1,6 +1,7 @@
+ #ifndef YYTK_INTERFACE_H_
+ #define YYTK_INTERFACE_H_
+ #include "../Tool.hpp"
++#include "ObjectCallGate.hpp"
+ #include <map>
+ 
+ namespace YYTK
+@@ -38,6 +39,15 @@ namespace YYTK
+ 		// A pointer to Code_Execute - not a trampoline, just the actual function
+ 		PVOID m_CodeExecute = nullptr;
+ 
++		// Set by Hooks::HkPreinitialize() once the ExecuteIt hook is actually in place.
++		// EVENT_OBJECT_CALL is dispatched from that hook and from nowhere else, so while
++		// this is false, CreateCallback() refuses EVENT_OBJECT_CALL registrations.
++		bool m_ObjectCallHookInstalled = false;
++
++		// How many EVENT_OBJECT_CALL registrations were refused. Only the first few are
++		// logged (see ObjectCallGate.hpp), so a plugin retrying every frame can't flood the log file.
++		std::atomic<uint32_t> m_ObjectCallRefusals = 0;
++
+ 	private:
+ 
+ 		// A pointer to the functions array in memory
+diff --git a/YYToolkit/source/YYTK/Module Interface/ObjectCallGate.hpp b/YYToolkit/source/YYTK/Module Interface/ObjectCallGate.hpp
+new file mode 100644
+index 0000000..056f1be
+--- /dev/null
++++ b/YYToolkit/source/YYTK/Module Interface/ObjectCallGate.hpp	
+@@ -0,0 +1,157 @@
++#ifndef YYTK_OBJECT_CALL_GATE_H_
++#define YYTK_OBJECT_CALL_GATE_H_
++
++// DLL-private - this file is not part of the plugin ABI, and plugins never see it.
++//
++// It holds the build switch for the ExecuteIt hook, and the pure logic that
++// YYTKInterfaceImpl::CreateCallback() uses when it refuses EVENT_OBJECT_CALL.
++// Only standard and Windows headers are included, so that
++// YYToolkit/hs-tests/ObjectCallGateTest.cpp can compile and run it without the game.
++
++#include <Windows.h>
++#include <atomic>
++#include <cstdint>
++#include <string>
++
++#ifndef IN
++#define IN
++#endif // IN
++
++#ifndef OUT
++#define OUT
++#endif // OUT
++
++// Controls whether Hooks::HkPreinitialize() installs the ExecuteIt detour, which is the
++// only thing that dispatches EVENT_OBJECT_CALL. This fork ships with it OFF - see the
++// comment in HkPreinitialize() for why, and YYTKInterfaceImpl::CreateCallback() for
++// what a plugin observes. Build with /DYYTK_HOOK_EXECUTEIT=1 for upstream behavior.
++#ifndef YYTK_HOOK_EXECUTEIT
++#define YYTK_HOOK_EXECUTEIT 0
++#endif // YYTK_HOOK_EXECUTEIT
++
++namespace YYTK
++{
++	namespace ObjectCallGate
++	{
++		// How many refused EVENT_OBJECT_CALL registrations are written to the log and the console.
++		// Each written refusal is a flushed file write, so the number has to be bounded:
++		// a plugin that retries the registration every frame must not be able to grow
++		// YYToolkit.log without limit. No such plugin was observed - this is a precaution.
++		constexpr uint32_t max_logged_refusals = 8;
++
++		// The longest image name that is put into a refusal line.
++		// CmpParseVa() formats into a fixed 4096 byte buffer, so whatever goes into it has to be bounded.
++		constexpr size_t max_image_name_length = 64;
++
++		// Counts one refusal, and returns its number (the first refusal is number 1).
++		// The count sticks at UINT32_MAX instead of wrapping around, because a wrapped counter
++		// would start logging again.
++		//
++		// ASSUMED, not measured: CreateCallback() can be reached from more than one thread
++		// (a plugin's init thread and the game thread). The compare-exchange hands every number out
++		// exactly once either way, and takes no lock. The callback list itself is unguarded upstream,
++		// and that is left as it was.
++		inline uint32_t CountRefusal(
++			IN OUT std::atomic<uint32_t>& RefusalCount
++		)
++		{
++			uint32_t seen_count = RefusalCount.load();
++
++			while (seen_count != UINT32_MAX)
++			{
++				// On failure, seen_count is reloaded with the current value.
++				if (RefusalCount.compare_exchange_weak(seen_count, seen_count + 1))
++					return seen_count + 1;
++			}
++
++			return UINT32_MAX;
++		}
++
++		// Whether the refusal with this number is written out. Number 0 means "no refusal".
++		inline bool ShouldLogRefusal(
++			IN uint32_t RefusalNumber
++		)
++		{
++			return RefusalNumber >= 1 && RefusalNumber <= max_logged_refusals;
++		}
++
++		// Whether the refusal with this number is the last one that is written out,
++		// ie. the one that has to say that the following ones are silent.
++		inline bool IsLastLoggedRefusal(
++			IN uint32_t RefusalNumber
++		)
++		{
++			return RefusalNumber == max_logged_refusals;
++		}
++
++		// Turns an image path into something that is safe to put into a log line:
++		// only the file name (a full path may carry the user's profile folder name),
++		// printable ASCII only, and never longer than max_image_name_length.
++		inline std::string NarrowImageName(
++			IN const std::wstring& ImagePath
++		)
++		{
++			const size_t last_separator = ImagePath.find_last_of(L"\\/");
++			const size_t name_start = (last_separator == std::wstring::npos) ? 0 : last_separator + 1;
++
++			std::string image_name;
++			for (size_t i = name_start; i < ImagePath.size(); i++)
++			{
++				const wchar_t character = ImagePath[i];
++				const bool is_printable_ascii = (character >= 0x20 && character <= 0x7E);
++
++				image_name.push_back(is_printable_ascii ? static_cast<char>(character) : '?');
++			}
++
++			if (image_name.empty())
++				return "<unknown>";
++
++			if (image_name.size() > max_image_name_length)
++			{
++				image_name.resize(max_image_name_length - 3);
++				image_name.append("...");
++			}
++
++			return image_name;
++		}
++
++		// Names the image that a callback routine lives in.
++		//
++		// The loader is asked about the routine's address. The AurieModule pointer that came
++		// with the request is deliberately not used for this: upstream never dereferences it
++		// in CreateCallback(), and a refusal path must not be the first place that does.
++		inline std::string DescribeRoutineOwner(
++			IN PVOID Routine
++		)
++		{
++			HMODULE owner_image = nullptr;
++
++			if (!Routine)
++				return NarrowImageName(L"");
++
++			if (!GetModuleHandleExW(
++				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++				static_cast<LPCWSTR>(Routine),
++				&owner_image
++			))
++			{
++				return NarrowImageName(L"");
++			}
++
++			wchar_t image_path[1024] = { 0 };
++			const DWORD path_length = GetModuleFileNameW(
++				owner_image,
++				image_path,
++				static_cast<DWORD>(std::size(image_path))
++			);
++
++			// A path that didn't fit has lost its file name, which is the part that matters.
++			if (path_length == 0 || path_length >= std::size(image_path))
++				return NarrowImageName(L"");
++
++			return NarrowImageName(std::wstring(image_path, path_length));
++		}
++	}
++}
++
++#endif // YYTK_OBJECT_CALL_GATE_H_
+diff --git a/YYToolkit/source/YYTK/Module Internals/Hooks/Hooks.cpp b/YYToolkit/source/YYTK/Module Internals/Hooks/Hooks.cpp
+index 0b45aea..6450d20 100644
+--- a/YYToolkit/source/YYTK/Module Internals/Hooks/Hooks.cpp	
++++ b/YYToolkit/source/YYTK/Module Internals/Hooks/Hooks.cpp	
+@@ -285,6 +285,7 @@ namespace YYTK
+ 				&code_execute
+ 			);
+ 
++#if YYTK_HOOK_EXECUTEIT
+ 			if (!AurieSuccess(last_status))
+ 				return last_status;
+ 
+@@ -301,8 +302,59 @@ namespace YYTK
+ 				return last_status;
+ 
+ 			g_ModuleInterface.m_CodeExecute = code_execute;
+-			
++			g_ModuleInterface.m_ObjectCallHookInstalled = true;
++
++			CmWriteLogOutput(
++				"[%s:%d] HkPreinitialize() => ExecuteIt hooked at 0x%p (YYTK_HOOK_EXECUTEIT=1), EVENT_OBJECT_CALL is available",
++				__FILE__,
++				__LINE__,
++				code_execute
++			);
++
+ 			return last_status;
++#else
++			/*
++				ExecuteIt is deliberately NOT hooked in this build (YYTK_HOOK_EXECUTEIT is 0).
++
++				- The hook's only job is to dispatch EVENT_OBJECT_CALL, and no plugin in this toolkit
++				  registers for that event. It would run on every object-event call the runner makes,
++				  for no consumer. What that costs was never measured.
++				- Being on that path puts a YYToolkit frame into the stacktrace of errors the game
++				  raises from an object event, which got YYToolkit blamed for one of the game's own
++				  caught errors. The project's research notes record that error with the hook absent too.
++				- The project's notes also record this hook crash-looping on Hero Siege Season 10.
++				  That was NOT re-measured for this build, and no recorded measurement ties a crash
++				  to the hook - treat it as "not observed either way", not as a finding.
++
++				The lookup above is still done, because GmResolveGameSymbolFromAddress() uses
++				m_CodeExecute to label frames in error reports. Nothing else reads it, so failing
++				to find ExecuteIt is no longer a reason to fail stage 1. If it does fail, m_CodeExecute
++				stays nullptr, and that function labels every frame below the lowest real symbol
++				as Code_Execute - which is why the log line below says so.
++
++				m_ObjectCallHookInstalled stays false, which makes CreateCallback() refuse
++				EVENT_OBJECT_CALL instead of accepting a callback that can never fire.
++			*/
++			const bool code_execute_found = AurieSuccess(last_status) && code_execute;
++
++			if (code_execute_found)
++				g_ModuleInterface.m_CodeExecute = code_execute;
++
++			CmWriteLogOutput(
++				"[%s:%d] HkPreinitialize() => ExecuteIt hook NOT installed by design (YYTK_HOOK_EXECUTEIT=0): "
++				"no plugin in this toolkit consumes EVENT_OBJECT_CALL, and project notes record the hook "
++				"crash-looping on Season 10 (not re-measured). "
++				"CreateCallback(EVENT_OBJECT_CALL) is refused with AURIE_UNAVAILABLE. "
++				"ExecuteIt lookup => %s, 0x%p%s",
++				__FILE__,
++				__LINE__,
++				AurieStatusToString(last_status),
++				code_execute,
++				code_execute_found ? "" : " - lookup FAILED, init continues, but crash-report frames may be mislabelled Code_Execute"
++			);
++
++			return AURIE_SUCCESS;
++#endif // YYTK_HOOK_EXECUTEIT
+ 		}
+ 
+ 		Aurie::AurieStatus HkInitialize(

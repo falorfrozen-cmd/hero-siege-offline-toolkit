@@ -19,7 +19,9 @@ file), five review agents (`sdk-contract-reviewer`, `tauri-command-reviewer`,
 three phase agents that run a change through plan → implement → verify at
 three different model tiers (`planner`, `implementer`, `verifier`), a
 `consultant` a phase can put one hard decision to without escalating the whole
-phase, and three skills: `/catalog-rebuild`, `/workorder` (drives those phases
+phase, a `scribe` that pastes a round's precomputed Log/State text into a
+workorder's own files with `Read`/`Edit` only, and three skills:
+`/catalog-rebuild`, `/workorder` (drives those phases
 and routes defects back to the phase that caused them), and
 `submodule-context` (loads the guide named above). MCP servers are in
 [`.mcp.json`](.mcp.json).
@@ -466,6 +468,20 @@ expensive mistake.
 ## YYToolkit Integration
 
 When a prompt or task requires the use of `yytoolkit`, attempt to retrieve `yytoolkit` documentation and references from the `context7` MCP server if it is available.
+
+**The modified YYToolkit's source of truth is [`third_party/yytoolkit/`](third_party/yytoolkit/README.md)**
+— one pinned upstream commit (`upstream.json`) plus the patch series in
+`patches/`, built by `tools/build_yytoolkit.py` — and not any submodule's
+`yytoolkit-modified/` copy. A change to the distributed YYToolkit is a new
+documented patch (`Why` / `Evidence` / `Fails-safe` / `Log-markers` /
+`Upstream-status`), never an edited tree, and a binary is never built from a
+tree that is not the pin plus that series: the DLL this toolkit distributed
+through ForgePact v1.3.16 contains changes its notice never listed, from source
+nobody kept, which is why nobody can say what is in it.
+`tests/test_yytoolkit_patch_series.py` enforces the series' shape mechanically,
+and `verify-dll` fails a binary that lacks a marker its patches declare.
+
+Story and evidence: [docs/agents/yytoolkit-provenance.md](docs/agents/yytoolkit-provenance.md)
 
 ## HS Game SDK Usage
 

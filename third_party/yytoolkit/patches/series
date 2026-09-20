@@ -1,0 +1,7 @@
+0001-runner-interface-scan-hint.patch
+0002-runner-interface-quiet-init-dump.patch
+0003-executeit-hook-off-by-design.patch
+0004-functions-array-validation.patch
+0005-yyerror-report-once-and-measure.patch
+0006-release-build-optimised-and-series-identity.patch
+0007-runner-interface-refuse-unfound-interface.patch

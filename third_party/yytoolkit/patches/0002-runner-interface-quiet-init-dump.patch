@@ -1,0 +1,470 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hero Siege Offline Toolkit <noreply@example.invalid>
+Date: Sat, 19 Sep 2026 12:00:00 +0000
+Subject: [PATCH 2/7] runner interface: keep the init dump out of the log
+ unless asked
+
+Why: On every launch of Hero Siege, upstream's GmpRunnerInterfaceHook writes the register state, every instruction of the interface chain and all 512 rows of its emulated stack into YYToolkit.log. That is nearly the whole log a player attaches to a bug report, and the lines that matter are buried under it. The dump now needs YYTK_RI_VERBOSE=1 in the environment of the game; without it one "RI init summary:" line reports the instruction count, the emulated stores, the stack rows and how many of them are non-zero, the interface offset, whether the chain ended where it should, and which of three answers the environment gave for YYTK_RI_VERBOSE (not set / set but not 1 / 1) together with the length of its value.
+
+Evidence: evidence/fresh-build-crash.YYToolkit.log, counted with grep: 736 lines in total, of which 7 register lines, 202 instruction lines, 2 stack pointer lines and 512 stack rows (723 lines), 487 of the 512 rows all zeros; 100 of the instructions are stores to [rsp|rbp+disp] and the chain ends on "lea rcx, [rsp+0x60]". So the expected summary on that build is 202 instructions, 100 stores, 512 rows of which 25 are non-zero, rsp+0x60. The dump is upstream code (v4.0.1 Generic-RunnerInterfaceNew.cpp:72-104, :134, :222-237) and runs once per launch, so it is log noise and NOT the in-play lag - this patch makes no performance claim. YYToolkit/hs-tests/ri_dump_test.cpp: 39 checks pass, also under /fsanitize=address; 4 single-line mutations of the gate (no trimming, a looser length test, the fit test off by one, not-set reported as refused) each fail at least one check. NOT verified: no launch of the game was made with this patch, so neither the summary numbers above nor the return of the 723 lines under YYTK_RI_VERBOSE=1 (the positive control for the gate) have been seen live; whether the launcher hands its environment on to the game. MEASURED on this host: "set NAME=1 && set NAME" in a cmd script prints the value as "1 " with the trailing blank, which is the case the trimming is for.
+
+Fails-safe: Only the value 1 enables the dump, with blanks and tabs around it ignored (cmd's "set YYTK_RI_VERBOSE=1 && game.exe" stores "1 "); unset, empty, any other or an overlong value leaves it off. The summary line is written in every case and tells the three apart - "not set", "set, but to something other than 1" with the length of the value, or "1" - so a value that arrived and was refused cannot be mistaken for a launcher that does not hand its environment on. It also names a chain that did NOT end on the rsp-relative lea, so a broken walk is still visible without the dump. The two always-on upstream lines ("Found RSP-relative LEA", "Failed to calculate RIP-relative address") are untouched. The variable is read once per hook run with a 16 character stack buffer: no cached static, no lock, no allocation. Nothing about what the hook emulates or copies has changed - only what it logs.
+
+Log-markers: "RI init summary:"
+Log-markers: "YYTK_RI_VERBOSE is"
+Log-markers: "the dump stays off"
+
+Upstream-status: not submitted. Upstream v4.0.1 writes the dump unconditionally.
+
+diff --git a/YYToolkit/hs-tests/ri_dump_test.cpp b/YYToolkit/hs-tests/ri_dump_test.cpp
+new file mode 100644
+index 0000000..17fd320
+--- /dev/null
++++ b/YYToolkit/hs-tests/ri_dump_test.cpp
+@@ -0,0 +1,117 @@
++// Host test for the init dump helpers of Generic-RunnerInterfaceScan.hpp - needs neither the game
++// nor Aurie/Zydis/Windows.
++//
++// From a "x64 Native Tools" prompt, in this directory:
++//     cl /nologo /std:c++latest /EHsc /W4 ri_dump_test.cpp && ri_dump_test.exe
++//
++// Prints one line per check and returns non-zero if any check failed.
++// Every predicate has at least one input it must accept and one it must refuse.
++
++#include "../source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp"
++
++#include <cstdio>
++
++using namespace YYTK::RiScan;
++
++static int g_ChecksRun = 0;
++static int g_ChecksFailed = 0;
++
++static void Check(
++	IN bool Condition,
++	IN const char* Name
++)
++{
++	g_ChecksRun++;
++	if (!Condition)
++		g_ChecksFailed++;
++
++	std::printf("%s  %s\n", Condition ? "ok  " : "FAIL", Name);
++}
++
++static void TestDumpGate()
++{
++	Check(IsDumpRequested(L"1", 1), "gate: YYTK_RI_VERBOSE=1 asks for the dump");
++
++	// Not null-terminated on purpose: only ValueLength characters may be looked at
++	const wchar_t unterminated[2] = { L'1', L'1' };
++	Check(IsDumpRequested(unterminated, 1), "gate: the value does not have to be null-terminated");
++
++	// What cmd stores for "set YYTK_RI_VERBOSE=1 && game.exe" - the blank before the && is part of the value
++	Check(IsDumpRequested(L"1 ", 2), "gate: a 1 followed by a blank asks for the dump");
++	Check(IsDumpRequested(L" 1", 2), "gate: a 1 after a blank asks for the dump");
++	Check(IsDumpRequested(L" \t1\t ", 5), "gate: blanks and tabs on both sides are ignored");
++
++	Check(!IsDumpRequested(L"", 0), "gate: an empty value does not");
++	Check(!IsDumpRequested(L" ", 1), "gate: a blank alone does not");
++	Check(!IsDumpRequested(L" \t ", 3), "gate: blanks and tabs alone do not");
++	Check(!IsDumpRequested(L"0", 1), "gate: 0 does not");
++	Check(!IsDumpRequested(L"2", 1), "gate: 2 does not");
++	Check(!IsDumpRequested(L"10", 2), "gate: 10 does not");
++	Check(!IsDumpRequested(L"11", 2), "gate: 11 does not");
++	Check(!IsDumpRequested(L"1 1", 3), "gate: a blank between two 1s is not ignored");
++	Check(!IsDumpRequested(L" 0 ", 3), "gate: a padded 0 does not");
++	Check(!IsDumpRequested(L"1\n", 2), "gate: only blanks and tabs are ignored, a newline is not");
++	Check(!IsDumpRequested(L"true", 4), "gate: true does not");
++	Check(!IsDumpRequested(L"1", 0), "gate: a length of 0 does not, whatever the buffer holds");
++	Check(!IsDumpRequested(nullptr, 1), "gate: no value does not");
++
++	// The three answers, from what GetEnvironmentVariableW returns for a 16 character buffer
++	constexpr size_t capacity = 16;
++	Check(ClassifyDumpRequest(L"1", 1, capacity) == DumpRequest::Requested, "answer: 1 is a request");
++	Check(ClassifyDumpRequest(L"1 ", 2, capacity) == DumpRequest::Requested, "answer: a 1 followed by a blank is a request");
++	Check(ClassifyDumpRequest(L"", 0, capacity) == DumpRequest::NotSet, "answer: a returned length of 0 is a variable that is not set");
++	Check(ClassifyDumpRequest(L"1", 0, capacity) == DumpRequest::NotSet, "answer: ...whatever the buffer holds");
++	Check(ClassifyDumpRequest(L"0", 1, capacity) == DumpRequest::Refused, "answer: 0 is set, but refused - not the same as not set");
++	Check(ClassifyDumpRequest(L"true", 4, capacity) == DumpRequest::Refused, "answer: true is set, but refused");
++	Check(ClassifyDumpRequest(L"              1", 15, capacity) == DumpRequest::Requested, "answer: the longest value that fits is still looked at");
++
++	// A value that did not fit: the buffer holds nothing of it, and the length is the capacity it needs.
++	// The buffer is given a lone 1 here, to show that it is not what decides.
++	Check(ClassifyDumpRequest(L"1", capacity, capacity) == DumpRequest::Refused, "answer: a value that needs the whole buffer for itself is refused");
++	Check(ClassifyDumpRequest(L"1", 4096, capacity) == DumpRequest::Refused, "answer: a very long value is refused");
++	Check(ClassifyDumpRequest(L"1", 1, 1) == DumpRequest::Refused, "answer: a buffer without room for the terminator fits nothing");
++}
++
++static void TestRowCount()
++{
++	constexpr size_t row_size = 32;
++
++	// The emulated stack of the hook: 16 KiB, 512 rows
++	std::vector<uint8_t> stack(0x4000, 0);
++	Check(CountNonZeroRows(stack.data(), stack.size(), row_size) == 0, "rows: a zeroed stack has no non-zero row");
++
++	// 100 pointers from 0x1F60 on, as in the measured log: 800 bytes, exactly 25 rows
++	for (size_t slot = 0; slot < 100; slot++)
++		stack[0x1F60 + (slot * 8) + 5] = 0x7F;
++	Check(CountNonZeroRows(stack.data(), stack.size(), row_size) == 25, "rows: 100 pointers from a row boundary on are 25 rows");
++
++	std::vector<uint8_t> edges(4 * row_size, 0);
++	edges[0] = 1;
++	Check(CountNonZeroRows(edges.data(), edges.size(), row_size) == 1, "rows: the first byte of a row counts");
++	edges[0] = 0;
++	edges[row_size - 1] = 1;
++	Check(CountNonZeroRows(edges.data(), edges.size(), row_size) == 1, "rows: the last byte of a row counts");
++	edges[row_size] = 1;
++	Check(CountNonZeroRows(edges.data(), edges.size(), row_size) == 2, "rows: bytes either side of a row boundary are two rows");
++	edges[row_size + 1] = 1;
++	Check(CountNonZeroRows(edges.data(), edges.size(), row_size) == 2, "rows: two bytes in one row are one row");
++
++	// Bytes after the last whole row must neither be counted nor be read as part of a row
++	std::vector<uint8_t> ragged(row_size + 5, 0);
++	ragged[row_size + 2] = 1;
++	Check(CountNonZeroRows(ragged.data(), ragged.size(), row_size) == 0, "rows: bytes after the last whole row are not counted");
++	Check(CountNonZeroRows(ragged.data(), row_size - 1, row_size) == 0, "rows: less than one row is no row");
++
++	Check(CountNonZeroRows(edges.data(), edges.size(), 0) == 0, "rows: a row size of 0 is refused");
++	Check(CountNonZeroRows(nullptr, 64, row_size) == 0, "rows: no buffer, no rows");
++	Check(CountNonZeroRows(edges.data(), 0, row_size) == 0, "rows: no bytes, no rows");
++}
++
++int main()
++{
++	TestDumpGate();
++	TestRowCount();
++
++	std::printf("%d checks, %d failed\n", g_ChecksRun, g_ChecksFailed);
++	return g_ChecksFailed ? 1 : 0;
++}
+diff --git a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceNew.cpp b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceNew.cpp
+index b9a86ba..47cb3d1 100644
+--- a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceNew.cpp	
++++ b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceNew.cpp	
+@@ -44,11 +44,66 @@ namespace YYTK
+ 		return instructions;
+ 	}
+ 
++#if _WIN64
++	// ===== The init dump =====
++	// GmpRunnerInterfaceHook dumps the registers, every instruction of the chain and the whole emulated
++	// stack into the log. MEASURED in a log of Hero Siege: 723 of its 736 lines (7 register lines,
++	// 202 instructions, 2 stack pointers, 512 stack rows of which 487 are all zeros). That happens once
++	// per launch, so it is noise in every bug report rather than a cost in play.
++	//
++	// The dump is only written if the environment of the game has YYTK_RI_VERBOSE=1.
++	// The summary line at the end of the hook is always written, and says which of the three answers
++	// the environment gave: a variable that arrived with another value must not read like one that
++	// never arrived, or the wrong thing (the launcher's environment) gets debugged.
++	// ValueCharacters receives the length of the value, 0 if the variable is not set.
++	static RiScan::DumpRequest GmpQueryInterfaceDumpRequest(
++		OUT size_t& ValueCharacters
++	)
++	{
++		// Read on every call instead of being cached: the hook runs once per launch, and a function-local
++		// static would bring a lock with it. A value that does not fit the buffer is not "1" either.
++		wchar_t value[16] = {};
++
++		const DWORD length = GetEnvironmentVariableW(
++			L"YYTK_RI_VERBOSE",
++			value,
++			static_cast<DWORD>(std::size(value))
++		);
++
++		// If the value did not fit, the length is the buffer size it needs, terminator included
++		ValueCharacters = (length >= std::size(value)) ? (length - 1) : length;
++
++		return RiScan::ClassifyDumpRequest(value, length, std::size(value));
++	}
++
++	// CmWriteLogOutput, if the dump was asked for.
++	static void GmpWriteInterfaceDump(
++		IN bool IsDumpRequested,
++		IN const char* Format,
++		IN ...
++	)
++	{
++		if (!IsDumpRequested)
++			return;
++
++		va_list va_args;
++		va_start(va_args, Format);
++		const std::string formatted_output = CmpParseVa(Format, va_args);
++		va_end(va_args);
++
++		// Handed on as an argument, so that a % in the formatted text is not read as a format again
++		CmWriteLogOutput("%s", formatted_output.c_str());
++	}
++#endif // _WIN64
++
+ 	void GmpRunnerInterfaceHook(
+ 		IN ProcessorContext& ProcessorContext
+ 	)
+ 	{
+ #if _WIN64
++		size_t dump_value_characters = 0;
++		const RiScan::DumpRequest dump_request = GmpQueryInterfaceDumpRequest(dump_value_characters);
++		const bool is_dump_requested = (dump_request == RiScan::DumpRequest::Requested);
+ 
+ 		/*
+ 		* WinDbg output before jmp to hook
+@@ -73,36 +128,43 @@ namespace YYTK
+ 			r14=0000000000000008 r15=000000001e66bb28 tsp=000000296073e148
+ 		
+ 		*/
+-		CmWriteLogOutput(
++		GmpWriteInterfaceDump(
++			is_dump_requested,
+ 			"Dumping register state from thread ID %x",
+ 			GetCurrentThreadId()
+ 		);
+-		CmWriteLogOutput(
++		GmpWriteInterfaceDump(
++			is_dump_requested,
+ 			"    rax=%016llx rbx=%016llx rcx=%016llx",
+ 			ProcessorContext.RAX, ProcessorContext.RBX, ProcessorContext.RCX
+ 		);
+ 
+-		CmWriteLogOutput(
++		GmpWriteInterfaceDump(
++			is_dump_requested,
+ 			"    rdx=%016llx rsi=%016llx rdi=%016llx",
+ 			ProcessorContext.RDX, ProcessorContext.RSI, ProcessorContext.RDI
+ 		);
+ 
+-		CmWriteLogOutput(
++		GmpWriteInterfaceDump(
++			is_dump_requested,
+ 			"    rip=%016llx rsp=%016llx rbp=%016llx",
+ 			ProcessorContext.RIP, ProcessorContext.RSP, ProcessorContext.RBP
+ 		);
+ 
+-		CmWriteLogOutput(
++		GmpWriteInterfaceDump(
++			is_dump_requested,
+ 			"    r8=%016llx r9=%016llx r10=%016llx",
+ 			ProcessorContext.R8, ProcessorContext.R9, ProcessorContext.R10
+ 		);
+ 
+-		CmWriteLogOutput(
++		GmpWriteInterfaceDump(
++			is_dump_requested,
+ 			"    r11=%016llx r12=%016llx r13=%016llx",
+ 			ProcessorContext.R11, ProcessorContext.R12, ProcessorContext.R13
+ 		);
+ 
+-		CmWriteLogOutput(
++		GmpWriteInterfaceDump(
++			is_dump_requested,
+ 			"    r14=%016llx r15=%016llx tsp=%016llx",
+ 			ProcessorContext.R14, ProcessorContext.R15, ProcessorContext.TrampolineRSP
+ 		);
+@@ -126,6 +188,11 @@ namespace YYTK
+ 
+ 		int64_t rsp_offset_to_runner_interface = 0;
+ 
++		// What the summary line reports in place of the dump
++		size_t instructions_walked = 0;
++		size_t stores_emulated = 0;
++		bool is_chain_end_found = false;
++
+ 		// Loop disassemble
+ 		while (ZYAN_SUCCESS(ZydisDisassembleIntel(
+ 			ZYDIS_MACHINE_MODE_LONG_64,
+@@ -135,7 +202,8 @@ namespace YYTK
+ 			&current_instruction
+ 		)))
+ 		{
+-			CmWriteLogOutput("[%s:%d] %016llx | %s", __FILE__, __LINE__, current_instruction.runtime_address, current_instruction.text);
++			instructions_walked++;
++			GmpWriteInterfaceDump(is_dump_requested, "[%s:%d] %016llx | %s", __FILE__, __LINE__, current_instruction.runtime_address, current_instruction.text);
+ 
+ 			// The chain unconditionally ends on a call instruction - we shouldn't get here though, as 
+ 			if (current_instruction.info.mnemonic == ZYDIS_MNEMONIC_CALL)
+@@ -175,6 +243,7 @@ namespace YYTK
+ 						);
+ 
+ 						rsp_offset_to_runner_interface = current_instruction.operands[1].mem.disp.value;
++						is_chain_end_found = true;
+ 						break;
+ 					}
+ 
+@@ -210,9 +279,11 @@ namespace YYTK
+ 				{
+ 				case ZYDIS_REGISTER_RSP:
+ 					*reinterpret_cast<uint64_t*>(new_rsp + current_instruction.operands[0].mem.disp.value) = last_saved_value;
++					stores_emulated++;
+ 					break;
+ 				case ZYDIS_REGISTER_RBP:
+ 					*reinterpret_cast<uint64_t*>(new_rbp + current_instruction.operands[0].mem.disp.value) = last_saved_value;
++					stores_emulated++;
+ 					break;
+ 				}
+ 			}
+@@ -223,13 +294,14 @@ namespace YYTK
+ 		// Copy out everything
+ 		memcpy(&g_ModuleInterface.m_RunnerInterface, new_rsp + rsp_offset_to_runner_interface, sizeof(YYRunnerInterface));
+ 
+-		CmWriteLogOutput("[%s:%d] New RSP: %llx", __FILE__, __LINE__, new_rsp);
+-		CmWriteLogOutput("[%s:%d] New RBP: %llx", __FILE__, __LINE__, new_rbp);
++		GmpWriteInterfaceDump(is_dump_requested, "[%s:%d] New RSP: %llx", __FILE__, __LINE__, new_rsp);
++		GmpWriteInterfaceDump(is_dump_requested, "[%s:%d] New RBP: %llx", __FILE__, __LINE__, new_rbp);
+ 
+ 		for (int offset_to_buffer = 0; offset_to_buffer < (KERNEL_STACK_SIZE / sizeof(uint64_t)); offset_to_buffer += 4)
+ 		{
+ 			// Print the address
+-			CmWriteLogOutput(
++			GmpWriteInterfaceDump(
++				is_dump_requested,
+ 				"[%s:%d] 0x%llx | %016llx %016llx %016llx %016llx", 
+ 				__FILE__, __LINE__,
+ 				new_stack + (offset_to_buffer * sizeof(uint64_t)),
+@@ -240,6 +312,36 @@ namespace YYTK
+ 			);
+ 		}
+ 
++		// One line in place of the dump, and after it if it was asked for. A row is what the dump above
++		// prints per line. In the measured log of Hero Siege this is 202 instructions, 100 stores,
++		// 512 rows of which 25 are non-zero, and rsp+0x60.
++		constexpr size_t stack_row_size = 4 * sizeof(uint64_t);
++		const bool is_offset_negative = rsp_offset_to_runner_interface < 0;
++
++		// Which of its three answers the environment gave, so that "set, but refused" cannot be mistaken
++		// for "never arrived" (a launcher that does not hand its environment on)
++		const char* dump_request_text = "not set - set it to 1 in the environment of the game for the full dump";
++		if (dump_request == RiScan::DumpRequest::Requested)
++			dump_request_text = "1 - the full dump is above";
++		else if (dump_request == RiScan::DumpRequest::Refused)
++			dump_request_text = "set, but to something other than 1 - the dump stays off";
++
++		CmWriteLogOutput(
++			"[%s:%d] GmpRunnerInterfaceHook() => RI init summary: %zu instructions walked from 0x%llX, %zu stores emulated, %zu stack rows of which %zu are non-zero, interface at rsp%c0x%llX, the chain %s. YYTK_RI_VERBOSE is %s (its value has %zu characters).",
++			__FILE__,
++			__LINE__,
++			instructions_walked,
++			g_ModuleInterface.m_RunnerInterfaceBase,
++			stores_emulated,
++			static_cast<size_t>(KERNEL_STACK_SIZE / stack_row_size),
++			RiScan::CountNonZeroRows(new_stack, KERNEL_STACK_SIZE, stack_row_size),
++			is_offset_negative ? '-' : '+',
++			is_offset_negative ? (0 - static_cast<uint64_t>(rsp_offset_to_runner_interface)) : static_cast<uint64_t>(rsp_offset_to_runner_interface),
++			is_chain_end_found ? "ended on the rsp-relative lea" : "did NOT end on the rsp-relative lea",
++			dump_request_text,
++			dump_value_characters
++		);
++
+ 		delete[] new_stack;
+ 		SetEvent(g_ModuleInterface.m_RunnerInterfacePopulatedEvent);
+ #endif
+diff --git a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp
+index 5815fd6..e146244 100644
+--- a/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp	
++++ b/YYToolkit/source/YYTK/Module Internals/GameMaker/Generic/Generic-RunnerInterfaceScan.hpp	
+@@ -4,8 +4,8 @@
+ // Pure helpers for the runner interface scan in Generic-RunnerInterfaceNew.cpp.
+ //
+ // Only standard headers are included - no Aurie, no Zydis, no Windows - so that
+-// YYToolkit/hs-tests/ri_scan_test.cpp can compile and exercise every function in here on a build
+-// host, without the game. Nothing in this file touches memory it was not handed, a file, or a global.
++// YYToolkit/hs-tests/ri_scan_test.cpp and ri_dump_test.cpp can compile and exercise every function in
++// here on a build host, without the game. Nothing in this file touches memory it was not handed, a file, or a global.
+ 
+ #include <cstddef>
+ #include <cstdint>
+@@ -602,6 +602,94 @@ namespace YYTK
+ 				Stored.SizeOfImage == Current.SizeOfImage &&
+ 				Stored.CheckSum == Current.CheckSum;
+ 		}
++
++		// ===== The init dump =====
++
++		// True if the value of YYTK_RI_VERBOSE asks for the dump, which only "1" does.
++		// Value does not have to be null-terminated.
++		//
++		// Blanks and tabs around the 1 are ignored: "set YYTK_RI_VERBOSE=1 && game.exe" in cmd stores
++		// "1 " (everything up to the &&), and that is the commonest way to follow the log's own advice.
++		inline bool IsDumpRequested(
++			IN const wchar_t* Value,
++			IN size_t ValueLength
++		)
++		{
++			if (!Value)
++				return false;
++
++			const auto is_blank = [](wchar_t Character) -> bool
++				{
++					return Character == L' ' || Character == L'\t';
++				};
++
++			size_t first = 0;
++			size_t last = ValueLength;
++
++			while (first < last && is_blank(Value[first]))
++				first++;
++
++			while (last > first && is_blank(Value[last - 1]))
++				last--;
++
++			return (last - first) == 1 && Value[first] == L'1';
++		}
++
++		// What the environment said about the dump. "Set, but refused" is its own answer, so that the
++		// log can tell "the variable never reached the game" from "it arrived and was not 1".
++		enum class DumpRequest
++		{
++			NotSet,
++			Refused,
++			Requested
++		};
++
++		// Reads the result of GetEnvironmentVariableW(Name, Value, ValueCapacity), whose return value is
++		// ReturnedLength: 0 if the variable is not set (or empty), the number of characters stored if the
++		// value fit, and the capacity it would have needed - which is not below ValueCapacity - if it did
++		// not. A value that did not fit was not looked at, and is refused: no such value is "1".
++		inline DumpRequest ClassifyDumpRequest(
++			IN const wchar_t* Value,
++			IN size_t ReturnedLength,
++			IN size_t ValueCapacity
++		)
++		{
++			if (!ReturnedLength)
++				return DumpRequest::NotSet;
++
++			if (ReturnedLength >= ValueCapacity)
++				return DumpRequest::Refused;
++
++			return IsDumpRequested(Value, ReturnedLength) ? DumpRequest::Requested : DumpRequest::Refused;
++		}
++
++		// The number of rows of BytesPerRow bytes that hold anything but zeros.
++		// Bytes left over after the last whole row are not counted.
++		inline size_t CountNonZeroRows(
++			IN const uint8_t* Bytes,
++			IN size_t ByteCount,
++			IN size_t BytesPerRow
++		)
++		{
++			if (!Bytes || !BytesPerRow)
++				return 0;
++
++			size_t non_zero_rows = 0;
++
++			for (size_t row_start = 0; (ByteCount - row_start) >= BytesPerRow; row_start += BytesPerRow)
++			{
++				for (size_t index = 0; index < BytesPerRow; index++)
++				{
++					if (Bytes[row_start + index])
++					{
++						non_zero_rows++;
++						break;
++					}
++				}
++			}
++
++			return non_zero_rows;
++		}
+ 	}
+ }
+ 

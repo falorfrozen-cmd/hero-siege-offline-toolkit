@@ -14,10 +14,11 @@ a link back to the section it backs.
 | [`Check a Permission Where It Is Used, Not Where It Is Convenient`](../../AGENTS.md#check-a-permission-where-it-is-used-not-where-it-is-convenient) | [check-a-permission.md](check-a-permission.md) |
 | [`Never Call an Address You Resolved by Hand`](../../AGENTS.md#never-call-an-address-you-resolved-by-hand) | [never-call-resolved-address.md](never-call-resolved-address.md) |
 | [`Don't Suspend the Game's Own Runtime`](../../AGENTS.md#dont-suspend-the-games-own-runtime) | [dont-suspend-runtime.md](dont-suspend-runtime.md) |
+| [`YYToolkit Integration`](../../AGENTS.md#yytoolkit-integration) | [yytoolkit-provenance.md](yytoolkit-provenance.md) — why the modified YYToolkit is a patch series in `third_party/yytoolkit/` |
 | [`HS Game SDK Usage`](../../AGENTS.md#hs-game-sdk-usage) | [hs-game-sdk-usage.md](hs-game-sdk-usage.md) |
 
 Sections not listed here (`Submodule & Directory Development Instructions`,
 `Offer /workorder…`, `Legal`, `Mod Development Workflow`, `Drive a Tauri
-App…`, `Documentation & Instructions Maintenance`, `YYToolkit Integration`,
-and `HS Game SDK Usage`'s intro list) carry no incident narrative worth
-splitting out — the rule and its one-sentence why are the whole story.
+App…`, `Documentation & Instructions Maintenance`, and `HS Game SDK Usage`'s
+intro list) carry no incident narrative worth splitting out — the rule and its
+one-sentence why are the whole story.
