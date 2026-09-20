@@ -28,6 +28,9 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
 from . import capture, checks, ipc, launch, procs, saves
+# `input` shadows nothing at module scope here, but a bare `input` in this file
+# would read as the builtin to every later reader of it.
+from . import input as input_module
 
 INSTRUCTIONS = (
     "Order for a verified test run: hs_selfcheck -> hs_saves_backup -> "
@@ -415,6 +418,55 @@ def hs_screenshot(
             blocks.append(Image(data=data, format="png").to_image_content())
     blocks.insert(0, TextContent(type="text", text=json.dumps(payload, indent=2)))
     return CallToolResult(content=blocks, structured_content=payload)
+
+
+@server.tool(
+    name="hs_input",
+    title="Send keyboard and mouse input to the game window",
+    description=(
+        "Inject keystrokes, clicks and waits into the Hero Siege window, "
+        "either as OS-level input (SendInput, needs the game in front) or as "
+        "posted window messages. An instrument for measuring what can drive "
+        "the game's menus -- it makes no claim that the game reacts. Refuses "
+        "unless the target window belongs to a running game process."),
+    annotations=_acts("Send keyboard and mouse input to the game window"),
+)
+def hs_input(
+    actions: Annotated[list[dict[str, Any]], Field(
+        description="Up to 64 actions, in order. `{\"type\":\"key\",\"vk\":13,"
+                    "\"hold_ms\":60}`, `key_down`/`key_up` with `vk`, "
+                    "`{\"type\":\"click\",\"x\":100,\"y\":50,\"button\":"
+                    "\"left\"}`, `move` with `x`/`y`, `{\"type\":\"wait\","
+                    "\"ms\":300}`. Click and move coordinates are client "
+                    "coordinates by default -- a pixel of hs_screenshot("
+                    "\"game\", capture_method=\"grab_window\") -- or virtual "
+                    "screen coordinates with `\"space\":\"screen\"`.")],
+    route: Annotated[Literal["send_input", "post_message"], Field(
+        description="`send_input` replays the events through the OS, so they "
+                    "reach device-state reads as well as window messages, and "
+                    "needs the game in the foreground. `post_message` puts "
+                    "messages straight on the window's queue, changes no OS "
+                    "key state, and needs no foreground.")] = "send_input",
+    require_foreground: Annotated[bool, Field(
+        description="With `send_input`, try one SetForegroundWindow when the "
+                    "game is not in front. False means never take focus: the "
+                    "call is refused instead unless the game already has it. "
+                    "Either way input is never sent to another window.")] = True,
+) -> dict[str, Any]:
+    """Inject `actions` into the game window and report what was sent.
+
+    The result names the route, the window and its client rectangle, the
+    foreground window before and after, and how many actions were performed --
+    `actions_done` below `actions_total` means the sequence stopped, and
+    `detail` says why. Nothing here reads the game's reaction: pair it with
+    `hs_command(["roomprobe"])` or `hs_screenshot` for that.
+
+    Refusals: `invalid_input`, `game_not_running`, `game_state_unknown`,
+    `engine_source_missing`, `engine_import_failed`,
+    `no_visible_window_for_pid`, `window_minimized`, `foreground_not_game`.
+    """
+    return input_module.inject(actions, route=route,
+                               require_foreground=require_foreground)
 
 
 def main() -> None:

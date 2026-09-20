@@ -40,7 +40,10 @@ ENGINE_SOURCE = ROOT / "ForgePact" / "src" / "offline_launcher.py"
 #: The argv `.mcp.json` carries, and what the acceptance criteria pin.
 SERVER_ARGV = ["-3", "-m", "tools.hs_drive_mcp"]
 
-EXPECTED_TOOLS = {
+#: The twelve the core and game workorders shipped, kept as their own set so
+#: the regression "a later workorder registers one and drops another" is
+#: asserted separately from the current total.
+CORE_AND_GAME_TOOLS = {
     # hs-drive-mcp-core
     "hs_status", "hs_selfcheck", "hs_saves_backup",
     "hs_saves_restore", "hs_saves_list", "hs_saves_inspect",
@@ -48,6 +51,9 @@ EXPECTED_TOOLS = {
     "hs_launch", "hs_wait_ready", "hs_stop_game",
     "hs_command", "hs_ipc_tail", "hs_screenshot",
 }
+
+#: Plus `hs_input`, from `hs-drive-mcp-charselect`.
+EXPECTED_TOOLS = CORE_AND_GAME_TOOLS | {"hs_input"}
 
 #: Two tools can take away something that was not theirs: a restore overwrites
 #: the live save directory, and a forced stop terminates a process. Everything
@@ -134,8 +140,34 @@ class StdioSurfaceTests(unittest.TestCase):
                 return listed.tools, checked
 
     def test_all_twelve_tools_are_registered(self):
+        """Baseline: none of the original twelve went away.
+
+        Kept under its original name now that `hs_input` makes the total
+        thirteen, because the regression it catches is the one a rename would
+        hide -- a later workorder registering its own tool and quietly
+        dropping one of these.
+        """
+        missing = CORE_AND_GAME_TOOLS - {tool.name for tool in self.tools}
+        self.assertEqual(missing, set())
+        self.assertEqual(len(CORE_AND_GAME_TOOLS), 12)
+
+    def test_all_thirteen_tools_are_registered(self):
         self.assertEqual({tool.name for tool in self.tools}, EXPECTED_TOOLS)
-        self.assertEqual(len(self.tools), 12)
+        self.assertEqual(len(self.tools), 13)
+
+    def test_hs_input_is_not_read_only_not_destructive_not_idempotent(self):
+        """All three false, and each for its own reason.
+
+        Not read-only: it injects events into a live game. Not destructive:
+        it removes nothing and writes no file -- claiming otherwise would put
+        it in the same class as a save restore and devalue that claim. Not
+        idempotent: sending the same click twice is two clicks.
+        """
+        tool = next(tool for tool in self.tools if tool.name == "hs_input")
+        hints = tool.annotations.model_dump(by_alias=True)
+        self.assertFalse(hints["readOnlyHint"])
+        self.assertFalse(hints["destructiveHint"])
+        self.assertFalse(hints["idempotentHint"])
 
     def test_every_tool_carries_a_title_and_both_behaviour_hints(self):
         destructive = []

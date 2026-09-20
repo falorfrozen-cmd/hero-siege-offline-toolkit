@@ -111,7 +111,7 @@ bug report nobody can undo.
 
 ## Tools
 
-Twelve. One tool per action, `hs_` prefixed, with annotations on every one.
+Thirteen. One tool per action, `hs_` prefixed, with annotations on every one.
 
 | Tool | Hints | Inputs | Returns |
 | --- | --- | --- | --- |
@@ -127,6 +127,31 @@ Twelve. One tool per action, `hs_` prefixed, with annotations on every one.
 | `hs_command` | writes | `lines[]`, `timeout_s` 1–120 = 10, `queue=false` | `consumed`, `reply`, `reply_lines`, `queued`, `pending_before`, `pending_left`, `observed_consumption`, `out_bytes_before`, `out_bytes_after`, `rotated`, `sent`, `wrote_bytes`, `aborted` |
 | `hs_ipc_tail` | read-only | `lines` 1–500 = 40 | `exists`, `lines[]`, `bytes_total`, `requested`, `truncated`, `path` |
 | `hs_screenshot` | writes | `target` `game`\|`screen` = `game`, `method` `grab_bbox`\|`grab_window` = `grab_bbox`, `label` | `path`, `width`, `height`, `bbox`, `capture_method`, `hwnd`, `pid`, `flat`, `warning`, `bytes_written`, `transport_width`, `transport_height` — **plus** a JSON text block and a PNG image block |
+| `hs_input` | writes | `actions[]` (≤ 64), `route` `send_input`\|`post_message` = `send_input`, `require_foreground=true` | `route`, `pid`, `hwnd`, `window_rect`, `client_rect`, `client_size`, `dpi`, `foreground_before`, `foreground_after`, `actions_done`, `actions_total`, `records_sent`, `records_rejected`, `complete`, `elapsed_s` |
+
+`hs_input`'s actions are objects, in order, each with a `type`:
+
+| `type` | Fields | What it sends |
+| --- | --- | --- |
+| `key` | `vk` 1–254, `hold_ms` 0–10000 = 60 | press, wait, release |
+| `key_down` / `key_up` | `vk` | one half of a press; a `key_down` with no matching `key_up` leaves the key down, which is the caller's business |
+| `click` | `x`, `y`, `button` `left`\|`right` = `left`, `space` `client`\|`screen` = `client` | move, button down, button up |
+| `move` | `x`, `y`, `space` | the move only |
+| `wait` | `ms` 0–10000 | nothing; it sleeps |
+
+Coordinates default to the **client area**, which is exactly what a pixel of
+`hs_screenshot("game", capture_method="grab_window")` is — measured 2026-09-20,
+a 1920×1080 client captured as 1920×1080 — so a point read off that screenshot
+can be passed straight in. `space: "screen"` takes virtual-desktop coordinates
+instead. Every point is checked against the client rectangle **before anything
+is sent**, so a coordinate typo cannot leave a half-applied sequence.
+
+The two routes reach different depths, which is the point of having both.
+`send_input` replays events through the operating system, so they are visible
+to device-state reads as well as to window messages, and it needs the game in
+the foreground; `post_message` puts messages straight on the window's queue,
+touches no OS key state, and needs no foreground. A runner that polls the
+device state sees the first and not the second.
 
 `hs_saves_restore` and `hs_stop_game` are the only tools with
 `destructiveHint: true`, and that is asserted rather than assumed: they are the
@@ -188,6 +213,25 @@ Tokens this server can return today:
 | `window_minimized` | The game's only visible window is minimized, so capturing its rectangle would photograph whatever is behind it. |
 | `not_launched_here` | `force=true` on a PID this server's own `hs_launch` did not start. Killing a process someone else started can lose whatever it had not written. |
 | `capture_unavailable` | Pillow is not importable, so nothing can be captured. Not `invalid_command`: the arguments were fine and the install is not. |
+| `foreground_not_game` | `hs_input` with `route="send_input"` found some other window in front. `SendInput` goes to whatever is in front, so the keystrokes would have landed somewhere that never asked for them. With `require_foreground: true` one `SetForegroundWindow` was attempted first and did not take; with `false` no attempt was made. The same comparison runs again immediately before **every** injection, so a sequence that loses the foreground half way through stops there and reports `actions_done` — `AGENTS.md` § "Check a Permission Where It Is Used". |
+| `invalid_input` | `hs_input`'s own arguments: more than 64 actions, an empty list, an unknown `type`, `button` or `space`, a `vk` outside 1–254, a `hold_ms` or `ms` outside 0–10000, or a point outside the client rectangle (or the virtual screen, with `space: "screen"`). Nothing was sent. Deliberately separate from `invalid_command`, which means "the plugin would not accept that" and sends a reader to the wrong place. |
+
+One shape does **not** come back as a refusal: a `route` that is neither
+`send_input` nor `post_message` is rejected by the SDK's own `Literal`
+validation before any code here runs, and arrives as a protocol error —
+measured 2026-09-20 over a real stdio session: `Error executing tool
+hs_input: 1 validation error for hs_inputArguments … Input should be
+'send_input' or 'post_message'`. That is the same SDK layer as the dropped
+unknown argument in "Known limitations", and it is a better outcome than a
+refusal; the module still answers `invalid_input` for an in-process caller,
+which is what its own tests exercise.
+
+Two more tokens are **reserved and not implemented**: `layout_not_measured`
+and `research_build_required` belong to `hs-drive-mcp-charselect-ship`, the
+workorder that would ship a character-select tool. They are named here so a
+later change adds them rather than inventing a third spelling; nothing in this
+server can return them today, and `tests.test_hs_drive_mcp_input` asserts they
+are absent from `results.REASONS`.
 
 ## The process gate
 
@@ -431,6 +475,48 @@ convenience.
 Files land in `%LOCALAPPDATA%\HSDriveMcp\screenshots\<UTC stamp>[_label].png` at
 full resolution and nothing prunes them.
 
+## Character select
+
+After `hs_launch` the game sits at its main menu, and most ForgePact gameplay
+commands act only once a character is loaded. Getting from one to the other —
+main menu → Local → save slot → Play — is the one step a human still has to
+take, and whether anything can take it instead is **being measured, not
+answered**.
+
+`hs_input` is one half of the instrument for that measurement. The other half
+is `menuprobe`, a research-build-only verb in the plugin, and the two are
+written up together in
+[`ForgePact/docs/character-select-research.md`](../../ForgePact/docs/character-select-research.md),
+which carries the static search, four candidate mechanisms with a positive
+control each, the live procedure and an empty results table.
+
+That document's `## Decision` section is the record. It reads, today:
+
+```
+finding: pending
+shipRoute: pending
+```
+
+`pending` because **the live session has not been run.** Nothing here has
+measured whether injected input reaches this game: `hs_input` is registered,
+tested and documented, and what it does is inject — it makes no claim that
+the game reacts. Do not read a `pending` as a negative, and do not read the
+existence of the tool as a working character-select.
+
+Until the session runs and those two lines are replaced, **a human loads a
+character once per session**: main menu → Local → save slot → Play, then
+`hs_wait_ready`, after which every tool here works against that session.
+`hs_command(["orbpickup stat"])` is the check — its reply ends
+`player via <route>`, and anything other than `none` means a character is
+loaded. `orbpickup` is in the plugin's player allowlist, so that proof works
+on a shipping build as well as a research one.
+
+**Shipping whatever the finding supports is a separate workorder,
+`hs-drive-mcp-charselect-ship`** — a character-select tool, the reserved
+refusal tokens above, and any player-visible ForgePact change belong to it,
+not here. Its first step reads the two lines above out of the research
+document, and a `pending` on either is a refusal.
+
 ## Saves: what the tools guarantee
 
 The live directory is a snapshot target, not a guessed subset: **every regular
@@ -639,14 +725,15 @@ rather than by falling back to another launcher:
   `## Tools` above, and treat a suspiciously default-looking answer as a
   possible misspelling.
 
-- **Nothing here can select a character or enter a zone, and most ForgePact
-  gameplay commands only act once one is loaded.** After `hs_launch` the game
-  sits at its main menu. Static research on 2026-09-20 found no
-  name-resolvable route to character select that could be trusted without a live
-  research round, and this server has no synthetic keyboard or mouse input by
-  design, so an in-game verification still needs a human to load a character
-  once — after which every tool here works against that session. A third,
-  research-shaped workorder (`hs-drive-mcp-charselect`) is where that belongs.
+- **Nothing here can select a character or enter a zone yet, and most
+  ForgePact gameplay commands only act once one is loaded.** After `hs_launch`
+  the game sits at its main menu. `hs_input` can now inject keystrokes and
+  clicks into that window, but **whether they reach the game is not
+  observed**: the live session that measures it has not been run, and the
+  research document's `finding:` line still reads `pending`. So an in-game
+  verification still needs a human to load a character once — after which
+  every tool here works against that session. See "Character select" above;
+  shipping anything on the result is `hs-drive-mcp-charselect-ship`.
 - **Exclusive fullscreen captures fine, but only while the game holds the
   foreground.** Measured on 2026-09-20 (see the Verification table): in
   windowed, borderless and exclusive fullscreen alike, both `grab_bbox` and
@@ -729,11 +816,30 @@ rather than by falling back to another launcher:
 | C1 | `hs-drive` connects in a fresh session | `/mcp` in a new Claude Code session at the repo root | **pass**, owner-run 2026-09-20: listed as connected. The working-directory assumption holds — `args: ["-3", "-m", "tools.hs_drive_mcp"]` resolves as a namespace package from the repo root, so no absolute-path fallback and no `os.chdir` were needed. Note the session must *start* at the repo root: a session already running when this entry was added does not pick it up, and shows the server as absent rather than failed. |
 | — | Unknown arguments are dropped by the SDK, not by this server (Known limitations) | `py -3 -m unittest tests.test_hs_drive_mcp_server -v` | `OK`, 21 tests, no skips. `UnknownArgumentTests` pins it on a toy signature mirroring `hs_ipc_tail`: `{"n": 5}` → `lines=40`, `{"LINES": 5}` → `lines=40`, no `additionalProperties` in the published schema. The pin is inverted on purpose — if a later `mcp` release starts refusing unknown arguments it **fails**, and that failure is the signal to delete the limitation. Whole suite: `Ran 845 tests in 147.299s`, `OK (skipped=9)` — 2026-09-20 |
 
+The rows below belong to `hs-drive-mcp-charselect`, the workorder that added
+`hs_input`. Its ids restart at A1; they are not the A-rows above.
+
+| # | Check | Command | Result |
+| --- | --- | --- | --- |
+| A1 (charselect) | `hs_input`: the baseline refusals with nothing injected, both routes; scan-code down/up with the extended bit; the absolute-mouse conversion; the foreground permission re-proved before every send; the posted-message `lParam` bits; every limit | `py -3 -m unittest tests.test_hs_drive_mcp_input -v` | `OK`, 38 tests, no skips — 2026-09-20. Every Win32 call goes through the module's `WIN32` table, which the fixture replaces wholesale, so the assertions read the `INPUT` records that would have been injected rather than a return code |
+| A7 (charselect) | Thirteen tools over the real stdio transport, `hs_input` among them with `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: false` | `py -3 -m unittest tests.test_hs_drive_mcp_server -v` | `OK`, 23 tests, no skips — 2026-09-20. The twelve-tool assertion is kept under its old name as the baseline: a later workorder registering its own tool must not quietly drop one |
+| A8 (charselect) | Release boundary still holds with `input.py` present: it imports no MCP SDK, and the no-stdout/no-listener pattern still has no match | `py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 7 tests — 2026-09-20. One skip, `test_no_shipped_build_input_mentions_the_server`, because `HS-Offline-Launcher/` is not checked out in this worktree; it is environmental and predates this change |
+| F1 (charselect) | Whole root suite after `hs_input` | `py -3 -m unittest discover -s tests` | `Ran 885 tests in 149.476s`, `OK (skipped=10)` — 2026-09-20. All ten skips are environmental (three uninitialized submodules, `hs-game-sdk/data` gitignored, one non-Windows branch); the 40 tests added here skip nowhere |
+| — (charselect) | `hs_input` **called** over a real stdio session, game closed — registered is not the same as callable | one-off client, the same argv `.mcp.json` carries | 2026-09-20: `list_tools` returned 13 tools including `hs_input`, schema properties `actions`, `require_foreground`, `route`. `{"actions":[{"type":"key","vk":16,"hold_ms":100}]}` → a refusal envelope, `reason: game_not_running`, `is_error: false`. `{"actions":[{"type":"key","vk":0}]}` → `reason: invalid_input`, detail `action 0 vk must be between 1 and 254, not 0`. `route: "sendinput"` → `is_error: true`, an SDK `Literal` validation error before any code here ran (see the note under the token table) |
+| B (charselect) | The plugin half: the `menuprobe` contract, the research document, and both builds | `py -m unittest discover -s tests` and `plugin_build\build.bat dev` / `release`, in `ForgePact/` | `Ran 606 tests in 32.216s`, `OK (skipped=2)` — 2026-09-20; both skips are `HS-Offline-Launcher/` not being checked out. Both builds exit 0; `BloodPactPlugin_rel.dll` contains `menuprobe` and not `command unavailable in player build`, and `BloodPactPlugin_ship.dll` the reverse |
+| C (charselect) | **The live session** — the four candidates measured against the real game, each behind its own positive control | owner-run, `ForgePact/docs/character-select-research.md` § Live procedure | **not run — 2026-09-20.** Deferred to a later session by the owner. Every row of that document's § Results is empty, and its § Decision reads `finding: pending` / `shipRoute: pending`. Nothing here has measured whether injected input reaches this game |
+
 ## What is deliberately not here
 
-- **Character select, and anything that needs one.** See "Known limitations".
-- **Synthetic keyboard or mouse input**, of any kind, by any route. Nothing in
-  this server presses a key.
+- **Character select, and anything that needs one.** `hs_input` injects; it
+  does not select a character, and nothing here claims the game reacts to it.
+  See "Character select" and "Known limitations".
+- **Synthetic input anywhere but the game's own window.** `hs_input` refuses
+  unless the target window belongs to a running `hero_siege.exe`, and on the
+  `send_input` route it re-proves that the game holds the foreground
+  immediately before every injection. There is no second, more forceful route
+  to taking focus: one `SetForegroundWindow` attempt, then
+  `foreground_not_game`.
 - **Pause, freeze, time-scale, save-state or forced state restore** —
   `AGENTS.md` § "Don't Suspend the Game's Own Runtime", and
   `ForgePact/docs/menu-pause-plan.md` § 0 for the worked example of why.
@@ -752,6 +858,7 @@ py -3 -m unittest tests.test_hs_drive_mcp_saves -v             # the fail-closed
 py -3 -m unittest tests.test_hs_drive_mcp_launch -v            # launch, readiness, WM_CLOSE, force
 py -3 -m unittest tests.test_hs_drive_mcp_ipc -v               # the bp_ipc command channel
 py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v        # window resolution and capture
+py -3 -m unittest tests.test_hs_drive_mcp_input -v             # what actually leaves the process
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # nothing shipped knows it exists
 py -3 -m unittest discover -s tests                            # all of the above, plus the rest
 ```

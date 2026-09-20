@@ -57,7 +57,20 @@ GAME_REASONS = (
     "capture_unavailable",
 )
 
-REASONS = CORE_REASONS + GAME_REASONS
+#: Added by `hs-drive-mcp-charselect` for `hs_input`, and only these two.
+#: `foreground_not_game` is the permission this server will not inject
+#: without -- `SendInput` reaches whatever window is in front, so a mismatch
+#: means the keystrokes would land somewhere that never asked for them.
+#: `invalid_input` is separate from `invalid_command` on purpose: the latter
+#: means "that is not a ForgePact command", which sends a caller looking at the
+#: plugin, and an action list the tool itself rejected has nothing to do with
+#: the plugin.
+INPUT_REASONS = (
+    "foreground_not_game",
+    "invalid_input",
+)
+
+REASONS = CORE_REASONS + GAME_REASONS + INPUT_REASONS
 
 
 def ok(tool: str, **fields: Any) -> dict[str, Any]:
