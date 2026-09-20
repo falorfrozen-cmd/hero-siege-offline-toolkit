@@ -62,9 +62,10 @@ def hs_status() -> dict[str, Any]:
     Windows process snapshot could not be taken. `unknown` is never read as
     "not running" anywhere in this server.
 
-    Refusals: `engine_source_missing`. A missing ForgePact panel configuration
-    is reported through `exe_validation` rather than refusing, because the
-    process and anti-cheat readings are still useful without it.
+    Refusals: `engine_source_missing`, `engine_import_failed`. A missing
+    ForgePact panel configuration is reported through `exe_validation` rather
+    than refusing, because the process and anti-cheat readings are still
+    useful without it.
     """
     return procs.status()
 
@@ -107,9 +108,9 @@ def hs_saves_backup(
 ) -> dict[str, Any]:
     """Snapshot the live save directory. Nothing existing is ever modified.
 
-    Refusals: `game_running`, `game_state_unknown`, `save_dir_missing`,
-    `no_character_saves`, `save_dir_too_large`, `copy_verification_failed`,
-    `invalid_label`.
+    Refusals: `engine_source_missing`, `engine_import_failed`, `game_running`,
+    `game_state_unknown`, `save_dir_missing`, `no_character_saves`,
+    `save_dir_too_large`, `copy_verification_failed`, `invalid_label`.
     """
     return saves.backup(label, gate=procs.gate)
 
@@ -142,8 +143,10 @@ def hs_saves_restore(
     Every restore first writes and verifies a `pre-restore` backup, so the
     state being overwritten is always recoverable. Nothing is ever deleted.
 
-    Refusals: `confirmation_mismatch`, `game_running`, `game_state_unknown`,
-    `backup_incomplete`, `backup_corrupt`, `save_dir_missing`,
+    Refusals: `confirmation_mismatch`, `invalid_backup_id`,
+    `engine_source_missing`, `engine_import_failed`, `game_running`,
+    `game_state_unknown`, `backup_incomplete`, `backup_corrupt`,
+    `save_dir_missing`, `restore_target_unrelated`,
     `pre_restore_backup_failed`, `copy_verification_failed`.
     """
     return saves.restore(backup_id, confirm_backup_id, remove_extra=remove_extra,
@@ -184,7 +187,7 @@ def hs_saves_inspect(
 ) -> dict[str, Any]:
     """The manifest plus `changed`, `added` and `missing` versus the live dir.
 
-    Refusals: `backup_incomplete`.
+    Refusals: `invalid_backup_id`, `backup_incomplete`.
     """
     return saves.inspect_backup(backup_id)
 

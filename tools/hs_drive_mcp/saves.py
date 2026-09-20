@@ -42,7 +42,7 @@ import re
 import shutil
 import stat
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Callable, Iterable
 
 from . import launcher_bridge, results
@@ -64,7 +64,10 @@ LABEL_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
 
 _REPARSE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
-Gate = Callable[[], str]
+#: A gate answers `(state, why)`. It cannot report a state without reporting
+#: how it got there, so a refusal never has to re-derive the reason -- the
+#: mistake that twice made these tools blame a Win32 call nobody attempted.
+Gate = Callable[[], tuple[str, str]]
 
 
 # --------------------------------------------------------------------------
@@ -124,35 +127,60 @@ def default_is_link(path: Path) -> bool:
 # Shared helpers
 # --------------------------------------------------------------------------
 
+def is_bare_name(value: Any) -> bool:
+    """True when `value` is one path component and nothing else.
+
+    `backup_id` arrives from a model and is then joined to the backup root; a
+    manifest `name` is joined to both the backup and the live save directory.
+    Neither is allowed to be `..`, an absolute path, or anything with a
+    separator in it.
+
+    Both flavours are checked because the check has to hold on the machine
+    running the test as well as the one running the server: on Linux,
+    `PurePath("..\\\\x")` is a perfectly ordinary single filename, so a
+    Windows traversal would sail through a POSIX-only check and the test that
+    was supposed to catch it would pass.
+    """
+    if not isinstance(value, str) or value in ("", ".", ".."):
+        return False
+    for flavour in (PurePosixPath, PureWindowsPath):
+        candidate = flavour(value)
+        if candidate.is_absolute() or len(candidate.parts) != 1 or candidate.name != value:
+            return False
+    return True
+
+
 def _gate_refusal(tool: str, gate: Gate, when: str) -> dict[str, Any] | None:
     """Ask the gate. Only `not_running` proceeds; every other answer refuses.
 
-    Each answer refuses under its own token. A gate that cannot answer because
-    `ForgePact/src/offline_launcher.py` is absent has not failed a Win32 call,
-    and saying so would send the reader to the wrong subsystem: a clone without
-    `--recursive` is fixed by one `git submodule update`, not by anything about
-    process snapshots.
+    Each answer refuses under its own token, and each detail is the gate's own
+    `why` rather than a sentence composed here. That is deliberate: a reason
+    re-derived at the point of refusal is a reason that can be wrong about
+    which subsystem failed, and this module has shipped that mistake twice --
+    a missing ForgePact checkout reported as a failed Win32 snapshot, then a
+    non-Windows process table reported the same way. The gate knows; it says.
     """
-    state = gate()
+    state, why = gate()
     if state == "running":
         return results.refuse(
             tool, "game_running",
-            f"Hero_Siege.exe is running ({when}). Close the game first: it "
-            "rewrites hs2saves on exit, so anything done now is undone then.")
+            f"{why} Close the game first ({when}): it rewrites hs2saves on "
+            "exit, so anything done now is undone then.")
     if state == "not_running":
         return None
     if state == "engine_missing":
         return results.refuse(
             tool, "engine_source_missing",
-            f"{launcher_bridge.ENGINE_RELPATH} is not in this checkout, so "
-            f"whether the game is running cannot be determined ({when}). Run "
-            "`git submodule update --init ForgePact` in the toolkit checkout. "
-            "Nothing was read or written.")
+            f"{why} So whether the game is running cannot be determined "
+            f"({when}); nothing was read or written.")
+    if state == "engine_unusable":
+        return results.refuse(
+            tool, "engine_import_failed",
+            f"{why} So whether the game is running cannot be determined "
+            f"({when}); nothing was read or written.")
     return results.refuse(
         tool, "game_state_unknown",
-        f"The Windows process snapshot could not be read ({when}), so "
-        "whether the game is running is unknown. Refusing rather than "
-        "assuming it is closed.")
+        f"{why} Refusing ({when}) rather than assuming the game is closed.")
 
 
 def _inventory(source: Path, is_link: Callable[[Path], bool]) -> tuple[list[Path], list[str], int]:
@@ -211,6 +239,49 @@ def read_manifest(directory: Path) -> dict[str, Any] | None:
     return data
 
 
+def _restore_target_refusal(tool: str, source: Path, known: set[str],
+                            is_link: Callable[[Path], bool]) -> dict[str, Any] | None:
+    """Is this directory recognisably the save directory the backup came from?
+
+    `hs_saves_backup` answers the same question with `no_character_saves`, and
+    the restore used to inherit that answer through its pre-restore backup.
+    Relaxing that check so a *wiped* directory could be restored into --
+    which is the case the tool exists for -- also removed the only thing
+    stopping a mis-set `HS_DRIVE_SAVE_DIR` from being restored into, and with
+    `remove_extra=True` that directory's own files would be moved into the
+    pre-restore backup. Bounded, since nothing is deleted and everything is
+    manifested first, but wider than what is documented.
+
+    So the target qualifies three ways, and the third is the recovery case:
+
+    1. it is empty -- there is nothing there to be wrong about;
+    2. it holds at least one `herosiege*.hss` -- the same positive signal
+       `hs_saves_backup` identifies a save directory by, so an ordinary live
+       directory with unrelated extras in it still restores, as it always did;
+    3. every file it holds is one this backup names -- a partially wiped save
+       directory, where the characters are gone and `shop.ini` is all that is
+       left.
+
+    Anything else is a directory of unrelated files and is refused by name.
+    """
+    files, _, _ = _inventory(source, is_link)
+    if not files:
+        return None
+    if any(entry.match(CHARACTER_GLOB) for entry in files):
+        return None
+    unrelated = sorted(entry.name for entry in files if entry.name not in known)
+    if not unrelated:
+        return None
+    shown = ", ".join(unrelated[:5]) + (" ..." if len(unrelated) > 5 else "")
+    return results.refuse(
+        tool, "restore_target_unrelated",
+        f"{source} holds no {CHARACTER_GLOB} and {len(unrelated)} file(s) this "
+        f"backup does not name ({shown}), so it is not the save directory this "
+        "backup came from. Restoring would write into it and, with "
+        "remove_extra, move its files into the pre-restore backup. Check "
+        "HS_DRIVE_SAVE_DIR. Nothing was written.")
+
+
 def verify_backup(directory: Path) -> tuple[str, str] | None:
     """`None` when the backup is whole, else `(reason, detail)`.
 
@@ -225,9 +296,16 @@ def verify_backup(directory: Path) -> tuple[str, str] | None:
                 f"{directory} has no readable {MANIFEST_NAME}, so it is a "
                 "partial or interrupted backup and cannot be trusted.")
     for entry in manifest["files"]:
-        name = str(entry.get("name", ""))
+        name = entry.get("name", "")
+        if not is_bare_name(name):
+            return ("backup_corrupt",
+                    f"{name!r} in {directory / MANIFEST_NAME} is not a plain "
+                    "file name. A manifest entry is joined to both the backup "
+                    "and the live save directory, so it must be one path "
+                    "component and nothing else.")
+        name = str(name)
         stored = directory / FILES_DIR / name
-        if not name or not stored.is_file():
+        if not stored.is_file():
             return ("backup_corrupt",
                     f"{name or '<unnamed>'} is listed in {directory / MANIFEST_NAME} "
                     f"but missing from {directory / FILES_DIR}.")
@@ -377,6 +455,13 @@ def restore(backup_id: str, confirm_backup_id: str, remove_extra: bool = False,
             f"backup_id {backup_id!r}. Restoring overwrites live saves, so it "
             "asks for the id twice. Nothing was read.")
 
+    if not is_bare_name(backup_id):
+        return results.refuse(
+            tool, "invalid_backup_id",
+            f"{backup_id!r} is not a backup id. An id is one directory name "
+            "under the backup root, as reported by hs_saves_list -- not a "
+            "path. Nothing was read.")
+
     refusal = _gate_refusal(tool, gate, "before reading the backup")
     if refusal:
         return refusal
@@ -394,6 +479,11 @@ def restore(backup_id: str, confirm_backup_id: str, remove_extra: bool = False,
         return results.refuse(
             tool, "save_dir_missing",
             f"No save directory at {source} to restore into.")
+
+    known = {str(entry["name"]) for entry in manifest["files"]}
+    refusal = _restore_target_refusal(tool, source, known, is_link)
+    if refusal:
+        return refusal
 
     # Everything currently live is backed up before a single byte is written,
     # and that backup is verified the same way the chosen one just was.
@@ -455,8 +545,7 @@ def restore(backup_id: str, confirm_backup_id: str, remove_extra: bool = False,
                 restored=len(restored))
 
     moved, not_moved = _move_extras(
-        source, pre_directory, set(str(e["name"]) for e in manifest["files"]),
-        is_link) if remove_extra else ([], [])
+        source, pre_directory, known, is_link) if remove_extra else ([], [])
 
     return results.ok(
         tool,
@@ -554,6 +643,11 @@ def inspect_backup(backup_id: str, is_link: Callable[[Path], bool] | None = None
                    tool: str = "hs_saves_inspect") -> dict[str, Any]:
     """The manifest, plus how the live directory differs from it right now."""
     is_link = default_is_link if is_link is None else is_link
+    if not is_bare_name(backup_id):
+        return results.refuse(
+            tool, "invalid_backup_id",
+            f"{backup_id!r} is not a backup id. An id is one directory name "
+            "under the backup root, as reported by hs_saves_list -- not a path.")
     directory = (backup_root() if root is None else Path(root)) / backup_id
     if not directory.is_dir():
         return results.refuse(

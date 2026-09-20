@@ -66,8 +66,9 @@ class SaveToolBase(unittest.TestCase):
         }))
         self.state = "not_running"
 
-    def gate(self) -> str:
-        return self.state
+    def gate(self) -> tuple[str, str]:
+        """A gate answers `(state, why)`; the reason travels with the answer."""
+        return self.state, f"the test gate was set to {self.state!r}."
 
     def backup_ids(self) -> list[str]:
         if not self.backups.is_dir():
@@ -119,7 +120,7 @@ class BaselineRefusalTests(SaveToolBase):
         absent = self.root / "ForgePact" / "src" / "offline_launcher.py"
         with patch.object(launcher_bridge, "_LOADED", {}), \
              patch.object(launcher_bridge, "ENGINE_PATH", absent):
-            self.assertEqual(procs.gate(), "engine_missing")
+            self.assertEqual(procs.gate()[0], "engine_missing")
             made = saves.backup("nochain", gate=procs.gate)
             done = saves.restore("anything", "anything", gate=procs.gate)
 
@@ -131,7 +132,7 @@ class BaselineRefusalTests(SaveToolBase):
         self.assertEqual(self.backup_ids(), [])
         self.assertEqual(tree(self.live), FIXTURE)
 
-    def test_the_status_tri_state_still_hides_the_fourth_state(self):
+    def test_the_status_tri_state_still_hides_the_engine_states(self):
         """`game_state` keeps the three values hs_status was specified against."""
         absent = self.root / "ForgePact" / "src" / "offline_launcher.py"
         with patch.object(launcher_bridge, "_LOADED", {}), \
@@ -141,6 +142,42 @@ class BaselineRefusalTests(SaveToolBase):
             self.assertIn("offline_launcher.py", why)
             self.assertEqual(procs.game_state(), "unknown")
             self.assertEqual(procs.game_pids(), [])
+
+    def test_an_engine_that_will_not_import_refuses_by_its_own_name(self):
+        """Present but unimportable is not the same machine as absent.
+
+        The gate used to report this as `unknown` and the detail then named a
+        Win32 snapshot that was never attempted, while `hs_status` raised
+        ModuleNotFoundError straight across the transport. Both now say
+        `engine_import_failed` and name the import.
+        """
+        def explode(*_args, **_kwargs):
+            raise ModuleNotFoundError("No module named 'ctypes.wintypes'")
+
+        with patch.object(launcher_bridge, "load", explode):
+            state, why = procs.game_state_detail()
+            self.assertEqual(state, "engine_unusable")
+            self.assertIn("ModuleNotFoundError", why)
+            self.assertEqual(procs.game_state(), "unknown")
+
+            made = saves.backup("noimport", gate=procs.gate)
+            report = procs.status()
+
+        self.assertTrue(made["refused"], made)
+        self.assertEqual(made["reason"], "engine_import_failed")
+        self.assertIn("ModuleNotFoundError", made["detail"])
+        self.assertTrue(report["refused"], report)
+        self.assertEqual(report["reason"], "engine_import_failed",
+                         "hs_status and the save gate disagreed about one machine")
+        self.assertEqual(self.backup_ids(), [])
+        self.assertEqual(tree(self.live), FIXTURE)
+
+    def test_a_refusal_carries_the_gates_own_reason(self):
+        """The `why` travels with the state instead of being re-derived."""
+        self.state = "unknown"
+        result = saves.backup("baseline", gate=self.gate)
+        self.assertEqual(result["reason"], "game_state_unknown")
+        self.assertIn("the test gate was set to 'unknown'", result["detail"])
 
 
 class RoundTripTests(SaveToolBase):
@@ -198,6 +235,44 @@ class RoundTripTests(SaveToolBase):
         pre = json.loads((self.backups / done["pre_restore_backup_id"]
                           / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(pre["files"], [])
+
+    def test_an_unrelated_directory_is_not_a_restore_target(self):
+        """The negative control for the two cases above.
+
+        Relaxing the character-save requirement so a wiped directory could be
+        restored into also removed the only thing stopping a mis-set
+        HS_DRIVE_SAVE_DIR from being restored into -- and with remove_extra
+        that directory's own files would be moved into the pre-restore backup.
+        Kept beside the recovery tests on purpose: widening what is accepted
+        must not be able to drift into accepting anything.
+        """
+        made = saves.backup("target", gate=self.gate)
+        elsewhere = self.root / "not-a-save-dir"
+        elsewhere.mkdir()
+        for name in ("notes.txt", "photo.jpg", "budget.xlsx"):
+            (elsewhere / name).write_bytes(b"someone else's file: " + name.encode())
+        before = tree(elsewhere)
+
+        with patch.dict(os.environ, {"HS_DRIVE_SAVE_DIR": str(elsewhere)}):
+            done = saves.restore(made["backup_id"], made["backup_id"],
+                                 remove_extra=True, gate=self.gate)
+
+        self.assertTrue(done["refused"], done)
+        self.assertEqual(done["reason"], "restore_target_unrelated")
+        for name in before:
+            self.assertIn(name, done["detail"])
+        self.assertEqual(tree(elsewhere), before, "an unrelated directory was written to")
+        self.assertEqual(self.backup_ids(), [made["backup_id"]],
+                         "a pre-restore backup was taken of an unrelated directory")
+
+    def test_a_live_directory_with_unrelated_extras_still_restores(self):
+        """A real save directory keeps restoring, extras and all (B3/B4)."""
+        made = saves.backup("target", gate=self.gate)
+        (self.live / "lootfilter_notes.txt").write_bytes(b"not in the backup")
+        done = saves.restore(made["backup_id"], made["backup_id"], gate=self.gate)
+        self.assertFalse(done["refused"], done)
+        self.assertEqual((self.live / "lootfilter_notes.txt").read_bytes(),
+                         b"not in the backup")
 
     def test_a_plain_backup_of_a_wiped_directory_is_still_refused(self):
         """The relaxation is for the pre-restore backup only, not for backup()."""
@@ -469,6 +544,38 @@ class InventoryAndConfirmationTests(SaveToolBase):
         self.assertEqual(done["reason"], "confirmation_mismatch")
         verify.assert_not_called()
         manifest.assert_not_called()
+
+    def test_a_backup_id_that_is_a_path_is_refused(self):
+        """`backup_id` is model-chosen and becomes a path component."""
+        made = saves.backup("target", gate=self.gate)
+        for bad in ("..", "../" + made["backup_id"], r"..\..\Hero_Siege",
+                    "sub/dir", r"sub\dir", "/etc/passwd", r"C:\Windows", ""):
+            with self.subTest(backup_id=bad):
+                self.assertFalse(saves.is_bare_name(bad))
+                done = saves.restore(bad, bad, gate=self.gate)
+                self.assertTrue(done["refused"], done)
+                self.assertEqual(done["reason"], "invalid_backup_id")
+                seen = saves.inspect_backup(bad)
+                self.assertTrue(seen["refused"], seen)
+                self.assertEqual(seen["reason"], "invalid_backup_id")
+        # The negative control: a real id is still accepted.
+        self.assertTrue(saves.is_bare_name(made["backup_id"]))
+        self.assertFalse(saves.inspect_backup(made["backup_id"])["refused"])
+
+    def test_a_manifest_naming_a_path_is_corrupt_not_followed(self):
+        made = saves.backup("target", gate=self.gate)
+        path = self.backups / made["backup_id"] / "manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["files"][0]["name"] = r"..\escaped.hss"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        before = tree(self.live)
+
+        done = saves.restore(made["backup_id"], made["backup_id"], gate=self.gate)
+        self.assertTrue(done["refused"], done)
+        self.assertEqual(done["reason"], "backup_corrupt")
+        self.assertIn("escaped.hss", done["detail"])
+        self.assertEqual(tree(self.live), before)
+        self.assertFalse((self.root / "escaped.hss").exists())
 
     def test_an_unusable_label_is_refused(self):
         result = saves.backup("no spaces allowed", gate=self.gate)

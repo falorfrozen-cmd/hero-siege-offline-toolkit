@@ -727,11 +727,13 @@ py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release inpu
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 
-The server and engine-bridge suites skip with a named reason off Windows, or
-when `mcp`/`Pillow` or the `ForgePact` submodule is absent, and the release
-boundary one skips its submodule check the same way — which is how all four
-stay green on CI's `ubuntu-latest` runner, where none of those is present. The
-saves suite needs none of them: it runs everywhere, against fixtures.
+Those four stay green on CI's `ubuntu-latest` runner, where neither Windows,
+the SDK, nor any submodule is present — but only the parts that need one skip.
+The engine-bridge suite skips wholesale; the server suite skips its stdio and
+`hs_status` classes but still runs `SelfCheckSummaryTests`, which drives
+`run_checks` over a stub registry and so needs nothing; the release-boundary
+suite skips only its submodule check; and the saves suite runs in full,
+against fixtures. Each skip names its reason.
 
 **`.claude/workflows/*.js` and `*.mjs` must stay LF.** `.gitattributes` forces
 `text eol=lf` on both globs: the Workflow tool's permission handler refuses to

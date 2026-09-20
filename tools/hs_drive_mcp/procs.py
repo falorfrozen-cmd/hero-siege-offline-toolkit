@@ -54,8 +54,14 @@ UNKNOWN = "unknown"
 #: wrong subsystem costs a session.
 ENGINE_MISSING = "engine_missing"
 
+#: And a fifth, for an engine file that is present but will not import -- a
+#: partial checkout, a Python that cannot load `ctypes.wintypes`. Same argument
+#: as above: the fix is not the one `engine_missing` names, so it does not
+#: borrow that name.
+ENGINE_UNUSABLE = "engine_unusable"
+
 #: What a gate may return. Only `not_running` lets a write through.
-GATE_STATES = (RUNNING, NOT_RUNNING, UNKNOWN, ENGINE_MISSING)
+GATE_STATES = (RUNNING, NOT_RUNNING, UNKNOWN, ENGINE_MISSING, ENGINE_UNUSABLE)
 
 
 def _snapshot(engine: Any) -> list[tuple[int, str]] | None:
@@ -66,16 +72,30 @@ def _snapshot(engine: Any) -> list[tuple[int, str]] | None:
         return None
 
 
+def load_engine() -> tuple[Any, str, str]:
+    """(engine, blocking state, why). `state` is empty when the engine loaded.
+
+    The one place the engine is obtained, so the gate and `hs_status` cannot
+    describe the same machine differently -- which is the defect this module
+    has now been corrected for twice.
+    """
+    try:
+        engine = launcher_bridge.load()
+    except Exception as exc:  # noqa: BLE001 - an unimportable engine is a state
+        return None, ENGINE_UNUSABLE, (
+            f"{launcher_bridge.ENGINE_RELPATH} is present but could not be "
+            f"imported ({type(exc).__name__}: {exc}).")
+    if results.is_refusal(engine):
+        return None, ENGINE_MISSING, engine["detail"]
+    return engine, "", ""
+
+
 def _readings(engine: Any = None) -> tuple[str, str, list[tuple[int, str]]]:
     """(state, why, matching rows). The one place the distinction is made."""
     if engine is None:
-        try:
-            engine = launcher_bridge.load()
-        except Exception as exc:  # noqa: BLE001 - an unimportable engine is a state
-            return UNKNOWN, (
-                f"{launcher_bridge.ENGINE_RELPATH} could not be imported "
-                f"({type(exc).__name__}: {exc}), so whether the game is running "
-                "is unknown."), []
+        engine, blocked, why = load_engine()
+        if blocked:
+            return blocked, why, []
     if results.is_refusal(engine):
         return ENGINE_MISSING, engine["detail"], []
     if os.name != "nt":
@@ -114,13 +134,14 @@ def game_rows(engine: Any = None) -> list[tuple[int, str]] | None:
 def game_state(engine: Any = None) -> str:
     """`running` | `not_running` | `unknown` -- the tri-state `hs_status` reports.
 
-    `engine_missing` collapses to `unknown` here on purpose: `hs_status` asks
-    the bridge for the engine before it ever reaches this function and returns
-    `engine_source_missing` itself, so this field keeps the shape its callers
-    and its acceptance criterion were written against.
+    The two engine states collapse to `unknown` here on purpose: `hs_status`
+    asks for the engine before it ever reaches this function and returns
+    `engine_source_missing` / `engine_import_failed` itself, so this field
+    keeps the shape its callers and its acceptance criterion were written
+    against.
     """
     state, _, _ = _readings(engine)
-    return UNKNOWN if state == ENGINE_MISSING else state
+    return UNKNOWN if state in (ENGINE_MISSING, ENGINE_UNUSABLE) else state
 
 
 def game_pids(engine: Any = None) -> list[int]:
@@ -129,13 +150,19 @@ def game_pids(engine: Any = None) -> list[int]:
     return [] if rows is None else [int(pid) for pid, _ in rows]
 
 
-def gate() -> str:
-    """The callable the save tools inject.
+def gate() -> tuple[str, str]:
+    """The callable the save tools inject: `(state, why)`.
 
-    Returns one of `GATE_STATES` -- four, not three, so a refusal can name the
-    subsystem that actually failed. A named function, so a test can see it.
+    The gate cannot answer without also saying how it arrived there. That is
+    not decoration -- it is what makes "the refusal names the subsystem that
+    actually failed" true by construction rather than by each caller
+    remembering to re-derive it. Twice now the reason has been recomputed at
+    the point of refusal and got it wrong, so the reason travels with the
+    answer instead.
+
+    `state` is one of `GATE_STATES`; only `not_running` lets a write through.
     """
-    return game_state_detail()[0]
+    return game_state_detail()
 
 
 def status(tool: str = "hs_status") -> dict[str, Any]:
@@ -144,9 +171,17 @@ def status(tool: str = "hs_status") -> dict[str, Any]:
     Nothing here is cached. A cached "not running" is a save write against a
     live game, which is the one outcome the whole gate exists to prevent.
     """
-    engine = launcher_bridge.load(tool)
-    if results.is_refusal(engine):
-        return engine
+    engine, blocked, why = load_engine()
+    if blocked == ENGINE_MISSING:
+        return results.refuse(tool, "engine_source_missing", why)
+    if blocked:
+        # Present but unimportable. A traceback across the transport is not a
+        # result a caller can branch on; this module's own rule is that a
+        # refusal is never an exception.
+        return results.refuse(
+            tool, "engine_import_failed",
+            f"{why} Reinstall or re-check out ForgePact, and confirm this "
+            "Python can import ctypes.wintypes on this platform.")
 
     state = game_state(engine)
     pids = game_pids(engine)

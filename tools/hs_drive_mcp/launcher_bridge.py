@@ -48,9 +48,17 @@ ENGINE_PATH = REPO_ROOT / "ForgePact" / "src" / "offline_launcher.py"
 #: message knows which checkout is incomplete.
 ENGINE_RELPATH = "ForgePact/src/offline_launcher.py"
 
-#: Names this server calls or reads. `tests/test_hs_drive_mcp_engine_bridge.py`
-#: asserts every one is still defined in the engine, so a ForgePact bump that
-#: renames one fails here instead of at the first tool call.
+#: The engine surface this server depends on. Nine are called or read today
+#: (`processes`, `eac_service_status`, `validate_game`, `_exe_facts`,
+#: `launch_status`, `launch_safety_blocker`, `UPSTREAM_REVISION`,
+#: `UPSTREAM_DEFINITIONS`, plus the module itself); the remaining six --
+#: `launch_game`, `start_steam_if_needed`, `find_steam_runtime`,
+#: `eac_is_inactive`, `LAUNCH_LOCK`, `APP_ID` -- are what `hs-drive-mcp-game`
+#: will use, pinned now so a rename is caught by the suite rather than by that
+#: workorder's first launch attempt.
+#: `tests/test_hs_drive_mcp_engine_bridge.py` asserts every one is still
+#: defined in the engine, so a ForgePact bump that renames one fails here
+#: instead of at a tool call.
 ENGINE_SYMBOLS = (
     "launch_game",
     "launch_status",

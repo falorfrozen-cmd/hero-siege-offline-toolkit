@@ -138,15 +138,18 @@ Tokens this server can return today:
 | Token | Meaning |
 | --- | --- |
 | `engine_source_missing` | `ForgePact/src/offline_launcher.py` is not in this checkout, so there is no engine to take a process snapshot with. The save tools return this too, not `game_state_unknown`: a clone without `--recursive` is fixed by `git submodule update --init ForgePact`, and a refusal naming a Win32 call that was never attempted sends the reader to the wrong subsystem. |
+| `engine_import_failed` | That file is present but will not import — a partial checkout, or a Python that cannot load `ctypes.wintypes`. A different machine state with a different fix, so it does not borrow the name above. |
 | `forgepact_config_missing` | `game_exe` is not set in `%LOCALAPPDATA%\Hero_Siege\forgepact.json`. |
 | `game_running` | A `hero_siege.exe` process is live. |
-| `game_state_unknown` | The process snapshot was attempted and failed — or could not be attempted on this platform — so whether the game is running is unknown. |
+| `game_state_unknown` | The process snapshot was attempted and failed, or could not be attempted on this platform. The detail is the gate's own account of which. |
 | `save_dir_missing` | No directory at the resolved save path. |
 | `no_character_saves` | The directory holds no `herosiege*.hss`, so it is not a save directory. |
 | `save_dir_too_large` | Over the 256 MB ceiling — almost always a mis-set `HS_DRIVE_SAVE_DIR`. |
+| `restore_target_unrelated` | The directory to restore *into* is neither empty, nor a save directory, nor made only of files this backup names — so it is not where this backup came from. |
 | `copy_verification_failed` | A copy did not re-hash equal to its source. |
 | `backup_incomplete` | The backup directory has no readable `manifest.json`. |
-| `backup_corrupt` | A file in the backup no longer matches its manifest hash; the detail names it. |
+| `backup_corrupt` | A file in the backup no longer matches its manifest hash, or a manifest entry names something that is not a plain file name; the detail names it. |
+| `invalid_backup_id` | A `backup_id` that is not one bare directory name — a path, `..`, or empty. |
 | `pre_restore_backup_failed` | The restore could not first back up what is live, so it did not start. |
 | `confirmation_mismatch` | `confirm_backup_id` did not equal `backup_id`. |
 | `invalid_label` | A backup label outside `^[A-Za-z0-9._-]{1,40}$`. |
@@ -166,15 +169,29 @@ applied here — a sentinel meaning *unknown* must never compare equal to a real
 value — and it matches the engine's own fail direction, where a failed snapshot
 makes `launch_safety_blocker()` say the launch was blocked.
 
-The **gate** the save tools ask has a fourth state, `engine_missing`, which
-`game_state()` collapses to `unknown` so `hs_status` keeps the shape it was
-specified against. It exists because "the snapshot failed" and "there is no
-engine to take a snapshot with" have different fixes, and a refusal that names
-the wrong one costs a session: without it, a checkout missing `ForgePact/`
-refused every save operation with a detail about a Win32 call that was never
-attempted, while `hs_status` — which asks the bridge directly — correctly said
-`engine_source_missing` about the same machine. Two tools disagreeing about one
-machine state is the bug; both still refuse.
+The **gate** the save tools ask has five states, not three. `game_state()`
+collapses the two engine ones to `unknown` so `hs_status` keeps the shape it
+was specified against, but the gate keeps them apart because they have
+different fixes, and a refusal that names the wrong one costs a session:
+
+| Gate state | Refusal token | What is actually wrong |
+| --- | --- | --- |
+| `running` | `game_running` | Close the game. |
+| `not_running` | — | The only state that lets a write through. |
+| `unknown` | `game_state_unknown` | The snapshot failed, or this is not Windows. |
+| `engine_missing` | `engine_source_missing` | `git submodule update --init ForgePact`. |
+| `engine_unusable` | `engine_import_failed` | The engine file is there but will not import. |
+
+A gate answers `(state, why)` — it cannot report a state without reporting how
+it got there — and the refusal detail *is* that `why`, not a sentence composed
+at the point of refusal. That is the correction, and it was needed twice: a
+checkout missing `ForgePact/` refused every save operation with a detail about
+a Win32 call nobody attempted, while `hs_status`, which asks the bridge
+directly, correctly said `engine_source_missing` about the same machine; then
+the non-Windows and unimportable cases did the same thing one layer down. Two
+tools disagreeing about one machine state is the bug. Carrying the reason with
+the answer makes them agree by construction rather than by each caller
+remembering to re-derive it.
 
 Matching is by image name. ForgePact's panel additionally matches the full
 image path, because a Steam copy and an offline copy can be open at once; this
@@ -218,7 +235,13 @@ Four rules hold everywhere:
    `<id>.failed`. Extras are *moved* into the pre-restore backup. A failed
    copy leaves its `.hsdrive-tmp` file beside the target and the refusal names
    it. There is no code path in `saves.py` that removes a file, which is what
-   makes "could it have deleted a save?" answerable by reading it.
+   makes "could it have deleted a save?" answerable by reading it — and
+   `test_the_save_module_calls_nothing_that_removes_a_file` keeps that
+   answerable, by walking the parsed module for a call to `unlink`, `remove`,
+   `rmdir`, `removedirs`, `rmtree` or `shutil.move`. It reads the tree rather
+   than the text because `saves.py` discusses all of those in its own comments,
+   explaining why it uses none of them, and a grep would trip on the
+   explanation instead of the code.
 2. **The gate is asked twice** — at the start, and again immediately before
    the first write, because everything in between is file reads and the game
    can start during them.
@@ -238,6 +261,30 @@ directory that has been wiped or corrupted. That is the case
 tool refuse exactly when it was needed. The 256 MB ceiling is not relaxed with
 it; that guard is about a path pointing somewhere enormous and still applies to
 both.
+
+Relaxing it needed a replacement, though, because that check was also the only
+thing stopping a restore *into* a directory that had never held a save — and
+with `remove_extra=true` that directory's own files would be moved into the
+pre-restore backup. So `hs_saves_restore` asks its own question about the
+target, and accepts it three ways:
+
+1. **it is empty** — there is nothing there to be wrong about;
+2. **it holds at least one `herosiege*.hss`** — the same positive signal
+   `hs_saves_backup` identifies a save directory by, so an ordinary live
+   directory with unrelated extras in it restores exactly as it always did;
+3. **every file in it is one this backup names** — a partially wiped save
+   directory, where the characters are gone and `shop.ini` is all that is left.
+
+Anything else is `restore_target_unrelated`, and nothing is read or written.
+The post-wipe recovery case and a directory of unrelated files are tested
+beside each other on purpose: widening what is accepted must not be able to
+drift into accepting anything.
+
+`backup_id` is model-chosen and becomes a path component, and a manifest
+`name` is joined to both the backup and the live directory. Both must be one
+bare path component — `saves.is_bare_name()` checks POSIX *and* Windows
+flavours, because on Linux `..\x` is an ordinary filename and a POSIX-only
+check would let a Windows traversal through the very test meant to catch it.
 
 ## `hs_selfcheck` — proving the instrument
 
@@ -337,9 +384,9 @@ rather than by falling back to another launcher:
 | A3/A4/A7 | Tool surface over stdio, self-check, status, `healthy` semantics | `py -3 -m unittest tests.test_hs_drive_mcp_server -v` | `OK`, 16 tests, no skips — 2026-09-20 |
 | A5 | Engine pin, inert import, missing-source refusal | `py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v` | `OK`, 8 tests, no skips — 2026-09-20 |
 | A6 | No stdout, no listener, no shell | `Select-String -Path tools/hs_drive_mcp/*.py -Pattern 'shell=True\|os\.system\(\|socket\.\|\.bind\(\|HTTPServer\|uvicorn\|streamable\|^\s*print\('` | no matches — 2026-09-20 |
-| B1–B10 | Save backup and restore, including the wiped-directory recovery case | `py -3 -m unittest tests.test_hs_drive_mcp_saves -v` | `OK`, 30 tests, no skips — 2026-09-20 |
-| C6 | Release boundary | `py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 6 tests, no skips — 2026-09-20 |
-| C7 | Whole root suite | `py -3 -m unittest discover -s tests` | `Ran 734 tests`, `OK (skipped=9)` — all nine skips pre-existing in other suites — 2026-09-20 |
+| B1–B10 | Save backup and restore, the wiped-directory recovery case and its negative control | `py -3 -m unittest tests.test_hs_drive_mcp_saves -v` | `OK`, 36 tests, no skips — 2026-09-20 |
+| C6 | Release boundary, including the mechanical no-deletion check | `py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 7 tests, no skips — 2026-09-20 |
+| C7 | Whole root suite | `py -3 -m unittest discover -s tests` | `Ran 741 tests`, `OK (skipped=9)` — all nine skips pre-existing in other suites — 2026-09-20 |
 | C7 | This change touches no submodule | `git -C ForgePact status --porcelain`, `git -C HS-Offline-Launcher status --porcelain` | both printed nothing — 2026-09-20. (An unrelated ` M HS-Offline-Tracker` gitlink drift predates this work; `git diff --stat 589246f HEAD` touches no submodule.) |
 | — | Self-check on this machine | `hs_selfcheck` over stdio | all five checks `pass` (137 files, 48 characters in the live dir; snapshot sees own PID; EAC `stopped`) — 2026-09-20 |
 | C1 | `hs-drive` connects in a fresh session | `/mcp` in a new Claude Code session at the repo root | **not yet run** — owner-run; the working-directory assumption above is unconfirmed |

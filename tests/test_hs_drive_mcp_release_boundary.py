@@ -21,6 +21,7 @@ The three claims:
    a shell. The same pattern the acceptance criteria grep for, kept here so it
    runs in the suite rather than only in a reviewer's terminal.
 """
+import ast
 import json
 import re
 import unittest
@@ -48,6 +49,11 @@ UNSAFE = re.compile(
     re.IGNORECASE | re.MULTILINE)
 
 EXPECTED_ENTRY = {"command": "py", "args": ["-3", "-m", "tools.hs_drive_mcp"]}
+
+#: Anything that removes a file. `shutil.move` is here because its
+#: cross-volume path is a copy followed by an unlink of the source, and the
+#: source would be a file in the live save directory.
+REMOVERS = frozenset({"unlink", "remove", "removedirs", "rmdir", "rmtree", "move"})
 
 
 class ReleaseBoundaryTests(unittest.TestCase):
@@ -101,6 +107,32 @@ class PackageSurfaceTests(unittest.TestCase):
                 self.fail(f"{path.relative_to(ROOT)}:{line} matches "
                           f"{match.group(0)!r}; a stdio server writes only to "
                           "stderr and opens nothing")
+
+    def test_the_save_module_calls_nothing_that_removes_a_file(self):
+        """Turn the documented "nothing is ever deleted" into an enforced one.
+
+        `docs/tools/hs-drive-mcp.md` says a reader can answer "could it have
+        deleted a save?" by reading `saves.py`. That is only worth saying if
+        it stays true, and it is one convenient line away from not being.
+
+        The check is over the parsed tree, not the text: `saves.py` discusses
+        `unlink` and `shutil.move` at length in its own comments, explaining
+        why it uses neither, and a grep would fail on the explanation rather
+        than on the code.
+        """
+        source = (PACKAGE / "saves.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+        self.assertGreater(len(calls), 20, "the parse found almost nothing; "
+                                           "this test is measuring nothing")
+        for node in calls:
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            self.assertNotIn(
+                name, REMOVERS,
+                f"tools/hs_drive_mcp/saves.py:{node.lineno} calls {name}(); "
+                "nothing in the save module may remove a file - a failed "
+                "backup is renamed, and an extra is moved with os.replace")
 
     def test_only_the_registration_module_imports_the_sdk(self):
         for path in sorted(PACKAGE.glob("*.py")):

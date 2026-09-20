@@ -15,15 +15,18 @@ from typing import Any
 
 REASONS = (
     "engine_source_missing",
+    "engine_import_failed",
     "forgepact_config_missing",
     "game_running",
     "game_state_unknown",
     "save_dir_missing",
     "no_character_saves",
     "save_dir_too_large",
+    "restore_target_unrelated",
     "copy_verification_failed",
     "backup_incomplete",
     "backup_corrupt",
+    "invalid_backup_id",
     "pre_restore_backup_failed",
     "confirmation_mismatch",
     "invalid_label",

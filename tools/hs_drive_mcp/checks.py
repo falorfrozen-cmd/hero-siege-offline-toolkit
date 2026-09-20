@@ -157,8 +157,8 @@ def check_backup_roundtrip() -> tuple[str, str]:
             (source / name).write_bytes(data)
         root = base / "backups"
 
-        def gate() -> str:
-            return "not_running"
+        def gate() -> tuple[str, str]:
+            return "not_running", "the self-check fixture is not a live game."
 
         made = saves.backup("selfcheck", gate=gate, source=source, root=root)
         if results.is_refusal(made):
