@@ -18,7 +18,18 @@ and a check whose code raised is `fail` with the exception name -- never
 `skipped`, because "we did not look" and "we looked and it broke" are the two
 answers that must not be confused. The registry is a list so a later check is
 appended with `register()` instead of by editing anything here, which is how
-`screenshot_screen` and `ipc_ping` were added.
+`screenshot_screen` was added.
+
+**No check here writes anywhere but a temporary directory of its own.**
+`hs_selfcheck` is annotated `readOnlyHint: true`, which is what a client uses to
+auto-approve it without prompting, and it is the tool this server's own
+instructions say to run first -- so it is the one most likely to run unattended.
+`check_backup_roundtrip` builds its own fixture tree for exactly that reason. A
+plugin ping used to live here too and broke the rule: it wrote into the live
+install's `bp_ipc\\cmd.txt` and made the running game execute a command, and an
+unconsumed one was left on disk for the game to run at its *next* start. That
+control now lives in `hs_wait_ready` alone, which sends the identical ping, is
+annotated honestly, and returns a far richer envelope.
 """
 from __future__ import annotations
 
@@ -27,7 +38,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-from . import capture, ipc, launch, launcher_bridge, procs, results, saves
+from . import capture, launcher_bridge, results, saves
 
 #: A check returns (status, detail). status is one of these three.
 STATUSES = ("pass", "fail", "skipped")
@@ -213,36 +224,6 @@ def check_screenshot_screen() -> tuple[str, str]:
         "about the game's window rather than about this instrument.")
 
 
-def check_ipc_ping() -> tuple[str, str]:
-    """The plugin's own positive control -- when there is a game to ask.
-
-    Deliberately **not** registered as a positive control: it can only run with
-    the modded game up, and a check that is usually skipped cannot be what
-    `summary.healthy` rests on. `skipped` here says "there was nothing to ask",
-    which is different from the instrument failing.
-    """
-    reason = _not_windows()
-    if reason:
-        return "skipped", reason.replace("reads the Windows process table",
-                                         "pings a running Windows process")
-    state, why = procs.gate()
-    if state != procs.RUNNING:
-        return "skipped", (f"the game is not running ({state}: {why}), so the "
-                           "plugin could not be pinged")
-    sent = ipc.send([launch.PING], timeout_s=10.0, tool="hs_selfcheck")
-    if results.is_refusal(sent):
-        return "fail", (f"the game is running but a ping was refused "
-                        f"({sent['reason']}): {sent['detail']}")
-    reply = str(sent.get("reply", ""))
-    if launch.PONG not in reply.lower():
-        return "fail", (
-            "the plugin consumed a ping but did not answer with pong; out.txt "
-            f"gained {sent.get('out_bytes_after', 0) - sent.get('out_bytes_before', 0)}"
-            f" byte(s): {reply.strip()!r}")
-    return "pass", (f"the running plugin consumed a ping and answered "
-                    f"{reply.strip()!r}")
-
-
 register("engine_import", check_engine_import)
 # Both of these point the instrument at something certainly present -- this
 # server's own process, and a fixture it just wrote. They are what `healthy`
@@ -253,10 +234,8 @@ register("save_dir", check_save_dir)
 register("backup_roundtrip", check_backup_roundtrip, positive_control=True)
 # The third control: the desktop is as certainly present as this process and the
 # fixture, so a screenshot tool that cannot capture it is blind rather than
-# unlucky. `ipc_ping` is not one -- it needs a running game, and a control that
-# is usually skipped would make `healthy` mean "nothing was checked".
+# unlucky.
 register("screenshot_screen", check_screenshot_screen, positive_control=True)
-register("ipc_ping", check_ipc_ping)
 
 
 def run_checks(tool: str = "hs_selfcheck") -> dict[str, Any]:

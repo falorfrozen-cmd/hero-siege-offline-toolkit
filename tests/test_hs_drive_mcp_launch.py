@@ -8,11 +8,13 @@ Three things are asserted here that no amount of reading the code proves:
    compared byte for byte afterwards. Owner decision D3 chose this engine over
    HS-Offline-Launcher's module precisely because that module writes the user's
    launcher configuration.
-2. **The three readiness outcomes are never conflated.** "the process is up",
-   "the plugin answered" and "the plugin never answered" are separate phases
-   with separate fields, because a tool that reports itself ready while the
-   plugin is not loaded is the shape `AGENTS.md` § "Prove the Instrument" exists
-   to catch -- and here the instrument is the readiness check itself.
+2. **The four readiness outcomes are never conflated.** "the process is up",
+   "the plugin answered", "the plugin consumed the ping and said nothing" and
+   "nothing consumed it at all" are separate phases with separate fields,
+   because a tool that reports itself ready while its own positive control has
+   not fired is the shape `AGENTS.md` § "Prove the Instrument" exists to catch
+   -- and here the instrument is the readiness check itself. `ready` is
+   therefore true for `plugin_ready` alone.
 3. **`TerminateProcess` is unreachable for a process this server did not
    start.** `AGENTS.md` § "Drive a Tauri App Yourself" -- never kill a process
    you did not start. The graceful `WM_CLOSE` path is always allowed; the forced
@@ -218,12 +220,82 @@ class LaunchFixture(unittest.TestCase):
         })
 
     def consumer(self, reply: bytes, *, delay: float = 0.0):
-        """The plugin's half of the channel: delete `cmd.txt`, append a reply."""
+        """The plugin's half of the channel: delete `cmd.txt`, append a reply.
+
+        `reply=b""` is the consumer that consumes and answers nothing, which is
+        the input the readiness report used to call `plugin_ready`.
+        """
         def run():
             deadline = time.monotonic() + 8.0
             while time.monotonic() < deadline:
                 if self.cmd.is_file():
                     time.sleep(delay)
+                    try:
+                        os.remove(self.cmd)
+                    except OSError:  # pragma: no cover - lost a race
+                        continue
+                    with open(self.out, "ab") as handle:
+                        handle.write(reply)
+                    return
+                time.sleep(0.01)
+
+        thread = threading.Thread(target=run, name="fake-bp-consumer", daemon=True)
+        self.addCleanup(thread.join, 9.0)
+        thread.start()
+
+    def pending_wait_started(self) -> threading.Event:
+        """An `Event` `ipc.send` sets once it is waiting for `cmd.txt` to go.
+
+        `pending_before` is read just before that wait starts, so this is the
+        point after which a fake plugin may take the pending file without
+        changing which state the test is measuring.
+        """
+        entered = threading.Event()
+        real = ipc._await_consumption
+
+        def spy(*args, **kwargs):
+            entered.set()
+            return real(*args, **kwargs)
+
+        self.enterContext(patch.object(ipc, "_await_consumption", spy))
+        return entered
+
+    def clearing_consumer(self, *, stream_s: float, reply: bytes = b"pong\r\n",
+                          answer_next: bool = True):
+        """The plugin at load: run the queued command, print, then answer the ping.
+
+        This is what `hs_wait_ready` after `hs_command(queue=true)` actually
+        meets: the queued command is consumed when the plugin loads and its
+        output streams into `out.txt` for as long as it runs. `reply=b""` is not
+        offered -- the point of this consumer is that the ping *is* answered, so
+        anything but `plugin_ready` at the end is this server's own accounting.
+        `answer_next=False` stops after the queued command, which is the channel
+        that has been watched being read and still did not take the ping.
+
+        It waits for the send's own pending wait to start before taking the
+        queued file: a consumer that wins that race removes it before
+        `pending_before` is read, and the test then measures a plugin that was
+        merely busy while looking like this one. A `sleep` in its place would be
+        a guess at how long a real `procs.game_pids()` snapshot takes.
+        """
+        started = self.pending_wait_started()
+
+        def run():
+            deadline = time.monotonic() + 8.0
+            started.wait(8.0)
+            while time.monotonic() < deadline and not self.cmd.is_file():
+                time.sleep(0.01)
+            try:
+                os.remove(self.cmd)
+            except OSError:  # pragma: no cover - lost a race
+                return
+            until = time.monotonic() + stream_s
+            while time.monotonic() < until:
+                with open(self.out, "ab") as handle:
+                    handle.write(b"citrace: 1 instance\r\n")
+                time.sleep(0.02)
+            while answer_next and time.monotonic() < deadline:
+                if self.cmd.is_file():
                     try:
                         os.remove(self.cmd)
                     except OSError:  # pragma: no cover - lost a race
@@ -431,6 +503,111 @@ class ReadinessTests(LaunchFixture):
         self.assert_common_fields(waited)
         self.assertEqual(waited["phase"], "plugin_ready", waited)
         self.assertIn("pong", waited["plugin_reply"])
+
+    def test_a_consumed_ping_without_pong_is_not_ready(self):
+        """The positive control not firing is not readiness.
+
+        This state used to report `plugin_ready, ready: true` -- for a ping the
+        plugin consumed and never answered, which the self-check's own plugin
+        probe called a `fail` on the identical condition. `ready` is documented as
+        "whether a command would be answered", and if the plugin's `Out()`
+        writes are failing then every later `hs_command` returns an empty
+        reply, which an agent that branched on `ready: true` cannot tell from
+        "the command did nothing". `AGENTS.md` § "Prove the Instrument Before
+        Trusting a Negative Result".
+
+        Two consumers, because the failure has two shapes: one that appends
+        nothing at all, and one that appends a line which is not a `pong` --
+        the player build's own answer to a command it does not accept.
+        """
+        for appended in (b"", b"command unavailable in player build: ping\r\n"):
+            with self.subTest(appended=appended):
+                self.consumer(appended)
+                launched = self.do_launch(timeout_s=2.0)
+                self.consumer(appended)
+                waited = launch.hs_wait_ready(gate=gate_running, timeout_s=2.0)
+                for result in (launched, waited):
+                    self.assert_common_fields(result)
+                    self.assertEqual(result["phase"],
+                                     "plugin_consumed_without_pong", result)
+                    self.assertIs(result["ready"], False, result)
+                    self.assertEqual(result["plugin"], "consumed_without_pong")
+                    self.assertEqual(result["plugin_reply"], appended.decode())
+                    detail = result["detail"]
+                    self.assertIn("control did not fire", detail)
+                    self.assertIn(f"{len(appended)} byte", detail)
+                    self.assertIn("cannot be trusted", detail)
+
+    def test_an_unconsumed_ping_is_not_observed_not_plugin_absent(self):
+        """Nothing consuming `cmd.txt` is an observation, not a conclusion.
+
+        The report used to say "so the BloodPact plugin is not loaded", and the
+        two halves of that inference come from different installs: the gate
+        says `running` by image name, while `bp_ipc\\` is resolved from the
+        configured executable. The plugin derives its own channel from its own
+        module path, so the owner's documented two-copy setup produces this
+        exact reading with the plugin fully loaded. `AGENTS.md` § "Check a
+        Permission Where It Is Used" -- write a negative down as "not
+        observed", not "does not happen".
+        """
+        launched, waited = self.launch_and_wait()
+        for result in (launched, waited):
+            self.assert_common_fields(result)
+            self.assertEqual(result["phase"], "timeout_waiting_for_plugin", result)
+            self.assertEqual(result["plugin"], "not_consumed")
+            detail = result["detail"]
+            self.assertIn("not observed", detail)
+            self.assertTrue(str(self.cmd) in detail or str(self.ipc_dir) in detail,
+                            f"the detail names no channel path: {detail}")
+            self.assertIn("different copy", detail)
+            self.assertNotIn("is not loaded", detail,
+                             "a negative measured on one channel was reported "
+                             "as a conclusion about the plugin")
+
+    def test_a_queued_command_cleared_first_does_not_starve_the_ping(self):
+        """The session this exists to prevent, end to end.
+
+        `hs_command(queue=true)` leaves a command in `cmd.txt`; the plugin runs
+        it at load, printing for as long as it takes, and only then polls again.
+        When the wait for that command and the wait for the ping shared one
+        budget, the ping was written with the budget already gone and
+        `hs_wait_ready` reported `timeout_waiting_for_plugin, ready: false` --
+        sending the driver off to compare install paths for a plugin that had
+        just consumed a command on that exact channel, in this call. The ping
+        here *is* answered, so anything but `plugin_ready` is this server's own
+        accounting rather than the game.
+        """
+        # The queued command prints for longer than the whole budget, which is
+        # what a `citrace collect` at load does; nothing is left for the ping if
+        # the two waits come out of one deadline.
+        self.cmd.write_bytes(b"citrace collect\r\n")
+        self.clearing_consumer(stream_s=1.2)
+        result = launch.hs_wait_ready(gate=gate_running, timeout_s=1.0)
+        self.assert_common_fields(result)
+        self.assertEqual(result["phase"], "plugin_ready", result)
+        self.assertTrue(result["ready"])
+        self.assertIn("pong", result["plugin_reply"])
+
+    def test_a_ping_the_live_channel_ignored_is_not_a_missing_plugin(self):
+        """A channel seen consuming a command is not an unobserved channel.
+
+        Same wait, same phase, different diagnosis: the plugin cleared the queued
+        command and then did not take the ping in time, so the detail must not
+        hand back the "never loaded, or a different copy" pair -- both were
+        disproved inside this call. `AGENTS.md` § "Check a Permission Where It Is
+        Used", last bullet.
+        """
+        self.cmd.write_bytes(b"citrace collect\r\n")
+        self.clearing_consumer(stream_s=0.05, answer_next=False)
+        result = launch.hs_wait_ready(gate=gate_running, timeout_s=1.0)
+        self.assertEqual(result["phase"], "timeout_waiting_for_plugin", result)
+        self.assertFalse(result["ready"])
+        detail = result["detail"]
+        self.assertIn("observed consuming an earlier command", detail)
+        self.assertNotIn("different copy", detail,
+                         "a channel this wait proved is being read was reported "
+                         "as possibly belonging to another copy of the game")
+        self.assertNotIn("not observed", detail)
 
     def test_no_bp_ipc_directory_stops_at_process_running(self):
         os.rename(self.ipc_dir, self.ipc_dir.with_name("bp_ipc_gone"))

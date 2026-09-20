@@ -16,13 +16,18 @@ things that engine deliberately leaves to its caller:
   "`Popen` was never reached" true by construction: the engine refuses before it
   starts anything, and this module only has to translate that refusal.
 
-**Readiness is three answers, never one.** "the process is up" is not "the
-plugin answered", and neither is "the plugin never answered". Each is its own
-`phase`, and `ready` is the single field that says whether the game can be
-driven. An earlier feature in this toolkit reported itself armed while being
-structurally unable to do anything, which is why `AGENTS.md` § "Prove the
-Instrument" asks for a positive control: here the control is the plugin's own
-`ping`/`pong`, sent through the same channel `hs_command` uses.
+**Readiness is four answers, never one.** "the process is up" is not "the
+plugin answered", and neither is "the plugin consumed the ping and said
+nothing" or "nothing consumed it at all". Each is its own `phase`, and `ready`
+is the single field that says whether the game can be driven. An earlier
+feature in this toolkit reported itself armed while being structurally unable
+to do anything, which is why `AGENTS.md` § "Prove the Instrument" asks for a
+positive control: here the control is the plugin's own `ping`/`pong`, sent
+through the same channel `hs_command` uses. `ready` is therefore exactly "the
+control fired" -- a consumed ping that came back without a `pong` is
+`plugin_consumed_without_pong, ready: false`, because a channel whose replies
+are not arriving makes every later `hs_command` reply unreadable rather than
+empty, and this module must not be the thing that hides that.
 
 **Closing is `WM_CLOSE`.** That is the user pressing X: the game runs its own
 exit path and writes its saves, which is what makes a save comparison after a
@@ -35,9 +40,20 @@ runtime state; § "Don't Suspend the Game's Own Runtime" was checked and this
 module stays on the read-or-ask-nicely side of it.
 
 The envelope's `ok` says whether the tool did its job; `ready`, `exited` and
-`phase` say what the game did. A launch that ran and then sat at a plugin that
-never loaded is `ok: true, ready: false, phase: "timeout_waiting_for_plugin"` --
-not a refusal, because nothing was refused, and not a success either.
+`phase` say what the game did. A launch that ran and then sat at a channel
+nothing consumed is `ok: true, ready: false, phase:
+"timeout_waiting_for_plugin"` -- not a refusal, because nothing was refused, and
+not a success either. That phase is deliberately *not* reported as "the plugin
+is absent": the gate matches by image name while `bp_ipc\\` is resolved from the
+configured executable, and the plugin derives its own channel from its own
+module path, so a second copy of the game running produces the same reading with
+the plugin fully loaded. The detail names both explanations -- **unless the wait
+itself watched the plugin consume an earlier command on that channel**, which is
+what `hs_command(queue=true)` followed by this wait produces. Then neither
+explanation is available: the channel is read, the ping's own wait is what
+expired, and the detail says so instead, because sending the reader off to
+compare install paths for a plugin this call just watched working is the
+mislabelled negative § "Prove the Instrument" is about.
 """
 from __future__ import annotations
 
@@ -238,26 +254,62 @@ def wait_ready(*, engine: Any, gate: Gate, timeout_s: float, require_plugin: boo
                 detail=(f"The process disappeared while waiting for the plugin. "
                         f"{message}"))
         if sent["reason"] == "not_consumed":
+            if sent.get("observed_consumption"):
+                # The send watched the plugin take an earlier command off this
+                # channel during this same wait -- the queued-command case, which
+                # `hs_command(queue=true)` then `hs_wait_ready` produces -- so the
+                # channel is read and the ping's own wait is what expired. Saying
+                # "not observed" here would send the reader to compare install
+                # paths for a plugin this wait had just watched working.
+                detail = (f"{procs.GAME_IMAGE} is running and the ping was not "
+                          f"answered, but this channel is not unread: "
+                          f"{sent['detail']}")
+            else:
+                detail = (f"{procs.GAME_IMAGE} is running, but nothing consumed "
+                          f"{directory / ipc.CMD_NAME} within "
+                          f"{round(remaining, 1)} s. That makes the plugin "
+                          "reading this channel not observed rather than absent: "
+                          "either BloodPactPlugin.dll was never loaded into the "
+                          f"running process, or the running {procs.GAME_IMAGE} is "
+                          "a different copy from the one this channel belongs to, "
+                          f"since the plugin derives its own {ipc.DIR_NAME} from "
+                          "its own executable's location -- two copies, two "
+                          "channels, and `pids` says which processes are live. "
+                          f"{sent['detail']}")
             return _report(
                 tool, engine=engine, phase="timeout_waiting_for_plugin",
                 ready=False, plugin="not_consumed", pid=pid, state=state,
-                started=started,
-                detail=(f"{procs.GAME_IMAGE} is running but nothing consumed "
-                        f"cmd.txt within {round(remaining, 1)} s, so the "
-                        "BloodPact plugin is not loaded. "
-                        f"{sent['detail']}"))
+                started=started, detail=detail)
         # Anything else the channel refuses is that refusal, not a phase.
         return {**sent, "phase": "readiness"}
 
     reply = str(sent.get("reply", ""))
     answered = PONG in reply.lower()
+    if answered:
+        detail = "The plugin consumed a ping and answered: " + reply.strip()
+    else:
+        # Consumed, but the positive control did not fire. `ready` means "a
+        # command would be answered", and nothing here has shown that -- the
+        # plugin's `Out()` writes can be failing (the panel holding out.txt open
+        # is a recorded case), in which case every later reply is empty and
+        # indistinguishable from a command that did nothing. § "Prove the
+        # Instrument Before Trusting a Negative Result" forbids trusting
+        # anything downstream of a control that did not fire, so this is its own
+        # phase rather than `plugin_ready` with the flag turned off.
+        gained = (int(sent.get("out_bytes_after", 0))
+                  - int(sent.get("out_bytes_before", 0)))
+        detail = (f"The plugin consumed a ping but did not answer pong, so its "
+                  f"positive control did not fire. out.txt gained {gained} "
+                  f"byte(s): {reply.strip() or '(nothing was appended)'}. "
+                  "Replies from hs_command cannot be trusted until a ping "
+                  "answers -- an empty reply cannot be told apart from a "
+                  "command that did nothing.")
     return _report(
-        tool, engine=engine, phase="plugin_ready", ready=True,
-        plugin="ready" if answered else "consumed_without_pong",
+        tool, engine=engine,
+        phase="plugin_ready" if answered else "plugin_consumed_without_pong",
+        ready=answered, plugin="ready" if answered else "consumed_without_pong",
         plugin_reply=reply, pid=pid, state=state, started=started,
-        detail=("The plugin consumed a ping and answered: "
-                + (reply.strip() or "(nothing was appended to out.txt)")),
-        ipc_dir=sent.get("ipc_dir", ""))
+        detail=detail, ipc_dir=sent.get("ipc_dir", ""))
 
 
 def hs_launch(exe_path: str | None = None, wait_for_plugin: bool = True,

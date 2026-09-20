@@ -106,6 +106,174 @@ class IpcFixture(unittest.TestCase):
         thread.start()
         return seen
 
+    def consuming_loop(self, *replies: bytes, after: float = 0.0):
+        """A consumer that keeps going until it has consumed one file per reply.
+
+        `consumer` above is one-shot, which cannot answer "did anything get
+        lost across two commands": the concatenation of everything *this* one
+        read is every byte that actually reached the plugin.
+
+        `after` delays the first look, so a test can be sure `send` has already
+        taken its `pending_before` reading before the pending file disappears.
+        Without it the consumer can win that race and the test asserts against
+        a reading nobody made.
+        """
+        seen: list[bytes] = []
+
+        def run():
+            time.sleep(after)
+            deadline = time.monotonic() + 5.0
+            for reply in replies:
+                while time.monotonic() < deadline:
+                    if self.cmd.is_file():
+                        try:
+                            seen.append(self.cmd.read_bytes())
+                            os.remove(self.cmd)
+                        except OSError:  # pragma: no cover - lost a race, retry
+                            continue
+                        with open(self.out, "ab") as handle:
+                            handle.write(reply)
+                        break
+                    time.sleep(0.01)
+
+        thread = threading.Thread(target=run, name="fake-bp-consumer", daemon=True)
+        self.addCleanup(thread.join, 6.0)
+        thread.start()
+        return seen
+
+    def pending_wait_started(self) -> threading.Event:
+        """An `Event` the send sets once it is waiting for `cmd.txt` to go.
+
+        `pending_before` is read before that wait begins, so this is the point
+        after which a fake plugin can take the pending file without changing
+        which state the test is measuring. A `sleep` here would be a guess at how
+        long `send`'s validation, gate reading and directory resolution take.
+        """
+        entered = threading.Event()
+        real = ipc._await_consumption
+
+        def spy(*args, **kwargs):
+            entered.set()
+            return real(*args, **kwargs)
+
+        self.enterContext(patch.object(ipc, "_await_consumption", spy))
+        return entered
+
+    def clearing_consumer(self, *, stream_s: float, reply: bytes = b"pong\r\n",
+                          answer_next: bool = True):
+        """The plugin at load: clear the pending command, print for a while, then
+        answer the next one.
+
+        `answer_next=False` is the plugin that cleared the earlier command and
+        then never came back for this one -- a channel this call has *watched*
+        being read, which is a different state from one nothing reads.
+
+        This is the shape `hs_wait_ready` after `hs_command(queue=true)` meets in
+        a real session -- the queued command runs at plugin load and its output
+        streams into `out.txt` for as long as it takes -- and it is the shape that
+        catches a send which spends this command's own wait on the earlier one's
+        settle: by the time `cmd.txt` is written the budget is gone, so the
+        refusal reports a timeout that never happened.
+
+        It waits for the send's *own* wait to start before taking the pending
+        file, because a consumer that wins that race removes the file before
+        `pending_before` is read -- and then the test measures a different shape
+        (a plugin that was merely busy) while looking like this one.
+        """
+        seen: list[bytes] = []
+        started = self.pending_wait_started()
+
+        def run():
+            deadline = time.monotonic() + 5.0
+            started.wait(5.0)
+            while time.monotonic() < deadline and not self.cmd.is_file():
+                time.sleep(0.01)
+            try:
+                seen.append(self.cmd.read_bytes())
+                os.remove(self.cmd)
+            except OSError:  # pragma: no cover - it went before we read it
+                return
+            # Still running the earlier command: out.txt grows the whole time,
+            # which is what the pre-write settle is waiting out.
+            until = time.monotonic() + stream_s
+            while time.monotonic() < until:
+                with open(self.out, "ab") as handle:
+                    handle.write(b"citrace: 1 instance\r\n")
+                time.sleep(0.02)
+            while answer_next and time.monotonic() < deadline:
+                if self.cmd.is_file():
+                    try:
+                        seen.append(self.cmd.read_bytes())
+                        os.remove(self.cmd)
+                    except OSError:  # pragma: no cover - lost a race, retry
+                        continue
+                    with open(self.out, "ab") as handle:
+                        handle.write(reply)
+                    return
+                time.sleep(0.01)
+
+        thread = threading.Thread(target=run, name="fake-bp-consumer", daemon=True)
+        self.addCleanup(thread.join, 6.0)
+        thread.start()
+        return seen
+
+    def interleaving_consumer(self):
+        """The plugin's read-then-delete order, with the race window held open.
+
+        The plugin reads the whole of `cmd.txt` and **then** deletes it, so
+        anything appended between those two steps is deleted unread while the
+        file still vanishes -- which a driver watching for the file to disappear
+        reads as "consumed", and then attributes the *previous* command's output
+        to this command.
+
+        This consumer reads on first sight, signals that it has read, then holds
+        the window open for up to a second waiting for the file to **grow**
+        before deleting it regardless. The returned `Event` lets a test
+        guarantee the read happens before `send` is called, so the race is
+        reproduced on every run rather than on most of them; the growth wait
+        stays well under the fixture's 3 s send timeout.
+        """
+        seen: list[bytes] = []
+        first_read = threading.Event()
+
+        def run():
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and not self.cmd.is_file():
+                time.sleep(0.01)
+            try:
+                seen.append(self.cmd.read_bytes())
+            except OSError:  # pragma: no cover - it went before we read it
+                return
+            first_read.set()
+            grew = len(seen[0])
+            window = time.monotonic() + 1.0
+            while time.monotonic() < window:
+                if self.cmd.is_file() and self.cmd.stat().st_size > grew:
+                    break
+                time.sleep(0.01)
+            try:
+                os.remove(self.cmd)
+            except OSError:  # pragma: no cover - already gone
+                pass
+            with open(self.out, "ab") as handle:
+                handle.write(b"prev reply\r\n")
+            while time.monotonic() < deadline:
+                if self.cmd.is_file():
+                    try:
+                        seen.append(self.cmd.read_bytes())
+                        os.remove(self.cmd)
+                    except OSError:  # pragma: no cover - lost a race, retry
+                        continue
+                    with open(self.out, "ab") as handle:
+                        handle.write(b"pong\r\n")
+                    return
+                time.sleep(0.01)
+
+        thread = threading.Thread(target=run, name="fake-bp-consumer", daemon=True)
+        self.addCleanup(thread.join, 6.0)
+        thread.start()
+        return seen, first_read
+
     def send(self, lines, **kwargs):
         kwargs.setdefault("gate", running_gate)
         kwargs.setdefault("timeout_s", 3.0)
@@ -212,6 +380,22 @@ class GateTests(IpcFixture):
         self.assertLess(time.monotonic() - started, 2.0,
                         "a queued command waited for a consumer that cannot exist")
 
+    def test_a_queued_command_still_appends_to_a_pending_file(self):
+        """Baseline: with the game closed nothing can be mid-read of `cmd.txt`,
+        so the pending-file wait must not reach this path -- a caller who asked
+        to queue must not be made to wait for a consumer that cannot exist, and
+        the command already in the file must still be there afterwards."""
+        self.cmd.write_bytes(b"density 2\r\n")
+        started = time.monotonic()
+        result = self.send(["ping"], gate=not_running_gate, queue=True)
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["queued"])
+        self.assertTrue(result["pending_before"])
+        self.assertTrue(result["pending_left"])
+        self.assertEqual(self.cmd.read_bytes(), b"density 2\r\nping\r\n")
+        self.assertLess(time.monotonic() - started, 2.0,
+                        "a queued command waited for a consumer that cannot exist")
+
     def test_an_unknown_state_refuses_even_with_queue(self):
         for queue in (False, True):
             result = self.send(["ping"], gate=unknown_gate, queue=queue)
@@ -251,15 +435,177 @@ class SendTests(IpcFixture):
         self.assertNotEqual(seen[0][:3], b"\xef\xbb\xbf")
         self.assertEqual(seen[0].decode("ascii"), "ping\r\nstat\r\n")
 
-    def test_a_pending_command_is_appended_to_rather_than_overwritten(self):
+    def test_a_pending_command_is_never_overwritten_or_lost(self):
+        """Baseline: both commands reach the plugin, exactly once each.
+
+        This is the invariant the old
+        `test_a_pending_command_is_appended_to_rather_than_overwritten` was
+        protecting, stated without encoding the append: what actually reached
+        the plugin is the concatenation of everything it read, and that must
+        start with the pending bytes and carry this send's bytes once. True
+        whether the pending file is appended to or waited out and replaced.
+        """
         self.cmd.write_bytes(b"density 2\r\n")
-        seen = self.consumer(b"ok\r\n")
+        seen = self.consuming_loop(b"ok\r\n", b"pong\r\n", after=0.2)
         result = self.send(["ping"])
+        self.assertTrue(result["ok"], result)
         self.assertTrue(result["pending_before"],
                         "a pending cmd.txt was not reported")
-        self.assertEqual(seen[0], b"density 2\r\nping\r\n",
-                         "the pending command was overwritten, not appended to")
         self.assertTrue(result["consumed"])
+        reached = b"".join(seen)
+        self.assertTrue(reached.startswith(b"density 2\r\n"),
+                        f"the pending command was lost: {reached!r}")
+        self.assertEqual(reached.count(b"ping\r\n"), 1,
+                         "this command reached the plugin the wrong number of "
+                         f"times: {reached!r}")
+
+    def test_a_pending_command_is_consumed_before_this_one_is_written(self):
+        """The race in finding #6, reproduced, then closed.
+
+        The plugin reads the whole file and *then* deletes it, so a line
+        appended in between is deleted unread while the file still vanishes --
+        `consumed: true`, and `out.txt`'s byte delta is the *earlier* command's
+        output reported as this one's reply. Nothing downstream can tell that
+        from a real answer, which is why a label on the success detail is not
+        enough: the pending command is waited out, `out.txt` is allowed to
+        settle, and this command is then written fresh into a file the plugin
+        cannot already have opened.
+        """
+        self.cmd.write_bytes(b"density 2\r\n")
+        seen, first_read = self.interleaving_consumer()
+        self.assertTrue(first_read.wait(5.0), "the consumer never read cmd.txt")
+        result = self.send(["ping"])
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["pending_before"])
+        # The reply first: a wrong one here is the bug's whole payload, and
+        # nothing downstream can tell it from a real answer.
+        self.assertNotIn("prev reply", result["reply"],
+                         "the earlier command's output was reported as this "
+                         "command's reply")
+        self.assertEqual(result["reply"], "pong\r\n")
+        self.assertEqual(seen[0], b"density 2\r\n",
+                         "this command was appended to a file the plugin had "
+                         "already read, so it was deleted unread")
+        self.assertEqual(seen[1:], [b"ping\r\n"])
+        self.assertIn("earlier command", result["detail"])
+        self.assertIn("consumed first", result["detail"])
+
+    def test_clearing_a_pending_command_does_not_spend_this_command_s_own_wait(self):
+        """The wait for someone else's command is not this command's budget.
+
+        Waiting a pending command out and letting `out.txt` settle takes as long
+        as the earlier command takes to print. When that time came out of the
+        same `deadline` as the wait for *this* command, the send wrote `cmd.txt`
+        with nothing left and refused `not_consumed` on its first poll -- a
+        timeout of ~0 s reported as the caller's `timeout_s`, and the refusal
+        then named two explanations ("never loaded", "a different copy") that
+        the same call had just disproved by watching the plugin consume the
+        earlier command on this very channel. `AGENTS.md` § "Prove the
+        Instrument Before Trusting a Negative Result": a negative produced by
+        this module's own budget accounting is not evidence about the game.
+        """
+        self.cmd.write_bytes(b"citrace collect\r\n")
+        seen = self.clearing_consumer(stream_s=0.6)
+        result = self.send(["ping"], timeout_s=0.3)
+        self.assertTrue(result["ok"],
+                        "clearing the earlier command spent this command's own "
+                        f"wait, so it was never really waited for: {result}")
+        self.assertEqual(result["reply"], "pong\r\n")
+        self.assertNotIn("citrace:", result["reply"],
+                         "the earlier command's output was counted into this "
+                         "command's reply, so out.txt was not settled first")
+        self.assertTrue(result["pending_before"])
+        self.assertEqual(seen, [b"citrace collect\r\n", b"ping\r\n"])
+
+    def test_a_channel_seen_consuming_an_earlier_command_is_not_reported_unobserved(self):
+        """A live channel that ignored *this* command is a different diagnosis.
+
+        The plugin consumed the pending command here, so "nothing is reading
+        this channel" is measurably false: the fix is not to go and compare
+        install paths, it is that this command's own wait expired while the
+        plugin was busy. Reporting the second-copy paragraph for this state is
+        the mislabelled negative `AGENTS.md` § "Check a Permission Where It Is
+        Used" (last bullet) warns about, with the control already fired.
+        """
+        self.cmd.write_bytes(b"citrace collect\r\n")
+        seen = self.clearing_consumer(stream_s=0.05, answer_next=False)
+        result = self.send(["ping"], timeout_s=0.3)
+        self.assertEqual(seen, [b"citrace collect\r\n"],
+                         "the fake plugin did not clear the earlier command, so "
+                         "this is not the state under test")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["reason"], "not_consumed")
+        detail = result["detail"]
+        self.assertIn("observed consuming an earlier command", detail)
+        self.assertNotIn("not observed", detail,
+                         "the plugin was watched consuming a command on this "
+                         "channel and the refusal still called it unobserved")
+        self.assertNotIn("different copy", detail,
+                         "a channel this call proved is being read was reported "
+                         "as possibly belonging to another copy of the game")
+        self.assertTrue(result["observed_consumption"])
+        self.assertTrue(result["pending_before"])
+        self.assertTrue(result["pending_left"])
+        self.assertEqual(result["wrote_bytes"], len(b"ping\r\n"))
+        self.assertEqual(self.cmd.read_bytes(), b"ping\r\n",
+                         "this command was not written fresh after the earlier "
+                         "one was consumed")
+
+    def test_a_pending_command_nobody_consumes_means_this_one_is_not_written(self):
+        """A pending file that never goes is the same "nothing is reading this
+        channel" state as an unconsumed send -- same token, and `wrote_bytes: 0`,
+        because writing after a timed-out wait is the `queue=true` behaviour the
+        caller did not ask for."""
+        self.cmd.write_bytes(b"density 2\r\n")
+        result = self.send(["ping"], timeout_s=0.3)
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["reason"], "not_consumed")
+        self.assertEqual(result["wrote_bytes"], 0)
+        self.assertEqual(self.cmd.read_bytes(), b"density 2\r\n",
+                         "this command was written into a file the plugin may "
+                         "already have read")
+        self.assertTrue(result["pending_before"])
+        self.assertTrue(result["pending_left"])
+        self.assertFalse(result["consumed"])
+        self.assertIn("not written", result["detail"])
+
+        # The same refusal when the wait is cut short instead of timing out --
+        # the shape `hs_wait_ready` hands in, which watches for the game going
+        # away. Still nothing written.
+        started = time.monotonic()
+        aborted = self.send(["ping"], timeout_s=30.0,
+                            abort=lambda: "the game process disappeared")
+        self.assertEqual(aborted["reason"], "not_consumed")
+        self.assertEqual(aborted["aborted"], "the game process disappeared")
+        self.assertEqual(aborted["wrote_bytes"], 0)
+        self.assertIn("not written", aborted["detail"])
+        self.assertEqual(self.cmd.read_bytes(), b"density 2\r\n")
+        self.assertLess(time.monotonic() - started, 5.0)
+
+    def test_an_unconsumed_command_names_the_second_copy_possibility(self):
+        """Nothing consuming `cmd.txt` is "not observed on this channel", not
+        "the plugin never read it".
+
+        The gate says `running` by image name; `bp_ipc\\` comes from the
+        configured executable. The plugin derives its own channel from its own
+        module path, so a second copy of the game running produces this exact
+        reading with the plugin fully loaded -- and the reader needs the
+        configured path to compare against `pids`.
+        """
+        result = self.send(["ping"], timeout_s=0.3)
+        self.assertEqual(result["reason"], "not_consumed")
+        detail = result["detail"]
+        self.assertIn("not observed", detail)
+        self.assertIn("different copy", detail)
+        self.assertIn(str(self.exe), detail,
+                      "the detail does not name the configured executable, so "
+                      "nothing can be compared with the running processes")
+        self.assertNotIn("plugin never read", detail,
+                         "a negative measured on one channel was reported as a "
+                         "conclusion about the plugin")
+        # The negative control for the test above: nothing was consumed here, so
+        # this is the one refusal where the second-copy paragraph belongs.
+        self.assertFalse(result["observed_consumption"])
 
     def test_the_reply_is_the_byte_delta_and_excludes_everything_earlier(self):
         self.out.write_bytes(b"==== BloodPact plugin loaded ==== v1.3.21\r\n"

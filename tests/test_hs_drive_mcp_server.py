@@ -54,16 +54,26 @@ EXPECTED_TOOLS = {
 #: else writes only files of its own.
 EXPECTED_DESTRUCTIVE = {"hs_saves_restore", "hs_stop_game"}
 
+#: `readOnlyHint` is the flag a client auto-approves on without prompting, so
+#: it is the one annotation a tool must not overstate. Nothing in this set may
+#: write anywhere but a temporary directory of its own -- which is why the
+#: plugin ping is not a self-check any more: it wrote into the live install's
+#: `bp_ipc\\cmd.txt`, and an unconsumed ping is left there for the game to run
+#: at its next start.
+EXPECTED_READ_ONLY = {"hs_status", "hs_selfcheck", "hs_saves_list",
+                      "hs_saves_inspect", "hs_ipc_tail"}
+
+#: Every registered check, in registry order. Asserted as a whole rather than
+#: by absence, so a check that writes into the live game directory cannot be
+#: registered again under a different name.
 EXPECTED_CHECKS = [
     "engine_import", "process_snapshot", "eac_service", "save_dir",
-    "backup_roundtrip", "screenshot_screen", "ipc_ping",
+    "backup_roundtrip", "screenshot_screen",
 ]
 
 #: `save_dir` is left out on purpose: it reports on whatever directory the
 #: environment points at, which is a fixture here, so it is asserted by name
-#: below rather than by its status. `ipc_ping` is left out because it needs the
-#: modded game to be running; it is asserted by the pairing of its status and
-#: its detail instead.
+#: below rather than by its status.
 MUST_PASS_ON_WINDOWS = ["engine_import", "process_snapshot", "eac_service",
                         "backup_roundtrip", "screenshot_screen"]
 
@@ -141,6 +151,18 @@ class StdioSurfaceTests(unittest.TestCase):
                 destructive.append(tool.name)
         self.assertEqual(set(destructive), EXPECTED_DESTRUCTIVE)
 
+    def test_the_read_only_tools_are_exactly_the_documented_five(self):
+        """Baseline: the read-only set, over the wire, as a client sees it.
+
+        `test_every_tool_carries_a_title_and_both_behaviour_hints` pins only the
+        destructive set, so nothing pinned the read-only claim -- which is how a
+        check that writes into the live game directory ended up behind
+        `readOnlyHint: true`.
+        """
+        read_only = {tool.name for tool in self.tools
+                     if tool.annotations.model_dump(by_alias=True)["readOnlyHint"]}
+        self.assertEqual(read_only, EXPECTED_READ_ONLY)
+
     def test_the_selfcheck_reports_every_instrument_by_name(self):
         self.assertFalse(self.selfcheck.is_error, self.selfcheck)
         payload = self.selfcheck.structured_content
@@ -156,19 +178,6 @@ class StdioSurfaceTests(unittest.TestCase):
         for name in MUST_PASS_ON_WINDOWS:
             self.assertEqual(rows[name]["status"], "pass",
                              f"{name}: {rows[name]['detail']}")
-
-    def test_the_plugin_ping_is_skipped_for_the_stated_reason_or_answers_pong(self):
-        """`ipc_ping` cannot be pinned to one status: it depends on whether the
-        game happens to be running. What can be pinned is that its status and
-        its detail agree -- "we did not look" says why, "we looked" says what
-        came back, and a `fail` is reported here rather than passed over."""
-        row = {r["name"]: r for r in self.selfcheck.structured_content["checks"]}["ipc_ping"]
-        if row["status"] == "skipped":
-            self.assertIn("not running", row["detail"])
-        elif row["status"] == "pass":
-            self.assertIn("pong", row["detail"].lower())
-        else:
-            self.fail(f"ipc_ping failed against a running game: {row['detail']}")
 
 
 @unittest.skipIf(SKIP_REASON is not None, SKIP_REASON or "")
@@ -260,6 +269,64 @@ class StatusCompositionTests(unittest.TestCase):
         self.assertFalse(report["bp_ipc_exists"])
 
 
+class SelfCheckSideEffectTests(unittest.TestCase):
+    """A read-only tool must be read-only against a *running* game too.
+
+    `hs_selfcheck` carries `readOnlyHint: true`, which is what a client uses to
+    auto-approve without prompting -- and a plugin-ping check registered here
+    appended a `ping` into the live install's `bp_ipc\\cmd.txt` and made the
+    running plugin execute it. An unconsumed one was deliberately left on disk,
+    so the game ran it at its *next* start: a delayed write, from a tool a
+    session was told to run first and would never be prompted about.
+
+    The whole **real** registry runs here, against a fixture install a patched
+    gate reports as running -- the one arrangement in which that write happened.
+    Like `SelfCheckSummaryTests` it needs neither Windows nor the MCP SDK: the
+    gate is patched and every path is a temporary directory.
+    """
+
+    def setUp(self):
+        from tools.hs_drive_mcp import launcher_bridge, procs
+        temp = tempfile.TemporaryDirectory(prefix="hs-drive-selfcheck-writes-")
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name).resolve()
+
+        self.exe = self.base / "game" / "bin" / "Hero_Siege.exe"
+        self.exe.parent.mkdir(parents=True)
+        self.exe.write_bytes(b"not a real PE, and nothing here reads it")
+        self.ipc_dir = self.exe.parent / "bp_ipc"
+        self.ipc_dir.mkdir()
+
+        live = self.base / "hs2saves"
+        live.mkdir()
+        (live / "herosiege1.hss").write_bytes(b"fixture character")
+
+        self.enterContext(patch.object(launcher_bridge, "read_config",
+                                       return_value={"game_exe": str(self.exe)}))
+        self.enterContext(patch.object(
+            procs, "gate",
+            lambda: ("running", "1 hero_siege.exe process(es) are live: [4242].")))
+        self.enterContext(patch.dict(os.environ, {
+            "HS_DRIVE_SAVE_DIR": str(live),
+            "HS_DRIVE_BACKUP_DIR": str(self.base / "save-backups")}))
+
+    def test_the_selfcheck_writes_nothing_into_bp_ipc_even_with_the_game_running(self):
+        from tools.hs_drive_mcp import checks
+        report = checks.run_checks()
+        self.assertTrue(report["ok"], report)
+        left = sorted(path.name for path in self.ipc_dir.iterdir())
+        self.assertEqual(left, [],
+                         f"hs_selfcheck wrote {left} into the live install's "
+                         "bp_ipc while annotated readOnlyHint=true")
+        # The whole registry, not the absence of one name: a check that writes
+        # into the live install must not come back under a different one.
+        self.assertEqual([name for name, _, _ in checks.registered()],
+                         EXPECTED_CHECKS,
+                         "the registry changed; hs_wait_ready is the one "
+                         "instrument for the plugin's ping, because it is the "
+                         "one annotated as writing something")
+
+
 class SelfCheckSummaryTests(unittest.TestCase):
     """`summary.healthy` must never be true on a run that proved nothing.
 
@@ -343,9 +410,9 @@ class SelfCheckSummaryTests(unittest.TestCase):
         self.assertEqual(checks.positive_controls(),
                          ["process_snapshot", "backup_roundtrip",
                           "screenshot_screen"])
-        self.assertNotIn("ipc_ping", checks.positive_controls(),
-                         "a check that needs the game running cannot be what "
-                         "`healthy` rests on: it is usually skipped")
+        self.assertTrue(set(checks.positive_controls()) <= set(EXPECTED_CHECKS),
+                        "a control that is not a registered check cannot have "
+                        "run, so `healthy` would rest on nothing")
 
 
 if __name__ == "__main__":

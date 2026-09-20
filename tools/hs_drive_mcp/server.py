@@ -232,14 +232,17 @@ def hs_launch(
         description="Total budget for the process and plugin wait.",
         ge=5, le=600)] = 90,
 ) -> dict[str, Any]:
-    """Launch, then report one of five readiness phases.
+    """Launch, then report one of six readiness phases.
 
-    `phase` is `plugin_ready` (driveable), `process_running` (up, but the plugin
-    did not answer or `bp_ipc\\` is absent), `timeout_waiting_for_plugin`,
+    `phase` is `plugin_ready` (driveable), `plugin_consumed_without_pong` (the
+    ping was read and not answered, so the positive control did not fire and no
+    reply from this channel can be trusted), `process_running` (up, but nobody
+    asked or `bp_ipc\\` is absent), `timeout_waiting_for_plugin`,
     `timeout_waiting_for_process` or `process_exited`. `ready` is the single
-    flag that says whether a command would be answered; `ok` only says the tool
-    ran. The game starts at its main menu: most gameplay commands act once a
-    character is loaded, which nothing here can do.
+    flag that says whether a command would be answered, and it is true only for
+    `plugin_ready`; `ok` only says the tool ran. The game starts at its main
+    menu: most gameplay commands act once a character is loaded, which nothing
+    here can do.
 
     Refusals: `engine_source_missing`, `engine_import_failed`,
     `forgepact_config_missing`, `mod_chain_incomplete`, `launcher_refused`,
@@ -254,8 +257,9 @@ def hs_launch(
     title="Wait until Hero Siege can be driven",
     description=(
         "Poll until a Hero Siege process exists and, unless asked otherwise, "
-        "until the BloodPact plugin consumes a ping. For a game a human "
-        "started. Sends one ping; starts nothing."),
+        "until the BloodPact plugin answers a ping with pong; a ping that is "
+        "consumed and not answered is reported, not treated as ready. For a "
+        "game a human started. Sends one ping; starts nothing."),
     annotations=_acts("Wait until Hero Siege can be driven", idempotent=True),
 )
 def hs_wait_ready(
@@ -319,7 +323,10 @@ def hs_command(
                     "[\"droprate 2\", \"stat\"]. ASCII only, no line breaks, "
                     "at most 64 lines and 4096 bytes.")],
     timeout_s: Annotated[int, Field(
-        description="How long to wait for the plugin to consume cmd.txt.",
+        description="How long to wait for the plugin to consume cmd.txt. A "
+                    "command already pending is waited out first and gets its "
+                    "own share of this, so a call can take longer; elapsed_s "
+                    "and pending_before report when it did.",
         ge=1, le=120)] = 10,
     queue: Annotated[bool, Field(
         description="With the game closed, leave the command in cmd.txt for "
@@ -329,7 +336,9 @@ def hs_command(
 
     The reply is a byte delta of `out.txt`, not its last lines: the plugin
     appends to that file continuously. `consumed` says whether the game read the
-    command at all.
+    command at all, and `observed_consumption` whether the plugin was watched
+    reading *anything* on this channel during the call -- which is what separates
+    a channel nothing reads from one that was busy running an earlier command.
 
     Refusals: `invalid_command`, `game_not_running`, `game_state_unknown`,
     `forgepact_config_missing`, `bp_ipc_missing`, `not_consumed`.

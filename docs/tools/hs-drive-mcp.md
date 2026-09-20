@@ -124,7 +124,7 @@ Twelve. One tool per action, `hs_` prefixed, with annotations on every one.
 | `hs_launch` | writes | `exe_path=null`, `wait_for_plugin=true`, `timeout_s` 5–600 = 90 | `phase`, `ready`, `plugin`, `plugin_reply`, `pid`, `pids`, `launch`, `exe_path`, `exe_path_override`, `launched_here`, `launch_message`, `elapsed_s` |
 | `hs_wait_ready` | writes (one ping) | `timeout_s` 5–600 = 90, `require_plugin=true` | the same readiness fields, without the launch ones |
 | `hs_stop_game` | **destructive** | `force=false`, `timeout_s` 1–300 = 30 | `exited`, `pids_closed`, `forced`, `terminated`, `windows_found`, `errors`, `game_state` |
-| `hs_command` | writes | `lines[]`, `timeout_s` 1–120 = 10, `queue=false` | `consumed`, `reply`, `reply_lines`, `queued`, `pending_before`, `pending_left`, `out_bytes_before`, `out_bytes_after`, `rotated`, `sent`, `wrote_bytes`, `aborted` |
+| `hs_command` | writes | `lines[]`, `timeout_s` 1–120 = 10, `queue=false` | `consumed`, `reply`, `reply_lines`, `queued`, `pending_before`, `pending_left`, `observed_consumption`, `out_bytes_before`, `out_bytes_after`, `rotated`, `sent`, `wrote_bytes`, `aborted` |
 | `hs_ipc_tail` | read-only | `lines` 1–500 = 40 | `exists`, `lines[]`, `bytes_total`, `requested`, `truncated`, `path` |
 | `hs_screenshot` | writes | `target` `game`\|`screen` = `game`, `method` `grab_bbox`\|`grab_window` = `grab_bbox`, `label` | `path`, `width`, `height`, `bbox`, `capture_method`, `hwnd`, `pid`, `flat`, `warning`, `bytes_written`, `transport_width`, `transport_height` — **plus** a JSON text block and a PNG image block |
 
@@ -183,7 +183,7 @@ Tokens this server can return today:
 | `game_not_running` | A tool that needs a live game did not find one. `hs_command` accepts `queue=true` to leave the command for the next start instead. |
 | `bp_ipc_missing` | `<game>\bin\bp_ipc\` does not exist. The plugin creates it at load, so the modded game has never run. |
 | `invalid_command` | Something about the call cannot be sent or done: non-ASCII, an embedded line break, over 64 lines, over 4096 bytes, or a `target`/`method` that is not one of the documented values. |
-| `not_consumed` | `cmd.txt` was still on disk when the timeout expired, so the plugin never read it. The command is deliberately **left** there; the plugin runs a pending file at its next start. `aborted` says so when the wait stopped early because the process disappeared. |
+| `not_consumed` | `cmd.txt` was still on disk when the wait expired. One token, three shapes, and the detail says which — because they have different fixes. (a) Nothing consumed anything: the plugin reading *this* channel is **not observed**, not absent (see "The command channel" for the second-copy case), `observed_consumption: false`. (b) A command was *already* pending when `hs_command` was called and never went away: `wrote_bytes: 0`, and the detail says this command was not written at all. (c) The pending command **was** consumed and this one then was not: `observed_consumption: true`, and the detail says the plugin was watched reading this channel and that this command's own wait is what expired — the second-copy paragraph is deliberately absent, because the same call disproved it. In every shape the file is deliberately **left** there; the plugin runs a pending file at its next start, and `aborted` says so when the wait stopped early because the process disappeared. |
 | `no_visible_window_for_pid` | The game is running but owns no visible top-level window — usually a window that has not appeared yet. |
 | `window_minimized` | The game's only visible window is minimized, so capturing its rectangle would photograph whatever is behind it. |
 | `not_launched_here` | `force=true` on a PID this server's own `hs_launch` did not start. Killing a process someone else started can lose whatever it had not written. |
@@ -253,22 +253,55 @@ caller:
   object remembers its own verdict, so the two are told apart by what happened
   rather than by matching the engine's wording.
 
-### Readiness is three answers, and they are never merged
+### Readiness is four answers, and they are never merged
 
 | `phase` | `ready` | What it means |
 | --- | --- | --- |
-| `plugin_ready` | true | A `ping` was consumed and answered. The game is driveable. |
+| `plugin_ready` | true | A `ping` was consumed **and answered** `pong`. The game is driveable. |
+| `plugin_consumed_without_pong` | false | The ping was consumed and the answer was not a `pong` — nothing, or something else. The plugin's positive control did not fire, so no reply from this channel can be trusted: an empty `hs_command` reply cannot be told apart from a command that did nothing. `plugin_reply` carries whatever was appended and the detail says how many bytes. |
 | `process_running` | true only with `require_plugin=false` | The process exists. With `plugin: "no_bp_ipc"` the channel is not there at all; with `plugin: "not_checked"` nobody asked. |
-| `timeout_waiting_for_plugin` | false | The process is up and nothing consumed `cmd.txt`: the plugin is not loaded. |
+| `timeout_waiting_for_plugin` | false | The process is up and the ping was not consumed. If nothing was consumed at all, the plugin reading *this* channel is **not observed** — see below for why that is not the same as "not installed". If the wait watched the plugin clear an *earlier* (queued) command first, the detail says that instead: the channel is read and the ping's own wait expired. |
 | `timeout_waiting_for_process` | false | No `hero_siege.exe` appeared. |
 | `process_exited` | false | It was there and went away; the detail carries the engine's own `launch_status()` message, which names a startup exit. |
 
-`ok` says the tool ran; `ready` says whether a command would be answered. A
-launch that ended at `timeout_waiting_for_plugin` is `ok: true, ready: false` —
-nothing was refused, and nothing is ready either. Reporting that as success is
-the "armed but blind" shape `AGENTS.md` § "Prove the Instrument Before Trusting a
-Negative Result" exists to catch, and the plugin's `ping`/`pong` is the positive
-control that separates the two.
+`ok` says the tool ran; `ready` says whether a command would be answered, and it
+is true only for `plugin_ready`. A launch that ended at
+`timeout_waiting_for_plugin` is `ok: true, ready: false` — nothing was refused,
+and nothing is ready either. Reporting that as success is the "armed but blind"
+shape `AGENTS.md` § "Prove the Instrument Before Trusting a Negative Result"
+exists to catch, and the plugin's `ping`/`pong` is the positive control that
+separates the two — which is exactly why a consumed ping that came back without
+a `pong` is **not** `ready`. That state used to report `plugin_ready, ready:
+true`, and the plugin's `Out()` writes failing is a recorded case (the panel
+holding `out.txt` open), so it is a state that really happens and really does
+make every later reply unreadable.
+
+The two `not_consumed` answers — this phase and `hs_command`'s refusal — say
+what was *observed*: nothing consumed `cmd.txt` at the named path within N s.
+They deliberately stop there rather than concluding the plugin is absent, and
+name both explanations, because the two halves of that inference come from
+different installs: the process gate matches by **image name**, while `bp_ipc\`
+is resolved from the **configured** executable, and ForgePact's plugin derives
+its own channel from its own module path so that each copy of the game gets a
+separate one. A second copy running — the documented two-instance co-op setup —
+produces this exact reading with the plugin fully loaded. The detail names the
+configured path so it can be compared with the `pids` in the same envelope.
+`AGENTS.md` § "Check a Permission Where It Is Used" (write a negative down as
+"not observed", not "does not happen").
+
+That paragraph is withheld when the same call **watched** the plugin take a
+command off this channel — `observed_consumption: true`, the state
+`hs_command(queue=true)` then `hs_wait_ready` produces, since the plugin runs the
+queued command at load. Both of its explanations are disproved by that
+observation, so repeating them would send the reader to compare install paths for
+a plugin that is demonstrably alive; what the envelope says instead is that the
+channel is being read and that this command's own wait expired, which has a
+different fix (the earlier command may still be running — read `out.txt` with
+`hs_ipc_tail`, or retry with a larger `timeout_s`). This is also why `timeout_s`
+is **split** between the two waits rather than spent first-come: a wait handed
+whatever the previous one left over can end up with ~0 s and then report the
+caller's `timeout_s` as though it had waited that long. The refusals report the
+wait that actually happened.
 
 The plugin wait hands `ipc.send` an `abort` callback that watches the process
 gate, because the longest wait here is for a plugin that is still loading and a
@@ -320,10 +353,36 @@ plugin at load. `hs_command` and `hs_ipc_tail` are the MCP counterparts of
 Two deliberate differences from `ipc.ps1`, both because a model rather than a
 person is driving:
 
-1. **A pending `cmd.txt` is appended to, not overwritten.** `ipc.ps1` overwrites
-   with a warning a person reads; nothing reads a warning here, and silently
-   dropping a command the caller believes was sent is the worse failure.
-   `pending_before: true` reports that it happened.
+1. **With the game running, a pending `cmd.txt` is waited out — never added to,
+   never overwritten.** `ipc.ps1` overwrites it with a warning a person reads;
+   nothing reads a warning here, and silently dropping a command the caller
+   believes was sent is the worse failure. But adding to it is worse still. The
+   plugin reads the whole file and *then* deletes it, so a line written in
+   between is deleted unread **while the file still vanishes** — and the file
+   vanishing is this server's only signal for "consumed", so the send would
+   report `consumed: true` and hand back the *earlier* command's `out.txt` delta
+   as this command's reply. Nothing downstream can tell that from a real answer,
+   which is why a warning on the reply was not enough: it would leave the wrong
+   reply in the envelope. So the pending command is waited out, `out.txt` is
+   allowed to settle, and this command is then written fresh into a file the
+   plugin cannot already have opened. `pending_before: true` reports that it
+   happened and the success `detail` says so; it costs about 0.6 s, and only
+   when something was pending. A pending file nothing ever consumes is
+   `not_consumed` with `wrote_bytes: 0` — writing after a timed-out wait would
+   be the `queue=true` behaviour the caller did not ask for. With the game
+   **closed** and `queue=true` it still appends, because nothing can be
+   mid-read of a file the game is not running to read.
+
+   That makes two waits in one call, so `timeout_s` is **split** between them
+   (half each, and this command's own wait is never shorter than its half)
+   rather than spent first-come. Clearing a queued `citrace collect` can take
+   seconds of `out.txt` settling; when that came out of the same deadline, the
+   command was written with the budget already gone and refused `not_consumed`
+   on the first poll — a wait of ~0 s reported as the caller's whole `timeout_s`,
+   with the "never loaded, or a different copy" pair attached to a channel the
+   same call had just watched the plugin read. `elapsed_s` and `pending_before`
+   report when a call made both waits, and the refusals quote the wait that
+   actually happened.
 2. **An unconsumed command is a refusal token**, `not_consumed`, with the
    timeout in the detail — and the file is left in place, because the plugin
    runs a pending file at its next start. That is also what `queue=true` is for:
@@ -336,7 +395,8 @@ A **player (release) plugin build** accepts only `kPlayerCommands` and answers
 anything else with `command unavailable in player build: <cmd>`, which arrives as
 the reply rather than as a refusal. A research build (`plugin_build\build.bat
 dev`) accepts far more. `ping` → `pong (YYTK a.b.c)` is the channel's positive
-control and what the `ipc_ping` self-check and the readiness probe both use.
+control, and `hs_wait_ready` is the one tool that runs it — see `hs_selfcheck`
+below for why that control does not also live in the self-check.
 
 `hs_ipc_tail` reports `exists: false` and **no `lines` key at all** when
 `out.txt` is absent. An empty list there would read as "the plugin answered
@@ -475,18 +535,30 @@ from a process snapshot that never worked.
 | `save_dir` | The live directory exists and holds ≥ 1 `herosiege*.hss` (count in `detail`) | never |
 | `backup_roundtrip` | A temp fixture backs up, is damaged, and restores byte-identical through the real `saves` functions | never |
 | `screenshot_screen` | A capture of the primary screen holds more than one distinct pixel value | non-Windows, or Pillow not importable |
-| `ipc_ping` | The running plugin consumes a `ping` and answers `pong` within 10 s | the game is not running (the detail says so) |
 
 A check whose code raised is `fail` with the exception name, never `skipped`.
 `skipped` always carries its reason in `detail`, because "we did not look" and
 "we looked and it broke" must not be confusable. `checks.py` is a registry, which
-is how `screenshot_screen` and `ipc_ping` were added with two `register()` calls
-and no change to any logic there.
+is how `screenshot_screen` was added with one `register()` call and no change to
+any logic there.
 
-`ipc_ping` is deliberately **not** a positive control: it can only run with the
-modded game up, and a check that is usually skipped cannot be what `healthy`
-rests on. When the game *is* running it is a real one, and a `fail` there means
-the game is running without the plugin loaded.
+**No check writes anywhere but a temporary directory of its own**, and the
+plugin's `ping`/`pong` control therefore lives in `hs_wait_ready` alone.
+`hs_selfcheck` is annotated `readOnlyHint: true` — the flag a client uses to
+auto-approve a tool without prompting — and it is the tool this server's own
+instructions say to run *first*, so it is the one most likely to run unattended.
+A plugin ping was briefly a check here, and it wrote a `ping` into the live
+install's `bp_ipc\cmd.txt` and made the running game execute it; an unconsumed
+one was left on disk, so the game ran it at its **next** start. That is a
+delayed write into the game directory from a tool nobody would be asked about.
+`check_backup_roundtrip` builds its own fixture tree for exactly this reason, so
+the principle already existed. `hs_wait_ready` sends the identical ping, is
+annotated honestly (`readOnlyHint: false`, "Sends one ping; starts nothing"),
+and returns a far richer envelope — including `plugin_consumed_without_pong`,
+the verdict the removed check was the only thing reporting correctly.
+`tests/test_hs_drive_mcp_server.py::SelfCheckSideEffectTests` pins it: the real
+registry runs against a fixture install a patched gate reports as **running**,
+and nothing may appear in that install's `bp_ipc\` afterwards.
 
 `summary.healthy` is **not** "nothing failed". It requires every check
 registered with `positive_control=True` — `process_snapshot`,
@@ -602,6 +674,17 @@ rather than by falling back to another launcher:
 | F4 | Capture in `windowed` — `hs_screenshot("game")` with both `capture_method`s | owner-run, display mode set from the game's own Options menu | **not yet run** — record which method returned a non-flat image, any `warning`, and the file path |
 | F4 | Capture in `borderless` — the same two calls | owner-run | **not yet run** — as above |
 | F4 | Capture in `exclusive_fullscreen` — the same two calls | owner-run | **not yet run** — if both are flat, the documented workaround (already in Known limitations) is to run the game windowed or borderless while driving it |
+| G1 | Baseline before the "report what it did" change, on its round base `28b4c5c` | `py -3 -m unittest discover -s tests` | `Ran 831 tests in 137.923s`, `OK (skipped=9)` — 2026-09-20 |
+| G2 | The red run: every target for findings 1, 2, 3 and 6 against the **unchanged** code, with every baseline still `ok` | the three suites below, before the implementation | `FAILED (failures=3)`, `(failures=3)` and `(failures=1)` — `'plugin_ready' != 'plugin_consumed_without_pong'`; `'not observed' not found in …` — the old detail concluded the plugin was absent instead of unobserved; `'prev reply' unexpectedly found in 'prev reply\r\n'` (the consumption race, reproduced deterministically); `6 != 0` for `wrote_bytes`; `Lists differ: ['cmd.txt'] != []` for the self-check's write into a fixture install's `bp_ipc\` — 2026-09-20 |
+| G3 | `ready` is the control firing: a consumed ping with no `pong` is `plugin_consumed_without_pong, ready: false`, for both `hs_launch` and `hs_wait_ready`, and an unconsumed one reports "not observed" naming both installs | `py -3 -m unittest tests.test_hs_drive_mcp_launch -v` | `OK`, 31 tests, no skips — 2026-09-20 |
+| G4 | A pending `cmd.txt` is waited out, `out.txt` settled, and this command written fresh; a pending one nobody consumes is `not_consumed` with `wrote_bytes: 0`; `queue=true` against a closed game still appends | `py -3 -m unittest tests.test_hs_drive_mcp_ipc -v` | `OK`, 31 tests, no skips — runs on CI too — 2026-09-20 |
+| G5 | `hs_selfcheck` is read-only against a *running* game, and the read-only set over the wire is exactly the documented five | `py -3 -m unittest tests.test_hs_drive_mcp_server -v` | `OK`, 18 tests, no skips — the whole real registry ran with the gate reporting `running` and left nothing in the fixture `bp_ipc\` — 2026-09-20 |
+| G6 | Whole root suite after the change | `py -3 -m unittest discover -s tests` | `Ran 838 tests`, `OK (skipped=9)` — the same nine pre-existing skips; the seven added here skip nowhere on this machine — 2026-09-20 |
+| H1 | The red run for the budget fix: a queued command cleared first must not leave the caller's own command 0 s, and a channel watched being read must not be reported unobserved | the three new tests against the pre-fix accounting | all three failed as intended — `False is not true : clearing the earlier command spent this command's own wait …` with `elapsed_s: 0.646` against `timeout_s=0.3`, `wrote_bytes: 6`; `'timeout_waiting_for_plugin' != 'plugin_ready'` for `hs_wait_ready` after a queued command; `'observed consuming an earlier command' not found in "… is not observed … a different copy …"` — 2026-09-20 |
+| H2 | `timeout_s` is split, so a `not_consumed` refusal always reports a wait that happened | `py -3 -m unittest tests.test_hs_drive_mcp_ipc -v` | `OK`, 33 tests, no skips — runs on CI too — 2026-09-20 |
+| H3 | `hs_wait_ready` after `hs_command(queue=true)` reaches `plugin_ready`, and a live channel that ignored the ping is not reported as a missing plugin | `py -3 -m unittest tests.test_hs_drive_mcp_launch -v` | `OK`, 33 tests, no skips — 2026-09-20 |
+| H4 | Negative control for H2/H3: the same tests with `ipc.PENDING_WAIT_SHARE` patched to `1.0`, which is exactly the pre-fix accounting | one-off script, `unittest` loader + `patch.object` | 2 of 3 failed, and the refusal then read "did not take this command within the **0.0 s** that were this command's own wait (of a 0.3 s budget)" — the tests measure the split, not something else — 2026-09-20 |
+| H5 | Whole root suite after the budget fix | `py -3 -m unittest discover -s tests` | `Ran 842 tests in 139.390s`, `OK (skipped=9)` — the same nine pre-existing skips; the four added here skip nowhere on this machine — 2026-09-20 |
 | C1 | `hs-drive` connects in a fresh session | `/mcp` in a new Claude Code session at the repo root | **pass**, owner-run 2026-09-20: listed as connected. The working-directory assumption holds — `args: ["-3", "-m", "tools.hs_drive_mcp"]` resolves as a namespace package from the repo root, so no absolute-path fallback and no `os.chdir` were needed. Note the session must *start* at the repo root: a session already running when this entry was added does not pick it up, and shows the server as absent rather than failed. |
 
 ## What is deliberately not here

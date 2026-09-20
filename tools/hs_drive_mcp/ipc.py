@@ -16,10 +16,27 @@ the plugin at load:
 same algorithm with two differences, each of which exists because a model rather
 than a person is driving:
 
-1. **It appends to a pending `cmd.txt` instead of overwriting it.** `ipc.ps1`
-   overwrites with a warning a person reads; nothing reads a warning here, and
-   silently dropping a command the caller believes was sent is the worse
-   failure. `pending_before` reports that it happened.
+1. **With the game running, a pending `cmd.txt` is waited out, never added to.**
+   `ipc.ps1` overwrites it with a warning a person reads; nothing reads a
+   warning here, and silently dropping a command the caller believes was sent is
+   the worse failure. But adding to it is worse still: the plugin reads the whole
+   file and *then* deletes it, so a line written in between is deleted unread
+   **while the file still vanishes** -- which is this module's only signal for
+   "consumed", so the send reports success and hands back the *earlier*
+   command's output as this command's reply. Nothing downstream can tell that
+   from a real answer. So the pending command is waited out, `out.txt` is allowed
+   to settle, and this command is then written fresh into a file the plugin
+   cannot already have opened; `pending_before` reports that it happened, and the
+   success `detail` says so. A pending file nothing consumes is the same
+   "nothing is reading this channel" state as an unconsumed send: the same
+   `not_consumed` token, with `wrote_bytes: 0`, because writing after a
+   timed-out wait is the `queue=True` behaviour the caller did not ask for.
+   With the game closed and `queue=True` it still appends, because nothing can
+   be mid-read of a file the game is not running to read. `timeout_s` is
+   **split** between the two waits rather than spent first-come (see
+   `PENDING_WAIT_SHARE`): a wait that inherits whatever is left of the budget
+   reports a timeout it never made, and says the channel is unread when this
+   same call had just watched the plugin read it.
 2. **A send that was never consumed is a refusal, not a printed message.**
    `not_consumed` with the timeout in the detail, and the command deliberately
    left on disk -- the plugin runs a pending file at its next start, which is
@@ -55,6 +72,21 @@ MAX_LINES = 64
 MAX_BYTES = 4096
 
 DEFAULT_TIMEOUT_S = 10.0
+
+#: A send that finds a command already pending has two waits to make -- the
+#: earlier command's and its own -- and `timeout_s` is split between them rather
+#: than spent first-come. Measured before this split existed: a pending command
+#: consumed at 0.1 s whose output then streamed into `out.txt` for 2 s left the
+#: caller's own command **zero** budget, so `_await_consumption` refused on its
+#: first pass and the envelope read `not_consumed`, "cmd.txt was still there
+#: after 1.0 s" (it had been there for ~0 s), and named the only two explanations
+#: this module knows for an unread channel -- both of which that same call had
+#: disproved by watching the plugin consume the earlier command. A negative
+#: produced by this module's own budget accounting is not evidence about the
+#: game: `AGENTS.md` § "Prove the Instrument Before Trusting a Negative Result".
+#: Half each, and the caller's own wait is never shorter than this share, so a
+#: `not_consumed` refusal always reports a wait that actually happened.
+PENDING_WAIT_SHARE = 0.5
 
 #: How often `cmd.txt`'s disappearance is checked. ForgePact's panel polls at
 #: 0.25 s; 0.1 s here costs nothing and makes a `ping` round trip feel prompt.
@@ -200,6 +232,39 @@ def _size(path: Path) -> int:
         return 0
 
 
+def _configured_exe(tool: str) -> str:
+    """The configured executable's path, for a refusal that has to name it.
+
+    A `not_consumed` refusal has to say *which* install it was talking to: the
+    gate matches by image name, while this channel came from the configured
+    path, and the two can be different copies of the game.
+    """
+    exe = launcher_bridge.resolve_exe(tool)
+    return "the configured executable" if results.is_refusal(exe) else str(exe)
+
+
+def _not_observed(cmd: Path, exe: str) -> str:
+    """Why nothing consuming `cmd.txt` is an observation, not a conclusion.
+
+    Shared by both refusal shapes so they cannot drift apart. The gate says the
+    game is running by *image name*; `bp_ipc\\` is resolved from the configured
+    executable; and ForgePact's plugin derives its own channel from its own
+    module path so that each copy of the game has a separate one. A second copy
+    running -- the documented two-instance setup -- therefore produces this exact
+    reading with the plugin fully loaded, which is why the text marks the plugin
+    reading *this* channel as not observed and names both explanations.
+    `AGENTS.md` § "Check a Permission Where It Is Used", last bullet.
+    """
+    return (f"Nothing consumed {cmd}, so the plugin reading this channel is "
+            "not observed -- which is not the same as absent. Either "
+            "BloodPactPlugin.dll was never loaded into the running process "
+            f"(mods\\aurie\\BloodPactPlugin.dll), or the running "
+            f"{procs.GAME_IMAGE} is a different copy from the configured "
+            f"{exe}, because the plugin derives its own {DIR_NAME} from its own "
+            "executable's location -- two copies, two channels. Compare that "
+            "path with the running processes.")
+
+
 def _read_from(path: Path, offset: int) -> str:
     """The bytes after `offset`, decoded leniently.
 
@@ -213,6 +278,47 @@ def _read_from(path: Path, offset: int) -> str:
             return handle.read().decode("utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def _await_consumption(cmd: Path, deadline: float,
+                       abort: Callable[[], str] | None) -> tuple[bool, str]:
+    """Poll until `cmd.txt` is gone: `(consumed, aborted)`.
+
+    Called twice per send when a command was already pending -- once to wait
+    that one out, once for ours -- so the two waits cannot drift apart in poll
+    interval or abort handling. Their **deadlines are deliberately separate**:
+    each is one wait with its own share of the budget, and a wait handed
+    whatever the previous one left over reports a timeout nobody waited out
+    (`PENDING_WAIT_SHARE`).
+    """
+    while True:
+        if not cmd.exists():
+            return True, ""
+        aborted = (abort() or "") if abort is not None else ""
+        if aborted:
+            return False, aborted
+        if time.monotonic() >= deadline:
+            return False, ""
+        time.sleep(CONSUME_POLL_S)
+
+
+def _settle(out: Path, until: float) -> int:
+    """Poll `out.txt`'s size until unchanged `SETTLE_POLLS` times; return it.
+
+    Used twice, for the same reason in both places: the plugin appends while a
+    command runs, so "the file stopped growing" is the only end-of-output signal
+    this channel offers. After our command it ends the reply; *before* our
+    command, when an earlier one was just consumed, it keeps that command's late
+    output from being counted into our byte delta.
+    """
+    stable = 0
+    last = -1
+    while stable < SETTLE_POLLS and time.monotonic() < until:
+        time.sleep(SETTLE_POLL_S)
+        now = _size(out)
+        stable = stable + 1 if now == last else 0
+        last = now
+    return _size(out)
 
 
 def send(lines: Sequence[str], *, timeout_s: float = DEFAULT_TIMEOUT_S,
@@ -253,13 +359,76 @@ def send(lines: Sequence[str], *, timeout_s: float = DEFAULT_TIMEOUT_S,
     cmd = directory / CMD_NAME
     out = directory / OUT_NAME
 
-    before = _size(out)
+    budget = max(0.0, float(timeout_s))
     pending_before = cmd.exists()
+    # Did this call watch the plugin take a command off this channel? The
+    # `not_consumed` refusals below are different diagnoses with different fixes,
+    # and this is the positive signal that tells them apart -- rather than a
+    # field one of them happens to carry, which is how a reader ends up inferring
+    # "the plugin is alive" from `wrote_bytes`.
+    observed_consumption = False
 
-    # Append, never overwrite: a pending cmd.txt is a command the game has not
-    # read yet, and dropping it is the one outcome the caller cannot see.
+    if state == procs.RUNNING and pending_before:
+        # The plugin reads the whole of cmd.txt and *then* deletes it, so a line
+        # appended in between is deleted unread while the file still vanishes --
+        # which reads back as `consumed: true` with the *earlier* command's
+        # output as this command's reply, and nothing downstream can tell that
+        # from a real answer. So wait the pending command out and write ours
+        # fresh into a file the plugin cannot already have opened. Only ever
+        # creating a file is what closes the window; a label saying "this reply
+        # may be wrong" would leave the wrong reply in the envelope.
+        gone, aborted = _await_consumption(
+            cmd, time.monotonic() + budget * PENDING_WAIT_SHARE, abort)
+        if not gone:
+            waited = round(time.monotonic() - started, 3)
+            stopped = (f"The wait stopped after {waited} s because {aborted}"
+                       if aborted else
+                       f"An earlier command was still in {cmd} after {waited} s, "
+                       f"the share of the {timeout_s} s budget this call spends "
+                       "on a command that was already there")
+            observed = _not_observed(cmd, _configured_exe(tool))
+            return results.refuse(
+                tool, "not_consumed",
+                f"{stopped}, and nothing consumed it. This command was not "
+                "written, because adding to a file the plugin may already "
+                "have read loses it unread and would report the earlier "
+                f"command's output as this command's reply. {observed} "
+                "The earlier command was left in place; the plugin runs a "
+                "pending file at its next start.",
+                sent=cleaned, wrote_bytes=0, consumed=False, queued=False,
+                pending_before=True, pending_left=True, aborted=aborted,
+                observed_consumption=False, ipc_dir=str(directory),
+                out_bytes_before=_size(out), elapsed_s=waited)
+        observed_consumption = True
+        # Let the earlier command's late output land before the offset is taken,
+        # so it is not counted into this command's reply. Bounded by the settle
+        # grace from here rather than out of this command's wait: how long
+        # someone else's command prints for is not this caller's budget, and
+        # taking it from there is what used to leave the wait below nothing.
+        _settle(out, time.monotonic() + SETTLE_GRACE_S)
+
+    # Computed *after* the pending file is gone and `out.txt` has settled, so
+    # this is a wait for this command with its own share of the budget rather
+    # than the remainder of someone else's. `timeout_s` therefore bounds each
+    # wait; `pending_before`, `elapsed_s` and the success `detail` report when a
+    # call spent two of them.
+    deadline = max(started + budget,
+                   time.monotonic() + budget * (1.0 - PENDING_WAIT_SHARE))
+    settle_deadline = deadline + SETTLE_GRACE_S
+    before = _size(out)
+
+    # With the game running nothing can be pending here -- the wait above saw it
+    # go -- so this only ever creates the file. With the game closed and
+    # queue=true it appends, because nothing is going to read that file until the
+    # game starts and dropping a command the caller believes was sent is the one
+    # outcome they cannot see.
     with open(cmd, "ab") as handle:
         handle.write(raw)
+
+    # What this command's own wait is, as the refusals below have to report it
+    # rather than the caller's `timeout_s`: the two differ whenever an earlier
+    # command had to be cleared first.
+    own_wait = round(max(0.0, deadline - time.monotonic()), 1)
 
     if state != procs.RUNNING:
         # Queued by definition: nothing is going to consume this until the game
@@ -267,70 +436,86 @@ def send(lines: Sequence[str], *, timeout_s: float = DEFAULT_TIMEOUT_S,
         return results.ok(
             tool, sent=cleaned, wrote_bytes=len(raw), queued=True,
             consumed=False, pending_before=pending_before, pending_left=True,
-            ipc_dir=str(directory), game_state=state, aborted="", detail=(
+            observed_consumption=False, ipc_dir=str(directory),
+            game_state=state, aborted="", detail=(
                 f"{why} The command was appended to {cmd} and the plugin will "
                 "run it at its next start."),
             elapsed_s=round(time.monotonic() - started, 3))
 
-    deadline = time.monotonic() + max(0.0, float(timeout_s))
-    consumed = False
-    aborted = ""
-    while True:
-        if not cmd.exists():
-            consumed = True
-            break
-        aborted = (abort() or "") if abort is not None else ""
-        if aborted:
-            break
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(CONSUME_POLL_S)
+    consumed, aborted = _await_consumption(cmd, deadline, abort)
 
     if not consumed:
         waited = round(time.monotonic() - started, 3)
         if aborted:
             return results.refuse(
                 tool, "not_consumed",
-                f"The wait stopped after {waited} s because {aborted}, so the "
-                f"plugin never read cmd.txt at {cmd}. It was left in place; the "
+                f"The wait stopped after {waited} s because {aborted}, so "
+                f"nothing consumed cmd.txt at {cmd}. It was left in place; the "
                 "plugin runs a pending file at its next start.",
                 sent=cleaned, wrote_bytes=len(raw), consumed=False, queued=False,
                 pending_before=pending_before, pending_left=True, aborted=aborted,
+                observed_consumption=observed_consumption,
                 ipc_dir=str(directory), out_bytes_before=before,
                 elapsed_s=waited)
+        if observed_consumption:
+            # The plugin was watched taking the earlier command off this very
+            # channel, in this call, so "nothing is reading it" is measurably
+            # false and the two explanations `_not_observed` names are both
+            # already disproved. A refusal that hands them back sends the reader
+            # to compare install paths for a plugin that is demonstrably alive;
+            # this state has a different fix, so it says something different.
+            return results.refuse(
+                tool, "not_consumed",
+                f"The plugin on this channel was observed consuming an earlier "
+                f"command from {cmd} during this call, and then did not take "
+                f"this command within the {own_wait} s that were this command's "
+                f"own wait (of a {timeout_s} s budget). So the channel is being "
+                "read and it is this command's wait that expired -- not the same "
+                "state as a channel nothing reads, and not the same fix: the "
+                "plugin polls between commands, so the earlier one may still be "
+                "running. Read out.txt with hs_ipc_tail to see what it is doing, "
+                "or retry with a larger timeout_s. The command was left in "
+                "place; the plugin runs a pending file at its next start.",
+                sent=cleaned, wrote_bytes=len(raw), consumed=False, queued=False,
+                pending_before=pending_before, pending_left=True, aborted="",
+                observed_consumption=True, ipc_dir=str(directory),
+                out_bytes_before=before,
+                elapsed_s=round(time.monotonic() - started, 3))
         return results.refuse(
             tool, "not_consumed",
-            f"cmd.txt at {cmd} was still there after {timeout_s} s, so the "
-            "plugin never read it. Is Hero_Siege.exe running with "
-            "BloodPactPlugin.dll loaded (mods\\aurie\\BloodPactPlugin.dll)? "
-            "The command was left in place; the plugin runs a pending file at "
-            "its next start.",
+            f"cmd.txt was still there after {own_wait} s. "
+            f"{_not_observed(cmd, _configured_exe(tool))} The command was left "
+            "in place; the plugin runs a pending file at its next start.",
             sent=cleaned, wrote_bytes=len(raw), consumed=False, queued=False,
             pending_before=pending_before, pending_left=True, aborted="",
-            ipc_dir=str(directory), out_bytes_before=before,
+            observed_consumption=False, ipc_dir=str(directory),
+            out_bytes_before=before,
             elapsed_s=round(time.monotonic() - started, 3))
 
     # The plugin appends while the command runs, so the reply is complete only
     # once out.txt has stopped growing.
-    settle_deadline = deadline + SETTLE_GRACE_S
-    stable = 0
-    last = -1
-    while stable < SETTLE_POLLS and time.monotonic() < settle_deadline:
-        time.sleep(SETTLE_POLL_S)
-        now = _size(out)
-        stable = stable + 1 if now == last else 0
-        last = now
-
-    after = _size(out)
+    after = _settle(out, settle_deadline)
     rotated = after < before
     reply = _read_from(out, 0 if rotated else before)
+    extra: dict[str, Any] = {}
+    if pending_before:
+        # The only success path that carries a detail: the caller cannot
+        # otherwise tell that the ~0.6 s this took was a queued command being
+        # cleared, nor that the reply below was measured after it.
+        extra["detail"] = (
+            "An earlier command was pending; it was consumed first and out.txt "
+            "was allowed to settle before this command was written, so the "
+            "reply is this command's own output and not the earlier one's. "
+            f"That is why elapsed_s is longer than the {own_wait} s this "
+            "command's own wait was given.")
     return results.ok(
         tool, sent=cleaned, wrote_bytes=len(raw), consumed=True, queued=False,
         reply=reply, reply_lines=reply.splitlines(), aborted="",
         pending_before=pending_before, pending_left=cmd.exists(),
+        observed_consumption=True,
         ipc_dir=str(directory), out_bytes_before=before, out_bytes_after=after,
         rotated=rotated, game_state=state,
-        elapsed_s=round(time.monotonic() - started, 3))
+        elapsed_s=round(time.monotonic() - started, 3), **extra)
 
 
 def tail(n: int = 40, tool: str = "hs_ipc_tail") -> dict[str, Any]:
