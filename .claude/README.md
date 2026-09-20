@@ -627,6 +627,7 @@ absent — as it is in a worktree with the ForgePact submodule uninitialized.
 | Server | For |
 |---|---|
 | `tauri-hub` | driving a running debug hub through its bridge on `127.0.0.1:9223` |
+| `hs-drive` | reporting whether Hero Siege is running, and backing up / restoring `hs2saves\` — a local stdio server in `tools/hs_drive_mcp/` |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
 | `github` | releases, dispatches and pointer PRs across the eleven repositories |
 
@@ -643,6 +644,16 @@ it. Start the hub with `npm start` in `hub/` (which passes `--features mcp-bridg
 `tauri-hub` to connect. `AGENTS.md` § "Drive a Tauri App Yourself Instead of
 Asking Someone to Click It" has the rest, including the window label (`hub`, not
 the `main` every tool defaults to).
+
+`hs-drive` is the one entry that is not an installed package: it starts
+`py -3 -m tools.hs_drive_mcp` from this repository, so it needs
+`py -3 -m pip install -r tools/hs_drive_mcp/requirements.txt` once, and it
+assumes Claude Code starts a project-scoped stdio server with the project root
+as its working directory. Its save tools refuse — with a named reason — unless
+the game is provably not running, and nothing in it ever deletes a file.
+[`docs/tools/hs-drive-mcp.md`](../docs/tools/hs-drive-mcp.md) has the tool
+surface, the refusal vocabulary and the sharp edges, including why the server's
+process must keep the real `LOCALAPPDATA`.
 
 `github` does **not** authenticate interactively. Claude Code tries OAuth
 dynamic client registration, that endpoint does not support it, and the session
@@ -697,7 +708,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Six suites cover this page's tooling. Five are Python and run automatically
+Ten suites cover this page's tooling. Nine are Python and run automatically
 under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
@@ -709,8 +720,18 @@ py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py + ensure_subm
 py -3 -m unittest tests.test_claude_workorder_section -v  # section.py, plus the sentences in agents/ and SKILL.md that carry the same lesson
 py -3 -m unittest tests.test_workorder_audit -v   # workorder_audit.py's rules, each with a failing fixture and a passing control
 py -3 -m unittest tests.test_source_index -v      # source_index.py against a synthetic fixture, plus a real-ModuleMain.cpp smoke test
+py -3 -m unittest tests.test_hs_drive_mcp_server -v            # the hs-drive tool surface, over a real stdio session
+py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v     # ENGINE_SYMBOLS still resolve, and importing the engine starts nothing
+py -3 -m unittest tests.test_hs_drive_mcp_saves -v             # the fail-closed save backup/restore contract
+py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
+
+The server and engine-bridge suites skip with a named reason off Windows, or
+when `mcp`/`Pillow` or the `ForgePact` submodule is absent, and the release
+boundary one skips its submodule check the same way — which is how all four
+stay green on CI's `ubuntu-latest` runner, where none of those is present. The
+saves suite needs none of them: it runs everywhere, against fixtures.
 
 **`.claude/workflows/*.js` and `*.mjs` must stay LF.** `.gitattributes` forces
 `text eol=lf` on both globs: the Workflow tool's permission handler refuses to

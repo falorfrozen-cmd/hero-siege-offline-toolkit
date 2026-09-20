@@ -127,6 +127,13 @@ It is behind `#[cfg(debug_assertions)]` and a release build never starts one —
 it can invoke any command the app has. The window label is `hub`, not `main`;
 [`docs/hub/design.md`](docs/hub/design.md) has the rest of the sharp edges.
 
+A second, unrelated MCP server, `hs-drive`, sits beside it in `.mcp.json`. It
+is a local stdio server in `tools/hs_drive_mcp/` that reports whether Hero
+Siege is running and backs up or restores the save directory, refusing with a
+named reason unless the game is provably closed — see
+[`docs/tools/hs-drive-mcp.md`](docs/tools/hs-drive-mcp.md). Nothing about it
+ships to a player.
+
 | | |
 | --- | --- |
 | Source, and how to work on it | [`hub/`](hub) · [`hub/instructions.md`](hub/instructions.md) |
