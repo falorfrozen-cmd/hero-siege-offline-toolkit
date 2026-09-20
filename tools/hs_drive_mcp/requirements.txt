@@ -1,0 +1,9 @@
+# hs-drive MCP server (developer tooling; nothing here ships to a player).
+#
+# mcp 2.x is not mcp 1.x: the server class is MCPServer, not FastMCP, and
+# `from mcp.server.fastmcp import FastMCP` raises ModuleNotFoundError here by
+# design. The wheel also carries the stdio test client the root suite uses.
+mcp==2.2.0
+# Unused by this workorder. Pinned now so the follow-on screenshot tooling in
+# hs-drive-mcp-game adds no dependency to an already-verified install.
+Pillow==12.1.0
