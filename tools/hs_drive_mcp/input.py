@@ -58,11 +58,19 @@ registering.
 
 What this module deliberately does **not** do:
 
-* No `AttachThreadInput` dance to force the foreground. Windows' foreground
-  lock exists for the user's benefit, one `SetForegroundWindow` attempt is
-  already generous for a tool, and a second route to stealing focus is the kind
-  of thing that is convenient once and unwelcome forever. If the attempt does
-  not take, the answer is `foreground_not_game` and a human alt-tabs.
+* No forceful focus grab **by default, and never for `hs_input`.** Windows'
+  foreground lock exists for the user's benefit, and stealing it is the kind
+  of thing that is convenient once and unwelcome forever -- so `hs_input`
+  never asks for more than the one `SetForegroundWindow` attempt below. Only
+  the caller named in `force_focus`'s own doc (`hs_select_character`, a
+  scripted flow started right after `hs_launch`) may opt in to the bounded
+  escalation chain: `AttachThreadInput` to the foreground thread's input
+  state, then one zero-effect `SendInput` unlock record, each followed by a
+  re-read of the foreground before the next is tried. It sends no key,
+  button or movement to whatever window was in front; the one input event it
+  can produce there is the zero mouse record, and even that is only reached
+  if the attach step did not already give the game focus. If every step
+  fails, the answer is still `foreground_not_game`.
 * No key-state writes, no hooks, no suspension of anything. Every event this
   module produces is one a keyboard or a mouse could have produced.
 """
@@ -79,6 +87,31 @@ TOOL = "hs_input"
 ROUTE_SEND_INPUT = "send_input"
 ROUTE_POST_MESSAGE = "post_message"
 ROUTES = (ROUTE_SEND_INPUT, ROUTE_POST_MESSAGE)
+
+#: `focus_via` step names, in escalation order (owner decision "Let the tool
+#: force focus", 2026-09-21). `FOCUS_SET_FOREGROUND` is unchanged from before
+#: this workorder and runs whether or not `force_focus` is set; the other two
+#: run only when `force_focus` is true and the previous step did not take.
+#: See the module docstring for what each one does.
+FOCUS_SET_FOREGROUND = "set_foreground"
+FOCUS_ATTACH_THREAD_INPUT = "attach_thread_input"
+FOCUS_INPUT_UNLOCK = "input_unlock"
+FOCUS_STEPS = (FOCUS_SET_FOREGROUND, FOCUS_ATTACH_THREAD_INPUT,
+              FOCUS_INPUT_UNLOCK)
+
+#: `focus_via` values outside the step chain: the game was already in front
+#: (no step needed), or no step was ever relevant (`post_message`, or
+#: `require_foreground=False`, which still means never take focus).
+FOCUS_ALREADY_FOREGROUND = "already_foreground"
+FOCUS_NOT_REQUIRED = "not_required"
+
+#: How the foreground is re-read after each step, since `SetForegroundWindow`
+#: can return before the switch is visible: a short, bounded settle rather
+#: than one immediate read. Three reads 50 ms apart is 150 ms per step, so
+#: all three steps together stay well under the 1 s the mechanism doc caps
+#: the whole chain at.
+FOCUS_SETTLE_READS = 3
+FOCUS_SETTLE_INTERVAL_S = 0.05
 
 ACTION_TYPES = ("key", "key_down", "key_up", "click", "move", "wait")
 BUTTONS = ("left", "right")
@@ -233,6 +266,10 @@ def user32() -> Any:
     return ctypes.WinDLL("user32", use_last_error=True)
 
 
+def kernel32() -> Any:
+    return ctypes.WinDLL("kernel32", use_last_error=True)
+
+
 def _handle(hwnd: Any) -> ctypes.c_void_p:
     """An HWND as a pointer-sized argument, never a 32-bit `int`."""
     return ctypes.c_void_p(int(hwnd))
@@ -273,6 +310,36 @@ def _get_foreground_window() -> int:
 
 def _set_foreground_window(hwnd: int) -> bool:
     return bool(user32().SetForegroundWindow(_handle(hwnd)))
+
+
+def _get_window_thread_id(hwnd: int) -> int:
+    """The thread that owns `hwnd`, or 0. The process id out-parameter is
+    not needed here, so it is passed as null."""
+    return int(user32().GetWindowThreadProcessId(_handle(hwnd), None))
+
+
+def _get_current_thread_id() -> int:
+    return int(kernel32().GetCurrentThreadId())
+
+
+def _attach_thread_input(this_id: int, other_id: int, attach: bool) -> bool:
+    """Share (or stop sharing) input state between two threads. See the
+    module docstring's escalation section for why this makes the foreground
+    lock treat `this_id` as part of `other_id`'s input queue."""
+    return bool(user32().AttachThreadInput(
+        ctypes.c_ulong(int(this_id)), ctypes.c_ulong(int(other_id)),
+        ctypes.c_int(1 if attach else 0)))
+
+
+def _send_focus_unlock() -> int:
+    """One zero-effect mouse record -- no move, no button, no wheel -- sent
+    through its own entry rather than `SendInput`'s, so a test (and a reader
+    of a captured trace) can tell it apart from a real click's records. It is
+    the one input event this module ever sends to a window that is not the
+    game, and it relies only on the documented "received the last input
+    event" foreground condition."""
+    array = (INPUT * 1)(mouse_record(0))
+    return int(user32().SendInput(1, array, ctypes.sizeof(INPUT)))
 
 
 def _client_to_screen(hwnd: int, x: int, y: int) -> tuple[int, int] | None:
@@ -323,6 +390,10 @@ WIN32: dict[str, Callable[..., Any]] = {
     "GetSystemMetrics": _get_system_metrics,
     "MapVirtualKeyW": _map_virtual_key,
     "GetDpiForWindow": _get_dpi_for_window,
+    "GetWindowThreadProcessId": _get_window_thread_id,
+    "GetCurrentThreadId": _get_current_thread_id,
+    "AttachThreadInput": _attach_thread_input,
+    "SendFocusUnlock": _send_focus_unlock,
     "sleep": time.sleep,
 }
 
@@ -484,11 +555,94 @@ def _absolute(point: list[int], virtual: list[int]) -> tuple[int, int]:
     return ((point[0] - vx) * 65535 // vcx, (point[1] - vy) * 65535 // vcy)
 
 
+def _raise_foreground(hwnd: int,
+                      force_focus: bool) -> tuple[str | None, list[dict[str, Any]]]:
+    """Bring `hwnd` to the foreground, escalating through `FOCUS_STEPS` only
+    as far as `force_focus` allows. Returns the step that took (or `None` if
+    every step tried still left some other window in front) and the trail of
+    attempts: one `{"step", "foreground_after"}` per step actually tried,
+    plus a `skipped` reason for `attach_thread_input` when it could not be
+    attempted at all. `set_foreground` always runs, whether or not
+    `force_focus` is set -- see the module docstring.
+    """
+    attempts: list[dict[str, Any]] = []
+
+    def settle(step: str) -> bool:
+        """Re-read the foreground, bounded, after `step`. `SetForegroundWindow`
+        can return before the switch is visible, so one read is not trusted."""
+        raised = WIN32["GetForegroundWindow"]()
+        for _ in range(FOCUS_SETTLE_READS):
+            if raised == hwnd:
+                break
+            WIN32["sleep"](FOCUS_SETTLE_INTERVAL_S)
+            raised = WIN32["GetForegroundWindow"]()
+        attempts.append({"step": step, "foreground_after": raised})
+        return raised == hwnd
+
+    WIN32["SetForegroundWindow"](hwnd)
+    if settle(FOCUS_SET_FOREGROUND):
+        return FOCUS_SET_FOREGROUND, attempts
+    if not force_focus:
+        return None, attempts
+
+    # `attach_thread_input`: share input state with whatever thread owns the
+    # foreground, so the lock treats this thread as part of its input queue.
+    # Skip it, and say why, when there is nothing sane to attach to.
+    foreground_hwnd = WIN32["GetForegroundWindow"]()
+    this_id = WIN32["GetCurrentThreadId"]()
+    other_id = (WIN32["GetWindowThreadProcessId"](foreground_hwnd)
+               if foreground_hwnd else 0)
+    if foreground_hwnd == 0:
+        attempts.append({"step": FOCUS_ATTACH_THREAD_INPUT,
+                         "foreground_after": foreground_hwnd,
+                         "skipped": "no foreground window"})
+    elif other_id == 0:
+        attempts.append({"step": FOCUS_ATTACH_THREAD_INPUT,
+                         "foreground_after": foreground_hwnd,
+                         "skipped": "GetWindowThreadProcessId read 0 for the "
+                                   "foreground window"})
+    elif other_id == this_id:
+        attempts.append({"step": FOCUS_ATTACH_THREAD_INPUT,
+                         "foreground_after": foreground_hwnd,
+                         "skipped": "the foreground window already belongs "
+                                   "to this thread"})
+    elif not WIN32["AttachThreadInput"](this_id, other_id, True):
+        attempts.append({"step": FOCUS_ATTACH_THREAD_INPUT,
+                         "foreground_after": foreground_hwnd,
+                         "skipped": "AttachThreadInput returned FALSE"})
+    else:
+        # Only what actually attached is detached, and only in `finally`, so
+        # an exception here still leaves the shared input state torn down.
+        try:
+            WIN32["SetForegroundWindow"](hwnd)
+            attached_ok = settle(FOCUS_ATTACH_THREAD_INPUT)
+        finally:
+            WIN32["AttachThreadInput"](this_id, other_id, False)
+        if attached_ok:
+            return FOCUS_ATTACH_THREAD_INPUT, attempts
+
+    # `input_unlock`: one zero-effect SendInput record, relying on the
+    # documented "received the last input event" foreground condition. The
+    # one input event this module ever sends to another window; it carries
+    # no key, button or movement.
+    WIN32["SendFocusUnlock"]()
+    WIN32["SetForegroundWindow"](hwnd)
+    if settle(FOCUS_INPUT_UNLOCK):
+        return FOCUS_INPUT_UNLOCK, attempts
+    return None, attempts
+
+
 def inject(actions: Any, *, route: str = ROUTE_SEND_INPUT,
            require_foreground: bool = True,
+           force_focus: bool = False,
            gate: Callable[[], tuple[str, str]] | None = None,
            tool: str = TOOL) -> dict[str, Any]:
     """Send `actions` to the game window and report exactly what was sent.
+
+    `force_focus` opts a caller in to the bounded `FOCUS_STEPS` escalation
+    when the plain `SetForegroundWindow` attempt does not take; `hs_input`
+    never sets it (see the module docstring). Every result names the step
+    that gave the game focus in `focus_via`.
 
     Refusals: `invalid_input`, `game_not_running`, `game_state_unknown`,
     `engine_source_missing`, `engine_import_failed`,
@@ -548,23 +702,42 @@ def inject(actions: Any, *, route: str = ROUTE_SEND_INPUT,
     foreground_before = WIN32["GetForegroundWindow"]()
     report["foreground_before"] = foreground_before
 
-    if route == ROUTE_SEND_INPUT and foreground_before != hwnd:
-        if require_foreground:
-            # One attempt, then the answer stands. See the module docstring for
-            # why there is no second, more forceful route.
-            WIN32["SetForegroundWindow"](hwnd)
-        raised = WIN32["GetForegroundWindow"]()
-        if raised != hwnd:
-            return results.refuse(
-                tool, "foreground_not_game",
+    focus_via: str | None = FOCUS_NOT_REQUIRED
+    focus_attempts: list[dict[str, Any]] = []
+
+    if route == ROUTE_SEND_INPUT:
+        if foreground_before == hwnd:
+            focus_via = FOCUS_ALREADY_FOREGROUND
+        elif not require_foreground:
+            focus_via = None
+        else:
+            focus_via, focus_attempts = _raise_foreground(hwnd, force_focus)
+
+        if focus_via is None:
+            if focus_attempts:
+                raised = focus_attempts[-1]["foreground_after"]
+                tried = ", ".join(entry["step"] for entry in focus_attempts)
+                attempted = (
+                    "; one SetForegroundWindow attempt did not take. "
+                    if tried == FOCUS_SET_FOREGROUND else
+                    f"; steps tried: {tried}; none of them took. ")
+            else:
+                raised = foreground_before
+                attempted = ("; require_foreground=false, so no attempt was "
+                            "made to raise it. ")
+            detail = (
                 f"the foreground window is {raised}, not the game's {hwnd}"
-                + ("; one SetForegroundWindow attempt did not take. "
-                   if require_foreground
-                   else "; require_foreground=false, so no attempt was made "
-                        "to raise it. ")
+                + attempted
                 + "SendInput goes to whatever is in front, so nothing was "
-                  "sent. Click the game, or use route=\"post_message\".",
-                **report, foreground_after=raised, actions_done=0,
+                  "sent.")
+            if tool == TOOL:
+                detail += ' Click the game, or use route="post_message".'
+            else:
+                detail += " Click the game, or call again once it is in front."
+            return results.refuse(
+                tool, "foreground_not_game", detail,
+                **report, foreground_after=raised, focus_via=None,
+                focus_attempts=focus_attempts, actions_done=0,
                 actions_total=len(plan), records_sent=0, records_rejected=0,
                 complete=False,
                 elapsed_s=round(time.monotonic() - started, 3))
@@ -637,7 +810,8 @@ def inject(actions: Any, *, route: str = ROUTE_SEND_INPUT,
         detail += (f" {api} rejected {rejected} of {sent} {noun}(s); the "
                    "events that carried them did not reach the game.")
     return results.ok(
-        tool, **report, foreground_after=foreground_after, actions_done=done,
+        tool, **report, foreground_after=foreground_after, focus_via=focus_via,
+        actions_done=done,
         actions_total=len(plan), records_sent=sent, records_rejected=rejected,
         complete=not lost and not rejected,
         elapsed_s=round(time.monotonic() - started, 3), detail=detail)

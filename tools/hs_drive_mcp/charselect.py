@@ -37,10 +37,14 @@ click hold and the `send_input` route still come from the research doc
 
 Only `ping`, `orbpickup stat`, `orbpickup 1`, `orbpickup 0` and `menulayout`
 are ever sent over IPC, and every click goes through
-`input.inject(..., route="send_input")`
--- the same instrument `hs_input` is, with the same foreground and window
-checks. `saves` is never touched. Nothing here suspends the game; every event
-is one a mouse and the IPC channel could already send.
+`input.inject(..., route="send_input", force_focus=True)`
+-- the same instrument `hs_input` is, with the same window checks, but with
+the foreground permission escalated through `input.FOCUS_STEPS` when the
+plain `SetForegroundWindow` attempt does not take (owner decision "Let the
+tool force focus", 2026-09-21; `hs_input` itself is unchanged and never opts
+in). Which step took is recorded per click, in click order, as `focus_trail`.
+`saves` is never touched. Nothing here suspends the game; every event is one
+a mouse and the IPC channel could already send.
 """
 from __future__ import annotations
 
@@ -222,6 +226,7 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
     actions_sent = 0
     proof_trail: list[list[str]] = []
     layout_trail: list[dict[str, Any]] = []
+    focus_trail: list[dict[str, str]] = []
     screenshots: list[str] = []
     last_listing: list[str] = []
 
@@ -235,6 +240,7 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
             orbpickup_state = "restored_off"
         common = dict(phase=phase, proof_trail=list(proof_trail),
                      layout_trail=list(layout_trail),
+                     focus_trail=list(focus_trail),
                      screenshots=list(screenshots), orbpickup=orbpickup_state,
                      actions_sent=actions_sent,
                      elapsed_s=round(time.monotonic() - started, 3))
@@ -327,16 +333,20 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
 
     def click(screen: str, row: layout.Row) -> dict[str, str] | None:
         """One held click at `row`'s `win` point, verbatim -- no arithmetic.
-        `None` when it landed; a refusal dict when `inject` refused."""
+        `None` when it landed; a refusal dict when `inject` refused.
+        `force_focus=True` on every call -- see the module docstring for why
+        this tool, and not `hs_input`, is the one that escalates."""
         nonlocal actions_sent
         x, y = row.win
         result = input_module.inject(
             [{"type": "click", "x": x, "y": y, "hold_ms": CLICK_HOLD_MS}],
-            route="send_input", tool=tool)
+            route="send_input", force_focus=True, tool=tool)
         if results.is_refusal(result):
             return {"reason": result["reason"], "detail": result["detail"]}
         actions_sent += 1
         layout_trail.append({"screen": screen, **row.summary()})
+        focus_trail.append({"screen": screen,
+                            "focus_via": result.get("focus_via")})
         return None
 
     def shoot(label: str) -> None:

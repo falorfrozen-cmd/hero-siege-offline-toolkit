@@ -509,10 +509,15 @@ def hs_select_character(
     the last one read, on `timeout`); `proof_trail` is every screen's own
     reply, in the order main_menu, local, slot, play. `layout_trail` is the
     `menulayout` row each click used (`screen`, `obj`, `id`, `win`, `text`);
-    every click's point is that row's `win`, verbatim. `orbpickup` is
-    `restored_off` or `left_on`, whichever the pre-arm read decided --
-    this tool arms `orbpickup` itself to get the proof and restores it only
-    if its own pre-arm read showed the mod was off before it started.
+    every click's point is that row's `win`, verbatim. Before each click this
+    tool takes focus through a bounded chain (one `SetForegroundWindow`
+    attempt, then, only here and not in `hs_input`, `AttachThreadInput` and a
+    zero-effect input unlock) so an unattended session's clicks still reach
+    the game; `focus_trail` names which step took, per click, in click
+    order. `orbpickup` is `restored_off` or `left_on`, whichever the pre-arm
+    read decided -- this tool arms `orbpickup` itself to get the proof and
+    restores it only if its own pre-arm read showed the mod was off before
+    it started.
 
     Refusals: `game_not_running`, `game_state_unknown`,
     `engine_source_missing`, `engine_import_failed`, `not_consumed`,

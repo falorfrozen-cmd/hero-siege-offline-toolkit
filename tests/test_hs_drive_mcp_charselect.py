@@ -144,30 +144,46 @@ class ScriptedIpc:
                           queued=False, wrote_bytes=len(reply))
 
 
+#: `focus_via` for each landed `ScriptedInject` call, in call order (0-indexed
+#: among click-carrying calls, the same indexing `refuse_at` uses); the last
+#: entry repeats once exhausted, the same convention `ScriptedIpc` uses.
+DEFAULT_FOCUS_VIA = ("already_foreground",)
+
+
 class ScriptedInject:
-    """`hs_input.inject`, replaced. Records every call; refuses the call at
-    `refuse_at` (0-indexed among *click-carrying* calls) once, if set."""
+    """`hs_input.inject`, replaced. Records every call, including
+    `force_focus`; refuses the call at `refuse_at` (0-indexed among
+    *click-carrying* calls) once, if set; answers `focus_via` from
+    `focus_via_sequence`."""
 
     def __init__(self, refuse_at=None, refusal=("foreground_not_game",
-                                                "test refusal"), order=None):
+                                                "test refusal"), order=None,
+                focus_via_sequence=DEFAULT_FOCUS_VIA):
         self.calls: list[dict] = []
         self.landed = 0
         self.refuse_at = refuse_at
         self.refusal = refusal
         self.order = order
+        self.focus_via_sequence = list(focus_via_sequence)
 
     def __call__(self, actions, *, route="send_input",
-                require_foreground=True, tool="hs_input", **kwargs):
+                require_foreground=True, force_focus=False,
+                tool="hs_input", **kwargs):
         index = len(self.calls)
-        self.calls.append({"actions": actions, "route": route})
+        self.calls.append({"actions": actions, "route": route,
+                           "force_focus": force_focus})
         if self.order is not None:
             self.order.append(("inject", index))
         if self.refuse_at is not None and index == self.refuse_at:
             reason, detail = self.refusal
             return results.refuse(tool, reason, detail)
+        focus_via = (self.focus_via_sequence.pop(0)
+                    if len(self.focus_via_sequence) > 1
+                    else self.focus_via_sequence[0])
         self.landed += 1
         return results.ok(tool, actions_done=len(actions),
-                          actions_total=len(actions), complete=True)
+                          actions_total=len(actions), complete=True,
+                          focus_via=focus_via)
 
     def points(self):
         return [(c["actions"][0]["x"], c["actions"][0]["y"])
@@ -781,6 +797,47 @@ class InjectRefusalTests(CharselectTestCase):
         self.assertEqual(report["actions_sent"], 1,
                          "local succeeded; slot is the one that refused")
         self.assertEqual(len(self.inject.calls), 2)
+
+
+class FocusTrailTests(CharselectTestCase):
+    """`hs-drive-mcp-force-focus`: every click escalates focus, and the
+    step that took is reported per click."""
+
+    def test_every_click_carries_force_focus(self):
+        self.arrange(ipc_script=target_script())
+        report = self.call(slot=1, timeout_s=5)
+        self.assertEqual(report["phase"], "character_loaded", report)
+        self.assertEqual(len(self.inject.calls), 3)
+        for call in self.inject.calls:
+            self.assertTrue(call["force_focus"], call)
+
+    def test_a_successful_run_reports_a_three_row_focus_trail(self):
+        self.arrange(ipc_script=target_script())
+        report = self.call(slot=1, timeout_s=5)
+        self.assertEqual(report["phase"], "character_loaded", report)
+        self.assertEqual([row["screen"] for row in report["focus_trail"]],
+                         ["local", "slot", "play"])
+        for row in report["focus_trail"]:
+            self.assertIn("focus_via", row)
+
+    def test_the_focus_via_of_each_click_is_carried_through(self):
+        self.arrange(ipc_script=target_script())
+        self.inject.focus_via_sequence = ["set_foreground",
+                                          "attach_thread_input",
+                                          "input_unlock"]
+        report = self.call(slot=1, timeout_s=5)
+        self.assertEqual(report["phase"], "character_loaded", report)
+        self.assertEqual([row["focus_via"] for row in report["focus_trail"]],
+                         ["set_foreground", "attach_thread_input",
+                          "input_unlock"])
+
+    def test_a_refusal_also_carries_a_focus_trail(self):
+        self.arrange(ipc_script=baseline_script(), inject_refuse_at=1)
+        report = self.call(timeout_s=5)
+        self.assertEqual(report["reason"], "foreground_not_game", report)
+        self.assertEqual([row["screen"] for row in report["focus_trail"]],
+                         ["local"], "the one click that landed before the "
+                         "refusal")
 
 
 if __name__ == "__main__":

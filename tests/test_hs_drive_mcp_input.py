@@ -93,13 +93,35 @@ def _pointer_order(log):
     return order
 
 
+#: The two thread ids `AttachThreadInput` and `GetWindowThreadProcessId`
+#: deal in. Fixed, so a test can assert the pairing without threading them
+#: through every constructor call.
+THIS_THREAD_ID = 111
+OTHER_THREAD_ID = 222
+
+
 class FakeWin32:
     """Every call the module can make, recorded rather than performed."""
 
     def __init__(self, foreground=(HWND,), raise_succeeds=True, dpi=96,
-                 accepted=None, post_queued=True, post_error=0):
+                 accepted=None, post_queued=True, post_error=0,
+                 window_thread_id=OTHER_THREAD_ID, attach_succeeds=True):
         self.foreground = list(foreground)
         self.raise_succeeds = raise_succeeds
+        #: Optional override: a list of per-call outcomes for
+        #: `SetForegroundWindow`, consumed the same way `self.foreground` is
+        #: (the last entry repeats). `None` (the default) means every call
+        #: answers `self.raise_succeeds`, matching the fake exactly as it was
+        #: before `force_focus` -- a test that scripts the plain attempt
+        #: failing and a later, escalated attempt taking sets this instead.
+        self.raise_sequence: list[bool] | None = None
+        #: `GetWindowThreadProcessId`'s answer for whatever window is
+        #: foreground when `attach_thread_input` reads it. 0 means "the read
+        #: failed", one of the two skip cases the mechanism doc names.
+        self.window_thread_id = window_thread_id
+        #: Whether `AttachThreadInput(..., TRUE)` succeeds. `False` is the
+        #: other skip case; detach is never attempted when this is `False`.
+        self.attach_succeeds = attach_succeeds
         self.dpi = dpi
         #: How many records SendInput claims to have accepted; None means
         #: "all of them", which is what a healthy machine reports.
@@ -123,6 +145,14 @@ class FakeWin32:
         self.raises = []
         self.converted = []
         self.foreground_reads = 0
+        #: `(this_id, other_id, attach)` for every `AttachThreadInput` call,
+        #: in order -- so a test can assert the attach and the detach are
+        #: equal in number and paired (same thread ids, `True` then `False`).
+        self.attach_calls: list[tuple[int, int, bool]] = []
+        #: The `INPUT` record built by every `SendFocusUnlock` call, so a
+        #: test can read back the one event this module ever sends to a
+        #: window that is not the game.
+        self.unlocked: list = []
 
     # -- reads --
     def get_foreground_window(self):
@@ -133,9 +163,32 @@ class FakeWin32:
 
     def set_foreground_window(self, hwnd):
         self.raises.append(hwnd)
-        if self.raise_succeeds:
+        if self.raise_sequence is not None:
+            succeeds = (self.raise_sequence.pop(0)
+                       if len(self.raise_sequence) > 1
+                       else self.raise_sequence[0])
+        else:
+            succeeds = self.raise_succeeds
+        if succeeds:
             self.foreground = [hwnd]
-        return self.raise_succeeds
+        return succeeds
+
+    def get_window_thread_id(self, hwnd):
+        return self.window_thread_id
+
+    def get_current_thread_id(self):
+        return THIS_THREAD_ID
+
+    def attach_thread_input(self, this_id, other_id, attach):
+        self.attach_calls.append((this_id, other_id, attach))
+        self.log.append(("attach_thread_input", this_id, other_id, attach))
+        return self.attach_succeeds if attach else True
+
+    def send_focus_unlock(self):
+        record = hs_input.mouse_record(0)
+        self.unlocked.append(record)
+        self.log.append(("send_focus_unlock", record))
+        return 1
 
     def client_to_screen(self, hwnd, x, y):
         self.converted.append((hwnd, x, y))
@@ -180,6 +233,10 @@ class FakeWin32:
             "GetSystemMetrics": self.get_system_metrics,
             "MapVirtualKeyW": self.map_virtual_key,
             "GetDpiForWindow": self.get_dpi_for_window,
+            "GetWindowThreadProcessId": self.get_window_thread_id,
+            "GetCurrentThreadId": self.get_current_thread_id,
+            "AttachThreadInput": self.attach_thread_input,
+            "SendFocusUnlock": self.send_focus_unlock,
             "sleep": self.sleep,
         }
 
@@ -550,8 +607,10 @@ class ForegroundTests(InputTestCase):
         report = self.inject([{"type": "key", "vk": VK_SHIFT}])
         self.assertEqual(report["reason"], "foreground_not_game")
         self.assertEqual(self.win32.raises, [HWND],
-                         "exactly one attempt; there is no second, more "
-                         "forceful route by design")
+                         "exactly one attempt without force_focus; there is "
+                         "no escalation by default")
+        self.assertEqual(self.win32.attach_calls, [],
+                         "no AttachThreadInput without force_focus")
         self.assertEqual(self.win32.injections, [])
         self.assertEqual(report["actions_done"], 0)
 
@@ -582,6 +641,147 @@ class ForegroundTests(InputTestCase):
         self.assertEqual(report["actions_total"], 3)
         self.assertFalse(report["complete"])
         self.assertIn("foreground window changed", report["detail"])
+
+
+# --------------------------------------------------------------------------
+# force_focus -- hs-drive-mcp-force-focus. Only a caller that opts in (in
+# practice, `hs_select_character`; see `charselect.py`) reaches
+# `attach_thread_input` or `input_unlock`. Every scenario here uses
+# `force_focus=True` directly on `inject`, the way that caller does.
+# --------------------------------------------------------------------------
+
+class ForceFocusTests(InputTestCase):
+    def test_the_attached_retry_takes_after_the_plain_attempt_fails(self):
+        self.win32.foreground = [OTHER_HWND]
+        self.win32.raise_sequence = [False, True]
+        report = self.inject([{"type": "click", "x": 10, "y": 10}],
+                             force_focus=True)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["focus_via"], "attach_thread_input")
+        self.assertNotEqual(self.win32.sent, [],
+                            "the click's records were sent")
+
+        self.assertEqual(len(self.win32.attach_calls), 2, "attach then detach")
+        (this1, other1, attach1), (this2, other2, attach2) = self.win32.attach_calls
+        self.assertEqual((this1, other1), (THIS_THREAD_ID, OTHER_THREAD_ID))
+        self.assertEqual((this1, other1), (this2, other2),
+                         "the same thread ids are attached and detached")
+        self.assertTrue(attach1)
+        self.assertFalse(attach2)
+
+    def test_the_input_unlock_takes_once_attach_is_skipped(self):
+        self.win32.foreground = [OTHER_HWND]
+        self.win32.raise_sequence = [False, True]
+        self.win32.attach_succeeds = False
+        report = self.inject([{"type": "click", "x": 10, "y": 10}],
+                             force_focus=True)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["focus_via"], "input_unlock")
+        self.assertNotEqual(self.win32.sent, [],
+                            "the click's records were sent")
+
+        self.assertEqual(len(self.win32.unlocked), 1)
+        record = self.win32.unlocked[0]
+        self.assertEqual(record.type, hs_input.INPUT_MOUSE)
+        self.assertEqual(record.mi.dx, 0)
+        self.assertEqual(record.mi.dy, 0)
+        self.assertEqual(record.mi.dwFlags, 0)
+        # AttachThreadInput was tried (and reported FALSE); nothing to detach.
+        self.assertEqual(len(self.win32.attach_calls), 1)
+        self.assertTrue(self.win32.attach_calls[0][2])
+
+    def test_every_step_failing_refuses_naming_all_three(self):
+        self.win32.foreground = [OTHER_HWND]
+        self.win32.raise_succeeds = False
+        report = self.inject([{"type": "click", "x": 10, "y": 10}],
+                             force_focus=True)
+        self.assertEqual(report["reason"], "foreground_not_game", report)
+        self.assertEqual(self.win32.sent, [])
+        self.assertIsNone(report["focus_via"])
+        for step in hs_input.FOCUS_STEPS:
+            self.assertIn(step, report["detail"], report["detail"])
+        self.assertEqual([entry["step"] for entry in report["focus_attempts"]],
+                         list(hs_input.FOCUS_STEPS))
+
+        # Every step was actually tried (attach succeeded), so attach and
+        # detach are paired the same way as the successful escalation.
+        self.assertEqual(len(self.win32.attach_calls), 2)
+        (this1, other1, attach1), (this2, other2, attach2) = self.win32.attach_calls
+        self.assertEqual((this1, other1), (this2, other2))
+        self.assertTrue(attach1)
+        self.assertFalse(attach2)
+
+    def test_an_exception_inside_the_attached_step_still_detaches(self):
+        self.win32.foreground = [OTHER_HWND]
+        calls = {"n": 0}
+
+        def flaky(hwnd):
+            calls["n"] += 1
+            self.win32.raises.append(hwnd)
+            if calls["n"] == 2:
+                raise RuntimeError("boom")
+            return False
+
+        with patch.dict(hs_input.WIN32, {"SetForegroundWindow": flaky}):
+            with self.assertRaises(RuntimeError):
+                self.inject([{"type": "click", "x": 10, "y": 10}],
+                            force_focus=True)
+
+        self.assertEqual(self.win32.sent, [], "no click record was sent")
+        self.assertEqual(len(self.win32.attach_calls), 2,
+                         "the detach still ran despite the exception")
+        (this1, other1, attach1), (this2, other2, attach2) = self.win32.attach_calls
+        self.assertEqual((this1, other1), (this2, other2))
+        self.assertTrue(attach1)
+        self.assertFalse(attach2)
+
+    def test_require_foreground_false_ignores_force_focus(self):
+        self.win32.foreground = [OTHER_HWND]
+        report = self.inject([{"type": "key", "vk": VK_SHIFT}],
+                             require_foreground=False, force_focus=True)
+        self.assertEqual(report["reason"], "foreground_not_game")
+        self.assertEqual(self.win32.raises, [],
+                         "force_focus has no effect when require_foreground "
+                         "is false")
+        self.assertEqual(self.win32.attach_calls, [])
+        self.assertIsNone(report["focus_via"])
+
+    def test_focus_via_is_already_foreground_when_the_game_already_has_it(self):
+        report = self.inject([{"type": "key", "vk": VK_SHIFT}],
+                             force_focus=True)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["focus_via"], "already_foreground")
+        self.assertEqual(self.win32.raises, [])
+
+    def test_focus_via_is_not_required_on_post_message(self):
+        self.win32.foreground = [OTHER_HWND]
+        report = self.inject([{"type": "key", "vk": VK_SHIFT}],
+                             route="post_message", force_focus=True)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["focus_via"], "not_required")
+
+    def test_the_refusal_suggests_nothing_hs_select_character_cannot_do(self):
+        self.win32.foreground = [OTHER_HWND]
+        self.win32.raise_succeeds = False
+        report = self.inject([{"type": "click", "x": 10, "y": 10}],
+                             force_focus=True, tool="hs_select_character")
+        self.assertEqual(report["reason"], "foreground_not_game")
+        self.assertNotIn("post_message", report["detail"])
+        self.assertNotIn("route=", report["detail"])
+
+    def test_the_default_tool_refusal_still_suggests_post_message(self):
+        self.win32.foreground = [OTHER_HWND]
+        self.win32.raise_succeeds = False
+        report = self.inject([{"type": "click", "x": 10, "y": 10}])
+        self.assertEqual(report["reason"], "foreground_not_game")
+        self.assertIn('route="post_message"', report["detail"])
+
+
+class Win32TableTests(unittest.TestCase):
+    def test_the_fake_replaces_every_win32_entry(self):
+        """A key missing from the fake stays the real Win32 function -- so
+        every entry `input.py` can call must be in `FakeWin32.table()`."""
+        self.assertEqual(set(FakeWin32().table()), set(hs_input.WIN32))
 
 
 class PostMessageTests(InputTestCase):
