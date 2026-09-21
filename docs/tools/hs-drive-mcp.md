@@ -967,6 +967,7 @@ py -3 -m unittest tests.test_hs_drive_mcp_launch -v            # launch, readine
 py -3 -m unittest tests.test_hs_drive_mcp_ipc -v               # the bp_ipc command channel
 py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v        # window resolution and capture
 py -3 -m unittest tests.test_hs_drive_mcp_input -v             # what actually leaves the process
+py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # parsing ForgePact's menulayout listing
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # nothing shipped knows it exists
 py -3 -m unittest discover -s tests                            # all of the above, plus the rest
 ```

@@ -96,9 +96,10 @@ class McpConfigTests(unittest.TestCase):
         # `server.py` failing to import -- which a stdio client reports as a
         # server that will not start, naming nothing. `input.py` and
         # `charselect.py` joined the same list once `hs_input` and
-        # `hs_select_character` shipped.
+        # `hs_select_character` shipped, and `layout.py` (the `menulayout`
+        # parser it clicks from) beside it.
         for name in ("ipc.py", "capture.py", "launch.py", "input.py",
-                     "charselect.py"):
+                     "charselect.py", "layout.py"):
             self.assertTrue((PACKAGE / name).is_file(),
                             f"{name} is missing; the game tools import it")
 
