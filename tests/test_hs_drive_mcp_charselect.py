@@ -25,6 +25,7 @@ answers a route after the third click.
 import sys
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,17 +110,25 @@ class ScriptedIpc:
     A script entry may instead be a callable taking no arguments: its return
     value is the reply, every time. That is how `menulayout` answers with
     whichever screen the clicks so far have reached.
+
+    `order`, if given, is a list shared with `ScriptedInject`: every call
+    appends `("ipc", line)` to it, so a test can recover the interleaving of
+    `menulayout` reads and clicks that `self.calls` and `self.inject.calls`
+    alone cannot (`WindowSettleTests`).
     """
 
-    def __init__(self, script, refusals=None):
+    def __init__(self, script, refusals=None, order=None):
         self.script = {line: (replies if callable(replies) else list(replies))
                        for line, replies in script.items()}
         self.refusals = dict(refusals or {})
         self.calls: list[str] = []
+        self.order = order
 
     def send(self, lines, *, tool="hs_command", **kwargs):
         line = lines[0]
         self.calls.append(line)
+        if self.order is not None:
+            self.order.append(("ipc", line))
         if line in self.refusals:
             reason, detail = self.refusals.pop(line)
             return results.refuse(tool, reason, detail)
@@ -140,16 +149,19 @@ class ScriptedInject:
     `refuse_at` (0-indexed among *click-carrying* calls) once, if set."""
 
     def __init__(self, refuse_at=None, refusal=("foreground_not_game",
-                                                "test refusal")):
+                                                "test refusal"), order=None):
         self.calls: list[dict] = []
         self.landed = 0
         self.refuse_at = refuse_at
         self.refusal = refusal
+        self.order = order
 
     def __call__(self, actions, *, route="send_input",
                 require_foreground=True, tool="hs_input", **kwargs):
         index = len(self.calls)
         self.calls.append({"actions": actions, "route": route})
+        if self.order is not None:
+            self.order.append(("inject", index))
         if self.refuse_at is not None and index == self.refuse_at:
             reason, detail = self.refusal
             return results.refuse(tool, reason, detail)
@@ -175,6 +187,22 @@ class ScriptedScreenshot:
 class CharselectTestCase(unittest.TestCase):
     """One running game, one 1920x1080 client, every side effect scripted."""
 
+    @staticmethod
+    def _geometry_fn(geometry):
+        """`_geometry`, replaced. `geometry` is a single `{"client_size":
+        [...]}` dict -- the original, one-size-for-every-read behaviour --
+        or a sequence of them, consumed one per call the same way
+        `ScriptedIpc` consumes a scripted command's replies: the next value
+        each call, and the last one repeating once only one is left. The
+        call-start check consumes the first value, so a sequence models
+        "the window was still N at launch and settled to M by the time the
+        listing was read" (`WindowSettleTests`)."""
+        values = [geometry] if isinstance(geometry, dict) else list(geometry)
+        def _geometry(hwnd):
+            value = values.pop(0) if len(values) > 1 else values[0]
+            return dict(value), ""
+        return _geometry
+
     def arrange(self, *, game_state=RUNNING, geometry=GEOMETRY,
                ipc_script=None, ipc_refusals=None, inject_refuse_at=None,
                screens=SCREENS):
@@ -182,11 +210,13 @@ class CharselectTestCase(unittest.TestCase):
         landed (the last one repeats), unless `ipc_script` scripts
         `menulayout` itself."""
         self.doCleanups()
-        self.inject = ScriptedInject(refuse_at=inject_refuse_at)
+        self.order: list[tuple[str, Any]] = []
+        self.inject = ScriptedInject(refuse_at=inject_refuse_at,
+                                     order=self.order)
         script = dict(ipc_script or {})
         script.setdefault("menulayout", lambda: screens[
             min(self.inject.landed, len(screens) - 1)])
-        self.ipc = ScriptedIpc(script, ipc_refusals)
+        self.ipc = ScriptedIpc(script, ipc_refusals, order=self.order)
         self.screenshot = ScriptedScreenshot()
         self.sleeps: list[float] = []
         self.saves_calls: list[tuple] = []
@@ -197,7 +227,7 @@ class CharselectTestCase(unittest.TestCase):
         self.enterContext(patch.object(
             capture, "resolve_game_window", lambda pids, tool: dict(WINDOW)))
         self.enterContext(patch.object(
-            input_module, "_geometry", lambda hwnd: (dict(geometry), "")))
+            input_module, "_geometry", self._geometry_fn(geometry)))
         self.enterContext(patch.object(charselect.ipc, "send", self.ipc.send))
         self.enterContext(patch.object(
             charselect.input_module, "inject", self.inject))
@@ -405,15 +435,18 @@ class RefusalTests(CharselectTestCase):
 
     def test_a_listing_for_another_window_size_refuses_before_any_click(self):
         # The live listings say window=1920x1080; this client measures
-        # 2560x1440, so every `win` point is for a different window.
+        # 2560x1440 on every read, so it never settles: the poll budget
+        # runs out on a mismatch every time, not just the call-start read.
         self.arrange(ipc_script=baseline_script(),
                      geometry={"client_size": [2560, 1440]})
         report = self.call()
         self.assertEqual(report["reason"], "window_size_mismatch", report)
         self.assertIn("1920x1080", report["detail"])
         self.assertIn("2560x1440", report["detail"])
+        self.assertIn("room=Main_Menu_rm", report["detail"])
         self.assertEqual(self.inject.calls, [])
-        self.assertEqual(self.ipc.calls.count("menulayout"), 1)
+        self.assertEqual(self.ipc.calls.count("menulayout"),
+                         charselect.LAYOUT_POLL_ATTEMPTS)
         self.assertEqual(report["orbpickup"], "restored_off")
 
     def test_an_older_plugin_refuses_layout_command_missing_before_any_click(self):
@@ -490,6 +523,74 @@ class RefusalTests(CharselectTestCase):
         self.assertEqual(report["orbpickup"], "restored_off",
                          "orbpickup is restored per the pre-arm rule even on "
                          "this refusal")
+
+
+class WindowSettleTests(CharselectTestCase):
+    """The defect this workorder fixes: `hs_launch` returns `plugin_ready`
+    before the game window necessarily reaches its configured size, so the
+    client measured once at the top of the call can be stale by the time a
+    listing is read. Every listing check now re-measures the client at that
+    same read, and a disagreement alone is "not settled yet" -- it keeps
+    polling within the existing budget rather than refusing at once. The
+    negative control (fe9ef17's single call-start measurement) is expected
+    to fail these tests: see the acceptance criteria's negative-control
+    step."""
+
+    def test_a_resized_window_settles_by_the_first_listing_read(self):
+        # The call-start read (stale) sees 1024x576; every listing read
+        # after it -- main menu included -- already sees the settled
+        # 1920x1080 the live listings report, so nothing is ever refused.
+        self.arrange(ipc_script=target_script(),
+                     geometry=[{"client_size": [1024, 576]},
+                              {"client_size": [1920, 1080]}])
+        report = self.call(slot=1, timeout_s=5)
+        self.assertEqual(report["phase"], "character_loaded", report)
+        self.assertNotIn("reason", report)
+        self.assertEqual(self.inject.points(),
+                         [LOCAL_POINT, SLOT_1_POINT, PLAY_POINT])
+
+    def test_a_resizing_window_settles_mid_poll_before_the_first_click(self):
+        # The call-start read and the main menu's first two listing reads
+        # all still see 1024x576 (mismatched); the third listing read sees
+        # 1920x1080 and the poll accepts it -- exercising the settle poll
+        # itself, not just a single stale-then-fresh pair.
+        self.arrange(ipc_script=target_script(),
+                     geometry=[{"client_size": [1024, 576]},
+                              {"client_size": [1024, 576]},
+                              {"client_size": [1024, 576]},
+                              {"client_size": [1920, 1080]}])
+        report = self.call(slot=1, timeout_s=5)
+        self.assertEqual(report["phase"], "character_loaded", report)
+        self.assertNotIn("reason", report)
+        self.assertEqual(self.inject.points(),
+                         [LOCAL_POINT, SLOT_1_POINT, PLAY_POINT])
+
+        first_inject_at = next(i for i, (kind, _) in enumerate(self.order)
+                               if kind == "inject")
+        menulayout_before_first_click = sum(
+            1 for kind, value in self.order[:first_inject_at]
+            if kind == "ipc" and value == "menulayout")
+        self.assertGreater(menulayout_before_first_click, 1,
+                           "the settle poll itself was exercised: more than "
+                           "one menulayout read happened before any click")
+
+    def test_a_window_that_agrees_only_through_local_then_never_settles_again(self):
+        # The main menu's own read agrees (Play local is clicked), but
+        # every listing read after that click -- while waiting for the
+        # save-slot screen -- measures a client the listing never agrees
+        # with again. Unlike a persistent mismatch from the very start,
+        # this proves the fix re-measures at *each* read rather than
+        # trusting the first agreement for the rest of the call.
+        self.arrange(ipc_script=baseline_script(),
+                     geometry=[{"client_size": [1920, 1080]},
+                              {"client_size": [1920, 1080]},
+                              {"client_size": [1024, 576]}])
+        report = self.call()
+        self.assertEqual(report["reason"], "window_size_mismatch", report)
+        self.assertEqual(report["actions_sent"], 1,
+                         "Play local landed; nothing after it did")
+        self.assertEqual(len(self.inject.calls), 1,
+                         "no second click was ever sent")
 
 
 class RestoreRuleTests(CharselectTestCase):

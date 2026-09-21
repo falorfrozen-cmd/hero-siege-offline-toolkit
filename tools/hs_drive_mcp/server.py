@@ -519,7 +519,10 @@ def hs_select_character(
     `no_visible_window_for_pid`, `window_minimized`, `foreground_not_game`,
     `invalid_input`, `proof_not_armed`, `character_already_loaded`,
     `layout_command_missing` (the plugin has no `menulayout`),
-    `window_size_mismatch` (the listing is for another window size),
+    `window_size_mismatch` (a listing's window never agreed with the
+    client's measured size within the poll budget; a disagreement alone
+    just keeps polling, since the window can still be settling to its
+    configured size right after plugin_ready),
     `button_not_found` (a screen's button was never listed; the refusal's
     `last_listing` holds what was), `slot_not_listed` (fewer cards than
     `slot`).

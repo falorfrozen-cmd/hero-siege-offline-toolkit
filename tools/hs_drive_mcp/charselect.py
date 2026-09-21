@@ -24,8 +24,11 @@ on/off state of its own).
 field of a row in ForgePact's read-only `menulayout` listing (`layout.py`),
 which the plugin computes in the game from its own GUI and window sizes --
 no fraction, no arithmetic here. The listing's `window=` must equal the
-client size this server measures (`window_size_mismatch` otherwise), and a
-button the listing does not carry is refused (`button_not_found`,
+client size this server re-measures at that same read; a disagreement is
+"not settled yet" (the window can still be reaching its configured size
+right after `hs_launch`'s `plugin_ready`) and polls on within the listing's
+budget, refusing `window_size_mismatch` only if the two never agree within
+it. A button the listing does not carry is refused (`button_not_found`,
 `slot_not_listed`), never guessed. A plugin without the command refuses
 `layout_command_missing`. Each screen's next button is polled for rather
 than waited for: the game lists it when the screen is ready. The 120 ms
@@ -203,10 +206,9 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
     if results.is_refusal(window):
         return window
     hwnd = int(window["hwnd"])
-    geometry, why = input_module._geometry(hwnd)  # noqa: SLF001 - shared seam
+    _, why = input_module._geometry(hwnd)  # noqa: SLF001 - shared seam
     if why:
         return results.refuse(tool, "no_visible_window_for_pid", why)
-    client_w, client_h = geometry["client_size"]
 
     ping_result = ipc.send(["ping"], tool=tool)
     if results.is_refusal(ping_result):
@@ -244,9 +246,19 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
         return results.ok(tool, proof=proof, **common)
 
     def read_layout() -> tuple[layout.Listing | None, dict[str, str] | None]:
-        """One `menulayout` read, checked: `(listing, None)`, or `(None,
-        refusal)` for an IPC refusal, a plugin without the command, or a
-        listing computed for a window other than this client."""
+        """One `menulayout` read, checked against the client size measured
+        at this same read -- never the call-start size, which can predate
+        the window reaching its configured size after `hs_launch`'s
+        `plugin_ready`. `(listing, None)` for a listing whose window agrees
+        with that fresh measurement, or `(None, refusal)` for a `_geometry`
+        failure, an IPC refusal, a plugin without the command, or a listing
+        computed for a window other than the one just measured. That last
+        case (`window_size_mismatch`) means "not settled yet"; `poll`
+        decides whether it is terminal, not this function."""
+        geometry, why = input_module._geometry(hwnd)  # noqa: SLF001
+        if why:
+            return None, {"reason": "no_visible_window_for_pid", "detail": why}
+        client_w, client_h = geometry["client_size"]
         reply = ipc.send([layout.COMMAND], tool=tool)
         if results.is_refusal(reply):
             return None, {"reason": reply["reason"], "detail": reply["detail"]}
@@ -262,21 +274,44 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
             return None, {"reason": reason, "detail": detail}
         return listing, None
 
-    def poll(match) -> tuple[layout.Row | None, layout.Listing | None,
-                             dict[str, str] | None]:
+    def poll(match, *, sleep_first: bool = True
+            ) -> tuple[layout.Row | None, layout.Listing | None,
+                       dict[str, str] | None]:
         """Re-read `menulayout` every `LAYOUT_POLL_S`, up to
         `LAYOUT_POLL_ATTEMPTS` reads, until `match(listing)` returns a row
-        or a refusal. `(None, last_listing, None)` means the budget ran out
-        with the button never listed."""
+        or a refusal. A `window_size_mismatch` read is treated exactly like
+        a "button not listed yet" read: it does not end the poll on its
+        own, and is only surfaced if the budget ends on it -- meaning the
+        window never settled to agreement within the budget. Any other
+        refusal (missing command, IPC, `_geometry`) ends the poll at once.
+        `(None, last_listing, None)` means the budget ran out on an
+        agreeing read with the button never listed. `sleep_first=False`
+        (the main menu's use, which has no click of its own to wait out)
+        reads once immediately and sleeps only between the retries after
+        that; every post-click poll keeps sleeping before its first read
+        too, since that first read is what gives the click time to land."""
         listing = None
-        for _attempt in range(LAYOUT_POLL_ATTEMPTS):
-            _sleep(LAYOUT_POLL_S)
+        last_mismatch: dict[str, str] | None = None
+        for attempt in range(LAYOUT_POLL_ATTEMPTS):
+            if sleep_first or attempt > 0:
+                _sleep(LAYOUT_POLL_S)
             listing, refusal = read_layout()
             if refusal is not None:
+                if refusal["reason"] == layout.WINDOW_SIZE_MISMATCH:
+                    last_mismatch = refusal
+                    listing = None
+                    continue
                 return None, None, refusal
+            last_mismatch = None
             row, refusal = match(listing)
             if row is not None or refusal is not None:
                 return row, listing, refusal
+        if last_mismatch is not None:
+            detail = (last_mismatch["detail"] + " It never agreed with this "
+                      f"client within {LAYOUT_POLL_ATTEMPTS} reads "
+                      f"{LAYOUT_POLL_S} s apart, so nothing was clicked.")
+            return None, None, {"reason": last_mismatch["reason"],
+                                "detail": detail}
         return None, listing, None
 
     def not_found(what: str, obj: str,
@@ -354,12 +389,17 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
     proof_trail.append(["main_menu", menu["line"]])
     shoot("main_menu")
 
-    # Main menu: one read. The window check and the missing-command check
-    # both happen here, before the first click.
-    listing, refusal = read_layout()
+    # Main menu: polled the same way every later screen is. The window
+    # check and the missing-command check both happen on every read; a
+    # mismatch just keeps the poll going (the window can still be settling
+    # right after `plugin_ready`), and only an exhausted budget on a
+    # mismatch refuses `window_size_mismatch`.
+    def match_main_menu(listing: layout.Listing):
+        return layout.match_play_local(listing), None
+
+    target, listing, refusal = poll(match_main_menu, sleep_first=False)
     if refusal is not None:
         return finish("main_menu", refusal=refusal)
-    target = layout.match_play_local(listing)
     if target is None:
         found = len(layout.play_local_rows(listing))
         return finish("main_menu", refusal={
