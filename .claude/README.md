@@ -708,7 +708,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Fourteen suites cover this page's tooling. Thirteen are Python and run
+Fifteen suites cover this page's tooling. Fourteen are Python and run
 automatically under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
@@ -727,6 +727,7 @@ py -3 -m unittest tests.test_hs_drive_mcp_launch -v            # launch through 
 py -3 -m unittest tests.test_hs_drive_mcp_ipc -v               # the bp_ipc command channel, against a fake consumer
 py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v        # window resolution, both capture methods, the flat-image warning
 py -3 -m unittest tests.test_hs_drive_mcp_input -v             # what hs_input actually injects, and the foreground it refuses without
+py -3 -m unittest tests.test_hs_drive_mcp_charselect -v        # hs_select_character's click sequence, its proof and every refusal
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```

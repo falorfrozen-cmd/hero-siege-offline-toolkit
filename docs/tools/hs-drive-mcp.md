@@ -111,7 +111,7 @@ bug report nobody can undo.
 
 ## Tools
 
-Thirteen. One tool per action, `hs_` prefixed, with annotations on every one.
+Fourteen. One tool per action, `hs_` prefixed, with annotations on every one.
 
 | Tool | Hints | Inputs | Returns |
 | --- | --- | --- | --- |
@@ -128,6 +128,7 @@ Thirteen. One tool per action, `hs_` prefixed, with annotations on every one.
 | `hs_ipc_tail` | read-only | `lines` 1–500 = 40 | `exists`, `lines[]`, `bytes_total`, `requested`, `truncated`, `path` |
 | `hs_screenshot` | writes | `target` `game`\|`screen` = `game`, `method` `grab_bbox`\|`grab_window` = `grab_bbox`, `label` | `path`, `width`, `height`, `bbox`, `capture_method`, `hwnd`, `pid`, `flat`, `warning`, `bytes_written`, `transport_width`, `transport_height` — **plus** a JSON text block and a PNG image block |
 | `hs_input` | writes | `actions[]` (≤ 64), `route` `send_input`\|`post_message` = `send_input`, `require_foreground=true` | `route`, `pid`, `hwnd`, `window_rect`, `client_rect`, `client_size`, `dpi`, `foreground_before`, `foreground_after`, `actions_done`, `actions_total`, `records_sent`, `records_rejected`, `complete`, `elapsed_s` |
+| `hs_select_character` | writes | `slot=1`, `timeout_s` 1–600 = 60 | `phase`, `proof`, `proof_trail`, `screenshots`, `orbpickup`, `actions_sent`, `elapsed_s` |
 
 `hs_input`'s actions are objects, in order, each with a `type`:
 
@@ -230,6 +231,9 @@ Tokens this server can return today:
 | `capture_unavailable` | Pillow is not importable, so nothing can be captured. Not `invalid_command`: the arguments were fine and the install is not. |
 | `foreground_not_game` | `hs_input` with `route="send_input"` found some other window in front. `SendInput` goes to whatever is in front, so the keystrokes would have landed somewhere that never asked for them. With `require_foreground: true` one `SetForegroundWindow` was attempted first and did not take; with `false` no attempt was made. The same comparison runs again immediately before **every** injection, so a sequence that loses the foreground half way through stops there and reports `actions_done` — `AGENTS.md` § "Check a Permission Where It Is Used". |
 | `invalid_input` | `hs_input`'s own arguments: more than 64 actions, an empty list, an unknown `type`, `button` or `space`, a `vk` outside 1–254, a `hold_ms` or `ms` outside 0–10000, or a point outside the client rectangle (or the virtual screen, with `space: "screen"`). Nothing was sent. Deliberately separate from `invalid_command`, which means "the plugin would not accept that" and sends a reader to the wrong place. |
+| `layout_not_measured` | `hs_select_character` with a `slot` other than 1, or a client whose aspect ratio is not 16:9. The character-select research measured slot 1's click point and the fractions' stability across display modes only at 16:9; anything else refuses rather than click a guessed point. Refused before any command is sent. |
+| `proof_not_armed` | `hs_select_character` armed `orbpickup` (`orbpickup 1`) and either got no acknowledgement, or `orbpickup stat` still read `player via (not tried)` on two reads at least a second apart. The resolver never ran; the instrument is blind, not the game — the same trap an earlier revision of this doc's own "`orbpickup stat` does not prove a character is loaded" section fell into. No click is sent. |
+| `character_already_loaded` | `hs_select_character`'s menu-time read of `orbpickup stat` already named a resolver route before any click was sent. |
 
 One shape does **not** come back as a refusal: a `route` that is neither
 `send_input` nor `post_message` is rejected by the SDK's own `Literal`
@@ -241,12 +245,11 @@ unknown argument in "Known limitations", and it is a better outcome than a
 refusal; the module still answers `invalid_input` for an in-process caller,
 which is what its own tests exercise.
 
-Two more tokens are **reserved and not implemented**: `layout_not_measured`
-and `research_build_required` belong to `hs-drive-mcp-charselect-ship`, the
-workorder that would ship a character-select tool. They are named here so a
-later change adds them rather than inventing a third spelling; nothing in this
-server can return them today, and `tests.test_hs_drive_mcp_input` asserts they
-are absent from `results.REASONS`.
+`research_build_required` is **not** a token this server defines. It was
+reserved for a branch (shipping a player verb behind a research-build check)
+that the character-select measurement did not select; `mcp-only` shipped
+instead, so nothing here ever needs it, and `tests.test_hs_drive_mcp_input`
+asserts it stays absent from `results.REASONS`.
 
 ## The process gate
 
@@ -516,6 +519,19 @@ observed** for `UI_Button_obj` and the seven events tried, with its enumeration
 control passing. The warm-script route is **unmeasured** -- its positive
 control raised, so nothing it reported could be told from a blind instrument.
 
+**Branch M shipped: `hs_select_character`, over `hs_input` and IPC only.**
+Three other shapes were on the table and none of them did:
+
+- **P (a player-visible ForgePact change)** -- a new `kPlayerCommands` verb
+  and a release. The owner declined it (`shipRoute: mcp-only`): the mechanism
+  already works without touching the plugin, and a player-visible change is
+  not worth taking on for this.
+- **R (shipping the research build)** -- `menuprobe`'s `event`/`script`
+  routes change gameplay by design (a real event performed, a real script
+  called) and the research docs say never to ship that build to a player.
+- **N (nothing works)** -- ruled out by the measurement itself: `a-sendinput`
+  drove the whole path to a loaded character.
+
 ### The click had to be held, and now it is (fixed 2026-09-21)
 
 `hs_input`'s `click` action used to emit the button-down and the button-up
@@ -537,35 +553,46 @@ reuse it. This was an instrument that reported armed and did nothing, found
 by measurement rather than by review -- see
 [`docs/agents/prove-the-instrument.md`](../agents/prove-the-instrument.md).
 
-### `orbpickup stat` does not prove a character is loaded
+### `orbpickup stat` proves a character is loaded -- while `orbpickup` is on
 
-An earlier version of this section said it did, and that the reply's
-`player via <route>` being anything other than `none` meant a character was
-loaded. **That is wrong**, and the session measured it: in a town with no orbs
-nearby the reply is `globe objs=0 ... player via (not tried)`, because the
-player resolution is never attempted. It answers about the orb-pickup feature,
-not about the player.
+An earlier version of this section said the field answers regardless of that
+state. **That was wrong**, and a live read falsified it: with `orbpickup`
+never turned on, `orbpickup stat` replies `globe objs=0 ... player via (not
+tried)`, in a town with a `Player_obj` provably live. The static reason is in
+`ModuleMain.cpp`: `g_OrbPlayerHow` is written only inside `FrameCallback`'s
+`if (g_OrbPickupRadius.load())` branch, which runs only while `orbpickup` is
+on -- so `(not tried)` and `globe objs=0` both mean "the mod has never been on
+in this process", not "the resolver ran and found nothing".
 
-What did prove it was `menuprobe list Player_obj` returning one live instance,
-with `Player_Parent_obj` -> `not found (asset_get_index)` beside it as a
-negative control. That verb is research-build only, so a
-player-build-answerable proof is still an open problem and belongs to the
-shipping workorder.
+`hs_select_character` is the fix: it arms `orbpickup` itself, reads the field
+while armed (`none` at the menu is the negative control -- the resolver ran
+and found no player; a route is the proof once a character loads), and
+restores `orbpickup` to off only if its own pre-arm read showed the mod was
+never on. See `docs/agents/prove-the-instrument.md` for the general shape --
+a field that answers only under a precondition nobody arms is a blind
+instrument, not evidence the mechanism does not exist.
 
-### Until `hs_select_character` ships
+### Calling `hs_select_character`
 
-A human still loads a character once per session -- main menu -> Play local ->
-save slot -> Play, then `hs_wait_ready` -- because the tool that automates it
-is the separate workorder `hs-drive-mcp-charselect-ship`, which reads the two
-lines above out of the research document. Everything here works against that
-session once a character is loaded, however it got loaded.
+```json
+{"slot": 1, "timeout_s": 60}
+```
 
-Two measured facts that workorder depends on, both in the research document's
-Results table: a button's **client fractions are stable across display modes**
-even though its absolute GUI coordinates are not (`Play local` sits at
-(0.175, 0.4944) windowed and fullscreen alike), and the **room index is only a
-partial oracle** -- opening the character panel changes the screen without
-leaving `Chose_rm`, so a screenshot is the reliable check.
+Call it any time after `hs_launch` reports `phase: plugin_ready` and before
+anything that needs a loaded character. It clicks `Play local`, save slot 1
+and `Play` itself -- held `send_input` clicks at the measured client
+fractions -- and polls `orbpickup stat` until a resolver route appears or
+`timeout_s` runs out. `phase` moves through `main_menu`, `local`, `slot` and
+`play` as each screen is reached; `character_loaded` is the only outcome
+that proves a load; `proof` and `proof_trail` carry the `orbpickup stat`
+reply that decided it, one line per screen. `proof_ambiguous` means the
+save-slot screen already showed a resolver route before `Play` was clicked
+-- a live `Player_obj` on the character panel would make the proof
+unspecific to a *loaded* character, so the tool stops rather than claim one;
+`timeout` means no route appeared within `timeout_s` of the `Play` click.
+Only slot 1 and a 16:9 client are supported today -- anything else refuses
+`layout_not_measured` before a single input is sent, rather than click a
+point this research never measured.
 
 ## Saves: what the tools guarantee
 
@@ -777,15 +804,17 @@ rather than by falling back to another launcher:
   `## Tools` above, and treat a suspiciously default-looking answer as a
   possible misspelling.
 
-- **Nothing here can select a character or enter a zone yet, and most
-  ForgePact gameplay commands only act once one is loaded.** After `hs_launch`
-  the game sits at its main menu. `hs_input` can now inject keystrokes and
-  clicks into that window, but **whether they reach the game is not
-  observed**: the live session that measures it has not been run, and the
-  research document's `finding:` line still reads `pending`. So an in-game
-  verification still needs a human to load a character once — after which
-  every tool here works against that session. See "Character select" above;
-  shipping anything on the result is `hs-drive-mcp-charselect-ship`.
+- **`hs_select_character` only covers slot 1, only at a 16:9 client, only
+  windowed or borderless.** The character-select research measured one save
+  slot's click point and showed the other two fractions stable across
+  16:9 display modes only; a slot other than 1 or a non-16:9 client refuses
+  `layout_not_measured` rather than click a point nobody measured, and
+  exclusive fullscreen is minimized by Windows when the game loses focus (see
+  the capture caveat below), so run windowed or borderless. The proof of a
+  load is the plugin's own player resolver -- `orbpickup stat`'s `player via`
+  field, armed and read by the tool itself, the same resolver every other
+  player-gated feature in the plugin already gates on -- not a screenshot or
+  a room read. See "Character select" above.
 - **Exclusive fullscreen captures fine, but only while the game holds the
   foreground.** Measured on 2026-09-20 (see the Verification table): in
   windowed, borderless and exclusive fullscreen alike, both `grab_bbox` and
@@ -881,11 +910,25 @@ The rows below belong to `hs-drive-mcp-charselect`, the workorder that added
 | B (charselect) | The plugin half: the `menuprobe` contract, the research document, and both builds | `py -m unittest discover -s tests` and `plugin_build\build.bat dev` / `release`, in `ForgePact/` | `Ran 609 tests in 25.626s`, `OK (skipped=2)` — 2026-09-20, after the three review amendments (the same-instrument enumeration control in the research document's steps 6 and 13, `MpWhere`'s `<destroyed>` marker, and both comments saying that a command runs inside `PollCommands()` on the frame thread rather than claiming it does not). Both skips are `HS-Offline-Launcher/` not being checked out. Both builds exit 0; `BloodPactPlugin_rel.dll` contains `menuprobe` and not `command unavailable in player build`, and `BloodPactPlugin_ship.dll` the reverse |
 | C (charselect) | **The live session** — the four candidates measured against the real game, each behind its own positive control | owner-run, `ForgePact/docs/character-select-research.md` § Live procedure | **not run — 2026-09-20.** Deferred to a later session by the owner. Every row of that document's § Results is empty, and its § Decision reads `finding: pending` / `shipRoute: pending`. Nothing here has measured whether injected input reaches this game |
 
+The rows below belong to `hs-drive-mcp-charselect-ship`, the workorder that
+shipped `hs_select_character`. Its ids restart at I1; they are not the
+A/B/C rows above, which belong to `hs-drive-mcp-charselect` and are its own
+dated record.
+
+| # | Check | Command | Result |
+| --- | --- | --- | --- |
+| I1–I3 (ship) | `hs_input`'s `click` holds the button: `hold_ms` 0–10000 = 120, a sleep between down and up on both routes, the ordered move → down → sleep → up pin, `hold_ms: 0` still reachable with no sleep, a refused button-down followed by neither a sleep nor an up, `key`'s own hold unaffected | `py -3 -m unittest tests.test_hs_drive_mcp_input -v` | `OK`, 49 tests, no skips — 2026-09-21. The new ordered assertion ran red against the unmodified `_do_pointer` first (2 failures, 1 error: no `DEFAULT_CLICK_HOLD_MS`, `['move','down','up'] != ['move','down','sleep','up']`) |
+| S1–S7 (ship) | `hs_select_character`: the S2 baseline (game never loads → `timeout` having sent exactly the scripted commands), the S3 target (a route right after the third click → `character_loaded`, both resolver routes), every refusal, both branches of the restore rule, the `proof_ambiguous` stop before `Play`, fourteen tools registered with `hs_select_character`'s hints, and the docstring/hub-doc phase and refusal-token coverage | `py -3 -m unittest tests.test_hs_drive_mcp_charselect tests.test_hs_drive_mcp_server tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 16 + 27 + 7 tests, no skips (one skip in the release-boundary suite, `HS-Offline-Launcher/` not checked out) — 2026-09-21. `results.REASONS` gained exactly `layout_not_measured`, `proof_not_armed`, `character_already_loaded`; `research_build_required` still absent |
+| L1 (ship) | **The live gate** — `hs_select_character` through a fresh MCP session against the real modded install, with the server-identity controls first | owner-run, per the workorder's Group L step | *(pending -- fill in after the live session)* |
+
 ## What is deliberately not here
 
-- **Character select, and anything that needs one.** `hs_input` injects; it
-  does not select a character, and nothing here claims the game reacts to it.
-  See "Character select" and "Known limitations".
+- **Character creation, class, difficulty, season, and anything past a
+  loaded character; gameplay.** `hs_select_character` takes an existing
+  save from the main menu to a loaded character and stops there; it does
+  not create one, does not choose a slot other than 1 or a page other than
+  the first, and nothing here plays the game. See "Character select" and
+  "Known limitations".
 - **Synthetic input anywhere but the game's own window.** `hs_input` refuses
   unless the target window belongs to a running `hero_siege.exe`, and on the
   `send_input` route it re-proves that the game holds the foreground
