@@ -476,20 +476,21 @@ def hs_input(
     title="Select a character and reach a loaded game",
     description=(
         "Drive a freshly launched game from its main menu to a loaded "
-        "character: held send_input clicks at measured client fractions "
-        "through Play local, a save slot and Play, proved by orbpickup "
-        "stat's own player-resolution field, which this tool arms and "
-        "restores itself. Slot 1 and a 16:9 client only -- anything the "
-        "character-select research did not measure refuses "
-        "layout_not_measured before any input is sent."),
+        "character: held send_input clicks through Play local, a save slot "
+        "and Play, each at the point ForgePact's read-only menulayout "
+        "listing reports for that button, proved by orbpickup stat's own "
+        "player-resolution field, which this tool arms and restores "
+        "itself. A button the listing does not carry is refused, never "
+        "guessed."),
     annotations=_acts("Select a character and reach a loaded game"),
 )
 def hs_select_character(
     slot: Annotated[int, Field(
-        description="The save slot to load. Only 1 is supported: the "
-                    "character-select research measured slot 1's click "
-                    "point only, and any other value refuses "
-                    "layout_not_measured rather than guess a point.")] = 1,
+        description="The save slot to load, 1-based and row-major on page "
+                    "1 of the save-slot screen: slot 1 is the top-left "
+                    "card, slot 2 the card to its right. A slot the "
+                    "listing does not carry refuses slot_not_listed.",
+        ge=1)] = 1,
     timeout_s: Annotated[float, Field(
         description="How long to keep polling orbpickup stat after the "
                     "Play click before giving up and reporting phase "
@@ -506,7 +507,9 @@ def hs_select_character(
     `timeout` means no route appeared within `timeout_s` of the Play click.
     `proof` is the `orbpickup stat` reply line that decided the outcome (or
     the last one read, on `timeout`); `proof_trail` is every screen's own
-    reply, in the order main_menu, local, slot, play. `orbpickup` is
+    reply, in the order main_menu, local, slot, play. `layout_trail` is the
+    `menulayout` row each click used (`screen`, `obj`, `id`, `win`, `text`);
+    every click's point is that row's `win`, verbatim. `orbpickup` is
     `restored_off` or `left_on`, whichever the pre-arm read decided --
     this tool arms `orbpickup` itself to get the proof and restores it only
     if its own pre-arm read showed the mod was off before it started.
@@ -514,8 +517,12 @@ def hs_select_character(
     Refusals: `game_not_running`, `game_state_unknown`,
     `engine_source_missing`, `engine_import_failed`, `not_consumed`,
     `no_visible_window_for_pid`, `window_minimized`, `foreground_not_game`,
-    `invalid_input`, `layout_not_measured`, `proof_not_armed`,
-    `character_already_loaded`.
+    `invalid_input`, `proof_not_armed`, `character_already_loaded`,
+    `layout_command_missing` (the plugin has no `menulayout`),
+    `window_size_mismatch` (the listing is for another window size),
+    `button_not_found` (a screen's button was never listed; the refusal's
+    `last_listing` holds what was), `slot_not_listed` (fewer cards than
+    `slot`).
     """
     return charselect.hs_select_character(slot=slot, timeout_s=timeout_s,
                                           tool="hs_select_character")

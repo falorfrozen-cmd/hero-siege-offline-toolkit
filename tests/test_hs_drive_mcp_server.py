@@ -196,6 +196,21 @@ class StdioSurfaceTests(unittest.TestCase):
         self.assertFalse(hints["destructiveHint"])
         self.assertFalse(hints["idempotentHint"])
 
+    def test_hs_select_character_slot_is_one_based_and_clicks_no_fraction(self):
+        """The published schema refuses `slot < 1` before the tool runs
+        (`ge=1`), and the description no longer promises fixed fractions or
+        a 16:9-only client: every point comes from the `menulayout`
+        listing now."""
+        tool = next(tool for tool in self.tools
+                   if tool.name == "hs_select_character")
+        schema = tool.model_dump(by_alias=True)["inputSchema"]
+        slot = schema["properties"]["slot"]
+        self.assertEqual(slot.get("minimum"), 1, schema)
+        self.assertIn("menulayout", tool.description)
+        for stale in ("fraction", "16:9", "measured"):
+            self.assertNotIn(stale, tool.description)
+            self.assertNotIn(stale, slot["description"])
+
     def test_every_tool_carries_a_title_and_both_behaviour_hints(self):
         destructive = []
         for tool in self.tools:
@@ -492,8 +507,10 @@ class SelectCharacterDocstringTests(unittest.TestCase):
                       "engine_source_missing", "engine_import_failed",
                       "not_consumed", "no_visible_window_for_pid",
                       "window_minimized", "foreground_not_game",
-                      "invalid_input", "layout_not_measured",
-                      "proof_not_armed", "character_already_loaded")
+                      "invalid_input", "proof_not_armed",
+                      "character_already_loaded", "layout_command_missing",
+                      "button_not_found", "slot_not_listed",
+                      "window_size_mismatch")
 
     @classmethod
     def setUpClass(cls):

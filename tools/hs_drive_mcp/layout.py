@@ -2,12 +2,16 @@
 
 `menulayout` is a read-only player command (ForgePact
 `docs/menu-layout-research.md`, pinned by `tests/test_menu_layout_contract.py`
-there) that lists every live main-menu and character-select button instance
-with its object name, on-screen text and position in **window (client)
-coordinates**, computed inside the game from its own GUI and window sizes.
-This module parses one `ipc.send` reply of it and answers the questions
-`hs_select_character` asks of each screen. It clicks nothing, sends nothing
-and imports no MCP SDK; it is pure text in, values out.
+there) that lists every live instance of its candidate menu objects (and
+the UI children they reach) with its object name, on-screen text and
+position in **window (client) coordinates**, computed inside the game from
+its own GUI and window sizes. This module parses one `ipc.send` reply of it
+and answers the questions `hs_select_character` asks of each screen: which
+row is `Play local`, which is save slot N, which is `PLAY`. It clicks
+nothing, sends nothing and imports no MCP SDK; it is pure text in, values
+out. The matchers are phase 0's Decision lines (ForgePact
+`docs/menu-layout-research.md`), and the tests run them against the three
+listings that session captured, verbatim.
 
 The reply shape is the plugin's parse contract, framed the way every command
 reply is (`---- running command file ----` / `---- done ----`, CRLF)::
@@ -55,6 +59,16 @@ WINDOW_SIZE_MISMATCH = "window_size_mismatch"
 #: exist, so sprite and position are not).
 PLAY_LOCAL_OBJECT = "UI_Button_obj"
 PLAY_LOCAL_TEXT = "Play local"
+
+#: The room the save-slot cards and the character panel are both in.
+SLOT_ROOM = "Chose_rm"
+
+#: Phase 0's Decision (ForgePact `docs/menu-layout-research.md`, 2026-09-21,
+#: recorded in `1553fbd`): `slotObject: Choose_Parent_obj`, `playObject: UI_Button_obj`,
+#: both clicked at their listed origin (`point:origin`).
+SLOT_OBJECT = "Choose_Parent_obj"
+PLAY_OBJECT = "UI_Button_obj"
+PLAY_TEXT = "Play"
 
 
 @dataclass(frozen=True)
@@ -259,3 +273,52 @@ def match_play_local(listing: Listing) -> Row | None:
     rows = [row for row in play_local_rows(listing)
             if None not in row.win]
     return rows[0] if len(rows) == 1 else None
+
+
+def slot_rows(listing: Listing) -> list[Row]:
+    """The save-slot cards, in slot order: every visible `Choose_Parent_obj`
+    with a readable `win` point, sorted by `win` y then `win` x.
+
+    Row-major (the owner's rule, D12): slot 1 is the top-left card, slot 2
+    the card to its right on the same row, and the next row starts after
+    the last card of this one. Phase 0 checked the game's own `slot`
+    variable against this order on all 24 page-1 cards and they agreed.
+    `visible=1` is not optional: the same screen lists a second, hidden
+    `Choose_Parent_obj` at every card's point (`slot` 25-48 at phase 0), and
+    counting those would double every card."""
+    rows = [row for row in visible_rows(listing, SLOT_OBJECT)
+            if None not in row.win]
+    return sorted(rows, key=lambda row: (row.win[1], row.win[0]))
+
+
+def match_slot(listing: Listing, slot: int) -> Row | None:
+    """Card `slot` (1-based, row-major), or `None` when fewer are listed."""
+    rows = slot_rows(listing)
+    return rows[slot - 1] if 1 <= slot <= len(rows) else None
+
+
+def play_rows(listing: Listing) -> list[Row]:
+    """Every visible `UI_Button_obj` whose text is exactly `Play` -- not
+    `Play local`, and case-sensitive -- with a readable `win` point."""
+    return [row for row in visible_rows(listing, PLAY_OBJECT)
+            if row.text == PLAY_TEXT and None not in row.win]
+
+
+def match_play(listing: Listing) -> Row | None:
+    """The character panel's one `PLAY` row, or `None` when there is none or
+    more than one. The row does not exist until a card has been clicked
+    (phase 0), so a caller polls for it rather than reading once."""
+    rows = play_rows(listing)
+    return rows[0] if len(rows) == 1 else None
+
+
+def describe(listing: Listing, obj: str, limit: int = 30) -> str:
+    """A refusal's quote of a listing: its header, how many rows it carried,
+    and the visible `obj` rows it offered (text and `win`), so a caller can
+    see what was there instead of the button it was looking for."""
+    rows = visible_rows(listing, obj)
+    shown = "; ".join(f"{row.text!r} win={row.win[0]},{row.win[1]}"
+                      for row in rows[:limit])
+    more = f" (+{len(rows) - limit} more)" if len(rows) > limit else ""
+    return (f"{listing.header!r}, {len(listing.rows)} row(s), "
+            f"{len(rows)} visible {obj}: [{shown}]{more}")

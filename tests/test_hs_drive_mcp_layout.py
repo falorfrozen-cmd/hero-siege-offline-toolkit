@@ -2,21 +2,14 @@
 
 Pure parsing: no game, no Windows, no submodule, no MCP SDK.
 
-The fixture is a reply exactly as `ipc.send` returns it -- framed by
-`---- running command file ----` / `---- done ----`, CRLF -- because a double
-that hands back a bare or reshaped line cannot represent the input a live run
-fails on (the L-1 lesson `charselect._reply_line` was written for).
-
-**STAND-IN.** `MAIN_MENU_REPLY` is hand-written until the phase-0 live session
-(ForgePact `docs/menu-layout-research.md`) captures the real reply, and must
-then be replaced by it verbatim. What it rests on: the 2026-09-21 research
-session's `menuprobe list UI_Button_obj` at `Main_Menu_rm` -- 13 instances,
-`Play local` at GUI (448, 676.4), id 257029, sprite `Menu_Button_Kaelith_spr`,
-visible, which C-1.15 mapped to client (336, 534) on a 1920x1080 windowed
-client with a 2560x1368 GUI. That row's numbers are measured; every other
-row's position, id, sprite and bbox is invented to give the parser something
-realistic to walk (the texts and visibilities are the ones measured: six
-visible buttons, seven hidden ones, two `Cosmetic Shop`).
+The fixtures are the three replies phase 0 captured from a running game
+(`tests/hs_drive_mcp_menulayout_fixtures.py`), exactly as `ipc.send` returned
+them -- framed by `---- running command file ----` / `---- done ----`, CRLF --
+because a double that hands back a bare or reshaped line cannot represent the
+input a live run fails on (the L-1 lesson `charselect._reply_line` was
+written for). Hand-written listings appear only where a test needs a shape
+no live screen showed (two candidates, an unreadable field, a short page),
+each one next to the verbatim case it varies.
 """
 import sys
 import unittest
@@ -26,31 +19,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tools.hs_drive_mcp import layout  # noqa: E402
-
-FIXTURE_IS_STAND_IN = True
-
-MAIN_MENU_REPLY = (
-    "---- running command file ----\r\n"
-    "menulayout: room=Main_Menu_rm gui=2560x1368 window=1920x1080 fullscreen=0 view=0.0,0.0,2560.0,1368.0\r\n"
-    "  obj=UI_Button_obj id=257029 gui=448.0,676.4 win=336,534 bbox=260.0,640.0,636.0,712.0 visible=1 sprite=Menu_Button_Kaelith_spr text=Play local\r\n"
-    "  obj=UI_Button_obj id=257030 gui=448.0,776.4 win=336,612 bbox=260.0,740.0,636.0,812.0 visible=1 sprite=Menu_Button_Kaelith_spr text=Play online\r\n"
-    "  obj=UI_Button_obj id=257031 gui=448.0,876.4 win=336,691 bbox=260.0,840.0,636.0,912.0 visible=1 sprite=Menu_Button_Kaelith_spr text=Options\r\n"
-    "  obj=UI_Button_obj id=257032 gui=448.0,976.4 win=336,770 bbox=260.0,940.0,636.0,1012.0 visible=1 sprite=Menu_Button_Kaelith_spr text=Cosmetic Shop\r\n"
-    "  obj=UI_Button_obj id=257033 gui=2200.0,300.0 win=1650,237 bbox=2000.0,250.0,2400.0,350.0 visible=1 sprite=Menu_Button_Kaelith_spr text=Featured Cosmetics\r\n"
-    "  obj=UI_Button_obj id=257034 gui=2200.0,1200.0 win=1650,947 bbox=2000.0,1160.0,2400.0,1240.0 visible=1 sprite=Menu_Button_Kaelith_spr text=Official Discord\r\n"
-    "  obj=UI_Button_obj id=257035 gui=1280.0,200.0 win=960,158 bbox=1250.0,170.0,1310.0,230.0 visible=0 sprite=Menu_Button_Close_spr text=\r\n"
-    "  obj=UI_Button_obj id=257036 gui=1280.0,684.0 win=960,540 bbox=1100.0,640.0,1460.0,728.0 visible=0 sprite=Menu_Button_Kaelith_spr text=Cosmetic Shop\r\n"
-    "  obj=UI_Button_obj id=257037 gui=900.0,500.0 win=675,395 bbox=850.0,450.0,950.0,550.0 visible=0 sprite=Menu_Class_Tile_spr text=Play local\r\n"
-    "  obj=UI_Button_obj id=257038 gui=1100.0,500.0 win=825,395 bbox=1050.0,450.0,1150.0,550.0 visible=0 sprite=Menu_Class_Tile_spr text=Class 2\r\n"
-    "  obj=UI_Button_obj id=257039 gui=1300.0,500.0 win=975,395 bbox=1250.0,450.0,1350.0,550.0 visible=0 sprite=Menu_Class_Tile_spr text=Class 3\r\n"
-    "  obj=UI_Button_obj id=257040 gui=1500.0,500.0 win=1125,395 bbox=1450.0,450.0,1550.0,550.0 visible=0 sprite=Menu_Class_Tile_spr text=Shop Tile 1\r\n"
-    "  obj=UI_Button_obj id=257041 gui=1700.0,500.0 win=1275,395 bbox=1650.0,450.0,1750.0,550.0 visible=0 sprite=Menu_Class_Tile_spr text=Shop Tile 2\r\n"
-    "  obj=Menu_Controller_obj id=100012 gui=0.0,0.0 win=0,0 bbox=0.0,0.0,0.0,0.0 visible=1 sprite=none text=\r\n"
-    "  obj=Profile_Manager_obj id=100013 gui=0.0,0.0 win=0,0 bbox=<read-failed>,<read-failed>,<read-failed>,<read-failed> visible=0 sprite=none text=\r\n"
-    "menulayout: listed=15 absent=none capped=0\r\n"
-    "---- done ----\r\n")
+from tests.hs_drive_mcp_menulayout_fixtures import (  # noqa: E402
+    CHOSE_RM_REPLY, MAIN_MENU_REPLY, PANEL_REPLY)
 
 CLIENT_1080 = [1920, 1080]
+HEADER_CHOSE_RM = ("menulayout: room=Chose_rm gui=2560x1368 window=1920x1080 "
+                   "fullscreen=0 view=0.0,0.0,1280.0,720.0")
+
+
+def card(slot, x, y, visible=1):
+    """One `Choose_Parent_obj` row in the shape phase 0 listed them."""
+    return (f"  obj=Choose_Parent_obj id={257047 + slot} gui=0.0,0.0 "
+            f"win={x},{y} bbox=0.0,0.0,1.0,1.0 visible={visible} "
+            f"sprite=Choosing_SSF_spr slot={slot} text=")
 
 
 def reply(text):
@@ -74,10 +55,10 @@ class HeaderTests(unittest.TestCase):
         self.assertEqual(self.listing.gui, (2560, 1368))
         self.assertEqual(self.listing.window, (1920, 1080))
         self.assertIs(self.listing.fullscreen, False)
-        self.assertEqual(self.listing.view, (0.0, 0.0, 2560.0, 1368.0))
+        self.assertEqual(self.listing.view, (0.0, 0.0, 1280.0, 720.0))
 
     def test_footer_fields(self):
-        self.assertEqual(self.listing.listed, 15)
+        self.assertEqual(self.listing.listed, 19)
         self.assertEqual(self.listing.absent, ())
         self.assertIs(self.listing.capped, False)
         self.assertEqual(len(self.listing.rows), self.listing.listed)
@@ -105,7 +86,7 @@ class RowTests(unittest.TestCase):
         self.assertEqual(row.id, 257029)
         self.assertEqual(row.gui, (448.0, 676.4))
         self.assertEqual(row.win, (336, 534))
-        self.assertEqual(row.bbox, (260.0, 640.0, 636.0, 712.0))
+        self.assertEqual(row.bbox, (240.0, 604.2, 658.0, 750.5))
         self.assertIs(row.visible, True)
         self.assertEqual(row.sprite, "Menu_Button_Kaelith_spr")
         self.assertEqual(row.text, "Play local")
@@ -121,12 +102,11 @@ class RowTests(unittest.TestCase):
         self.assertEqual(row.win, (1, 2))
 
     def test_empty_text_is_empty(self):
-        self.assertEqual(self.rows[6].text, "")
-        self.assertIs(self.rows[6].visible, False)
+        self.assertEqual(self.rows[5].obj, "UI_Container_obj")
+        self.assertEqual(self.rows[5].text, "")
+        self.assertIs(self.rows[5].visible, False)
 
     def test_read_failed_is_none_never_zero(self):
-        row = self.rows[-1]
-        self.assertEqual(row.bbox, (None, None, None, None))
         row = layout.parse_row(
             "  obj=X id=<read-failed> gui=<read-failed>,3.0 win=<read-failed>,<read-failed> "
             "bbox=0.0,0.0,1.0,1.0 visible=<read-failed> sprite=<read-failed> text=")
@@ -157,9 +137,11 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(layout.match_play_local(listing).win, (336, 534))
 
     def test_negative_control_hidden_and_other_objects_are_ignored(self):
-        # The fixture carries a hidden `UI_Button_obj` whose text is also
-        # `Play local` (id 257037); it must never be the answer, and neither
-        # may another object with the same text.
+        # A hidden `UI_Button_obj` whose text is also `Play local` must never
+        # be the answer, and neither may another object with the same text
+        # or a button whose text merely starts with it. (The live main menu
+        # has the hidden-duplicate shape too: a second, `visible=0`
+        # `Cosmetic Shop`.)
         listing = layout.parse(reply(framed(
             "menulayout: room=Main_Menu_rm gui=2560x1368 window=1920x1080 fullscreen=0 view=0.0,0.0,2560.0,1368.0",
             "  obj=UI_Button_obj id=5 gui=900.0,500.0 win=675,395 bbox=0.0,0.0,1.0,1.0 visible=0 sprite=none text=Play local",
@@ -220,11 +202,125 @@ class ReadTests(unittest.TestCase):
         self.assertEqual(reason, "window_size_mismatch")
 
 
+class SlotMatcherTests(unittest.TestCase):
+    """Phase 0's `slotObject: Choose_Parent_obj`, `slotRule: order:y,x over
+    the visible=1 rows`, against the `Chose_rm` listing it captured."""
+
+    def setUp(self):
+        self.listing = layout.parse(reply(CHOSE_RM_REPLY))
+
+    def test_the_listing_is_the_slot_screen(self):
+        self.assertEqual(self.listing.room, layout.SLOT_ROOM)
+        self.assertEqual(self.listing.listed, 56)
+
+    def test_page_one_has_24_visible_cards_and_the_hidden_duplicates_are_dropped(self):
+        every = [row for row in self.listing.rows
+                 if row.obj == layout.SLOT_OBJECT]
+        self.assertEqual(len(every), 48, "24 visible cards plus 24 hidden")
+        cards = layout.slot_rows(self.listing)
+        self.assertEqual(len(cards), 24)
+        self.assertTrue(all(row.visible for row in cards))
+
+    def test_slot_1_is_the_top_left_card(self):
+        row = layout.match_slot(self.listing, 1)
+        self.assertEqual(row.win, (177, 174))
+        self.assertEqual(row.id, 257048)
+
+    def test_slot_2_is_the_card_right_of_slot_1_on_the_same_row(self):
+        # D12, the owner's rule: slots run left to right along a row, then
+        # the next row -- slot 2 is grid x:1, y:0, never x:0, y:1.
+        one = layout.match_slot(self.listing, 1)
+        two = layout.match_slot(self.listing, 2)
+        self.assertEqual(two.win, (381, 174))
+        self.assertGreater(two.win[0], one.win[0])
+        self.assertEqual(two.win[1], one.win[1])
+        below = layout.match_slot(self.listing, 9)
+        self.assertEqual(below.win, (177, 429),
+                         "the card below slot 1 is slot 9, the next row's first")
+        self.assertNotEqual(two.win, below.win)
+
+    def test_row_major_order_holds_whatever_order_the_rows_are_listed_in(self):
+        # Two cards on the top row, one on the next, listed column-first --
+        # the order a column-major reading would number 1, 2, 3.
+        listing = layout.parse(reply(framed(
+            HEADER_CHOSE_RM,
+            card(1, 177, 174), card(3, 177, 429), card(2, 381, 174),
+            card(4, 381, 174, visible=0),
+            "menulayout: listed=4 absent=none capped=0")))
+        self.assertEqual(layout.match_slot(listing, 1).win, (177, 174))
+        self.assertEqual(layout.match_slot(listing, 2).win, (381, 174))
+        self.assertEqual(layout.match_slot(listing, 3).win, (177, 429))
+        self.assertIsNone(layout.match_slot(listing, 4),
+                          "a hidden card is not a slot")
+
+    def test_the_game_slot_variable_agrees_with_the_row_major_order(self):
+        # Phase 0 checked this on the live screen; the fixture carries it.
+        for index, row in enumerate(layout.slot_rows(self.listing), start=1):
+            self.assertEqual(row.extra.get("slot"), str(index), row.line)
+
+    def test_a_slot_beyond_the_listed_cards_is_none(self):
+        self.assertIsNone(layout.match_slot(self.listing, 25))
+        self.assertIsNone(layout.match_slot(self.listing, 0))
+
+    def test_the_main_menu_lists_no_cards(self):
+        self.assertEqual(layout.slot_rows(layout.parse(reply(MAIN_MENU_REPLY))),
+                         [])
+
+
+class PlayMatcherTests(unittest.TestCase):
+    """Phase 0's `playObject: UI_Button_obj`, `playRule: text=Play exactly
+    and visible=1`, against the character-panel listing it captured."""
+
+    def test_play_is_the_one_visible_play_button_on_the_panel(self):
+        listing = layout.parse(reply(PANEL_REPLY))
+        row = layout.match_play(listing)
+        self.assertIsNotNone(row)
+        self.assertEqual((row.obj, row.id, row.win, row.text),
+                         ("UI_Button_obj", 257591, (584, 345), "Play"))
+
+    def test_play_is_not_listed_before_a_card_is_clicked(self):
+        self.assertIsNone(layout.match_play(layout.parse(reply(CHOSE_RM_REPLY))))
+
+    def test_play_local_is_not_play(self):
+        self.assertEqual(layout.play_rows(layout.parse(reply(MAIN_MENU_REPLY))),
+                         [])
+
+    def test_the_cards_stay_listed_behind_the_panel(self):
+        # Phase 0: card rows stay visible=1 under the panel, so their
+        # disappearance cannot be the signal the panel opened -- PLAY is.
+        self.assertEqual(len(layout.slot_rows(layout.parse(reply(PANEL_REPLY)))),
+                         24)
+
+    def test_case_and_visibility_matter(self):
+        listing = layout.parse(reply(framed(
+            HEADER_CHOSE_RM,
+            "  obj=UI_Button_obj id=1 gui=0.0,0.0 win=584,345 bbox=0.0,0.0,1.0,1.0 visible=1 sprite=none text=PLAY",
+            "  obj=UI_Button_obj id=2 gui=0.0,0.0 win=584,345 bbox=0.0,0.0,1.0,1.0 visible=0 sprite=none text=Play",
+            "  obj=UI_Button_Small_obj id=3 gui=0.0,0.0 win=584,345 bbox=0.0,0.0,1.0,1.0 visible=1 sprite=none text=Play",
+            "menulayout: listed=3 absent=none capped=0")))
+        self.assertIsNone(layout.match_play(listing))
+
+    def test_describe_quotes_the_header_and_the_visible_buttons(self):
+        text = layout.describe(layout.parse(reply(PANEL_REPLY)), "UI_Button_obj")
+        self.assertIn("room=Chose_rm", text)
+        self.assertIn("'Play' win=584,345", text)
+
+
 class FixtureTests(unittest.TestCase):
-    def test_fixture_is_framed_and_crlf(self):
-        self.assertTrue(MAIN_MENU_REPLY.startswith("---- running command file ----\r\n"))
-        self.assertTrue(MAIN_MENU_REPLY.endswith("---- done ----\r\n"))
-        self.assertNotIn("\n", MAIN_MENU_REPLY.replace("\r\n", ""))
+    def test_fixtures_are_framed_and_crlf(self):
+        for name, text in (("main menu", MAIN_MENU_REPLY),
+                           ("Chose_rm", CHOSE_RM_REPLY),
+                           ("panel", PANEL_REPLY)):
+            with self.subTest(name):
+                self.assertTrue(text.startswith("---- running command file ----\r\n"))
+                self.assertTrue(text.endswith("---- done ----\r\n"))
+                self.assertNotIn("\n", text.replace("\r\n", ""))
+
+    def test_every_fixture_row_parses_and_the_footer_count_matches(self):
+        for text in (MAIN_MENU_REPLY, CHOSE_RM_REPLY, PANEL_REPLY):
+            listing = layout.parse(reply(text))
+            self.assertEqual(len(listing.rows), listing.listed)
+            self.assertEqual(listing.window, (1920, 1080))
 
 
 if __name__ == "__main__":

@@ -97,9 +97,8 @@ class McpConfigTests(unittest.TestCase):
         # server that will not start, naming nothing. `input.py` and
         # `charselect.py` joined the same list once `hs_input` and
         # `hs_select_character` shipped, and `layout.py` (the parser for
-        # ForgePact's `menulayout` listing, which `hs_select_character` is
-        # to click from once phase 0 has named the slot and PLAY rows)
-        # beside it.
+        # ForgePact's `menulayout` listing, whose rows `hs_select_character`
+        # takes every click point from) beside it.
         for name in ("ipc.py", "capture.py", "launch.py", "input.py",
                      "charselect.py", "layout.py"):
             self.assertTrue((PACKAGE / name).is_file(),

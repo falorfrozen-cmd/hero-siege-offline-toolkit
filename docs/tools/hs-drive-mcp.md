@@ -128,7 +128,7 @@ Fourteen. One tool per action, `hs_` prefixed, with annotations on every one.
 | `hs_ipc_tail` | read-only | `lines` 1–500 = 40 | `exists`, `lines[]`, `bytes_total`, `requested`, `truncated`, `path` |
 | `hs_screenshot` | writes | `target` `game`\|`screen` = `game`, `method` `grab_bbox`\|`grab_window` = `grab_bbox`, `label` | `path`, `width`, `height`, `bbox`, `capture_method`, `hwnd`, `pid`, `flat`, `warning`, `bytes_written`, `transport_width`, `transport_height` — **plus** a JSON text block and a PNG image block |
 | `hs_input` | writes | `actions[]` (≤ 64), `route` `send_input`\|`post_message` = `send_input`, `require_foreground=true` | `route`, `pid`, `hwnd`, `window_rect`, `client_rect`, `client_size`, `dpi`, `foreground_before`, `foreground_after`, `actions_done`, `actions_total`, `records_sent`, `records_rejected`, `complete`, `elapsed_s` |
-| `hs_select_character` | writes | `slot=1`, `timeout_s` 1–600 = 60 | `phase`, `proof`, `proof_trail`, `screenshots`, `orbpickup`, `actions_sent`, `elapsed_s` |
+| `hs_select_character` | writes | `slot` ≥ 1 = 1, `timeout_s` 1–600 = 60 | `phase`, `proof`, `proof_trail`, `layout_trail`, `screenshots`, `orbpickup`, `actions_sent`, `elapsed_s` (a refusal after the arm also carries `last_listing`) |
 
 `hs_input`'s actions are objects, in order, each with a `type`:
 
@@ -231,7 +231,10 @@ Tokens this server can return today:
 | `capture_unavailable` | Pillow is not importable, so nothing can be captured. Not `invalid_command`: the arguments were fine and the install is not. |
 | `foreground_not_game` | `hs_input` with `route="send_input"` found some other window in front. `SendInput` goes to whatever is in front, so the keystrokes would have landed somewhere that never asked for them. With `require_foreground: true` one `SetForegroundWindow` was attempted first and did not take; with `false` no attempt was made. The same comparison runs again immediately before **every** injection, so a sequence that loses the foreground half way through stops there and reports `actions_done` — `AGENTS.md` § "Check a Permission Where It Is Used". |
 | `invalid_input` | `hs_input`'s own arguments: more than 64 actions, an empty list, an unknown `type`, `button` or `space`, a `vk` outside 1–254, a `hold_ms` or `ms` outside 0–10000, or a point outside the client rectangle (or the virtual screen, with `space: "screen"`). Nothing was sent. Deliberately separate from `invalid_command`, which means "the plugin would not accept that" and sends a reader to the wrong place. |
-| `layout_not_measured` | `hs_select_character` with a `slot` other than 1, or a client whose aspect ratio is not 16:9. The character-select research measured slot 1's click point and the fractions' stability across display modes only at 16:9; anything else refuses rather than click a guessed point. Refused before any command is sent. |
+| `layout_command_missing` | `hs_select_character` asked ForgePact's `menulayout` where the main-menu buttons are and got no listing: the installed plugin answered `command unavailable in player build: menulayout` (it predates the command), or replied with no `menulayout: room=` header at all. There is nothing to click from, so nothing is clicked. |
+| `window_size_mismatch` | A `menulayout` listing's `window=` is not the client size this server measured for the game window. Its `win` points were computed for a different window, so none of them is clicked. Checked on the main menu's listing, before the first click, and on every listing read after. |
+| `button_not_found` | The button `hs_select_character` needed on a screen was not listed: no single visible `UI_Button_obj` reading exactly `Play local` on the main menu (one read), or save slot `slot` / the character panel's `Play` never listed within the poll budget (30 reads 0.5 s apart) after the previous click. The detail quotes the last listing's header and the visible rows it did offer; the refusal's `last_listing` holds that listing whole. No click is sent for that screen. |
+| `slot_not_listed` | `Chose_rm` listed fewer visible save-slot cards than `slot` on two reads in a row. Only page 1 of the save-slot screen is reachable; no card is guessed. |
 | `proof_not_armed` | `hs_select_character` armed `orbpickup` (`orbpickup 1`) and either got no acknowledgement, or `orbpickup stat` still read `player via (not tried)` on two reads at least a second apart. The resolver never ran; the instrument is blind, not the game — the same trap an earlier revision of this doc's own "`orbpickup stat` does not prove a character is loaded" section fell into. No click is sent. |
 | `character_already_loaded` | `hs_select_character`'s menu-time read of `orbpickup stat` already named a resolver route before any click was sent. |
 
@@ -525,7 +528,10 @@ Three other shapes were on the table and none of them did:
 - **P (a player-visible ForgePact change)** -- a new `kPlayerCommands` verb
   and a release. The owner declined it (`shipRoute: mcp-only`): the mechanism
   already works without touching the plugin, and a player-visible change is
-  not worth taking on for this.
+  not worth taking on for this. (A later workorder did add one read-only
+  player command, `menulayout`, for a different reason: so the clicks land
+  where the game says the buttons are instead of at measured fractions. See
+  "Where to click" below.)
 - **R (shipping the research build)** -- `menuprobe`'s `event`/`script`
   routes change gameplay by design (a real event performed, a real script
   called) and the research docs say never to ship that build to a player.
@@ -579,6 +585,50 @@ screen, then `player via GetMyPlayer` on the first read after `Play`. Every
 one of those reads also said `globe objs=2`, the menu's included, so the globe
 count is no sign of where the game is.
 
+### Where to click: ForgePact's `menulayout` listing
+
+`hs_select_character` first clicked three client fractions measured by the
+research session: `Play local`, slot 1 and `Play`, at 16:9 only. A game patch
+or another layout could move a button and the tool would still click the old
+spot. It now clicks where the running game says each button is.
+
+ForgePact has a read-only player command, `menulayout`
+(`ForgePact/docs/menu-layout-research.md`, noted in its
+`release-notes-v1.4.5.md`). It lists every live instance of its candidate
+menu objects, and the UI children they reach. Each row gives the object name,
+instance id, on-screen text, visibility, and a `win=` point in **window
+(client) coordinates**. The plugin computes that point from the game's own GUI
+and window sizes. The header names the room and the `window=` size the points
+were computed for. `tools/hs_drive_mcp/layout.py` parses one reply. The
+plugin lists and the hub picks, using the rules phase 0 measured on
+2026-09-21 (that doc's `## Decision`):
+
+| Screen | Row clicked | Rule |
+|---|---|---|
+| main menu | `UI_Button_obj` | `visible=1`, text exactly `Play local`, exactly one such row |
+| `Chose_rm` | `Choose_Parent_obj` | the `slot`-th of the `visible=1` rows, sorted by `win` y then `win` x. This is row-major: slot 2 is the card right of slot 1 on the same row. The game's own `slot` variable agreed with this order on all 24 page-1 cards. The screen also lists a hidden duplicate at every card's point, which is why `visible=1` is required. |
+| character panel | `UI_Button_obj` | `visible=1`, text exactly `Play` (not `Play local`; case-sensitive), exactly one such row. The row is not listed until a card has been clicked. |
+
+Every click's `x`,`y` is the chosen row's `win` field, copied as is, with no
+arithmetic in the hub. `layout_trail` records the row each click used. The
+main menu is read once. Before the first click, that listing's `window=` must
+equal the client size this server measures, or the call refuses
+`window_size_mismatch`. After each click the tool polls `menulayout` (0.5 s,
+up to 30 reads) until the next screen's button is listed, instead of sleeping
+a fixed settle. The game lists the button when the screen is ready. A button
+that is never listed refuses `button_not_found` and quotes the listing.
+Fewer cards than `slot` on two reads in a row refuses `slot_not_listed`.
+A plugin without the command refuses `layout_command_missing`. No path clicks
+a guessed point. The `orbpickup stat` proof below is unchanged, and `none` at
+the menu is still its negative control.
+
+The main-menu point is proven by a click: `Play local` listed at `win=336,534`
+on a 1920x1080 windowed client, the point C-1.15 measured by hand, and
+clicking it reached `Chose_rm`. The slot-1 card was also clicked in phase 0
+and opened the panel. `Play`'s listed point had not been clicked by the
+listing when this was written. The live gate (Verification `M-L2`) is its
+first test, and `M-L2b` is slot 2's.
+
 ### Calling `hs_select_character`
 
 ```json
@@ -586,10 +636,11 @@ count is no sign of where the game is.
 ```
 
 Call it any time after `hs_launch` reports `phase: plugin_ready` and before
-anything that needs a loaded character. It clicks `Play local`, save slot 1
-and `Play` itself -- held `send_input` clicks at the measured client
-fractions -- and polls `orbpickup stat` until a resolver route appears or
-`timeout_s` runs out. `phase` moves through `main_menu`, `local`, `slot` and
+anything that needs a loaded character. It clicks `Play local`, save slot
+`slot` (1-based, row-major on page 1) and `Play` itself. Each is a held
+`send_input` click at the point `menulayout` lists (above). It then polls
+`orbpickup stat` until a resolver route appears or `timeout_s` runs out.
+`phase` moves through `main_menu`, `local`, `slot` and
 `play` as each screen is reached; `character_loaded` is the only outcome
 that proves a load; `proof` and `proof_trail` carry the `orbpickup stat`
 reply that decided it, one line per screen. `proof_ambiguous` means the
@@ -597,14 +648,15 @@ save-slot screen already showed a resolver route before `Play` was clicked
 -- a live `Player_obj` on the character panel would make the proof
 unspecific to a *loaded* character, so the tool stops rather than claim one;
 `timeout` means no route appeared within `timeout_s` of the `Play` click.
-Only slot 1 and a 16:9 client are supported today -- anything else refuses
-`layout_not_measured` before a single input is sent, rather than click a
-point this research never measured.
+The timeout counts from the call's start, so the listing polls come out of
+the same budget. A client of any size works if the listing's `window=`
+matches it. There is no aspect-ratio rule any more.
 
-Measured at the live gate (2026-09-21): the tool waits 3 s (`SETTLE_S`)
-after each click, which was enough on every screen, since the route answered on
-the first read after `Play`. Shorter waits were not tried. The whole call took
-17.5 s from the main menu to `character_loaded`.
+At the first live gate (2026-09-21, fraction clicks, Verification row L1),
+the tool waited a fixed 3 s after each click. That was enough on every
+screen, and the whole call took 17.5 s from the main menu to
+`character_loaded`. The fixed wait is gone. Each screen now takes as long as
+the game needs to list its next button.
 
 ## Saves: what the tools guarantee
 
@@ -816,13 +868,16 @@ rather than by falling back to another launcher:
   `## Tools` above, and treat a suspiciously default-looking answer as a
   possible misspelling.
 
-- **`hs_select_character` only covers slot 1, only at a 16:9 client, only
-  windowed or borderless.** The character-select research measured one save
-  slot's click point and showed the other two fractions stable across
-  16:9 display modes only; a slot other than 1 or a non-16:9 client refuses
-  `layout_not_measured` rather than click a point nobody measured, and
-  exclusive fullscreen is minimized by Windows when the game loses focus (see
-  the capture caveat below), so run windowed or borderless. The proof of a
+- **`hs_select_character` reaches page 1 of the save-slot screen only, needs
+  a ForgePact build with `menulayout`, and runs windowed or borderless.** It
+  clicks where ForgePact's `menulayout` listing says each button is, so a
+  slot on another page refuses `slot_not_listed`, and an older plugin refuses
+  `layout_command_missing`. Nothing falls back to a guessed point. The slot
+  and `Play` rules are phase 0's measurement of one game build (2026-09-21).
+  A patch that renames `Choose_Parent_obj` or relabels `Play` shows up as
+  `button_not_found` quoting the listing, not as a wrong click. Exclusive
+  fullscreen is minimized by Windows when the game loses focus (see the
+  capture caveat below), so run windowed or borderless. The proof of a
   load is the plugin's own player resolver -- `orbpickup stat`'s `player via`
   field, armed and read by the tool itself, the same resolver every other
   player-gated feature in the plugin already gates on -- not a screenshot or
@@ -930,18 +985,31 @@ dated record.
 | # | Check | Command | Result |
 | --- | --- | --- | --- |
 | I1–I3 (ship) | `hs_input`'s `click` holds the button: `hold_ms` 0–10000 = 120, a sleep between down and up on both routes, the ordered move → down → sleep → up pin, `hold_ms: 0` still reachable with no sleep, a refused button-down followed by neither a sleep nor an up, `key`'s own hold unaffected | `py -3 -m unittest tests.test_hs_drive_mcp_input -v` | `OK`, 49 tests, no skips — 2026-09-21. The new ordered assertion ran red against the unmodified `_do_pointer` first (2 failures, 1 error: no `DEFAULT_CLICK_HOLD_MS`, `['move','down','up'] != ['move','down','sleep','up']`) |
-| S1–S7 (ship) | `hs_select_character`: the S2 baseline (game never loads → `timeout` having sent exactly the scripted commands), the S3 target (a route right after the third click → `character_loaded`, both resolver routes), every refusal, both branches of the restore rule, the `proof_ambiguous` stop before `Play`, fourteen tools registered with `hs_select_character`'s hints, and the docstring/hub-doc phase and refusal-token coverage | `py -3 -m unittest tests.test_hs_drive_mcp_charselect tests.test_hs_drive_mcp_server tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 16 + 27 + 7 tests, no skips (one skip in the release-boundary suite, `HS-Offline-Launcher/` not checked out) — 2026-09-21. `results.REASONS` gained exactly `layout_not_measured`, `proof_not_armed`, `character_already_loaded`; `research_build_required` still absent |
+| S1–S7 (ship) | `hs_select_character`: the S2 baseline (game never loads → `timeout` having sent exactly the scripted commands), the S3 target (a route right after the third click → `character_loaded`, both resolver routes), every refusal, both branches of the restore rule, the `proof_ambiguous` stop before `Play`, fourteen tools registered with `hs_select_character`'s hints, and the docstring/hub-doc phase and refusal-token coverage | `py -3 -m unittest tests.test_hs_drive_mcp_charselect tests.test_hs_drive_mcp_server tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 16 + 27 + 7 tests, no skips (one skip in the release-boundary suite, `HS-Offline-Launcher/` not checked out) — 2026-09-21. `results.REASONS` gained exactly three tokens: the slot/aspect-ratio refusal (removed by M1 below), `proof_not_armed`, `character_already_loaded`; `research_build_required` still absent |
 | S8 (ship) | Replies are read the way the plugin writes them: `ipc.send`'s `reply` is the handler's line framed by `---- running command file ----` / `---- done ----`, so the arm acknowledgement and the `orbpickup stat` line are picked out by prefix (`_reply_line`) rather than tested against the whole reply. The test double now frames every reply, and `LIVE_ARM_REPLY` is the exact reply L-1's first attempt refused on | `py -3 -m unittest tests.test_hs_drive_mcp_charselect tests.test_hs_drive_mcp_server tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 25 + 27 + 7 tests (one release-boundary skip, as above) — 2026-09-21. Negative control: the same tests against the pre-fix `charselect.py` give `FAILED (failures=11, errors=1)` |
-| L1 (ship) | **The live gate** — `hs_select_character` through a fresh MCP session against the real modded install, with the server-identity controls first | owner-run, per the workorder's Group L step | **Attempt 1, 2026-09-21 — failed, tool defect (fixed in S8).** Server identity proven: `hs_input` `hold_ms: 99999` → `invalid_input` naming `hold_ms`; `hs_select_character(slot=99)` → `game_not_running` with the game closed (the tool checks for a running game before the slot) and `layout_not_measured` once it was running. DLL `24020eac` (a research build, `9dcd5fb1`, was installed and was swapped out for the run and back afterwards); `hs_selfcheck` six `pass`; backup `20260921T100906Z_pre-charselect-ship`; `hs_launch` `plugin_ready` in 14.9 s; `hs_select_character(1)` → `proof_not_armed`, `actions_sent: 0`, `orbpickup: restored_off`, because the framed arm reply failed a whole-reply `startswith`; `hs_stop_game` `exited: true, forced: false`; `hs_saves_inspect` `changed: []`, `missing: []`. **Attempt 2, 2026-09-21 — pass** (server restarted with `3b701d2`): server identity — `hs_input` `hold_ms: 99999` → `invalid_input` naming `hold_ms`, `hs_select_character(slot=99)` → `game_not_running` (closed) then `layout_not_measured` (running, before any input); DLL `24020eac` (swapped in over `9dcd5fb1` and back afterwards); `hs_selfcheck` six `pass`; backup `20260921T101547Z_pre-charselect-ship-2`, 137 files; `hs_launch` `plugin_ready` in 15.8 s; `hs_select_character(1)` → `phase: character_loaded`, `proof` `… | player via GetMyPlayer`, `proof_trail` `main_menu` / `local` / `slot` each `player via none` with `orbpickup` on (the negative control: the on-state menu reading, previously `not observed`) and `play` `player via GetMyPlayer`; four screenshots; `orbpickup: restored_off`; `actions_sent: 3`; `elapsed_s: 17.538`. Settle: every screen waited the fixed `SETTLE_S` = 3 s and the route answered on the first read after `Play`, so 3 s was enough for each screen; nothing shorter was tried. Every `orbpickup stat` line read `globe objs=2`, the menu's included. `hs_screenshot` (`grab_window`) shows the slot-1 character in the Town of Inoya; `hs_stop_game` `exited: true, forced: false`; `hs_saves_inspect` before the restore `changed: [herosiege0.hss, shop.ini]` (the game's own writes on exit), after it `changed: []`, `added: []`, `missing: []`, and the live directory hash-identical to an out-of-band copy taken before either attempt. |
+| L1 (ship) | **The live gate** — `hs_select_character` through a fresh MCP session against the real modded install, with the server-identity controls first | owner-run, per the workorder's Group L step | **Attempt 1, 2026-09-21 — failed, tool defect (fixed in S8).** Server identity proven: `hs_input` `hold_ms: 99999` → `invalid_input` naming `hold_ms`; `hs_select_character(slot=99)` → `game_not_running` with the game closed (the tool checks for a running game before the slot) and the then-current slot refusal (since removed, M1) once it was running. DLL `24020eac` (a research build, `9dcd5fb1`, was installed and was swapped out for the run and back afterwards); `hs_selfcheck` six `pass`; backup `20260921T100906Z_pre-charselect-ship`; `hs_launch` `plugin_ready` in 14.9 s; `hs_select_character(1)` → `proof_not_armed`, `actions_sent: 0`, `orbpickup: restored_off`, because the framed arm reply failed a whole-reply `startswith`; `hs_stop_game` `exited: true, forced: false`; `hs_saves_inspect` `changed: []`, `missing: []`. **Attempt 2, 2026-09-21 — pass** (server restarted with `3b701d2`): server identity — `hs_input` `hold_ms: 99999` → `invalid_input` naming `hold_ms`, `hs_select_character(slot=99)` → `game_not_running` (closed) then the same slot refusal (running, before any input); DLL `24020eac` (swapped in over `9dcd5fb1` and back afterwards); `hs_selfcheck` six `pass`; backup `20260921T101547Z_pre-charselect-ship-2`, 137 files; `hs_launch` `plugin_ready` in 15.8 s; `hs_select_character(1)` → `phase: character_loaded`, `proof` `… | player via GetMyPlayer`, `proof_trail` `main_menu` / `local` / `slot` each `player via none` with `orbpickup` on (the negative control: the on-state menu reading, previously `not observed`) and `play` `player via GetMyPlayer`; four screenshots; `orbpickup: restored_off`; `actions_sent: 3`; `elapsed_s: 17.538`. Settle: every screen waited the then-fixed 3 s settle and the route answered on the first read after `Play`, so 3 s was enough for each screen; nothing shorter was tried. Every `orbpickup stat` line read `globe objs=2`, the menu's included. `hs_screenshot` (`grab_window`) shows the slot-1 character in the Town of Inoya; `hs_stop_game` `exited: true, forced: false`; `hs_saves_inspect` before the restore `changed: [herosiege0.hss, shop.ini]` (the game's own writes on exit), after it `changed: []`, `added: []`, `missing: []`, and the live directory hash-identical to an out-of-band copy taken before either attempt. |
+
+The rows below belong to `hs-drive-mcp-charselect-buttons`, the workorder
+that replaced the measured click fractions with ForgePact's `menulayout`
+listing. Its ids start at M1.
+
+| # | Check | Command | Result |
+| --- | --- | --- | --- |
+| M-P0 | **Phase 0**: the live `menulayout` listing of the main menu, `Chose_rm` and the character panel, with the dev build (`BloodPactPlugin_rel.dll` from ForgePact `f9889a6`) | owner-authorized, run by a live agent, per `ForgePact/docs/menu-layout-research.md` § Live procedure | **pass — 2026-09-21** (that doc's § Results, P0-1 to P0-9). Positive control: `Play local` listed at `win=336,534` on a 1920x1080 windowed client (C-1.15's hand-measured point), and one held click there reached `Chose_rm`. Slot 1 listed at `win=177,174`, and a click there opened the character panel. `PLAY` listed only after that click, at `win=584,345`. Decision: `slotObject: Choose_Parent_obj`, `playObject: UI_Button_obj`, both `point:origin`. Saves `changed: []` before and after restore, and the installed DLL was restored to `22371422…fabc33`. The three framed replies are the hub's fixtures, verbatim (`tests/hs_drive_mcp_menulayout_fixtures.py`). |
+| M1 | `layout.py` on the three phase-0 listings: header, rows, `text` to end of line, `<read-failed>` as `None`, `layout_command_missing` for an older plugin or no header, `window_size_mismatch`. The `Play local`, slot and `PLAY` matchers are checked against those listings. Slot 2 is the card right of slot 1 on the same row (`381,174` vs `177,174`), and slot 9 is the card below. The hidden duplicate cards are dropped. The game's `slot` variable agrees with the row-major order. Negative controls: a hidden or look-alike `Play local`, `PLAY` vs `Play`, and two candidates. | `py -3 -m unittest tests.test_hs_drive_mcp_layout -v` | `OK`, 35 tests, no skips — 2026-09-21 |
+| M2 | `hs_select_character` from the listing. The fake plugin answers `menulayout` with whichever phase-0 listing the clicks so far have reached. Covered: the S2 baseline, the S3 target with `layout_trail`, every click equal to the chosen row's `win`, slot 2's click at `381,174`, a 1024x768 client whose listing agrees, `window_size_mismatch` and `layout_command_missing` before any click, `button_not_found` on each of the three screens (one quoting the last listing after exactly 30 polls), `slot_not_listed` for `slot=99` and for a page that stays short, and one short read not refused. Proof, restore and `proof_ambiguous` rules are unchanged. | `py -3 -m unittest tests.test_hs_drive_mcp_charselect -v` | `OK`, 35 tests, no skips — 2026-09-21. Negative control: the same 35 tests with the previous (fraction-clicking) `charselect.py` loaded in its place give `FAILED (failures=3, errors=12)` |
+| M3 | Tool surface: `slot`'s published schema has `minimum: 1`, and the description names `menulayout` and no fraction, 16:9 or removed token. `REFUSAL_TOKENS` is the new set, each in the docstring and in this doc. The release boundary lists `layout.py`. | `py -3 -m unittest tests.test_hs_drive_mcp_server tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 28 + 7 tests (one release-boundary skip, `HS-Offline-Launcher/` not checked out) — 2026-09-21 |
+| M4 | Whole root suite after the change | `py -3 -m unittest discover -s tests` | `Ran 973 tests`, `OK (skipped=10)`. All ten skips are the pre-existing environmental ones. — 2026-09-21 |
+| M-L2 | **The live gate**: `hs_select_character(1)` against the player build carrying `menulayout`, in a fresh session, with identity controls (`slot=0` → schema error; `slot=99` → `slot_not_listed` naming 24 cards) | owner-run, per the workorder's L-2 step | **pending** |
+| M-L2b | **Second launch**: `hs_select_character(2)`. Its `layout_trail` slot row must have a greater `win` x than M-L2's and the same `win` y, and the screenshot must show a different character. | owner-run, same step | **pending** |
 
 ## What is deliberately not here
 
 - **Character creation, class, difficulty, season, and anything past a
   loaded character; gameplay.** `hs_select_character` takes an existing
-  save from the main menu to a loaded character and stops there; it does
-  not create one, does not choose a slot other than 1 or a page other than
-  the first, and nothing here plays the game. See "Character select" and
-  "Known limitations".
+  save from the main menu to a loaded character and stops there. It does
+  not create one or turn to a page other than the first, and nothing here
+  plays the game. See "Character select" and "Known limitations".
 - **Synthetic input anywhere but the game's own window.** `hs_input` refuses
   unless the target window belongs to a running `hero_siege.exe`, and on the
   `send_input` route it re-proves that the game holds the foreground
@@ -967,7 +1035,8 @@ py -3 -m unittest tests.test_hs_drive_mcp_launch -v            # launch, readine
 py -3 -m unittest tests.test_hs_drive_mcp_ipc -v               # the bp_ipc command channel
 py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v        # window resolution and capture
 py -3 -m unittest tests.test_hs_drive_mcp_input -v             # what actually leaves the process
-py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # parsing ForgePact's menulayout listing
+py -3 -m unittest tests.test_hs_drive_mcp_charselect -v        # hs_select_character: clicks, proof, refusals
+py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # ForgePact's menulayout listing and the three matchers
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # nothing shipped knows it exists
 py -3 -m unittest discover -s tests                            # all of the above, plus the rest
 ```

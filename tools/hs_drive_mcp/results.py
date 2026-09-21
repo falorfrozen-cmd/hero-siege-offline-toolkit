@@ -70,18 +70,30 @@ INPUT_REASONS = (
     "invalid_input",
 )
 
-#: Added by `hs-drive-mcp-charselect-ship` for `hs_select_character`, and only
-#: these three. `layout_not_measured` covers a slot, page or client ratio the
-#: research doc never measured -- refused before any input, not guessed at.
-#: `proof_not_armed` is the instrument-blind case D17 fell into, now a named
-#: refusal: `orbpickup 1` was not acknowledged, or `orbpickup stat` still read
-#: `player via (not tried)` on a second read at least a second later, so the
-#: resolver never ran and no click was sent. `character_already_loaded` means
-#: the menu-time read already named a resolver route before any click.
+#: `hs_select_character`'s own tokens. `proof_not_armed` and
+#: `character_already_loaded` came with `hs-drive-mcp-charselect-ship`:
+#: the first is the instrument-blind case D17 fell into, now a named
+#: refusal -- `orbpickup 1` was not acknowledged, or `orbpickup stat` still
+#: read `player via (not tried)` on a second read at least a second later, so
+#: the resolver never ran and no click was sent; the second means the
+#: menu-time read already named a resolver route before any click.
+#:
+#: The other four came with `hs-drive-mcp-charselect-buttons`, which replaced
+#: the measured click points (and their unmeasured-slot refusal) with
+#: ForgePact's `menulayout` listing. Each names a way the listing cannot
+#: be clicked from, so nothing is: `layout_command_missing` (the plugin
+#: predates the command, or answered with no listing), `button_not_found`
+#: (the screen's button was not listed within the poll budget),
+#: `slot_not_listed` (the save-slot screen listed fewer cards than `slot`),
+#: `window_size_mismatch` (the listing's `window=` is not this client, so its
+#: points are for a different window).
 SELECT_CHARACTER_REASONS = (
-    "layout_not_measured",
     "proof_not_armed",
     "character_already_loaded",
+    "layout_command_missing",
+    "button_not_found",
+    "slot_not_listed",
+    "window_size_mismatch",
 )
 
 REASONS = CORE_REASONS + GAME_REASONS + INPUT_REASONS + SELECT_CHARACTER_REASONS

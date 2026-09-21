@@ -784,9 +784,8 @@ class TokenTests(unittest.TestCase):
                          ("foreground_not_game", "invalid_input"))
         for token in results.INPUT_REASONS:
             self.assertIn(token, results.REASONS)
-        # layout_not_measured now belongs to hs_select_character
-        # (hs-drive-mcp-charselect-ship, results.SELECT_CHARACTER_REASONS) --
-        # this only pins that hs_input's own two tokens are unchanged, not
+        # hs_select_character's own tokens live in
+        # results.SELECT_CHARACTER_REASONS -- this only pins that hs_input's own two tokens are unchanged, not
         # that no other tool may ever define a refusal. research_build_required
         # was dropped with branch R at that workorder's replan 2 and must
         # never exist anywhere: nothing in this codebase ships a research

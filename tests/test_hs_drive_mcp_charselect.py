@@ -3,10 +3,18 @@
 `hs_input.inject` and `ipc.send` are patched at module level with a scripted
 fake plugin; nothing here starts a game, touches `%LOCALAPPDATA%`, or calls
 the real Win32 input functions. `_sleep` (the one seam every wait in
-`charselect.py` goes through -- the settle after a click, the blind-instrument
-retry, the poll interval) is patched to a no-op that records what it was
-asked to wait, so these tests finish in milliseconds regardless of `SETTLE_S`
-or `timeout_s`.
+`charselect.py` goes through -- the listing polls, the blind-instrument
+retry, the orbpickup poll interval) is patched to a no-op that records what
+it was asked to wait, so these tests finish in milliseconds regardless of
+the poll budgets or `timeout_s`.
+
+The fake plugin answers `menulayout` with the three listings phase 0
+captured from a running game, verbatim (`hs_drive_mcp_menulayout_fixtures`),
+and which one it answers depends on how many clicks have landed: the main
+menu before any, `Chose_rm` after `Play local`, the character panel after a
+card. So every click point these tests see is a `win=` field a real game
+printed, and a click the tool should not have sent changes what it reads
+next -- the way the game would.
 
 S2 is the baseline (`AGENTS.md` § "Mod Development Workflow"): the game never
 loads, so the tool has to time out having sent exactly the scripted commands
@@ -22,8 +30,10 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.hs_drive_mcp import capture, charselect, procs, results  # noqa: E402
+from tools.hs_drive_mcp import capture, charselect, layout, procs, results  # noqa: E402
 from tools.hs_drive_mcp import input as input_module  # noqa: E402
+from tests.hs_drive_mcp_menulayout_fixtures import (  # noqa: E402
+    CHOSE_RM_REPLY, MAIN_MENU_REPLY, PANEL_REPLY)
 
 HWND = 0x1234ABCD
 PID = 4242
@@ -37,17 +47,16 @@ GEOMETRY = {"client_size": [CLIENT_W, CLIENT_H]}
 WINDOW = {"hwnd": HWND, "pid": PID, "bbox": (0, 0, CLIENT_W, CLIENT_H),
          "area": CLIENT_W * CLIENT_H, "minimized": False}
 
-#: `ForgePact/docs/character-select-research.md` C-1.15's measured client
-#: points, computed here the same way `charselect.py` does (`round(fraction *
-#: client dimension)`), so the assertions pin the formula rather than agree
-#: with it. At CLIENT_W=1920, CLIENT_H=1080 these are (336, 534), (243, 225)
-#: and (583, 346).
-LOCAL_POINT = (round(charselect.FRACTION_LOCAL[0] * CLIENT_W),
-              round(charselect.FRACTION_LOCAL[1] * CLIENT_H))
-SLOT_POINT = (round(charselect.FRACTION_SLOT_1[0] * CLIENT_W),
-             round(charselect.FRACTION_SLOT_1[1] * CLIENT_H))
-PLAY_POINT = (round(charselect.FRACTION_PLAY[0] * CLIENT_W),
-             round(charselect.FRACTION_PLAY[1] * CLIENT_H))
+#: The `win=` fields of the rows phase 0's listings carry for `Play local`,
+#: slot 1, slot 2 and `PLAY`, copied from the fixture text by hand so the
+#: assertions pin what the game printed rather than agree with the matcher.
+LOCAL_POINT = (336, 534)
+SLOT_1_POINT = (177, 174)
+SLOT_2_POINT = (381, 174)
+PLAY_POINT = (584, 345)
+
+#: What the fake plugin lists after 0, 1 and 2+ clicks.
+SCREENS = (MAIN_MENU_REPLY, CHOSE_RM_REPLY, PANEL_REPLY)
 
 NOT_TRIED_LINE = ("orbpickup stat: globe objs=0 | seen=0 noplayer=0 "
                   "outofreach=0 uncacheable=0 pulled=0 | nearest=-1 px "
@@ -96,10 +105,15 @@ class ScriptedIpc:
     `refusals` maps a command line to a one-shot `(reason, detail)`: the
     next call for that line is refused instead of scripted, and every call
     after that reads the script again.
+
+    A script entry may instead be a callable taking no arguments: its return
+    value is the reply, every time. That is how `menulayout` answers with
+    whichever screen the clicks so far have reached.
     """
 
     def __init__(self, script, refusals=None):
-        self.script = {line: list(replies) for line, replies in script.items()}
+        self.script = {line: (replies if callable(replies) else list(replies))
+                       for line, replies in script.items()}
         self.refusals = dict(refusals or {})
         self.calls: list[str] = []
 
@@ -110,7 +124,10 @@ class ScriptedIpc:
             reason, detail = self.refusals.pop(line)
             return results.refuse(tool, reason, detail)
         queue = self.script[line]
-        reply = queue.pop(0) if len(queue) > 1 else queue[0]
+        if callable(queue):
+            reply = queue()
+        else:
+            reply = queue.pop(0) if len(queue) > 1 else queue[0]
         if not reply.startswith("---- running command file ----"):
             reply = framed(reply)
         return results.ok(tool, sent=[line], reply=reply,
@@ -125,6 +142,7 @@ class ScriptedInject:
     def __init__(self, refuse_at=None, refusal=("foreground_not_game",
                                                 "test refusal")):
         self.calls: list[dict] = []
+        self.landed = 0
         self.refuse_at = refuse_at
         self.refusal = refusal
 
@@ -135,8 +153,13 @@ class ScriptedInject:
         if self.refuse_at is not None and index == self.refuse_at:
             reason, detail = self.refusal
             return results.refuse(tool, reason, detail)
+        self.landed += 1
         return results.ok(tool, actions_done=len(actions),
                           actions_total=len(actions), complete=True)
+
+    def points(self):
+        return [(c["actions"][0]["x"], c["actions"][0]["y"])
+                for c in self.calls]
 
 
 class ScriptedScreenshot:
@@ -153,10 +176,17 @@ class CharselectTestCase(unittest.TestCase):
     """One running game, one 1920x1080 client, every side effect scripted."""
 
     def arrange(self, *, game_state=RUNNING, geometry=GEOMETRY,
-               ipc_script=None, ipc_refusals=None, inject_refuse_at=None):
+               ipc_script=None, ipc_refusals=None, inject_refuse_at=None,
+               screens=SCREENS):
+        """`screens[n]` is what `menulayout` lists once `n` clicks have
+        landed (the last one repeats), unless `ipc_script` scripts
+        `menulayout` itself."""
         self.doCleanups()
-        self.ipc = ScriptedIpc(ipc_script or {}, ipc_refusals)
         self.inject = ScriptedInject(refuse_at=inject_refuse_at)
+        script = dict(ipc_script or {})
+        script.setdefault("menulayout", lambda: screens[
+            min(self.inject.landed, len(screens) - 1)])
+        self.ipc = ScriptedIpc(script, ipc_refusals)
         self.screenshot = ScriptedScreenshot()
         self.sleeps: list[float] = []
         self.saves_calls: list[tuple] = []
@@ -253,14 +283,15 @@ class BaselineTests(CharselectTestCase):
             self.assertEqual(action["type"], "click")
             self.assertEqual(action["hold_ms"], 120,
                              "the hold is explicit, not the default")
-        self.assertEqual(
-            [(a["actions"][0]["x"], a["actions"][0]["y"])
-             for a in self.inject.calls],
-            [LOCAL_POINT, SLOT_POINT, PLAY_POINT])
+        self.assertEqual(self.inject.points(),
+                         [LOCAL_POINT, SLOT_1_POINT, PLAY_POINT])
 
         self.assertEqual(set(self.ipc.calls),
                          {"ping", "orbpickup stat", "orbpickup 1",
-                          "orbpickup 0"})
+                          "orbpickup 0", "menulayout"})
+        self.assertEqual(self.ipc.calls.count("menulayout"), 3,
+                         "one read per screen: each target was listed on "
+                         "the first poll")
         self.assertEqual(self.ipc.calls[0], "ping")
         self.assertEqual(self.ipc.calls[1], "orbpickup stat")
         self.assertEqual(self.ipc.calls[2], "orbpickup 1")
@@ -294,6 +325,14 @@ class TargetTests(CharselectTestCase):
                          ["main_menu", "local", "slot", "play"])
         self.assertEqual(report["orbpickup"], "restored_off")
         self.assertEqual(len(self.inject.calls), 3)
+        self.assertEqual(
+            report["layout_trail"],
+            [{"screen": "local", "obj": "UI_Button_obj", "id": 257029,
+              "win": [336, 534], "text": "Play local"},
+             {"screen": "slot", "obj": "Choose_Parent_obj", "id": 257048,
+              "win": [177, 174], "text": ""},
+             {"screen": "play", "obj": "UI_Button_obj", "id": 257591,
+              "win": [584, 345], "text": "Play"}])
 
     def test_instance_find_player_obj_is_accepted_the_same_way(self):
         self.arrange(ipc_script=target_script(INSTANCE_FIND_LINE))
@@ -364,21 +403,37 @@ class RefusalTests(CharselectTestCase):
         self.assertEqual(report["reason"], "game_state_unknown", report)
         self.assertEqual(self.ipc.calls, [])
 
-    def test_a_slot_other_than_one_refuses_before_any_command(self):
-        self.arrange(ipc_script=baseline_script())
-        report = self.call(slot=2)
-        self.assertEqual(report["reason"], "layout_not_measured", report)
-        self.assertIn("C-1.15", report["detail"])
-        self.assertEqual(self.ipc.calls, [])
-        self.assertEqual(self.inject.calls, [])
-
-    def test_a_non_sixteen_by_nine_client_refuses_before_any_inject(self):
+    def test_a_listing_for_another_window_size_refuses_before_any_click(self):
+        # The live listings say window=1920x1080; this client measures
+        # 2560x1440, so every `win` point is for a different window.
         self.arrange(ipc_script=baseline_script(),
-                     geometry={"client_size": [1024, 768]})
+                     geometry={"client_size": [2560, 1440]})
         report = self.call()
-        self.assertEqual(report["reason"], "layout_not_measured", report)
-        self.assertIn("1024x768", report["detail"])
-        self.assertEqual(self.ipc.calls, [])
+        self.assertEqual(report["reason"], "window_size_mismatch", report)
+        self.assertIn("1920x1080", report["detail"])
+        self.assertIn("2560x1440", report["detail"])
+        self.assertEqual(self.inject.calls, [])
+        self.assertEqual(self.ipc.calls.count("menulayout"), 1)
+        self.assertEqual(report["orbpickup"], "restored_off")
+
+    def test_an_older_plugin_refuses_layout_command_missing_before_any_click(self):
+        script = baseline_script()
+        script["menulayout"] = [
+            "command unavailable in player build: menulayout"]
+        self.arrange(ipc_script=script)
+        report = self.call()
+        self.assertEqual(report["reason"], "layout_command_missing", report)
+        self.assertIn("command unavailable in player build: menulayout",
+                      report["detail"])
+        self.assertEqual(self.inject.calls, [])
+        self.assertEqual(report["orbpickup"], "restored_off")
+
+    def test_a_reply_with_no_listing_header_is_layout_command_missing(self):
+        script = baseline_script()
+        script["menulayout"] = ["unknown command"]
+        self.arrange(ipc_script=script)
+        report = self.call()
+        self.assertEqual(report["reason"], "layout_command_missing", report)
         self.assertEqual(self.inject.calls, [])
 
     def test_ping_not_consumed_is_propagated(self):
@@ -470,7 +525,9 @@ class ProofAmbiguousTests(CharselectTestCase):
         self.assertEqual(len(self.inject.calls), 2,
                          "local and slot only -- Play is never clicked")
         self.assertEqual(set(self.ipc.calls) - {"orbpickup 0"},
-                         {"ping", "orbpickup stat", "orbpickup 1"})
+                         {"ping", "orbpickup stat", "orbpickup 1",
+                          "menulayout"})
+        self.assertEqual(self.inject.points(), [LOCAL_POINT, SLOT_1_POINT])
 
     def test_the_restore_rule_holds_in_the_ambiguous_case_too(self):
         script = baseline_script()
@@ -482,6 +539,137 @@ class ProofAmbiguousTests(CharselectTestCase):
         self.assertEqual(report["phase"], "proof_ambiguous", report)
         self.assertEqual(report["orbpickup"], "left_on")
         self.assertNotIn("orbpickup 0", self.ipc.calls)
+
+
+def one_card_listing():
+    """Phase 0's `Chose_rm` listing with every card row but slot 1's
+    removed: a page holding one save."""
+    kept = [line for line in CHOSE_RM_REPLY.split("\r\n")
+            if "obj=Choose_Parent_obj" not in line or " slot=1 text=" in line]
+    return "\r\n".join(kept)
+
+
+class ListedPointTests(CharselectTestCase):
+    """Every click lands on a `win=` field the game printed, verbatim."""
+
+    def test_every_click_is_the_win_field_of_the_row_the_matcher_chose(self):
+        self.arrange(ipc_script=target_script())
+        report = self.call(slot=1, timeout_s=5)
+        self.assertEqual(report["phase"], "character_loaded", report)
+        chosen = [
+            layout.match_play_local(layout.parse({"reply": MAIN_MENU_REPLY})),
+            layout.match_slot(layout.parse({"reply": CHOSE_RM_REPLY}), 1),
+            layout.match_play(layout.parse({"reply": PANEL_REPLY})),
+        ]
+        self.assertEqual(self.inject.points(),
+                         [tuple(row.win) for row in chosen])
+        self.assertEqual(self.inject.points(),
+                         [LOCAL_POINT, SLOT_1_POINT, PLAY_POINT])
+        for point, trail in zip(self.inject.points(), report["layout_trail"]):
+            self.assertEqual(list(point), trail["win"])
+
+    def test_slot_2_clicks_the_card_right_of_slot_1(self):
+        self.arrange(ipc_script=target_script())
+        report = self.call(slot=2, timeout_s=5)
+        self.assertEqual(report["phase"], "character_loaded", report)
+        self.assertEqual(self.inject.points(),
+                         [LOCAL_POINT, SLOT_2_POINT, PLAY_POINT])
+        slot_row = report["layout_trail"][1]
+        self.assertEqual(slot_row["win"], list(SLOT_2_POINT))
+        self.assertGreater(slot_row["win"][0], SLOT_1_POINT[0])
+        self.assertEqual(slot_row["win"][1], SLOT_1_POINT[1])
+
+    def test_a_client_of_any_shape_is_fine_when_the_listing_agrees(self):
+        # No aspect-ratio rule any more: the listing's own window= is the
+        # check. A 1024x768 client whose listing says 1024x768 proceeds.
+        screens = tuple(text.replace("window=1920x1080", "window=1024x768")
+                        for text in SCREENS)
+        self.arrange(ipc_script=target_script(),
+                     geometry={"client_size": [1024, 768]}, screens=screens)
+        report = self.call(slot=1, timeout_s=5)
+        self.assertEqual(report["phase"], "character_loaded", report)
+
+
+class ListingRefusalTests(CharselectTestCase):
+    """A button the listing does not carry is refused, never guessed."""
+
+    def test_no_play_local_on_the_main_menu_refuses_before_any_click(self):
+        text = MAIN_MENU_REPLY.replace("text=Play local", "text=Play elsewhere")
+        self.arrange(ipc_script=baseline_script(), screens=(text,))
+        report = self.call()
+        self.assertEqual(report["reason"], "button_not_found", report)
+        self.assertIn("Play local", report["detail"])
+        self.assertIn("room=Main_Menu_rm", report["detail"])
+        self.assertEqual(self.inject.calls, [])
+        self.assertEqual(report["orbpickup"], "restored_off")
+
+    def test_a_slot_screen_that_never_appears_refuses_button_not_found(self):
+        # The main menu keeps being listed after the Play local click: the
+        # poll budget runs out, the last listing is quoted, and no second
+        # click is sent.
+        self.arrange(ipc_script=baseline_script(),
+                     screens=(MAIN_MENU_REPLY,))
+        report = self.call()
+        self.assertEqual(report["reason"], "button_not_found", report)
+        self.assertEqual(report["phase"], "local")
+        self.assertIn("room=Main_Menu_rm", report["detail"])
+        self.assertEqual(report["last_listing"][0],
+                         MAIN_MENU_REPLY.splitlines()[1])
+        self.assertEqual(self.inject.points(), [LOCAL_POINT])
+        self.assertEqual(self.ipc.calls.count("menulayout"),
+                         1 + charselect.LAYOUT_POLL_ATTEMPTS)
+        self.assertEqual(self.sleeps.count(charselect.LAYOUT_POLL_S),
+                         charselect.LAYOUT_POLL_ATTEMPTS)
+
+    def test_a_play_button_that_never_appears_refuses_button_not_found(self):
+        self.arrange(ipc_script=baseline_script(),
+                     screens=(MAIN_MENU_REPLY, CHOSE_RM_REPLY))
+        report = self.call()
+        self.assertEqual(report["reason"], "button_not_found", report)
+        self.assertEqual(report["phase"], "slot")
+        self.assertIn("Play", report["detail"])
+        self.assertEqual(self.inject.points(), [LOCAL_POINT, SLOT_1_POINT])
+        self.assertEqual([row["screen"] for row in report["layout_trail"]],
+                         ["local", "slot"])
+
+    def test_a_slot_beyond_the_listed_cards_refuses_slot_not_listed(self):
+        self.arrange(ipc_script=baseline_script())
+        report = self.call(slot=99)
+        self.assertEqual(report["reason"], "slot_not_listed", report)
+        self.assertIn("24", report["detail"])
+        self.assertEqual(self.inject.points(), [LOCAL_POINT],
+                         "Play local only -- no card is guessed")
+        self.assertEqual(report["orbpickup"], "restored_off")
+
+    def test_a_short_page_is_not_refused_on_one_read(self):
+        # The screen may still be filling in: one read listing fewer cards
+        # than `slot` is polled again, and slot 2 is clicked once listed.
+        # Only the same short count read twice running is `slot_not_listed`.
+        slot_screens = iter([one_card_listing()])
+
+        def listing():
+            if self.inject.landed == 0:
+                return MAIN_MENU_REPLY
+            if self.inject.landed >= 2:
+                return PANEL_REPLY
+            return next(slot_screens, CHOSE_RM_REPLY)
+
+        script = target_script()
+        script["menulayout"] = listing
+        self.arrange(ipc_script=script)
+        report = self.call(slot=2, timeout_s=5)
+        self.assertEqual(report["phase"], "character_loaded", report)
+        self.assertEqual(self.inject.points()[1], SLOT_2_POINT)
+
+    def test_a_page_that_stays_short_refuses_slot_not_listed(self):
+        self.arrange(ipc_script=baseline_script(),
+                     screens=(MAIN_MENU_REPLY, one_card_listing()))
+        report = self.call(slot=2)
+        self.assertEqual(report["reason"], "slot_not_listed", report)
+        self.assertIn("1 visible", report["detail"])
+        self.assertEqual(self.inject.points(), [LOCAL_POINT])
+        self.assertEqual(self.ipc.calls.count("menulayout"), 3,
+                         "the main menu, then the same short page twice")
 
 
 class InjectRefusalTests(CharselectTestCase):
