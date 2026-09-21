@@ -627,7 +627,7 @@ absent — as it is in a worktree with the ForgePact submodule uninitialized.
 | Server | For |
 |---|---|
 | `tauri-hub` | driving a running debug hub through its bridge on `127.0.0.1:9223` |
-| `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, graceful close) — a local stdio server in `tools/hs_drive_mcp/` |
+| `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close) — a local stdio server in `tools/hs_drive_mcp/` |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
 | `github` | releases, dispatches and pointer PRs across the eleven repositories |
 
@@ -708,7 +708,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Fifteen suites cover this page's tooling. Fourteen are Python and run
+Seventeen suites cover this page's tooling. Sixteen are Python and run
 automatically under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
@@ -733,14 +733,17 @@ py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release inpu
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 
-Those seven stay green on CI's `ubuntu-latest` runner, where neither Windows,
-the SDK, nor any submodule is present — but only the parts that need one skip.
+The ten `test_hs_drive_mcp_*` suites stay green on CI's `ubuntu-latest`
+runner, where neither Windows, the SDK, nor any submodule is present — but only the parts that need one skip.
 The engine-bridge, launch and screenshot suites skip wholesale (launching a
 process, enumerating windows and grabbing the screen are Windows-only); the
 server suite skips its stdio and `hs_status` classes but still runs
 `SelfCheckSummaryTests`, which drives `run_checks` over a stub registry and so
 needs nothing; the release-boundary suite skips only its submodule check; and
-the saves and IPC suites run in full, against fixtures — the IPC one because
+the saves, IPC, input, charselect and layout suites run in
+full, against fixtures and fakes (the input suite's Win32 calls all go through
+one patched table, charselect patches `hs_input.inject` and `ipc.send`, and
+layout is pure parsing) — the IPC one because
 its gate is injected and its whole channel is two files in a temporary
 directory, which is deliberate: it covers the rules most likely to be broken by
 an edit somewhere else. Each skip names its reason.
