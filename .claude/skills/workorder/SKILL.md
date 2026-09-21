@@ -421,7 +421,11 @@ Set `status: PASS` in the workorder and tell the user:
   the pipeline earns its keep or shows it is not;
 - run `py -3 tools/workorder_audit.py --latest` and report every `FAIL` line
   verbatim beside the round summary — a workorder that passes its criteria and
-  fails its cost budget says so, not silence.
+  fails its cost budget says so, not silence;
+- if the work opened pull requests in more than one module, end with the merge
+  order and each PR's link, per `AGENTS.md` § "One Branch and One Pull Request
+  per Module, per Feature": submodule PRs first, then the hub PR once
+  `submodule-dispatch.yml` has bumped each pointer on hub `main`.
 
 Then fold what is still true out of the workorder and into the document that
 describes the result — `docs/hub/design.md`, a `docs/adr/` entry, or the

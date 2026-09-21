@@ -481,7 +481,22 @@ for the same feature in the same module.
   force-pushing.
 - **A submodule's PR is opened in the submodule's own repository**, from its
   own branch, and the hub PR links it. The hub never bumps the gitlink in the
-  same breath; that happens once the submodule PR is merged.
+  same breath, and no agent bumps it by hand afterwards: once the submodule
+  PR merges to its `main`, that repository's `notify-hub.yml` dispatches to
+  the hub and `.github/workflows/submodule-dispatch.yml` opens and merges the
+  `chore: bump <submodule> to <sha>` pull request itself. If no bump PR
+  appears, look at that workflow's run rather than committing the pointer.
+- **After opening pull requests in more than one module, print the merge
+  order** as the last thing you report, with each PR's link:
+  1. each submodule PR, in dependency order if one submodule consumes
+     another;
+  2. wait for `submodule-dispatch.yml`'s bump PR for each of them to land on
+     hub `main`;
+  3. the hub PR last. If its change needs the new pointer, update the hub
+     branch from `main` before merging so its checks run against it.
+
+  Merged the other way round, hub `main` carries code that calls into a
+  submodule commit it does not yet point at.
 - **Different features stay apart** even when they touch the same module:
   one feature per branch is what lets a single reviewer read, approve or
   revert each one on its own.
