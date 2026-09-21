@@ -135,7 +135,7 @@ Thirteen. One tool per action, `hs_` prefixed, with annotations on every one.
 | --- | --- | --- |
 | `key` | `vk` 1–254, `hold_ms` 0–10000 = 60 | press, wait, release |
 | `key_down` / `key_up` | `vk` | one half of a press; a `key_down` with no matching `key_up` leaves the key down, which is the caller's business |
-| `click` | `x`, `y`, `button` `left`\|`right` = `left`, `space` `client`\|`screen` = `client` | move, button down, button up |
+| `click` | `x`, `y`, `button` `left`\|`right` = `left`, `space` `client`\|`screen` = `client`, `hold_ms` 0–10000 = 120 | move, button down, wait, button up |
 | `move` | `x`, `y`, `space` | the move only |
 | `wait` | `ms` 0–10000 | nothing; it sleeps |
 
@@ -516,21 +516,25 @@ observed** for `UI_Button_obj` and the seven events tried, with its enumeration
 control passing. The warm-script route is **unmeasured** -- its positive
 control raised, so nothing it reported could be told from a blind instrument.
 
-### The click has to be held, and `hs_input` does not hold it yet
+### The click had to be held, and now it is (fixed 2026-09-21)
 
-This is the finding that matters for anyone using the tool today.
-`hs_input`'s `click` action emits the button-down and the button-up back to
-back with nothing between them. Both land inside a single frame, and at 144
-fps the game's sample loop never observes a frame with the button held -- so
-the click moves the cursor, lights the button underneath it, reports
-`complete: true`, and activates nothing. The identical click with **120 ms
-between the two records** changed the room every time.
+`hs_input`'s `click` action used to emit the button-down and the button-up
+back to back with nothing between them. Both landed inside a single frame,
+and at 144 fps the game's sample loop never observed a frame with the button
+held -- so the click moved the cursor, lit the button underneath it, reported
+`complete: true`, and activated nothing. The identical click with **120 ms
+between the two records** changed the room every time
+(`ForgePact/docs/character-select-research.md` C-1.10).
 
-So `click` cannot currently press a button, even though the mechanism works.
-Its `key` action already takes `hold_ms` and defaults it to 60; the pointer
-path needs the same, and until it has one, a caller has to emit the records
-itself. This is an instrument that reported armed and did nothing, found by
-measurement rather than by review -- see
+**Fixed 2026-09-21.** `click` now takes `hold_ms` (0–10000, default
+`DEFAULT_CLICK_HOLD_MS = 120` -- the measured value) the same way `key`
+already did, and sleeps between the button-down and the button-up on both
+routes. `hold_ms: 0` still sends move/button-down/button-up back to back with
+no sleep -- the pre-fix shape, kept reachable on purpose as the baseline a
+caller can still ask for. `key`'s own default, 60 ms, was measured for a held
+*key* (C-1.7); it was never re-measured for a *button*, so `click` does not
+reuse it. This was an instrument that reported armed and did nothing, found
+by measurement rather than by review -- see
 [`docs/agents/prove-the-instrument.md`](../agents/prove-the-instrument.md).
 
 ### `orbpickup stat` does not prove a character is loaded

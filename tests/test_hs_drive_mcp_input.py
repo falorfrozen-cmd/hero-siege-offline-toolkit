@@ -61,6 +61,38 @@ VK_SHIFT = 16
 VK_DOWN = 40
 
 
+def _pointer_order(log):
+    """`FakeWin32.log` as readable move/down/sleep/up tags.
+
+    Only meaningful for a log that holds pointer actions (mouse records and
+    posted mouse messages) -- a keyboard record has no `.mi` field, and
+    nothing here needs to tell held-key ordering from held-click ordering.
+    """
+    order = []
+    for kind, payload in log:
+        if kind == "sleep":
+            order.append("sleep")
+        elif kind == "send_input":
+            flags = payload[0].mi.dwFlags
+            if flags & hs_input.MOUSEEVENTF_MOVE:
+                order.append("move")
+            elif flags & (hs_input.MOUSEEVENTF_LEFTDOWN
+                         | hs_input.MOUSEEVENTF_RIGHTDOWN):
+                order.append("down")
+            elif flags & (hs_input.MOUSEEVENTF_LEFTUP
+                         | hs_input.MOUSEEVENTF_RIGHTUP):
+                order.append("up")
+        elif kind == "post_message":
+            message = payload
+            if message == hs_input.WM_MOUSEMOVE:
+                order.append("move")
+            elif message in (hs_input.WM_LBUTTONDOWN, hs_input.WM_RBUTTONDOWN):
+                order.append("down")
+            elif message in (hs_input.WM_LBUTTONUP, hs_input.WM_RBUTTONUP):
+                order.append("up")
+    return order
+
+
 class FakeWin32:
     """Every call the module can make, recorded rather than performed."""
 
@@ -82,6 +114,12 @@ class FakeWin32:
         self.sent = []
         self.posted = []
         self.slept = []
+        #: One ordered log of every Win32 call and sleep, tagged by kind, so
+        #: a test can say whether a sleep fell *between* the button records
+        #: or after them -- `sent`/`posted`/`slept` alone cannot, because
+        #: they are three separate lists with no shared position. See
+        #: `_pointer_order` below.
+        self.log = []
         self.raises = []
         self.converted = []
         self.foreground_reads = 0
@@ -119,14 +157,17 @@ class FakeWin32:
     # -- writes --
     def send_input(self, records):
         self.sent.append(list(records))
+        self.log.append(("send_input", list(records)))
         return len(records) if self.accepted is None else self.accepted
 
     def post_message(self, hwnd, message, wparam, lparam):
         self.posted.append((hwnd, message, wparam, lparam))
+        self.log.append(("post_message", message))
         return self.post_queued, (0 if self.post_queued else self.post_error)
 
     def sleep(self, seconds):
         self.slept.append(seconds)
+        self.log.append(("sleep", seconds))
 
     def table(self):
         return {
@@ -402,6 +443,91 @@ class SendInputMouseTests(InputTestCase):
                                "space": "screen"}])
         self.assertEqual(report["reason"], "invalid_input")
         self.assertEqual(self.win32.injections, [])
+
+
+# --------------------------------------------------------------------------
+# The click hold (hs-drive-mcp-charselect-ship, I2): C-1.10 measured that a
+# zero-hold click moves the cursor, lights the button and activates nothing
+# -- both records land inside one frame. This class pins the *order* of the
+# fix, not just its presence: `sent`/`posted`/`slept` are three separate
+# lists and could not say whether a sleep fell between the button records or
+# after them.
+# --------------------------------------------------------------------------
+
+class ClickHoldOrderTests(InputTestCase):
+    def test_a_send_input_click_is_move_down_sleep_up_in_that_order(self):
+        report = self.inject([{"type": "click", "x": 100, "y": 50,
+                               "hold_ms": 150}])
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(_pointer_order(self.win32.log),
+                         ["move", "down", "sleep", "up"])
+        self.assertEqual(len(self.win32.slept), 1)
+        self.assertGreaterEqual(self.win32.slept[0], 0.15)
+
+    def test_a_posted_click_is_move_down_sleep_up_in_that_order(self):
+        report = self.inject([{"type": "click", "x": 100, "y": 50,
+                               "hold_ms": 150}], route="post_message")
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(_pointer_order(self.win32.log),
+                         ["move", "down", "sleep", "up"])
+        self.assertEqual(len(self.win32.slept), 1)
+        self.assertGreaterEqual(self.win32.slept[0], 0.15)
+
+    def test_a_click_defaults_to_the_measured_hundred_and_twenty_ms_hold(self):
+        self.inject([{"type": "click", "x": 100, "y": 50}])
+        self.assertEqual(self.win32.slept, [hs_input.DEFAULT_CLICK_HOLD_MS
+                                            / 1000.0])
+
+    def test_a_zero_hold_click_sends_move_down_up_and_never_sleeps(self):
+        """The pre-fix shape stays reachable on purpose, as the baseline."""
+        report = self.inject([{"type": "click", "x": 100, "y": 50,
+                               "hold_ms": 0}])
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(_pointer_order(self.win32.log), ["move", "down", "up"])
+        self.assertEqual(self.win32.slept, [])
+
+    def test_a_posted_zero_hold_click_never_sleeps_either(self):
+        report = self.inject([{"type": "click", "x": 100, "y": 50,
+                               "hold_ms": 0}], route="post_message")
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(_pointer_order(self.win32.log), ["move", "down", "up"])
+        self.assertEqual(self.win32.slept, [])
+
+    def test_a_move_never_sleeps(self):
+        self.inject([{"type": "move", "x": 5, "y": 6}])
+        self.assertEqual(self.win32.slept, [])
+
+    def test_a_refused_posted_button_down_is_followed_by_neither_a_sleep_nor_an_up(self):
+        """The mirror of `test_a_refused_key_down_is_not_followed_by_a_key_up`,
+        for the pointer path: the move has to succeed (so the down is even
+        attempted) and the down has to be the one that is refused, which the
+        blanket `post_queued` flag cannot express -- it would also refuse the
+        move."""
+        calls = []
+
+        def flaky_post(hwnd, message, wparam, lparam):
+            calls.append(message)
+            if message == hs_input.WM_MOUSEMOVE:
+                return True, 0
+            return False, 5  # ERROR_ACCESS_DENIED
+
+        with patch.dict(hs_input.WIN32, {"PostMessageW": flaky_post}):
+            report = self.inject([{"type": "click", "x": 100, "y": 50,
+                                   "hold_ms": 150}], route="post_message")
+        self.assertEqual(calls, [hs_input.WM_MOUSEMOVE,
+                                 hs_input.WM_LBUTTONDOWN],
+                         "no WM_LBUTTONUP for a down that was never queued")
+        self.assertEqual(self.win32.slept, [],
+                         "and no hold, because there is nothing being held")
+        self.assertFalse(report["complete"])
+
+    def test_the_existing_key_hold_test_is_unaffected(self):
+        """I1/I2 touch `_do_pointer`, not `_do_key` -- `key`'s own hold stays
+        60 ms by default and still sleeps exactly once between down and up."""
+        self.inject([{"type": "key", "vk": VK_SHIFT, "hold_ms": 100}])
+        self.assertEqual(len(self.win32.slept), 1)
+        self.assertGreaterEqual(self.win32.slept[0], 0.1)
+        self.assertEqual(hs_input.DEFAULT_HOLD_MS, 60)
 
 
 # --------------------------------------------------------------------------

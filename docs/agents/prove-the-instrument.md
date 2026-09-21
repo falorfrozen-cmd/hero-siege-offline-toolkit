@@ -47,7 +47,8 @@ Everything above is a C++ hook, which is a problem for this rule's reach: a
 reader writing a host-side Python tool reads `HookOneScript`,
 `InstallScriptHook` and `citrace nativetrace` and reasonably concludes the
 section is about hooks. It is not. The `hs-drive` MCP server produced the
-same shape **twice**, in ordinary Python, with no hook anywhere near it.
+same shape **three times**, in ordinary Python, with no hook anywhere near
+it.
 
 - **`hs_selfcheck` reported itself healthy while blind.** `checks.py`
   computed `healthy = counts["fail"] == 0`, so a run in which every check
@@ -71,6 +72,20 @@ same shape **twice**, in ordinary Python, with no hook anywhere near it.
   stops the rest of the sequence, counts, clears `complete` and names the
   message and the error code (`tools/hs_drive_mcp/input.py`, pinned by
   `tests/test_hs_drive_mcp_input.py`).
+- **`hs_input`'s `click` reported a press that never happened.** Its own
+  existing test, `test_a_client_click_converts_then_moves_then_presses_then_releases`,
+  asserted three `INPUT` records in that order and never asked whether
+  anything separated the down record from the up one - so it could not have
+  caught a `click` that emitted both back to back, which is exactly what
+  `_do_pointer` did. Measured live (`ForgePact/docs/character-select-research.md`
+  C-1.10): both records landed inside one frame, invisible to a 144 fps
+  sample loop, so the click moved the cursor, lit the button and reported
+  `complete: true` having activated nothing. The fixture's `sent`/`posted`/
+  `slept` lists could represent "no sleep" but not "sleep in the wrong
+  place," so the fix (`hold_ms` on `click`, a sleep between down and up)
+  needed a fixture that logs one ordered sequence of calls, not three
+  separate ones, before the ordering itself could be pinned
+  (`tests/test_hs_drive_mcp_input.py`, `ClickHoldOrderTests`).
 
 The second one is why this matters to research and not only to shipping: the
 route's positive controls in the character-select procedure are a human
@@ -80,21 +95,29 @@ recorded that candidate as "not observed" about the *game* when nothing had
 ever left the MCP process - a zero that measured the instrument, which is
 this rule's opening paragraph in a different language.
 
-### What the two have in common: a test double that could not represent the failing return
+### What the first two have in common: a test double that could not represent the failing return
 
 `AGENTS.md` § "HS Game SDK Usage" already states this for input kinds - "a
 stub that cannot represent the failing input cannot catch the bug", learned
 when a C++ test double did not define the `RValue` kind the real runtime
-returns. Both instances here are the same rule pointed at a **return value**
-instead: `hs_input`'s fake `post_message` returned a hardcoded `True`, so no
-test could express a refusal; `hs_selfcheck`'s summary counted `skipped` as
-not-a-failure, so no test could express "ran nothing". The failing case was
-not missed, it was *unrepresentable*.
+returns. The `hs_selfcheck` and `hs_input`-refusal instances above are the
+same rule pointed at a **return value** instead: `hs_input`'s fake
+`post_message` returned a hardcoded `True`, so no test could express a
+refusal; `hs_selfcheck`'s summary counted `skipped` as not-a-failure, so no
+test could express "ran nothing". The failing case was not missed, it was
+*unrepresentable*. The `click`-hold instance is the same rule pointed at a
+fixture's **structure**: `sent`/`posted`/`slept` were three separate lists,
+which could express *that* something happened but not *where in the
+sequence* - so an assertion checking presence and count could never say
+whether a sleep landed between two button records or after both, and the
+gap it could not have caught was exactly the one C-1.10 measured.
 
-And both were found by a **reviewer**, neither by a test. Both suites were
-green throughout: they asserted the field was present and well-typed, never
-that it was *earned*. So the operational form of the rule, for whoever is
-writing the tests rather than reading them afterwards, is:
+The first two were found by a **reviewer**, neither by a test; the third by
+**live measurement**, neither by a test nor by review. All three suites were
+green throughout: they asserted the field was present and well-typed, or the
+records were sent in order, never that the effect was *earned*. So the
+operational form of the rule, for whoever is writing the tests rather than
+reading them afterwards, is:
 
 > **Ask what your green would look like if the thing under test did
 > nothing.** If the answer is "the same", the test is measuring the

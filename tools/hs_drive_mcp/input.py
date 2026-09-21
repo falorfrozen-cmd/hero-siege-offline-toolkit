@@ -94,6 +94,14 @@ MAX_MS = 10000
 
 DEFAULT_HOLD_MS = 60
 
+#: `docs/character-select-research.md` C-1.10: a `click` with nothing between
+#: its button-down and button-up lands both records inside one frame, which a
+#: 144 fps sample loop never sees held -- it moves the cursor, lights the
+#: button under it, reports `complete: true`, and activates nothing. 120 ms
+#: between the records changed the room every time; 60 ms is what C-1.7
+#: measured for a held *key*, not a button, so it is not reused here.
+DEFAULT_CLICK_HOLD_MS = 120
+
 # -- Win32 constants -------------------------------------------------------
 
 INPUT_MOUSE = 0
@@ -391,6 +399,11 @@ def normalise(actions: Any) -> tuple[list[dict[str, Any]], str]:
                     return [], (f"{where} button is {button!r}; it is one of "
                                 f"{', '.join(BUTTONS)}.")
                 entry["button"] = button
+                hold, why = _integer(raw.get("hold_ms", DEFAULT_CLICK_HOLD_MS),
+                                     f"{where} hold_ms", 0, MAX_MS)
+                if why:
+                    return [], why + "."
+                entry["hold_ms"] = hold
         plan.append(entry)
     return plan, ""
 
@@ -685,6 +698,8 @@ def _do_pointer(entry: dict[str, Any], route: str,
         lost = emit([mouse_record(down)])
         if lost:
             return lost
+        if entry["hold_ms"] > 0:
+            WIN32["sleep"](entry["hold_ms"] / 1000.0)
         return emit([mouse_record(up)])
 
     x, y = entry["client_point"]
@@ -696,4 +711,6 @@ def _do_pointer(entry: dict[str, Any], route: str,
     lost = post(down, BUTTON_KEYSTATE[button], lparam)
     if lost:
         return lost
+    if entry["hold_ms"] > 0:
+        WIN32["sleep"](entry["hold_ms"] / 1000.0)
     return post(up, 0, lparam)
