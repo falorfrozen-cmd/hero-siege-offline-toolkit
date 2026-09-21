@@ -232,8 +232,8 @@ Tokens this server can return today:
 | `foreground_not_game` | `hs_input` with `route="send_input"` found some other window in front. `SendInput` goes to whatever is in front, so the keystrokes would have landed somewhere that never asked for them. With `require_foreground: true` one `SetForegroundWindow` was attempted first and did not take; with `false` no attempt was made. The same comparison runs again immediately before **every** injection, so a sequence that loses the foreground half way through stops there and reports `actions_done` — `AGENTS.md` § "Check a Permission Where It Is Used". |
 | `invalid_input` | `hs_input`'s own arguments: more than 64 actions, an empty list, an unknown `type`, `button` or `space`, a `vk` outside 1–254, a `hold_ms` or `ms` outside 0–10000, or a point outside the client rectangle (or the virtual screen, with `space: "screen"`). Nothing was sent. Deliberately separate from `invalid_command`, which means "the plugin would not accept that" and sends a reader to the wrong place. |
 | `layout_command_missing` | `hs_select_character` asked ForgePact's `menulayout` where the main-menu buttons are and got no listing: the installed plugin answered `command unavailable in player build: menulayout` (it predates the command), or replied with no `menulayout: room=` header at all. There is nothing to click from, so nothing is clicked. |
-| `window_size_mismatch` | A `menulayout` listing's `window=` is not the client size this server measured for the game window. Its `win` points were computed for a different window, so none of them is clicked. Checked on the main menu's listing, before the first click, and on every listing read after. |
-| `button_not_found` | The button `hs_select_character` needed on a screen was not listed: no single visible `UI_Button_obj` reading exactly `Play local` on the main menu (one read), or save slot `slot` / the character panel's `Play` never listed within the poll budget (30 reads 0.5 s apart) after the previous click. The detail quotes the last listing's header and the visible rows it did offer; the refusal's `last_listing` holds that listing whole. No click is sent for that screen. |
+| `window_size_mismatch` | A `menulayout` listing's `window=` disagreed with the client size this server re-measures at that same read, on every read within the poll budget (30 reads 0.5 s apart) — the window never settled to the listing's size. A single disagreeing read is not this refusal by itself: `hs_launch`'s `plugin_ready` can precede the window reaching its configured size, so one mismatch just keeps the poll going. Its `win` points were computed for a different window, so none of them is clicked. Checked on the main menu's listing, before the first click, and on every listing read after. |
+| `button_not_found` | The button `hs_select_character` needed on a screen was not listed within the poll budget (30 reads 0.5 s apart): no single visible `UI_Button_obj` reading exactly `Play local` on the main menu, or save slot `slot` / the character panel's `Play` after the previous click. The detail quotes the last listing's header and the visible rows it did offer; the refusal's `last_listing` holds that listing whole. No click is sent for that screen. |
 | `slot_not_listed` | `Chose_rm` listed fewer visible save-slot cards than `slot` on two reads in a row. Only page 1 of the save-slot screen is reachable; no card is guessed. |
 | `proof_not_armed` | `hs_select_character` armed `orbpickup` (`orbpickup 1`) and either got no acknowledgement, or `orbpickup stat` still read `player via (not tried)` on two reads at least a second apart. The resolver never ran; the instrument is blind, not the game — the same trap an earlier revision of this doc's own "`orbpickup stat` does not prove a character is loaded" section fell into. No click is sent. |
 | `character_already_loaded` | `hs_select_character`'s menu-time read of `orbpickup stat` already named a resolver route before any click was sent. |
@@ -610,17 +610,20 @@ plugin lists and the hub picks, using the rules phase 0 measured on
 | character panel | `UI_Button_obj` | `visible=1`, text exactly `Play` (not `Play local`; case-sensitive), exactly one such row. The row is not listed until a card has been clicked. |
 
 Every click's `x`,`y` is the chosen row's `win` field, copied as is, with no
-arithmetic in the hub. `layout_trail` records the row each click used. The
-main menu is read once. Before the first click, that listing's `window=` must
-equal the client size this server measures, or the call refuses
-`window_size_mismatch`. After each click the tool polls `menulayout` (0.5 s,
-up to 30 reads) until the next screen's button is listed, instead of sleeping
-a fixed settle. The game lists the button when the screen is ready. A button
-that is never listed refuses `button_not_found` and quotes the listing.
-Fewer cards than `slot` on two reads in a row refuses `slot_not_listed`.
-A plugin without the command refuses `layout_command_missing`. No path clicks
-a guessed point. The `orbpickup stat` proof below is unchanged, and `none` at
-the menu is still its negative control.
+arithmetic in the hub. `layout_trail` records the row each click used. Every
+listing check — the main menu's included — re-measures the client size at
+that same read and compares it against the listing's `window=`. `hs_launch`
+reports `plugin_ready` before the game window necessarily reaches its
+configured size, so a disagreement alone is "not settled yet": it keeps
+polling (0.5 s, up to 30 reads) instead of refusing at once, exactly the way
+the tool already polled after each click for the next screen's button. Only
+a budget that runs out on a disagreement refuses `window_size_mismatch`. A
+button that is never listed within the budget refuses `button_not_found` and
+quotes the listing. Fewer cards than `slot` on two reads in a row refuses
+`slot_not_listed`. A plugin without the command refuses
+`layout_command_missing`. No path clicks a guessed point. The `orbpickup
+stat` proof below is unchanged, and `none` at the menu is still its negative
+control.
 
 The main-menu point is proven by a click: `Play local` listed at `win=336,534`
 on a 1920x1080 windowed client, the point C-1.15 measured by hand, and
@@ -1000,7 +1003,8 @@ listing. Its ids start at M1.
 | M2 | `hs_select_character` from the listing. The fake plugin answers `menulayout` with whichever phase-0 listing the clicks so far have reached. Covered: the S2 baseline, the S3 target with `layout_trail`, every click equal to the chosen row's `win`, slot 2's click at `381,174`, a 1024x768 client whose listing agrees, `window_size_mismatch` and `layout_command_missing` before any click, `button_not_found` on each of the three screens (one quoting the last listing after exactly 30 polls), `slot_not_listed` for `slot=99` and for a page that stays short, and one short read not refused. Proof, restore and `proof_ambiguous` rules are unchanged. | `py -3 -m unittest tests.test_hs_drive_mcp_charselect -v` | `OK`, 35 tests, no skips — 2026-09-21. Negative control: the same 35 tests with the previous (fraction-clicking) `charselect.py` loaded in its place give `FAILED (failures=3, errors=12)` |
 | M3 | Tool surface: `slot`'s published schema has `minimum: 1`, and the description names `menulayout` and no fraction, 16:9 or removed token. `REFUSAL_TOKENS` is the new set, each in the docstring and in this doc. The release boundary lists `layout.py`. | `py -3 -m unittest tests.test_hs_drive_mcp_server tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 28 + 7 tests (one release-boundary skip, `HS-Offline-Launcher/` not checked out) — 2026-09-21 |
 | M4 | Whole root suite after the change | `py -3 -m unittest discover -s tests` | `Ran 973 tests`, `OK (skipped=10)`. All ten skips are the pre-existing environmental ones. — 2026-09-21 |
-| M-L2 | **The live gate**: `hs_select_character(1)` against the player build carrying `menulayout`, in a fresh session, with identity controls (`slot=0` → schema error; `slot=99` → `slot_not_listed` naming 24 cards) | owner-run, per the workorder's L-2 step | **pending** |
+| M5 | Resize fix: `WindowSettleTests` — two `resiz` tests (settled by the first listing read; settled mid-poll before the first click), the after-`Play local` mismatch, and the persistent-mismatch test (updated to `LAYOUT_POLL_ATTEMPTS` reads) | `py -3 -m unittest tests.test_hs_drive_mcp_charselect -v` | `OK`, 38 tests, no skips — 2026-09-21. Negative control: the same command against the pre-fix `charselect.py` (`fe9ef17`) on `WindowSettleTests` alone gives `FAILED (failures=2, errors=1)` |
+| M-L2 | **The live gate**: `hs_select_character(1)` against the player build carrying `menulayout`, in a fresh session, with identity controls (`slot=0` → schema error; `slot=99` → `slot_not_listed` naming 24 cards) | owner-run, per the workorder's L-2 step | **Attempt 1, 2026-09-21 — failed, tool defect (fixed in M5).** Player build `d627486c…` (`ForgePact/plugin_build/BloodPactPlugin_ship.dll`, sha256 `d627486c33f54b140d3ebceb611e158153eef1e221bf2f6d57ae4fb3863ec815`). Fresh stdio client of the worktree's server. Closed-game `slot=0` → validation error `greater_than_equal`; `hs_selfcheck` six `pass`; `hs_launch` → `plugin_ready`, then **immediately** `hs_select_character(slot=99)` → `window_size_mismatch`, `actions_sent: 0`, `phase: main_menu`, `elapsed_s: 6.302` — the header read `window=1920x1080` while the client measured `1024x576`, because the tool measured the client once before `plugin_ready`'s window had settled. The listing itself was correct: `Play local` `win=336,534`, `listed=19 absent=none`; `proof_trail` `main_menu` `player via none`. Saves restored clean (`changed: []`, `missing: []`, identical to the out-of-band copy `hs2saves-20260921-pre-menulayout-L2`); DLL restored to `22371422…`. **Attempt 2: pending.** |
 | M-L2b | **Second launch**: `hs_select_character(2)`. Its `layout_trail` slot row must have a greater `win` x than M-L2's and the same `win` y, and the screenshot must show a different character. | owner-run, same step | **pending** |
 
 ## What is deliberately not here
