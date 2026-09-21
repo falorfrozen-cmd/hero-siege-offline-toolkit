@@ -4,6 +4,10 @@
       "command": "npx",
       "args": ["-y", "-p", "@hypothesi/tauri-mcp-server@0.13.0", "mcp-server-tauri"]
     },
+    "hs-drive": {
+      "command": "py",
+      "args": ["-3", "-m", "tools.hs_drive_mcp"]
+    },
     "context7": {
       "command": "npx",
       "args": ["-y", "-p", "@upstash/context7-mcp@4.1.1", "context7-mcp"]

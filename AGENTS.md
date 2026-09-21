@@ -465,6 +465,45 @@ This is a rule about *this* repository. The research and plan documents under
 investigation that came back negative is a result, and re-running it is the
 expensive mistake.
 
+## One Branch and One Pull Request per Module, per Feature
+
+A feature gets exactly **one branch and one pull request in each module it
+touches** — one in this hub, one in each submodule repository it changes, and
+no more. Follow-on work for that feature (a fix a live gate found, a doc
+correction, a verification result) is committed onto that same branch and
+rides that same pull request; it never becomes a second branch or a second PR
+for the same feature in the same module.
+
+- **Before pushing, look for the feature's existing branch on the remote**
+  (`git branch -r`, `gh pr list --state all`). If one exists and your branch
+  contains it, fast-forward it (`git push origin HEAD:<that-branch>`) instead
+  of pushing a sibling; if it has diverged, merge onto it rather than
+  force-pushing.
+- **A submodule's PR is opened in the submodule's own repository**, from its
+  own branch, and the hub PR links it. The hub never bumps the gitlink in the
+  same breath, and no agent bumps it by hand afterwards: once the submodule
+  PR merges to its `main`, that repository's `notify-hub.yml` dispatches to
+  the hub and `.github/workflows/submodule-dispatch.yml` opens and merges the
+  `chore: bump <submodule> to <sha>` pull request itself. If no bump PR
+  appears, look at that workflow's run rather than committing the pointer.
+- **After opening pull requests in more than one module, print the merge
+  order** as the last thing you report, with each PR's link:
+  1. each submodule PR, in dependency order if one submodule consumes
+     another;
+  2. wait for `submodule-dispatch.yml`'s bump PR for each of them to land on
+     hub `main`;
+  3. the hub PR last. If its change needs the new pointer, update the hub
+     branch from `main` before merging so its checks run against it.
+
+  Merged the other way round, hub `main` carries code that calls into a
+  submodule commit it does not yet point at.
+- **Different features stay apart** even when they touch the same module:
+  one feature per branch is what lets a single reviewer read, approve or
+  revert each one on its own.
+
+This is the rule that keeps concurrent sessions in `.claude/worktrees/` from
+turning one feature into several overlapping PRs and a merge-conflict queue.
+
 ## YYToolkit Integration
 
 When a prompt or task requires the use of `yytoolkit`, attempt to retrieve `yytoolkit` documentation and references from the `context7` MCP server if it is available.
