@@ -73,6 +73,10 @@ KNOWN_ROUTES = ("GetMyPlayer", "instance_find(Player_obj)",
 #: Anything else means the mod did not arm.
 ARM_ACK_PREFIX = "orbpickup -> globes pulled"
 
+#: The literal prefix of `orbpickup stat`'s one reply line
+#: (`ModuleMain.cpp:5600`).
+STAT_PREFIX = "orbpickup stat:"
+
 _PLAYER_VIA = "player via "
 _GLOBE_OBJS_RE = re.compile(r"globe objs=(\d+)")
 
@@ -138,14 +142,36 @@ def _parse_stat(line: str) -> tuple[str, int | None]:
     return via, globe_objs
 
 
+def _reply_line(result: dict[str, Any], prefix: str) -> str:
+    """The one line of an `ipc.send` reply that starts with `prefix`, or `""`.
+
+    `reply` is everything the plugin appended to `out.txt` for the command,
+    which is the handler's line *framed* by `---- running command file ----`
+    and `---- done ----` (L-1 live gate, 2026-09-21). Testing the whole reply
+    with `startswith`, or parsing it as one line, can therefore never match
+    on a real game -- only on a test double that returns the bare line."""
+    lines = result.get("reply_lines")
+    if lines is None:
+        lines = (result.get("reply") or "").splitlines()
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith(prefix):
+            return line
+    return ""
+
+
 def _read_stat(tool: str) -> dict[str, Any]:
     """One `orbpickup stat` read. A refusal from `ipc.send` is returned as
-    is; a successful read gains `line`, `via` and `globe_objs`."""
+    is; a successful read gains `line`, `via` and `globe_objs`. Only the
+    handler's own line is parsed; when the reply has none, `via` is `""`
+    (never a route) and `line` keeps the raw reply so a refusal can quote
+    what actually came back."""
     result = ipc.send(["orbpickup stat"], tool=tool)
     if results.is_refusal(result):
         return result
-    line = (result.get("reply") or "").strip()
-    via, globe_objs = _parse_stat(line)
+    stat_line = _reply_line(result, STAT_PREFIX)
+    via, globe_objs = _parse_stat(stat_line)
+    line = stat_line or (result.get("reply") or "").strip()
     result = dict(result)
     result["line"] = line
     result["via"] = via
@@ -249,11 +275,12 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
     if results.is_refusal(arm):
         return finish("main_menu",
                       refusal={"reason": arm["reason"], "detail": arm["detail"]})
-    arm_line = (arm.get("reply") or "").strip()
-    if not arm_line.startswith(ARM_ACK_PREFIX):
+    if not _reply_line(arm, ARM_ACK_PREFIX):
         return finish("main_menu", refusal={
             "reason": "proof_not_armed",
-            "detail": (f"orbpickup 1 replied {arm_line!r}, not the "
+            "detail": (f"orbpickup 1 replied "
+                      f"{(arm.get('reply') or '').strip()!r} with no line "
+                      "starting with the "
                       f"{ARM_ACK_PREFIX!r} acknowledgement the handler "
                       "prints when it arms. The resolver may not be "
                       "running, so no click was sent.")})

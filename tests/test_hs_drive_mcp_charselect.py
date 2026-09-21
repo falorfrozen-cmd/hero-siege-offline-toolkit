@@ -65,10 +65,30 @@ ARM_ACK_LINE = ("orbpickup -> globes pulled from 64 px (player obj=1, "
                 "globe objs=0, pulled=0)")
 PING_REPLY = "pong (YYTK 4.0.1)"
 
+#: `orbpickup 1`'s reply exactly as `ipc.send` returned it from a running
+#: game at the L-1 live gate (2026-09-21, player build `24020eac`) -- the
+#: reply the tool refused `proof_not_armed` on, because the handler's line
+#: arrives framed and the framing was never part of any fixture above.
+LIVE_ARM_REPLY = ("---- running command file ----\r\n"
+                  "orbpickup -> globes pulled from 480 px (player obj=3553, "
+                  "globe objs=2, pulled every frame, found by a scan at most "
+                  "every 15 frames)\r\n"
+                  "---- done ----\r\n")
+
+
+def framed(line):
+    """Wrap one handler line the way the plugin writes every command's
+    output to `out.txt` (`LIVE_ARM_REPLY`), which is what `ipc.send`
+    returns as `reply`. A double that hands back the bare line cannot
+    represent the input L-1 failed on."""
+    return f"---- running command file ----\r\n{line}\r\n---- done ----\r\n"
+
 
 class ScriptedIpc:
     """`ipc.send`, replaced. `script` maps a command line to a list of
-    reply lines, consumed one at a time; once only one is left it repeats,
+    handler lines, consumed one at a time and returned `framed` as the real
+    plugin frames them (a script entry that is already framed, such as
+    `LIVE_ARM_REPLY`, is returned verbatim); once only one is left it repeats,
     which is what lets one script represent both "answers changed after the
     third click" (S3) and "this command's reply never changes" (S2's ping
     and its own steady-state `orbpickup stat`).
@@ -91,6 +111,8 @@ class ScriptedIpc:
             return results.refuse(tool, reason, detail)
         queue = self.script[line]
         reply = queue.pop(0) if len(queue) > 1 else queue[0]
+        if not reply.startswith("---- running command file ----"):
+            reply = framed(reply)
         return results.ok(tool, sent=[line], reply=reply,
                           reply_lines=reply.splitlines(), consumed=True,
                           queued=False, wrote_bytes=len(reply))
@@ -278,6 +300,39 @@ class TargetTests(CharselectTestCase):
         report = self.call(slot=1, timeout_s=5)
         self.assertEqual(report["phase"], "character_loaded", report)
         self.assertEqual(report["proof"], INSTANCE_FIND_LINE)
+
+
+class FramedReplyTests(CharselectTestCase):
+    """The replies a real game sends: the handler's line between the
+    plugin's own framing lines. L-1 refused `proof_not_armed` on exactly
+    `LIVE_ARM_REPLY`; the same framing, parsed as one line, would also have
+    made every `player via` read a route plus `---- done ----`, and so never
+    a route."""
+
+    def test_the_live_arm_reply_is_an_acknowledgement(self):
+        script = target_script(GET_MY_PLAYER_LINE)
+        script["orbpickup 1"] = [LIVE_ARM_REPLY]
+        self.arrange(ipc_script=script)
+        report = self.call(slot=1, timeout_s=5)
+
+        self.assertEqual(report["phase"], "character_loaded", report)
+        self.assertEqual(report["proof"], GET_MY_PLAYER_LINE)
+        for _screen, line in report["proof_trail"]:
+            self.assertNotIn("----", line)
+
+    def test_framing_with_no_acknowledgement_line_is_not_armed(self):
+        script = baseline_script()
+        script["orbpickup 1"] = [framed("orbpickup: usage")]
+        self.arrange(ipc_script=script)
+        report = self.call()
+        self.assertEqual(report["reason"], "proof_not_armed", report)
+        self.assertEqual(self.inject.calls, [])
+
+    def test_a_framed_stat_line_parses_to_the_bare_route(self):
+        line = charselect._reply_line(
+            {"reply": framed(GET_MY_PLAYER_LINE)}, charselect.STAT_PREFIX)
+        self.assertEqual(line, GET_MY_PLAYER_LINE)
+        self.assertEqual(charselect._parse_stat(line)[0], "GetMyPlayer")
 
 
 class UnresolvedReadAfterPlayTests(CharselectTestCase):
