@@ -530,7 +530,9 @@ def hs_select_character(
     configured size right after plugin_ready),
     `button_not_found` (a screen's button was never listed; the refusal's
     `last_listing` holds what was), `slot_not_listed` (fewer cards than
-    `slot`).
+    `slot`), `click_not_delivered` (the injection answered but did not
+    deliver the whole click -- `complete` false or `records_rejected` > 0 --
+    so it is not counted in `actions_sent` or `layout_trail`).
     """
     return charselect.hs_select_character(slot=slot, timeout_s=timeout_s,
                                           tool="hs_select_character")

@@ -644,6 +644,22 @@ class ReadinessTests(LaunchFixture):
         self.assertFalse(result["ready"])
         self.assertIn("exited during startup", result["detail"])
 
+    def test_an_unknown_gate_during_the_wait_is_not_reported_as_an_exit(self):
+        # A snapshot that fails mid-wait says nothing about whether the game is
+        # up. The pre-wait check refuses `unknown` as `game_state_unknown`; the
+        # in-wait watch must do the same, not borrow `process_exited`'s
+        # hard-coded `not_running` and empty `pids`.
+        gate = gate_sequence("running", "running", "unknown")
+        with patch.object(procs, "game_pids", return_value=[4242]):
+            result = launch.hs_wait_ready(gate=gate, timeout_s=3.0)
+        self.assertTrue(results.is_refusal(result), result)
+        self.assertEqual(result["reason"], "game_state_unknown", result)
+        self.assertEqual(result["phase"], "readiness", result)
+        self.assertEqual(result["game_state"], "unknown", result)
+        self.assertNotEqual(result.get("plugin"), "process_exited", result)
+        self.assertIn("scripted gate reported 'unknown'", result["detail"])
+        self.assertNotIn("disappeared", result["detail"])
+
     def test_require_plugin_false_reports_the_process_without_probing(self):
         result = launch.hs_wait_ready(gate=gate_running, require_plugin=False,
                                       timeout_s=2.0)

@@ -225,26 +225,58 @@ def wait_ready(*, engine: Any, gate: Gate, timeout_s: float, require_plugin: boo
                     f"{directory['detail']}"))
 
     checked = [time.monotonic()]
+    #: The gate reading that stopped the wait, if one did: `(state, why)`.
+    stopped: list[tuple[str, str]] = []
 
     def watch() -> str:
-        """Stop waiting the moment the process is no longer there.
+        """Stop waiting the moment the process is no longer there -- or the
+        moment the gate stops giving an answer.
 
         Throttled to the process poll interval rather than run on every
         consumption poll: each gate reading is a whole Win32 process snapshot,
         and taking ten a second while the game is loading is this server
         competing with the thing it is waiting for.
+
+        Only `not_running` means the process went away. `unknown` (a snapshot
+        that failed) and the engine states are not an answer either way, so
+        they stop the wait too -- the same "refusing beats polling a reading
+        that is not an answer" rule as the pre-wait check above -- but they are
+        recorded, so the abort branch below reports them as what they are
+        rather than as an exit.
         """
         now = time.monotonic()
         if now - checked[0] < PROCESS_POLL_S:
             return ""
         checked[0] = now
         state_now, now_why = gate()
-        return "" if state_now == procs.RUNNING else f"the game is no longer running ({now_why})"
+        if state_now == procs.RUNNING:
+            return ""
+        stopped.append((state_now, now_why))
+        if state_now == procs.NOT_RUNNING:
+            return f"the game is no longer running ({now_why})"
+        return f"the process gate stopped answering ({state_now}: {now_why})"
 
     remaining = max(1.0, deadline - time.monotonic())
     sent = ipc.send([PING], timeout_s=remaining, gate=gate, abort=watch, tool=tool)
 
     if results.is_refusal(sent):
+        if stopped and stopped[-1][0] != procs.NOT_RUNNING:
+            # The wait stopped on a reading that is not an answer. Whether the
+            # game is still up is unknown, so this is neither `process_exited`
+            # nor a plugin timeout: it is the same refusal the pre-wait check
+            # gives, carrying the state the gate actually reported.
+            state_now, now_why = stopped[-1]
+            reason = {procs.ENGINE_MISSING: "engine_source_missing",
+                      procs.ENGINE_UNUSABLE: "engine_import_failed"}.get(
+                          state_now, "game_state_unknown")
+            return results.refuse(
+                tool, reason,
+                f"{now_why} The process gate stopped answering while waiting "
+                "for the plugin, so whether the game is still running is "
+                "unknown; refusing rather than reporting it as exited. "
+                f"{sent['detail']}",
+                phase="readiness", game_state=state_now, pid=pid,
+                aborted=sent.get("aborted", ""))
         if sent.get("aborted") or sent["reason"] == "game_not_running":
             message = str(engine.launch_status().get("message", ""))
             return _report(

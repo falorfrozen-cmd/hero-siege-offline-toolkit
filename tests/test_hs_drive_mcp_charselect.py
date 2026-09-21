@@ -6,7 +6,9 @@ the real Win32 input functions. `_sleep` (the one seam every wait in
 `charselect.py` goes through -- the listing polls, the blind-instrument
 retry, the orbpickup poll interval) is patched to a no-op that records what
 it was asked to wait, so these tests finish in milliseconds regardless of
-the poll budgets or `timeout_s`.
+the poll budgets or `timeout_s`. `_now` (the clock every deadline reads) is
+left real except in `PlayTimeoutTests`, which drives it from the `_sleep`
+double so navigation can be made to consume more than `timeout_s`.
 
 The fake plugin answers `menulayout` with the three listings phase 0
 captured from a running game, verbatim (`hs_drive_mcp_menulayout_fixtures`),
@@ -153,15 +155,20 @@ DEFAULT_FOCUS_VIA = ("already_foreground",)
 class ScriptedInject:
     """`hs_input.inject`, replaced. Records every call, including
     `force_focus`; refuses the call at `refuse_at` (0-indexed among
-    *click-carrying* calls) once, if set; answers `focus_via` from
+    *click-carrying* calls) once, if set; answers the call at
+    `undelivered_at` with `ok: true` but `complete: false` and every record
+    rejected -- the shape the real `inject` returns when `SendInput` accepts
+    the call and UIPI drops its records -- and does not count it as landed,
+    since the game never saw it; answers `focus_via` from
     `focus_via_sequence`."""
 
     def __init__(self, refuse_at=None, refusal=("foreground_not_game",
                                                 "test refusal"), order=None,
-                focus_via_sequence=DEFAULT_FOCUS_VIA):
+                focus_via_sequence=DEFAULT_FOCUS_VIA, undelivered_at=None):
         self.calls: list[dict] = []
         self.landed = 0
         self.refuse_at = refuse_at
+        self.undelivered_at = undelivered_at
         self.refusal = refusal
         self.order = order
         self.focus_via_sequence = list(focus_via_sequence)
@@ -180,9 +187,18 @@ class ScriptedInject:
         focus_via = (self.focus_via_sequence.pop(0)
                     if len(self.focus_via_sequence) > 1
                     else self.focus_via_sequence[0])
+        if self.undelivered_at is not None and index == self.undelivered_at:
+            return results.ok(
+                tool, actions_done=len(actions), actions_total=len(actions),
+                records_sent=2, records_rejected=2, complete=False,
+                focus_via=focus_via,
+                detail=("1 of 1 action(s) sent to hwnd 1 via send_input. "
+                        "SendInput rejected 2 of 2 record(s); the events "
+                        "that carried them did not reach the game."))
         self.landed += 1
         return results.ok(tool, actions_done=len(actions),
-                          actions_total=len(actions), complete=True,
+                          actions_total=len(actions), records_sent=2,
+                          records_rejected=0, complete=True,
                           focus_via=focus_via)
 
     def points(self):
@@ -221,14 +237,15 @@ class CharselectTestCase(unittest.TestCase):
 
     def arrange(self, *, game_state=RUNNING, geometry=GEOMETRY,
                ipc_script=None, ipc_refusals=None, inject_refuse_at=None,
-               screens=SCREENS):
+               screens=SCREENS, inject_undelivered_at=None):
         """`screens[n]` is what `menulayout` lists once `n` clicks have
         landed (the last one repeats), unless `ipc_script` scripts
         `menulayout` itself."""
         self.doCleanups()
         self.order: list[tuple[str, Any]] = []
         self.inject = ScriptedInject(refuse_at=inject_refuse_at,
-                                     order=self.order)
+                                     order=self.order,
+                                     undelivered_at=inject_undelivered_at)
         script = dict(ipc_script or {})
         script.setdefault("menulayout", lambda: screens[
             min(self.inject.landed, len(screens) - 1)])
@@ -797,6 +814,116 @@ class InjectRefusalTests(CharselectTestCase):
         self.assertEqual(report["actions_sent"], 1,
                          "local succeeded; slot is the one that refused")
         self.assertEqual(len(self.inject.calls), 2)
+
+
+class UndeliveredClickTests(CharselectTestCase):
+    """PR #122 review: `inject` answering `ok: true` with records rejected
+    (UIPI dropping `SendInput` records) is a click that never reached the
+    game. It must refuse `click_not_delivered` at that click -- not be
+    counted in `actions_sent` or `layout_trail`, and not surface one screen
+    later as a `button_not_found` that points at the listing."""
+
+    def test_a_click_with_rejected_records_refuses_click_not_delivered(self):
+        self.arrange(ipc_script=baseline_script(), inject_undelivered_at=1)
+        report = self.call(timeout_s=5)
+        self.assertTrue(results.is_refusal(report), report)
+        self.assertEqual(report["reason"], "click_not_delivered", report)
+        self.assertEqual(report["phase"], "slot", report)
+        self.assertEqual(report["actions_sent"], 1,
+                         "only the local click landed; the slot click did not")
+        self.assertEqual([row["screen"] for row in report["layout_trail"]],
+                         ["local"])
+        self.assertEqual(len(self.inject.calls), 2,
+                         "nothing is clicked after an undelivered click")
+        self.assertIn("records_rejected=2", report["detail"])
+        self.assertIn("did not reach the game", report["detail"])
+        self.assertEqual(report["orbpickup"], "restored_off",
+                         "the restore rule still applies on this refusal")
+
+    def test_an_undelivered_first_click_sends_nothing_further(self):
+        self.arrange(ipc_script=baseline_script(), inject_undelivered_at=0)
+        report = self.call(timeout_s=5)
+        self.assertEqual(report["reason"], "click_not_delivered", report)
+        self.assertEqual(report["phase"], "local", report)
+        self.assertEqual(report["actions_sent"], 0)
+        self.assertEqual(report["layout_trail"], [])
+        self.assertEqual(len(self.inject.calls), 1)
+
+    def test_the_token_is_a_registered_refusal(self):
+        self.assertIn("click_not_delivered", results.SELECT_CHARACTER_REASONS)
+
+
+class PlayTimeoutTests(CharselectTestCase):
+    """PR #122 review: `timeout_s` counts from the `Play` click, as
+    `server.py` documents, not from the call's start. The clock here is
+    advanced only by `_sleep`, so navigation (the blind-instrument retry and
+    the post-click listing polls) consumes simulated time exceeding
+    `timeout_s` before `Play` is clicked."""
+
+    def arrange_clock(self):
+        self.clock = [1000.0]
+        self.play_sleeps: list[float] = []
+
+        def sleep(seconds):
+            self.sleeps.append(seconds)
+            self.clock[0] += seconds
+
+        self.enterContext(patch.object(charselect, "_now",
+                                       lambda: self.clock[0]))
+        self.enterContext(patch.object(charselect, "_sleep", sleep))
+        # Slow listing polls, so the three screens' navigation alone (plus
+        # the blind retry) outlasts the timeout_s these tests pass.
+        self.enterContext(patch.object(charselect, "LAYOUT_POLL_S", 2.0))
+
+    def test_navigation_longer_than_timeout_s_still_polls_for_the_load(self):
+        # pre-arm (not tried), menu (not tried -> blind retry, 1 s), menu
+        # again (none), local (none), slot (none), then after Play: none on
+        # the first read and a route on the second.
+        script = {
+            "ping": [PING_REPLY],
+            "orbpickup stat": [NOT_TRIED_LINE, NOT_TRIED_LINE, NONE_LINE,
+                               NONE_LINE, NONE_LINE, NONE_LINE,
+                               GET_MY_PLAYER_LINE],
+            "orbpickup 1": [ARM_ACK_LINE],
+            "orbpickup 0": ["orbpickup -> off"],
+        }
+        self.arrange(ipc_script=script)
+        self.arrange_clock()
+        timeout_s = 2.5
+        report = self.call(slot=1, timeout_s=timeout_s)
+
+        play_at = len(self.sleeps) - 2
+        navigation = sum(self.sleeps[:play_at])
+        self.assertGreater(navigation, timeout_s,
+                           "the fixture must spend more than timeout_s "
+                           "before Play for this test to mean anything")
+        self.assertEqual(report["phase"], "character_loaded", report)
+        self.assertEqual(report["proof"], GET_MY_PLAYER_LINE)
+        self.assertEqual(self.sleeps[play_at:],
+                         [charselect.POLL_INTERVAL_S,
+                          timeout_s - charselect.POLL_INTERVAL_S],
+                         "after Play the whole timeout_s is available: one "
+                         "full poll interval, then the rest of the budget")
+
+    def test_the_timeout_after_play_waits_out_timeout_s_from_the_click(self):
+        self.arrange(ipc_script=baseline_script())
+        self.arrange_clock()
+        timeout_s = 5.0
+        report = self.call(slot=1, timeout_s=timeout_s)
+        self.assertEqual(report["phase"], "timeout", report)
+        # Every sleep after the third click belongs to the Play poll; they
+        # add up to exactly timeout_s whatever navigation consumed.
+        clicks = [i for i, entry in enumerate(self.order)
+                  if entry[0] == "inject"]
+        self.assertEqual(len(clicks), 3)
+        stat_reads_after_play = sum(
+            1 for entry in self.order[clicks[-1]:]
+            if entry == ("ipc", "orbpickup stat"))
+        post_play = self.sleeps[-stat_reads_after_play:]
+        self.assertAlmostEqual(sum(post_play), timeout_s)
+        self.assertGreater(stat_reads_after_play, 1,
+                           "a budget spent by navigation would allow only "
+                           "one zero-wait read")
 
 
 class FocusTrailTests(CharselectTestCase):

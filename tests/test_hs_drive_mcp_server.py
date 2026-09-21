@@ -510,7 +510,7 @@ class SelectCharacterDocstringTests(unittest.TestCase):
                       "invalid_input", "proof_not_armed",
                       "character_already_loaded", "layout_command_missing",
                       "button_not_found", "slot_not_listed",
-                      "window_size_mismatch")
+                      "window_size_mismatch", "click_not_delivered")
 
     @classmethod
     def setUpClass(cls):

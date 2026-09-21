@@ -87,6 +87,11 @@ INPUT_REASONS = (
 #: `slot_not_listed` (the save-slot screen listed fewer cards than `slot`),
 #: `window_size_mismatch` (the listing's `window=` is not this client, so its
 #: points are for a different window).
+#:
+#: `click_not_delivered` came with the PR #122 review: `inject` answered `ok`
+#: for a click but did not deliver it whole (`complete` false or
+#: `records_rejected > 0` -- UIPI dropping `SendInput` records, or the
+#: foreground moving part way through), so the click is not counted as landed.
 SELECT_CHARACTER_REASONS = (
     "proof_not_armed",
     "character_already_loaded",
@@ -94,6 +99,7 @@ SELECT_CHARACTER_REASONS = (
     "button_not_found",
     "slot_not_listed",
     "window_size_mismatch",
+    "click_not_delivered",
 )
 
 REASONS = CORE_REASONS + GAME_REASONS + INPUT_REASONS + SELECT_CHARACTER_REASONS

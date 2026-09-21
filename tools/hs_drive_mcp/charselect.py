@@ -110,8 +110,11 @@ LAYOUT_POLL_ATTEMPTS = 30
 
 #: How often `orbpickup stat` is re-read after the `Play` click while waiting
 #: for a route. Bounded against the caller's own `timeout_s` at each
-#: iteration (`_poll_sleep`), so a short `timeout_s` does not have to wait
-#: out a full interval it will never get to use.
+#: iteration, so a short `timeout_s` does not have to wait out a full
+#: interval it will never get to use. `timeout_s` counts from the `Play`
+#: click, not the call's start: navigation (arming, three screens of listing
+#: polls) took 13-18 s at the live gate, and a budget it had already spent
+#: would leave one zero-wait read for the character load itself.
 POLL_INTERVAL_S = 2.0
 
 #: How far apart the two menu-time reads that decide `proof_not_armed` have
@@ -125,6 +128,14 @@ def _sleep(seconds: float) -> None:
     `timeout_s` -- the same reason `input.py` routes every Win32 call
     through one table rather than calling `ctypes` directly."""
     time.sleep(seconds)
+
+
+def _now() -> float:
+    """The clock every deadline and `elapsed_s` in this module reads -- a
+    seam for the same reason as `_sleep`: a test that advances it from its
+    `_sleep` double can make navigation consume more than `timeout_s` and
+    pin that the load is still polled for after `Play`."""
+    return time.monotonic()
 
 
 def _parse_stat(line: str) -> tuple[str, int | None]:
@@ -191,7 +202,7 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
     mechanism and `docs/tools/hs-drive-mcp.md` for the field-by-field
     contract `server.py` documents to the caller.
     """
-    started = time.monotonic()
+    started = _now()
 
     state, why = procs.gate()
     if state == procs.NOT_RUNNING:
@@ -243,7 +254,7 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
                      focus_trail=list(focus_trail),
                      screenshots=list(screenshots), orbpickup=orbpickup_state,
                      actions_sent=actions_sent,
-                     elapsed_s=round(time.monotonic() - started, 3))
+                     elapsed_s=round(_now() - started, 3))
         if refusal is not None:
             # The last listing read, whole, so a refusal about a button
             # carries what the game did list instead of it.
@@ -333,7 +344,14 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
 
     def click(screen: str, row: layout.Row) -> dict[str, str] | None:
         """One held click at `row`'s `win` point, verbatim -- no arithmetic.
-        `None` when it landed; a refusal dict when `inject` refused.
+        `None` when it landed; a refusal dict when `inject` refused, or when
+        it answered `ok` without delivering the whole click (`complete` not
+        true, or `records_rejected > 0`: `SendInput` took the call but UIPI
+        dropped records, or the foreground moved part way through). That
+        second case is `click_not_delivered`, not counted in
+        `actions_sent` or `layout_trail`: a click that never reached the game
+        would otherwise surface one screen later as `button_not_found`,
+        sending the reader to the listing instead of the input.
         `force_focus=True` on every call -- see the module docstring for why
         this tool, and not `hs_input`, is the one that escalates."""
         nonlocal actions_sent
@@ -343,6 +361,17 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
             route="send_input", force_focus=True, tool=tool)
         if results.is_refusal(result):
             return {"reason": result["reason"], "detail": result["detail"]}
+        rejected = int(result.get("records_rejected") or 0)
+        if result.get("complete") is not True or rejected > 0:
+            return {"reason": "click_not_delivered",
+                    "detail": (f"the {screen} click at win={x},{y} was not "
+                               f"delivered whole (complete="
+                               f"{result.get('complete')!r}, records_rejected="
+                               f"{rejected} of "
+                               f"{result.get('records_sent')!r}), so it is not "
+                               "counted as landed and nothing further was "
+                               "clicked. inject said: "
+                               f"{result.get('detail', '')}")}
         actions_sent += 1
         layout_trail.append({"screen": screen, **row.summary()})
         focus_trail.append({"screen": screen,
@@ -501,11 +530,14 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
     if refusal is not None:
         return finish("play", refusal=refusal)
 
-    deadline = started + max(0.0, float(timeout_s))
+    # `timeout_s` is the budget for the load itself, so it starts here, at
+    # the Play click -- the contract `server.py` documents -- and not at the
+    # call's start, which navigation has already spent.
+    deadline = _now() + max(0.0, float(timeout_s))
     last_line = read["line"]
     first = True
     while True:
-        _sleep(max(0.0, min(POLL_INTERVAL_S, deadline - time.monotonic())))
+        _sleep(max(0.0, min(POLL_INTERVAL_S, deadline - _now())))
         read = _read_stat(tool)
         if results.is_refusal(read):
             return finish("play", refusal={
@@ -517,6 +549,6 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
         if _has_route(read["via"]):
             shoot("play")
             return finish("character_loaded", proof=read["line"])
-        if time.monotonic() >= deadline:
+        if _now() >= deadline:
             shoot("play")
             return finish("timeout", proof=last_line)
