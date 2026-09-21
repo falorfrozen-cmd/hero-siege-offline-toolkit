@@ -572,6 +572,13 @@ never on. See `docs/agents/prove-the-instrument.md` for the general shape --
 a field that answers only under a precondition nobody arms is a blind
 instrument, not evidence the mechanism does not exist.
 
+The on state was measured at the live gate (2026-09-21, player build
+`24020eac`, Verification row L1): with `orbpickup` armed, the reading was
+`player via none` at the main menu, after `Play local` and on the save-slot
+screen, then `player via GetMyPlayer` on the first read after `Play`. Every
+one of those reads also said `globe objs=2`, the menu's included, so the globe
+count is no sign of where the game is.
+
 ### Calling `hs_select_character`
 
 ```json
@@ -593,6 +600,11 @@ unspecific to a *loaded* character, so the tool stops rather than claim one;
 Only slot 1 and a 16:9 client are supported today -- anything else refuses
 `layout_not_measured` before a single input is sent, rather than click a
 point this research never measured.
+
+Measured at the live gate (2026-09-21): the tool waits 3 s (`SETTLE_S`)
+after each click, which was enough on every screen, since the route answered on
+the first read after `Play`. Shorter waits were not tried. The whole call took
+17.5 s from the main menu to `character_loaded`.
 
 ## Saves: what the tools guarantee
 

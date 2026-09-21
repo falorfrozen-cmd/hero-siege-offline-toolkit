@@ -98,10 +98,10 @@ FRACTION_PLAY = (0.3036, 0.3204)
 #: the number that makes it work.
 CLICK_HOLD_MS = 120
 
-#: UNVERIFIED upper bound (`ForgePact/docs/character-select-research.md` only
-#: records "settle time under 3 s" for the town load, C-1.16). L-1's live
-#: gate measures what each screen actually needs; until then this is the
-#: number every screen waits, labelled as the bound it is.
+#: Measured sufficient, not minimal: at L-1's live gate (2026-09-21) every
+#: screen was ready after 3 s and the route answered on the first read after
+#: `Play` (`docs/tools/hs-drive-mcp.md`, Verification row L1). No shorter
+#: settle was tried, so this is the number every screen waits.
 SETTLE_S = 3.0
 
 #: How often `orbpickup stat` is re-read after the `Play` click while waiting
