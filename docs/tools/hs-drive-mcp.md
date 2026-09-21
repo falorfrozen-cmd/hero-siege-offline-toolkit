@@ -1033,10 +1033,10 @@ listing. Its ids start at M1.
   `SetForegroundWindow` attempt, then `foreground_not_game` — Windows'
   foreground lock exists for the user's benefit, and a caller that may run at
   any moment while a human is typing elsewhere is not the one that should be
-  able to override it (`hs-drive-mcp-force-focus`, owner decision "Let the
-  tool force focus", 2026-09-21). `hs_select_character` is the one exception,
-  because it is a scripted, unattended flow started right after `hs_launch`
-  and expects the game in front: when the plain attempt does not take, it
+  able to override it (`hs-drive-mcp-force-focus`, owner decision "Let the tool force focus", 2026-09-21).
+  `hs_select_character` is the one exception, because it is a scripted,
+  unattended flow started right after `hs_launch` and expects the game in
+  front: when the plain attempt does not take, it
   escalates through `AttachThreadInput` (shares input state with whatever
   thread owns the foreground, so the lock treats this thread as part of its
   queue) and then one zero-effect `SendInput` record (no move, no button, no
