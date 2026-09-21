@@ -96,7 +96,8 @@ Thumbs.db
 # decisions in docs/adr/. Keep the plan on your own machine.
 *-plan.md
 
-# Workorder context files and round snapshots, for the same reason: working
-# notes for the run, not documentation of the change.
+# Workorder context files, round snapshots and raw session logs, for the same
+# reason: working notes for the run, not documentation of the change.
 .claude/workorders/*-context.md
 .claude/workorders/.rounds/
+.claude/workorders/*.log
