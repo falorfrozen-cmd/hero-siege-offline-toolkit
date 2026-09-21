@@ -70,7 +70,21 @@ INPUT_REASONS = (
     "invalid_input",
 )
 
-REASONS = CORE_REASONS + GAME_REASONS + INPUT_REASONS
+#: Added by `hs-drive-mcp-charselect-ship` for `hs_select_character`, and only
+#: these three. `layout_not_measured` covers a slot, page or client ratio the
+#: research doc never measured -- refused before any input, not guessed at.
+#: `proof_not_armed` is the instrument-blind case D17 fell into, now a named
+#: refusal: `orbpickup 1` was not acknowledged, or `orbpickup stat` still read
+#: `player via (not tried)` on a second read at least a second later, so the
+#: resolver never ran and no click was sent. `character_already_loaded` means
+#: the menu-time read already named a resolver route before any click.
+SELECT_CHARACTER_REASONS = (
+    "layout_not_measured",
+    "proof_not_armed",
+    "character_already_loaded",
+)
+
+REASONS = CORE_REASONS + GAME_REASONS + INPUT_REASONS + SELECT_CHARACTER_REASONS
 
 
 def ok(tool: str, **fields: Any) -> dict[str, Any]:

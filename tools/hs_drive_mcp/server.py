@@ -27,7 +27,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
-from . import capture, checks, ipc, launch, procs, saves
+from . import capture, charselect, checks, ipc, launch, procs, saves
 # `input` shadows nothing at module scope here, but a bare `input` in this file
 # would read as the builtin to every later reader of it.
 from . import input as input_module
@@ -469,6 +469,56 @@ def hs_input(
     """
     return input_module.inject(actions, route=route,
                                require_foreground=require_foreground)
+
+
+@server.tool(
+    name="hs_select_character",
+    title="Select a character and reach a loaded game",
+    description=(
+        "Drive a freshly launched game from its main menu to a loaded "
+        "character: held send_input clicks at measured client fractions "
+        "through Play local, a save slot and Play, proved by orbpickup "
+        "stat's own player-resolution field, which this tool arms and "
+        "restores itself. Slot 1 and a 16:9 client only -- anything the "
+        "character-select research did not measure refuses "
+        "layout_not_measured before any input is sent."),
+    annotations=_acts("Select a character and reach a loaded game"),
+)
+def hs_select_character(
+    slot: Annotated[int, Field(
+        description="The save slot to load. Only 1 is supported: the "
+                    "character-select research measured slot 1's click "
+                    "point only, and any other value refuses "
+                    "layout_not_measured rather than guess a point.")] = 1,
+    timeout_s: Annotated[float, Field(
+        description="How long to keep polling orbpickup stat after the "
+                    "Play click before giving up and reporting phase "
+                    "\"timeout\".", ge=1, le=600)] = 60,
+) -> dict[str, Any]:
+    """Take a freshly launched game from its main menu to a loaded
+    character, `slot`, and prove it.
+
+    `phase` is one of `main_menu`, `local`, `slot`, `play`,
+    `character_loaded`, `proof_ambiguous`, `timeout`. `character_loaded` is
+    the only phase that proves a character loaded; `proof_ambiguous` means
+    the save-slot screen already showed a resolver route before Play was
+    clicked, so the tool stopped rather than claim a load it could not back;
+    `timeout` means no route appeared within `timeout_s` of the Play click.
+    `proof` is the `orbpickup stat` reply line that decided the outcome (or
+    the last one read, on `timeout`); `proof_trail` is every screen's own
+    reply, in the order main_menu, local, slot, play. `orbpickup` is
+    `restored_off` or `left_on`, whichever the pre-arm read decided --
+    this tool arms `orbpickup` itself to get the proof and restores it only
+    if its own pre-arm read showed the mod was off before it started.
+
+    Refusals: `game_not_running`, `game_state_unknown`,
+    `engine_source_missing`, `engine_import_failed`, `not_consumed`,
+    `no_visible_window_for_pid`, `window_minimized`, `foreground_not_game`,
+    `invalid_input`, `layout_not_measured`, `proof_not_armed`,
+    `character_already_loaded`.
+    """
+    return charselect.hs_select_character(slot=slot, timeout_s=timeout_s,
+                                          tool="hs_select_character")
 
 
 def main() -> None:

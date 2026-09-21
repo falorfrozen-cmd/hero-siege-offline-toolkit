@@ -94,8 +94,11 @@ class McpConfigTests(unittest.TestCase):
         # because an empty stub would have made that workorder look partly done.
         # Now the twelve tools depend on them, and a missing one would leave
         # `server.py` failing to import -- which a stdio client reports as a
-        # server that will not start, naming nothing.
-        for name in ("ipc.py", "capture.py", "launch.py"):
+        # server that will not start, naming nothing. `input.py` and
+        # `charselect.py` joined the same list once `hs_input` and
+        # `hs_select_character` shipped.
+        for name in ("ipc.py", "capture.py", "launch.py", "input.py",
+                     "charselect.py"):
             self.assertTrue((PACKAGE / name).is_file(),
                             f"{name} is missing; the game tools import it")
 

@@ -53,7 +53,10 @@ CORE_AND_GAME_TOOLS = {
 }
 
 #: Plus `hs_input`, from `hs-drive-mcp-charselect`.
-EXPECTED_TOOLS = CORE_AND_GAME_TOOLS | {"hs_input"}
+THIRTEEN_TOOLS = CORE_AND_GAME_TOOLS | {"hs_input"}
+
+#: Plus `hs_select_character`, from `hs-drive-mcp-charselect-ship`.
+EXPECTED_TOOLS = THIRTEEN_TOOLS | {"hs_select_character"}
 
 #: Two tools can take away something that was not theirs: a restore overwrites
 #: the live save directory, and a forced stop terminates a process. Everything
@@ -152,8 +155,20 @@ class StdioSurfaceTests(unittest.TestCase):
         self.assertEqual(len(CORE_AND_GAME_TOOLS), 12)
 
     def test_all_thirteen_tools_are_registered(self):
+        """Baseline: none of the thirteen `hs-drive-mcp-charselect` shipped
+        went away. Kept under its old name now that `hs_select_character`
+        makes the total fourteen, for the same reason
+        `test_all_twelve_tools_are_registered` was kept: the regression this
+        catches is a later workorder registering its own tool and quietly
+        dropping one of these.
+        """
+        missing = THIRTEEN_TOOLS - {tool.name for tool in self.tools}
+        self.assertEqual(missing, set())
+        self.assertEqual(len(THIRTEEN_TOOLS), 13)
+
+    def test_all_fourteen_tools_are_registered(self):
         self.assertEqual({tool.name for tool in self.tools}, EXPECTED_TOOLS)
-        self.assertEqual(len(self.tools), 13)
+        self.assertEqual(len(self.tools), 14)
 
     def test_hs_input_is_not_read_only_not_destructive_not_idempotent(self):
         """All three false, and each for its own reason.
@@ -164,6 +179,18 @@ class StdioSurfaceTests(unittest.TestCase):
         idempotent: sending the same click twice is two clicks.
         """
         tool = next(tool for tool in self.tools if tool.name == "hs_input")
+        hints = tool.annotations.model_dump(by_alias=True)
+        self.assertFalse(hints["readOnlyHint"])
+        self.assertFalse(hints["destructiveHint"])
+        self.assertFalse(hints["idempotentHint"])
+
+    def test_hs_select_character_is_not_read_only_not_destructive_not_idempotent(self):
+        """Not read-only: it injects clicks and sends IPC commands. Not
+        destructive: it removes nothing and writes no file of its own. Not
+        idempotent: calling it again after a character is loaded is a
+        different sequence, not a repeat of this one."""
+        tool = next(tool for tool in self.tools
+                   if tool.name == "hs_select_character")
         hints = tool.annotations.model_dump(by_alias=True)
         self.assertFalse(hints["readOnlyHint"])
         self.assertFalse(hints["destructiveHint"])
@@ -445,6 +472,52 @@ class SelfCheckSummaryTests(unittest.TestCase):
         self.assertTrue(set(checks.positive_controls()) <= set(EXPECTED_CHECKS),
                         "a control that is not a registered check cannot have "
                         "run, so `healthy` would rest on nothing")
+
+
+@unittest.skipIf(SKIP_REASON is not None, SKIP_REASON or "")
+class SelectCharacterDocstringTests(unittest.TestCase):
+    """`hs_select_character`'s docstring is the contract a caller reads over
+    the wire (its MCP `description` is the short blurb; the Python docstring
+    is where the phase values and refusal tokens actually live, following
+    `hs_input`'s own convention). Every one of them has to be backed by the
+    hub doc too, or a caller reading one and not the other gets a different
+    answer -- in process, so this needs no subprocess, only `mcp` importable
+    for `server.py` itself."""
+
+    DOC = ROOT / "docs" / "tools" / "hs-drive-mcp.md"
+
+    PHASES = ("main_menu", "local", "slot", "play", "character_loaded",
+              "proof_ambiguous", "timeout")
+    REFUSAL_TOKENS = ("game_not_running", "game_state_unknown",
+                      "engine_source_missing", "engine_import_failed",
+                      "not_consumed", "no_visible_window_for_pid",
+                      "window_minimized", "foreground_not_game",
+                      "invalid_input", "layout_not_measured",
+                      "proof_not_armed", "character_already_loaded")
+
+    @classmethod
+    def setUpClass(cls):
+        from tools.hs_drive_mcp import server
+        cls.docstring = server.hs_select_character.__doc__ or ""
+        cls.hub_doc = cls.DOC.read_text(encoding="utf-8")
+
+    def test_every_phase_value_is_in_the_docstring_and_the_hub_doc(self):
+        for phase in self.PHASES:
+            with self.subTest(phase=phase):
+                self.assertIn(phase, self.docstring,
+                             f"{phase} is not named in hs_select_character's "
+                             "own docstring")
+                self.assertIn(phase, self.hub_doc,
+                             f"{phase} is not documented in {self.DOC}")
+
+    def test_every_refusal_token_is_in_the_docstring_and_the_hub_doc(self):
+        for token in self.REFUSAL_TOKENS:
+            with self.subTest(token=token):
+                self.assertIn(token, self.docstring,
+                             f"{token} is not named in hs_select_character's "
+                             "own docstring")
+                self.assertIn(token, self.hub_doc,
+                             f"{token} is not documented in {self.DOC}")
 
 
 @unittest.skipIf(SKIP_REASON is not None, SKIP_REASON or "")

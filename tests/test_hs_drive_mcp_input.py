@@ -784,11 +784,18 @@ class TokenTests(unittest.TestCase):
                          ("foreground_not_game", "invalid_input"))
         for token in results.INPUT_REASONS:
             self.assertIn(token, results.REASONS)
-        for reserved in ("layout_not_measured", "research_build_required"):
-            self.assertNotIn(reserved, results.REASONS,
-                             f"{reserved} belongs to hs-drive-mcp-charselect-"
-                             "ship; defining it here would let a tool refuse "
-                             "with a token nothing implements")
+        # layout_not_measured now belongs to hs_select_character
+        # (hs-drive-mcp-charselect-ship, results.SELECT_CHARACTER_REASONS) --
+        # this only pins that hs_input's own two tokens are unchanged, not
+        # that no other tool may ever define a refusal. research_build_required
+        # was dropped with branch R at that workorder's replan 2 and must
+        # never exist anywhere: nothing in this codebase ships a research
+        # build, so a tool refusing with it would name a fix that does not
+        # apply to what shipped.
+        self.assertNotIn("research_build_required", results.REASONS,
+                         "research_build_required was dropped with branch R; "
+                         "defining it would let a tool refuse with a token "
+                         "nothing implements")
 
 
 if __name__ == "__main__":
