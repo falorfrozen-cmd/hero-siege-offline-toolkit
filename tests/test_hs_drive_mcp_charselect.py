@@ -190,6 +190,30 @@ def target_script(final_line=GET_MY_PLAYER_LINE):
     }
 
 
+class HasRouteTests(unittest.TestCase):
+    """`_has_route` is an allowlist of the routes `HhResolveLocalPlayer`
+    actually writes, not `via not in (NONE_VIA, BLIND)` -- the shape the
+    instrument-blindness review measured accepting a missing field as a
+    resolved route."""
+
+    def test_an_empty_via_is_not_a_route(self):
+        self.assertFalse(charselect._has_route(""))
+
+    def test_a_reply_with_no_player_via_field_parses_to_an_empty_via(self):
+        via, globe_objs = charselect._parse_stat("orbpickup: usage")
+        self.assertEqual(via, "")
+        self.assertIsNone(globe_objs)
+        self.assertFalse(charselect._has_route(via))
+
+    def test_the_known_routes_are_routes(self):
+        for route in charselect.KNOWN_ROUTES:
+            self.assertTrue(charselect._has_route(route), route)
+
+    def test_none_and_blind_are_not_routes(self):
+        self.assertFalse(charselect._has_route(charselect.NONE_VIA))
+        self.assertFalse(charselect._has_route(charselect.BLIND))
+
+
 class BaselineTests(CharselectTestCase):
     """S2: the game never loads."""
 
@@ -256,6 +280,19 @@ class TargetTests(CharselectTestCase):
         self.assertEqual(report["proof"], INSTANCE_FIND_LINE)
 
 
+class UnresolvedReadAfterPlayTests(CharselectTestCase):
+    """The exact case the instrument-blindness review measured: a reply with
+    no `player via ` field lands right where a resolved route would --
+    after the third (Play) click -- and must not be mistaken for one."""
+
+    def test_an_empty_reply_after_play_does_not_report_character_loaded(self):
+        self.arrange(ipc_script=target_script(final_line=""))
+        report = self.call(slot=1, timeout_s=0.05)
+
+        self.assertNotEqual(report.get("phase"), "character_loaded", report)
+        self.assertEqual(report["phase"], "timeout", report)
+
+
 class RefusalTests(CharselectTestCase):
     """S4: every refusal happens before anything past it is sent."""
 
@@ -316,6 +353,19 @@ class RefusalTests(CharselectTestCase):
         self.assertEqual(self.inject.calls, [])
         # The retry sleep is the observable proof the second read was really
         # spaced out, not fired back to back.
+        self.assertIn(charselect.BLIND_RETRY_S, self.sleeps)
+
+    def test_a_menu_read_missing_the_player_via_field_refuses_proof_not_armed(self):
+        # An empty reply (or one cut off before the last field, or an
+        # unrelated line landing in its place) must be treated the same as
+        # the instrument-blind case, not silently accepted as the "none"
+        # negative control.
+        script = baseline_script()
+        script["orbpickup stat"] = [NOT_TRIED_LINE, "", ""]
+        self.arrange(ipc_script=script)
+        report = self.call()
+        self.assertEqual(report["reason"], "proof_not_armed", report)
+        self.assertEqual(self.inject.calls, [])
         self.assertIn(charselect.BLIND_RETRY_S, self.sleeps)
 
     def test_a_route_already_at_the_menu_refuses_character_already_loaded(self):

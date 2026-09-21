@@ -57,6 +57,17 @@ BLIND = "(not tried)"
 #: reads at the main menu before any click.
 NONE_VIA = "none"
 
+#: The only three values `HhResolveLocalPlayer` writes into `g_OrbPlayerHow`
+#: when it resolves a player (`ModuleMain.cpp`, § "The proof" in the
+#: workorder's context file). `_has_route` allowlists exactly these -- never
+#: "anything that isn't `none` or `(not tried)`" -- because that denylist
+#: also counted `""` as a route: a reply with no `player via ` field at all
+#: (an empty read, one cut off before the last field, or an unrelated line
+#: landing in its place) has an empty `via`, and `"" not in (NONE_VIA,
+#: BLIND)` is true.
+KNOWN_ROUTES = ("GetMyPlayer", "instance_find(Player_obj)",
+               "instance_find(Player_obj) id")
+
 #: The literal prefix `orbpickup 1`'s handler prints when it arms
 #: (`ModuleMain.cpp:17491`, `sprintf_s(ob, "orbpickup -> globes pulled ...`).
 #: Anything else means the mod did not arm.
@@ -143,8 +154,11 @@ def _read_stat(tool: str) -> dict[str, Any]:
 
 
 def _has_route(via: str) -> bool:
-    """A resolved player, as opposed to "never tried" or "tried, found none"."""
-    return via not in (NONE_VIA, BLIND)
+    """A resolved player: `via` is one of the exact routes the resolver
+    writes (`KNOWN_ROUTES`), not merely something other than "never tried"
+    or "tried, found none". An allowlist, on purpose -- see `KNOWN_ROUTES`
+    for the false positive the equivalent denylist produced."""
+    return via in KNOWN_ROUTES
 
 
 def hs_select_character(slot: int = 1, timeout_s: float = 60,
@@ -248,21 +262,22 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
     if results.is_refusal(menu):
         return finish("main_menu",
                       refusal={"reason": menu["reason"], "detail": menu["detail"]})
-    if menu["via"] == BLIND:
+    if menu["via"] in (BLIND, ""):
         _sleep(BLIND_RETRY_S)
         menu = _read_stat(tool)
         if results.is_refusal(menu):
             return finish("main_menu", refusal={
                 "reason": menu["reason"], "detail": menu["detail"]})
-        if menu["via"] == BLIND:
+        if menu["via"] in (BLIND, ""):
             return finish("main_menu", refusal={
                 "reason": "proof_not_armed",
-                "detail": ("orbpickup stat still read "
-                          f"'player via {BLIND}' on two reads at least "
-                          f"{BLIND_RETRY_S} s apart, after orbpickup 1 was "
-                          "acknowledged. The resolver never ran this "
-                          "process; the instrument is blind. No click was "
-                          "sent.")})
+                "detail": ("orbpickup stat still had no resolved 'player "
+                          f"via' field (raw reply: {menu['line']!r}) on two "
+                          f"reads at least {BLIND_RETRY_S} s apart, after "
+                          "orbpickup 1 was acknowledged. Either the "
+                          "resolver never ran this process and the "
+                          "instrument is blind, or the reply was empty or "
+                          "malformed. No click was sent.")})
     if _has_route(menu["via"]):
         return finish("main_menu", refusal={
             "reason": "character_already_loaded",
