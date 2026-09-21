@@ -493,44 +493,75 @@ full resolution and nothing prunes them.
 ## Character select
 
 After `hs_launch` the game sits at its main menu, and most ForgePact gameplay
-commands act only once a character is loaded. Getting from one to the other —
-main menu → Local → save slot → Play — is the one step a human still has to
-take, and whether anything can take it instead is **being measured, not
-answered**.
+commands act only once a character is loaded. Getting from one to the other --
+main menu -> Play local -> save slot -> Play -- was the one step a human had to
+take. **It was measured on 2026-09-21, and it can be taken by injected input.**
 
-`hs_input` is one half of the instrument for that measurement. The other half
-is `menuprobe`, a research-build-only verb in the plugin, and the two are
-written up together in
-[`ForgePact/docs/character-select-research.md`](../../ForgePact/docs/character-select-research.md),
-which carries the static search, four candidate mechanisms with a positive
-control each, the live procedure and an empty results table.
-
-That document's `## Decision` section is the record. It reads, today:
+The measurement, its controls and every reply are in
+[`ForgePact/docs/character-select-research.md`](../../ForgePact/docs/character-select-research.md).
+Its `## Decision` section is the record, and it now reads:
 
 ```
-finding: pending
-shipRoute: pending
+finding: a-sendinput, a-postmessage, d
+shipRoute: mcp-only
 ```
 
-`pending` because **the live session has not been run.** Nothing here has
-measured whether injected input reaches this game: `hs_input` is registered,
-tested and documented, and what it does is inject — it makes no claim that
-the game reacts. Do not read a `pending` as a negative, and do not read the
-existence of the tool as a working character-select.
+`hs_input` driving `send_input` took a freshly launched game from its main menu
+to a loaded character in `Town_01_rm`, proven by a live `Player_obj` instance,
+with no human hand. The posted-message route reaches `keyboard_check` but not
+`keyboard_check_direct`; the engine's own `keyboard_key_press` reaches both and
+needs no foreground, but is keys only, and keyboard navigation is **not
+observed** at this menu. `event_perform` on the menu's own buttons is **not
+observed** for `UI_Button_obj` and the seven events tried, with its enumeration
+control passing. The warm-script route is **unmeasured** -- its positive
+control raised, so nothing it reported could be told from a blind instrument.
 
-Until the session runs and those two lines are replaced, **a human loads a
-character once per session**: main menu → Local → save slot → Play, then
-`hs_wait_ready`, after which every tool here works against that session.
-`hs_command(["orbpickup stat"])` is the check — its reply ends
-`player via <route>`, and anything other than `none` means a character is
-loaded. `orbpickup` is in the plugin's player allowlist, so that proof works
-on a shipping build as well as a research one.
+### The click has to be held, and `hs_input` does not hold it yet
 
-**Shipping whatever the finding supports is a separate workorder,
-`hs-drive-mcp-charselect-ship`** — a character-select tool, the reserved
-refusal tokens above, and any player-visible ForgePact change belong to it,
-not here. Its first step reads the two lines above out of the research
-document, and a `pending` on either is a refusal.
+This is the finding that matters for anyone using the tool today.
+`hs_input`'s `click` action emits the button-down and the button-up back to
+back with nothing between them. Both land inside a single frame, and at 144
+fps the game's sample loop never observes a frame with the button held -- so
+the click moves the cursor, lights the button underneath it, reports
+`complete: true`, and activates nothing. The identical click with **120 ms
+between the two records** changed the room every time.
+
+So `click` cannot currently press a button, even though the mechanism works.
+Its `key` action already takes `hold_ms` and defaults it to 60; the pointer
+path needs the same, and until it has one, a caller has to emit the records
+itself. This is an instrument that reported armed and did nothing, found by
+measurement rather than by review -- see
+[`docs/agents/prove-the-instrument.md`](../agents/prove-the-instrument.md).
+
+### `orbpickup stat` does not prove a character is loaded
+
+An earlier version of this section said it did, and that the reply's
+`player via <route>` being anything other than `none` meant a character was
+loaded. **That is wrong**, and the session measured it: in a town with no orbs
+nearby the reply is `globe objs=0 ... player via (not tried)`, because the
+player resolution is never attempted. It answers about the orb-pickup feature,
+not about the player.
+
+What did prove it was `menuprobe list Player_obj` returning one live instance,
+with `Player_Parent_obj` -> `not found (asset_get_index)` beside it as a
+negative control. That verb is research-build only, so a
+player-build-answerable proof is still an open problem and belongs to the
+shipping workorder.
+
+### Until `hs_select_character` ships
+
+A human still loads a character once per session -- main menu -> Play local ->
+save slot -> Play, then `hs_wait_ready` -- because the tool that automates it
+is the separate workorder `hs-drive-mcp-charselect-ship`, which reads the two
+lines above out of the research document. Everything here works against that
+session once a character is loaded, however it got loaded.
+
+Two measured facts that workorder depends on, both in the research document's
+Results table: a button's **client fractions are stable across display modes**
+even though its absolute GUI coordinates are not (`Play local` sits at
+(0.175, 0.4944) windowed and fullscreen alike), and the **room index is only a
+partial oracle** -- opening the character panel changes the screen without
+leaving `Chose_rm`, so a screenshot is the reliable check.
 
 ## Saves: what the tools guarantee
 
