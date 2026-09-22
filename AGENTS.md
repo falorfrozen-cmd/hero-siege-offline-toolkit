@@ -150,6 +150,19 @@ behavior, prefer a fixture or mock built on `hs-game-sdk` structs over a live
 game session for the baseline/target tests, and reserve actual in-game runs for
 final verification.
 
+**Choose representative cases, not every case.** A feature that applies to many
+skills, items or objects (the toggle-skill border, the double-cast guard, the
+skill-timer countdown and the like) does not need every covered case exercised.
+Most of those cases share one code path and behave the same way. So pick one or
+two ordinary cases, plus the outliers: the cases that take a different code path
+or read a different kind of value. For the toggle table, the outliers were a skill
+with no upgrade slot (Bushido) and a marker the game returns as a bool (Meteor
+Storm). This applies most to live sessions, where the owner's time in the game is
+the cost. The owner asks for more cases when they want them. It does not relax
+"Prove the Instrument" below: a negative result still needs a positive control
+in the same session, and a case left untested is recorded as "not observed
+live", never as a pass.
+
 ## Limit Rebuilds & Reruns During Development
 
 Full recompiles and relaunching the game for every change are slow and make the
