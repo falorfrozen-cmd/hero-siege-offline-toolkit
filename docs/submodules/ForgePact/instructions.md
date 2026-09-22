@@ -1438,7 +1438,7 @@ here before pressing Publish.
 2. **Equipped Item Detection for Custom Mechanics:**
    - Active mechanics like Headhunter, Beacon, and Tyrant's Crown currently rely on `force` commands sent by the panel rather than dynamically reading equipped inventory slots in C++.
 3. **Release vs. Research Command Separation:**
-   - Diagnostic commands (`readmem`, `census`, `enemylog`, `probestruct`, `structdump`, `hashprobe`, `forgehash`) are excluded from release builds (`/DFORGEPACT_RELEASE`) to protect performance and stability.
+   - Diagnostic commands (`readmem`, `census`, `enemylog`, `probestruct`, `structdump`, `hashprobe`, `forgehash`, `restartprobe`) are excluded from release builds (`/DFORGEPACT_RELEASE`) to protect performance and stability.
 4. **Build order matters since `build_release.py`'s plugin-sync guard:**
    - `build_release.py` now refuses to package unless `plugin_build\BloodPactPlugin_ship.dll` exists and byte-matches `modfiles_shipped\BloodPactPlugin.dll` (see `build_release.py`). Always run `plugin_build\build.bat release` (which now auto-stages the DLL into `modfiles_shipped\` and, if present, `dist\ForgePact\modfiles\`) *before* `py build_release.py`. Running the packaging script first, or after editing `plugin/ModuleMain.cpp` without rebuilding, is the most common "build keeps failing" report.
 5. **Hot builtins must stay allocation-free (`distance_to_object`):**
@@ -1563,6 +1563,7 @@ here before pressing Publish.
 - Map Reveal Research (why a revealed map had no monsters, and the spawner regression): `../../../ForgePact/docs/map-reveal-research.md`
 - Pet Quest Collector (active plan + findings log): `../../../ForgePact/docs/pet-quest-collector-plan-c-direct-invocation.md`, `../../../ForgePact/docs/pet-quest-collector-c-research.md`
 - Prospect Window Research (issue #9, Phase 0 pending): `../../../ForgePact/docs/prospect-window-research.md`
+- Restart-Always-Available Research (issue #8, live session pending): `../../../ForgePact/docs/restart-always-available-research.md`
 - Menu Pause (planned, **not recommended** - read §0 before proposing anything in this class): `../../../ForgePact/docs/menu-pause-plan.md`
 - Satanic Zone SDK Data (shared, not ForgePact-specific): `../../../hs-game-sdk/curated/satanic_zone.json`
 - Live Plugin IPC Driver: `../../../ForgePact/tools/ipc.ps1` (send a command to the running game, print only the reply)
