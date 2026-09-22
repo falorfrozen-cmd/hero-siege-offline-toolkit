@@ -98,16 +98,22 @@ next one a document rather than a conversation. They are driven by
 | Agent | Model | Does |
 |---|---|---|
 | `planner` | opus | researches the change and writes `.claude/workorders/<slug>-plan.md`, whose acceptance criteria are commands and files, never prose |
-| `implementer` | sonnet | executes the steps; returns `PLAN-DEFECT` with evidence rather than improvising around a plan that turns out to be wrong |
+| `implementer` | opus | executes the steps; returns `PLAN-DEFECT` with evidence rather than improvising around a plan that turns out to be wrong |
 | `verifier` | haiku | runs the acceptance criteria and reports what they actually printed; read-only, and judges nothing it cannot execute |
 | `consultant` | opus | answers **one** narrow question from a phase that hit a decision above its tier, then stops; never implements, plans or reviews |
+| `live-operator` | sonnet | runs a workorder's written `### Live procedure <n>` against the real game through `hs-drive` — its own save backup, the positive control first, raw output to `<slug>-live-<n>.md` — and hands every in-game action a person must take back to the driver; never installs a build, never judges the mechanism |
 | `scribe` | haiku | pastes a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Edit` only; spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
 
 Why these tiers: planning carries the most judgement that is written down
 nowhere, so it gets the strongest model. Implementation is *not* the easy part —
 a plan never fully survives contact, and a weak model follows a wrong plan off
-the cliff instead of stopping — so it gets a capable one. Verification against
-mechanical criteria is genuinely cheap, so it gets the cheapest. The verifier
+the cliff instead of stopping — so it gets a capable one: `opus` since
+2026-09-22, when Opus 5.5 made that tier cost about what Sonnet 5 does for
+this cache-read-dominated work and the Sonnet tail was what hit the round caps
+(`skills/workorder/SKILL.md` § "Model tiers" has the prices and the
+measurement). Verification against mechanical criteria is genuinely cheap, so
+it gets the cheapest. Every agent that can take one also pins `effort:`, for
+the same reason it pins `model:` — left out, it silently follows the session. The verifier
 never sees the implementer's reasoning, because sharing that context would mean
 sharing its blind spots.
 
@@ -371,7 +377,12 @@ under it unless `--log` is passed — the Log is also left out of the listing
 and cut from a level-1 section. It is how the verifier follows a criterion's
 citation into the context file without reading the rest, whose `## Log` is the
 implementer's reasoning; an implementer or the driver reading a round's entry
-passes `--log`. That same run's verifier had no context path in its dispatch
+passes `--log`. It reads any markdown file, module guides included: `--toc`
+lists every heading with its line and section size, and `--grep '<regex>'`
+prints only the list items and paragraphs of a section that match, windowing
+an item over 4,000 characters around each match — ForgePact's guide is 334KB
+and 23 of its lines hold 128KB, so even a 20-line `Read` window returned 45KB
+and R3 failed in 8 of 22 sessions for agents that *were* reading by section. That same run's verifier had no context path in its dispatch
 and no command for a `###` heading; it spent eight calls looking and then read
 the whole file (audit R2, which now also catches a `cat`/`sed`/`Get-Content`
 of a context file, since `Read` is not the only way in). The workflow now
@@ -535,9 +546,19 @@ the same rules this page states above (batching, per-role budgets, plan/context
 scope, driver discipline, replans, round budgets):
 
 ```
-py -3 tools/workorder_audit.py [--latest | --session <id-prefix>]
+py -3 tools/workorder_audit.py [--latest | --session <id-prefix> | --calibrate <list>]
     [--projects-dir DIR] [--project NAME] [--json]
 ```
+
+`--session` looks in every checkout of the repository — the main checkout's
+project directory and each `.claude/worktrees/<name>` one — when the prefix is
+not under the current one, since every `/workorder` session runs in a worktree
+of its own. `--calibrate <file>` takes a list of session prefixes (one per
+line) and prints, over all of them, each role's turns, tokens, context per
+turn and list-price cost as p50/p75/p90/max — per role and per role *and
+model* — plus round-0 and later-round totals, driver turns per round, and how
+many sessions each rule fails at the constants as they stand. The budgets are
+set from that output (story: [docs/agents/workorder-calibration.md](../docs/agents/workorder-calibration.md)).
 
 It streams — never loads whole — a session's transcripts: the driver's own
 `~/.claude/projects/<project>/<session>.jsonl`, ad-hoc subagents at
@@ -552,8 +573,10 @@ becomes `-`); `--projects-dir`/`--project` exist so tests never touch the real
 Per agent it reports turns (deduped by `message.id`), tokens (input +
 cache-creation + cache-read, summed over assistant turns), output tokens,
 context per turn, peak context, wall minutes, the longest single tool call,
-and KB of `Read` results by kind (plan, context file, `instructions.md`,
-source). It prints one table, then sixteen rules as `PASS`/`FAIL` with
+the model the transcript actually ran on (what a tier alias resolved to that
+day), its list-price cost (`MODEL_PRICES`), and KB of `Read` results by kind
+(plan, context file, `instructions.md`, source). It prints one table and the
+session's total cost, then seventeen rules as `PASS`/`FAIL` with
 evidence (the agent, the time, the command or path), then each role's numbers
 against the pre-update averages as a percentage; `--json` emits the same as
 one object.
@@ -564,22 +587,27 @@ one object.
 | R2 verifier-scope | a verifier whole-file `Read` of a `-context.md` or of an oversized plan, or a shell read (`cat`, `sed`, `head`, `Get-Content`, … as a command, not as part of a slug) of a `-context.md`, or `section.py` run with `--log` — `section.py` without it and a heading `grep` are the sanctioned routes; the reader list is a heuristic drawn from real transcripts, not a fence |
 | R3 guide-whole | an agent whose `instructions.md` `Read` results exceed a KB budget |
 | R4 batching | an implementer's share of small-sequential-shell-call runs over budget |
-| R5 blocking-call | a tool call over the time budget — except `Agent`/`Task`, which dispatch a subagent and are meant to block for minutes |
+| R5 blocking-call | a tool call over the time budget — except `Agent`/`Task`, which dispatch a subagent and are meant to block for minutes, and `AskUserQuestion`, which waits for a person |
 | R6 planner-rewrite | a planner `Write` to a plan/context path already written earlier in the session |
-| R7 / R8 / R9 reviewer- / implementer- / verifier-budget | turns, tokens, or (implementer only) context-per-turn over that role's budget |
+| R7 / R8 / R9 reviewer- / implementer- / verifier-budget | turns, tokens, or (implementer only) context-per-turn over that role's budget — each reviewer type has its own (`REVIEWER_BUDGETS`) |
 | R10 driver-discipline | a driver shell command that builds or tests, a driver `Edit`/`Write` outside `.claude/workorders/`, or too many driver turns in one round — judged only while it is driving: one window per `/workorder` invocation, from the invocation to the first message the user types after that invocation's last pipeline agent finished (a phase agent, a reviewer, anything in a workflow run — an ad-hoc agent asked for later does not hold it open; harness-written `user` records are not the user), or to the next invocation, so a build the user asks for afterwards, or between two workorders, is not the driver's violation |
 | R11 replans | two or more planner runs in one session |
 | R12 plan-size | a plan or context file whose planner-authored part is over its KB budget, from the `Read` calls that touched it — `## Log` is not counted, being what the scribe, implementer and driver append while the rounds run |
-| R13 round-budget | a round's total subagent tokens over budget |
+| R13 round-budget | one round's total subagent tokens over budget — a round is one workflow launch's round `n`, never every launch's round `n` added together, and round 0 (the whole change) has a larger budget than a later round (a defect) |
 | R14 reviewer-reruns-suite | a reviewer running test suites or builds more than twice (the two reviewers told to build and test are exempt) |
 | R15 edit-guard-workaround | a subagent whose `Edit`/`Write` was refused by the harness's worktree guard ("is in the base repo checkout") and which then made more than five further tool calls (its own return not counted) instead of returning `PLAN-DEFECT` — unless an edit of the same repo-relative path then landed inside a worktree, which is a mistyped path corrected, not a workaround (a same-named scratch copy is the workaround) |
 | R16 scribe-scope | a scribe (`agentType: "scribe"`, or the `scribe` role a workflow label like `scribe:r1` parses to) whose `Edit`/`Write` landed outside its own `.claude/workorders/`, judged against the transcript's own `cwd` rather than a bare substring test; which ran `git add`/`git commit` in any shell command; which wrote a file through a shell command instead (a redirect or heredoc, `tee`, a PowerShell content cmdlet, `cp`/`mv`/`rm`/`sed -i`, a Python file write) whatever the target path; or, for the restricted `scribe` agent type, ran any shell command at all |
+| R17 live-operator-scope | a `live-operator` that wrote anything but its own `.claude/workorders/<slug>-live-<n>.md`, installed a build (a `.dll` copied or moved, or `installmod`), ran a writing git command, restored saves, or force-stopped the game |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
 on), each with a comment naming the measurement it was set from — read those
 constants for the current number rather than one copied here, since
-re-measuring is exactly what this tool exists to make cheap. Exit code is 0
+re-measuring is exactly what this tool exists to make cheap. Since
+2026-09-22 each sits at about the 90th percentile of what its role did over a
+named set of real runs, so a `FAIL` means "this run is in the slowest tenth";
+re-run `--calibrate` on newer sessions and move a constant when its
+percentile has moved. Exit code is 0
 when every rule passes, 1 when any rule fails, 2 on a usage error.
 
 Tests (`tests/test_workorder_audit.py`) build synthetic transcripts in a temp

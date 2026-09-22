@@ -37,27 +37,47 @@ from pathlib import Path
 from typing import Iterable, Iterator, List, Optional
 
 # --------------------------------------------------------------------------
-# Budgets. Each constant names the section 1 measurement it is drawn from
-# (see `.claude/workorders/COST-GATE-SPEC.md`, or its post-merge home).
+# Budgets. Recalibrated 2026-09-22 against the 22 sessions that ran
+# `/workorder` between 2026-09-19 and 2026-09-22 (533 agents, 61 rounds,
+# ~$1,160 at list price); `--calibrate <session list>` reprints every
+# distribution below, and the evidence note is
+# `docs/agents/workorder-calibration.md`.
+#
+# The rule: a budget sits at about the 90th percentile of what that role
+# actually did, so a FAIL means "this run is in the slowest tenth -- look at
+# it". The previous budgets were set just above a pre-update average so that
+# a run at the old baseline would fail; after the pipeline changes they were
+# meant to force, R7 still failed 17 of 22 sessions, R13 16 and R8 14 -- a
+# rule that fails most runs gets read as noise, and then it catches nothing.
 # --------------------------------------------------------------------------
 
-# §1 pre-update per-run averages: implementer 117 turns / 21.8M tokens / 188K
-# context per turn. R8 budgets sit just above that average so a run at the
-# old baseline already fails.
-IMPLEMENTER_MAX_TURNS = 120
-IMPLEMENTER_MAX_TOKENS = 15_000_000
-IMPLEMENTER_MAX_CONTEXT_PER_TURN = 200_000
+# R8, set from the Opus-tier implementers (n=21: 17 on Opus 5, 4 on Opus 5.5)
+# because `opus` is now the implementer's default tier: p90 123 turns, 27.6M
+# tokens, 205K context per turn. For comparison Sonnet 5 implementers (n=43)
+# ran p75 25.2M but p90 46.8M and max 78.9M -- the tail that hit round caps.
+IMPLEMENTER_MAX_TURNS = 125
+IMPLEMENTER_MAX_TOKENS = 28_000_000
+IMPLEMENTER_MAX_CONTEXT_PER_TURN = 210_000
 
-# §1: verifier 53 turns / 3.1M tokens pre-update; post-update driver-run
-# sessions measured 1.5M (-52%). R9 sits between the two.
+# R9: verifier (Haiku 4.5, n=61) p90 58 turns / 3.1M tokens -- the budget
+# set on 2026-09-18 already sat there, and is kept.
 VERIFIER_MAX_TURNS = 60
 VERIFIER_MAX_TOKENS = 3_500_000
 
-# §1: reviewers 20-22 turns / 0.74-2.0M tokens pre-update; workflow-mode
-# reviewers ran 23-59 turns / 1.2-4.3M only because their dispatch pointed at
-# an empty diff (a bug, since fixed). R7 sits above the fixed pre-update band.
+# R7, per reviewer type, p90 of each (turns / tokens): docs-sync 30 / 1.9M
+# (n=60), decompile-output-guard 17 / 1.1M (n=59), sdk-contract 31 / 2.7M
+# (n=28), instrument-blindness 21 / 1.3M (n=53). One budget for all five
+# failed 17 of 22 sessions, almost always docs-sync at 26-37 turns, while
+# holding decompile-output-guard to a limit it never came near. A type with
+# too few runs to calibrate (tauri-command-reviewer, n=1) keeps the default.
 REVIEWER_MAX_TURNS = 25
 REVIEWER_MAX_TOKENS = 3_000_000
+REVIEWER_BUDGETS = {
+    "docs-sync-reviewer": (30, 2_500_000),
+    "decompile-output-guard": (18, 1_500_000),
+    "sdk-contract-reviewer": (32, 3_000_000),
+    "instrument-blindness-reviewer": (22, 2_000_000),
+}
 
 # R3: no §1 number pins this one; it is a guard against reading the whole
 # submodule guide instead of the section that applies.
@@ -83,7 +103,11 @@ BATCHABLE_MIN_RUN = 3
 # are not the "should have polled instead of blocking" smell this rule is
 # for (see AGENTS.md "no single wait ... for more than about four minutes").
 BLOCKING_CALL_MAX_SECONDS = 240
-BLOCKING_EXEMPT_TOOLS = {"Agent", "Task"}
+# `AskUserQuestion` waits for a person to answer: 7 of R5's 8 failing
+# sessions in the 2026-09-22 calibration cited a driver's question left open
+# for 260-26,642s, and for 5 of them it was the only evidence -- the user
+# thinking, not a hung call.
+BLOCKING_EXEMPT_TOOLS = {"Agent", "Task", "AskUserQuestion"}
 
 # R12: no plan/context should carry the implementation (see planner.md rule);
 # these are size smells, not hard limits on what a plan may describe. Only
@@ -100,8 +124,15 @@ H2_RE = re.compile(rb"^## ")
 # agree on what is structure and what is quoted markdown.
 FENCE_RE = re.compile(rb"^ {0,3}(`{3,}|~{3,})(.*)$")
 
-# R13: §1 first workflow-mode run measured ~21M tokens per round.
-ROUND_MAX_TOKENS = 15_000_000
+# R13, per (workflow launch, round) -- see `_round_windows`. Round 0 carries
+# the whole change and later rounds a defect, so they are budgeted apart:
+# round 0 measured p50 22.5M / p75 32.7M / p90 56.7M (n=30), later rounds
+# p50 7.5M / p75 14.7M / p90 22.8M (n=31). ROUND0 is the per-role budgets of a
+# round-0 roster added up (implementer 28M + verifier 3.5M + about four
+# reviewers at ~2M), so a round over it has at least one role over its own
+# budget; later rounds sit at ~p85. The old single 15M budget failed 16 of 22.
+ROUND0_MAX_TOKENS = 40_000_000
+ROUND_MAX_TOKENS = 20_000_000
 
 # R10: driver turns per round; a driver that needs more than this per round
 # is doing the subagents' job instead of dispatching it.
@@ -204,7 +235,7 @@ SECTION_LOG_FLAG_RE = re.compile(r"section\.py\b[^|;&\n]*(?<!\S)--log\b", re.IGN
 # R10: the agents a `/workorder` invocation itself spawns. Only these keep
 # its window open -- an ad-hoc agent the user asks for afterwards is
 # conversation, like the message that asked for it.
-PIPELINE_AGENT_TYPES = {"planner", "implementer", "verifier", "consultant", "workflow-subagent"}
+PIPELINE_AGENT_TYPES = {"planner", "implementer", "verifier", "consultant", "workflow-subagent", "live-operator"}
 
 REVIEWER_TYPES = {
     "docs-sync-reviewer",
@@ -226,6 +257,22 @@ PRE_UPDATE_AVG = {
 
 SHELL_TOOLS = {"Bash", "PowerShell"}
 EDIT_TOOLS = {"Edit", "Write"}
+
+# List prices, $ per million tokens: (input, output, cache read), as published
+# 2026-09 (the `claude-api` skill's model table). A cache write bills
+# CACHE_WRITE_MULTIPLIER x input. These are for comparing roles and tiers with
+# each other, not an invoice: a subscription does not bill per token. Price is
+# why the tiers are where they are -- 92-99% of every role's tokens here are
+# cache reads, and Opus 5.5 reads cache at Sonnet 5's price.
+MODEL_PRICES = {
+    "claude-fable-5-1": (10.0, 50.0, 0.25),
+    "claude-opus-5-5": (4.0, 20.0, 0.20),
+    "claude-opus-5": (5.0, 25.0, 0.50),
+    "claude-sonnet-5": (2.0, 10.0, 0.20),
+    "claude-haiku-4-5-20251001": (1.0, 5.0, 0.10),
+    "claude-haiku-4-5": (1.0, 5.0, 0.10),
+}
+CACHE_WRITE_MULTIPLIER = 1.25
 
 
 # --------------------------------------------------------------------------
@@ -375,6 +422,7 @@ class AgentTranscript:
     is_driver: bool = False
 
     turns: dict = field(default_factory=dict)          # message_id -> TurnUsage
+    models: dict = field(default_factory=lambda: defaultdict(int))  # model id -> assistant records
     tool_calls: list = field(default_factory=list)      # ToolCall, in order
     read_kb: dict = field(default_factory=lambda: defaultdict(float))  # kind -> KB
     write_paths: list = field(default_factory=list)     # (path, ts) for Write calls
@@ -403,6 +451,26 @@ class AgentTranscript:
     @property
     def peak_context(self) -> int:
         return max((t.total_tokens for t in self.turns.values()), default=0)
+
+    @property
+    def model(self) -> Optional[str]:
+        """The model that produced most of this transcript's turns: what a
+        tier alias (`opus`, `sonnet`) actually resolved to on the day."""
+        return max(self.models, key=self.models.get) if self.models else None
+
+    @property
+    def cost_usd(self) -> Optional[float]:
+        """List-price cost of this transcript's tokens, or None for a model
+        MODEL_PRICES does not know."""
+        price = MODEL_PRICES.get(self.model or "")
+        if price is None:
+            return None
+        inp, out, read = price
+        t = self.turns.values()
+        return (sum(x.input_tokens for x in t) * inp
+                + sum(x.cache_creation_tokens for x in t) * inp * CACHE_WRITE_MULTIPLIER
+                + sum(x.cache_read_tokens for x in t) * read
+                + sum(x.output_tokens for x in t) * out) / 1e6
 
     @property
     def wall_minutes(self) -> float:
@@ -458,6 +526,9 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
             message_id = message.get("id")
             usage = message.get("usage") or {}
             content = message.get("content") or []
+            model = message.get("model")
+            if model and model != "<synthetic>":
+                agent.models[model] += 1
             if message_id and ts is not None:
                 turn = agent.turns.get(message_id)
                 if turn is None:
@@ -558,6 +629,45 @@ def find_session_dir(projects_dir: Path, project: str, session_prefix: Optional[
         raise SystemExit("usage error: one of --latest or --session is required")
 
     return chosen.stem, chosen
+
+
+WORKTREE_PROJECT_MARKER = "--claude-worktrees-"
+
+
+def sibling_projects(projects_dir: Path, project: str) -> list:
+    """Every project directory of the same repository: the main checkout's
+    and each `.claude/worktrees/<name>` session's, which Claude Code files
+    under separate mangled names."""
+    base = project.split(WORKTREE_PROJECT_MARKER, 1)[0]
+    if not projects_dir.is_dir():
+        return []
+    return sorted(p.name for p in projects_dir.iterdir()
+                  if p.is_dir() and (p.name == base or p.name.startswith(base + WORKTREE_PROJECT_MARKER)))
+
+
+def locate_session(projects_dir: Path, project: str, session_prefix: Optional[str],
+                   latest: bool) -> tuple:
+    """(project, session id, transcript path). A `--session` prefix not found
+    under `project` is looked for in the repository's other checkouts: every
+    /workorder session in this repo runs in a worktree, and auditing one from
+    another checkout otherwise needs its mangled name typed by hand."""
+    try:
+        return (project, *find_session_dir(projects_dir, project, session_prefix, latest))
+    except SystemExit:
+        if not session_prefix:
+            raise
+    hits = []
+    for other in sibling_projects(projects_dir, project):
+        if other == project:
+            continue
+        hits.extend((other, p) for p in (projects_dir / other).glob(f"{session_prefix}*.jsonl"))
+    if len(hits) == 1:
+        other, path = hits[0]
+        return other, path.stem, path
+    if hits:
+        raise SystemExit(f"usage error: session prefix '{session_prefix}' is ambiguous: "
+                         + ", ".join(f"{p.stem} ({o})" for o, p in hits))
+    raise SystemExit(f"usage error: no session matching '{session_prefix}' in any checkout of this repository")
 
 
 def discover_session(projects_dir: Path, project: str, session_id: str,
@@ -773,15 +883,21 @@ def rule_r6_planner_rewrite(session: Session) -> RuleResult:
     return RuleResult("R6", "planner-rewrite", passed=not evidence, evidence=evidence)
 
 
+def reviewer_budget(agent_type: str) -> tuple:
+    """(max turns, max tokens) for one reviewer type."""
+    return REVIEWER_BUDGETS.get(agent_type, (REVIEWER_MAX_TURNS, REVIEWER_MAX_TOKENS))
+
+
 def rule_r7_reviewer_budget(session: Session) -> RuleResult:
     evidence = []
     for agent in all_subagents(session):
         if agent.agent_type not in REVIEWER_TYPES:
             continue
-        if agent.turn_count > REVIEWER_MAX_TURNS or agent.total_tokens > REVIEWER_MAX_TOKENS:
+        max_turns, max_tokens = reviewer_budget(agent.agent_type)
+        if agent.turn_count > max_turns or agent.total_tokens > max_tokens:
             evidence.append(
                 f"{agent.label}: {agent.turn_count} turns, {agent.total_tokens:,} tokens "
-                f"(budget {REVIEWER_MAX_TURNS} turns / {REVIEWER_MAX_TOKENS:,} tokens)"
+                f"(budget {max_turns} turns / {max_tokens:,} tokens)"
             )
     return RuleResult("R7", "reviewer-budget", passed=not evidence, evidence=evidence)
 
@@ -869,25 +985,52 @@ def rule_r10_driver_discipline(session: Session) -> RuleResult:
             if DRIVER_ALLOWED_EDIT_PREFIX not in fp:
                 evidence.append(f"driver {call.name} outside {DRIVER_ALLOWED_EDIT_PREFIX} at {call.ts_start}: {fp}")
 
-    for round_, window in _round_windows(session).items():
-        start, end = window
-        count = sum(1 for t in driver.turns.values() if start <= t.ts <= end)
+    for key, count in driver_turns_per_round(session).items():
         if count > DRIVER_MAX_TURNS_PER_ROUND:
-            evidence.append(f"driver: {count} turns during round {round_} (budget {DRIVER_MAX_TURNS_PER_ROUND})")
+            evidence.append(f"driver: {count} turns during {_round_name(key)} (budget {DRIVER_MAX_TURNS_PER_ROUND})")
 
     return RuleResult("R10", "driver-discipline", passed=not evidence, evidence=evidence)
 
 
+def _round_name(key: tuple) -> str:
+    workflow_id, round_ = key
+    return f"round {round_}" + (f" [{workflow_id}]" if workflow_id else "")
+
+
 def _round_windows(session: Session) -> dict:
-    """round number -> (earliest ts, latest ts) spanned by that round's
-    subagents, used to attribute driver turns to a round."""
+    """(workflow id or None, round number) -> (earliest ts, latest ts) spanned
+    by that round's subagents, used to attribute driver turns to a round.
+
+    Keyed by workflow as well as round: a session drives several workorders,
+    each with its own round 0, and one window per round *number* stretched
+    from the first workorder's round 0 to the last one's -- measured
+    2026-09-22, a session with seven workflow launches audited as one
+    127M-token "round 0", and every driver turn between two workorders counted
+    against it."""
     windows: dict = {}
     for agent in all_subagents(session):
         if agent.round is None or agent.ts_first is None or agent.ts_last is None:
             continue
-        lo, hi = windows.get(agent.round, (agent.ts_first, agent.ts_last))
-        windows[agent.round] = (min(lo, agent.ts_first), max(hi, agent.ts_last))
+        key = (agent.workflow_id, agent.round)
+        lo, hi = windows.get(key, (agent.ts_first, agent.ts_last))
+        windows[key] = (min(lo, agent.ts_first), max(hi, agent.ts_last))
     return windows
+
+
+def driver_turns_per_round(session: Session) -> dict:
+    """(workflow id or None, round) -> driver turns inside that round's window."""
+    turns = session.driver.turns.values()
+    return {key: sum(1 for t in turns if lo <= t.ts <= hi)
+            for key, (lo, hi) in _round_windows(session).items()}
+
+
+def round_totals(session: Session) -> dict:
+    """(workflow id or None, round) -> subagent tokens spent in that round."""
+    totals: dict = defaultdict(int)
+    for agent in all_subagents(session):
+        if agent.round is not None:
+            totals[(agent.workflow_id, agent.round)] += agent.total_tokens
+    return dict(totals)
 
 
 def rule_r11_replans(session: Session) -> RuleResult:
@@ -943,7 +1086,10 @@ def authored_and_log_kb(data: bytes) -> tuple[float, float]:
             if log_start is None:
                 if LOG_HEADING_RE.match(line):
                     log_start = offset
-            elif H2_RE.match(line):
+            elif H2_RE.match(line) and not LOG_HEADING_RE.match(line):
+                # A second `## Log` continues the first: measured
+                # 2026-09-22, a driver appended one at the end of a context
+                # file, and everything under it was audited as authored.
                 log_end = offset
                 break
         offset += len(raw)
@@ -970,15 +1116,16 @@ def rule_r12_plan_size(session: Session) -> RuleResult:
     return RuleResult("R12", "plan-size", passed=not evidence, evidence=evidence)
 
 
+def round_budget(round_: int) -> int:
+    return ROUND0_MAX_TOKENS if round_ == 0 else ROUND_MAX_TOKENS
+
+
 def rule_r13_round_budget(session: Session) -> RuleResult:
-    totals: dict = defaultdict(int)
-    for agent in all_subagents(session):
-        if agent.round is not None:
-            totals[agent.round] += agent.total_tokens
     evidence = []
-    for round_, total in sorted(totals.items()):
-        if total > ROUND_MAX_TOKENS:
-            evidence.append(f"round {round_}: {total:,} subagent tokens (budget {ROUND_MAX_TOKENS:,})")
+    for key, total in sorted(round_totals(session).items(), key=lambda kv: (kv[0][0] or "", kv[0][1])):
+        budget = round_budget(key[1])
+        if total > budget:
+            evidence.append(f"{_round_name(key)}: {total:,} subagent tokens (budget {budget:,})")
     return RuleResult("R13", "round-budget", passed=not evidence, evidence=evidence)
 
 
@@ -1127,6 +1274,39 @@ def rule_r16_scribe_scope(session: Session) -> RuleResult:
     return RuleResult("R16", "scribe-scope", passed=not evidence, evidence=evidence)
 
 
+LIVE_CAPTURE_RE = re.compile(r"(^|/)\.claude/workorders/[^/]+-live-\d+\.md$", re.IGNORECASE)
+DLL_INSTALL_RE = re.compile(
+    r"\b(cp|mv|copy|xcopy|robocopy|Copy-Item|Move-Item)\b[^|;&\n]*\.dll\b|\binstallmod\b", re.IGNORECASE)
+
+
+def rule_r17_live_operator_scope(session: Session) -> RuleResult:
+    """`live-operator` runs the owner's game: it may write its own capture
+    file and nothing else, never installs a build (the owner decides when the
+    DLL their game loads changes), never runs a writing git command, and
+    never restores saves or force-stops the game on its own."""
+    evidence = []
+    for agent in all_subagents(session):
+        if agent.agent_type != "live-operator":
+            continue
+        for call in agent.tool_calls:
+            if call.name in EDIT_TOOLS:
+                fp = str(call.tool_input.get("file_path", "")).replace("\\", "/")
+                if not LIVE_CAPTURE_RE.search(fp):
+                    evidence.append(f"{agent.label} {call.name} outside its capture file at {call.ts_start}: {fp}")
+            elif call.name in SHELL_TOOLS:
+                cmd = _cmd_text(call)
+                mutations = _git_mutations(cmd)
+                if mutations:
+                    evidence.append(f"{agent.label} ran git {'/'.join(dict.fromkeys(mutations))} at {call.ts_start}: {cmd[:120]}")
+                if DLL_INSTALL_RE.search(cmd):
+                    evidence.append(f"{agent.label} installed a build at {call.ts_start}: {cmd[:120]}")
+            elif call.name.endswith("hs_saves_restore"):
+                evidence.append(f"{agent.label} restored saves at {call.ts_start}")
+            elif call.name.endswith("hs_stop_game") and call.tool_input.get("force"):
+                evidence.append(f"{agent.label} force-stopped the game at {call.ts_start}")
+    return RuleResult("R17", "live-operator-scope", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -1144,6 +1324,7 @@ ALL_RULES = [
     rule_r14_reviewer_reruns_suite,
     rule_r15_edit_guard_workaround,
     rule_r16_scribe_scope,
+    rule_r17_live_operator_scope,
 ]
 
 
@@ -1161,6 +1342,7 @@ def _agent_row(agent: AgentTranscript) -> dict:
         "agent_type": agent.agent_type,
         "workflow": agent.workflow_id or "-",
         "round": agent.round if agent.round is not None else "-",
+        "model": (agent.model or "-").replace("claude-", ""),
         "turns": agent.turn_count,
         "tokens": agent.total_tokens,
         "output_tokens": agent.total_output_tokens,
@@ -1168,7 +1350,14 @@ def _agent_row(agent: AgentTranscript) -> dict:
         "peak_context": agent.peak_context,
         "wall_minutes": round(agent.wall_minutes, 1),
         "longest_tool_call_s": round(agent.longest_tool_call_seconds, 1),
+        "cost_usd": round(agent.cost_usd, 2) if agent.cost_usd is not None else "-",
     }
+
+
+def session_cost(session: Session) -> tuple:
+    """(list-price $ for every priced transcript, how many had no price)."""
+    costs = [a.cost_usd for a in all_agents(session)]
+    return sum(c for c in costs if c is not None), sum(1 for c in costs if c is None)
 
 
 def build_table(session: Session) -> list:
@@ -1228,6 +1417,8 @@ def format_report(session: Session, results: list, comparison: list) -> str:
     out.append(f"Session {session.session_id}  (project {session.project})")
     out.append("")
     out.append(format_table(build_table(session)))
+    cost, unpriced = session_cost(session)
+    out.append(f"list-price cost: ${cost:,.2f}" + (f" ({unpriced} transcript(s) on an unpriced model)" if unpriced else ""))
     out.append("")
     for r in results:
         status = "PASS" if r.passed else "FAIL"
@@ -1251,6 +1442,7 @@ def to_json(session: Session, results: list, comparison: list) -> dict:
         "session_id": session.session_id,
         "project": session.project,
         "table": build_table(session),
+        "cost_usd": round(session_cost(session)[0], 2),
         "rules": [
             {"rule_id": r.rule_id, "name": r.name, "passed": r.passed, "evidence": r.evidence}
             for r in results
@@ -1258,6 +1450,104 @@ def to_json(session: Session, results: list, comparison: list) -> dict:
         "comparison": comparison,
         "exit_code": 0 if all(r.passed for r in results) else 1,
     }
+
+
+# --------------------------------------------------------------------------
+# Calibration
+# --------------------------------------------------------------------------
+
+def percentile(values: list, p: float) -> float:
+    """Linear-interpolated percentile, p in [0, 1]; 0 for no values."""
+    xs = sorted(values)
+    if not xs:
+        return 0.0
+    k = (len(xs) - 1) * p
+    lo = int(k)
+    hi = min(lo + 1, len(xs) - 1)
+    return xs[lo] + (xs[hi] - xs[lo]) * (k - lo)
+
+
+def _spread(values: list) -> dict:
+    return {"n": len(values), "p50": percentile(values, .5), "p75": percentile(values, .75),
+            "p90": percentile(values, .9), "max": max(values, default=0)}
+
+
+def calibrate(sessions: list) -> dict:
+    """The distributions the budgets above are set from, over many sessions:
+    per role (and per reviewer type, and per role and model) turns, tokens,
+    context per turn and list-price cost; per-round subagent tokens, round 0
+    apart from later rounds; driver turns per round; and how many sessions
+    each rule fails as the constants stand. Each budget's comment names the
+    percentile it was set at, so re-running this on newer sessions says
+    whether that still holds."""
+    by_role: dict = defaultdict(list)
+    by_role_model: dict = defaultdict(list)
+    rounds0, rounds_later, driver_rounds, costs = [], [], [], []
+    fails: dict = defaultdict(int)
+    for session in sessions:
+        for agent in all_subagents(session):
+            by_role[agent.agent_type].append(agent)
+            by_role_model[(agent.agent_type, agent.model or "?")].append(agent)
+        by_role["driver"].append(session.driver)
+        by_role_model[("driver", session.driver.model or "?")].append(session.driver)
+        for (_wf, round_), total in round_totals(session).items():
+            (rounds0 if round_ == 0 else rounds_later).append(total)
+        driver_rounds.extend(driver_turns_per_round(session).values())
+        costs.append(session_cost(session)[0])
+        for result in evaluate(session):
+            if not result.passed:
+                fails[result.rule_id] += 1
+
+    def role_row(agents: list) -> dict:
+        priced = [a.cost_usd for a in agents if a.cost_usd is not None]
+        return {"turns": _spread([a.turn_count for a in agents]),
+                "tokens": _spread([a.total_tokens for a in agents]),
+                "context_per_turn": _spread([a.avg_context_per_turn for a in agents]),
+                "cost_usd": round(sum(priced), 2)}
+
+    return {
+        "sessions": len(sessions),
+        "cost_usd": round(sum(costs), 2),
+        "roles": {k: role_row(v) for k, v in sorted(by_role.items())},
+        "roles_by_model": {f"{k[0]} / {k[1]}": role_row(v) for k, v in sorted(by_role_model.items())},
+        "round0_tokens": _spread(rounds0),
+        "later_round_tokens": _spread(rounds_later),
+        "driver_turns_per_round": _spread(driver_rounds),
+        "rule_fails": dict(sorted(fails.items(), key=lambda kv: int(kv[0][1:]))),
+    }
+
+
+def format_calibration(cal: dict) -> str:
+    def fmt(s: dict, scale: float = 1.0, unit: str = "") -> str:
+        return (f"n={s['n']:<3} p50={s['p50'] / scale:,.1f}{unit} p75={s['p75'] / scale:,.1f}{unit} "
+                f"p90={s['p90'] / scale:,.1f}{unit} max={s['max'] / scale:,.1f}{unit}")
+    out = [f"{cal['sessions']} sessions, list-price cost ${cal['cost_usd']:,.2f}", ""]
+    for title, rows in (("per role", cal["roles"]), ("per role and model", cal["roles_by_model"])):
+        out.append(f"{title}:")
+        for name, r in rows.items():
+            out.append(f"  {name}  (${r['cost_usd']:,.2f})")
+            out.append(f"    turns   {fmt(r['turns'])}")
+            out.append(f"    tokens  {fmt(r['tokens'], 1e6, 'M')}")
+            out.append(f"    ctx     {fmt(r['context_per_turn'], 1e3, 'K')}")
+        out.append("")
+    out.append(f"round 0 subagent tokens   {fmt(cal['round0_tokens'], 1e6, 'M')}")
+    out.append(f"later-round tokens        {fmt(cal['later_round_tokens'], 1e6, 'M')}")
+    out.append(f"driver turns per round    {fmt(cal['driver_turns_per_round'])}")
+    out.append("")
+    out.append("sessions failing each rule at the current constants: "
+               + (", ".join(f"{k} {v}/{cal['sessions']}" for k, v in cal["rule_fails"].items()) or "none"))
+    return "\n".join(out)
+
+
+def read_session_list(path: Path) -> list:
+    """Session id prefixes, one per line (a leading project name is allowed
+    and ignored; `#` starts a comment)."""
+    prefixes = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        words = line.split("#", 1)[0].split()
+        if words:
+            prefixes.append(words[-1])
+    return prefixes
 
 
 # --------------------------------------------------------------------------
@@ -1284,20 +1574,36 @@ def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--latest", action="store_true", help="use the most recently modified session")
-    group.add_argument("--session", metavar="ID-PREFIX", help="session id prefix to audit")
+    group.add_argument("--session", metavar="ID-PREFIX",
+                       help="session id prefix to audit; looked for in every checkout of this repository")
+    group.add_argument("--calibrate", metavar="FILE", type=Path,
+                       help="print the budget distributions over the sessions listed in FILE (one id prefix per line)")
     parser.add_argument("--projects-dir", type=Path, default=None, help="override ~/.claude/projects (for tests)")
     parser.add_argument("--project", default=None, help="project directory name; defaults to cwd's mangled name")
     parser.add_argument("--json", action="store_true", help="emit one JSON object instead of the text report")
     args = parser.parse_args(argv)
 
-    if not args.latest and not args.session:
-        parser.error("one of --latest or --session is required")
+    if not args.latest and not args.session and not args.calibrate:
+        parser.error("one of --latest, --session or --calibrate is required")
 
     projects_dir = args.projects_dir or default_projects_dir()
     project = args.project or default_project_dir()
 
+    if args.calibrate:
+        try:
+            sessions = []
+            for prefix in read_session_list(args.calibrate):
+                found_project, session_id, session_path = locate_session(projects_dir, project, prefix, False)
+                sessions.append(discover_session(projects_dir, found_project, session_id, session_path))
+        except (SystemExit, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        cal = calibrate(sessions)
+        print(json.dumps(cal, indent=2) if args.json else format_calibration(cal))
+        return 0
+
     try:
-        session_id, session_path = find_session_dir(projects_dir, project, args.session, args.latest)
+        project, session_id, session_path = locate_session(projects_dir, project, args.session, args.latest)
         session = discover_session(projects_dir, project, session_id, session_path)
     except SystemExit as exc:
         print(str(exc), file=sys.stderr)

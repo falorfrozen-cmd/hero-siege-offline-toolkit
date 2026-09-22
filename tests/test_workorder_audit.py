@@ -546,6 +546,15 @@ class R5Tests(TempDirMixin, unittest.TestCase):
         _, results = b.evaluate()
         self.assertTrue(get_rule(results, "R5").passed)
 
+    def test_a_question_the_user_takes_time_to_answer_is_not_a_hung_call(self):
+        # 2026-09-22 calibration: 7 of R5's 8 failing sessions cited a
+        # driver's AskUserQuestion open for 260-26,642s.
+        records = tool_turn(0, 0, "AskUserQuestion", {"questions": []}, result="answered",
+                             result_offset=3600)
+        b = SessionBuilder(self.tmp_path).driver(records)
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R5").passed)
+
 
 # --------------------------------------------------------------------------
 # R6 planner-rewrite
@@ -582,19 +591,30 @@ def make_turns(count, start_idx=0, input_tokens=1000, cache_creation=0, cache_re
 
 
 class R7Tests(TempDirMixin, unittest.TestCase):
-    def test_fail_over_turn_budget(self):
-        records = make_turns(wa.REVIEWER_MAX_TURNS + 1)
-        b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).subagent(
-            "docs-sync-reviewer", "docs-sync-reviewer:r0", records)
+    def _review(self, agent_type, turns, sub="a"):
+        b = SessionBuilder(self.tmp_path / sub).driver([turn(0, 9000)]).subagent(
+            agent_type, f"{agent_type}:r0", make_turns(turns))
         _, results = b.evaluate()
-        self.assertFalse(get_rule(results, "R7").passed)
+        return get_rule(results, "R7")
+
+    def test_fail_over_turn_budget(self):
+        max_turns, _ = wa.reviewer_budget("docs-sync-reviewer")
+        self.assertFalse(self._review("docs-sync-reviewer", max_turns + 1).passed)
 
     def test_pass_under_budget(self):
-        records = make_turns(wa.REVIEWER_MAX_TURNS - 1)
-        b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).subagent(
-            "docs-sync-reviewer", "docs-sync-reviewer:r0", records)
-        _, results = b.evaluate()
-        self.assertTrue(get_rule(results, "R7").passed)
+        max_turns, _ = wa.reviewer_budget("docs-sync-reviewer")
+        self.assertTrue(self._review("docs-sync-reviewer", max_turns - 1).passed)
+
+    def test_each_reviewer_type_is_held_to_its_own_budget(self):
+        # One shared budget failed 17 of 22 sessions, mostly on docs-sync,
+        # while never coming near decompile-output-guard's real range.
+        self.assertTrue(self._review("docs-sync-reviewer", 28, "a").passed)
+        self.assertFalse(self._review("decompile-output-guard", 28, "b").passed)
+
+    def test_a_type_without_its_own_budget_gets_the_default(self):
+        self.assertEqual(wa.reviewer_budget("tauri-command-reviewer"),
+                         (wa.REVIEWER_MAX_TURNS, wa.REVIEWER_MAX_TOKENS))
+        self.assertEqual(set(wa.REVIEWER_BUDGETS) - wa.REVIEWER_TYPES, set(), "a budget for no reviewer")
 
 
 class R8Tests(TempDirMixin, unittest.TestCase):
@@ -677,6 +697,17 @@ class R10Tests(TempDirMixin, unittest.TestCase):
             "wf_a", "implementer", "implementer:r0", self._round_window_turns(9000, -1, n))
         _, results = b.evaluate()
         self.assertFalse(get_rule(results, "R10").passed)
+
+    def test_driver_turns_between_two_launches_count_against_neither(self):
+        # Two launches' round 0s, far apart; the driver's turns sit between
+        # them. One window per round *number* spanned both and counted them.
+        n = wa.DRIVER_MAX_TURNS_PER_ROUND + 5
+        driver_records = make_turns(n, start_idx=0, gap=1)  # t = 0..n-1
+        b = SessionBuilder(self.tmp_path).driver(driver_records)
+        b.workflow_agent("wf_a", "implementer", "implementer:r0", self._round_window_turns(9000, -10, -5))
+        b.workflow_agent("wf_b", "implementer", "implementer:r0", self._round_window_turns(9100, n + 5, n + 10))
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R10").passed)
 
     def test_pass_few_driver_turns_per_round(self):
         driver_records = make_turns(3, start_idx=0, gap=1)
@@ -906,6 +937,14 @@ class R12Tests(TempDirMixin, unittest.TestCase):
                 + b"l" * (30 * 1024) + b"\n````\n")
         self.assertTrue(self._context_result(body).passed)
 
+    def test_a_second_log_heading_continues_the_log(self):
+        # Measured 2026-09-22: a driver appended a second `## Log` at the end
+        # of a context file, and what followed it was audited as authored.
+        authored, log = wa.authored_and_log_kb(
+            b"## Context\n" + b"c" * 1024 + b"\n## Log\n" + b"l" * 1024 + b"\n## Log\n" + b"m" * 4096)
+        self.assertAlmostEqual(authored, 1.0, delta=0.05)
+        self.assertAlmostEqual(log, 5.0, delta=0.05)
+
     def test_pass_missing_file_is_silently_skipped(self):
         # The referenced worktree no longer exists -- must not crash or fail.
         records = tool_turn(0, 0, "Read", {"file_path": "C:/gone/nowhere-plan.md"}, result="whatever")
@@ -920,8 +959,8 @@ class R12Tests(TempDirMixin, unittest.TestCase):
 
 class R13Tests(TempDirMixin, unittest.TestCase):
     def test_fail_round_over_budget(self):
-        # Two subagents in round 0 together exceed ROUND_MAX_TOKENS.
-        half = wa.ROUND_MAX_TOKENS // 2 + 1000
+        # Two subagents in round 0 together exceed round 0's budget.
+        half = wa.round_budget(0) // 6 + 1000
         b = SessionBuilder(self.tmp_path).driver([turn(0, 0)])
         b.workflow_agent("wf_a", "implementer", "implementer:r0", make_turns(3, start_idx=100, cache_read=half))
         b.workflow_agent("wf_a", "verifier", "verifier:r0", make_turns(3, start_idx=200, cache_read=half))
@@ -936,6 +975,36 @@ class R13Tests(TempDirMixin, unittest.TestCase):
         b.workflow_agent("wf_a", "verifier", "verifier:r0", make_turns(3, start_idx=200, cache_read=1000))
         _, results = b.evaluate()
         self.assertTrue(get_rule(results, "R13").passed)
+
+    def test_round_zeros_of_different_workflow_launches_are_not_added_together(self):
+        # Measured 2026-09-22: a session with seven launches audited as one
+        # 127M-token "round 0". Each launch's round 0 is its own round.
+        per_turn = wa.round_budget(0) * 2 // 3 // 3  # two thirds of the budget per launch, over 3 turns
+        b = SessionBuilder(self.tmp_path / "split").driver([turn(0, 0)])
+        b.workflow_agent("wf_a", "implementer", "implementer:r0", make_turns(3, start_idx=100, cache_read=per_turn))
+        b.workflow_agent("wf_b", "implementer", "implementer:r0", make_turns(3, start_idx=200, cache_read=per_turn))
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R13").passed)
+        # Control: the same tokens inside one launch are over.
+        b = SessionBuilder(self.tmp_path / "control").driver([turn(0, 0)])
+        b.workflow_agent("wf_a", "implementer", "implementer:r0", make_turns(3, start_idx=100, cache_read=per_turn))
+        b.workflow_agent("wf_a", "verifier", "verifier:r0", make_turns(3, start_idx=200, cache_read=per_turn))
+        _, results = b.evaluate()
+        r = get_rule(results, "R13")
+        self.assertFalse(r.passed)
+        self.assertIn("[wf_a]", r.evidence[0])
+
+    def test_later_rounds_have_their_own_smaller_budget(self):
+        self.assertLess(wa.round_budget(1), wa.round_budget(0))
+        per_turn = wa.round_budget(1) // 3 + 1000
+        b = SessionBuilder(self.tmp_path / "r1").driver([turn(0, 0)])
+        b.workflow_agent("wf_a", "implementer", "implementer:r1", make_turns(3, start_idx=100, cache_read=per_turn))
+        _, results = b.evaluate()
+        self.assertFalse(get_rule(results, "R13").passed)
+        b = SessionBuilder(self.tmp_path / "r0").driver([turn(0, 0)])
+        b.workflow_agent("wf_a", "implementer", "implementer:r0", make_turns(3, start_idx=100, cache_read=per_turn))
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R13").passed, "the same spend is inside round 0's budget")
 
 
 # --------------------------------------------------------------------------
@@ -1350,3 +1419,138 @@ class CliTests(TempDirMixin, unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --------------------------------------------------------------------------
+# Model, cost, session lookup and calibration
+# --------------------------------------------------------------------------
+
+def with_model(records, model):
+    for rec in records:
+        if rec.get("type") == "assistant":
+            rec["message"]["model"] = model
+    return records
+
+
+class ModelAndCostTests(TempDirMixin, unittest.TestCase):
+    def test_the_model_an_alias_resolved_to_is_reported_and_priced(self):
+        records = with_model(make_turns(2, input_tokens=0, cache_read=1_000_000, output_tokens=0), "claude-opus-5-5")
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).subagent("implementer", "implementer:r0", records)
+        session, _ = b.evaluate()
+        row = [r for r in wa.build_table(session) if r["agent_type"] == "implementer"][0]
+        self.assertEqual(row["model"], "opus-5-5")
+        self.assertAlmostEqual(row["cost_usd"], 0.40, places=2)  # 2M cache reads at $0.20
+
+    def test_an_unpriced_model_is_not_given_a_cost(self):
+        records = with_model(make_turns(2), "claude-some-future-model")
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).subagent("implementer", "implementer:r0", records)
+        session, _ = b.evaluate()
+        row = [r for r in wa.build_table(session) if r["agent_type"] == "implementer"][0]
+        self.assertEqual(row["cost_usd"], "-")
+        self.assertEqual(wa.session_cost(session)[1], 2, "driver and implementer are both unpriced")
+
+    def test_opus_5_5_reads_cache_at_sonnet_5_s_price(self):
+        # The fact the implementer's tier move rests on.
+        self.assertEqual(wa.MODEL_PRICES["claude-opus-5-5"][2], wa.MODEL_PRICES["claude-sonnet-5"][2])
+
+
+class LocateSessionTests(TempDirMixin, unittest.TestCase):
+    def test_a_session_in_another_worktree_of_the_same_repo_is_found(self):
+        main = "C--repo"
+        wt = main + "--claude-worktrees-feature-1"
+        b = SessionBuilder(self.tmp_path, project=wt, session_id="abcd1234-0000")
+        b.driver([turn(0, 0)]).build()
+        (b.projects_dir / main).mkdir(parents=True, exist_ok=True)
+        other = b.projects_dir / "C--other-repo--claude-worktrees-x"
+        write_jsonl(other / "abcd9999-0000.jsonl", [turn(0, 0)])
+        project, sid, _ = wa.locate_session(b.projects_dir, main + "--claude-worktrees-here", "abcd", False)
+        self.assertEqual((project, sid), (wt, "abcd1234-0000"), "another repository's session is not a candidate")
+
+    def test_an_unknown_prefix_is_still_a_usage_error(self):
+        b = SessionBuilder(self.tmp_path, project="C--repo")
+        b.driver([turn(0, 0)]).build()
+        with self.assertRaises(SystemExit):
+            wa.locate_session(b.projects_dir, "C--repo", "zzzz", False)
+
+
+class CalibrationTests(TempDirMixin, unittest.TestCase):
+    def test_percentile_interpolates(self):
+        self.assertEqual(wa.percentile([], 0.9), 0.0)
+        self.assertAlmostEqual(wa.percentile([10, 20, 30, 40, 50], 0.9), 46.0)
+        self.assertEqual(wa.percentile([7], 0.5), 7)
+
+    def test_calibration_spans_sessions_and_counts_rule_failures(self):
+        a = SessionBuilder(self.tmp_path, session_id="aaaa0000-0000")
+        a.driver([turn(0, 0)]).workflow_agent("wf_a", "implementer", "implementer:r0",
+                                              make_turns(wa.IMPLEMENTER_MAX_TURNS + 1, start_idx=100))
+        a.build()
+        b = SessionBuilder(self.tmp_path, session_id="bbbb0000-0000")
+        b.driver([turn(0, 0)]).workflow_agent("wf_b", "implementer", "implementer:r0",
+                                              make_turns(3, start_idx=100))
+        b.build()
+        listing = self.tmp_path / "sessions.txt"
+        listing.write_text("# calibration set\nproj aaaa\nbbbb\n", encoding="utf-8")
+        sessions = [wa.discover_session(a.projects_dir, "proj", sid, a.projects_dir / "proj" / f"{sid}.jsonl")
+                    for sid in ("aaaa0000-0000", "bbbb0000-0000")]
+        cal = wa.calibrate(sessions)
+        self.assertEqual(cal["sessions"], 2)
+        self.assertEqual(cal["roles"]["implementer"]["turns"]["n"], 2)
+        self.assertEqual(cal["roles"]["implementer"]["turns"]["max"], wa.IMPLEMENTER_MAX_TURNS + 1)
+        self.assertEqual(cal["rule_fails"].get("R8"), 1)
+        self.assertEqual(cal["round0_tokens"]["n"], 2)
+        self.assertEqual(wa.read_session_list(listing), ["aaaa", "bbbb"])
+        rc = wa.main(["--calibrate", str(listing), "--projects-dir", str(a.projects_dir), "--project", "proj"])
+        self.assertEqual(rc, 0)
+
+
+# --------------------------------------------------------------------------
+# R17 live-operator-scope
+# --------------------------------------------------------------------------
+
+class R17Tests(TempDirMixin, unittest.TestCase):
+    def _operator(self, *calls, sub="a"):
+        records = []
+        for i, (name, tool_input) in enumerate(calls):
+            records += tool_turn(i * 10, i, name, tool_input, result="ok")
+        b = SessionBuilder(self.tmp_path / sub).driver([turn(0, 9000)]).subagent(
+            "live-operator", "live session 2", records)
+        _, results = b.evaluate()
+        return get_rule(results, "R17")
+
+    CAPTURE = "C:/repo/.claude/workorders/forgepact-x-live-2.md"
+
+    def test_pass_the_session_it_is_meant_to_run(self):
+        r = self._operator(
+            ("mcp__hs-drive__hs_selfcheck", {}),
+            ("Bash", {"command": "cp -r \"$LOCALAPPDATA/Hero_Siege/hs2saves\" \"$USERPROFILE/HeroSiege-manual-save-backup/x\""}),
+            ("mcp__hs-drive__hs_command", {"lines": ["toggleborder stat"]}),
+            ("Write", {"file_path": self.CAPTURE}),
+            ("Edit", {"file_path": self.CAPTURE}),
+            ("mcp__hs-drive__hs_stop_game", {}),
+            ("Bash", {"command": "git status --porcelain"}))
+        self.assertTrue(r.passed, r.evidence)
+
+    def test_fail_writing_anywhere_but_its_capture_file(self):
+        for path in ("C:/repo/ForgePact/plugin/ModuleMain.cpp",
+                     "C:/repo/.claude/workorders/forgepact-x-context.md"):
+            with self.subTest(path=path):
+                r = self._operator(("Edit", {"file_path": path}), sub=path[-12:].replace("/", "_"))
+                self.assertFalse(r.passed)
+
+    def test_fail_installing_a_build(self):
+        for cmd in ('cp ForgePact/build/BloodPactPlugin_ship.dll "C:/Games/HeroSiege/mods/aurie/"',
+                    'Copy-Item .\\x.dll -Destination "$game\\mods\\aurie"',
+                    'curl -X POST http://127.0.0.1:8765/api/installmod'):
+            with self.subTest(cmd=cmd):
+                self.assertFalse(self._operator(("Bash", {"command": cmd}), sub=str(abs(hash(cmd)))).passed)
+
+    def test_fail_git_writes_restores_and_force_stops(self):
+        self.assertFalse(self._operator(("Bash", {"command": "git commit -am x"}), sub="g").passed)
+        self.assertFalse(self._operator(("mcp__hs-drive__hs_saves_restore", {"backup_id": "b"}), sub="r").passed)
+        self.assertFalse(self._operator(("mcp__hs-drive__hs_stop_game", {"force": True}), sub="f").passed)
+
+    def test_other_agents_are_not_held_to_it(self):
+        records = tool_turn(0, 0, "Edit", {"file_path": "C:/repo/ForgePact/plugin/ModuleMain.cpp"})
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).subagent("implementer", "implementer:r0", records)
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R17").passed)
