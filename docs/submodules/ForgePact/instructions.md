@@ -1,5 +1,173 @@
 # ForgePact Module Development Guide
 
+## Current local population acceptance (2026-09-22)
+
+A source-level read of the game's own monster handling (2026-09-22,
+`ForgePact/docs/population-performance-analysis.md`) settled the open
+performance question: after the queues empty, the remaining 30-80 ms frames at
+4x are the game's per-frame passes over every **living** monster (minimap
+dynamic layer over `Enemy_Parent_obj`, one health-bar instance per monster
+with a Draw GUI event, the monster Draw event, and the 30-frame
+`monsterHandleArray` rebuild in `ActivateDeactivateProps`). Only monsters inside
+the player box step; the game never deactivates monsters. Pacing, admission and
+copy-queue work cannot lower that cost. The recommended direction is to stop
+keeping far packs alive (pack markers plus a rolling spawn radius), with
+GameMaker deactivation of far pass-born packs as a fail-open, opt-in experiment.
+The same day, the analysis' option A shipped locally as **pack markers**:
+`plugin/include/ForgePact/PackMarkers.hpp` keeps one marker per unspawned
+`Enemy_Creator_*` (enumerated once per zone, a 32-marker rotating check per
+frame, births reported by the existing create hooks through `PackMarkerBirth`)
+and draws them from a `DrawMinimapDynamic` hook for the `Enemy_Parent_obj`
+family call only, reusing the call's own placement arguments (x' = 32 +
+x*args[2], y' = 32 + (y+args[7])*args[3], sprite args[4]) so they land in the
+game's minimap surface. `reveal packs` / the panel's `map_reveal_packs` now mean
+the markers; the real spawn pass is `reveal spawn` / `map_reveal_spawn`, off by
+default (`m_Packs{ false }`), with its whole admission/capacity machinery
+unchanged behind it. `BeWakeObject` now activates first and walks only if the
+count changed (`g_BeWakeSnapshot`), since the game never deactivates monsters.
+`packmarks stat|style|alpha|scale|ring|radius|list` (a player command: cosmetics
+and counters only) tunes the look live. RunCommand's `else if` chain is at MSVC's
+C1061 nesting limit, so `packmarks`, `miningore` and `minerhelm` are standalone
+early returns (main's `test_menu_probe_contract` pins the chain's length). Tests:
+`test_pack_markers_behavior.py` (real class against a fake runner), updated
+`beacon_wake_harness.cpp`, `test_map_reveal_contract.py`.
+MEASURED 2026-09-22 in-game: the enemy-family layer call arrives about once a
+second, not per frame (854 calls in ~12 minutes), so marker cost is one
+draw_circle per unspawned pack per call; the sprite path (icon sheet passed as
+args[4], subimages from the rarity table) drew nothing visible while the
+primitives landed exactly on the packs in the map screen, so the default is now
+dots by kind (`Style::ring = true`) and the sprite path is `packmarks ring 0`.
+Later the same day the look became PNG icons: `tools/make_packmark_icons.py`
+embeds the reviewed PNG files in `assets/packmarks/` into
+`plugin/include/ForgePact/PackMarkerIcons.hpp` (seven 16x16 PNGs as
+byte arrays); `PackMarkerIconPath` in ModuleMain writes each to
+`bp_ipc\packmarks\<kind>.png` only when absent (a player's own file wins) and
+hands GameMaker the path relative to its working directory, which its file
+sandbox accepts; `PackMarkers::LoadIcons` calls `sprite_add` once per kind and
+re-centres a foreign size with `sprite_set_offset`. Markers closer than
+`Style::clusterPx` (96 world px, so density copies) collapse into one icon with
+a `draw_text` count badge in `global.font_smallest`; the rarest kind names the
+cluster. Dots by kind stay the fallback. `plugin_build/build.bat` now passes
+`/bigobj` (the research TU hit C1128), pinned in `test_build_bat_contract.py`.
+Still open: the marker cost at 4x has not been measured as frame time, only as
+call counts; the icon sandbox path is verified on the 2026-09-22 build only.
+
+The local v4 candidate follows an inspected v3 player run, not a controlled
+same-map benchmark: last scheduled work 7.694s, peak frame 232.430ms, peak outer
+create 89.971ms, 95 tracked creators observed beginning births, zero remaining
+tracked unconfirmed identities. No full-pack census or FPS gain is established.
+Installed `data.win` confirms object 3259 = `objZoneGenV2`; executable code/data
+sections match the private analysis image. New preset instances are immediately
+used; do not enqueue their creates or replay generator events as an assumed
+safe optimization.
+
+V4 shares `CreationCallerInfo` only between pre-native guards in one existing
+create-hook invocation. The actual production-body fixture measured 2000 -> 1000
+caller-object reads per 1000 births, preserving nested chains/all-off paths.
+No new player hook, watcher, thread, density reduction or generation change.
+The profile adds nine generation stages (22 timings total), beginning before
+preset-data generation or at ready creators as fallback. `captureStart` records
+the trigger; the 90-second deadline cannot be reset/restarted. New summaries
+retain initial work with unknown starting room/CPU snapshot. Verify attachment
+and runtime hits; do not sum overlapping inclusive wall times. Player binaries
+must omit diagnostic hooks/strings. Live performance acceptance remains open.
+See `ForgePact/docs/population-capacity.md`, `test_population_birth.py`,
+`test_population_profile.py`, and `test_population_profile_summary.py`.
+
+The next local v3 candidate follows the v2 player run's missed target
+(last scheduling progress 10.807s, peak frame 309.311ms, outer creation 123.579ms,
+29 unconfirmed groups). Density selection now reuses a distance heap instead of
+scanning every remaining job for each copy; the 4096-placement/32-selection
+fixture measured 261152 coordinate reads before and 8192 after. A retry deadline
+heap preserves waiting contexts and exact density-copy completion bits.
+Existing creation hooks now observe successful native enemy births from tracked
+creators and resolve their waiting records separately as `observedNativeBirthPacks`.
+Numeric IDs are captured before native creation, with generation and full-map
+identity checks. This means a group started, not that it fully populated.
+Unknown outcomes remain unknown. The elapsed counter freezes when the population
+window closes, avoiding status-file writes driven solely by idle elapsed time.
+The peak creation now records its object ID and whether it was a density copy;
+the timing includes work inside the hook, not exclusive native CPU time.
+No new hook, watcher, thread, native event replay or reduced density was added.
+See `ForgePact/docs/population-capacity.md` for evidence and limitations, and
+`test_adaptive_population.py`, `test_population_birth.py`,
+`test_map_reveal_behavior.py`, `test_population_capacity.py` for the fast loop.
+Build success and synthetic checks are not live performance acceptance.
+
+Latest `f2b0444b...` capture completed 90 seconds with all 13 native timing hooks.
+No allocation/handle failures, but 309.603ms peak frame interval; user reports
+some improvement, not a same-map benchmark. More importantly, 71 and 42 queued
+groups expired without admission increments. Their actual outcome is unknown.
+The latest local refinement retains these identities as `unconfirmedPacks`,
+reported in the panel/profile, with reset on zone/toggle changes. It does not
+force missing callers awake or claim to fix their unknown lifecycle. Expiry
+housekeeping now follows deadlines rather than scanning every entry per frame;
+immediate grants avoid temporary queue allocation. Hunt activation uses direct
+numeric/REF identities (object-valued fallback retained) and a contiguous sorted
+snapshot. Tests verify native-active preservation, mixed rarities/radii/handle
+kinds and delayed caller accounting. 4096 synthetic active enemies avoid 4096
+redundant ID reads; 32 immediate grants avoid 97 temporary allocations. Neither
+is an FPS claim. Build/player and profile remain separate; live acceptance is
+still pending. Read `ForgePact/docs/population-capacity.md` before proceeding.
+
+The five-second early-population candidate on `feat/mining-ore-amount` failed
+live performance testing at 4x density. No crash was reported, but the target
+was missed and 346.814-410.922ms frame intervals persisted with both known queues
+empty. No allocation/invalid-handle errors were recorded. Hook overhead versus
+ongoing native AI/render cost has not been measured separately; an external WPR
+capture could not start due to its Windows profiling policy. Do not call this
+candidate optimized or release-ready based on its synthetic deadline tests.
+See `ForgePact/docs/population-capacity.md` for the measured scope and DLL hash.
+
+For a bounded local timing capture without the dev build's other behaviors, run
+`plugin_build\build.bat profile` inside ForgePact. The separate profile DLL uses
+the player configuration and one automatic 90-second capture before the first
+preset-data generation call, or when ready packs appear as a fallback. Normal release builds compile the recorder out. The
+profile build is never staged to player distribution folders. See the capture
+limitations and `tools/summarize_population_profile.py` in the capacity document;
+do not infer CPU attribution by summing overlapping wall-time categories.
+
+The current local follow-up preserves actual births at the configured density.
+It fixes empty-first creator polling and an unready first creator blocking ready
+siblings (32-candidate rotating readiness probe, same bounded timeout). Tyrant/
+Beacon skips redundant second walks when activation added no instances, and both
+filter walks for unlimited all-enemy activation. Production-body harnesses pin
+the original active-set behavior and the lookup reduction; these are not FPS tests.
+The profile build additionally hooks 13 named AI/pathfinding/draw scripts and
+times existing hunt hooks; normal release compiles these probes out. Script
+attachment coverage and Windows process/frame-thread CPU counters accompany the
+inclusive wall measurements. Run `test_map_reveal_behavior.py`,
+`test_beacon_wake_behavior.py`, `test_population_profile.py` and
+`test_population_profile_summary.py` for the focused loop. The expanded profile
+has not yet passed live performance acceptance; do not present it as a finished fix.
+
+## Mining Ore Amount and the Miner's Helmet (verified in play 2026-09-23)
+
+The Loot slider `drops.mining_ore` (integer 1–10) sends the shipping command
+`miningore N`. The native adapter in `plugin/include/ForgePact/MiningOreMod.hpp`
+lazily hooks SDK-named `MiningNodeStepMain` and `LootGroundCreate`; both native
+detours must succeed. Only scoped ore material rewards are copied/scaled, using
+their optional `o` quantity field; `b` is a definition ID. No new watcher or
+forced extra drop is used. The existing mod-state output adds `miningOre`
+readiness/effective value and the `stepObserved` / `oreObserved` first-use
+flags. Verified in play: x10 turned a 6-ore reward into 60.
+
+The Miner's Helmet (`MinerHelmetModel/State/Mod.hpp`, forged with the sibling
+Item Editor's Miner template) replaces the slider with x4 while worn; with it
+off the slider applies. Ownership: on the installed build an ordinary dig leaves
+the node's `miningPlayer` at `noone`, so a reward is accepted when the node names
+the local player, or names nobody while the player stands within 400 units.
+Vein Resonance finishes the two nearest eligible veins within 192 units of a
+finished node by raising their `miningQue` and widening `miningActivateDistance`
+for up to 90 frames; the game's own step then completes them (4x through the
+"vein resonance" ownership rule, no chaining). Verified in play: `10 -> 40`,
+`13 -> 52`, and two veins at 154 and 186 units completed. The panel's test
+Create button and `minerhelm grant` were removed on 2026-09-23. The golden pulse
+is not yet confirmed on screen. Tests: `test_mining_ore_behavior.py`,
+`test_mining_ore_panel.py`, `test_miner_helmet_behavior.py` (full runtime
+harness) and `test_miner_helmet_panel.py`. Evidence and design:
+`ForgePact/docs/mining-ore-research.md` and `ForgePact/docs/miner-helmet-prototype.md`.
+
 ## Module Overview & Metadata
 - **Module Name:** ForgePact (Hero Siege Season 10 Offline Mod Panel & BloodPactPlugin)
 - **Submodule Path:** `ForgePact`
@@ -1592,3 +1760,80 @@ here before pressing Publish.
 - Build Workflow: `../../../ForgePact/.github/workflows/forgepact-release.yml` (see "The build half (forgepact-release.yml)" above)
 - Toolchain Pins & Fetcher: `../../../ForgePact/tools/toolchain-pins.json`, `../../../ForgePact/tools/fetch_toolchain.py` (all-or-nothing, SHA-256-verified headers/binaries)
 - Release CI Helpers: `../../../ForgePact/tools/release_ci.py` (tag normalisation, the `build.bat` compile-line contract, and zip packaging — `tag`, `compile-line`, `package` subcommands)
+
+## Miner's Helmet
+
+See "Mining Ore Amount and the Miner's Helmet" near the top of this guide;
+`ForgePact/docs/miner-helmet-prototype.md` carries the design, the live evidence
+and what is still open (tooltip numbers, the golden pulse on screen). Vein
+Resonance deliberately drives the game's own dig through `miningQue`; it never
+creates loot, forces node health or synthesizes player input.
+
+### Local early-population capacity candidate (2026-09-21)
+
+Read `ForgePact/docs/population-capacity.md` before modifying this candidate.
+The observed dense-map crash exhausted the native protected-variable store;
+pacing alone cannot increase its live capacity. The candidate pairs independent
+native storage banks with a ready-caller admission queue. After a live report of
+15-20 second population, the local follow-up replaces the two-per-frame FIFO:
+up to 32 groups per frame, yielding after 8ms of elapsed work between grants.
+Absent/not-yet-polling creators do not block ready callers. Native calls are not
+replayed or interrupted; two-second completion remains a target, not a guarantee.
+Deterministic-clock tests cover staggered native polls and expensive groups.
+The modstate population diagnostics include peakPacksPerFrame,
+budgetLimitedFrames and lastAdmissionMs to measure the next live run.
+That fast follow-up still hitched live. The current local candidate adds
+AdaptivePopulationBudget.hpp and DeferredDensityCopies.hpp: deferred density
+copies and outer native-call timing. Its first 0.25-2ms feedback policy starved
+live work (56.1s, 216 groups remaining). The local replacement targets five
+seconds from readable-minimap arming, with a 4-8ms budget driven by remaining
+work, median frame cadence and one recovery frame after a severe native burst.
+Reservations and measured pack work overlap rather than being double-charged;
+copy cost remains separate. Deadline misses are latched in modstate and surfaced
+in the panel. This is a throughput target, never a reason to bypass safety or
+drop pending work. The production adapter preserves deferred density
+copies. Original calls remain synchronous; only extra scalar four-argument copies
+are queued, with caller IDs resolved at execution. Unknown shapes use the old
+path and increment synchronousDensityFallbacks. Pending plans survive zone exit,
+active jobs do not; a restored original resumes only its missing copies. Both
+plans and placements clear on full reset. Read population-capacity.md for limits.
+`test_adaptive_population.py` compiles the production helpers and the actual
+density adapter/DoMultiCreate bodies against controlled native responses. The
+MapReveal harness also checks the five-second target and prolonged capacity
+pauses. population_deadline.cpp models 1536 groups at 4x, delayed native polling
+and 50fps: 3.24015 simulated seconds after the correction, versus a failing
+five-second assertion with the old policy. It is not a live-game benchmark.
+Do not claim no hitches from these synthetic tests. The capacity router preserves
+existing bank-zero handles and shares the existing drop-rate getter hook.
+Never attach another GetVariable detour or disable routing while overflow
+handles remain live. Unknown library hashes and incomplete hook installation
+refuse early population, with the reason in modstate.json and the panel.
+
+Fast loop: `py -3 -m unittest discover -s tests -p test_population_capacity.py -v`
+and `test_map_reveal*.py`. Optional `FORGEPACT_POOL_TEST_DLL` enables the actual
+native-library harness; `FORGEPACT_MINHOOK_SOURCE` additionally tests real
+detours plus the production drop getter. No game process is involved. Native
+checks remain native; the memory-query wrapper provides caller stack space for
+the supported library's oversized query-buffer request. The candidate is local,
+not a release claim: map-entry/combat and mining acceptance remain live checks.
+
+
+## AFK FARM independent reward compatibility (local, 2026-09-22)
+
+AFK FARM 0.5.0 owns its MF, XP, Gold and loot settings. During its short native
+reward scope, ForgePact passes through reward stats, drop-repeat hooks, extra
+LoadDrops gates and the relic filter. Outside that scope its normal settings
+remain active. Combat/density modifiers are unchanged. Neither plugin rewrites
+ForgePact's configuration. ForgePact is not required to use AFK FARM.
+
+The shared `hs_game_sdk/reward_scope.hpp` publishes compatibility and original
+repository denominators through a process-local named mapping; no cross-plugin
+symbol calls are used. Both DLLs must be rebuilt against that header. Older
+ForgePact DLLs have no isolation protocol and AFK refuses independent rewards
+with an update message, rather than silently stacking multipliers.
+
+Regression commands: `py -3.13 -m unittest discover -s tests -p test_release_hook_contract.py`
+and `plugin_build\build.bat release`. Native scope/restore tests are in
+`HS-AFK-Expedition/tests/cpp/rewards_smoke.cpp`; live AFK probe evidence is in
+`HS-AFK-Expedition/verification/independent-rewards-0.5.0/`. These checks do not
+certify rare-drop distributions or unrelated local experimental ForgePact features.

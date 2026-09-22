@@ -469,3 +469,17 @@ matching its template.
 * **No Game Binaries / Bytecode in Git**: Root `.gitignore` excludes `data.win`, `.exe`, `.dll`, audio groups, texture pages, and raw dump folders (`hs-game-sdk/data/`, `raw/`, `extracted/`). `hs-game-sdk/curated/` is the deliberate exception to this rule: it holds hand-verified data (not extracted bytecode/assets) and is meant to be shared, so it is tracked normally.
 * **Interoperability Definitions**: Distributes typed symbol names, enum IDs, and data structures necessary for interoperability and modding.
 * **Idempotent Regeneration**: Extraction tooling is deterministic and can be rerun against any updated game binary to regenerate SDK bindings.
+
+
+## Independent reward cooperation (2026-09-22)
+
+`cpp/include/hs_game_sdk/reward_scope.hpp` provides a process-local, thread-owned
+RAII scope shared by AFK FARM and optional ForgePact. It exposes compatibility
+and observed native drop denominators, never calls plugin symbols, and restores
+scope depth on exception. Keep mapping version/layout identical in both builds.
+`reward_stats.hpp` distinguishes runtime query IDs from item/UI stat IDs: native
+`ReturnSpecificStat` Magic Find uses query 34 on the verified AFK build.
+
+AFK's C++ rewards smoke checks defaults, bounds, nesting, thread isolation,
+exception restoration and published bases. Native MF positive control requires
+the query to reach StatMagicFind, not just return a plausible number.

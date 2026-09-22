@@ -236,3 +236,13 @@ All commands below are executed from the submodule root `hero-siege-item-editor/
   - HSCraftSim Crafting & CPR RNG Mechanics: [`../HSCraftSim/instructions.md`](../HSCraftSim/instructions.md)
   - HS Offline Tracker Telemetry Integration: [`../HS-Offline-Tracker/instructions.md`](../HS-Offline-Tracker/instructions.md)
   - Shared Documentation Index: [`../README.md`](../README.md)
+
+## Miner's Helmet signature item (2026-09-23)
+
+`miner` is a Custom Forge mechanic, and `hs_signature_items.json` carries a
+Miner's Helmet template: Great Helm, SS tier, +1000 Defense, +500% Enhanced
+Defense, +20% Movement Speed, +20% All Resistances, +5 Light Radius. Only helmet
+selectors (`t=0`) may use it. ForgePact 1.4.5 implements the mechanic: 4x ore
+while worn, and Vein Resonance digs the two nearest eligible veins with each
+finished dig. `test_custom_item_forge.py` covers the template round trip and the
+helmet-only rule.
