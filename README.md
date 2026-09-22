@@ -251,6 +251,18 @@ Then launch the game and reproduce the freeze; Ctrl+C when done. See
 [ForgePact's instructions](docs/submodules/ForgePact/instructions.md) for a
 worked example (Known Limitations, stall watchdog section).
 
+`tools/stash_tab_counts.py` counts what the shared stash's two special tabs —
+Socketable (`socket_tab`) and Materials (`material_tab`) — hold in the save,
+summed per (item class, base id). It decodes `hs2saves\stash.hss` read-only with
+`hero-siege-item-editor`'s own decoder (so that submodule must be initialized)
+and never writes; run it with the game closed, since the file is the last saved
+state. It is the save-side cross-check for ForgePact issue #14's in-game reader
+(`craftprobe node`). See [its page](docs/tools/stash-tab-counts.md):
+
+```powershell
+py -3 tools/stash_tab_counts.py            # or --path <a backup's stash.hss>, --json
+```
+
 ## Modified YYToolkit
 
 ForgePact and HS Offline Tracker load their plugins through a modified
