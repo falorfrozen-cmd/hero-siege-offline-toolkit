@@ -246,6 +246,58 @@ class TestRefusals(SectionTestCase):
         self.assertEqual(self.run_section(str(self.path.with_name("gone.md")), "A")[0], 2)
 
 
+class TestGuideReading(SectionTestCase):
+    """`--toc` and `--grep`: reading a module guide whose lines are huge.
+
+    Measured 2026-09-22: ForgePact's guide is 334KB and 23 of its lines hold
+    128KB, so agents that read it "by section" with a 20-line window still
+    pulled 45KB a read -- R3 failed in 8 of 22 workorder sessions."""
+
+    GUIDE = "\n".join([
+        "# Guide",
+        "## Commands",
+        "- `alpha on`: turns alpha on.",
+        "- `beta on`: turns beta on,",
+        "  and its continuation line mentions gamma.",
+        "",
+        "A paragraph about delta.",
+        "- `huge`: " + ("filler " * 1500) + "NEEDLE" + (" filler" * 1500),
+        "## Log",
+        "- secret alpha",
+    ])
+
+    def setUp(self):
+        super().setUp()
+        self.guide = Path(self._tmp.name) / "instructions.md"
+        self.guide.write_bytes(self.GUIDE.encode("utf-8"))
+
+    def test_toc_gives_each_section_its_line_and_size_and_hides_the_log(self):
+        code, out, _ = self.run_section(str(self.guide), "--toc")
+        self.assertEqual(code, 0)
+        self.assertRegex(out, r"(?m)^\s+2\s+\d+\.\dKB  ## Commands$")
+        self.assertNotIn("Log", out)
+
+    def test_grep_prints_only_the_matching_items_with_their_lines(self):
+        code, out, _ = self.run_section(str(self.guide), "Commands", "--grep", "gamma")
+        self.assertEqual(code, 0)
+        self.assertIn("-- line 4\n- `beta on`: turns beta on,\n  and its continuation line mentions gamma.", out)
+        self.assertNotIn("alpha", out, "a non-matching item is not printed")
+        self.assertNotIn("filler", out)
+
+    def test_a_long_item_is_windowed_around_the_match(self):
+        code, out, _ = self.run_section(str(self.guide), "Commands", "--grep", "needle")
+        self.assertEqual(code, 0)
+        self.assertIn("NEEDLE", out)
+        self.assertIn("-- line 8 (", out)
+        self.assertLess(len(out), 2000, "the 21K-character item must not print whole")
+
+    def test_grep_never_reaches_into_the_log_and_says_when_nothing_matches(self):
+        code, out, err = self.run_section(str(self.guide), "Guide", "--grep", "secret")
+        self.assertEqual((code, out), (7, ""))
+        self.assertIn("matches", err)
+        self.assertEqual(self.run_section(str(self.guide), "Commands", "--grep", "(")[0], 2)
+
+
 class TestThePipelineSaysSo(unittest.TestCase):
     """The lesson lives in four files an agent reads; each must keep saying it."""
 

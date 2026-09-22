@@ -16,11 +16,13 @@ four `PostToolUse` checks (the catalog signature, the Tauri command threading
 rules, the hub's frontend tests, and decompiled output reaching a tracked
 file), five review agents (`sdk-contract-reviewer`, `tauri-command-reviewer`,
 `decompile-output-guard`, `docs-sync-reviewer`, `instrument-blindness-reviewer`),
-three phase agents that run a change through plan → implement → verify at
-three different model tiers (`planner`, `implementer`, `verifier`), a
-`consultant` a phase can put one hard decision to without escalating the whole
-phase, a `scribe` that pastes a round's precomputed Log/State text into a
-workorder's own files with `Read`/`Edit` only, and three skills:
+three phase agents that run a change through plan → implement → verify,
+each at its own pinned model tier and effort (`planner`, `implementer`,
+`verifier`), a `consultant` a phase can put one hard decision to without
+escalating the whole phase, a `live-operator` that runs a workorder's written
+live-game procedure so the driver only relays to the person, a `scribe` that
+pastes a round's precomputed Log/State text into a workorder's own files with
+`Read`/`Edit` only, and three skills:
 `/catalog-rebuild`, `/workorder` (drives those phases
 and routes defects back to the phase that caused them), and
 `submodule-context` (loads the guide named above). MCP servers are in
@@ -44,7 +46,9 @@ If a hook blocks an edit, it is quoting a rule from this file — read what it
 printed rather than working around it. If you add a rule here that is
 mechanically checkable, add the check too; `.claude/README.md` says how.
 
-Story and evidence: [docs/agents/rules-enforced.md](docs/agents/rules-enforced.md)
+Story and evidence: [docs/agents/rules-enforced.md](docs/agents/rules-enforced.md);
+where `/workorder`'s budgets and tiers come from:
+[docs/agents/workorder-calibration.md](docs/agents/workorder-calibration.md)
 
 ## Offer `/workorder` When the Work Has Shape, and Respect "Plan Only"
 
@@ -149,6 +153,19 @@ Place these alongside existing coverage — see `tests/` at the repo root for th
 behavior, prefer a fixture or mock built on `hs-game-sdk` structs over a live
 game session for the baseline/target tests, and reserve actual in-game runs for
 final verification.
+
+**Choose representative cases, not every case.** A feature that applies to many
+skills, items or objects (the toggle-skill border, the double-cast guard, the
+skill-timer countdown and the like) does not need every covered case exercised.
+Most of those cases share one code path and behave the same way. So pick one or
+two ordinary cases, plus the outliers: the cases that take a different code path
+or read a different kind of value. For the toggle table, the outliers were a skill
+with no upgrade slot (Bushido) and a marker the game returns as a bool (Meteor
+Storm). This applies most to live sessions, where the owner's time in the game is
+the cost. The owner asks for more cases when they want them. It does not relax
+"Prove the Instrument" below: a negative result still needs a positive control
+in the same session, and a case left untested is recorded as "not observed
+live", never as a pass.
 
 ## Limit Rebuilds & Reruns During Development
 
