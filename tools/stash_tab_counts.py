@@ -64,8 +64,9 @@ def save_dir() -> Path:
 
 def load_editor():
     """hero-siege-item-editor's GUI module, for its codec (decode_hss/encode_hss)
-    and native_stack_count. Refuses with the command that initializes it."""
-    if not (EDITOR_DIR / "hs_item_editor_gui.py").is_file():
+    and native_stack_count. Refuses with the command that initializes it, on
+    the same two files tests/test_stash_tab_counts.py requires before it runs."""
+    if not all((EDITOR_DIR / name).is_file() for name in ("hs_item_editor_gui.py", "hss_recovery.py")):
         raise StashCountError(
             f"hero-siege-item-editor is not initialized at {EDITOR_DIR} "
             "(py -3 .claude/skills/workorder/ensure_submodule.py hero-siege-item-editor)")
