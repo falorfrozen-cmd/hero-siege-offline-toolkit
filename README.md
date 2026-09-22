@@ -127,6 +127,21 @@ It is behind `#[cfg(debug_assertions)]` and a release build never starts one —
 it can invoke any command the app has. The window label is `hub`, not `main`;
 [`docs/hub/design.md`](docs/hub/design.md) has the rest of the sharp edges.
 
+A second, unrelated MCP server, `hs-drive`, sits beside it in `.mcp.json`. It
+is a local stdio server in `tools/hs_drive_mcp/` that reports whether Hero
+Siege is running, backs up or restores the save directory, launches the
+ForgePact-modded game through ForgePact's own launcher engine, sends ForgePact
+commands over `bp_ipc` and reads the plugin's reply back, screenshots the game
+window, injects keyboard and mouse input into that window (`hs_input`, by
+either of two routes), clicks from the title screen into a loaded character
+(`hs_select_character`, proving the load through the plugin rather than a
+screenshot), and closes the game gracefully — every tool refusing
+with a named reason rather than guessing, the save tools refusing unless the
+game is provably closed, and the injection refusing unless the target window
+belongs to a running game process. See
+[`docs/tools/hs-drive-mcp.md`](docs/tools/hs-drive-mcp.md). Nothing about it
+ships to a player.
+
 | | |
 | --- | --- |
 | Source, and how to work on it | [`hub/`](hub) · [`hub/instructions.md`](hub/instructions.md) |
