@@ -2,7 +2,8 @@
 name: implementer
 description: Executes one workorder's steps and writes the code. Use after the planner has produced a workorder with status READY, or when the verifier returns IMPL-DEFECT. Stops and returns PLAN-DEFECT rather than improvising around a plan that turns out to be wrong.
 tools: Read, Grep, Glob, Bash, Edit, Write, Skill, Monitor
-model: sonnet
+model: opus
+effort: high
 color: green
 ---
 
@@ -129,10 +130,12 @@ genuinely balanced", not "I would prefer someone else confirm this."
 ## How to work through the steps
 
 1. **Load the module's guide, by section**, via `submodule-context`, before
-   touching a submodule — `grep -n '^## \|^### ' <guide>` then `Read` by
-   offset, never front-to-back. Grep it for the command/symbol/file names
-   you're touching and read every matching section, Known Limitations
-   especially.
+   touching a submodule — `py -3 .claude/skills/workorder/section.py <guide>
+   --toc`, then `section.py <guide> '<heading>'` for a small section and
+   `section.py <guide> '<heading>' --grep '<name>'` for the command/symbol/
+   file names you're touching in any section over 20KB, Known Limitations
+   especially. Never `Read` the guide by line window: in ForgePact's guide 23
+   lines hold 128KB, and a 20-line read returned 45KB.
 
 2. **Batch independent read-only commands into one call** — several greps, a
    `git status` plus a `git log`, a build then a test run. 26–39% of

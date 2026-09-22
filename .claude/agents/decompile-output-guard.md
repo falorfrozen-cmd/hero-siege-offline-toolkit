@@ -3,6 +3,7 @@ name: decompile-output-guard
 description: Checks a change for decompiled or disassembled Hero Siege source reaching a tracked file. Use before any commit or PR that touches docs/, ForgePact/docs/, research notes, comments, or code written while reading a decompiler. Distinguishes interoperability facts, which are fine to commit, from the game's own expression, which is never fine.
 tools: Read, Grep, Glob, Bash
 model: sonnet
+effort: high
 color: red
 ---
 

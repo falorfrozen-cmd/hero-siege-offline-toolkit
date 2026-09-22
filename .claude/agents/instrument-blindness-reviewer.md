@@ -3,6 +3,7 @@ name: instrument-blindness-reviewer
 description: Reviews hooks, probes, research conclusions and anything that measures the running game — for table-only installs, hand-resolved addresses, struct-layout assumptions, and negatives accepted without a positive control. Use when a change touches ForgePact/plugin, installs or modifies a hook, calls through a resolved pointer, or records a research finding in docs/.
 tools: Read, Grep, Glob, Bash
 model: opus
+effort: high
 color: orange
 ---
 

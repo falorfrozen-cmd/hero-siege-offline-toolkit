@@ -504,3 +504,18 @@ test('the delta dispatch runs the content greps from the repo root', async () =>
   await run({ ...BASE, repoRoot: '/repo root' }, reply)
   assert.match(prompts['delta:r0'], /cd "\/repo root"/)
 })
+
+test('the verifier is handed the criteria extraction, not left to read the plan whole', async () => {
+  // 2026-09-22: 8 of 22 sessions failed R2 on a verifier reading a 30-42KB plan whole.
+  const prompts = {}
+  await run(BASE, (label, prompt) => { prompts[label] = prompt; return standard()(label) })
+  assert.ok(prompts['verifier:r0'].includes(`section.py "p.md" 'Acceptance criteria'`))
+  assert.ok(prompts['verifier:r0'].includes(`section.py "p.md" 'State'`))
+  assert.match(prompts['verifier:r0'], /do not Read the plan whole/)
+})
+
+test('the implementer runs at opus unless triage says otherwise', async () => {
+  const models = {}
+  await run({ ...BASE, implementerModel: undefined }, (label, prompt, opts) => { models[label] = opts && opts.model; return standard()(label) })
+  assert.equal(models['implementer:r0'], 'opus')
+})
