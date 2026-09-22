@@ -35,6 +35,7 @@ SKILLS = REPO / ".claude" / "skills"
 # Tier aliases, not pinned version IDs -- the tier is the design decision and
 # the version is not. See `.claude/README.md`, "Agents".
 VALID_MODELS = {"opus", "sonnet", "haiku", "fable", "inherit"}
+VALID_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 
 FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 FIELD = re.compile(r"^([A-Za-z][\w-]*):[ \t]*(.*?)[ \t]*$", re.M)
@@ -109,6 +110,22 @@ class TestAgentDefinitions(unittest.TestCase):
                     f"alias. Pinning a dated model ID rots -- see "
                     f"`.claude/README.md`.",
                 )
+
+    def test_every_agent_that_can_take_an_effort_pins_one(self):
+        """An agent without `effort:` inherits the session's -- the same
+        "not a decision anybody made" as an unpinned model, and it now moves
+        cost as much as the tier does: Opus 5.5 defaults to `medium`, the
+        Claude Code session to something else, and a subagent silently takes
+        whichever it was launched under. Haiku 4.5 takes no effort at all, so
+        a pin there would be ignored at best."""
+        for path in self.agents:
+            with self.subTest(agent=path.name):
+                fields, _ = parse_frontmatter(read(path))
+                if fields.get("model") == "haiku":
+                    self.assertNotIn("effort", fields, f"{path.name}: Haiku 4.5 takes no effort level")
+                    continue
+                self.assertIn(fields.get("effort"), VALID_EFFORTS,
+                              f"{path.name} must pin `effort:` to one of {sorted(VALID_EFFORTS)}")
 
     def test_agent_name_matches_its_filename(self):
         for path in self.agents:

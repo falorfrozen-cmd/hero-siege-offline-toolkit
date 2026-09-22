@@ -29,8 +29,14 @@ composes the draft release body from those files.
 
 ### Read a guide by section
 
-`grep -n '^## \|^### ' <guide>` first — the same role has a different heading per
-module (ForgePact's `Command Reference` = `hero-siege-item-editor`'s `Setup,
+`py -3 .claude/skills/workorder/section.py <guide> --toc` first — it lists
+every heading with its line and size. Read a small section with `section.py
+<guide> '<heading>'`; in a section over 20KB, read only what matches, with
+`section.py <guide> '<heading>' --grep '<symbol|file|command>'`, which windows
+an oversized item around each match. Not `grep -n`, and not a `Read` line
+window: ForgePact's guide is 334KB and 23 of its lines hold 128KB, so a
+20-line read returned 45KB (measured 2026-09-22). The same role has a
+different heading per module (ForgePact's `Command Reference` = `hero-siege-item-editor`'s `Setup,
 Build, Run, & Test Commands`), and a guide may skip a role it has no use for
 (only ForgePact and `hs-stat-forge` package a binary). **Always read**:
 overview/metadata, the change workflow (if any), platforms & prerequisites,

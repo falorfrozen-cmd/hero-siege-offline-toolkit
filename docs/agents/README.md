@@ -8,7 +8,7 @@ a link back to the section it backs.
 
 | `AGENTS.md` section | Story and evidence |
 |---|---|
-| [`Some of These Rules Are Enforced, Not Just Written`](../../AGENTS.md#some-of-these-rules-are-enforced-not-just-written) | [rules-enforced.md](rules-enforced.md) |
+| [`Some of These Rules Are Enforced, Not Just Written`](../../AGENTS.md#some-of-these-rules-are-enforced-not-just-written) | [rules-enforced.md](rules-enforced.md); [workorder-calibration.md](workorder-calibration.md) — the 2026-09-22 recalibration of `/workorder`'s audit budgets and model tiers on 22 real runs |
 | [`Limit Rebuilds & Reruns During Development`](../../AGENTS.md#limit-rebuilds--reruns-during-development) | [limit-rebuilds-reruns.md](limit-rebuilds-reruns.md) |
 | [`Prove the Instrument Before Trusting a Negative Result`](../../AGENTS.md#prove-the-instrument-before-trusting-a-negative-result) | [prove-the-instrument.md](prove-the-instrument.md) |
 | [`Check a Permission Where It Is Used, Not Where It Is Convenient`](../../AGENTS.md#check-a-permission-where-it-is-used-not-where-it-is-convenient) | [check-a-permission.md](check-a-permission.md) |

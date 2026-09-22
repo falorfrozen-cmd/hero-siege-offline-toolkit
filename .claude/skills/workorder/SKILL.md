@@ -40,8 +40,9 @@ never a plan, just a conversation someone was still holding in their head.
 ## The loop
 
 ```
-planner(opus) → implementer(sonnet) → verifier+reviewers(haiku,sonnet/opus) → PASS → report
-  ▲ PLAN-DEFECT ◄────────┘ ◄──────────────────── IMPL-DEFECT / BLOCKING
+planner(opus) → implementer(opus) → verifier+reviewers(haiku,sonnet/opus) → PASS ─→ report
+  ▲ PLAN-DEFECT ◄───────┘ ◄──────────────────── IMPL-DEFECT / BLOCKING
+                                    PASS-PENDING-HUMAN → live-operator(sonnet) → report
 ```
 
 ### Step 0 — decide whether this is worth a workorder
@@ -92,10 +93,16 @@ about whether it can. These are checkable:
 |---|---|
 | **introduces or changes concurrency** — threads, async boundaries, a new `#[tauri::command]` that touches disk or network, anything that can deadlock or race | planner `fable`, implementer `opus` |
 | must **establish an unknown game mechanism**, not verify a suspected one — the "which of N candidates does X" shape | planner `fable`, implementer `opus` |
-| changes **how a hook attaches** — install routes, trampolines, what a hook can see | planner `opus`, implementer `opus` |
-| changes a **contract three bindings must agree on** (C++ / Python / TypeScript) | planner `opus`, implementer `opus` |
 | falls in the **suspend-the-game-loop class** (`AGENTS.md`) | stop — read `ForgePact/docs/menu-pause-plan.md` §0 with the user before planning at all |
-| everything else | the agents' own pins (planner `opus`, implementer `sonnet`) |
+| touches **only docs, tests or config** — no product source, no hook, no binding | planner `opus`, implementer `sonnet` |
+| everything else — including hook attachment and three-binding contracts, which had their own `opus`/`opus` rows when the default implementer was `sonnet` | the agents' own pins (planner `opus`, implementer `opus`) |
+
+The implementer's default is `opus` since 2026-09-22 (see "Model tiers"):
+Opus 5.5 reads cache at Sonnet 5's price, and 99% of an implementer's tokens
+are cache reads, so the tier costs about the same per token while the Sonnet
+tail (p90 46.8M tokens, max 78.9M) was what hit the round caps. `sonnet` is
+kept for the one row where its median run (8.2M tokens, $2.62) is all the
+work there is.
 
 Say which row you matched and why, in one line, before you spawn — a triage
 nobody can see is a triage nobody can correct, and the user is the cheapest
@@ -175,19 +182,26 @@ Then stop. Spawn nothing further, and do not begin implementing.
 
 ### Step 2 — implement
 
-**Entering here from `resume`?** Do three things first, because this session
+**Entering here from `resume`?** Do four things first, because this session
 did not write the plan and knows nothing it does not say:
 
 1. **Repeat the submodule check from Step 1**, against the plan's `module:`
    field — a week-old plan may name a module this fresh checkout hasn't
    initialized.
-2. **Read the plan file in full, `## Needs human judgement` and all of `## Log`**
+2. **Check the plan is not already finished.** A `status:` of `PASS`,
+   `DONE`, `CAP`, `SPLIT` or `SUPERSEDED` stops here — say so, spawn nothing.
+   A `READY` plan that arrived by copy (its header says "they travel by
+   copy") may be a stale handover: ask the user whether it already ran
+   before resuming it. Measured 2026-09-22: the main checkout held two
+   `READY` plans that had both run to completion on 2026-09-19 in worktrees
+   since removed, and every new worktree was created with a copy of both.
+3. **Read the plan file in full, `## Needs human judgement` and all of `## Log`**
    — the one point the driver reads the whole Log, to re-count replans and
    consultations. Grep `## Context` for what step 2 needs rather than reading
    it whole. Re-run the step 0.25 checkout check against the plan's
    `repoRoot:` and preconditions, then the step 0.5 triage — a task property,
    not a session one, though the repo may have moved under a week-old plan.
-3. **Check it is self-sufficient.** Every step must be actionable from the file
+4. **Check it is self-sufficient.** Every step must be actionable from the file
    alone. A step that assumes a decision made only in conversation, names a file
    that no longer exists, or says "as discussed" is a `PLAN-DEFECT` now — cheaper
    to route back before an implementer has spent a round discovering it.
@@ -217,10 +231,13 @@ Spawn `implementer` with the plan and context paths. Three outcomes:
   | 2nd | `model: fable` | cheaper reasoning has now demonstrably failed twice on the same problem |
   | 3rd | — stop, ask the user | a goal that survives two replans is usually not well posed |
 
-  Spend money where it's earned, not guessed: planning is the lowest-volume
-  phase (a few thousand output tokens against an implementation's hundred
-  thousand), so one Fable replan costs less than the round it saves, and far
-  less than a wrong mechanism model's live game session.
+  Spend money where it's earned, not guessed. Planning is *not* cheap: over
+  2026-09-19..22 the planner was 22% of list-price spend, and a Fable 5.1
+  plan averaged $10.38 against $4.00 on Opus 5 (about $2.60 on Opus 5.5) —
+  Fable's output costs 2.5× Opus 5.5's, and a planner writes more output than
+  any other phase. One Fable replan still costs less than the round it saves
+  and far less than a wrong mechanism model's live session, which is why it
+  is the *second* replan's tier and not the first plan's.
 
   Record the escalation under the round's heading in the context file's
   `## Log` (`planner escalated to fable after 2nd PLAN-DEFECT`). A Fable
@@ -373,7 +390,9 @@ The line, when a reviewer's label looks wrong to you:
   non-blocking finding into the report.
 - **`verifier` PASS-PENDING-HUMAN and no blocking finding** → everything
   runnable passed and something needs a person: a live game session, a
-  twelve-minute rebuild, eyes on a window. Go to step 5 and report it as such.
+  twelve-minute rebuild, eyes on a window. When what is pending is a live game
+  session the context file writes out as a `### Live procedure <n>`, go to
+  step 4.5; otherwise go to step 5 and report it as such.
   **Do not spend a round on it** — the implementer cannot fix a criterion that
   is not broken — and do not quietly upgrade it to `PASS`. Set `status: PASS
   (pending <what)` in the workorder so the gap survives the session.
@@ -409,6 +428,44 @@ The line, when a reviewer's label looks wrong to you:
   rebuild, eyes on a window — → stop and ask. Never record an unchecked
   criterion as passed.
 
+### Step 4.5 — live gate: `live-operator` runs the session, you talk to the person
+
+A live session is a phase like the others, and the driver does not run it.
+Across 2026-09-19..22 every live session was run by the driver itself —
+`ipc.ps1` commands, log parsing, DLL installs, heredoc appends to the Log —
+and the sessions that did so were the most expensive drivers measured: up to
+325 turns, 99.5M tokens and $60 of list price, at 250-300K context a turn,
+against a median driver of $12.
+
+1. **Ask before anything changes on the owner's machine.** One question:
+   install this build now, and is a session convenient now? Never install on
+   your own — the owner decides when the DLL their game loads changes. On a
+   yes, install it yourself with the module's documented install command (one
+   call), and nothing else.
+2. **Spawn `live-operator`** with: the slug, the session number `<n>`, the
+   context file and the `### Live procedure <n>` heading, the character slot,
+   and which build is installed. Record its agent id in `## State` › `agents:`.
+3. **Relay, do not operate.** A `NEEDS-HUMAN` comes back with one `ASK`: put
+   it to the user verbatim, then `SendMessage` the operator their answer
+   (ToolSearch `select:SendMessage` if deferred). Do not run `hs_*` tools,
+   `ipc.ps1` or log reads yourself — you would be the operator at the most
+   expensive context in the pipeline.
+4. **Route what it returns.** Append at most a short summary and the capture
+   path — never the capture — under a `### Live <n>` Log heading, then:
+   - every check `pass` → the pending criteria are met; step 5.
+   - a check `fail` with the mechanism as the plan described it → an
+     `IMPL-DEFECT` round (step 4), the capture path as its evidence.
+   - a `fail` or `not-observed` that contradicts the plan's model of the
+     mechanism → `PLAN-DEFECT`; the replan cites the capture.
+   - `INSTRUMENT-BLIND` → the instrument could not see its own positive
+     control. Nothing was measured, so nothing is concluded; it goes to the
+     planner as an instrument defect, never into a doc as "does not happen".
+   - `LIVE-ABORTED` → report its `WHY` to the user and stop.
+
+`tools/workorder_audit.py` R17 fails a session whose operator wrote anything
+but its `<slug>-live-<n>.md`, installed a build, ran a writing git command,
+restored saves or force-stopped the game.
+
 ### Step 5 — report
 
 Set `status: PASS` in the workorder and tell the user:
@@ -420,8 +477,12 @@ Set `status: PASS` in the workorder and tell the user:
 - how many rounds it took, and what each round caught. That last line is how
   the pipeline earns its keep or shows it is not;
 - run `py -3 tools/workorder_audit.py --latest` and report every `FAIL` line
-  verbatim beside the round summary — a workorder that passes its criteria and
-  fails its cost budget says so, not silence;
+  verbatim beside the round summary, with its `list-price cost` line — a
+  workorder that passes its criteria and fails its cost budget says so, not
+  silence;
+- if this plan came from a handover copy in another checkout, say that copy
+  still reads `READY` and name its path — the harness will not let you edit it,
+  and left alone it is cloned into every new worktree as work still to do;
 - if the work opened pull requests in more than one module, end with the merge
   order and each PR's link, per `AGENTS.md` § "One Branch and One Pull Request
   per Module, per Feature": submodule PRs first, then the hub PR once
@@ -436,7 +497,10 @@ are ignored.
 
 **The driver never implements.** Its tool use is limited to: reading the
 workorder, `round_delta.py`, `git status`/`git diff` for a dispatch, `Edit` on
-`## State`/`## Log`, `Agent`, `SendMessage`, `AskUserQuestion`. Running builds
+`## State`/`## Log`, `Agent`, `SendMessage`, `AskUserQuestion`, and step
+4.5's one approved install. Log entries go in with `Edit`, under the one
+`## Log` — not `cat >>` heredocs, which is how a context file ended up with two
+`## Log` headings and rounds recorded under the planner's. Running builds
 or tests, or editing source, makes it the implementer at the wrong tier and the
 largest context in the pipeline — stop and dispatch instead. Measured: the
 driver that closed a capped workorder by hand made 236 Bash calls and 47 edits
@@ -503,9 +567,51 @@ backwards is cheap and correct. That is the whole design.
 
 ## Model tiers
 
-Set in each agent's frontmatter: `planner` opus, `implementer` sonnet,
-`verifier` haiku, reviewers sonnet except `instrument-blindness-reviewer` at
-opus. Override for one run by passing `model` on the Agent call.
+Set in each agent's frontmatter, with an `effort:` beside every tier that
+takes one: `planner` opus/high, `implementer` opus/high, `consultant`
+opus/xhigh, `instrument-blindness-reviewer` opus/high, the other reviewers and
+`live-operator` sonnet/high, `verifier` and `scribe` haiku (Haiku 4.5 takes no
+effort). Override the model for one run by passing `model` on the Agent call;
+effort has no per-call override, which is why it is pinned — an agent without
+one inherits whatever the session runs at.
+
+**Where Opus 5.5 fits (2026-09-22).** `opus` resolves to Claude Opus 5.5; it
+did so already for the last sessions of the calibration set, with no file
+changed. What it changes is the price, and price is what the tiers were
+chosen by. List prices per million tokens (input / output / cache read):
+
+| Model | In | Out | Cache read |
+|---|---|---|---|
+| Fable 5.1 (`fable`) | $10 | $50 | $0.25 |
+| Opus 5.5 (`opus`) | $4 | $20 | $0.20 |
+| Opus 5 (was `opus`) | $5 | $25 | $0.50 |
+| Sonnet 5 (`sonnet`) | $2 | $10 | $0.20 |
+| Haiku 4.5 (`haiku`) | $1 | $5 | $0.10 |
+
+92-99% of every role's tokens here are cache reads, so for this pipeline
+Opus 5.5 costs about what Sonnet 5 does, and 40-60% less than Opus 5 did:
+the 20 Opus 5 drivers and the Opus-5 planners of the calibration set would
+have cost about half as much. Hence:
+
+- **implementer → `opus`.** Measured on the 22 sessions: Sonnet 5
+  implementers averaged $4.65 a run with a tail to $18.90 (p90 46.8M tokens,
+  max 78.9M — the runs that hit round caps); Opus-tier ones used 36% fewer
+  tokens on average (11.2M against 17.4M) while carrying the hard triage
+  rows, and the four Opus 5.5 runs averaged $4.82. Same money, no tail.
+- **planner, consultant, instrument-blindness-reviewer stay `opus`**, now
+  cheaper. `fable` keeps the two rows above plus the second replan.
+- **reviewers stay `sonnet`, verifier and scribe `haiku`.** On the same
+  tokens Opus 5.5 would cost the reviewers 1.2× and the verifier 2.9×, with no
+  finding of theirs measured as missed.
+- **Effort.** Opus 5.5 defaults to `medium` and thinks more per turn than
+  Opus 5 at the same level; `high` is pinned for the phases that carry long
+  agentic work and `xhigh` for the one narrow question `consultant` answers.
+  Neither is measured yet: `tools/workorder_audit.py --calibrate` reports
+  per role *and model*, so the next recalibration says whether they hold.
+
+`tools/workorder_audit.py` prices every transcript at these rates
+(`MODEL_PRICES`), so a report's cost line tracks a tier change without anyone
+redoing this arithmetic.
 
 **Tier aliases, not pinned version IDs.** `opus` names the tier, not a
 version. Pinning `claude-opus-5` across eight files buys reproducibility this
@@ -524,5 +630,6 @@ constant.
   player's session.
 
 Not on a routine change, or the implementer or a reviewer — those run at high
-volume where 2× is real money for no measured gain; the planner is cheap
-enough for the upgrade to be nearly free.
+volume where 2.5× is real money for no measured gain — and not as the
+default planner: at 22% of spend with Fable averaging 2.6× an Opus 5 plan, it
+is no longer "nearly free".
