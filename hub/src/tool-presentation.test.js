@@ -40,6 +40,32 @@ test('backend update flag drives action; installed HTML opens, external NSIS get
   assert.equal(presentation({ ...base, installed_version: '1', artifact: { kind: 'html' } }).primary.label, 'Open');
   assert.equal(presentation({ ...base, artifact: { kind: 'nsis' } }).primary.command, 'open_release');
 });
+test('an outdated installed copy (e.g. right after a rollback) offers a secondary launch beside Update', () => {
+  const outdated = { ...base, installed_version: '1.0', update_available: true };
+  const { primary, secondary } = presentation(outdated);
+  assert.equal(primary.command, 'install_tool');
+  assert.equal(primary.label, 'Update');
+  assert.equal(secondary.command, 'launch_tool');
+  assert.equal(secondary.label, 'Launch installed');
+  assert.equal(secondary.aria, 'Launch installed ForgePact');
+  assert.ok(secondary.why.includes('1.0'));
+  assert.ok(secondary.why.includes(base.version));
+});
+test('secondary launch stays hidden whenever a second action would duplicate or fight the primary', () => {
+  assert.equal(presentation(base).secondary, null);
+  assert.equal(presentation({ ...base, installed_version: '2.0' }).secondary, null);
+  assert.equal(presentation({ ...base, installed_version: '1.0', update_available: true, running_pid: 42, can_stop: true }).secondary, null);
+  assert.equal(presentation({ ...base, installed_version: '1.0', update_available: true, running_elsewhere: true }).secondary, null);
+  assert.equal(presentation({ ...base, installed_version: '1.0', update_available: true }, { phase: 'downloading' }).secondary, null);
+  const done = presentation({ ...base, update_available: true }, { phase: 'done', version: '3.0' });
+  assert.equal(done.secondary, null);
+});
+test('secondary launch mirrors the installed action label for HTML tools, and survives a staged update', () => {
+  const html = presentation({ ...base, installed_version: '1.0', update_available: true, artifact: { kind: 'html' } });
+  assert.equal(html.secondary.label, 'Open installed');
+  const staged = presentation({ ...base, installed_version: '1.0', update_available: true, staged: { version: '9.9' } });
+  assert.equal(staged.secondary.command, 'launch_tool');
+});
 test('running copy only offers Stop with a PID the backend can stop', () => {
   assert.equal(presentation({ ...base, running_pid: 42, can_stop: true, update_available: true }).primary.command, 'stop_tool');
   assert.equal(presentation({ ...base, running_pid: 42, can_stop: false }).primary.command, null);
