@@ -29,11 +29,14 @@ later round.
 
 ## What to check, in order
 
-**1. The module's own guide.** For every submodule the change touches, `grep
--n '^## \|^### '` `docs/submodules/<name>/instructions.md`, then grep it for
-the commands, symbols, file names and section titles the change touches. Read
-those matching sections plus the command reference, maintenance triggers, and
-any verification table — not the guide front-to-back. Does the change alter an
+**1. The module's own guide.** For every submodule the change touches, run
+`py -3 .claude/skills/workorder/section.py docs/submodules/<name>/instructions.md
+--toc`, then `section.py <guide> '<heading>' --grep '<name>'` for the
+commands, symbols, file names and section titles the change touches. Read the
+command reference, maintenance triggers, and any verification table whole
+when they are small — never the guide front-to-back, and never a section over
+20KB whole: ForgePact's are 67-78KB, and `grep -n` or a line-window `Read`
+there returns lines of up to 22KB each. Does the change alter an
 entry point, a command, a dependency, a workflow step, a known limitation, or
 the architecture those sections describe? Then the guide is now wrong.
 

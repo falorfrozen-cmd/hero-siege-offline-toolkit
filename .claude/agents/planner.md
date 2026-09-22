@@ -27,11 +27,17 @@ you find yourself wanting to, that is a signal the plan is not finished.
 
 1. **Load the module's guide, by section — never front-to-back.** Invoke
    `submodule-context` for any touched submodule, then
-   `grep -n '^## \|^### ' <guide>` and `Read` by offset. Always read:
-   overview, the change workflow, platforms & prerequisites, command
-   reference, packaging hazards, maintenance triggers, and the repo-layout
-   entries for files you'll touch. Grep the changed feature/symbol names and
-   read every matching section — Known Limitations especially. Data formats,
+   `py -3 .claude/skills/workorder/section.py <guide> --toc` for each
+   section's size, and read a small one whole with `section.py <guide>
+   '<heading>'`. Always read: overview, the change workflow, platforms &
+   prerequisites, command reference, packaging hazards, maintenance triggers,
+   and the repo-layout entries for files you'll touch — that last one, and any
+   section over 20KB (ForgePact's Repository Layout, Data Formats and Known
+   Limitations are 67-78KB each), only through `section.py <guide>
+   '<heading>' --grep '<symbol|file|command>'`. A `Read` with a line window
+   is not a small read in that guide: 23 of its lines hold 128KB. Grep the
+   changed feature/symbol names and read every match — Known Limitations
+   especially. Data formats,
    release/tagging and long narratives (e.g. ForgePact's Performance Pass)
    load only when the change touches what they describe. `AGENTS.md` §
    "Submodule & Directory Development Instructions" is not optional — a
