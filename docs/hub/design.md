@@ -452,6 +452,28 @@ the updated ToolView arrives. Staged/downloaded events never claim an install
 finished. Requirements say "Requires game closed/running" rather than implying
 they describe the current game state.
 
+When the primary is Update (a newer version is available, most commonly right
+after a *Roll back*), `presentation()` also returns a smaller, secondary
+action — *Launch installed* (*Open installed* for `kind: "html"`) — that runs
+the already-installed copy through the same `launch_tool` command, unchanged.
+This exists because rolling back leaves `update_available` true by design (the
+catalog is still ahead of the version now installed), and without it there was
+no way to start the rolled-back copy without updating over it first. It stays
+hidden whenever a second action would duplicate or fight the primary (running,
+in flight, or the momentary `done`-event window), and is disabled while a
+mutation for that tool is pending. `ToolAction.svelte` renders it once, so the
+card, quick launch, the Updates screen card and the detail header all pick it
+up from the one shared component.
+
+Known limitation: `launch::launch` builds the executable path from the
+*current catalog entry's* `launch.exe`/`args`, not the entry point the
+installed version actually shipped with (`state.rs`'s `Installed` record
+keeps version, hash, path and previous, not the entry point). If a newer
+release renamed its executable, launching an older installed copy through
+this button fails with the existing `LaunchError::Missing` message rather than
+starting it. Not observed with any current catalog tool; fixing it would need
+a Rust and `state.json` change to record the entry point actually installed.
+
 `action-gate.js` permits one pending mutation per tool. Repeated requests with
 the same command and arguments share its promise, including the gap before a
 progress event. A different command or different launch options reject with a
@@ -795,6 +817,7 @@ checks a test cannot make, and because three of them found defects.
 | Card controls after the move | Heading and `.corner` measured to the same client rect (198.3–218.3), both glyphs centred on it; menu opens downward and paints over the card below it; primary button has the footer to itself (2026-09-13) |
 | First canonical installer candidate | Extracted the actual NSIS application, verified its updater signature and manifest, opened it in an isolated WebView2 profile; all ten tools appeared, offline first run and favorites persisted, and the Steam Deck editor installed from its real release (2026-09-15) |
 | Manual hub update check after packaging | **Found a defect before publication:** the catalog refreshed but the hub check stayed on `Checking...`. Async Tauri commands nested `block_on` inside the runtime. Converted both updater commands to async/await and bounded the metadata check to 30 seconds. The 1.0.1 candidate resolves a missing release JSON, logs the error, restores the button, and retains the installed tool and favorite after restart (2026-09-15) |
+| *Launch installed* beside Update (issue #121) | With an installed copy older than the catalog, the card, quick launch, Updates screen and detail header showed Update plus the smaller *Launch installed*; clicking it started the installed copy without updating (checked by hand in the `npm start` dev build, 2026-09-22) |
 
 ### Workshop interface verification — 2026-09-17
 

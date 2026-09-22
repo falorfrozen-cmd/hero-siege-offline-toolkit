@@ -34,7 +34,7 @@ how to work on the code; it deliberately does not restate the reasoning.
 | `App.svelte` | The shell: sidebar, routing between screens, `connect()` on mount. |
 | `Library.svelte` | Search, category/status filters, grid/list layouts, all ten tools in one list and full-card quick launch. |
 | `ToolCard.svelte` | One tool: icon, requirements, status, shared primary action, star and keyboard-accessible overflow menu. |
-| `ToolAction.svelte`, `tool-presentation.js` | Shared action/status rendering; display-only names, categories and search. |
+| `ToolAction.svelte`, `tool-presentation.js` | Shared action/status rendering; display-only names, categories and search. Also renders the secondary *Launch installed* (*Open installed* for HTML) action beside Update, so a rollback's outdated copy can still be started. |
 | `ToolIcon.svelte`, `Icon.svelte` | Original SVG tool artwork and interface glyphs. |
 | `action-gate.js` | Allows one pending mutation per tool, coalesces identical requests and rejects conflicting commands/options with a busy error. |
 | `ToolDetail.svelte` | One tool in full, including *Verify files*. |

@@ -73,5 +73,22 @@ export function presentation(tool, progress = null) {
   else if (installed) primary = { label: tool.artifact.kind === 'html' ? 'Open' : 'Launch', command: 'launch_tool' };
   else if (tool.artifact.kind === 'nsis') primary = { label: 'Get it', command: 'open_release' };
   else primary = { label: failed ? 'Try again' : 'Install', command: 'install_tool' };
-  return { chip, primary, installed, inFlight };
+
+  // A rollback leaves update_available true on purpose, so the primary stays
+  // Update; this is the only route back to the installed copy without going
+  // through it. Non-null exactly when the update branch above was chosen and
+  // a copy is actually installed to launch.
+  let secondary = null;
+  if (installed && primary.command === 'install_tool' && primary.label === 'Update') {
+    const html = tool.artifact.kind === 'html';
+    const label = html ? 'Open installed' : 'Launch installed';
+    secondary = {
+      command: 'launch_tool',
+      label,
+      aria: `${label} ${tool.name}`,
+      why: `${html ? 'Opens' : 'Launches'} the installed ${installed} copy without updating to ${tool.version}.`,
+    };
+  }
+
+  return { chip, primary, secondary, installed, inFlight };
 }
