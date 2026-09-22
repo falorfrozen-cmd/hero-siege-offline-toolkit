@@ -16,7 +16,7 @@ export const meta = {
 // args: {
 //   slug, planPath, contextPath,        // contextPath === planPath for a legacy single-file plan
 //   goalExcerpt,                        // '## Goal' + '## Out of scope', pasted by the driver
-//   implementerModel,                   // 'sonnet' | 'opus', from step 0.5 triage
+//   implementerModel,                   // 'opus' (the default) | 'sonnet' | 'fable', from step 0.5 triage
 //   round,                              // the round to start at (State's `round:`)
 //   reviewers: { '<name>': 'never' | 'clean' | 'blocking' },   // applicable reviewers and their last verdict
 //   submodules: ['ForgePact', ...],     // dirs whose own diff the reviewers must read, relative to repoRoot
@@ -248,6 +248,10 @@ const NOTHING_CHANGED_SCOPE = 'This is a re-run, and nothing changed this round:
 // command, and workorder headings are full of backticks. A legacy single-file
 // plan keeps its cited sections in the plan itself.
 const SECTION_CMD = file => `\`py -3 .claude/skills/workorder/section.py "${file}" '<heading>'\``
+// Measured 2026-09-22: 8 of 22 sessions failed R2 because a verifier, told
+// only "Workorder: <path>", read a 30-42KB plan whole to find its criteria.
+// Hand it the two extractions that are the whole of its mandate.
+const VERIFIER_CRITERIA_NOTE = ` Take the criteria and the gate tokens with exactly \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\` and \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'State'\`; do not Read the plan whole.`
 const VERIFIER_CONTEXT_NOTE = A.contextPath !== A.planPath
   ? ` Context file: ${A.contextPath} -- open it only for a heading a criterion cites, with ${SECTION_CMD(A.contextPath)}; never read it whole, its '## Log' is the implementer's reasoning.`
   : ` This is a single-file plan: open a section a criterion cites with ${SECTION_CMD(A.planPath)} rather than reading on past the criteria; its '## Log' is the implementer's reasoning.`
@@ -280,7 +284,7 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
       ` for the evidence before anything else. ` : '') +
     (carried ? `The scribe could not write the evidence, so it is here verbatim: ${JSON.stringify(carried)} ` : '') +
     `Return your usual verdict; put the PLAN-DEFECT evidence block or the ADVICE-NEEDED request, verbatim, in 'evidence'/'question'.`,
-    { label: `implementer:r${n}`, phase: 'Implement', agentType: 'implementer', model: A.implementerModel || 'sonnet', schema: IMPL_SCHEMA })
+    { label: `implementer:r${n}`, phase: 'Implement', agentType: 'implementer', model: A.implementerModel || 'opus', schema: IMPL_SCHEMA })
   if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'implementer returned nothing', rounds }
   if (impl.verdict !== 'IMPL-DONE') {
     await scribe(n, implBlock(n, impl), `round: ${n}\nphase: blocked`)
@@ -331,7 +335,7 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
     ? `Nothing changed this round: the implementer reports your previous BLOCKING finding does not hold. Its report: ${String(impl.report).slice(0, 1500)}\nConfirm the finding with the command and output that proves it, or withdraw it.\n`
     : ''
   const results = await parallel([
-    () => nothingChanged ? Promise.resolve(lastVerifier) : agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${VERIFIER_CONTEXT_NOTE}`,
+    () => nothingChanged ? Promise.resolve(lastVerifier) : agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${VERIFIER_CRITERIA_NOTE}${VERIFIER_CONTEXT_NOTE}`,
       { label: `verifier:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA }),
     ...toRun.map(name => () => agent(
       `You are reviewing a change. You are NOT given the workorder; this is its intent:\n${A.goalExcerpt}\n${OUT_OF_SCOPE_NOTE}\n${scope(name)}\n` +

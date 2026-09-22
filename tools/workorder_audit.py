@@ -235,7 +235,7 @@ SECTION_LOG_FLAG_RE = re.compile(r"section\.py\b[^|;&\n]*(?<!\S)--log\b", re.IGN
 # R10: the agents a `/workorder` invocation itself spawns. Only these keep
 # its window open -- an ad-hoc agent the user asks for afterwards is
 # conversation, like the message that asked for it.
-PIPELINE_AGENT_TYPES = {"planner", "implementer", "verifier", "consultant", "workflow-subagent"}
+PIPELINE_AGENT_TYPES = {"planner", "implementer", "verifier", "consultant", "workflow-subagent", "live-operator"}
 
 REVIEWER_TYPES = {
     "docs-sync-reviewer",
@@ -1274,6 +1274,39 @@ def rule_r16_scribe_scope(session: Session) -> RuleResult:
     return RuleResult("R16", "scribe-scope", passed=not evidence, evidence=evidence)
 
 
+LIVE_CAPTURE_RE = re.compile(r"(^|/)\.claude/workorders/[^/]+-live-\d+\.md$", re.IGNORECASE)
+DLL_INSTALL_RE = re.compile(
+    r"\b(cp|mv|copy|xcopy|robocopy|Copy-Item|Move-Item)\b[^|;&\n]*\.dll\b|\binstallmod\b", re.IGNORECASE)
+
+
+def rule_r17_live_operator_scope(session: Session) -> RuleResult:
+    """`live-operator` runs the owner's game: it may write its own capture
+    file and nothing else, never installs a build (the owner decides when the
+    DLL their game loads changes), never runs a writing git command, and
+    never restores saves or force-stops the game on its own."""
+    evidence = []
+    for agent in all_subagents(session):
+        if agent.agent_type != "live-operator":
+            continue
+        for call in agent.tool_calls:
+            if call.name in EDIT_TOOLS:
+                fp = str(call.tool_input.get("file_path", "")).replace("\\", "/")
+                if not LIVE_CAPTURE_RE.search(fp):
+                    evidence.append(f"{agent.label} {call.name} outside its capture file at {call.ts_start}: {fp}")
+            elif call.name in SHELL_TOOLS:
+                cmd = _cmd_text(call)
+                mutations = _git_mutations(cmd)
+                if mutations:
+                    evidence.append(f"{agent.label} ran git {'/'.join(dict.fromkeys(mutations))} at {call.ts_start}: {cmd[:120]}")
+                if DLL_INSTALL_RE.search(cmd):
+                    evidence.append(f"{agent.label} installed a build at {call.ts_start}: {cmd[:120]}")
+            elif call.name.endswith("hs_saves_restore"):
+                evidence.append(f"{agent.label} restored saves at {call.ts_start}")
+            elif call.name.endswith("hs_stop_game") and call.tool_input.get("force"):
+                evidence.append(f"{agent.label} force-stopped the game at {call.ts_start}")
+    return RuleResult("R17", "live-operator-scope", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -1291,6 +1324,7 @@ ALL_RULES = [
     rule_r14_reviewer_reruns_suite,
     rule_r15_edit_guard_workaround,
     rule_r16_scribe_scope,
+    rule_r17_live_operator_scope,
 ]
 
 

@@ -2,7 +2,8 @@
 name: implementer
 description: Executes one workorder's steps and writes the code. Use after the planner has produced a workorder with status READY, or when the verifier returns IMPL-DEFECT. Stops and returns PLAN-DEFECT rather than improvising around a plan that turns out to be wrong.
 tools: Read, Grep, Glob, Bash, Edit, Write, Skill, Monitor
-model: sonnet
+model: opus
+effort: high
 color: green
 ---
 

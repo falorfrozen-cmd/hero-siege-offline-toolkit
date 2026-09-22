@@ -1501,3 +1501,56 @@ class CalibrationTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(wa.read_session_list(listing), ["aaaa", "bbbb"])
         rc = wa.main(["--calibrate", str(listing), "--projects-dir", str(a.projects_dir), "--project", "proj"])
         self.assertEqual(rc, 0)
+
+
+# --------------------------------------------------------------------------
+# R17 live-operator-scope
+# --------------------------------------------------------------------------
+
+class R17Tests(TempDirMixin, unittest.TestCase):
+    def _operator(self, *calls, sub="a"):
+        records = []
+        for i, (name, tool_input) in enumerate(calls):
+            records += tool_turn(i * 10, i, name, tool_input, result="ok")
+        b = SessionBuilder(self.tmp_path / sub).driver([turn(0, 9000)]).subagent(
+            "live-operator", "live session 2", records)
+        _, results = b.evaluate()
+        return get_rule(results, "R17")
+
+    CAPTURE = "C:/repo/.claude/workorders/forgepact-x-live-2.md"
+
+    def test_pass_the_session_it_is_meant_to_run(self):
+        r = self._operator(
+            ("mcp__hs-drive__hs_selfcheck", {}),
+            ("Bash", {"command": "cp -r \"$LOCALAPPDATA/Hero_Siege/hs2saves\" \"$USERPROFILE/HeroSiege-manual-save-backup/x\""}),
+            ("mcp__hs-drive__hs_command", {"lines": ["toggleborder stat"]}),
+            ("Write", {"file_path": self.CAPTURE}),
+            ("Edit", {"file_path": self.CAPTURE}),
+            ("mcp__hs-drive__hs_stop_game", {}),
+            ("Bash", {"command": "git status --porcelain"}))
+        self.assertTrue(r.passed, r.evidence)
+
+    def test_fail_writing_anywhere_but_its_capture_file(self):
+        for path in ("C:/repo/ForgePact/plugin/ModuleMain.cpp",
+                     "C:/repo/.claude/workorders/forgepact-x-context.md"):
+            with self.subTest(path=path):
+                r = self._operator(("Edit", {"file_path": path}), sub=path[-12:].replace("/", "_"))
+                self.assertFalse(r.passed)
+
+    def test_fail_installing_a_build(self):
+        for cmd in ('cp ForgePact/build/BloodPactPlugin_ship.dll "C:/Games/HeroSiege/mods/aurie/"',
+                    'Copy-Item .\\x.dll -Destination "$game\\mods\\aurie"',
+                    'curl -X POST http://127.0.0.1:8765/api/installmod'):
+            with self.subTest(cmd=cmd):
+                self.assertFalse(self._operator(("Bash", {"command": cmd}), sub=str(abs(hash(cmd)))).passed)
+
+    def test_fail_git_writes_restores_and_force_stops(self):
+        self.assertFalse(self._operator(("Bash", {"command": "git commit -am x"}), sub="g").passed)
+        self.assertFalse(self._operator(("mcp__hs-drive__hs_saves_restore", {"backup_id": "b"}), sub="r").passed)
+        self.assertFalse(self._operator(("mcp__hs-drive__hs_stop_game", {"force": True}), sub="f").passed)
+
+    def test_other_agents_are_not_held_to_it(self):
+        records = tool_turn(0, 0, "Edit", {"file_path": "C:/repo/ForgePact/plugin/ModuleMain.cpp"})
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).subagent("implementer", "implementer:r0", records)
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R17").passed)
