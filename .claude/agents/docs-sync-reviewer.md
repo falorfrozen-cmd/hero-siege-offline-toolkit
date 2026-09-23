@@ -69,12 +69,15 @@ when the change adds or alters a hook, agent or skill.
 records research results (a `*-research.md` results section, or an "After
 Phase" paragraph), list the facts it establishes about the game itself:
 variables, container layouts, formats, script behaviour, crash conditions.
-Check that each one also reached `docs/RUNTIME_DATA_MODELS.md`, `hs-game-sdk`
-(or `hs-game-sdk/curated/`), or is explicitly deferred with a reason.
-`AGENTS.md` § "Fold What a Mod Learned About the Game Into the Shared
-References" is the rule. A missing fold is **non-blocking**: name the fact and
-the file it belongs in. Also check any "missing from the SDK" claim by searching
-every binding for the bare name as well.
+Check that each one also reached `docs/RUNTIME_DATA_MODELS.md` or `hs-game-sdk`
+(or `hs-game-sdk/curated/`) on the feature's hub branch. `AGENTS.md` § "Fold
+What a Mod Learned About the Game Into the Shared References" is the rule. The
+fold may land in a later commit of that same hub PR, so a fold missing from
+this round's diff is **non-blocking for the round**: name the fact and the file
+it belongs in. It is still required, and the feature's hub PR is not done until
+it lands. A fold pushed to a separate follow-up feature does not satisfy the
+rule. Also check any "missing from the SDK" claim by searching every binding
+for the bare name as well.
 
 **4. `AGENTS.md` itself.** If the change adds a mechanically checkable rule, the
 check should exist too, and `AGENTS.md` § "Some of These Rules Are Enforced"

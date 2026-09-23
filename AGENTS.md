@@ -547,7 +547,12 @@ mod's developers read it. Facts about the game itself belong to every module:
 where a structure lives, what a container holds, what a script reads and
 writes, what an argument means, which call crashes the game. So when a
 research phase is recorded, the facts it established about the game go into
-the shared references in the same pull request, not "later":
+the shared references as part of the same feature, not "later". The shared
+references live in this hub, so they ride the feature's hub pull request: the
+one that accompanies the submodule's PR, per § "One Branch and One Pull
+Request per Module, per Feature" below. A later commit on that same hub
+branch is fine. A separate follow-up feature is not, and neither is merging
+the hub PR without the fold.
 
 - **`docs/RUNTIME_DATA_MODELS.md`**: instance variables, container layouts,
   key and fingerprint formats, the shapes scripts return, and the state
