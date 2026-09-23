@@ -157,6 +157,38 @@ true. `.gitignore` also excludes common decompiler artifact paths as a mechanica
 backstop; extend it rather than working around it if a new tool produces a new
 artifact type.
 
+## Check for a Named Ghidra Project Before Researching a Game Mechanism
+
+Without a decompiler, a question about how a game script behaves — what it is
+really called, what arguments and `self` it wants, what it leaves behind — can
+only be answered by guessing, building and asking the owner for a live session.
+Each guess costs a whole round. Reading the script's body locally usually
+answers the question before the first build, so development without it is much
+slower. Before planning research into an unknown game mechanism, check whether
+this machine has a named Ghidra project, and say what you found.
+
+- **If it is present, give its paths** in the plan or report: the Ghidra install
+  (conventionally `%USERPROFILE%\tools\ghidra_<version>_PUBLIC`, launched
+  headless through `support\analyzeHeadless.bat`) and the project
+  (conventionally `%USERPROFILE%\ghidra_projects\HeroSiege`, program
+  `Hero_Siege.exe`). Use them, and keep what they show local, as the Legal
+  section above requires.
+- **If it is not present, offer the owner two options** and let them choose:
+  1. **Set up Ghidra first (recommended).** Install a JDK 21 and Ghidra; run
+     `citrace symdump` in the research build to write `bp_ipc\symbols.csv`;
+     then import the exe headless with `-noanalysis` and
+     `ForgePact/tools/ghidra/ImportSymbols.java` as its post-script, as that
+     script's header describes. Downloads and the game launch need the owner's
+     go-ahead.
+  2. **Continue without decompilation (not recommended).** Every mechanism
+     question then has to be settled by live measurement, one round each.
+
+Two things about the setup are not visible from the script. The headless
+launcher cannot take a path containing `(x86)`, so import a byte-identical copy
+of `Hero_Siege.exe` from a plain path. And functions carry the bare script
+names (`SaveStash`, not `gml_Script_SaveStash`), because that is how the CSV
+stores them.
+
 ## Mod Development Workflow: Test Before / After, Then Build to It
 
 When developing a mod, hook, or any gameplay-affecting change (drop rates, stats,
