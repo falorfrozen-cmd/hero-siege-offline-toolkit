@@ -1900,6 +1900,7 @@ here before pressing Publish.
 | tag | run URL | zip sha256 | installed from zip | out.txt boot line + version | panel version | mod smoke check | launch gate result | date | tester |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | v1.3.20 | | | | | | | | | |
+| v1.4.5 | [35831690354](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/35831690354) | `5f7a8d728d3203b9184d345efe652b92c74cedc435eac4f37fd4d5b60228ac03` | yes: Install Mod Plugin from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`48a8450b02ef`) | `==== BloodPact plugin loaded ==== v1.4.5` | 1.4.5 | `hhlabel` -> `callback ok` | pass | 2026-09-23 | falorfrozen-cmd (install and checks run by Claude Code) |
 
 ---
 
