@@ -324,6 +324,7 @@ and the exact tooltip for a saved item appears. Record a row here.
 
 | tag | run URL | sha256 matches | starts, tagged version shown | save loads | exact tooltip shown | date | tester |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `v2.15.10` | [35884558791](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/35884558791) | yes: `4d6ae127…f99f8` = `.sha256` asset = GitHub asset digest | yes: window title and `/api/instance` show `2.15.10-s10` | yes: 10 saves listed, slot 0 loaded (Hero Siege was running; read-only checks) | yes: 22 character and 127 Shared Stash items carry exact tooltips (5059 profiles); Dice targets ready | 2026-09-23 | Claude Code, for the owner |
 
 ## Infinite Vault deletion (2026-09-22)
 
