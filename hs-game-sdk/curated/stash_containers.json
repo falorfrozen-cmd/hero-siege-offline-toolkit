@@ -1,0 +1,42 @@
+{
+  "$schema_note": "Hand-verified game knowledge, NOT mechanically extracted from Hero_Siege.exe/data.win: these Controller_obj variable names cannot be recovered by any extractor because the executable carries no member names for them, only found live, by content search. No generator produces this file or reads it; see docs/RUNTIME_DATA_MODELS.md section '## 5. Stash Special Tabs & the Crafting Route' for the full write-up and ForgePact issue #14 (ForgePact/docs/crafting-materials-research.md) for the research.",
+  "controller_object": {
+    "name": "Controller_obj",
+    "index": 984
+  },
+  "stash_map": {
+    "variable": "stashInventoryMap",
+    "kind": "ds_map",
+    "owner": 9,
+    "getter": "gml_Script_GetItemMap"
+  },
+  "special_tabs": {
+    "materials": {
+      "variable": "stashMaterialTab",
+      "item_class": 14,
+      "cell_path": "[x][y]"
+    },
+    "socketable": {
+      "variable": "stashSocketItemSlot",
+      "item_class": 15,
+      "cell_path": "[row][0][0]"
+    }
+  },
+  "cell": {
+    "fingerprint_member": "nodeFingerprint"
+  },
+  "fingerprint_format": "0-0-<n>-<class>",
+  "measured": {
+    "date": "2026-09-24",
+    "session": "Live 1i",
+    "launches": 1,
+    "cases": [
+      "one Materials-tab entry the bag stacks (Greater Unstable Dust, class 14, b=51)",
+      "one Socketable stack of 10 (Pristine Ruby, class 15, b=51)"
+    ]
+  },
+  "sources": [
+    { "file": "ForgePact/docs/crafting-materials-research.md", "section": "### Phase 1i results" },
+    { "file": "docs/RUNTIME_DATA_MODELS.md", "section": "## 5. Stash Special Tabs & the Crafting Route" }
+  ]
+}

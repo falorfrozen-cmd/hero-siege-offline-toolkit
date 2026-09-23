@@ -154,3 +154,131 @@ returns `AlreadyInstalled` and leaves the saved original alone, so forwarding
 through it can never re-enter the hook. See
 [`docs/submodules/hs-game-sdk/instructions.md`](submodules/hs-game-sdk/instructions.md)
 for the full semantics.
+
+---
+
+## 5. Stash Special Tabs & the Crafting Route
+
+Source: ForgePact issue #14 (`ForgePact/docs/crafting-materials-research.md`,
+"RD" below). Facts come from one launch per research session, on
+representative cases (one Materials-tab entry the bag stacks, one Socketable
+stack of 10), on the Season 10 build of 2026-09-22..24. **M** marks a fact
+measured live; **R** marks a static Ghidra reading, paraphrased in RD's own
+words per `AGENTS.md` § "Legal: Decompiled Output Never Reaches Any Origin" -
+never the decompiled text itself.
+
+### The stash map
+
+The stash map lives on `Controller_obj` (`HeroSiege::Objects::GameObject`,
+index `984`) as `stashInventoryMap`. M: a content search matched
+`stashInventoryMap (reference)` against the map's own text, and `GetItemMap(9)`
+returned the same map by name with self `Console_Save_obj` (RD `### Phase 1i
+results`). R, a static reading, not measured: `GetItemMap` answers owner `0`
+with `New_Inventory_Data_obj.localItemMap` and owner `9` with a `ds_map`
+variable of `Controller_obj` (RD `### Phase 1h instrument`). The map's
+`ds_map` index is per launch, so compare it as an index only, never as an
+identity (RD `### Phase 1e results`, `### Phase 1f results`, `### Phase 1i
+results`).
+
+The first `GetItemMap(9)` call of a launch comes at the stash's first open
+(RD `### Phase 1d results`, `### Phase 1e results`); by name before any open
+it still returns the whole map, counts equal to the save file (RD `### Phase
+1f results`). The game edits the map in place, following a hand move and
+dropping the entry on a whole-stack move; a by-name `GridRemoveItem` alone
+leaves the map entry behind (RD `### Phase 1e results`). Map keys read as
+`0-0-<n>-<class>`; values are item structs.
+
+### Where the special tabs' cells live
+
+M, by content search (RD `### Phase 1i results`):
+
+- `stashMaterialTab` is a two-level `[x][y]` array.
+- `stashSocketItemSlot` is an array of rows, each a 1x1 cell array.
+- A cell keeps its item's fingerprint in `nodeFingerprint`, the same key the
+  stash map uses.
+
+R, a static reading, not measured: the executable holds no variable names for
+these containers, so they could only be found live, by content (RD `### Phase
+1h instrument`); a cell holds either an item struct or GameMaker's own "no
+value" sentinel; `SaveStash` and `GridRemoveItem` both read a cell's
+`nodeFingerprint`; the ordinary (non-special) tabs form one `[tab][x][y]`
+array whose variable name has not been found (RD `### Phase 1h instrument`).
+
+### The item
+
+M: `GetItemFromFingerprint(<fingerprint>, 9)` with the stash closed, self
+`Console_Save_obj`, returns the item struct (`itemType=real:14` for the
+Materials case) (RD `### Phase 1i results`). `itemDefinitionStruct.b` is the
+base item id (Unstable Dust `50`, Greater Unstable Dust `51`); § 2's `o` field
+is the stack count on this item, as on any stackable item - see § 2, not
+restated here. `hs-game-sdk`'s `ItemType.SOCKETABLE` = 15 names the
+Socketable case's class; that value is cited, not itself measured here (RD
+`### Phase 1e results`, `### Phase 1i results`).
+
+### `SaveStash` and the save invariant
+
+M: one `SaveStash` call at each stash close, self `Console_Save_obj`, no
+argument (RD `### Phase 1e results`, `### Phase 1f results`). A healthy save
+makes one `CreateItemSaveStruct` call per item (RD `### Phase 1h results`).
+
+R, a static reading: for each anchor cell, `SaveStash` looks the fingerprint
+up in map `9` and passes the result to `CreateItemSaveStruct` without
+checking whether the lookup came back with GameMaker's own "no value"
+sentinel (RD `### Phase 1h instrument`).
+
+**Invariant, measured twice, in two launches:** after a take that removed the
+map entry but left the stash cell in place, the game's own save at the next
+stash close ended the game (RD `### Phase 1h results`). A complete by-name
+take (map step and `GridRemoveItem` on the cell, in the same take) avoided
+the fault: each by-name `SaveStash` after it returned with one
+`CreateItemSaveStruct` call fewer, and the owner's own stash close afterward
+kept the game running and wrote a file without the taken items - measured in
+one launch (RD `### Phase 1i results`). A by-name `SaveStash` (self
+`Console_Save_obj`, no argument, stash closed) returned but wrote no file in
+that same launch, making 1627 `CreateItemSaveStruct` calls against the 1993
+the owner's own close made - a gap RD tracks as its own open lead, not
+restated here.
+
+### The take calls
+
+M, with the call shapes as supplied (RD `### Phase 1i results`):
+
+- Stacked case: `InventoryGridCanAddToStack` → `InventoryGridAddToStack`
+  (`success=true`) → `RemoveItemFromMap` on map `9` → `GridRemoveItem` on
+  `Controller_obj.stashMaterialTab` (`true`).
+- No-stack case: `InventoryGridCanAddToStack` returns undefined, then
+  `GetItemPreferredGrid(1, item)` returns a struct with a `gridBits` member
+  and a grid array, `GridAddItem` places the item in that grid
+  (`success=true`), `ChangeItemOwner` reassigns it to the bag, then
+  `GridRemoveItem` clears `Controller_obj.stashSocketItemSlot`'s cell
+  (`true`).
+
+`inventorySocketGrid` (on `New_Inventory_Data_obj`) holds the bag's
+Socketable tab; that it is the same array `GetItemPreferredGrid` returns is a
+match on shape only, not established as identity (RD `### Phase 1i
+results`). R, a static reading: `GridAddItem`'s last two arguments are
+optional and it touches no map; `GridRemoveItem` sets every matching cell to
+undefined and returns `true` if it matched any (RD `### Phase 1h instrument`,
+`### Phase 1i instrument`).
+
+### The recipe amount and the craft route
+
+R, a static reading: a recipe's input amounts are stored encrypted and
+decoded by `PilipaliDecrypt`, then compared against a `CountInventoryItem`
+count (RD `### Phase 1h instrument`). M: at the craft press, inside
+`CraftFindRecipeItems`, `PilipaliDecrypt` returned the recipe's amount (5),
+matching the owner's own figure, beside `CountInventoryItem`'s stock count
+(155) (RD `### Phase 1i results`). `CraftFindRecipeItems` runs once at the
+press and returns before `DoCraftResult` starts; `DoCraftResult` encloses the
+consume and the production of a one-unit craft in a single call (RD
+`### Phase 1g results`). A multi-unit craft was not observed.
+
+### SDK names and the curated entry
+
+`SaveStashFunc` and `LoadStashFunc` are present in every `hs-game-sdk`
+binding (bare names, not `gml_Script_`-prefixed) - see RD `### Phase 1h rows`
+for the indices; neither is a call target here. The container names above
+(`stashInventoryMap`, `stashMaterialTab`, `stashSocketItemSlot`,
+`nodeFingerprint`) cannot be produced by any generator, so they are recorded
+as hand-verified data in `hs-game-sdk/curated/stash_containers.json`, checked
+against this section and the SDK by `tests/test_curated_stash_containers.py`.

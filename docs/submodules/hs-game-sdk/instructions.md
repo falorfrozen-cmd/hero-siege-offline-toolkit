@@ -30,7 +30,8 @@ hs-game-sdk/
 │   ├── rooms.json              # 306 Room indexes and names
 │   └── sounds.json             # 2,718 Sound indexes and names
 ├── curated/                    # Hand-verified game knowledge (NOT gitignored - tracked)
-│   └── satanic_zone.json       # Satanic Zone buff/debuff ids/names/descriptions + Controller_obj var names
+│   ├── satanic_zone.json       # Satanic Zone buff/debuff ids/names/descriptions + Controller_obj var names
+│   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
 ├── python/                     # Python SDK package
 │   ├── hs_game_sdk/
 │   │   ├── objects.py          # GameObject enum & index maps
@@ -81,7 +82,10 @@ and IS tracked in git, generated into the same three language targets by a small
 `extract_and_generate_sdk.py`'s pipeline since it has nothing to extract from a binary). `curated/`
 is the pattern to extend for any future hand-verified, non-mechanically-extracted domain knowledge a
 submodule needs to share - see `ForgePact/docs/satanic-zone-mods-research.md` for how `satanic_zone.json`
-came to exist.
+came to exist. Not every `curated/*.json` file is generated into the same three language targets:
+`stash_containers.json` (ForgePact issue #14's stash and Crafting Cube container names, see
+`docs/RUNTIME_DATA_MODELS.md` § 5) is data-only, with no generator and no consumer yet, checked
+against the SDK and that doc section by `tests/test_curated_stash_containers.py` instead.
 
 ---
 
@@ -308,6 +312,7 @@ contributor can be assumed to have:
 | `test_extractor_layout.py` | nothing (builds a synthetic `data.win`) | always runs |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
+| `test_curated_stash_containers.py` | nothing (reads the tracked `curated/stash_containers.json`, the SDK and `docs/RUNTIME_DATA_MODELS.md`) | always runs |
 
 `test_extractor_layout.py` is how the OBJT offsets stay verifiable without the
 game: it writes a tiny GameMaker IFF file by hand, with each field at its
