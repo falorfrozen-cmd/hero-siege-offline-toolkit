@@ -50,6 +50,32 @@ Story and evidence: [docs/agents/rules-enforced.md](docs/agents/rules-enforced.m
 where `/workorder`'s budgets and tiers come from:
 [docs/agents/workorder-calibration.md](docs/agents/workorder-calibration.md)
 
+## Shared Agent Tooling
+
+So that work from different contributors meets the same bar, the repository
+carries the tooling rather than leaving it to each machine. Claude Code picks
+up all of it automatically. Other agents do not, so read the files named here
+directly when a task calls for them:
+
+- **Frontend and motion skills** in `.claude/skills/` (vendored from
+  `emilkowalski/skill`, MIT, see `.claude/skills/THIRD_PARTY.md`). Before you
+  build or review UI or animation in `hub/`, `HSCraftSim/` or
+  `HS-Offline-Tracker/src`, read the matching `SKILL.md`: `animate`,
+  `review-animations`, `improve-animations`, `find-animation-opportunities`,
+  `emil-design-eng`, `apple-design`, `mobile-native`, `pick-ui-library`,
+  `prototype`, `animation-vocabulary`, `ask-sonner`.
+- **MCP servers** in `.mcp.json`: `tauri-hub`, `hs-drive`, `context7`, `github`
+  and `playwright`. Use `playwright` to drive and screenshot a browser-based
+  frontend, the same way `tauri-hub` drives the hub.
+- **Plugins**: `impeccable` (the frontend design audit and polish skill), the
+  `taste-skill` design skills and `claude-code-setup`, enabled for the project
+  in `.claude/settings.json`. Claude Code offers to install them the first time
+  a contributor trusts the folder. `impeccable` also adds a design-detector hook
+  that runs after edits to UI files; set `IMPECCABLE_HOOK_DISABLED=1` in your
+  environment to switch it off for yourself.
+
+`.claude/README.md` describes each of these.
+
 ## Offer `/workorder` When the Work Has Shape, and Respect "Plan Only"
 
 `/workorder` is user-invoked only. The skill sets `disable-model-invocation:
@@ -130,6 +156,38 @@ practice is what keeps the AGPL-3.0 "original work" claim in `ForgePact/CREDITS.
 true. `.gitignore` also excludes common decompiler artifact paths as a mechanical
 backstop; extend it rather than working around it if a new tool produces a new
 artifact type.
+
+## Check for a Named Ghidra Project Before Researching a Game Mechanism
+
+Without a decompiler, a question about how a game script behaves — what it is
+really called, what arguments and `self` it wants, what it leaves behind — can
+only be answered by guessing, building and asking the owner for a live session.
+Each guess costs a whole round. Reading the script's body locally usually
+answers the question before the first build, so development without it is much
+slower. Before planning research into an unknown game mechanism, check whether
+this machine has a named Ghidra project, and say what you found.
+
+- **If it is present, give its paths** in the plan or report: the Ghidra install
+  (conventionally `%USERPROFILE%\tools\ghidra_<version>_PUBLIC`, launched
+  headless through `support\analyzeHeadless.bat`) and the project
+  (conventionally `%USERPROFILE%\ghidra_projects\HeroSiege`, program
+  `Hero_Siege.exe`). Use them, and keep what they show local, as the Legal
+  section above requires.
+- **If it is not present, offer the owner two options** and let them choose:
+  1. **Set up Ghidra first (recommended).** Install a JDK 21 and Ghidra; run
+     `citrace symdump` in the research build to write `bp_ipc\symbols.csv`;
+     then import the exe headless with `-noanalysis` and
+     `ForgePact/tools/ghidra/ImportSymbols.java` as its post-script, as that
+     script's header describes. Downloads and the game launch need the owner's
+     go-ahead.
+  2. **Continue without decompilation (not recommended).** Every mechanism
+     question then has to be settled by live measurement, one round each.
+
+Two things about the setup are not visible from the script. The headless
+launcher cannot take a path containing `(x86)`, so import a byte-identical copy
+of `Hero_Siege.exe` from a plain path. And functions carry the bare script
+names (`SaveStash`, not `gml_Script_SaveStash`), because that is how the CSV
+stores them.
 
 ## Mod Development Workflow: Test Before / After, Then Build to It
 
@@ -543,8 +601,8 @@ Story and evidence: [docs/agents/yytoolkit-provenance.md](docs/agents/yytoolkit-
 
 When developing, modifying, testing, or reverse-engineering game logic, hooks, drops, and items across any submodules:
 - Use `hs-game-sdk` (`hs-game-sdk/`) as the central source of truth for GameMaker object indices, script names, room indices, sprite indices, sound indices, stat IDs, proc bundles, and runtime item/stat structs.
-- In **C++** plugins (`ForgePact/plugin`, `HS-Offline-Tracker/aurie-producer`, `hs-stat-forge`), `#include <hs_game_sdk/hs_game_sdk.hpp>` and use strongly-typed definitions from namespace `HeroSiege` (such as `HeroSiege::Objects::GameObject`, `HeroSiege::Scripts::gml_Script_*`, `HeroSiege::Stats::StatId`, and `HeroSiege::YYTK`).
-- In **Python** submodules (`ForgePact/src`, `hero-siege-item-editor`, `HSSaveEditor`, `HS-Offline-Launcher`), import models and constants from `hs_game_sdk` (e.g. `from hs_game_sdk import GameObject, GameScript, StatId, PROC_FAMILIES, ItemDefinitionStruct, ItemStatStruct`).
+- In **C++** plugins (`ForgePact/plugin`, `HS-Offline-Tracker/aurie-producer`, `hs-stat-forge`, `HS-AFK-Expedition/plugin`), `#include <hs_game_sdk/hs_game_sdk.hpp>` and use strongly-typed definitions from namespace `HeroSiege` (such as `HeroSiege::Objects::GameObject`, `HeroSiege::Scripts::gml_Script_*`, `HeroSiege::Stats::StatId`, and `HeroSiege::YYTK`).
+- In **Python** submodules (`ForgePact/src`, `hero-siege-item-editor`, `HSSaveEditor`, `HS-Offline-Launcher`, `HS-AFK-Expedition/tools`), import models and constants from `hs_game_sdk` (e.g. `from hs_game_sdk import GameObject, GameScript, StatId, PROC_FAMILIES, ItemDefinitionStruct, ItemStatStruct`).
 - In **TypeScript / Web** submodules (`HSCraftSim`, `HS-Offline-Tracker/src`), import from `@hero-siege/sdk`.
 - Avoid declaring raw string literals or magic numbers for game scripts, asset indices, object types, and stat keys when equivalent constants exist in `hs-game-sdk`.
 - If game updates shift asset or script indices, regenerate the SDK bindings using `tools/extract_and_generate_sdk.py`.
