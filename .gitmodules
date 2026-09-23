@@ -28,3 +28,6 @@
 [submodule "HSCraftSim"]
 	path = HSCraftSim
 	url = https://github.com/falorfrozen-cmd/HSCraftSim.git
+[submodule "HS-AFK-Expedition"]
+	path = HS-AFK-Expedition
+	url = https://github.com/falorfrozen-cmd/HS-AFK-Expedition.git

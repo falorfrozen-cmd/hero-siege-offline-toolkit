@@ -483,3 +483,14 @@ scope depth on exception. Keep mapping version/layout identical in both builds.
 AFK's C++ rewards smoke checks defaults, bounds, nesting, thread isolation,
 exception restoration and published bases. Native MF positive control requires
 the query to reach StatMagicFind, not just return a plausible number.
+
+## Native routine names (AFK FARM, 2026-09-23)
+
+`cpp/include/hs_game_sdk/native_names.hpp` (namespace `HeroSiege::Hooks`) finds
+the one function that references a GML routine's name string: it looks for the
+NUL-terminated name in readable, non-executable sections, then for RIP-relative
+`LEA` references to it inside caller-supplied function bounds. Ambiguous matches
+and names inlined into another script's body are refused. It never calls or
+patches a resolved address, and an offline PE probe runs the same search as the
+live one. AFK FARM's plugin (`HS-AFK-Expedition/plugin`) includes it; ForgePact
+does not.
