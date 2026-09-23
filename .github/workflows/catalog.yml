@@ -77,7 +77,8 @@ jobs:
         run: |
           allowed="ForgePact HSCraftSim HSSaveEditor HSSaveEditor-SteamDeck- \
                    HS-Offline-Launcher HS-Offline-Tracker HS-ValueEditor \
-                   Hs-Offline-Loot-Forge hero-siege-item-editor hs-stat-forge"
+                   Hs-Offline-Loot-Forge hero-siege-item-editor hs-stat-forge \
+                   HS-AFK-Expedition"
           name="${SENDER##*/}"
           [ -n "$name" ] || name="$SUBMODULE"
           for candidate in $allowed; do
