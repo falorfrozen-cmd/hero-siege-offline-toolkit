@@ -1,6 +1,6 @@
 ---
 name: submodule-context
-description: Load a submodule's development guide before working in it. Use whenever a task touches ForgePact/, HS-Offline-Launcher/, HS-Offline-Tracker/, HS-ValueEditor/, HSCraftSim/, HSSaveEditor/, HSSaveEditor-SteamDeck-/, Hs-Offline-Loot-Forge/, hero-siege-item-editor/, hs-stat-forge/, hs-game-sdk/, hub/ or third_party/yytoolkit/ (the modified YYToolkit's patch series, including any question about the distributed YYToolkit.dll or a submodule's yytoolkit-modified/ copy) — before reading their source, planning a change, or answering a question about how one of them works.
+description: Load a submodule's development guide before working in it. Use whenever a task touches ForgePact/, HS-Offline-Launcher/, HS-Offline-Tracker/, HS-ValueEditor/, HSCraftSim/, HSSaveEditor/, HSSaveEditor-SteamDeck-/, Hs-Offline-Loot-Forge/, hero-siege-item-editor/, HS-AFK-Expedition/, hs-stat-forge/, hs-game-sdk/, hub/ or third_party/yytoolkit/ (the modified YYToolkit's patch series, including any question about the distributed YYToolkit.dll or a submodule's yytoolkit-modified/ copy) — before reading their source, planning a change, or answering a question about how one of them works.
 user-invocable: false
 ---
 

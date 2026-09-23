@@ -43,7 +43,8 @@ jobs:
           case "$SUBMODULE" in
             HS-ValueEditor|HSSaveEditor-SteamDeck-|Hs-Offline-Loot-Forge| \
             HS-Offline-Launcher|hs-stat-forge|HSSaveEditor| \
-            HS-Offline-Tracker|hero-siege-item-editor|ForgePact|HSCraftSim)
+            HS-Offline-Tracker|hero-siege-item-editor|ForgePact|HSCraftSim| \
+            HS-AFK-Expedition)
               ;;
             *)
               echo "::error::Unknown submodule path in payload: '$SUBMODULE'"

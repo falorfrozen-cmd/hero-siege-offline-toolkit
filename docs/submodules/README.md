@@ -17,6 +17,7 @@ This directory serves as the centralized repository for development, architectur
 | **HS Steam Deck Save Editor** | `HSSaveEditor-SteamDeck-/` | [HSSaveEditor-SteamDeck- Instructions](HSSaveEditor-SteamDeck-/instructions.md) | Ready | Browser-based save editor tailored for Steam Deck handheld users. |
 | **HS Offline Loot Forge** | `Hs-Offline-Loot-Forge/` | [Hs-Offline-Loot-Forge Instructions](Hs-Offline-Loot-Forge/instructions.md) | Ready | Runtime loot table adjustments and targeted farming assistant. |
 | **Hero Siege Item Editor** | `hero-siege-item-editor/` | [hero-siege-item-editor Instructions](hero-siege-item-editor/instructions.md) | Ready | Item creator, stash editor, and inventory customizer. |
+| **AFK FARM** | `HS-AFK-Expedition/` | [HS-AFK-Expedition Instructions](HS-AFK-Expedition/instructions.md) | Ready | Timed offline expeditions: calibrated farming pace, native reward delivery through an Aurie plugin, Infinite Vault transfers. |
 | **HS Offline Stat Forge** | `hs-stat-forge/` | [hs-stat-forge Instructions](hs-stat-forge/instructions.md) | Ready | Runtime character stat tuner and monster density modifier. |
 | **HS Game SDK** | `hs-game-sdk/` | [HS Game SDK Instructions](hs-game-sdk/instructions.md) | Ready | Centralized cross-language SDK and metadata library for GameMaker objects, scripts, assets, and runtime models. |
 | **Hero Siege Codex** | Release-only *(no submodule)* | [Codex Integration](../tools/hero-siege-codex.md) | Ready | Offline item, class, creature and world reference archive. |
