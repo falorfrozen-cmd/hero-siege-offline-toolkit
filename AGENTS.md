@@ -50,6 +50,32 @@ Story and evidence: [docs/agents/rules-enforced.md](docs/agents/rules-enforced.m
 where `/workorder`'s budgets and tiers come from:
 [docs/agents/workorder-calibration.md](docs/agents/workorder-calibration.md)
 
+## Shared Agent Tooling
+
+So that work from different contributors meets the same bar, the repository
+carries the tooling rather than leaving it to each machine. Claude Code picks
+up all of it automatically. Other agents do not, so read the files named here
+directly when a task calls for them:
+
+- **Frontend and motion skills** in `.claude/skills/` (vendored from
+  `emilkowalski/skill`, MIT, see `.claude/skills/THIRD_PARTY.md`). Before you
+  build or review UI or animation in `hub/`, `HSCraftSim/` or
+  `HS-Offline-Tracker/src`, read the matching `SKILL.md`: `animate`,
+  `review-animations`, `improve-animations`, `find-animation-opportunities`,
+  `emil-design-eng`, `apple-design`, `mobile-native`, `pick-ui-library`,
+  `prototype`, `animation-vocabulary`, `ask-sonner`.
+- **MCP servers** in `.mcp.json`: `tauri-hub`, `hs-drive`, `context7`, `github`
+  and `playwright`. Use `playwright` to drive and screenshot a browser-based
+  frontend, the same way `tauri-hub` drives the hub.
+- **Plugins**: `impeccable` (the frontend design audit and polish skill), the
+  `taste-skill` design skills and `claude-code-setup`, enabled for the project
+  in `.claude/settings.json`. Claude Code offers to install them the first time
+  a contributor trusts the folder. `impeccable` also adds a design-detector hook
+  that runs after edits to UI files; set `IMPECCABLE_HOOK_DISABLED=1` in your
+  environment to switch it off for yourself.
+
+`.claude/README.md` describes each of these.
+
 ## Offer `/workorder` When the Work Has Shape, and Respect "Plan Only"
 
 `/workorder` is user-invoked only. The skill sets `disable-model-invocation:

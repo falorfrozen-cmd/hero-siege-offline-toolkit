@@ -269,6 +269,21 @@ reproducing expression?
 | `workorder` | user-only (`/workorder`) | drives plan → implement → verify across the phase agents, routing defects back to the phase that caused them |
 | `submodule-context` | Claude-only | loads the right `docs/submodules/<name>/instructions.md` before work starts |
 
+The remaining eleven directories are vendored, unmodified, from
+[`emilkowalski/skill`](https://github.com/emilkowalski/skill) (MIT) so every
+contributor's agent works from the same frontend and motion guidance —
+`skills/THIRD_PARTY.md` has the pinned commit and how to update them. Claude
+Code discovers them on its own; `AGENTS.md` § "Shared Agent Tooling" points
+other agents at them.
+
+| Skill | Invocation | Use for |
+|---|---|---|
+| `animate` | either | building a web animation |
+| `review-animations`, `prototype`, `pick-ui-library` | user-only | critiquing motion code, several UI variants, choosing a frontend library |
+| `improve-animations`, `find-animation-opportunities` | either | read-only motion audits of a codebase or UI |
+| `emil-design-eng`, `apple-design`, `mobile-native` | either | UI polish, gesture/spring design, mobile web feel |
+| `animation-vocabulary`, `ask-sonner` | either | naming a motion effect, the Sonner toast library |
+
 `catalog-rebuild` is user-only because it has side effects and needs a signing
 key that is deliberately not in this repository. `workorder` is user-only
 because it spawns at least three agents and is the wrong tool for a one-line
@@ -650,6 +665,30 @@ nested guard spans, a function inside and outside a guard, `--find`, `--at`)
 plus a smoke test against the real `ModuleMain.cpp`, skipped when the file is
 absent — as it is in a worktree with the ForgePact submodule uninitialized.
 
+## Plugins — `settings.json`
+
+`settings.json` registers three marketplaces (`extraKnownMarketplaces`) and
+enables one plugin from each (`enabledPlugins`). Claude Code offers to install
+them when a contributor trusts the repository.
+
+| Plugin | Source | For |
+|---|---|---|
+| `impeccable` | `pbakaus/impeccable` | frontend design: `/impeccable audit`, `critique`, `polish` and the rest, plus a design-detector hook |
+| `taste-skill` | `Leonxlnx/taste-skill` | design-direction skills (minimalist, brutalist, redesign and more) |
+| `claude-code-setup` | `anthropics/claude-plugins-official` | recommending Claude Code automations for this codebase |
+
+`impeccable` ships its own hooks, which run alongside `post_tool_use.py` above
+and do not replace it. A `PostToolUse` hook scans each edited UI file
+(`.tsx .jsx .html .vue .svelte .astro .css .scss .sass .less .ts .js`), and a
+`Stop` hook makes one deeper pass over the files touched in the session. Both
+only report findings; neither blocks an edit. The first run downloads a signed
+engine binary from the project's GitHub releases and checks its SHA-256.
+Telemetry is one anonymous ping during a design-direction round and nothing
+else. `DO_NOT_TRACK=1` turns it off, `IMPECCABLE_NO_UPDATE_CHECK=1` turns off
+the update check, and `IMPECCABLE_HOOK_DISABLED=1` turns off the hook for one
+contributor. `/impeccable hooks off` turns it off for everyone, because it writes
+the shared `.impeccable/config.json`.
+
 ## MCP servers — `../.mcp.json`
 
 | Server | For |
@@ -658,6 +697,7 @@ absent — as it is in a worktree with the ForgePact submodule uninitialized.
 | `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close) — a local stdio server in `tools/hs_drive_mcp/` |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
 | `github` | releases, dispatches and pointer PRs across the eleven repositories |
+| `playwright` | driving a browser — the web submodules (`HSCraftSim`, `HS-Offline-Tracker`'s frontend) the way `tauri-hub` drives the hub; pinned to `@playwright/mcp@0.0.82` |
 
 `tauri-hub` is pinned to `@hypothesi/tauri-mcp-server@0.13.0` to match
 `tauri-plugin-mcp-bridge = "0.13"` in `hub/src-tauri/Cargo.toml`. Keep those two
