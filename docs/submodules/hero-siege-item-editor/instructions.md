@@ -387,4 +387,17 @@ category (`vault_meta` marks those with `afk: true`); below Satanic is deleted.
 Tests: `VaultStackTests` (2) and `AfkDismantleTests` (2) in `test_vault_afk_qol.py`.
 The full suite shows the same 23 existing failures before and after (448 tests).
 
-Upstream pull request for 2.15.5–2.15.9: falorfrozen-cmd/hero-siege-item-editor#6.
+## Dismantle by rarity (2.15.10, 2026-09-23)
+
+**DISMANTLE BY RARITY…** in the category menu of an AFK expedition category runs a
+stash's DISMANTLE on every item of the ticked rarity groups (`VAULT_RARITY_GROUPS`,
+the CLEAN UP BY RARITY grouping). `POST /api/vault/dismantle` takes `groups` instead
+of `pageIndex` (never both); the preview returns per-group counts and `emptyStashes`,
+and a different choice needs its own review. With `removeEmptied`,
+`rework_items(remove_empty_stashes=True)` removes every empty stash of the category in
+the same transaction (also ones already empty), keeping the lowest-numbered one.
+Tests: `AfkDismantleTests` (4). Browser check on a copy of a real Vault: Set + Satanic,
+3,164 items -> 15,725 Satanic Crystal + 2,535 random fragments, 49 empty stashes
+removed, 17 Heroic items kept. Full suite: 450 tests, the same 23 existing failures.
+
+Upstream pull request for 2.15.5–2.15.10: falorfrozen-cmd/hero-siege-item-editor#6.
