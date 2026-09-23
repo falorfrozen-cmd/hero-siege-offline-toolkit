@@ -516,7 +516,7 @@ the Workflow tool requires, so don't ask again. It carried
 Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
-                   submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings } })
+                   submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state } })
 ```
 
 `reviewers`/`submodules` are as in Step 3. `researchHeadings` names the
@@ -535,11 +535,26 @@ and nothing here passes it: it re-points the git commands agents are handed,
 never where `Edit` lands, so it cannot make another checkout workable — Step
 0.25 stops that case before it gets here.
 
+`state` is the plan's `## State` section exactly as `py -3
+.claude/skills/workorder/section.py <plan> 'State'` prints it. The script
+merges each round's `round:`/`phase:`/`reviewers:`/`open defects:` into it
+and hands the scribe the whole block, so the lines only the driver writes —
+`gates:`, `round base:`, `agents:`, `decisions in force:` and any other —
+are pasted back verbatim rather than left to the scribe to preserve. On
+2026-09-23 a scribe handed only the four computed lines replaced the whole
+block with them in several workorders, and the next verifier, reading no
+`gates:`, reported gated criteria pending instead of running them.
+
 It loops implement → verify+reviewers → route as code (same 3-round cap,
 scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,
-`PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED` or `CAP`. One launch may cover
-several rounds; `PLAN-DEFECT` means relaunching after the replan. Replans,
-consultations, human questions and the step 5 report stay with the driver;
+`PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`, `STATE-LOST` or `CAP`. One
+launch may cover several rounds; `PLAN-DEFECT` means relaunching after the
+replan. `STATE-LOST` means the scribe's own before/after report shows a
+State line gone that the round did not replace; the launch stops there, before
+a verifier can read the damaged block. Paste the result's `state` back under
+`## State` (its `lost` lists what went), then act on its `then` exactly as if
+that had been the outcome — `continue` means relaunch at the State's `round:`.
+Replans, consultations, human questions and the step 5 report stay with the driver;
 every re-entry inside is a fresh spawn (no resume) — measured no worse than a
 resumed implementer. The scribe runs as the restricted `scribe` agent type
 (`Read`, `Edit` only), never the unrestricted `workflow-subagent` every other

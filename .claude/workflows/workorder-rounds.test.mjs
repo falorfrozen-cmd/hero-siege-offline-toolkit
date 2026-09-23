@@ -519,3 +519,134 @@ test('the implementer runs at opus unless triage says otherwise', async () => {
   await run({ ...BASE, implementerModel: undefined }, (label, prompt, opts) => { models[label] = opts && opts.model; return standard()(label) })
   assert.equal(models['implementer:r0'], 'opus')
 })
+
+// --- 2e: State is merged, never replaced ------------------------------------
+//
+// Pinned 2026-09-23: handed four lines and told to replace them, the haiku
+// scribe replaced the whole '## State' block with those four, so the next
+// round's verifier read no `gates:` and reported gated criteria pending
+// instead of running them. These stubs *apply* the scribe's instructions to an
+// in-memory plan, so what survives a Record pass is measured, not assumed.
+const PLAN_STATE = [
+  'round: 0        phase: plan',
+  'gates: `build: complete` (set 2026-09-23); `live1: complete`',
+  'round base: round 0 = hub `f76ef98`, ForgePact `cb602e5`',
+  'agents: planner-tier=opus',
+  'reviewers: <none yet>',
+  'open defects: none',
+  'decisions in force: D1, D2 (context file, `### Decisions`)',
+].join('\n')
+const DRIVER_OWNED = /^(gates|round base|agents|decisions in force):/
+const planFile = state => `---\nslug: zz\n---\n\n## State\n${state}\n\n## Goal\ng\n`
+const stateOf = plan => plan.split('## State\n')[1].split('\n\n')[0]
+const between = (s, a, b) => { const i = s.indexOf(a); return i < 0 ? null : s.slice(i + a.length, s.indexOf(b, i + a.length)) }
+// A faithful scribe: pastes the whole block when handed one, else edits each
+// keyed line in place (adding a key the State lacks at its end).
+const faithfulScribe = file => prompt => {
+  const before = stateOf(file.plan)
+  const whole = between(prompt, 'already in it, verbatim:\n\n', '\n\nBefore your first Edit')
+  let after
+  if (whole !== null) after = whole
+  else {
+    const lines = before.split('\n')
+    for (const u of between(prompt, 'to exactly these lines:\n\n', '\n\nUse one Edit').split('\n')) {
+      const key = u.slice(0, u.indexOf(':') + 1)
+      const i = lines.findIndex(l => l.startsWith(key))
+      if (i >= 0) lines[i] = u; else lines.push(u)
+    }
+    after = lines.join('\n')
+  }
+  file.plan = file.plan.replace(`## State\n${before}\n`, `## State\n${after}\n`)
+  return { written: true, note: '', state_before: before, state_after: after }
+}
+// The measured 2026-09-23 behaviour: the lines this round computed replace the
+// whole block, and nothing else is kept.
+const incidentScribe = file => prompt => {
+  const before = stateOf(file.plan)
+  const keys = [...(between(prompt, "this round's ", ' values merged') ?? '').matchAll(/`([^`]+)`/g)].map(m => m[1])
+  const handed = between(prompt, 'to exactly these lines:\n\n', '\n\nUse one Edit') ??
+    between(prompt, 'already in it, verbatim:\n\n', '\n\nBefore your first Edit').split('\n')
+      .filter(l => keys.some(k => l.startsWith(k))).join('\n')
+  file.plan = file.plan.replace(`## State\n${before}\n`, `## State\n${handed}\n`)
+  return { written: true, note: '', state_before: before, state_after: handed }
+}
+const withPlan = (file, scribeFn, overrides = {}) => (label, prompt) =>
+  label.startsWith('scribe') ? scribeFn(file)(prompt) : standard(overrides)(label)
+const defectThenPass = () => {
+  let v = 0
+  return () => (v++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] } : PASS)
+}
+
+test('a gates: line survives a Record pass, and the round after it', async () => {
+  const file = { plan: planFile(PLAN_STATE) }
+  const prompts = {}
+  const reply = withPlan(file, faithfulScribe, { verifier: defectThenPass() })
+  const { result } = await run({ ...BASE, state: `## State\n${PLAN_STATE}\n` }, (label, prompt, opts) => { prompts[label] = prompt; return reply(label, prompt, opts) })
+  assert.equal(result.outcome, 'PASS')
+  assert.equal(result.round, 1)
+  const lines = stateOf(file.plan).split('\n')
+  for (const line of PLAN_STATE.split('\n').filter(l => DRIVER_OWNED.test(l))) assert.ok(lines.includes(line), `lost after two Record passes: ${line}`)
+  assert.ok(lines.includes('round: 1') && lines.includes('phase: pass'), lines.join('\n'))
+  assert.ok(!lines.some(l => /phase: plan/.test(l)), 'the combined `round: 0  phase: plan` line is replaced, not kept beside the new one')
+  assert.equal(lines.filter(l => l.startsWith('round:')).length, 1)
+  assert.ok(prompts['scribe:r0'].includes('gates: `build: complete`'), 'the scribe is handed the gates line, not asked to keep it from memory')
+})
+
+test('without args.state the scribe is told one Edit per line, and gates: still survives', async () => {
+  const file = { plan: planFile(PLAN_STATE.replace('round: 0        phase: plan', 'round: 0\nphase: plan')) }
+  const prompts = {}
+  const reply = withPlan(file, faithfulScribe)
+  const { result } = await run(BASE, (label, prompt, opts) => { prompts[label] = prompt; return reply(label, prompt, opts) })
+  assert.equal(result.outcome, 'PASS')
+  assert.match(prompts['scribe:r0'], /one Edit per line/)
+  assert.match(prompts['scribe:r0'], /Never use an old_string spanning several lines/)
+  assert.ok(stateOf(file.plan).split('\n').includes('gates: `build: complete` (set 2026-09-23); `live1: complete`'))
+})
+
+test('a scribe that drops gates: stops the launch as STATE-LOST before the next verifier', async () => {
+  for (const state of [`## State\n${PLAN_STATE}`, undefined]) {
+    const file = { plan: planFile(PLAN_STATE) }
+    const { result, calls } = await run({ ...BASE, state }, withPlan(file, incidentScribe, { verifier: defectThenPass() }))
+    const tag = `args.state ${state ? 'given' : 'absent'}`
+    assert.equal(result.outcome, 'STATE-LOST', tag)
+    assert.equal(result.then, 'continue')
+    assert.ok(result.lost.some(l => l.startsWith('gates:')), JSON.stringify(result.lost))
+    assert.ok(result.lost.some(l => l.startsWith('decisions in force:')), tag)
+    assert.ok(result.state.includes('gates: `build: complete`') && /^round: 1$/m.test(result.state), result.state)
+    assert.ok(!calls.includes('verifier:r1'), 'no verifier may read the damaged block')
+  }
+})
+
+test('control: a faithful scribe on a clean pass reports no STATE-LOST', async () => {
+  const file = { plan: planFile(PLAN_STATE) }
+  const { result } = await run({ ...BASE, state: PLAN_STATE }, withPlan(file, faithfulScribe))
+  assert.equal(result.outcome, 'PASS')
+  assert.equal(result.lost, undefined)
+})
+
+test('the implementer-verdict Record pass keeps reviewers: and open defects:', async () => {
+  const withReviewers = PLAN_STATE.replace('reviewers: <none yet>', 'reviewers: docs-sync-reviewer: blocking')
+    .replace('open defects: none', 'open defects: docs-sync-reviewer: stale README')
+  const blocked = { implementer: { ...DONE, verdict: 'PLAN-DEFECT', evidence: 'ev' } }
+  {
+    const file = { plan: planFile(withReviewers) }
+    const { result } = await run({ ...BASE, state: withReviewers }, withPlan(file, faithfulScribe, blocked))
+    assert.equal(result.outcome, 'PLAN-DEFECT')
+    const lines = stateOf(file.plan).split('\n')
+    assert.ok(lines.includes('phase: blocked'), lines.join('\n'))
+    assert.ok(lines.includes('reviewers: docs-sync-reviewer: blocking') && lines.includes('open defects: docs-sync-reviewer: stale README'), lines.join('\n'))
+  }
+  {
+    // Keeping only round/phase is what phase1c's scribe did on 2026-09-23.
+    const file = { plan: planFile(withReviewers) }
+    const { result } = await run({ ...BASE, state: withReviewers }, withPlan(file, incidentScribe, blocked))
+    assert.equal(result.outcome, 'STATE-LOST')
+    assert.equal(result.then, 'PLAN-DEFECT')
+    assert.ok(result.lost.some(l => l.startsWith('reviewers:')), JSON.stringify(result.lost))
+  }
+})
+
+test('a scribe that could read nothing is not reported as STATE-LOST', async () => {
+  const { result } = await run({ ...BASE, state: PLAN_STATE }, standard({ scribe: { written: false, note: 'no such file', state_before: '', state_after: '' } }))
+  assert.equal(result.outcome, 'PASS')
+})

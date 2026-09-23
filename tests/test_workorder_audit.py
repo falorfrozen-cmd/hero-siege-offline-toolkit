@@ -1554,3 +1554,67 @@ class R17Tests(TempDirMixin, unittest.TestCase):
         b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).subagent("implementer", "implementer:r0", records)
         _, results = b.evaluate()
         self.assertTrue(get_rule(results, "R17").passed)
+
+
+# --------------------------------------------------------------------------
+# R18 scribe-state-preserved
+# --------------------------------------------------------------------------
+
+class R18Tests(TempDirMixin, unittest.TestCase):
+    PLAN = "C:\\repo\\.claude\\workorders\\zz-plan.md"
+    # The phase1d scribe's Edit on 2026-09-23, shortened: the whole block in,
+    # the four computed lines out.
+    OLD_STATE = ("## State\nround: 0        phase: plan\ngates: live1d: run; live1d: recorded\n"
+                 "round base: <none yet>\nagents: planner-tier=fable\nreviewers: <none yet>\n"
+                 "open defects: none\ndecisions in force: none")
+    DROPPED = ("## State\nround: 1\nphase: implement\n"
+               "reviewers: docs-sync-reviewer: clean\nopen defects: none")
+
+    def _scribe(self, *edits, agent_type="scribe"):
+        records = []
+        for i, tool_input in enumerate(edits):
+            records += tool_turn(i * 10, i, "Edit", tool_input, result="The file has been updated.")
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).workflow_agent(
+            "wf_0fbe61d0-6c3", agent_type, "scribe:r0", with_cwd(records))
+        _, results = b.evaluate()
+        return get_rule(results, "R18")
+
+    def test_fail_the_measured_whole_block_replacement(self):
+        r = self._scribe({"file_path": self.PLAN, "old_string": self.OLD_STATE, "new_string": self.DROPPED})
+        self.assertFalse(r.passed)
+        joined = " ".join(r.evidence)
+        for key in ("gates:", "round base:", "agents:", "decisions in force:"):
+            self.assertIn(key, joined)
+        self.assertNotIn("reviewers:", joined)
+        self.assertIn("wf_0fbe61d0-6c3", joined)
+
+    def test_fail_blocked_verdict_dropping_reviewers(self):
+        # phase1c's implementer-verdict scribe: only round/phase were handed over.
+        old = "round: 0\nphase: plan\nreviewers: <none yet>\nopen defects: none"
+        r = self._scribe({"file_path": self.PLAN, "old_string": old, "new_string": "round: 0\nphase: blocked"})
+        self.assertFalse(r.passed)
+        self.assertIn("reviewers:, open defects:", " ".join(r.evidence))
+
+    def test_pass_whole_block_with_every_key_kept(self):
+        kept = self.OLD_STATE.replace("round: 0        phase: plan", "round: 1\nphase: implement")
+        self.assertTrue(self._scribe({"file_path": self.PLAN, "old_string": self.OLD_STATE, "new_string": kept}).passed)
+
+    def test_pass_one_line_edits(self):
+        self.assertTrue(self._scribe(
+            {"file_path": self.PLAN, "old_string": "round: 0", "new_string": "round: 1"},
+            {"file_path": self.PLAN, "old_string": "phase: plan", "new_string": "phase: implement"}).passed)
+
+    def test_log_edits_to_the_context_file_are_not_state(self):
+        ctx = {"file_path": "C:\\repo\\.claude\\workorders\\zz-context.md",
+               "old_string": "## Log\nverifier: PASS", "new_string": "## Log\n### Round 0"}
+        self.assertTrue(self._scribe(ctx).passed)
+
+    def test_other_agents_are_not_held_to_it(self):
+        records = tool_turn(0, 0, "Edit", {"file_path": self.PLAN, "old_string": self.OLD_STATE, "new_string": self.DROPPED})
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).subagent("planner", "planner", records)
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R18").passed)
+
+    def test_state_keys_splits_a_two_key_line(self):
+        self.assertEqual(wa.state_keys("## State\nround: 0        phase: plan\n- note\nround base: x"),
+                         ["round", "phase", "round base"])

@@ -1307,6 +1307,55 @@ def rule_r17_live_operator_scope(session: Session) -> RuleResult:
     return RuleResult("R17", "live-operator-scope", passed=not evidence, evidence=evidence)
 
 
+# R18: measured 2026-09-23 (forgepact-issue-14-phaseA, -phaseA-record,
+# -phase1h; phase1c/phase1d the same week). Handed four State lines to
+# "replace", the haiku scribe used the whole `## State` block as its Edit's
+# old_string and wrote back only those four, so `gates:`, `round base:`,
+# `agents:` and `decisions in force:` vanished and the next verifier reported
+# gated criteria pending instead of running them. `workorder-rounds.js` 2e now
+# hands the scribe the merged block and stops the launch as STATE-LOST when
+# its before/after report shows a dropped line; this rule is the transcript
+# side of the same check -- a scribe Edit to a `-plan.md` whose old_string
+# carries a `key:` entry that its new_string no longer has.
+STATE_KEY_RE = re.compile(r"^([a-z][a-z0-9 _-]*?):(\s|$)", re.IGNORECASE)
+STATE_KEY_SPLIT_RE = re.compile(r"\s{2,}(?=[a-z][a-z0-9 _-]*?:\s)", re.IGNORECASE)
+
+
+def state_keys(text: str) -> list:
+    """The `key:` entries in a State fragment, in order -- one per line, and
+    a hand-written line carrying two (`round: 0        phase: plan`) counts
+    both. Headings and lines with no key are not entries."""
+    keys = []
+    for line in str(text or "").splitlines():
+        line = line.rstrip()
+        if not line.strip() or line.startswith("#") or not STATE_KEY_RE.match(line):
+            continue
+        for seg in STATE_KEY_SPLIT_RE.split(line):
+            m = STATE_KEY_RE.match(seg)
+            if m:
+                keys.append(m.group(1).lower())
+    return keys
+
+
+def rule_r18_scribe_state_preserved(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_subagents(session):
+        if not _is_scribe(agent):
+            continue
+        tag = f"{agent.label} [{agent.workflow_id}]" if agent.workflow_id else agent.label
+        for call in agent.tool_calls:
+            if call.name not in EDIT_TOOLS or call.is_error or call.guard_refused:
+                continue
+            fp = str(call.tool_input.get("file_path", "")).replace("\\", "/")
+            if not fp.lower().endswith("-plan.md") or "old_string" not in call.tool_input:
+                continue
+            new_keys = set(state_keys(call.tool_input.get("new_string", "")))
+            dropped = [k for k in dict.fromkeys(state_keys(call.tool_input.get("old_string", ""))) if k not in new_keys]
+            if dropped:
+                evidence.append(f"{tag} {call.name} dropped State {', '.join(k + ':' for k in dropped)} at {call.ts_start}: {fp}")
+    return RuleResult("R18", "scribe-state-preserved", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -1325,6 +1374,7 @@ ALL_RULES = [
     rule_r15_edit_guard_workaround,
     rule_r16_scribe_scope,
     rule_r17_live_operator_scope,
+    rule_r18_scribe_state_preserved,
 ]
 
 
