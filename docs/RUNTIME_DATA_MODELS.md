@@ -84,10 +84,11 @@ Items in Hero Siege exist in memory as GameMaker Structs (`VALUE_OBJECT`) with t
 **`o` means two things, depending on the item.** On a relic it is the upgrade
 level. On a stackable item, such as a socketable or a crafting material, it is the
 stack count. That was measured live on 2026-09-23 for ForgePact issue #14
-(`ForgePact/docs/crafting-materials-research.md`, `### Phase 1b results`). Every
-move of Ol and Unstable Dust between the stash's special tabs and the bag handed
-the game's own routines an item whose `o` was the stack, or the part of the stack
-being moved. It is also the `data.o` that `tools/stash_tab_counts.py` sums from
+(`ForgePact/docs/crafting-materials-research.md`, `### Phase 1b results`).
+Every observed move of Ol (Socketable tab, both ways) and Unstable Dust (bag to
+Materials tab) between the stash's special tabs and the bag handed the game's own
+routines an item whose `o` was the stack, or the part of the stack being moved;
+the Materials-to-bag leg was not observed. It is also the `data.o` that `tools/stash_tab_counts.py` sums from
 `stash.hss`, where a missing `o` counts as one. So identify the item first
 (rarity tier 16 is a relic) and only then read `o` as one or the other; `o`
 alone does not say which it is.

@@ -101,3 +101,4 @@ Thumbs.db
 .claude/workorders/*-context.md
 .claude/workorders/.rounds/
 .claude/workorders/*.log
+.claude/workorders/*-live-*.md
