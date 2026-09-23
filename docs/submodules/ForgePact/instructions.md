@@ -1,5 +1,173 @@
 # ForgePact Module Development Guide
 
+## Current local population acceptance (2026-09-22)
+
+A source-level read of the game's own monster handling (2026-09-22,
+`ForgePact/docs/population-performance-analysis.md`) settled the open
+performance question: after the queues empty, the remaining 30-80 ms frames at
+4x are the game's per-frame passes over every **living** monster (minimap
+dynamic layer over `Enemy_Parent_obj`, one health-bar instance per monster
+with a Draw GUI event, the monster Draw event, and the 30-frame
+`monsterHandleArray` rebuild in `ActivateDeactivateProps`). Only monsters inside
+the player box step; the game never deactivates monsters. Pacing, admission and
+copy-queue work cannot lower that cost. The recommended direction is to stop
+keeping far packs alive (pack markers plus a rolling spawn radius), with
+GameMaker deactivation of far pass-born packs as a fail-open, opt-in experiment.
+The same day, the analysis' option A shipped locally as **pack markers**:
+`plugin/include/ForgePact/PackMarkers.hpp` keeps one marker per unspawned
+`Enemy_Creator_*` (enumerated once per zone, a 32-marker rotating check per
+frame, births reported by the existing create hooks through `PackMarkerBirth`)
+and draws them from a `DrawMinimapDynamic` hook for the `Enemy_Parent_obj`
+family call only, reusing the call's own placement arguments (x' = 32 +
+x*args[2], y' = 32 + (y+args[7])*args[3], sprite args[4]) so they land in the
+game's minimap surface. `reveal packs` / the panel's `map_reveal_packs` now mean
+the markers; the real spawn pass is `reveal spawn` / `map_reveal_spawn`, off by
+default (`m_Packs{ false }`), with its whole admission/capacity machinery
+unchanged behind it. `BeWakeObject` now activates first and walks only if the
+count changed (`g_BeWakeSnapshot`), since the game never deactivates monsters.
+`packmarks stat|style|alpha|scale|ring|radius|list` (a player command: cosmetics
+and counters only) tunes the look live. RunCommand's `else if` chain is at MSVC's
+C1061 nesting limit, so `packmarks`, `miningore` and `minerhelm` are standalone
+early returns (main's `test_menu_probe_contract` pins the chain's length). Tests:
+`test_pack_markers_behavior.py` (real class against a fake runner), updated
+`beacon_wake_harness.cpp`, `test_map_reveal_contract.py`.
+MEASURED 2026-09-22 in-game: the enemy-family layer call arrives about once a
+second, not per frame (854 calls in ~12 minutes), so marker cost is one
+draw_circle per unspawned pack per call; the sprite path (icon sheet passed as
+args[4], subimages from the rarity table) drew nothing visible while the
+primitives landed exactly on the packs in the map screen, so the default is now
+dots by kind (`Style::ring = true`) and the sprite path is `packmarks ring 0`.
+Later the same day the look became PNG icons: `tools/make_packmark_icons.py`
+embeds the reviewed PNG files in `assets/packmarks/` into
+`plugin/include/ForgePact/PackMarkerIcons.hpp` (seven 16x16 PNGs as
+byte arrays); `PackMarkerIconPath` in ModuleMain writes each to
+`bp_ipc\packmarks\<kind>.png` only when absent (a player's own file wins) and
+hands GameMaker the path relative to its working directory, which its file
+sandbox accepts; `PackMarkers::LoadIcons` calls `sprite_add` once per kind and
+re-centres a foreign size with `sprite_set_offset`. Markers closer than
+`Style::clusterPx` (96 world px, so density copies) collapse into one icon with
+a `draw_text` count badge in `global.font_smallest`; the rarest kind names the
+cluster. Dots by kind stay the fallback. `plugin_build/build.bat` now passes
+`/bigobj` (the research TU hit C1128), pinned in `test_build_bat_contract.py`.
+Still open: the marker cost at 4x has not been measured as frame time, only as
+call counts; the icon sandbox path is verified on the 2026-09-22 build only.
+
+The local v4 candidate follows an inspected v3 player run, not a controlled
+same-map benchmark: last scheduled work 7.694s, peak frame 232.430ms, peak outer
+create 89.971ms, 95 tracked creators observed beginning births, zero remaining
+tracked unconfirmed identities. No full-pack census or FPS gain is established.
+Installed `data.win` confirms object 3259 = `objZoneGenV2`; executable code/data
+sections match the private analysis image. New preset instances are immediately
+used; do not enqueue their creates or replay generator events as an assumed
+safe optimization.
+
+V4 shares `CreationCallerInfo` only between pre-native guards in one existing
+create-hook invocation. The actual production-body fixture measured 2000 -> 1000
+caller-object reads per 1000 births, preserving nested chains/all-off paths.
+No new player hook, watcher, thread, density reduction or generation change.
+The profile adds nine generation stages (22 timings total), beginning before
+preset-data generation or at ready creators as fallback. `captureStart` records
+the trigger; the 90-second deadline cannot be reset/restarted. New summaries
+retain initial work with unknown starting room/CPU snapshot. Verify attachment
+and runtime hits; do not sum overlapping inclusive wall times. Player binaries
+must omit diagnostic hooks/strings. Live performance acceptance remains open.
+See `ForgePact/docs/population-capacity.md`, `test_population_birth.py`,
+`test_population_profile.py`, and `test_population_profile_summary.py`.
+
+The next local v3 candidate follows the v2 player run's missed target
+(last scheduling progress 10.807s, peak frame 309.311ms, outer creation 123.579ms,
+29 unconfirmed groups). Density selection now reuses a distance heap instead of
+scanning every remaining job for each copy; the 4096-placement/32-selection
+fixture measured 261152 coordinate reads before and 8192 after. A retry deadline
+heap preserves waiting contexts and exact density-copy completion bits.
+Existing creation hooks now observe successful native enemy births from tracked
+creators and resolve their waiting records separately as `observedNativeBirthPacks`.
+Numeric IDs are captured before native creation, with generation and full-map
+identity checks. This means a group started, not that it fully populated.
+Unknown outcomes remain unknown. The elapsed counter freezes when the population
+window closes, avoiding status-file writes driven solely by idle elapsed time.
+The peak creation now records its object ID and whether it was a density copy;
+the timing includes work inside the hook, not exclusive native CPU time.
+No new hook, watcher, thread, native event replay or reduced density was added.
+See `ForgePact/docs/population-capacity.md` for evidence and limitations, and
+`test_adaptive_population.py`, `test_population_birth.py`,
+`test_map_reveal_behavior.py`, `test_population_capacity.py` for the fast loop.
+Build success and synthetic checks are not live performance acceptance.
+
+Latest `f2b0444b...` capture completed 90 seconds with all 13 native timing hooks.
+No allocation/handle failures, but 309.603ms peak frame interval; user reports
+some improvement, not a same-map benchmark. More importantly, 71 and 42 queued
+groups expired without admission increments. Their actual outcome is unknown.
+The latest local refinement retains these identities as `unconfirmedPacks`,
+reported in the panel/profile, with reset on zone/toggle changes. It does not
+force missing callers awake or claim to fix their unknown lifecycle. Expiry
+housekeeping now follows deadlines rather than scanning every entry per frame;
+immediate grants avoid temporary queue allocation. Hunt activation uses direct
+numeric/REF identities (object-valued fallback retained) and a contiguous sorted
+snapshot. Tests verify native-active preservation, mixed rarities/radii/handle
+kinds and delayed caller accounting. 4096 synthetic active enemies avoid 4096
+redundant ID reads; 32 immediate grants avoid 97 temporary allocations. Neither
+is an FPS claim. Build/player and profile remain separate; live acceptance is
+still pending. Read `ForgePact/docs/population-capacity.md` before proceeding.
+
+The five-second early-population candidate on `feat/mining-ore-amount` failed
+live performance testing at 4x density. No crash was reported, but the target
+was missed and 346.814-410.922ms frame intervals persisted with both known queues
+empty. No allocation/invalid-handle errors were recorded. Hook overhead versus
+ongoing native AI/render cost has not been measured separately; an external WPR
+capture could not start due to its Windows profiling policy. Do not call this
+candidate optimized or release-ready based on its synthetic deadline tests.
+See `ForgePact/docs/population-capacity.md` for the measured scope and DLL hash.
+
+For a bounded local timing capture without the dev build's other behaviors, run
+`plugin_build\build.bat profile` inside ForgePact. The separate profile DLL uses
+the player configuration and one automatic 90-second capture before the first
+preset-data generation call, or when ready packs appear as a fallback. Normal release builds compile the recorder out. The
+profile build is never staged to player distribution folders. See the capture
+limitations and `tools/summarize_population_profile.py` in the capacity document;
+do not infer CPU attribution by summing overlapping wall-time categories.
+
+The current local follow-up preserves actual births at the configured density.
+It fixes empty-first creator polling and an unready first creator blocking ready
+siblings (32-candidate rotating readiness probe, same bounded timeout). Tyrant/
+Beacon skips redundant second walks when activation added no instances, and both
+filter walks for unlimited all-enemy activation. Production-body harnesses pin
+the original active-set behavior and the lookup reduction; these are not FPS tests.
+The profile build additionally hooks 13 named AI/pathfinding/draw scripts and
+times existing hunt hooks; normal release compiles these probes out. Script
+attachment coverage and Windows process/frame-thread CPU counters accompany the
+inclusive wall measurements. Run `test_map_reveal_behavior.py`,
+`test_beacon_wake_behavior.py`, `test_population_profile.py` and
+`test_population_profile_summary.py` for the focused loop. The expanded profile
+has not yet passed live performance acceptance; do not present it as a finished fix.
+
+## Mining Ore Amount and the Miner's Helmet (verified in play 2026-09-23)
+
+The Loot slider `drops.mining_ore` (integer 1–10) sends the shipping command
+`miningore N`. The native adapter in `plugin/include/ForgePact/MiningOreMod.hpp`
+lazily hooks SDK-named `MiningNodeStepMain` and `LootGroundCreate`; both native
+detours must succeed. Only scoped ore material rewards are copied/scaled, using
+their optional `o` quantity field; `b` is a definition ID. No new watcher or
+forced extra drop is used. The existing mod-state output adds `miningOre`
+readiness/effective value and the `stepObserved` / `oreObserved` first-use
+flags. Verified in play: x10 turned a 6-ore reward into 60.
+
+The Miner's Helmet (`MinerHelmetModel/State/Mod.hpp`, forged with the sibling
+Item Editor's Miner template) replaces the slider with x4 while worn; with it
+off the slider applies. Ownership: on the installed build an ordinary dig leaves
+the node's `miningPlayer` at `noone`, so a reward is accepted when the node names
+the local player, or names nobody while the player stands within 400 units.
+Vein Resonance finishes the two nearest eligible veins within 192 units of a
+finished node by raising their `miningQue` and widening `miningActivateDistance`
+for up to 90 frames; the game's own step then completes them (4x through the
+"vein resonance" ownership rule, no chaining). Verified in play: `10 -> 40`,
+`13 -> 52`, and two veins at 154 and 186 units completed. The panel's test
+Create button and `minerhelm grant` were removed on 2026-09-23. The golden pulse
+is not yet confirmed on screen. Tests: `test_mining_ore_behavior.py`,
+`test_mining_ore_panel.py`, `test_miner_helmet_behavior.py` (full runtime
+harness) and `test_miner_helmet_panel.py`. Evidence and design:
+`ForgePact/docs/mining-ore-research.md` and `ForgePact/docs/miner-helmet-prototype.md`.
+
 ## Module Overview & Metadata
 - **Module Name:** ForgePact (Hero Siege Season 10 Offline Mod Panel & BloodPactPlugin)
 - **Submodule Path:** `ForgePact`
@@ -26,6 +194,7 @@
   - `ModuleMain.cpp`: C++20 dynamic library source for `BloodPactPlugin`. Implements Aurie module lifecycle (`ModuleInitialize`), hooks GameMaker engine routines via YYToolkit, manages frame event callbacks (`EVENT_FRAME`), polls commands from `bp_ipc/cmd.txt`, logs responses to `bp_ipc/out.txt`, applies throttled density/spawn overrides, manipulates drop tables and LoadDrops gates, projects HUD head labels, and exports live item statistics to `bp_ipc/itemstats.json`.
   - `BUILD.md`: Build requirements, compilation instructions, and differences between shipping (`/DFORGEPACT_RELEASE`) and research builds.
   - `include/ForgePact/AutoProspectMod.hpp`: The auto-prospect decision core (issue #9, Stage B) - when an insert into the ProspectGrid counts, when to invoke, when to refuse and what to say, plus the recorded shape's names (`activationFunc`, `activationArgs`, `"ProspectGrid"`). Stage C adds the move pass: when to ask for it (`MoveMaterials`, once per landed insert, just before the invoke), which cells (those the adapter flagged as materials - the core has no item-type value), and what each cell's report means (`ClassifyMove`). Game-independent (names no runtime interface), so `tests/auto_prospect_harness.cpp` compiles it whole; `ModuleMain.cpp`'s `Hook_AutoProspectInsert`/`AutoProspectTick`/`ApMovePass` are the only code that touches the game for it.
+  - `include/ForgePact/RestartAnytimeMod.hpp`: The "Restart zone at any time" decision core (issue #8, `restartanytime`) - the site script (`UiSetFocus`), the identifying member and value (`uiNodeCallstack` = `PauseRestart`), the gate member and its ready value (`manualDisable` = false), `RestartAnytimeModel::Decide` (Pass or Write) and the armed/pending/blind flags and four counters. Game-independent: no `RValue`, no builtin call.
 - `plugin_build/`: Plugin compiler script and build workspace.
   - `build.bat`: MSVC x64 batch script compiling `plugin/ModuleMain.cpp` into `BloodPactPlugin_ship.dll` (player build) or `BloodPactPlugin_rel.dll` (research build).
 - `modfiles_shipped/`: Shipped binaries deployed to the game's `bin/` directory upon mod installation.
@@ -143,6 +312,13 @@
     - The stand-in answers `object_index` as `VALUE_REF` by default, the kind this runner returns: an earlier stand-in that only answered `VALUE_REAL` let a guard that rejected `VALUE_REF` - and so failed open on every live call - pass every scenario.
     - Every refused-path scenario was run red first against a decision that always passed, and the `VALUE_REF` scenarios red against that plain-number-only check.
     - Skips without a C++ toolchain, like `test_orb_pickup_behavior.py`.
+  - `test_restart_anytime_contract.py`: Pins `restartprobe`, the research-build instrument for issue #8 (the pause-menu Restart gate), and its research doc.
+    - `RestartProbeContractTests`: research build only (one `"restartprobe"` literal, in `HandleRestartProbeCommand`, stripped from the player build and absent from `kPlayerCommands`); the 22 rows are exactly the doc's static-search set, every one an `hs-game-sdk` constant, attached by one resolver that checks `AddrIsExecutableInModule` before its single `MmCreateHook` (no table hook); `set` refuses before its one write and reads back `wrote=`/`changed=`; every write builtin sits in one helper with two callers; `show` prints `control=` first and `n/a`, never `0`, for an unattached row; nothing of the probe is on `FrameCallback`; `dump` captures inside the Restart draw on that call's self; `argset` is budgeted and confirm-gated; `path` resolves through `TgProbeDeepGet`. The hold (round 2, extended in round 3) writes only inside a site row's detour before the trampoline, in the kind read at entry, with `entryHeld`/`entryOther`/`readbackOk` decided there; scope `arg0` checks the call's argument count and argument 0 before `HhUsableInstance`, before the member read, before the write, and every instance target is labelled from the instance it resolved to (no `"button."` literal); there are two slots (`kRpHoldSlots`), a third hold refuses `two holds armed`, `hold off` clears both, and `hold stat` prints each slot's run-length ring (`kRpHoldRing` entries); the 3-frame gap disarm applies only at the draw row, any other site disarms on the draw row's `lastCallFrame`/gap (`menu not drawing since frame …`), and arming there refuses `needs the Restart draw attached` while the draw row is not `native`.
+    - `RestartResearchDocTests`: the doc's headings, the six `## Decision` lines pinned literally (round 3's, with `override: works` allowed only while the round-3 rows record C1 and C5 as passes), every round's result rows quoting the printed fragments, the procedure tables' bolded step names (a plain `| S1 |` row is a result), C1-C5 named before the procedure, and the round-3 procedure rows C5, T1-T6.
+    - `RestartAnytimeContractTests` (the shipped mod, `restartanytime`): a player command dispatched as a standalone early return; one `UiSetFocus` install, in `FrameCallback` behind `IsPending()`/`g_Setup`/`(fc % 60) == 0`/`HhResolveLocalPlayer`, through `HookOneScript` with its `nativeOut` read; a `TABLE-ONLY` install calls `MarkBlind()` and says so; the off fast path is the hook's first statement and reads nothing; the button is identified by its own `uiNodeCallstack` after `HhUsableInstance`, before the gate read, before the write, never by `self`, `selfIds` or an instance id; `0` and `stat` print every counter; `mod_restart_anytime` appears in `forgepact.py` exactly as often as `mod_toggle_guard`; the release notes, README and this guide record the mod.
+  - `test_restart_anytime_behavior.py` + `restart_anytime_harness.cpp`: **Behavioral** suite for `restartanytime` (issue #8). Splices the real `RestartAnytimeMod.hpp`, `HhUsableInstance`, `RestartAnytimeReadGate` and `HookRestartAnytimeSetFocus` against a stand-in runner that answers the kinds this runner was measured to hand over (`VALUE_REF` for the button, `VALUE_BOOL` for its members, `VALUE_STRING` for `uiNodeCallstack`) and a counting trampoline.
+    - Scenarios: `baseline/off_by_default`, `baseline/off_calls_original_and_writes_nothing` (no builtin call at all while off), `target/on_writes_only_when_arg0_is_the_restart_button`, `target/on_leaves_every_other_node_untouched` (a Resume-shaped negative control, a node without the key, a numeric key, a non-instance argument, no argument, and the Restart button as `self` rather than `a0`), `target/on_unreadable_member_passes_and_counts`, `target/on_calls_the_original_exactly_once` (the game's body sees the written value), `target/on_preserves_the_kind_read_at_entry` (bool stays bool, real stays real), `target/on_gate_already_open_writes_nothing` and `target/blind_install_stays_off`; the first-write line appears exactly once.
+    - Every `target/*` scenario was run red first against a pass-through body; each failing line is recorded beside it in the harness. Skips without a C++ toolchain, like `test_orb_pickup_behavior.py`.
   - `test_relic_filter_contract.py`: Validates the relic drop pool filter, orb pickup radius mod, build-order packaging guard, player-resolution against `VALUE_REF`, the stall watchdog's research-build presence/ordering, and the Map Reveal / Headhunter / Tyrant's Crown / Beacon panel relocation (28 tests, covering everything fixed 2026-09-09/10).
   - `test_mods_categories.py`: Contract tests for the Mods tab's card split (issue #12) - the five-tab sidebar, every control's card membership, the Items/Quality-of-Life classification rule (an Items row's description names a forged Mechanic; no other Mods-tab row's does), the parent/child groupings, and the three silent failure traps in `preparePanelUI()` (the conversion loop's id list, the grouping condition's id, the `SECTION_ICONS` key), plus the result: `qolCard`/`itemsCard` in order, `qolCard` titled "Quality of Life" holding the ten Quality of Life controls, and no leftover "gameplay" wording or `gameplayCard` id. `ModsSubtabMarkupTests` and `ModsSubtabBehaviourTests` (round 1 follow-up) pin the Quality of Life | Items sub-tab strip added on top of that split: its markup, each card's `role`/`aria-labelledby`, the `.subtabbar`/`.subtabbtn` CSS, and `openTab`/`openModsSubtab`/`bindModsSubtabs` run through `node` against a stub DOM. Honours `FORGEPACT_TEST_PANEL_DIR` (default `src/`), reading `forgepact.py`/`panel_icons.py` as text so it can run against an older copy with no `hs_game_sdk` on the path.
   - `test_out_log_rotation_contract.py`: Source-contract tests for the `out.txt` / `itemdrops.jsonl` size rotation (2026-09-18) - both rotation helpers exist with their own size thresholds, `RotateOutLogIfNeeded` survives stripping research-only code (compiled in both builds) while `RotateItemDropsLogIfNeeded` does not (research build only, since the player build never writes `itemdrops.jsonl` at all), both move via `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)` rather than copy or delete, `out.txt` is never opened with `std::ios::trunc` (checked as the code token, not the English word, since the fallback comment legitimately says "truncate"), and `ForgePact::ModManager::Initialize()` creates `bp_ipc\` before rotating and rotates before the `BloodPact plugin loaded` banner, with the `itemdrops.jsonl` call site itself (not just the function) guarded by `#ifndef FORGEPACT_RELEASE`. No native harness (see the file's own docstring for why: the rotation helpers call `GetModuleFileNameA`/`MoveFileExW` directly rather than being game-independent by contract like `ProspectWindowMod.hpp`'s core, so faking the Win32 calls would be a bigger lift than a rotation fix justifies) - the two real `build.bat dev`/`release` runs are the compile-time check.
@@ -334,7 +510,7 @@ To add or modify a gameplay modifier or runtime command:
 | Command | Working Directory | Shell / Platform | Prerequisites | Expected Result | Side Effects | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `py src/forgepact.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Launches local control panel HTTP server (`http://127.0.0.1:8766`). | Opens web browser / desktop window; watches for game process | Verified |
-| `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Executes all 1230 Python contract tests (including the native behavior harnesses, which skip without a C++ toolchain). | Read-only test execution; all tests pass | Verified 2026-09-22 |
+| `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Executes all 1271 Python contract tests (including the native behavior harnesses, which skip without a C++ toolchain). | Read-only test execution; all tests pass | Verified 2026-09-22 |
 | `py tools/perf_panel.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Times the panel's two per-poll costs - the boot count and the process scan - against reference copies of the pre-1.3.20 implementations, and exits non-zero if either regressed below its floor. No game, no network. `--log-mb`, `--iterations`, `--min-speedup`. | Writes and deletes a synthetic log in a temp directory | Verified 2026-09-15 |
 | `py tools/cut_release.py --check --expect <version>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Reports the version at every site and fails if they disagree, or if the release notes are missing and `--allow-missing-notes` was not given. `py tools/cut_release.py <version>` moves them. `--allow-missing-notes` (only `--check`; only used by `forgepact-tag.yml`) reports a missing notes file without failing. **Do not hand-edit the version sites** - a mismatch here is the signal, not a nuisance. Touches no git, runs no build, stages no DLL. | `--check` is read-only; a bump rewrites two files | Verified 2026-09-16 |
 | `py tools/forgepact_tag.py --tag <version> --existing <tags…>` | `ForgePact/` | PowerShell / CMD (Git Bash for the real examples below) | Python 3.10+ | Checks a typed tag/version against the existing `v*` tags and the tree, and prints `version=`, `tag=`, `bump=`, `previous=`. Refuses a taken tag, a downgrade against the highest tag, a version below the tree, or a malformed input. | Read-only | Verified 2026-09-16 |
@@ -441,6 +617,11 @@ UTF-8 / ASCII plain-text command queue. The panel appends lines to `cmd.txt`; th
     - `toggleguard 0` and `toggleguard stat` (read-only) print `refused=`/`passed=`/`procSeen=`/`selfUnreadable=`/`objUnresolved=`/`subOff=`/`subUnreadable=`/`baseForm=`/`subIndex=<n|none>` (which `global.subTalentMap` index actually answered, so a moved map and an unallocated sub-talent are never the same silent counter)/`hook=not installed|installed|TABLE-ONLY`, `stat` also `enabled=` and the same per-row `talentId=` line `toggleborder stat` prints; the research build adds `lastProcRet=` (what the last passed proc call returned).
     - Off by default; panel key `mod_toggle_guard`.
     - See Known Limitations item 17.
+  - `restartanytime 1` / `restartanytime 0` (or `off`) / `restartanytime stat`: shipped "Restart zone at any time" (issue #8, 1.4.5, off by default; panel key `mod_restart_anytime`).
+    - `1` only arms it (`ON` or `ON (armed, applies once you are in-game)`); `FrameCallback` installs `HookOneScript` on `UiSetFocus` (`HookRestartAnytimeSetFocus`, both routes) once the setup gate has passed and `HhResolveLocalPlayer` succeeds, checked once a second - the `toggleguard` shape, so it is safe to send at launch. The install logs `restartanytime: hook installed -> ON`; a `TABLE-ONLY` install (or `UiSetFocus` not found) logs why and turns the mod off for the session, and a later `restartanytime 1` says so instead of reporting ON.
+    - While on, each `UiSetFocus` call's first argument is checked at the call: present, readable through `HhUsableInstance` (it arrives as `VALUE_REF`), and its own `uiNodeCallstack` reading the string `PauseRestart` - the Restart button, never identified by position, instance id or `self`. On that button only, `manualDisable` is read and, if it is closed (`true`), written `false` in the kind it was read in (the game's bool stays a bool), before the game's own body runs; `enabled` is never touched. Nothing is restored after the call: the game recomputes the member every frame. The first write logs `restartanytime: first write - …` once per session.
+    - `restartanytime 0` clears the flag only; the hook stays and passes every call straight through without reading anything. `0` and `stat` (read-only) print `written=` (gate written open) / `passed=` (Restart's gate was already open) / `otherNode=` (any other node, or no usable argument) / `unreadable=` (the gate member absent, not a bool or real, or the write threw - never written) / `hook=not installed|installed|TABLE-ONLY|FAILED`; `stat` also `enabled=`.
+    - See Known Limitations item 22.
   - `skilltimer off|arc|bar|number|fade|stat`: shipped skill-timer countdown (issue #55, 1.4.5, off by default), drawn over a skill's own hotbar slot in one of four looks inside the existing `DrawHudBuffs` hook, reading the game's own timer and changing nothing. Three tiers, checked in this order: **object rows** (`kSkillTimerRows` in `plugin/include/ForgePact/SkillTimerMod.hpp`, measured cast objects whose `destroyTimer` carries the duration, sessions 8 and 10), **buff rows** (`kSkillTimerBuffRows`, session 12: Counter `[104]`, Last Stand `[107]`, Defensive Shout `[9]`, Berserk `[1]`, read from `global.playerBuff[1][0][<buffId>].destroyTimer` with a per-draw `buffType` identity check, so a renumbered id draws nothing and counts `identityMismatch=`), and the **rule tier** (untested cast objects, D-S4). A row whose skill is currently a toggle draws no countdown (`toggleOn=`): Counter draws only while Give No Quarter is NOT allocated, the same sub-talent read the toggle border uses, never cached across draws. First sight latches the full value and a refresh that rises re-latches (Berserk refreshes to 720 per stack; Defensive Shout is re-added to full for ~90 frames after the cast). `skilltimer stat` prints one line per object row and per buff row (`drawn=`/`noBuff=`/`unreadable=`/`identityMismatch=`/`expired=`/`toggleOn=`/`toggleUnreadable=`/`unresolved=`/`noSlot=`/`latched=`/`unlatched=`) plus the rule-tier totals. Live smoke on the ship build (2026-09-22): `counter drawn=1037 toggleOn=838 noSlot=0` with the border's `subOff=1037` (countdown and outline never overlap), `defensiveShout drawn=1125 noSlot=0`; Last Stand and Berserk are not observed live on the ship build. Research and rows: `ForgePact/docs/toggle-skills-research.md` (`### Buff-carried countdown (session 12)`).
   - `autoprospect 1` / `autoprospect 0` (+ `autoprospect stat` in the research build only; `autoprospect` is in `kPlayerCommands`, dispatched from `HandleProspectCommand`): Auto-prospect on insert (issue #9, Stage B; panel key `mod_auto_prospect`, off by default, `build_cmds` emits `autoprospect 1` only when it is on).
     - While on, every item moved into the Prospect Cube's grid - drag or click - is prospected at once by the game's own Prospect handler.
@@ -599,6 +780,10 @@ UTF-8 / ASCII plain-text command queue. The panel appends lines to `cmd.txt`; th
     - A full snapshot is a deliberate stall (the watchdog may print `STALL`).
     - Its negatives count only with five controls in the same session and `truncated=0` and `followTruncated=0` on every compared snapshot: `deep selftest` → `OK leaves=5 changed=3` plus `selftest instance: OK followed=1 members=N`, `global.playerBuff[1][0][86]` in `deep diff base on playerBuff[1][0][86]` (the Martyr buff under Purgatory's drain), a `census.` row moving on a Healing Zone cast, a changed direct `Player_obj.<name>` member (not a followed `Player_obj.<handle>.<member>`) in base→on, and the `talent` scope reading `read=3` with no `<absent:` leaf.
   - `tgprobe buffwatch on|off|clear|show` (research build only, stripped from the player build like every `tgprobe` command): samples every non-empty `global.playerBuff[1][0]` slot on each `DrawHudBuffs` draw (no new hook) and keeps one record per buff id - `app=` appearances, `present=`, `first=`/`last=`/`min=`/`max=` of `destroyTimer`, `identityMismatch=` (the slot's own `buffType` differs from its index), `host=`, and from the `BuffAdd` note `adds=`/`lastAddFrames=`/`inUse=`/`useTalent=` (whether the buff was added inside a `TalentUse`/`TalentUseClass` call). `show` also prints records that were only added or only mismatched, so a failed positive control says why. Positive control: a timed Counter cast must produce `[104] app=1 first=` > 0. Session 12 used it to measure the four buff rows (`docs/toggle-skills-research.md`).
+  - `restartprobe vars` / `hook` / `show` / `reset` / `set <scope> <name> <number> confirm` / `dump button|pause|show <label>` / `dump diff <a> <b>` / `hold <scope|button|arg0> <name> <number> [at <row>] confirm` / `hold off` / `hold stat` / `argset <row> a<i> <number> [calls=N] confirm` / `argset clear` / `argset stat` (**research build only**, not in `kPlayerCommands`, dispatched from `HandleRestartProbeCommand`): the pause-menu Restart gate instrument (issue #8); see `ForgePact/docs/restart-always-available-research.md`.
+    - Round 1 (2026-09-22) found the gate upstream of the Restart activation - a refused press never calls `UiAIngameRestart` - and did not identify it. Round 2 (the same evening) did not identify it either: the Restart button's own `enabled`/`manualDisable` flip with combat, none of the four attached node-API setters was observed to be called, a draw-time hold of either member was rewritten before every next call (`entryHeld=0`), and a draw-time hold of `wasInCombat` stayed in place without unlocking the press; `UiSetFocus` is called (assumed at step time, not measured) every frame the cursor hovers Restart, with the button as `a0`. Round 3 (late the same evening) identified it: an `arg0` hold of `manualDisable 0` at `UiSetFocus` alone let an in-combat press reach `UiAIngameRestart` (`calls=1`, `wasInCombat=bool:true` at the call) and restart the zone, while `enabled 1` alone did not; that write is what `restartanytime` ships. Every write and point-of-use read happens inside a hooked call before the game's own body runs, or on the frame that consumes `cmd.txt`; nothing runs from `FrameCallback`. `vars`: hook-free, prints each candidate name on `global`, `Controller_obj`, `Player_obj` and `UI_Pause_obj` as `<scope>.<name>=<kind:value>|absent|unreadable`, plus the path `global.tupm[1].in_combat` as `path:…=<kind:value>|unresolved: <reason>` (resolved by `tgprobe deep get`'s reader). `hook`: attaches 22 rows (the Restart activation and draw, `ZoneGenRestart`, the six `UI_Pause_obj` closures and thirteen UI node-API scripts such as `UiSetRowEnabled`) each as a native detour, printing `native`, `blocked` with the reason, or `not found`; `prospectprobe hook` detours four of the same scripts, so run one of the two per session.
+    - `show`: `control=` (the draw's call count - **C1**, must be above 0 with the menu open; **C3**, unchanged across two seconds with it closed), `selfIds=` (the distinct button instance ids that reached the Restart draw), the hold and `argset` status lines, per-row `calls=` (`n/a` when not attached, never 0), and the first 20 calls per row. `reset`: clears counters, logs and `selfIds`; keeps rows, dumps and an armed hold. `set`: the one command-time write, refused in order (unknown scope, no instance, absent, not a number, no `confirm`) and read back as `wrote=yes|no changed=yes|no`; scope `path` writes the path's last segment. `dump button <label>`: captures the Restart button's own instance inside its next draw call; `dump pause <label>`: the `UI_Pause_obj` instance now; `dump show` prints `<label>: kind= id= frame= names=` and every member; `dump diff` prints `~`/`+`/`-` lines per kind. `hold`: writes a number, in the kind it finds, on every call of a site row (default the Restart draw) before the trampoline, counting `entryHeld`/`entryOther` (whether the last write survived to this call), `readbackOk`, `writes`, `unreadable`, `skipped`; **C4** is `readbackOk` equal to `writes`. Scopes are `set`'s plus `button` (the call's self) and, since round 3, `arg0` (the call's first argument - the Restart button at `UiSetFocus` - checked on every call: argument present, readable through `HhUsableInstance`, member read by name, never a kind check); every instance target is labelled `<object name>#<id>.<member>` from the instance it resolved to.
+    - There are two hold slots: `hold …` arms the first free one and refuses `two holds armed; hold off first` rather than replacing one, `hold off` disarms both, `show` prints one stat line per slot (`hold[0]: armed= …`), and `hold stat` also prints each slot's entry ring (1024 entries, one per write: frame, label, entry value, `held=yes|no`, written value, read-back), collapsed into `hold[<slot>] ring: frames <first>..<last> x<count> …` runs, newest 32. Disarm: at the draw site, a call more than 3 frames after the last write (menu closed); at any other site the draw row's own calls decide - no draw for more than 3 frames, or a draw gap since the slot's last write, prints `hold: disarmed (menu not drawing since frame …)`, so a hover gap on `UiSetFocus` disarms nothing; 20000 writes caps both. Arming at a non-draw site refuses `needs the Restart draw attached` while the draw row is not `native`. `argset`: replaces one numeric argument of one row for its next N calls, in the argument's own kind, and writes no variable.
 
 ### 3. IPC Log & Output File (`<game>\bin\bp_ipc\out.txt`)
 Append-only log containing plugin startup notifications, command responses, and runtime diagnostic dumps. The panel reads `out.txt` to track process boot counts (`BloodPact plugin loaded`).
@@ -1732,6 +1917,7 @@ here before pressing Publish.
 | tag | run URL | zip sha256 | installed from zip | out.txt boot line + version | panel version | mod smoke check | launch gate result | date | tester |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | v1.3.20 | | | | | | | | | |
+| v1.4.5 | [35831690354](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/35831690354) | `5f7a8d728d3203b9184d345efe652b92c74cedc435eac4f37fd4d5b60228ac03` | yes: Install Mod Plugin from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`48a8450b02ef`) | `==== BloodPact plugin loaded ==== v1.4.5` | 1.4.5 | `hhlabel` -> `callback ok` | pass | 2026-09-23 | falorfrozen-cmd (install and checks run by Claude Code) |
 
 ---
 
@@ -1742,7 +1928,7 @@ here before pressing Publish.
 2. **Equipped Item Detection for Custom Mechanics:**
    - Active mechanics like Headhunter, Beacon, and Tyrant's Crown currently rely on `force` commands sent by the panel rather than dynamically reading equipped inventory slots in C++.
 3. **Release vs. Research Command Separation:**
-   - Diagnostic commands (`readmem`, `census`, `enemylog`, `probestruct`, `structdump`, `hashprobe`, `forgehash`) are excluded from release builds (`/DFORGEPACT_RELEASE`) to protect performance and stability.
+   - Diagnostic commands (`readmem`, `census`, `enemylog`, `probestruct`, `structdump`, `hashprobe`, `forgehash`, `restartprobe`) are excluded from release builds (`/DFORGEPACT_RELEASE`) to protect performance and stability.
 4. **Build order matters since `build_release.py`'s plugin-sync guard:**
    - `build_release.py` now refuses to package unless `plugin_build\BloodPactPlugin_ship.dll` exists and byte-matches `modfiles_shipped\BloodPactPlugin.dll` (see `build_release.py`). Always run `plugin_build\build.bat release` (which now auto-stages the DLL into `modfiles_shipped\` and, if present, `dist\ForgePact\modfiles\`) *before* `py build_release.py`. Running the packaging script first, or after editing `plugin/ModuleMain.cpp` without rebuilding, is the most common "build keeps failing" report.
 5. **Hot builtins must stay allocation-free (`distance_to_object`):**
@@ -1890,6 +2076,15 @@ here before pressing Publish.
     - **What is unverified live.** The pool append, the per-pick dispatch, the equal three-way share (`signature_equal_share`, 3000 synthetic kills, 800-1200 hits per candidate out of a pool of one unique plus both signature entries) and the `sigdrop crown|belt` force path are all covered by `test_headhunter_dispatch.py`'s `test_signature_drop_target` (native harness, each scenario shown failing against the pre-#63 source) and `test_signature_drop_contract.py` (source contract, same). None of it has run against the real game since the change - `fetch_toolchain.py --verify-only` failed when this was written (`modfiles_shipped/*.dll` MISSING), so the build criterion and the in-game check below are both still open.
     - **The in-game check, once a build is available (human-pending; a DLL is only installed on the user's say-so).** `angelicdrop 1` then `angelicdrop status` - pool count two more than before; `angeliclist` lists both signature entries; `sigdrop belt` + one kill drops a dressed Headhunter, `sigdrop crown` a Tyrant's Crown, `sigdrop off` stops forcing; with `angelicdrop 1` running normally (no force), `bp_ipc\out.txt` shows a `sigdrop: <item> dropped at ...` line within roughly 150 kills.
     - **Tests:** `tests/test_headhunter_dispatch.py`'s `test_signature_drop_baseline` + `test_signature_drop_target` (+ `headhunter_dispatch_harness.cpp`), `tests/test_signature_drop_contract.py`.
+22. **"Restart zone at any time" (`restartanytime`, issue #8) opens the Restart button's own gate while the mouse is on it - mouse only, and an accepted risk (2026-09-22):**
+    - **What is measured.** Three research rounds (`ForgePact/docs/restart-always-available-research.md`) found that the pause menu's Restart is refused on the button's own `manualDisable`, which the game rewrote to `true` on every observed `UiSetFocus` call and every observed draw while in combat. Round 3 (2026-09-22, research DLL `d40a4f25…`, combat against the town training dummies) wrote it `false` inside the game's own `UiSetFocus` call, on the button that call is handed: with `wasInCombat=bool:true` at the call, the press reached `UiAIngameRestart` (`calls=1`) and the zone restarted (T2 with both members, T3 with `manualDisable` alone). `enabled` alone did not unlock it, so the mod never touches `enabled`.
+    - **How it is shaped.** One value inside a call the game is already making, never a restart of our own: the hook writes, then hands the call to the game's body; nothing is restored afterwards, because the game recomputes the member the next frame. The button is identified by its own `uiNodeCallstack` (`PauseRestart`), never by position, instance id or the call's `self` - round 3's T5 showed the instrument's unfiltered `arg0` write landing on other buttons the cursor crossed, which the identity check exists to prevent.
+    - **Mouse only (accepted by the owner, 2026-09-22).** `UiSetFocus` was not observed to be called with the mouse off the menu (`calls=0`); keyboard and controller were not tested. Keyboard navigation did not reach the pause menu's buttons at all in round 3's session, and no controller was available, so T4 was not run: a keyboard or controller path to Restart, if one exists, is not covered.
+    - **Greyed until hovered (accepted by the owner, 2026-09-22).** The greyed look follows the value set before the draw (inferred from the draw-site hold, not measured at step time): a hold of both members at the Restart draw, with the cursor elsewhere, left Restart drawn greyed. So in combat Restart still looks greyed, lights up once the cursor is on it, and works when clicked. The panel sub-text and the release notes say so.
+    - **Enemies alive (accepted risk).** Quoting the owner's decision of 2026-09-22: "**risk accepted** - a restart while enemies are alive is accepted". The mod lets the game's own Restart run in a state the game would have refused; the restart itself is the game's.
+    - **Live confirmation (2026-09-22, player build `BloodPactPlugin_ship.dll` sha256 `242f1f10…`, ForgePact `00b95c6`).** `restartanytime 0`, in combat: Restart refused (nothing happened). `restartanytime 1`: hook installed on both of `HookOneScript`'s routes (`restartanytime: hook installed -> ON`, no `TABLE-ONLY`); an in-combat Restart on an ordinary zone restarted it (`written=88 passed=0 otherNode=50 unreadable=0`). `restartanytime 0` again: Restart refused, `written` unchanged at 88. The boss-room outlier was not run (the owner's choice, "no need"); round 3 fought in `Town_01_rm` only.
+    - **Research probe and mod in one session (not run live).** From a static reading of `HookOneScript` and `RestartProbeAttach`: the mod hooks `UiSetFocus` through both routes, so its saved original is a trampoline and the table entry is our own hook, neither of them code inside `Hero_Siege.exe` - which is why the probe's `UiSetFocus` row stays unbound (unlike `ZoneGenRestart`, which attaches under table-only `zonegenlog`). With the mod's hook in first, a later `restartprobe hook` reports that one row `blocked` and attaches the other 21. With `restartprobe hook` first, the mod's install asks the hooking library to detour an address the probe already patched; `docs/prospect-window-research.md` says the second hook on an address fails, measured only in the other order, so this is unverified - if it fails, the mod logs `restartanytime: hook TABLE-ONLY -> OFF` and stays off for the session. Neither order was run. Run the probe or the mod in a session, not both. Players never meet either case: the player build has no probe (`restartprobe` is behind `#ifndef FORGEPACT_RELEASE`).
+    - **Tests:** `tests/test_restart_anytime_contract.py` (`RestartAnytimeContractTests`, `RestartResearchDocTests`), `tests/test_restart_anytime_behavior.py` + `restart_anytime_harness.cpp`.
 
 ---
 
@@ -1919,6 +2114,7 @@ here before pressing Publish.
 - Map Reveal Research (why a revealed map had no monsters, and the spawner regression): `../../../ForgePact/docs/map-reveal-research.md`
 - Pet Quest Collector (active plan + findings log): `../../../ForgePact/docs/pet-quest-collector-plan-c-direct-invocation.md`, `../../../ForgePact/docs/pet-quest-collector-c-research.md`
 - Prospect Window Research (issue #9, Phase 0 pending): `../../../ForgePact/docs/prospect-window-research.md`
+- Restart-Always-Available Research (issue #8; round 1 measured 2026-09-22 - the gate is upstream of the Restart activation, not identified; round 2 measured the same evening - the Restart button's own `enabled`/`manualDisable` flip with combat and a draw-time hold of either is rewritten before use, not identified; round 3 measured the same night - the Restart button's own `manualDisable` written false inside `UiSetFocus` unlocks an in-combat press, shipped as `restartanytime`): `../../../ForgePact/docs/restart-always-available-research.md`
 - Menu Pause (planned, **not recommended** - read §0 before proposing anything in this class): `../../../ForgePact/docs/menu-pause-plan.md`
 - Satanic Zone SDK Data (shared, not ForgePact-specific): `../../../hs-game-sdk/curated/satanic_zone.json`
 - Live Plugin IPC Driver: `../../../ForgePact/tools/ipc.ps1` (send a command to the running game, print only the reply)
@@ -1931,3 +2127,80 @@ here before pressing Publish.
 - Build Workflow: `../../../ForgePact/.github/workflows/forgepact-release.yml` (see "The build half (forgepact-release.yml)" above)
 - Toolchain Pins & Fetcher: `../../../ForgePact/tools/toolchain-pins.json`, `../../../ForgePact/tools/fetch_toolchain.py` (all-or-nothing, SHA-256-verified headers/binaries)
 - Release CI Helpers: `../../../ForgePact/tools/release_ci.py` (tag normalisation, the `build.bat` compile-line contract, and zip packaging — `tag`, `compile-line`, `package` subcommands)
+
+## Miner's Helmet
+
+See "Mining Ore Amount and the Miner's Helmet" near the top of this guide;
+`ForgePact/docs/miner-helmet-prototype.md` carries the design, the live evidence
+and what is still open (tooltip numbers, the golden pulse on screen). Vein
+Resonance deliberately drives the game's own dig through `miningQue`; it never
+creates loot, forces node health or synthesizes player input.
+
+### Local early-population capacity candidate (2026-09-21)
+
+Read `ForgePact/docs/population-capacity.md` before modifying this candidate.
+The observed dense-map crash exhausted the native protected-variable store;
+pacing alone cannot increase its live capacity. The candidate pairs independent
+native storage banks with a ready-caller admission queue. After a live report of
+15-20 second population, the local follow-up replaces the two-per-frame FIFO:
+up to 32 groups per frame, yielding after 8ms of elapsed work between grants.
+Absent/not-yet-polling creators do not block ready callers. Native calls are not
+replayed or interrupted; two-second completion remains a target, not a guarantee.
+Deterministic-clock tests cover staggered native polls and expensive groups.
+The modstate population diagnostics include peakPacksPerFrame,
+budgetLimitedFrames and lastAdmissionMs to measure the next live run.
+That fast follow-up still hitched live. The current local candidate adds
+AdaptivePopulationBudget.hpp and DeferredDensityCopies.hpp: deferred density
+copies and outer native-call timing. Its first 0.25-2ms feedback policy starved
+live work (56.1s, 216 groups remaining). The local replacement targets five
+seconds from readable-minimap arming, with a 4-8ms budget driven by remaining
+work, median frame cadence and one recovery frame after a severe native burst.
+Reservations and measured pack work overlap rather than being double-charged;
+copy cost remains separate. Deadline misses are latched in modstate and surfaced
+in the panel. This is a throughput target, never a reason to bypass safety or
+drop pending work. The production adapter preserves deferred density
+copies. Original calls remain synchronous; only extra scalar four-argument copies
+are queued, with caller IDs resolved at execution. Unknown shapes use the old
+path and increment synchronousDensityFallbacks. Pending plans survive zone exit,
+active jobs do not; a restored original resumes only its missing copies. Both
+plans and placements clear on full reset. Read population-capacity.md for limits.
+`test_adaptive_population.py` compiles the production helpers and the actual
+density adapter/DoMultiCreate bodies against controlled native responses. The
+MapReveal harness also checks the five-second target and prolonged capacity
+pauses. population_deadline.cpp models 1536 groups at 4x, delayed native polling
+and 50fps: 3.24015 simulated seconds after the correction, versus a failing
+five-second assertion with the old policy. It is not a live-game benchmark.
+Do not claim no hitches from these synthetic tests. The capacity router preserves
+existing bank-zero handles and shares the existing drop-rate getter hook.
+Never attach another GetVariable detour or disable routing while overflow
+handles remain live. Unknown library hashes and incomplete hook installation
+refuse early population, with the reason in modstate.json and the panel.
+
+Fast loop: `py -3 -m unittest discover -s tests -p test_population_capacity.py -v`
+and `test_map_reveal*.py`. Optional `FORGEPACT_POOL_TEST_DLL` enables the actual
+native-library harness; `FORGEPACT_MINHOOK_SOURCE` additionally tests real
+detours plus the production drop getter. No game process is involved. Native
+checks remain native; the memory-query wrapper provides caller stack space for
+the supported library's oversized query-buffer request. The candidate is local,
+not a release claim: map-entry/combat and mining acceptance remain live checks.
+
+
+## AFK FARM independent reward compatibility (local, 2026-09-22)
+
+AFK FARM 0.5.0 owns its MF, XP, Gold and loot settings. During its short native
+reward scope, ForgePact passes through reward stats, drop-repeat hooks, extra
+LoadDrops gates and the relic filter. Outside that scope its normal settings
+remain active. Combat/density modifiers are unchanged. Neither plugin rewrites
+ForgePact's configuration. ForgePact is not required to use AFK FARM.
+
+The shared `hs_game_sdk/reward_scope.hpp` publishes compatibility and original
+repository denominators through a process-local named mapping; no cross-plugin
+symbol calls are used. Both DLLs must be rebuilt against that header. Older
+ForgePact DLLs have no isolation protocol and AFK refuses independent rewards
+with an update message, rather than silently stacking multipliers.
+
+Regression commands: `py -3.13 -m unittest discover -s tests -p test_release_hook_contract.py`
+and `plugin_build\build.bat release`. Native scope/restore tests are in
+`HS-AFK-Expedition/tests/cpp/rewards_smoke.cpp`; live AFK probe evidence is in
+`HS-AFK-Expedition/verification/independent-rewards-0.5.0/`. These checks do not
+certify rare-drop distributions or unrelated local experimental ForgePact features.
