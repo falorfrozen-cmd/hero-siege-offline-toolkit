@@ -32,7 +32,7 @@
 - `item_icons/`: Sprite icon catalog containing item icons indexed by sprite name.
 - `HeroSiegeItemEditor.spec`: PyInstaller one-file Windows executable packaging specification (`HeroSiegeItemEditor.exe`).
 - `ItemEditor.bat`: Windows batch launcher executing `py -3 "%~dp0hs_item_editor_gui.py"`.
-- `tests/`: 19 Python `unittest` test suites covering HTTP security, save recovery, infinite vault transactions, custom forge serialization, socket solvers, stat semantics, and launch readiness.
+- `test_*.py` (at the repository root): 20 Python `unittest` test suites covering HTTP security, save recovery, infinite vault transactions, custom forge serialization, socket solvers, stat semantics, launch readiness, and the release tooling.
 - **Data Catalogs & Models:**
   - `hs_full_catalog.json`: Base item definitions, item types, and catalog indices.
   - `hs_custom_forge_catalog.json`: 330 observed numeric stat keys, 932 active unique donor records, 8,877 property presets.
@@ -255,7 +255,8 @@ helmet-only rule.
 
 Ported from ForgePact (`docs/submodules/ForgePact/instructions.md`, "Tagging a
 release"), which carries the longer reasoning. This repository's default branch
-is **`master`**, and every workflow below refuses to run from anything else.
+is **`master`**, and the tag and build workflows refuse to run from anything
+else; `ai-review.yml` runs on a pull request's head, like every other copy of it.
 
 **AI review (`ai-review.yml`).** ForgePact's workflow with only the repository
 name changed. Opt-in: add the `ai-review` label or comment `@claude review`
@@ -273,8 +274,8 @@ GitHub's generated notes under a rewrite banner when the file is missing),
 moves `APP_VERSION` with `tools/cut_release.py` and pushes that to `master`
 before tagging, pushes the tag, leaves a **draft** release titled
 `Hero Siege Item Editor X.Y.Z`, and dispatches `editor-release.yml` against
-`master`. The bump commit is made by `github-actions[bot]`, so it does not fire
-`notify-hub.yml`.
+`master`. The bump commit is made by `github-actions[bot]` with `GITHUB_TOKEN`, so it
+does not fire `notify-hub.yml`.
 
 **Building (`editor-release.yml`).** `workflow_dispatch` with `tag` and
 `dry_run` (default `true` for a manual run). On `windows-latest`, Python 3.14:
