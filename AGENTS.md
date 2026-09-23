@@ -540,6 +540,34 @@ This is a rule about *this* repository. The research and plan documents under
 investigation that came back negative is a result, and re-running it is the
 expensive mistake.
 
+## Fold What a Mod Learned About the Game Into the Shared References
+
+A mod's research doc is where its measurements are argued out, and only that
+mod's developers read it. Facts about the game itself belong to every module:
+where a structure lives, what a container holds, what a script reads and
+writes, what an argument means, which call crashes the game. So when a
+research phase is recorded, the facts it established about the game go into
+the shared references in the same pull request, not "later":
+
+- **`docs/RUNTIME_DATA_MODELS.md`**: instance variables, container layouts,
+  key and fingerprint formats, the shapes scripts return, and the state
+  invariants the game relies on (for example, that a stash cell whose map
+  entry is gone crashes the game's own save).
+- **`hs-game-sdk`**: a name or index the research used that the SDK lacks,
+  through `tools/extract_and_generate_sdk.py`, never a hand-typed constant.
+  Put curated knowledge a generator cannot produce under `hs-game-sdk/curated/`.
+  Before you record a name as "missing from the SDK", search every binding
+  for it, bare name included. A script can be listed without the
+  `gml_Script_` prefix.
+- **The module's `instructions.md`**: only what that module's developers need
+  to work in it.
+
+Copy only what was measured, or what a decompiled body shows. Label a static
+reading as a reading, in your own words, per the Legal section above. Leave
+the argument, the negative results and the session history in the research
+doc, and link to it. A fact that exists only in one mod's research doc gets
+rediscovered by the next mod, at the price of another live session.
+
 ## One Branch and One Pull Request per Module, per Feature
 
 A feature gets exactly **one branch and one pull request in each module it

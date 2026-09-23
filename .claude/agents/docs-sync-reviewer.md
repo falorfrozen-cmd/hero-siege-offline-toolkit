@@ -65,6 +65,17 @@ Check three things when notes exist:
 module guide that is not listed there is unreachable), and `.claude/README.md`
 when the change adds or alters a hook, agent or skill.
 
+**3a. Game facts that stayed in one mod's research doc.** When the change
+records research results (a `*-research.md` results section, or an "After
+Phase" paragraph), list the facts it establishes about the game itself:
+variables, container layouts, formats, script behaviour, crash conditions.
+Check that each one also reached `docs/RUNTIME_DATA_MODELS.md`, `hs-game-sdk`
+(or `hs-game-sdk/curated/`), or is explicitly deferred with a reason.
+`AGENTS.md` § "Fold What a Mod Learned About the Game Into the Shared
+References" is the rule. A missing fold is **non-blocking**: name the fact and
+the file it belongs in. Also check any "missing from the SDK" claim by searching
+every binding for the bare name as well.
+
 **4. `AGENTS.md` itself.** If the change adds a mechanically checkable rule, the
 check should exist too, and `AGENTS.md` § "Some of These Rules Are Enforced"
 counts the hooks, agents and skills — a new one makes that sentence wrong.
