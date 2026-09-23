@@ -16,7 +16,7 @@
 
 ### Repository Layout
 - `hs_item_editor_gui.py`: Main application server and desktop entry point. Implements a single-threaded/threaded Python HTTP server (`http.server.ThreadingHTTPServer`) listening on loopback (`127.0.0.1:8765`), embedded HTML/CSS/JS frontend views, save discovery under `%LOCALAPPDATA%\Hero_Siege`, atomic save read/write routines, single-instance port reservation, and CSRF/Host verification guards.
-- `infinite_vault.py`: SQLite-backed permanent storage engine (schema version 6). Manages unlimited item collections and 17×18 stash pages, automatic migrations with pre-migration backups, item transfers, deduplication, full-text search, and cross-process file locking.
+- `infinite_vault.py`: SQLite-backed permanent storage engine (schema version 7). Manages unlimited item collections and 17×18 stash pages, automatic migrations with pre-migration backups, item transfers, deduplication, full-text search, and cross-process file locking.
 - `hss_recovery.py`: Corrupted `.hss` save file recovery and sanitization engine. Decodes base64/XOR/zlib payloads, enforces memory and recursion boundaries (128 MB max decoded payload, 256 max JSON depth), extracts salvageable inventory and character data, and creates timestamped recovery manifests.
 - `custom_item_forge.py`: Custom forge validation and mutation engine. Manages custom property presets, donor item unique mechanics, linked proc bundles, keep/replace native stat semantics, and serializes sidecars to `%LOCALAPPDATA%\Hero_Siege\hs_custom_item_forge.json` and `.runtime`.
 - `custom_forge_runtime.py`: ForgePact runtime status watcher. Inspects ForgePact capability markers, reads status from `bp_ipc/customforge_status.json`, verifies timestamp ordering between runtime files and reports, and checks process user matching.
@@ -72,8 +72,8 @@
 |  [ Save Management ]   [ Infinite Vault ]       [ Custom Item Forge ]                   |
 |  - .hss decode/encode  - infinite_vault.py      - custom_item_forge.py                  |
 |  - hss_recovery.py     - hs_infinite_vault      - custom_forge_runtime.py               |
-|  - Atomic replace        .sqlite3 (schema 6)    - Validates stat keys & bundles         |
-|  - Timestamped bak     - Migrations (v2->v6)    - Writes sidecars                       |
+|  - Atomic replace        .sqlite3 (schema 7)    - Validates stat keys & bundles         |
+|  - Timestamped bak     - Migrations (v2->v7)    - Writes sidecars                       |
 +---------|---------------------|--------------------------|------------------------------+
           |                     |                          |
           | (Writes .hss)       | (Direct SQLite)          | (Writes sidecars)
@@ -193,7 +193,7 @@ All commands below are executed from the submodule root `hero-siege-item-editor/
 | `py -3 -m unittest test_small_charm_metadata.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs 8 charm metadata tests | None | Verified |
 | `py -3 -m unittest test_roll_profile_db.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs 24 roll profile evaluator tests | None | Verified |
 | `py -3 -m unittest test_custom_forge_runtime.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs custom forge runtime bridge tests | None | Verified |
-| `py -3 -m unittest discover -s . -p "test*.py"` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs all 20 test suites (425 tests, 1 skipped; passes on a fresh clone with `core.autocrlf` true or false, 2026-09-23) | Temporary test fixtures | Verified |
+| `py -3 -m unittest discover -s . -p "test*.py"` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs the whole suite (476 tests, 1 skipped, with hero-siege-item-editor#6; passes on a fresh clone with `core.autocrlf` true or false, 2026-09-23) | Temporary test fixtures | Verified |
 | `py -3 build_custom_forge_catalog.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Rebuilds `hs_custom_forge_catalog.json` | Overwrites catalog JSON | Inspected |
 | `py -3 -m PyInstaller --clean --noconfirm HeroSiegeItemEditor.spec` | PowerShell / CMD | `hero-siege-item-editor/` | `pip install -r requirements-build.txt` (PyInstaller 6.20.0, pywebview 6.2.1) | Compiles single-file executable `dist/HeroSiegeItemEditor.exe` (18 MB with Python 3.14, 2026-09-23) | Creates `build/` and `dist/` | Verified |
 | `py -3 tools/cut_release.py --check` / `py -3 tools/cut_release.py 2.15.5` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Reports / moves the X.Y.Z of `APP_VERSION`, keeping the `-s10` suffix | The bump rewrites `hs_item_editor_gui.py` | Verified |
@@ -324,3 +324,160 @@ and the exact tooltip for a saved item appears. Record a row here.
 
 | tag | run URL | sha256 matches | starts, tagged version shown | save loads | exact tooltip shown | date | tester |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+
+## Infinite Vault deletion (2026-09-22)
+
+The category **…** menu exposes **DELETE CATEGORY**; stash headers expose
+**DELETE STASH**. Both remove their contents after a name/count confirmation.
+`/api/vault/collections` and `/api/vault/stashes` accept `previewDelete`, followed
+by `delete` with the returned `previewToken`. The store verifies the snapshot in
+one write transaction, refuses unresolved transfers/reservations and deletion of
+the last category/stash, and retains a dedicated `*.before-delete-<uuid>.bak`.
+Game save files are untouched. The game must be closed. Deletion is not available
+through metadata Undo; it forms an undo barrier. Manual whole-database restoration
+is documented in `hero-siege-item-editor/INFINITE_VAULT_DESIGN.md`.
+
+Stash page indexes remain stable across deletion. `_vault_layout_plan` accepts
+existing indexes, and `ensure_stash_pages` initializes only missing required pages,
+so refresh/compact cannot resurrect deleted gaps. Counts are refreshed after
+initial placement of legacy/unplaced items.
+
+Run `py -3 -m unittest test_vault_deletion -v` for isolated database/HTTP checks,
+plus `test_infinite_vault`, `test_vault_integration`, and `test_http_security` for
+regressions. Browser verification must use a temporary `SAVES` and `VAULT_DB_FILE`,
+never the user's real Vault. The baseline already fails
+`test_tooltip_identity_is_enriched_with_the_verified_subskill_name` with missing
+`selectedName`; it is unrelated to deletion.
+
+Verification on 2026-09-22: all 16 deletion tests passed; the combined 132-test
+Vault/storage/HTTP run passed 131 tests with that same baseline tooltip error.
+In the isolated browser fixture, Cancel preserved all items, deleting the first
+stash preserved the second stash, and deleting a two-stash category removed its
+two items while the other category's item remained. Counts, automatic fallback,
+retained SQLite backup integrity, and an empty browser error log were checked.
+
+## Merged local Item Editor (2026-09-22)
+
+Version `2.15.5-s10-local` combines the AFK spool API, confirmed deletion, and
+the local Miner template. Launch this source build with `ItemEditor.bat`; a new
+release EXE has not been built.
+
+`POST /api/vault/ingest` accepts expedition records; `GET /api/vault/ingest/status`
+counts accepted identities, including items withdrawn or intentionally deleted.
+Gear belongs to expedition stashes in AFK Farm, native stackables to AFK Materials.
+The POST retains the existing Host/Origin and `X-Hero-Siege-Item-Editor: 1` checks.
+Ingest changes only SQLite and may run while the game runs; deletion and save
+transfers still require a closed game.
+
+Schema 7 adds `deleted_deposit_keys`. Deletion stores import identities in the
+same transaction that removes items; retries cannot recreate them, even after a
+restart or removal of the whole category. Existing payloads and transfer journals
+are preserved during migration after a pre-migration backup. Old editors reject
+schema 7. Prior deletions made without receipts cannot be backfilled.
+
+The final affected-suite command is:
+`py -3 -m unittest test_infinite_vault test_vault_integration test_http_security test_vault_deletion test_vault_ingest test_custom_item_forge test_launch_readiness -q`.
+It ran 203 tests: 201 passed, the prior tooltip error and the missing external
+research fixture failed. All 28 deletion/ingest tests passed. Browser tests used
+temporary storage and the actual AFK spool client to verify stash/category
+deletion followed by retry: zero new items, no recreated storage, surviving
+items intact, valid dedicated backups, and no console errors. See
+`hero-siege-item-editor/MERGE_VERIFICATION_2026-09-22.md` for provenance and details.
+
+## Vault speed, AFK categories and clean-up (2026-09-23)
+
+Version `2.15.6-s10-local`. Measured on a copy of a real Vault (14 MB, a 5,230-item
+AFK category): opening the category took 3–5 s of tooltip building and 17.5 MB of
+JSON plus a 36,000-element page; ingesting one AFK item cost about 260 ms because
+every deposit copied the whole database first (16 minutes for 4,547 items).
+
+- `exact_tooltip.build_tooltip_model` reads definitions through private read-only
+  views (`_definition_view`, `_profile_view`, `_stat_label_view`); the public
+  lookups still return defensive copies. The builder never mutates them; a test
+  mutates a returned model and checks the next one is unchanged.
+- `resolve(..., roll_profiles=False)` skips roll profiles and skill selectors for
+  grid fields. `_vault_item_derived` caches those per `(item id, raw sha256)`
+  (first read still runs the integrity check); layout sizes use it too.
+- `GET /api/vault/items?lite=1` returns grid rows without `gameTooltip`;
+  `GET /api/vault/tooltips?ids=` returns up to 200 models. The embedded UI draws
+  stash headers at once and each 17×18 grid when it nears the view
+  (IntersectionObserver), prefetches tooltips per drawn stash, fetches a hovered
+  item's model immediately, loads both models before Compare, and after a drop
+  redraws only the source and target stashes.
+- `_vault_layout_plan` starts each first-fit search at the page where the last item
+  of the same size landed; a test compares it with a full scan on 900 random items.
+- `InfiniteVault.deposit_many` stores a batch in one `_write` (one backup) and
+  reports each entry. `op_vault_ingest` uses it; gear goes to a per-expedition
+  category found again through a `collection_created` marker
+  (`find_marked_collection`), laid out by `_afk_group_layout` on stashes named after
+  `VAULT_RARITY_GROUPS` via `apply_named_layout`. `layout: "defer"` and
+  `finalize: true` let a client lay out an expedition once. Expeditions that already
+  have a page in **AFK Farm** keep the legacy path.
+- `POST /api/vault/purge` (`preview_item_purge` / `purge_items`) deletes the chosen
+  rarity groups of one category with the stash-deletion safety rules; custom-named
+  items are kept, `removeEmptied` removes stashes it empties, and `items_purged` is
+  an undo barrier. The UI entry is **CLEAN UP BY RARITY…** in the category menu.
+
+Measured after the change on the same copy: lite listing 0.12 + 0.07 s (2.9 MB),
+200 tooltips 0.02 s, layout ensure 0.1–0.17 s, ingest 500 records about 1.9 s. Browser
+check on an isolated fixture (copied Vault, temporary saves, game reported closed):
+the category opened with 837 elements, grids and tooltips appeared on scroll, a drop
+updated two stashes in 0.19 s, Compare loaded both models, and clean-up deleted 576
+Satanic items with a backup and removed 8 emptied stashes. No console errors.
+
+Tests: `test_vault_afk_qol` (8 new) and updated `test_vault_ingest` (15, per-expedition
+categories, legacy AFK Farm, one backup per batch) pass. The affected-suite command
+above now runs 214 tests with the same two baseline failures. A full
+`discover` run fails the same 17 tests before and after this change (dice/torch
+selector catalog checks, the subskill-name tooltip test, the external research
+fixture); none of them is new.
+
+## Split AFK Farm by expedition (2.15.7, 2026-09-23)
+
+`POST /api/vault/afk-split` with `action: "preview"` groups the shared AFK Farm
+category's available items by the expedition their deposit key names and returns the
+target category names and counts with a preview token; `action: "split"` with that
+token creates or finds each expedition's marked category, moves the items with
+`InfiniteVault.split_items` (one transaction, `before-split` backup, emptied stashes
+removed, `items_split` undo barrier), lays each category out on rarity stashes and
+deletes AFK Farm when it is empty. Hero Siege must be closed. The UI entry is
+**SPLIT BY EXPEDITION…** in the AFK Farm category menu. `op_vault_ingest` now prefers
+an expedition's marked category over a legacy AFK Farm stash of the same name.
+Tests: `AfkFarmSplitTests` in `test_vault_afk_qol.py` (5). On a copy of the real
+Vault, 3,351 items moved in 1.1 s. The full suite shows the same 23 existing
+failures before and after the change (438 → 443 tests).
+
+## AFK stack counts (2.15.8, 2026-09-23)
+
+`_afk_prepare_record` keeps a stackable record's `itemDefinitionStruct.o` (a whole
+number from 1 to `FULL_STACK_AMOUNT`, 999) instead of forcing 1; other values are
+skipped with a reason. AFK FARM 0.6.2 delivers Prospector fragments as native stacks.
+Test: `AfkStackCountTests` in `test_vault_afk_qol.py`.
+
+## Stacks and AFK dismantle (2.15.9, 2026-09-23)
+
+`InfiniteVault.rework_items` is the single atomic primitive for removing, changing
+and adding items (deposit keys of removed items kept as deleted, dedicated backup,
+undo barrier). Stackables merge into 999 stacks on AFK ingest into AFK Materials and
+on COMPACT ITEMS (`_vault_stack_category`). `POST /api/vault/dismantle`
+(preview/dismantle) runs the Prospector break-down on one stash of an AFK expedition
+category (`vault_meta` marks those with `afk: true`); below Satanic is deleted.
+Tests: `VaultStackTests` (2) and `AfkDismantleTests` (2) in `test_vault_afk_qol.py`.
+The full suite shows the same 23 existing failures before and after (448 tests).
+
+## Dismantle by rarity (2.15.10, 2026-09-23)
+
+**DISMANTLE BY RARITY…** in the category menu of an AFK expedition category runs a
+stash's DISMANTLE on every item of the ticked rarity groups (`VAULT_RARITY_GROUPS`,
+the CLEAN UP BY RARITY grouping). `POST /api/vault/dismantle` takes `groups` instead
+of `pageIndex` (never both); the preview returns per-group counts and `emptyStashes`,
+and a different choice needs its own review. With `removeEmptied`,
+`rework_items(remove_empty_stashes=True)` removes every empty stash of the category in
+the same transaction (also ones already empty), keeping the lowest-numbered one.
+Tests: `AfkDismantleTests` (4). Browser check on a copy of a real Vault: Set + Satanic,
+3,164 items -> 15,725 Satanic Crystal + 2,535 random fragments, 49 empty stashes
+removed, 17 Heroic items kept. `ItemEditorSeason10Tests` now keeps `VAULT_DB_FILE` in
+its temporary folder (the Global Item Finder test used to search the machine's real
+Vault). Merged with master 3aada04 on a clean checkout: 476 tests pass (1 skipped).
+
+Upstream pull request for 2.15.5–2.15.10: falorfrozen-cmd/hero-siege-item-editor#6.
