@@ -3,9 +3,9 @@
 ## Module Overview & Metadata
 - **Module Name:** HS-AFK-Expedition (AFK FARM)
 - **Submodule Path:** `HS-AFK-Expedition`
-- **Reviewed Git Revision:** `6079ee90bbe1828c5214f4277840c2eb73f8e350` (Branch: `main`; release tag `v0.6.4` is `5082037`)
+- **Reviewed Git Revision:** `75e335c` (Branch: `main`; release tag `v0.6.4` is `5082037`)
 - **Revision Date:** `2026-09-23`
-- **Commit Message:** `Tell the toolkit hub about published releases`
+- **Commit Message:** `Opt-in AI code review, like ForgePact and the toolkit`
 - **Source Availability:** Full source:
   - the C++20 Aurie/YYToolkit plugin (`plugin/`);
   - the Python 3.13 standard-library panel and CLI (`tools/`);
@@ -15,6 +15,8 @@
 - **CI / Pipeline Availability:** No test CI; the suites run locally (see Command Reference). Two workflows talk to the hub, and both need the `HUB_DISPATCH_TOKEN` repository secret:
   - `notify-hub.yml` (push to `main`) asks for a submodule pointer bump;
   - `notify-hub-release.yml` (release published) asks for a catalog rebuild.
+
+  `ai-review.yml` is the opt-in AI code review, ForgePact's workflow with only the repository guard changed. A pull request gets a review when it is labelled `ai-review` or someone with write access comments `@claude review` (text after the phrase narrows the scope). It needs the Claude GitHub App installed on the repository and the `CLAUDE_CODE_OAUTH_TOKEN` secret from `claude setup-token`.
 
   Releases are built locally with `tools/build_release.py` and uploaded to GitHub by hand.
 - **Purpose & Scope:** Timed offline expeditions for Hero Siege.
