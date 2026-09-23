@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-19T19:22:54Z",
+  "generated": "2026-09-23T15:13:18Z",
   "tools": [
     {
       "id": "forgepact",
@@ -101,6 +101,64 @@
         "args": [
           "-3",
           "hs_item_editor_gui.py"
+        ]
+      }
+    },
+    {
+      "id": "afk-farm",
+      "name": "AFK FARM",
+      "summary": "Timed offline expeditions from your hero's measured farming pace.",
+      "repo": "falorfrozen-cmd/HS-AFK-Expedition",
+      "submodule": "HS-AFK-Expedition",
+      "version": "0.6.4",
+      "tag": "v0.6.4",
+      "published": "2026-09-23T14:02:55Z",
+      "license": "AGPL-3.0",
+      "requires": {
+        "admin": false,
+        "game_closed": false,
+        "game_running": false,
+        "windows_only": true
+      },
+      "artifact": {
+        "kind": "zip",
+        "name": "AFK-FARM-0.6.4.zip",
+        "url": "https://github.com/falorfrozen-cmd/HS-AFK-Expedition/releases/download/v0.6.4/AFK-FARM-0.6.4.zip",
+        "size": 16161273,
+        "sha256": "bf01b6f8d5ca5744321bf9693d83c309f078db41ecf3979e508bd83d89995515",
+        "sha256_source": "published+verified",
+        "strip_prefix": "AFK-FARM-0.6.4/"
+      },
+      "launch": {
+        "exe": "AFK FARM.exe",
+        "args": [],
+        "elevate": false,
+        "ports": [
+          8787,
+          8788,
+          8789,
+          8790,
+          8791,
+          8792,
+          8793,
+          8794,
+          8795,
+          8796
+        ],
+        "health": {
+          "url": "http://127.0.0.1:8787/",
+          "timeout_s": 20
+        }
+      },
+      "notes_url": "https://github.com/falorfrozen-cmd/HS-AFK-Expedition/releases/tag/v0.6.4",
+      "notes": "Timed offline expeditions for Hero Siege. Calibrate your hero's farming pace once, start an expedition and claim the rewards later. The game itself generates every kill's loot, XP and gold through its own drop calls. Windows only; the interface is in English.\n\n## Download\n\n**AFK-FARM-0.6.4.zip**: extract the whole folder and open **AFK FARM.exe**. Python is bundled, so nothing else needs installing. `START_HERE.md` in the package walks through the setup.\n\n- **Requirements:** Hero Siege on Windows, with Aurie and YYToolkit installed for your game version. **Install AFK plugin** in the panel's Settings installs the plugin and backs up any previous one. The Settings page also shows whether your game build, Aurie, YYToolkit and the installed plugin are supported.\n- **Where items go:** Items go to Hero Siege Item Editor's Infinite Vault, which needs Item Editor 2.15.5 or later (currently on its `master` branch). XP and gold are saved by the game.\n- **Integrity:** SHA-256 of the zip is in `AFK-FARM-0.6.4.zip.sha256`; `MANIFEST.json` inside lists every file's hash.\n\n## What's new in 0.6\n\n- **0.6.0:** faster delivery (Normal, Fast and Maximum speeds), pause and continue, a Vault filter, and quality-of-life fixes.\n- **0.6.1:**\n  - A delivery can continue from its recorded position after a crash.\n  - A Windows notification appears when an expedition is ready.\n  - Adds a region comparison.\n  - Vault categories are named after the hero and the time claimed.\n- **0.6.2:** Items your loot filter hides are converted in the game during delivery.\n  - Items below Satanic are sold for gold. Satanic and above are broken down with the Prospector's recipes.\n  - This happens only while the game has no server connection.\n- **0.6.3:** A loadout, level or combat setting that changed after calibrating no longer blocks a claim. The calibrated pace still sets the rewards.\n- **0.6.4:** The panel's loadout notes and the Start question now describe that rule correctly.\n\n## Notes\n\n- **Beta.** Automatic game startup and **Claim in background** support the verified game executable only.\n- **Play offline.** Use AFK FARM with your offline heroes only.\n- **Item transfers.** Never replay rewards to repair an item transfer; use **Transfer to Vault** in Loot instead.",
+      "guide": "docs/submodules/HS-AFK-Expedition/instructions.md",
+      "source_launch": {
+        "cmd": "py",
+        "args": [
+          "-3",
+          "-B",
+          "tools/panel.py"
         ]
       }
     },
