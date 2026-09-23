@@ -7,7 +7,7 @@
 - **Revision Date:** `Mon Sep 7 19:02:12 2026 +0300`
 - **Commit Message:** `v2.15.4: a stale "no forged-item file" report asks for a restart, not a user mismatch`
 - **Source Availability:** Full application source is present (Python GUI/server `hs_item_editor_gui.py`, SQLite infinite vault `infinite_vault.py`, corrupted save recovery `hss_recovery.py`, Custom Item Forge validation `custom_item_forge.py`, ForgePact runtime bridge integration `custom_forge_runtime.py`, game build identity verification `game_build_identity.py`, exact tooltip rendering `exact_tooltip.py`, stat semantics dictionary `stat_semantics.py`, PRNG roll models `generated_pool_model.py` and `roll_profile_db.py`, socket solver `socket_chain.py`, skill/torch class solvers `dice_skill_selector.py` and `torch_class_selector.py`, frontend assets `item_forge_ui.js` and `item_forge_ui.css`, item icon sprites `item_icons/`, bundled JSON catalogs, catalog generator utilities, PyInstaller build spec `HeroSiegeItemEditor.spec`, and unittest suites `test_*.py`).
-- **CI / Pipeline Availability:** **Not available** (no remote GitHub Actions or external CI configurations exist; validation is conducted locally via Python `unittest` test suites and static build audits).
+- **CI / Pipeline Availability:** GitHub Actions for hub notification (`notify-hub.yml`, `notify-hub-release.yml`), opt-in AI review (`ai-review.yml`), and a tag → draft → CI build release pipeline (`editor-tag.yml`, `editor-release.yml`); see "Release Automation" below. There is no per-PR test run: the suite runs locally and inside the release build.
 - **Purpose & Scope:** Standalone offline save editor and custom item forge for Hero Siege Season 10. Allows players to browse, add, duplicate, socket, and transfer items across character inventories and Shared Stash tabs (`stash.hss`), store unlimited items in an SQLite-backed Infinite Vault, repair corrupted save files, calculate deterministic Perfect/Best roll seeds matching native game PRNG chains, and forge custom runtime statistics and mechanics (e.g. Headhunter, Tyrant's Crown) mediated via ForgePact runtime sidecars. Operates strictly offline and fails closed when Hero Siege is running.
 
 ---
@@ -32,7 +32,7 @@
 - `item_icons/`: Sprite icon catalog containing item icons indexed by sprite name.
 - `HeroSiegeItemEditor.spec`: PyInstaller one-file Windows executable packaging specification (`HeroSiegeItemEditor.exe`).
 - `ItemEditor.bat`: Windows batch launcher executing `py -3 "%~dp0hs_item_editor_gui.py"`.
-- `tests/`: 19 Python `unittest` test suites covering HTTP security, save recovery, infinite vault transactions, custom forge serialization, socket solvers, stat semantics, and launch readiness.
+- `test_*.py` (at the repository root): 20 Python `unittest` test suites covering HTTP security, save recovery, infinite vault transactions, custom forge serialization, socket solvers, stat semantics, launch readiness, and the release tooling.
 - **Data Catalogs & Models:**
   - `hs_full_catalog.json`: Base item definitions, item types, and catalog indices.
   - `hs_custom_forge_catalog.json`: 330 observed numeric stat keys, 932 active unique donor records, 8,877 property presets.
@@ -193,13 +193,17 @@ All commands below are executed from the submodule root `hero-siege-item-editor/
 | `py -3 -m unittest test_small_charm_metadata.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs 8 charm metadata tests | None | Verified |
 | `py -3 -m unittest test_roll_profile_db.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs 24 roll profile evaluator tests | None | Verified |
 | `py -3 -m unittest test_custom_forge_runtime.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs custom forge runtime bridge tests | None | Verified |
-| `py -3 -m unittest discover -s . -p "test*.py"` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs all 19 test suites (397 total tests) | Temporary test fixtures | Verified (Note: see Test Notes below) |
+| `py -3 -m unittest discover -s . -p "test*.py"` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs the whole suite (476 tests, 1 skipped, with hero-siege-item-editor#6; passes on a fresh clone with `core.autocrlf` true or false, 2026-09-23) | Temporary test fixtures | Verified |
 | `py -3 build_custom_forge_catalog.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Rebuilds `hs_custom_forge_catalog.json` | Overwrites catalog JSON | Inspected |
-| `py -3 -m PyInstaller --clean HeroSiegeItemEditor.spec` | PowerShell / CMD | `hero-siege-item-editor/` | PyInstaller, pywebview | Compiles single-file executable `dist/HeroSiegeItemEditor.exe` | Creates `build/` and `dist/` | Inspected |
+| `py -3 -m PyInstaller --clean --noconfirm HeroSiegeItemEditor.spec` | PowerShell / CMD | `hero-siege-item-editor/` | `pip install -r requirements-build.txt` (PyInstaller 6.20.0, pywebview 6.2.1) | Compiles single-file executable `dist/HeroSiegeItemEditor.exe` (18 MB with Python 3.14, 2026-09-23) | Creates `build/` and `dist/` | Verified |
+| `py -3 tools/cut_release.py --check` / `py -3 tools/cut_release.py 2.15.5` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Reports / moves the X.Y.Z of `APP_VERSION`, keeping the `-s10` suffix | The bump rewrites `hs_item_editor_gui.py` | Verified |
+| `py -3 tools/editor_tag.py --tag v2.15.5 --existing <tags>` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Prints `version=/tag=/bump=/previous=` or refuses with nothing on stdout | None | Verified |
+| `py -3 tools/release_ci.py package --root . --out out` | PowerShell / CMD | `hero-siege-item-editor/` | a built `dist/HeroSiegeItemEditor.exe` | Writes `HeroSiegeItemEditor-v<APP_VERSION>.exe` and its `.sha256` | Creates `out/` | Verified |
+| `py -3 -m unittest test_release_tooling` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs 26 release tooling and workflow-shape tests | Temp directories | Verified |
 
 ### Test Suite Fixtures & Checksum Notes
 - Several specialized test suites (`test_dice_skill_selector.py`, `test_torch_class_selector.py`) enforce strict SHA-256 catalog checksums and specific game build versions. If run in an environment where optional research files or catalog hashes differ, these tests fail-closed by design to reflect unverified data state.
-- `test_custom_item_forge.py` includes a research fixture assertion checking for `CLAUDE_CUSTOM_FORGE_STAT_DECODE_REQUEST.md`. In development environments where this external research file is not distributed, the test notes the missing audit artifact.
+- Those checksums are of the exact committed bytes. `.gitattributes` (`*.json -text`) keeps every checkout byte-exact; a working tree created before it existed can still hold CRLF copies, so re-check them out (`git rm --cached -r -q . && git reset --hard` in the submodule, with no local edits) if the dice or tooltip databases report a hash mismatch.
 
 ---
 
@@ -246,6 +250,80 @@ selectors (`t=0`) may use it. ForgePact 1.4.5 implements the mechanic: 4x ore
 while worn, and Vein Resonance digs the two nearest eligible veins with each
 finished dig. `test_custom_item_forge.py` covers the template round trip and the
 helmet-only rule.
+
+## Release Automation
+
+Ported from ForgePact (`docs/submodules/ForgePact/instructions.md`, "Tagging a
+release"), which carries the longer reasoning. This repository's default branch
+is **`master`**, and the tag and build workflows refuse to run from anything
+else; `ai-review.yml` runs on a pull request's head, like every other copy of it.
+
+**AI review (`ai-review.yml`).** ForgePact's workflow with only the repository
+name changed. Opt-in: add the `ai-review` label or comment `@claude review`
+(text after the phrase scopes the review). Needs the `CLAUDE_CODE_OAUTH_TOKEN`
+repository secret **and** the Claude GitHub App installed on this repository;
+the hub's `docs/hub/design.md` ("Asking for a review") explains the shape.
+
+**Tagging (`editor-tag.yml`).** Actions → *Item Editor tag* → Run workflow,
+with the tag (`v2.15.5`). `tools/editor_tag.py` refuses a malformed tag, a
+taken one, one below the highest `v*` tag, and one below `APP_VERSION`; the
+workflow also refuses a version that already has a release, drafts included.
+It then composes the draft body from `RELEASE_NOTES_vX.Y.Z.md` (plus any
+never-released versions' notes since the previous tag, newest first; or
+GitHub's generated notes under a rewrite banner when the file is missing),
+moves `APP_VERSION` with `tools/cut_release.py` and pushes that to `master`
+before tagging, pushes the tag, leaves a **draft** release titled
+`Hero Siege Item Editor X.Y.Z`, and dispatches `editor-release.yml` against
+`master`. The bump commit is made by `github-actions[bot]` with `GITHUB_TOKEN`, so it
+does not fire `notify-hub.yml`.
+
+**Building (`editor-release.yml`).** `workflow_dispatch` with `tag` and
+`dry_run` (default `true` for a manual run). On `windows-latest`, Python 3.14:
+checks the draft exists and is still a draft, checks the tag out into `editor/`
+(the tooling comes from `master`, in `ci/`), installs `requirements-build.txt`,
+runs `cut_release.py --check --expect`, runs the **whole** unittest suite,
+builds the spec with PyInstaller, and names/checksums the exe with
+`release_ci.py package` (`HeroSiegeItemEditor-v<APP_VERSION>.exe` and
+`<that>.sha256` as `<hash> *<name>`, the shapes the hub's
+`catalog/sources.toml` matches). A dry run keeps them as a workflow artifact;
+otherwise a second draft check runs and they are uploaded with
+`gh release upload --clobber`. Nothing in either workflow publishes a release.
+
+The data files are pinned by SHA-256 of their exact committed bytes
+(`exact_tooltip.py` pins `hs_full_catalog.json` and
+`hs_perfect_roll_profiles.json`; `dice_skill_selector.py` pins
+`hs_dice_skill_targets.json`), so `.gitattributes` marks `*.json -text` and no
+checkout rewrites their line endings, whatever `core.autocrlf` says. The build
+also sets `core.autocrlf false` before checking out, since it may be building a
+tag that predates `.gitattributes`.
+
+Until 2026-09-23 no checkout passed the suite: `hs_tooltip_roll_models.json`
+pinned the CRLF bytes of `hs_perfect_roll_profiles.json` (the file as a Windows
+working tree wrote it) while the dice database was pinned to LF bytes, so an
+LF clone rejected the exact-tooltip model and a CRLF clone rejected the dice
+targets. The profile content never changed; the pin was moved to the committed
+LF bytes and `payloadSha256` recomputed (the source files the model was
+generated from are not in the repository, so this is a re-pin, not a
+regeneration). A test that required the never-committed
+`CLAUDE_CUSTOM_FORGE_STAT_DECODE_REQUEST.md` no longer does. The full suite
+(425 tests, 1 skipped) now passes on fresh clones with `core.autocrlf` both
+`true` and `false`. Tags up to `v2.15.4` still carry the old pin, so a rebuild
+of one of those stops at "Tests".
+
+**No notes cleanup.** ForgePact and the Tracker delete a release's notes files
+once it is published. This repository's `README.md` links every
+`RELEASE_NOTES_vX.Y.Z.md` as its version history, so that workflow is not
+ported; the notes files stay.
+
+### CI build launch gate
+
+Before pressing Publish, download the exe from the draft, check its sha256
+against the `.sha256` asset, start it, and confirm the window title and
+`http://127.0.0.1:8765/api/instance` show the tagged version, a save loads,
+and the exact tooltip for a saved item appears. Record a row here.
+
+| tag | run URL | sha256 matches | starts, tagged version shown | save loads | exact tooltip shown | date | tester |
+| --- | --- | --- | --- | --- | --- | --- | --- |
 
 ## Infinite Vault deletion (2026-09-22)
 
@@ -398,6 +476,8 @@ and a different choice needs its own review. With `removeEmptied`,
 the same transaction (also ones already empty), keeping the lowest-numbered one.
 Tests: `AfkDismantleTests` (4). Browser check on a copy of a real Vault: Set + Satanic,
 3,164 items -> 15,725 Satanic Crystal + 2,535 random fragments, 49 empty stashes
-removed, 17 Heroic items kept. Full suite: 450 tests, the same 23 existing failures.
+removed, 17 Heroic items kept. `ItemEditorSeason10Tests` now keeps `VAULT_DB_FILE` in
+its temporary folder (the Global Item Finder test used to search the machine's real
+Vault). Merged with master 3aada04 on a clean checkout: 476 tests pass (1 skipped).
 
 Upstream pull request for 2.15.5–2.15.10: falorfrozen-cmd/hero-siege-item-editor#6.
