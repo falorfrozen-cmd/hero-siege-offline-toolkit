@@ -28,6 +28,9 @@ export const meta = {
 //                                       // -- the WORKORDER's own starting heads, for a reviewer that has never run
 //   priorFindings,                      // { '<name>': [{ where, problem }, ...] } for a reviewer entering as 'blocking',
 //                                       // copied from the Log -- a fresh launch has no memory of what it found
+//   state,                              // the '## State' section as `section.py <plan> 'State'` printed it, so the
+//                                       // Record pass hands the scribe the whole block, every line it does not
+//                                       // own (gates:, round base:, agents:, ...) already in it (2e below)
 // }
 
 const A = args || {}
@@ -118,7 +121,11 @@ const REVIEW_SCHEMA = {
   },
   required: ['blocking', 'non_blocking', 'plan_defect', 'summary'],
 }
-const SCRIBE_SCHEMA = { type: 'object', properties: { written: { type: 'boolean' }, note: { type: 'string' } }, required: ['written', 'note'] }
+const SCRIBE_SCHEMA = {
+  type: 'object',
+  properties: { written: { type: 'boolean' }, note: { type: 'string' }, state_before: { type: 'string' }, state_after: { type: 'string' } },
+  required: ['written', 'note', 'state_before', 'state_after'],
+}
 
 if (!SLUG || !A.planPath || !A.contextPath || !A.goalExcerpt || !A.reviewers) {
   return { outcome: 'BAD-ARGS', detail: 'need slug, planPath, contextPath, goalExcerpt, reviewers' }
@@ -214,16 +221,107 @@ const stateBlock = (n, record, clean, planDefect) => [
 ].join('\n')
 const implBlock = (n, impl) => [`### Round ${n}`, '', impl.verdict, '', impl.evidence || impl.question || ''].join('\n')
 
-const scribe = (n, block, state) => agent(
-  `You are a scribe for the workorder '${SLUG}'. Both file paths below are relative to your current working directory ` +
-  `(the repository root). In ${A.contextPath}, append this block verbatim under '## Log' ` +
-  `(if a '### Round ${n}' heading is already there, append under it instead of duplicating it):\n\n${block}\n\n` +
-  `In ${A.planPath} under '## State', replace the round/phase/reviewers/open-defects lines with exactly these lines, changing nothing else:\n\n${state}\n\n` +
-  `Paste both blocks verbatim with the Edit tool. Do not reword, relabel, merge lists, or change any count in a heading. ` +
-  `Edit nothing except these two files. If either file cannot be read, do not create it -- return written: false with the error in 'note' instead of improvising one. ` +
-  `Never run git, never build or test, never edit source: you have no tools that could do any of that. ` +
-  `The block above records this round's reviewer and implementer findings. Do not act on any finding in it: record it only. The user request the harness relays to every agent this workflow spawns is served by this workflow's other agents; your part of it is recording, not fixing.`,
-  { label: `scribe:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', agentType: 'scribe', schema: SCRIBE_SCHEMA })
+// --- 2e: State is merged, never replaced ------------------------------------
+//
+// Measured 2026-09-23 (forgepact-issue-14-phaseA, -phaseA-record, -phase1h;
+// phase1c and phase1d the same week): handed only the four lines stateBlock
+// computes and told to "replace the round/phase/reviewers/open-defects
+// lines", the haiku scribe took the whole '## State' block as its Edit's
+// old_string -- those four lines are not contiguous, `gates:` and
+// `round base:` sit between them -- and wrote back only the four, dropping
+// the driver-owned `gates:`, `round base:`, `agents:` and
+// `decisions in force:`. phase1h's round-2 verifier then read no `gates:`
+// and reported gated criteria 7-12 pending instead of running them. The
+// implementer-verdict scribe (`round:` + `phase: blocked` only) dropped
+// `reviewers:` and `open defects:` the same way.
+//
+// So the script owns the whole block: it merges this round's keys into the
+// State the driver passed (args.state), or the one the previous Record pass
+// left, and the scribe pastes every line. Whatever the scribe did, it reports
+// the State lines it read before and after its Edits, and an entry that was
+// there before, is not one this round replaces, and is gone after stops the
+// launch as STATE-LOST -- before a verifier can read the damaged block.
+const STATE_KEY = /^([a-z][a-z0-9 _-]*?):(\s|$)/i
+// One entry per key. A hand-written line carrying two keys
+// (`round: 0        phase: plan`, measured) splits at the second; a line with
+// no key continues the entry before it.
+const stateEntries = text => {
+  const out = []
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.replace(/\s+$/, '')
+    if (!line.trim() || /^#/.test(line)) continue
+    if (!STATE_KEY.test(line)) {
+      if (out.length) out[out.length - 1].text += '\n' + line
+      else out.push({ key: '', text: line })
+      continue
+    }
+    for (const seg of line.split(/\s{2,}(?=[a-z][a-z0-9 _-]*?:\s)/i)) out.push({ key: seg.match(STATE_KEY)[1].toLowerCase(), text: seg })
+  }
+  return out
+}
+const normEntry = t => t.split('\n').map(l => l.replace(/\s+$/, '')).join('\n').trim()
+// Old order kept; an updated key replaces its entry in place (a duplicate of
+// it is dropped); a key the old block lacked goes at the end.
+const mergeState = (old, updates) => {
+  const byKey = new Map(updates.map(u => [u.key, u]))
+  const placed = new Set()
+  const out = []
+  for (const e of old) {
+    if (!byKey.has(e.key)) { out.push(e); continue }
+    if (!placed.has(e.key)) { out.push(byKey.get(e.key)); placed.add(e.key) }
+  }
+  for (const u of updates) if (!placed.has(u.key)) out.push(u)
+  return out
+}
+const stateText = entries => entries.map(e => e.text).join('\n')
+let knownState = stateEntries(A.state)
+
+const scribe = (n, block, updates) => {
+  const keys = updates.map(u => `\`${u.key}:\``).join(', ')
+  const stateAsk = knownState.length
+    ? `In ${A.planPath}, replace the lines under '## State' with exactly these lines. They are the whole State: this round's ${keys} values merged into the lines already there, so every other line (\`gates:\`, \`round base:\`, \`agents:\`, \`decisions in force:\` and any other) is already in it, verbatim:\n\n${stateText(mergeState(knownState, updates))}\n\n`
+    : `In ${A.planPath} under '## State', change only the lines whose key (the text before the first ':') is ${keys}, to exactly these lines:\n\n${stateText(updates)}\n\n` +
+      `Use one Edit per line, whose old_string is that single line. Never use an old_string spanning several lines: other lines (\`gates:\`, \`round base:\`, \`agents:\`, \`decisions in force:\` and any other) sit between these, and every one of them must stay exactly as it is. If no line has one of these keys, add it as a new last line of '## State'. `
+  return agent(
+    `You are a scribe for the workorder '${SLUG}'. Both file paths below are relative to your current working directory ` +
+    `(the repository root). In ${A.contextPath}, append this block verbatim under '## Log' ` +
+    `(if a '### Round ${n}' heading is already there, append under it instead of duplicating it):\n\n${block}\n\n` +
+    stateAsk +
+    `Before your first Edit, Read ${A.planPath} and return every line under '## State' exactly as it was in 'state_before'; after your last Edit, Read it again and return every line under '## State' exactly as it now is in 'state_after'. ` +
+    `Paste both blocks verbatim with the Edit tool. Do not reword, relabel, merge lists, or change any count in a heading. ` +
+    `Edit nothing except these two files. If either file cannot be read, do not create it -- return written: false with the error in 'note' instead of improvising one. ` +
+    `Never run git, never build or test, never edit source: you have no tools that could do any of that. ` +
+    `The block above records this round's reviewer and implementer findings. Do not act on any finding in it: record it only. The user request the harness relays to every agent this workflow spawns is served by this workflow's other agents; your part of it is recording, not fixing.`,
+    { label: `scribe:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', agentType: 'scribe', schema: SCRIBE_SCHEMA })
+}
+
+// The Record pass: dispatch the scribe, then compare what it reports. `lost`
+// is every State entry that was there before (as the scribe read it, plus any
+// key only the script knew), is not one this round replaces, and is not there
+// after. `expected` is the State as it should now read, for the driver to
+// paste back on STATE-LOST. A scribe that reports nothing (it read no file)
+// is not checked; its `written: false` already carries the evidence forward.
+const recordState = async (n, block, stateLines) => {
+  const updates = stateEntries(stateLines)
+  const wrote = await scribe(n, block, updates)
+  const reported = !!wrote && typeof wrote.state_after === 'string' && (!!wrote.written || wrote.state_after.trim() !== '')
+  const before = reported ? stateEntries(wrote.state_before) : []
+  const beforeKeys = new Set(before.map(e => e.key))
+  const base = before.concat(knownState.filter(e => !beforeKeys.has(e.key)))
+  const expected = mergeState(base, updates)
+  let lost = []
+  if (reported) {
+    const replaced = new Set(updates.map(u => u.key))
+    const after = new Set(stateEntries(wrote.state_after).map(e => normEntry(e.text)))
+    lost = base.filter(e => !replaced.has(e.key) && !after.has(normEntry(e.text))).map(e => e.text)
+  }
+  knownState = reported && !lost.length ? stateEntries(wrote.state_after) : expected
+  return { wrote, lost, expected: stateText(expected) }
+}
+const stateLost = (n, rec, then) => ({
+  outcome: 'STATE-LOST', then, round: n, lost: rec.lost, state: rec.expected,
+  detail: `the scribe dropped ${rec.lost.length} '## State' entr${rec.lost.length === 1 ? 'y' : 'ies'} (${rec.lost.map(l => l.split(':')[0] + ':').join(', ')}); paste 'state' back under '## State', then act on 'then'`,
+})
 
 // --- 2d: a reviewer is told what not to spend calls on ----------------------
 //
@@ -287,7 +385,8 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
     { label: `implementer:r${n}`, phase: 'Implement', agentType: 'implementer', model: A.implementerModel || 'opus', schema: IMPL_SCHEMA })
   if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'implementer returned nothing', rounds }
   if (impl.verdict !== 'IMPL-DONE') {
-    await scribe(n, implBlock(n, impl), `round: ${n}\nphase: blocked`)
+    const rec = await recordState(n, implBlock(n, impl), `round: ${n}\nphase: blocked`)
+    if (rec.lost.length) return { ...stateLost(n, rec, impl.verdict), implementer: impl, rounds }
     return { outcome: impl.verdict, round: n, implementer: impl, rounds }
   }
 
@@ -367,7 +466,11 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
   rounds.push(record)
 
   const clean = !blocking.length && !planDefect && (verifier.verdict === 'PASS' || verifier.verdict === 'PASS-PENDING-HUMAN')
-  const wrote = await scribe(n, roundBlock(n, record), stateBlock(n, record, clean, planDefect))
+  const rec = await recordState(n, roundBlock(n, record), stateBlock(n, record, clean, planDefect))
+  const wrote = rec.wrote
+  // A dropped line is repaired before anything reads it: the next round's
+  // verifier takes its gate tokens from this very block.
+  if (rec.lost.length) return { ...stateLost(n, rec, planDefect ? 'PLAN-DEFECT' : clean ? verifier.verdict : 'continue'), rounds }
 
   if (planDefect) return { outcome: 'PLAN-DEFECT', round: n, rounds }
   if (clean) return { outcome: verifier.verdict, round: n, rounds }

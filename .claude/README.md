@@ -481,6 +481,22 @@ turned a round's own `1 BLOCKING` + `5 NON-BLOCKING` verdict into six
 hand; counts baked into the headings make that kind of relabel visible on
 sight instead.
 
+The State the scribe pastes is the *whole* block, not just the lines the round
+computed. The script merges this round's `round:`/`phase:`/`reviewers:`/`open
+defects:` into the `## State` the driver passed as `args.state` (or the one the
+previous Record pass left), so `gates:`, `round base:`, `agents:`,
+`decisions in force:` and anything else are pasted back verbatim; without
+`args.state` the scribe is told to edit one line per `Edit`. On 2026-09-23 a
+scribe handed only the four computed lines replaced the whole block with them
+in several workorders, and the next verifier, reading no `gates:`, reported
+gated criteria pending instead of running them. The scribe now also returns
+the State lines it read before and after its edits, and a line that was there
+before, is not one the round replaces, and is gone after ends the launch as
+`STATE-LOST` — carrying `lost`, the full `state` it should read, and `then`,
+the outcome the round would otherwise have returned — before any verifier
+reads the damaged block. `tools/workorder_audit.py` R18 checks the same thing
+from the transcript.
+
 It runs as the restricted `scribe` agent type (`.claude/agents/scribe.md`,
 `Read`/`Edit` only), not the unrestricted `workflow-subagent` every other
 Record-phase agent here still is. On 2026-09-19 an unrestricted scribe read
@@ -502,7 +518,7 @@ with.
 Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
-                   submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings } })
+                   submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state } })
 ```
 
 `reviewers` is a map, one entry per applicable round-0 reviewer, valued
@@ -513,7 +529,9 @@ read, relative to `repoRoot`. `researchHeadings` names the context file's
 `round base:`. `priorFindings` is `{ '<reviewer>': [{ where, problem }] }` for
 a reviewer entering as `blocking`, copied by the driver on a fresh launch from
 the most recent `### Round <n>` Log entry that carries a `BLOCKING (k)` list;
-between rounds of one launch the script carries it itself. A
+between rounds of one launch the script carries it itself. `state` is the
+plan's `## State` section as `section.py <plan> 'State'` prints it, which the
+Record pass merges each round's lines into (see the scribe above). A
 re-run reviewer that was blocking is handed its own finding and asked whether
 the delta resolves it, every re-run is told earlier rounds reviewed the rest,
 and every reviewer is told the Out-of-scope list is not a checklist — a
@@ -591,7 +609,7 @@ context per turn, peak context, wall minutes, the longest single tool call,
 the model the transcript actually ran on (what a tier alias resolved to that
 day), its list-price cost (`MODEL_PRICES`), and KB of `Read` results by kind
 (plan, context file, `instructions.md`, source). It prints one table and the
-session's total cost, then seventeen rules as `PASS`/`FAIL` with
+session's total cost, then eighteen rules as `PASS`/`FAIL` with
 evidence (the agent, the time, the command or path), then each role's numbers
 against the pre-update averages as a percentage; `--json` emits the same as
 one object.
@@ -613,6 +631,7 @@ one object.
 | R15 edit-guard-workaround | a subagent whose `Edit`/`Write` was refused by the harness's worktree guard ("is in the base repo checkout") and which then made more than five further tool calls (its own return not counted) instead of returning `PLAN-DEFECT` — unless an edit of the same repo-relative path then landed inside a worktree, which is a mistyped path corrected, not a workaround (a same-named scratch copy is the workaround) |
 | R16 scribe-scope | a scribe (`agentType: "scribe"`, or the `scribe` role a workflow label like `scribe:r1` parses to) whose `Edit`/`Write` landed outside its own `.claude/workorders/`, judged against the transcript's own `cwd` rather than a bare substring test; which ran `git add`/`git commit` in any shell command; which wrote a file through a shell command instead (a redirect or heredoc, `tee`, a PowerShell content cmdlet, `cp`/`mv`/`rm`/`sed -i`, a Python file write) whatever the target path; or, for the restricted `scribe` agent type, ran any shell command at all |
 | R17 live-operator-scope | a `live-operator` that wrote anything but its own `.claude/workorders/<slug>-live-<n>.md`, installed a build (a `.dll` copied or moved, or `installmod`), ran a writing git command, restored saves, or force-stopped the game |
+| R18 scribe-state-preserved | a scribe `Edit` to a `-plan.md` whose `old_string` carries a `key:` State entry (`gates:`, `round base:`, `agents:`, … — a hand-written `round: 0        phase: plan` counts as two) that its `new_string` no longer has |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
