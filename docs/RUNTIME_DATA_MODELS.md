@@ -344,9 +344,9 @@ recorded as logged without interpreting them (RD `### Phase 1k results`,
 Live 1k, `partial-cube`). Not observed: the game's own hash check on the
 owner's drag of the edited bag stack, on that Cube merge, or on a save or a
 reload - `ItemCheckHash` and `ReportClient` both logged zero calls during the
-two armed drag windows and were not armed for the save or the reload, and
-`ReportClient` never fired at all this session, so it has no positive
-control here (RD `### Phase 1k results`, Live 1k, `hash-accept`,
+two armed drag windows, with no read taken of either row during the save or
+the reload, and `ReportClient` never fired at all this session, so it has no
+positive control here (RD `### Phase 1k results`, Live 1k, `hash-accept`,
 `partial-cube`).
 
 ### The recipe amount and the craft route
