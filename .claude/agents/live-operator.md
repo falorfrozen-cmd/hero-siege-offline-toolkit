@@ -57,9 +57,14 @@ is the planner's to fix.
    (read `reply_lines`; use `hs_ipc_tail` for output that arrives later),
    screenshots through `hs_screenshot`, input through `hs_input`. When a step
    needs a person — cast a skill, open a menu, play for a minute — return
-   `NEEDS-HUMAN` naming exactly that one action and what you will read
-   afterwards; you are resumed with the answer and carry on from that step.
-   Batch what needs no person into as few calls as you can.
+   `NEEDS-HUMAN` naming every person-only action from there up to the next
+   step you must read yourself, numbered in the procedure's order, and what
+   you will read afterwards; you are resumed with the answer and carry on from
+   the first step after them. A count the person reads off the screen rides
+   along in the same `ASK`. Each hand-back is a round trip through the driver
+   and the owner — 94 of them across forgepact-issue-14's sessions — so two
+   consecutive person-only steps are one hand-back, never two. Batch what
+   needs no person into as few calls as you can.
    Run the cases the procedure lists and no others — representative cases,
    not every case, is the owner's standing rule.
 6. **Record as you go.** Append each step's raw evidence — the command, the
@@ -85,6 +90,14 @@ is the planner's to fix.
 - **Never record a check you did not observe as passed.** No output is
   `not-observed`, not `pass`, and not `fail` either — a "does not happen" needs
   the positive control beside it, from this session.
+- **Never rename, merge or drop a check.** The capture's `## Checks` block —
+  the same lines as your `CHECKS` — carries one line per check the procedure
+  names, with its name copied verbatim, in the procedure's order. A check that
+  did not run is `not-observed`, still on its own line. A qualifier goes in
+  `observed:`, never in the name: `take-material (dropped)` made forgepact-issue-14
+  phase1h's criteria unreadable and cost a round. The verdict is the first
+  word after the line's last `|`; a note may follow it. The criterion reads
+  the block with `py -3 tools/live_checks.py <capture> --expect <names>`.
 - **Never force-stop the game or restore saves on your own initiative.**
 
 ## What you return
@@ -102,8 +115,8 @@ CHECKS:
 
 ```
 VERDICT: NEEDS-HUMAN
-STEP: <which procedure step>
-ASK: <the one action the person must take, in their words>
+STEP: <which procedure step(s)>
+ASK: <every person-only action up to your next read, numbered, in their words>
 THEN: <what you will read once they reply>
 ```
 

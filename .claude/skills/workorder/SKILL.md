@@ -164,7 +164,11 @@ Read the plan file, `## Needs human judgement` and `## Log` yourself — grep
 `## Context the implementer needs` for what you need rather than reading it
 front-to-back. If `## Acceptance criteria` contains anything that is not a
 runnable command or a checkable file, send it back now — an unrunnable
-criterion costs a full implement round to discover. If `## Needs human
+criterion costs a full implement round to discover. `py -3
+tools/plan_lint.py <plan>` checks that statically, running no criterion:
+prose, a heading slice not anchored on `\n`, a grep over a live capture
+instead of `tools/live_checks.py`, `python` for `py -3`. A finding goes back
+to the planner with the tool's output before any implementer is spawned. If `## Needs human
 judgement` is non-empty, show it to the user and get an answer before spawning
 the implementer.
 
@@ -383,7 +387,8 @@ The line, when a reviewer's label looks wrong to you:
 | ships inert or wrong — the `HOOK INSTALLED`-and-does-nothing class | a follow-up idea for later |
 | a legal finding from `decompile-output-guard` — **always** | a naming or wording nit |
 | an overclaim in **release notes** — `AGENTS.md` is explicit that one wrong "Fixed" erodes every note after it | an overclaim in a research doc or a test comment |
-| | an internal doc that is merely incomplete |
+| an overclaim in `docs/RUNTIME_DATA_MODELS.md` or `hs-game-sdk/curated/`, which every module reads as settled | an internal doc that is merely incomplete |
+| before a pending live session, anything that leaves one of its checks uninterpretable — a measured route with no positive control, an instrument that cannot see what the check reads. A round costs 13-23 min; a wasted session costs the owner a sitting | |
 | | a player-visible ForgePact change with no `release-notes-vX.Y.Z.md` — `forgepact-tag.yml` falls back to generated notes under a rewrite banner; flag it, don't spend a round |
 
 - **`verifier` PASS and no blocking finding** → go to step 5, carrying every
@@ -451,12 +456,19 @@ against a median driver of $12.
 2. **Spawn `live-operator`** with: the slug, the session number `<n>`, the
    context file and the `### Live procedure <n>` heading, the character slot,
    and which build is installed. Record its agent id in `## State` › `agents:`.
-3. **Relay, do not operate.** A `NEEDS-HUMAN` comes back with one `ASK`: put
+3. **Relay, do not operate.** A `NEEDS-HUMAN` comes back with one `ASK` (it may number several actions): put
    it to the user verbatim, then `SendMessage` the operator their answer
    (ToolSearch `select:SendMessage` if deferred). Do not run `hs_*` tools,
    `ipc.ps1` or log reads yourself — you would be the operator at the most
    expensive context in the pipeline.
-4. **Route what it returns.** Append at most a short summary and the capture
+4. **Put the next decision to the owner first.** At `LIVE-DONE`, show the
+   operator's `CHECKS` lines verbatim and ask whatever the next phase needs
+   decided, before any record or docs work starts. The answer usually
+   depends only on the session's result. In forgepact-issue-14, Phase B's
+   four design questions depended only on Live 1i, known at 01:06, and went
+   out at 02:33, after a record round and a 64-minute docs workorder; the
+   owner answered them at 08:59.
+5. **Route what it returns.** Append at most a short summary and the capture
    path — never the capture — under a `### Live <n>` Log heading, then:
    - every check `pass` → the pending criteria are met. Move the session's
      gate token (for example `live1: complete`) from `gates pending:` to
@@ -472,9 +484,54 @@ against a median driver of $12.
      planner as an instrument defect, never into a doc as "does not happen".
    - `LIVE-ABORTED` → report its `WHY` to the user and stop.
 
+   A capture `tools/live_checks.py` cannot read — a renamed, missing or
+   unreadable check — is not repaired by anyone: report it, and re-run the
+   session or replan. The capture is the session's evidence.
+
+**Record this phase while the next one is planned.** When the owner's answer
+from 4 means another phase, launch this workorder's record round and, in the
+same message, spawn `planner` for the next phase's own slug (that
+workorder's Step 1, stopping at the plan), telling it the record is running.
+Record and plan share no files: the planner writes only its own workorder
+files and reads the result from the capture. The next implementer starts
+only after this record round has returned `PASS`, because both edit the
+research doc. Merge `origin/main` into the branch only between rounds —
+before the record launches or after it returns — never while one runs:
+`round_delta.py` and every reviewer diff from the round base, so a merge
+mid-round puts main's commits into this round's review. The overlap is up to
+about 2 h over forgepact-issue-14's nine research phases (`min(record,
+next plan)` summed). This is not folding the record into the next phase's
+first round: the record keeps its own rounds, review and commit, so the
+measurement is in a tracked file before anything else depends on it.
+
+**Same build, more to measure: a second session, not a new phase.** If the
+result raises a question the installed DLL can already answer, have the
+planner add `### Live procedure <n+1>` to this workorder (planner.md "A live
+session is a procedure") and run it as session `<n+1>`: its own capture, a
+fresh operator, a relaunch when the procedure needs one, with the
+`instrument-blindness-reviewer` reading only the new procedure first. Ask the
+owner once, as in 1. Twice in forgepact-issue-14 (1c→1d and 1e→1f) this was a
+new workorder instead, costing about 1.8 h between them. Since Ghidra came
+into use every phase has needed a new build, so expect this rarely.
+
+**One sitting, several sessions — never one launch.** When the owner has time
+for more than one ready procedure, run them back to back in that sitting, each
+with its own install question, launch, backup, operator and capture, and a
+stop and restore between any two that write saves. Do not merge procedures
+into one launch: nine forgepact-issue-14 sessions used seven different DLLs,
+each procedure pins the counts the previous restore left, and two of the nine
+crashed the game on stash close.
+
+**Offer a fresh session at the next phase boundary** when this session has
+already driven a live session. The driver relays every hand-back at its own
+context size: in forgepact-issue-14, relays at 605-680K tokens a turn cost
+about $13 in one 22-hour session, where a fresh session starts near 90K. Say
+so in one line with the `resume` or `plan` command, and let the owner decide.
+
 `tools/workorder_audit.py` R17 fails a session whose operator wrote anything
 but its `<slug>-live-<n>.md`, installed a build, ran a writing git command,
-restored saves or force-stopped the game.
+restored saves or force-stopped the game. R20 fails any other agent's edit to
+a capture, the driver's included.
 
 ### Step 5 — report
 
@@ -502,6 +559,13 @@ Then fold what is still true out of the workorder and into the document that
 describes the result — `docs/hub/design.md`, a `docs/adr/` entry, or the
 submodule's `instructions.md`. Leave both workorder files where they are; they
 are ignored.
+
+**When the owner says they are leaving,** list in one line what could run
+without them — a plan for a phase whose decisions they have already made, a
+record round — and start only what they approve. A plan written before the
+owner's answer to its own design question is likely a replan: in
+forgepact-issue-14 the design moved under the owner's answers four times.
+"Plan only" still means plan only.
 
 ## Driver discipline
 

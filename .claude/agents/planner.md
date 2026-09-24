@@ -54,7 +54,10 @@ you find yourself wanting to, that is a signal the plan is not finished.
 3. **Read the existing research before re-running it.** `ForgePact/docs/`
    keeps negative results deliberately. A negative labelled "does not happen"
    when it was only "not observed" is a trap — treat any unsourced negative as
-   unproven.
+   unproven. Read a `*-research.md` the way you read the guide: `section.py
+   <doc> --toc`, then by heading or `--grep`, never whole.
+   `crafting-materials-research.md` reached 426 KB during forgepact-issue-14,
+   and research docs were about $19 of that feature's re-read cost.
 
 ## What a usable acceptance criterion looks like
 
@@ -108,8 +111,33 @@ When a criterion needs the running game, write the session as a
   code path — not every skill or item (`AGENTS.md` § "Mod Development
   Workflow").
 
-The criterion then reads `<slug>-live-<n>.md records pass for <check>`, which
-the verifier can check once the session has run.
+The session criterion reads the capture with the tool, never a hand-written
+grep: `py -3 tools/live_checks.py .claude/workorders/<slug>-live-<n>.md
+--expect <every check name, comma-separated> --require-pass <checks>` exits
+0, gated on the session's gate token. What goes on `--require-pass` depends on
+what a `fail` would mean:
+
+- **session-validity checks** — `dll-hash`, `marker`, `control` — always:
+  failing one means nothing was measured;
+- **acceptance checks of shipped behaviour** (a build's `on-*`, `off-*`,
+  `no-duplicate`): the feature is wrong if one fails, so it must pass;
+- **research checks** — the question the session exists to answer — never.
+  Their `fail` or `not-observed` is the finding, routed by the driver
+  (SKILL.md Step 4.5), and a criterion that demands `pass` turns a result
+  into a defect round: forgepact-issue-14-phase1b round 2 capped that way.
+
+Nine forgepact-issue-14 plans instead grepped for `| (pass|fail|not-observed)$`
+and counted lines. The operator's note after a verdict and one renamed check
+cost three rounds and a split workorder on punctuation.
+
+**A follow-up measurement on the same build is a second session of this
+workorder, not a new phase.** When the question a session raises can be
+answered with the DLL already installed, write it as `### Live procedure
+<n+1>` in this context file, with its own capture `<slug>-live-<n+1>.md` and
+its own criterion. Write its starting values against the state the previous
+session left, or have it restore first. Twice in forgepact-issue-14 such a
+follow-up (1c→1d, 1e→1f) became a whole new workorder that started 65 and 80
+minutes after the session before it.
 
 ## Specify behaviour, not text
 
@@ -127,6 +155,20 @@ Confirm every path, symbol, script/object name, command and expected output
 the plan names against the working tree, in this run — grep, ls, or run it.
 Mark anything unconfirmed `UNVERIFIED:` in place, or move it to `## Needs
 human judgement`. Never state it as fact.
+
+Then run `py -3 tools/plan_lint.py .claude/workorders/<slug>-plan.md` and fix
+every finding before returning: a criterion in prose, a heading slice not
+anchored on `\n` (`t.index('\n## X\n')`, since a heading's name is often
+mentioned in backticks above the heading itself), a grep over a live capture
+instead of `live_checks.py`, or `python` where this repository runs `py -3`.
+Each has cost a round.
+
+**Planning while the previous phase is recorded.** The driver may start you
+while the last session's record round is still running (SKILL.md Step 4.5).
+Read that session's results from its capture (`<slug>-live-<n>.md`), not
+from the research doc, which is being written. Cite them as `UNVERIFIED:
+being recorded`, and write no step that edits the section the record is
+writing.
 
 ## The workorder format
 

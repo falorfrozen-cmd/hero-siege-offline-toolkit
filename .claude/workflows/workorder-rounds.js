@@ -207,6 +207,12 @@ const diffCommands = (REPO_ROOT
 // docs with tools it had no business having, and ran `git add`/`git commit`.
 // `tools/workorder_audit.py` R16 audits this.
 const findingLine = f => `- [${f.reviewer}] ${f.where}: ${f.problem} — evidence: ${f.evidence}`
+// A NON-BLOCKING line goes in without its evidence. Every later round's
+// implementer and driver re-reads the Log, and across forgepact-issue-14's 16
+// context files NON-BLOCKING text was 154 KB, 52 KB of it evidence tails, for
+// findings the round is told not to spend itself on. BLOCKING lines keep
+// theirs: the next implementer works from it.
+const nonBlockingLine = f => `- [${f.reviewer}] ${f.where}: ${f.problem}`
 const roundBlock = (n, record) => {
   const lines = [`### Round ${n}`, '', `verifier: ${record.verifier}` +
     (record.verifierSaid ? ` (the verifier said ${record.verifierSaid}; every failed criterion is gated on a gate not set in \`gates:\`)` : '')]
@@ -215,7 +221,7 @@ const roundBlock = (n, record) => {
   lines.push('', `BLOCKING (${record.blocking.length})`)
   for (const f of record.blocking) lines.push(findingLine(f))
   lines.push('', `NON-BLOCKING (${record.nonBlocking.length})`)
-  for (const f of record.nonBlocking) lines.push(findingLine(f))
+  for (const f of record.nonBlocking) lines.push(nonBlockingLine(f))
   lines.push('', `not re-run: ${record.notReRun.join(', ') || 'none'}`)
   return lines.join('\n')
 }
@@ -385,7 +391,8 @@ const SECTION_CMD = file => `\`py -3 .claude/skills/workorder/section.py "${file
 // only "Workorder: <path>", read a 30-42KB plan whole to find its criteria.
 // Hand it the two extractions that are the whole of its mandate.
 const VERIFIER_CRITERIA_NOTE = ` Take the criteria and the gate tokens with exactly \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\` and \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'State'\`; do not Read the plan whole.` +
-  ` A gate is set only when the \`gates:\` line itself carries its token. \`gates pending:\` and \`route tokens:\` set nothing, and a \`gates:\` value with \`|\` alternatives is a template that sets nothing. Put the token a gated criterion names in its 'gate'. A criterion whose gate is not set is 'unattempted' (gate <token> not set), never 'fail'. Put each STRUCTURAL FINDING and each NOT DONE/DEVIATIONS finding in 'other_defects'.`
+  ` A gate is set only when the \`gates:\` line itself carries its token. \`gates pending:\` and \`route tokens:\` set nothing, and a \`gates:\` value with \`|\` alternatives is a template that sets nothing. Put the token a gated criterion names in its 'gate'. A criterion whose gate is not set is 'unattempted' (gate <token> not set), never 'fail'. Put each STRUCTURAL FINDING and each NOT DONE/DEVIATIONS finding in 'other_defects'.` +
+  ` Run each criterion's command exactly as written: never swap \`py -3\` for \`python\`; a command that cannot start is a failed criterion with its error. Run each test suite once, with the Bash timeout at 240000 and its output sent to a scratch file you grep; never run a suite again to read another slice.`
 const VERIFIER_CONTEXT_NOTE = A.contextPath !== A.planPath
   ? ` Context file: ${A.contextPath} -- open it only for a heading a criterion cites, with ${SECTION_CMD(A.contextPath)}; never read it whole, its '## Log' is the implementer's reasoning.`
   : ` This is a single-file plan: open a section a criterion cites with ${SECTION_CMD(A.planPath)} rather than reading on past the criteria; its '## Log' is the implementer's reasoning.`
