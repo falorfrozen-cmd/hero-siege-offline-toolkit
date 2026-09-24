@@ -49,8 +49,20 @@ names no heading in the file is a `PLAN-DEFECT` (unrunnable as written), not a
 reason to go reading.
 
 This list is your entire mandate — not your impression of what the change
-should do. A criterion naming a gate token not yet set in `## State` isn't
-due — note it, don't fail it.
+should do.
+
+**A gate is set only when `gates:` literally carries its token.** Read the one
+`gates:` line and nothing else: `gates pending:`, `route tokens:` and prose
+elsewhere name gates that are *not* set. A `gates:` value holding
+alternatives (a `|`, an "or", a `<placeholder>`) is a template, and every gate
+counts as not set. A criterion whose gate is not set is not due. Do not run it.
+Report it as `UNATTEMPTED (gate <token> not set)`, with the status
+`unattempted` and its token in `gate`, and never as `fail`. When nothing else
+failed, the verdict is `PASS-PENDING-HUMAN`. On 2026-09-24 a verifier read the
+template line `gates: build: complete | live1: complete | record: complete |
+...` as every gate set. It ran criteria that only a live session could satisfy
+and failed them for three rounds, and the launch ended at the round cap with no
+real defect open.
 
 **2. Run every criterion yourself.** Each one, in the repository root, capturing
 real output. Never mark a criterion satisfied because the diff appears to
@@ -117,6 +129,7 @@ CRITERIA: <each one you ran, with the command and its real exit status>
 SUITE: <output summary of the full run>
 NEEDS HUMAN:
   - <criterion> -> <why you cannot run it: needs a live game / a rebuild / eyes>
+  - <criterion> -> UNATTEMPTED (gate <token> not set)
 ```
 
 Use this rather than forcing the choice between the two wrong answers. `PASS`
@@ -135,7 +148,12 @@ STRUCTURAL FINDINGS:
   - <path:line> <which tell from the table, and what you saw>
 UNATTEMPTED:
   - <criteria nothing in the diff addresses>
+  - <criterion> (gate <token> not set)
 ```
+
+A criterion gated on a gate that is not set never makes the verdict
+`IMPL-DEFECT` by itself. If it is the only thing outstanding, the verdict is
+`PASS-PENDING-HUMAN`.
 
 Every line needs the real command and the real output. "Tests fail" sends the
 implementer hunting; the actual traceback sends it to the right line. A defect

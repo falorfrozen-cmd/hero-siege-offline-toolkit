@@ -105,8 +105,12 @@ const VERIFIER_SCHEMA = {
     verdict: { type: 'string', enum: ['PASS', 'PASS-PENDING-HUMAN', 'IMPL-DEFECT', 'PLAN-DEFECT'] },
     criteria: { type: 'array', items: { type: 'object', properties: {
       criterion: { type: 'string' }, status: { type: 'string', enum: ['pass', 'fail', 'unattempted'] }, evidence: { type: 'string' },
+      gate: { type: 'string' }, // the gate token(s) the criterion names, e.g. 'live1: complete'; '' when ungated (2f)
     }, required: ['criterion', 'status', 'evidence'] } },
     pending_human: { type: 'array', items: { type: 'string' } },
+    // STRUCTURAL FINDINGS and a non-empty NOT DONE/DEVIATIONS: an IMPL-DEFECT
+    // that is not a failed criterion, which 2f must never reclassify.
+    other_defects: { type: 'array', items: { type: 'string' } },
   },
   required: ['verdict', 'criteria', 'pending_human'],
 }
@@ -204,8 +208,10 @@ const diffCommands = (REPO_ROOT
 // `tools/workorder_audit.py` R16 audits this.
 const findingLine = f => `- [${f.reviewer}] ${f.where}: ${f.problem} — evidence: ${f.evidence}`
 const roundBlock = (n, record) => {
-  const lines = [`### Round ${n}`, '', `verifier: ${record.verifier}`]
+  const lines = [`### Round ${n}`, '', `verifier: ${record.verifier}` +
+    (record.verifierSaid ? ` (the verifier said ${record.verifierSaid}; every failed criterion is gated on a gate not set in \`gates:\`)` : '')]
   for (const c of record.failed) lines.push(`- FAILED ${c.criterion}: ${c.evidence}`)
+  for (const c of record.gatePending || []) lines.push(`- PENDING (gate ${c.gate} not set) ${c.criterion}`)
   lines.push('', `BLOCKING (${record.blocking.length})`)
   for (const f of record.blocking) lines.push(findingLine(f))
   lines.push('', `NON-BLOCKING (${record.nonBlocking.length})`)
@@ -275,6 +281,35 @@ const mergeState = (old, updates) => {
 }
 const stateText = entries => entries.map(e => e.text).join('\n')
 let knownState = stateEntries(A.state)
+
+// --- 2f: a criterion gated on a gate not set is pending, never a defect -----
+//
+// Measured 2026-09-24 (forgepact-issue-14-phase1j): the planner wrote
+// `gates:` as a template listing every gate and every possible value
+// ("build: complete | live1: complete | record: complete | ..."). The verifier
+// read it as all set, ran the criteria gated on `live1`/`record`, which only
+// a live session can satisfy, and failed them. Rounds 1 and 2 had no BLOCKING
+// finding and no other failure, and the launch still ended at CAP. So the
+// script reads `gates:` itself. Only the tokens literally on that line count
+// as set. A value holding `|` or "or" alternatives, or a `<placeholder>`, is a template
+// and sets nothing, and a legacy "not yet: ..." tail is cut off. A round whose
+// every failure names a gate that is not set, with no BLOCKING finding, routes
+// as PASS-PENDING-HUMAN. When State has no `gates:` line at all, nothing is
+// reclassified: an unknown gate set must not hide a real failure.
+const normGate = t => String(t).replace(/`/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
+const gateTokens = text => {
+  const ticked = [...String(text || '').matchAll(/`([^`]+)`/g)].map(m => m[1])
+  const toks = ticked.length ? ticked : String(text || '').split(/[;,]|\band\b/i)
+  return toks.map(t => normGate(t.replace(/\([^)]*\)/g, ''))).filter(t => t && t !== 'none')
+}
+const gatesSet = entries => {
+  const e = entries.find(x => x.key === 'gates')
+  if (!e) return null
+  const value = e.text.replace(/^gates:\s*/i, '').replace(/\n/g, ' ').replace(/\([^)]*\)/g, '')
+  // `|`, a `<placeholder>`, or an "or" outside a backticked token: alternatives, not gates set.
+  if (/\||<[^>]*>/.test(value) || /\bor\b/i.test(value.replace(/`[^`]*`/g, ''))) return new Set()
+  return new Set(gateTokens(value.split(/\bnot yet\b/i)[0]))
+}
 
 const scribe = (n, block, updates) => {
   const keys = updates.map(u => `\`${u.key}:\``).join(', ')
@@ -349,7 +384,8 @@ const SECTION_CMD = file => `\`py -3 .claude/skills/workorder/section.py "${file
 // Measured 2026-09-22: 8 of 22 sessions failed R2 because a verifier, told
 // only "Workorder: <path>", read a 30-42KB plan whole to find its criteria.
 // Hand it the two extractions that are the whole of its mandate.
-const VERIFIER_CRITERIA_NOTE = ` Take the criteria and the gate tokens with exactly \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\` and \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'State'\`; do not Read the plan whole.`
+const VERIFIER_CRITERIA_NOTE = ` Take the criteria and the gate tokens with exactly \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\` and \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'State'\`; do not Read the plan whole.` +
+  ` A gate is set only when the \`gates:\` line itself carries its token. \`gates pending:\` and \`route tokens:\` set nothing, and a \`gates:\` value with \`|\` alternatives is a template that sets nothing. Put the token a gated criterion names in its 'gate'. A criterion whose gate is not set is 'unattempted' (gate <token> not set), never 'fail'. Put each STRUCTURAL FINDING and each NOT DONE/DEVIATIONS finding in 'other_defects'.`
 const VERIFIER_CONTEXT_NOTE = A.contextPath !== A.planPath
   ? ` Context file: ${A.contextPath} -- open it only for a heading a criterion cites, with ${SECTION_CMD(A.contextPath)}; never read it whole, its '## Log' is the implementer's reasoning.`
   : ` This is a single-file plan: open a section a criterion cites with ${SECTION_CMD(A.planPath)} rather than reading on past the criteria; its '## Log' is the implementer's reasoning.`
@@ -461,19 +497,29 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
   const blocking = reviews.flatMap(({ name, r }) => r.blocking.map(f => ({ reviewer: name, ...f })))
   const nonBlocking = reviews.flatMap(({ name, r }) => r.non_blocking.map(f => ({ reviewer: name, ...f })))
   const planDefect = verifier.verdict === 'PLAN-DEFECT' || reviews.some(x => x.r.plan_defect)
-  const failed = verifier.criteria.filter(c => c.status === 'fail')
-  const record = { round: n, verifier: verifier.verdict, failed, pending_human: verifier.pending_human, blocking, nonBlocking, notReRun: skipped, reviewerState: { ...reviewerState } }
+  // 2f: the gates as the State this round's verifier read spells them.
+  const gates = gatesSet(knownState)
+  const gatedUnset = c => !!gates && gateTokens(c.gate).some(t => !gates.has(t))
+  const allFailed = verifier.criteria.filter(c => c.status === 'fail')
+  const failed = allFailed.filter(c => !gatedUnset(c))
+  const gatePending = verifier.criteria.filter(c => c.status !== 'pass' && gatedUnset(c))
+  const onlyGated = verifier.verdict === 'IMPL-DEFECT' && allFailed.length > 0 && !failed.length && !blocking.length &&
+    !(verifier.other_defects || []).length
+  const verdict = onlyGated ? 'PASS-PENDING-HUMAN' : verifier.verdict
+  const pendingHuman = [...new Set([...(verifier.pending_human || []),
+    ...gatePending.map(c => `${c.criterion} -> UNATTEMPTED (gate ${gateTokens(c.gate).filter(t => !gates.has(t)).join('; ')} not set)`)])]
+  const record = { round: n, verifier: verdict, verifierSaid: onlyGated ? verifier.verdict : undefined, failed, gatePending, pending_human: pendingHuman, blocking, nonBlocking, notReRun: skipped, reviewerState: { ...reviewerState } }
   rounds.push(record)
 
-  const clean = !blocking.length && !planDefect && (verifier.verdict === 'PASS' || verifier.verdict === 'PASS-PENDING-HUMAN')
+  const clean = !blocking.length && !planDefect && (verdict === 'PASS' || verdict === 'PASS-PENDING-HUMAN')
   const rec = await recordState(n, roundBlock(n, record), stateBlock(n, record, clean, planDefect))
   const wrote = rec.wrote
   // A dropped line is repaired before anything reads it: the next round's
   // verifier takes its gate tokens from this very block.
-  if (rec.lost.length) return { ...stateLost(n, rec, planDefect ? 'PLAN-DEFECT' : clean ? verifier.verdict : 'continue'), rounds }
+  if (rec.lost.length) return { ...stateLost(n, rec, planDefect ? 'PLAN-DEFECT' : clean ? verdict : 'continue'), rounds }
 
   if (planDefect) return { outcome: 'PLAN-DEFECT', round: n, rounds }
-  if (clean) return { outcome: verifier.verdict, round: n, rounds }
+  if (clean) return { outcome: verdict, round: n, pending_human: pendingHuman, rounds }
   carried = wrote && wrote.written ? null : { failed, blocking }
 }
 

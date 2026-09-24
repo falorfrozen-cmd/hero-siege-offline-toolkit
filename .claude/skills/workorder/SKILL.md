@@ -427,6 +427,12 @@ The line, when a reviewer's label looks wrong to you:
 - **Anything under `UNATTEMPTED` that needs a human** — a live game session, a
   rebuild, eyes on a window — → stop and ask. Never record an unchecked
   criterion as passed.
+- **Every failed criterion names a gate that `gates:` does not literally
+  carry, and there is no BLOCKING finding** → treat it as `PASS-PENDING-HUMAN`,
+  not `IMPL-DEFECT`. The verifier ran something that was not due yet, and
+  nothing the implementer does can make it pass. Check the State first: a
+  `gates:` value with `|` or "or" alternatives is a template that sets nothing. Rewrite
+  it as the gates actually set plus a `gates pending:` line.
 
 ### Step 4.5 — live gate: `live-operator` runs the session, you talk to the person
 
@@ -452,7 +458,11 @@ against a median driver of $12.
    expensive context in the pipeline.
 4. **Route what it returns.** Append at most a short summary and the capture
    path — never the capture — under a `### Live <n>` Log heading, then:
-   - every check `pass` → the pending criteria are met; step 5.
+   - every check `pass` → the pending criteria are met. Move the session's
+     gate token (for example `live1: complete`) from `gates pending:` to
+     `gates:` in `## State`, so a later verifier treats that gate as set and
+     runs the criteria it guards. Then go to step 5, or, if criteria gated on
+     it still need a mechanical run, relaunch the rounds.
    - a check `fail` with the mechanism as the plan described it → an
      `IMPL-DEFECT` round (step 4), the capture path as its evidence.
    - a `fail` or `not-observed` that contradicts the plan's model of the
@@ -544,6 +554,18 @@ are pasted back verbatim rather than left to the scribe to preserve. On
 2026-09-23 a scribe handed only the four computed lines replaced the whole
 block with them in several workorders, and the next verifier, reading no
 `gates:`, reported gated criteria pending instead of running them.
+
+The script also reads `gates:` itself. Only tokens literally on that line
+count as set. `gates pending:` and `route tokens:` set nothing, and a value
+with `|` or "or" alternatives, or a `<placeholder>`, is a template that sets nothing. A
+round with no BLOCKING finding and no verifier `other_defects` (a structural
+finding, or a non-empty NOT DONE or DEVIATIONS), whose every failed criterion
+names a gate that is not set, returns `PASS-PENDING-HUMAN` and does not spend another round. The
+Log entry records what the verifier said, and each such criterion appears as
+`- PENDING (gate <x> not set)`. With no `gates:` line in State, nothing is
+reclassified. On 2026-09-24, forgepact-issue-14-phase1j lost three rounds to a
+template `gates:` line, which the verifier read as every gate set, and ended at
+`CAP` with no real defect open after round 0.
 
 It loops implement → verify+reviewers → route as code (same 3-round cap,
 scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,
