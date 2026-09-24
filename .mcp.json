@@ -14,7 +14,7 @@
     },
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@0.0.82"]
+      "args": ["-y", "@playwright/mcp@0.0.82", "--browser", "msedge", "--headless"]
     },
     "github": {
       "type": "http",

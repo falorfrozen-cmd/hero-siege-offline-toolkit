@@ -799,7 +799,7 @@ the shared `.impeccable/config.json`.
 | `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close), under one machine-wide game lease (`hs_lease_acquire` / `hs_lease_status` / `hs_lease_release`) that stops a second session driving the same install — a local stdio server in `tools/hs_drive_mcp/` |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
 | `github` | releases, dispatches and pointer PRs across the eleven repositories |
-| `playwright` | driving a browser — the web submodules (`HSCraftSim`, `HS-Offline-Tracker`'s frontend) the way `tauri-hub` drives the hub; pinned to `@playwright/mcp@0.0.82` |
+| `playwright` | driving a browser — the web submodules (`HSCraftSim`, `HS-Offline-Tracker`'s frontend) the way `tauri-hub` drives the hub; pinned to `@playwright/mcp@0.0.82`, run headless on Microsoft Edge (`--browser msedge --headless`) because Edge ships with Windows and the server's default, Chrome, is often not installed |
 
 `tauri-hub` is pinned to `@hypothesi/tauri-mcp-server@0.13.0` to match
 `tauri-plugin-mcp-bridge = "0.13"` in `hub/src-tauri/Cargo.toml`. Keep those two
