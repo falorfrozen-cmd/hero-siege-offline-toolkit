@@ -593,7 +593,7 @@ trades away: every re-entry inside the script is a fresh spawn, never the
 measured, on this one real run, as no worse than a resumed implementer (a
 resumed round-1 implementer cost 14.6M tokens at 304K context per turn;
 losing the resume cost nothing). `.claude/workflows/workorder-rounds.test.mjs`
-(`node --test`, 71 cases, each with its own control) dry-runs the routing
+(`node --test`, 70 cases, each with its own control) dry-runs the routing
 above against stub agents.
 
 That makes the split a forcing function rather than just a workflow: a plan that
