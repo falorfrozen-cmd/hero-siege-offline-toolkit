@@ -291,7 +291,7 @@ let knownState = stateEntries(A.state)
 // a live session can satisfy, and failed them. Rounds 1 and 2 had no BLOCKING
 // finding and no other failure, and the launch still ended at CAP. So the
 // script reads `gates:` itself. Only the tokens literally on that line count
-// as set. A value holding `|` alternatives or a `<placeholder>` is a template
+// as set. A value holding `|` or "or" alternatives, or a `<placeholder>`, is a template
 // and sets nothing, and a legacy "not yet: ..." tail is cut off. A round whose
 // every failure names a gate that is not set, with no BLOCKING finding, routes
 // as PASS-PENDING-HUMAN. When State has no `gates:` line at all, nothing is
@@ -306,7 +306,8 @@ const gatesSet = entries => {
   const e = entries.find(x => x.key === 'gates')
   if (!e) return null
   const value = e.text.replace(/^gates:\s*/i, '').replace(/\n/g, ' ').replace(/\([^)]*\)/g, '')
-  if (/\||<[^>]*>/.test(value)) return new Set()
+  // `|`, a `<placeholder>`, or an "or" outside a backticked token: alternatives, not gates set.
+  if (/\||<[^>]*>/.test(value) || /\bor\b/i.test(value.replace(/`[^`]*`/g, ''))) return new Set()
   return new Set(gateTokens(value.split(/\bnot yet\b/i)[0]))
 }
 
@@ -515,7 +516,7 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
   const wrote = rec.wrote
   // A dropped line is repaired before anything reads it: the next round's
   // verifier takes its gate tokens from this very block.
-  if (rec.lost.length) return { ...stateLost(n, rec, planDefect ? 'PLAN-DEFECT' : clean ? verifier.verdict : 'continue'), rounds }
+  if (rec.lost.length) return { ...stateLost(n, rec, planDefect ? 'PLAN-DEFECT' : clean ? verdict : 'continue'), rounds }
 
   if (planDefect) return { outcome: 'PLAN-DEFECT', round: n, rounds }
   if (clean) return { outcome: verdict, round: n, pending_human: pendingHuman, rounds }

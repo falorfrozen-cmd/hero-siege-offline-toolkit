@@ -1647,6 +1647,14 @@ class R19Tests(TempDirMixin, unittest.TestCase):
                                "new_string": "gates: <tokens a criterion conditions on>"}, agent_type="implementer")
         self.assertFalse(r.passed)
 
+    def test_fail_or_between_backticked_tokens(self):
+        content = "## State\ngates: `live1: complete` or `record: complete`"
+        self.assertFalse(self._run("Write", {"file_path": self.PLAN, "content": content}).passed)
+
+    def test_pass_or_inside_a_token_or_parenthetical(self):
+        content = "## State\ngates: `route: error or skip` (set after run or rerun)"
+        self.assertTrue(self._run("Write", {"file_path": self.PLAN, "content": content}).passed)
+
     def test_pass_set_gates_pending_and_route_tokens(self):
         content = ("## State\ngates: `build: complete` (set 2026-09-24 | after round 0)\n"
                    "gates pending: `live1: complete` | `record: complete`\n"

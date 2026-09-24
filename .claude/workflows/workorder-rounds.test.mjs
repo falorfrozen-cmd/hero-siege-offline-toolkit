@@ -728,6 +728,22 @@ test('the verifier is told a template gates: line sets nothing and a gated crite
   assert.match(prompts['verifier:r0'], /'unattempted' \(gate <token> not set\), never 'fail'/)
 })
 
+test('an "or" between backticked tokens on gates: is a template too', async () => {
+  const { result } = await run({ ...BASE, state: gatedState('gates: `live1: complete` or `record: complete`') }, standard({ verifier: failing(LIVE) }))
+  assert.equal(result.outcome, 'PASS-PENDING-HUMAN')
+  // control: "or" inside a token or a parenthetical is not an alternative
+  const r = await run({ ...BASE, state: gatedState('gates: `live1: complete` (run or rerun)') }, standard({ verifier: failing(LIVE) }))
+  assert.equal(r.result.outcome, 'CAP')
+})
+
+test('a dropped State line on an all-gated round reports then: PASS-PENDING-HUMAN', async () => {
+  const state = gatedState(TEMPLATE_GATES)
+  const file = { plan: planFile(state) }
+  const { result } = await run({ ...BASE, state }, withPlan(file, incidentScribe, { verifier: failing(LIVE) }))
+  assert.equal(result.outcome, 'STATE-LOST')
+  assert.equal(result.then, 'PASS-PENDING-HUMAN')
+})
+
 test('a structural finding keeps an all-gated round a defect', async () => {
   const { result } = await run({ ...BASE, state: gatedState(TEMPLATE_GATES) },
     standard({ verifier: { ...failing(LIVE), other_defects: ['ForgePact/plugin/x.cpp:12 *Rva* constant reachable from release'] } }))

@@ -431,7 +431,7 @@ The line, when a reviewer's label looks wrong to you:
   carry, and there is no BLOCKING finding** → treat it as `PASS-PENDING-HUMAN`,
   not `IMPL-DEFECT`. The verifier ran something that was not due yet, and
   nothing the implementer does can make it pass. Check the State first: a
-  `gates:` value with `|` alternatives is a template that sets nothing. Rewrite
+  `gates:` value with `|` or "or" alternatives is a template that sets nothing. Rewrite
   it as the gates actually set plus a `gates pending:` line.
 
 ### Step 4.5 — live gate: `live-operator` runs the session, you talk to the person
@@ -557,7 +557,7 @@ block with them in several workorders, and the next verifier, reading no
 
 The script also reads `gates:` itself. Only tokens literally on that line
 count as set. `gates pending:` and `route tokens:` set nothing, and a value
-with `|` alternatives or a `<placeholder>` is a template that sets nothing. A
+with `|` or "or" alternatives, or a `<placeholder>`, is a template that sets nothing. A
 round with no BLOCKING finding and no verifier `other_defects` (a structural
 finding, or a non-empty NOT DONE or DEVIATIONS), whose every failed criterion
 names a gate that is not set, returns `PASS-PENDING-HUMAN` and does not spend another round. The

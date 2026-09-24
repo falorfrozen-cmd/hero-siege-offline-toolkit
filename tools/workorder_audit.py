@@ -1365,13 +1365,16 @@ def rule_r18_scribe_state_preserved(session: Session) -> RuleResult:
 # treats such a line as no gate set; this rule catches whoever wrote it.
 GATES_LINE_RE = re.compile(r"^gates:(.*)$", re.IGNORECASE | re.MULTILINE)
 GATES_TEMPLATE_RE = re.compile(r"\||<[^>]*>")
+GATES_OR_RE = re.compile(r"\bor\b", re.IGNORECASE)
 
 
 def gates_template(text: str) -> Optional[str]:
-    """The first `gates:` line in `text` whose value holds alternatives (`|`)
-    or a `<placeholder>`, parentheticals aside, else None."""
+    """The first `gates:` line in `text` whose value holds alternatives (`|`,
+    or an "or" outside a backticked token) or a `<placeholder>`,
+    parentheticals aside, else None."""
     for m in GATES_LINE_RE.finditer(str(text or "")):
-        if GATES_TEMPLATE_RE.search(re.sub(r"\([^)]*\)", "", m.group(1))):
+        value = re.sub(r"\([^)]*\)", "", m.group(1))
+        if GATES_TEMPLATE_RE.search(value) or GATES_OR_RE.search(re.sub(r"`[^`]*`", "", value)):
             return m.group(0).strip()
     return None
 
