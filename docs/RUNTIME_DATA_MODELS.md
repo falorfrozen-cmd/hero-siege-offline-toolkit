@@ -229,6 +229,18 @@ restated here. `hs-game-sdk`'s `ItemType.SOCKETABLE` = 15 names the
 Socketable case's class; that value is cited, not itself measured here (RD
 `### Phase 1e results`, `### Phase 1i results`).
 
+R: the item's methods are stored unbound on the struct the constructor
+builds, so a name-resolved `script_execute` runs them with the caller's own
+self, not the struct itself (RD `### Phase 1k results`, Live 1k). M:
+`callm`'s `bind` re-binds a member to the struct it was read from through the
+runtime's own `method` builtin before dispatch - `bind=yes`, and
+`method_get_self` read `before=undefined` and `after=struct members=11`, so
+the rebind was applied - but the one `script_execute` under the bound value
+still threw and did not answer the item's count. This is a rejected shape
+(`script_execute` of a bound value with an instance self), not a measurement
+that a bound call cannot complete (RD `### Phase 1k results`, Live 1k,
+`bind-control`).
+
 ### `SaveStash` and the save invariant
 
 M: one `SaveStash` call at each stash close, self `Console_Save_obj`, no
@@ -303,6 +315,36 @@ shows only "not an instance", not that struct's identity. The inline `set`
 route on `itemDefinitionStruct.o` was never tried, because the control showed
 a method, not an inline write.
 
+M: the inline route Live 1k used instead - `set itemDefinitionStruct.o <n>`
+then `call ItemCheckHash(<item>)`, self `Console_Save_obj` - on a stash entry
+and on a bag stack: `ItemCheckHash` answered `bool:false` both times, but the
+item's `itemDataHash` had changed on the very next lookup (RD `### Phase 1k
+results`, Live 1k, `partial-stacked`). R: `ItemCheckHash` takes one argument
+and re-runs the item's own hash method for comparison; a `false` on a
+just-edited item is consistent with a stale-versus-new mismatch, not itself
+probed (RD `### Phase 1k instrument`). M: the json creation chain that makes
+an item without the constructor - `CreateItemSaveStruct` -> `set o <n>` ->
+`LootTimestamp` -> `InitItemFromJson(struct, "0-0-<S>-14")` -> `GetItemMap(0)`
+-> `AddItemToMap(map, key, item)` -> `GetItemPreferredGrid` -> `GridAddItem` -
+succeeded on the first argument order tried into both
+`New_Inventory_Data_obj.inventoryMaterialGrid` (the bag) and
+`New_Inventory_Data_obj.craftGrid` (the Crafting Cube's own input grid), with
+no `ChangeItemOwner` needed in either case since the item was created
+directly in map 0 (RD `### Phase 1k results`, Live 1k, `partial-nostack`,
+`partial-cube`). R: the game's own merchant multi-buy (`UiAMerchantBuyMultiple`)
+and its loaders (`InitItemFromJson`/`AddItemToMap`, the pattern
+`ParseItemToGrid`, `ControllerLoadOnlineData` and the trade and market
+handlers use) are the two routes that make an item without the constructor
+(RD `### Phase 1k instrument`). M: the owner's drag of the edited bag stack,
+and the owner's drag of the Cube-created unit into the bag's existing stack,
+each logged `InventorySwapItemsNew`, `InventorySocketItem` and
+`RemoveItemFromMap` rows, recorded as logged without interpreting them (RD
+`### Phase 1k results`, Live 1k, `hash-accept`, `partial-cube`). Not
+observed: the game's own hash check on that drag, the merge, the save or a
+reload - `ItemCheckHash` and `ReportClient` both logged zero calls
+throughout, and `ReportClient` never fired at all this session, so it has no
+positive control here (RD `### Phase 1k results`, Live 1k, `hash-accept`).
+
 ### The recipe amount and the craft route
 
 R, a static reading: a recipe's input amounts are stored encrypted and
@@ -347,3 +389,7 @@ count walks that grid is not measured, recorded as not observed on the
 curated entry itself; the grid's persistence across a save is also not
 measured, and the owner's design (2026-09-24) does not need it, since only
 the craft's own items are placed there, at the press, and consumed at once.
+
+Live 1k (RD `### Phase 1k results`) named no container the curated JSON
+lacks: `inventoryMaterialGrid` (above) and `craftGrid` (`crafting_cube`,
+just above) already covered every grid it placed an item into.
