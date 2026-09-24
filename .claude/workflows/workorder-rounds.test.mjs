@@ -22,7 +22,7 @@ const CLEAN = { blocking: [], non_blocking: [], plan_defect: false, summary: 'no
 const DONE = { verdict: 'IMPL-DONE', report: '', evidence: '', progress_so_far: '' }
 const PASS = { verdict: 'PASS', criteria: [], pending_human: [] }
 const BASE = {
-  slug: 'zz', planPath: 'p.md', contextPath: 'c.md', goalExcerpt: 'g', implementerModel: 'sonnet', round: 0,
+  slug: 'zz', planPath: 'p.md', contextPath: 'c.md', checkoutRoot: 'C:/wt/here', goalExcerpt: 'g', implementerModel: 'sonnet', round: 0,
   reviewers: { 'docs-sync-reviewer': 'never', 'decompile-output-guard': 'never', 'instrument-blindness-reviewer': 'never' },
 }
 
@@ -156,18 +156,18 @@ test('three failing rounds stop at the cap', async () => {
   assert.equal(calls.filter(c => c.startsWith('implementer')).length, 3)
 })
 
-test('when the scribe cannot write, the evidence travels in the next dispatch', async () => {
-  let verifies = 0
-  const prompts = []
-  const reply = (label, prompt) => {
-    if (label.startsWith('implementer')) prompts.push(prompt)
-    return standard({
-      scribe: { written: false, note: 'edit failed' },
-      verifier: () => (verifies++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'REAL-OUTPUT-42' }], pending_human: [] } : PASS),
-    })(label)
+test('when the scribe cannot write, the launch stops as SCRIBE-FAILED carrying the evidence', async () => {
+  for (const scribe of [{ written: false, note: 'edit failed' }, null]) {
+    const { result, calls } = await run(BASE, standard({
+      scribe,
+      verifier: { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'REAL-OUTPUT-42' }], pending_human: [] },
+    }))
+    assert.equal(result.outcome, 'SCRIBE-FAILED')
+    assert.equal(result.then, 'continue')
+    assert.match(result.log, /REAL-OUTPUT-42/)
+    assert.match(result.state, /^round: 1$/m)
+    assert.ok(!calls.includes('implementer:r1'), 'no round may start from a Log that was never written')
   }
-  await run(BASE, reply)
-  assert.match(prompts[1], /REAL-OUTPUT-42/)
 })
 
 test('omitted repoRoot produces the exact commands as before', async () => {
@@ -311,7 +311,7 @@ test('every scribe dispatch runs as the restricted scribe agent type with the re
     'Edit nothing except these two files.',
     'Never run git',
     'If either file cannot be read, do not create it',
-    'relative to your current working directory',
+    'never resolve them against another checkout or directory',
   ]
   const check = (dispatches, label) => {
     const d = dispatches[label]
@@ -646,9 +646,53 @@ test('the implementer-verdict Record pass keeps reviewers: and open defects:', a
   }
 })
 
-test('a scribe that could read nothing is not reported as STATE-LOST', async () => {
+test('a scribe that could read nothing is SCRIBE-FAILED, not STATE-LOST', async () => {
   const { result } = await run({ ...BASE, state: PLAN_STATE }, standard({ scribe: { written: false, note: 'no such file', state_before: '', state_after: '' } }))
-  assert.equal(result.outcome, 'PASS')
+  assert.equal(result.outcome, 'SCRIBE-FAILED')
+  assert.equal(result.then, 'PASS')
+})
+
+// --- 2g: the scribe gets absolute paths -------------------------------------
+//
+// Pinned 2026-09-24 (hs-drive-game-lease, wf_949ed012-a02): run from a
+// worktree, the scribe resolved its relative paths against the main checkout,
+// found no files, and returned written: false with a non-empty "N/A" State.
+// The Record pass compared that against the driver's State and reported
+// STATE-LOST, listing every driver-owned line, though nothing had been lost.
+test('a scribe that found no files routes as SCRIBE-FAILED with nothing listed lost', async () => {
+  const na = { written: false, note: 'files do not exist', state_before: 'N/A - files do not exist', state_after: 'N/A - files do not exist' }
+  for (const blocked of [{}, { implementer: { ...DONE, verdict: 'PLAN-DEFECT', evidence: 'ev' } }]) {
+    const { result, calls } = await run({ ...BASE, state: PLAN_STATE }, standard({ scribe: na, verifier: defectThenPass(), ...blocked }))
+    assert.equal(result.outcome, 'SCRIBE-FAILED', JSON.stringify(result))
+    assert.equal(result.lost, undefined)
+    assert.equal(result.then, blocked.implementer ? 'PLAN-DEFECT' : 'continue')
+    for (const line of PLAN_STATE.split('\n').filter(l => DRIVER_OWNED.test(l))) assert.ok(result.state.includes(line), `state to paste lacks: ${line}`)
+    assert.match(result.log, /^### Round 0$/m)
+    assert.ok(!calls.includes('verifier:r1'))
+  }
+})
+
+test('the scribe is handed absolute paths under checkoutRoot, never relative ones', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
+  await run({ ...BASE, planPath: '.claude/workorders/zz-plan.md', contextPath: './.claude/workorders/zz-context.md', checkoutRoot: 'C:\\wt\\here\\' }, reply)
+  const p = prompts['scribe:r0']
+  assert.ok(p.includes('In C:\\wt\\here/.claude/workorders/zz-context.md, append'), p)
+  assert.ok(p.includes('Read C:\\wt\\here/.claude/workorders/zz-plan.md and return'), p)
+  assert.doesNotMatch(p, /relative to your current working directory/)
+  // An already-absolute path is used as it is.
+  await run({ ...BASE, planPath: 'D:/x/p.md', contextPath: 'D:/x/c.md' }, reply)
+  assert.ok(prompts['scribe:r0'].includes('In D:/x/c.md, append'))
+})
+
+test('control: without checkoutRoot a relative plan path is refused, an absolute one is not', async () => {
+  const { checkoutRoot, ...noRoot } = BASE
+  let r = await run(noRoot, standard())
+  assert.equal(r.result.outcome, 'BAD-ARGS')
+  assert.match(r.result.detail, /checkoutRoot/)
+  assert.deepEqual(r.calls, [])
+  r = await run({ ...noRoot, planPath: 'D:/x/p.md', contextPath: 'D:/x/c.md' }, standard())
+  assert.equal(r.result.outcome, 'PASS')
 })
 
 // --- 2f: a criterion gated on a gate not set is pending, never a defect -----

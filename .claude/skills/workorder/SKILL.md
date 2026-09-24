@@ -588,12 +588,17 @@ the Workflow tool requires, so don't ask again. It carried
 
 ```
 Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
-           args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
+           args: { slug, planPath, contextPath, checkoutRoot, goalExcerpt, implementerModel, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
                    submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state } })
 ```
 
-`reviewers`/`submodules` are as in Step 3. `researchHeadings` names the
+`checkoutRoot` is this session's `git rev-parse --show-toplevel`; the script
+hands the scribe `planPath`/`contextPath` joined under it, and refuses with
+`BAD-ARGS` without it unless both paths are already absolute. On 2026-09-24
+(`hs-drive-game-lease`, run from a worktree) a scribe given relative paths
+resolved them against the main checkout, found neither file, and wrote
+nothing. `reviewers`/`submodules` are as in Step 3. `researchHeadings` names the
 context file's `###` heading(s) for `instrument-blindness-reviewer`.
 `baseHeads` is `{ '.': sha, '<submodule>': sha }`, copied from `## State` ›
 `round base:`, so a `never` reviewer reads the whole change from the
@@ -633,13 +638,20 @@ template `gates:` line, which the verifier read as every gate set, and ended at
 
 It loops implement → verify+reviewers → route as code (same 3-round cap,
 scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,
-`PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`, `STATE-LOST` or `CAP`. One
+`PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED` or `CAP`. One
 launch may cover several rounds; `PLAN-DEFECT` means relaunching after the
 replan. `STATE-LOST` means the scribe's own before/after report shows a
 State line gone that the round did not replace; the launch stops there, before
 a verifier can read the damaged block. Paste the result's `state` back under
 `## State` (its `lost` lists what went), then act on its `then` exactly as if
 that had been the outcome — `continue` means relaunch at the State's `round:`.
+`SCRIBE-FAILED` means the scribe wrote nothing (`written: false`, or no
+result), so no State was lost and nothing is compared: append the result's
+`log` under `## Log` in the context file, replace `## State` with its `state`,
+then act on its `then` the same way. Before this outcome existed, the
+`hs-drive-game-lease` scribe's "N/A - files do not exist" report was read as a
+State with every driver-owned line gone and returned `STATE-LOST` for a round
+that had lost nothing.
 Replans, consultations, human questions and the step 5 report stay with the driver;
 every re-entry inside is a fresh spawn (no resume) — measured no worse than a
 resumed implementer. The scribe runs as the restricted `scribe` agent type
