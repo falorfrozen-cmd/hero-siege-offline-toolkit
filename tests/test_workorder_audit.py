@@ -1750,3 +1750,121 @@ class R22Tests(TempDirMixin, unittest.TestCase):
     def test_suite_key(self):
         self.assertEqual(wa.suite_key("cd ForgePact && py -m unittest discover -s tests 2>&1"), "ForgePact -s tests")
         self.assertIsNone(wa.suite_key("py -3 -m unittest tests.test_x"))
+
+
+# --------------------------------------------------------------------------
+# Lanes (issue #176): per-lane columns and summary, R13 scaling, R23
+# --------------------------------------------------------------------------
+
+def _span(start_s, end_s, start_idx, model=None, cache_read=0):
+    """Two turns, at `start_s` and `end_s` seconds past BASE: a transcript
+    whose wall time is exactly that span."""
+    records = [turn(start_s, start_idx, cache_read=cache_read), turn(end_s, start_idx + 1, cache_read=cache_read)]
+    return with_model(records, model) if model else records
+
+
+class LaneTests(TempDirMixin, unittest.TestCase):
+    def test_single_implementer_round_budget_unchanged(self):
+        self.assertEqual(wa.round_budget(0), wa.ROUND0_MAX_TOKENS)
+        self.assertEqual(wa.round_budget(1), wa.ROUND_MAX_TOKENS)
+        # One implementer over round 0's budget still fails R13 as it did.
+        per_turn = wa.ROUND0_MAX_TOKENS // 2 + 1000
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 0)])
+        b.workflow_agent("wf_a", "implementer", "implementer:r0", _span(0, 60, 100, cache_read=per_turn))
+        _, results = b.evaluate()
+        r = get_rule(results, "R13")
+        self.assertFalse(r.passed)
+        self.assertIn(f"budget {wa.ROUND0_MAX_TOKENS:,}", r.evidence[0])
+
+    def test_pass_the_join_and_a_laneless_implementer_committing(self):
+        commit = ("Bash", {"command": 'git add -- "tools/x.py" && git commit -m "lane code"'})
+        for label in ("implementer:r0", "implementer:join:r0"):
+            with self.subTest(label=label):
+                r = _one_agent_rule(self.tmp_path / label.replace(":", "_"), "R23", "implementer", commit, label=label)
+                self.assertTrue(r.passed, r.evidence)
+
+    def test_fail_a_lane_that_ran_a_git_write(self):
+        # D2: lanes never write to git -- `.git/index.lock` is fail-fast.
+        for cmd, sub in (('git add -- "tools/x.py"', "add"), ('git -C "C:/repo" stash push -m wip', "stash"),
+                         ("git status --porcelain && git commit -m x", "commit")):
+            with self.subTest(cmd=cmd):
+                r = _one_agent_rule(self.tmp_path / sub, "R23", "implementer", ("Bash", {"command": cmd}),
+                                    label="implementer:code:r0")
+                self.assertFalse(r.passed)
+                self.assertIn("implementer:code:r0", r.evidence[0])
+                self.assertIn(f"git {sub}", r.evidence[0])
+                self.assertIn(cmd[:40], r.evidence[0])
+        # control: a lane's read-only git and its stop check are fine
+        r = _one_agent_rule(self.tmp_path / "reads", "R23", "implementer",
+                            ("Bash", {"command": "git status --porcelain -uall && git diff HEAD -- tools/x.py"}),
+                            ("Bash", {"command": "py -3 .claude/skills/workorder/round_delta.py stopped zz 0"}),
+                            label="implementer:code:r0")
+        self.assertTrue(r.passed, r.evidence)
+
+    def test_lane_column_from_label(self):
+        self.assertEqual(wa.lane_of("implementer:code:r0"), "code")
+        self.assertEqual(wa.lane_of("implementer:plan-tools:r2"), "plan-tools")
+        self.assertEqual(wa.lane_of("implementer:join:r0"), "join")
+        for label in ("implementer:r0", "verifier:r0", "docs-sync-reviewer:r1", "scribe:r0", "", None):
+            self.assertIsNone(wa.lane_of(label), label)
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 0)])
+        b.workflow_agent("wf_a", "implementer", "implementer:code:r0", _span(0, 60, 100))
+        b.workflow_agent("wf_a", "implementer", "implementer:r1", _span(100, 160, 200))
+        session, _ = b.evaluate()
+        lanes = {r["label"]: r["lane"] for r in wa.build_table(session)}
+        self.assertEqual(lanes["implementer:code:r0"], "code")
+        self.assertEqual(lanes["implementer:r1"], "-")
+
+    def _laned_round(self, b, wf="wf_a", round_=0, cache_read=0):
+        # code runs 0-600 s, docs 60-1260 s, the join 1300-1600 s.
+        b.workflow_agent(wf, "implementer", f"implementer:code:r{round_}", _span(0, 600, 100, "claude-opus-5-5", cache_read))
+        b.workflow_agent(wf, "implementer", f"implementer:docs:r{round_}", _span(60, 1260, 200, "claude-opus-5-5", cache_read))
+        b.workflow_agent(wf, "implementer", f"implementer:join:r{round_}", _span(1300, 1600, 300, "claude-opus-5-5", cache_read))
+        return b
+
+    def test_lane_summary_span_versus_serial(self):
+        b = self._laned_round(SessionBuilder(self.tmp_path).driver([turn(0, 0)]))
+        b.workflow_agent("wf_a", "verifier", "verifier:r0", _span(1700, 1800, 400))
+        b.workflow_agent("wf_b", "implementer", "implementer:r0", _span(0, 60, 500))  # laneless: no summary
+        session, _ = b.evaluate()
+        summary = wa.lane_summary(session)
+        self.assertEqual(len(summary), 1, summary)
+        s = summary[0]
+        self.assertEqual((s["workflow"], s["round"]), ("wf_a", 0))
+        self.assertEqual([x["lane"] for x in s["lanes"]], ["code", "docs"])
+        self.assertEqual([x["wall_minutes"] for x in s["lanes"]], [10.0, 20.0])
+        self.assertTrue(all(isinstance(x["cost_usd"], float) for x in s["lanes"]), s)
+        self.assertEqual(s["span_minutes"], 21.0)  # 0 s .. 1260 s
+        self.assertEqual(s["serial_minutes"], 30.0)
+        self.assertEqual(s["join_minutes"], 5.0)
+        # --json carries it under `lanes`; the text report prints it after the table
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            b.run_main(["--json"])
+        self.assertEqual(json.loads(buf.getvalue())["lanes"], summary)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            b.run_main()
+        text = buf.getvalue()
+        self.assertIn("span 21.0 min vs serial 30.0 min", text)
+        self.assertLess(text.index("implementer:join:r0"), text.index("span 21.0 min"))
+
+    def test_round0_budget_scales_with_implementers_in_the_round(self):
+        self.assertEqual(wa.round_budget(0, 3), 3 * wa.ROUND0_MAX_TOKENS)
+        self.assertEqual(wa.round_budget(1, 2), 2 * wa.ROUND_MAX_TOKENS)
+        self.assertEqual(wa.round_budget(0, 1), wa.ROUND0_MAX_TOKENS)
+        # Two lanes and a join, each at 2/3 of the one-implementer round budget:
+        # 2x over the old figure, under 3x.
+        per_turn = wa.ROUND0_MAX_TOKENS // 3
+        b = self._laned_round(SessionBuilder(self.tmp_path / "laned").driver([turn(0, 0)]), cache_read=per_turn)
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R13").passed, get_rule(results, "R13").evidence)
+        # control: the same tokens spent by one implementer and two verifiers are over
+        b = SessionBuilder(self.tmp_path / "single").driver([turn(0, 0)])
+        b.workflow_agent("wf_a", "implementer", "implementer:r0", _span(0, 600, 100, cache_read=per_turn))
+        b.workflow_agent("wf_a", "verifier", "verifier:r0", _span(0, 600, 200, cache_read=per_turn))
+        b.workflow_agent("wf_a", "verifier", "verifier:r0", _span(0, 600, 300, cache_read=per_turn))
+        _, results = b.evaluate()
+        self.assertFalse(get_rule(results, "R13").passed)

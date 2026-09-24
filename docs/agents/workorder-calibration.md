@@ -178,3 +178,78 @@ the independent check on the instrument under test). The live-session
 contention between worktrees — four incidents where two sessions wanted the
 one game — is left to a machine-wide game lease in hs-drive, a separate
 change.
+
+## Lanes: independent steps on parallel implementers (issue #176)
+
+The measurement above found a feature's chain of workorders serial, but not
+always the steps inside one workorder. Round 0 of
+`forgepact-issue-14-player-build` (2026-09-24) ran five build steps one after
+another in a single implementer. After about 25 minutes it had written 1,800
+lines in 5 files and was still in the first two steps; the whole round was
+expected to take one to two hours. Several of those steps touched files the
+others never read. Lanes let a plan say so, and let the workflow run them at
+once.
+
+What was decided, and why:
+
+- **Syntax (D1).** A lane is a `### Lane: <name>` heading directly under
+  `## Steps`, with a `files:` line of backticked paths or globs. One
+  `### Join` follows the lanes. Steps above the first lane are preconditions
+  for all of them. There is no fixed number of lanes: the Workflow tool runs
+  at most min(16, CPUs−2) agents at once and queues the rest.
+  `tools/plan_lint.py` refuses overlapping file sets over every pair of lanes
+  (conservatively: a glob whose fixed prefix contains another lane's path
+  overlaps it), a lane without files, lanes without a join, and a duplicate
+  or bad name. `--lanes-json` prints the lane table only when the lint is
+  clean, and the driver passes that line to the workflow unchanged.
+- **Lanes never write to git; the join commits per lane (D2).** Two
+  processes committing in one repository race on `.git/index.lock`, and git
+  fails the second at once instead of waiting. So a lane runs no git write,
+  no build and no full suite. The join runs alone after the lanes and commits
+  each lane's file set as its own commit (`git add -- <paths>`, per
+  repository), then does its own steps. `round_delta.py delta` already finds
+  committed and uncommitted paths alike, so reviewers do not depend on who
+  committed when. A worktree per lane was rejected: every edit would land
+  outside the session's checkout, and a submodule's gitdir is per checkout.
+- **Stopping is cooperative (D3).** A workflow script cannot cancel a running
+  agent. A lane about to return `PLAN-DEFECT` or `ADVICE-NEEDED` writes a stop
+  marker (`round_delta.py stop`). Every lane checks it before each step
+  (`round_delta.py stopped`, exit 4) and returns `STOPPED` with its progress.
+  The join is skipped, and the round goes back to the driver with every
+  lane's verdict and progress.
+- **Only a launch's first round is laned (D4).** A defect round is a fix on a
+  small delta, and nothing attributes a failed criterion or a reviewer
+  finding to a lane, so later rounds run one implementer. A laned round
+  counts as one round against the cap of three.
+- **Reviewers read the round's whole delta (D5)**, whichever lane wrote it.
+  Per-lane attribution is in the plan's file sets and the join's commits.
+- **The audit reports each lane (D6).** `tools/workorder_audit.py` shows a
+  `lane` column, and for each round with two or more implementers, each
+  lane's wall minutes and cost, the round's span (earliest lane start to
+  latest lane end) against its serial sum (the lanes' wall minutes added up),
+  and the join's wall minutes. The same figures are under `lanes` in
+  `--json`. R13 scales the round budget by the number of implementers in the
+  round, since R8 already holds each one to its own budget. R23 fails a lane
+  that ran a git write.
+- **The wall-time measurement is gated (D7).** It needs a real laned plan run
+  in a real session, which no implement round can produce.
+
+How it will be measured: run `py -3 tools/workorder_audit.py --session <id>
+--json` on the first real laned workorder and read its `lanes` entry. The
+saving is `serial_minutes` minus `span_minutes`. The join's minutes are the
+cost of committing and building once at the end. The before row is round 0
+of `forgepact-issue-14-player-build`, from the same tool's table. Which
+workorder provides the after row is the owner's choice, still open. The
+table stays `not yet measured` until then, and the plan's gate
+`measured: complete` is set only when both rows hold numbers.
+
+| | workorder | round 0 implement wall time | implementer minutes, added up |
+|---|---|---|---|
+| before | `forgepact-issue-14-player-build`, one implementer | not yet measured | not yet measured |
+| after | first real laned workorder (to be chosen) | not yet measured | not yet measured |
+
+Not yet observed: lanes have not run on a real workorder. The fan-out, the
+join, the stop marker and the audit summary are tested against stub agents
+and synthetic transcripts only. Whether a real lane keeps to its file set,
+checks the marker before each step and leaves git alone is not established,
+and R23 is the instrument that will show it.

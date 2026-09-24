@@ -816,3 +816,215 @@ test('the verifier is told to run criteria as written and each suite once', asyn
   assert.match(prompts['verifier:r0'], /never swap `py -3` for `python`/)
   assert.match(prompts['verifier:r0'], /Run each test suite once, with the Bash timeout at 240000/)
 })
+
+// --- lanes: independent step groups on parallel implementers (issue #176) ---
+//
+// `args.lanes` / `args.join` come from `tools/plan_lint.py --lanes-json`. On a
+// launch's first round each lane gets its own implementer, all dispatched
+// through one parallel() barrier, then the join runs alone. The stub
+// parallel() records labels in dispatch order, so "concurrent" is asserted as
+// every lane label landing before the join's, and the join being handed every
+// lane's report.
+const LANES = [
+  { name: 'code', files: ['.claude/workflows/x.js', 'tests/test_x.py'] },
+  { name: 'docs', files: ['docs/agents/*.md'] },
+]
+const LANED = { ...BASE, lanes: LANES, join: true }
+const laneDone = name => ({ ...DONE, lane: name, report: `REPORT-OF-${name}`, progress_so_far: `PROGRESS-OF-${name}` })
+const laneReply = (byLane = {}, overrides = {}) => (label, prompt, opts) => {
+  const m = /^implementer:([a-z0-9-]+):r\d+$/.exec(label)
+  if (m && m[1] !== 'join') {
+    const v = byLane[m[1]]
+    if (v === undefined) return laneDone(m[1])
+    return typeof v === 'function' ? v(label, prompt, opts) : v
+  }
+  return standard(overrides)(label, prompt, opts)
+}
+
+test('lanes: a plan without lanes dispatches the byte-identical single implementer', async () => {
+  const seen = []
+  const capture = (label, prompt, opts) => {
+    if (label.startsWith('implementer')) seen.push({ label, prompt, opts })
+    return standard()(label, prompt, opts)
+  }
+  const bare = await run(BASE, capture)
+  const empty = await run({ ...BASE, lanes: [], join: false }, capture)
+  assert.equal(bare.result.outcome, 'PASS')
+  assert.equal(empty.result.outcome, 'PASS')
+  assert.equal(seen.length, 2, seen.map(s => s.label).join(', '))
+  assert.equal(seen[0].label, 'implementer:r0')
+  assert.equal(seen[1].label, seen[0].label)
+  assert.equal(seen[1].prompt, seen[0].prompt)
+  assert.deepEqual(seen[1].opts, seen[0].opts)
+  assert.equal(empty.calls.filter(c => c.startsWith('implementer')).length, 1)
+  assert.deepEqual(empty.calls.filter(c => c.startsWith('implementer')), ['implementer:r0'])
+})
+
+test('lanes: two declared lanes run concurrently and the join runs after both', async () => {
+  const opts = {}
+  const { result, calls } = await run(LANED, (label, prompt, o) => { opts[label] = o; return laneReply()(label, prompt, o) })
+  assert.equal(result.outcome, 'PASS')
+  const impl = calls.filter(c => c.startsWith('implementer'))
+  assert.deepEqual(impl, ['implementer:code:r0', 'implementer:docs:r0', 'implementer:join:r0'])
+  assert.ok(!calls.includes('implementer:r0'), 'a laned round has no single implementer')
+  for (const l of ['implementer:code:r0', 'implementer:docs:r0', 'implementer:join:r0']) {
+    assert.equal(opts[l].agentType, 'implementer', l)
+    assert.equal(opts[l].phase, 'Implement', l)
+    assert.equal(opts[l].model, 'sonnet', l)
+  }
+  assert.ok(opts['implementer:code:r0'].schema.properties.verdict.enum.includes('STOPPED'))
+  assert.equal(opts['implementer:code:r0'].schema.properties.lane.type, 'string')
+  assert.ok(!opts['implementer:join:r0'].schema.properties.verdict.enum.includes('STOPPED'), 'the join returns the laneless verdicts')
+  // the round goes on to the delta and the verifier, once
+  assert.ok(calls.indexOf('delta:r0') > calls.indexOf('implementer:join:r0'))
+  assert.equal(calls.filter(c => c === 'verifier:r0').length, 1)
+})
+
+test('lanes: three declared lanes run concurrently and the join runs after all three', async () => {
+  const three = [...LANES, { name: 'audit', files: ['tools/workorder_audit.py'] }]
+  const prompts = {}
+  const { result, calls } = await run({ ...LANED, lanes: three }, (label, prompt, o) => { prompts[label] = prompt; return laneReply()(label, prompt, o) })
+  assert.equal(result.outcome, 'PASS')
+  const joinAt = calls.indexOf('implementer:join:r0')
+  assert.ok(joinAt > 0)
+  for (const name of ['code', 'docs', 'audit']) {
+    const at = calls.indexOf(`implementer:${name}:r0`)
+    assert.ok(at >= 0 && at < joinAt, `${name} dispatched before the join`)
+    assert.ok(prompts['implementer:join:r0'].includes(`REPORT-OF-${name}`), name)
+  }
+  assert.equal(calls.filter(c => /^implementer:[a-z0-9-]+:r0$/.test(c)).length, 4)
+})
+
+test('lanes: the join is handed every lane report and commits per lane by pathspec', async () => {
+  const prompts = {}
+  await run({ ...LANED, submodules: ['ForgePact'], lanes: [...LANES, { name: 'plugin', files: ['ForgePact/plugin/a.cpp'] }] },
+    (label, prompt, o) => { prompts[label] = prompt; return laneReply()(label, prompt, o) })
+  const p = prompts['implementer:join:r0']
+  assert.ok(p.includes('REPORT-OF-code') && p.includes('REPORT-OF-docs') && p.includes('REPORT-OF-plugin'), p)
+  assert.ok(p.includes('git add -- ".claude/workflows/x.js" "tests/test_x.py"'), p)
+  assert.ok(p.includes('git add -- "docs/agents/*.md"'), p)
+  assert.ok(p.includes('git -C ForgePact add -- "plugin/a.cpp"'), 'a submodule path is committed in its own repo')
+  // lane order is the commit order, each lane its own commit, before the join's own steps
+  assert.ok(p.indexOf('lane code') < p.indexOf('lane docs') && p.indexOf('lane docs') < p.indexOf('lane plugin'), p)
+  assert.match(p, /then carry out the steps under '### Join'/)
+  assert.match(p, /DEVIATIONS/)
+  assert.match(p, /This is round 0\./)
+  assert.match(p, /Return your usual verdict/)
+})
+
+test('lanes: a lane PLAN-DEFECT skips the join and hands the round back with the progress of every lane', async () => {
+  const prompts = {}
+  const defect = { verdict: 'PLAN-DEFECT', report: '', evidence: 'EVIDENCE-CODE', progress_so_far: 'PROGRESS-OF-code', lane: 'code' }
+  const stopped = { verdict: 'STOPPED', report: '', evidence: '', progress_so_far: 'PROGRESS-OF-docs', lane: 'docs' }
+  const { result, calls } = await run({ ...LANED, state: 'round: 0\nphase: implement\ngates: none' },
+    (label, prompt, o) => { prompts[label] = prompt; return laneReply({ code: defect, docs: stopped })(label, prompt, o) })
+  assert.equal(result.outcome, 'PLAN-DEFECT')
+  assert.equal(result.round, 0)
+  assert.ok(!calls.includes('implementer:join:r0'), 'no join after a lane defect')
+  assert.ok(!calls.some(c => c.startsWith('verifier') || c.startsWith('delta')))
+  assert.deepEqual(result.lanes.map(l => [l.name, l.verdict, l.progress_so_far]),
+    [['code', 'PLAN-DEFECT', 'PROGRESS-OF-code'], ['docs', 'STOPPED', 'PROGRESS-OF-docs']])
+  const s = prompts['scribe:r0']
+  assert.match(s, /^### Round 0$/m)
+  assert.match(s, /lane code: PLAN-DEFECT/)
+  assert.match(s, /EVIDENCE-CODE/)
+  assert.match(s, /lane docs: STOPPED/)
+  assert.ok(s.includes('PROGRESS-OF-code') && s.includes('PROGRESS-OF-docs'), s)
+  assert.match(s, /^phase: blocked$/m)
+})
+
+test('lanes: a lane ADVICE-NEEDED does the same, and PLAN-DEFECT outranks it', async () => {
+  const advice = name => ({ verdict: 'ADVICE-NEEDED', report: '', evidence: '', question: `Q-${name}`, progress_so_far: `PROGRESS-OF-${name}`, lane: name })
+  let r = await run(LANED, laneReply({ docs: advice('docs') }))
+  assert.equal(r.result.outcome, 'ADVICE-NEEDED')
+  assert.ok(!r.calls.includes('implementer:join:r0'))
+  assert.deepEqual(r.result.lanes.map(l => l.verdict), ['IMPL-DONE', 'ADVICE-NEEDED'])
+  const defect = { verdict: 'PLAN-DEFECT', report: '', evidence: 'ev', progress_so_far: 'p', lane: 'docs' }
+  r = await run(LANED, laneReply({ code: advice('code'), docs: defect }))
+  assert.equal(r.result.outcome, 'PLAN-DEFECT')
+  assert.ok(!r.calls.includes('implementer:join:r0'))
+})
+
+test('lanes: a lane that returns nothing is AGENT-FAILED naming the lane', async () => {
+  const { result, calls } = await run(LANED, laneReply({ docs: null }))
+  assert.equal(result.outcome, 'AGENT-FAILED')
+  assert.equal(result.detail, 'lane docs returned nothing')
+  assert.ok(!calls.includes('implementer:join:r0'))
+  // control: the lane that did return is still handed back
+  assert.equal(result.lanes.find(l => l.name === 'code').verdict, 'IMPL-DONE')
+})
+
+test('lanes: a lane prompt carries its file set, the stop check, the stop write and the no-git-writes rule', async () => {
+  const prompts = {}
+  await run(LANED, (label, prompt, o) => { prompts[label] = prompt; return laneReply()(label, prompt, o) })
+  const p = prompts['implementer:code:r0']
+  assert.ok(p.includes('`.claude/workflows/x.js`') && p.includes('`tests/test_x.py`'), p)
+  assert.ok(!p.includes('docs/agents/*.md'), 'a lane is not handed another lane\'s file set')
+  assert.match(p, /'### Lane: code'/)
+  assert.ok(p.includes('py -3 .claude/skills/workorder/round_delta.py stopped zz 0'), p)
+  assert.ok(p.includes('py -3 .claude/skills/workorder/round_delta.py stop zz 0 --lane code --verdict <PLAN-DEFECT|ADVICE-NEEDED>'), p)
+  assert.match(p, /exit 4/)
+  assert.match(p, /STOPPED/)
+  assert.match(p, /Run no git command that writes/)
+  assert.match(p, /PLAN-DEFECT/)
+  assert.match(p, /no full build and no full test suite/)
+  assert.match(p, /Workorder: p\.md \(context file: c\.md\)\. This is round 0\./)
+  assert.ok(prompts['implementer:docs:r0'].includes('`docs/agents/*.md`'))
+  assert.ok(prompts['implementer:docs:r0'].includes('--lane docs'))
+  // a repoRoot reaches the stop commands the same way it reaches snapshot/delta
+  await run({ ...LANED, repoRoot: '/repo root' }, (label, prompt, o) => { prompts[label] = prompt; return laneReply()(label, prompt, o) })
+  assert.ok(prompts['implementer:code:r0'].includes('stopped zz 0 --root "/repo root"'))
+})
+
+test('lanes: later rounds of a laned launch run one implementer', async () => {
+  const prompts = {}
+  const reply = laneReply({}, { verifier: defectThenPass() })
+  const { result, calls } = await run(LANED, (label, prompt, o) => { prompts[label] = prompt; return reply(label, prompt, o) })
+  assert.equal(result.outcome, 'PASS')
+  assert.equal(result.round, 1)
+  const impl = calls.filter(c => c.startsWith('implementer'))
+  assert.deepEqual(impl, ['implementer:code:r0', 'implementer:docs:r0', 'implementer:join:r0', 'implementer:r1'])
+  const p = prompts['implementer:r1']
+  assert.match(p, /re-entered after a defect/)
+  assert.match(p, /lanes \(code, docs\)/)
+  assert.match(p, /you own every lane's file set/)
+  // control: a laneless launch's round 1 carries no lane sentence
+  const bare = {}
+  const bareReply = standard({ verifier: defectThenPass() })
+  await run(BASE, (label, prompt, o) => { bare[label] = prompt; return bareReply(label, prompt, o) })
+  assert.ok(bare['implementer:r1'], 'control: the laneless launch reached round 1')
+  assert.doesNotMatch(bare['implementer:r1'], /lane/)
+})
+
+test('lanes: a join verdict routes like the laneless implementer', async () => {
+  for (const verdict of ['PLAN-DEFECT', 'ADVICE-NEEDED']) {
+    const prompts = {}
+    const joinSays = { ...DONE, verdict, evidence: `JOIN-EV-${verdict}` }
+    const { result, calls } = await run(LANED, (label, prompt, o) => {
+      prompts[label] = prompt
+      return laneReply({}, { 'implementer:join': joinSays })(label, prompt, o)
+    })
+    assert.equal(result.outcome, verdict)
+    assert.equal(result.implementer.evidence, `JOIN-EV-${verdict}`)
+    assert.ok(!calls.some(c => c.startsWith('verifier')))
+    assert.match(prompts['scribe:r0'], new RegExp(`JOIN-EV-${verdict}`))
+    assert.match(prompts['scribe:r0'], /^phase: blocked$/m)
+  }
+  const { result } = await run(LANED, laneReply({}, { 'implementer:join': null }))
+  assert.equal(result.outcome, 'AGENT-FAILED')
+  assert.match(result.detail, /join/)
+})
+
+test('lanes: args that could not have come from plan_lint --lanes-json are refused', async () => {
+  for (const bad of [
+    { lanes: LANES, join: false },
+    { lanes: [{ name: 'code', files: [] }, LANES[1]], join: true },
+    { lanes: [{ name: 'join', files: ['a'] }, LANES[1]], join: true },
+    { lanes: [{ name: 'Code', files: ['a'] }, LANES[1]], join: true },
+    { lanes: [LANES[0], LANES[0]], join: true },
+  ]) {
+    const { result, calls } = await run({ ...BASE, ...bad }, laneReply())
+    assert.equal(result.outcome, 'BAD-ARGS', JSON.stringify(bad))
+    assert.deepEqual(calls, [])
+  }
+})

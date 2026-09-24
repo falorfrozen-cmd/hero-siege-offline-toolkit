@@ -145,6 +145,105 @@ class PlanLintTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(run(plan_lint.main, [self.write("x-plan.md", "## Goal\nx\n")])[0], 2)
         self.assertEqual(run(plan_lint.main, [])[0], 2)
 
+    def test_pass_a_laneless_plan_prints_no_lanes(self):
+        # Baseline: a plan with no `### Lane:` heading lints exactly as before,
+        # and the lane table the driver passes to the workflow is empty.
+        rc, out = run(plan_lint.main, [self.write("x-plan.md", PLAN), "--lanes-json"])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("5 criteria, 0 finding(s)", out)
+        self.assertEqual(out.strip().splitlines()[-1], '{"lanes": [], "join": false}')
+
+
+def laned(*lanes, join=True):
+    """PLAN with `## Steps` holding one `### Lane:` per (name, files-line)
+    pair, a `files:` line only when the pair's second item is not None."""
+    body = ["## Steps", "", "Preconditions for every step: work in this checkout.", ""]
+    for k, (name, files) in enumerate(lanes, 1):
+        body.append(f"### Lane: {name}")
+        if files is not None:
+            body.append(f"files: {files}")
+        body += ["", f"{k}. **Step {k}.** Edit the lane's files.", ""]
+    if join:
+        body += ["### Join", f"{len(lanes) + 1}. Run the full suite and commit.", ""]
+    return PLAN.replace("## Steps\n", "\n".join(body))
+
+
+class PlanLintLaneTests(TempDirMixin, unittest.TestCase):
+    def lint(self, text, *extra):
+        return run(plan_lint.main, [self.write("x-plan.md", text), *extra])
+
+    def test_fail_overlapping_lane_file_sets(self):
+        for a, b in (("`tools/a.py`, `tests/test_a.py`", "`tools/a.py`"),
+                     ("`docs/**`", "`docs/agents/*.md`"),
+                     ("`docs/agents/*.md`", "`docs/agents/*.md`"),
+                     ("`ForgePact/docs/`", "`ForgePact/docs/x.md`"),
+                     # fnmatch's `*` crosses `/`, so `docs/readme.md` is in both.
+                     ("`docs/`", "`*.md`"),
+                     ("`docs/agents/`", "`docs/*.md`")):
+            with self.subTest(a=a, b=b):
+                rc, out = self.lint(laned(("code", a), ("docs", b)))
+                self.assertEqual(rc, 1, out)
+                self.assertIn("lane code: lane-overlap:", out)
+                self.assertIn("lane docs", out)
+                self.assertIn("5 criteria, 1 finding(s)", out)
+
+    def test_fail_overlap_between_non_adjacent_lanes_of_three(self):
+        # Only lanes 1 and 3 share a path: an adjacent-pairs check misses it.
+        rc, out = self.lint(laned(("one", "`x/1.py`"), ("two", "`y/2.py`"),
+                                  ("three", "`z/3.py`, `x/1.py`")))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("lane one: lane-overlap: `x/1.py` overlaps lane three `x/1.py`", out)
+        self.assertNotIn("lane two", out)
+        self.assertIn("1 finding(s)", out)
+
+    def test_fail_a_literal_inside_another_lanes_glob(self):
+        rc, out = self.lint(laned(("docs", "`docs/agents/*.md`"),
+                                  ("calib", "`docs/agents/workorder-calibration.md`")))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("lane docs: lane-overlap: `docs/agents/*.md` overlaps lane calib "
+                      "`docs/agents/workorder-calibration.md`", out)
+
+    def test_fail_lanes_without_a_join(self):
+        rc, out = self.lint(laned(("code", "`tools/a.py`"), ("docs", "`docs/a.md`"), join=False))
+        self.assertEqual(rc, 1, out)
+        self.assertIn(": lane-no-join:", out)
+        self.assertIn("1 finding(s)", out)
+
+    def test_fail_a_lane_without_files(self):
+        rc, out = self.lint(laned(("code", None), ("docs", ""), ("tools", "`tools/a.py`")))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("lane code: lane-no-files:", out)
+        self.assertIn("lane docs: lane-no-files:", out)
+        self.assertNotIn("lane tools", out)
+        self.assertIn("2 finding(s)", out)
+
+    def test_fail_a_duplicate_or_bad_lane_name(self):
+        rc, out = self.lint(laned(("code", "`tools/a.py`"), ("code", "`tools/b.py`"),
+                                  ("Code_X", "`tools/c.py`"), ("join", "`tools/d.py`")))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("lane code: lane-dup-name:", out)
+        self.assertIn("lane Code_X: lane-bad-name:", out)
+        self.assertIn("lane join: lane-bad-name:", out)
+        self.assertIn("3 finding(s)", out)
+
+    def test_lanes_json_prints_the_lane_table(self):
+        # Three lanes, and two globs whose literal prefixes diverge
+        # (`tools/a*` / `tools/b*`) - the negative control for the prefix rule.
+        text = laned(("code", "`tools/a*.py`, `tests/test_a.py`"),
+                     ("audit", "`tools/b*.py`"),
+                     ("docs", "`docs/agents/*.md`"))
+        rc, out = self.lint(text, "--lanes-json")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("5 criteria, 0 finding(s)", out)
+        self.assertEqual(out.strip().splitlines()[-1],
+                         '{"lanes": [{"name": "code", "files": ["tools/a*.py", "tests/test_a.py"]}, '
+                         '{"name": "audit", "files": ["tools/b*.py"]}, '
+                         '{"name": "docs", "files": ["docs/agents/*.md"]}], "join": true}')
+        # A lint finding withholds the table, so a rejected plan never fans out.
+        rc, out = self.lint(laned(("code", "`tools/a.py`"), ("docs", "`tools/a.py`")), "--lanes-json")
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn('{"lanes"', out)
+
 
 if __name__ == "__main__":
     unittest.main()

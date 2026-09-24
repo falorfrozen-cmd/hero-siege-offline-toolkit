@@ -32,6 +32,7 @@ hs-game-sdk/
 ├── curated/                    # Hand-verified game knowledge (NOT gitignored - tracked)
 │   ├── satanic_zone.json       # Satanic Zone buff/debuff ids/names/descriptions + Controller_obj var names
 │   ├── drop_types.json         # LoadDrops drop types + GetNormalRepoStruct repository categories (data only)
+│   ├── drop_roll_measurements.json # M1-M10: recorded drop-roll numbers drop_roll_model.py is tested against (data only)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
 ├── python/                     # Python SDK package
@@ -45,6 +46,7 @@ hs-game-sdk/
 │   │   ├── structs.py          # Dataclasses: ItemDefinitionStruct, ItemStatStruct, etc.
 │   │   ├── player.py           # EquipmentSlot enums, PlayerEquipment, container scanners
 │   │   ├── item_type.py        # ItemType IntEnum: the item instance's itemType class (hand-written)
+│   │   ├── drop_roll_model.py  # Two-stage drop roll model, stdlib only, not exported from __init__ (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
 │   ├── pyproject.toml
@@ -84,13 +86,24 @@ and IS tracked in git, generated into the same three language targets by a small
 `extract_and_generate_sdk.py`'s pipeline since it has nothing to extract from a binary). `curated/`
 is the pattern to extend for any future hand-verified, non-mechanically-extracted domain knowledge a
 submodule needs to share - see `ForgePact/docs/satanic-zone-mods-research.md` for how `satanic_zone.json`
-came to exist. Not every `curated/*.json` file is generated into bindings: `drop_types.json` and
-`special_content.json` (2026-09-24) are data only, read as JSON, with no `tools/generate_*_sdk.py`
-counterpart; each file's `$schema_note` says so, and `docs/RUNTIME_DATA_MODELS.md` §13-§14 carries
-the prose and sources. `tests/test_sdk_all.py` checks every script and object they name is bound.
+came to exist. Not every `curated/*.json` file is generated into bindings: `drop_types.json`,
+`special_content.json` (2026-09-24) and `item_info.json` (2026-09-25: rarity codes, info keys,
+affix slots and the tooltip's stat-line call, from the Item Editor's game-truth check) are data only,
+read as JSON, with no `tools/generate_*_sdk.py` counterpart; each file's `$schema_note` says so, and
+`docs/RUNTIME_DATA_MODELS.md` §13, §14 and §16 carry the prose and sources. `tests/test_sdk_all.py`
+checks every script and object they name is bound.
 `stash_containers.json` (ForgePact issue #14's stash and Crafting Cube container names, see
-`docs/RUNTIME_DATA_MODELS.md` § 16) is data-only too, with no generator and no consumer yet, checked
+`docs/RUNTIME_DATA_MODELS.md` § 17) is data-only too, with no generator and no consumer yet, checked
 against the SDK and that doc section by `tests/test_curated_stash_containers.py`.
+
+**Models (`drop_roll_model.py`, 2026-09-24, issue #162):** a model is a hand-written, stdlib-only,
+deterministic function of the game's mechanism, built from a written spec
+(`docs/models/drop-roll-spec.md`) and checked against a curated fixture of recorded measurements
+(`curated/drop_roll_measurements.json`) by `tests/test_drop_roll_model.py`. It models the game only;
+a mod's levers are that mod's code and live in the test as input transforms. It is imported as
+`from hs_game_sdk import drop_roll_model` and deliberately not exported from the generator-owned
+`__init__.py`. There is no C++ or TypeScript counterpart, so no parity across bindings is claimed.
+Why and how: `docs/agents/static-model-workflow.md`.
 
 ---
 
@@ -318,6 +331,7 @@ contributor can be assumed to have:
 | `test_object_hierarchy.py` → `TestObjectParentChain` | nothing (reads the tracked bindings) | always runs |
 | `test_object_hierarchy.py` → `TestObjectsJsonMatchesBindings` | `hs-game-sdk/data/` | skips |
 | `test_extractor_layout.py` | nothing (builds a synthetic `data.win`) | always runs |
+| `test_drop_roll_model.py` | nothing (the model, its fixture and the pilot docs); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/ModuleMain.cpp` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
 | `test_curated_stash_containers.py` | nothing (reads the tracked `curated/stash_containers.json`, the SDK and `docs/RUNTIME_DATA_MODELS.md`) | always runs |
@@ -469,8 +483,10 @@ re-run it; regeneration is idempotent, so a second run must produce no diff.
 `tools/generate_satanic_zone_sdk.py` and are regenerated from `curated/satanic_zone.json`.
 
 "Every file" is broader than the code, though: `player.py`/`.hpp`/`.ts`, `hooks.hpp`,
-`mod_registry.py` and `item_type.py`/`.hpp`/`.ts` are hand-written, and the generator neither
-writes nor deletes them. Edit those in place. They still have to be wired into the aggregates
+`mod_registry.py`, `item_type.py`/`.hpp`/`.ts` and `drop_roll_model.py` are hand-written, and the
+generator neither writes nor deletes them. Edit those in place. `drop_roll_model.py` is not wired
+into any aggregate on purpose (import it by its module name), and it has no C++ or TypeScript
+counterpart. They still have to be wired into the aggregates
 through the templates — `init_content`, `main_header` and `index_content` all include
 `item_type` now, and `tests/test_item_type_parity.py` fails if a committed aggregate stops
 matching its template.

@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Hand-verified game knowledge, NOT mechanically extracted from Hero_Siege.exe/data.win: these Controller_obj variable names are not present in Hero_Siege.exe (a static reading); the runtime fills the slots the code reads them through from data.win at run time, and no extractor currently produces them or ties them to Controller_obj, so they were found live, by content search. No generator produces this file or reads it; see docs/RUNTIME_DATA_MODELS.md section '## 16. Stash Special Tabs & the Crafting Route' for the full write-up and ForgePact issue #14 (ForgePact/docs/crafting-materials-research.md) for the research.",
+  "$schema_note": "Hand-verified game knowledge, NOT mechanically extracted from Hero_Siege.exe/data.win: these Controller_obj variable names are not present in Hero_Siege.exe (a static reading); the runtime fills the slots the code reads them through from data.win at run time, and no extractor currently produces them or ties them to Controller_obj, so they were found live, by content search. No generator produces this file or reads it; see docs/RUNTIME_DATA_MODELS.md section '## 17. Stash Special Tabs & the Crafting Route' for the full write-up and ForgePact issue #14 (ForgePact/docs/crafting-materials-research.md) for the research.",
   "controller_object": {
     "name": "Controller_obj",
     "index": 984
@@ -60,6 +60,6 @@
   },
   "sources": [
     { "file": "ForgePact/docs/crafting-materials-research.md", "section": "### Phase 1i results" },
-    { "file": "docs/RUNTIME_DATA_MODELS.md", "section": "## 16. Stash Special Tabs & the Crafting Route" }
+    { "file": "docs/RUNTIME_DATA_MODELS.md", "section": "## 17. Stash Special Tabs & the Crafting Route" }
   ]
 }

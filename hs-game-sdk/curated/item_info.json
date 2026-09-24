@@ -1,0 +1,66 @@
+{
+  "$schema_note": "Hand-verified game knowledge, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. What a finished item struct carries at CreateItemNew's outermost return, and how the inventory tooltip draws a stat line. Prose and sources are in docs/RUNTIME_DATA_MODELS.md section 16. `status` is `measured` (observed live) or `static_reading` (read from the compiled code locally and paraphrased; AGENTS.md section Legal).",
+  "source": {
+    "item": "hero-siege-item-editor/GAME_TRUTH_DESIGN.md steps 1-2: ForgePact Item Truth records of 7,628 owned items, build pe-6aaa6779-0cad4fc8 (measured 2026-09-24)",
+    "tooltip": "hero-siege-item-editor/GAME_TRUTH_DESIGN.md step 3: 41,920 stat lines of 7,628 tooltips the game drew (measured 2026-09-24); DrawInventoryStatsNew's arguments and return live-traced 2026-09-04 for ForgePact's forged tooltip rows"
+  },
+  "finished_item": {
+    "script": "gml_Script_CreateItemNew",
+    "where": "the outermost return; a CreateItemNew call made inside another builds part of the outer item",
+    "status": "measured"
+  },
+  "loader": {
+    "script": "gml_Script_InitItemFromJson",
+    "arguments": ["json_parse result of the item's save data object", "the item's save key"],
+    "self": "the global instance",
+    "returns": "the finished item struct (VALUE_OBJECT)",
+    "status": "measured"
+  },
+  "info_keys": [
+    { "key": "27", "holds": "rarity code (see rarities)", "status": "measured" },
+    { "key": "28", "holds": "display name", "status": "measured" },
+    { "key": "5", "holds": "magic prefix, empty when there is none", "status": "measured" },
+    { "key": "4", "holds": "magic suffix, empty when there is none", "status": "measured" },
+    { "key": "32", "holds": "tier letter code (see tiers)", "status": "measured" },
+    { "key": "1", "holds": "level requirement", "status": "measured" }
+  ],
+  "rarities": [
+    { "code": 1, "name": "Common" },
+    { "code": 2, "name": "Superior" },
+    { "code": 3, "name": "Rare" },
+    { "code": 5, "name": "Mythic" },
+    { "code": 6, "name": "Satanic" },
+    { "code": 7, "name": "Angelic" },
+    { "code": 9, "name": "Heroic" },
+    { "code": 10, "name": "Unholy" }
+  ],
+  "rarities_not_observed": [4, 8],
+  "tiers": [
+    { "code": 1, "letter": "C" },
+    { "code": 2, "letter": "B" },
+    { "code": 3, "letter": "A" },
+    { "code": 4, "letter": "S" },
+    { "code": 5, "letter": "SS" }
+  ],
+  "affix_slots": {
+    "stat_keys": ["10", "11", "12", "13", "14"],
+    "shape": ["stat id", "minimum", "maximum", "affix tier"],
+    "note": "the rolled value itself sits under the stat id, like any other stat",
+    "status": "measured"
+  },
+  "never_drawn_stats": [447],
+  "tooltip": {
+    "pass": "gml_Script_DrawInventoryItemV2",
+    "text": ["gml_Script_draw_text_outline", "gml_Script_draw_text_outline_ext", "gml_Script_DrawTooltipRichText"],
+    "colour_format": "0xBBGGRR",
+    "stat_line": {
+      "script": "gml_Script_DrawInventoryStatsNew",
+      "arguments": { "0": "x", "1": "y", "2": "item", "3": "stat", "4": "label", "5": "format", "6": "style", "8": "per level", "9": "negated", "10": "colour" },
+      "returns": "the row height (30) when it drew a row, else 0",
+      "formats": { "2": "percent", "3": "flat" },
+      "styles": { "8": "value first, signed", "9": "label first, unsigned" },
+      "calls_per_pass": 335,
+      "status": "measured"
+    }
+  }
+}

@@ -5,7 +5,7 @@ variables ForgePact issue #14 found live, by content search. They are not
 present in Hero_Siege.exe (a static reading); the runtime fills the slots
 the code reads them through from data.win at run time, and no extractor
 currently produces them or ties them to Controller_obj (see
-docs/RUNTIME_DATA_MODELS.md section '## 16. Stash Special Tabs & the Crafting
+docs/RUNTIME_DATA_MODELS.md section '## 17. Stash Special Tabs & the Crafting
 Route' and ForgePact/docs/crafting-materials-research.md). This test is what
 stops the curated file, the SDK and the doc drifting apart.
 """
@@ -42,7 +42,7 @@ def _bare_script_name(script_name: str) -> str:
 
 
 def _runtime_doc_section_5(doc_text: str) -> str:
-    heading = "\n## 16. Stash Special Tabs & the Crafting Route"
+    heading = "\n## 17. Stash Special Tabs & the Crafting Route"
     start = doc_text.find(heading)
     if start == -1:
         return ""

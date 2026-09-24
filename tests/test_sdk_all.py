@@ -78,6 +78,28 @@ class TestSdkArtifacts(unittest.TestCase):
         referenced = {s for m in special["mechanics"] for s in m["slots"]}
         self.assertEqual(referenced, set(slots) - {special["est"]["shared_gate_slot"]})
 
+    def test_curated_item_info_names_real_scripts(self):
+        """item_info.json (RUNTIME_DATA_MODELS section 16) names scripts, never indices, so
+        every one must be bound; and each rarity, tier and info key means one thing."""
+        sys.path.insert(0, str(SDK_ROOT / "python"))
+        from hs_game_sdk.scripts import GameScript
+
+        info = json.loads((SDK_ROOT / "curated" / "item_info.json").read_text(encoding="utf-8"))
+        tooltip = info["tooltip"]
+        scripts = {info["finished_item"]["script"], info["loader"]["script"], tooltip["pass"],
+                   tooltip["stat_line"]["script"], *tooltip["text"]}
+        for name in scripts:
+            self.assertIn(name, GameScript.__members__, f"{name} is not an SDK script")
+
+        codes = [r["code"] for r in info["rarities"]]
+        self.assertEqual(len(codes), len(set(codes)), "a rarity code is listed twice")
+        self.assertFalse(set(codes) & set(info["rarities_not_observed"]))
+        self.assertEqual([t["code"] for t in info["tiers"]], [1, 2, 3, 4, 5])
+        keys = [k["key"] for k in info["info_keys"]]
+        self.assertEqual(len(keys), len(set(keys)), "an info key is listed twice")
+        entries = [info["finished_item"], info["loader"], info["affix_slots"], tooltip["stat_line"], *info["info_keys"]]
+        self.assertTrue(all(e["status"] in ("measured", "static_reading") for e in entries))
+
 
 @unittest.skipUnless(
     DATA_DIR.exists(),
