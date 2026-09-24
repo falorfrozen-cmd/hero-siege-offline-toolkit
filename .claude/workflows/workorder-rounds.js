@@ -3,7 +3,7 @@ export const meta = {
   description: 'Run one workorder\'s implement -> verify -> route rounds as code; hands back to the driver on anything that needs judgement',
   whenToUse: 'Opt-in from /workorder (workflow mode). Replaces the driver\'s own turns for steps 2-4; replans, consultations, human questions and the final report stay with the driver.',
   phases: [
-    { title: 'Implement', detail: 'fresh implementer per round at the triaged tier' },
+    { title: 'Implement', detail: 'fresh implementer per round at the triaged tier; on a laned plan\'s first round, one implementer per lane in parallel, then the join' },
     { title: 'Verify', detail: 'verifier + delta-scoped reviewers, in parallel' },
     { title: 'Record', detail: 'haiku scribe: round snapshot/delta, Log entry, State' },
   ],
@@ -33,6 +33,11 @@ export const meta = {
 //   state,                              // the '## State' section as `section.py <plan> 'State'` printed it, so the
 //                                       // Record pass hands the scribe the whole block, every line it does not
 //                                       // own (gates:, round base:, agents:, ...) already in it (2e below)
+//   lanes,                              // [{ name, files: [...] }, ...] and
+//   join,                               // true -- both pasted from `py -3 tools/plan_lint.py <plan> --lanes-json`,
+//                                       // and only for a first implementation of the plan's steps (round 0, or the
+//                                       // relaunch after a replan; never after an IMPL-DEFECT). Absent or [] runs
+//                                       // exactly as a plan without lanes (2h below)
 // }
 
 const A = args || {}
@@ -73,6 +78,15 @@ const IMPL_SCHEMA = {
     question: { type: 'string' },
   },
   required: ['verdict', 'report', 'evidence', 'progress_so_far'],
+}
+// A lane may also return STOPPED: another lane wrote the round's stop marker (2h).
+const LANE_SCHEMA = {
+  ...IMPL_SCHEMA,
+  properties: {
+    ...IMPL_SCHEMA.properties,
+    verdict: { type: 'string', enum: [...IMPL_SCHEMA.properties.verdict.enum, 'STOPPED'] },
+    lane: { type: 'string' },
+  },
 }
 // The snapshot agent runs both `snapshot` (content hashes, for `delta` later)
 // and `heads` (this round's per-repo base shas, for the reviewer read
@@ -155,6 +169,18 @@ if (!SLUG || !A.planPath || !A.contextPath || !A.goalExcerpt || !A.reviewers) {
 }
 if (!CHECKOUT_ROOT && !(isAbsolutePath(A.planPath) && isAbsolutePath(A.contextPath))) {
   return { outcome: 'BAD-ARGS', detail: 'need checkoutRoot (`git rev-parse --show-toplevel` in this session) or absolute planPath and contextPath: the scribe resolves a relative path against the wrong checkout' }
+}
+// Lanes are only ever what a clean `plan_lint.py --lanes-json` printed, and
+// that output always pairs lanes with `"join": true` and valid, distinct,
+// non-empty lanes. Anything else was typed by hand, so it is refused before a
+// single agent spawns rather than fanned out on trust.
+const LANES = Array.isArray(A.lanes) ? A.lanes : []
+if (LANES.length) {
+  const bad = LANES.find(l => !l || !/^[a-z0-9-]+$/.test(l.name || '') || l.name === 'join' ||
+    !Array.isArray(l.files) || !l.files.length || LANES.filter(o => o && o.name === l.name).length > 1)
+  if (A.join !== true || bad) {
+    return { outcome: 'BAD-ARGS', detail: `lanes must be pasted from \`plan_lint.py --lanes-json\`: ${A.join !== true ? 'join is not true' : `lane ${JSON.stringify(bad)} has a bad or duplicate name or no files`}` }
+  }
 }
 
 // --- 2a: reviewers diff from the recorded base, not `HEAD` -----------------
@@ -432,13 +458,74 @@ const VERIFIER_CONTEXT_NOTE = A.contextPath !== A.planPath
   ? ` Context file: ${A.contextPath} -- open it only for a heading a criterion cites, with ${SECTION_CMD(A.contextPath)}; never read it whole, its '## Log' is the implementer's reasoning.`
   : ` This is a single-file plan: open a section a criterion cites with ${SECTION_CMD(A.planPath)} rather than reading on past the criteria; its '## Log' is the implementer's reasoning.`
 
+// --- 2h: lanes run in parallel on a launch's first round (issue #176) -------
+//
+// A plan may declare `### Lane: <name>` step groups with disjoint file sets
+// plus one `### Join` (`tools/plan_lint.py` refuses overlap). On the round a
+// launch starts at, each lane gets its own implementer through one parallel()
+// barrier, and the join runs alone once every lane returned IMPL-DONE. Its
+// result then goes down the same delta/verify path a single implementer's does.
+//
+// Lanes never write to git: `.git/index.lock` is fail-fast, so two lanes
+// committing at once would fail rather than wait. The join commits each lane's
+// file set as its own commit first, then does its own steps. Lanes run no
+// build or full suite either, since two builds in one tree race on artifacts.
+//
+// The script cannot cancel a running agent, so stopping is cooperative. A lane
+// about to return PLAN-DEFECT or ADVICE-NEEDED writes the round's stop marker
+// (`round_delta.py stop`), every lane checks it before each step
+// (`round_delta.py stopped`, exit 4) and returns STOPPED with its progress.
+// When any lane is not IMPL-DONE the join is skipped and the round is handed
+// back with every lane's verdict and progress. Later rounds of the launch are
+// defect rounds and run one implementer, as a plan without lanes does.
+const START = A.round || 0
+const VERDICT_ASK = `Return your usual verdict; put the PLAN-DEFECT evidence block or the ADVICE-NEEDED request, verbatim, in 'evidence'/'question'.`
+const workorderLine = n => `Workorder: ${A.planPath}${A.contextPath !== A.planPath ? ` (context file: ${A.contextPath})` : ''}. This is round ${n}. `
+// Any round past 0 follows a defect round -- '## State' only bumps `round:`
+// after one -- including the first round of a fresh launch, which has no
+// memory of it (the gap priorFindings closes for reviewers).
+const reentry = n => n > 0 ? `You are re-entered after a defect: read '## Log' > '### Round ${n - 1}'` +
+  `, and '### Round ${n}' if it is already there (this round was relaunched after a replan or a consultation, and that entry is the newer evidence),` +
+  ` for the evidence before anything else. ` : ''
+const LANE_NAMES = LANES.map(l => l.name).join(', ')
+const LANED_LATER_NOTE = `This plan declares lanes (${LANE_NAMES}), but this round runs one implementer, not lanes: you own every lane's file set and the join's steps, and the lane-only rules (no git writes, the stop marker) do not apply to you. `
+const implPrompt = n => workorderLine(n) + reentry(n) + (LANES.length && n > START ? LANED_LATER_NOTE : '') + VERDICT_ASK
+const implOpts = (label, schema) => ({ label, phase: 'Implement', agentType: 'implementer', model: A.implementerModel || 'opus', schema })
+const lanePrompt = (n, lane) => workorderLine(n) + reentry(n) +
+  `You are lane '${lane.name}', one of ${LANES.length} lanes (${LANE_NAMES}) running at the same time in separate implementers: follow your "When you are one lane, or the join" section. ` +
+  `Carry out only the steps under '### Lane: ${lane.name}' in '## Steps', after the preconditions written above the first '### Lane:'; the '### Join' steps and every other lane's steps are not yours. ` +
+  `Your file set is ${lane.files.map(f => `\`${f}\``).join(', ')}: edit nothing outside it -- an edit you need outside it is a PLAN-DEFECT. ` +
+  `Run no git command that writes (add, commit, stash, checkout, restore, reset, rebase, merge, switch, submodule, push, ...): the join commits your file set after every lane has returned. ` +
+  `Run no full build and no full test suite, only tests inside your file set: the build and the suite are join steps. ` +
+  `Before starting each step, run \`${DELTA} stopped ${SLUG} ${n}${DELTA_ROOT_ARG}\`: exit 4 means another lane has stopped this round, so stop there (finish a step you are already in the middle of first) and return verdict STOPPED with 'progress_so_far' naming the steps done, the files touched and what is half-finished. ` +
+  `Before you return PLAN-DEFECT or ADVICE-NEEDED, first run \`${DELTA} stop ${SLUG} ${n} --lane ${lane.name} --verdict <PLAN-DEFECT|ADVICE-NEEDED>${DELTA_ROOT_ARG}\` so the other lanes stop too. ` +
+  `Set 'lane' to '${lane.name}'. ` + VERDICT_ASK
+// One lane's commit, per repo its paths belong to (a submodule path is
+// committed in that submodule, prefix stripped). Paths are double-quoted so
+// the shell never expands a glob; git matches it as a pathspec.
+const laneCommit = files => Object.entries(splitPathsByRepo(files)).filter(([, ps]) => ps.length).map(([k, ps]) => {
+  const git = k === '.' ? (REPO_ROOT ? `git -C "${REPO_ROOT}"` : 'git') : `git -C ${repoTarget(k)}`
+  return `\`${git} add -- ${ps.map(p => `"${p}"`).join(' ')}\` then \`${git} commit\``
+}).join(' and ')
+const joinPrompt = (n, lanes) => workorderLine(n) + reentry(n) +
+  `You are the join: the ${LANES.length} lanes (${LANE_NAMES}) each returned IMPL-DONE, and none of their work is committed; follow your "When you are one lane, or the join" section. ` +
+  `First commit each lane's file set as its own commit, in this order, with a message naming the lane: ` +
+  LANES.map(l => `lane ${l.name}: ${laneCommit(l.files)}`).join('; ') + '; ' +
+  `then carry out the steps under '### Join' in '## Steps' (the build, the full suite, and every step that reads another lane's output), and last commit what remains. ` +
+  `Report under DEVIATIONS any dirty path that is in no lane's file set and that you did not create. ` +
+  `The lanes reported:\n${lanes.map(l => `--- lane ${l.name} ---\n${l.report || ''}`).join('\n')}\n` + VERDICT_ASK
+const laneBlock = (n, outcome, lanes) => [`### Round ${n}`, '', `${outcome} (lanes: ${lanes.map(l => `${l.name} ${l.verdict}`).join(', ')}; the join did not run)`,
+  ...lanes.flatMap(l => ['', `lane ${l.name}: ${l.verdict}`,
+    ...(l.verdict !== 'IMPL-DONE' && (l.evidence || l.question) ? [l.evidence || l.question] : []),
+    `progress: ${l.progress_so_far || 'none reported'}`])].join('\n')
+
 let reviewerState = { ...A.reviewers }
 const lastFindings = { ...(A.priorFindings || {}) } // reviewer -> its BLOCKING findings from the round before
 let lastVerifier = null // the previous round's full verifier result, reused when nothing changed
 let firstHeads = null // this invocation's first usable snapshot heads, for a `never` reviewer's base when args.baseHeads is absent
 const rounds = []
 
-for (let n = A.round || 0; n < ROUND_CAP; n++) {
+for (let n = START; n < ROUND_CAP; n++) {
   const snap = await agent(
     `Run exactly: ${DELTA} snapshot ${SLUG} ${n}${DELTA_ROOT_ARG}  — then report its exit code and output. ` +
     `Then run exactly: ${DELTA} heads ${SLUG} ${n}${DELTA_ROOT_ARG}  — report its exit code (3 if either command exited 3) and each printed line, split into repo and sha at the first tab, as heads: [{repo, sha}]. Edit nothing.`,
@@ -446,20 +533,29 @@ for (let n = A.round || 0; n < ROUND_CAP; n++) {
 
   const roundHeads = headsMap(snap && snap.heads)
   const roundHeadsUsable = !!(snap && snap.exit_code === 0 && roundHeads)
-  if (n === (A.round || 0)) firstHeads = roundHeadsUsable ? roundHeads : null
+  if (n === START) firstHeads = roundHeadsUsable ? roundHeads : null
   const baseHeadsForNever = (A.baseHeads && Object.keys(A.baseHeads).length) ? A.baseHeads : firstHeads
 
-  const impl = await agent(
-    `Workorder: ${A.planPath}${A.contextPath !== A.planPath ? ` (context file: ${A.contextPath})` : ''}. This is round ${n}. ` +
-    // Any round past 0 follows a defect round -- '## State' only bumps `round:`
-    // after one -- including the first round of a fresh launch, which has no
-    // memory of it (the gap priorFindings closes for reviewers).
-    (n > 0 ? `You are re-entered after a defect: read '## Log' > '### Round ${n - 1}'` +
-      `, and '### Round ${n}' if it is already there (this round was relaunched after a replan or a consultation, and that entry is the newer evidence),` +
-      ` for the evidence before anything else. ` : '') +
-    `Return your usual verdict; put the PLAN-DEFECT evidence block or the ADVICE-NEEDED request, verbatim, in 'evidence'/'question'.`,
-    { label: `implementer:r${n}`, phase: 'Implement', agentType: 'implementer', model: A.implementerModel || 'opus', schema: IMPL_SCHEMA })
-  if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'implementer returned nothing', rounds }
+  let impl
+  if (LANES.length && n === START) {
+    // 2h: every lane at once, then -- only if all of them are done -- the join.
+    const laneResults = await parallel(LANES.map(lane => () => agent(lanePrompt(n, lane), implOpts(`implementer:${lane.name}:r${n}`, LANE_SCHEMA))))
+    const lanes = LANES.map((lane, i) => laneResults[i] ? { ...laneResults[i], name: lane.name } : { name: lane.name, verdict: null })
+    const silent = lanes.filter(l => !l.verdict)
+    if (silent.length) return { outcome: 'AGENT-FAILED', round: n, detail: silent.map(l => `lane ${l.name} returned nothing`).join('; '), lanes, rounds }
+    if (lanes.some(l => l.verdict !== 'IMPL-DONE')) {
+      const outcome = lanes.some(l => l.verdict === 'PLAN-DEFECT') ? 'PLAN-DEFECT' : 'ADVICE-NEEDED'
+      const rec = await recordState(n, laneBlock(n, outcome, lanes), `round: ${n}\nphase: blocked`)
+      const stop = recordStop(n, rec, outcome)
+      if (stop) return { ...stop, lanes, rounds }
+      return { outcome, round: n, lanes, rounds }
+    }
+    impl = await agent(joinPrompt(n, lanes), implOpts(`implementer:join:r${n}`, IMPL_SCHEMA))
+    if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'the join implementer returned nothing', lanes, rounds }
+  } else {
+    impl = await agent(implPrompt(n), implOpts(`implementer:r${n}`, IMPL_SCHEMA))
+    if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'implementer returned nothing', rounds }
+  }
   if (impl.verdict !== 'IMPL-DONE') {
     const rec = await recordState(n, implBlock(n, impl), `round: ${n}\nphase: blocked`)
     const stop = recordStop(n, rec, impl.verdict)
