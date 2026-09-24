@@ -105,6 +105,11 @@ Items in Hero Siege exist in memory as GameMaker Structs (`VALUE_OBJECT`) with t
 }
 ```
 
+What the game itself puts on a finished item (the rolled rarity, the name, the
+generated affixes) and why `itemDataHash` cannot identify one were measured on
+7,628 items in §16. The rarity a tooltip names is `itemInfoStruct["27"]`
+(§16.4), not the definition's `c`: a Common belt carries `c` 0 and rarity 1.
+
 ---
 
 ## 3. `Loot_Manager_obj` Drop Tables & Mechanics
@@ -1234,3 +1239,175 @@ All **measured** unless marked.
 | Filling the protected-variable store (262,144 records) | fault while a creator builds a monster | §5.8 |
 | Special content at 20× | dies at about 13.4k instances | §5.8 |
 | A creator acted on before `enemyCreatorTimer` is real | no crash — the pack never spawns | §11.2 |
+
+---
+
+## 16. Items as the Game Builds and Draws Them
+
+What ForgePact's Item Truth capture measured on 2026-09-24, while the Item Editor
+checked every item it owned (7,628, on characters, in the Shared Stash and in the
+Infinite Vault) against the 2026-09-16 build, `pe-6aaa6779-0cad4fc8`. How the
+capture works (hooks, budgets, files) is in
+[ADR 0003](adr/0003-item-truth-lives-in-forgepact.md) and the two module guides.
+The argument and the numbers are in the Item Editor's
+[`GAME_TRUTH_DESIGN.md`](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md).
+
+### 16.1 Where an item is finished
+
+- A save keeps an item's compact definition (§2) and nothing it rolled.
+  `CreateItemNew` computes everything else each time it builds the item: the rarity,
+  the magic prefix and suffix, up to five generated affixes, runeword and special
+  tables, sockets and the display name. A rolled value therefore belongs to the
+  build that rolled it.
+- `CreateItemNew` can run inside another `CreateItemNew` call, and the inner item
+  is part of the outer one. The **outermost return** is the finished item. Read
+  there, the item's values match the stat lines the game drew for it: 41,920 of
+  41,920 (§16.6).
+- Before that point the item is not finished yet. A snapshot taken inside
+  `CreateItemInit` / `GenerateItemRandomStats` lacked the socket count on 121 of
+  386 compared items.
+
+**Measured.**
+[Item Truth, step 1](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-1--the-games-records-item-editor-2160-forgepact-145)
+
+### 16.2 Building an item from its save data
+
+- `InitItemFromJson(json, key)` is the game's loader for one saved item. It takes
+  the `json_parse` result of the item's save `data` object and the item's key,
+  with the global instance as `self`. It builds the item through `CreateItemNew`
+  and returns the item struct (`VALUE_OBJECT`). ForgePact's Angelic pool
+  (`BuildAngelicPool`, a ForgePact function) already built its probe items this
+  way.
+- On the game thread, 342 of 342 queued items were built this way in about 2 s at
+  the main menu, including items of a character that had never been loaded. The
+  structs were left to the collector, never placed in a grid or saved.
+
+**Measured.**
+[Item Truth, step 2](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-2--the-game-checks-any-item-on-request-item-editor-2160-forgepact-145)
+
+### 16.3 What a finished item carries
+
+| Member | Holds |
+|---|---|
+| `itemTimeStamp` | the time stamp in the item's save key, `x-y-<itemTimeStamp>-<n>` |
+| `itemType` | the item class (`ItemType`, `hs_game_sdk/item_type.hpp`) |
+| `itemDataHash` | a hash of the item, which is not an identity (§16.5) |
+| `itemDefinitionStruct` | the save definition (§2) |
+| `itemStatStruct` | every stat the item has, by stat id |
+| `itemInfoStruct` | what the tooltip's header shows |
+
+| `itemInfoStruct` key | Holds |
+|---|---|
+| `"27"` | the rolled rarity (§16.4) |
+| `"28"` | the display name |
+| `"5"` / `"4"` | the magic prefix / suffix (`" of Recovery"`), empty when there is none |
+| `"32"` | the tier letter: 1 C, 2 B, 3 A, 4 S, 5 SS |
+| `"1"` | the level requirement |
+
+- `itemStatStruct` keys `"10"`–`"14"` each hold one generated affix as
+  `[stat id, minimum, maximum, affix tier]`. The rolled value itself sits under
+  the stat id, like any other stat.
+- Stat 447 is on hundreds of weapons, and a tooltip never draws it.
+
+**Measured**, the info keys against 7,628 drawn tooltips. Also in
+[`hs-game-sdk/curated/item_info.json`](../hs-game-sdk/curated/item_info.json).
+
+### 16.4 Rarity codes
+
+`itemInfoStruct["27"]`. The names are the game's own: the tooltip's type line
+reads "Superior Ring", "Mythic Belt".
+
+| Code | Rarity |
+|---|---|
+| 1 | Common |
+| 2 | Superior |
+| 3 | Rare |
+| 5 | Mythic |
+| 6 | Satanic |
+| 7 | Angelic |
+| 9 | Heroic |
+| 10 | Unholy |
+
+Codes 4 and 8 were not observed. **Measured** on 7,628 drawn tooltips. Also in
+[`hs-game-sdk/curated/item_info.json`](../hs-game-sdk/curated/item_info.json).
+
+### 16.5 `itemDataHash` is not an identity
+
+The game gives some items a new `itemDataHash` each time it builds them, even
+when the content is identical: potions, essence vaults, forged gear and a few
+uniques, 51 of 7,628 owned items. Find an item by its `itemTimeStamp` and its
+content, never by the hash alone. **Measured.**
+[Item Truth, tying a drawing to its record](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#tying-a-drawing-to-its-record)
+
+### 16.6 The inventory tooltip
+
+- `DrawInventoryItemV2(x, y, scale, item, …)` draws an item's whole inventory
+  tooltip, on every frame it is shown. The call can nest; the outer pass is the
+  tooltip.
+- Its text goes through the `draw_text*` builtins and the game's own
+  `draw_text_outline(_ext)` and `DrawTooltipRichText` scripts. An outlined text is
+  the same string drawn several times
+  within 3 px, and the last draw is the visible one. Colours are GameMaker's
+  `0xBBGGRR` integers.
+- Stat lines come from `DrawInventoryStatsNew`. Its arguments are:
+  0 `x`, 1 `y`, 2 `item`, 3 `stat`, 4 `label`, 5 `format`, 6 `style`,
+  8 `per level`, 9 `negated`, 10 `colour`. Argument 7 is not established.
+  - The pass calls it once for each stat line the tooltip knows, in draw order,
+    whether or not the item has that stat. One pass made 335 calls on this build.
+  - It draws a row only when the item has the stat. It returns the row height
+    (30) or 0, and the caller adds that to its y cursor.
+- How a line reads, checked on all 41,920 stat lines of the 7,628 drawn tooltips:
+  - format 2 is a percent and 3 a flat number;
+  - style 8 puts the value first and signs it (`+449% Enhanced Damage`,
+    `-25% to All Enemy Resistances`);
+  - style 9 puts the label first, unsigned (`Ailment damage increased by 35%`);
+  - a per-level line is multiplied by the viewing character's level: a level-100
+    character reads +300 for 3 per level;
+  - a negated line is drawn below zero;
+  - a whole number prints plain and anything else with two decimals
+    (`+1.50 to Projectile Speed`);
+  - a stat of 0 draws no line;
+  - a skill grant is one line with its class (`+16 to Omnislash (Samurai)`): the
+    skill is the stat id before it, the class the stat id after it;
+  - `to All Skills` (201) and the element skill lines (222–227) take their class
+    from stat 21;
+  - relic skills are named from the game's `translations*.csv`
+    (`talent_name_relicMeatHook` → `Meat Hook`).
+- Every tooltip carries the key hint `ALT - Show Information`. Holding ALT draws
+  the information view, which adds each rolled line's range (` [45-75]`) and
+  skill descriptions.
+- An unidentified item draws `Unidentified` and no stat lines.
+
+**Measured 2026-09-24.** The stat call's arguments and return value were
+live-traced on 2026-09-04 (ForgePact's forged tooltip rows).
+[Item Truth, step 3](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-3--the-games-own-text-item-editor-2160-forgepact-145),
+[how the rows are read](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#showing-it-item-editor)
+
+### 16.7 Drawing a tooltip nobody sees
+
+A tooltip can be drawn for other items from inside the game's own
+`DrawInventoryItemV2` pass: the same instance, in its draw event. ForgePact does
+it like this:
+1. Save the draw colour, alpha, font, both alignments and the draw target.
+2. Set a 16×16 surface as the target.
+3. Call `DrawInventoryItemV2` for the other item struct.
+4. Restore everything from step 1.
+
+It drew 7,607 tooltips this way in about 2 minutes, at most 6 items and 3 ms per
+frame. There were 0 failures, and nothing extra was seen on screen. **Measured.**
+[Item Truth, drawing requests](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#drawing-requests-tooltips-of-items-the-player-never-hovers)
+
+### 16.8 Which build is running
+
+`pe-<link time stamp>-<.text size>`, both as 8 hex digits read from the PE headers
+of `Hero_Siege.exe` (the file header's time stamp and the `.text` section's
+virtual size), names a build.
+- ForgePact chose these two fields because AuriePatcher does not touch them: it
+  appends its `.aurie` section and rewrites the entry point and `SizeOfImage`.
+  A patched and a clean exe of one build should therefore share the id. That is
+  ForgePact's reasoning; it was not compared on a clean exe here.
+- The two builds seen so far have different ids: `pe-6a91a8b3-0caf38b8`
+  (2026-08-28) and `pe-6aaa6779-0cad4fc8` (2026-09-16).
+
+**Measured**: the Item Editor computes the id from the exe on disk, and ForgePact
+from the running process, and both gave the same id on 2026-09-24.
