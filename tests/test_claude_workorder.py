@@ -67,11 +67,11 @@ class DeltaRepo:
         _git("add", "-A", cwd=self.root)
         _git("commit", "-qm", message, cwd=self.root)
 
-    def run(self, command, slug="wo", round_="0", root=None):
+    def run(self, command, slug="wo", round_="0", root=None, extra=()):
         return subprocess.run(
             [
                 sys.executable, str(SCRIPT), command, slug, round_,
-                "--root", str(root if root is not None else self.root),
+                "--root", str(root if root is not None else self.root), *extra,
             ],
             capture_output=True, text=True,
         )
@@ -1034,6 +1034,65 @@ class TestProvisionLocalPrereqs(unittest.TestCase):
         result = repos.run()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("prerequisite not in main checkout: never-existed.txt", result.stdout)
+
+
+class TestStopMarker(RoundDeltaTestCase):
+    """`stop` / `stopped` (issue #176, D3): the cooperative marker a lane
+    writes before returning a non-DONE verdict and every other lane checks
+    before each step. The workflow cannot cancel a running agent, so this
+    marker is the whole stop mechanism."""
+
+    def marker(self, slug="wo", round_="0"):
+        return self.repo.root / ".claude" / "workorders" / ".rounds" / slug / f"round-{round_}.stop"
+
+    # Baseline: no lane has stopped, so every lane carries on.
+    def test_stopped_exits_0_when_no_lane_has_stopped(self):
+        result = self.repo.run("stopped")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_stop_then_stopped_exits_4_and_prints_lane_and_verdict(self):
+        stop = self.repo.run("stop", extra=("--lane", "docs", "--verdict", "PLAN-DEFECT"))
+        self.assertEqual(stop.returncode, 0, stop.stderr)
+        self.assertEqual(self.marker().read_bytes(), b"docs\tPLAN-DEFECT\n")
+        result = self.repo.run("stopped")
+        self.assertEqual(result.returncode, 4, result.stderr)
+        self.assertEqual(result.stdout.strip(), "docs\tPLAN-DEFECT")
+        # Scoped to its slug and round: another round's lanes are not stopped.
+        self.assertEqual(self.repo.run("stopped", round_="1").returncode, 0)
+        self.assertEqual(self.repo.run("stopped", slug="other").returncode, 0)
+
+    # A round is relaunched under the same number after a replan, so the
+    # previous launch's marker must not stop the new launch's lanes.
+    def test_snapshot_clears_a_stale_stop_marker(self):
+        self.repo.run("stop", extra=("--lane", "code", "--verdict", "ADVICE-NEEDED"))
+        self.repo.run("stop", round_="1", extra=("--lane", "code", "--verdict", "ADVICE-NEEDED"))
+        self.assertEqual(self.repo.run("stopped").returncode, 4)
+        snap = self.repo.run("snapshot")
+        self.assertEqual(snap.returncode, 0, snap.stderr)
+        self.assertFalse(self.marker().exists())
+        self.assertEqual(self.repo.run("stopped").returncode, 0)
+        # Only its own round's marker.
+        self.assertTrue(self.marker(round_="1").exists())
+
+    def test_stop_marker_is_never_in_the_delta(self):
+        snap = self.repo.run("snapshot")
+        self.assertEqual(snap.returncode, 0, snap.stderr)
+        self.repo.write("lane_edit.txt", b"a lane's work\n")
+        self.repo.run("stop", extra=("--lane", "code", "--verdict", "PLAN-DEFECT"))
+        self.assertTrue(self.marker().exists())
+        delta = self.repo.run("delta")
+        self.assertEqual(delta.returncode, 0, delta.stderr)
+        self.assertEqual(delta.stdout.split(), ["lane_edit.txt"])
+
+    def test_stop_refuses_a_bad_lane_or_verdict(self):
+        for lane, verdict in (("Code_X", "PLAN-DEFECT"), ("../x", "PLAN-DEFECT"),
+                              ("code", "IMPL-DONE"), ("code", "STOPPED")):
+            with self.subTest(lane=lane, verdict=verdict):
+                result = self.repo.run("stop", extra=("--lane", lane, "--verdict", verdict))
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertFalse(self.marker().exists())
+        self.assertEqual(self.repo.run("stop").returncode, 2)
 
 
 class TestUsageErrors(RoundDeltaTestCase):
