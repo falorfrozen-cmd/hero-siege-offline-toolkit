@@ -1,0 +1,160 @@
+{
+  "$schema_note": "Hand-curated record of the numbers ForgePact's drop-rate research already measured, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/drop_roll_model.py never reads it; tests/test_drop_roll_model.py reads both and checks that the model reproduces each entry. The mechanism, in our own words, is docs/models/drop-roll-spec.md. Every entry has `id`, `kind` (`baseline` = vanilla, no lever; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`measured`, `qualitative`, `approximate` or `our_code`), `date` (the measurement date; for `our_code` entries, the date the code was read), `source` (a list of {path, section} or {repo, commit}; paths are relative to the hub root, `section` is text that appears in that file), `scripts` (every `gml_Script_*` the entry involves, all bound in hs_game_sdk.scripts.GameScript), `what` (the observation), `model` (what the model must show) and exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). These rates were all recorded before 2026-09-12, while HookOneScript was still table-only (ForgePact guide, Known Limitations item 12); they are rates per call the hook saw, which is what the gate arithmetic needs.",
+  "measurements": [
+    {
+      "id": "M1",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-08-27",
+      "source": [
+        { "path": "ForgePact/docs/S10-special-content-notes.md", "section": "COZULDU - zindan anahtarlari dogal olarak dusuyor" }
+      ],
+      "scripts": ["gml_Script_LoadDrops", "gml_Script_DropKeys", "gml_Script_DropDungeonKeys"],
+      "what": "dungeonkey probe over 200 LoadDrops calls on monsters that drop ordinary keys: type 12 never appeared, and chances[12] was 0 in 200 of 200 calls.",
+      "values": { "calls": 200, "chance_type_12": 0, "type_12_seen": 0 },
+      "model": "The dungeon-key gate probability is exactly 0 when chances[12] is 0, for any number of die outcomes.",
+      "reproduced_by": "tests.test_drop_roll_model.BaselineTests.test_m1_a_zero_chance_never_opens_the_gate"
+    },
+    {
+      "id": "M2",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-08-27",
+      "source": [
+        { "path": "ForgePact/docs/S10-special-content-notes.md", "section": "COZULDU - zindan anahtarlari dogal olarak dusuyor" }
+      ],
+      "scripts": ["gml_Script_LoadDrops", "gml_Script_DropDungeonKeys", "gml_Script_DropKeys", "gml_Script_DropBifrostKey", "gml_Script_DropChaosKey", "gml_Script_cpr_irandom", "gml_Script_cpr_rand32"],
+      "what": "With dungeonkey on and chance auto, 1233 extra type-12 rolls were made and 95 passed (about 7.7%). chances[11] on those monsters was 5 to 9.",
+      "values": { "extra_rolls": 1233, "passed": 95, "chance_type_11_min": 5, "chance_type_11_max": 9 },
+      "model": "95/1233 lies inside the binomial band for chances 5 to 9 at the default 100 die outcomes; a forced gate (probability 1) is rejected; the set of die-outcome counts consistent with the observation includes 100.",
+      "reproduced_by": "tests.test_drop_roll_model.TargetTests.test_m2_opened_gate_passes_at_the_monsters_key_chance"
+    },
+    {
+      "id": "M3",
+      "kind": "baseline",
+      "status": "qualitative",
+      "date": "2026-08-27",
+      "source": [
+        { "path": "ForgePact/docs/S10-special-content-notes.md", "section": "COZULDU - zindan anahtarlari dogal olarak dusuyor" }
+      ],
+      "scripts": ["gml_Script_DropDungeonKeys", "gml_Script_GetDungeonKeys", "gml_Script_GetNormalRepoStruct", "gml_Script_LootGroundCreate"],
+      "what": "95 DropDungeonKeys calls with every key at its vanilla droprate.base of 1500; the player saw no key.",
+      "values": { "calls": 95, "base": 1500, "keys_seen": 0 },
+      "model": "The probability of no hit in 95 calls is at least 0.5 for an inner scale s of 0.7, 1 and 1/0.7.",
+      "reproduced_by": "tests.test_drop_roll_model.BaselineTests.test_m3_vanilla_key_base_gives_no_key_in_95_calls"
+    },
+    {
+      "id": "M4",
+      "kind": "target",
+      "status": "approximate",
+      "date": "2026-08-27",
+      "source": [
+        { "path": "ForgePact/docs/S10-special-content-notes.md", "section": "COZULDU - zindan anahtarlari dogal olarak dusuyor" }
+      ],
+      "scripts": ["gml_Script_DropDungeonKeys", "gml_Script_LootGroundCreate"],
+      "what": "With the key base set to 50 (droprate set), the record says \"~2\". It does not say whether that was observed or computed.",
+      "values": { "calls": 95, "base": 50, "hits_recorded": "~2" },
+      "model": "The expected hits in 95 calls at base 50 fall in [1, 4] for an inner scale s of 0.7, 1 and 1/0.7.",
+      "reproduced_by": "tests.test_drop_roll_model.TargetTests.test_m4_base_50_gives_about_two_keys_in_95_calls"
+    },
+    {
+      "id": "M5",
+      "kind": "target",
+      "status": "qualitative",
+      "date": "2026-08-27",
+      "source": [
+        { "path": "ForgePact/docs/S10-special-content-notes.md", "section": "COZULDU - zindan anahtarlari dogal olarak dusuyor" }
+      ],
+      "scripts": ["gml_Script_DropDungeonKeys", "gml_Script_LootGroundCreate"],
+      "what": "With the key base set to 3, keys became visible.",
+      "values": { "calls": 95, "base": 3 },
+      "model": "The expected hits in 95 calls at base 3 are at least 10 for an inner scale s of 0.7, 1 and 1/0.7.",
+      "reproduced_by": "tests.test_drop_roll_model.TargetTests.test_m5_base_3_makes_keys_visible"
+    },
+    {
+      "id": "M6",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-08-28",
+      "source": [
+        { "path": "ForgePact/plugin/ModuleMain.cpp", "section": "g_DkTipOlcek" },
+        { "repo": "ForgePact", "commit": "799ac2f" },
+        { "repo": "ForgePact", "commit": "c0a6a6b" }
+      ],
+      "scripts": ["gml_Script_LoadDrops", "gml_Script_DropRelic", "gml_Script_cpr_irandom"],
+      "what": "v1.2.1 scaled the relic gate chance by 0.05, and then by 0.001; relics were not reduced (30% and 69% of dropped items).",
+      "values": { "scales": [0.05, 0.001], "relic_share_of_dropped_items": [0.30, 0.69] },
+      "model": "Gate probabilities are equal for every chance in (0, 1], and the predicted reduction from scale 0.05 to 0.001 is at most 2x, not the intended 50x.",
+      "reproduced_by": "tests.test_drop_roll_model.TargetTests.test_m6_scaling_a_chance_below_one_changes_nothing"
+    },
+    {
+      "id": "M7",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-08-28",
+      "source": [
+        { "repo": "ForgePact", "commit": "c0a6a6b" }
+      ],
+      "scripts": ["gml_Script_DropRelic", "gml_Script_GetNormalRepoStruct"],
+      "what": "All 156 relics sat at droprate.base 25,000,000, yet relics dropped constantly: DropRelic does not read droprate.base.",
+      "values": { "relics": 156, "base": 25000000 },
+      "model": "The relic drop probability does not depend on base, so droprate group relic is a no-op.",
+      "reproduced_by": "tests.test_drop_roll_model.TargetTests.test_m7_relic_base_lever_is_a_no_op"
+    },
+    {
+      "id": "M8",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-08-28",
+      "source": [
+        { "repo": "ForgePact", "commit": "c0a6a6b" },
+        { "repo": "ForgePact", "commit": "cbac161" },
+        { "path": "ForgePact/plugin/ModuleMain.cpp", "section": "g_DkTipOlcek" }
+      ],
+      "scripts": ["gml_Script_LoadDrops", "gml_Script_DropRelic"],
+      "what": "The relic share of dropped items. At x2: 30.2% (171/567) before the fix, 6.4% with pre-roll 0.01, 0.7% (1/138) with pre-roll 0.0005. At x100 with pre-roll 0.0005: 5.0% (commit cbac161) or 4.3% (the code comment above g_DkTipOlcek); the two records disagree, so both are kept. Quadratic 0.00025: 0.7% at x2 and 13.5% at x100.",
+      "values": {
+        "x2_before_fix": { "share": 0.302, "relics": 171, "items": 567 },
+        "x2_linear_0.01": { "share": 0.064 },
+        "x2_linear_0.0005": { "share": 0.007, "relics": 1, "items": 138 },
+        "x100_linear_0.0005": { "share_commit_cbac161": 0.050, "share_code_comment": 0.043 },
+        "x2_quadratic_0.00025": { "share": 0.007 },
+        "x100_quadratic_0.00025": { "share": 0.135 }
+      },
+      "model": "Only the identity 0.00025 x 2^2 = 0.0005 x 2 = 0.001 (the same per-death probability, hence the same 0.7%) and that x100 clamps at 1.",
+      "identity_checked_by": "tests.test_drop_roll_model.TargetTests.test_m8_quadratic_and_linear_pre_roll_agree_at_x2",
+      "not_reproduced": "A share of dropped items depends on the mix of other items dropped and on kill counts, and neither was recorded, so the model cannot turn a per-death probability into these percentages."
+    },
+    {
+      "id": "M9",
+      "kind": "target",
+      "status": "qualitative",
+      "date": "2026-09-06",
+      "source": [
+        { "path": "ForgePact/src/forgepact.py", "section": "def build_key_cmds" },
+        { "path": "ForgePact/src/forgepact.py", "section": "KEYS = [" },
+        { "repo": "ForgePact", "commit": "5822d3a" }
+      ],
+      "scripts": ["gml_Script_LoadDrops"],
+      "what": "1.3.10 to 1.3.12 applied the slider to both the gate and the item's own roll (the x50 flood of 2026-09-06, player reports 2026-09-07); 1.3.13 set the gate multiplier to 1 for every family except relic.",
+      "values": { "flooded_versions": ["1.3.10", "1.3.11", "1.3.12"], "fixed_in": "1.3.13" },
+      "model": "With the multiplier applied to both the gate and the roll (both unclamped), the rate relative to x1 is m^2; with the gate multiplier at 1 it is m.",
+      "reproduced_by": "tests.test_drop_roll_model.TargetTests.test_m9_multiplier_on_gate_and_roll_squares_the_lever"
+    },
+    {
+      "id": "M10",
+      "kind": "our_code",
+      "status": "our_code",
+      "date": "2026-09-24",
+      "source": [
+        { "path": "ForgePact/README.md", "section": "Drops are **not forced**" },
+        { "path": "ForgePact/plugin/ModuleMain.cpp", "section": "VanilyaBase" }
+      ],
+      "scripts": ["gml_Script_GetNormalRepoStruct"],
+      "what": "x5 divides the base by five; the vanilla value is stored on first touch; x1 restores it exactly.",
+      "values": { "vanilla_base": 1500, "x5": 300, "x5_again": 300, "x1": 1500, "x5000": 1 },
+      "model": "1500 -> 300; a second x5 still gives 300; x1 gives 1500; x5000 floors at 1; the probability ratio is 5 while unclamped.",
+      "reproduced_by": "tests.test_drop_roll_model.TargetTests.test_m10_droprate_group_divides_the_vanilla_base_without_compounding"
+    }
+  ]
+}

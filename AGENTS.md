@@ -187,7 +187,10 @@ Two things about the setup are not visible from the script. The headless
 launcher cannot take a path containing `(x86)`, so import a byte-identical copy
 of `Hero_Siege.exe` from a plain path. And functions carry the bare script
 names (`SaveStash`, not `gml_Script_SaveStash`), because that is how the CSV
-stores them.
+stores them. Run `citrace symdump` with no ForgePact hooks installed: in the
+2026-09-24 import every drop script came out unnamed, probably because the
+dump ran while table hooks were in place (unverified; see
+[static-model-workflow.md](docs/agents/static-model-workflow.md#tooling-findings)).
 
 ## Mod Development Workflow: Test Before / After, Then Build to It
 
@@ -225,6 +228,26 @@ the cost. The owner asks for more cases when they want them. It does not relax
 in the same session, and a case left untested is recorded as "not observed
 live", never as a pass.
 
+**Where a mechanism can be written down, model it before you launch.** Read the
+game locally, write the mechanism in your own words with each claim labelled
+static reading, measured or not established, and build a stdlib-only model from
+that spec and the recorded measurements. Then write the baseline and target
+tests against the model. Keep the split clean: whoever builds the model works
+from the spec alone, and returns a gap to the reader instead of opening the
+decompiler. Specs go in `docs/models/`, models in `hs-game-sdk/python/hs_game_sdk/`,
+and the measurements they are checked against in `hs-game-sdk/curated/`. The
+model covers only the game; a mod's levers stay in the test as input transforms,
+pinned to the mod's source. The first one is
+[`drop_roll_model`](hs-game-sdk/python/hs_game_sdk/drop_roll_model.py), from
+[`docs/models/drop-roll-spec.md`](docs/models/drop-roll-spec.md). Replayed over the
+drop-lever research, it answers five of eight recorded live rounds without a
+launch, including both releases that shipped a defect. A model is a pure function
+of numbers, so it cannot catch whether a hook attaches, frame timing, value kinds,
+stale addresses or moving closure names, the game's RNG sequence, or how a rate
+feels in play. Those still need the live run and the rules below.
+
+Story and evidence: [docs/agents/static-model-workflow.md](docs/agents/static-model-workflow.md)
+
 ## Limit Rebuilds & Reruns During Development
 
 Full recompiles and relaunching the game for every change are slow and make the
@@ -241,6 +264,9 @@ edit-verify loop expensive. Before or alongside mod development:
   mod iteration.
 - Reserve full rebuild + in-game relaunch cycles for final confirmation once
   the baseline/target tests above already pass against the faster loop.
+- For arithmetic about a game mechanism (rates, gates, multipliers), the fastest
+  loop is a model written from a spec in `docs/models/`, with its test beside
+  the hub's other tests. It runs in under a second, with no build and no game.
 
 When the goal is "find which of several unknown candidates does X," exhaust
 the static search before any live session, then hook every candidate it turns
