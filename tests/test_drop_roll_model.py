@@ -144,8 +144,9 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(model.probability_of_no_hit(model.inner_probability(1), 95), 0.0)
 
     def test_the_relic_roll_has_no_base_parameter(self):
-        # Static reading plus M7: DropRelic does not read droprate.base, so the
-        # model's relic function cannot even be given one.
+        # M7 (a measurement, the only source): no 1-in-base roll follows the
+        # relic gate, so the model's relic function cannot even be given a base.
+        # Whether the base weights the pick between relics is not established.
         params = inspect.signature(model.relic_roll_probability).parameters
         self.assertNotIn("base", params)
         self.assertEqual(model.relic_roll_probability(0), 0.0)

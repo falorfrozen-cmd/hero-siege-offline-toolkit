@@ -124,6 +124,7 @@ count again.
   CI checks out without submodules, so `LeverParityTests` skips there. It runs
   only in a local checkout with ForgePact initialised. The owner decided on
   2026-09-24 to leave CI as it is.
-- **The dead relic lever, fixed.** The relic half of `droprate group relic`
-  divides bases that `DropRelic` never reads. That is recorded in ForgePact's
+- **The inert relic lever, fixed.** The relic half of `droprate group relic`
+  divides every relic base by the same factor, which changed nothing observable
+  because `DropRelic`'s drop is not a 1-in-base roll. That is recorded in ForgePact's
   Known Limitations. Removing it is a separate ForgePact change.

@@ -24,8 +24,15 @@ Measured entries are cited by their fixture id (M1–M10). All of them were reco
 before 2026-09-12, when `HookOneScript` was still table-only (ForgePact guide,
 Known Limitations item 12). So they are rates per call *that the hook saw*, not a
 census of every call the game made. The gate arithmetic needs only the per-call
-rate, so this does not weaken it. It does mean that no count here says how often
-the game reached a script by some other route.
+rate, and for M2 the reason that rate holds is worth stating. Its denominator,
+1233, counts our own re-calls of `LoadDrops`, so it is complete. Its numerator,
+95, is the `c=N` counter of a table-only `DropDungeonKeys` hook, so it is
+complete only if the type-12 branch reaches `DropDungeonKeys` through the table.
+The counter read 95, not 0, so the hook did see that path. That it saw every
+call on it rests on 95 agreeing with `chances[11]` of 5–9 at about 100 outcomes,
+which is the same agreement the die-size inference below uses, so the two are
+not independent. And no count here says how often the game reached a script by
+some other route.
 
 ## Static reading
 
@@ -74,9 +81,12 @@ the game reached a script by some other route.
 - **The draw is a whole number, so chances in (0, 1] are all the same gate.**
   v1.2.1 scaled the relic gate chance by 0.05 and then by 0.001. Relics were not
   reduced: they were 30% and then 69% of dropped items (M6, 2026-08-28).
-- **`DropRelic` does not read `droprate.base`.** All 156 relics sat at base
-  25,000,000, yet relics dropped constantly (M7, 2026-08-28). So the relic family
-  has a gate but no base-driven inner roll.
+- **`DropRelic`'s drop is not a 1-in-`droprate.base` roll.** All 156 relics
+  carried base 25,000,000, yet relics dropped constantly (M7, 2026-08-28). So
+  dividing every relic's base by the same factor (the `droprate group relic`
+  lever) changed nothing observable, and the relic family has a gate but no
+  1-in-base inner roll. Whether the base is read some other way is not
+  established (see below).
 - **The relic share of dropped items under each pre-roll** (M8, 2026-08-28). This
   is recorded, but the model cannot reproduce it: see "What the model cannot catch".
 - **Squaring the lever flooded drops.** 1.3.10–1.3.12 applied the slider to both
@@ -94,6 +104,13 @@ the game reached a script by some other route.
   more or less likely, and the form of the luck term. The 2026-09-24 pass did not
   follow the code that far. The model carries the whole adjustment as one scale `s`
   (default 1, a hypothesis). The M3–M5 checks hold for `s` in {0.7, 1, 1/0.7}.
+- **Whether `DropRelic` reads `droprate.base` at all**, for example as a weight
+  in the pick between relics. M7 cannot tell: every relic carried the same value,
+  and a weighted pick over equal weights looks exactly like a uniform one, as does
+  one divided by the same factor throughout. No run changed a single relic's
+  base, which is the control that would settle it. Only relic drops were
+  observed, not the other direct callers of `DropRelic`
+  ([RUNTIME_DATA_MODELS §5](../RUNTIME_DATA_MODELS.md)).
 - **What `DropRelic` does after it runs**: which relic it picks, and any filter.
   This is not modelled.
 
@@ -114,7 +131,9 @@ A pure function of numbers, deterministic and analytic
   probabilities, because the pick is uniform. `dungeon_key_probability` multiplies
   that by the gate.
 - `relic_roll_probability(chance, N)` is the gate alone. It takes no base on
-  purpose, because the measured fact is that the base plays no part.
+  purpose, because the measured fact is that no 1-in-base roll follows the gate.
+  That also makes a uniform divide of every relic's base a no-op in the model,
+  which holds whether or not the base weights the pick between relics.
 - Binomial helpers (`binomial_band`, `observation_within`,
   `consistent_die_outcomes`) let a test compare a recorded count with a
   predicted probability.

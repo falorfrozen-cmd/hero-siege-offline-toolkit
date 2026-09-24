@@ -187,9 +187,10 @@ Two things about the setup are not visible from the script. The headless
 launcher cannot take a path containing `(x86)`, so import a byte-identical copy
 of `Hero_Siege.exe` from a plain path. And functions carry the bare script
 names (`SaveStash`, not `gml_Script_SaveStash`), because that is how the CSV
-stores them. Run `citrace symdump` with no ForgePact hooks installed: in the
-2026-09-24 import every drop script came out unnamed, probably because the
-dump ran while table hooks were in place (unverified; see
+stores them. In the 2026-09-24 import every drop script came out unnamed. The
+cause is an open question: one untested explanation is that the dump ran while
+table hooks were in place, so until someone checks it, run `citrace symdump`
+with no ForgePact hooks installed as a precaution, not a known fix (see
 [static-model-workflow.md](docs/agents/static-model-workflow.md#tooling-findings)).
 
 ## Mod Development Workflow: Test Before / After, Then Build to It

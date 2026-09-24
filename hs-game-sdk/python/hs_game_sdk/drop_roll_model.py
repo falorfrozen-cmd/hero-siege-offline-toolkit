@@ -14,8 +14,9 @@ Two stages decide whether a monster drops something from a family:
    type. Because the draw is whole, any chance in (0, 1] behaves like 1.
 2. **The inner roll** (`droprate.base`). The `Drop*` script picks an item and
    rolls against its "1 in N" base, after an adjustment the model carries as
-   one unknown scale `s`. `DropRelic` has no such roll: it does not read the
-   base at all.
+   one unknown scale `s`. `DropRelic` has no such roll: relics dropped at a
+   base of 25,000,000 (M7). Whether it reads the base some other way, such as
+   a weight in the pick between relics, is not established.
 
 This module models the game only. ForgePact's levers (`droprate group`,
 `dungeonkey`, the relic pre-roll) are that mod's own code and live in the
@@ -116,9 +117,11 @@ def relic_roll_probability(chance: float, *,
                            die_outcomes: int = DEFAULT_DIE_OUTCOMES) -> float:
     """Probability that `DropRelic` runs for one relic-type `LoadDrops` call.
 
-    `DropRelic` does not read `droprate.base` (measured, M7), so there is no
-    base-driven inner roll and this function deliberately takes no base: the
-    gate is the whole of what a base-side lever could move. What `DropRelic`
+    No 1-in-`droprate.base` roll follows the gate (measured, M7: relics
+    dropped constantly at a base of 25,000,000), so this function deliberately
+    takes no base: the gate is the whole of what a uniform divide of every
+    relic's base could move, and that divide moves nothing. Whether the base
+    weights the pick between relics is not established and not modelled. What `DropRelic`
     does after it runs (which relic, and any filtering) is not modelled.
     """
     return gate_probability(chance, die_outcomes)
