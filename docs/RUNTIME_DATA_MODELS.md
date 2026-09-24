@@ -1433,7 +1433,14 @@ matching the owner's own figure, beside `CountInventoryItem`'s stock count
 (155) (RD `### Phase 1i results`). `CraftFindRecipeItems` runs once at the
 press and returns before `DoCraftResult` starts; `DoCraftResult` encloses the
 consume and the production of a one-unit craft in a single call (RD
-`### Phase 1g results`). A multi-unit craft was not observed.
+`### Phase 1g results`). M, Phase C (RD `## Phase C results`, ForgePact's
+`craftmats` on): one press at the Crafting Cube's quantity 3, of a two-input
+recipe whose inputs came only from the stash (Nut: 3 Sal and 1 Chipped
+Sapphire per unit), moved 9 and 3 in one combined move line and produced 3
+units, and the Cube's craftable maximum read 62 before and 59 after, with no
+refusal or consume-mismatch line logged. How the quantity reaches the amount
+the decode returns, and how many `DoCraftResult` calls a quantity 3 press
+makes, are not measured.
 
 R, a static reading of `CraftFindRecipeItems`, paraphrased (RD `## Ship
 design`, "The needs"): each recipe input's amount is decoded by
@@ -1443,10 +1450,38 @@ stopping at the first base whose count reaches the amount.
 `CountInventoryItem` decodes nothing and walks the bag's grids, not a map.
 So the amount of a count made inside the call is the latest decode before
 it, and of a run of counts after one decode the last is the one the game
-used. This pairing was observed only for a one-input recipe (the one decode
-and one count measured above); a multi-input recipe's pairing is not
-observed. ForgePact's `craftmats` pairs the needs it moves at the press this
-way.
+used. ForgePact's `craftmats` pairs the needs it moves at the press this
+way. M: the pairing held for a one-input recipe (the one decode and one
+count measured above) and, in Phase C, for one two-input recipe (Nut) at
+quantity 1 and at quantity 3: pairing this way, the mod moved exactly each
+input's shortfall - 3 Sal and 1 Chipped Sapphire, then 9 and 3 - and the
+game consumed them with no consume-mismatch line (RD `## Phase C results`).
+Other multi-input recipes, including one whose input accepts several base
+ids, were not exercised.
+
+M, Phase C (RD `## Phase C results`, the player build on 2026-09-24; one
+Socketable recipe, one Materials recipe and the two-input one, one press
+each, the bag always with room and every stash stack left non-empty): a
+recipe the bag alone could not cover (Ol: the bag's 1 of 3; Greater Unstable
+Dust: none of 5) read available and crafted on one press, with the count
+inside `CraftFindRecipeItems` supplied by the mod's hook. The by-name takes
+ran inside `DoCraftResult`'s frame, before the game's own body: 2 Ol onto the
+bag's existing stack (the inline route, the stack's `o` raised then
+`ItemCheckHash`, `### The take calls`), and 5 Dust and the Nut's inputs as
+new bag stacks made by the json creation chain, each stash stack lowered by
+the same inline route. The game then consumed
+the moved and the created units together with the bag's own - the bag held
+none of the input afterwards - and produced one result per unit crafted.
+The by-name stash save after each press (`SaveLocalFile(4, 1)`, the close's own route
+above) moved `stash.hss`'s write time, and
+the stash counts tool read the lowered stacks before any stash open, in the
+stash window, after the game's own quit and reload, and with the game
+stopped. The Cube builds its recipe-availability list when it opens, so a
+count change (the `craftmats` toggle) takes effect at the next Cube open,
+not while the window stays open (observed once). Not observed: the Cube's
+`craftGrid` as a press-time destination, a take that empties a stash entry,
+and the game's own hash check on the edited and created items beyond the
+owner's drag and reload finding nothing marked.
 
 M: a count injection inside the game's own availability check
 (`GetCraftItemsAvailable`, the recipe row's Create closure, and any
