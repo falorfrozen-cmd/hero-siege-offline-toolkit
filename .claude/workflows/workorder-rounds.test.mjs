@@ -749,3 +749,26 @@ test('a structural finding keeps an all-gated round a defect', async () => {
     standard({ verifier: { ...failing(LIVE), other_defects: ['ForgePact/plugin/x.cpp:12 *Rva* constant reachable from release'] } }))
   assert.equal(result.outcome, 'CAP')
 })
+
+test('NON-BLOCKING Log lines carry no evidence tail; BLOCKING lines keep theirs', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => {
+    prompts[label] = prompt
+    return standard({
+      'docs-sync-reviewer': { blocking: [{ where: 'w', problem: 'wrong', evidence: 'BLOCK-EV' }], non_blocking: [], plan_defect: false, summary: 'x' },
+      'decompile-output-guard': { blocking: [], non_blocking: [{ where: 'nw', problem: 'nit', evidence: 'NB-EV' }], plan_defect: false, summary: 'x' },
+    })(label)
+  }
+  await run(BASE, reply)
+  assert.match(prompts['scribe:r0'], /\[docs-sync-reviewer\] w: wrong — evidence: BLOCK-EV/)
+  assert.match(prompts['scribe:r0'], /\[decompile-output-guard\] nw: nit/)
+  assert.doesNotMatch(prompts['scribe:r0'], /NB-EV/)
+})
+
+test('the verifier is told to run criteria as written and each suite once', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
+  await run(BASE, reply)
+  assert.match(prompts['verifier:r0'], /never swap `py -3` for `python`/)
+  assert.match(prompts['verifier:r0'], /Run each test suite once, with the Bash timeout at 240000/)
+})
