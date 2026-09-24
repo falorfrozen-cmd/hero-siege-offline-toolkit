@@ -622,7 +622,7 @@ context per turn, peak context, wall minutes, the longest single tool call,
 the model the transcript actually ran on (what a tier alias resolved to that
 day), its list-price cost (`MODEL_PRICES`), and KB of `Read` results by kind
 (plan, context file, `instructions.md`, source). It prints one table and the
-session's total cost, then nineteen rules as `PASS`/`FAIL` with
+session's total cost, then twenty-two rules as `PASS`/`FAIL` with
 evidence (the agent, the time, the command or path), then each role's numbers
 against the pre-update averages as a percentage; `--json` emits the same as
 one object.
@@ -646,6 +646,9 @@ one object.
 | R17 live-operator-scope | a `live-operator` that wrote anything but its own `.claude/workorders/<slug>-live-<n>.md`, installed a build (a `.dll` copied or moved, or `installmod`), ran a writing git command, restored saves, or force-stopped the game |
 | R18 scribe-state-preserved | a scribe `Edit` to a `-plan.md` whose `old_string` carries a `key:` State entry (`gates:`, `round base:`, `agents:`, … — a hand-written `round: 0        phase: plan` counts as two) that its `new_string` no longer has |
 | R19 gates-template | any agent's `Write`/`Edit` to a `-plan.md` whose `gates:` line holds `\|` or "or" alternatives (an "or" inside a backticked token does not count) or a `<placeholder>`, outside parentheses: a template of every possible gate, which sets none. Possible gates go on `gates pending:`, and outcome tokens go on `route tokens:` |
+| R20 live-capture-author | any agent but `live-operator` (the driver included) whose `Edit`/`Write` landed on a `.claude/workorders/<slug>-live-<n>.md` capture. A capture a criterion cannot read is reported, never repaired |
+| R21 verifier-interpreter | a verifier shell command that runs `python` or `python3` in command position (a `grep python` does not count) — this repository's commands are `py -3`, and the verifier runs a criterion exactly as written |
+| R22 verifier-suite-once | a verifier that runs the same `unittest discover` suite (same `cd` directory, same arguments) more than once — after a timeout, or to read another slice of the output |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
@@ -662,6 +665,24 @@ Tests (`tests/test_workorder_audit.py`) build synthetic transcripts in a temp
 directory; every rule has both a failing fixture and a passing control, plus
 coverage for message-id dedupe, workflow-subdirectory discovery, and the exit
 codes.
+
+### `tools/live_checks.py` and `tools/plan_lint.py` — criteria that read, not guess
+
+Both read a file and run nothing. `live_checks.py <capture> --expect <names>
+[--require-pass <names>]` reads a live capture's `## Checks` block: the
+verdict is the first word after a line's last `|`, anything after it a note.
+It exits 1 on a missing, renamed, duplicated or unreadable check, or a
+`--require-pass` check (`dll-hash`, `marker`, `control`, a shipped feature's
+acceptance checks) that did not pass; a research check's `fail` or
+`not-observed` is a finding and exits 0. It replaces the
+`| (pass|fail|not-observed)$` greps that cost forgepact-issue-14 three rounds
+and a split workorder on the operator's punctuation. `plan_lint.py <plan>`
+checks `## Acceptance criteria` for four defects that each cost a round there:
+a prose criterion, a heading slice not anchored on `
+`, a grep over a live
+capture, and `python` where the repository runs `py -3`. The planner runs it
+before `PLAN-READY`; the driver runs it again before spawning an implementer.
+Tests: `tests/test_workorder_plan_tools.py`.
 
 ### `tools/source_index.py` — go to the range, don't grep around
 
@@ -809,7 +830,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Seventeen suites cover this page's tooling. Sixteen are Python and run
+Eighteen suites cover this page's tooling. Seventeen are Python and run
 automatically under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
@@ -820,6 +841,7 @@ py -3 -m unittest tests.test_claude_agents -v     # the definitions are well-for
 py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py + ensure_submodule.py, one round/submodule at a time
 py -3 -m unittest tests.test_claude_workorder_section -v  # section.py, plus the sentences in agents/ and SKILL.md that carry the same lesson
 py -3 -m unittest tests.test_workorder_audit -v   # workorder_audit.py's rules, each with a failing fixture and a passing control
+py -3 -m unittest tests.test_workorder_plan_tools -v  # live_checks.py and plan_lint.py, on the capture and criterion shapes that cost rounds
 py -3 -m unittest tests.test_source_index -v      # source_index.py against a synthetic fixture, plus a real-ModuleMain.cpp smoke test
 py -3 -m unittest tests.test_hs_drive_mcp_server -v            # the hs-drive tool surface, over a real stdio session
 py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v     # ENGINE_SYMBOLS still resolve, and importing the engine starts nothing

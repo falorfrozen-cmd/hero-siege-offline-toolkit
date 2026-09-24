@@ -101,3 +101,6 @@ Thumbs.db
 .claude/workorders/*-context.md
 .claude/workorders/.rounds/
 .claude/workorders/*.log
+# live-operator's session captures: quoted game output and save-file hashes,
+# read by the workorder's criteria and folded into docs by the record round.
+.claude/workorders/*-live-*.md
