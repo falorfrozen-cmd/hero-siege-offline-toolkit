@@ -180,8 +180,10 @@ def _overlap(a: str, b: str) -> bool:
         glob, literal = (a, b) if ga else (b, a)
         if fnmatch.fnmatchcase(literal, glob):
             return True
-        # A directory literal (`docs/`) against a glob beneath it.
-        return literal.endswith("/") and _literal_prefix(glob).startswith(literal)
+        # A directory literal (`docs/`) against a glob beneath it, or above
+        # it: fnmatch's `*` crosses `/`, so `*.md` reaches `docs/readme.md`.
+        p = _literal_prefix(glob)
+        return literal.endswith("/") and (p.startswith(literal) or literal.startswith(p))
     return (a.endswith("/") and b.startswith(a)) or (b.endswith("/") and a.startswith(b))
 
 

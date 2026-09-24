@@ -176,7 +176,10 @@ class PlanLintLaneTests(TempDirMixin, unittest.TestCase):
         for a, b in (("`tools/a.py`, `tests/test_a.py`", "`tools/a.py`"),
                      ("`docs/**`", "`docs/agents/*.md`"),
                      ("`docs/agents/*.md`", "`docs/agents/*.md`"),
-                     ("`ForgePact/docs/`", "`ForgePact/docs/x.md`")):
+                     ("`ForgePact/docs/`", "`ForgePact/docs/x.md`"),
+                     # fnmatch's `*` crosses `/`, so `docs/readme.md` is in both.
+                     ("`docs/`", "`*.md`"),
+                     ("`docs/agents/`", "`docs/*.md`")):
             with self.subTest(a=a, b=b):
                 rc, out = self.lint(laned(("code", a), ("docs", b)))
                 self.assertEqual(rc, 1, out)
