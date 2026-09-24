@@ -144,7 +144,8 @@ verdict: PLAN-READY
 
 ## State
 round: 0        phase: plan
-gates: <tokens a criterion or step conditions on, e.g. `phase0: complete`>
+gates: none
+gates pending: `build: complete`; `live1: complete`
 round base: <none yet>
 agents: planner-tier=opus
 reviewers: <none yet>
@@ -160,7 +161,7 @@ Be specific; this is your main lever against scope drift.
 
 ## Acceptance criteria
 Mechanical checkboxes, per the section above. A conditional one names its
-gate token from `## State`.
+gate token exactly as `gates pending:` spells it, e.g. "(gate `live1: complete`)".
 
 ## Steps
 Preconditions common to every step (branch, CRLF, do-not-revert) as
@@ -191,6 +192,22 @@ Every consultant answer, human decision and escalation note, verbatim.
 ### Plan
 planner: initial plan.
 ```
+
+**`gates:` is a statement, not a template.** It lists only the gates that are
+set now, each as one backticked `name: value` token separated by `; `, or
+`none`. A new plan sets none, so its line is `gates: none`. Every gate a
+criterion or step may later need goes on `gates pending:`. Research
+outcome tokens, which name one of several possible results, go on
+`route tokens:` (for example
+``route tokens: `save-route: proven` or `save-route: not-observed` ``). Never
+write alternatives on `gates:`, whether as `|`, "or", or `<placeholder>`. The
+driver moves a token from `gates pending:` to `gates:` when that gate is met.
+The verifier and `workorder-rounds.js` read `gates:` literally, and treat a
+line with a `|` as no gate set. On 2026-09-24, forgepact-issue-14-phase1j's
+`gates:` listed every gate and every possible value, joined with `|`. The
+verifier read that as all gates set and ran the live-session criteria before
+the session. It reported them as `IMPL-DEFECT` in rounds 0 to 2, and the launch
+ended at `CAP` with no real defect open after round 0.
 
 `### Round <n>` belongs to the rounds — the scribe and the driver write it —
 so the planner never uses it: the first plan logs under `### Plan`, each
