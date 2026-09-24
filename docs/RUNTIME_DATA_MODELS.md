@@ -160,12 +160,13 @@ for the full semantics.
 ## 5. Stash Special Tabs & the Crafting Route
 
 Source: ForgePact issue #14 (`ForgePact/docs/crafting-materials-research.md`,
-"RD" below). Facts come from one launch per research session, on
-representative cases (one Materials-tab entry the bag stacks, one Socketable
-stack of 10), on the Season 10 build of 2026-09-22..24. **M** marks a fact
-measured live; **R** marks a static Ghidra reading, paraphrased in RD's own
-words per `AGENTS.md` § "Legal: Decompiled Output Never Reaches Any Origin" -
-never the decompiled text itself.
+"RD" below). Facts come from one or two launches per research session (RD
+`### Phase 1f results` ran two, launches A and B), on representative cases
+(one Materials-tab entry the bag stacks, one Socketable stack of 10), on the
+Season 10 build of 2026-09-22..24. **M** marks a fact measured live; **R**
+marks a static Ghidra reading, paraphrased in RD's own words per `AGENTS.md`
+§ "Legal: Decompiled Output Never Reaches Any Origin" - never the decompiled
+text itself.
 
 ### The stash map
 
@@ -190,19 +191,21 @@ leaves the map entry behind (RD `### Phase 1e results`). Map keys read as
 
 ### Where the special tabs' cells live
 
-M, by content search (RD `### Phase 1i results`):
+M: `stashMaterialTab` is a two-level array, and `stashSocketItemSlot` is an
+array of rows, each a 1x1 cell array (RD `### Phase 1i results`); R: the
+two-level array's axis order, `[x][y]`, is from the static reading below, not
+itself probed live. A cell keeps its item's fingerprint in `nodeFingerprint`,
+the same key the stash map uses (M, RD `### Phase 1i results`).
 
-- `stashMaterialTab` is a two-level `[x][y]` array.
-- `stashSocketItemSlot` is an array of rows, each a 1x1 cell array.
-- A cell keeps its item's fingerprint in `nodeFingerprint`, the same key the
-  stash map uses.
-
-R, a static reading, not measured: the executable holds no variable names for
-these containers, so they could only be found live, by content (RD `### Phase
-1h instrument`); a cell holds either an item struct or GameMaker's own "no
-value" sentinel; `SaveStash` and `GridRemoveItem` both read a cell's
-`nodeFingerprint`; the ordinary (non-special) tabs form one `[tab][x][y]`
-array whose variable name has not been found (RD `### Phase 1h instrument`).
+R, a static reading, not measured: these container names are not present in
+`Hero_Siege.exe`; the runtime fills the slots the code reads them through
+from `data.win` at run time, and no extractor currently produces them or
+ties them to `Controller_obj`, so they were found live, by content search
+(RD `### Phase 1h instrument`); a cell holds either an item struct or
+GameMaker's own "no value" sentinel; `SaveStash` and `GridRemoveItem` both
+read a cell's `nodeFingerprint`; the ordinary (non-special) tabs form one
+`[tab][x][y]` array whose variable name has not been found (RD `### Phase
+1h instrument`).
 
 ### The item
 
@@ -218,8 +221,10 @@ Socketable case's class; that value is cited, not itself measured here (RD
 ### `SaveStash` and the save invariant
 
 M: one `SaveStash` call at each stash close, self `Console_Save_obj`, no
-argument (RD `### Phase 1e results`, `### Phase 1f results`). A healthy save
-makes one `CreateItemSaveStruct` call per item (RD `### Phase 1h results`).
+argument (RD `### Phase 1e results`, `### Phase 1f results`). M: each by-name
+`SaveStash` in Live 1i made one `CreateItemSaveStruct` call per kept-map
+entry (1627/1626/1625; RD `### Phase 1i results`); the save-control window
+counted 1993, not reconciled.
 
 R, a static reading: for each anchor cell, `SaveStash` looks the fingerprint
 up in map `9` and passes the result to `CreateItemSaveStruct` without
@@ -235,9 +240,12 @@ the fault: each by-name `SaveStash` after it returned with one
 kept the game running and wrote a file without the taken items - measured in
 one launch (RD `### Phase 1i results`). A by-name `SaveStash` (self
 `Console_Save_obj`, no argument, stash closed) returned but wrote no file in
-that same launch, making 1627 `CreateItemSaveStruct` calls against the 1993
-the owner's own close made - a gap RD tracks as its own open lead, not
-restated here.
+that same launch, making 1627 `CreateItemSaveStruct` calls; a separate
+save-control window - the owner's stash open, hand move and close, run
+before any by-name call - counted 1993, a different window in scope, so the
+gap between the two is not reconciled and may be the open and the move
+rather than the by-name save itself - a gap RD tracks as its own open lead,
+not restated here.
 
 ### The take calls
 
@@ -279,6 +287,8 @@ consume and the production of a one-unit craft in a single call (RD
 binding (bare names, not `gml_Script_`-prefixed) - see RD `### Phase 1h rows`
 for the indices; neither is a call target here. The container names above
 (`stashInventoryMap`, `stashMaterialTab`, `stashSocketItemSlot`,
-`nodeFingerprint`) cannot be produced by any generator, so they are recorded
-as hand-verified data in `hs-game-sdk/curated/stash_containers.json`, checked
-against this section and the SDK by `tests/test_curated_stash_containers.py`.
+`nodeFingerprint`) are not present in `Hero_Siege.exe`; the runtime fills
+them from `data.win`, and no extractor currently produces them or ties them
+to `Controller_obj`, so they are recorded as hand-verified data in
+`hs-game-sdk/curated/stash_containers.json`, checked against this section and
+the SDK by `tests/test_curated_stash_containers.py`.

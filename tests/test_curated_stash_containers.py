@@ -1,8 +1,10 @@
 """Cross-checks for the hand-verified stash/crafting container names.
 
 ``hs-game-sdk/curated/stash_containers.json`` names the ``Controller_obj``
-variables ForgePact issue #14 found live, by content search - the executable
-carries no member names for them, so no extractor can produce this file (see
+variables ForgePact issue #14 found live, by content search. They are not
+present in Hero_Siege.exe (a static reading); the runtime fills the slots
+the code reads them through from data.win at run time, and no extractor
+currently produces them or ties them to Controller_obj (see
 docs/RUNTIME_DATA_MODELS.md section '## 5. Stash Special Tabs & the Crafting
 Route' and ForgePact/docs/crafting-materials-research.md). This test is what
 stops the curated file, the SDK and the doc drifting apart.

@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Hand-verified game knowledge, NOT mechanically extracted from Hero_Siege.exe/data.win: these Controller_obj variable names cannot be recovered by any extractor because the executable carries no member names for them, only found live, by content search. No generator produces this file or reads it; see docs/RUNTIME_DATA_MODELS.md section '## 5. Stash Special Tabs & the Crafting Route' for the full write-up and ForgePact issue #14 (ForgePact/docs/crafting-materials-research.md) for the research.",
+  "$schema_note": "Hand-verified game knowledge, NOT mechanically extracted from Hero_Siege.exe/data.win: these Controller_obj variable names are not present in Hero_Siege.exe (a static reading); the runtime fills the slots the code reads them through from data.win at run time, and no extractor currently produces them or ties them to Controller_obj, so they were found live, by content search. No generator produces this file or reads it; see docs/RUNTIME_DATA_MODELS.md section '## 5. Stash Special Tabs & the Crafting Route' for the full write-up and ForgePact issue #14 (ForgePact/docs/crafting-materials-research.md) for the research.",
   "controller_object": {
     "name": "Controller_obj",
     "index": 984
@@ -14,7 +14,8 @@
     "materials": {
       "variable": "stashMaterialTab",
       "item_class": 14,
-      "cell_path": "[x][y]"
+      "cell_path": "[x][y]",
+      "cell_path_note": "the array being two-level is measured; the [x][y] axis order is from the static reading, not itself probed live"
     },
     "socketable": {
       "variable": "stashSocketItemSlot",
