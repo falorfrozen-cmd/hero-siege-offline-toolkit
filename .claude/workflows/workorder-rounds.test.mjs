@@ -650,3 +650,86 @@ test('a scribe that could read nothing is not reported as STATE-LOST', async () 
   const { result } = await run({ ...BASE, state: PLAN_STATE }, standard({ scribe: { written: false, note: 'no such file', state_before: '', state_after: '' } }))
   assert.equal(result.outcome, 'PASS')
 })
+
+// --- 2f: a criterion gated on a gate not set is pending, never a defect -----
+//
+// Pinned 2026-09-24 (forgepact-issue-14-phase1j): `gates:` was written as a
+// template of every gate and value joined by `|`, the verifier read it as all
+// set and failed the live-session criteria, and three rounds went to CAP with
+// no real defect open after round 0.
+const TEMPLATE_GATES = 'gates: build: complete | live1: complete | record: complete | save-route: proven|not-observed'
+const gatedState = gatesLine => ['round: 0', 'phase: implement', gatesLine, 'open defects: none'].join('\n')
+const LIVE = { criterion: 'phase1j rows= in the live log', status: 'fail', evidence: 'no live log', gate: 'live1: complete' }
+const SUITE = { criterion: 'suite passes', status: 'pass', evidence: 'OK', gate: '' }
+const failing = (...criteria) => ({ verdict: 'IMPL-DEFECT', criteria: [SUITE, ...criteria], pending_human: [] })
+
+test('failures gated only on a template gates: line route as PASS-PENDING-HUMAN, spending no round', async () => {
+  const prompts = {}
+  const { result, calls } = await run({ ...BASE, state: gatedState(TEMPLATE_GATES) },
+    (label, prompt, opts) => { prompts[label] = prompt; return standard({ verifier: failing(LIVE) })(label, prompt, opts) })
+  assert.equal(result.outcome, 'PASS-PENDING-HUMAN')
+  assert.equal(result.round, 0)
+  assert.equal(calls.filter(c => c.startsWith('implementer')).length, 1)
+  assert.deepEqual(result.rounds[0].failed, [])
+  assert.ok(result.pending_human.some(p => /gate live1: complete not set/.test(p)), JSON.stringify(result.pending_human))
+  assert.match(prompts['scribe:r0'], /verifier: PASS-PENDING-HUMAN \(the verifier said IMPL-DEFECT/)
+  assert.match(prompts['scribe:r0'], /- PENDING \(gate live1: complete not set\) phase1j rows=/)
+  assert.match(prompts['scribe:r0'], /^phase: pass$/m)
+})
+
+test('control: the same failure with its gate literally set on gates: is a defect', async () => {
+  for (const line of ['gates: `build: complete`; `live1: complete`', 'gates: build: complete, live1: complete']) {
+    const { result } = await run({ ...BASE, state: gatedState(line) }, standard({ verifier: failing(LIVE) }))
+    assert.equal(result.outcome, 'CAP', line)
+    assert.equal(result.rounds[0].failed.length, 1, line)
+  }
+})
+
+test('an ungated failure beside a gated one is still a defect, and only it is reported FAILED', async () => {
+  const prompts = {}
+  const real = { criterion: 'doc structure', status: 'fail', evidence: 'missing heading', gate: '' }
+  let v = 0
+  const { result } = await run({ ...BASE, state: gatedState(TEMPLATE_GATES) }, (label, prompt, opts) => {
+    prompts[label] = prompt
+    return standard({ verifier: () => (v++ === 0 ? failing(LIVE, real) : failing(LIVE)) })(label, prompt, opts)
+  })
+  assert.equal(result.outcome, 'PASS-PENDING-HUMAN')
+  assert.equal(result.round, 1, 'round 0 had a real failure')
+  assert.match(prompts['scribe:r0'], /- FAILED doc structure/)
+  assert.doesNotMatch(prompts['scribe:r0'], /- FAILED phase1j/)
+})
+
+test('a BLOCKING finding still spends a round when every failure is gated', async () => {
+  let seen = 0
+  const { result } = await run({ ...BASE, state: gatedState(TEMPLATE_GATES) }, standard({
+    verifier: failing(LIVE),
+    'docs-sync-reviewer': () => (seen++ === 0 ? { ...CLEAN, blocking: [{ where: 'a', problem: 'wrong', evidence: 'x' }] } : CLEAN),
+  }))
+  assert.equal(result.outcome, 'PASS-PENDING-HUMAN')
+  assert.equal(result.round, 1)
+})
+
+test('with no gates: line in State nothing is reclassified', async () => {
+  const { result } = await run({ ...BASE, state: 'round: 0\nphase: implement' }, standard({ verifier: failing(LIVE) }))
+  assert.equal(result.outcome, 'CAP')
+})
+
+test('a legacy "not yet:" tail and gates pending: set nothing', async () => {
+  for (const line of ['gates: `build: complete` (set 2026-09-24); not yet: `live1: complete`', 'gates: none\ngates pending: `live1: complete`']) {
+    const { result } = await run({ ...BASE, state: gatedState(line) }, standard({ verifier: failing(LIVE) }))
+    assert.equal(result.outcome, 'PASS-PENDING-HUMAN', line)
+  }
+})
+
+test('the verifier is told a template gates: line sets nothing and a gated criterion is unattempted', async () => {
+  const prompts = {}
+  await run(BASE, (label, prompt) => { prompts[label] = prompt; return standard()(label) })
+  assert.match(prompts['verifier:r0'], /`\|` alternatives is a template that sets nothing/)
+  assert.match(prompts['verifier:r0'], /'unattempted' \(gate <token> not set\), never 'fail'/)
+})
+
+test('a structural finding keeps an all-gated round a defect', async () => {
+  const { result } = await run({ ...BASE, state: gatedState(TEMPLATE_GATES) },
+    standard({ verifier: { ...failing(LIVE), other_defects: ['ForgePact/plugin/x.cpp:12 *Rva* constant reachable from release'] } }))
+  assert.equal(result.outcome, 'CAP')
+})

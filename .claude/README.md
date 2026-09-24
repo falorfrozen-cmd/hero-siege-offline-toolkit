@@ -304,9 +304,22 @@ A workorder is two files: `.claude/workorders/<slug>-plan.md` (frontmatter,
 subsection, `## Needs human judgement`, `## Log` — read by section, only when
 a step or a reviewer is pointed at it). `## State` carries `round:`, `phase:`,
 `gates:` (the tokens a conditional criterion or step names, instead of
-"while the Log lacks X"), `round base:` (the `round_delta.py` snapshot for
+"while the Log lacks X"), `gates pending:` and `route tokens:`, `round base:` (the `round_delta.py` snapshot for
 this round), `agents:` (each phase's agent id, for the resume mechanism
-above), `reviewers:`, `open defects:` and `decisions in force:`. The nine plans written before this
+above), `reviewers:`, `open defects:` and `decisions in force:`. `gates:`
+lists only the gates that are set, or `none`. Every gate a criterion may
+later need sits on `gates pending:`, and the possible research outcomes sit
+on `route tokens:`. A gate counts as set only when `gates:` literally carries
+its token. A `gates:` value holding `|` alternatives or a `<placeholder>` is a
+template and sets nothing. On 2026-09-24 a planner wrote `gates:` as a
+template of every gate and every possible value. The verifier read it as all
+set and failed the live-session criteria three rounds running, and the launch
+went to `CAP` with no real defect open after round 0. The verifier now
+reports a criterion whose gate is not set as `UNATTEMPTED (gate <x> not set)`.
+`workorder-rounds.js` reads `gates:` itself and routes a round as
+`PASS-PENDING-HUMAN` when every failure it has is gated on a gate that is not
+set and no reviewer found anything BLOCKING. `tools/workorder_audit.py` R19
+flags whoever wrote the template line. The nine plans written before this
 split stay valid — same sections, single-file — located with
 `grep -n '^## \|^### '` rather than assumed; nothing routes on which shape it
 finds. Both files, and the `.claude/workorders/.rounds/` round snapshots, are
@@ -609,7 +622,7 @@ context per turn, peak context, wall minutes, the longest single tool call,
 the model the transcript actually ran on (what a tier alias resolved to that
 day), its list-price cost (`MODEL_PRICES`), and KB of `Read` results by kind
 (plan, context file, `instructions.md`, source). It prints one table and the
-session's total cost, then eighteen rules as `PASS`/`FAIL` with
+session's total cost, then nineteen rules as `PASS`/`FAIL` with
 evidence (the agent, the time, the command or path), then each role's numbers
 against the pre-update averages as a percentage; `--json` emits the same as
 one object.
@@ -632,6 +645,7 @@ one object.
 | R16 scribe-scope | a scribe (`agentType: "scribe"`, or the `scribe` role a workflow label like `scribe:r1` parses to) whose `Edit`/`Write` landed outside its own `.claude/workorders/`, judged against the transcript's own `cwd` rather than a bare substring test; which ran `git add`/`git commit` in any shell command; which wrote a file through a shell command instead (a redirect or heredoc, `tee`, a PowerShell content cmdlet, `cp`/`mv`/`rm`/`sed -i`, a Python file write) whatever the target path; or, for the restricted `scribe` agent type, ran any shell command at all |
 | R17 live-operator-scope | a `live-operator` that wrote anything but its own `.claude/workorders/<slug>-live-<n>.md`, installed a build (a `.dll` copied or moved, or `installmod`), ran a writing git command, restored saves, or force-stopped the game |
 | R18 scribe-state-preserved | a scribe `Edit` to a `-plan.md` whose `old_string` carries a `key:` State entry (`gates:`, `round base:`, `agents:`, … — a hand-written `round: 0        phase: plan` counts as two) that its `new_string` no longer has |
+| R19 gates-template | any agent's `Write`/`Edit` to a `-plan.md` whose `gates:` line holds `\|` alternatives or a `<placeholder>` outside parentheses: a template of every possible gate, which sets none. Possible gates go on `gates pending:`, and outcome tokens go on `route tokens:` |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so

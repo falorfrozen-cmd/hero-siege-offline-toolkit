@@ -1618,3 +1618,42 @@ class R18Tests(TempDirMixin, unittest.TestCase):
     def test_state_keys_splits_a_two_key_line(self):
         self.assertEqual(wa.state_keys("## State\nround: 0        phase: plan\n- note\nround base: x"),
                          ["round", "phase", "round base"])
+
+
+# --------------------------------------------------------------------------
+# R19 gates-template
+# --------------------------------------------------------------------------
+
+class R19Tests(TempDirMixin, unittest.TestCase):
+    PLAN = "C:\\repo\\.claude\\workorders\\zz-plan.md"
+    # forgepact-issue-14-phase1j's planner line on 2026-09-24, shortened.
+    TEMPLATE = ("## State\nround: 0        phase: plan\n"
+                "gates: build: complete | live1: complete | record: complete | save-route: proven|not-observed\n"
+                "open defects: none")
+
+    def _run(self, tool, tool_input, agent_type="planner"):
+        records = tool_turn(0, 0, tool, tool_input, result="ok")
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).subagent(agent_type, agent_type, records)
+        _, results = b.evaluate()
+        return get_rule(results, "R19")
+
+    def test_fail_the_measured_template_line(self):
+        r = self._run("Write", {"file_path": self.PLAN, "content": self.TEMPLATE})
+        self.assertFalse(r.passed)
+        self.assertIn("live1: complete |", " ".join(r.evidence))
+
+    def test_fail_a_placeholder_in_an_edit(self):
+        r = self._run("Edit", {"file_path": self.PLAN, "old_string": "gates: none",
+                               "new_string": "gates: <tokens a criterion conditions on>"}, agent_type="implementer")
+        self.assertFalse(r.passed)
+
+    def test_pass_set_gates_pending_and_route_tokens(self):
+        content = ("## State\ngates: `build: complete` (set 2026-09-24 | after round 0)\n"
+                   "gates pending: `live1: complete` | `record: complete`\n"
+                   "route tokens: `save-route: proven` or `save-route: not-observed`")
+        self.assertTrue(self._run("Write", {"file_path": self.PLAN, "content": content}).passed)
+        self.assertTrue(self._run("Write", {"file_path": self.PLAN, "content": "## State\ngates: none"}).passed)
+
+    def test_context_file_is_not_state(self):
+        ctx = {"file_path": "C:\\repo\\.claude\\workorders\\zz-context.md", "content": self.TEMPLATE}
+        self.assertTrue(self._run("Write", ctx).passed)

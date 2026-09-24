@@ -1355,6 +1355,41 @@ def rule_r18_scribe_state_preserved(session: Session) -> RuleResult:
                 evidence.append(f"{tag} {call.name} dropped State {', '.join(k + ':' for k in dropped)} at {call.ts_start}: {fp}")
     return RuleResult("R18", "scribe-state-preserved", passed=not evidence, evidence=evidence)
 
+# R19: measured 2026-09-24 (forgepact-issue-14-phase1j). The planner wrote
+# `gates:` as a template of every gate and every possible value joined with
+# `|` ("build: complete | live1: complete | record: complete | ..."). The
+# verifier read it as every gate set and failed the live-session criteria for
+# three rounds, and the launch went to CAP with no real defect open after
+# round 0. `gates:` lists only the gates set, or `none`; the rest go on
+# `gates pending:` / `route tokens:` (planner.md). `workorder-rounds.js` 2f
+# treats such a line as no gate set; this rule catches whoever wrote it.
+GATES_LINE_RE = re.compile(r"^gates:(.*)$", re.IGNORECASE | re.MULTILINE)
+GATES_TEMPLATE_RE = re.compile(r"\||<[^>]*>")
+
+
+def gates_template(text: str) -> Optional[str]:
+    """The first `gates:` line in `text` whose value holds alternatives (`|`)
+    or a `<placeholder>`, parentheticals aside, else None."""
+    for m in GATES_LINE_RE.finditer(str(text or "")):
+        if GATES_TEMPLATE_RE.search(re.sub(r"\([^)]*\)", "", m.group(1))):
+            return m.group(0).strip()
+    return None
+
+
+def rule_r19_gates_template(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_agents(session):
+        for call in agent.tool_calls:
+            if call.name not in EDIT_TOOLS or call.is_error or call.guard_refused:
+                continue
+            fp = str(call.tool_input.get("file_path", "")).replace("\\", "/")
+            if not fp.lower().endswith("-plan.md"):
+                continue
+            line = gates_template(call.tool_input.get("content", call.tool_input.get("new_string", "")))
+            if line:
+                evidence.append(f"{agent.label} {call.name} wrote a template gates: line at {call.ts_start}: {fp}: {line[:120]}")
+    return RuleResult("R19", "gates-template", passed=not evidence, evidence=evidence)
+
 
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
@@ -1375,6 +1410,7 @@ ALL_RULES = [
     rule_r16_scribe_scope,
     rule_r17_live_operator_scope,
     rule_r18_scribe_state_preserved,
+    rule_r19_gates_template,
 ]
 
 
