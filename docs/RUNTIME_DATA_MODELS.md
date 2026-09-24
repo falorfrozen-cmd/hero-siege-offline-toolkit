@@ -207,6 +207,15 @@ read a cell's `nodeFingerprint`; the ordinary (non-special) tabs form one
 `[tab][x][y]` array whose variable name has not been found (RD `### Phase
 1h instrument`).
 
+M: the bag's own grids read the same way: `inventoryMaterialGrid`
+(`New_Inventory_Data_obj`) is row-major, `[row][column]` - `.0.7` held a
+stack at column 7, row 0 (`nodeStartX=7`); `.7.0` was out of range (RD
+`### Phase 1j results`). M: the Crafting Cube's own input grid is
+`New_Inventory_Data_obj.craftGrid`, an array of 6 length-9 arrays, mirrored
+at the Cube's own grid instance's `nodeGrid`; an item placed there by name
+(`GridAddItem`) stays in map `0`, the bag's, not map `9` (RD `### Phase 1j
+results`, Live 1j).
+
 ### The item
 
 M: `GetItemFromFingerprint(<fingerprint>, 9)` with the stash closed, self
@@ -247,6 +256,16 @@ gap between the two is not reconciled and may be the open and the move
 rather than the by-name save itself - a gap RD tracks as its own open lead,
 not restated here.
 
+M: the close's own save runs through `SaveLocalFile`, not `SaveStash`
+directly - of the close's several `SaveLocalFile` calls, only the one with
+self `Console_Save_obj`, `a0=4`, `a1=1` runs `SaveStart` (`stash.hss`,
+`stash_kind` 4) with a true answer, then `SaveStash`, `SaveCommit`,
+`SaveFileGMAsync`; the same shape, replayed by name with the stash closed,
+ran the same chain and moved `stash.hss`'s write time again (RD `### Phase
+1j results`, Live 1j). This is the reading that `SaveStash` alone only
+serialises, into a buffer the game keeps, and `SaveLocalFile` is what
+commits it to disk.
+
 ### The take calls
 
 M, with the call shapes as supplied (RD `### Phase 1i results`):
@@ -269,6 +288,16 @@ optional and it touches no map; `GridRemoveItem` sets every matching cell to
 undefined and returns `true` if it matched any (RD `### Phase 1h instrument`,
 `### Phase 1i instrument`).
 
+M, the rejected shape, recorded with what was supplied (RD `### Phase 1j
+results`, Live 1j): four `callm` calls with self and other `Console_Save_obj`
+- `SetItemDef` (key `"o"`) and `GenerateItemHash`, tried on both the stash
+entry and the bag stack's own struct - each entered `script_execute` and
+threw, with no state change. The game's own split instead runs those same
+two methods with the struct itself as self and other `UI_Split_Stack_obj`
+(RD `### Phase 1j results`, split-control); a self `callm` cannot supply.
+The inline `set` route on `itemDefinitionStruct.o` was never tried, because
+the control showed a method, not an inline write.
+
 ### The recipe amount and the craft route
 
 R, a static reading: a recipe's input amounts are stored encrypted and
@@ -281,6 +310,16 @@ press and returns before `DoCraftResult` starts; `DoCraftResult` encloses the
 consume and the production of a one-unit craft in a single call (RD
 `### Phase 1g results`). A multi-unit craft was not observed.
 
+M: a count injection inside the game's own availability check
+(`GetCraftItemsAvailable`, the recipe row's Create closure, and any
+craft-route row) moved a short recipe from unavailable to available and
+back, `injected=2`, `outside-route=0`, `other-owner=0` - the mod's count
+reaches the game's own display without any craft press (RD `### Phase 1j
+results`, count-inject). M: the one `CountInventoryItem` call logged for
+that recipe read `a0=1 a1=15 a2=1 a3=1` (owner, class, and base for a
+Socketable identity); what `a0` and `a2` mean beyond that reading is not
+measured (RD `### Phase 1j results`, cube-count).
+
 ### SDK names and the curated entry
 
 `SaveStashFunc` and `LoadStashFunc` are present in every `hs-game-sdk`
@@ -292,3 +331,11 @@ them from `data.win`, and no extractor currently produces them or ties them
 to `Controller_obj`, so they are recorded as hand-verified data in
 `hs-game-sdk/curated/stash_containers.json`, checked against this section and
 the SDK by `tests/test_curated_stash_containers.py`.
+
+M: two more curated entries, added after Live 1j (RD `### Phase 1j
+results`): `save` names the close's own save route (`SaveLocalFile`,
+`hs-game-sdk` index 3518; self `Console_Save_obj`, index 980; `stash_kind`
+4); `crafting_cube` names the Cube's input grid (`New_Inventory_Data_obj`,
+index 3067; variable `craftGrid`; the item stays in map `0`). Neither the
+grid's persistence across a save nor whether the game's own count walks it
+is measured; both are recorded as not observed on the curated entry itself.

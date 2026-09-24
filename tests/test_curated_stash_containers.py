@@ -34,6 +34,13 @@ ITEM_CLASS_MEMBERS = {
 }
 
 
+def _bare_script_name(script_name: str) -> str:
+    prefix = "gml_Script_"
+    if script_name and script_name.startswith(prefix):
+        return script_name[len(prefix):]
+    return script_name
+
+
 def _runtime_doc_section_5(doc_text: str) -> str:
     heading = "\n## 5. Stash Special Tabs & the Crafting Route"
     start = doc_text.find(heading)
@@ -101,6 +108,42 @@ def validate(data: dict, doc_text: str) -> list:
             "RUNTIME_DATA_MODELS.md section 5"
         )
 
+    save = data.get("save", {})
+    save_script = save.get("script")
+    if require("save.script", save_script):
+        if save_script not in SCRIPT_NAME_TO_INDEX:
+            problems.append(f"save.script {save_script!r} is not in SCRIPT_NAME_TO_INDEX")
+        bare_script = _bare_script_name(save_script)
+        if bare_script not in section:
+            problems.append(
+                f"save.script {save_script!r} (bare name {bare_script!r}) is absent from "
+                "RUNTIME_DATA_MODELS.md section 5"
+            )
+    save_self_object = save.get("self_object")
+    if require("save.self_object", save_self_object) and save_self_object not in GameObject.__members__:
+        problems.append(f"save.self_object {save_self_object!r} is not a GameObject member")
+    require("save.stash_kind", save.get("stash_kind"))
+
+    crafting_cube = data.get("crafting_cube", {})
+    cc_object = crafting_cube.get("object")
+    cc_index = crafting_cube.get("index")
+    if not require("crafting_cube.object", cc_object) or not require("crafting_cube.index", cc_index):
+        pass
+    elif cc_object not in GameObject.__members__:
+        problems.append(f"crafting_cube.object {cc_object!r} is not a GameObject member")
+    elif GameObject[cc_object].value != cc_index:
+        problems.append(
+            f"crafting_cube.index {cc_index!r} does not match "
+            f"GameObject[{cc_object!r}].value ({GameObject[cc_object].value!r})"
+        )
+    cc_variable = crafting_cube.get("variable")
+    if require("crafting_cube.variable", cc_variable) and cc_variable not in section:
+        problems.append(
+            f"crafting_cube.variable {cc_variable!r} is absent from "
+            "RUNTIME_DATA_MODELS.md section 5"
+        )
+    require("crafting_cube.item_map_owner", crafting_cube.get("item_map_owner"))
+
     for source in data.get("sources", []):
         source_file = source.get("file")
         section_heading = source.get("section")
@@ -134,12 +177,28 @@ class TestCuratedStashContainers(unittest.TestCase):
         bad["controller_object"]["index"] = 985
         bad["stash_map"]["getter"] = "gml_Script_NoSuchScript"
         bad["stash_map"]["variable"] = "stashNoSuchVar"
+        bad["save"]["script"] = "gml_Script_NoSuchSave"
+        bad["crafting_cube"]["variable"] = "noSuchGrid"
+        bad["crafting_cube"]["index"] = 3068
 
         problems = validate(bad, self.doc_text)
 
         self.assertTrue(any("985" in p for p in problems), problems)
         self.assertTrue(any("gml_Script_NoSuchScript" in p for p in problems), problems)
         self.assertTrue(any("stashNoSuchVar" in p for p in problems), problems)
+        self.assertTrue(any("gml_Script_NoSuchSave" in p for p in problems), problems)
+        self.assertTrue(any("noSuchGrid" in p for p in problems), problems)
+        self.assertTrue(any("3068" in p for p in problems), problems)
+
+    def test_validator_reports_a_missing_object_as_a_problem(self):
+        missing = copy.deepcopy(self.data)
+        del missing["save"]
+        del missing["crafting_cube"]
+
+        problems = validate(missing, self.doc_text)
+
+        self.assertTrue(any("save" in p for p in problems), problems)
+        self.assertTrue(any("crafting_cube" in p for p in problems), problems)
 
 
 if __name__ == "__main__":

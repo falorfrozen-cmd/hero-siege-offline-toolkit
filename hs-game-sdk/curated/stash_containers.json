@@ -27,6 +27,28 @@
     "fingerprint_member": "nodeFingerprint"
   },
   "fingerprint_format": "0-0-<n>-<class>",
+  "save": {
+    "script": "gml_Script_SaveLocalFile",
+    "self_object": "Console_Save_obj",
+    "stash_kind": 4,
+    "second_argument": 1,
+    "second_argument_note": "as the close supplied it; its meaning is not measured",
+    "measured": {
+      "date": "2026-09-24",
+      "session": "Live 1j"
+    }
+  },
+  "crafting_cube": {
+    "object": "New_Inventory_Data_obj",
+    "index": 3067,
+    "variable": "craftGrid",
+    "item_map_owner": 0,
+    "note": "the grid's persistence across a save and whether the game counts it are not observed",
+    "measured": {
+      "date": "2026-09-24",
+      "session": "Live 1j"
+    }
+  },
   "measured": {
     "date": "2026-09-24",
     "session": "Live 1i",
