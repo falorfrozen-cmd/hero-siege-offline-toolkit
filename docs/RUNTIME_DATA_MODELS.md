@@ -317,8 +317,10 @@ a method, not an inline write.
 
 M: the inline route Live 1k used instead - `set itemDefinitionStruct.o <n>`
 then `call ItemCheckHash(<item>)`, self `Console_Save_obj` - on a stash entry
-and on a bag stack: `ItemCheckHash` answered `bool:false` both times, but the
-item's `itemDataHash` had changed on the very next lookup (RD `### Phase 1k
+and on a bag stack: `ItemCheckHash` answered `bool:false` both times; the bag
+stack's `itemDataHash` changed from an earlier read, but the stash entry's
+hash was read only after the edit, so its change is supplied by the reading,
+not itself observed against an earlier value (RD `### Phase 1k
 results`, Live 1k, `partial-stacked`). R: `ItemCheckHash` takes one argument
 and re-runs the item's own hash method for comparison; a `false` on a
 just-edited item is consistent with a stale-versus-new mismatch, not itself
@@ -335,15 +337,17 @@ directly in map 0 (RD `### Phase 1k results`, Live 1k, `partial-nostack`,
 and its loaders (`InitItemFromJson`/`AddItemToMap`, the pattern
 `ParseItemToGrid`, `ControllerLoadOnlineData` and the trade and market
 handlers use) are the two routes that make an item without the constructor
-(RD `### Phase 1k instrument`). M: the owner's drag of the edited bag stack,
-and the owner's drag of the Cube-created unit into the bag's existing stack,
-each logged `InventorySwapItemsNew`, `InventorySocketItem` and
-`RemoveItemFromMap` rows, recorded as logged without interpreting them (RD
-`### Phase 1k results`, Live 1k, `hash-accept`, `partial-cube`). Not
-observed: the game's own hash check on that drag, the merge, the save or a
-reload - `ItemCheckHash` and `ReportClient` both logged zero calls
-throughout, and `ReportClient` never fired at all this session, so it has no
-positive control here (RD `### Phase 1k results`, Live 1k, `hash-accept`).
+(RD `### Phase 1k instrument`). M: the owner's drag of the Cube-created unit
+into the bag's existing stack logged one call each of
+`InventorySwapItemsNew`, `InventorySocketItem` and `RemoveItemFromMap`,
+recorded as logged without interpreting them (RD `### Phase 1k results`,
+Live 1k, `partial-cube`). Not observed: the game's own hash check on the
+owner's drag of the edited bag stack, on that Cube merge, or on a save or a
+reload - `ItemCheckHash` and `ReportClient` both logged zero calls during the
+two armed drag windows and were not armed for the save or the reload, and
+`ReportClient` never fired at all this session, so it has no positive
+control here (RD `### Phase 1k results`, Live 1k, `hash-accept`,
+`partial-cube`).
 
 ### The recipe amount and the craft route
 
