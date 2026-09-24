@@ -33,7 +33,8 @@ hs-game-sdk/
 │   ├── satanic_zone.json       # Satanic Zone buff/debuff ids/names/descriptions + Controller_obj var names
 │   ├── drop_types.json         # LoadDrops drop types + GetNormalRepoStruct repository categories (data only)
 │   ├── drop_roll_measurements.json # M1-M10: recorded drop-roll numbers drop_roll_model.py is tested against (data only)
-│   └── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
+│   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
+│   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
 ├── python/                     # Python SDK package
 │   ├── hs_game_sdk/
 │   │   ├── objects.py          # GameObject enum & index maps
@@ -91,6 +92,9 @@ affix slots and the tooltip's stat-line call, from the Item Editor's game-truth 
 read as JSON, with no `tools/generate_*_sdk.py` counterpart; each file's `$schema_note` says so, and
 `docs/RUNTIME_DATA_MODELS.md` §13, §14 and §16 carry the prose and sources. `tests/test_sdk_all.py`
 checks every script and object they name is bound.
+`stash_containers.json` (ForgePact issue #14's stash and Crafting Cube container names, see
+`docs/RUNTIME_DATA_MODELS.md` § 17) is data-only too, with no generator and no consumer yet, checked
+against the SDK and that doc section by `tests/test_curated_stash_containers.py`.
 
 **Models (`drop_roll_model.py`, 2026-09-24, issue #162):** a model is a hand-written, stdlib-only,
 deterministic function of the game's mechanism, built from a written spec
@@ -330,6 +334,7 @@ contributor can be assumed to have:
 | `test_drop_roll_model.py` | nothing (the model, its fixture and the pilot docs); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/ModuleMain.cpp` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
+| `test_curated_stash_containers.py` | nothing (reads the tracked `curated/stash_containers.json`, the SDK and `docs/RUNTIME_DATA_MODELS.md`) | always runs |
 
 `test_extractor_layout.py` is how the OBJT offsets stay verifiable without the
 game: it writes a tiny GameMaker IFF file by hand, with each field at its
