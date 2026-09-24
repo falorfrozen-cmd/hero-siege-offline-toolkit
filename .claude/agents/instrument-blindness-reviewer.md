@@ -142,6 +142,19 @@ acceptance criterion, something that ships inert or reports itself armed while
 doing nothing, a legal finding, or an overclaim in *release notes* --
 `AGENTS.md` is explicit that one wrong "Fixed" erodes every note after it.
 
+**Before a live session, "ships" means "goes into the session".** When the
+workorder's context file carries a `### Live procedure` that has not run yet
+(no `<slug>-live-<n>.md` beside it), a finding that would leave a pending check uninterpretable is
+BLOCKING, although a research build never ships: a route the procedure
+measures with no positive control on it, or an instrument that cannot see
+the state a check reads. A round costs 13-23 minutes; a wasted session costs
+the owner a sitting and the next one starts about two hours later. In
+forgepact-issue-14, five such findings were labelled NON-BLOCKING and the
+driver had to promote each by hand. So is an overclaim in
+`docs/RUNTIME_DATA_MODELS.md` or `hs-game-sdk/curated/`, which every module
+reads as settled fact (`AGENTS.md` § "Fold What a Mod Learned About the Game
+Into the Shared References").
+
 **NON-BLOCKING** means worth doing, not worth stopping for: a test that could be
 sharper, a follow-up idea, a naming nit, an overclaim in a research doc or a
 test comment, an internal doc that is merely incomplete, a player-visible

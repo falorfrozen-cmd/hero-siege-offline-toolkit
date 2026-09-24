@@ -27,15 +27,18 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
-from . import capture, charselect, checks, ipc, launch, procs, saves
+from . import capture, charselect, checks, ipc, launch, lease, procs, saves
 # `input` shadows nothing at module scope here, but a bare `input` in this file
 # would read as the builtin to every later reader of it.
 from . import input as input_module
 
 INSTRUCTIONS = (
-    "Order for a verified test run: hs_selfcheck -> hs_saves_backup -> "
-    "hs_launch -> hs_command / hs_screenshot -> hs_stop_game -> "
-    "hs_saves_inspect -> hs_saves_restore. Every refusal carries `reason`; "
+    "Order for a verified test run: hs_lease_acquire -> hs_selfcheck -> "
+    "hs_saves_backup -> hs_launch -> hs_command / hs_screenshot -> "
+    "hs_stop_game -> hs_saves_inspect -> hs_saves_restore -> "
+    "hs_lease_release. The lease is machine-wide: while another session "
+    "holds it, the tools that drive or overwrite the game refuse `lease_held`. "
+    "Every refusal carries `reason`; "
     "a `skipped` self-check is not a pass. hs_launch and hs_wait_ready report a "
     "`phase` and a `ready` flag: `process_running` is not `plugin_ready`, and "
     "most gameplay commands act only once a character is loaded, which a human "
@@ -59,10 +62,12 @@ def _acts(title: str, *, destructive: bool = False,
           idempotent: bool = False) -> ToolAnnotations:
     """A tool that changes something. `destructive` is claimed sparingly.
 
-    Only two tools here can take something away that was not theirs:
-    `hs_saves_restore` overwrites the live save directory, and `hs_stop_game`
-    can terminate a process. Everything else writes only files of its own --
-    a backup, a screenshot, one line into `cmd.txt`.
+    Only three tools here can take something away that was not theirs:
+    `hs_saves_restore` overwrites the live save directory, `hs_stop_game`
+    can terminate a process, and `hs_lease_acquire` with `force` takes
+    another session's game lease. Everything else writes only files of its
+    own -- a backup, a screenshot, one line into `cmd.txt`, this server's
+    own lease record.
     """
     return ToolAnnotations(title=title, read_only_hint=False,
                            destructive_hint=destructive, idempotent_hint=idempotent,
@@ -130,6 +135,9 @@ def hs_saves_backup(
 ) -> dict[str, Any]:
     """Snapshot the live save directory. Nothing existing is ever modified.
 
+    While this server holds the game lease, the backup's id is recorded in
+    it and a restore is marked owed (`restore_pending`).
+
     Refusals: `engine_source_missing`, `engine_import_failed`, `game_running`,
     `game_state_unknown`, `save_dir_missing`, `no_character_saves`,
     `save_dir_too_large`, `copy_verification_failed`, `invalid_label`.
@@ -165,8 +173,11 @@ def hs_saves_restore(
     Every restore first writes and verifies a `pre-restore` backup, so the
     state being overwritten is always recoverable. Nothing is ever deleted.
 
-    Refusals: `confirmation_mismatch`, `invalid_backup_id`,
-    `engine_source_missing`, `engine_import_failed`, `game_running`,
+    Asks the game lease first: `lease_held` while another session holds it.
+    A restore of the backup the lease recorded clears its `restore_pending`.
+
+    Refusals: `lease_held`, `lease_unavailable`, `confirmation_mismatch`,
+    `invalid_backup_id`, `engine_source_missing`, `engine_import_failed`, `game_running`,
     `game_state_unknown`, `backup_incomplete`, `backup_corrupt`,
     `save_dir_missing`, `restore_target_unrelated`,
     `pre_restore_backup_failed`, `copy_verification_failed`.
@@ -247,9 +258,9 @@ def hs_launch(
     menu: most gameplay commands act once a character is loaded, which nothing
     here can do.
 
-    Refusals: `engine_source_missing`, `engine_import_failed`,
-    `forgepact_config_missing`, `mod_chain_incomplete`, `launcher_refused`,
-    `game_state_unknown`.
+    Refusals: `lease_held`, `lease_unavailable`, `engine_source_missing`,
+    `engine_import_failed`, `forgepact_config_missing`,
+    `mod_chain_incomplete`, `launcher_refused`, `game_state_unknown`.
     """
     return launch.hs_launch(exe_path=exe_path, wait_for_plugin=wait_for_plugin,
                             timeout_s=float(timeout_s))
@@ -306,7 +317,7 @@ def hs_stop_game(
     timed out. A process this server did not start is refused, because killing
     one can lose whatever it had not written yet.
 
-    Refusals: `not_launched_here`.
+    Refusals: `lease_held`, `lease_unavailable`, `not_launched_here`.
     """
     return launch.hs_stop_game(force=force, timeout_s=float(timeout_s))
 
@@ -343,8 +354,9 @@ def hs_command(
     reading *anything* on this channel during the call -- which is what separates
     a channel nothing reads from one that was busy running an earlier command.
 
-    Refusals: `invalid_command`, `game_not_running`, `game_state_unknown`,
-    `forgepact_config_missing`, `bp_ipc_missing`, `not_consumed`.
+    Refusals: `lease_held`, `lease_unavailable`, `invalid_command`,
+    `game_not_running`, `game_state_unknown`, `forgepact_config_missing`,
+    `bp_ipc_missing`, `not_consumed`.
     """
     return ipc.send(lines, timeout_s=float(timeout_s), queue=queue)
 
@@ -463,7 +475,8 @@ def hs_input(
     `detail` says why. Nothing here reads the game's reaction: pair it with
     `hs_command(["roomprobe"])` or `hs_screenshot` for that.
 
-    Refusals: `invalid_input`, `game_not_running`, `game_state_unknown`,
+    Refusals: `lease_held`, `lease_unavailable`, `invalid_input`,
+    `game_not_running`, `game_state_unknown`,
     `engine_source_missing`, `engine_import_failed`,
     `no_visible_window_for_pid`, `window_minimized`, `foreground_not_game`.
     """
@@ -519,8 +532,9 @@ def hs_select_character(
     restores it only if its own pre-arm read showed the mod was off before
     it started.
 
-    Refusals: `game_not_running`, `game_state_unknown`,
-    `engine_source_missing`, `engine_import_failed`, `not_consumed`,
+    Refusals: `lease_held`, `lease_unavailable`, `game_not_running`,
+    `game_state_unknown`, `engine_source_missing`, `engine_import_failed`,
+    `not_consumed`,
     `no_visible_window_for_pid`, `window_minimized`, `foreground_not_game`,
     `invalid_input`, `proof_not_armed`, `character_already_loaded`,
     `layout_command_missing` (the plugin has no `menulayout`),
@@ -536,6 +550,92 @@ def hs_select_character(
     """
     return charselect.hs_select_character(slot=slot, timeout_s=timeout_s,
                                           tool="hs_select_character")
+
+
+@server.tool(
+    name="hs_lease_acquire",
+    title="Take the machine-wide game lease",
+    description=(
+        "Take the one game lease on this machine before driving Hero Siege, "
+        "so another session's launch, commands, input, stop or restore are "
+        "refused while this one runs. Records the label, slot and the "
+        "installed BloodPactPlugin.dll's SHA-256. A crashed holder's lease "
+        "is recovered. force=true takes a live session's lease away and "
+        "belongs to the owner's decision only."),
+    annotations=_acts("Take the machine-wide game lease", destructive=True),
+)
+def hs_lease_acquire(
+    label: Annotated[str, Field(
+        description="Who is driving, as another session's refusal will name "
+                    "it, e.g. <slug>-live-<n>. 1-80 characters from "
+                    "A-Z a-z 0-9 . _ -",
+        max_length=80)],
+    slot: Annotated[int | None, Field(
+        description="The save slot this session will load, if known.",
+        ge=1)] = None,
+    force: Annotated[bool, Field(
+        description="Take the lease even though another live process holds "
+                    "it. The previous holder is named in `took_over_from`.")] = False,
+) -> dict[str, Any]:
+    """Take the lease, or refuse naming who has it.
+
+    A free or stale lease is taken; a stale one reports `recovered_stale`
+    and `previous.outcome: "stale"`. Re-acquiring a lease this server holds
+    refreshes `label` and `slot` and reports `already_held`. A released
+    lease whose session still owed a restore is taken with a `warning`.
+
+    Refusals: `lease_held` (another live process holds it; `detail` names
+    its label, pid and when it took it), `lease_unavailable` (the record is
+    unreadable or the lock could not be taken; `force` replaces an
+    unreadable record), `invalid_label`.
+    """
+    return lease.acquire(label, slot=slot, force=force)
+
+
+@server.tool(
+    name="hs_lease_status",
+    title="Report who holds the game lease",
+    description=(
+        "Report whether the machine-wide game lease is free, held by this "
+        "session, held by another live session, stale (its holder is gone) "
+        "or unreadable, and whether the installed BloodPactPlugin.dll has "
+        "changed since it was taken. Reads only."),
+    annotations=_read_only("Report who holds the game lease"),
+)
+def hs_lease_status() -> dict[str, Any]:
+    """`state` is `free`, `held`, `held_by_me`, `stale` or `unavailable`.
+
+    `record` is the lease while one is held or stale; `last` is the released
+    record when the lease is free, so a restore the last session still owed
+    shows as a `warning`. `dll_sha256_now` and `dll_changed_since_taken`
+    compare the installed plugin with the one recorded at acquire.
+
+    Refusals: none. An unreadable record is the state `unavailable`.
+    """
+    return lease.status()
+
+
+@server.tool(
+    name="hs_lease_release",
+    title="Release the game lease",
+    description=(
+        "Release the game lease this session holds. The record is kept as "
+        "released, so the next session can see whether a restore is still "
+        "owed."),
+    annotations=_acts("Release the game lease", idempotent=True),
+)
+def hs_lease_release() -> dict[str, Any]:
+    """Mark this server's lease released and report `restore_pending`.
+
+    When a backup was taken under the lease and no restore of it has been
+    recorded, the release still succeeds and carries a `warning` naming the
+    backup id.
+
+    Refusals: `lease_not_held` (nobody holds it, it is already released, or
+    its holder is gone -- `hs_lease_acquire` recovers a stale one),
+    `lease_held` (another live process holds it), `lease_unavailable`.
+    """
+    return lease.release()
 
 
 def main() -> None:

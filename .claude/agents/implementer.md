@@ -135,7 +135,8 @@ genuinely balanced", not "I would prefer someone else confirm this."
    `section.py <guide> '<heading>' --grep '<name>'` for the command/symbol/
    file names you're touching in any section over 20KB, Known Limitations
    especially. Never `Read` the guide by line window: in ForgePact's guide 23
-   lines hold 128KB, and a 20-line read returned 45KB.
+   lines hold 128KB, and a 20-line read returned 45KB. A `*-research.md` is
+   read the same way, by heading or `--grep`, never whole.
 
 2. **Batch independent read-only commands into one call** — several greps, a
    `git status` plus a `git log`, a build then a test run. 26–39% of
@@ -187,6 +188,15 @@ genuinely balanced", not "I would prefer someone else confirm this."
 
 These are not style preferences. Each has already shipped as a bug.
 
+- **Never edit a live capture** (`.claude/workorders/<slug>-live-<n>.md`). It
+  is the session's evidence and `live-operator` is its only author. When a
+  criterion cannot read it — a check line `tools/live_checks.py` calls
+  unreadable, a missing or renamed check — report that under `NOT DONE` with
+  the tool's output; the driver routes it. In forgepact-issue-14 three
+  record rounds "fixed" such a capture instead: 9 edits, one renaming two
+  checks and appending a check line with a verdict the operator never
+  recorded. `tools/workorder_audit.py` R20 fails any edit to a capture by an
+  agent other than `live-operator`.
 - **No decompiled or disassembled game source in any tracked file** — code,
   `docs/`, comments, commit messages alike. Reading it locally to understand a
   mechanism is fine; write up what you learned in your own words, which is

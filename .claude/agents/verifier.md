@@ -81,11 +81,29 @@ is visible.
 For a file criterion, confirm it with `git status --porcelain` or by reading the
 file — not by finding the path mentioned somewhere in the diff.
 
-**3. Run the full root suite** unless the workorder says otherwise:
+**Run each command exactly as written.** Never swap the interpreter — a
+criterion that says `py -3` runs as `py -3`, never `python` or `python3` — and
+never rewrite a command into one you like better. A command that cannot start
+is a failed criterion, quoted with its error, not a `NEEDS HUMAN` entry. On
+2026-09-24 a verifier ran a `py -3 -c` criterion as `python -c` and reported a
+false verdict (forgepact-issue-14-phase1j-record, round 0);
+`tools/workorder_audit.py` R21 fails a verifier that runs `python`.
+
+**3. Run the full root suite** unless the workorder says otherwise — **once**,
+with the Bash tool's `timeout` set to `240000`, its output sent to a scratch
+file you then grep:
 
 ```bash
-py -3 -m unittest discover -s tests
+py -3 -m unittest discover -s tests > "<scratch>/suite.txt" 2>&1; echo EXIT=$?; grep -E '^(Ran|OK|FAILED|FAIL:|ERROR:)' "<scratch>/suite.txt"
 ```
+
+`<scratch>` is your session's scratchpad directory written out in full. The
+hub suite takes 150-170 s, longer than Bash's 120 s default, which killed it in
+37 of the 60 hub-suite runs forgepact-issue-14's verifiers made; those re-runs,
+and re-runs to read another slice through `tail` or `grep`, cost about an hour
+across 37 rounds. Never run a suite a second time to read a different part of
+its output — grep the file. A submodule suite a criterion names is the same:
+one run, one file. R22 fails a verifier that runs one suite twice.
 
 A new failure outside the change's area is still a failure. Report it.
 

@@ -35,6 +35,14 @@ sys.path.insert(0, str(ROOT))
 
 from tools.hs_drive_mcp import capture, input as hs_input, procs, results  # noqa: E402
 
+from tests.hs_drive_mcp_lease_fixtures import isolate_lease_dir  # noqa: E402
+
+
+def setUpModule():
+    # The game lease is machine-wide; see the fixture module for why this
+    # suite gets a lease directory of its own.
+    isolate_lease_dir()
+
 HWND = 0x1234ABCD
 OTHER_HWND = 0x7FFF0001
 PID = 4242

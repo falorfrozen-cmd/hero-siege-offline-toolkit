@@ -52,6 +52,14 @@ elif not ENGINE_SOURCE.is_file():
 if SKIP_REASON is None:
     from tools.hs_drive_mcp import capture, ipc, launch, launcher_bridge, procs, results
 
+from tests.hs_drive_mcp_lease_fixtures import isolate_lease_dir  # noqa: E402
+
+
+def setUpModule():
+    # The game lease is machine-wide; see the fixture module for why this
+    # suite gets a lease directory of its own.
+    isolate_lease_dir()
+
 
 def gate_running():
     return "running", "1 hero_siege.exe process(es) are live: [4242]."

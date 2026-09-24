@@ -1521,12 +1521,14 @@ class R17Tests(TempDirMixin, unittest.TestCase):
 
     def test_pass_the_session_it_is_meant_to_run(self):
         r = self._operator(
+            ("mcp__hs-drive__hs_lease_acquire", {"label": "x-live-2"}),
             ("mcp__hs-drive__hs_selfcheck", {}),
             ("Bash", {"command": "cp -r \"$LOCALAPPDATA/Hero_Siege/hs2saves\" \"$USERPROFILE/HeroSiege-manual-save-backup/x\""}),
             ("mcp__hs-drive__hs_command", {"lines": ["toggleborder stat"]}),
             ("Write", {"file_path": self.CAPTURE}),
             ("Edit", {"file_path": self.CAPTURE}),
             ("mcp__hs-drive__hs_stop_game", {}),
+            ("mcp__hs-drive__hs_lease_release", {}),
             ("Bash", {"command": "git status --porcelain"}))
         self.assertTrue(r.passed, r.evidence)
 
@@ -1548,6 +1550,15 @@ class R17Tests(TempDirMixin, unittest.TestCase):
         self.assertFalse(self._operator(("Bash", {"command": "git commit -am x"}), sub="g").passed)
         self.assertFalse(self._operator(("mcp__hs-drive__hs_saves_restore", {"backup_id": "b"}), sub="r").passed)
         self.assertFalse(self._operator(("mcp__hs-drive__hs_stop_game", {"force": True}), sub="f").passed)
+
+    def test_fail_a_forced_lease_takeover(self):
+        # A held lease is another session's live run; taking it is the
+        # owner's decision, made through the driver, never the operator's.
+        r = self._operator(("mcp__hs-drive__hs_lease_acquire",
+                            {"label": "x-live-2", "force": True}), sub="lease")
+        self.assertFalse(r.passed)
+        self.assertTrue(any("forced a lease takeover" in line for line in r.evidence),
+                        r.evidence)
 
     def test_other_agents_are_not_held_to_it(self):
         records = tool_turn(0, 0, "Edit", {"file_path": "C:/repo/ForgePact/plugin/ModuleMain.cpp"})
@@ -1665,3 +1676,77 @@ class R19Tests(TempDirMixin, unittest.TestCase):
     def test_context_file_is_not_state(self):
         ctx = {"file_path": "C:\\repo\\.claude\\workorders\\zz-context.md", "content": self.TEMPLATE}
         self.assertTrue(self._run("Write", ctx).passed)
+
+
+# --------------------------------------------------------------------------
+# R20 live-capture-author / R21 verifier-interpreter / R22 verifier-suite-once
+# --------------------------------------------------------------------------
+
+def _one_agent_rule(tmp_path, rule_id, agent_type, *calls, label=None):
+    records = []
+    for i, (name, tool_input) in enumerate(calls):
+        records += tool_turn(i * 10, i, name, tool_input, result="ok")
+    b = SessionBuilder(tmp_path).driver([turn(0, 9000)]).subagent(agent_type, label or agent_type, records)
+    _, results = b.evaluate()
+    return get_rule(results, rule_id)
+
+
+class R20Tests(TempDirMixin, unittest.TestCase):
+    CAPTURE = r"C:\repo\.claude\workorders\forgepact-x-live-1.md"
+
+    def test_fail_an_implementer_repairing_the_capture(self):
+        # forgepact-issue-14-phase1h r2 renamed checks in the operator's capture.
+        r = _one_agent_rule(self.tmp_path, "R20", "implementer",
+                            ("Edit", {"file_path": self.CAPTURE, "old_string": "take-material (dropped)",
+                                      "new_string": "take-material"}), label="implementer:r2")
+        self.assertFalse(r.passed)
+        self.assertIn("forgepact-x-live-1.md", " ".join(r.evidence))
+
+    def test_pass_the_operator_writing_it(self):
+        r = _one_agent_rule(self.tmp_path, "R20", "live-operator", ("Write", {"file_path": self.CAPTURE}))
+        self.assertTrue(r.passed, r.evidence)
+
+    def test_pass_other_workorder_files(self):
+        r = _one_agent_rule(self.tmp_path, "R20", "implementer",
+                            ("Edit", {"file_path": r"C:\repo\.claude\workorders\forgepact-x-context.md"}))
+        self.assertTrue(r.passed, r.evidence)
+
+
+class R21Tests(TempDirMixin, unittest.TestCase):
+    def test_fail_python_in_command_position(self):
+        for cmd in ('cd "C:/repo" && python -3 -c "print(1)"', "python3 << 'EOF'\nprint(1)\nEOF",
+                    "python -m unittest tests.test_x"):
+            with self.subTest(cmd=cmd):
+                sub = self.tmp_path / str(abs(hash(cmd)))
+                self.assertFalse(_one_agent_rule(sub, "R21", "verifier", ("Bash", {"command": cmd})).passed)
+
+    def test_pass_py_and_mentions(self):
+        for cmd in ('py -3 -c "print(1)"', "ps aux | grep -i python | head -5",
+                    "py -3 -m unittest discover -s tests"):
+            with self.subTest(cmd=cmd):
+                sub = self.tmp_path / str(abs(hash(cmd)))
+                self.assertTrue(_one_agent_rule(sub, "R21", "verifier", ("Bash", {"command": cmd})).passed)
+
+    def test_other_agents_are_not_held_to_it(self):
+        r = _one_agent_rule(self.tmp_path, "R21", "implementer", ("Bash", {"command": "python -c 1"}))
+        self.assertTrue(r.passed)
+
+
+class R22Tests(TempDirMixin, unittest.TestCase):
+    def test_fail_the_same_suite_twice(self):
+        # The 120 s default killed the hub suite and the verifier ran it again.
+        r = _one_agent_rule(self.tmp_path, "R22", "verifier",
+                            ("Bash", {"command": "py -3 -m unittest discover -s tests 2>&1 | tail -5"}),
+                            ("Bash", {"command": "py -3 -m unittest discover -s tests 2>&1 | grep FAIL"}))
+        self.assertFalse(r.passed)
+        self.assertIn("2 times", " ".join(r.evidence))
+
+    def test_pass_two_different_suites_once_each(self):
+        r = _one_agent_rule(self.tmp_path, "R22", "verifier",
+                            ("Bash", {"command": "py -3 -m unittest discover -s tests > s.txt 2>&1"}),
+                            ("Bash", {"command": "cd ForgePact && py -m unittest discover -s tests > f.txt 2>&1"}))
+        self.assertTrue(r.passed, r.evidence)
+
+    def test_suite_key(self):
+        self.assertEqual(wa.suite_key("cd ForgePact && py -m unittest discover -s tests 2>&1"), "ForgePact -s tests")
+        self.assertIsNone(wa.suite_key("py -3 -m unittest tests.test_x"))

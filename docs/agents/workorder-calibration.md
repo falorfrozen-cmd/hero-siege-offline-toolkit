@@ -131,3 +131,50 @@ b6a72c77 7b6e833f d61d18d5 1149765d bd2015b9 6d82062b c089f4c1 ece90d97
 fc166594 f90ad632 21d58ac6 2e7a06dd 433734b7 8b014920 fa082d95`; the next
 calibration should use sessions from after this change and say whether each
 percentile still holds.
+
+## A multi-phase feature: forgepact-issue-14 (2026-09-22..24)
+
+The second measurement was one feature rather than many: ForgePact #14,
+crafting from stash materials, run as 16 workorders and 10 live sessions
+over 42.4 h (26.5 h active, $469 at list price) in sessions `fa082d95`,
+`fe6fc695` and `6db2260e`. The question was whether more agents could work
+in parallel. Mostly they cannot:
+
+- **The chain is serial by its nature.** 6 of the 11 transitions between
+  workorders waited on a live result or an owner decision. Implementing was
+  11.5% of active time and builds 10 minutes in total, so splitting one
+  research workorder across agents saves little and collides on the same
+  lines of the module guide.
+- **Live sessions do not merge into one launch.** 9 sessions used 7
+  different DLLs, each procedure pins the save state the previous restore
+  left, and 2 crashed the game. One sitting can hold several sessions back
+  to back; one launch cannot.
+- **What was recoverable** was about 3.5-6.5 h and $55-105, mostly not
+  parallelism: a record round and the next plan run at the same time (up to
+  about 2 h), a same-DLL follow-up kept as a second session instead of a new
+  phase (about 1.8 h, both cases before Ghidra), bookkeeping defects (about
+  1.3-1.6 h), and a verifier re-running suites after the 120 s Bash timeout
+  (about 1 h of verifier time).
+
+What changed as a result: `tools/live_checks.py` reads a capture's check
+lines instead of a hand-written grep; `tools/plan_lint.py` catches four
+criterion defects before a round is spent on them; only `live-operator`
+writes a capture (R20); the verifier runs a command as written (R21) and a
+suite once (R22); a reviewer finding that would leave a pending live check
+uninterpretable is BLOCKING; the operator batches consecutive person-only
+steps into one hand-back; NON-BLOCKING Log lines drop their evidence; and
+SKILL.md Step 4.5 asks the owner's next decision at `LIVE-DONE`, overlaps
+the record with the next plan, and offers a fresh session after a live
+session.
+
+Not adopted, with the reason: a queue that composes several procedures into
+one launch (the three points above); folding the record into the next
+phase's first round (it delays the tracked record of a measurement and
+shares one round cap between two jobs); a cached test-suite result shared
+between implementer and verifier (it would let the verifier report a green
+it never observed); and replacing the owner's on-screen counts with a tool
+(the only tool reads the save with the game closed, and the owner's eye is
+the independent check on the instrument under test). The live-session
+contention between worktrees — four incidents where two sessions wanted the
+one game — is left to a machine-wide game lease in hs-drive, a separate
+change.

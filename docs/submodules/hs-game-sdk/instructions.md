@@ -31,6 +31,8 @@ hs-game-sdk/
 │   └── sounds.json             # 2,718 Sound indexes and names
 ├── curated/                    # Hand-verified game knowledge (NOT gitignored - tracked)
 │   ├── satanic_zone.json       # Satanic Zone buff/debuff ids/names/descriptions + Controller_obj var names
+│   ├── drop_types.json         # LoadDrops drop types + GetNormalRepoStruct repository categories (data only)
+│   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
 ├── python/                     # Python SDK package
 │   ├── hs_game_sdk/
@@ -82,10 +84,13 @@ and IS tracked in git, generated into the same three language targets by a small
 `extract_and_generate_sdk.py`'s pipeline since it has nothing to extract from a binary). `curated/`
 is the pattern to extend for any future hand-verified, non-mechanically-extracted domain knowledge a
 submodule needs to share - see `ForgePact/docs/satanic-zone-mods-research.md` for how `satanic_zone.json`
-came to exist. Not every `curated/*.json` file is generated into the same three language targets:
+came to exist. Not every `curated/*.json` file is generated into bindings: `drop_types.json` and
+`special_content.json` (2026-09-24) are data only, read as JSON, with no `tools/generate_*_sdk.py`
+counterpart; each file's `$schema_note` says so, and `docs/RUNTIME_DATA_MODELS.md` §13-§14 carries
+the prose and sources. `tests/test_sdk_all.py` checks every script and object they name is bound.
 `stash_containers.json` (ForgePact issue #14's stash and Crafting Cube container names, see
-`docs/RUNTIME_DATA_MODELS.md` § 5) is data-only, with no generator and no consumer yet, checked
-against the SDK and that doc section by `tests/test_curated_stash_containers.py` instead.
+`docs/RUNTIME_DATA_MODELS.md` § 16) is data-only too, with no generator and no consumer yet, checked
+against the SDK and that doc section by `tests/test_curated_stash_containers.py`.
 
 ---
 
@@ -202,11 +207,11 @@ include it on its own; `hs_game_sdk.hpp` pulls it in too.
 | 8 | `BELT` | `Belt` | R (`RUNTIME_DATA_MODELS.md` gives 8 a different label on `c`) |
 | 10 | `CHARM` | `Charm` | R (`RUNTIME_DATA_MODELS.md` gives 10 a different label on `c`) |
 | 11 | `CONSUMABLE` | `Consumable` | R + V (catalog row `(11, 23)` Infernal Codex) |
-| 12 | `KEY` | `Key` | R + V (`(12, 8)` Angelic Key) + D ("Dungeon Keys `12`") |
+| 12 | `KEY` | `Key` | R + V (`(12, 8)` Angelic Key) + D (repository category 12 = keys) |
 | 13 | `TAROT` | `Tarot` | R + V (`(13, 24)` The Wheel of Fortune) |
 | 14 | `MATERIAL` | `Material` | R + V (`(14, 69)` Infernal Codex Page) + M (measured in-game 2026-09-19) |
 | 15 | `SOCKETABLE` | `Socketable` | R + V (`(15, 82)` Exan Jewel) — runes, gems and jewels |
-| 16 | `RELIC` | `Relic` | R + S (`RELIC_RARITY_TIER` / `kRelicRarityTier`, matched against `itemType`) + D ("Relics `16`") |
+| 16 | `RELIC` | `Relic` | R + S (`RELIC_RARITY_TIER` / `kRelicRarityTier`, matched against `itemType`) + D (repository category 16 = relics) |
 | 18 | `POTION` | `Potion` | R |
 | 19 | `OTHER` | `Other` | R |
 
@@ -219,7 +224,10 @@ Sources:
 - **S** — already in this SDK: the relic contract in `player.py` / `player.hpp` identifies a
   relic by tier 16 read from `itemType` among other fields. `tests/test_item_type_parity.py`
   asserts `ItemType.RELIC == RELIC_RARITY_TIER`; the relic contract itself is unchanged.
-- **D** — `docs/RUNTIME_DATA_MODELS.md` § 3, the `LoadDrops` drop categories.
+- **D** — `docs/RUNTIME_DATA_MODELS.md` § 13.2, the item repository categories that
+  `GetNormalRepoStruct(category, 0, index)` answers (measured 2026-08-27; also in
+  `curated/drop_types.json`). Until 2026-09-24 this row cited § 3's "Dungeon Keys `12`" /
+  "Relics `16`" examples, which mixed drop types with repository categories.
 - **M** — measured in-game, 2026-09-19: ForgePact research build `8c56ca7`'s
   `prospectprobe stackmove` route read `itemType` off a live item twice in the same
   session — the Prospect Cube grid cell's `nodeFingerprint` (a Mallet Fragment)

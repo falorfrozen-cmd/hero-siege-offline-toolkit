@@ -2124,6 +2124,7 @@ here before pressing Publish.
 ---
 
 ## Source Documents & Evidence References
+- Shared game facts folded from the research docs below: `../../RUNTIME_DATA_MODELS.md` §5-§15 (a fact about the game itself goes there too, per `AGENTS.md` § "Fold What a Mod Learned About the Game Into the Shared References")
 - Submodule Readme: `../../../ForgePact/README.md`
 - Plugin Build Specifications: `../../../ForgePact/plugin/BUILD.md`
 - Plugin Build Script: `../../../ForgePact/plugin_build/build.bat`
@@ -2141,7 +2142,7 @@ here before pressing Publish.
 - Restart-Always-Available Research (issue #8; round 1 measured 2026-09-22 - the gate is upstream of the Restart activation, not identified; round 2 measured the same evening - the Restart button's own `enabled`/`manualDisable` flip with combat and a draw-time hold of either is rewritten before use, not identified; round 3 measured the same night - the Restart button's own `manualDisable` written false inside `UiSetFocus` unlocks an in-combat press, shipped as `restartanytime`): `../../../ForgePact/docs/restart-always-available-research.md`
 - Menu Pause (planned, **not recommended** - read §0 before proposing anything in this class): `../../../ForgePact/docs/menu-pause-plan.md`
 - Satanic Zone SDK Data (shared, not ForgePact-specific): `../../../hs-game-sdk/curated/satanic_zone.json`
-- Stash & Crafting Cube Container Data (issue #14's shared-references fold, not ForgePact-specific): `../../RUNTIME_DATA_MODELS.md` § 5, `../../../hs-game-sdk/curated/stash_containers.json`
+- Stash & Crafting Cube Container Data (issue #14's shared-references fold, not ForgePact-specific): `../../RUNTIME_DATA_MODELS.md` § 16, `../../../hs-game-sdk/curated/stash_containers.json`
 - Live Plugin IPC Driver: `../../../ForgePact/tools/ipc.ps1` (send a command to the running game, print only the reply)
 - Ghidra Symbol Importer: `../../../ForgePact/tools/ghidra/ImportSymbols.java` (name the stripped game binary from its own script table)
 - Out-of-Process Freeze Probe: `../../../tools/freeze_probe.ps1` (toolkit root, not ForgePact-specific)

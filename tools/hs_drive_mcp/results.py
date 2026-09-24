@@ -102,7 +102,23 @@ SELECT_CHARACTER_REASONS = (
     "click_not_delivered",
 )
 
-REASONS = CORE_REASONS + GAME_REASONS + INPUT_REASONS + SELECT_CHARACTER_REASONS
+#: Added by `hs-drive-game-lease` for the machine-wide game lease (`lease.py`).
+#: `lease_held` is what the six tools that drive or overwrite the game answer
+#: while another live hs-drive process holds the lease, and what
+#: `hs_lease_acquire` answers without `force`; `lease_not_held` is a release
+#: by a process that has nothing to release; `lease_unavailable` is a record
+#: that cannot be read or a lock that cannot be taken -- never read as "free".
+#: There is deliberately no `lease_required`: a caller with no lease while
+#: nobody holds one is allowed, and its result says `lease: "none"`.
+#: A bad lease label reuses `invalid_label`.
+LEASE_REASONS = (
+    "lease_held",
+    "lease_not_held",
+    "lease_unavailable",
+)
+
+REASONS = (CORE_REASONS + GAME_REASONS + INPUT_REASONS + SELECT_CHARACTER_REASONS
+           + LEASE_REASONS)
 
 
 def ok(tool: str, **fields: Any) -> dict[str, Any]:

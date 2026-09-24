@@ -508,7 +508,13 @@ before, is not one the round replaces, and is gone after ends the launch as
 `STATE-LOST` — carrying `lost`, the full `state` it should read, and `then`,
 the outcome the round would otherwise have returned — before any verifier
 reads the damaged block. `tools/workorder_audit.py` R18 checks the same thing
-from the transcript.
+from the transcript. A scribe that wrote nothing (`written: false`, or no
+result) is not compared at all: the launch ends as `SCRIBE-FAILED`, carrying
+the `log` block and `state` it should have written and `then`. The scribe is
+handed absolute paths, joined under the driver's `checkoutRoot` (`git
+rev-parse --show-toplevel`): on 2026-09-24 a scribe given relative ones in a
+worktree resolved them against the main checkout, wrote nothing, and its "N/A"
+report came back as a false `STATE-LOST`.
 
 It runs as the restricted `scribe` agent type (`.claude/agents/scribe.md`,
 `Read`/`Edit` only), not the unrestricted `workflow-subagent` every other
@@ -554,8 +560,8 @@ history. `repoRoot` is still accepted and nothing passes it; see "A workorder
 cannot be run against another checkout" above.
 
 It returns to the driver on anything needing judgement — `PASS`,
-`PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED` or `CAP`
-— so replans, consultations, human questions and the step-5 report stay with
+`PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`,
+`STATE-LOST`, `SCRIBE-FAILED` or `CAP` — so replans, consultations, human questions and the step-5 report stay with
 the driver either way, and one launch may cover several rounds (a
 `PLAN-DEFECT` hand-back means relaunching after the replan). What it still
 trades away: every re-entry inside the script is a fresh spawn, never the
@@ -622,7 +628,7 @@ context per turn, peak context, wall minutes, the longest single tool call,
 the model the transcript actually ran on (what a tier alias resolved to that
 day), its list-price cost (`MODEL_PRICES`), and KB of `Read` results by kind
 (plan, context file, `instructions.md`, source). It prints one table and the
-session's total cost, then nineteen rules as `PASS`/`FAIL` with
+session's total cost, then twenty-two rules as `PASS`/`FAIL` with
 evidence (the agent, the time, the command or path), then each role's numbers
 against the pre-update averages as a percentage; `--json` emits the same as
 one object.
@@ -643,9 +649,12 @@ one object.
 | R14 reviewer-reruns-suite | a reviewer running test suites or builds more than twice (the two reviewers told to build and test are exempt) |
 | R15 edit-guard-workaround | a subagent whose `Edit`/`Write` was refused by the harness's worktree guard ("is in the base repo checkout") and which then made more than five further tool calls (its own return not counted) instead of returning `PLAN-DEFECT` — unless an edit of the same repo-relative path then landed inside a worktree, which is a mistyped path corrected, not a workaround (a same-named scratch copy is the workaround) |
 | R16 scribe-scope | a scribe (`agentType: "scribe"`, or the `scribe` role a workflow label like `scribe:r1` parses to) whose `Edit`/`Write` landed outside its own `.claude/workorders/`, judged against the transcript's own `cwd` rather than a bare substring test; which ran `git add`/`git commit` in any shell command; which wrote a file through a shell command instead (a redirect or heredoc, `tee`, a PowerShell content cmdlet, `cp`/`mv`/`rm`/`sed -i`, a Python file write) whatever the target path; or, for the restricted `scribe` agent type, ran any shell command at all |
-| R17 live-operator-scope | a `live-operator` that wrote anything but its own `.claude/workorders/<slug>-live-<n>.md`, installed a build (a `.dll` copied or moved, or `installmod`), ran a writing git command, restored saves, or force-stopped the game |
+| R17 live-operator-scope | a `live-operator` that wrote anything but its own `.claude/workorders/<slug>-live-<n>.md`, installed a build (a `.dll` copied or moved, or `installmod`), ran a writing git command, restored saves, force-stopped the game, or took over another holder's game lease (`hs_lease_acquire` with `force`) |
 | R18 scribe-state-preserved | a scribe `Edit` to a `-plan.md` whose `old_string` carries a `key:` State entry (`gates:`, `round base:`, `agents:`, … — a hand-written `round: 0        phase: plan` counts as two) that its `new_string` no longer has |
 | R19 gates-template | any agent's `Write`/`Edit` to a `-plan.md` whose `gates:` line holds `\|` or "or" alternatives (an "or" inside a backticked token does not count) or a `<placeholder>`, outside parentheses: a template of every possible gate, which sets none. Possible gates go on `gates pending:`, and outcome tokens go on `route tokens:` |
+| R20 live-capture-author | any agent but `live-operator` (the driver included) whose `Edit`/`Write` landed on a `.claude/workorders/<slug>-live-<n>.md` capture. A capture a criterion cannot read is reported, never repaired |
+| R21 verifier-interpreter | a verifier shell command that runs `python` or `python3` in command position (a `grep python` does not count) — this repository's commands are `py -3`, and the verifier runs a criterion exactly as written |
+| R22 verifier-suite-once | a verifier that runs the same `unittest discover` suite (same `cd` directory, same arguments) more than once — after a timeout, or to read another slice of the output |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
@@ -662,6 +671,24 @@ Tests (`tests/test_workorder_audit.py`) build synthetic transcripts in a temp
 directory; every rule has both a failing fixture and a passing control, plus
 coverage for message-id dedupe, workflow-subdirectory discovery, and the exit
 codes.
+
+### `tools/live_checks.py` and `tools/plan_lint.py` — criteria that read, not guess
+
+Both read a file and run nothing. `live_checks.py <capture> --expect <names>
+[--require-pass <names>]` reads a live capture's `## Checks` block: the
+verdict is the first word after a line's last `|`, anything after it a note.
+It exits 1 on a missing, renamed, duplicated or unreadable check, or a
+`--require-pass` check (`dll-hash`, `marker`, `control`, a shipped feature's
+acceptance checks) that did not pass; a research check's `fail` or
+`not-observed` is a finding and exits 0. It replaces the
+`| (pass|fail|not-observed)$` greps that cost forgepact-issue-14 three rounds
+and a split workorder on the operator's punctuation. `plan_lint.py <plan>`
+checks `## Acceptance criteria` for four defects that each cost a round there:
+a prose criterion, a heading slice not anchored on `
+`, a grep over a live
+capture, and `python` where the repository runs `py -3`. The planner runs it
+before `PLAN-READY`; the driver runs it again before spawning an implementer.
+Tests: `tests/test_workorder_plan_tools.py`.
 
 ### `tools/source_index.py` — go to the range, don't grep around
 
@@ -727,7 +754,7 @@ the shared `.impeccable/config.json`.
 | Server | For |
 |---|---|
 | `tauri-hub` | driving a running debug hub through its bridge on `127.0.0.1:9223` |
-| `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close) — a local stdio server in `tools/hs_drive_mcp/` |
+| `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close), under one machine-wide game lease (`hs_lease_acquire` / `hs_lease_status` / `hs_lease_release`) that stops a second session driving the same install — a local stdio server in `tools/hs_drive_mcp/` |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
 | `github` | releases, dispatches and pointer PRs across the eleven repositories |
 | `playwright` | driving a browser — the web submodules (`HSCraftSim`, `HS-Offline-Tracker`'s frontend) the way `tauri-hub` drives the hub; pinned to `@playwright/mcp@0.0.82` |
@@ -752,6 +779,11 @@ the `main` every tool defaults to).
 assumes Claude Code starts a project-scoped stdio server with the project root
 as its working directory. Its save tools refuse — with a named reason — unless
 the game is provably not running, and nothing in it ever deletes a file.
+The tools that drive or overwrite the game refuse `lease_held` while another
+session holds its machine-wide lease; the `live-operator` takes it with
+`hs_lease_acquire` before its first check and gives it back with
+`hs_lease_release` after the stop, and the `/workorder` driver reads
+`hs_lease_status` before asking to install anything.
 [`docs/tools/hs-drive-mcp.md`](../docs/tools/hs-drive-mcp.md) has the tool
 surface, the refusal vocabulary and the sharp edges, including why the server's
 process must keep the real `LOCALAPPDATA`.
@@ -809,7 +841,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Seventeen suites cover this page's tooling. Sixteen are Python and run
+Eighteen suites cover this page's tooling. Seventeen are Python and run
 automatically under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
@@ -820,6 +852,7 @@ py -3 -m unittest tests.test_claude_agents -v     # the definitions are well-for
 py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py + ensure_submodule.py, one round/submodule at a time
 py -3 -m unittest tests.test_claude_workorder_section -v  # section.py, plus the sentences in agents/ and SKILL.md that carry the same lesson
 py -3 -m unittest tests.test_workorder_audit -v   # workorder_audit.py's rules, each with a failing fixture and a passing control
+py -3 -m unittest tests.test_workorder_plan_tools -v  # live_checks.py and plan_lint.py, on the capture and criterion shapes that cost rounds
 py -3 -m unittest tests.test_source_index -v      # source_index.py against a synthetic fixture, plus a real-ModuleMain.cpp smoke test
 py -3 -m unittest tests.test_hs_drive_mcp_server -v            # the hs-drive tool surface, over a real stdio session
 py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v     # ENGINE_SYMBOLS still resolve, and importing the engine starts nothing
@@ -830,19 +863,20 @@ py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v        # window resoluti
 py -3 -m unittest tests.test_hs_drive_mcp_input -v             # what hs_input actually injects, and the foreground it refuses without
 py -3 -m unittest tests.test_hs_drive_mcp_charselect -v        # hs_select_character's click sequence, its proof and every refusal
 py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # parsing ForgePact's menulayout listing, and the refusals it decides
+py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the machine-wide game lease, across real processes
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 
-The ten `test_hs_drive_mcp_*` suites stay green on CI's `ubuntu-latest`
+The eleven `test_hs_drive_mcp_*` suites stay green on CI's `ubuntu-latest`
 runner, where neither Windows, the SDK, nor any submodule is present — but only the parts that need one skip.
 The engine-bridge, launch and screenshot suites skip wholesale (launching a
 process, enumerating windows and grabbing the screen are Windows-only); the
 server suite skips its stdio and `hs_status` classes but still runs
 `SelfCheckSummaryTests`, which drives `run_checks` over a stub registry and so
 needs nothing; the release-boundary suite skips only its submodule check; and
-the saves, IPC, input, charselect and layout suites run in
-full, against fixtures and fakes (the input suite's Win32 calls all go through
+the lease suite skips only its two-stdio-server test; and the saves, IPC,
+input, charselect and layout suites run in full, against fixtures and fakes (the input suite's Win32 calls all go through
 one patched table, charselect patches `hs_input.inject` and `ipc.send`, and
 layout is pure parsing) — the IPC one because
 its gate is injected and its whole channel is two files in a temporary

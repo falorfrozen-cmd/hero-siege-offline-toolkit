@@ -8,6 +8,8 @@ able to lose a file; launch the ForgePact-modded game through ForgePact's own
 launch engine and wait until the BloodPact plugin answers; send any ForgePact
 command and read back exactly the plugin's reply; screenshot the game window;
 and close the game politely enough that its exit-time save write completes.
+One machine-wide game lease keeps two sessions in different worktrees from
+doing any of that to the one install at the same time.
 
 What it cannot do is play the game. There is no synthetic input of any kind, and
 the game comes up at its main menu — **most ForgePact gameplay commands act only
@@ -94,8 +96,8 @@ process. The `py` launcher keeps its installed runtimes under
 installed, begins downloading one, and writes `Downloading: ...` to **stdout**
 — which on a stdio transport is the protocol channel. The client then dies on
 `Invalid JSON: expected value at line 1 column 1`, which names nothing useful.
-Use `HS_DRIVE_SAVE_DIR` and `HS_DRIVE_BACKUP_DIR` instead; they redirect
-everything this server writes.
+Use `HS_DRIVE_SAVE_DIR`, `HS_DRIVE_BACKUP_DIR` and `HS_DRIVE_LEASE_DIR`
+instead; they redirect everything this server writes.
 
 ## Environment
 
@@ -104,6 +106,7 @@ everything this server writes.
 | `HS_DRIVE_SAVE_DIR` | `%LOCALAPPDATA%\Hero_Siege\hs2saves` | The live save directory. Also covers an install whose saves sit directly in `%LOCALAPPDATA%\Hero_Siege`; nothing auto-detects that layout. |
 | `HS_DRIVE_BACKUP_DIR` | `%LOCALAPPDATA%\HSDriveMcp\save-backups` | Where backups accumulate. |
 | `HS_DRIVE_SCREENSHOT_DIR` | `%LOCALAPPDATA%\HSDriveMcp\screenshots` | Where `hs_screenshot` writes its full-resolution PNGs. |
+| `HS_DRIVE_LEASE_DIR` | `%LOCALAPPDATA%\HSDriveMcp` | Where the machine-wide game lease keeps `lease.json` and `lease.lock` (see "The game lease"). For test isolation only: a value set per worktree gives each session a lease of its own and defeats the point of having one. |
 
 Every test sets the ones it can reach. That is the whole reason they exist: a
 suite that ran against the owner's real saves would be one mistake away from a
@@ -111,7 +114,11 @@ bug report nobody can undo.
 
 ## Tools
 
-Fourteen. One tool per action, `hs_` prefixed, with annotations on every one.
+Seventeen. One tool per action, `hs_` prefixed, with annotations on every one.
+The six that drive or overwrite the game — `hs_launch`, `hs_stop_game`,
+`hs_command`, `hs_input`, `hs_select_character` and `hs_saves_restore` — ask
+the machine-wide game lease first and carry `lease: "held" | "none"` on
+every other answer; see "The game lease".
 
 | Tool | Hints | Inputs | Returns |
 | --- | --- | --- | --- |
@@ -129,6 +136,9 @@ Fourteen. One tool per action, `hs_` prefixed, with annotations on every one.
 | `hs_screenshot` | writes | `target` `game`\|`screen` = `game`, `method` `grab_bbox`\|`grab_window` = `grab_bbox`, `label` | `path`, `width`, `height`, `bbox`, `capture_method`, `hwnd`, `pid`, `flat`, `warning`, `bytes_written`, `transport_width`, `transport_height` — **plus** a JSON text block and a PNG image block |
 | `hs_input` | writes | `actions[]` (≤ 64), `route` `send_input`\|`post_message` = `send_input`, `require_foreground=true` | `route`, `pid`, `hwnd`, `window_rect`, `client_rect`, `client_size`, `dpi`, `foreground_before`, `foreground_after`, `focus_via`, `actions_done`, `actions_total`, `records_sent`, `records_rejected`, `complete`, `elapsed_s` |
 | `hs_select_character` | writes | `slot` ≥ 1 = 1, `timeout_s` 1–600 = 60 | `phase`, `proof`, `proof_trail`, `layout_trail`, `focus_trail`, `screenshots`, `orbpickup`, `actions_sent`, `elapsed_s` (a refusal after the arm also carries `last_listing`) |
+| `hs_lease_acquire` | **destructive** (with `force`) | `label` (1–80 of `A-Z a-z 0-9 . _ -`), `slot` ≥ 1 = null, `force=false` | `state`, `already_held`, `recovered_stale`, `took_over_from`, `lease_id`, `label`, `slot`, `holder`, `taken_utc`, `dll_path`, `dll_sha256`, `dll_status`, `backup_id`, `restore_pending`, `previous`, `lease_path`, and `warning` when the last holder still owed a restore |
+| `hs_lease_status` | read-only | — | `state` `free`\|`held`\|`held_by_me`\|`stale`\|`unavailable`, `detail`, `record`, `last`, `dll_sha256_now`, `dll_status_now`, `dll_path_now`, `dll_changed_since_taken`, `lease_path`, and `warning` when a released record still owes a restore |
+| `hs_lease_release` | writes, idempotent | — | `released`, the record's fields (`label`, `taken_utc`, `released_utc`, `backup_id`, `restore_pending`, …), and `warning` naming the backup when `restore_pending` is true |
 
 `hs_input`'s actions are objects, in order, each with a `type`:
 
@@ -177,10 +187,13 @@ delivered nothing, and a `keyboard_check` of false afterwards would be
 measuring this tool rather than the game (`AGENTS.md` § "Prove the Instrument
 Before Trusting a Negative Result").
 
-`hs_saves_restore` and `hs_stop_game` are the only tools with
-`destructiveHint: true`, and that is asserted rather than assumed: they are the
-two that can take away something that was not theirs — the live save directory,
-and a process. Everything else writes only files of its own.
+`hs_saves_restore`, `hs_stop_game` and `hs_lease_acquire` are the only tools
+with `destructiveHint: true`, and that is asserted rather than assumed: they are
+the three that can take away something that was not theirs — the live save
+directory, a process, and (with `force`) another session's game lease. A client
+that prompts on destructive tools therefore prompts on every acquire; the owner
+chose that on 2026-09-24 rather than leave a takeover un-annotated. Everything
+else writes only files of its own.
 
 `hs_screenshot` is also the only tool that does not return a plain dict. It
 returns a `CallToolResult` carrying the envelope twice — as `structuredContent`
@@ -190,10 +203,12 @@ only the copy in the message is downscaled (to 1280 px wide).
 
 Server `instructions`, which a client shows to the model:
 
-> Order for a verified test run: `hs_selfcheck` → `hs_saves_backup` →
-> `hs_launch` → `hs_command` / `hs_screenshot` → `hs_stop_game` →
-> `hs_saves_inspect` → `hs_saves_restore`. Every refusal carries `reason`; a
-> `skipped` self-check is not a pass. `hs_launch` and `hs_wait_ready` report a
+> Order for a verified test run: `hs_lease_acquire` → `hs_selfcheck` →
+> `hs_saves_backup` → `hs_launch` → `hs_command` / `hs_screenshot` →
+> `hs_stop_game` → `hs_saves_inspect` → `hs_saves_restore` →
+> `hs_lease_release`. The lease is machine-wide: while another session holds
+> it, the tools that drive or overwrite the game refuse `lease_held`. Every
+> refusal carries `reason`; a `skipped` self-check is not a pass. `hs_launch` and `hs_wait_ready` report a
 > `phase` and a `ready` flag: `process_running` is not `plugin_ready`, and most
 > gameplay commands act only once a character is loaded, which a human still has
 > to do.
@@ -246,6 +261,9 @@ Tokens this server can return today:
 | `click_not_delivered` | `hs_select_character`'s click went through `hs_input`'s injection without a refusal but was not delivered whole: `complete` was not true or `records_rejected` was above zero — `SendInput` accepted the call and UIPI dropped its records, or the foreground moved part way through. The click is not counted in `actions_sent` or `layout_trail`, and nothing further is clicked; the detail quotes the injection's own account. Without it, an undelivered click surfaced one screen later as `button_not_found`, which points at the listing rather than the input. |
 | `proof_not_armed` | `hs_select_character` armed `orbpickup` (`orbpickup 1`) and either got no acknowledgement, or `orbpickup stat` still read `player via (not tried)` on two reads at least a second apart. The resolver never ran; the instrument is blind, not the game — the same trap an earlier revision of this doc's own "`orbpickup stat` does not prove a character is loaded" section fell into. No click is sent. |
 | `character_already_loaded` | `hs_select_character`'s menu-time read of `orbpickup stat` already named a resolver route before any click was sent. |
+| `lease_held` | Another live hs-drive process holds the machine-wide game lease. Returned by the six gated tools before they touch anything — engine, process gate, save directory, `cmd.txt` or window — and by `hs_lease_acquire` without `force` and `hs_lease_release` by a non-holder. The detail reads "held by `<label>` (pid `<pid>`) since `<taken_utc>`", and `holder_label`, `holder_pid` and `taken_utc` carry the same. |
+| `lease_not_held` | `hs_lease_release` with nothing to release: no record, a record already released, or a stale one (its holder is gone — the detail says so, and that `hs_lease_acquire` recovers it). |
+| `lease_unavailable` | `lease.json` is present and cannot be read as a lease record, or the lock / the replace did not succeed within 5 s. **Never read as "free"**: the gated tools refuse on it, `hs_lease_status` reports the state `unavailable` naming the path, and `hs_lease_acquire(force=true)` replaces an unreadable record. A bad lease label reuses `invalid_label`. |
 
 One shape does **not** come back as a refusal: a `route` that is neither
 `send_input` nor `post_message` is rejected by the SDK's own `Literal`
@@ -763,6 +781,205 @@ bare path component — `saves.is_bare_name()` checks POSIX *and* Windows
 flavours, because on Linux `..\x` is an ordinary filename and a POSIX-only
 check would let a Windows traversal through the very test meant to catch it.
 
+## The game lease
+
+There is one Hero Siege install on this machine and several Claude sessions,
+each in its own worktree. Four clashes over that one game in a single
+workorder run (ForgePact #14, 2026-09-22..24) were each handled by hand: a
+DLL kept "because another session will swap it", a restore to the wrong slot
+after another session played slot 13, a session told "game busy" in the
+middle of a live gate, and a planner writing a coordination section by hand.
+Coordination cannot live in a checkout, because each worktree has its own
+`.claude/workorders/`. So `tools/hs_drive_mcp/lease.py` keeps one
+machine-wide lease where this server already keeps its other machine-wide
+state: `%LOCALAPPDATA%\HSDriveMcp\` (or `HS_DRIVE_LEASE_DIR`).
+
+### The record
+
+Two files, and never any others: `lease.json`, the record, and `lease.lock`,
+an empty file that exists only to be locked. A previous holder is summarised
+inside the record rather than moved aside, so nothing accumulates, and nothing
+in `lease.py` deletes a file.
+
+`lease.json` carries `schema: "hs-drive-lease/1"`; `lease_id` (random, made
+at acquire); `state` `held` or `released`; `label`; `slot`; `holder: {pid,
+pid_start, platform}`; `taken_utc` and `released_utc`; `dll_path`,
+`dll_sha256` and `dll_status` — the installed `BloodPactPlugin.dll`, at the
+path `launcher_bridge.mod_chain()` checks, hashed at acquire, or why not
+(`forgepact_config_missing`, `dll_missing`); `backup_id` and
+`restore_pending`; and `previous`, a summary of the record before it (`label`,
+`pid`, `taken_utc`, `backup_id`, `restore_pending`, `outcome` `stale` |
+`taken_over` | `released`, `at_utc`). The lease records the DLL; it never
+blocks, performs or checks an install — hs-drive does not install anything.
+
+`hs_lease_status` reads the record without the lock and never refuses. Its
+`state` is `free` (no record, or a released one — returned as `last`, so a
+released record that still owes a restore is visible to the next session),
+`held`, `held_by_me`, `stale` or `unavailable`. It also hashes the installed
+DLL again and reports `dll_sha256_now` and `dll_changed_since_taken` — the "keep
+the DLL, it will probably be swapped" clash, made visible.
+
+### The lock, and why it is safe on Windows and on ubuntu
+
+Every read-modify-write of `lease.json` runs while this process holds an OS
+lock on `lease.lock`, taken non-blocking in a bounded loop (up to 5 s in 25 ms
+steps; past it, `lease_unavailable`):
+
+- **Windows:** `msvcrt.locking(fd, LK_NBLCK, 1)` on the file opened
+  `O_RDWR | O_CREAT`. Measured 2026-09-24 with two real processes: a second
+  process's attempt raises `PermissionError` errno 13 while the first holds
+  it, and the byte is lockable again the moment the holder is killed.
+- **POSIX (the ubuntu CI runner):** `fcntl.flock(fd, LOCK_EX | LOCK_NB)`,
+  which raises `BlockingIOError` while held. `flock` is unreliable only on NFS;
+  `/tmp` on the runner and `%LOCALAPPDATA%` are local.
+
+Both are kernel locks released when the handle closes, so a crashed server
+cannot leave the lock held and nothing ever has to "break" one — which is why
+an `O_CREAT | O_EXCL` mutex file with age- or PID-based breaking was rejected:
+breaking a stale mutex races (one process unlinks another's fresh lock after
+both recovered the same stale one). The lock is held for milliseconds, not for
+the lease's lifetime; the lease's lifetime is the record. The record is written
+through a temp file beside it and `os.replace`, the convention `saves.py` uses
+for `manifest.json`, so a reader never sees half a record and
+`hs_lease_status` needs no lock. The four-process race test runs whichever
+branch the platform has: CI covers `flock`, the owner's machine `msvcrt`.
+
+### Windows: `os.replace` against an open reader
+
+Measured 2026-09-24: `os.replace(tmp, lease.json)` fails with
+`PermissionError` winerror 5 while another process has `lease.json` open for
+reading, and succeeds once that handle closes. Python opens files without
+`FILE_SHARE_DELETE`, which is the cause, and a different open mode is not the
+fix. So readers read and close in one call (`Path.read_bytes()`), and writers
+retry the replace within the same 5 s bound before answering
+`lease_unavailable`.
+
+### Stale holders, and PID reuse
+
+A `held` record is stale when its holder process is gone. The holder is
+recorded as `(pid, pid_start)`, and it is alive only when a process with that
+PID exists, has not exited, and was created at that same moment:
+
+- **Windows:** `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`; a null handle
+  is gone. A handle alone is **not** proof of life — measured: a child killed
+  by its parent still opened, because the parent's `Popen` handle keeps the
+  process object, and reported exit code 1 — so `GetExitCodeProcess` must say
+  `STILL_ACTIVE` (259), and `GetProcessTimes`' creation `FILETIME`, as one
+  64-bit integer, must equal the recorded `pid_start`. A reused PID has a
+  different creation time, so it reads as gone.
+- **Linux:** `os.kill(pid, 0)`, then `/proc/<pid>/stat` field 22
+  (`starttime`, read after the last `)`, and a zombie counts as exited),
+  recorded together with `/proc/sys/kernel/random/boot_id` so a reuse after a
+  reboot cannot match.
+- **Any other platform:** `pid_start` is null and liveness is `os.kill(pid, 0)`
+  alone. It is not an owner or CI platform.
+
+"Held by me" is not a PID comparison: `acquire` makes a random `lease_id` and
+this server process remembers it, so a record carrying it is this server's and
+a record carrying another is somebody else's, whatever PIDs say.
+
+`hs_lease_acquire` treats a stale record like a free one, summarises it under
+`previous` with `outcome: "stale"`, logs one stderr line and reports
+`recovered_stale: true`. The gated tools treat stale as nobody holding.
+`hs_lease_release` on a stale record refuses `lease_not_held` and says acquire
+recovers it. There is no heartbeat and no TTL: a lease legitimately held
+through an overnight `NEEDS-HUMAN` wait (one operator waited 601 minutes)
+would expire.
+
+### Who is gated, and what a caller with no lease gets
+
+`hs_launch`, `hs_stop_game`, `hs_command`, `hs_input`, `hs_select_character`
+and `hs_saves_restore` ask the lease **first**, inside their domain functions,
+before the engine loads, the process gate is asked, a file is read or anything
+is sent: while another live process holds it they refuse `lease_held`, naming
+its label, pid and `taken_utc`, so a second session sees the lease and not
+`game_running`. Every other answer from those six carries `lease: "held"` (this
+server holds it) or `lease: "none"`. The read-only tools — `hs_status`,
+`hs_selfcheck`, `hs_saves_list`, `hs_saves_inspect`, `hs_ipc_tail`,
+`hs_screenshot`, `hs_wait_ready` and `hs_lease_status` — never ask. Two details
+follow from that: `hs_wait_ready`'s one ping and the pings, reads and clicks
+inside `hs_select_character` go through `ipc.send` / `input.inject` with
+`lease_checked=True`, so they are not refused by a guard their caller already
+passed (or, for `hs_wait_ready`, deliberately skips); and `hs_selfcheck`'s
+backup round trip passes its own temporary `source`, which `saves.restore`
+does not gate, because no other session can see that directory.
+
+A lease record that cannot be parsed refuses the six `lease_unavailable` — a
+record nobody can read must not compare equal to "free" (`AGENTS.md` § "Check
+a Permission Where It Is Used") — and `hs_lease_acquire(force=true)` replaces
+it.
+
+**A caller with no lease while nobody holds one is allowed, and labelled.** The
+six proceed and report `lease: "none"`; nothing is acquired implicitly. The
+reasons, so the strict option is not proposed again: every recorded clash was
+two *sessions*, and a lone caller harms nobody; refusing would break every
+existing direct use of hs-drive — the owner's own ad-hoc calls, the suites'
+fixtures — for a case the evidence never showed; the protection that matters
+still holds, because the operator and the driver acquire, so an un-leased
+session's `hs_launch` is refused while they run; and `lease: "none"` is the
+field that names what the tool did, so a transcript shows an un-leased drive
+instead of hiding it (`AGENTS.md` § "HS Game SDK Usage"). An implicit acquire
+was rejected because it would make every `hs_command` a holder with no label and
+no release. `lease_required` is deliberately not a token.
+
+### Backups, restores and `restore_pending`
+
+While this server holds the lease, a finished `hs_saves_backup` of the live
+directory records its `backup_id` and sets `restore_pending: true`. A
+`hs_saves_restore` of that same id clears it — on the held record, or on a
+`released` one, so a driver that restores after the operator released still
+settles it. A restore of a *different* id leaves it, and the restore result
+says so (`lease_restore_pending: true`, `lease_detail`). The pre-restore backup
+inside a restore and the self-check's fixture backup are not the session's
+backup and do not touch the record.
+
+`hs_lease_release` by the holder marks the record `released` — kept, not
+removed — and reports `restore_pending`; when it is true the release still
+succeeds and carries a `warning` naming the backup. The next session's
+`hs_lease_status` and `hs_lease_acquire` then carry that `warning` too, which
+is the 2026-09-23 09:39 incident (a release with a restore still owed) made
+visible.
+
+### `force`
+
+`hs_lease_acquire(force=true)` over a live holder replaces the record,
+summarises the old one under `previous` with `outcome: "taken_over"`, returns
+`took_over_from` (`label`, `pid`, `taken_utc`, `backup_id`,
+`restore_pending`) and logs one stderr line. Without `force`, a live holder
+refuses `lease_held` with the same "held by `<label>` (pid `<pid>`) since
+`<taken_utc>`" detail every gated tool's refusal carries. Re-acquiring a lease
+this server holds refreshes `label` and `slot`, keeps `taken_utc`, `backup_id`
+and `restore_pending`, and reports `already_held: true`. A takeover is the
+owner's decision: the `live-operator` never passes `force` (a held lease is
+`LIVE-ABORTED`), and `tools/workorder_audit.py` R17 fails a run where it did.
+
+### What the workorder driver and the live-operator do with it
+
+- **The operator** (`.claude/agents/live-operator.md`) takes the lease as its
+  first step, before `hs_selfcheck`, with label `<slug>-live-<n>` and the
+  dispatch's slot, and quotes `taken_utc` and `dll_sha256` into the capture.
+  `lease_held` is `LIVE-ABORTED`, quoting the refusal's `detail`. It releases
+  after `hs_stop_game` and `hs_saves_inspect`; it never restores, so its
+  release reports `restore_pending: true` whenever it backed up, and that is
+  relayed, not fixed. `NEEDS-HUMAN` keeps the lease.
+- **The driver** (`.claude/skills/workorder/SKILL.md` Step 4.5) calls
+  `hs_lease_status` before the install question. The lease cannot block an
+  install, because hs-drive never installs, so the driver is the one that has
+  to look first: `held` by another process means no install question and no
+  launch until the user decides, and a `force` takeover happens only on the
+  owner's word and is logged as one.
+- The operator and the driver share one hs-drive server process (MCP servers
+  are per session), so a driver's `hs_saves_restore` in that session is
+  `held_by_me` until the operator releases, and after it runs un-leased and
+  clears `restore_pending` on the released record when the id matches.
+
+The lease is advisory between hs-drive processes; see "Known limitations".
+`tests/test_hs_drive_mcp_lease.py` proves every behaviour above without a game:
+four real processes race and exactly one wins, a killed holder is recovered as
+stale, a reused PID reads as gone, each gated tool refuses before touching
+anything, and — on Windows with ForgePact checked out — two real stdio servers
+share one lease and the second is refused.
+
 ## `hs_selfcheck` — proving the instrument
 
 `AGENTS.md` § "Prove the Instrument Before Trusting a Negative Result" exists
@@ -861,7 +1078,7 @@ rather than by falling back to another launcher:
   pydantic's default `extra='ignore'` applies; `validate_arguments` drops the
   unknown key at `model_validate`, and `model_dump_one_level` enumerates
   declared fields only. Every tool here registers through `@server.tool(...)`
-  → `Tool.from_function` → `func_metadata`, so all fourteen behave identically
+  → `Tool.from_function` → `func_metadata`, so all seventeen behave identically
   and **no code in `tools/hs_drive_mcp/` can see the dropped key** — by the
   time a tool body runs, the evidence is gone. Reproduced on a toy signature
   mirroring `hs_ipc_tail`: `{"lines": 5}` → `lines=5`, `{"n": 5}` → `lines=40`,
@@ -880,7 +1097,7 @@ rather than by falling back to another launcher:
   before any handler sees it — but the SDK's own docstring calls it
   "Provisional - the signature may change in a 2.x minor release", and it
   would mean wrapping the whole request path to catch a typo. If this is ever
-  enforced, that middleware is the single place to do it; **not** fourteen tool
+  enforced, that middleware is the single place to do it; **not** seventeen tool
   bodies, none of which can. Until then: check the parameter names in
   `## Tools` above, and treat a suspiciously default-looking answer as a
   possible misspelling.
@@ -917,6 +1134,15 @@ rather than by falling back to another launcher:
   `%LOCALAPPDATA%\HSDriveMcp\screenshots\`. Nothing prunes them, for the same
   reason nothing prunes backups: no tool in this server has removal as its
   effect.
+- **The game lease is advisory, and only between hs-drive processes.** It
+  stops a second hs-drive session's `hs_launch`, `hs_stop_game`, `hs_command`,
+  `hs_input`, `hs_select_character` and `hs_saves_restore`. It does not stop
+  anything that reaches the game another way — `ForgePact/tools/ipc.ps1`, the
+  ForgePact panel, a person at the keyboard — and it does not stop a session
+  that sets `HS_DRIVE_LEASE_DIR` to a directory of its own, which is why that
+  variable is for tests only. A caller that holds no lease while nobody holds
+  one is let through and labelled `lease: "none"`, by design (see "The game
+  lease").
 - **A forced stop is not available for a game you started yourself.** That is
   the point of `not_launched_here`, not an oversight. Close it from its own
   window.
@@ -1002,7 +1228,7 @@ dated record.
 | # | Check | Command | Result |
 | --- | --- | --- | --- |
 | I1–I3 (ship) | `hs_input`'s `click` holds the button: `hold_ms` 0–10000 = 120, a sleep between down and up on both routes, the ordered move → down → sleep → up pin, `hold_ms: 0` still reachable with no sleep, a refused button-down followed by neither a sleep nor an up, `key`'s own hold unaffected | `py -3 -m unittest tests.test_hs_drive_mcp_input -v` | `OK`, 49 tests, no skips — 2026-09-21. The new ordered assertion ran red against the unmodified `_do_pointer` first (2 failures, 1 error: no `DEFAULT_CLICK_HOLD_MS`, `['move','down','up'] != ['move','down','sleep','up']`) |
-| S1–S7 (ship) | `hs_select_character`: the S2 baseline (game never loads → `timeout` having sent exactly the scripted commands), the S3 target (a route right after the third click → `character_loaded`, both resolver routes), every refusal, both branches of the restore rule, the `proof_ambiguous` stop before `Play`, fourteen tools registered with `hs_select_character`'s hints, and the docstring/hub-doc phase and refusal-token coverage | `py -3 -m unittest tests.test_hs_drive_mcp_charselect tests.test_hs_drive_mcp_server tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 16 + 27 + 7 tests, no skips (one skip in the release-boundary suite, `HS-Offline-Launcher/` not checked out) — 2026-09-21. `results.REASONS` gained exactly three tokens: the slot/aspect-ratio refusal (removed by M1 below), `proof_not_armed`, `character_already_loaded`; `research_build_required` still absent |
+| S1–S7 (ship) | `hs_select_character`: the S2 baseline (game never loads → `timeout` having sent exactly the scripted commands), the S3 target (a route right after the third click → `character_loaded`, both resolver routes), every refusal, both branches of the restore rule, the `proof_ambiguous` stop before `Play`, all 14 tools registered with `hs_select_character`'s hints, and the docstring/hub-doc phase and refusal-token coverage | `py -3 -m unittest tests.test_hs_drive_mcp_charselect tests.test_hs_drive_mcp_server tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 16 + 27 + 7 tests, no skips (one skip in the release-boundary suite, `HS-Offline-Launcher/` not checked out) — 2026-09-21. `results.REASONS` gained exactly three tokens: the slot/aspect-ratio refusal (removed by M1 below), `proof_not_armed`, `character_already_loaded`; `research_build_required` still absent |
 | S8 (ship) | Replies are read the way the plugin writes them: `ipc.send`'s `reply` is the handler's line framed by `---- running command file ----` / `---- done ----`, so the arm acknowledgement and the `orbpickup stat` line are picked out by prefix (`_reply_line`) rather than tested against the whole reply. The test double now frames every reply, and `LIVE_ARM_REPLY` is the exact reply L-1's first attempt refused on | `py -3 -m unittest tests.test_hs_drive_mcp_charselect tests.test_hs_drive_mcp_server tests.test_hs_drive_mcp_release_boundary -v` | `OK`, 25 + 27 + 7 tests (one release-boundary skip, as above) — 2026-09-21. Negative control: the same tests against the pre-fix `charselect.py` give `FAILED (failures=11, errors=1)` |
 | L1 (ship) | **The live gate** — `hs_select_character` through a fresh MCP session against the real modded install, with the server-identity controls first | owner-run, per the workorder's Group L step | **Attempt 1, 2026-09-21 — failed, tool defect (fixed in S8).** Server identity proven: `hs_input` `hold_ms: 99999` → `invalid_input` naming `hold_ms`; `hs_select_character(slot=99)` → `game_not_running` with the game closed (the tool checks for a running game before the slot) and the then-current slot refusal (since removed, M1) once it was running. DLL `24020eac` (a research build, `9dcd5fb1`, was installed and was swapped out for the run and back afterwards); `hs_selfcheck` six `pass`; backup `20260921T100906Z_pre-charselect-ship`; `hs_launch` `plugin_ready` in 14.9 s; `hs_select_character(1)` → `proof_not_armed`, `actions_sent: 0`, `orbpickup: restored_off`, because the framed arm reply failed a whole-reply `startswith`; `hs_stop_game` `exited: true, forced: false`; `hs_saves_inspect` `changed: []`, `missing: []`. **Attempt 2, 2026-09-21 — pass** (server restarted with `3b701d2`): server identity — `hs_input` `hold_ms: 99999` → `invalid_input` naming `hold_ms`, `hs_select_character(slot=99)` → `game_not_running` (closed) then the same slot refusal (running, before any input); DLL `24020eac` (swapped in over `9dcd5fb1` and back afterwards); `hs_selfcheck` six `pass`; backup `20260921T101547Z_pre-charselect-ship-2`, 137 files; `hs_launch` `plugin_ready` in 15.8 s; `hs_select_character(1)` → `phase: character_loaded`, `proof` `… | player via GetMyPlayer`, `proof_trail` `main_menu` / `local` / `slot` each `player via none` with `orbpickup` on (the negative control: the on-state menu reading, previously `not observed`) and `play` `player via GetMyPlayer`; four screenshots; `orbpickup: restored_off`; `actions_sent: 3`; `elapsed_s: 17.538`. Settle: every screen waited the then-fixed 3 s settle and the route answered on the first read after `Play`, so 3 s was enough for each screen; nothing shorter was tried. Every `orbpickup stat` line read `globe objs=2`, the menu's included. `hs_screenshot` (`grab_window`) shows the slot-1 character in the Town of Inoya; `hs_stop_game` `exited: true, forced: false`; `hs_saves_inspect` before the restore `changed: [herosiege0.hss, shop.ini]` (the game's own writes on exit), after it `changed: []`, `added: []`, `missing: []`, and the live directory hash-identical to an out-of-band copy taken before either attempt. |
 
@@ -1022,6 +1248,7 @@ listing. Its ids start at M1.
 | M7 | PR #122 review fixes. `hs_select_character`: an `inject` answer of `ok: true` with `complete: false` / `records_rejected > 0` refuses `click_not_delivered` at that click, not counted in `actions_sent` or `layout_trail`, nothing clicked after it (`UndeliveredClickTests`); `timeout_s` counts from the `Play` click — with a `_now` clock seam driven by the `_sleep` double, navigation consuming more than `timeout_s` still polls for the load and the post-`Play` waits sum to exactly `timeout_s` (`PlayTimeoutTests`). `hs_wait_ready`: an `unknown` gate reading during the plugin wait refuses `game_state_unknown` with `phase: readiness` and `game_state: unknown` instead of `process_exited` (`test_an_unknown_gate_during_the_wait_is_not_reported_as_an_exit`). `REFUSAL_TOKENS` gains `click_not_delivered` | `py -3 -m unittest tests.test_hs_drive_mcp_charselect tests.test_hs_drive_mcp_launch tests.test_hs_drive_mcp_server tests.test_hs_drive_mcp_input tests.test_hs_drive_mcp_layout tests.test_hs_drive_mcp_release_boundary -v`, then `py -3 -m unittest discover -s tests` | `OK`, 210 tests (one release-boundary skip, `HS-Offline-Launcher/` not checked out); discover `Ran 996 tests`, `OK (skipped=10)` — 2026-09-21. Negative controls: the five new charselect tests against the pre-fix `charselect.py`/`results.py` give `FAILED (failures=3, errors=2)`; `PlayTimeoutTests` with only the deadline reverted to the call's start gives `FAILED (failures=2)` (`'timeout' != 'character_loaded'`); the new launch test against the pre-fix `launch.py` fails |
 | M-L2 | **The live gate**: `hs_select_character(1)` against the player build carrying `menulayout`, in a fresh session, with identity controls (`slot=0` → schema error; `slot=99` → `slot_not_listed` naming 24 cards) | owner-run, per the workorder's L-2 step | **Attempt 1, 2026-09-21 — failed, tool defect (fixed in M5 as far as its unit tests show; the cause below was the leading hypothesis at the time; attempt 5's live pass confirms it, since the same `plugin_ready`-then-immediately timing got its listing accepted and went on to load slots 1 and 2).** Player build `d627486c…` (`ForgePact/plugin_build/BloodPactPlugin_ship.dll`, sha256 `d627486c33f54b140d3ebceb611e158153eef1e221bf2f6d57ae4fb3863ec815`). Fresh stdio client of the worktree's server. Closed-game `slot=0` → validation error `greater_than_equal`; `hs_selfcheck` six `pass`; `hs_launch` → `plugin_ready`, then **immediately** `hs_select_character(slot=99)` → `window_size_mismatch`, `actions_sent: 0`, `phase: main_menu`, `elapsed_s: 6.302` — the header read `window=1920x1080` while the client measured `1024x576`, the leading hypothesis being that the tool measured the client once before `plugin_ready`'s window had settled. The listing itself was correct: `Play local` `win=336,534`, `listed=19 absent=none`; `proof_trail` `main_menu` `player via none`. Saves restored clean (`changed: []`, `missing: []`, identical to the out-of-band copy `hs2saves-20260921-pre-menulayout-L2`); DLL restored to `22371422…`. **Attempt 2, 2026-09-21 16:31–16:34 — stopped at the identity control, `foreground_not_game`; not a pass.** Pre-flight: `hs_status` `not_running`, `game_pids: []`, no `Hero_Siege.exe` in `tasklist`. Installed DLL pre-run sha256 `bea8cc00b4aadb16ad22755c9379b686770cbb99a6f668c9525f4ffdb135ec64` (set aside as `BloodPactPlugin.dll.pre-L2a2-bea8cc00`), re-hashed unchanged right before the copy; after the copy the installed file hashed `d627486c33f54b140d3ebceb611e158153eef1e221bf2f6d57ae4fb3863ec815` (`menulayout` present, `menuprobe` absent, plugin source older than the DLL). Out-of-band copy `hs2saves-20260921-pre-menulayout-L2-attempt2` (137 files), then `hs_saves_backup` `20260921T143246Z_pre-menulayout-L2-a2`. Fresh stdio client of the worktree's server at hub `05e031e`. Closed-game `slot=0` → validation error `greater_than_equal`; `hs_selfcheck` six `pass`, 0 skipped. `hs_launch` → `plugin_ready` (`elapsed_s: 15.914`, pid 132112), then **immediately** `hs_select_character(slot=99)` → `foreground_not_game`, `actions_sent: 0`, `phase: local`, `elapsed_s: 6.384`, detail "the foreground window is 853428, not the game's 38733986; one SetForegroundWindow attempt did not take. SendInput goes to whatever is in front, so nothing was sent." The main-menu listing (`window=1920x1080`, `Play local` `win=336,534`, `listed=19 absent=none`) was accepted at the timing that failed attempt 1 — no `window_size_mismatch` — and the refusal came from the `Play local` click, before it was sent, so the `slot_not_listed` positive was never reached. `proof_trail` `main_menu` `player via none`; `layout_trail` empty; `orbpickup: left_on`; screenshot `%LOCALAPPDATA%\HSDriveMcp\screenshots\20260921T143347523844Z_main_menu.png`. `hs_stop_game` `exited: true`, `forced: false`. Inspect `changed: []`, `added: []`, `missing: []`; restored (pre-restore `20260921T143415Z_pre-restore`), inspect clean, and all 137 live files hash-identical to the out-of-band copy. DLL restored to `bea8cc00…` and re-hashed equal. Per the procedure, no retry: slot 1 and slot 2 were not run. Leading hypothesis for the refusal, not verified: the run was driven from a background session, so Windows' foreground lock refused the single `SetForegroundWindow` attempt while another window held the foreground. Note that the detail's hint `route="post_message"` is an `hs_input` option; `hs_select_character` takes no route. **Attempt 3, 2026-09-21 16:48–16:54 — stopped again at the identity control, `foreground_not_game`; not a pass.** The owner stayed off the PC. Pre-flight: `hs_status` `not_running`, no `Hero_Siege.exe` in `tasklist`; installed DLL pre-run sha256 `bea8cc00…ec64` (set aside as `BloodPactPlugin.dll.pre-L2a3-bea8cc00`). The owner copied the player build in by hand; installed sha256 re-checked `d627486c33f54b140d3ebceb611e158153eef1e221bf2f6d57ae4fb3863ec815` and the game still not running. Out-of-band copy `hs2saves-20260921-pre-menulayout-L2-attempt3` (137 files), `hs_saves_backup` `20260921T144915Z_pre-menulayout-L2-a3`, then `20260921T145347Z_pre-L2a3-identity` before the launch. Fresh stdio client of the worktree's server at hub `05e031e`. Closed-game `slot=0` → validation error `greater_than_equal`; `hs_selfcheck` six `pass`, 0 skipped. `hs_launch` → `plugin_ready` (`elapsed_s: 18.287`, pid 126072), then **immediately** `hs_select_character(slot=99)` → `foreground_not_game`, `actions_sent: 0`, `phase: local`, `elapsed_s: 6.257`, detail "the foreground window is 1968114, not the game's 7800362; one SetForegroundWindow attempt did not take." As in attempt 2 the main-menu listing (`window=1920x1080`, `listed=19 absent=none`) was accepted with no `window_size_mismatch`; the refusal came at the `Play local` click before it was sent. `proof_trail` `main_menu` `player via none`; `layout_trail` empty; `orbpickup: left_on`; screenshot `%LOCALAPPDATA%\HSDriveMcp\screenshots\20260921T145411161235Z_main_menu.png`. Measured after the run: window 1968114 belongs to the Claude Code terminal (process `claude`, title `Terminal`) and still held the foreground, so the game launched by a background MCP server never received focus even with nobody at the PC. `hs_stop_game` `exited: true`, `forced: false`. Inspect `changed: []`, `added: []`, `missing: []`; restored (pre-restore `20260921T145427Z_pre-restore`), inspect clean against both backups, all 137 live files hash-identical to the out-of-band copy. No retry; slot 1 and slot 2 were not run. At the end the installed DLL still hashed `d627486c…ec815`; the owner restores `bea8cc00…` from the aside copy. Conclusion: re-running will not pass while the tool's only way to focus the game is one `SetForegroundWindow` call from a process Windows does not let take the foreground; that is a tool/plan question, not a timing one. **Attempt 4, 2026-09-21 16:55–16:57 — driven through the Claude Code session's own `hs-drive` server (the `mcp__hs-drive__*` tools; server pid 132456, not a stdio server started by a driver script); stopped at the identity control, `foreground_not_game` again; not a pass.** The owner stayed off the PC and had installed the player build by hand; installed sha256 verified `d627486c33f54b140d3ebceb611e158153eef1e221bf2f6d57ae4fb3863ec815` before launching. Pre-flight: `hs_status` `not_running`, no `Hero_Siege.exe` in `tasklist`; live saves hash-identical to the out-of-band copy `hs2saves-20260921-pre-menulayout-L2-attempt3` (137 files). Server identity: closed-game `slot=0` → server-side validation error `greater_than_equal` (the new code's `ge=1`); `hs_selfcheck` six `pass`, 0 skipped. `hs_saves_backup` `20260921T145556Z_pre-L2a4-identity`. `hs_launch` → `plugin_ready` (`elapsed_s: 17.241`, pid 127116), then **immediately** `hs_select_character(slot=99)` → `foreground_not_game`, `actions_sent: 0`, `phase: local`, `elapsed_s: 6.247`, detail "the foreground window is 1968114, not the game's 854564; one SetForegroundWindow attempt did not take." The main-menu listing (`window=1920x1080`, `Play local` `win=336,534`, `listed=19 absent=none`) was again accepted with no `window_size_mismatch`. `proof_trail` `main_menu` `player via none`; `layout_trail` empty; `orbpickup: left_on`; screenshot `%LOCALAPPDATA%\HSDriveMcp\screenshots\20260921T145625717580Z_main_menu.png`. Measured while the game was still up: the foreground window 1968114 is owned by pid 43312, process `claude` (`Claude.exe`, the Claude desktop app), window title `Terminal`, parent `explorer`. So which MCP server ran the tool is not the variable: in attempts 2–4 the Claude app's terminal window held the foreground and Windows refused the tool's single `SetForegroundWindow`. `hs_stop_game` `exited: true`, `forced: false`. Inspect `changed: []`, `added: []`, `missing: []`; restored (pre-restore `20260921T145646Z_pre-restore`), inspect clean, all 137 live files hash-identical to the out-of-band copy. No retry; slot 1 and slot 2 were not run. Installed DLL at the end: `d627486c…ec815` (the owner restores `bea8cc00…`). **Attempt 5, 2026-09-21 17:36–17:39 — passed (force-focus build).** The owner reinstalled the player build by hand and stayed off the PC; the agent did not install, copy or restore the DLL, only hashed it. Pre-flight: `hs_status` `not_running`, `game_pids: []`, no `Hero_Siege.exe` in `tasklist`; out-of-band copy `C:\Users\stann\HeroSiege-manual-save-backup\hs2saves-20260921-pre-menulayout-L2-attempt5` (robocopy, 137 files); installed `BloodPactPlugin.dll` sha256 `d627486c33f54b140d3ebceb611e158153eef1e221bf2f6d57ae4fb3863ec815`, re-hashed equal immediately before each of the three launches. Fresh stdio client of the worktree's server at hub `a00d0c7` (`py -3 -m tools.hs_drive_mcp`, not the session's older server). Closed-game `slot=0` → validation error `greater_than_equal`; `hs_selfcheck` six `pass`, 0 skipped, `healthy: true`. Identity: `hs_saves_backup` `20260921T153650Z_pre-L2a5-identity`; `hs_launch` → `plugin_ready` (`elapsed_s: 16.486`, pid 135848), then **immediately** `hs_select_character(slot=99)` → `slot_not_listed`, detail "Chose_rm listed 24 visible Choose_Parent_obj card(s) on two reads in a row, fewer than slot 99; only page 1 of the save-slot screen is reachable, so no card was clicked.", `actions_sent: 1`, `phase: local`, `elapsed_s: 13.215`, listing `window=1920x1080` `listed=56 absent=none`, `focus_trail` `[{screen: local, focus_via: input_unlock}]` — the field's presence proves the new code, and the `Play local` click that refused `foreground_not_game` in attempts 2–4 landed. Foreground afterwards: the game (`Hero_Siege.exe`, title `Hero Siege`). `hs_stop_game` `exited: true`, `forced: false`; inspect `changed: []`, `added: []`, `missing: []`; restored, inspect clean. M-L2: backup `20260921T153742Z_pre-L2a5-slot1`; `hs_launch` → `plugin_ready` (`elapsed_s: 17.552`, pid 139052); `hs_select_character(1)` → `ok: true`, `phase: character_loaded`, `actions_sent: 3`, `elapsed_s: 18.061`; `proof_trail` `main_menu`/`local`/`slot` `player via none`, `play` `player via GetMyPlayer` (`proof` = that line); `layout_trail` `local` `UI_Button_obj` `Play local` `win=336,534`, `slot` `Choose_Parent_obj` id 257048 `win=177,174`, `play` `UI_Button_obj` `Play` `win=584,345`; `focus_trail` `local` `input_unlock`, `slot` `already_foreground`, `play` `already_foreground`; `orbpickup: left_on` — not the `restored_off` the plan's criterion expected: the pre-arm read found `globe objs=2` because the launch-time command file had already turned `orbpickup` on (the `hs_launch` plugin reply shows `orbpickup -> globes pulled from 480 px`), so D26 correctly leaves it on; attempts 2–4 reported `left_on` for the same reason. Screenshot `%LOCALAPPDATA%\HSDriveMcp\screenshots\20260921T153818973084Z_L2a5-slot1.png`: character `Pal`, level 100, in Town of Inoya. `hs_stop_game` `exited: true`, `forced: false`; inspect `changed: [herosiege0.hss, shop.ini]` (the game's exit writes), `added: []`, `missing: []`; restored (pre-restore `20260921T153822Z_pre-restore`), inspect `changed: []`, `missing: []`. After M-L2b's restore all 137 live files are hash-identical to the out-of-band copy. Installed DLL at the end: `d627486c…ec815` (the owner restores their own). **Attempt 5 verdict: pass on phase, layout, focus and saves; `orbpickup` differs from the criterion's literal value for the measured reason above.** |
 | M-L2b | **Second launch**: `hs_select_character(2)`. Its `layout_trail` slot row must have a greater `win` x than M-L2's and the same `win` y, and the screenshot must show a different character. | owner-run, same step | **Not run at attempts 2, 3 and 4** (all stopped at the identity control's `foreground_not_game`, see M-L2). **Attempt 5, 2026-09-21 17:38–17:39 — passed.** DLL re-hashed `d627486c…ec815` immediately before the launch. Backup `20260921T153853Z_pre-L2a5-slot2`; `hs_launch` → `plugin_ready` (`elapsed_s` about 16, pid 137036); `hs_select_character(2)` → `ok: true`, `phase: character_loaded`, `actions_sent: 3`, `elapsed_s: 17.834`; `proof_trail` `main_menu`/`local`/`slot` `player via none`, `play` `player via GetMyPlayer`; `layout_trail` slot row `Choose_Parent_obj` id 257049 `win=381,174` — greater x than M-L2's `177,174`, same y (row-major); `local` `win=336,534` and `play` `win=584,345` as in M-L2; `focus_trail` `local` `input_unlock`, `slot` `already_foreground`, `play` `already_foreground`; `orbpickup: left_on` (same reason as M-L2). Screenshot `%LOCALAPPDATA%\HSDriveMcp\screenshots\20260921T153928680504Z_L2a5-slot2.png`: a different character, `Miss Fortune`, level 100, in Town of Inoya. `hs_stop_game` `exited: true`, `forced: false`; inspect `changed: [herosiege1.hss, shop.ini]`, `added: []`, `missing: []`; restored (pre-restore `20260921T153932Z_pre-restore`), inspect `changed: []`, `missing: []`; live saves then hash-identical to the out-of-band copy (137 files). **pass** |
+| L1–L13 | The machine-wide game lease (`hs-drive-game-lease`): four real processes race and exactly one wins, the rest refused `lease_held` naming the winner's label and `taken_utc`; a killed holder reads `stale` and is recovered with `previous.outcome: "stale"`; the same PID with a different creation stamp reads `stale` (positive control: the unpatched stamp reads `held`); with no record each of the six gated domain functions reaches its own first gate and adds `lease: "none"` (the baseline); with another live holder each refuses before touching anything; read-only tools, `hs_wait_ready`'s ping and the self-check round trip never refuse; `force` records `took_over_from`; backup/restore/release keep `restore_pending` honest; an unreadable record is `unavailable`, never free | `py -3 -m unittest tests.test_hs_drive_mcp_lease -v` | `Ran 15 tests`, `OK (skipped=1)` — the skip is `test_two_stdio_servers_the_second_is_refused`, ForgePact not checked out in this worktree; the same two-server scenario, driven directly through that test's `two_servers` helper over real `py -3 -m tools.hs_drive_mcp` stdio sessions, returned `held` / `lease_held` / `lease_held` for B's status, acquire and `hs_command` — 2026-09-24. Instrument check: with the guard stubbed out 10 subtests fail, with liveness stubbed alive the stale and PID-reuse tests fail, and racers with the lock removed produced 2–3 winners in 4 of 5 runs. Whole root suite: `Ran 1051 tests in 123.485s`, `OK (skipped=111)` |
 
 ## What is deliberately not here
 
@@ -1072,6 +1299,7 @@ py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v        # window resoluti
 py -3 -m unittest tests.test_hs_drive_mcp_input -v             # what actually leaves the process
 py -3 -m unittest tests.test_hs_drive_mcp_charselect -v        # hs_select_character: clicks, proof, refusals
 py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # ForgePact's menulayout listing and the three matchers
+py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the game lease: race, stale, PID reuse, the six gates
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # nothing shipped knows it exists
 py -3 -m unittest discover -s tests                            # all of the above, plus the rest
 ```

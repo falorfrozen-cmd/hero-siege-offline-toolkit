@@ -1282,8 +1282,11 @@ DLL_INSTALL_RE = re.compile(
 def rule_r17_live_operator_scope(session: Session) -> RuleResult:
     """`live-operator` runs the owner's game: it may write its own capture
     file and nothing else, never installs a build (the owner decides when the
-    DLL their game loads changes), never runs a writing git command, and
-    never restores saves or force-stops the game on its own."""
+    DLL their game loads changes), never runs a writing git command, never
+    restores saves or force-stops the game on its own, and never takes over
+    another session's game lease: `hs_lease_acquire` with `force` is the
+    owner's decision, made through the driver, and a held lease is the
+    operator's `LIVE-ABORTED`."""
     evidence = []
     for agent in all_subagents(session):
         if agent.agent_type != "live-operator":
@@ -1304,6 +1307,8 @@ def rule_r17_live_operator_scope(session: Session) -> RuleResult:
                 evidence.append(f"{agent.label} restored saves at {call.ts_start}")
             elif call.name.endswith("hs_stop_game") and call.tool_input.get("force"):
                 evidence.append(f"{agent.label} force-stopped the game at {call.ts_start}")
+            elif call.name.endswith("hs_lease_acquire") and call.tool_input.get("force"):
+                evidence.append(f"{agent.label} forced a lease takeover at {call.ts_start}")
     return RuleResult("R17", "live-operator-scope", passed=not evidence, evidence=evidence)
 
 
@@ -1394,6 +1399,85 @@ def rule_r19_gates_template(session: Session) -> RuleResult:
     return RuleResult("R19", "gates-template", passed=not evidence, evidence=evidence)
 
 
+# R20: measured 2026-09-22..24 (forgepact-issue-14 phase1c r2, phaseA-record
+# r0, phase1h r2). A capture whose check lines did not match the criterion's
+# grep was "fixed" by the record-round implementer editing the operator's
+# capture -- 9 Edit calls, in 1h renaming two checks and appending a whole
+# check line with a verdict. The capture is the session's evidence and
+# `live-operator` its only author; a line that does not parse is reported,
+# never repaired (implementer.md). R17 holds the operator to its capture;
+# this holds everyone else off it.
+def rule_r20_live_capture_author(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_agents(session):
+        if agent.agent_type == "live-operator":
+            continue
+        for call in agent.tool_calls:
+            if call.name not in EDIT_TOOLS or call.is_error or call.guard_refused:
+                continue
+            fp = str(call.tool_input.get("file_path", "")).replace("\\", "/")
+            if LIVE_CAPTURE_RE.search(fp):
+                evidence.append(f"{agent.label} {call.name} on a live capture at {call.ts_start}: {fp}")
+    return RuleResult("R20", "live-capture-author", passed=not evidence, evidence=evidence)
+
+
+# R21: measured 2026-09-24 (forgepact-issue-14-phase1j-record r0): a verifier
+# ran a criterion's `py -3 -c ...` as `python -c ...` and reported a false
+# verdict; `python` is at least three times in the verifier transcripts.
+# This repository's commands are `py -3`, and the verifier runs a criterion
+# exactly as written (verifier.md step 2).
+# Only in command position: `grep -i python` names it, it does not run it.
+VERIFIER_BARE_PYTHON_RE = re.compile(r"(?:^|[;&|(\n])\s*python3?(?:\.exe)?\s")
+
+
+def rule_r21_verifier_interpreter(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_subagents(session):
+        if agent.agent_type != "verifier":
+            continue
+        for call in agent.tool_calls:
+            cmd = _cmd_text(call)
+            if cmd and VERIFIER_BARE_PYTHON_RE.search(cmd):
+                evidence.append(f"{agent.label} ran python, not py -3, at {call.ts_start}: {cmd[:120]}")
+    return RuleResult("R21", "verifier-interpreter", passed=not evidence, evidence=evidence)
+
+
+# R22: measured over forgepact-issue-14's verifiers (2026-09-22..24): suite
+# plus polling took 165 min, of which about 61 were a suite run again -- after
+# the Bash tool's 120 s default killed the 150-170 s hub suite (37 of 60 hub
+# runs), or to read another slice of the same output. verifier.md step 3 now
+# runs each suite once with a 240 s timeout into a scratch file.
+SUITE_RUN_RE = re.compile(
+    r"(?:\bcd\s+(?P<cd>[^\s;&|]+)\s*(?:&&|;)\s*)?[^;&|]*?unittest\s+discover(?P<args>[^;&|>]*)", re.IGNORECASE)
+
+
+def suite_key(cmd: str) -> Optional[str]:
+    """Which suite a shell command runs -- the directory it `cd`s to, plus
+    discover's own arguments -- or None if it runs none."""
+    m = SUITE_RUN_RE.search(cmd)
+    if not m:
+        return None
+    where = m.group("cd") or "."
+    args = re.sub(r"\s\d$", "", m.group("args").rstrip())  # the `2` of a `2>&1`
+    return f"{where.strip(chr(34) + chr(39)).rstrip('/')} {' '.join(args.split())}".strip()
+
+
+def rule_r22_verifier_suite_once(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_subagents(session):
+        if agent.agent_type != "verifier":
+            continue
+        runs: dict = defaultdict(list)
+        for call in agent.tool_calls:
+            key = suite_key(_cmd_text(call)) if call.name in SHELL_TOOLS else None
+            if key:
+                runs[key].append(call)
+        for key, calls in runs.items():
+            if len(calls) > 1:
+                evidence.append(f"{agent.label} ran suite `{key}` {len(calls)} times, first at {calls[0].ts_start}")
+    return RuleResult("R22", "verifier-suite-once", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -1414,6 +1498,9 @@ ALL_RULES = [
     rule_r17_live_operator_scope,
     rule_r18_scribe_state_preserved,
     rule_r19_gates_template,
+    rule_r20_live_capture_author,
+    rule_r21_verifier_interpreter,
+    rule_r22_verifier_suite_once,
 ]
 
 

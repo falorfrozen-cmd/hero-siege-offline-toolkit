@@ -340,8 +340,12 @@ def backup(label: str, gate: Gate, is_link: Callable[[Path], bool] | None = None
     `hs_saves_restore` exists for, and refusing it made the tool inert exactly
     where it was needed. The size ceiling is not relaxed with it: that is the
     guard against a path pointing somewhere enormous, and it still applies.
+
+    A finished backup of the live directory is recorded in the game lease when
+    this server holds it (`lease.note_backup`), which marks a restore owed.
     """
     is_link = default_is_link if is_link is None else is_link
+    source_given = source is not None
 
     if not isinstance(label, str) or not LABEL_PATTERN.match(label):
         return results.refuse(
@@ -378,6 +382,12 @@ def backup(label: str, gate: Gate, is_link: Callable[[Path], bool] | None = None
     refusal = _gate_refusal(tool, gate, "immediately before the first write")
     if refusal:
         return refusal
+
+    # Only a backup of the live directory into the real backup root is the
+    # session's own backup. The self-check's round trip and the pre-restore
+    # backup inside `restore` both pass `source` and `root`, and neither is a
+    # backup the game lease should say a restore is owed for.
+    live_backup = not source_given and root is None
 
     stamp, created = _utc_stamp()
     root = backup_root() if root is None else Path(root)
@@ -420,6 +430,10 @@ def backup(label: str, gate: Gate, is_link: Callable[[Path], bool] | None = None
     staging.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     os.replace(staging, directory / MANIFEST_NAME)
 
+    if live_backup:
+        from . import lease
+        lease.note_backup(directory.name)
+
     return results.ok(
         tool,
         backup_id=directory.name,
@@ -440,7 +454,33 @@ def restore(backup_id: str, confirm_backup_id: str, remove_extra: bool = False,
             gate: Gate | None = None, is_link: Callable[[Path], bool] | None = None,
             source: Path | None = None, root: Path | None = None,
             tool: str = "hs_saves_restore") -> dict[str, Any]:
-    """Put a verified backup back, after backing up what is there now."""
+    """Put a verified backup back, after backing up what is there now.
+
+    A restore into the live directory asks the game lease first, before
+    anything is read: overwriting the saves another session is playing is
+    the clash the lease exists for, so it refuses `lease_held` there, and
+    every other answer carries `lease: "held" | "none"`. A restore given an
+    explicit `source` -- the self-check's round trip inside a temporary
+    directory no other session can see -- is not the live directory and is
+    not asked about.
+    """
+    if source is not None:
+        return _restore(backup_id, confirm_backup_id, remove_extra, gate=gate,
+                        is_link=is_link, source=source, root=root, tool=tool)
+    from . import lease
+    refusal = lease.guard(tool)
+    if refusal:
+        return refusal
+    result = _restore(backup_id, confirm_backup_id, remove_extra, gate=gate,
+                      is_link=is_link, source=None, root=root, tool=tool)
+    if result.get("ok"):
+        result = {**result, **lease.note_restore(backup_id)}
+    return lease.stamp(result)
+
+
+def _restore(backup_id: str, confirm_backup_id: str, remove_extra: bool, *,
+             gate: Gate | None, is_link: Callable[[Path], bool] | None,
+             source: Path | None, root: Path | None, tool: str) -> dict[str, Any]:
     is_link = default_is_link if is_link is None else is_link
     if gate is None:
         from . import procs
