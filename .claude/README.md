@@ -560,8 +560,8 @@ history. `repoRoot` is still accepted and nothing passes it; see "A workorder
 cannot be run against another checkout" above.
 
 It returns to the driver on anything needing judgement — `PASS`,
-`PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED` or `CAP`
-— so replans, consultations, human questions and the step-5 report stay with
+`PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`,
+`STATE-LOST`, `SCRIBE-FAILED` or `CAP` — so replans, consultations, human questions and the step-5 report stay with
 the driver either way, and one launch may cover several rounds (a
 `PLAN-DEFECT` hand-back means relaunching after the replan). What it still
 trades away: every re-entry inside the script is a fresh spawn, never the
