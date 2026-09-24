@@ -1226,6 +1226,7 @@ All **measured** unless marked.
 | Filling the protected-variable store (262,144 records) | fault while a creator builds a monster | §5.8 |
 | Special content at 20× | dies at about 13.4k instances | §5.8 |
 | A creator acted on before `enemyCreatorTimer` is real | no crash — the pack never spawns | §11.2 |
+| Removing a stash item's map entry (`RemoveItemFromMap` on map 9) but leaving its cell in the tab | the game ends at its next stash save — measured twice, in two launches; `GridRemoveItem` on the cell in the same take avoids it | §16 |
 
 ---
 
@@ -1396,7 +1397,8 @@ not itself observed against an earlier value (RD `### Phase 1k
 results`, Live 1k, `partial-stacked`). R: `ItemCheckHash` takes one argument
 and re-runs the item's own hash method for comparison; a `false` on a
 just-edited item is consistent with a stale-versus-new mismatch, not itself
-probed (RD `### Phase 1k instrument`). M: the json creation chain that makes
+probed (RD `### Phase 1k instrument`). R: `ItemCheckHash` itself calls no
+reporting script (RD `## Ship design`). M: the json creation chain that makes
 an item without the constructor - `CreateItemSaveStruct` -> `set o <n>` ->
 `LootTimestamp` -> `InitItemFromJson(struct, "0-0-<S>-14")` -> `GetItemMap(0)`
 -> `AddItemToMap(map, key, item)` -> `GetItemPreferredGrid` -> `GridAddItem` -
@@ -1432,6 +1434,19 @@ matching the owner's own figure, beside `CountInventoryItem`'s stock count
 press and returns before `DoCraftResult` starts; `DoCraftResult` encloses the
 consume and the production of a one-unit craft in a single call (RD
 `### Phase 1g results`). A multi-unit craft was not observed.
+
+R, a static reading of `CraftFindRecipeItems`, paraphrased (RD `## Ship
+design`, "The needs"): each recipe input's amount is decoded by
+`PilipaliDecrypt` before that input is counted, and an input that accepts
+several base ids is counted one base at a time after its one decode,
+stopping at the first base whose count reaches the amount.
+`CountInventoryItem` decodes nothing and walks the bag's grids, not a map.
+So the amount of a count made inside the call is the latest decode before
+it, and of a run of counts after one decode the last is the one the game
+used. This pairing was observed only for a one-input recipe (the one decode
+and one count measured above); a multi-input recipe's pairing is not
+observed. ForgePact's `craftmats` pairs the needs it moves at the press this
+way.
 
 M: a count injection inside the game's own availability check
 (`GetCraftItemsAvailable`, the recipe row's Create closure, and any
