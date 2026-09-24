@@ -172,6 +172,17 @@ to the planner with the tool's output before any implementer is spawned. If `## 
 judgement` is non-empty, show it to the user and get an answer before spawning
 the implementer.
 
+Then run `py -3 tools/plan_lint.py <plan> --lanes-json` and keep its last
+line, `{"lanes": [...], "join": true|false}`. A plan whose `## Steps`
+declares `### Lane: <name>` groups (each with a `files:` line) and a
+`### Join` gets its steps implemented by one implementer per lane at once,
+then the join (Step 2); a plan without them prints `{"lanes": [], "join":
+false}` and runs exactly as it always has. The JSON is only printed when
+the lint is clean — overlapping file sets (`lane-overlap`), a lane without
+files, lanes without a join, a duplicate or bad name all exit 1 without it —
+so lanes a lint rejected can never be launched. Paste its `lanes` and `join`
+into the workflow's args unchanged (see "Driver discipline").
+
 **In `plan` mode, stop here.** Report:
 
 - the goal and what is explicitly out of scope;
@@ -213,6 +224,27 @@ did not write the plan and knows nothing it does not say:
 Snapshot before spawning: `py -3 .claude/skills/workorder/round_delta.py
 snapshot <slug> <round>`, recorded in `## State` › `round base:` — step 3
 diffs against it, and every later round repeats this before re-entering.
+
+**A laned plan** (Step 1's `--lanes-json` printed lanes) runs its lanes only
+on the first implementation of the plan's steps: round 0, or the relaunch
+after a replan. Pass `lanes` and `join` to the workflow then, and never when
+relaunching after an `IMPL-DEFECT` (a `continue` from `STATE-LOST` or
+`SCRIBE-FAILED`, or a fresh `resume` past round 0): a defect round is a fix
+on a small delta, and no failed criterion or reviewer finding says which
+lane it belongs to, so it runs one implementer that owns every file set.
+Each lane implementer works only inside its `files:`, runs no git command
+that writes and no full build or suite, and checks `py -3
+.claude/skills/workorder/round_delta.py stopped <slug> <round>` before each
+step; a lane about to return `PLAN-DEFECT` or `ADVICE-NEEDED` first writes
+the marker with `round_delta.py stop`, and the others return `STOPPED` with
+their progress. The join runs only when every lane returned `IMPL-DONE`: it
+commits each lane's file set as its own commit, then does the `### Join`
+steps. A lane that is not done skips the join and hands the round back with
+every lane's verdict and progress — `PLAN-DEFECT` if any lane returned it,
+else `ADVICE-NEEDED` — and what the lanes finished stays uncommitted in the
+tree for the relaunch. Lanes run in workflow mode only; in driver mode a
+laned plan gets one implementer that owns every file set, as a defect round
+does.
 
 Spawn `implementer` with the plan and context paths. Three outcomes:
 
@@ -415,7 +447,9 @@ The line, when a reviewer's label looks wrong to you:
 
   Cap: **3 implement→verify rounds.** On a fourth, stop and bring it to the
   user with everything tried so far. Ping-ponging past three means the pipeline
-  has lost the thread and more rounds will not find it.
+  has lost the thread and more rounds will not find it. The cap counts rounds,
+  not implementers: a laned round — every lane plus the join, then one
+  verify — is one round.
 
   **At the cap, split — never close it by hand.** Three failed rounds mean the
   pipeline lost the thread, regardless of plan size or how close it looks to
@@ -614,8 +648,15 @@ the Workflow tool requires, so don't ask again. It carried
 Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, checkoutRoot, goalExcerpt, implementerModel, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
-                   submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state } })
+                   submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
+                   lanes: [{ name, files: [...] }, ...], join } })
 ```
+
+`lanes` and `join` are pasted from `py -3 tools/plan_lint.py <plan>
+--lanes-json` (Step 1), and only for the first implementation of the plan's
+steps (Step 2); leave them out otherwise. Lanes that could not have come from
+that output (no `join: true`, a lane with no files, a bad or duplicate name)
+are refused with `BAD-ARGS` before anything is spawned.
 
 `checkoutRoot` is this session's `git rev-parse --show-toplevel`; the script
 hands the scribe `planPath`/`contextPath` joined under it, and refuses with
@@ -669,6 +710,13 @@ State line gone that the round did not replace; the launch stops there, before
 a verifier can read the damaged block. Paste the result's `state` back under
 `## State` (its `lost` lists what went), then act on its `then` exactly as if
 that had been the outcome — `continue` means relaunch at the State's `round:`.
+A laned round that ends before its join returns `PLAN-DEFECT`,
+`ADVICE-NEEDED` or `AGENT-FAILED` with `lanes:` beside it — every lane's
+`name`, `verdict` (`IMPL-DONE`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `STOPPED`, or
+null for a lane that returned nothing) and `progress_so_far`, the same list
+the scribe wrote under the round's Log heading. Hand the replan or the
+consultant every lane's progress, not only the lane that stopped the round:
+the lanes that finished left their work uncommitted in the tree.
 `SCRIBE-FAILED` means the scribe wrote nothing (`written: false`, or no
 result), so no State was lost and nothing is compared: append the result's
 `log` under `## Log` in the context file, replace `## State` with its `state`,

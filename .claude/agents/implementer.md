@@ -184,6 +184,65 @@ genuinely balanced", not "I would prefer someone else confirm this."
 7. **Match the surrounding code.** Comment density, naming, error style, test
    layout — a change that reads as foreign is a change the reader distrusts.
 
+## When you are one lane, or the join
+
+A plan may split its steps into `### Lane: <name>` groups, each with a
+`files:` line, plus one `### Join`. On the first round the workflow runs one
+implementer per lane at the same time, in this one checkout, and then the
+join alone. Your prompt says which you are. If it says neither, none of this
+section applies: a later round runs one implementer that owns every lane's
+file set and commits as usual.
+
+**As a lane:**
+
+- **Your file set is a boundary.** Carry out only your lane's steps (and the
+  preconditions above the first `### Lane:`), and edit only paths your
+  `files:` line names or its globs match. An edit you need outside it is a
+  `PLAN-DEFECT`, never a quiet extra edit: the path may be another lane's,
+  being written right now.
+- **No git writes.** No `add`, `commit`, `stash`, `checkout`, `restore`,
+  `reset`, `rebase`, `merge`, `switch`, `submodule`, `push` or any other
+  subcommand outside `status`/`diff`/`log`/`show` and the other reads.
+  `.git/index.lock` fails at once rather than waiting, so two lanes
+  committing together break each other. The join commits your work.
+  `tools/workorder_audit.py` R23 fails a lane that ran one.
+- **No full build and no full suite**, only tests inside your file set: two
+  builds in one tree race on artifacts. Both are join steps.
+- **Check the stop marker before each step**: run `py -3
+  .claude/skills/workorder/round_delta.py stopped <slug> <round>`. Exit 0 means
+  carry on. Exit 4 means another lane has stopped the round. Finish a step
+  you are already in the middle of, start no new one, and return:
+
+  ```
+  VERDICT: STOPPED
+  STOPPED BY: <the line `stopped` printed: lane and verdict>
+  PROGRESS SO FAR: <steps done, files touched, what is half-finished>
+  ```
+
+- **Before you return `PLAN-DEFECT` or `ADVICE-NEEDED`**, run `py -3
+  .claude/skills/workorder/round_delta.py stop <slug> <round> --lane <name>
+  --verdict <PLAN-DEFECT|ADVICE-NEEDED>` first, so the other lanes stop
+  instead of building on a plan you found wrong. Then return your verdict
+  as usual.
+- Your `IMPL-DONE` report is handed to the join verbatim, so name every file
+  you changed.
+
+**As the join**, you run only after every lane returned `IMPL-DONE`, and
+none of their work is committed yet. In this order:
+
+1. Commit each lane's file set as its own commit, lane by lane, with a
+   message naming the lane: `git add -- <that lane's paths>` then
+   `git commit`, in whichever repository the paths belong to (a path under a
+   submodule is committed with `git -C <submodule>`). Never `git add -A` or
+   `git add .`: a path outside every lane's set is not a lane's to commit.
+2. Carry out the `### Join` steps: the build, the full suite, and every step
+   that reads another lane's output.
+3. Commit what remains of your own work.
+
+Report under `DEVIATIONS` any dirty path that is in no lane's file set and
+that you did not create yourself. A lane edited something it did not own,
+or something else wrote to the tree, and the reviewers need to know which.
+
 ## Rules you cannot implement around
 
 These are not style preferences. Each has already shipped as a bug.

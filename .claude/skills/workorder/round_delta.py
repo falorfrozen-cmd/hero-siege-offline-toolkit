@@ -30,10 +30,22 @@ Usage:
     round_delta.py snapshot <slug> <round> [--root PATH]
     round_delta.py delta    <slug> <round> [--root PATH]
     round_delta.py heads    <slug> <round> [--root PATH]
+    round_delta.py stop     <slug> <round> --lane NAME --verdict PLAN-DEFECT|ADVICE-NEEDED [--root PATH]
+    round_delta.py stopped  <slug> <round> [--root PATH]
 
 `--root` defaults to `git rev-parse --show-toplevel`; tests pass a throwaway
 repo instead. Snapshots live at
 `<root>/.claude/workorders/.rounds/<slug>/round-<round>.json`.
+
+`stop` and `stopped` are the lanes' cooperative stop (issue #176; SKILL.md
+Step 2). The workflow cannot cancel a running agent, so a lane about to
+return `PLAN-DEFECT` or `ADVICE-NEEDED` runs `stop`, which writes
+`round-<round>.stop` beside the snapshot holding `<lane>\\t<verdict>\\n`; every
+lane runs `stopped` before each step, which exits 4 and prints that line when
+the marker exists and exits 0 silently when it does not. `snapshot` deletes
+its round's marker first, because a round is relaunched under the same number
+after a replan. The marker lives under `.rounds/`, which `delta` never
+reports.
 
 `heads` prints that snapshot's recorded heads, one `<key>\t<sha>` line per
 repo -- `.` for the hub, the submodule dir otherwise, an unborn head printing
@@ -56,8 +68,10 @@ Snapshot format v2 (JSON):
 (the same set `_submodule_dirs` yields). `files` is what the v1 snapshot was
 in full: a content hash per changed/untracked path.
 
-Exit codes: 0 on success (state, delta or heads printed); 2 on a usage error
-(bad slug/round, missing command); 3 when the snapshot cannot be trusted at
+Exit codes: 0 on success (state, delta or heads printed; marker written; no
+lane stopped); 4 from `stopped` when a lane has stopped; 2 on a usage error
+(bad slug/round, missing command, a lane name outside `[a-z0-9-]+` or a
+verdict other than the two above); 3 when the snapshot cannot be trusted at
 all -- missing, unreadable, a pre-commit-tracking v1 snapshot, or malformed
 (both `delta` and `heads`), plus, for `delta` only, a repo present now with no
 recorded head or a recorded head git can no longer diff from. The driver then
@@ -68,11 +82,14 @@ blindness must fail into.
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 STATUS_ARGS = ["status", "--porcelain", "-z", "-uall"]
+LANE_NAME_RE = re.compile(r"[a-z0-9-]+")
+STOP_VERDICTS = ("PLAN-DEFECT", "ADVICE-NEEDED")
 
 
 def _run_git(args, cwd):
@@ -242,7 +259,32 @@ def _snapshot_path(root, slug, round_):
     return root / ".claude" / "workorders" / ".rounds" / slug / f"round-{round_}.json"
 
 
+def _stop_path(root, slug, round_):
+    return root / ".claude" / "workorders" / ".rounds" / slug / f"round-{round_}.stop"
+
+
+def cmd_stop(root, slug, round_, lane, verdict):
+    path = _stop_path(root, slug, round_)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(f"{lane}\t{verdict}\n")
+    return 0
+
+
+def cmd_stopped(root, slug, round_):
+    path = _stop_path(root, slug, round_)
+    try:
+        line = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return 0
+    print(line)
+    return 4
+
+
 def cmd_snapshot(root, slug, round_):
+    # A replan relaunches the round under the same number; the previous
+    # launch's stop marker must not stop this launch's lanes.
+    _stop_path(root, slug, round_).unlink(missing_ok=True)
     snapshot = {
         "version": 2,
         "heads": compute_heads(root),
@@ -376,11 +418,14 @@ def _validate_round(parser, value):
 def build_parser():
     parser = argparse.ArgumentParser(prog="round_delta.py")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("snapshot", "delta", "heads"):
+    for name in ("snapshot", "delta", "heads", "stop", "stopped"):
         p = sub.add_parser(name)
         p.add_argument("slug")
         p.add_argument("round")
         p.add_argument("--root", default=None)
+        if name == "stop":
+            p.add_argument("--lane", required=True)
+            p.add_argument("--verdict", required=True)
     return parser
 
 
@@ -389,6 +434,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     _validate_slug(parser, args.slug)
     _validate_round(parser, args.round)
+    if args.command == "stop":
+        if not LANE_NAME_RE.fullmatch(args.lane):
+            parser.error(f"invalid lane (want [a-z0-9-]+): {args.lane!r}")
+        if args.verdict not in STOP_VERDICTS:
+            parser.error(f"invalid verdict (want {' or '.join(STOP_VERDICTS)}): {args.verdict!r}")
 
     try:
         root = resolve_root(args.root)
@@ -403,6 +453,10 @@ def main(argv=None):
             return cmd_snapshot(root, args.slug, args.round)
         if args.command == "heads":
             return cmd_heads(root, args.slug, args.round)
+        if args.command == "stop":
+            return cmd_stop(root, args.slug, args.round, args.lane, args.verdict)
+        if args.command == "stopped":
+            return cmd_stopped(root, args.slug, args.round)
         return cmd_delta(root, args.slug, args.round)
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode("utf-8", "surrogateescape") if exc.stderr else ""

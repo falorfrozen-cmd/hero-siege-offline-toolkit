@@ -19,6 +19,11 @@ Usage:
     py -3 tools/workorder_audit.py [--latest | --session <id-prefix>]
         [--projects-dir DIR] [--project NAME] [--json]
 
+A laned round (issue #176: `implementer:<lane>:r<n>` transcripts plus an
+`implementer:join:r<n>`) gets a `lane` column in the table, a summary after
+it -- each lane's wall minutes and cost, the round's span against the lanes'
+serial sum, the join's wall minutes -- and the same under `lanes` in `--json`.
+
 Exit code: 0 all rules pass, 1 a rule failed, 2 usage error.
 """
 
@@ -495,6 +500,19 @@ def parse_label(description: Optional[str]) -> tuple[str, Optional[int]]:
     if not m:
         return description, None
     return description[: m.start()], int(m.group(1))
+
+
+# A lane implementer is labelled `implementer:<lane>:r<n>` and the join
+# `implementer:join:r<n>` (`.claude/workflows/workorder-rounds.js` 2h); a
+# plan without lanes keeps `implementer:r<n>`. Lane names are what
+# `tools/plan_lint.py` accepts.
+LANE_LABEL_RE = re.compile(r"^implementer:([a-z0-9-]+):r\d+$")
+
+
+def lane_of(label: Optional[str]) -> Optional[str]:
+    """The lane an implementer's label names (`join` for the join), or None."""
+    m = LANE_LABEL_RE.match(label or "")
+    return m.group(1) if m else None
 
 
 def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
@@ -1116,14 +1134,28 @@ def rule_r12_plan_size(session: Session) -> RuleResult:
     return RuleResult("R12", "plan-size", passed=not evidence, evidence=evidence)
 
 
-def round_budget(round_: int) -> int:
-    return ROUND0_MAX_TOKENS if round_ == 0 else ROUND_MAX_TOKENS
+def round_budget(round_: int, implementers: int = 1) -> int:
+    """A round's token budget. Both figures were calibrated on one implementer
+    per round; a laned round runs k implementers (its lanes and the join),
+    each already held to its own budget by R8, so it gets k times the figure."""
+    base = ROUND0_MAX_TOKENS if round_ == 0 else ROUND_MAX_TOKENS
+    return base * implementers if implementers > 1 else base
+
+
+def round_implementers(session: Session) -> dict:
+    """(workflow id or None, round) -> implementer transcripts in that round."""
+    counts: dict = defaultdict(int)
+    for agent in all_subagents(session):
+        if agent.round is not None and agent.agent_type == "implementer":
+            counts[(agent.workflow_id, agent.round)] += 1
+    return dict(counts)
 
 
 def rule_r13_round_budget(session: Session) -> RuleResult:
     evidence = []
+    implementers = round_implementers(session)
     for key, total in sorted(round_totals(session).items(), key=lambda kv: (kv[0][0] or "", kv[0][1])):
-        budget = round_budget(key[1])
+        budget = round_budget(key[1], implementers.get(key, 1))
         if total > budget:
             evidence.append(f"{_round_name(key)}: {total:,} subagent tokens (budget {budget:,})")
     return RuleResult("R13", "round-budget", passed=not evidence, evidence=evidence)
@@ -1478,6 +1510,31 @@ def rule_r22_verifier_suite_once(session: Session) -> RuleResult:
     return RuleResult("R22", "verifier-suite-once", passed=not evidence, evidence=evidence)
 
 
+# R23: lanes (issue #176) run as concurrent implementers in one checkout, and
+# git's `.git/index.lock` is fail-fast: a second `git add`/`git commit` while
+# another holds it fails at once instead of waiting. So a lane runs no git
+# command that writes, and the join -- which runs alone, after every lane --
+# commits each lane's file set. A lane transcript with any git write breaks
+# the contract that makes running lanes together safe. The join and a
+# laneless implementer commit as they always have.
+def rule_r23_lane_git_mutation(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_subagents(session):
+        lane = lane_of(agent.label)
+        if lane is None or lane == "join":
+            continue
+        tag = f"{agent.label} [{agent.workflow_id}]" if agent.workflow_id else agent.label
+        for call in agent.tool_calls:
+            if call.name not in SHELL_TOOLS:
+                continue
+            cmd = _cmd_text(call)
+            mutations = _git_mutations(cmd)
+            if mutations:
+                evidence.append(
+                    f"{tag} ran git {'/'.join(dict.fromkeys(mutations))} at {call.ts_start}: {cmd[:120]}")
+    return RuleResult("R23", "lane-git-mutation", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -1501,6 +1558,7 @@ ALL_RULES = [
     rule_r20_live_capture_author,
     rule_r21_verifier_interpreter,
     rule_r22_verifier_suite_once,
+    rule_r23_lane_git_mutation,
 ]
 
 
@@ -1518,6 +1576,7 @@ def _agent_row(agent: AgentTranscript) -> dict:
         "agent_type": agent.agent_type,
         "workflow": agent.workflow_id or "-",
         "round": agent.round if agent.round is not None else "-",
+        "lane": lane_of(agent.label) or "-",
         "model": (agent.model or "-").replace("claude-", ""),
         "turns": agent.turn_count,
         "tokens": agent.total_tokens,
@@ -1534,6 +1593,53 @@ def session_cost(session: Session) -> tuple:
     """(list-price $ for every priced transcript, how many had no price)."""
     costs = [a.cost_usd for a in all_agents(session)]
     return sum(c for c in costs if c is not None), sum(1 for c in costs if c is None)
+
+
+def lane_summary(session: Session) -> list:
+    """One entry per (workflow, round) that ran two or more implementer
+    transcripts: each lane's wall minutes and cost, the round's
+    `span_minutes` (earliest lane start to latest lane end), its
+    `serial_minutes` (the lanes' wall minutes added up) and the join's wall
+    minutes. `span` against `serial` is the wall time the lanes saved, which
+    is what docs/agents/workorder-calibration.md § "Lanes" measures."""
+    groups: dict = defaultdict(list)
+    for agent in all_subagents(session):
+        if agent.round is not None and agent.agent_type == "implementer":
+            groups[(agent.workflow_id, agent.round)].append(agent)
+    out = []
+    for (wf_id, round_), agents in sorted(groups.items(), key=lambda kv: (kv[0][0] or "", kv[0][1])):
+        if len(agents) < 2:
+            continue
+        lanes = sorted((a for a in agents if lane_of(a.label) != "join"), key=lambda a: (a.ts_first.timestamp() if a.ts_first else 0.0, a.label))
+        joins = [a for a in agents if lane_of(a.label) == "join"]
+        starts = [a.ts_first for a in lanes if a.ts_first]
+        ends = [a.ts_last for a in lanes if a.ts_last]
+        out.append({
+            "workflow": wf_id or "-",
+            "round": round_,
+            "lanes": [{
+                "lane": lane_of(a.label) or "-",
+                "label": a.label,
+                "wall_minutes": round(a.wall_minutes, 1),
+                "cost_usd": round(a.cost_usd, 2) if a.cost_usd is not None else None,
+            } for a in lanes],
+            "span_minutes": round((max(ends) - min(starts)).total_seconds() / 60.0, 1) if starts and ends else 0.0,
+            "serial_minutes": round(sum(a.wall_minutes for a in lanes), 1),
+            "join_minutes": round(sum(a.wall_minutes for a in joins), 1) if joins else None,
+        })
+    return out
+
+
+def format_lane_summary(summary: list) -> list:
+    lines = []
+    for s in summary:
+        join = f"; join {s['join_minutes']} min" if s["join_minutes"] is not None else "; no join"
+        lines.append(f"lanes, {_round_name((None if s['workflow'] == '-' else s['workflow'], s['round']))}: "
+                     f"span {s['span_minutes']} min vs serial {s['serial_minutes']} min{join}")
+        for x in s["lanes"]:
+            cost = f"${x['cost_usd']:,.2f}" if x["cost_usd"] is not None else "unpriced"
+            lines.append(f"  {x['lane']}  {x['label']}  {x['wall_minutes']} min  {cost}")
+    return lines
 
 
 def build_table(session: Session) -> list:
@@ -1593,6 +1699,10 @@ def format_report(session: Session, results: list, comparison: list) -> str:
     out.append(f"Session {session.session_id}  (project {session.project})")
     out.append("")
     out.append(format_table(build_table(session)))
+    lanes = format_lane_summary(lane_summary(session))
+    if lanes:
+        out.append("")
+        out.extend(lanes)
     cost, unpriced = session_cost(session)
     out.append(f"list-price cost: ${cost:,.2f}" + (f" ({unpriced} transcript(s) on an unpriced model)" if unpriced else ""))
     out.append("")
@@ -1618,6 +1728,7 @@ def to_json(session: Session, results: list, comparison: list) -> dict:
         "session_id": session.session_id,
         "project": session.project,
         "table": build_table(session),
+        "lanes": lane_summary(session),
         "cost_usd": round(session_cost(session)[0], 2),
         "rules": [
             {"rule_id": r.rule_id, "name": r.name, "passed": r.passed, "evidence": r.evidence}
