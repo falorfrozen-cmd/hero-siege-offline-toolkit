@@ -210,7 +210,18 @@ Preconditions common to every step (branch, CRLF, do-not-revert) as
 imperatives, first. Then the ordered steps; a step that depends on context
 names the subsection: `ctx: "<### heading>"`. Every path is relative to this
 checkout's root — never an absolute path into another checkout's copy of a
-submodule.
+submodule. Optionally, after the preconditions, lanes (see "Lanes" below):
+
+### Lane: <name>
+files: `<path>`, `<glob>`, ...
+The steps this lane's implementer carries out, alone, inside those files.
+
+### Lane: <other-name>
+files: `<path>`, ...
+...
+
+### Join
+The build, the full suite, and every step that reads another lane's output.
 ```
 
 `.claude/workorders/<slug>-context.md`:
@@ -250,6 +261,34 @@ line with a `|` as no gate set. On 2026-09-24, forgepact-issue-14-phase1j's
 verifier read that as all gates set and ran the live-session criteria before
 the session. It reported them as `IMPL-DEFECT` in rounds 0 to 2, and the launch
 ended at `CAP` with no real defect open after round 0.
+
+**Lanes: step groups that can run at the same time.** Declare lanes when two
+or more groups of steps have disjoint file sets and no data dependency on
+each other, and each is big enough to be worth its own implementer. There is
+no fixed maximum; the Workflow tool runs at most min(16, CPUs−2) agents at
+once and queues the rest. Each lane is a level-3 `### Lane: <name>` heading
+directly under `## Steps` (name in `[a-z0-9-]+`, never `join`), whose first
+line is `files:` followed by the backticked paths it may edit, relative to
+the checkout root; a glob (`*`, `**`, `?`) is allowed. One `### Join`
+follows them and needs no `files:`: it runs alone after every lane returned
+`IMPL-DONE`, commits each lane's file set as its own commit, and then does
+its own steps. Steps written above the first `### Lane:` are preconditions
+every lane and the join follow.
+
+A lane step may never contain a full build, the full test suite, or a
+commit. Lanes share one checkout, so two builds race on artifacts and two
+commits race on `.git/index.lock`, which fails instead of waiting. Tests
+inside the lane's own file set are fine. The build, the full suite and every
+step that reads another lane's output go under `### Join`. A plan with no
+`### Lane:` heading runs as it always has.
+
+`py -3 tools/plan_lint.py <plan>` refuses a lane plan with any of five
+findings: `lane-overlap` (two lanes share a literal path, a literal matches
+the other lane's glob, two globs are identical, or one glob's fixed prefix
+is a prefix of another's — checked over every pair of lanes, and
+conservative on purpose: narrow the globs), `lane-no-files` (a lane with no
+`files:` line or an empty one), `lane-no-join` (lanes and no `### Join`),
+`lane-dup-name`, and `lane-bad-name`. Run it before `PLAN-READY`.
 
 `### Round <n>` belongs to the rounds — the scribe and the driver write it —
 so the planner never uses it: the first plan logs under `### Plan`, each

@@ -537,7 +537,8 @@ with.
 Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
-                   submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state } })
+                   submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
+                   lanes, join } })
 ```
 
 `reviewers` is a map, one entry per applicable round-0 reviewer, valued
@@ -559,17 +560,40 @@ scope the verifier already checks and once re-deriving a one-file delta's
 history. `repoRoot` is still accepted and nothing passes it; see "A workorder
 cannot be run against another checkout" above.
 
+**Lanes** (issue #176) are step groups a plan declares as `### Lane: <name>`
+headings with a `files:` line, plus one `### Join`. `lanes` (`[{ name, files }]`)
+and `join` are pasted from `py -3 tools/plan_lint.py <plan> --lanes-json`, and
+only for the first implementation of the plan's steps: round 0, or the
+relaunch after a replan. On the round a launch starts at, the script runs one
+implementer per lane (`implementer:<name>:r<n>`) through one `parallel()`
+barrier, however many lanes there are. Each lane stays inside its file set,
+runs no git write and no full build or suite, and checks the cooperative stop
+marker (`round_delta.py stopped`) before each step. A lane about to return
+`PLAN-DEFECT` or `ADVICE-NEEDED` writes the marker first (`round_delta.py
+stop`), and the others return `STOPPED`. When every lane returns `IMPL-DONE`,
+the join (`implementer:join:r<n>`) is handed every lane's report, commits each
+lane's file set as its own commit by pathspec, does the `### Join` steps, and
+its result goes down the same delta and verify path as a single implementer's.
+Otherwise the join is skipped, the Log records every lane's verdict and
+progress, and the launch returns `PLAN-DEFECT` if any lane returned it, else
+`ADVICE-NEEDED`. Later rounds of the launch run one implementer that owns every
+file set. Lanes that could not have come from `--lanes-json` are `BAD-ARGS`.
+Absent or empty `lanes` dispatches exactly the prompt a plan without lanes
+always got.
+
 It returns to the driver on anything needing judgement — `PASS`,
 `PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`,
 `STATE-LOST`, `SCRIBE-FAILED` or `CAP` — so replans, consultations, human questions and the step-5 report stay with
 the driver either way, and one launch may cover several rounds (a
-`PLAN-DEFECT` hand-back means relaunching after the replan). What it still
+`PLAN-DEFECT` hand-back means relaunching after the replan). A laned round
+that ends before its join also returns `lanes`, each lane's `name`,
+`verdict` and `progress_so_far`. What it still
 trades away: every re-entry inside the script is a fresh spawn, never the
 `SendMessage` resume above, because the script has no agent id to send to —
 measured, on this one real run, as no worse than a resumed implementer (a
 resumed round-1 implementer cost 14.6M tokens at 304K context per turn;
 losing the resume cost nothing). `.claude/workflows/workorder-rounds.test.mjs`
-(`node --test`, 36 cases, each with its own control) dry-runs the routing
+(`node --test`, 71 cases, each with its own control) dry-runs the routing
 above against stub agents.
 
 That makes the split a forcing function rather than just a workflow: a plan that
@@ -627,8 +651,14 @@ cache-creation + cache-read, summed over assistant turns), output tokens,
 context per turn, peak context, wall minutes, the longest single tool call,
 the model the transcript actually ran on (what a tier alias resolved to that
 day), its list-price cost (`MODEL_PRICES`), and KB of `Read` results by kind
-(plan, context file, `instructions.md`, source). It prints one table and the
-session's total cost, then twenty-two rules as `PASS`/`FAIL` with
+(plan, context file, `instructions.md`, source). The table's `lane` column
+names a lane implementer's lane (`implementer:<lane>:r<n>`, `join` for the
+join). For every round that ran two or more implementers, a lane summary
+follows the table: each lane's wall minutes and cost, the round's span
+(earliest lane start to latest lane end) against the lanes' serial sum, and
+the join's wall minutes; `--json` carries it under `lanes`, which is what
+`docs/agents/workorder-calibration.md` § "Lanes" measures. It prints one table and the
+session's total cost, then twenty-three rules as `PASS`/`FAIL` with
 evidence (the agent, the time, the command or path), then each role's numbers
 against the pre-update averages as a percentage; `--json` emits the same as
 one object.
@@ -645,7 +675,7 @@ one object.
 | R10 driver-discipline | a driver shell command that builds or tests, a driver `Edit`/`Write` outside `.claude/workorders/`, or too many driver turns in one round — judged only while it is driving: one window per `/workorder` invocation, from the invocation to the first message the user types after that invocation's last pipeline agent finished (a phase agent, a reviewer, anything in a workflow run — an ad-hoc agent asked for later does not hold it open; harness-written `user` records are not the user), or to the next invocation, so a build the user asks for afterwards, or between two workorders, is not the driver's violation |
 | R11 replans | two or more planner runs in one session |
 | R12 plan-size | a plan or context file whose planner-authored part is over its KB budget, from the `Read` calls that touched it — `## Log` is not counted, being what the scribe, implementer and driver append while the rounds run |
-| R13 round-budget | one round's total subagent tokens over budget — a round is one workflow launch's round `n`, never every launch's round `n` added together, and round 0 (the whole change) has a larger budget than a later round (a defect) |
+| R13 round-budget | one round's total subagent tokens over budget — a round is one workflow launch's round `n`, never every launch's round `n` added together, and round 0 (the whole change) has a larger budget than a later round (a defect); a round that ran k > 1 implementers (a laned round's lanes and join) gets k times its budget, since R8 already holds each implementer to its own |
 | R14 reviewer-reruns-suite | a reviewer running test suites or builds more than twice (the two reviewers told to build and test are exempt) |
 | R15 edit-guard-workaround | a subagent whose `Edit`/`Write` was refused by the harness's worktree guard ("is in the base repo checkout") and which then made more than five further tool calls (its own return not counted) instead of returning `PLAN-DEFECT` — unless an edit of the same repo-relative path then landed inside a worktree, which is a mistyped path corrected, not a workaround (a same-named scratch copy is the workaround) |
 | R16 scribe-scope | a scribe (`agentType: "scribe"`, or the `scribe` role a workflow label like `scribe:r1` parses to) whose `Edit`/`Write` landed outside its own `.claude/workorders/`, judged against the transcript's own `cwd` rather than a bare substring test; which ran `git add`/`git commit` in any shell command; which wrote a file through a shell command instead (a redirect or heredoc, `tee`, a PowerShell content cmdlet, `cp`/`mv`/`rm`/`sed -i`, a Python file write) whatever the target path; or, for the restricted `scribe` agent type, ran any shell command at all |
@@ -655,6 +685,7 @@ one object.
 | R20 live-capture-author | any agent but `live-operator` (the driver included) whose `Edit`/`Write` landed on a `.claude/workorders/<slug>-live-<n>.md` capture. A capture a criterion cannot read is reported, never repaired |
 | R21 verifier-interpreter | a verifier shell command that runs `python` or `python3` in command position (a `grep python` does not count) — this repository's commands are `py -3`, and the verifier runs a criterion exactly as written |
 | R22 verifier-suite-once | a verifier that runs the same `unittest discover` suite (same `cd` directory, same arguments) more than once — after a timeout, or to read another slice of the output |
+| R23 lane-git-mutation | a lane implementer (`implementer:<lane>:r<n>`, any lane but `join`) that ran a git command outside the read-only allow-list R16 uses. Lanes share one checkout and `.git/index.lock` fails instead of waiting, so only the join commits; the join and a laneless implementer are exempt |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
@@ -688,6 +719,17 @@ a prose criterion, a heading slice not anchored on `
 `, a grep over a live
 capture, and `python` where the repository runs `py -3`. The planner runs it
 before `PLAN-READY`; the driver runs it again before spawning an implementer.
+It also reads a plan's lanes (`### Lane: <name>` headings under `## Steps`,
+each with a `files:` line, plus one `### Join`) and reports five lane
+findings, each exiting 1: `lane-overlap` (two lanes share a literal path, a
+literal matches another lane's glob, two globs are identical, or one glob's
+fixed prefix is a prefix of another's, checked over every pair of lanes),
+`lane-no-files`, `lane-no-join`, `lane-dup-name` and `lane-bad-name`.
+`plan_lint.py <plan> --lanes-json` prints, only when the lint is clean, one
+JSON line `{"lanes": [{"name", "files"}, ...], "join": true|false}`, which
+the driver pastes into the workflow's `lanes`/`join` args, so lanes the lint
+rejected cannot be launched. A plan without lanes prints `{"lanes": [],
+"join": false}`.
 Tests: `tests/test_workorder_plan_tools.py`.
 
 ### `tools/source_index.py` — go to the range, don't grep around
