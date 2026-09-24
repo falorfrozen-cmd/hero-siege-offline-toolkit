@@ -22,6 +22,7 @@
 - `custom_forge_runtime.py`: ForgePact runtime status watcher. Inspects ForgePact capability markers, reads status from `bp_ipc/customforge_status.json`, verifies timestamp ordering between runtime files and reports, and checks process user matching.
 - `game_build_identity.py`: Game executable fingerprinting and build identity verification. Checks `Hero_Siege.exe` headers and hash fingerprints to enforce version constraints (e.g., Season 10 patch compatibility).
 - `exact_tooltip.py`: Accurate in-game tooltip generator matching native GameMaker layout, affix coloring, roll range formatting, socket statuses, and custom forge annotations.
+- `game_truth.py`: Game truth (2.16.0): reads ForgePact's Item Truth journal into `itemtruth\truth.sqlite3`, matches saved items to the game's records, writes build and drawing requests, and turns the game's drawn tooltip rows and stat table into the tooltip. Design: `GAME_TRUTH_DESIGN.md`; contract: "Game truth" at the end of this guide.
 - `stat_semantics.py`: Season 10 stat semantic dictionary decoding 325 observed numeric stat keys into player-friendly names, category filters (Offense, Defense, Skills, Elements, Utility), units, and descriptions.
 - `generated_pool_model.py`: CPR pseudo-random number generator (PRNG) model matching native GameMaker logic for variable affixes and roll pools.
 - `roll_profile_db.py`: Solver and evaluator for Perfect/Best stat rolls against verified game roll profiles.
@@ -86,6 +87,7 @@
 |  - Backups: stash.hss.guibak_<timestamp>, hs_infinite_vault.sqlite3.bak                 |
 |  - Custom Forge: hs_custom_item_forge.json, hs_custom_item_forge.runtime                |
 |  - IPC Status: bp_ipc\customforge_status.json, bp_ipc\itemstats.json                    |
+|  - Game truth: itemtruth\ (journal, requests, tips, status.json)                        |
 +-----------------------------------------------------------------------------------------+
                                                            |
                                                            | (Consumed during boot)
@@ -98,6 +100,7 @@
 |  - Injects forged numeric keys into native itemStatStruct                               |
 |  - Exports active item stats to bp_ipc\itemstats.json every 2 seconds                   |
 |  - Writes runtime status report to bp_ipc\customforge_status.json                       |
+|  - Item Truth (1.4.5): journals finished items + drawn tooltips                         |
 +-----------------------------------------------------------------------------------------+
 ```
 
@@ -152,7 +155,7 @@ Custom Item Forge solves this via two cooperating mechanisms:
 ### Forge Runtime Status & Feedback Loop
 - ForgePact periodically writes status to `bp_ipc\customforge_status.json`.
 - **Timestamp Ordering:** When evaluating runtime status, `custom_forge_runtime.py` compares the file modification time of `hs_custom_item_forge.runtime` against `customforge_status.json`. If the status report is older than the forge file, the UI instructs the user to restart Hero Siege instead of displaying a false "different Windows user" error.
-- **Live Stat Snapshots:** ForgePact exports the live runtime stat struct to `bp_ipc\itemstats.json` (at most once every 2 seconds). When editing an owned item, the editor reads this file to display verified in-game stat values.
+- **Live Stat Snapshots:** ForgePact exports the live runtime stat struct to `bp_ipc\itemstats.json` (at most once every 2 seconds). When editing an owned item, the editor reads this file to display verified in-game stat values. Since ForgePact 1.4.5 the snapshot is taken at the outermost `CreateItemNew` return. Taken earlier, inside `CreateItemInit`/`GenerateItemRandomStats`, it missed the socket count on 121 of 386 compared items. Since 2.16.0 the Item Forge reads an item's base stats from the game-truth store first (the end of this guide), and uses this file only as a fallback.
 
 ---
 
@@ -193,7 +196,7 @@ All commands below are executed from the submodule root `hero-siege-item-editor/
 | `py -3 -m unittest test_small_charm_metadata.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs 8 charm metadata tests | None | Verified |
 | `py -3 -m unittest test_roll_profile_db.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs 24 roll profile evaluator tests | None | Verified |
 | `py -3 -m unittest test_custom_forge_runtime.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs custom forge runtime bridge tests | None | Verified |
-| `py -3 -m unittest discover -s . -p "test*.py"` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs the whole suite (476 tests, 1 skipped, with hero-siege-item-editor#6; passes on a fresh clone with `core.autocrlf` true or false, 2026-09-23) | Temporary test fixtures | Verified |
+| `py -3 -m unittest discover -s . -p "test*.py"` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs the whole suite (570 tests, 1 skipped, with hero-siege-item-editor#8, 2026-09-24; 476 with #6 passed on a fresh clone with `core.autocrlf` true or false, 2026-09-23) | Temporary test fixtures | Verified |
 | `py -3 build_custom_forge_catalog.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Rebuilds `hs_custom_forge_catalog.json` | Overwrites catalog JSON | Inspected |
 | `py -3 -m PyInstaller --clean --noconfirm HeroSiegeItemEditor.spec` | PowerShell / CMD | `hero-siege-item-editor/` | `pip install -r requirements-build.txt` (PyInstaller 6.20.0, pywebview 6.2.1) | Compiles single-file executable `dist/HeroSiegeItemEditor.exe` (18 MB with Python 3.14, 2026-09-23) | Creates `build/` and `dist/` | Verified |
 | `py -3 tools/cut_release.py --check` / `py -3 tools/cut_release.py 2.15.5` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Reports / moves the X.Y.Z of `APP_VERSION`, keeping the `-s10` suffix | The bump rewrites `hs_item_editor_gui.py` | Verified |
@@ -235,6 +238,7 @@ All commands below are executed from the submodule root `hero-siege-item-editor/
   - Verify `CreateItemNew` and `itemStatStruct` field formats using development ForgePact telemetry (`itemdrops.jsonl`).
   - Run `build_custom_forge_catalog.py` to regenerate the property catalog if new stat keys or unique items are added.
   - Check `game_build_identity.py` to update supported game version hashes.
+  - Game truth needs no action. The running build's id changes, so every owned item counts as unverified again, and the editor has the game build and draw them again on its own. Until then, tooltips show as **Estimate**. `MODEL_BUILD_ID` in `game_truth.py` names the only build the replay is promised for.
 - **Companion Documentation Links:**
   - ForgePact Runtime Plugin & Architecture: [`../ForgePact/instructions.md`](../ForgePact/instructions.md)
   - HSCraftSim Crafting & CPR RNG Mechanics: [`../HSCraftSim/instructions.md`](../HSCraftSim/instructions.md)
@@ -482,3 +486,103 @@ its temporary folder (the Global Item Finder test used to search the machine's r
 Vault). Merged with master 3aada04 on a clean checkout: 476 tests pass (1 skipped).
 
 Upstream pull request for 2.15.5–2.15.10: falorfrozen-cmd/hero-siege-item-editor#6.
+
+## Game truth: the game's numbers and text (2.16.0, 2026-09-24)
+
+The editor shows every item it owns, on characters, in the Shared Stash and in the
+Infinite Vault, with the numbers and tooltip text that the running game builds and
+draws for it. Those items are marked **✓ Game verified**. When there is no game
+record, the replay (`exact_tooltip.py`) is shown instead, marked **Estimate**.
+
+This needs ForgePact 1.4.5 or newer. It merged as
+falorfrozen-cmd/hero-siege-item-editor#8 together with falorfrozen-cmd/ForgePact#79.
+
+Where to read more:
+- Design and measurements:
+  [`GAME_TRUTH_DESIGN.md`](../../../hero-siege-item-editor/GAME_TRUTH_DESIGN.md).
+- The game facts it established:
+  [`RUNTIME_DATA_MODELS.md` §16](../../RUNTIME_DATA_MODELS.md#16-items-as-the-game-builds-and-draws-them).
+- Why the in-game half is ForgePact's:
+  [ADR 0003](../../adr/0003-item-truth-lives-in-forgepact.md).
+
+What it does:
+- **Step 1, the game's records.** ForgePact journals every item the game finishes.
+  The editor matches a saved item to a record by `itemTimeStamp`, class and every
+  definition field. It ignores placement fields (`g`, `w`, `zz`, `pos`), counts `m`
+  and `o` of 1 as absent, and ignores a native stack's `o`.
+- **Step 2, the game builds on request.** Every 30 s while the game runs, the editor
+  queues the owned items that are not verified on the running build, and the game
+  builds them.
+- **Step 3, the game's own text.** The game records the tooltip text it draws, and
+  draws the tooltips of items nobody hovers while the player has any item tooltip
+  open. An item not drawn yet takes its line text from the game's stat table,
+  which is checked against 41,920 of 41,920 drawn lines.
+- Measured 2026-09-24: all 7,628 owned items were verified and drawn.
+
+The save rule does not change: saves are still never written while the game runs.
+Game truth writes only the `itemtruth` files below, and ForgePact never writes
+anything from them back into the game. Built items are left to the collector.
+
+### The itemtruth contract
+
+This section is the contract between the Item Editor and ForgePact, per ADR 0003.
+Change it only together with both modules' code.
+[ForgePact's guide](../ForgePact/instructions.md#item-truth-for-the-item-editor-145-verified-live-2026-09-24)
+covers its side of the hooks. All paths are under
+`%LOCALAPPDATA%\Hero_Siege\itemtruth\`.
+
+| Path | Written by | Read by | Meaning |
+|---|---|---|---|
+| `capture.request` | Item Editor | ForgePact | Capture is on. ForgePact checks it at setup and about every 10 s, so removing it pauses capture. |
+| `capture.off` | Item Editor | Item Editor | The player turned capture off. This survives an editor restart. |
+| `status.json` | ForgePact | Item Editor | `schema`, `forgepact` (version), `build`, `pid`, `started`, `updated` (unix ms), `written`, `dropped`, `file`. It is rewritten at least every 30 s while the game runs, so an older one means the game is not running. |
+| `journal\live-<build>-<yyyymmdd-HHMMSS>-<pid>-<part>.ndjson` | ForgePact | Item Editor | One JSON object per line (see below). A new part starts at 16 MB. Parts are numbered `1`, `2` … `10` without padding, so read them in number order, not name order. |
+| `requests\<id>.req` / `.working` / `.stopped` | Item Editor, then ForgePact | ForgePact, then Item Editor | Items for the game to build. |
+| `tips\<id>.req` / `.working` / `.stopped` | Item Editor, then ForgePact | ForgePact, then Item Editor | Items for the game to draw. |
+| `truth.sqlite3` | Item Editor | Item Editor | The editor's own store. Not part of the contract. |
+
+A journal holds four kinds of line, all with `"v":1`, `"build"` and `"t"` (unix ms):
+
+- **An item record**:
+  - fields: `"src":"live"|"eval"`, `"ts"` (itemTimeStamp), `"type"`, `"hash"`,
+    `"def"`, `"stats"`, `"info"`;
+  - `"native"` is added when Custom Forge changed the stats (the stats before it
+    did);
+  - an `eval` record also has `"req":"<id>"` and is always written;
+  - a `live` record is written once per distinct content per session.
+- **Progress**: `"kind":"eval"|"tipdraw"`, `"req"`, `"total"`, `"done"`, `"ok"`,
+  `"failed"`, `"rejected"`, `"finished"`.
+- **A drawn tooltip**:
+  - fields: `"kind":"tooltip"`, `"ts"`, `"hash"`, `"args"`, `"rows"` (every text
+    draw of the pass), `"stats"` (every stat call that drew a line);
+  - `"by"` names the object whose draw event drew it;
+  - `"req"` is present when it was drawn for a request.
+  - A request's drawing comes right after the record of the item the game built
+    for it.
+- **The tooltip table**: `"kind":"tooltip-table"`, `"stats"`. It is written once per
+  session and lists every stat call of one tooltip pass, in order.
+
+Requests work like this:
+- **Line format.** Each line is `<item key>\t<save data JSON>`. The JSON is ASCII
+  with `\u` escapes, so the game's `json_parse` reads any name. A request holds at
+  most 50,000 lines.
+- **Ids.** An id is `<unix ms>-<6 hex digits>`, so ids sort by age.
+- **Claiming and finishing.** ForgePact takes the oldest `.req` and renames it
+  `.working` before reading it. It deletes the file when done.
+- **Budgets.** Builds take at most 4 ms and 200 items a frame. Drawings take at most
+  6 items and 3 ms a frame, and only while an item tooltip is open.
+- **Never resumed.** A `.working` file found at start (the game closed during it)
+  is renamed `.stopped` and never resumed by itself. The editor clears a stopped
+  build when the player clicks, and a stopped drawing by itself.
+- **Strikes.** Clearing gives the item the request stopped on a strike, but only
+  when the request was what the game was doing as its session ended. An item with
+  two strikes is not asked about again on that build.
+
+Tests: `test_game_truth.py` and `test_game_truth_editor.py`. The whole suite is 570
+tests (1 skipped) at the merge, 2026-09-24. ForgePact's side is covered by
+`tests/item_truth_harness.cpp`, `tests/test_item_truth_contract.py` and
+`tests/test_item_truth_behavior.py`.
+
+Follow-up:
+[issue #173](https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit/issues/173),
+which moves the reusable half of ForgePact's `ItemTruth.hpp` into `hs-game-sdk`.

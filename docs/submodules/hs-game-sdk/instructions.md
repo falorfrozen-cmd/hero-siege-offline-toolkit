@@ -85,10 +85,12 @@ and IS tracked in git, generated into the same three language targets by a small
 `extract_and_generate_sdk.py`'s pipeline since it has nothing to extract from a binary). `curated/`
 is the pattern to extend for any future hand-verified, non-mechanically-extracted domain knowledge a
 submodule needs to share - see `ForgePact/docs/satanic-zone-mods-research.md` for how `satanic_zone.json`
-came to exist. Not every `curated/*.json` file is generated into bindings: `drop_types.json` and
-`special_content.json` (2026-09-24) are data only, read as JSON, with no `tools/generate_*_sdk.py`
-counterpart; each file's `$schema_note` says so, and `docs/RUNTIME_DATA_MODELS.md` §13-§14 carries
-the prose and sources. `tests/test_sdk_all.py` checks every script and object they name is bound.
+came to exist. Not every `curated/*.json` file is generated into bindings: `drop_types.json`,
+`special_content.json` (2026-09-24) and `item_info.json` (2026-09-25: rarity codes, info keys,
+affix slots and the tooltip's stat-line call, from the Item Editor's game-truth check) are data only,
+read as JSON, with no `tools/generate_*_sdk.py` counterpart; each file's `$schema_note` says so, and
+`docs/RUNTIME_DATA_MODELS.md` §13, §14 and §16 carry the prose and sources. `tests/test_sdk_all.py`
+checks every script and object they name is bound.
 
 **Models (`drop_roll_model.py`, 2026-09-24, issue #162):** a model is a hand-written, stdlib-only,
 deterministic function of the game's mechanism, built from a written spec

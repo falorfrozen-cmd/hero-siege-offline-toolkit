@@ -797,7 +797,10 @@ Append-only log containing plugin startup notifications, command responses, and 
 Rotating `out.txt` changes its file identity (a new file, new inode), which the panel's restart detection must survive: `plugin_boot_count()`'s own incremental scan already treats an identity change as a reason to recount from scratch (see its docstring), but a *freshly rotated* `out.txt` always opens with exactly one boot banner, so its count can coincidentally equal the count the file it replaced held — a bare count comparison then reads e.g. `1 -> 1` and misses a close-and-relaunch that happened to land between two 5-second polls. `watcher()` therefore compares `plugin_boot_generation(cfg)`'s `(file identity, boot count)` pair rather than the raw count alone; see `tests/test_panel_performance.py`'s `BootGenerationTests`.
 
 ### 4. Live Item Stats File (`<game>\bin\bp_ipc\itemstats.json`)
-Exported by the plugin at most once every 2 seconds when custom forge hooks are active. Contains actual rolled `itemStatStruct` records keyed by `itemTimeStamp`. Consumed by the companion `hero-siege-item-editor` to display live rolled base stats.
+Exported by the plugin at most once every 2 seconds when custom forge hooks are active. Contains actual rolled `itemStatStruct` records keyed by `itemTimeStamp`. Consumed by the companion `hero-siege-item-editor` to display live rolled base stats. Since 1.4.5 the snapshot is taken at the outermost `CreateItemNew` return, the same pass Item Truth records. Taken earlier, inside `CreateItemInit`/`GenerateItemRandomStats`, it missed the socket count on 121 of 386 compared items.
+
+### 5. Item Truth files (`%LOCALAPPDATA%\Hero_Siege\itemtruth\`, 1.4.5)
+The Item Editor's capture switch, ForgePact's journal of finished items and drawn tooltips, and the editor's build and drawing requests. The contract for these files is [the Item Editor's guide, "The itemtruth contract"](../hero-siege-item-editor/instructions.md#the-itemtruth-contract). ForgePact's side is described in "Item Truth for the Item Editor" near the end of this guide.
 
 ---
 
@@ -2114,7 +2117,7 @@ here before pressing Publish.
 ---
 
 ## Source Documents & Evidence References
-- Shared game facts folded from the research docs below: `../../RUNTIME_DATA_MODELS.md` §5-§15 (a fact about the game itself goes there too, per `AGENTS.md` § "Fold What a Mod Learned About the Game Into the Shared References")
+- Shared game facts folded from the research docs below: `../../RUNTIME_DATA_MODELS.md` §5-§16 (§16 from Item Truth) (a fact about the game itself goes there too, per `AGENTS.md` § "Fold What a Mod Learned About the Game Into the Shared References")
 - Submodule Readme: `../../../ForgePact/README.md`
 - Plugin Build Specifications: `../../../ForgePact/plugin/BUILD.md`
 - Plugin Build Script: `../../../ForgePact/plugin_build/build.bat`
@@ -2219,3 +2222,53 @@ and `plugin_build\build.bat release`. Native scope/restore tests are in
 `HS-AFK-Expedition/tests/cpp/rewards_smoke.cpp`; live AFK probe evidence is in
 `HS-AFK-Expedition/verification/independent-rewards-0.5.0/`. These checks do not
 certify rare-drop distributions or unrelated local experimental ForgePact features.
+
+## Item Truth for the Item Editor (1.4.5, verified live 2026-09-24)
+
+`plugin/include/ForgePact/ItemTruth.hpp` and the Item Truth block of
+`plugin/ModuleMain.cpp` let the Item Editor show items exactly as the game builds
+and draws them (Item Editor 2.16.0). It merged as falorfrozen-cmd/ForgePact#79.
+
+Related documents:
+- The file contract:
+  [the Item Editor's guide](../hero-siege-item-editor/instructions.md#the-itemtruth-contract).
+- Why this code lives in ForgePact:
+  [ADR 0003](../../adr/0003-item-truth-lives-in-forgepact.md).
+- The game facts it established:
+  [`RUNTIME_DATA_MODELS.md` §16](../../RUNTIME_DATA_MODELS.md#16-items-as-the-game-builds-and-draws-them).
+
+How it works:
+- **Off until asked.** Nothing runs until `itemtruth\capture.request` exists.
+  ForgePact checks for it at setup and about every 10 s.
+- **Records.** At the outermost `CreateItemNew` return, after Custom Forge has
+  dressed the item, the game thread serialises it and queues one line. A writer
+  thread does all the disk I/O. Its queue holds at most 20,000 lines, and dropped
+  lines are counted in `status.json`. The `bp_ipc\itemstats.json` snapshot is taken
+  on the same pass.
+- **Builds on request.** ForgePact claims the oldest `requests\*.req` (renaming it
+  `.working`) and builds its items, at most 4 ms and 200 items a frame. Each build
+  is `json_parse`, then `InitItemFromJson(json, key)` with the global instance as
+  self. `BuildAngelicPool` builds its probe items with the same call.
+- **Tooltip text.** Hooks on `DrawInventoryItemV2`, `DrawInventoryStatsNew`,
+  `draw_text_outline(_ext)` and `DrawTooltipRichText` read the first pass for each
+  item in a session. Nothing is drawn differently. Once a session, one pass also
+  records the whole stat table.
+- **Drawing requests.** These run only while the player has an item tooltip open.
+  `TipDrawBatch` runs at the start of the `DrawInventoryItemV2` hook, before the
+  player's own tooltip is drawn. Each frame it builds and draws requested items,
+  at most 6 items or 3 ms, into a 16×16 surface. It saves the draw colour, alpha,
+  font, both alignments and the target first, and restores them after.
+- **No crash loop.** At start, a `.working` request left over from a session that
+  closed or failed is renamed `.stopped`. It is never resumed on its own.
+- **Tests.**
+  - `tests/item_truth_harness.cpp`: the header, run without a game.
+  - `tests/test_item_truth_contract.py`.
+  - `tests/test_item_truth_behavior.py`.
+- **Live result, 2026-09-24, build `pe-6aaa6779-0cad4fc8`:**
+  - 342 of 342 queued items were built in about 2 s at the main menu;
+  - 7,607 tooltips were drawn in about 2 minutes, with 0 failures;
+  - all 7,628 owned items were verified and drawn.
+- **Follow-up.**
+  [Issue #173](https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit/issues/173)
+  moves the reusable half of `ItemTruth.hpp` into `hs-game-sdk` once a second
+  plugin needs it.
