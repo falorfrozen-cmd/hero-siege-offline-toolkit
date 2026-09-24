@@ -52,7 +52,7 @@ import re
 import time
 from typing import Any
 
-from . import capture, ipc, layout, procs, results
+from . import capture, ipc, layout, lease, procs, results
 from . import input as input_module
 
 TOOL = "hs_select_character"
@@ -174,7 +174,7 @@ def _read_stat(tool: str) -> dict[str, Any]:
     handler's own line is parsed; when the reply has none, `via` is `""`
     (never a route) and `line` keeps the raw reply so a refusal can quote
     what actually came back."""
-    result = ipc.send(["orbpickup stat"], tool=tool)
+    result = ipc.send(["orbpickup stat"], tool=tool, lease_checked=True)
     if results.is_refusal(result):
         return result
     stat_line = _reply_line(result, STAT_PREFIX)
@@ -201,7 +201,23 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
     character, `slot`, and prove it. See the module docstring for the
     mechanism and `docs/tools/hs-drive-mcp.md` for the field-by-field
     contract `server.py` documents to the caller.
+
+    The game lease is asked once, first, before the process gate: a second
+    session sees `lease_held` and nothing is sent or clicked. The pings,
+    reads and clicks inside pass `lease_checked=True` so one selection is
+    not refused half way through by its own guard. A `character_loaded`
+    result records `slot` in the lease this server holds.
     """
+    refusal = lease.guard(tool)
+    if refusal:
+        return refusal
+    result = _select_character(slot, timeout_s, tool)
+    if result.get("ok") and result.get("phase") == "character_loaded":
+        lease.note_slot(slot)
+    return lease.stamp(result)
+
+
+def _select_character(slot: int, timeout_s: float, tool: str) -> dict[str, Any]:
     started = _now()
 
     state, why = procs.gate()
@@ -225,7 +241,7 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
     if why:
         return results.refuse(tool, "no_visible_window_for_pid", why)
 
-    ping_result = ipc.send(["ping"], tool=tool)
+    ping_result = ipc.send(["ping"], tool=tool, lease_checked=True)
     if results.is_refusal(ping_result):
         return ping_result
 
@@ -247,7 +263,7 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
         the restore rule (D26) and the envelope shape apply exactly once."""
         orbpickup_state = "left_on"
         if restore_needed:
-            ipc.send(["orbpickup 0"], tool=tool)
+            ipc.send(["orbpickup 0"], tool=tool, lease_checked=True)
             orbpickup_state = "restored_off"
         common = dict(phase=phase, proof_trail=list(proof_trail),
                      layout_trail=list(layout_trail),
@@ -276,7 +292,7 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
         if why:
             return None, {"reason": "no_visible_window_for_pid", "detail": why}
         client_w, client_h = geometry["client_size"]
-        reply = ipc.send([layout.COMMAND], tool=tool)
+        reply = ipc.send([layout.COMMAND], tool=tool, lease_checked=True)
         if results.is_refusal(reply):
             return None, {"reason": reply["reason"], "detail": reply["detail"]}
         lines = layout.reply_lines(reply)
@@ -358,7 +374,8 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
         x, y = row.win
         result = input_module.inject(
             [{"type": "click", "x": x, "y": y, "hold_ms": CLICK_HOLD_MS}],
-            route="send_input", force_focus=True, tool=tool)
+            route="send_input", force_focus=True, tool=tool,
+            lease_checked=True)
         if results.is_refusal(result):
             return {"reason": result["reason"], "detail": result["detail"]}
         rejected = int(result.get("records_rejected") or 0)
@@ -384,7 +401,7 @@ def hs_select_character(slot: int = 1, timeout_s: float = 60,
         if not results.is_refusal(shot):
             screenshots.append(shot.get("path", ""))
 
-    arm = ipc.send(["orbpickup 1"], tool=tool)
+    arm = ipc.send(["orbpickup 1"], tool=tool, lease_checked=True)
     if results.is_refusal(arm):
         return finish("main_menu",
                       refusal={"reason": arm["reason"], "detail": arm["detail"]})

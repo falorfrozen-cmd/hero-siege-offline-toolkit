@@ -34,6 +34,14 @@ sys.path.insert(0, str(ROOT))
 
 from tools.hs_drive_mcp import ipc, launcher_bridge, results  # noqa: E402
 
+from tests.hs_drive_mcp_lease_fixtures import isolate_lease_dir  # noqa: E402
+
+
+def setUpModule():
+    # The game lease is machine-wide; see the fixture module for why this
+    # suite gets a lease directory of its own.
+    isolate_lease_dir()
+
 
 def running_gate():
     return "running", "1 hero_siege.exe process(es) are live: [4242]."

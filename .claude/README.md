@@ -643,7 +643,7 @@ one object.
 | R14 reviewer-reruns-suite | a reviewer running test suites or builds more than twice (the two reviewers told to build and test are exempt) |
 | R15 edit-guard-workaround | a subagent whose `Edit`/`Write` was refused by the harness's worktree guard ("is in the base repo checkout") and which then made more than five further tool calls (its own return not counted) instead of returning `PLAN-DEFECT` — unless an edit of the same repo-relative path then landed inside a worktree, which is a mistyped path corrected, not a workaround (a same-named scratch copy is the workaround) |
 | R16 scribe-scope | a scribe (`agentType: "scribe"`, or the `scribe` role a workflow label like `scribe:r1` parses to) whose `Edit`/`Write` landed outside its own `.claude/workorders/`, judged against the transcript's own `cwd` rather than a bare substring test; which ran `git add`/`git commit` in any shell command; which wrote a file through a shell command instead (a redirect or heredoc, `tee`, a PowerShell content cmdlet, `cp`/`mv`/`rm`/`sed -i`, a Python file write) whatever the target path; or, for the restricted `scribe` agent type, ran any shell command at all |
-| R17 live-operator-scope | a `live-operator` that wrote anything but its own `.claude/workorders/<slug>-live-<n>.md`, installed a build (a `.dll` copied or moved, or `installmod`), ran a writing git command, restored saves, or force-stopped the game |
+| R17 live-operator-scope | a `live-operator` that wrote anything but its own `.claude/workorders/<slug>-live-<n>.md`, installed a build (a `.dll` copied or moved, or `installmod`), ran a writing git command, restored saves, force-stopped the game, or took over another holder's game lease (`hs_lease_acquire` with `force`) |
 | R18 scribe-state-preserved | a scribe `Edit` to a `-plan.md` whose `old_string` carries a `key:` State entry (`gates:`, `round base:`, `agents:`, … — a hand-written `round: 0        phase: plan` counts as two) that its `new_string` no longer has |
 | R19 gates-template | any agent's `Write`/`Edit` to a `-plan.md` whose `gates:` line holds `\|` or "or" alternatives (an "or" inside a backticked token does not count) or a `<placeholder>`, outside parentheses: a template of every possible gate, which sets none. Possible gates go on `gates pending:`, and outcome tokens go on `route tokens:` |
 
@@ -727,7 +727,7 @@ the shared `.impeccable/config.json`.
 | Server | For |
 |---|---|
 | `tauri-hub` | driving a running debug hub through its bridge on `127.0.0.1:9223` |
-| `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close) — a local stdio server in `tools/hs_drive_mcp/` |
+| `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close), under one machine-wide game lease (`hs_lease_acquire` / `hs_lease_status` / `hs_lease_release`) that stops a second session driving the same install — a local stdio server in `tools/hs_drive_mcp/` |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
 | `github` | releases, dispatches and pointer PRs across the eleven repositories |
 | `playwright` | driving a browser — the web submodules (`HSCraftSim`, `HS-Offline-Tracker`'s frontend) the way `tauri-hub` drives the hub; pinned to `@playwright/mcp@0.0.82` |
@@ -752,6 +752,11 @@ the `main` every tool defaults to).
 assumes Claude Code starts a project-scoped stdio server with the project root
 as its working directory. Its save tools refuse — with a named reason — unless
 the game is provably not running, and nothing in it ever deletes a file.
+The tools that drive or overwrite the game refuse `lease_held` while another
+session holds its machine-wide lease; the `live-operator` takes it with
+`hs_lease_acquire` before its first check and gives it back with
+`hs_lease_release` after the stop, and the `/workorder` driver reads
+`hs_lease_status` before asking to install anything.
 [`docs/tools/hs-drive-mcp.md`](../docs/tools/hs-drive-mcp.md) has the tool
 surface, the refusal vocabulary and the sharp edges, including why the server's
 process must keep the real `LOCALAPPDATA`.
@@ -830,19 +835,20 @@ py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v        # window resoluti
 py -3 -m unittest tests.test_hs_drive_mcp_input -v             # what hs_input actually injects, and the foreground it refuses without
 py -3 -m unittest tests.test_hs_drive_mcp_charselect -v        # hs_select_character's click sequence, its proof and every refusal
 py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # parsing ForgePact's menulayout listing, and the refusals it decides
+py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the machine-wide game lease, across real processes
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 
-The ten `test_hs_drive_mcp_*` suites stay green on CI's `ubuntu-latest`
+The eleven `test_hs_drive_mcp_*` suites stay green on CI's `ubuntu-latest`
 runner, where neither Windows, the SDK, nor any submodule is present — but only the parts that need one skip.
 The engine-bridge, launch and screenshot suites skip wholesale (launching a
 process, enumerating windows and grabbing the screen are Windows-only); the
 server suite skips its stdio and `hs_status` classes but still runs
 `SelfCheckSummaryTests`, which drives `run_checks` over a stub registry and so
 needs nothing; the release-boundary suite skips only its submodule check; and
-the saves, IPC, input, charselect and layout suites run in
-full, against fixtures and fakes (the input suite's Win32 calls all go through
+the lease suite skips only its two-stdio-server test; and the saves, IPC,
+input, charselect and layout suites run in full, against fixtures and fakes (the input suite's Win32 calls all go through
 one patched table, charselect patches `hs_input.inject` and `ipc.send`, and
 layout is pure parsing) — the IPC one because
 its gate is injected and its whole channel is two files in a temporary

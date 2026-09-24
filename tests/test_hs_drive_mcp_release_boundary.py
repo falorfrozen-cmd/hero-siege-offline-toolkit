@@ -98,9 +98,10 @@ class McpConfigTests(unittest.TestCase):
         # `charselect.py` joined the same list once `hs_input` and
         # `hs_select_character` shipped, and `layout.py` (the parser for
         # ForgePact's `menulayout` listing, whose rows `hs_select_character`
-        # takes every click point from) beside it.
+        # takes every click point from) beside it, and `lease.py`, which the
+        # six tools that drive or overwrite the game ask before they act.
         for name in ("ipc.py", "capture.py", "launch.py", "input.py",
-                     "charselect.py", "layout.py"):
+                     "charselect.py", "layout.py", "lease.py"):
             self.assertTrue((PACKAGE / name).is_file(),
                             f"{name} is missing; the game tools import it")
 

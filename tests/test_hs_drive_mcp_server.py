@@ -10,9 +10,10 @@ operating-system process, so nothing in this file could mock the engine inside
 it -- and the tri-state gate's whole point is what it does when the process
 snapshot *fails*, which cannot be arranged from outside.
 
-The subprocess runs with `HS_DRIVE_SAVE_DIR` and `HS_DRIVE_BACKUP_DIR` pointed
-at a fixture tree, so not even the read-only checks reach the real
-`hs2saves\\`.
+The subprocess runs with `HS_DRIVE_SAVE_DIR`, `HS_DRIVE_BACKUP_DIR` and
+`HS_DRIVE_LEASE_DIR` pointed at a fixture tree, so not even the read-only
+checks reach the real `hs2saves\\`, and no server started here can see or take
+the machine's real game lease.
 
 **`LOCALAPPDATA` is deliberately *not* overridden for the subprocess**, though
 the in-process tests do override it. The `py` launcher keeps its installed
@@ -20,7 +21,7 @@ runtimes under `%LOCALAPPDATA%\\Python`; with that variable repointed at a temp
 directory it concludes no runtime is installed, starts downloading one, and
 writes `Downloading: ...` to **stdout** -- which on a stdio transport is the
 protocol channel, so the client dies on `Invalid JSON: expected value at line 1
-column 1`. Measured here on 2026-09-20. The two `HS_DRIVE_*` overrides already
+column 1`. Measured here on 2026-09-20. The three `HS_DRIVE_*` overrides already
 redirect everything this server writes; `LOCALAPPDATA` is only read beyond them
 for ForgePact's `forgepact.json`, which is read-only.
 """
@@ -56,12 +57,17 @@ CORE_AND_GAME_TOOLS = {
 THIRTEEN_TOOLS = CORE_AND_GAME_TOOLS | {"hs_input"}
 
 #: Plus `hs_select_character`, from `hs-drive-mcp-charselect-ship`.
-EXPECTED_TOOLS = THIRTEEN_TOOLS | {"hs_select_character"}
+FOURTEEN_TOOLS = THIRTEEN_TOOLS | {"hs_select_character"}
 
-#: Two tools can take away something that was not theirs: a restore overwrites
-#: the live save directory, and a forced stop terminates a process. Everything
-#: else writes only files of its own.
-EXPECTED_DESTRUCTIVE = {"hs_saves_restore", "hs_stop_game"}
+#: Plus the three game-lease tools, from `hs-drive-game-lease`.
+EXPECTED_TOOLS = FOURTEEN_TOOLS | {"hs_lease_acquire", "hs_lease_status",
+                                   "hs_lease_release"}
+
+#: Three tools can take away something that was not theirs: a restore
+#: overwrites the live save directory, a forced stop terminates a process, and
+#: a forced lease acquire takes another session's lease. Everything else
+#: writes only files of its own.
+EXPECTED_DESTRUCTIVE = {"hs_saves_restore", "hs_stop_game", "hs_lease_acquire"}
 
 #: `readOnlyHint` is the flag a client auto-approves on without prompting, so
 #: it is the one annotation a tool must not overstate. Nothing in this set may
@@ -70,7 +76,7 @@ EXPECTED_DESTRUCTIVE = {"hs_saves_restore", "hs_stop_game"}
 #: `bp_ipc\\cmd.txt`, and an unconsumed ping is left there for the game to run
 #: at its next start.
 EXPECTED_READ_ONLY = {"hs_status", "hs_selfcheck", "hs_saves_list",
-                      "hs_saves_inspect", "hs_ipc_tail"}
+                      "hs_saves_inspect", "hs_ipc_tail", "hs_lease_status"}
 
 #: Every registered check, in registry order. Asserted as a whole rather than
 #: by absence, so a check that writes into the live game directory cannot be
@@ -102,8 +108,10 @@ else:
 
 
 def fixture_environment(base: Path) -> dict[str, str]:
-    """A temporary save dir and backup root. See the module docstring for why
-    `LOCALAPPDATA` is left alone for a subprocess started through `py`."""
+    """A temporary save dir, backup root and game-lease dir. See the module
+    docstring for why `LOCALAPPDATA` is left alone for a subprocess started
+    through `py`. Two servers given the same `base` share one lease, which is
+    what `tests/test_hs_drive_mcp_lease.py`'s two-server test relies on."""
     live = base / "hs2saves"
     live.mkdir(parents=True, exist_ok=True)
     (live / "herosiege1.hss").write_bytes(b"fixture character")
@@ -112,6 +120,7 @@ def fixture_environment(base: Path) -> dict[str, str]:
     environment.update({
         "HS_DRIVE_SAVE_DIR": str(live),
         "HS_DRIVE_BACKUP_DIR": str(base / "save-backups"),
+        "HS_DRIVE_LEASE_DIR": str(base / "lease"),
         "PYTHONIOENCODING": "utf-8",
     })
     return environment
@@ -167,8 +176,17 @@ class StdioSurfaceTests(unittest.TestCase):
         self.assertEqual(len(THIRTEEN_TOOLS), 13)
 
     def test_all_fourteen_tools_are_registered(self):
+        """Baseline: none of the fourteen `hs-drive-mcp-charselect-ship`
+        shipped went away. Kept under its old name now that the three lease
+        tools make the total seventeen, for the same reason as the twelve and
+        the thirteen."""
+        missing = FOURTEEN_TOOLS - {tool.name for tool in self.tools}
+        self.assertEqual(missing, set())
+        self.assertEqual(len(FOURTEEN_TOOLS), 14)
+
+    def test_all_seventeen_tools_are_registered(self):
         self.assertEqual({tool.name for tool in self.tools}, EXPECTED_TOOLS)
-        self.assertEqual(len(self.tools), 14)
+        self.assertEqual(len(self.tools), 17)
 
     def test_hs_input_is_not_read_only_not_destructive_not_idempotent(self):
         """All three false, and each for its own reason.
@@ -225,7 +243,7 @@ class StdioSurfaceTests(unittest.TestCase):
                 destructive.append(tool.name)
         self.assertEqual(set(destructive), EXPECTED_DESTRUCTIVE)
 
-    def test_the_read_only_tools_are_exactly_the_documented_five(self):
+    def test_the_read_only_tools_are_exactly_the_documented_six(self):
         """Baseline: the read-only set, over the wire, as a client sees it.
 
         `test_every_tool_carries_a_title_and_both_behaviour_hints` pins only the
