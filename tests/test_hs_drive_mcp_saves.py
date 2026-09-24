@@ -25,6 +25,14 @@ sys.path.insert(0, str(ROOT))
 
 from tools.hs_drive_mcp import launcher_bridge, procs, saves  # noqa: E402
 
+from tests.hs_drive_mcp_lease_fixtures import isolate_lease_dir  # noqa: E402
+
+
+def setUpModule():
+    # The game lease is machine-wide; see the fixture module for why this
+    # suite gets a lease directory of its own.
+    isolate_lease_dir()
+
 FIXTURE = {
     "herosiege1.hss": b"character one\x00\x01",
     "ether1.hss": b"ether one",

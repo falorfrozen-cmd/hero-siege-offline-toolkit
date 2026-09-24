@@ -448,6 +448,24 @@ and the sessions that did so were the most expensive drivers measured: up to
 325 turns, 99.5M tokens and $60 of list price, at 250-300K context a turn,
 against a median driver of $12.
 
+0. **Look at the game lease first.** Call `hs_lease_status` yourself — the
+   one `hs_*` call item 3's rule allows, because it only reads. There is one
+   Hero Siege install and one machine-wide lease on it, and the lease cannot
+   stop an install (hs-drive never installs), so you are the one who has to
+   look before asking to change the DLL:
+   - `held` by another process → do not ask to install and do not launch.
+     Tell the user the holder's `label` and `taken_utc` (from `record`) and
+     stop, or wait for their word. A `force` takeover happens only when the
+     owner says so: you do it, through `hs_lease_acquire` with `force: true`,
+     and log it under `### Live <n>` as a takeover naming the previous
+     holder from `took_over_from`. Never pass `force` on anyone's say-so but
+     the owner's, and never ask the operator to.
+   - `stale` → say so (the holder's process is gone) and carry on; the
+     operator's acquire recovers it.
+   - `free`, `held_by_me` → carry on. A `warning` on a free lease means the
+     last session backed up and never restored; relay it before the install
+     question.
+   - `unavailable` → report its `detail` and stop.
 1. **Ask before anything changes on the owner's machine.** One question:
    install this build now, and is a session convenient now? Never install on
    your own — the owner decides when the DLL their game loads changes. On a
@@ -458,8 +476,8 @@ against a median driver of $12.
    and which build is installed. Record its agent id in `## State` › `agents:`.
 3. **Relay, do not operate.** A `NEEDS-HUMAN` comes back with one `ASK` (it may number several actions): put
    it to the user verbatim, then `SendMessage` the operator their answer
-   (ToolSearch `select:SendMessage` if deferred). Do not run `hs_*` tools,
-   `ipc.ps1` or log reads yourself — you would be the operator at the most
+   (ToolSearch `select:SendMessage` if deferred). Do not run `hs_*` tools
+   (item 0's lease calls aside), `ipc.ps1` or log reads yourself — you would be the operator at the most
    expensive context in the pipeline.
 4. **Put the next decision to the owner first.** At `LIVE-DONE`, show the
    operator's `CHECKS` lines verbatim and ask whatever the next phase needs
@@ -482,7 +500,13 @@ against a median driver of $12.
    - `INSTRUMENT-BLIND` → the instrument could not see its own positive
      control. Nothing was measured, so nothing is concluded; it goes to the
      planner as an instrument defect, never into a doc as "does not happen".
-   - `LIVE-ABORTED` → report its `WHY` to the user and stop.
+   - `LIVE-ABORTED` → report its `WHY` to the user and stop. A `lease_held`
+     `WHY` is another session driving the game: the user decides whether to
+     wait or have you take the lease over (item 0).
+
+   Relay every `LEASE:` line's `restore_pending` and `warning` verbatim: the
+   operator backs up and does not restore, so a restore is owed until someone
+   runs `hs_saves_restore` on that backup.
 
    A capture `tools/live_checks.py` cannot read — a renamed, missing or
    unreadable check — is not repaired by anyone: report it, and re-run the
@@ -530,8 +554,8 @@ so in one line with the `resume` or `plan` command, and let the owner decide.
 
 `tools/workorder_audit.py` R17 fails a session whose operator wrote anything
 but its `<slug>-live-<n>.md`, installed a build, ran a writing git command,
-restored saves or force-stopped the game. R20 fails any other agent's edit to
-a capture, the driver's included.
+restored saves, force-stopped the game, or took over another holder's lease.
+R20 fails any other agent's edit to a capture, the driver's included.
 
 ### Step 5 — report
 

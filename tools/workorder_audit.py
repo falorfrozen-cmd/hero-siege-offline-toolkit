@@ -1282,8 +1282,11 @@ DLL_INSTALL_RE = re.compile(
 def rule_r17_live_operator_scope(session: Session) -> RuleResult:
     """`live-operator` runs the owner's game: it may write its own capture
     file and nothing else, never installs a build (the owner decides when the
-    DLL their game loads changes), never runs a writing git command, and
-    never restores saves or force-stops the game on its own."""
+    DLL their game loads changes), never runs a writing git command, never
+    restores saves or force-stops the game on its own, and never takes over
+    another session's game lease: `hs_lease_acquire` with `force` is the
+    owner's decision, made through the driver, and a held lease is the
+    operator's `LIVE-ABORTED`."""
     evidence = []
     for agent in all_subagents(session):
         if agent.agent_type != "live-operator":
@@ -1304,6 +1307,8 @@ def rule_r17_live_operator_scope(session: Session) -> RuleResult:
                 evidence.append(f"{agent.label} restored saves at {call.ts_start}")
             elif call.name.endswith("hs_stop_game") and call.tool_input.get("force"):
                 evidence.append(f"{agent.label} force-stopped the game at {call.ts_start}")
+            elif call.name.endswith("hs_lease_acquire") and call.tool_input.get("force"):
+                evidence.append(f"{agent.label} forced a lease takeover at {call.ts_start}")
     return RuleResult("R17", "live-operator-scope", passed=not evidence, evidence=evidence)
 
 

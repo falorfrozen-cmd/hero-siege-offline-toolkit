@@ -62,7 +62,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from . import capture, ipc, launcher_bridge, procs, results
+from . import capture, ipc, launcher_bridge, lease, procs, results
 
 WM_CLOSE = 0x0010
 PROCESS_TERMINATE = 0x0001
@@ -257,7 +257,11 @@ def wait_ready(*, engine: Any, gate: Gate, timeout_s: float, require_plugin: boo
         return f"the process gate stopped answering ({state_now}: {now_why})"
 
     remaining = max(1.0, deadline - time.monotonic())
-    sent = ipc.send([PING], timeout_s=remaining, gate=gate, abort=watch, tool=tool)
+    # `lease_checked`: `hs_launch` asked the lease before it launched, and
+    # `hs_wait_ready` is deliberately not gated -- it drives nothing but one
+    # ping, for a game somebody else started.
+    sent = ipc.send([PING], timeout_s=remaining, gate=gate, abort=watch, tool=tool,
+                    lease_checked=True)
 
     if results.is_refusal(sent):
         if stopped and stopped[-1][0] != procs.NOT_RUNNING:
@@ -347,7 +351,21 @@ def wait_ready(*, engine: Any, gate: Gate, timeout_s: float, require_plugin: boo
 def hs_launch(exe_path: str | None = None, wait_for_plugin: bool = True,
               timeout_s: float = DEFAULT_LAUNCH_TIMEOUT_S, *,
               gate: Gate | None = None, tool: str = "hs_launch") -> dict[str, Any]:
-    """Launch the modded game through ForgePact's engine, then wait for it."""
+    """Launch the modded game through ForgePact's engine, then wait for it.
+
+    The game lease is asked first, before the engine loads, so a second
+    session sees `lease_held` rather than whatever the game's own state would
+    have made it; every other answer carries `lease: "held" | "none"`.
+    """
+    refusal = lease.guard(tool)
+    if refusal:
+        return refusal
+    return lease.stamp(_launch(exe_path, wait_for_plugin, timeout_s, gate=gate,
+                               tool=tool))
+
+
+def _launch(exe_path: str | None, wait_for_plugin: bool, timeout_s: float, *,
+            gate: Gate | None, tool: str) -> dict[str, Any]:
     gate = procs.gate if gate is None else gate
     started = time.monotonic()
 
@@ -410,7 +428,19 @@ def hs_wait_ready(timeout_s: float = DEFAULT_LAUNCH_TIMEOUT_S,
 def hs_stop_game(force: bool = False, timeout_s: float = DEFAULT_STOP_TIMEOUT_S,
                  *, gate: Gate | None = None,
                  tool: str = "hs_stop_game") -> dict[str, Any]:
-    """Post `WM_CLOSE` to every visible game window and wait for the exit."""
+    """Post `WM_CLOSE` to every visible game window and wait for the exit.
+
+    Gated by the lease like `hs_launch`: closing a game another session is
+    driving loses that session's run as surely as launching over it.
+    """
+    refusal = lease.guard(tool)
+    if refusal:
+        return refusal
+    return lease.stamp(_stop_game(force, timeout_s, gate=gate, tool=tool))
+
+
+def _stop_game(force: bool, timeout_s: float, *, gate: Gate | None,
+               tool: str) -> dict[str, Any]:
     gate = procs.gate if gate is None else gate
     started = time.monotonic()
 

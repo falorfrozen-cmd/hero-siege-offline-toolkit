@@ -139,7 +139,11 @@ either of two routes), clicks from the title screen into a loaded character
 screenshot), and closes the game gracefully — every tool refusing
 with a named reason rather than guessing, the save tools refusing unless the
 game is provably closed, and the injection refusing unless the target window
-belongs to a running game process. See
+belongs to a running game process. A machine-wide game lease
+(`hs_lease_acquire`, `hs_lease_status`, `hs_lease_release`) keeps two
+sessions from driving the one game at once: while another live hs-drive
+process holds it, every tool that drives the game or overwrites saves
+refuses with `lease_held`, naming the holder. See
 [`docs/tools/hs-drive-mcp.md`](docs/tools/hs-drive-mcp.md). Nothing about it
 ships to a player.
 

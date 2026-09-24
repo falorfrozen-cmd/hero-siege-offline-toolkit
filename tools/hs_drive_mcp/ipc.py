@@ -58,7 +58,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from . import launcher_bridge, procs, results
+from . import launcher_bridge, lease, procs, results
 
 DIR_NAME = "bp_ipc"
 CMD_NAME = "cmd.txt"
@@ -324,7 +324,7 @@ def _settle(out: Path, until: float) -> int:
 def send(lines: Sequence[str], *, timeout_s: float = DEFAULT_TIMEOUT_S,
          queue: bool = False, gate: Gate | None = None,
          abort: Callable[[], str] | None = None,
-         tool: str = "hs_command") -> dict[str, Any]:
+         tool: str = "hs_command", lease_checked: bool = False) -> dict[str, Any]:
     """Write `lines` to `cmd.txt` and return exactly what the plugin appended.
 
     The reply is the byte delta of `out.txt` after the pre-send length. If
@@ -340,7 +340,26 @@ def send(lines: Sequence[str], *, timeout_s: float = DEFAULT_TIMEOUT_S,
     and a wait that cannot notice the game died runs its full budget after a
     startup crash. The reason it returned travels back as `aborted`; ForgePact's
     own `wait_for_plugin_ready` stops on the same condition.
+
+    The game lease is asked first, before the payload is even checked, so a
+    second session sees `lease_held` and nothing is written; every other
+    answer carries `lease: "held" | "none"`. `lease_checked=True` is for the
+    callers inside this package that already asked (`hs_launch`,
+    `hs_select_character`) or deliberately do not (`hs_wait_ready`'s ping).
     """
+    if lease_checked:
+        return _send(lines, timeout_s=timeout_s, queue=queue, gate=gate,
+                     abort=abort, tool=tool)
+    refusal = lease.guard(tool)
+    if refusal:
+        return refusal
+    return lease.stamp(_send(lines, timeout_s=timeout_s, queue=queue, gate=gate,
+                             abort=abort, tool=tool))
+
+
+def _send(lines: Sequence[str], *, timeout_s: float, queue: bool,
+          gate: Gate | None, abort: Callable[[], str] | None,
+          tool: str) -> dict[str, Any]:
     gate = procs.gate if gate is None else gate
     started = time.monotonic()
 

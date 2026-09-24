@@ -38,6 +38,14 @@ from tools.hs_drive_mcp import input as input_module  # noqa: E402
 from tests.hs_drive_mcp_menulayout_fixtures import (  # noqa: E402
     CHOSE_RM_REPLY, MAIN_MENU_REPLY, PANEL_REPLY)
 
+from tests.hs_drive_mcp_lease_fixtures import isolate_lease_dir  # noqa: E402
+
+
+def setUpModule():
+    # The game lease is machine-wide; see the fixture module for why this
+    # suite gets a lease directory of its own.
+    isolate_lease_dir()
+
 HWND = 0x1234ABCD
 PID = 4242
 CLIENT_W, CLIENT_H = 1920, 1080

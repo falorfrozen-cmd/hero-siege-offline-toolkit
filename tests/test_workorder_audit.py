@@ -1521,12 +1521,14 @@ class R17Tests(TempDirMixin, unittest.TestCase):
 
     def test_pass_the_session_it_is_meant_to_run(self):
         r = self._operator(
+            ("mcp__hs-drive__hs_lease_acquire", {"label": "x-live-2"}),
             ("mcp__hs-drive__hs_selfcheck", {}),
             ("Bash", {"command": "cp -r \"$LOCALAPPDATA/Hero_Siege/hs2saves\" \"$USERPROFILE/HeroSiege-manual-save-backup/x\""}),
             ("mcp__hs-drive__hs_command", {"lines": ["toggleborder stat"]}),
             ("Write", {"file_path": self.CAPTURE}),
             ("Edit", {"file_path": self.CAPTURE}),
             ("mcp__hs-drive__hs_stop_game", {}),
+            ("mcp__hs-drive__hs_lease_release", {}),
             ("Bash", {"command": "git status --porcelain"}))
         self.assertTrue(r.passed, r.evidence)
 
@@ -1548,6 +1550,15 @@ class R17Tests(TempDirMixin, unittest.TestCase):
         self.assertFalse(self._operator(("Bash", {"command": "git commit -am x"}), sub="g").passed)
         self.assertFalse(self._operator(("mcp__hs-drive__hs_saves_restore", {"backup_id": "b"}), sub="r").passed)
         self.assertFalse(self._operator(("mcp__hs-drive__hs_stop_game", {"force": True}), sub="f").passed)
+
+    def test_fail_a_forced_lease_takeover(self):
+        # A held lease is another session's live run; taking it is the
+        # owner's decision, made through the driver, never the operator's.
+        r = self._operator(("mcp__hs-drive__hs_lease_acquire",
+                            {"label": "x-live-2", "force": True}), sub="lease")
+        self.assertFalse(r.passed)
+        self.assertTrue(any("forced a lease takeover" in line for line in r.evidence),
+                        r.evidence)
 
     def test_other_agents_are_not_held_to_it(self):
         records = tool_turn(0, 0, "Edit", {"file_path": "C:/repo/ForgePact/plugin/ModuleMain.cpp"})

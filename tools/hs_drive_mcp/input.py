@@ -80,7 +80,7 @@ import ctypes
 import time
 from typing import Any, Callable
 
-from . import capture, procs, results
+from . import capture, lease, procs, results
 
 TOOL = "hs_input"
 
@@ -636,7 +636,7 @@ def inject(actions: Any, *, route: str = ROUTE_SEND_INPUT,
            require_foreground: bool = True,
            force_focus: bool = False,
            gate: Callable[[], tuple[str, str]] | None = None,
-           tool: str = TOOL) -> dict[str, Any]:
+           tool: str = TOOL, lease_checked: bool = False) -> dict[str, Any]:
     """Send `actions` to the game window and report exactly what was sent.
 
     `force_focus` opts a caller in to the bounded `FOCUS_STEPS` escalation
@@ -644,10 +644,30 @@ def inject(actions: Any, *, route: str = ROUTE_SEND_INPUT,
     never sets it (see the module docstring). Every result names the step
     that gave the game focus in `focus_via`.
 
-    Refusals: `invalid_input`, `game_not_running`, `game_state_unknown`,
+    The game lease is asked first, before the actions are even parsed, so a
+    second session sees `lease_held` and nothing is sent; every other answer
+    carries `lease: "held" | "none"`. `lease_checked=True` is for
+    `hs_select_character`, which asked once for the whole sequence.
+
+    Refusals: `lease_held`, `lease_unavailable`, `invalid_input`,
+    `game_not_running`, `game_state_unknown`,
     `engine_source_missing`, `engine_import_failed`,
     `no_visible_window_for_pid`, `window_minimized`, `foreground_not_game`.
     """
+    if lease_checked:
+        return _inject(actions, route=route, require_foreground=require_foreground,
+                       force_focus=force_focus, gate=gate, tool=tool)
+    refusal = lease.guard(tool)
+    if refusal:
+        return refusal
+    return lease.stamp(_inject(actions, route=route,
+                               require_foreground=require_foreground,
+                               force_focus=force_focus, gate=gate, tool=tool))
+
+
+def _inject(actions: Any, *, route: str, require_foreground: bool,
+            force_focus: bool, gate: Callable[[], tuple[str, str]] | None,
+            tool: str) -> dict[str, Any]:
     started = time.monotonic()
 
     if route not in ROUTES:
