@@ -101,6 +101,11 @@ Thumbs.db
 .claude/workorders/*-context.md
 .claude/workorders/.rounds/
 .claude/workorders/*.log
+# Per-workorder output directories (screenshots, baselines, exports) and the
+# JSON the workorder tools write beside the plans: evidence for the run, not
+# documentation.
+.claude/workorders/*/
+.claude/workorders/*.json
 # live-operator's session captures: quoted game output and save-file hashes,
 # read by the workorder's criteria and folded into docs by the record round.
 .claude/workorders/*-live-*.md
