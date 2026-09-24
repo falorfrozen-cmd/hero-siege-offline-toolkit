@@ -2106,6 +2106,7 @@ here before pressing Publish.
 ---
 
 ## Source Documents & Evidence References
+- Shared game facts folded from the research docs below: `../../RUNTIME_DATA_MODELS.md` §5-§15 (a fact about the game itself goes there too, per `AGENTS.md` § "Fold What a Mod Learned About the Game Into the Shared References")
 - Submodule Readme: `../../../ForgePact/README.md`
 - Plugin Build Specifications: `../../../ForgePact/plugin/BUILD.md`
 - Plugin Build Script: `../../../ForgePact/plugin_build/build.bat`

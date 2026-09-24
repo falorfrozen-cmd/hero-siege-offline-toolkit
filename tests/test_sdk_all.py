@@ -44,6 +44,40 @@ class TestSdkArtifacts(unittest.TestCase):
         content = json.loads(curated.read_text(encoding="utf-8"))
         self.assertGreater(len(content), 0)
 
+    def test_curated_game_facts_name_real_assets(self):
+        """drop_types.json and special_content.json name scripts and objects,
+        never indices (indices move between builds), so every name must be one
+        the SDK binds."""
+        sys.path.insert(0, str(SDK_ROOT / "python"))
+        from hs_game_sdk.objects import GameObject
+        from hs_game_sdk.scripts import GameScript
+
+        drops = json.loads((SDK_ROOT / "curated" / "drop_types.json").read_text(encoding="utf-8"))
+        special = json.loads((SDK_ROOT / "curated" / "special_content.json").read_text(encoding="utf-8"))
+
+        scripts = {drops["loaddrops"]["script"], drops["repository_categories"]["script"], special["est"]["filled_by"]}
+        scripts |= {t["script"] for t in drops["drop_types"] if "script" in t}
+        for name in scripts:
+            self.assertIn(name, GameScript.__members__, f"{name} is not an SDK script")
+        for mechanic in special["mechanics"]:
+            self.assertIn(mechanic["marker"], GameObject.__members__, f"{mechanic['marker']} is not an SDK object")
+
+        types = [t["type"] for t in drops["drop_types"]]
+        self.assertEqual(len(types), len(set(types)), "a drop type is listed twice")
+        self.assertTrue(all(0 <= t < drops["loaddrops"]["chances_length"] for t in types))
+        self.assertTrue(all(t["status"] in ("measured", "static_reading") for t in drops["drop_types"]))
+
+        categories = [c["category"] for c in drops["repository_categories"]["categories"]]
+        self.assertFalse(set(categories) & set(drops["repository_categories"]["empty"]))
+        # The two numberings disagree on purpose: 10 is flask as a drop type and charms as a category.
+        self.assertEqual(next(t["yields"] for t in drops["drop_types"] if t["type"] == 10), "flask")
+        self.assertEqual(next(c["holds"] for c in drops["repository_categories"]["categories"] if c["category"] == 10), "charms")
+
+        slots = [s["slot"] for s in special["slots"]]
+        self.assertEqual(slots, list(range(special["est"]["slots"])))
+        referenced = {s for m in special["mechanics"] for s in m["slots"]}
+        self.assertEqual(referenced, set(slots) - {special["est"]["shared_gate_slot"]})
+
 
 @unittest.skipUnless(
     DATA_DIR.exists(),
