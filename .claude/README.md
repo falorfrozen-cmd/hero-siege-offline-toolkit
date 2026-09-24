@@ -508,7 +508,13 @@ before, is not one the round replaces, and is gone after ends the launch as
 `STATE-LOST` — carrying `lost`, the full `state` it should read, and `then`,
 the outcome the round would otherwise have returned — before any verifier
 reads the damaged block. `tools/workorder_audit.py` R18 checks the same thing
-from the transcript.
+from the transcript. A scribe that wrote nothing (`written: false`, or no
+result) is not compared at all: the launch ends as `SCRIBE-FAILED`, carrying
+the `log` block and `state` it should have written and `then`. The scribe is
+handed absolute paths, joined under the driver's `checkoutRoot` (`git
+rev-parse --show-toplevel`): on 2026-09-24 a scribe given relative ones in a
+worktree resolved them against the main checkout, wrote nothing, and its "N/A"
+report came back as a false `STATE-LOST`.
 
 It runs as the restricted `scribe` agent type (`.claude/agents/scribe.md`,
 `Read`/`Edit` only), not the unrestricted `workflow-subagent` every other
