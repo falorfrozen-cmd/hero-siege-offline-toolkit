@@ -212,9 +212,11 @@ M: the bag's own grids read the same way: `inventoryMaterialGrid`
 stack at column 7, row 0 (`nodeStartX=7`); `.7.0` was out of range (RD
 `### Phase 1j results`). M: the Crafting Cube's own input grid is
 `New_Inventory_Data_obj.craftGrid`, an array of 6 length-9 arrays, mirrored
-at the Cube's own grid instance's `nodeGrid`; an item placed there by name
-(`GridAddItem`) stays in map `0`, the bag's, not map `9` (RD `### Phase 1j
-results`, Live 1j).
+at the Cube's own grid instance's `nodeGrid`. A hand-dropped item that was
+already in the bag stays in map `0` there (`cube-holder`). A stash item
+placed into the grid by name needs `ChangeItemOwner(9, 0, <fingerprint>)` as
+well as `GridAddItem`, after which it left map `9` (`cube-place`); map `0`
+was not read back after that call (RD `### Phase 1j results`, Live 1j).
 
 ### The item
 
@@ -292,11 +294,14 @@ M, the rejected shape, recorded with what was supplied (RD `### Phase 1j
 results`, Live 1j): four `callm` calls with self and other `Console_Save_obj`
 - `SetItemDef` (key `"o"`) and `GenerateItemHash`, tried on both the stash
 entry and the bag stack's own struct - each entered `script_execute` and
-threw, with no state change. The game's own split instead runs those same
-two methods with the struct itself as self and other `UI_Split_Stack_obj`
-(RD `### Phase 1j results`, split-control); a self `callm` cannot supply.
-The inline `set` route on `itemDefinitionStruct.o` was never tried, because
-the control showed a method, not an inline write.
+threw, with no state change. M: the game's own split instead runs those same
+two methods with self `(not an instance: object/struct object_index=undefined)`
+and other `UI_Split_Stack_obj` (RD `### Phase 1j results`, split-control), a
+self `callm`'s instance-self form cannot supply. R, an inference from that
+reading, not itself probed: that self is the item's own struct - the capture
+shows only "not an instance", not that struct's identity. The inline `set`
+route on `itemDefinitionStruct.o` was never tried, because the control showed
+a method, not an inline write.
 
 ### The recipe amount and the craft route
 
@@ -336,6 +341,9 @@ M: two more curated entries, added after Live 1j (RD `### Phase 1j
 results`): `save` names the close's own save route (`SaveLocalFile`,
 `hs-game-sdk` index 3518; self `Console_Save_obj`, index 980; `stash_kind`
 4); `crafting_cube` names the Cube's input grid (`New_Inventory_Data_obj`,
-index 3067; variable `craftGrid`; the item stays in map `0`). Neither the
-grid's persistence across a save nor whether the game's own count walks it
-is measured; both are recorded as not observed on the curated entry itself.
+index 3067; variable `craftGrid`; a stash item placed there by name needs
+`ChangeItemOwner(9, 0)` as well as `GridAddItem`). Whether the game's own
+count walks that grid is not measured, recorded as not observed on the
+curated entry itself; the grid's persistence across a save is also not
+measured, and the owner's design (2026-09-24) does not need it, since only
+the craft's own items are placed there, at the press, and consumed at once.

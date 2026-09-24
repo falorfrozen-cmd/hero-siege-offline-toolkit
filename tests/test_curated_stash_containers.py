@@ -143,6 +143,7 @@ def validate(data: dict, doc_text: str) -> list:
             "RUNTIME_DATA_MODELS.md section 5"
         )
     require("crafting_cube.item_map_owner", crafting_cube.get("item_map_owner"))
+    require("crafting_cube.note", crafting_cube.get("note"))
 
     for source in data.get("sources", []):
         source_file = source.get("file")

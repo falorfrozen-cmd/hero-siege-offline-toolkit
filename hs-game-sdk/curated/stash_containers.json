@@ -43,7 +43,7 @@
     "index": 3067,
     "variable": "craftGrid",
     "item_map_owner": 0,
-    "note": "the grid's persistence across a save and whether the game counts it are not observed",
+    "note": "whether the game's own count walks this grid is not observed; the grid's persistence across a save does not gate the build, per the owner's design (2026-09-24): only the craft's own items are placed here, at the press, and consumed at once",
     "measured": {
       "date": "2026-09-24",
       "session": "Live 1j"
