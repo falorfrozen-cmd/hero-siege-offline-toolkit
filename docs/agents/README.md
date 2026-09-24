@@ -9,6 +9,7 @@ a link back to the section it backs.
 | `AGENTS.md` section | Story and evidence |
 |---|---|
 | [`Some of These Rules Are Enforced, Not Just Written`](../../AGENTS.md#some-of-these-rules-are-enforced-not-just-written) | [rules-enforced.md](rules-enforced.md); [workorder-calibration.md](workorder-calibration.md) — the 2026-09-22 recalibration of `/workorder`'s audit budgets and model tiers on 22 real runs |
+| [`Mod Development Workflow: Test Before / After, Then Build to It`](../../AGENTS.md#mod-development-workflow-test-before--after-then-build-to-it) | [static-model-workflow.md](static-model-workflow.md) — the issue #162 pilot: the drop roll modelled from a written spec, and the live rounds it would have saved |
 | [`Limit Rebuilds & Reruns During Development`](../../AGENTS.md#limit-rebuilds--reruns-during-development) | [limit-rebuilds-reruns.md](limit-rebuilds-reruns.md) |
 | [`Prove the Instrument Before Trusting a Negative Result`](../../AGENTS.md#prove-the-instrument-before-trusting-a-negative-result) | [prove-the-instrument.md](prove-the-instrument.md) |
 | [`Check a Permission Where It Is Used, Not Where It Is Convenient`](../../AGENTS.md#check-a-permission-where-it-is-used-not-where-it-is-convenient) | [check-a-permission.md](check-a-permission.md) |
@@ -18,7 +19,6 @@ a link back to the section it backs.
 | [`HS Game SDK Usage`](../../AGENTS.md#hs-game-sdk-usage) | [hs-game-sdk-usage.md](hs-game-sdk-usage.md) |
 
 Sections not listed here (`Submodule & Directory Development Instructions`,
-`Offer /workorder…`, `Legal`, `Mod Development Workflow`, `Drive a Tauri
-App…`, `Documentation & Instructions Maintenance`, and `HS Game SDK Usage`'s
+`Offer /workorder…`, `Legal`, `Drive a Tauri App…`, `Documentation & Instructions Maintenance`, and `HS Game SDK Usage`'s
 intro list) carry no incident narrative worth splitting out — the rule and its
 one-sentence why are the whole story.

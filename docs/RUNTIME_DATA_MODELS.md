@@ -992,6 +992,19 @@ The data tables in this section are also in
   (`DropKeys`), 12 (`DropDungeonKeys`), 31 (`DropBifrostKey`) and 40
   (`DropChaosKey`) are built identically. The ceiling's value is unread. **Static
   reading.**
+- The die draws a whole number, so every chance in (0, 1] passes only on a draw
+  of zero: 0.5 and 0.01 are the same gate. Scaling the relic gate chance by 0.05,
+  and then by 0.001, did not reduce relics. A chance of 0 never passes (§13.3).
+  **Measured 2026-08-28** (ForgePact `c0a6a6b`).
+- With slot 12 set to the monster's own `chances[11]` (5–9), 95 of 1233 extra
+  type-12 rolls passed (about 7.7%). **Measured 2026-08-27.** That pass rate fits
+  a ceiling of about 100 outcomes and rules out 10 or 1000. This is an inference
+  from the rate, not a reading of the value, and whether the top value is
+  included is open. It also rests on the instrument: 1233 counts our own
+  re-calls, but 95 is the counter of a table-only `DropDungeonKeys` hook, which
+  read 95 rather than 0 and so saw that path, though only the rate's fit shows
+  it saw every call on it. The mechanism in our own words, and a model checked against
+  these numbers, is [`docs/models/drop-roll-spec.md`](models/drop-roll-spec.md).
 - Types measured by opening every gate on one monster (vanilla chance on that
   monster where non-zero): 4 rune (14), 6 gem (45), 10 flask (3), 12 dungeon
   key, 15 Ninja Hook, 16 Angelic Key, 17 and 49 Satanic Dice, 18 Ruby Key, 25
@@ -1045,6 +1058,13 @@ not measured beyond `itemType` 14 (§9.3).
 `droprate.base` values by index: runes 350 → 334,800, orbs 11,000–14,400, gems
 9,000/11,000, chipped/flawed/flawless stones 50/100/200, jewels 410, most dungeon
 keys 1500. **Measured 2026-08-27.**
+`DropRelic`'s drop is not a 1-in-`droprate.base` roll: all 156 relics carried
+25,000,000 and relics still dropped constantly, so dividing every relic's base by
+the same factor (the `droprate group relic` lever) changed nothing observable.
+**Measured 2026-08-28** (ForgePact `c0a6a6b`). Whether it reads the base at all,
+for example as a weight in the pick between relics, is **not established**: every
+relic had the same value, and a uniform divide leaves a weighted pick unchanged.
+Changing one relic's base would settle it.
 [blood pact §3](../ForgePact/docs/blood-pact-values-research.md#3-eşya-kategorisi-haritası-yeni)
 
 ### 13.3 Dungeon keys
