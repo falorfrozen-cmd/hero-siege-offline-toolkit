@@ -1476,9 +1476,13 @@ The by-name stash save after each press (`SaveLocalFile(4, 1)`, the close's own 
 above) moved `stash.hss`'s write time, and
 the stash counts tool read the lowered stacks before any stash open, in the
 stash window, after the game's own quit and reload, and with the game
-stopped. The Cube builds its recipe-availability list when it opens, so a
-count change (the `craftmats` toggle) takes effect at the next Cube open,
-not while the window stays open (observed once). Not observed: the Cube's
+stopped. The Cube's recipe list shows availability as computed when the Cube
+opened: after `craftmats 0` a recipe the stash had made available still read
+available while the window stayed open, and read unavailable at the next
+Cube open (observed once, on to off). A press on a row whose shown
+availability is stale was not observed, so what the game does on it, given
+the press-time count inside `CraftFindRecipeItems` above, is not measured.
+Not observed: the Cube's
 `craftGrid` as a press-time destination, a take that empties a stash entry,
 and the game's own hash check on the edited and created items beyond the
 owner's drag and reload finding nothing marked.
