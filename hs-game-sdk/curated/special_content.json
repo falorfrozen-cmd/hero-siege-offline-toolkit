@@ -1,0 +1,34 @@
+{
+  "$schema_note": "Hand-verified game knowledge, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. global.eSt is refilled at every Room Start by five-argument ReturnSpecificStat calls, one per slot, carrying the slot's stat id. A mechanic runs only if eSt[0] <= 0 AND each of its own slots is > 0 (the comparison directions are a static reading; the values are measured). The values are real parameters, not divisors: setting Battlefield's or Rift's slot to 1 stopped the mechanic. `measured_value` is one character's reading on 2026-08-25, not a constant. Markers are named, never indexed: the S10 notes' object indices belong to an older build, so resolve them through hs-game-sdk. Prose and sources: docs/RUNTIME_DATA_MODELS.md section 14.",
+  "source": "ForgePact/docs/S10-special-content-notes.md, sections on eSt being filled by the game, the slot and marker table, and the two gates in opposite directions",
+  "est": {
+    "global": "eSt",
+    "slots": 11,
+    "filled_by": "gml_Script_ReturnSpecificStat",
+    "shared_gate_slot": 0
+  },
+  "slots": [
+    { "slot": 0, "stat": 756, "content": "shared gate (every mechanic)", "measured_value": 35 },
+    { "slot": 1, "stat": 675, "content": "Chaos Pillars", "measured_value": 50 },
+    { "slot": 2, "stat": 682, "content": "Chaos Pillars", "measured_value": 3 },
+    { "slot": 3, "stat": 676, "content": "Chaos Pillars", "measured_value": 4 },
+    { "slot": 4, "stat": 705, "content": "Battlefield", "measured_value": 12 },
+    { "slot": 5, "stat": 721, "content": "Battlefield", "measured_value": 25 },
+    { "slot": 6, "stat": 666, "content": "Chaos Tower", "measured_value": 15 },
+    { "slot": 7, "stat": 813, "content": "Cursed Orb", "measured_value": 0 },
+    { "slot": 8, "stat": 770, "content": "Rift", "measured_value": 14 },
+    { "slot": 9, "stat": 723, "content": "Shadow Realm", "measured_value": 18 },
+    { "slot": 10, "stat": 823, "content": "Summon Portal", "measured_value": 28 }
+  ],
+  "mechanics": [
+    { "content": "Chaos Pillars", "marker": "Spawn_Chaos_Pillars_obj", "slots": [1, 2, 3], "note": "uses a different pattern from the two-gate comparison" },
+    { "content": "Battlefield", "marker": "Spawn_Battlefield_obj", "slots": [4, 5] },
+    { "content": "Chaos Tower", "marker": "Spawn_Chaos_Tower_obj", "slots": [6] },
+    { "content": "Cursed Orb", "marker": "Spawn_Cursed_Orb_obj", "slots": [7] },
+    { "content": "Rift", "marker": "Spawn_Rift_obj", "slots": [8] },
+    { "content": "Shadow Realm", "marker": "Spawn_Shadow_Realm_obj", "slots": [9] },
+    { "content": "Summon Portal", "marker": "Spawn_Summon_Portal_obj", "slots": [10] },
+    { "content": "Abyss", "marker": "Spawn_Abyss_obj", "slots": [] },
+    { "content": "Traveling Merchant", "marker": "Spawn_Traveling_Merchant_obj", "slots": [] }
+  ]
+}
