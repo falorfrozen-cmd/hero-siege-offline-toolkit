@@ -109,11 +109,13 @@
 ## Process Boundaries, HTTP Security, & Save Safety
 
 ### 1. Loopback Binding & Port Range Guard
-- The local server binds strictly to `127.0.0.1:8765`.
+- The local server binds strictly to `127.0.0.1`, on `8765` unless another program already holds that port.
 - At startup, the server acquires `editor-startup.itemeditor.lock` and inspects the port range `8765–8774`.
 - If an existing instance of the same editor version is running, the launcher reuses it by opening the browser to that port.
-- If an older or unrecognized process occupies a port in `8765–8774`, startup fails closed to prevent port confusion.
-- While active, the editor responds with its application identity across all 10 reserved ports, preventing legacy versions (v2.7.2 and older) from spawning concurrently.
+- If a different editor version runs on any port in `8765–8774`, startup fails closed. A build older than v2.7.2 has no `/api/instance`; it is recognized on `8765`, the only port those builds ever used, by the `<title>Hero Siege Item Editor` its page starts with.
+- Since 2.16.2, a port held by anything that is not an Item Editor is left to its owner, and startup takes the other ports. ForgePact's panel prefers `8766`; a range Windows reserved is skipped the same way. Before 2.16.2, startup refused ("occupied by an unidentified or legacy process").
+- The servers are `EditorHTTPServer`, which leaves SO_REUSEADDR off on Windows. `ThreadingHTTPServer` turns it on, and on Windows that let the editor's bind succeed on a port another program already served (the other program kept the connections). Without it, an occupied port fails the bind and is identified as above.
+- While active, the editor responds with its application identity on every port it holds, preventing legacy versions (v2.7.2 and older) from spawning concurrently. The runtime peer check before each write still probes the ports it left to other programs.
 
 ### 2. HTTP Security & CSRF Protection
 - **Host Header Enforcement:** Every HTTP request must supply a `Host` header matching `127.0.0.1:<port>` or `localhost:<port>`, blocking DNS rebinding attacks.
@@ -186,7 +188,7 @@ All commands below are executed from the submodule root `hero-siege-item-editor/
 | --- | --- | --- | --- | --- | --- | --- |
 | `py -3 hs_item_editor_gui.py` | PowerShell / CMD (Windows) | `hero-siege-item-editor/` | Python 3.10+ installed | Launches editor HTTP server at `http://127.0.0.1:8765` and opens browser | Creates lockfile `.item_editor.lock` | Verified |
 | `ItemEditor.bat` | Windows CMD | `hero-siege-item-editor/` | Python in PATH | Launches `hs_item_editor_gui.py` | Same as GUI launch | Verified |
-| `py -3 -m unittest test_launch_readiness.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs 23 launch and port verification tests | None | Verified |
+| `py -3 -m unittest test_launch_readiness.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs 29 launch and port verification tests (`ForeignPortTests` bind real loopback ports in 20000–32767, never 8765–8774) | None | Verified |
 | `py -3 -m unittest test_http_security.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs 9 HTTP CSRF / Host header security tests | None | Verified |
 | `py -3 -m unittest test_hss_recovery.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs 17 save recovery and decode tests | None | Verified |
 | `py -3 -m unittest test_hss_recovery_integration.py` | PowerShell / CMD | `hero-siege-item-editor/` | Python 3.10+ | Runs 12 recovery integration tests | Temp files in test sandbox | Verified |
@@ -226,7 +228,9 @@ All commands below are executed from the submodule root `hero-siege-item-editor/
 | --- | --- | --- |
 | "GAME RUNNING" warning stays visible when game is closed | Localized Windows output formatting in `tasklist` | Editor uses lenient tasklist parsing and PowerShell fallback. Ensure `Hero_Siege.exe` has fully terminated in Task Manager. |
 | Red "Different Windows User" status on Item Forge | Stale report file from before the item was forged | A report older than the forge file triggers a "restart Hero Siege" prompt. Restart the game to allow ForgePact to reload `.runtime`. |
-| Port 8765 occupied / startup refused | Another process or legacy editor instance is using port 8765 | Close conflicting processes. The editor verifies application identity across ports 8765–8774 and refuses to bind if an unidentified service is present. |
+| Startup refused: "Item Editor vX is already running" or "An Item Editor older than v2.7.2 is already running" | Another editor version holds a port in 8765–8774 | Close that editor. Since 2.16.2, a program that is not an Item Editor (ForgePact's panel on 8766) no longer blocks startup; the editor leaves its port alone. |
+| Startup refused: "No free editor port in 8765..8774" | Other programs, or a range Windows reserved, hold all ten ports | Close one of them. `netsh int ipv4 show excludedportrange protocol=tcp` lists Windows' reserved ranges. |
+| Startup refused: "Local editor port N is occupied by an unidentified or legacy process" | A release before 2.16.2, and a program on a port in 8765–8774 that does not share it (ForgePact's panel does share; those releases bound 8766 on top of it instead) | Update to 2.16.2, or close that program before starting the editor. |
 | Corrupted `.hss` save file fails to open | Save file payload was partially written or truncated | Use `hss_recovery.py` via the recovery interface to decode and salvage valid character/inventory JSON. |
 | Forged stats do not appear in combat | ForgePact plugin not installed or game launched without loader | Ensure `BloodPactPlugin.dll` is installed in the game's `bin/` directory and loaded via Aurie/YYToolkit. |
 
@@ -627,3 +631,40 @@ Tests:
 Merged in falorfrozen-cmd/hero-siege-item-editor#9 and released as `v2.16.1` on 2026-09-25 (launch gate row above).
 
 **Live check** (2026-09-25): AFK FARM 0.9 took seven kinds with `take`, and the Vault lost exactly those counts. For type 13, this editor made a Battle Fragment (13:0) in an empty Shared Stash tab with the game closed and deposited it into AFK Materials. AFK FARM's town then took it, and the game made it again. It came back to AFK Materials.
+
+## Ports shared with other tools (2.16.2, 2026-09-25)
+
+Reported while releasing 2.16.1: the editor could not start while ForgePact's panel held 8766. `main()` binds every port in 8765-8774, and a port that did not answer as an editor stopped startup ("occupied by an unidentified or legacy process").
+
+**Measured before the fix** (Windows 11, Python 3.13). A dummy server sat on the real 8766, then the editor's real `main()` ran, with the window, message box and game truth replaced and `USERPROFILE`/`LOCALAPPDATA` in a temporary folder:
+- **Dummy bound like ForgePact's panel** (`ThreadingHTTPServer`, which sets SO_REUSEADDR): the editor *started*, and counted 8766 as reserved. Its bind had succeeded on top of the dummy's. Every request to 8766 still reached the dummy, and the peer check never looked at 8766.
+- **Dummy that does not share its port** (SO_REUSEADDR off): the editor refused, as reported.
+
+How Windows binds, measured with throwaway servers on high ports:
+- Two sockets that both set SO_REUSEADDR can bind the same port. The first listener kept all 40 test connections.
+- A listener without the option makes a later SO_REUSEADDR bind fail with WSAEACCES (10013). A later bind without the option fails with WSAEADDRINUSE (10048).
+- A server without the option rebinds at once over 28 TIME_WAIT connections.
+
+**The fix (2.16.2).**
+- `main()` binds with `EditorHTTPServer`, which has SO_REUSEADDR off on Windows, so an occupied port fails the bind.
+- A port that fails and does not answer as an editor is left to its owner, and startup takes the rest.
+- A different editor version is still refused, and the same version is still reused.
+- A pre-2.7.2 build is still refused. Every commit before v2.7.2 lacks `/api/instance`, binds only 8765 and serves its page under the `<title>Hero Siege Item Editor`. `_legacy_editor_page` checks that title, on 8765 only, so the editor never fetches another program's page.
+- `_peer_editor_error` and `INSTANCE_RESERVED_PORTS` are unchanged. The reserved set holds the ports this instance bound, so the peer check before each write also probes the ports left to other programs. ForgePact answers `/api/instance` there with a 404.
+
+After the fix, with either dummy, the editor starts on 8765 and reserves 8765 and 8767-8774. 8766 keeps answering from the dummy.
+
+Tests:
+- `test_launch_readiness.py` has 29 tests. `ForeignPortTests` run `main()` on real sockets in 20000-32767, outside the ephemeral ranges and never in 8765-8774. The cases:
+  - a sharing and a non-sharing server on the second port;
+  - a non-editor on the first port;
+  - a pre-2.7.2 editor page on the first port;
+  - a held port that refuses a SO_REUSEADDR bind and still rebinds at once.
+- All five cases fail when run against master's code.
+- The whole suite is 585 tests (1 skipped), run with `USERPROFILE` and `LOCALAPPDATA` in a temporary folder.
+
+**Not changed; for the owner to decide.** ForgePact's first port candidate is still 8766, inside the editor's range, so a running editor (2.8.0 or later) sends ForgePact to 8780. The hub's ForgePact health probe is `http://127.0.0.1:8766/`, and any 2xx counts, so the probe then gets the editor's page.
+
+Read from `hub/src-tauri/src/launch.rs` and `hub/src/tool-presentation.js`, not reproduced: in that state ForgePact's card should show "Running externally" and offer no Launch button. Moving ForgePact's first candidate out of 8765-8774 would end this, together with the catalog's `ports` and `health.url`.
+
+Pull request: falorfrozen-cmd/hero-siege-item-editor#10. Not merged and not released yet.
