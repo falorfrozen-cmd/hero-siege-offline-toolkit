@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-25T09:18:50Z",
+  "generated": "2026-09-25T16:33:25Z",
   "tools": [
     {
       "id": "forgepact",
@@ -61,9 +61,9 @@
       "summary": "Item creator, stash editor and inventory customizer.",
       "repo": "falorfrozen-cmd/hero-siege-item-editor",
       "submodule": "hero-siege-item-editor",
-      "version": "2.16.1",
-      "tag": "v2.16.1",
-      "published": "2026-09-25T09:18:21Z",
+      "version": "2.16.2",
+      "tag": "v2.16.2",
+      "published": "2026-09-25T16:32:58Z",
       "license": "NOASSERTION",
       "requires": {
         "admin": false,
@@ -73,10 +73,10 @@
       },
       "artifact": {
         "kind": "exe",
-        "name": "HeroSiegeItemEditor-v2.16.1-s10.exe",
-        "url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/download/v2.16.1/HeroSiegeItemEditor-v2.16.1-s10.exe",
-        "size": 19743835,
-        "sha256": "ac18db5a160245a3798c4be3fc55fe95b2789079656b2d81235f05daa13b7dc6",
+        "name": "HeroSiegeItemEditor-v2.16.2-s10.exe",
+        "url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/download/v2.16.2/HeroSiegeItemEditor-v2.16.2-s10.exe",
+        "size": 19744093,
+        "sha256": "506ba048b83385a1fcb74684c15d22ec30acc4ba084fbfd6c64df7342b13e89b",
         "sha256_source": "published+verified",
         "strip_prefix": "",
         "install_as": "HeroSiegeItemEditor.exe"
@@ -93,8 +93,8 @@
           "timeout_s": 25
         }
       },
-      "notes_url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/tag/v2.16.1",
-      "notes": "# Hero Siege Item Editor 2.16.1\n\nFor AFK FARM 0.8 (the camp) and 0.9 (the town).\n\n## What's new\n\n- **The town's goods for AFK FARM's camp and town.** An AFK FARM adventurer opens\n  golden chests with Basic Keys and crystal chests with Crystal Keys from the camp's\n  key rack; the jeweler works from the camp's material stock. AFK FARM 0.9's town\n  (fortifications, merchants, trade wagons) stocks the town's goods: keys,\n  fragments and shards, tarot cards, materials, dusts, rare consumables, runes,\n  gems, jewels and orbs. AFK FARM can now fill its stock from your Vault's\n  **AFK Materials**: the amounts you choose leave the Vault (smaller stacks first)\n  and go to the camp or town, all at once or not at all.\n- **Never taken twice.** Each request carries its own id and is carried out at most\n  once. If AFK FARM loses the editor's answer, it asks again and gets the same\n  result; if the request never arrived, AFK FARM cancels it, and nothing can be\n  taken with that id afterwards.\n- Custom-named stacks are never taken. Hero Siege may be running (only the Vault\n  database changes, like an AFK transfer). The Vault's history lists each take, and\n  History undo does not reach past it.\n\nEverything else is as in 2.16.0. Download the exe and run it; no install.",
+      "notes_url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/tag/v2.16.2",
+      "notes": "# Hero Siege Item Editor 2.16.2\n\n## What's fixed\n\n- **The editor starts while ForgePact's panel is open.** The editor keeps ten\n  local ports, 8765-8774, so that no older copy of it can start alongside.\n  ForgePact's panel prefers 8766, one of those ten. Now, when another program\n  already holds one of them, the editor leaves that port to it and takes the\n  rest. Before, it bound 8766 on top of the panel without noticing, or, where a\n  program would not share its port, refused to start (\"Local editor port … is\n  occupied by an unidentified or legacy process\").\n- **It still refuses to run beside another Item Editor** of a different\n  version. That now includes builds older than 2.7.2: before, the editor could\n  start beside one of those without noticing.\n- Starting the editor while the same version already runs still brings up the\n  running one.\n\nEverything else is as in 2.16.1. Download the exe and run it; no install.",
       "guide": "docs/submodules/hero-siege-item-editor/instructions.md",
       "source_launch": {
         "cmd": "py",
