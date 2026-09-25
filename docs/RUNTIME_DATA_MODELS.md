@@ -1139,6 +1139,19 @@ as `self` (no drop from the second); the killer argument can be a projectile.
 Drops read `enemyRarity`, `x` and `y` off the dying enemy. **Measured.**
 [Headhunter, typed instance ids](../ForgePact/docs/headhunter-dispatch-verification.md#follow-up-falors-first-test-typed-instance-ids)
 
+### 13.6 World chests and loot goblins
+
+- **World chests.** A world chest (`Chest_Drop_obj`) drops its loot through `DropItem`, like a kill.
+  - The call's first argument is the chest's opening rarity: 2 is wooden, 3 golden, 4 crystal.
+  - A golden chest takes a Basic Key (type 12, base 0); a crystal chest takes a Crystal Key (12:1).
+  - **Measured** 2026-09-24 on the 23 chests AFK FARM recorded; each one's rarity matched its sprite.
+- **Loot goblins.** There are five: `Goblin_Treasure_obj`, `Goblin_Rune_obj`, `Goblin_Ore_obj`, `Goblin_Orb_obj` and `Goblin_Shadow_obj`.
+  - A dying goblin drops its items through `DropItem`, at rank 5 with the goblins' own magic find. **Static reading.**
+  - That path is **measured** for treasure, rune and shadow goblins: 15 packets AFK FARM recorded on 2026-09-24. Orb and ore goblins were not observed.
+  - A goblin's gold shower (`DropGold`) and the shadow goblin's Dimensional Shards (`LootGroundCreate`, type 13, base 1) are made outside `DropItem`, so a `DropItem` replay does not bring them. **Static reading.**
+
+[AFK FARM design, 0.8](../HS-AFK-Expedition/docs/DESIGN.md#08-the-camp-traits-and-three-more-worker-types)
+
 ---
 
 ## 14. Satanic Zone and Special Content
@@ -1693,6 +1706,17 @@ results`, count-inject). M: the one `CountInventoryItem` call logged for
 that recipe read `a0=1 a1=15 a2=1 a3=1` (owner, class, and base for a
 Socketable identity); what `a0` and `a2` mean beyond that reading is not
 measured (RD `### Phase 1j results`, cube-count).
+
+### Jewel recipes in the Crafting Cube
+
+**Static reading** (AFK FARM 0.8 research, paraphrased):
+- **Tables.** The Cube's recipes are two globals: `global.craftComboList` holds the inputs and `global.craftComboResult` the results.
+- **Jewelcrafting rows.** They have result types 37 to 41: 19 recipes, all with a 100% success chance.
+- **Outputs and inputs.** They make type 15 (socketables) bases 78-81 (gems) and 82-96 (jewels) from type 14 bases 0-23. Result type 41 also takes the Enchanted Sigil (14:44).
+- **Amounts** are stored encrypted like every recipe's and decoded by `PilipaliDecrypt` (above).
+- **The in-game gate.** A hero may craft them only with the Jewelcrafting level (player stat 157) that the recipe's tier asks for, from 750 to 3750. That level rises only through prospecting (`JewelcraftingAdd`).
+
+AFK FARM's plugin (0.8.0-camp) reads the two globals live with `afk worker recipes`. That read is **not yet measured** on a running game.
 
 ### SDK names and the curated entry
 

@@ -75,7 +75,7 @@ Data lives under `%LOCALAPPDATA%\Hero_Siege\afk\` (`profiles`, `sessions`, `plan
 - **Compiler:** MSVC (C++20) for the plugin, the launcher and the C++ tests.
 - **From the hub:** the `hs-game-sdk` C++ headers `hs_game_sdk.hpp`, `native_names.hpp`, `reward_scope.hpp` and `reward_stats.hpp`, and the Python `hs_game_sdk` (`GameObject`, `GameScript`, `GameRoom`). `build_release.py` copies the Python SDK into the package.
 - **Node.js:** only for the UI tests.
-- **Item Editor:** Hero Siege Item Editor 2.15.5 or later for Vault transfers. 2.15.8 keeps fragment stack counts; 2.15.10 adds stacking and DISMANTLE.
+- **Item Editor:** Hero Siege Item Editor 2.15.5 or later for Vault transfers. 2.15.8 keeps fragment stack counts; 2.15.10 adds stacking and DISMANTLE; 2.16.1 lets the camp (0.8) take keys and jewel materials from AFK Materials.
 
 ## Command Reference
 
@@ -115,8 +115,34 @@ All commands run from `HS-AFK-Expedition/`.
 - **Build-bound.** The plugin's farm context is tied to one game build; a game update needs a new verification.
 - **Item Editor release.** The Vault side needs Item Editor 2.15.5 or later, which is on its `master` branch until its next release.
 
+## Workers and the camp (0.7.0-0.8, in review)
+
+Not released yet. They are in falorfrozen-cmd/HS-AFK-Expedition#1 (0.7.0) and #2 (0.8, stacked on #1). The design notes are in the module's `docs/DESIGN.md`, the API in `docs/UI_CONTRACT.md`, and the player text in `docs/PLAYER_GUIDE.md`.
+
+- **Workers** (`tools/workers.py`, 0.7.0):
+  - They are paid with the game's gold (`afk worker pay`, one receipt per request).
+  - A trip takes real time. Its haul is made in the game (`afk worker deliver`, `LootGroundCreate`) and then transferred to the Vault.
+- **The camp** (0.8: `camp.py`, `traits.py`, `teams.py`): buildings, camp resources, traits and team trips. This is AFK FARM's own layer. It changes the crew's numbers and the Siege gate, and never makes an item.
+- **Adventurers and goblin hunters** (`worker_loot.py`):
+  - They replay recorded world-chest and loot-goblin packets of the running build, in the packets' region.
+  - Replays go through `afk.py worker-replay`, with experience off.
+  - Chest keys come from the camp's key rack.
+- **The jeweler** (`worker_jeweler.py`, plugin `0.8.0-camp`):
+  - `afk worker recipes` reads the Crafting Cube's jewel recipes.
+  - `worker deliver` reads a recipe again and makes only its jewel or gem.
+  - Materials come from the camp's stock. Miners fill it with their Gem Sense share, which the plugin rolls but does not make (`route_prospect`).
+- **Keys and materials from the Vault** (`vault_take.py`):
+  - They come through Item Editor 2.16.1's `POST /api/vault/afk-take`, with one receipt per request in `workers.json` (`vault_takes`).
+  - Anything but a clear "done" is settled by cancelling the request, so a lost answer neither doubles nor loses keys.
+  - AFK FARM never writes the Vault database.
+- **Tests on the 0.8 branch** (2026-09-25):
+  - 246 Python tests, including a bridge test against the real Item Editor handler, which is skipped without a sibling 2.16.1 checkout;
+  - 42 Node UI tests (panel 28, map 11, share card 3);
+  - the C++ smokes, including `worker_smoke`.
+- **Live check:** the 0.8 engine has not been run against the game yet.
+
 ## Related Guides
-- [hero-siege-item-editor](../hero-siege-item-editor/instructions.md): Infinite Vault, AFK transfers, DISMANTLE
+- [hero-siege-item-editor](../hero-siege-item-editor/instructions.md): Infinite Vault, AFK transfers, DISMANTLE, camp takes
 - [hs-game-sdk](../hs-game-sdk/instructions.md): reward scope, reward stats, native routine names
 - [ForgePact](../ForgePact/instructions.md): shared reward scope
 - [Shared Documentation Index](../README.md)
