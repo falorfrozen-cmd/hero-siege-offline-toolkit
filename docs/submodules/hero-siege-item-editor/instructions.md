@@ -587,3 +587,42 @@ tests (1 skipped) at the merge, 2026-09-24. ForgePact's side is covered by
 Follow-up:
 [issue #173](https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit/issues/173),
 which moves the reusable half of ForgePact's `ItemTruth.hpp` into `hs-game-sdk`.
+
+## AFK FARM camp takes (2.16.1, 2026-09-25)
+
+AFK FARM's camp (0.8) and town (0.9) fill their key rack and stock from AFK Materials:
+- the key rack takes Basic Keys (12:0, golden chests) and Crystal Keys (12:1, crystal chests);
+- the stock takes every town good. `AFK_TAKE_KINDS` is exactly AFK FARM's `tools/goods.py` list, 226 kinds:
+  - keys: 12:0-2, 7-19, 21-30 and 33;
+  - fragments, shards and tarot cards: 13:0-1, 18-42, 54 and 55;
+  - materials, dusts and rare consumables: 14:0-23, 27-39, 43, 44, 49-51, 53-58, 60-66 and 68-70;
+  - runes, gems, jewels and orbs: 15:1-69, 78-96 and 112-135.
+
+  Anything else (a Pickaxe 12:20, the single-item 14:59, 15:136 and so on) is refused. A take is at most 32 kinds.
+
+`POST /api/vault/afk-take` (`op_vault_afk_take`) has four actions:
+- **`stock`** counts the plain stacks that can be taken: no custom name, sub and kind 0, at most 999.
+- **`take`** removes `items` ([{cls, base, count}]) all or nothing, at most once per `requestId`. Smaller stacks are used up first (`_afk_take_plan`).
+- **`status`** and **`cancel`** settle a request whose reply was lost.
+
+How it stays exactly once:
+- **Request id:** `InfiniteVault.take_items` checks the id inside the write transaction. A repeated id answers with the recorded `afk_items_taken` event.
+- **Stale rows:** the rows are checked against a `preview_item_rework` token.
+- **Used-up stacks** keep their deposit keys as deleted.
+- **Cancel:** `cancel_take` records `afk_take_cancelled` unless the take already happened, so a late take with that id is refused.
+- **Errors:** a committed take never answers with an error.
+- **Undo:** `afk_items_taken` is an undo barrier.
+- **Backups:** only the rolling `.bak` is written.
+- **Game running:** SQLite only, so the game may run.
+
+AFK FARM's client is `HS-AFK-Expedition/tools/vault_take.py`.
+
+Replies name runes and orbs as AFK FARM does ("Lum Rune", "Orb of Goblin").
+
+Tests:
+- `AfkCampTakeTests` (6) and `AfkTownGoodsTakeTests` (3) in `test_vault_afk_qol.py`.
+- The whole suite is 579 tests (1 skipped). Run it with `USERPROFILE` and `LOCALAPPDATA` pointed at a temporary folder: `ROOT` is `Path.home()`-based, so this keeps any test away from the machine's Vault.
+
+Merged in falorfrozen-cmd/hero-siege-item-editor#9 on 2026-09-25. It is not released yet, so the toolkit still installs 2.16.0.
+
+**Live check** (2026-09-25): AFK FARM 0.9 took seven kinds with `take`, and the Vault lost exactly those counts.
