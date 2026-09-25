@@ -25,6 +25,10 @@
   3. Claiming replays every kill through the game's own drop and reward calls (items, XP, gold).
 
   Items the loot filter hides are sold or broken down inside the game. Delivered items go to Hero Siege Item Editor's Infinite Vault. The tool is for offline, single-player play only.
+- **Toolkit catalog:** out of the hub's catalog since 2026-09-25, at the owner's request, while the town systems are built.
+  - The hub no longer lists, installs or updates it. A copy a player installed earlier stays on disk, but the hub shows it as not in the catalog.
+  - The repository, its releases, this guide, the submodule and both dispatch workflows stay. A release still sends `release-published`; the rebuild simply finds no `afk-farm` entry.
+  - To offer it again, restore the `afk-farm` `[[tool]]` block in `catalog/sources.toml` (last present at `ecd0c5d`), set the count in `tests/test_build_catalog.py` back, and run Actions → Catalog.
 
 ---
 
@@ -75,7 +79,7 @@ Data lives under `%LOCALAPPDATA%\Hero_Siege\afk\` (`profiles`, `sessions`, `plan
 - **Compiler:** MSVC (C++20) for the plugin, the launcher and the C++ tests.
 - **From the hub:** the `hs-game-sdk` C++ headers `hs_game_sdk.hpp`, `native_names.hpp`, `reward_scope.hpp` and `reward_stats.hpp`, and the Python `hs_game_sdk` (`GameObject`, `GameScript`, `GameRoom`). `build_release.py` copies the Python SDK into the package.
 - **Node.js:** only for the UI tests.
-- **Item Editor:** Hero Siege Item Editor 2.15.5 or later for Vault transfers. 2.15.8 keeps fragment stack counts; 2.15.10 adds stacking and DISMANTLE.
+- **Item Editor:** Hero Siege Item Editor 2.15.5 or later for Vault transfers. 2.15.8 keeps fragment stack counts; 2.15.10 adds stacking and DISMANTLE; 2.16.1 lets the camp and town (0.8-0.9) take their goods from AFK Materials.
 
 ## Command Reference
 
@@ -103,8 +107,8 @@ All commands run from `HS-AFK-Expedition/`.
 ## Releases & Hub Integration
 - **Package.** `tools/build_release.py` names the package after `VERSION` in `tools/panel.py`. The zip carries an `AFK-FARM-<version>/` root with `MANIFEST.json` (a SHA-256 for every file).
 - **Release assets.** GitHub releases carry `AFK-FARM-<version>.zip` and its `AFK-FARM-<version>.zip.sha256` sidecar.
-- **Catalog.** The catalog id is `afk-farm` (`catalog/sources.toml`), and its asset pattern is `^AFK-FARM-[0-9][^/]*\.zip$`.
-- **Dispatch token.** Until the AFK repository has the `HUB_DISPATCH_TOKEN` secret (the same token the other tools use), pointer bumps and catalog rebuilds are started by hand: Actions → Catalog → Run workflow, with `only: afk-farm`.
+- **Catalog.** The catalog id was `afk-farm`, with the asset pattern `^AFK-FARM-[0-9][^/]*\.zip$`. The tool is out of the catalog since 2026-09-25 (see **Toolkit catalog** above).
+- **Dispatch token.** The AFK repository has the `HUB_DISPATCH_TOKEN` secret. On 2026-09-25 its merges to `main` opened the pointer bump (hub #191) and started catalog rebuilds by themselves.
 
 ## Testing & Validation Classification
 1. **Game-free.** The Python, Node and C++ suites above.
@@ -113,10 +117,61 @@ All commands run from `HS-AFK-Expedition/`.
 ## Known Gaps
 - **Beta.** Automatic startup and **Claim in background** support the verified executable only.
 - **Build-bound.** The plugin's farm context is tied to one game build; a game update needs a new verification.
-- **Item Editor release.** The Vault side needs Item Editor 2.15.5 or later, which is on its `master` branch until its next release.
+- **Item Editor release.** Transfers to the Vault need Item Editor 2.15.5 or later, which is released. The camp's and town's takes need 2.16.1, which is merged on `master` (falorfrozen-cmd/hero-siege-item-editor#9) but not released yet.
+
+## Workers and the camp (0.7.0-0.8)
+
+Merged into `main` on 2026-09-25 (falorfrozen-cmd/HS-AFK-Expedition#1 and #2), not released yet. The design notes are in the module's `docs/DESIGN.md`, the API in `docs/UI_CONTRACT.md`, and the player text in `docs/PLAYER_GUIDE.md`.
+
+- **Workers** (`tools/workers.py`, 0.7.0):
+  - They are paid with the game's gold (`afk worker pay`, one receipt per request).
+  - A trip takes real time. Its haul is made in the game (`afk worker deliver`, `LootGroundCreate`) and then transferred to the Vault.
+- **The camp** (0.8: `camp.py`, `traits.py`, `teams.py`): buildings, camp resources, traits and team trips. This is AFK FARM's own layer. It changes the crew's numbers and the Siege gate, and never makes an item.
+- **Adventurers and goblin hunters** (`worker_loot.py`):
+  - They replay recorded world-chest and loot-goblin packets of the running build, in the packets' region.
+  - Replays go through `afk.py worker-replay`, with experience off.
+  - Chest keys come from the camp's key rack.
+- **The jeweler** (`worker_jeweler.py`, plugin `0.8.0-camp`):
+  - `afk worker recipes` reads the Crafting Cube's jewel recipes.
+  - `worker deliver` reads a recipe again and makes only its jewel or gem.
+  - Materials come from the camp's stock. Miners fill it with their Gem Sense share, which the plugin rolls but does not make (`route_prospect`).
+- **Keys and materials from the Vault** (`vault_take.py`):
+  - They come through Item Editor 2.16.1's `POST /api/vault/afk-take`, with one receipt per request in `workers.json` (`vault_takes`).
+  - Anything but a clear "done" is settled by cancelling the request, so a lost answer neither doubles nor loses keys.
+  - AFK FARM never writes the Vault database.
+- **Tests on the 0.8 branch** (2026-09-25):
+  - 246 Python tests, including a bridge test against the real Item Editor handler, which is skipped without a sibling 2.16.1 checkout;
+  - 42 Node UI tests (panel 28, map 11, share card 3);
+  - the C++ smokes, including `worker_smoke`.
+- **Live check** (2026-09-25, as part of the 0.9 test): a take of seven kinds, including Basic Keys for the key rack, removed exactly those counts from the Vault. The 0.8 trips (adventurers, goblin hunters, the jeweler, team trips) have not been run against the game yet.
+
+## The town (0.9)
+
+Merged into `main` on 2026-09-25 (falorfrozen-cmd/HS-AFK-Expedition#3), not released yet. The rules are in the module's `docs/DESIGN.md`, the API in `docs/UI_CONTRACT.md` ("0.9: the town"), the player text in `docs/PLAYER_GUIDE.md`, and the UI brief in `docs/CHATGPT_HANDOVER.md`.
+
+- **Town defense** (`defense.py`, `battle.py`, `bestiary.py`, `fortifications.py`, `town.py`):
+  - Sieges of 15 minutes to 8 hours, a wave every 5 minutes, at levels 1-60.
+  - The defenders are walls, a keep, eight kinds of towers (levels 1-10, a specialisation at 5) and up to three stationed heroes. Each hero fights with its measured pace from a calibration in that region.
+  - The attackers are drawn from the region's recorded kill packets: the player's own monsters, with their real rank, speed, range, immunities and affixes. The monsters that special content spawned come as special waves (the Abyss chest's pack, the Unholy Siege's, a Chaos Pillar's).
+  - Each kill is paid by replaying that packet:
+    - a hero's kills through its own claim (`mode: 'defense'`, with XP);
+    - every other kill as the town's share, collected like a worker's haul with no XP.
+  - The fight, the tiers above Legion (Ascended, Primordial, Warlord), the affix effects and events are AFK FARM's layer.
+- **Economy** (`goods.py`, `economy.py`, `trade.py`, `merchants.py`, `town_panel.py`):
+  - The town has its own coffer. A deposit goes through the purchase path; a payout uses the new `afk worker credit` (plugin 0.9.0-town), with one receipt per request. A refused payout after which the gold rose anyway stays out of the coffer as `review`.
+  - The stock holds 226 kinds of stackable goods. Goods come in through the Item Editor's take and go out only as stacks the game makes (`worker_town_*` deliveries; `TownGoods.hpp` is generated from `goods.py`).
+  - Travelling merchants and trade wagons to ten towns price with a stock model: every unit moves the price, a round trip always loses, and prices recover by the hour.
+- **Tests** (2026-09-25): 390 Python tests, including the panel integration (`test_town.py`, 34), the town modules' unit tests (94), the goods header and the packet facts cache; 42 Node UI tests; the C++ smokes, with 36 worker checks covering the credit decisions and the goods list. An independent review's findings were fixed with regression tests.
+- **The watch** (`defense_watch`): the town can keep itself under siege with its towers alone, one siege after another. It catches up after the panel was closed (at most a day back) and pauses while 8 town shares wait or after the keep falls.
+- **Packet facts cache** (`packet_facts.py`): the bestiary and the workers' loot pools read `afk/packet-facts.json` instead of every packet file. It keeps each file's few facts with its size and modification time, so only new or changed files are read again. It is derived: deleting it only makes the next read slow. On 6,471 packets, a cold siege page went from 24 s to 0.26 s.
+- **Live check** (2026-09-25, plugin 0.9.0-town, a level-100 hero). The sieges used a temporary town that was removed afterwards.
+  - A coffer deposit of 10,000 and a payout of 5,000 (`worker credit`) moved the account gold by exactly those amounts, each with one receipt.
+  - A town delivery made seven stacks of types 12, 14 and 15 with the right `b` and `o`. The Vault ingest put back exactly what the take had removed.
+  - Two sieges held, at levels 1 and 10. The hero's claim replayed 60 of 60 kills with XP. The town's shares replayed 80 of 80 and 185 of 185 kills, with no XP. All were saved.
+  - Not yet checked: a delivery of type 13 (fragments, shards and tarot cards). The Vault had none to take.
 
 ## Related Guides
-- [hero-siege-item-editor](../hero-siege-item-editor/instructions.md): Infinite Vault, AFK transfers, DISMANTLE
+- [hero-siege-item-editor](../hero-siege-item-editor/instructions.md): Infinite Vault, AFK transfers, DISMANTLE, camp takes
 - [hs-game-sdk](../hs-game-sdk/instructions.md): reward scope, reward stats, native routine names
 - [ForgePact](../ForgePact/instructions.md): shared reward scope
 - [Shared Documentation Index](../README.md)

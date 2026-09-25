@@ -417,7 +417,7 @@ class TestSourcesFile(unittest.TestCase):
 
     def test_the_checked_in_sources_file_loads(self):
         sources = bc.load_sources(self.SOURCES)
-        self.assertEqual(len(sources["tool"]), 12)
+        self.assertEqual(len(sources["tool"]), 11)
 
     def test_every_tool_points_at_a_guide_that_exists(self):
         root = Path(__file__).resolve().parents[1]
