@@ -1720,3 +1720,130 @@ the craft's own items are placed there, at the press, and consumed at once.
 Live 1k (RD `### Phase 1k results`) named no container the curated JSON
 lacks: `inventoryMaterialGrid` (above) and `craftGrid` (`crafting_cube`,
 just above) already covered every grid it placed an item into.
+
+## 18. Gems of Incarnation
+
+What ForgePact's Gems of Incarnation mod established on 2026-09-25 against the
+2026-09-16 build, `pe-6aaa6779-0cad4fc8`: the running game built 14,521 gems
+through its own save loader (§16.2), and the drop, filter and pickup scripts were
+read. The argument, the full tables and the live checks are in ForgePact's
+[`docs/incarnation-gems-research.md`](../ForgePact/docs/incarnation-gems-research.md); how the mod uses them is in the
+[module guide](submodules/ForgePact/instructions.md#gems-of-incarnation-146-simulated-drops-verified-2026-09-25).
+
+### 18.1 The item
+
+- Item key `socketable_gem_of_incarnation`: item type 15 (Socketable), base `b`
+  136, `c` 0, `j` 0. A save keeps its seed `a`, `b`, `c`, `j` and the flags `n`,
+  `o` and `w`, and nothing it rolled (§16.1). **Measured** (the owner's 21 gems).
+- It goes only into the Incarnation tree's node sockets: a node holds an item
+  fingerprint (`nodeItemFingerprint`), the tree gathers the socketed items in
+  `incarnationSocketItemArray`, and `IncarnationStatGetter` adds their stats.
+  **Static reading.**
+
+[What a Gem of Incarnation is](../ForgePact/docs/incarnation-gems-research.md#what-a-gem-of-incarnation-is)
+
+### 18.2 How the game rolls one
+
+- The roll depends on the definition alone: the owner's 21 gems, rebuilt under
+  new time stamps, came out identical to what the game had recorded for them,
+  stats and names. **Measured.**
+- The rarity (info `"27"`, §16.4) decides the affix count: Superior (2) 1-3,
+  Rare (3) 3-4, Mythic (5) 4-5. With no `n`, 5,000 random seeds gave Superior
+  91.1%, Rare 7.0% and Mythic 2.0%, and 1 to 5 affixes 66.8%, 24.0%, 7.2%, 1.9%
+  and 0.1%. The level requirement (info `"1"`) is 52, 57, 62 and 67 for 1, 2, 3
+  and 4+ affixes; the tier letter (info `"32"`) is always 4 (S). **Measured.**
+- The affixes sit in stat slots `"10"`-`"14"` (§16.3). Each of the 37 affix stats
+  has three affix tiers, 2, 3 and 4, with one range each: across all 14,521 gems
+  and every `n`, no (stat, tier) pair showed a second range. Tier 4 is the best
+  range. A value is rolled uniformly within its range. **Measured.**
+- `n` moves the rarity odds, not the tiers (the tier-4 share stays 35-37%), and
+  it is a table index, not a scale. On the same 2,000 seeds the Mythic share was
+  2.0% for no `n`, 0 and 1; 3.0% for 2; 6.3% for 3; 11.3% for 4; 20.0% for 6.
+  5 and 8 behave like no `n`. Real gear carries 0-4, mostly 3 and 4. What sets a
+  drop's `n` was not read. **Measured.**
+- Building one gem through `InitItemFromJson` costs about 0.3 ms on the game
+  thread: 47,147 builds took 14.4 s of build time at the main menu, in 4 ms
+  slices. **Measured.**
+
+[How the game rolls one](../ForgePact/docs/incarnation-gems-research.md#how-the-game-rolls-one---measured-on-14521-gems)
+
+### 18.3 The affix pool
+
+Every affix stat seen on the 14,521 gems, with its tier-4 range and the share of
+Mythic gems carrying it (1,536 Mythic seeds: `n` 3, 4 and none, 512 each). The
+names are the stats' tooltip names (the Item Editor's game-verified stat table).
+**Measured.**
+
+| Stat | Tooltip name | Tier 4 | Mythic gems |
+|---|---|---|---|
+| 28 | Enhanced Damage (%) | 12-35 | 17.3% |
+| 29 | Enhanced Defense (%) | 25-75 | 16.6% |
+| 52 | to Life | 10-50 | 15.8% |
+| 53 | Life Increased by (%) | 3-10 | 12.4% |
+| 57 | Life stolen per Hit (%) | 2-6 | 28.1% |
+| 60 | to Mana | 10-50 | 16.5% |
+| 61 | Mana Increased by (%) | 3-10 | 10.9% |
+| 64 | Mana stolen per Hit (%) | 2-6 | 27.0% |
+| 68 | Increased Attack Speed (%) | 3-12 | 28.6% |
+| 74 | to Attack Rating | 15-50 | 17.0% |
+| 75 | Increased Attack Rating (%) | 8-25 | 16.7% |
+| 95 | Chance for a Deadly Blow (%) | 3-10 | 16.1% |
+| 101 | Magic Skill Damage increased by (%) | 5-20 | 19.5% |
+| 128 | to Physical Damage | 2-6 | 2.4% |
+| 133 / 137 / 141 / 145 / 149 | to Fire / Cold / Arcane / Lightning / Poison Skill Damage | 18-24 | 2.7-3.4% each |
+| 134 / 138 / 142 / 146 / 150 | Fire / Cold / Arcane / Lightning / Poison Skill Damage increased by (%) | 5-20 | 5.0-5.9% each |
+| 173 | to All Resistances (%) | 2-5 | 11.7% |
+| 175 / 177 / 179 / 181 / 183 | to Fire / Cold / Lightning / Arcane / Poison Resistance (%) | 6-15 | 3.1-3.6% each |
+| 196 | Faster Cast Rate (%) | 2-5 | 24.8% |
+| 201 | to All Skills | 1-1 | 0.7% |
+| 284 | Increased Magic Find (%) | 3-10 | 25.7% |
+| 448 / 450 | to Minimum / Maximum Weapon Damage | 6-12 | 16.7% / 25.5% |
+| 462 + 463 | a skill grant: the skill (462, a skill id, 2-433) and its levels (463, 1-1) | - | 2.9% |
+
+- A skill grant always takes two slots, 462 and 463. 462's "range" is a range of
+  skill ids, not values.
+- +All Skills is the rarest by far, yet it was on 3-4 of the 512 Mythic seeds at
+  each of `n` 3, 4 and none. No movement stat is in the pool.
+
+[The affix pool](../ForgePact/docs/incarnation-gems-research.md#the-affix-pool)
+
+### 18.4 How a gem drops
+
+- `DropGems` (drop type 6, §13.1) picks a socketable from repository category 15
+  (§13.2) by drop rate and hands it to `LootGroundCreate`. **Static reading.**
+- `LootGroundCreate(x, y, type, params, ...)` writes a fresh random seed into the
+  params' `a`, creates the item instance and calls `CreateItemNew(instance,
+  undefined)`. So a drop's seed is settled between that write and
+  `CreateItemNew`'s first line. **Static reading.** A seed replaced at
+  `CreateItemNew`'s entry, while `DropGems` runs, rolled as the replacement:
+  simulated drops through the game's loader in that scope came out as the
+  replacement seed's Mythic roll, 13 of 13. **Measured** (research build).
+- Loading an item goes through `InitItemFromJson`, never `DropGems`, so an owned
+  gem never takes a new seed. **Static reading.**
+- A `DropGems` detour, like `DropRelic`'s, is installed once a player exists: a
+  drop hook installed during character select stalls the runner (§15).
+- A real drop through `DropGems` with the seed replaced is **not yet observed**.
+
+[How it drops](../ForgePact/docs/incarnation-gems-research.md#how-it-drops---static-reading),
+[Live checks](../ForgePact/docs/incarnation-gems-research.md#live-checks)
+
+### 18.5 The loot filter never sees them
+
+- The ground item's loot-filter closure (a `Loot_Ground_obj` Create closure; its
+  `anon@N` name moves between builds, §5.3) runs its checks for equipment
+  (types 0-8), charms (10), consumables (11), potions (18) and socketables with
+  base 97-111 only: the Uncut Jewels, the only socketables with random affixes
+  before Season 10. Every other socketable, base 136 included, skips the checks
+  and stays visible. **Static reading;** not measured live.
+
+[Why the loot filter never hides them](../ForgePact/docs/incarnation-gems-research.md#why-the-loot-filter-never-hides-them---static-reading)
+
+### 18.6 No automatic pickup
+
+- No automatic pickup was found. `Loot_Manager_obj`'s Step picks up only the
+  targeted item (`playerLootTarget`) after an input: a key, a click or the
+  gamepad (§10.2). `Loot_Ground_obj` has no Step, and its `Alarm 9` only sets
+  visibility from the filter and the screen. No code in the exe or `data.win`
+  refers to the translation key `auto_pickup`. **Static reading.**
+
+["Auto loot"](../ForgePact/docs/incarnation-gems-research.md#auto-loot---static-reading)
