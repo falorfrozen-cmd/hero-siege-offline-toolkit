@@ -3,7 +3,7 @@ export const meta = {
   description: 'Run one workorder\'s implement -> verify -> route rounds as code; hands back to the driver on anything that needs judgement',
   whenToUse: 'Opt-in from /workorder (workflow mode). Replaces the driver\'s own turns for steps 2-4; replans, consultations, human questions and the final report stay with the driver.',
   phases: [
-    { title: 'Implement', detail: 'fresh implementer per round at the triaged tier; on a laned plan\'s first round, one implementer per lane in parallel, then the join' },
+    { title: 'Implement', detail: 'fresh implementer per round at the triaged tier; on a laned plan\'s first round, one implementer per lane in parallel, then the join; a patch round applies reviewer-stated fixes only' },
     { title: 'Verify', detail: 'verifier + delta-scoped reviewers, in parallel' },
     { title: 'Record', detail: 'haiku scribe: round snapshot/delta, Log entry, State' },
   ],
@@ -39,6 +39,9 @@ export const meta = {
 //                                       // relaunch after a replan; never after an IMPL-DEFECT). Absent or [] runs
 //                                       // exactly as a plan without lanes (2h below)
 // }
+//
+// The count of patch rounds already spent (2i below) is read from `state`'s
+// `patch rounds:` line, which this script writes; there is no separate arg.
 
 const A = args || {}
 const ROUND_CAP = 3
@@ -112,6 +115,10 @@ const DELTA_SCHEMA = {
     files_checked: { type: 'number' },
     files_missing: { type: 'number' },
     raw_output: { type: 'string' },
+    // Patch rounds only (2i): `round_delta.py size`'s exit code and totals.
+    size_exit_code: { type: 'number' },
+    lines_changed: { type: 'number' },
+    new_files: { type: 'number' },
   },
   required: ['exit_code', 'paths', 'instrumentContent', 'sdkContent', 'files_checked', 'files_missing', 'raw_output'],
 }
@@ -130,7 +137,10 @@ const VERIFIER_SCHEMA = {
   },
   required: ['verdict', 'criteria', 'pending_human'],
 }
-const FINDING = { type: 'object', properties: { where: { type: 'string' }, problem: { type: 'string' }, evidence: { type: 'string' } }, required: ['where', 'problem', 'evidence'] }
+// `fix` is the exact change that resolves a BLOCKING finding, when the reviewer
+// can state one; a round whose every BLOCKING finding carries one may be
+// followed by a patch round (2i).
+const FINDING = { type: 'object', properties: { where: { type: 'string' }, problem: { type: 'string' }, evidence: { type: 'string' }, fix: { type: 'string' } }, required: ['where', 'problem', 'evidence'] }
 const REVIEW_SCHEMA = {
   type: 'object',
   properties: {
@@ -254,7 +264,7 @@ const diffCommands = (REPO_ROOT
 // user's home directory (creating files there), edited ForgePact source and
 // docs with tools it had no business having, and ran `git add`/`git commit`.
 // `tools/workorder_audit.py` R16 audits this.
-const findingLine = f => `- [${f.reviewer}] ${f.where}: ${f.problem} — evidence: ${f.evidence}`
+const findingLine = f => `- [${f.reviewer}] ${f.where}: ${f.problem} — evidence: ${f.evidence}${f.fix ? ` — fix: ${f.fix}` : ''}`
 // A NON-BLOCKING line goes in without its evidence. Every later round's
 // implementer and driver re-reads the Log, and across forgepact-issue-14's 16
 // context files NON-BLOCKING text was 154 KB, 52 KB of it evidence tails, for
@@ -271,13 +281,16 @@ const roundBlock = (n, record) => {
   lines.push('', `NON-BLOCKING (${record.nonBlocking.length})`)
   for (const f of record.nonBlocking) lines.push(nonBlockingLine(f))
   lines.push('', `not re-run: ${record.notReRun.join(', ') || 'none'}`)
+  if (record.patch) lines.push(`patch: ${record.patch}`)
+  if (record.next) lines.push(`next: ${record.next}`)
   return lines.join('\n')
 }
-const stateBlock = (n, record, clean, planDefect) => [
+const stateBlock = (n, record, clean, planDefect, patchRounds) => [
   `round: ${clean || planDefect ? n : n + 1}`,
-  `phase: ${clean ? 'pass' : planDefect ? 'blocked' : 'implement'}`,
+  `phase: ${clean ? 'pass' : planDefect ? 'blocked' : record.next ? 'patch' : 'implement'}`,
   `reviewers: ${Object.entries(record.reviewerState).map(([k, v]) => `${k}: ${v}${record.notReRun.includes(k) ? ', not re-run' : ''}`).join('; ')}`,
   `open defects: ${record.blocking.map(f => `${f.reviewer}: ${f.problem}`).join('; ') || 'none'}`,
+  ...(patchRounds ? [`patch rounds: ${patchRounds}`] : []),
 ].join('\n')
 const implBlock = (n, impl) => [`### Round ${n}`, '', impl.verdict, '', impl.evidence || impl.question || ''].join('\n')
 
@@ -453,6 +466,7 @@ const SECTION_CMD = file => `\`py -3 .claude/skills/workorder/section.py "${file
 // Hand it the two extractions that are the whole of its mandate.
 const VERIFIER_CRITERIA_NOTE = ` Take the criteria and the gate tokens with exactly \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\` and \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'State'\`; do not Read the plan whole.` +
   ` A gate is set only when the \`gates:\` line itself carries its token. \`gates pending:\` and \`route tokens:\` set nothing, and a \`gates:\` value with \`|\` alternatives is a template that sets nothing. Put the token a gated criterion names in its 'gate'. A criterion whose gate is not set is 'unattempted' (gate <token> not set), never 'fail'. Put each STRUCTURAL FINDING and each NOT DONE/DEVIATIONS finding in 'other_defects'.` +
+  ` First run every command-shaped criterion in one call: \`py -3 tools/run_criteria.py "${A.planPath}" --out "<your scratchpad>/criteria"\` with the Bash timeout at 600000. It runs each distinct command once, exactly as written, skips criteria whose gate is not set, and prints each exit code and output tail (full output in cmd-<n>.log); it judges nothing, so decide each criterion from what it printed, check the ones it prints as 'no command' by reading, run by hand only a command that could not start in bash, and if its output stops early re-run it with --start <next criterion>. A root suite the runner already ran is the suite run: grep its log, never run it again.` +
   ` Run each criterion's command exactly as written: never swap \`py -3\` for \`python\`; a command that cannot start is a failed criterion with its error. Run each test suite once, with the Bash timeout at 240000 and its output sent to a scratch file you grep; never run a suite again to read another slice.`
 const VERIFIER_CONTEXT_NOTE = A.contextPath !== A.planPath
   ? ` Context file: ${A.contextPath} -- open it only for a heading a criterion cites, with ${SECTION_CMD(A.contextPath)}; never read it whole, its '## Log' is the implementer's reasoning.`
@@ -519,13 +533,71 @@ const laneBlock = (n, outcome, lanes) => [`### Round ${n}`, '', `${outcome} (lan
     ...(l.verdict !== 'IMPL-DONE' && (l.evidence || l.question) ? [l.evidence || l.question] : []),
     `progress: ${l.progress_so_far || 'none reported'}`])].join('\n')
 
+// --- 2i: a stated fix is a patch round, not a round ------------------------
+//
+// Measured 2026-09-25 over the 29 sessions that ran a planner
+// (docs/agents/workorder-calibration.md, "The cheap routes"): fix rounds,
+// replans and reviewer re-runs were about a quarter of all subagent spend,
+// and 32 of 69 fix-round implementers ran 7 minutes or less -- each at the
+// price of a whole round and one of the three the cap allows.
+//
+// So when every BLOCKING finding of a round carries the reviewer's exact
+// `fix`, nothing failed a criterion, and the verifier reported no other
+// defect, the next round is a patch round: one implementer applies those fixes
+// only, the verifier runs every criterion as usual (nothing says which
+// criteria a change can reach), and only the reviewers that raised the
+// findings re-run -- to confirm their own -- plus `decompile-output-guard`
+// whenever its trigger matches, because a legal finding is never skipped.
+//
+// Eligibility is read off the findings, never off anyone's confidence, and
+// the patch is checked again after the fact: `round_delta.py size` must
+// report at most PATCH_MAX_LINES changed lines and no new file, and the
+// delta must not reach an instrument path or a release note. A patch that
+// holds does not count against ROUND_CAP (State's `patch rounds:`); one that
+// does not is an ordinary round -- its reviewers chosen by the table as
+// usual, and counted. Two patch rounds never run back to back, and
+// `instrument-blindness-reviewer` findings never qualify: what a hook sees is
+// not a matter of applying a stated edit.
+const PATCH_MAX_LINES = 20
+const PATCH_NEVER = new Set(['instrument-blindness-reviewer'])
+const PATCH_EXCLUDED = p => /^ForgePact\/plugin\//.test(p) || /^hs-game-sdk\/.*(hook|install)/i.test(p) ||
+  /-research\.md$/.test(p) || /(^|\/)release-notes-v[^/]*\.md$/.test(p)
+const patchable = (verdict, failed, otherDefects, blocking) => blocking.length > 0 &&
+  (verdict === 'PASS' || verdict === 'PASS-PENDING-HUMAN') && !failed.length && !otherDefects.length &&
+  blocking.every(f => typeof f.fix === 'string' && f.fix.trim() && !PATCH_NEVER.has(f.reviewer))
+const patchPrompt = (n, findings) => workorderLine(n) +
+  `This is a patch round: the previous round's only defects were BLOCKING reviewer findings, each with the exact fix its reviewer stated. Apply exactly these fixes, then commit:\n` +
+  findings.map(f => `- [${f.reviewer}] ${f.where}: ${f.problem}\n  fix: ${f.fix}`).join('\n') + '\n' +
+  `Read the plan and context only where a fix needs them, start no other step, and run no full build or suite: the verifier runs the criteria. ` +
+  `If a fix as stated does not resolve its finding, resolve the finding properly anyway and say so under DEVIATIONS -- the round is measured afterwards, and one that outgrew a patch counts as an ordinary round. ` + VERDICT_ASK
+// Why a patch round did not hold, or null when it did.
+const patchMiss = delta => {
+  if (!delta || delta.exit_code !== 0) return 'the delta was unusable'
+  if (delta.size_exit_code !== 0 || !Number.isFinite(delta.lines_changed) || !Number.isFinite(delta.new_files)) return '`round_delta.py size` gave no usable figure'
+  if (delta.lines_changed > PATCH_MAX_LINES) return `${delta.lines_changed} lines changed (limit ${PATCH_MAX_LINES})`
+  if (delta.new_files > 0) return `${delta.new_files} new file(s)`
+  if (delta.instrumentContent) return 'instrument-shaped text changed'
+  const excluded = delta.paths.filter(PATCH_EXCLUDED)
+  if (excluded.length) return `touched ${excluded.join(', ')}`
+  return null
+}
+const patchStateEntry = stateEntries(A.state).find(e => e.key === 'patch rounds')
+let patchCount = patchStateEntry ? (parseInt(patchStateEntry.text.replace(/^patch rounds:\s*/i, ''), 10) || 0) : 0
+let patchNext = null // the BLOCKING findings the next round patches, or null for an ordinary round
+
 let reviewerState = { ...A.reviewers }
 const lastFindings = { ...(A.priorFindings || {}) } // reviewer -> its BLOCKING findings from the round before
 let lastVerifier = null // the previous round's full verifier result, reused when nothing changed
 let firstHeads = null // this invocation's first usable snapshot heads, for a `never` reviewer's base when args.baseHeads is absent
 const rounds = []
 
-for (let n = START; n < ROUND_CAP; n++) {
+// `n - patchCount` is the number of rounds counted against the cap so far; a
+// patch round already decided runs even at the cap, and counts only if it
+// does not hold (2i).
+for (let n = START; n - patchCount < ROUND_CAP || patchNext; n++) {
+  const patchFindings = patchNext
+  patchNext = null
+  const isPatch = !!patchFindings
   const snap = await agent(
     `Run exactly: ${DELTA} snapshot ${SLUG} ${n}${DELTA_ROOT_ARG}  — then report its exit code and output. ` +
     `Then run exactly: ${DELTA} heads ${SLUG} ${n}${DELTA_ROOT_ARG}  — report its exit code (3 if either command exited 3) and each printed line, split into repo and sha at the first tab, as heads: [{repo, sha}]. Edit nothing.`,
@@ -552,6 +624,10 @@ for (let n = START; n < ROUND_CAP; n++) {
     }
     impl = await agent(joinPrompt(n, lanes), implOpts(`implementer:join:r${n}`, IMPL_SCHEMA))
     if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'the join implementer returned nothing', lanes, rounds }
+  } else if (isPatch) {
+    // Labelled apart from `implementer:<lane>:r<n>` so the audit never reads a patch as a lane.
+    impl = await agent(patchPrompt(n, patchFindings), implOpts(`patch-implementer:r${n}`, IMPL_SCHEMA))
+    if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'patch implementer returned nothing', rounds }
   } else {
     impl = await agent(implPrompt(n), implOpts(`implementer:r${n}`, IMPL_SCHEMA))
     if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'implementer returned nothing', rounds }
@@ -573,7 +649,9 @@ for (let n = START; n < ROUND_CAP; n++) {
     `grep -lE "Rva|GetModuleHandle|MmCreateHook|HookOneScript|InstallScriptHook" -- <paths> and report any match as instrumentContent; run ` +
     `grep -lE "CInstance|relicLevel|ItemStatStruct|ItemDefinitionStruct" -- <paths> and report any match as sdkContent. ` +
     `Report files_checked and files_missing: a path missing because it was deleted this round is normal, a path missing because you ran the greps from the wrong directory is not — if more than half the paths are missing, treat the delta as unusable and return exit_code 3 so every reviewer re-runs. ` +
-    `An empty path list with exit code 0 is a valid answer — the round changed nothing; report it exactly as printed and stop, do not investigate. Edit nothing.`,
+    `An empty path list with exit code 0 is a valid answer — the round changed nothing; report it exactly as printed and stop, do not investigate. ` +
+    (isPatch ? `Then run exactly: ${DELTA} size ${SLUG} ${n}${DELTA_ROOT_ARG}  — report its exit code as size_exit_code, and the numbers on its 'lines_changed:' and 'new_files:' lines as lines_changed and new_files. ` : '') +
+    `Edit nothing.`,
     { label: `delta:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', schema: DELTA_SCHEMA })
   const deltaUsable = !!(snap && snap.exit_code === 0 && delta && delta.exit_code === 0)
   // Measured 2026-09-18: a round whose only "fix" was confirming a false
@@ -590,12 +668,18 @@ for (let n = START; n < ROUND_CAP; n++) {
   const emptyDelta = deltaUsable && delta.paths.length === 0
   const nothingChanged = emptyDelta && !!prev && prev.verifier === 'PASS' && !!lastVerifier
 
+  // 2i: a patch that held is re-read by the reviewers that found what it fixed
+  // and by the decompile guard when its trigger matches; one that did not hold
+  // is an ordinary round from here on.
+  const miss = isPatch ? patchMiss(delta) : null
+  const patchHeld = isPatch && !miss
   // A reviewer that has never run, or was blocking, always runs. A clean one
   // runs when its trigger matches the delta — or when the delta is unusable.
-  const toRun = Object.keys(reviewerState).filter(name =>
-    reviewerState[name] !== 'clean' || !deltaUsable || (TRIGGERS[name] || (() => true))(delta))
+  const toRun = Object.keys(reviewerState).filter(name => patchHeld
+    ? reviewerState[name] !== 'clean' || (name === 'decompile-output-guard' && TRIGGERS[name](delta))
+    : reviewerState[name] !== 'clean' || !deltaUsable || (TRIGGERS[name] || (() => true))(delta))
   const skipped = Object.keys(reviewerState).filter(name => !toRun.includes(name))
-  log(`round ${n}: delta ${deltaUsable ? delta.paths.length + ' paths' : 'UNUSABLE -> all reviewers'}; running ${toRun.join(', ') || 'none'}; not re-run: ${skipped.join(', ') || 'none'}${nothingChanged ? '; nothing changed -> previous PASS stands, verifier not re-run' : ''}`)
+  log(`round ${n}: ${isPatch ? `patch ${patchHeld ? 'held' : `not held (${miss})`}; ` : ''}delta ${deltaUsable ? delta.paths.length + ' paths' : 'UNUSABLE -> all reviewers'}; running ${toRun.join(', ') || 'none'}; not re-run: ${skipped.join(', ') || 'none'}${nothingChanged ? '; nothing changed -> previous PASS stands, verifier not re-run' : ''}`)
 
   const wholeScope = () => baseHeadsForNever ? `Read the whole change. ${wholeChangeScope(baseHeadsForNever)}` : `${HEADS_UNKNOWN} Read the whole change: ${diffCommands}`
   const deltaScope = () => (roundHeadsUsable ? `This is a re-run. ${rerunScope(roundHeads, delta.paths)}` : `${HEADS_UNKNOWN} This is a re-run. Read only these paths changed this round (use the same commands restricted to them): ${delta.paths.join(', ')}.`) + ` ${RERUN_NOTE}`
@@ -614,7 +698,8 @@ for (let n = START; n < ROUND_CAP; n++) {
       `${reviewerState[name] === 'blocking' ? priorNote(lastFindings[name], emptyDelta ? 'This is the finding the implementer disputes.' : PRIOR_ASK) + nothingChangedNote : ''}` +
       (name === 'instrument-blindness-reviewer' && A.researchHeadings ? `Research findings to check are recorded in ${A.contextPath} under: ${A.researchHeadings}. Read only those subsections.\n` : '') +
       `The verifier runs the acceptance criteria in parallel: do not re-run test suites or builds; run one targeted test only if a finding depends on its result. ` +
-      `Mark every finding BLOCKING or NON-BLOCKING; set plan_defect only when no implementation of the plan as written could satisfy its Goal -- a missing assert, pin or sentence the plan did not forbid goes to the implementer, not plan_defect; lead the summary with "no blocking findings" when true.`,
+      `Mark every finding BLOCKING or NON-BLOCKING; set plan_defect only when no implementation of the plan as written could satisfy its Goal -- a missing assert, pin or sentence the plan did not forbid goes to the implementer, not plan_defect; lead the summary with "no blocking findings" when true. ` +
+      `When you can state exactly how a BLOCKING finding is resolved -- the edit itself, at its path:line -- put it in that finding's 'fix'; leave 'fix' out when resolving it needs judgement or more research.`,
       { label: `${name}:r${n}`, phase: 'Verify', agentType: name, model: MODELS[name], schema: REVIEW_SCHEMA })
       .then(r => ({ name, r }))),
   ])
@@ -646,10 +731,20 @@ for (let n = START; n < ROUND_CAP; n++) {
   const pendingHuman = [...new Set([...(verifier.pending_human || []),
     ...gatePending.map(c => `${c.criterion} -> UNATTEMPTED (gate ${gateTokens(c.gate).filter(t => !gates.has(t)).join('; ')} not set)`)])]
   const record = { round: n, verifier: verdict, verifierSaid: onlyGated ? verifier.verdict : undefined, failed, gatePending, pending_human: pendingHuman, blocking, nonBlocking, notReRun: skipped, reviewerState: { ...reviewerState } }
+  if (isPatch) {
+    record.patch = patchHeld
+      ? `held (${delta.lines_changed} lines in ${delta.paths.length} file(s)); not counted against the cap`
+      : `not held (${miss}); counted as an ordinary round`
+    if (patchHeld) patchCount++
+  }
   rounds.push(record)
 
   const clean = !blocking.length && !planDefect && (verdict === 'PASS' || verdict === 'PASS-PENDING-HUMAN')
-  const rec = await recordState(n, roundBlock(n, record), stateBlock(n, record, clean, planDefect))
+  if (!clean && !planDefect && !isPatch && patchable(verdict, failed, verifier.other_defects || [], blocking)) {
+    patchNext = blocking
+    record.next = 'patch round (every BLOCKING finding carries its reviewer\'s fix)'
+  }
+  const rec = await recordState(n, roundBlock(n, record), stateBlock(n, record, clean, planDefect, patchCount))
   // A dropped line -- or a Log/State never written -- is repaired before
   // anything reads it: the next round's verifier takes its gate tokens from
   // this very block, and its implementer its evidence from the Log.

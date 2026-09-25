@@ -167,6 +167,13 @@ the last round and stopped eight findings that were already green. If nothing
 blocks, say **"no blocking findings"** as the first line of your report, before
 anything else.
 
+**Your findings never go down the patch route.** Other reviewers may attach a
+`fix` to a BLOCKING finding, and a round whose every BLOCKING finding carries
+one is followed by a cheaper patch round. A finding of yours always spends an
+ordinary round, because what a hook or probe can see is not settled by
+applying an edit someone wrote down. Give a suggested change in the finding's
+text if it helps the implementer; it is not treated as a patch.
+
 ## What you return
 
 For each finding: path and line, which of the four sections it falls under, the

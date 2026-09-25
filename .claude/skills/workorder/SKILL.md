@@ -257,6 +257,35 @@ Spawn `implementer` with the plan and context paths. Three outcomes:
   fresh (a replan is always fresh — see "Re-entering a phase" below). This is
   the loop working.
 
+  **Amend, or replan.** First decide whether this defect needs a replan at
+  all. It does not when the evidence already names what is wrong *and*
+  states the correction: the implementer's `CORRECTION:` line, or a
+  reviewer's `plan_defect` finding carrying a `fix`. Typical cases are a
+  criterion's command or anchor, a path that moved, or one wrong fact in
+  `## Context`. Then it is an **amendment**:
+
+  1. `py -3 tools/amend_check.py save <plan> <context>`;
+  2. spawn `planner` fresh at its default tier, with the description
+     `amendment: <slug> <what>` and the correction verbatim (planner.md "When
+     you are spawned as an amendment");
+  3. `py -3 tools/amend_check.py check <plan> <context>` once it returns.
+
+  Exit 0 (`AMENDMENT`) means Goal, Out of scope and Needs human judgement are
+  untouched, no section came or went, and at most 20 lines changed outside
+  `## State` and `## Log`. The amendment is then not a replan: it does not
+  count toward the cap below and does not move the next replan up a tier.
+  Exit 1 (`REPLAN: <why>`), or a planner returning `NOT AN AMENDMENT`, makes it
+  a replan like any other, counted and escalated. Relaunch the rounds from
+  the same round number either way.
+
+  No two amendments run back to back: a second `PLAN-DEFECT` with no
+  implementer round between it and the first amendment is a replan. The
+  test is the files, never the planner's account of what it changed. Over
+  2026-09-19..24, labels such as "fix criterion 11 anchoring" and "fix M3 row
+  id collision" each counted as a full replan. `tools/workorder_audit.py` R24
+  fails an `amendment:` planner that has no `save` before it or no `check`
+  after it, and R11 counts it as a replan unless its `check` passed.
+
   **Escalate the planner's model as it fails, rather than only counting.** A
   `PLAN-DEFECT` is the pipeline telling you this problem is harder than the tier
   you assigned it:
@@ -291,7 +320,8 @@ claim the driver makes about it.
 
 Spawn fresh when: the tier changes; it's a planner replan (always fresh — the
 point is a fresh look at what the earlier plan assumed, and a resumed planner
-is that assumption's own context); the agent id doesn't resolve (`/workorder
+is that assumption's own context) or an amendment (fresh and labelled
+`amendment: ...`, which is how the audit tells it from a replan); the agent id doesn't resolve (`/workorder
 resume` in a new session) or the send fails; or it's already been resumed
 twice. A fresh implementer or planner gets a `PROGRESS SO FAR` block (steps
 done, files touched, what's half-finished) instead of history. `verifier` and
@@ -367,6 +397,15 @@ one `docs-sync-reviewer` that ran 40 turns twice:
 that the context file is opened one cited heading at a time with
 `section.py`, never whole.
 
+**The verifier starts with `tools/run_criteria.py <plan>`.** The script runs
+every command-shaped criterion in one call, exactly as written, once per
+distinct command, and skips gated ones. It prints each exit code with the tail
+of the command's output and judges nothing, so the verifier still decides
+every criterion and reads the prose ones. Verifiers spent about a third of
+their time on model turns between commands, so this cuts per-command turns
+and nothing the verifier observes. A root suite a criterion already ran is not
+run a second time for step 3 of `verifier.md`.
+
 **Diff from the round base, never from `HEAD`** — implementers commit during
 the round, so `git diff HEAD` is empty afterwards. Take each repo's base sha
 from `round_delta.py heads <slug> <round>` (or `## State` › `round base:`):
@@ -398,6 +437,11 @@ classify yourself. `PLAN-DEFECT` only when no implementation of the plan as
 written could satisfy its Goal — say that explicitly; a missing assert, pin,
 or sentence the plan didn't forbid is `BLOCKING`, for the implementer, not the
 planner.
+
+**Ask for the fix.** A `BLOCKING` finding whose resolution the reviewer can
+state exactly, as the edit itself at its `path:line`, carries it as `fix`. A
+finding that needs judgement or research leaves `fix` out. Step 4's patch
+route runs only when every `BLOCKING` finding has one.
 
 ### Step 4 — route the verdicts
 
@@ -449,7 +493,39 @@ The line, when a reviewer's label looks wrong to you:
   user with everything tried so far. Ping-ponging past three means the pipeline
   has lost the thread and more rounds will not find it. The cap counts rounds,
   not implementers: a laned round — every lane plus the join, then one
-  verify — is one round.
+  verify — is one round. A patch round that held (below) is not counted.
+
+  **The patch route.** When a round's only defects are `BLOCKING` reviewer
+  findings and *every* one carries its reviewer's `fix`, the next round is a
+  patch round instead. "Only" means no failed criterion, no structural or
+  NOT DONE finding from the verifier, no `PLAN-DEFECT`, and no finding from
+  `instrument-blindness-reviewer`, because what a hook sees is not settled by
+  applying an edit someone wrote down. In a patch round:
+
+  - one implementer (`patch-implementer:r<n>`) applies those fixes and
+    nothing else;
+  - `verifier` runs every criterion as usual, because nothing says which
+    criteria a change can reach;
+  - only the reviewers that raised the findings re-run, to confirm their own,
+    plus `decompile-output-guard` whenever its trigger matches.
+
+  Whether the round was a patch is decided afterwards, from the tree:
+  `round_delta.py size <slug> <n>` must report at most 20 changed lines and
+  no new file, and the delta must not reach `ForgePact/plugin/`, hook or
+  installer code under `hs-game-sdk/`, a `*-research.md`, a
+  `release-notes-v*.md`, or instrument-shaped text. A patch that holds is not
+  counted against the cap, and `## State` carries `patch rounds: <k>`. One that
+  does not hold is an ordinary round: its reviewers are chosen by the Step 3
+  table, and it counts. Two patch rounds never run back to back, and a patch
+  decided on the third round still runs.
+
+  Measured over the 29 sessions that ran a planner (started 2026-09-19..24):
+  fix rounds, replans and reviewer re-runs took about a quarter of all
+  subagent spend. 32 of the 69 fix-round implementers ran for 7 minutes or
+  less, each inside a 13–23 minute round that also used one of the three the
+  cap allows. How many of them applied a fix the reviewer had already written
+  out was not recorded; the `fix` field makes that countable. Details:
+  [`docs/agents/workorder-calibration.md`](../../../docs/agents/workorder-calibration.md#the-cheap-routes-2026-09-25).
 
   **At the cap, split — never close it by hand.** Three failed rounds mean the
   pipeline lost the thread, regardless of plan size or how close it looks to
@@ -462,7 +538,8 @@ The line, when a reviewer's label looks wrong to you:
   hold and changed nothing) → the previous PASS stands; re-run only the
   reviewers that were BLOCKING, to confirm with evidence or withdraw.
 - **Any `PLAN-DEFECT`** — from implementer, verifier, or a reviewer finding
-  labelled that way — → back to step 1, under the replan cap.
+  labelled that way — → Step 2's "Amend, or replan": an amendment when the
+  correction is stated, else back to step 1, under the replan cap.
 - **Anything under `UNATTEMPTED` that needs a human** — a live game session, a
   rebuild, eyes on a window — → stop and ask. Never record an unchecked
   criterion as passed.
@@ -628,7 +705,8 @@ forgepact-issue-14 the design moved under the owner's answers four times.
 ## Driver discipline
 
 **The driver never implements.** Its tool use is limited to: reading the
-workorder, `round_delta.py`, `git status`/`git diff` for a dispatch, `Edit` on
+workorder, `round_delta.py`, `tools/amend_check.py save`/`check` around an
+amendment, `git status`/`git diff` for a dispatch, `Edit` on
 `## State`/`## Log`, `Agent`, `SendMessage`, `AskUserQuestion`, and step
 4.5's one approved install. Log entries go in with `Edit`, under the one
 `## Log` — not `cat >>` heredocs, which is how a context file ended up with two
@@ -681,8 +759,8 @@ never where `Edit` lands, so it cannot make another checkout workable — Step
 
 `state` is the plan's `## State` section exactly as `py -3
 .claude/skills/workorder/section.py <plan> 'State'` prints it. The script
-merges each round's `round:`/`phase:`/`reviewers:`/`open defects:` into it
-and hands the scribe the whole block, so the lines only the driver writes —
+merges each round's `round:`/`phase:`/`reviewers:`/`open defects:` (and,
+once a patch round has held, `patch rounds:`) into it and hands the scribe the whole block, so the lines only the driver writes —
 `gates:`, `round base:`, `agents:`, `decisions in force:` and any other —
 are pasted back verbatim rather than left to the scribe to preserve. On
 2026-09-23 a scribe handed only the four computed lines replaced the whole
@@ -700,6 +778,14 @@ Log entry records what the verifier said, and each such criterion appears as
 reclassified. On 2026-09-24, forgepact-issue-14-phase1j lost three rounds to a
 template `gates:` line, which the verifier read as every gate set, and ended at
 `CAP` with no real defect open after round 0.
+
+It runs Step 4's patch route itself. It asks each reviewer for a `fix`,
+decides when the next round is a patch (the round's Log gets `next: patch
+round` and State `phase: patch`), runs `round_delta.py size` in that round,
+and writes `patch: held` or `patch: not held (<why>)` under its Log heading.
+It keeps `patch rounds: <k>` in State and reads it back on the next launch,
+so a patch that held stays uncounted across launches. A patch decided just
+before a launch ends is not carried over; the relaunch runs an ordinary round.
 
 It loops implement → verify+reviewers → route as code (same 3-round cap,
 scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,

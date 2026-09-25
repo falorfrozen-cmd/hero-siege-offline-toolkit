@@ -1417,6 +1417,88 @@ class CliTests(TempDirMixin, unittest.TestCase):
         self.assertFalse(all(r["passed"] for r in payload["rules"]))
 
 
+# --------------------------------------------------------------------------
+# R24 cheap routes (amendments, patch rounds) and R11's amendment exemption
+# --------------------------------------------------------------------------
+
+def _amend_call(offset, idx, verb, failed=False):
+    """A driver `amend_check.py <verb>` call; `failed` marks a non-zero exit."""
+    records = tool_turn(offset, idx, "Bash", {"command": f"py -3 tools/amend_check.py {verb} .claude/workorders/x-plan.md"},
+                        result="REPLAN: ## goal changed" if failed else "AMENDMENT")
+    records[1]["message"]["content"][0]["is_error"] = failed
+    return records
+
+
+class CheapRouteTests(TempDirMixin, unittest.TestCase):
+    """Timeline: plan 0-100s, implementer 200-300s, [save 350s], amendment
+    400-450s, [check 500s], implementer 600-700s."""
+
+    def _session(self, sub, save=True, check=True, check_failed=False, second_amend=False):
+        driver = [turn(0, 9000)]
+        if save:
+            driver += _amend_call(350, 9001, "save")
+        if check:
+            driver += _amend_call(500, 9002, "check", failed=check_failed)
+        b = SessionBuilder(self.tmp_path / sub).driver(driver)
+        b.subagent("planner", "Plan x", _span(0, 100, 100))
+        b.subagent("implementer", "implementer:r0", _span(200, 300, 200))
+        b.subagent("planner", "amendment: x criterion 3 anchor", _span(400, 450, 300))
+        if second_amend:
+            b.subagent("planner", "amendment: x criterion 4 too", _span(550, 580, 400))
+        b.subagent("implementer", "implementer:r0", _span(600, 700, 500))
+        return b.evaluate()[1]
+
+    def test_pass_a_checked_amendment_is_not_a_replan(self):
+        results = self._session("ok")
+        self.assertTrue(get_rule(results, "R24").passed, get_rule(results, "R24").evidence)
+        self.assertTrue(get_rule(results, "R11").passed)
+        self.assertEqual(get_rule(results, "R11").evidence, [])
+
+    def test_a_failed_check_counts_as_a_replan(self):
+        results = self._session("failed", check_failed=True)
+        self.assertTrue(get_rule(results, "R24").passed)
+        self.assertEqual(len(get_rule(results, "R11").evidence), 1)
+
+    def test_fail_an_unchecked_amendment_counts_as_a_replan(self):
+        results = self._session("unchecked", check=False)
+        r = get_rule(results, "R24")
+        self.assertFalse(r.passed)
+        self.assertTrue(any("no `amend_check.py check`" in e for e in r.evidence), r.evidence)
+        self.assertEqual(len(get_rule(results, "R11").evidence), 1)
+
+    def test_fail_no_save_before_the_amendment(self):
+        r = get_rule(self._session("unsaved", save=False), "R24")
+        self.assertFalse(r.passed)
+        self.assertTrue(any("no `amend_check.py save`" in e for e in r.evidence), r.evidence)
+
+    def test_fail_two_amendments_with_no_implementer_between(self):
+        r = get_rule(self._session("twice", second_amend=True), "R24")
+        self.assertFalse(r.passed)
+        self.assertTrue(any("second amendment" in e for e in r.evidence), r.evidence)
+
+    def test_control_an_ordinary_replan_is_still_a_replan(self):
+        b = SessionBuilder(self.tmp_path / "replan").driver([turn(0, 9000)])
+        b.subagent("planner", "Plan x", _span(0, 100, 100))
+        b.subagent("planner", "Replan x after PLAN-DEFECT", _span(400, 450, 300))
+        b.subagent("planner", "Amend buildout B and restyle", _span(500, 550, 400))  # the free-form label drivers already use
+        _, results = b.evaluate()
+        self.assertEqual(len(get_rule(results, "R11").evidence), 2)
+        self.assertTrue(get_rule(results, "R24").passed)
+
+    def test_patch_rounds_back_to_back_fail_and_apart_pass(self):
+        for sub, rounds, passed in (("apart", (1, 3), True), ("adjacent", (1, 2), False)):
+            b = SessionBuilder(self.tmp_path / sub).driver([turn(0, 9000)])
+            b.workflow_agent("wf_a", "implementer", "implementer:r0", _span(0, 10, 100))
+            for k, n in enumerate(rounds):
+                b.workflow_agent("wf_a", "implementer", f"patch-implementer:r{n}", _span(20 + k * 20, 30 + k * 20, 200 + k * 10))
+            _, results = b.evaluate()
+            self.assertEqual(get_rule(results, "R24").passed, passed, sub)
+
+    def test_a_patch_implementer_is_not_read_as_a_lane(self):
+        self.assertIsNone(wa.lane_of("patch-implementer:r1"))
+        self.assertEqual(wa.parse_label("patch-implementer:r1"), ("patch-implementer", 1))
+
+
 if __name__ == "__main__":
     unittest.main()
 
