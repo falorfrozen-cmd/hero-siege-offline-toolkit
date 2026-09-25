@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-25T08:45:21Z",
+  "generated": "2026-09-25T09:18:50Z",
   "tools": [
     {
       "id": "forgepact",
@@ -61,9 +61,9 @@
       "summary": "Item creator, stash editor and inventory customizer.",
       "repo": "falorfrozen-cmd/hero-siege-item-editor",
       "submodule": "hero-siege-item-editor",
-      "version": "2.16.0",
-      "tag": "v2.16.0",
-      "published": "2026-09-25T00:28:57Z",
+      "version": "2.16.1",
+      "tag": "v2.16.1",
+      "published": "2026-09-25T09:18:21Z",
       "license": "NOASSERTION",
       "requires": {
         "admin": false,
@@ -73,10 +73,10 @@
       },
       "artifact": {
         "kind": "exe",
-        "name": "HeroSiegeItemEditor-v2.16.0-s10.exe",
-        "url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/download/v2.16.0/HeroSiegeItemEditor-v2.16.0-s10.exe",
-        "size": 19734053,
-        "sha256": "f937bc13f608d0296e4aa9795ccb7027bcd4def8bd1001c8fce895ff8da493cb",
+        "name": "HeroSiegeItemEditor-v2.16.1-s10.exe",
+        "url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/download/v2.16.1/HeroSiegeItemEditor-v2.16.1-s10.exe",
+        "size": 19743835,
+        "sha256": "ac18db5a160245a3798c4be3fc55fe95b2789079656b2d81235f05daa13b7dc6",
         "sha256_source": "published+verified",
         "strip_prefix": "",
         "install_as": "HeroSiegeItemEditor.exe"
@@ -93,8 +93,8 @@
           "timeout_s": 25
         }
       },
-      "notes_url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/tag/v2.16.0",
-      "notes": "# Hero Siege Item Editor 2.16.0\n\n## Tooltips show what the game built\n\nUntil now the editor worked out an item's lines itself, from the seeds in the\nsave, with the rules of the 2026-08-28 game build. The game changed since, and\nthat calculation never covered the random affixes of ordinary items, so tooltips\noften differed from the game. Measured on 755 owned items with the 2026-09-16\nbuild: 199 matched line for line; ranges were right, rolled values often were not.\n\n2.16.0 shows the game's own values wherever the game has built the item:\n\n- the full name with the magic prefix and suffix, the rolled rarity (Common,\n  Superior, Rare, Mythic, Satanic, …), the tier and the level requirement;\n- every stat and every random affix, with its range;\n- a **✓ Game verified** line, and in the details view the lines where the old\n  estimate differed.\n\nWhere the numbers come from:\n\n- **ForgePact 1.4.5 or newer** records each item the game finishes building while\n  the game runs. The editor asks for this by creating\n  `%LOCALAPPDATA%\\Hero_Siege\\itemtruth\\capture.request`; the **GAME TRUTH** line\n  turns it off and on.\n- **AFK FARM** delivery records already hold every delivered item, so the AFK\n  items in your Vault are verified as soon as 2.16.0 has read them, as long as\n  those records are still on this computer (on a test Vault: 6,716 of 6,802 items).\n\n- **The game checks the rest by itself.** While Hero Siege runs - the main menu is\n  enough - the editor sends every item it has not verified yet to ForgePact, and\n  the game builds each one in memory with its own save loader, records it and\n  throws it away. On a test save 342 items took about 2 seconds, and afterwards\n  all 7,628 owned items were verified: every character (loaded or not), the\n  Shared Stash and the whole Vault. After a game update, everything is checked\n  again the same way.\n\nUntil the game has checked an item, it keeps the editor's own calculation, now\nlabelled **Estimate** unless the game runs the build those rules were made for.\nItem Forge base stats use the same records, and grid tiles take the rarity the\ngame rolled.\n\n## Tooltips read exactly as in the game\n\nThe game also draws each item's tooltip for the editor, and the editor shows what\nit drew, row by row and in the game's colours:\n\n- the name, the type line (`Satanic Set Body Armor`), socket contents, Attack\n  Damage, Attacks per Second or Defense, Block Chance;\n- proc lines (`22% Chance when Casting [Fist of the Heavens] Level 70`), skill\n  grants (`+16 to Omnislash (Samurai)`), auras (`Angel's Vibrance Aura Level 27 [20-30]`);\n- every stat line in the game's order, wording and sign (`-25% to All Enemy\n  Resistances`, `Ailment damage increased by 35%`, `+300 to Mana (Based on Level)`);\n- sockets with their range, star level, set pieces, lore, `Unidentified` where the\n  game says so, and the Tier / Requires Level footer.\n\nThe editor's roll range still follows each rolled stat. How it works: while an item\ntooltip is open in the game, the game draws the tooltips of your other items off\nscreen, a few per frame (at most 3 ms), and ForgePact records the text. Hovering\nany item for a minute or two is enough: on a test save the game drew 7,607 items in\nabout 2 minutes, and all 7,628 owned items then read as in the game. New items are\ndrawn the next time a tooltip is open. Until an item has been drawn, its stat lines\nalready use the game's own labels, formats and colours (on 7,628 drawn tooltips,\nall 41,920 lines they share read the same); relic skills take their names from the\ngame's translation files.\n\nNothing is written into saves or into the game: items are only built in memory\nand read. A check the game could not finish (for example because it closed) is\nset aside and never restarted on its own.\n\nFixed: the editor could not find a game installed under a folder with Turkish or\nother non-English letters in its path (it read the path garbled), which also kept\nthe Custom Forge status from finding the running game.",
+      "notes_url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/tag/v2.16.1",
+      "notes": "# Hero Siege Item Editor 2.16.1\n\nFor AFK FARM 0.8 (the camp) and 0.9 (the town).\n\n## What's new\n\n- **The town's goods for AFK FARM's camp and town.** An AFK FARM adventurer opens\n  golden chests with Basic Keys and crystal chests with Crystal Keys from the camp's\n  key rack; the jeweler works from the camp's material stock. AFK FARM 0.9's town\n  (fortifications, merchants, trade wagons) stocks the town's goods: keys,\n  fragments and shards, tarot cards, materials, dusts, rare consumables, runes,\n  gems, jewels and orbs. AFK FARM can now fill its stock from your Vault's\n  **AFK Materials**: the amounts you choose leave the Vault (smaller stacks first)\n  and go to the camp or town, all at once or not at all.\n- **Never taken twice.** Each request carries its own id and is carried out at most\n  once. If AFK FARM loses the editor's answer, it asks again and gets the same\n  result; if the request never arrived, AFK FARM cancels it, and nothing can be\n  taken with that id afterwards.\n- Custom-named stacks are never taken. Hero Siege may be running (only the Vault\n  database changes, like an AFK transfer). The Vault's history lists each take, and\n  History undo does not reach past it.\n\nEverything else is as in 2.16.0. Download the exe and run it; no install.",
       "guide": "docs/submodules/hero-siege-item-editor/instructions.md",
       "source_launch": {
         "cmd": "py",
