@@ -106,7 +106,7 @@ there was no other way in.
   a licence compatible with shipping it inside ForgePact (SIL OFL or similar),
   and its licence text ships with it.
 - **The dev loop** is `py src/forgepact.py` beside `npm --prefix panel run dev`:
-  Vite serves on port 5178 and proxies `/api` to the backend on 8766. 5178 keeps
+  Vite serves on port 5178 and proxies `/api` to the backend on 8780. 5178 keeps
   clear of the hub's 5177 and HS-Offline-Tracker's 5176.
 - **Where the design lives.** The Figma file is "ForgePact redesign",
   <https://www.figma.com/design/75EleO8U3zngY8JU9adWpk>. It is a design
