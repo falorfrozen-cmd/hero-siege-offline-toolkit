@@ -1512,6 +1512,47 @@ virtual size), names a build.
 **Measured**: the Item Editor computes the id from the exe on disk, and ForgePact
 from the running process, and both gave the same id on 2026-09-24.
 
+### 16.9 What a save definition decides: rarity, runewords, sockets
+
+What the Item Editor's game-built seed table established on 2026-09-26 against
+`pe-6aaa6779-0cad4fc8`: the game built about 135,000 items through
+`InitItemFromJson` (§16.2) at the main menu, none placed or saved. The argument,
+the controls and the table are in the Item Editor's
+[`GAME_TRUTH_DESIGN.md`, step 4](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-4--seeds-the-game-built-item-editor-2163).
+
+- **Rarity is rolled from `a`.** The same definition always builds the same
+  rarity (info `"27"`, §16.4). Random seeds on white equipment bases came out
+  Common 61%, Superior 31%, Rare 6%, Mythic 1%. The CPR stat model (the stat
+  draws and the socket draw of the `a` chain) does not predict it: no single
+  draw separated Common from the rest across bases. **Measured.**
+- **Amulets and rings never came out Common** in about 16,000 builds. **Measured.**
+- **A runeword forms only on a Common base.** Of recipe x base items built with
+  the recipe's runes in `s1..sN`, 2,410 of 2,429 Common ones formed and 2 of
+  1,286 others. Disaster and Celestus also did not form on 20 and 8 of the bases
+  their targets name, even Common with the right socket count. **Measured.**
+- **Socket count (stat 20).** **Measured**, with probes of each case and 4,849
+  items built as the editor writes them:
+  - a non-unique item (`c` 0) shows the larger of the definition's
+    `zz.sockets` and the count its seed rolls; on a seed that rolls none,
+    `zz.sockets` 1-6 gave exactly that count on every equipment class, gloves
+    and belts included;
+  - a unique (`c` 1) shows the count its seed rolls and never reads
+    `zz.sockets`;
+  - filled payloads `s1..s6` never add a socket: payloads beyond the count stay
+    in the definition, unused (`s1..s5` on a seed that rolls 3 gave 3 sockets).
+- **Most sockets a white base rolls**, over 332 seeds per base: helmets 3-4,
+  body armours 4, boots 2-4, weapons 1-6, shields 2-5, gloves and belts none.
+  **Measured.**
+- **ForgePact's Custom Forge dresses every item whose type and `a`/`b`/`c`/`j`
+  equal a forged item's**: two items that share a seed on one base are the same
+  item to it. **Measured**: every white Great Helm built with the seed of the
+  owner's forged Miner's Helmet came out as that Miner's Helmet.
+- **The game keeps every item it evaluates this way in memory** until it closes:
+  about 95 KB each; a session that evaluated about 200,000 crashed in
+  `ucrtbase.dll` (0xc0000409). **Measured.** Why is not established.
+
+[Item Editor, game truth step 4](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-4--seeds-the-game-built-item-editor-2163)
+
 ---
 
 ## 17. Stash Special Tabs & the Crafting Route

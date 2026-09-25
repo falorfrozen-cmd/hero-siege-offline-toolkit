@@ -633,6 +633,39 @@ Merged in falorfrozen-cmd/hero-siege-item-editor#9 and released as `v2.16.1` on 
 
 **Live check** (2026-09-25): AFK FARM 0.9 took seven kinds with `take`, and the Vault lost exactly those counts. For type 13, this editor made a Battle Fragment (13:0) in an empty Shared Stash tab with the game closed and deposited it into AFK Materials. AFK FARM's town then took it, and the game made it again. It came back to AFK Materials.
 
+## Game-built seeds (2.16.3, 2026-09-26)
+
+Players reported yellow "white" bases and gems that go into only some sockets.
+Built by the game, 160 of 363 white bases came out Superior or better (rarity is
+rolled from `a`, which the roll profiles chose for stat draws only), about a
+third of the forged runewords never formed (a runeword forms only on a Common
+base), and 96 of 553 uniques had a different socket count from the one the
+editor claimed. The game facts are in
+[`RUNTIME_DATA_MODELS.md` §16.9](../../RUNTIME_DATA_MODELS.md#169-what-a-save-definition-decides-rarity-runewords-sockets);
+the design is `GAME_TRUTH_DESIGN.md`, step 4.
+
+- **`hs_game_seeds.json`** (bundled; the editor fails closed without it):
+  - per white equipment base, Common seeds that roll no socket, best CPR stat
+    score first, and `maxSockets`, the most sockets the game rolls for the base;
+  - per unique, the seed and the count the game gives it;
+  - `runewordBlocked`, recipe x base pairs the game does not form.
+  Amulets and rings have no entry (never Common).
+- **Generation.** `make_data` and `preferred_runeword_seeds` take the best table
+  seed no local Custom Forge item uses (Custom Forge matches type + `a`/`b`/`c`/`j`);
+  Perfect writes the best one; Reroll stays on table seeds for runewords and
+  editor-made white bases. Runewords keep their profile's `i` and write
+  `zz.sockets` = the rune count.
+- **Sockets.** A non-unique item shows max(`zz.sockets`, its seed's count), a
+  unique only its seed's count: the socket editor caps a white base at
+  `maxSockets` and keeps a unique at its count (`rolled_socket_count`).
+  `game_truth.identity_fields` keeps `zz.sockets` for non-unique items.
+- **Refreshing after a game update:** `build_game_seed_table.py` with Hero Siege
+  at the menu and Game truth on. The game keeps every evaluated item in memory (a
+  session of about 200,000 crashed), so each run evaluates at most 30,000 and the
+  tool resumes from a work file: restart the game between runs.
+- **Tests:** `test_game_seeds.py`. Test classes that generate items point `ROOT`
+  at their temporary folder, since generation reads the local Custom Forge store.
+
 ## Ports shared with other tools (2.16.2, 2026-09-25)
 
 Reported while releasing 2.16.1: the editor could not start while ForgePact's panel held 8766. `main()` binds every port in 8765-8774, and a port that did not answer as an editor stopped startup ("occupied by an unidentified or legacy process").
