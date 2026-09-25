@@ -42,10 +42,13 @@ windows_only = true
 exe = "ForgePact.exe"
 args = []
 elevate = false
-ports = [8766, 8780, 8801, 8899, 9133, 9777]
+# PORT_CANDIDATES in src/forgepact.py, in order. ForgePact 1.4.6 dropped 8766,
+# one of the Item Editor's 8765-8774: with the editor open, this health check
+# of 8766 reached the editor. The health URL is the first candidate.
+ports = [8780, 8801, 8899, 9133, 9777]
 
 [tool.launch.health]
-url = "http://127.0.0.1:8766/"
+url = "http://127.0.0.1:8780/"
 timeout_s = 20
 
 [tool.source_launch]
