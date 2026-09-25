@@ -623,4 +623,6 @@ Tests:
 - `AfkCampTakeTests` (6) and `AfkTownGoodsTakeTests` (3) in `test_vault_afk_qol.py`.
 - The whole suite is 579 tests (1 skipped). Run it with `USERPROFILE` and `LOCALAPPDATA` pointed at a temporary folder: `ROOT` is `Path.home()`-based, so this keeps any test away from the machine's Vault.
 
-Upstream pull request: falorfrozen-cmd/hero-siege-item-editor#9.
+Merged in falorfrozen-cmd/hero-siege-item-editor#9 on 2026-09-25. It is not released yet, so the toolkit still installs 2.16.0.
+
+**Live check** (2026-09-25): AFK FARM 0.9 took seven kinds with `take`, and the Vault lost exactly those counts.

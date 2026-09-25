@@ -107,8 +107,8 @@ All commands run from `HS-AFK-Expedition/`.
 ## Releases & Hub Integration
 - **Package.** `tools/build_release.py` names the package after `VERSION` in `tools/panel.py`. The zip carries an `AFK-FARM-<version>/` root with `MANIFEST.json` (a SHA-256 for every file).
 - **Release assets.** GitHub releases carry `AFK-FARM-<version>.zip` and its `AFK-FARM-<version>.zip.sha256` sidecar.
-- **Catalog.** The catalog id is `afk-farm` (`catalog/sources.toml`), and its asset pattern is `^AFK-FARM-[0-9][^/]*\.zip$`.
-- **Dispatch token.** Until the AFK repository has the `HUB_DISPATCH_TOKEN` secret (the same token the other tools use), pointer bumps and catalog rebuilds are started by hand: Actions → Catalog → Run workflow, with `only: afk-farm`.
+- **Catalog.** The catalog id was `afk-farm`, with the asset pattern `^AFK-FARM-[0-9][^/]*\.zip$`. The tool is out of the catalog since 2026-09-25 (see **Toolkit catalog** above).
+- **Dispatch token.** The AFK repository has the `HUB_DISPATCH_TOKEN` secret. On 2026-09-25 its merges to `main` opened the pointer bump (hub #191) and started catalog rebuilds by themselves.
 
 ## Testing & Validation Classification
 1. **Game-free.** The Python, Node and C++ suites above.
@@ -117,11 +117,11 @@ All commands run from `HS-AFK-Expedition/`.
 ## Known Gaps
 - **Beta.** Automatic startup and **Claim in background** support the verified executable only.
 - **Build-bound.** The plugin's farm context is tied to one game build; a game update needs a new verification.
-- **Item Editor release.** The Vault side needs Item Editor 2.15.5 or later, which is on its `master` branch until its next release.
+- **Item Editor release.** Transfers to the Vault need Item Editor 2.15.5 or later, which is released. The camp's and town's takes need 2.16.1, which is merged on `master` (falorfrozen-cmd/hero-siege-item-editor#9) but not released yet.
 
-## Workers and the camp (0.7.0-0.8, in review)
+## Workers and the camp (0.7.0-0.8)
 
-Not released yet. They are in falorfrozen-cmd/HS-AFK-Expedition#1 (0.7.0) and #2 (0.8, stacked on #1). The design notes are in the module's `docs/DESIGN.md`, the API in `docs/UI_CONTRACT.md`, and the player text in `docs/PLAYER_GUIDE.md`.
+Merged into `main` on 2026-09-25 (falorfrozen-cmd/HS-AFK-Expedition#1 and #2), not released yet. The design notes are in the module's `docs/DESIGN.md`, the API in `docs/UI_CONTRACT.md`, and the player text in `docs/PLAYER_GUIDE.md`.
 
 - **Workers** (`tools/workers.py`, 0.7.0):
   - They are paid with the game's gold (`afk worker pay`, one receipt per request).
@@ -143,11 +143,11 @@ Not released yet. They are in falorfrozen-cmd/HS-AFK-Expedition#1 (0.7.0) and #2
   - 246 Python tests, including a bridge test against the real Item Editor handler, which is skipped without a sibling 2.16.1 checkout;
   - 42 Node UI tests (panel 28, map 11, share card 3);
   - the C++ smokes, including `worker_smoke`.
-- **Live check:** the 0.8 engine has not been run against the game yet.
+- **Live check** (2026-09-25, as part of the 0.9 test): a take of seven kinds, including Basic Keys for the key rack, removed exactly those counts from the Vault. The 0.8 trips (adventurers, goblin hunters, the jeweler, team trips) have not been run against the game yet.
 
-## The town (0.9, in review)
+## The town (0.9)
 
-Not released. It is in falorfrozen-cmd/HS-AFK-Expedition#3, stacked on #2. The rules are in the module's `docs/DESIGN.md`, the API in `docs/UI_CONTRACT.md` ("0.9: the town"), the player text in `docs/PLAYER_GUIDE.md`, and the UI brief in `docs/CHATGPT_HANDOVER.md`.
+Merged into `main` on 2026-09-25 (falorfrozen-cmd/HS-AFK-Expedition#3), not released yet. The rules are in the module's `docs/DESIGN.md`, the API in `docs/UI_CONTRACT.md` ("0.9: the town"), the player text in `docs/PLAYER_GUIDE.md`, and the UI brief in `docs/CHATGPT_HANDOVER.md`.
 
 - **Town defense** (`defense.py`, `battle.py`, `bestiary.py`, `fortifications.py`, `town.py`):
   - Sieges of 15 minutes to 8 hours, a wave every 5 minutes, at levels 1-60.
@@ -161,9 +161,14 @@ Not released. It is in falorfrozen-cmd/HS-AFK-Expedition#3, stacked on #2. The r
   - The town has its own coffer. A deposit goes through the purchase path; a payout uses the new `afk worker credit` (plugin 0.9.0-town), with one receipt per request. A refused payout after which the gold rose anyway stays out of the coffer as `review`.
   - The stock holds 226 kinds of stackable goods. Goods come in through the Item Editor's take and go out only as stacks the game makes (`worker_town_*` deliveries; `TownGoods.hpp` is generated from `goods.py`).
   - Travelling merchants and trade wagons to ten towns price with a stock model: every unit moves the price, a round trip always loses, and prices recover by the hour.
-- **Tests** (2026-09-25): 387 Python tests, including the panel integration (`test_town.py`, 34), the town modules' unit tests (94) and the goods header; 42 Node UI tests; the C++ smokes, with 36 worker checks covering the credit decisions and the goods list. An independent review's findings were fixed with regression tests.
+- **Tests** (2026-09-25): 390 Python tests, including the panel integration (`test_town.py`, 34), the town modules' unit tests (94), the goods header and the packet facts cache; 42 Node UI tests; the C++ smokes, with 36 worker checks covering the credit decisions and the goods list. An independent review's findings were fixed with regression tests.
 - **The watch** (`defense_watch`): the town can keep itself under siege with its towers alone, one siege after another. It catches up after the panel was closed (at most a day back) and pauses while 8 town shares wait or after the keep falls.
-- **Live check:** not run in the game yet. Still to verify: `worker credit`; town deliveries of types 12, 13 and 15; a siege's hero and town claims.
+- **Packet facts cache** (`packet_facts.py`): the bestiary and the workers' loot pools read `afk/packet-facts.json` instead of every packet file. It keeps each file's few facts with its size and modification time, so only new or changed files are read again. It is derived: deleting it only makes the next read slow. On 6,471 packets, a cold siege page went from 24 s to 0.26 s.
+- **Live check** (2026-09-25, plugin 0.9.0-town, a level-100 hero). The sieges used a temporary town that was removed afterwards.
+  - A coffer deposit of 10,000 and a payout of 5,000 (`worker credit`) moved the account gold by exactly those amounts, each with one receipt.
+  - A town delivery made seven stacks of types 12, 14 and 15 with the right `b` and `o`. The Vault ingest put back exactly what the take had removed.
+  - Two sieges held, at levels 1 and 10. The hero's claim replayed 60 of 60 kills with XP. The town's shares replayed 80 of 80 and 185 of 185 kills, with no XP. All were saved.
+  - Not yet checked: a delivery of type 13 (fragments, shards and tarot cards). The Vault had none to take.
 
 ## Related Guides
 - [hero-siege-item-editor](../hero-siege-item-editor/instructions.md): Infinite Vault, AFK transfers, DISMANTLE, camp takes
