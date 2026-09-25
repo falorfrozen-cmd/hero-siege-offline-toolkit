@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-25T09:18:50Z",
+  "generated": "2026-09-25T17:18:39Z",
   "tools": [
     {
       "id": "forgepact",
@@ -8,9 +8,9 @@
       "summary": "Offline gameplay modifiers: density, spawns, drop rates, map reveal.",
       "repo": "falorfrozen-cmd/ForgePact",
       "submodule": "ForgePact",
-      "version": "1.4.5",
-      "tag": "v1.4.5",
-      "published": "2026-09-25T00:28:50Z",
+      "version": "1.4.6",
+      "tag": "v1.4.6",
+      "published": "2026-09-25T17:18:11Z",
       "license": "AGPL-3.0",
       "requires": {
         "admin": false,
@@ -20,19 +20,18 @@
       },
       "artifact": {
         "kind": "zip",
-        "name": "ForgePact-1.4.5.zip",
-        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.4.5/ForgePact-1.4.5.zip",
-        "size": 17803779,
-        "sha256": "ca29efd5ea8d79dde3de52b492733d513d9110b3d0933ffcf5d2d8329c9619ef",
+        "name": "ForgePact-1.4.6.zip",
+        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.4.6/ForgePact-1.4.6.zip",
+        "size": 17836007,
+        "sha256": "2ca25fddaf881309d33cac0efc7cfc89e5936950cccff68d13964ec2e93e44a9",
         "sha256_source": "published+verified",
-        "strip_prefix": "ForgePact-1.4.5/"
+        "strip_prefix": "ForgePact-1.4.6/"
       },
       "launch": {
         "exe": "ForgePact.exe",
         "args": [],
         "elevate": false,
         "ports": [
-          8766,
           8780,
           8801,
           8899,
@@ -40,12 +39,12 @@
           9777
         ],
         "health": {
-          "url": "http://127.0.0.1:8766/",
+          "url": "http://127.0.0.1:8780/",
           "timeout_s": 20
         }
       },
-      "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.4.5",
-      "notes": "# ForgePact 1.4.5\n\nThe Prospect Cube can now prospect each item the moment you put it in, so you\nno longer have to stop every 54 items to press Prospect and start again.\n\nThree new, off-by-default Quality of Life mods for toggle skills: mark the skill-bar\nslot of a toggle you have running, stop a double cast proc from flipping a\ntoggle straight back, and draw a countdown over a plain (non-toggled) cast so\nyou can see how much time is left before it ends.\n\nA fixed set of toggle skills, each measured in-game, is covered by the toggle\nmarker and the double-cast guard. The countdown below covers a different set\nof its own - see that bullet for what it draws on.\n\nThree fixes as well: entering the Underground Garden no longer freezes the game,\nthe `raredrop angelic` command works again when a drop multiplier is set, and the\nItem Forge's base stats include the socket count again. And the Item Editor can\nnow show your items exactly as the game builds and draws them.\n\n## New\n\n- **\"Reveal full map\" now marks every monster pack instead of spawning it.**\n  Before: the map's monster sub-toggle created every pack of the zone as you\n  arrived, so that distant monsters would show on the revealed map. Filling a\n  zone that way put a whole zone's monsters into the game at once, and at high\n  density the game stayed slow for the whole zone even after the spawning had\n  finished, because the game keeps working on every living monster every\n  frame. Now the sub-toggle (**Show every monster pack on the map**) draws one\n  marker per pack the moment you arrive, by pack kind (normal, champion,\n  ancient, legion, mini boss), including density copies, without creating a\n  single monster. Each pack is still born by the game when you walk near it,\n  exactly as without the mod, and its real minimap dots replace the marker at\n  that moment. What a marker cannot show is the rarity roll of the monsters\n  inside the pack, which the game only decides when the pack is born. Each pack\n  kind has its own icon, with its own shape and colour and a dark outline so it\n  stands out on the minimap: a skull for a normal pack, a hooded face for an\n  ambush, a horned mask for ancient, a helmet for champion, a chest for a\n  colossal chest, a group of skulls for a legion and a crowned skull for a mini\n  boss. Packs that sit close together, such as the copies Monster Density\n  adds, show as one icon with a small count. The icons are plain PNG files in\n  `bin\\bp_ipc\\packmarks\\` next to your game; replace any of them with your own\n  picture of the same name and it is used instead (`packmarks reload` in a\n  running game, or the next launch). The `packmarks` plugin command changes\n  size, grouping distance, the count badge and, for the fallback dots, colour\n  and outline, live. If an icon cannot be loaded, that kind falls back to a dot.\n  The old behaviour is still available as a second, off-by-default\n  sub-toggle, **Really spawn every pack on arrival (heavy)**, for comparison; it\n  still lags at high density.\n- **Tyrant's Crown and Beacon no longer scan every monster for nothing.** While\n  either was worn, ForgePact walked every living monster every sixth frame to\n  wake sleeping ones, but the game never puts monsters to sleep, so the walk\n  only cost frame time. It now checks whether waking changed anything before\n  walking, and walks only if it did.\n- **Monster Density no longer creates all of a spawner's extra monsters in\n  the same instant.** With Monster Density above x1, the extra copies each\n  spawner adds are now created over the next frames, nearest to you first,\n  instead of in the one frame the pack is born. Together with the pack markers\n  above, a dense zone no longer needs every monster in it alive at once. The\n  optional **Really spawn every pack on arrival (heavy)** sub-toggle still\n  creates the whole zone up front and still lags at high density; on the\n  supported game version it first reserves extra room in the game's\n  monster-stat storage, which a fully spawned dense map could run out of and\n  crash while creating enemies, and the panel says so when it cannot.\n\n- **Miner's Helmet.** A new signature helmet for miners: Great Helm base, SS\n  tier, +1000 Defense, +500% Enhanced Defense, +20% Movement Speed, +20% All\n  Resistances and +5 Light Radius. While you wear it, every mining node gives\n  exactly four times its ore; take it off and mining is back to normal (or to\n  your Mining Ore Amount setting). With it on, **Vein Resonance** digs more for\n  you: when you finish a node, the two nearest veins within a short distance of\n  it (192 units) that you could mine yourself are dug too, through the game's\n  own dig, each with the same four times the ore. Veins that are used up,\n  already being dug or above your mining level are skipped, and a vein dug this\n  way does not set off another one. Like the slider below, the helmet rewrites\n  only ore amounts and leaves mining experience to the game.\n  Forge the helmet in the Item Editor (Item Forge → Forge a signature item →\n  Miner's Helmet); Mods → Items shows whether you are wearing it.\n\n- **Mining Ore Amount.** A new 1–10× slider under Loot multiplies the ore each\n  mining node gives; x1 keeps normal mining. It rewrites only the ore amount:\n  ore types, mining experience and every other drop are left to the game, and\n  nothing is installed while it is at x1. While the Miner's Helmet is worn, its\n  four times replaces this slider instead of stacking with it.\n\n- **AFK FARM compatibility.** AFK FARM can now use its own reward settings\n  while ForgePact is loaded. Its MF, XP, Gold and loot bonuses apply once during\n  delivery. Your normal ForgePact settings still apply to active play and are\n  not overwritten.\n\n- **Auto-prospect items put in the Prospect Cube.** The cube's 9×6 prospect\n  grid fills long before a full inventory is through it: you fill it, press\n  Prospect, and fill it again, over and over. With the new **Auto-prospect**\n  switch in Quality of Life, every item you drag or click into the grid is\n  prospected straight away by the game's own Prospect, exactly as if you had\n  pressed the button, so the grid never fills with items waiting their turn.\n  It is **off by default**.\n  - **The previous batch goes to your materials tab.** Each prospect leaves\n    its materials in the grid, one stack per material type, as a normal\n    Prospect does. When you put the next item in, ForgePact first moves the\n    materials that the previous prospect made to your materials tab - the\n    same move the game makes when you click a material - and then prospects,\n    so the newest batch stays in the grid where you can see it and the grid\n    does not fill up with materials. A material that is the first of its kind\n    - one with no stack of it yet in your materials tab - is moved too, the\n    way a click on it moves it: the game puts it in your bag rather than the\n    materials tab. Only that batch moves. The item you put\n    in is prospected and not moved, even when it is itself a material such\n    as ore, and materials you put in the grid yourself stay where they are -\n    with one exception nobody has run into yet: if you swap an item onto one\n    of those batch materials and drop that material straight back in, it\n    still counts as part of the batch and goes to your tab instead of being\n    prospected. Prospecting an ore does not always give materials: the\n    game's own Prospect only has a chance to, with or without ForgePact, so\n    an ore that is used up with nothing in its place is the game, not the\n    mod. After you reopen the cube, turn Auto-prospect off and on,\n    or take something out of the grid, the next prospect moves nothing, and\n    moving starts again with the batch that prospect makes. This is its own\n    switch under Auto-prospect, **Move the previous materials to your\n    materials tab**, and it is **on by default** whenever Auto-prospect is\n    on; turn it off to keep every material in the grid as before. If the\n    game wi\n\n[...truncated; see the release page...]",
+      "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.4.6",
+      "notes": "# ForgePact 1.4.6\n\nGems of Incarnation drop Mythic, with the mods you pick, and every mod on them\nshows its best roll.\n\n## New\n\n- **Mythic Gems of Incarnation.** Most Gems of Incarnation used to drop with a\n  single weak mod. The game itself makes 1 in 50 of them Mythic, with 4 or 5\n  mods. With this switch on, every Gem of Incarnation that drops is Mythic. The\n  game still rolls the gem, and ForgePact hands it a seed the game has already\n  rolled Mythic for the same kind of drop, so what drops is an ordinary Mythic\n  gem. Gems you already own keep their mods. The first time the switch is on,\n  the game rolls sample gems quietly in the background, under a minute at the\n  main menu. Until that is done, a gem that drops keeps the game's own roll.\n  Mods tab → **Mythic Gems of Incarnation**, off by default.\n- **Gem mod filter.** Under the two switches, **Filter...** lists every mod a\n  Gem of Incarnation can roll - 36, in six groups (Attack, Skills, Elemental\n  skills, Defense, Life & mana, Loot). Tick the ones you want and save: every\n  Mythic gem that drops then carries as many of them as the game's own Mythic\n  rolls allow. Tick Increased Attack Speed and Increased Magic Find, and the\n  gems have both. It starts with every mod ticked, which is no filter.\n- **Max-roll Gems of Incarnation.** Every mod on every Gem of Incarnation, new or\n  old, shows the highest value its best tier can roll: Increased Attack Speed\n  reads 12, where a lower tier could have stopped at 8. A skill grant keeps its\n  skill. Nothing is written to your save: turn the switch off, and a gem shows\n  its own rolls again the next time the game loads it. Mods tab →\n  **Max-roll Gems of Incarnation**, off by default.\n\n## Changed\n\n- **The panel's address is now http://127.0.0.1:8780** (it was 8766). 8766 is\n  one of the ten ports the Item Editor keeps for itself. With the editor open,\n  the panel already ended up on 8780, and the Toolkit Hub, checking 8766 for\n  ForgePact, reached the editor instead. The panel now starts on 8780 whether or\n  not the editor is open, and the hub checks it there. If 8780 is taken, it\n  tries 8801, 8899, 9133 and 9777, as before. The panel still opens in its own\n  window; this only matters if you open it in a browser.\n\n## How to update\n\nDownload and extract the complete release, then reopen ForgePact. Your existing\nsettings are retained. Source users can run `Prepare-Plugin.bat` if plugin files\nare missing before using **Install Mod Plugin**. This change is in the plugin,\nso pressing **Install Mod Plugin** matters - updating only the panel leaves the\nold plugin in place.\n\nUse ForgePact only with an offline / EAC-disabled copy of Hero Siege.",
       "guide": "docs/submodules/ForgePact/instructions.md",
       "source_launch": {
         "cmd": "py",
@@ -61,9 +60,9 @@
       "summary": "Item creator, stash editor and inventory customizer.",
       "repo": "falorfrozen-cmd/hero-siege-item-editor",
       "submodule": "hero-siege-item-editor",
-      "version": "2.16.1",
-      "tag": "v2.16.1",
-      "published": "2026-09-25T09:18:21Z",
+      "version": "2.16.2",
+      "tag": "v2.16.2",
+      "published": "2026-09-25T16:32:58Z",
       "license": "NOASSERTION",
       "requires": {
         "admin": false,
@@ -73,10 +72,10 @@
       },
       "artifact": {
         "kind": "exe",
-        "name": "HeroSiegeItemEditor-v2.16.1-s10.exe",
-        "url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/download/v2.16.1/HeroSiegeItemEditor-v2.16.1-s10.exe",
-        "size": 19743835,
-        "sha256": "ac18db5a160245a3798c4be3fc55fe95b2789079656b2d81235f05daa13b7dc6",
+        "name": "HeroSiegeItemEditor-v2.16.2-s10.exe",
+        "url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/download/v2.16.2/HeroSiegeItemEditor-v2.16.2-s10.exe",
+        "size": 19744093,
+        "sha256": "506ba048b83385a1fcb74684c15d22ec30acc4ba084fbfd6c64df7342b13e89b",
         "sha256_source": "published+verified",
         "strip_prefix": "",
         "install_as": "HeroSiegeItemEditor.exe"
@@ -93,8 +92,8 @@
           "timeout_s": 25
         }
       },
-      "notes_url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/tag/v2.16.1",
-      "notes": "# Hero Siege Item Editor 2.16.1\n\nFor AFK FARM 0.8 (the camp) and 0.9 (the town).\n\n## What's new\n\n- **The town's goods for AFK FARM's camp and town.** An AFK FARM adventurer opens\n  golden chests with Basic Keys and crystal chests with Crystal Keys from the camp's\n  key rack; the jeweler works from the camp's material stock. AFK FARM 0.9's town\n  (fortifications, merchants, trade wagons) stocks the town's goods: keys,\n  fragments and shards, tarot cards, materials, dusts, rare consumables, runes,\n  gems, jewels and orbs. AFK FARM can now fill its stock from your Vault's\n  **AFK Materials**: the amounts you choose leave the Vault (smaller stacks first)\n  and go to the camp or town, all at once or not at all.\n- **Never taken twice.** Each request carries its own id and is carried out at most\n  once. If AFK FARM loses the editor's answer, it asks again and gets the same\n  result; if the request never arrived, AFK FARM cancels it, and nothing can be\n  taken with that id afterwards.\n- Custom-named stacks are never taken. Hero Siege may be running (only the Vault\n  database changes, like an AFK transfer). The Vault's history lists each take, and\n  History undo does not reach past it.\n\nEverything else is as in 2.16.0. Download the exe and run it; no install.",
+      "notes_url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/tag/v2.16.2",
+      "notes": "# Hero Siege Item Editor 2.16.2\n\n## What's fixed\n\n- **The editor starts while ForgePact's panel is open.** The editor keeps ten\n  local ports, 8765-8774, so that no older copy of it can start alongside.\n  ForgePact's panel prefers 8766, one of those ten. Now, when another program\n  already holds one of them, the editor leaves that port to it and takes the\n  rest. Before, it bound 8766 on top of the panel without noticing, or, where a\n  program would not share its port, refused to start (\"Local editor port … is\n  occupied by an unidentified or legacy process\").\n- **It still refuses to run beside another Item Editor** of a different\n  version. That now includes builds older than 2.7.2: before, the editor could\n  start beside one of those without noticing.\n- Starting the editor while the same version already runs still brings up the\n  running one.\n\nEverything else is as in 2.16.1. Download the exe and run it; no install.",
       "guide": "docs/submodules/hero-siege-item-editor/instructions.md",
       "source_launch": {
         "cmd": "py",
