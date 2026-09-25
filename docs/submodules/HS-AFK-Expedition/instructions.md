@@ -117,7 +117,6 @@ All commands run from `HS-AFK-Expedition/`.
 ## Known Gaps
 - **Beta.** Automatic startup and **Claim in background** support the verified executable only.
 - **Build-bound.** The plugin's farm context is tied to one game build; a game update needs a new verification.
-- **Item Editor release.** Transfers to the Vault need Item Editor 2.15.5 or later, which is released. The camp's and town's takes need 2.16.1, which is merged on `master` (falorfrozen-cmd/hero-siege-item-editor#9) but not released yet.
 
 ## Workers and the camp (0.7.0-0.8)
 
@@ -168,7 +167,7 @@ Merged into `main` on 2026-09-25 (falorfrozen-cmd/HS-AFK-Expedition#3), not rele
   - A coffer deposit of 10,000 and a payout of 5,000 (`worker credit`) moved the account gold by exactly those amounts, each with one receipt.
   - A town delivery made seven stacks of types 12, 14 and 15 with the right `b` and `o`. The Vault ingest put back exactly what the take had removed.
   - Two sieges held, at levels 1 and 10. The hero's claim replayed 60 of 60 kills with XP. The town's shares replayed 80 of 80 and 185 of 185 kills, with no XP. All were saved.
-  - Not yet checked: a delivery of type 13 (fragments, shards and tarot cards). The Vault had none to take.
+  - Type 13 (fragments, shards and tarot cards), checked the same day. The Item Editor made a Battle Fragment (13:0) and put it in AFK Materials. The town took it, and the game made it again (`type 13`, `b 0`, `o 1`, a seed of its own). It came back to the Vault.
 
 ## Related Guides
 - [hero-siege-item-editor](../hero-siege-item-editor/instructions.md): Infinite Vault, AFK transfers, DISMANTLE, camp takes

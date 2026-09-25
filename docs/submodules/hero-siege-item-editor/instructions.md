@@ -330,6 +330,7 @@ and the exact tooltip for a saved item appears. Record a row here.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `v2.15.10` | [35884558791](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/35884558791) | yes: `4d6ae127…f99f8` = `.sha256` asset = GitHub asset digest | yes: window title and `/api/instance` show `2.15.10-s10` | yes: 10 saves listed, slot 0 loaded (Hero Siege was running; read-only checks) | yes: 22 character and 127 Shared Stash items carry exact tooltips (5059 profiles); Dice targets ready | 2026-09-23 | Claude Code, for the owner |
 | `v2.16.0` | [36075703309](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/36075703309) | yes: `f937bc13…a493cb` = `.sha256` asset = GitHub asset digest | yes: window title and `/api/instance` show `2.16.0-s10` | yes: 10 saves listed, slot 0 loaded (Hero Siege 1.4.5 was running; read-only checks) | yes: all 16 character and 127 Shared Stash items **Game verified** with the game's own text; game truth reports 0 unverified and 0 undrawn on `pe-6aaa6779-0cad4fc8`; 5059 profiles; Dice targets ready | 2026-09-25 | Claude Code, for the owner |
+| `v2.16.1` | [36116151604](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/36116151604) | yes: `ac18db5a…3b7dc6` = `.sha256` asset = GitHub asset digest | yes: window title and `/api/instance` show `2.16.1-s10` | yes: 10 saves listed, slot 0 loaded (Hero Siege was running; read-only checks) | yes: slot 0's 22 items and the Shared Stash's 167 are **Game verified**; game truth: 630/630 character, 167/167 Shared Stash and 6,805/6,805 Vault items verified, 0 missing, 13 character items not yet drawn by the game, on `pe-6aaa6779-0cad4fc8`; 5059 profiles; Dice targets ready | 2026-09-25 | Claude Code, for the owner |
 
 ## Infinite Vault deletion (2026-09-22)
 
@@ -623,6 +624,6 @@ Tests:
 - `AfkCampTakeTests` (6) and `AfkTownGoodsTakeTests` (3) in `test_vault_afk_qol.py`.
 - The whole suite is 579 tests (1 skipped). Run it with `USERPROFILE` and `LOCALAPPDATA` pointed at a temporary folder: `ROOT` is `Path.home()`-based, so this keeps any test away from the machine's Vault.
 
-Merged in falorfrozen-cmd/hero-siege-item-editor#9 on 2026-09-25. It is not released yet, so the toolkit still installs 2.16.0.
+Merged in falorfrozen-cmd/hero-siege-item-editor#9 and released as `v2.16.1` on 2026-09-25 (launch gate row above).
 
-**Live check** (2026-09-25): AFK FARM 0.9 took seven kinds with `take`, and the Vault lost exactly those counts.
+**Live check** (2026-09-25): AFK FARM 0.9 took seven kinds with `take`, and the Vault lost exactly those counts. For type 13, this editor made a Battle Fragment (13:0) in an empty Shared Stash tab with the game closed and deposited it into AFK Materials. AFK FARM's town then took it, and the game made it again. It came back to AFK Materials.
