@@ -25,6 +25,10 @@
   3. Claiming replays every kill through the game's own drop and reward calls (items, XP, gold).
 
   Items the loot filter hides are sold or broken down inside the game. Delivered items go to Hero Siege Item Editor's Infinite Vault. The tool is for offline, single-player play only.
+- **Toolkit catalog:** out of the hub's catalog since 2026-09-25, at the owner's request, while the town systems are built.
+  - The hub no longer lists, installs or updates it. A copy a player installed earlier stays on disk, but the hub shows it as not in the catalog.
+  - The repository, its releases, this guide, the submodule and both dispatch workflows stay. A release still sends `release-published`; the rebuild simply finds no `afk-farm` entry.
+  - To offer it again, restore the `afk-farm` `[[tool]]` block in `catalog/sources.toml` (last present at `ecd0c5d`), set the count in `tests/test_build_catalog.py` back, and run Actions → Catalog.
 
 ---
 
