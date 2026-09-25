@@ -1476,6 +1476,30 @@ class CheapRouteTests(TempDirMixin, unittest.TestCase):
         self.assertFalse(r.passed)
         self.assertTrue(any("second amendment" in e for e in r.evidence), r.evidence)
 
+    def test_two_checked_amendments_do_not_fail_r11(self):
+        # Review of PR #195: `passed` counted every planner, so a plan plus two
+        # amendments that both passed their check failed R11 with no evidence.
+        driver = [turn(0, 9000)] + _amend_call(350, 9001, "save") + _amend_call(500, 9002, "check") \
+            + _amend_call(750, 9003, "save") + _amend_call(900, 9004, "check")
+        b = SessionBuilder(self.tmp_path / "two").driver(driver)
+        b.subagent("planner", "Plan x", _span(0, 100, 100))
+        b.subagent("implementer", "implementer:r0", _span(200, 300, 200))
+        b.subagent("planner", "amendment: x criterion 3", _span(400, 450, 300))
+        b.subagent("implementer", "implementer:r0", _span(600, 700, 400))
+        b.subagent("planner", "amendment: x criterion 5", _span(800, 850, 500))
+        _, results = b.evaluate()
+        self.assertTrue(get_rule(results, "R24").passed, get_rule(results, "R24").evidence)
+        r11 = get_rule(results, "R11")
+        self.assertEqual(r11.evidence, [])
+        self.assertTrue(r11.passed)
+        # control: the same two planners as ordinary replans fail R11
+        b = SessionBuilder(self.tmp_path / "two-replans").driver([turn(0, 9000)])
+        b.subagent("planner", "Plan x", _span(0, 100, 100))
+        b.subagent("planner", "Replan x criterion 3", _span(400, 450, 300))
+        b.subagent("planner", "Replan x criterion 5", _span(800, 850, 500))
+        _, results = b.evaluate()
+        self.assertFalse(get_rule(results, "R11").passed)
+
     def test_control_an_ordinary_replan_is_still_a_replan(self):
         b = SessionBuilder(self.tmp_path / "replan").driver([turn(0, 9000)])
         b.subagent("planner", "Plan x", _span(0, 100, 100))

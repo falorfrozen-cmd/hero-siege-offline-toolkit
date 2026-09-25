@@ -1062,7 +1062,7 @@ def rule_r11_replans(session: Session) -> RuleResult:
         if verdicts.get(id(p)) is True:
             continue
         evidence.append(f"{p.label}: {p.total_tokens:,} tokens (replan)")
-    passed = len(planners) - 1 < 2  # "two or more [replans] fails"
+    passed = len(evidence) < 2  # "two or more [replans] fails"; a checked amendment is not one
     return RuleResult("R11", "replans", passed=passed, evidence=evidence)
 
 
