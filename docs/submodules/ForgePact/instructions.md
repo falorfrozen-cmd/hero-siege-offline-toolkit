@@ -2373,6 +2373,9 @@ How it works:
   - real drops in play (with `gems convert`): the `DropGems` hook installed
     natively once the character was in play, and 4 of 4 monster drops came out
     Mythic from the replacement seed at their tier-4 tops; the first carried no
-    `n`.
+    `n`;
+  - the filter on real drops: 15 more, with the filter set by command and then
+    from the panel's **Filter...** list (its **Save filter** reached the game),
+    and not one filter miss.
 - **Open:** a Gem of Incarnation the game picked itself (no `gems convert`),
   and the loot-filter reading, are not yet observed live.
