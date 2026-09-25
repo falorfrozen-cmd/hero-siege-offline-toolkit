@@ -1760,7 +1760,8 @@ read. The argument, the full tables and the live checks are in ForgePact's
   it is a table index, not a scale. On the same 2,000 seeds the Mythic share was
   2.0% for no `n`, 0 and 1; 3.0% for 2; 6.3% for 3; 11.3% for 4; 20.0% for 6.
   5 and 8 behave like no `n`. Real gear carries 0-4, mostly 3 and 4. What sets a
-  drop's `n` was not read. **Measured.**
+  drop's `n` was not read; the first `DropGems` drop measured in play carried
+  none (§18.4). **Measured.**
 - Building one gem through `InitItemFromJson` costs about 0.3 ms on the game
   thread: 47,147 builds took 14.4 s of build time at the main menu, in 4 ms
   slices. **Measured.**
@@ -1818,11 +1819,18 @@ names are the stats' tooltip names (the Item Editor's game-verified stat table).
   `CreateItemNew`'s entry, while `DropGems` runs, rolled as the replacement:
   simulated drops through the game's loader in that scope came out as the
   replacement seed's Mythic roll, 13 of 13. **Measured** (research build).
+- On a real drop the definition is already on the item instance when
+  `CreateItemNew` starts. In play, with every socketable a `DropGems` call made
+  turned into a Gem of Incarnation at that point (a research-build test
+  switch), 4 of 4 monster drops came out Mythic from the replacement seed, with
+  every affix at its tier-4 top. The first carried no `n`. **Measured**
+  (2026-09-25).
 - Loading an item goes through `InitItemFromJson`, never `DropGems`, so an owned
   gem never takes a new seed. **Static reading.**
 - A `DropGems` detour, like `DropRelic`'s, is installed once a player exists: a
   drop hook installed during character select stalls the runner (§15).
-- A real drop through `DropGems` with the seed replaced is **not yet observed**.
+- A Gem of Incarnation that the game picked itself is not yet observed; it
+  takes the same path.
 
 [How it drops](../ForgePact/docs/incarnation-gems-research.md#how-it-drops---static-reading),
 [Live checks](../ForgePact/docs/incarnation-gems-research.md#live-checks)

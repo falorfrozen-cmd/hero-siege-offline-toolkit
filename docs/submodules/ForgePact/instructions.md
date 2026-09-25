@@ -748,7 +748,7 @@ UTF-8 / ASCII plain-text command queue. The panel appends lines to `cmd.txt`; th
     - Without the signal nothing is cleared and the verdict is `placed-unconfirmed (ret=…) - the cell is kept; check the tab by eye`; if the tab gained it by eye, **`prospectprobe stackmove clear <row> <col> confirm`** runs `InvGridClearItemNode(cell, undefined)` on that one cell (clear row detoured, every refusal before the call) so the session carries no duplicate.
     - No `prospectsize` command exists yet.
   - `craftmats 1` / `craftmats 0` (+ `craftmats stat` in the research build only, the owner's no-debug-tooling rule; a player command in `kPlayerCommands`, dispatched from `HandleCraftCommand`): crafting from the stash's special tabs (issue #14, ForgePact 1.4.5; the panel's Quality of Life switch **Craft from the stash**, `mod_craft_mats`, off by default, sent at launch and live). The command only sets the core's switch (`plugin/include/ForgePact/CraftMatsMod.hpp`); on the first frame after setup with it on, `CraftMatsInstall` puts six hooks in through `HookOneScript` by SDK constant - `CountInventoryItem`, `GetCraftItemsAvailable`, the recipe row's Create closure (`anon@840`), `CraftFindRecipeItems`, `PilipaliDecrypt`, `DoCraftResult` - and logs one line naming each `both-routes`/`TABLE-ONLY`/`NOT-INSTALLED`, ending `-> ON` or, for anything short of both routes on all six, `-> off for this session`. With the switch on, a Crafting Cube recipe's `CountInventoryItem` count (bag owner `a0 = 1`, inside the crafting route only) gains the stash's count of that material from `Controller_obj.stashMaterialTab` and `stashSocketItemSlot`, each cell resolved in `GetItemMap(9)` by name; at the press `DoCraftResult` moves only the shortfall (`need - k`) by the game's own routines - onto the bag's stack (inline `o` edit + `ItemCheckHash`), a new bag stack or the Cube's `craftGrid` (the `CreateItemSaveStruct` -> `InitItemFromJson` -> `AddItemToMap` -> `GridAddItem` route) - confirms both sides by re-read, refuses the craft before the game's call when anything is unconfirmed, checks the consume after it, and saves the stash with `SaveLocalFile(4, 1)` after a confirmed move. Log lines: `craftmats: moved <n> class=<c> b=<b> from <materials|socketable> to <bag-stack|bag-new|cube>; saved=<yes|no|failed>` per press that moved something, and once per session each `craftmats: unreadable - ...`/`not-taken - ...` (both say the craft was refused), `stash-unreadable - ...`, `off for this session - ...` and `consume mismatch - ...`. `craftmats 0` answers `craftmats: off - crafting is unchanged`; the hooks stay installed and only forward. In the research build `craftmats 1` refuses (and the install stays off) while `craftprobe hook` already detours any of the six, and `craftprobe hook` reports the six as `held by craftmats` once they are in. Design, shapes and what is not observed live: the research doc's `## Ship design`; Known Limitations item 24.
-  - `gemmythic 1` / `gemmythic 0`, `gemfilter all` / `gemfilter <stat,...>`, `gemmaxroll 1` / `gemmaxroll 0` (+ `gems stat|save|reset|drop <n>` in the research build only): Gems of Incarnation (ForgePact 1.4.6; player commands in `kPlayerCommands`; panel keys `mod_gem_mythic` and `mod_gem_maxroll`, both on by default at the owner's call, and `gem_filter`, `"all"` or a list of stat ids). The panel sends a narrowed filter at launch right after `gemmythic 1`, and again whenever Mythic is turned on.
+  - `gemmythic 1` / `gemmythic 0`, `gemfilter all` / `gemfilter <stat,...>`, `gemmaxroll 1` / `gemmaxroll 0` (+ `gems stat|save|reset|drop <n>|convert 1|0` in the research build only): Gems of Incarnation (ForgePact 1.4.6; player commands in `kPlayerCommands`; panel keys `mod_gem_mythic` and `mod_gem_maxroll`, both on by default at the owner's call, and `gem_filter`, `"all"` or a list of stat ids). The panel sends a narrowed filter at launch right after `gemmythic 1`, and again whenever Mythic is turned on.
     - `gemmythic 1` arms the `DropGems` hook: `HookOneScript` by SDK constant, native, installed once `HhResolveLocalPlayer` succeeds (checked once a second) - a drop hook installed at character select stalls the runner. A table-only install logs `incarnation gems: the gem drop could not be hooked - Mythic drops stay off` and turns the switch off for the session. While `DropGems` runs, a `CreateItemNew` whose instance is a Gem of Incarnation has its seed `a` replaced by a Mythic seed learned for its own `n`; with a filter, one of the seeds carrying the most ticked mods (a skill grant is ticked by 462), and when none carries any, any Mythic seed.
     - `gemmaxroll 1` dresses every finished gem at the outermost `CreateItemNew` return, before Item Truth records it: each affix takes its stat's tier-4 range and top value, identifier stats 462 and 21 untouched, then `RefreshItemHash`.
     - The tables build in `FrameCallback` while either switch is on, 4 ms a frame at the menu and 1 ms in play (0.3 ms a candidate), kept in `%LOCALAPPDATA%\Hero_Siege\forgepact_gem_tables.json` per game build; `n` 4, 3 and none first, any other `n` once a drop needs it.
@@ -2354,7 +2354,10 @@ How it works:
 - **In the research build**, `InstallItemInspectHooks` table-hooks
   `LootGroundCreate` first, so the Mining Ore mod reports unavailable there;
   the player build is unaffected. Test the gem mod's drops with `gems drop <n>`
-  (a gem built through the game's loader inside the drop scope).
+  (a gem built through the game's loader inside the drop scope), or with
+  `gems convert 1`: every socketable a monster's `DropGems` call makes becomes
+  a Gem of Incarnation before `CreateItemNew` reads it, so a few kills anywhere
+  test a real drop. Turn it off afterwards: while on, no rune or jewel drops.
 - **Tests.**
   - `tests/incarnation_gems_harness.cpp` + `tests/test_incarnation_gems_behavior.py`:
     the core, 45 checks, and the red-first baseline.
@@ -2366,6 +2369,10 @@ How it works:
   - simulated drops came out Mythic with every affix at its tier-4 top;
     `gemfilter 201` gave +All Skills 4 of 4, `gemfilter 68,284` both mods 3 of
     3, and a filter no seed meets logged its miss once;
-  - the owner's 21 gems came out maxed with their seeds unchanged.
-- **Open:** a real drop through `DropGems` in play, and the loot-filter
-  reading, are not yet observed live.
+  - the owner's 21 gems came out maxed with their seeds unchanged;
+  - real drops in play (with `gems convert`): the `DropGems` hook installed
+    natively once the character was in play, and 4 of 4 monster drops came out
+    Mythic from the replacement seed at their tier-4 tops; the first carried no
+    `n`.
+- **Open:** a Gem of Incarnation the game picked itself (no `gems convert`),
+  and the loot-filter reading, are not yet observed live.
