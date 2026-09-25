@@ -1054,10 +1054,15 @@ def round_totals(session: Session) -> dict:
 def rule_r11_replans(session: Session) -> RuleResult:
     planners = [a for a in all_agents(session) if a.agent_type == "planner" and a.ts_first]
     planners.sort(key=lambda a: a.ts_first)
+    verdicts = amendment_verdicts(session)
     evidence = []
     for p in planners[1:]:
+        # An amendment `tools/amend_check.py check` passed is not a replan
+        # (SKILL.md Step 2); one it failed, or that nobody checked, is.
+        if verdicts.get(id(p)) is True:
+            continue
         evidence.append(f"{p.label}: {p.total_tokens:,} tokens (replan)")
-    passed = len(planners) - 1 < 2  # "two or more [replans] fails"
+    passed = len(evidence) < 2  # "two or more [replans] fails"; a checked amendment is not one
     return RuleResult("R11", "replans", passed=passed, evidence=evidence)
 
 
@@ -1535,6 +1540,79 @@ def rule_r23_lane_git_mutation(session: Session) -> RuleResult:
     return RuleResult("R23", "lane-git-mutation", passed=not evidence, evidence=evidence)
 
 
+# R24: the two cheap routes for a defect whose fix is already known
+# (SKILL.md Step 2 "Amend, or replan" and Step 4 "The patch route"). Each is
+# cheap because it skips work, so each is only allowed where something other
+# than the agent taking it has checked it applies:
+#
+#   * an amendment is a planner the driver labelled `amendment: ...` (a
+#     distinct prefix: drivers have long written "Amend ..." for ordinary
+#     replans, measured in session 039722c8). The driver
+#     runs `tools/amend_check.py save` before spawning it and `check` after it
+#     returns; `check` exits non-zero when the change reached the Goal, the
+#     scope or the human questions, or grew past its line limit, and the
+#     amendment then counts as a replan (R11). An amendment with no `save`
+#     before it or no `check` after it was never checked at all, and two
+#     amendments with no implementer between them are one replan in two parts.
+#   * a patch round is `patch-implementer:r<n>`, spawned only by
+#     `workorder-rounds.js`, which never runs two back to back; two in
+#     consecutive rounds of one workflow launch mean that guard failed.
+AMEND_LABEL_RE = re.compile(r"^\s*amendment:", re.I)
+PATCH_LABEL_RE = re.compile(r"^patch-implementer:r(\d+)$")
+
+
+def is_amendment(agent: AgentTranscript) -> bool:
+    return agent.agent_type == "planner" and bool(AMEND_LABEL_RE.match(agent.label or ""))
+
+
+def _driver_amend_calls(session: Session, verb: str) -> list:
+    """The driver's shell calls running `amend_check.py <verb>`, in order."""
+    pattern = re.compile(rf"amend_check\.py\"?\s+{verb}\b")
+    return [c for c in session.driver.tool_calls
+            if c.name in SHELL_TOOLS and pattern.search(_cmd_text(c))]
+
+
+def amendment_verdicts(session: Session) -> dict:
+    """`id(amendment planner)` -> True when the driver's first `amend_check.py
+    check` after it ended passed, False when it failed, None when there was
+    none."""
+    checks = _driver_amend_calls(session, "check")
+    out = {}
+    for agent in all_subagents(session):
+        if not is_amendment(agent) or agent.ts_last is None:
+            continue
+        after = [c for c in checks if c.ts_start >= agent.ts_last]
+        out[id(agent)] = (not after[0].is_error) if after else None
+    return out
+
+
+def rule_r24_cheap_routes(session: Session) -> RuleResult:
+    evidence = []
+    verdicts = amendment_verdicts(session)
+    saves = _driver_amend_calls(session, "save")
+    planners = sorted((a for a in all_subagents(session) if a.agent_type == "planner" and a.ts_first),
+                      key=lambda a: a.ts_first)
+    implementers = [a for a in all_subagents(session) if a.agent_type == "implementer" and a.ts_first]
+    for i, agent in enumerate(planners):
+        if not is_amendment(agent):
+            continue
+        prev = planners[i - 1] if i else None
+        since = prev.ts_first if prev else None
+        if not any(c.ts_start <= agent.ts_first and (since is None or c.ts_start >= since) for c in saves):
+            evidence.append(f"{agent.label}: no `amend_check.py save` before it")
+        if verdicts.get(id(agent)) is None:
+            evidence.append(f"{agent.label}: no `amend_check.py check` after it")
+        if prev is not None and is_amendment(prev) and prev.ts_last and not any(
+                prev.ts_last <= a.ts_first <= agent.ts_first for a in implementers):
+            evidence.append(f"{agent.label}: a second amendment after {prev.label} with no implementer between")
+    for wf_id, group in session.workflow_runs.items():
+        rounds = sorted(int(m.group(1)) for a in group for m in [PATCH_LABEL_RE.match(a.label or "")] if m)
+        for a, b in zip(rounds, rounds[1:]):
+            if b == a + 1:
+                evidence.append(f"[{wf_id}] patch rounds {a} and {b} ran back to back")
+    return RuleResult("R24", "cheap-routes", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -1559,6 +1637,7 @@ ALL_RULES = [
     rule_r21_verifier_interpreter,
     rule_r22_verifier_suite_once,
     rule_r23_lane_git_mutation,
+    rule_r24_cheap_routes,
 ]
 
 
