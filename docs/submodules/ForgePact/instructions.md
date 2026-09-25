@@ -186,7 +186,7 @@ harness) and `test_miner_helmet_panel.py`. Evidence and design:
 
 ### Repository Layout
 - `src/`: Python application frontend and control panel runtime.
-  - `forgepact.py`: Single-file local web/desktop application (`http://127.0.0.1:8766`). Manages port selection, configuration persistence (`%LOCALAPPDATA%\Hero_Siege\forgepact.json`), background game process detection / auto-apply watcher, PE binary patching / backup / restoration via `AuriePatcher.exe`, and file-based IPC dispatch to `bp_ipc/cmd.txt`.
+  - `forgepact.py`: Single-file local web/desktop application (`http://127.0.0.1:8780`; `8766` before 1.4.6, see "Panel port" below). Manages port selection, configuration persistence (`%LOCALAPPDATA%\Hero_Siege\forgepact.json`), background game process detection / auto-apply watcher, PE binary patching / backup / restoration via `AuriePatcher.exe`, and file-based IPC dispatch to `bp_ipc/cmd.txt`.
   - `offline_launcher.py`: The HS Offline Launcher engine embedded in ForgePact (MIT; `UPSTREAM_REVISION` pins the HS-Offline-Launcher commit its audited helpers came from, and `UPSTREAM_DEFINITIONS` lists them). It owns the Win32 process snapshot (`processes`), the EAC service query (`eac_service_status`), PE validation (`validate_game`, `_exe_facts`), the Steam runtime lookup, the safety gate (`launch_safety_blocker`) and the single launch lock. The standalone UI, config discovery and polling loop are deliberately absent — the caller supplies the executable path. **Importing this module starts nothing**, which `tests/test_offline_launcher.py::test_source_import_needs_no_separate_launcher_and_starts_nothing` pins.
 
     The superproject's `tools/hs_drive_mcp/launcher_bridge.py` **imports this file by path** — it never copies or modifies it — and the superproject's `tests/test_hs_drive_mcp_engine_bridge.py` pins the names it calls as `ENGINE_SYMBOLS`, asserts the import still spawns no process and starts no thread, and asserts a checkout without this file refuses by name rather than raising. So a rename here fails that suite rather than surfacing at a tool call: when changing a public name in `offline_launcher.py`, update `ENGINE_SYMBOLS` in the same change. `docs/tools/hs-drive-mcp.md` describes the server.
@@ -380,7 +380,7 @@ harness) and `test_miner_helmet_panel.py`. Evidence and design:
 |                                                                                       |
 |   +------------------------------------+      +-----------------------------------+   |
 |   |          src/forgepact.py          |      |         Process Watcher           |   |
-|   |  - HTTP Server (127.0.0.1:8766)    |      |  - Background thread (5s poll)    |   |
+|   |  - HTTP Server (127.0.0.1:8780)    |      |  - Background thread (5s poll)    |   |
 |   |  - Web UI / Sliders / Settings     |      |  - Auto-applies on game start     |   |
 |   |  - Mod Installer & Exe Backup      |      |  - Detects new process boot count |   |
 |   +-----------------+------------------+      +-----------------+-----------------+   |
@@ -519,7 +519,7 @@ To add or modify a gameplay modifier or runtime command:
 
 | Command | Working Directory | Shell / Platform | Prerequisites | Expected Result | Side Effects | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `py src/forgepact.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Launches local control panel HTTP server (`http://127.0.0.1:8766`). | Opens web browser / desktop window; watches for game process | Verified |
+| `py src/forgepact.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Launches local control panel HTTP server (`http://127.0.0.1:8780`, or the next free of 8801, 8899, 9133, 9777). | Opens web browser / desktop window; watches for game process | Verified |
 | `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Executes all 1271 Python contract tests (including the native behavior harnesses, which skip without a C++ toolchain). | Read-only test execution; all tests pass | Verified 2026-09-22 |
 | `py -3 -m unittest tests.test_drop_roll_model -v` | hub root (not `ForgePact/`) | PowerShell / CMD | Python 3.10+; `ForgePact/` checked out for `LeverParityTests` | Runs the drop-roll model's baseline and target tests against the recorded measurements M1-M10 (`hs-game-sdk/curated/drop_roll_measurements.json`), and `LeverParityTests`, which pins the test's copies of `droprate group`, `dungeonkey` and the relic pre-roll to `plugin/ModuleMain.cpp` and `src/forgepact.py`. A lever change that moves either side fails here. See `docs/models/drop-roll-spec.md`. | Read-only; loads `src/forgepact.py` in-process to call `build_key_cmds` (no server, no bytecode written) | Verified 2026-09-24 (25 tests, OK, none skipped) |
 | `py tools/perf_panel.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Times the panel's two per-poll costs - the boot count and the process scan - against reference copies of the pre-1.3.20 implementations, and exits non-zero if either regressed below its floor. No game, no network. `--log-mb`, `--iterations`, `--min-speedup`. | Writes and deletes a synthetic log in a temp directory | Verified 2026-09-15 |
@@ -1952,10 +1952,22 @@ here before pressing Publish.
 | v1.3.20 | | | | | | | | | |
 | v1.4.5 | [35831690354](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/35831690354) | `5f7a8d728d3203b9184d345efe652b92c74cedc435eac4f37fd4d5b60228ac03` | yes: Install Mod Plugin from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`48a8450b02ef`) | `==== BloodPact plugin loaded ==== v1.4.5` | 1.4.5 | `hhlabel` -> `callback ok` | pass | 2026-09-23 | falorfrozen-cmd (install and checks run by Claude Code) |
 | v1.4.5 (tag at `0a55d97`) | [36051361059](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36051361059) | `ca29efd5ea8d79dde3de52b492733d513d9110b3d0933ffcf5d2d8329c9619ef` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`a14d7237ea4a`, `BUILD-INFO.json` `plugin_sha256`) | `==== BloodPact plugin loaded ==== v1.4.5`, first line of the session launched after the install | 1.4.5 (`/api/state`) | `hhlabel` -> `ON (0 active, callback ok)` | pass | 2026-09-25 | falorfrozen-cmd (install and checks run by Claude Code) |
+| v1.4.6 (tag at `d9aee6f`) | [36164948121](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36164948121) | `2ca25fddaf881309d33cac0efc7cfc89e5936950cccff68d13964ec2e93e44a9` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.6` folder; the installed `BloodPactPlugin.dll` matched the zip's (`6af792801764`, `BUILD-INFO.json` `plugin_sha256`). The AFK FARM and Seraph plugins in `mods/aurie` were left as they were. | `==== BloodPact plugin loaded ==== v1.4.6`, the first boot line of the session launched after the install (panel **Launch**, `POST /api/launch`) | 1.4.6 (`/api/state`), served on 8780 | `hhlabel` -> `ON (0 active, callback ok)` | pass | 2026-09-26 | falorfrozen-cmd (install and checks run by Claude Code) |
 
 The first `v1.4.5` row built an earlier `v1.4.5` tag. That draft was never
 published, and the tag was cut again at `0a55d97` on 2026-09-24. The second row
 is the build that ships.
+
+The first `v1.4.6` tag, at `0e7cdbc`, failed its build
+([36164048380](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36164048380)) in
+`VersionStampTests.test_the_version_appears_exactly_once_in_the_panel`. The
+port comment from ForgePact#85 said "Until 1.4.6", and the bump to 1.4.6 made
+that a second copy of the version in `src/forgepact.py`. The run before the bump
+could not see it, because the tree was still 1.4.5. ForgePact#86 fixed the
+comment. The draft, which had no assets, and its tag were deleted, and `v1.4.6`
+was cut again at `d9aee6f` on 2026-09-26. The files kept from before the
+install are in `HeroSiegeBackups\2026-09-26_forgepact-1.4.6-gate`, with a hash
+manifest.
 
 ---
 
@@ -2380,3 +2392,40 @@ How it works:
     and not one filter miss.
 - **Open:** a Gem of Incarnation the game picked itself (no `gems convert`),
   and the loot-filter reading, are not yet observed live.
+
+## Panel port 8780 (1.4.6, 2026-09-25)
+
+The panel's first port moved from 8766 to 8780. `PORT_CANDIDATES` in
+`src/forgepact.py` is now `[8780, 8801, 8899, 9133, 9777]`, and `PORT` follows it.
+The pre-bind connect probe in `main()` is unchanged. After the list, the OS picks
+a port.
+
+**Why.**
+- 8766 is one of 8765-8774, the ten ports the Item Editor keeps for itself (see
+  "Ports shared with other tools" in the Item Editor guide).
+- When the editor started first, the panel's probe found 8766 answering and moved
+  on to 8780.
+- The hub's health check for ForgePact (`catalog/sources.toml`, `health.url`) was
+  `http://127.0.0.1:8766/`, and `launch::probe` counts any 2xx as up. So it
+  reached the editor's page.
+- From reading `hub/src/tool-presentation.js`, not reproduced: ForgePact's card
+  then reads "Running externally" and offers no Launch button.
+
+**Tied to the catalog.** The hub's `catalog/sources.toml` moved in the same hub
+pull request: ForgePact's `ports` became this list, and `health.url` became
+`http://127.0.0.1:8780/`. The catalog describes the *released* ForgePact, and 1.4.5
+still prefers 8766. Merge that pull request right before 1.4.6 is published, so
+the `release-published` rebuild reads the new `sources.toml`. If it merges after
+publishing, run Actions → Catalog → Run workflow with `only` set to `forgepact`.
+
+**Test.** `tests/test_panel_port.py` pins three things:
+- `PORT` is `PORT_CANDIDATES[0]`;
+- that first candidate is 8780, the port the hub checks;
+- no candidate is another toolkit tool's port: the Item Editor's 8765-8774, the
+  AFK FARM panel's 8787, the Offline Launcher's 8861-8863 and 8961, and
+  HSCraftSim's 17870-17879.
+
+**Released in 1.4.6 on 2026-09-26.**
+- In the launch gate (row above), the zip's panel came up on 8780.
+- This pull request was merged right before publishing.
+- Do not put a version number in a comment in `src/forgepact.py`. VersionStampTests allow the version exactly once, and a comment naming the *next* version passes until the tag workflow bumps to it. That is what failed the first `v1.4.6` build.
