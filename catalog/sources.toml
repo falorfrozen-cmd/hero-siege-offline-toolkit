@@ -89,41 +89,11 @@ args = ["-3", "hs_item_editor_gui.py"]
 
 # ---------------------------------------------------------------------------
 
-[[tool]]
-id = "afk-farm"
-name = "AFK FARM"
-summary = "Timed offline expeditions from your hero's measured farming pace."
-repo = "falorfrozen-cmd/HS-AFK-Expedition"
-submodule = "HS-AFK-Expedition"
-license = "AGPL-3.0"
-guide = "docs/submodules/HS-AFK-Expedition/instructions.md"
-# tools/build_release.py zips dist/AFK-FARM-<version>/, so the archive carries an
-# AFK-FARM-<version>/ root (derived by the generator). The release also ships the
-# zip's .sha256 sidecar, which the pattern leaves out.
-asset_pattern = '^AFK-FARM-[0-9][^/]*\.zip$'
-kind = "zip"
-
-[tool.requires]
-admin = false
-game_closed = false
-game_running = false
-windows_only = true
-
-# AFK FARM.exe starts the bundled runtime\python.exe on app\tools\panel.py, which
-# serves 127.0.0.1:8787 or the next free port through 8796.
-[tool.launch]
-exe = "AFK FARM.exe"
-args = []
-elevate = false
-ports = [8787, 8788, 8789, 8790, 8791, 8792, 8793, 8794, 8795, 8796]
-
-[tool.launch.health]
-url = "http://127.0.0.1:8787/"
-timeout_s = 20
-
-[tool.source_launch]
-cmd = "py"
-args = ["-3", "-B", "tools/panel.py"]
+# AFK FARM (id "afk-farm", falorfrozen-cmd/HS-AFK-Expedition) is out of the
+# catalog since 2026-09-25, at its owner's request, while its town systems are
+# built. The repository, its releases, its guide, the submodule and the dispatch
+# wiring stay. To offer it again, restore its [[tool]] block from this file's
+# history (last present at ecd0c5d) and rebuild the catalog.
 
 # ---------------------------------------------------------------------------
 

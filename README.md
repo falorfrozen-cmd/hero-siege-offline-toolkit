@@ -69,7 +69,6 @@ tool on its own.
 | [HSCraftSim](https://github.com/falorfrozen-cmd/HSCraftSim) | Simulate Cube crafting, explore recipes and probabilities, and compare item stats before and after each craft. Windows and browser. | [Release](https://github.com/falorfrozen-cmd/HSCraftSim/releases/latest) | [Guide](docs/submodules/HSCraftSim/instructions.md) |
 | [ForgePact](https://github.com/falorfrozen-cmd/ForgePact) | Control offline gameplay modifiers: monster density, special spawns, drop rates, combat stats and map reveal. | [Release](https://github.com/falorfrozen-cmd/ForgePact/releases/latest) | [Guide](docs/submodules/ForgePact/instructions.md) |
 | [Hero Siege Item Editor](https://github.com/falorfrozen-cmd/hero-siege-item-editor) | Browse, add, equip and customize items in local saves, including set pieces, runewords, relics and stash inventories. | [Release](https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/latest) | [Guide](docs/submodules/hero-siege-item-editor/instructions.md) |
-| [AFK FARM](https://github.com/falorfrozen-cmd/HS-AFK-Expedition) | Plan timed offline expeditions from your hero's measured farming pace; the game generates the loot, XP and gold when you claim. | [Release](https://github.com/falorfrozen-cmd/HS-AFK-Expedition/releases/latest) | [Guide](docs/submodules/HS-AFK-Expedition/instructions.md) |
 | [HS Offline Tracker](https://github.com/falorfrozen-cmd/HS-Offline-Tracker) | Keep a loot journal, view session statistics and run history, and set drop alerts with a compact overlay. | [Release](https://github.com/falorfrozen-cmd/HS-Offline-Tracker/releases/latest) | [Guide](docs/submodules/HS-Offline-Tracker/instructions.md) |
 | [HS Offline Stat Forge](https://github.com/falorfrozen-cmd/hs-stat-forge) | Adjust runtime character stats — Magic Find, movement speed, skills, experience, combat bonuses — plus monster density. | [Release](https://github.com/falorfrozen-cmd/hs-stat-forge/releases/latest) | [Guide](docs/submodules/hs-stat-forge/instructions.md) |
 | [HS Offline Launcher](https://github.com/falorfrozen-cmd/HS-Offline-Launcher) | Find your Steam installation and start Hero Siege directly for offline play. | [Release](https://github.com/falorfrozen-cmd/HS-Offline-Launcher/releases/latest) | [Guide](docs/submodules/HS-Offline-Launcher/instructions.md) |
@@ -84,6 +83,11 @@ change how any of them work. Supported game builds are documented by each
 project. Codex is a release-only integration and has no source submodule.
 Existing Toolkit 1.0.5 users can refresh the library while online to see it
 under All or search; a Toolkit application upgrade is not required.
+
+AFK FARM ([HS-AFK-Expedition](https://github.com/falorfrozen-cmd/HS-AFK-Expedition))
+is out of the hub for now: the hub no longer lists or installs it, while its
+source, releases and [developer guide](docs/submodules/HS-AFK-Expedition/instructions.md)
+stay public.
 
 ---
 
