@@ -1952,10 +1952,22 @@ here before pressing Publish.
 | v1.3.20 | | | | | | | | | |
 | v1.4.5 | [35831690354](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/35831690354) | `5f7a8d728d3203b9184d345efe652b92c74cedc435eac4f37fd4d5b60228ac03` | yes: Install Mod Plugin from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`48a8450b02ef`) | `==== BloodPact plugin loaded ==== v1.4.5` | 1.4.5 | `hhlabel` -> `callback ok` | pass | 2026-09-23 | falorfrozen-cmd (install and checks run by Claude Code) |
 | v1.4.5 (tag at `0a55d97`) | [36051361059](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36051361059) | `ca29efd5ea8d79dde3de52b492733d513d9110b3d0933ffcf5d2d8329c9619ef` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`a14d7237ea4a`, `BUILD-INFO.json` `plugin_sha256`) | `==== BloodPact plugin loaded ==== v1.4.5`, first line of the session launched after the install | 1.4.5 (`/api/state`) | `hhlabel` -> `ON (0 active, callback ok)` | pass | 2026-09-25 | falorfrozen-cmd (install and checks run by Claude Code) |
+| v1.4.6 (tag at `d9aee6f`) | [36164948121](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36164948121) | `2ca25fddaf881309d33cac0efc7cfc89e5936950cccff68d13964ec2e93e44a9` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.6` folder; the installed `BloodPactPlugin.dll` matched the zip's (`6af792801764`, `BUILD-INFO.json` `plugin_sha256`). The AFK FARM and Seraph plugins in `mods/aurie` were left as they were. | `==== BloodPact plugin loaded ==== v1.4.6`, the first boot line of the session launched after the install (panel **Launch**, `POST /api/launch`) | 1.4.6 (`/api/state`), served on 8780 | `hhlabel` -> `ON (0 active, callback ok)` | pass | 2026-09-26 | falorfrozen-cmd (install and checks run by Claude Code) |
 
 The first `v1.4.5` row built an earlier `v1.4.5` tag. That draft was never
 published, and the tag was cut again at `0a55d97` on 2026-09-24. The second row
 is the build that ships.
+
+The first `v1.4.6` tag, at `0e7cdbc`, failed its build
+([36164048380](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36164048380)) in
+`VersionStampTests.test_the_version_appears_exactly_once_in_the_panel`. The
+port comment from ForgePact#85 said "Until 1.4.6", and the bump to 1.4.6 made
+that a second copy of the version in `src/forgepact.py`. The run before the bump
+could not see it, because the tree was still 1.4.5. ForgePact#86 fixed the
+comment. The draft, which had no assets, and its tag were deleted, and `v1.4.6`
+was cut again at `d9aee6f` on 2026-09-26. The files kept from before the
+install are in `HeroSiegeBackups\2026-09-26_forgepact-1.4.6-gate`, with a hash
+manifest.
 
 ---
 
@@ -2412,3 +2424,8 @@ publishing, run Actions → Catalog → Run workflow with `only` set to `forgepa
 - no candidate is another toolkit tool's port: the Item Editor's 8765-8774, the
   AFK FARM panel's 8787, the Offline Launcher's 8861-8863 and 8961, and
   HSCraftSim's 17870-17879.
+
+**Released in 1.4.6 on 2026-09-26.**
+- In the launch gate (row above), the zip's panel came up on 8780.
+- This pull request was merged right before publishing.
+- Do not put a version number in a comment in `src/forgepact.py`. VersionStampTests allow the version exactly once, and a comment naming the *next* version passes until the tag workflow bumps to it. That is what failed the first `v1.4.6` build.
