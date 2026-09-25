@@ -523,6 +523,7 @@ To add or modify a gameplay modifier or runtime command:
 | `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Executes all 1271 Python contract tests (including the native behavior harnesses, which skip without a C++ toolchain). | Read-only test execution; all tests pass | Verified 2026-09-22 |
 | `py -3 -m unittest tests.test_drop_roll_model -v` | hub root (not `ForgePact/`) | PowerShell / CMD | Python 3.10+; `ForgePact/` checked out for `LeverParityTests` | Runs the drop-roll model's baseline and target tests against the recorded measurements M1-M10 (`hs-game-sdk/curated/drop_roll_measurements.json`), and `LeverParityTests`, which pins the test's copies of `droprate group`, `dungeonkey` and the relic pre-roll to `plugin/ModuleMain.cpp` and `src/forgepact.py`. A lever change that moves either side fails here. See `docs/models/drop-roll-spec.md`. | Read-only; loads `src/forgepact.py` in-process to call `build_key_cmds` (no server, no bytecode written) | Verified 2026-09-24 (25 tests, OK, none skipped) |
 | `py tools/perf_panel.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Times the panel's two per-poll costs - the boot count and the process scan - against reference copies of the pre-1.3.20 implementations, and exits non-zero if either regressed below its floor. No game, no network. `--log-mb`, `--iterations`, `--min-speedup`. | Writes and deletes a synthetic log in a temp directory | Verified 2026-09-15 |
+| `py -3 tools/itemtruth_memrun.py run --items 20000 [--mix]` and `... control` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+ (standard library); Hero Siege closed; Item Truth on (`itemtruth\capture.request`); `control` needs the research DLL installed | `run` launches the game minimised to the main menu, waits until the menu's one-time memory release is behind it and the level is steady, queues one evaluation request of `--items` items from the journal's own evaluated shapes (`--mix`: white, unique, socketed and runeword items), samples private bytes every second and closes the game with `CloseMainWindow`. `summary.json`: baseline, peak while building, level after, KB per item. `control` runs two halves in one launch, the second under `truthmem hold on`: the positive control, which must grow. | Launches and closes the game; writes `samples.csv` and `summary.json` (and `truthmem.txt`) under `--out`; moves the run's own journal files there when every line in them is the run's | Verified 2026-09-26 (see "Item Truth for the Item Editor", Memory) |
 | `py tools/cut_release.py --check --expect <version>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Reports the version at every site and fails if they disagree, or if the release notes are missing and `--allow-missing-notes` was not given. `py tools/cut_release.py <version>` moves them. `--allow-missing-notes` (only `--check`; only used by `forgepact-tag.yml`) reports a missing notes file without failing. **Do not hand-edit the version sites** - a mismatch here is the signal, not a nuisance. Touches no git, runs no build, stages no DLL. | `--check` is read-only; a bump rewrites two files | Verified 2026-09-16 |
 | `py tools/forgepact_tag.py --tag <version> --existing <tags…>` | `ForgePact/` | PowerShell / CMD (Git Bash for the real examples below) | Python 3.10+ | Checks a typed tag/version against the existing `v*` tags and the tree, and prints `version=`, `tag=`, `bump=`, `previous=`. Refuses a taken tag, a downgrade against the highest tag, a version below the tree, or a malformed input. | Read-only | Verified 2026-09-16 |
 | `py tools/forgepact_tag.py --compose-notes --version <v> --previous <tag> --generated <file> --out <file>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Composes the draft release body: the tagged version's own `release-notes-vX.Y.Z.md` if present (else the generated notes at `--generated`, under a banner), plus every skipped version's file, newest first. Prints `source=` and `versions=`. | Writes `--out`; reads notes files under `--root` (default: repo root) | Verified 2026-09-16 |
@@ -2153,6 +2154,12 @@ manifest.
     - **Research build and mod in one session.** `craftmats 1` refuses while `craftprobe hook` already detours any of the six scripts, and `craftprobe hook` reports them `held by craftmats` once the mod's hooks are in - a second detour on one function would fail and read as a false `TABLE-ONLY`. Players never meet either: the player build has no `craftprobe`.
     - **Live confirmation:** Phase C, 2026-09-24, on the player DLL `BloodPactPlugin_ship.dll`, sha256 `eedc27c30c57236ecbf0e1dd8c04a423e257aaea927911e6e9d932edb01c46f3` (built from ForgePact `6f45abe`), slot 14, two launches. 13 of its 14 checks pass: the DLL and the player build's command set, the six hooks installed `both-routes`, a Socketable recipe (Ol, 2 moved onto the bag's own stack) and a Materials recipe (Greater Unstable Dust, 5 moved into a new bag stack) each unavailable with the switch off and crafting once with it on, one result per press, the stash saved after each press, and the lowered counts in the stash window, after the game's own quit and reload, and with the game stopped, with no flagged item observed. `bag-control` fails on the produced item's name only: a recipe the bag covered produced a Satanic Crystal Fragment in place of a Destiny Shard Fragment, while its count and the absent move line held and the mod did not touch that craft; the owner accepted it as an unrelated game bug ("Accept as game bug"). The owner added two cases, each observed live once: a multi-input recipe (Nut: 3 Sal and 1 Chipped Sapphire, both from the stash) and a multi-unit press of it (quantity 3: 9 and 3 moved in one line, 3 Nuts). The Cube's recipe list shows availability as computed when the Cube opened: after `craftmats 0` a recipe the stash had made available still read available while the window stayed open, and read unavailable at the next Cube open (observed once, on to off); a press on a row whose shown availability is stale was not observed. Record: `ForgePact/docs/crafting-materials-research.md` `## Phase C results`.
     - **Tests:** `tests/test_craft_mats_contract.py` (the `test_craftmats_*`, panel and research-doc tests), `tests/test_craft_mats_behavior.py` + `craft_mats_harness.cpp`.
+25. **The shipped HS-Offline-Tracker producer turns some game exits into a WER crash report (measured from crash dumps, 2026-09-26):**
+    - **What a player sees.** At or after closing the game, Windows reports Hero Siege crashed: faulting module `ucrtbase.dll`, exception `0xc0000409`, fast-fail parameter 7 (`abort`). A dump lands in `%LOCALAPPDATA%\CrashDumps`.
+    - **What it is.** `modfiles_shipped/HSOfflineTrackerProducer.dll` (pinned from the 1.3.16 package, a 2026-09-07-or-earlier build) keeps its publisher in a global `std::thread` (`g_publish_worker` in HS-Offline-Tracker's `aurie-producer/src/module.cpp`) and joins it only in `StopPublishWorker`. When the game leaves through `ExitProcess`, its other threads are gone before the DLL's globals are destroyed, and a `std::thread` still joinable at destruction calls `std::terminate`. The dumps' thread is inside `LdrShutdownProcess`, in that DLL's exit-time destructors, with the game's ordinary exit path under it.
+    - **How often.** 9 of the 10 dumps Windows kept (2026-09-25 13:17 to 2026-09-26 01:36) show it, one from a session that lived 70 s. None of the five closes by `CloseMainWindow` on 2026-09-26 left one; what separates an exit that aborts from one that does not was not determined.
+    - **Why it matters here.** The session of 197,704 Item Truth evaluations that "crashed" at 01:36:27 is one of them; it was read as the evaluations running out of memory (they do not: "Item Truth for the Item Editor", Memory). Read a dump's stack before blaming a `ucrtbase` report on ForgePact or the game.
+    - **Not fixed here.** The fix belongs in HS-Offline-Tracker (join or detach the worker before the globals go); ForgePact then updates the pin. `ItemTruth.hpp` avoids the same trap for its own writer thread by never destroying its `Journal`.
 
 ---
 
@@ -2188,6 +2195,7 @@ manifest.
 - Satanic Zone SDK Data (shared, not ForgePact-specific): `../../../hs-game-sdk/curated/satanic_zone.json`
 - Stash & Crafting Cube Container Data (issue #14's shared-references fold, not ForgePact-specific): `../../RUNTIME_DATA_MODELS.md` § 17, `../../../hs-game-sdk/curated/stash_containers.json`
 - Live Plugin IPC Driver: `../../../ForgePact/tools/ipc.ps1` (send a command to the running game, print only the reply)
+- Item Truth Memory Harness: `../../../ForgePact/tools/itemtruth_memrun.py` (queue evaluation requests at the menu and sample the game's private bytes from outside; `control` is the positive control) and its record, `../../../ForgePact/docs/item-truth-memory-research.md`
 - Ghidra Symbol Importer: `../../../ForgePact/tools/ghidra/ImportSymbols.java` (name the stripped game binary from its own script table)
 - Out-of-Process Freeze Probe: `../../../tools/freeze_probe.ps1` (toolkit root, not ForgePact-specific)
 - Release Notes: `../../../ForgePact/release-notes-v*.md` (one per not-yet-published version, deleted once published; preferred source for every version bump, see Representative Change Workflow §6)
@@ -2324,6 +2332,28 @@ How it works:
   [Issue #173](https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit/issues/173)
   moves the reusable half of `ItemTruth.hpp` into `hs-game-sdk` once a second
   plugin needs it.
+- **Memory (measured 2026-09-26): an evaluation keeps nothing.** The game's own
+  collector frees every item a request builds.
+  - With the released 1.4.6, 20,000 evaluations at the main menu moved private
+    bytes by +6.7 MB (white bases) and +10.2 MB (white, unique, socketed and
+    runeword items), and the level stayed flat afterwards.
+  - The positive control (`truthmem hold on`, research build) kept the same items
+    in a global struct: +106-117 MB, 5.4-6.0 KB and 5.0-5.7 collector objects
+    per item (two runs).
+  - The player build of the change that added the tool, measured through the tool
+    itself, gave the same flat line (+10.7 MB for 20,000 mixed items).
+  - The session of 197,704 evaluations that ended in a WER report peaked at
+    3.14 GB, the same as a fresh launch. Its report was the process exiting: the
+    tracker producer's abort in its exit-time destructor (Known Limitations 25).
+  - So no limit on evaluations per session is needed for memory; the earlier
+    "95 KB each" divided the game's whole private memory by the item count.
+  - Measure with `tools/itemtruth_memrun.py` (Command Reference). The research
+    build's `truthmem` reads the collector (`stat`, `gc`) and holds or releases
+    items (`hold on|off`, `release`).
+  - `LogDrop` (research build) skips Item Truth's own builds, which it used to
+    keep in `g_SeenDrop` for the whole session.
+  - Record: `ForgePact/docs/item-truth-memory-research.md`; game facts:
+    `RUNTIME_DATA_MODELS.md` §5.9 and §16.2.
 
 ## Gems of Incarnation (1.4.6, simulated drops verified 2026-09-25)
 
