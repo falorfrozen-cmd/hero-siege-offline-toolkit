@@ -75,7 +75,7 @@ Data lives under `%LOCALAPPDATA%\Hero_Siege\afk\` (`profiles`, `sessions`, `plan
 - **Compiler:** MSVC (C++20) for the plugin, the launcher and the C++ tests.
 - **From the hub:** the `hs-game-sdk` C++ headers `hs_game_sdk.hpp`, `native_names.hpp`, `reward_scope.hpp` and `reward_stats.hpp`, and the Python `hs_game_sdk` (`GameObject`, `GameScript`, `GameRoom`). `build_release.py` copies the Python SDK into the package.
 - **Node.js:** only for the UI tests.
-- **Item Editor:** Hero Siege Item Editor 2.15.5 or later for Vault transfers. 2.15.8 keeps fragment stack counts; 2.15.10 adds stacking and DISMANTLE; 2.16.1 lets the camp (0.8) take keys and jewel materials from AFK Materials.
+- **Item Editor:** Hero Siege Item Editor 2.15.5 or later for Vault transfers. 2.15.8 keeps fragment stack counts; 2.15.10 adds stacking and DISMANTLE; 2.16.1 lets the camp and town (0.8-0.9) take their goods from AFK Materials.
 
 ## Command Reference
 
@@ -140,6 +140,26 @@ Not released yet. They are in falorfrozen-cmd/HS-AFK-Expedition#1 (0.7.0) and #2
   - 42 Node UI tests (panel 28, map 11, share card 3);
   - the C++ smokes, including `worker_smoke`.
 - **Live check:** the 0.8 engine has not been run against the game yet.
+
+## The town (0.9, in review)
+
+Not released. It is in falorfrozen-cmd/HS-AFK-Expedition#3, stacked on #2. The rules are in the module's `docs/DESIGN.md`, the API in `docs/UI_CONTRACT.md` ("0.9: the town"), the player text in `docs/PLAYER_GUIDE.md`, and the UI brief in `docs/CHATGPT_HANDOVER.md`.
+
+- **Town defense** (`defense.py`, `battle.py`, `bestiary.py`, `fortifications.py`, `town.py`):
+  - Sieges of 15 minutes to 8 hours, a wave every 5 minutes, at levels 1-60.
+  - The defenders are walls, a keep, eight kinds of towers (levels 1-10, a specialisation at 5) and up to three stationed heroes. Each hero fights with its measured pace from a calibration in that region.
+  - The attackers are drawn from the region's recorded kill packets: the player's own monsters, with their real rank, speed, range, immunities and affixes. The monsters that special content spawned come as special waves (the Abyss chest's pack, the Unholy Siege's, a Chaos Pillar's).
+  - Each kill is paid by replaying that packet:
+    - a hero's kills through its own claim (`mode: 'defense'`, with XP);
+    - every other kill as the town's share, collected like a worker's haul with no XP.
+  - The fight, the tiers above Legion (Ascended, Primordial, Warlord), the affix effects and events are AFK FARM's layer.
+- **Economy** (`goods.py`, `economy.py`, `trade.py`, `merchants.py`, `town_panel.py`):
+  - The town has its own coffer. A deposit goes through the purchase path; a payout uses the new `afk worker credit` (plugin 0.9.0-town), with one receipt per request. A refused payout after which the gold rose anyway stays out of the coffer as `review`.
+  - The stock holds 226 kinds of stackable goods. Goods come in through the Item Editor's take and go out only as stacks the game makes (`worker_town_*` deliveries; `TownGoods.hpp` is generated from `goods.py`).
+  - Travelling merchants and trade wagons to ten towns price with a stock model: every unit moves the price, a round trip always loses, and prices recover by the hour.
+- **Tests** (2026-09-25): 387 Python tests, including the panel integration (`test_town.py`, 34), the town modules' unit tests (94) and the goods header; 42 Node UI tests; the C++ smokes, with 36 worker checks covering the credit decisions and the goods list. An independent review's findings were fixed with regression tests.
+- **The watch** (`defense_watch`): the town can keep itself under siege with its towers alone, one siege after another. It catches up after the panel was closed (at most a day back) and pauses while 8 town shares wait or after the keep falls.
+- **Live check:** not run in the game yet. Still to verify: `worker credit`; town deliveries of types 12, 13 and 15; a siege's hero and town claims.
 
 ## Related Guides
 - [hero-siege-item-editor](../hero-siege-item-editor/instructions.md): Infinite Vault, AFK transfers, DISMANTLE, camp takes

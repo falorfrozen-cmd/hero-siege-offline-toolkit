@@ -1152,6 +1152,80 @@ Drops read `enemyRarity`, `x` and `y` off the dying enemy. **Measured.**
 
 [AFK FARM design, 0.8](../HS-AFK-Expedition/docs/DESIGN.md#08-the-camp-traits-and-three-more-worker-types)
 
+### 13.7 Monster ranks: names, health, damage, XP and drop values
+
+From AFK FARM's 6,471 recorded packets and 214 capture sessions, 2026-09-17 to 09-24. Two game builds, pe6aaa6779 and pe6a9ed3ee.
+
+- **Rank values.** An ordinary monster's `enemyRarity` is 1-4, and `DropItem`'s first argument is the same number. In every packet `killStatistic` equals the rank. **Measured.**
+  - Loot goblins drop at 5, while their own `enemyRarity` stays 1, 3 or 4.
+  - Every special-content monster seen dropped at 4.
+- **Names (inferred).** The save's kill counters are Total, Common, Champion, Ancient, Legion and Fallen. On the save with the most kills, Common, Champion, Ancient and Legion add up exactly to the total, and their proportions fit only rank 1 Common, 2 Champion, 3 Ancient, 4 Legion. **Inferred; not yet checked on screen.** ForgePact's labels (normal, champion, rare, ancient) are one step off from this.
+- **Rank multipliers**, next to rank 1. Medians over 41-48 pairs of the same monster object in the same room. **Measured.**
+
+  | Rank | Health | Damage | XP |
+  | --- | --- | --- | --- |
+  | 2 | ×1.84 | ×1.27 | ×2.75 |
+  | 3 | ×2.98 | ×1.53 | ×4.25 |
+  | 4 | ×4.23 | ×1.90 | ×6.25 |
+
+  The XP multipliers are exact constants.
+- **Protected drop values by rank**: `dCommonChance` / `dCommonDropMult` / `dSatanicDropMult` / `dSlots`. They are identical within a rank. **Measured.**
+
+  | Source | dCommonChance | dCommonDropMult | dSatanicDropMult | dSlots |
+  | --- | --- | --- | --- | --- |
+  | Rank 1 | 4 | 11 | 1 | 1 |
+  | Rank 2 | 20 | 20 | 0.925 | 1-3 |
+  | Rank 3 | 36 | 42 | 0.475 | 2-5 |
+  | Rank 4 | 50 | 58 | 0.285 | 4-8 |
+  | Goblins | 100 | mostly 42 | mostly 0.475 | 1-7 |
+  | Abyss chest | 58 | 70 | 0.185 | 8 |
+
+- **The monster's drop table also rises with rank.** For example, runes (drop type 4) are 12/22/34/100 and dungeon keys (type 12) 5/40/75/100 by rank 1-4. **Measured.**
+- **Kill mix.** Without ForgePact's rarity sliders, over 2,994 kills: 70.1% rank 1, 16.9% rank 2, 10.4% rank 3, 0.1% rank 4. With the sliders on, over 21,122 kills: 35.1 / 18.9 / 32.1 / 13.8%. **Measured.**
+- **What a packet carries** (see AFK FARM's `Packet.hpp`):
+  - `monster_key`, which equals the snapshot's `nameKey` (for example `e_orc_warrior_3`; the suffix is `_1` for rank 1, `_2` for rank 2 and `_3` for ranks 3 and 4);
+  - the display `name`, `affixList`, `isRanged`, the fire, cold and poison immunities and `moveSpeed`;
+  - protected health, damage and XP.
+
+  So AFK FARM's town builds a bestiary of real monsters from them.
+
+### 13.8 Monsters of special content (`specialType`)
+
+A monster that special content spawned carries a non-zero `specialType` in its snapshot. It still drops through the ordinary `DropItem` at its own rank, so its packets replay like any other. Each value below is **measured** by association, from AFK FARM's recordings:
+- **9 and 10:** died within two minutes before an Abyss chest opened (341 kills in Act 3-3). The Abyss chest itself drops through `DropItem` with arguments 4, 4 (`dSlots` 8).
+- **4:** the Unholy Siege's (Summoning Portal) monsters in Act 6-5. They carry drop type 56 (tarot) at 100.
+- **1:** most likely a Chaos Pillar's pack (1,100 kills in Acts 1 and 3, always drop type 54). **Unconfirmed.**
+- **3:** unknown.
+
+### 13.9 Elite affixes by runtime index
+
+`affixList` holds runtime affix indexes. Slots from 40 up are flags (zones, states), not affixes. The names below are ForgePact's `kHhAffixNames`; "live" marks those ForgePact confirmed in a running game. The game ships affix names only (41 of them, `translationsEnemy.csv`), with no descriptions.
+- 0 Champion, 1 Fractal, 2 Raging, 3 Enraged, 4 Haunted, 5 Vampiric, 6 Burst Shot, 7 Possessed, 8 Extra Fast, 9 Extra Strong: live.
+- 10 Stoneskin, 11 Cold Enchanted, 12 Fire Enchanted, 13 Lightning Enchanted, 14 Magic Resistant, 15 Manaburn, 16 Multishot, 17 Treasure Gobbler, 18 Arcana's Curse, 19 Venomous, 20 Punisher, 21 Fallen Angel: live.
+- 22-24 are three of Commander, Guardian of Hell, Bloating and Sharpshooter (unconfirmed).
+- 25 Pyromaniac (live) and 26 Berserker (inferred). 27-29 are unconfirmed.
+- 30 Thick Skin and 31 Antimagus: live.
+- 32 Colossal, 33 Stealthy, 34 Time Lapsing and 35 Wasped.
+- 36 Blazing (live), 37 Thunder Caller and 38 Meteoric (live).
+
+**Fallen Angel** is the only kill source of Angelic Keys (12:8) on Hell, per the game's journal text. All 395 recorded packets with drop type 16 carried it. **Measured.**
+
+### 13.10 Vendors, gold and stackable goods
+
+- **Vendor stock** (**static reading**, at call-skeleton level):
+  - the town merchant fills its grid from the zone's normal equipment list;
+  - the Traveling Merchant fills it from the unique list;
+  - Veras's Black Market fills it from uniques and exclusives.
+
+  No stock routine offers keys, fragments, materials, socketables or relics, and no gamble routine was found in Season 10.
+- **Selling to a vendor pays** the item's info value 9 × the stack, rounded up. Materials are worth a token 10, runes and gems 125-381, most keys 15-5,000. **Static reading.**
+- **Gold** is account-wide, with separate pools for softcore, hardcore and Blood Pact (`hs2saves\shop.ini`, `[gold]`). The offline cap is 500,000,000.
+  - `PickUpGoldCheck(GetCounterHash(), amount, …)` is the only call that changes the balance, both credits and debits. `GoldLogAdd` only writes the UI log.
+  - AFK FARM's `worker pay` and `worker credit` (0.9) use `PickUpGoldCheck` with a fresh hash, one receipt per request.
+- **`LootGroundCreate(x, y, itemType, def, …)`** makes a floor item whose Create event builds it (`CreateItemNew`). `def` carries `b` (base), `j`, `c` (0 normal, 1 unique repository) and optional `o` (stack) and `a` (seed). Rarity is not an argument. **Measured** for types 14 and 15 through AFK FARM's workers; types 12 and 13 are **not yet measured** through that path.
+
+[AFK FARM design, 0.9](../HS-AFK-Expedition/docs/DESIGN.md#09-the-town-defense-trade-merchants)
+
 ---
 
 ## 14. Satanic Zone and Special Content
