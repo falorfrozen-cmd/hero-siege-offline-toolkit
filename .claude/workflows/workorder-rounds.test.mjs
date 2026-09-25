@@ -38,7 +38,7 @@ const standard = (overrides = {}) => label => {
   for (const [prefix, value] of Object.entries(overrides)) if (label.startsWith(prefix)) return typeof value === 'function' ? value(label) : value
   if (label.startsWith('snapshot')) return DELTA([]) // no `heads` field by default -> the heads-unavailable fallback path
   if (label.startsWith('delta')) return DELTA([])
-  if (label.startsWith('implementer')) return DONE
+  if (label.startsWith('implementer') || label.startsWith('patch-implementer')) return DONE
   if (label.startsWith('verifier')) return PASS
   if (label.startsWith('scribe')) return { written: true, note: '' }
   return CLEAN
@@ -1027,4 +1027,173 @@ test('lanes: args that could not have come from plan_lint --lanes-json are refus
     assert.equal(result.outcome, 'BAD-ARGS', JSON.stringify(bad))
     assert.deepEqual(calls, [])
   }
+})
+
+// --- 2i: the patch route ------------------------------------------------------
+// A round whose only defects are BLOCKING findings that each carry the
+// reviewer's exact fix is followed by a patch round: fix-only implementer,
+// verifier as usual, only the finding reviewers (plus the decompile guard on
+// its trigger) re-run, and -- when `round_delta.py size` says it stayed small
+// -- not counted against the cap. Each property has its control beside it.
+const FIXED = { where: 'docs/x.md:3', problem: 'wrong flag', evidence: 'line 3 says --a', fix: 'change `--a` to `--b` on docs/x.md:3' }
+const UNFIXED = { where: 'docs/x.md:3', problem: 'wrong flag', evidence: 'line 3 says --a' }
+const SMALL = (paths = ['docs/x.md'], extra = {}) => DELTA(paths, { size_exit_code: 0, lines_changed: 2, new_files: 0, ...extra })
+const PATCH_BASE = { ...BASE, reviewers: { 'docs-sync-reviewer': 'never', 'decompile-output-guard': 'never', 'tauri-command-reviewer': 'never' } }
+const blockingOnce = finding => { let seen = 0; return () => (seen++ === 0 ? { ...CLEAN, blocking: [finding] } : CLEAN) }
+const recording = (prompts, reply) => (label, prompt, opts) => { prompts[label] = prompt; return reply(label, prompt, opts) }
+const implementers = calls => calls.filter(c => /implementer/.test(c))
+
+test('patch: every BLOCKING finding carrying its fix runs a patch round that is not counted', async () => {
+  const prompts = {}
+  const { result, calls } = await run(PATCH_BASE, recording(prompts, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce(FIXED) })))
+  assert.equal(result.outcome, 'PASS')
+  assert.deepEqual(implementers(calls), ['implementer:r0', 'patch-implementer:r1'])
+  assert.match(prompts['patch-implementer:r1'], /patch round/)
+  assert.ok(prompts['patch-implementer:r1'].includes(FIXED.fix), 'the patch implementer is handed the fix itself')
+  assert.ok(prompts['delta:r1'].includes('round_delta.py size zz 1'), 'a patch round is measured')
+  assert.ok(!prompts['delta:r0'].includes('round_delta.py size'), 'control: an ordinary round is not')
+  assert.ok(calls.includes('verifier:r1'), 'the verifier still runs every criterion')
+  assert.ok(calls.includes('docs-sync-reviewer:r1'), 'the reviewer that found it confirms it')
+  assert.ok(calls.includes('decompile-output-guard:r1'), 'a .md changed: the legal guard is never skipped')
+  assert.ok(!calls.includes('tauri-command-reviewer:r1'))
+  assert.match(result.rounds[0].next, /patch round/)
+  assert.match(result.rounds[1].patch, /^held \(2 lines in 1 file\(s\)\)/)
+  assert.match(prompts['scribe:r1'], /patch rounds: 1/)
+  assert.match(prompts['scribe:r0'], /phase: patch/)
+})
+
+test('patch: a held patch skips a clean reviewer whose trigger matches; an ordinary round would run it', async () => {
+  // docs-sync's trigger matches any non-test path, so an ordinary re-run of a
+  // clean docs-sync on docs/x.md runs it -- a held patch does not.
+  const reviewers = { 'docs-sync-reviewer': 'never', 'decompile-output-guard': 'never' }
+  const tauri = blockingOnce({ ...FIXED, where: 'hub/src-tauri/src/x.rs:1' })
+  let r = await run({ ...BASE, reviewers: { ...reviewers, 'tauri-command-reviewer': 'never' } }, standard({ delta: SMALL(), 'tauri-command-reviewer': tauri }))
+  assert.ok(r.calls.includes('patch-implementer:r1'))
+  assert.ok(!r.calls.includes('docs-sync-reviewer:r1'), 'held patch: a clean docs-sync is not re-run')
+  assert.ok(r.calls.includes('tauri-command-reviewer:r1'))
+  r = await run({ ...BASE, reviewers: { ...reviewers, 'tauri-command-reviewer': 'never' } },
+    standard({ delta: SMALL(), 'tauri-command-reviewer': blockingOnce({ ...UNFIXED, where: 'hub/src-tauri/src/x.rs:1' }) }))
+  assert.ok(r.calls.includes('docs-sync-reviewer:r1'), 'control: an ordinary round re-runs it on the same delta')
+})
+
+test('patch: control -- a BLOCKING finding without a fix spends an ordinary round', async () => {
+  const { calls, result } = await run(PATCH_BASE, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce(UNFIXED) }))
+  assert.equal(result.outcome, 'PASS')
+  assert.deepEqual(implementers(calls), ['implementer:r0', 'implementer:r1'])
+  assert.equal(result.rounds[0].next, undefined)
+})
+
+test('patch: one finding without a fix among fixed ones makes the round ordinary', async () => {
+  let seen = 0
+  const { calls } = await run(PATCH_BASE, standard({
+    delta: SMALL(),
+    'docs-sync-reviewer': () => (seen++ === 0 ? { ...CLEAN, blocking: [FIXED, UNFIXED] } : CLEAN),
+  }))
+  assert.deepEqual(implementers(calls), ['implementer:r0', 'implementer:r1'])
+})
+
+test('patch: a failed criterion, a structural finding, a plan defect or an instrument finding never patches', async () => {
+  const fail = { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] }
+  const structural = { verdict: 'IMPL-DEFECT', criteria: [], pending_human: [], other_defects: ['NOT DONE: step 3'] }
+  for (const verifierReply of [fail, structural]) {
+    let v = 0
+    const { calls } = await run(PATCH_BASE, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce(FIXED), verifier: () => (v++ === 0 ? verifierReply : PASS) }))
+    assert.deepEqual(implementers(calls), ['implementer:r0', 'implementer:r1'], JSON.stringify(verifierReply))
+  }
+  let r = await run(PATCH_BASE, standard({ delta: SMALL(), 'docs-sync-reviewer': { ...CLEAN, blocking: [FIXED], plan_defect: true } }))
+  assert.equal(r.result.outcome, 'PLAN-DEFECT')
+  assert.ok(!r.calls.some(c => c.startsWith('patch-implementer')))
+  r = await run({ ...BASE, reviewers: { 'instrument-blindness-reviewer': 'never' } }, standard({ delta: SMALL(), 'instrument-blindness-reviewer': blockingOnce(FIXED) }))
+  assert.deepEqual(implementers(r.calls), ['implementer:r0', 'implementer:r1'])
+})
+
+test('patch: one that outgrew the limit, added a file or reached an excluded path is counted and reviewed as usual', async () => {
+  const cases = [
+    [SMALL(['docs/x.md'], { lines_changed: 21 }), /21 lines changed/],
+    [SMALL(['docs/x.md', 'docs/new.md'], { new_files: 1 }), /new file/],
+    [SMALL(['ForgePact/plugin/ModuleMain.cpp']), /touched ForgePact\/plugin/],
+    [SMALL(['ForgePact/release-notes-v1.4.6.md']), /release-notes/],
+    [SMALL(['docs/x.md'], { size_exit_code: 3 }), /no usable figure/],
+    [SMALL(['tools/x.py'], { instrumentContent: true }), /instrument-shaped/],
+  ]
+  for (const [delta, why] of cases) {
+    const state = { ...PATCH_BASE, reviewers: { ...PATCH_BASE.reviewers, 'instrument-blindness-reviewer': 'never' } }
+    const { result, calls } = await run(state, standard({ delta, 'docs-sync-reviewer': blockingOnce(FIXED) }))
+    assert.equal(result.outcome, 'PASS')
+    assert.match(result.rounds[1].patch, why)
+    assert.match(result.rounds[1].patch, /counted as an ordinary round/)
+    if (delta.paths.some(p => p.startsWith('ForgePact/plugin/')) || delta.instrumentContent) {
+      assert.ok(calls.includes('instrument-blindness-reviewer:r1'), 'an ordinary round runs its triggered reviewers')
+    }
+  }
+  // control: 20 lines is still a patch
+  const { result } = await run(PATCH_BASE, standard({ delta: SMALL(['docs/x.md'], { lines_changed: 20 }), 'docs-sync-reviewer': blockingOnce(FIXED) }))
+  assert.match(result.rounds[1].patch, /^held/)
+})
+
+test('patch: a patch that held does not count, so a third ordinary round still runs after it', async () => {
+  // r0 ordinary (blocking, fixed) -> r1 patch held (blocking again, unfixed)
+  // -> r2 ordinary -> r3 ordinary. Without the patch route r3 would be past the cap.
+  let seen = 0
+  const docs = () => { seen++; return seen === 1 ? { ...CLEAN, blocking: [FIXED] } : seen <= 3 ? { ...CLEAN, blocking: [UNFIXED] } : CLEAN }
+  const { result, calls } = await run(PATCH_BASE, standard({ delta: SMALL(), 'docs-sync-reviewer': docs }))
+  assert.equal(result.outcome, 'PASS', JSON.stringify(result.rounds && result.rounds.map(r => r.patch || '-')))
+  assert.equal(result.round, 3)
+  assert.deepEqual(implementers(calls), ['implementer:r0', 'patch-implementer:r1', 'implementer:r2', 'implementer:r3'])
+})
+
+test('patch: two patch rounds never run back to back', async () => {
+  let seen = 0
+  const docs = () => (seen++ < 2 ? { ...CLEAN, blocking: [FIXED] } : CLEAN)
+  const { calls } = await run(PATCH_BASE, standard({ delta: SMALL(), 'docs-sync-reviewer': docs }))
+  assert.deepEqual(implementers(calls), ['implementer:r0', 'patch-implementer:r1', 'implementer:r2'])
+})
+
+test('patch: a patch decided on the last counted round still runs, and the cap stands after it', async () => {
+  const fail = { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] }
+  let v = 0
+  const { result, calls } = await run(PATCH_BASE, standard({
+    delta: SMALL(),
+    verifier: () => (v++ < 2 ? fail : PASS),
+    'docs-sync-reviewer': label => (label.endsWith(':r2') || label.endsWith(':r3') ? { ...CLEAN, blocking: [FIXED] } : CLEAN),
+  }))
+  assert.equal(result.outcome, 'CAP')
+  assert.deepEqual(implementers(calls), ['implementer:r0', 'implementer:r1', 'implementer:r2', 'patch-implementer:r3'])
+})
+
+test('patch: patch rounds already spent are read from State and keep counting', async () => {
+  const prompts = {}
+  const state = { ...PATCH_BASE, round: 3, reviewers: { 'docs-sync-reviewer': 'blocking' }, state: '## State\nround: 3\nphase: implement\npatch rounds: 1\n' }
+  const { result, calls } = await run(state, recording(prompts, standard({ delta: SMALL() })))
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(calls.includes('implementer:r3'), 'round 3 with one patch spent is the third counted round, not past the cap')
+  assert.match(prompts['scribe:r3'], /patch rounds: 1/)
+  const control = await run({ ...state, state: '## State\nround: 3\nphase: implement\n' }, standard({ delta: SMALL() }))
+  assert.equal(control.result.outcome, 'CAP', 'control: without patch rounds, round 3 is past the cap')
+})
+
+test('patch: the Log line of a BLOCKING finding carries its fix', async () => {
+  const prompts = {}
+  await run(PATCH_BASE, recording(prompts, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce(FIXED) })))
+  assert.ok(prompts['scribe:r0'].includes(`— fix: ${FIXED.fix}`))
+  assert.ok(prompts['scribe:r0'].includes('next: patch round'))
+  assert.ok(prompts['scribe:r1'].includes('patch: held'))
+})
+
+test('patch: reviewers are told what a fix is and when to leave it out', async () => {
+  const prompts = {}
+  await run(PATCH_BASE, recording(prompts, standard()))
+  assert.match(prompts['docs-sync-reviewer:r0'], /'fix'/)
+  assert.match(prompts['docs-sync-reviewer:r0'], /leave 'fix' out/)
+})
+
+test('the verifier is sent to the criteria runner first, and told it judges nothing', async () => {
+  const prompts = {}
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
+  await run(BASE, reply)
+  assert.ok(prompts['verifier:r0'].includes('py -3 tools/run_criteria.py "p.md"'), 'the runner gets the plan path')
+  assert.match(prompts['verifier:r0'], /Bash timeout at 600000/)
+  assert.match(prompts['verifier:r0'], /it judges nothing/)
+  assert.match(prompts['verifier:r0'], /--start/)
+  assert.match(prompts['verifier:r0'], /A root suite the runner already ran is the suite run/)
 })

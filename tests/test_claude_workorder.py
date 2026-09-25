@@ -607,6 +607,83 @@ class TestHeadsSubcommand(RoundDeltaTestCase):
         self.assertEqual(delta.returncode, 3, delta.stdout)
 
 
+class TestSizeSubcommand(RoundDeltaTestCase):
+    """`size` is the patch route's post-check (SKILL.md Step 4): it must never
+    report a round as smaller than it was, or a round that outgrew a patch
+    would go uncounted against the cap. Each test pairs a small change with a
+    control that must come out larger."""
+
+    def totals(self, result):
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = dict(line.split(": ", 1) for line in result.stdout.splitlines() if ": " in line)
+        return int(lines["lines_changed"]), int(lines["new_files"])
+
+    def test_no_change_is_zero(self):
+        self.repo.run("snapshot")
+        self.assertEqual(self.totals(self.repo.run("size")), (0, 0))
+
+    def test_uncommitted_edit_counts_added_and_deleted_lines(self):
+        self.repo.write("a.md", b"one\ntwo\nthree\n")
+        self.repo.commit()
+        self.repo.run("snapshot")
+        self.repo.write("a.md", b"one\nTWO\nthree\nfour\n")
+        result = self.repo.run("size")
+        self.assertEqual(self.totals(result), (3, 0))  # 2 added, 1 deleted
+        self.assertIn("2\t1\texisting\ta.md", result.stdout)
+
+    def test_committed_edit_is_counted_too(self):
+        # Implementers commit mid-round; a clean tree afterwards is not a zero.
+        self.repo.write("a.md", b"one\n")
+        self.repo.commit()
+        self.repo.run("snapshot")
+        self.repo.write("a.md", b"one\ntwo\n")
+        self.repo.commit("round work")
+        self.assertEqual(self.totals(self.repo.run("size")), (1, 0))
+
+    def test_new_file_is_new_and_counts_every_line(self):
+        self.repo.run("snapshot")
+        self.repo.write("new.md", b"a\nb\nc\n")
+        result = self.repo.run("size")
+        self.assertEqual(self.totals(result), (3, 1))
+        self.assertIn("\tnew\tnew.md", result.stdout)
+
+    def test_new_file_committed_mid_round_is_still_new(self):
+        self.repo.run("snapshot")
+        self.repo.write("new.md", b"a\n")
+        self.repo.commit("round work")
+        self.assertEqual(self.totals(self.repo.run("size")), (1, 1))
+
+    def test_pre_round_dirt_in_a_touched_file_counts_against_it(self):
+        # The fail-safe direction: earlier uncommitted changes in a file the
+        # round also touched make the figure larger, never smaller.
+        self.repo.write("a.md", b"one\n")
+        self.repo.commit()
+        self.repo.write("a.md", b"one\nearlier\n")
+        self.repo.run("snapshot")
+        self.repo.write("a.md", b"one\nearlier\nround\n")
+        self.assertEqual(self.totals(self.repo.run("size")), (2, 0))
+
+    def test_untouched_dirty_file_is_not_counted(self):
+        # Control for the test above: dirt the round never touched is not in
+        # the delta, so it is not in the size either.
+        self.repo.write("a.md", b"one\n")
+        self.repo.commit()
+        self.repo.write("a.md", b"one\nearlier\n")
+        self.repo.run("snapshot")
+        self.assertEqual(self.totals(self.repo.run("size")), (0, 0))
+
+    def test_binary_file_is_never_small(self):
+        self.repo.run("snapshot")
+        self.repo.write("blob.bin", b"\x00\x01\x02")
+        lines, new = self.totals(self.repo.run("size"))
+        self.assertGreater(lines, 20)
+        self.assertEqual(new, 1)
+
+    def test_missing_snapshot_exits_3(self):
+        result = self.repo.run("size", round_="9")
+        self.assertEqual(result.returncode, 3, result.stdout)
+
+
 class TestHeadsWithSubmodule(RoundDeltaTestCase):
     """`heads` must key a submodule by its own dir, not fold it into the hub
     entry -- the same prefixing property `TestSubmodulePrefixing` pins down

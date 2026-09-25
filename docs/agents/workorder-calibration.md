@@ -253,3 +253,79 @@ join, the stop marker and the audit summary are tested against stub agents
 and synthetic transcripts only. Whether a real lane keeps to its file set,
 checks the marker before each step and leaves git alone is not established,
 and R23 is the instrument that will show it.
+
+# The cheap routes (2026-09-25)
+
+## The question
+
+The owner asked whether the pipeline wastes time on defects whose problem and
+fix are already known: a reviewer finding that names the edit, or a plan
+defect that is one wrong criterion. Each one cost a full implement-verify
+round, or a fresh replan, and each counted against the cap.
+
+## What was measured
+
+`tools/workorder_audit.py --json` over the 29 sessions whose transcripts
+spawned a `planner` (started 2026-09-19..24), with each agent sorted by its
+label. The sort is rough: labels are free text, and fix rounds that ran
+inside a workflow launch as `workflow-subagent` are not counted, so the
+defect figures are a floor.
+
+| Agents | Spawns | Agent-minutes | List price |
+|---|---|---|---|
+| fix-round implementers (round 1 and later) | 69 | 711 | $191 |
+| replanning planners | 37 | 462 | $170 |
+| reviewer re-runs | 212 | 449 | $96 |
+| all subagents | | | $1,858 |
+
+That is about $457, or a quarter of all subagent spend. Median wall time is
+7.4 minutes for a fix-round implementer and 9.0 for a replan. 32 of the 69
+fix rounds, and 17 of the 37 replans, ran for 7 minutes or less. The planner
+labels include "Fix buildout criterion 14 flag" (0.9 minutes), "Replan 2: fix
+criterion 11 anchoring", "Replan: fix M3 row id collision" and "Replan:
+reconcile ADR criteria". Each of those counted as a replan, so the next real
+replan went to Fable or to the owner. Whether a fix round's change had
+already been written out by its reviewer was not recorded, and is not
+established.
+
+## What changed
+
+- **Patch rounds** (SKILL.md Step 4, `workorder-rounds.js` 2i). A round
+  whose only defects are BLOCKING reviewer findings that all carry a `fix`
+  is followed by a patch round. In it a `patch-implementer` applies the
+  fixes, the verifier runs every criterion, and only the finding reviewers
+  and `decompile-output-guard` re-run. `round_delta.py size` then checks the
+  round: at most 20 changed lines, no new file, and no instrument path or
+  release note. A patch that passes is not counted against the cap.
+- **Amendments** (SKILL.md Step 2). A `PLAN-DEFECT` that states its own
+  correction goes to a fresh `amendment:` planner. `tools/amend_check.py`
+  then decides from the files whether it was one: the Goal, scope and human
+  questions are unchanged, no section came or went, and at most 20 lines
+  changed. An amendment that passes is neither a replan nor a step up the
+  tier ladder.
+- **The verifier's criteria runner** (`tools/run_criteria.py`). Over 124
+  verifiers, 697 of 1,042 wall minutes went on shell commands and 346 on the
+  model's turns between them, at a median of 38 tool calls. Exact repeats of
+  one command cost only 3 minutes, so running a command once saves little.
+  The saving is the turns: the runner runs every command-shaped criterion in
+  one call and prints what each printed, and the verifier judges from that.
+  A root suite a criterion already ran also stops being run again as
+  `verifier.md` step 3's own suite. Caching a result across agents stays
+  rejected, as above.
+- **R24** fails an amendment with no `save` or `check` around it, two
+  amendments with no implementer between them, and two patch rounds back to
+  back. **R11** stops counting an amendment whose `check` passed.
+
+## Not yet measured
+
+None of the three has run on a real workorder. The routing, the size check and
+the amendment check are tested against stub agents, throwaway repositories
+and synthetic transcripts only. For the runner, read a verifier's turns and
+wall minutes against the 38-call, 7.6-minute median above. For the routes,
+read after the first few real runs:
+how many rounds a `next: patch round` Log line saved, how many patches came
+back `not held`, and whether a patch that held let a defect through that an
+ordinary round's reviewers would have caught. Count that last one from the
+next round's findings. If patches often come back `not held`, the fix field
+is being used for work that is not a patch, and the prompt needs tightening
+rather than the limit raising.

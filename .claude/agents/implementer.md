@@ -61,8 +61,16 @@ EVIDENCE: <the command you ran and its real output, or path:line showing the
            assumption is false>
 WHAT THE PLAN ASSUMED: <one sentence>
 WHAT IS ACTUALLY TRUE: <one sentence>
+CORRECTION: <the exact change to the plan that fixes it -- which criterion or
+            step, and its new text -- or "none" when it needs replanning>
 PROGRESS SO FAR: <steps done, files touched, what is half-finished>
 ```
+
+`CORRECTION` decides how the plan is fixed. When you can state it exactly (a
+criterion's command or anchor, a path that moved, one wrong fact), the driver
+sends it to a planner as an amendment, which applies that correction alone and
+costs a fraction of a replan. Write "none" when you would be guessing; a wrong
+correction is caught by the amendment check and becomes a full replan anyway.
 
 The cost of stopping is one round trip. The cost of improvising is a change
 that looks finished, passes a shallow check, and fails months later as a bug
@@ -282,6 +290,18 @@ These are not style preferences. Each has already shipped as a bug.
   `instructions.md`, the README, and a player-visible ForgePact change's
   `release-notes-vX.Y.Z.md`. A `*-plan.md` is gitignored; fold what is still
   true into the document describing the result.
+
+## When you are a patch round
+
+Your label is `patch-implementer:r<n>` and your prompt lists BLOCKING
+findings, each with the exact `fix` the reviewer stated. Apply those fixes,
+commit, and return. Read the plan and context only where a fix needs them,
+start no other step, and run no full build or suite: the verifier runs every
+criterion after you. If a fix as stated does not resolve its finding, resolve
+the finding properly anyway and say so under `DEVIATIONS`. The round is
+measured afterwards (`round_delta.py size`), and one that grew past 20 changed
+lines or added a file is counted as an ordinary round. That costs the pipeline
+a round; a finding left unresolved costs it more.
 
 ## When you finish
 

@@ -42,6 +42,13 @@ properties of the task, never a model's self-reported confidence, because a
 model that cannot solve something is also badly calibrated about whether it
 can.
 
+A defect whose fix is already written down does not buy a whole phase. A
+reviewer finding that carries its exact `fix` gets a patch round, and a
+`PLAN-DEFECT` that states its correction gets an amendment rather than a
+replan. Neither is counted against the pipeline's caps, and the files decide
+whether one applied (`round_delta.py size`, `tools/amend_check.py`), not the
+agent that took it.
+
 If a hook blocks an edit, it is quoting a rule from this file — read what it
 printed rather than working around it. If you add a rule here that is
 mechanically checkable, add the check too; `.claude/README.md` says how.

@@ -1139,6 +1139,93 @@ as `self` (no drop from the second); the killer argument can be a projectile.
 Drops read `enemyRarity`, `x` and `y` off the dying enemy. **Measured.**
 [Headhunter, typed instance ids](../ForgePact/docs/headhunter-dispatch-verification.md#follow-up-falors-first-test-typed-instance-ids)
 
+### 13.6 World chests and loot goblins
+
+- **World chests.** A world chest (`Chest_Drop_obj`) drops its loot through `DropItem`, like a kill.
+  - The call's first argument is the chest's opening rarity: 2 is wooden, 3 golden, 4 crystal.
+  - A golden chest takes a Basic Key (type 12, base 0); a crystal chest takes a Crystal Key (12:1).
+  - **Measured** 2026-09-24 on the 23 chests AFK FARM recorded; each one's rarity matched its sprite.
+- **Loot goblins.** There are five: `Goblin_Treasure_obj`, `Goblin_Rune_obj`, `Goblin_Ore_obj`, `Goblin_Orb_obj` and `Goblin_Shadow_obj`.
+  - A dying goblin drops its items through `DropItem`, at rank 5 with the goblins' own magic find. **Static reading.**
+  - That path is **measured** for treasure, rune and shadow goblins: 15 packets AFK FARM recorded on 2026-09-24. Orb and ore goblins were not observed.
+  - A goblin's gold shower (`DropGold`) and the shadow goblin's Dimensional Shards (`LootGroundCreate`, type 13, base 1) are made outside `DropItem`, so a `DropItem` replay does not bring them. **Static reading.**
+
+[AFK FARM design, 0.8](../HS-AFK-Expedition/docs/DESIGN.md#08-the-camp-traits-and-three-more-worker-types)
+
+### 13.7 Monster ranks: names, health, damage, XP and drop values
+
+From AFK FARM's 6,471 recorded packets and 214 capture sessions, 2026-09-17 to 09-24. Two game builds, pe6aaa6779 and pe6a9ed3ee.
+
+- **Rank values.** An ordinary monster's `enemyRarity` is 1-4, and `DropItem`'s first argument is the same number. In every packet `killStatistic` equals the rank. **Measured.**
+  - Loot goblins drop at 5, while their own `enemyRarity` stays 1, 3 or 4.
+  - Every special-content monster seen dropped at 4.
+- **Names (inferred).** The save's kill counters are Total, Common, Champion, Ancient, Legion and Fallen. On the save with the most kills, Common, Champion, Ancient and Legion add up exactly to the total, and their proportions fit only rank 1 Common, 2 Champion, 3 Ancient, 4 Legion. **Inferred; not yet checked on screen.** ForgePact's labels (normal, champion, rare, ancient) are one step off from this.
+- **Rank multipliers**, next to rank 1. Medians over 41-48 pairs of the same monster object in the same room. **Measured.**
+
+  | Rank | Health | Damage | XP |
+  | --- | --- | --- | --- |
+  | 2 | ×1.84 | ×1.27 | ×2.75 |
+  | 3 | ×2.98 | ×1.53 | ×4.25 |
+  | 4 | ×4.23 | ×1.90 | ×6.25 |
+
+  The XP multipliers are exact constants.
+- **Protected drop values by rank**: `dCommonChance` / `dCommonDropMult` / `dSatanicDropMult` / `dSlots`. They are identical within a rank. **Measured.**
+
+  | Source | dCommonChance | dCommonDropMult | dSatanicDropMult | dSlots |
+  | --- | --- | --- | --- | --- |
+  | Rank 1 | 4 | 11 | 1 | 1 |
+  | Rank 2 | 20 | 20 | 0.925 | 1-3 |
+  | Rank 3 | 36 | 42 | 0.475 | 2-5 |
+  | Rank 4 | 50 | 58 | 0.285 | 4-8 |
+  | Goblins | 100 | mostly 42 | mostly 0.475 | 1-7 |
+  | Abyss chest | 58 | 70 | 0.185 | 8 |
+
+- **The monster's drop table also rises with rank.** For example, runes (drop type 4) are 12/22/34/100 and dungeon keys (type 12) 5/40/75/100 by rank 1-4. **Measured.**
+- **Kill mix.** Without ForgePact's rarity sliders, over 2,994 kills: 70.1% rank 1, 16.9% rank 2, 10.4% rank 3, 0.1% rank 4. With the sliders on, over 21,122 kills: 35.1 / 18.9 / 32.1 / 13.8%. **Measured.**
+- **What a packet carries** (see AFK FARM's `Packet.hpp`):
+  - `monster_key`, which equals the snapshot's `nameKey` (for example `e_orc_warrior_3`; the suffix is `_1` for rank 1, `_2` for rank 2 and `_3` for ranks 3 and 4);
+  - the display `name`, `affixList`, `isRanged`, the fire, cold and poison immunities and `moveSpeed`;
+  - protected health, damage and XP.
+
+  So AFK FARM's town builds a bestiary of real monsters from them.
+
+### 13.8 Monsters of special content (`specialType`)
+
+A monster that special content spawned carries a non-zero `specialType` in its snapshot. It still drops through the ordinary `DropItem` at its own rank, so its packets replay like any other. Each value below is **measured** by association, from AFK FARM's recordings:
+- **9 and 10:** died within two minutes before an Abyss chest opened (341 kills in Act 3-3). The Abyss chest itself drops through `DropItem` with arguments 4, 4 (`dSlots` 8).
+- **4:** the Unholy Siege's (Summoning Portal) monsters in Act 6-5. They carry drop type 56 (tarot) at 100.
+- **1:** most likely a Chaos Pillar's pack (1,100 kills in Acts 1 and 3, always drop type 54). **Unconfirmed.**
+- **3:** unknown.
+
+### 13.9 Elite affixes by runtime index
+
+`affixList` holds runtime affix indexes. Slots from 40 up are flags (zones, states), not affixes. The names below are ForgePact's `kHhAffixNames`; "live" marks those ForgePact confirmed in a running game. The game ships affix names only (41 of them, `translationsEnemy.csv`), with no descriptions.
+- 0 Champion, 1 Fractal, 2 Raging, 3 Enraged, 4 Haunted, 5 Vampiric, 6 Burst Shot, 7 Possessed, 8 Extra Fast, 9 Extra Strong: live.
+- 10 Stoneskin, 11 Cold Enchanted, 12 Fire Enchanted, 13 Lightning Enchanted, 14 Magic Resistant, 15 Manaburn, 16 Multishot, 17 Treasure Gobbler, 18 Arcana's Curse, 19 Venomous, 20 Punisher, 21 Fallen Angel: live.
+- 22-24 are three of Commander, Guardian of Hell, Bloating and Sharpshooter (unconfirmed).
+- 25 Pyromaniac (live) and 26 Berserker (inferred). 27-29 are unconfirmed.
+- 30 Thick Skin and 31 Antimagus: live.
+- 32 Colossal, 33 Stealthy, 34 Time Lapsing and 35 Wasped.
+- 36 Blazing (live), 37 Thunder Caller and 38 Meteoric (live).
+
+**Fallen Angel** is the only kill source of Angelic Keys (12:8) on Hell, per the game's journal text. All 395 recorded packets with drop type 16 carried it. **Measured.**
+
+### 13.10 Vendors, gold and stackable goods
+
+- **Vendor stock** (**static reading**, at call-skeleton level):
+  - the town merchant fills its grid from the zone's normal equipment list;
+  - the Traveling Merchant fills it from the unique list;
+  - Veras's Black Market fills it from uniques and exclusives.
+
+  No stock routine offers keys, fragments, materials, socketables or relics, and no gamble routine was found in Season 10.
+- **Selling to a vendor pays** the item's info value 9 × the stack, rounded up. Materials are worth a token 10, runes and gems 125-381, most keys 15-5,000. **Static reading.**
+- **Gold** is account-wide, with separate pools for softcore, hardcore and Blood Pact (`hs2saves\shop.ini`, `[gold]`). The offline cap is 500,000,000.
+  - `PickUpGoldCheck(GetCounterHash(), amount, …)` is the only call that changes the balance, both credits and debits. `GoldLogAdd` only writes the UI log.
+  - AFK FARM's `worker pay` and `worker credit` (0.9) use `PickUpGoldCheck` with a fresh hash, one receipt per request. **Measured** 2026-09-25: a `worker credit` of 5,000 raised the balance by exactly 5,000.
+- **`LootGroundCreate(x, y, itemType, def, …)`** makes a floor item whose Create event builds it (`CreateItemNew`). `def` carries `b` (base), `j`, `c` (0 normal, 1 unique repository) and optional `o` (stack) and `a` (seed). Rarity is not an argument. **Measured** for types 14 and 15 through AFK FARM's workers. Type 12 was **measured** on 2026-09-25: a town delivery made Basic Keys (12:0) and Cellar Keys (12:10) with the right `b` and `o`. Type 13 was **measured** the same day: a town delivery made a Battle Fragment (13:0) with the right `b` and `o`, and the game gave it a new seed (`a`).
+
+[AFK FARM design, 0.9](../HS-AFK-Expedition/docs/DESIGN.md#09-the-town-defense-trade-merchants)
+
 ---
 
 ## 14. Satanic Zone and Special Content
@@ -1694,6 +1781,17 @@ that recipe read `a0=1 a1=15 a2=1 a3=1` (owner, class, and base for a
 Socketable identity); what `a0` and `a2` mean beyond that reading is not
 measured (RD `### Phase 1j results`, cube-count).
 
+### Jewel recipes in the Crafting Cube
+
+**Static reading** (AFK FARM 0.8 research, paraphrased):
+- **Tables.** The Cube's recipes are two globals: `global.craftComboList` holds the inputs and `global.craftComboResult` the results.
+- **Jewelcrafting rows.** They have result types 37 to 41: 19 recipes, all with a 100% success chance.
+- **Outputs and inputs.** They make type 15 (socketables) bases 78-81 (gems) and 82-96 (jewels) from type 14 bases 0-23. Result type 41 also takes the Enchanted Sigil (14:44).
+- **Amounts** are stored encrypted like every recipe's and decoded by `PilipaliDecrypt` (above).
+- **The in-game gate.** A hero may craft them only with the Jewelcrafting level (player stat 157) that the recipe's tier asks for, from 750 to 3750. That level rises only through prospecting (`JewelcraftingAdd`).
+
+AFK FARM's plugin (0.8.0-camp) reads the two globals live with `afk worker recipes`. That read is **not yet measured** on a running game.
+
 ### SDK names and the curated entry
 
 `SaveStashFunc` and `LoadStashFunc` are present in every `hs-game-sdk`
@@ -1720,3 +1818,138 @@ the craft's own items are placed there, at the press, and consumed at once.
 Live 1k (RD `### Phase 1k results`) named no container the curated JSON
 lacks: `inventoryMaterialGrid` (above) and `craftGrid` (`crafting_cube`,
 just above) already covered every grid it placed an item into.
+
+## 18. Gems of Incarnation
+
+What ForgePact's Gems of Incarnation mod established on 2026-09-25 against the
+2026-09-16 build, `pe-6aaa6779-0cad4fc8`: the running game built 14,521 gems
+through its own save loader (§16.2), and the drop, filter and pickup scripts were
+read. The argument, the full tables and the live checks are in ForgePact's
+[`docs/incarnation-gems-research.md`](../ForgePact/docs/incarnation-gems-research.md); how the mod uses them is in the
+[module guide](submodules/ForgePact/instructions.md#gems-of-incarnation-146-simulated-drops-verified-2026-09-25).
+
+### 18.1 The item
+
+- Item key `socketable_gem_of_incarnation`: item type 15 (Socketable), base `b`
+  136, `c` 0, `j` 0. A save keeps its seed `a`, `b`, `c`, `j` and the flags `n`,
+  `o` and `w`, and nothing it rolled (§16.1). **Measured** (the owner's 21 gems).
+- It goes only into the Incarnation tree's node sockets: a node holds an item
+  fingerprint (`nodeItemFingerprint`), the tree gathers the socketed items in
+  `incarnationSocketItemArray`, and `IncarnationStatGetter` adds their stats.
+  **Static reading.**
+
+[What a Gem of Incarnation is](../ForgePact/docs/incarnation-gems-research.md#what-a-gem-of-incarnation-is)
+
+### 18.2 How the game rolls one
+
+- The roll depends on the definition alone: the owner's 21 gems, rebuilt under
+  new time stamps, came out identical to what the game had recorded for them,
+  stats and names. **Measured.**
+- The rarity (info `"27"`, §16.4) decides the affix count: Superior (2) 1-3,
+  Rare (3) 3-4, Mythic (5) 4-5. With no `n`, 5,000 random seeds gave Superior
+  91.1%, Rare 7.0% and Mythic 2.0%, and 1 to 5 affixes 66.8%, 24.0%, 7.2%, 1.9%
+  and 0.1%. The level requirement (info `"1"`) is 52, 57, 62 and 67 for 1, 2, 3
+  and 4+ affixes; the tier letter (info `"32"`) is always 4 (S). **Measured.**
+- The affixes sit in stat slots `"10"`-`"14"` (§16.3). Each of the 37 affix stats
+  has three affix tiers, 2, 3 and 4, with one range each: across all 14,521 gems
+  and every `n`, no (stat, tier) pair showed a second range. Tier 4 is the best
+  range. A value is rolled uniformly within its range. **Measured.**
+- `n` moves the rarity odds, not the tiers (the tier-4 share stays 35-37%), and
+  it is a table index, not a scale. On the same 2,000 seeds the Mythic share was
+  2.0% for no `n`, 0 and 1; 3.0% for 2; 6.3% for 3; 11.3% for 4; 20.0% for 6.
+  5 and 8 behave like no `n`. Real gear carries 0-4, mostly 3 and 4. What sets a
+  drop's `n` was not read; the first `DropGems` drop measured in play carried
+  none (§18.4). **Measured.**
+- Building one gem through `InitItemFromJson` costs about 0.3 ms on the game
+  thread: 47,147 builds took 14.4 s of build time at the main menu, in 4 ms
+  slices. **Measured.**
+
+[How the game rolls one](../ForgePact/docs/incarnation-gems-research.md#how-the-game-rolls-one---measured-on-14521-gems)
+
+### 18.3 The affix pool
+
+Every affix stat seen on the 14,521 gems, with its tier-4 range and the share of
+Mythic gems carrying it (1,536 Mythic seeds: `n` 3, 4 and none, 512 each). The
+names are the stats' tooltip names (the Item Editor's game-verified stat table).
+**Measured.**
+
+| Stat | Tooltip name | Tier 4 | Mythic gems |
+|---|---|---|---|
+| 28 | Enhanced Damage (%) | 12-35 | 17.3% |
+| 29 | Enhanced Defense (%) | 25-75 | 16.6% |
+| 52 | to Life | 10-50 | 15.8% |
+| 53 | Life Increased by (%) | 3-10 | 12.4% |
+| 57 | Life stolen per Hit (%) | 2-6 | 28.1% |
+| 60 | to Mana | 10-50 | 16.5% |
+| 61 | Mana Increased by (%) | 3-10 | 10.9% |
+| 64 | Mana stolen per Hit (%) | 2-6 | 27.0% |
+| 68 | Increased Attack Speed (%) | 3-12 | 28.6% |
+| 74 | to Attack Rating | 15-50 | 17.0% |
+| 75 | Increased Attack Rating (%) | 8-25 | 16.7% |
+| 95 | Chance for a Deadly Blow (%) | 3-10 | 16.1% |
+| 101 | Magic Skill Damage increased by (%) | 5-20 | 19.5% |
+| 128 | to Physical Damage | 2-6 | 2.4% |
+| 133 / 137 / 141 / 145 / 149 | to Fire / Cold / Arcane / Lightning / Poison Skill Damage | 18-24 | 2.7-3.4% each |
+| 134 / 138 / 142 / 146 / 150 | Fire / Cold / Arcane / Lightning / Poison Skill Damage increased by (%) | 5-20 | 5.0-5.9% each |
+| 173 | to All Resistances (%) | 2-5 | 11.7% |
+| 175 / 177 / 179 / 181 / 183 | to Fire / Cold / Lightning / Arcane / Poison Resistance (%) | 6-15 | 3.1-3.6% each |
+| 196 | Faster Cast Rate (%) | 2-5 | 24.8% |
+| 201 | to All Skills | 1-1 | 0.7% |
+| 284 | Increased Magic Find (%) | 3-10 | 25.7% |
+| 448 / 450 | to Minimum / Maximum Weapon Damage | 6-12 | 16.7% / 25.5% |
+| 462 + 463 | a skill grant: the skill (462, a skill id, 2-433) and its levels (463, 1-1) | - | 2.9% |
+
+- A skill grant always takes two slots, 462 and 463. 462's "range" is a range of
+  skill ids, not values.
+- +All Skills is the rarest by far, yet it was on 3-4 of the 512 Mythic seeds at
+  each of `n` 3, 4 and none. No movement stat is in the pool.
+
+[The affix pool](../ForgePact/docs/incarnation-gems-research.md#the-affix-pool)
+
+### 18.4 How a gem drops
+
+- `DropGems` (drop type 6, §13.1) picks a socketable from repository category 15
+  (§13.2) by drop rate and hands it to `LootGroundCreate`. **Static reading.**
+- `LootGroundCreate(x, y, type, params, ...)` writes a fresh random seed into the
+  params' `a`, creates the item instance and calls `CreateItemNew(instance,
+  undefined)`. So a drop's seed is settled between that write and
+  `CreateItemNew`'s first line. **Static reading.** A seed replaced at
+  `CreateItemNew`'s entry, while `DropGems` runs, rolled as the replacement:
+  simulated drops through the game's loader in that scope came out as the
+  replacement seed's Mythic roll, 13 of 13. **Measured** (research build).
+- On a real drop the definition is already on the item instance when
+  `CreateItemNew` starts. In play, with every socketable a `DropGems` call made
+  turned into a Gem of Incarnation at that point (a research-build test
+  switch), 4 of 4 monster drops came out Mythic from the replacement seed, with
+  every affix at its tier-4 top. The first carried no `n`. **Measured**
+  (2026-09-25).
+- Loading an item goes through `InitItemFromJson`, never `DropGems`, so an owned
+  gem never takes a new seed. **Static reading.**
+- A `DropGems` detour, like `DropRelic`'s, is installed once a player exists: a
+  drop hook installed during character select stalls the runner (§15).
+- A Gem of Incarnation that the game picked itself is not yet observed; it
+  takes the same path.
+
+[How it drops](../ForgePact/docs/incarnation-gems-research.md#how-it-drops---static-reading),
+[Live checks](../ForgePact/docs/incarnation-gems-research.md#live-checks)
+
+### 18.5 The loot filter never sees them
+
+- The ground item's loot-filter closure (a `Loot_Ground_obj` Create closure; its
+  `anon@N` name moves between builds, §5.3) runs its checks for equipment
+  (types 0-8), charms (10), consumables (11), potions (18) and socketables with
+  base 97-111 only: the Uncut Jewels, the only socketables with random affixes
+  before Season 10. Every other socketable, base 136 included, skips the checks
+  and stays visible. **Static reading;** not measured live.
+
+[Why the loot filter never hides them](../ForgePact/docs/incarnation-gems-research.md#why-the-loot-filter-never-hides-them---static-reading)
+
+### 18.6 No automatic pickup
+
+- No automatic pickup was found. `Loot_Manager_obj`'s Step picks up only the
+  targeted item (`playerLootTarget`) after an input: a key, a click or the
+  gamepad (§10.2). `Loot_Ground_obj` has no Step, and its `Alarm 9` only sets
+  visibility from the filter and the screen. No code in the exe or `data.win`
+  refers to the translation key `auto_pickup`. **Static reading.**
+
+["Auto loot"](../ForgePact/docs/incarnation-gems-research.md#auto-loot---static-reading)

@@ -400,7 +400,24 @@ mod tests {
         let loaded = loaded();
         assert_eq!(loaded.source, Source::Embedded);
         assert_eq!(loaded.catalog.schema, SCHEMA);
-        assert_eq!(loaded.catalog.tools.len(), 11);
+        // Checked against sources.toml rather than a hard-coded count. A
+        // literal 11 went stale when a twelfth tool was added, and since these
+        // tests only run in the release build, nothing noticed until
+        // hub-v1.0.6 failed to build. tests/test_build_catalog.py makes the
+        // same comparison on the Python side.
+        let sources = include_str!("../../../catalog/sources.toml");
+        let mut expected: Vec<&str> = sources
+            .lines()
+            .filter_map(|line| line.strip_prefix("id = \"")?.strip_suffix('"'))
+            .collect();
+        let mut actual: Vec<&str> = loaded.catalog.tools.iter().map(|t| t.id.as_str()).collect();
+        expected.sort_unstable();
+        actual.sort_unstable();
+        assert!(!expected.is_empty(), "no `id = \"...\"` lines found in sources.toml");
+        assert_eq!(
+            actual, expected,
+            "catalog.json and sources.toml disagree about which tools exist"
+        );
     }
 
     #[test]

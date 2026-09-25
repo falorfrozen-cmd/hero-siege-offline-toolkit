@@ -32,6 +32,7 @@ Usage:
     round_delta.py heads    <slug> <round> [--root PATH]
     round_delta.py stop     <slug> <round> --lane NAME --verdict PLAN-DEFECT|ADVICE-NEEDED [--root PATH]
     round_delta.py stopped  <slug> <round> [--root PATH]
+    round_delta.py size     <slug> <round> [--root PATH]
 
 `--root` defaults to `git rev-parse --show-toplevel`; tests pass a throwaway
 repo instead. Snapshots live at
@@ -57,6 +58,17 @@ unreadable / not version 2 / malformed), never for the live-repo checks
 `delta` layers on top (a recorded head git can no longer diff from, a repo
 that came or went) -- those don't apply to a plain read of what was recorded.
 
+`size` is the patch route's post-check (SKILL.md Step 4, "The patch
+route"). It takes the same delta `delta` prints and says how big it is: one
+`<added>\\t<deleted>\\t<new|existing>\\t<path>` line per path, then
+`lines_changed: <N>` and `new_files: <K>`. Lines are counted against the
+repo's *recorded* head (`git diff --numstat <head> -- <path>`, working tree
+included), so a file that was already dirty before the round also counts its
+earlier changes: the figure can only come out too large, never too small,
+which fails into "count this round against the cap" rather than past it. A
+path absent from the recorded head is `new` and counts every line it now has;
+a binary file counts as 10**6 lines. It exits 3 exactly when `delta` would.
+
 Snapshot format v2 (JSON):
 
     {"version": 2,
@@ -68,7 +80,7 @@ Snapshot format v2 (JSON):
 (the same set `_submodule_dirs` yields). `files` is what the v1 snapshot was
 in full: a content hash per changed/untracked path.
 
-Exit codes: 0 on success (state, delta or heads printed; marker written; no
+Exit codes: 0 on success (state, delta, size or heads printed; marker written; no
 lane stopped); 4 from `stopped` when a lane has stopped; 2 on a usage error
 (bad slug/round, missing command, a lane name outside `[a-z0-9-]+` or a
 verdict other than the two above); 3 when the snapshot cannot be trusted at
@@ -343,12 +355,13 @@ def cmd_heads(root, slug, round_):
     return 0
 
 
-def cmd_delta(root, slug, round_):
+def _delta(root, slug, round_):
+    """`(changed paths, snapshot heads, None)`, or `(None, None, message)` when
+    the snapshot cannot be trusted -- the shared body of `delta` and `size`."""
     path = _snapshot_path(root, slug, round_)
     snapshot, error = _load_snapshot(path)
     if error:
-        print(f"round_delta: {error}", file=sys.stderr)
-        return 3
+        return None, None, error
     before_heads = snapshot["heads"]
     before_files = snapshot["files"]
 
@@ -360,15 +373,12 @@ def cmd_delta(root, slug, round_):
     # so its changes would silently drop out. Fail into "run everything".
     for key in before_heads:
         if key not in current_heads:
-            print(f"round_delta: {key or '<hub>'} was recorded in the snapshot but is "
-                  f"not an initialized repo now: {path}", file=sys.stderr)
-            return 3
+            return None, None, (f"{key or '<hub>'} was recorded in the snapshot but is "
+                                f"not an initialized repo now: {path}")
     for key, current_head in current_heads.items():
         if key not in before_heads:
             where = key or "<hub>"
-            print(f"round_delta: {where} has no recorded head in snapshot: {path}",
-                  file=sys.stderr)
-            return 3
+            return None, None, f"{where} has no recorded head in snapshot: {path}"
         recorded_head = before_heads[key]
         if current_head == recorded_head:
             continue
@@ -376,9 +386,8 @@ def cmd_delta(root, slug, round_):
         paths = _committed_paths(repo_root, recorded_head)
         if paths is None:
             where = key or "<hub>"
-            print(f"round_delta: git cannot diff {where} from its recorded "
-                  f"head {recorded_head!r}: {path}", file=sys.stderr)
-            return 3
+            return None, None, (f"git cannot diff {where} from its recorded "
+                                f"head {recorded_head!r}: {path}")
         if key == "":
             for p in paths:
                 if p in sub_dirs or p.startswith(_ROUNDS_PREFIX):
@@ -400,8 +409,66 @@ def cmd_delta(root, slug, round_):
         current = after[p] if p in after else _hash_path(root / p)
         if current != was:
             changed.append(p)
+    return changed, before_heads, None
+
+
+def cmd_delta(root, slug, round_):
+    changed, _, error = _delta(root, slug, round_)
+    if error:
+        print(f"round_delta: {error}", file=sys.stderr)
+        return 3
     for p in changed:
         print(p)
+    return 0
+
+
+BINARY_LINES = 10 ** 6
+
+
+def _path_size(root, sub_dirs, heads, p):
+    """`(added, deleted, is_new)` for one delta path, against its repo's
+    recorded head."""
+    owner = next((d for d in sub_dirs if p.startswith(f"{d}/")), None)
+    repo_root = root / owner if owner else root
+    rel = p[len(owner) + 1:] if owner else p
+    head = heads.get(owner or "", "")
+    in_head = bool(head) and subprocess.run(
+        ["git", "cat-file", "-e", f"{head}:{rel}"], cwd=str(repo_root), capture_output=True,
+    ).returncode == 0
+    if not in_head:
+        try:
+            data = (repo_root / rel).read_bytes()
+        except OSError:
+            return 0, 0, False  # never committed and gone again: nothing left to count
+        if b"\0" in data:
+            return BINARY_LINES, 0, True
+        return len(data.splitlines()), 0, True
+    result = _run_git(["diff", "--numstat", "--no-renames", head, "--", rel], cwd=repo_root)
+    added = deleted = 0
+    for line in result.stdout.decode("utf-8", "surrogateescape").splitlines():
+        a, _, rest = line.partition("\t")
+        d = rest.partition("\t")[0]
+        if a == "-" or d == "-":
+            return BINARY_LINES, 0, False
+        added += int(a)
+        deleted += int(d)
+    return added, deleted, False
+
+
+def cmd_size(root, slug, round_):
+    changed, heads, error = _delta(root, slug, round_)
+    if error:
+        print(f"round_delta: {error}", file=sys.stderr)
+        return 3
+    sub_dirs = sorted(_submodule_dirs(root), key=len, reverse=True)
+    total = new_files = 0
+    for p in changed:
+        added, deleted, is_new = _path_size(root, sub_dirs, heads, p)
+        total += added + deleted
+        new_files += is_new
+        print(f"{added}\t{deleted}\t{'new' if is_new else 'existing'}\t{p}")
+    print(f"lines_changed: {total}")
+    print(f"new_files: {new_files}")
     return 0
 
 
@@ -418,7 +485,7 @@ def _validate_round(parser, value):
 def build_parser():
     parser = argparse.ArgumentParser(prog="round_delta.py")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("snapshot", "delta", "heads", "stop", "stopped"):
+    for name in ("snapshot", "delta", "heads", "stop", "stopped", "size"):
         p = sub.add_parser(name)
         p.add_argument("slug")
         p.add_argument("round")
@@ -457,6 +524,8 @@ def main(argv=None):
             return cmd_stop(root, args.slug, args.round, args.lane, args.verdict)
         if args.command == "stopped":
             return cmd_stopped(root, args.slug, args.round)
+        if args.command == "size":
+            return cmd_size(root, args.slug, args.round)
         return cmd_delta(root, args.slug, args.round)
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode("utf-8", "surrogateescape") if exc.stderr else ""

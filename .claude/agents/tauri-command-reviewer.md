@@ -104,6 +104,15 @@ the last round and stopped eight findings that were already green. If nothing
 blocks, say **"no blocking findings"** as the first line of your report, before
 anything else.
 
+**Give the fix when you can state it exactly.** For a BLOCKING finding whose
+resolution is a specific edit, write that edit as the finding's `fix`: the
+change itself, at its `path:line` (for example, "`docs/x.md:12`: change
+`--all` to `--changed`"). A round whose every BLOCKING finding carries one is
+followed by a patch round, which applies those fixes without a full round and
+brings you back to confirm only your own finding. Leave `fix` out when
+resolving the finding needs judgement, a design choice or more research; a
+`fix` that turns out to be wrong costs the round it was meant to save.
+
 ## How to report
 
 Build and test before reporting if the change is non-trivial:

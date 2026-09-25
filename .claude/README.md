@@ -99,7 +99,7 @@ next one a document rather than a conversation. They are driven by
 |---|---|---|
 | `planner` | opus | researches the change and writes `.claude/workorders/<slug>-plan.md`, whose acceptance criteria are commands and files, never prose |
 | `implementer` | opus | executes the steps; returns `PLAN-DEFECT` with evidence rather than improvising around a plan that turns out to be wrong |
-| `verifier` | haiku | runs the acceptance criteria and reports what they actually printed; read-only, and judges nothing it cannot execute |
+| `verifier` | haiku | runs the acceptance criteria (first through `tools/run_criteria.py`, which runs every command-shaped criterion in one call) and reports what they actually printed; read-only, and judges nothing it cannot execute |
 | `consultant` | opus | answers **one** narrow question from a phase that hit a decision above its tier, then stops; never implements, plans or reviews |
 | `live-operator` | sonnet | runs a workorder's written `### Live procedure <n>` against the real game through `hs-drive` — its own save backup, the positive control first, raw output to `<slug>-live-<n>.md` — and hands every in-game action a person must take back to the driver; never installs a build, never judges the mechanism |
 | `scribe` | haiku | pastes a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Edit` only; spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
@@ -306,7 +306,8 @@ a step or a reviewer is pointed at it). `## State` carries `round:`, `phase:`,
 `gates:` (the tokens a conditional criterion or step names, instead of
 "while the Log lacks X"), `gates pending:` and `route tokens:`, `round base:` (the `round_delta.py` snapshot for
 this round), `agents:` (each phase's agent id, for the resume mechanism
-above), `reviewers:`, `open defects:` and `decisions in force:`. `gates:`
+above), `reviewers:`, `open defects:`, `patch rounds:` (the patch rounds
+that held, which the round cap does not count) and `decisions in force:`. `gates:`
 lists only the gates that are set, or `none`. Every gate a criterion may
 later need sits on `gates pending:`, and the possible research outcomes sit
 on `route tokens:`. A gate counts as set only when `gates:` literally carries
@@ -342,6 +343,19 @@ hand, outside the phase separation:
   polish consumed the last round and stopped eight findings that were already
   green. Non-blocking findings ride along as context and surface in the final
   report.
+- **A fix that is already known does not buy a full round.** When every
+  BLOCKING finding of a round carries its reviewer's exact `fix`, and nothing
+  else failed, the next round is a *patch round*. A `patch-implementer`
+  applies the fixes, the verifier runs every criterion, and only the finding
+  reviewers and `decompile-output-guard` re-run. If `round_delta.py size`
+  then shows at most 20 changed lines, no new file and no instrument path or
+  release note, the round is not counted against the cap. The same idea
+  covers plans: a `PLAN-DEFECT` that states its own correction goes to an
+  `amendment:` planner, and `tools/amend_check.py` decides from the files
+  whether it stayed an amendment (Goal, scope and human questions untouched,
+  at most 20 lines) or counts as a replan. `skills/workorder/SKILL.md` Steps 2
+  and 4 have the rules, and `docs/agents/workorder-calibration.md` the
+  measurement behind them.
 - **At the cap, split rather than raise.** The recovery is a new workorder
   carrying only the still-open findings, with its own fresh three rounds. The
   cap means the pipeline lost the thread, and that does not become untrue
@@ -496,7 +510,7 @@ sight instead.
 
 The State the scribe pastes is the *whole* block, not just the lines the round
 computed. The script merges this round's `round:`/`phase:`/`reviewers:`/`open
-defects:` into the `## State` the driver passed as `args.state` (or the one the
+defects:` (and, once a patch round has held, `patch rounds:`) into the `## State` the driver passed as `args.state` (or the one the
 previous Record pass left), so `gates:`, `round base:`, `agents:`,
 `decisions in force:` and anything else are pasted back verbatim; without
 `args.state` the scribe is told to edit one line per `Edit`. On 2026-09-23 a
@@ -658,7 +672,7 @@ follows the table: each lane's wall minutes and cost, the round's span
 (earliest lane start to latest lane end) against the lanes' serial sum, and
 the join's wall minutes; `--json` carries it under `lanes`, which is what
 `docs/agents/workorder-calibration.md` § "Lanes" measures. It prints one table and the
-session's total cost, then twenty-three rules as `PASS`/`FAIL` with
+session's total cost, then twenty-four rules as `PASS`/`FAIL` with
 evidence (the agent, the time, the command or path), then each role's numbers
 against the pre-update averages as a percentage; `--json` emits the same as
 one object.
@@ -673,7 +687,7 @@ one object.
 | R6 planner-rewrite | a planner `Write` to a plan/context path already written earlier in the session |
 | R7 / R8 / R9 reviewer- / implementer- / verifier-budget | turns, tokens, or (implementer only) context-per-turn over that role's budget — each reviewer type has its own (`REVIEWER_BUDGETS`) |
 | R10 driver-discipline | a driver shell command that builds or tests, a driver `Edit`/`Write` outside `.claude/workorders/`, or too many driver turns in one round — judged only while it is driving: one window per `/workorder` invocation, from the invocation to the first message the user types after that invocation's last pipeline agent finished (a phase agent, a reviewer, anything in a workflow run — an ad-hoc agent asked for later does not hold it open; harness-written `user` records are not the user), or to the next invocation, so a build the user asks for afterwards, or between two workorders, is not the driver's violation |
-| R11 replans | two or more planner runs in one session |
+| R11 replans | two or more planner runs in one session, not counting an `amendment:` planner whose `tools/amend_check.py check` passed |
 | R12 plan-size | a plan or context file whose planner-authored part is over its KB budget, from the `Read` calls that touched it — `## Log` is not counted, being what the scribe, implementer and driver append while the rounds run |
 | R13 round-budget | one round's total subagent tokens over budget — a round is one workflow launch's round `n`, never every launch's round `n` added together, and round 0 (the whole change) has a larger budget than a later round (a defect); a round that ran k > 1 implementers (a laned round's lanes and join) gets k times its budget, since R8 already holds each implementer to its own |
 | R14 reviewer-reruns-suite | a reviewer running test suites or builds more than twice (the two reviewers told to build and test are exempt) |
@@ -686,6 +700,7 @@ one object.
 | R21 verifier-interpreter | a verifier shell command that runs `python` or `python3` in command position (a `grep python` does not count) — this repository's commands are `py -3`, and the verifier runs a criterion exactly as written |
 | R22 verifier-suite-once | a verifier that runs the same `unittest discover` suite (same `cd` directory, same arguments) more than once — after a timeout, or to read another slice of the output |
 | R23 lane-git-mutation | a lane implementer (`implementer:<lane>:r<n>`, any lane but `join`) that ran a git command outside the read-only allow-list R16 uses. Lanes share one checkout and `.git/index.lock` fails instead of waiting, so only the join commits; the join and a laneless implementer are exempt |
+| R24 cheap-routes | an `amendment:` planner with no `tools/amend_check.py save` by the driver before it or no `check` after it; a second amendment with no implementer between it and the first; or two `patch-implementer` rounds back to back in one workflow launch. Both routes skip work, so each runs only where something other than the agent taking it has checked that it applies |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
@@ -730,6 +745,15 @@ JSON line `{"lanes": [{"name", "files"}, ...], "join": true|false}`, which
 the driver pastes into the workflow's `lanes`/`join` args, so lanes the lint
 rejected cannot be launched. A plan without lanes prints `{"lanes": [],
 "join": false}`.
+`run_criteria.py <plan>` is the verifier's first call. It runs every
+command-shaped criterion (a backticked span starting with `py`, `git`, `grep`,
+`node`, `cd` and the like) exactly as written, in bash from the checkout
+root, once per distinct command. It skips a criterion whose gate `gates:`
+does not carry, and carries a criterion's opening `cd <dir>;` to its later
+spans. It prints each exit code with the output's tail, keeps full logs as
+`cmd-<n>.log`, and judges nothing. `amend_check.py save|check <plan>
+[<context>]` decides whether a plan change was an amendment or a replan
+(SKILL.md Step 2).
 Tests: `tests/test_workorder_plan_tools.py`.
 
 ### `tools/source_index.py` — go to the range, don't grep around
@@ -894,7 +918,7 @@ py -3 -m unittest tests.test_claude_agents -v     # the definitions are well-for
 py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py + ensure_submodule.py, one round/submodule at a time
 py -3 -m unittest tests.test_claude_workorder_section -v  # section.py, plus the sentences in agents/ and SKILL.md that carry the same lesson
 py -3 -m unittest tests.test_workorder_audit -v   # workorder_audit.py's rules, each with a failing fixture and a passing control
-py -3 -m unittest tests.test_workorder_plan_tools -v  # live_checks.py and plan_lint.py, on the capture and criterion shapes that cost rounds
+py -3 -m unittest tests.test_workorder_plan_tools -v  # live_checks.py, plan_lint.py, amend_check.py and run_criteria.py, on the capture, criterion and plan-diff shapes that cost rounds
 py -3 -m unittest tests.test_source_index -v      # source_index.py against a synthetic fixture, plus a real-ModuleMain.cpp smoke test
 py -3 -m unittest tests.test_hs_drive_mcp_server -v            # the hs-drive tool surface, over a real stdio session
 py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v     # ENGINE_SYMBOLS still resolve, and importing the engine starts nothing

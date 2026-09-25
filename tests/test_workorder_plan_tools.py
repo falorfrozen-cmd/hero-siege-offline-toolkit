@@ -1,6 +1,10 @@
-"""Tests for tools/live_checks.py and tools/plan_lint.py -- the two static
-readers `/workorder` criteria use instead of a hand-written grep over a live
-capture and a before-the-round guess at whether a criterion can run.
+"""Tests for tools/live_checks.py, tools/plan_lint.py, tools/amend_check.py
+and tools/run_criteria.py.
+
+The first two are the static readers `/workorder` criteria use instead of a
+hand-written grep over a live capture and a before-the-round guess at whether
+a criterion can run; amend_check decides whether a plan change was an
+amendment or a replan, and run_criteria runs a plan's criteria for the verifier.
 
 The fixture lines are shortened from forgepact-issue-14's real captures and
 plans (2026-09-22..24), each the shape that cost a round.
@@ -16,8 +20,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
+import amend_check  # noqa: E402
 import live_checks  # noqa: E402
 import plan_lint  # noqa: E402
+import run_criteria  # noqa: E402
 
 
 CAPTURE = """# forgepact-x live 1
@@ -243,6 +249,241 @@ class PlanLintLaneTests(TempDirMixin, unittest.TestCase):
         rc, out = self.lint(laned(("code", "`tools/a.py`"), ("docs", "`tools/a.py`")), "--lanes-json")
         self.assertEqual(rc, 1, out)
         self.assertNotIn('{"lanes"', out)
+
+
+AMEND_PLAN = """---
+slug: x
+---
+# x
+
+## State
+round: 1
+
+## Goal
+Make the flag right.
+
+## Out of scope
+- the launcher
+
+## Acceptance criteria
+- [ ] `py -3 -m unittest tests.test_x` prints `OK`
+- [ ] `grep -n -- '--b' docs/x.md` prints one line
+
+## Steps
+1. Change docs/x.md.
+
+```md
+## Not a heading, inside a fence
+```
+"""
+
+AMEND_CONTEXT = """# x context
+
+## Context the implementer needs
+### Where
+docs/x.md
+
+## Needs human judgement
+none
+
+## Log
+### Plan
+written
+"""
+
+
+class AmendCheckTests(TempDirMixin, unittest.TestCase):
+    """Each REPLAN case beside an AMENDMENT control: a check that always says
+    AMENDMENT would let any replan skip the tier escalation, and one that
+    always says REPLAN would save nothing."""
+
+    def setUp(self):
+        super().setUp()
+        self.plan = self.write("x-plan.md", AMEND_PLAN)
+        self.context = self.write("x-context.md", AMEND_CONTEXT)
+        rc, _ = run(amend_check.main, ["save", self.plan, self.context])
+        self.assertEqual(rc, 0)
+
+    def edit(self, path, old, new):
+        text = Path(path).read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        Path(path).write_text(text.replace(old, new, 1), encoding="utf-8")
+
+    def check(self):
+        return run(amend_check.main, ["check", self.plan, self.context])
+
+    def test_unchanged_is_an_amendment_of_zero_lines(self):
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("lines_changed: 0", out)
+
+    def test_a_corrected_criterion_is_an_amendment(self):
+        self.edit(self.plan, "prints one line", "prints exactly one line")
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("x-plan.md: ## acceptance criteria: +1 -1", out)
+        self.assertIn("AMENDMENT", out)
+
+    def test_a_context_fact_and_a_log_entry_are_an_amendment(self):
+        self.edit(self.context, "docs/x.md\n", "docs/y.md\n")
+        self.edit(self.context, "written\n", "written\n### Amendment 1\n" + "a line\n" * 40)
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("lines_changed: 2", out)  # the Log is not compared
+
+    def test_state_edits_are_not_compared(self):
+        self.edit(self.plan, "round: 1\n", "round: 2\nphase: implement\n" + "x: y\n" * 30)
+        self.assertEqual(self.check()[0], 0)
+
+    def test_goal_out_of_scope_or_human_judgement_changed_is_a_replan(self):
+        for path, old, new in [
+            (self.plan, "Make the flag right.", "Make the flag and the launcher right."),
+            (self.plan, "- the launcher", "- nothing"),
+            (self.context, "## Needs human judgement\nnone", "## Needs human judgement\nwhich flag?"),
+        ]:
+            with self.subTest(old=old):
+                original = Path(path).read_text(encoding="utf-8")
+                self.edit(path, old, new)
+                rc, out = self.check()
+                self.assertEqual(rc, 1, out)
+                self.assertIn("REPLAN:", out)
+                Path(path).write_text(original, encoding="utf-8")
+
+    def test_a_section_added_or_removed_is_a_replan(self):
+        self.edit(self.plan, "## Steps\n", "## Lanes\nnew\n\n## Steps\n")
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("## lanes added", out)
+
+    def test_a_heading_inside_a_fence_is_content(self):
+        self.edit(self.plan, "## Not a heading, inside a fence", "## Still not a heading")
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("## steps: +1 -1", out)
+
+    def test_over_the_line_limit_is_a_replan(self):
+        self.edit(self.plan, "1. Change docs/x.md.\n", "".join(f"{k}. step\n" for k in range(1, 21)))
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("21 lines changed (limit 20)", out)
+
+    def test_twenty_lines_is_still_an_amendment(self):
+        self.edit(self.plan, "1. Change docs/x.md.\n", "".join(f"{k}. step\n" for k in range(1, 20)))
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("lines_changed: 20", out)
+
+    def test_check_without_save_and_bad_usage_exit_2(self):
+        other = self.write("y-plan.md", AMEND_PLAN)
+        self.assertEqual(run(amend_check.main, ["check", other])[0], 2)
+        self.assertEqual(run(amend_check.main, ["diff", self.plan])[0], 2)
+        self.assertEqual(run(amend_check.main, [])[0], 2)
+
+    def test_the_copy_lands_beside_the_plan_under_rounds(self):
+        base = self.tmp_path / ".rounds" / "x"
+        self.assertTrue((base / "amend-base-plan.md").is_file())
+        self.assertTrue((base / "amend-base-context.md").is_file())
+
+
+RUNNER_PLAN = """# x
+
+## State
+round: 0
+gates: `build: complete`
+
+## Acceptance criteria
+
+- [ ] `bash -c "echo once >> count.txt; echo ok"` prints `ok`
+- [ ] `ls count.txt` lists the file, and `bash -c "echo once >> count.txt; echo ok"` prints `ok` again
+- [ ] `bash -c "exit 3"` exits 3
+- [ ] `docs/x.md` records the decision in its own words
+- [ ] (gate `live1: complete`) `bash -c "echo live >> gated.txt"` exits 0
+- [ ] (gate `build: complete`) `bash -c "echo built >> built.txt"` exits 0
+- [ ] `cd sub; bash -c "pwd > where.txt"` exits 0 and `bash -c "pwd > where2.txt"` exits 0
+- [ ] `bash -c "
+printf 'a\\\\nb\\\\n' > multi.txt
+wc -l < multi.txt"` prints `2`
+"""
+
+
+class RunCriteriaTests(TempDirMixin, unittest.TestCase):
+    """The runner judges nothing, so what these pin is that it runs exactly
+    what the plan says, once, where the plan says -- each with a control."""
+
+    def setUp(self):
+        super().setUp()
+        self.bash = run_criteria.find_bash(None)
+        if not self.bash:
+            self.skipTest("no bash on this machine")
+        (self.tmp_path / "sub").mkdir()
+        self.plan = self.write("x-plan.md", RUNNER_PLAN)
+
+    def runner(self, *extra):
+        return run(run_criteria.main, [self.plan, "--out", str(self.tmp_path / "logs"), *extra])
+
+    def test_commands_prose_and_expected_output_are_told_apart(self):
+        items = run_criteria.criteria(RUNNER_PLAN)
+        self.assertEqual(len(items), 8)
+        self.assertEqual(run_criteria.commands(items[3]), [], "a path is not a command")
+        self.assertEqual(run_criteria.commands(items[0]), ['bash -c "echo once >> count.txt; echo ok"'],
+                         "`ok` is expected output, not a command")
+        self.assertEqual(run_criteria.commands(items[1])[0], "ls count.txt")
+
+    def test_a_later_span_keeps_the_criterion_cd(self):
+        cmds = run_criteria.commands(run_criteria.criteria(RUNNER_PLAN)[6])
+        self.assertEqual(cmds, ['cd sub; bash -c "pwd > where.txt"', 'cd sub; bash -c "pwd > where2.txt"'])
+
+    def test_a_multi_line_span_keeps_its_newlines(self):
+        (cmd,) = run_criteria.commands(run_criteria.criteria(RUNNER_PLAN)[7])
+        self.assertIn("\nwc -l < multi.txt", cmd)
+
+    def test_runs_each_command_once_from_the_checkout_and_reports_exit_codes(self):
+        rc, out = self.runner()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual((self.tmp_path / "count.txt").read_text().count("once"), 1,
+                         "the repeated command ran once")
+        self.assertIn("same command as cmd-1.log, run once", out)
+        self.assertIn("-> exit 3", out)
+        self.assertIn("-> exit 0", out)
+        self.assertIn("criterion 4: `docs/x.md`", out)
+        self.assertIn("no command -- check by reading", out)
+        self.assertTrue((self.tmp_path / "sub" / "where.txt").is_file())
+        self.assertTrue((self.tmp_path / "sub" / "where2.txt").is_file(), "the cd carried to the second span")
+        last = out.replace("\r", "").split("criterion 8:")[1]
+        self.assertRegex(last, r"-> exit 0 .*\n\s*2\s*$", "the multi-line script ran as written")
+        self.assertTrue((self.tmp_path / "logs" / "cmd-1.log").read_text(encoding="utf-8").startswith("$ bash -c"))
+
+    def test_a_gate_not_set_is_skipped_and_a_set_one_runs(self):
+        rc, out = self.runner()
+        self.assertIn("SKIPPED (gate live1: complete not set)", out)
+        self.assertFalse((self.tmp_path / "gated.txt").exists())
+        self.assertTrue((self.tmp_path / "built.txt").exists(), "control: `build: complete` is on gates:")
+
+    def test_a_template_gates_line_sets_nothing_and_no_gates_line_skips_nothing(self):
+        text = RUNNER_PLAN.replace("gates: `build: complete`", "gates: build: complete | live1: complete")
+        self.assertEqual(run_criteria.gates_set(text), set())
+        self.assertIsNone(run_criteria.gates_set(RUNNER_PLAN.replace("gates: `build: complete`\n", "")))
+        self.assertEqual(run_criteria.gates_set(RUNNER_PLAN), {"build: complete"})
+
+    def test_start_resumes_and_list_runs_nothing(self):
+        rc, out = self.runner("--list")
+        self.assertEqual(rc, 0)
+        self.assertIn("would run: ls count.txt", out)
+        self.assertFalse((self.tmp_path / "count.txt").exists(), "--list ran something")
+        rc, out = self.runner("--start", "3")
+        self.assertNotIn("criterion 1:", out)
+        self.assertIn("criterion 3:", out)
+        self.assertFalse((self.tmp_path / "count.txt").exists())
+
+    def test_a_command_over_its_timeout_is_reported_not_hung(self):
+        plan = self.write("t-plan.md", "## Acceptance criteria\n\n- [ ] `bash -c \"sleep 5\"` exits 0\n")
+        rc, out = run(run_criteria.main, [plan, "--timeout", "1", "--out", str(self.tmp_path / "t")])
+        self.assertEqual(rc, 0)
+        self.assertIn("-> exit TIMEOUT", out)
+
+    def test_usage_errors_exit_2(self):
+        self.assertEqual(run(run_criteria.main, [str(self.tmp_path / "missing-plan.md")])[0], 2)
+        self.assertEqual(run(run_criteria.main, [self.write("y-plan.md", "## Goal\nx\n")])[0], 2)
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ hs-game-sdk/
 │   ├── drop_types.json         # LoadDrops drop types + GetNormalRepoStruct repository categories (data only)
 │   ├── drop_roll_measurements.json # M1-M10: recorded drop-roll numbers drop_roll_model.py is tested against (data only)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
+│   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
 ├── python/                     # Python SDK package
 │   ├── hs_game_sdk/
