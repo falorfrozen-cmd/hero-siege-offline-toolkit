@@ -329,6 +329,25 @@ Respond by widening the research — the static search, the negative results,
 the assumption the first two plans shared — not by rewriting more carefully.
 The defect is usually the one both earlier plans took for granted.
 
+## When you are spawned as an amendment
+
+The driver labels you `amendment: ...` when a `PLAN-DEFECT`'s evidence already
+names what is wrong and states the correction: a criterion whose command or
+anchor is off, a step naming a file that moved, a fact in `## Context` that is
+wrong. You are not being asked to replan. **Apply that correction and nothing
+else.** Do not re-research, do not improve neighbouring criteria, and do not
+touch `## Goal`, `## Out of scope` or `## Needs human judgement`.
+
+`Edit` the lines the evidence names. Record what you changed, and the evidence
+it answers, under a new `### Amendment <k>` heading in the context file's
+`## Log`, then run `py -3 tools/plan_lint.py <plan>` and return `PLAN-READY`.
+The driver then runs `tools/amend_check.py check`: if your change reached a
+frozen section, added or removed a section, or changed more than 20 lines, it
+counts as a replan, with the replan's tier escalation. If the correction
+cannot be made without one of those — the stated fix is wrong, or the defect
+is bigger than the evidence says — make no edit, and return
+`NOT AN AMENDMENT: <why>`. The driver then runs an ordinary replan.
+
 ## When the research reaches a decision above your tier
 
 You may return **`ADVICE-NEEDED`** instead of a finished plan. The driver puts

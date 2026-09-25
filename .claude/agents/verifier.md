@@ -69,6 +69,35 @@ real output. Never mark a criterion satisfied because the diff appears to
 address it, because the implementer said it passed, or because it "should" pass.
 Evidence before assertion, every time.
 
+**Start with the runner, in one call:**
+
+```bash
+py -3 tools/run_criteria.py "<plan>" --out "<scratch>/criteria"
+```
+
+Set the Bash tool's `timeout` to `600000`. It runs every command-shaped
+criterion exactly as written, in bash, from the checkout root. It runs each
+distinct command once and skips a criterion whose gate `gates:` does not
+carry. For each criterion it prints the commands, their exit codes and the
+tail of their output, and writes each command's full output to
+`<scratch>/criteria/cmd-<n>.log`. It judges nothing. You still decide from
+that output whether each criterion holds, and you `grep` a log rather than
+re-running a command to see more of it. Then handle only what it leaves you:
+
+- a criterion it prints as `no command -- check by reading`: check it by
+  reading the file, as before;
+- a command that could not start in bash (a Windows `\` path, a `.bat`): run
+  that one command by hand, in the form its author meant, and say so beside
+  it;
+- output that stops before the last criterion because the call hit its
+  timeout: run it again with `--start <the first criterion it did not
+  reach>`.
+
+Verifiers spent about a third of their time on model turns between commands
+(346 of 1,042 minutes over 124 verifiers, measured 2026-09-25), at a median
+of 38 tool calls each. The runner puts those commands in one call. It is not
+a cache: the commands run now, in your call, and you see what they print.
+
 **Never tick a criterion you did not execute.** This has already happened: a
 criterion required three named symbols to "still default to `false`", and those
 symbols do not exist anywhere in the plugin — it could not have been run as
@@ -89,9 +118,12 @@ is a failed criterion, quoted with its error, not a `NEEDS HUMAN` entry. On
 false verdict (forgepact-issue-14-phase1j-record, round 0);
 `tools/workorder_audit.py` R21 fails a verifier that runs `python`.
 
-**3. Run the full root suite** unless the workorder says otherwise — **once**,
-with the Bash tool's `timeout` set to `240000`, its output sent to a scratch
-file you then grep:
+**3. Run the full root suite** unless the workorder says otherwise — **once**.
+When a criterion already ran it (the runner printed `py -3 -m unittest
+discover -s tests` from the checkout root), that run *is* the suite run: grep
+its `cmd-<n>.log` and do not run it again. Otherwise run it with the Bash
+tool's `timeout` set to `240000`, its output sent to a scratch file you then
+grep:
 
 ```bash
 py -3 -m unittest discover -s tests > "<scratch>/suite.txt" 2>&1; echo EXIT=$?; grep -E '^(Ran|OK|FAILED|FAIL:|ERROR:)' "<scratch>/suite.txt"
