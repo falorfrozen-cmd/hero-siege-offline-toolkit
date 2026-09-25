@@ -51,7 +51,15 @@ jobs:
       # To start catalog-publish.yml after an automatic merge; see below.
       actions: write
     steps:
+      # Build on main as it is now, not on the event's SHA. A dispatch records
+      # the default branch's head when it is *sent*, and `concurrency` above
+      # queues a second run behind the first: on 2026-09-25 two release
+      # dispatches arrived seconds apart, the first merged #183, and the second
+      # rebuilt on the commit before it, so its PR (#184) conflicted with the
+      # catalog it was meant to follow and was left open.
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - uses: actions/setup-python@v5
         with:
