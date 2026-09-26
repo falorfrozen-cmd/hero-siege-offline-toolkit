@@ -3,8 +3,8 @@ export const meta = {
   description: 'Run one workorder\'s implement -> verify -> route rounds as code; hands back to the driver on anything that needs judgement',
   whenToUse: 'Opt-in from /workorder (workflow mode). Replaces the driver\'s own turns for steps 2-4; replans, consultations, human questions and the final report stay with the driver.',
   phases: [
-    { title: 'Implement', detail: 'fresh implementer per round at the triaged tier; on a laned plan\'s first round, one implementer per lane in parallel, then the join; a patch round applies reviewer-stated fixes only' },
-    { title: 'Verify', detail: 'verifier + delta-scoped reviewers, in parallel' },
+    { title: 'Implement', detail: 'fresh implementer per round at the triaged tier; on a laned plan\'s first round, one implementer per lane in parallel, then the join; a patch round applies reviewer-stated fixes only; a plan of items streams: one implementer per item as its files free up, and a fixer per reviewer finding' },
+    { title: 'Verify', detail: 'verifier + delta-scoped reviewers, in parallel; for items, a targeted check per item, reviewers on pinned commits as they land, and one whole-tree gate at the end' },
     { title: 'Record', detail: 'haiku scribe: round snapshot/delta, Log entry, State' },
   ],
 }
@@ -38,6 +38,14 @@ export const meta = {
 //                                       // and only for a first implementation of the plan's steps (round 0, or the
 //                                       // relaunch after a replan; never after an IMPL-DEFECT). Absent or [] runs
 //                                       // exactly as a plan without lanes (2h below)
+//   items,                              // [{ id, title, files, checks, after, shares, owner }, ...] pasted from
+//                                       // `plan_lint.py <plan> --items-json`: the launch streams (3b below) instead
+//                                       // of running rounds. Absent or [] runs in rounds exactly as before
+//   streaming, answered,                // items mode: the planner is still releasing items; ids whose owner: question
+//                                       // is answered under '### Decisions'
+//   reviewScopes,                       // items mode: { '<reviewer>': [{ label, paths }] } splits a reviewer by scope
+//   maxParallel, maxAgents,             // items mode budgets: implementers at once (4), agents per launch (120),
+//   tokenCeiling, itemAttempts          // output tokens per launch (none), implement attempts per item (3)
 // }
 //
 // The count of patch rounds already spent (2i below) is read from `state`'s
@@ -70,6 +78,109 @@ const TRIGGERS = {
     /^ForgePact\/plugin\//.test(p) || /^hs-game-sdk\/.*(hook|install)/i.test(p) || /-research\.md$/.test(p) ||
     /^docs\/submodules\/[^/]+\/instructions\.md$/.test(p) || /(^|\/)docs\/.*\.md$/.test(p)),
 }
+
+// @scheduler-begin
+// --- 3a: the items scheduler, as pure functions ------------------------------
+//
+// Items mode (3b below) runs a plan's `### Item:` groups as parallel
+// implementers. Which item may start is decided here and nowhere else, from
+// the item table and each item's status alone, so the policy is tested
+// without spawning anything: workorder-rounds.test.mjs cuts this block out
+// between the two @scheduler markers and calls it directly.
+//
+// Statuses: pending, running, done, parked (it stopped and needs someone --
+// the owner, a consultant, a replan, or its budget ran out), held (it cannot
+// start because something it depends on is parked). `touched` says whether
+// an implementer ever worked on the item: an item parked before it started
+// (an owner question) left its files alone, one parked mid-way may have left
+// them half-edited.
+//
+// Two items may run at once only when their file sets are disjoint. Items
+// sharing a file run one at a time in plan order, which is the per-file
+// queue: an item waits while an earlier item on the same files is pending, or
+// parked or held after touching them. `files: '*'` is a fix whose files are
+// unknown (a finding without a path, a failed whole-tree criterion): it runs
+// alone, after everything before it.
+const SCHED_GLOB = /[*?[]/
+const schedLiteralPrefix = g => { const i = g.search(SCHED_GLOB); return i < 0 ? g : g.slice(0, i) }
+// fnmatch, as tools/plan_lint.py uses it: `*` crosses `/`.
+const schedGlobRe = g => new RegExp('^' + g.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$')
+// Whether two declared paths can name the same file -- plan_lint's
+// `_overlap`, conservative on purpose.
+const pathsOverlap = (a, b) => {
+  if (a === b) return true
+  const ga = SCHED_GLOB.test(a), gb = SCHED_GLOB.test(b)
+  if (ga && gb) { const pa = schedLiteralPrefix(a), pb = schedLiteralPrefix(b); return pa.startsWith(pb) || pb.startsWith(pa) }
+  if (ga || gb) {
+    const [glob, literal] = ga ? [a, b] : [b, a]
+    if (schedGlobRe(glob).test(literal)) return true
+    const p = schedLiteralPrefix(glob)
+    return literal.endsWith('/') && (p.startsWith(literal) || literal.startsWith(p))
+  }
+  return (a.endsWith('/') && b.startsWith(a)) || (b.endsWith('/') && a.startsWith(b))
+}
+const filesOverlap = (fa, fb) => fa === '*' || fb === '*' || fa.some(a => fb.some(b => pathsOverlap(a, b)))
+
+// The ids to start now, in plan order, at most `maxParallel` running in all.
+function nextToStart(items, st, maxParallel) {
+  const byId = Object.fromEntries(items.map(it => [it.id, it]))
+  const running = items.filter(it => st[it.id].status === 'running')
+  if (running.some(it => it.files === '*')) return []
+  let slots = maxParallel - running.length
+  const out = []
+  for (let i = 0; i < items.length && slots > 0; i++) {
+    const it = items[i]
+    if (st[it.id].status !== 'pending') continue
+    if (!(it.after || []).every(d => st[d] && st[d].status === 'done')) continue
+    const busy = running.concat(out.map(id => byId[id]))
+    if (busy.some(o => filesOverlap(o.files, it.files))) continue
+    const queuedAhead = items.slice(0, i).some(o => filesOverlap(o.files, it.files) && (st[o.id].status === 'pending' ||
+      ((st[o.id].status === 'parked' || st[o.id].status === 'held') && st[o.id].touched)))
+    if (queuedAhead) continue
+    if (it.files === '*' && busy.length) continue
+    out.push(it.id)
+    slots--
+    if (it.files === '*') break
+  }
+  return out
+}
+
+// Pending items that can now never start, each with why: an `after:` item
+// that is parked or held, or a file shared with an item parked or held after
+// touching it. Repeated to a fixed point by the caller's loop; returns
+// [{ id, reason }] and changes nothing itself.
+function newlyHeld(items, st) {
+  const stuck = s => s.status === 'parked' || s.status === 'held'
+  const out = []
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]
+    if (st[it.id].status !== 'pending') continue
+    const dep = (it.after || []).find(d => st[d] && stuck(st[d]))
+    if (dep) { out.push({ id: it.id, reason: `after ${dep}, which is ${st[dep].status}` }); continue }
+    const sharer = items.slice(0, i).find(o => stuck(st[o.id]) && st[o.id].touched && filesOverlap(o.files, it.files))
+    if (sharer) out.push({ id: it.id, reason: `shares files with ${sharer.id}, which is ${st[sharer.id].status} after editing them` })
+  }
+  return out
+}
+
+// The pending items a PLAN-DEFECT on `id` may invalidate: those that name it
+// in `after:`/`shares:`, that it names, whose files overlap its own, or that
+// run one of the same check commands. They are held for the replan; the rest
+// keep flowing.
+function invalidatedBy(items, st, id) {
+  const bad = items.find(it => it.id === id)
+  if (!bad) return []
+  const links = it => (it.after || []).concat(it.shares || [])
+  const cmds = it => new Set((it.checks || []).flatMap(c => [...String(c).matchAll(/`([^`]+)`/g)].map(m => m[1].trim())))
+  const badCmds = cmds(bad)
+  return items.filter(it => it.id !== id && st[it.id].status === 'pending' && (
+    links(it).includes(id) || links(bad).includes(it.id) || filesOverlap(it.files, bad.files) ||
+    [...cmds(it)].some(c => badCmds.has(c)))).map(it => it.id)
+}
+
+// Nothing left that could run: every item is done, parked or held.
+const drainedItems = (items, st) => items.every(it => !['pending', 'running'].includes(st[it.id].status))
+// @scheduler-end
 
 const IMPL_SCHEMA = {
   type: 'object',
@@ -466,7 +577,7 @@ const SECTION_CMD = file => `\`py -3 .claude/skills/workorder/section.py "${file
 // Hand it the two extractions that are the whole of its mandate.
 const VERIFIER_CRITERIA_NOTE = ` Take the criteria and the gate tokens with exactly \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\` and \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'State'\`; do not Read the plan whole.` +
   ` A gate is set only when the \`gates:\` line itself carries its token. \`gates pending:\` and \`route tokens:\` set nothing, and a \`gates:\` value with \`|\` alternatives is a template that sets nothing. Put the token a gated criterion names in its 'gate'. A criterion whose gate is not set is 'unattempted' (gate <token> not set), never 'fail'. Put each STRUCTURAL FINDING and each NOT DONE/DEVIATIONS finding in 'other_defects'.` +
-  ` First run every command-shaped criterion in one call: \`py -3 tools/run_criteria.py "${A.planPath}" --out "<your scratchpad>/criteria"\` with the Bash timeout at 600000. It runs each distinct command once, exactly as written, skips criteria whose gate is not set, and prints each exit code and output tail (full output in cmd-<n>.log); it judges nothing, so decide each criterion from what it printed, check the ones it prints as 'no command' by reading, run by hand only a command that could not start in bash, and if its output stops early re-run it with --start <next criterion>. A root suite the runner already ran is the suite run: grep its log, never run it again.` +
+  ` First run every command-shaped criterion in one call: \`py -3 tools/run_criteria.py "${A.planPath}" --jobs auto --out "<your scratchpad>/criteria"\` with the Bash timeout at 600000. It runs each distinct command once, exactly as written, independent ones at the same time (builds first), skips criteria whose gate is not set, and prints each exit code and output tail in plan order (full output in cmd-<n>.log); it judges nothing, so decide each criterion from what it printed, check the ones it prints as 'no command' by reading, run by hand only a command that could not start in bash, and if its output stops early re-run it with --start <next criterion>. A root suite the runner already ran is the suite run: grep its log, never run it again.` +
   ` Run each criterion's command exactly as written: never swap \`py -3\` for \`python\`; a command that cannot start is a failed criterion with its error. Run each test suite once, with the Bash timeout at 240000 and its output sent to a scratch file you grep; never run a suite again to read another slice.`
 const VERIFIER_CONTEXT_NOTE = A.contextPath !== A.planPath
   ? ` Context file: ${A.contextPath} -- open it only for a heading a criterion cites, with ${SECTION_CMD(A.contextPath)}; never read it whole, its '## Log' is the implementer's reasoning.`
@@ -581,6 +692,386 @@ const patchMiss = delta => {
   if (excluded.length) return `touched ${excluded.join(', ')}`
   return null
 }
+// --- 3b: items mode -- a streamed pipeline instead of rounds -----------------
+//
+// The owner, 2026-09-26: "Going back to streamed workorder pipeline instead of
+// hard gates. This could speed things up significantly." The ForgePact UI
+// redesign lost most of its ~48 h to waiting: a 25-35 min full verify after
+// every round, every item of a multi-item workorder waiting for the slowest
+// one, and one owner question blocking unrelated items
+// (docs/agents/workorder-calibration.md, "Streamed items").
+//
+// A plan whose `## Steps` declares `### Item:` groups (tools/plan_lint.py
+// `--items-json`, pasted as args.items) runs here instead of in rounds:
+//
+//   * each item flows implement -> its own targeted checks -> done the moment
+//     it is ready. Items on disjoint files run as parallel implementers;
+//     items sharing a file queue in plan order (3a). An implementer commits
+//     only its own files, under the checkout's commit lock
+//     (tools/item_commit.py), so commits never race.
+//   * reviewers read committed ranges, pinned to the HEAD they start from,
+//     never the working tree the implementers are changing. Each reviewer
+//     (or each scope of one, args.reviewScopes) re-runs as new commits land
+//     and its trigger matches, and every BLOCKING finding it returns becomes
+//     a fix item at once, queued on the files the finding names.
+//   * an item that needs someone -- an owner question, ADVICE-NEEDED, a
+//     PLAN-DEFECT, a spent budget -- parks alone. What depends on it (its
+//     `after:` items, files it half-edited, and for a PLAN-DEFECT anything
+//     its files, links or check commands overlap) is held; everything else
+//     keeps flowing.
+//   * when nothing is left to run, the whole-tree criteria (`## Acceptance
+//     criteria`) run once: the only full verify. A failure there becomes one
+//     fix item that runs alone, and the gate runs again (GATE_CAP runs).
+//
+// Budgets are per item (ITEM_ATTEMPTS implement attempts, FIX_CAP fix items
+// per reviewer) under a ceiling for the launch (maxAgents agents, and
+// tokenCeiling output tokens when set). Output tokens cannot be charged to
+// one item from inside a script -- every agent running at once draws on the
+// one `budget.spent()` counter -- so the token budget is the launch's only.
+//
+// Independence is unchanged: verifiers and reviewers get commits, paths and
+// the plan's own text, never an implementer's reasoning.
+const ITEMS_IN = Array.isArray(A.items) ? A.items : []
+const ITEM_ATTEMPTS = A.itemAttempts || 3
+const FIX_CAP = 3
+const GATE_CAP = 3
+const REFILL_CAP = 40
+const MAX_PARALLEL = A.maxParallel || 4
+const MAX_AGENTS = A.maxAgents || 120
+const REVIEW_PASS_CAP = A.reviewPassCap || 4
+const ITEM_ID = /^[a-z0-9-]+$/
+const validItem = it => it && ITEM_ID.test(it.id || '') && Array.isArray(it.files) && it.files.length > 0
+if (ITEMS_IN.length) {
+  const ids = ITEMS_IN.map(it => it && it.id)
+  const bad = ITEMS_IN.find(it => !validItem(it) || ids.filter(x => x === it.id).length > 1)
+  const known = new Set(ids)
+  const ref = ITEMS_IN.find(it => it && (it.after || []).concat(it.shares || []).some(r => !known.has(r)))
+  if (LANES.length || bad || ref) {
+    return { outcome: 'BAD-ARGS', detail: `items must be pasted from \`plan_lint.py --items-json\`: ${LANES.length ? 'a plan runs lanes or items, not both' : bad ? `item ${JSON.stringify(bad)} has a bad or duplicate id or no files` : `item ${ref.id} names an item the table lacks`}` }
+  }
+}
+
+const ITEM_IMPL_SCHEMA = {
+  ...IMPL_SCHEMA,
+  properties: {
+    ...IMPL_SCHEMA.properties,
+    commits: { type: 'array', items: { type: 'object', properties: { repo: { type: 'string' }, sha: { type: 'string' } }, required: ['repo', 'sha'] } },
+    paths: { type: 'array', items: { type: 'string' } },
+    flags: { type: 'string' },
+  },
+}
+const REVIEW_ITEMS_SCHEMA = {
+  ...REVIEW_SCHEMA,
+  properties: { ...REVIEW_SCHEMA.properties, reviewed_heads: SNAPSHOT_SCHEMA.properties.heads },
+  required: [...REVIEW_SCHEMA.required, 'reviewed_heads'],
+}
+const REFILL_SCHEMA = {
+  type: 'object',
+  properties: { exit_code: { type: 'number' }, items: { type: 'array', items: { type: 'object' } }, complete: { type: 'boolean' }, raw_output: { type: 'string' } },
+  required: ['exit_code', 'items', 'complete', 'raw_output'],
+}
+// `items: a=done; b=parked` in State, as a previous launch left it.
+const itemsStateLine = text => {
+  const e = stateEntries(text).find(x => x.key === 'items')
+  if (!e) return {}
+  return Object.fromEntries(e.text.replace(/^items:\s*/i, '').split(/[;,]/).map(s => s.trim().match(/^([a-z0-9-]+)\s*=\s*([a-z]+)/)).filter(Boolean).map(m => [m[1], m[2]]))
+}
+// The file a finding's `where` names (`panel/src/a.css:42` -> `panel/src/a.css`), or null.
+const findingPath = where => {
+  const w = String(where || '').trim()
+  const m = w.match(/^`?([\w./\\-]+\.\w+)`?(?=$|[:\s§(,])/) || w.match(/`([\w./\\-]+\.\w+)`/)
+  return m ? m[1].replace(/\\/g, '/').replace(/^\.\//, '') : null
+}
+const commitCmd = (id, title) => `py -3 tools/item_commit.py --message "${SLUG} ${id}${title ? `: ${String(title).replace(/"/g, "'")}` : ''}" -- <paths>`
+const COMMIT_NOTE = 'Put each `commit` line it prints in \'commits\' as {repo, sha}, each `path` line in \'paths\', and the text after `flags` in \'flags\'. '
+
+async function runItems(n) {
+  const itemsState = itemsStateLine(A.state)
+  const answered = new Set(A.answered || [])
+  const all = []
+  const st = {}
+  const add = raw => {
+    const it = { id: raw.id, title: raw.title || '', files: raw.files, after: raw.after || [], shares: raw.shares || [], owner: raw.owner || null, checks: raw.checks || [], kind: raw.kind || 'item', findings: raw.findings, reviewer: raw.reviewer, failed: raw.failed }
+    all.push(it)
+    // Only a plan item carries over from State: fix ids are this launch's own.
+    const prior = it.kind === 'item' ? itemsState[it.id] : undefined
+    const s = { status: 'pending', touched: false, attempts: 0, reason: '', commits: [], evidence: '' }
+    if (prior === 'done') { s.status = 'done'; s.reason = 'done in an earlier launch' }
+    else if (it.owner && !answered.has(it.id)) { s.status = 'parked'; s.reason = `owner: ${it.owner}` }
+    st[it.id] = s
+    return it
+  }
+  for (const raw of ITEMS_IN) add(raw)
+  let agents = 0
+  const tokenStart = (typeof budget !== 'undefined' && budget && budget.spent) ? budget.spent() : 0
+  const overCeiling = () => agents >= MAX_AGENTS ||
+    !!(A.tokenCeiling && typeof budget !== 'undefined' && budget && budget.spent && budget.spent() - tokenStart >= A.tokenCeiling)
+  const spawn = (prompt, opts) => { agents++; return agent(prompt, opts) }
+
+  const snap = await spawn(
+    `Run exactly: ${DELTA} snapshot ${SLUG} ${n}${DELTA_ROOT_ARG}  — then report its exit code and output. ` +
+    `Then run exactly: ${DELTA} heads ${SLUG} ${n}${DELTA_ROOT_ARG}  — report its exit code (3 if either command exited 3) and each printed line, split into repo and sha at the first tab, as heads: [{repo, sha}]. Edit nothing.`,
+    { label: `snapshot:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', schema: SNAPSHOT_SCHEMA })
+  const baseHeads = (A.baseHeads && Object.keys(A.baseHeads).length) ? A.baseHeads
+    : (snap && snap.exit_code === 0 ? headsMap(snap.heads) : null)
+
+  // Reviewer instances: one per reviewer, or one per scope when the driver
+  // split a reviewer by screen or dimension (args.reviewScopes).
+  const scopes = A.reviewScopes || {}
+  const reviewers = Object.keys(A.reviewers).flatMap(name => (scopes[name] && scopes[name].length ? scopes[name] : [null]).map(sc => ({
+    name, key: sc ? `${name}@${sc.label}` : name, scope: sc, state: A.reviewers[name], seen: 0, passes: 0, fixes: 0,
+    base: baseHeads, findings: (A.priorFindings || {})[name] || [], failed: false, running: false,
+  })))
+  const landed = [] // one entry per item or fix that committed: { id, paths, flags }
+  const blocking = [], nonBlocking = [], planDefects = [], gateRuns = [], passLog = {}
+  let fixSeq = 0
+  let streaming = !!A.streaming
+  let refills = 0
+  let lintFailure = null
+
+  const itemTitle = it => it.title ? ` (${it.title})` : ''
+  const fileWords = it => it.files === '*' ? 'every file: you run alone, with no other implementer in the checkout' : it.files.map(f => `\`${f}\``).join(', ')
+  const inFlight = () => all.filter(it => ['pending', 'running'].includes(st[it.id].status) && it.kind === 'item')
+  const itemPrompt = (it, s) => workorderLine(n) +
+    `You are item '${it.id}'${itemTitle(it)}, one of ${all.filter(x => x.kind === 'item').length} items; other items' implementers work in this checkout at the same time: follow your "When you are one item" section. ` +
+    `Carry out only the steps under '### Item: ${it.id}' in '## Steps', after the preconditions written above the first '### Item:'. ` +
+    `Your file set is ${fileWords(it)}: edit nothing outside it -- an edit you need outside it is a PLAN-DEFECT. ` +
+    (it.owner ? `The owner has answered this item's question ("${it.owner}"); the answer is under '## Log' > '### Decisions'. ` : '') +
+    `Run no git command that writes, except committing your own files once, at the end, with exactly \`${commitCmd(it.id, it.title)}\` (your file set, or the files you changed within it): it takes the checkout's commit lock and commits only those paths. ${COMMIT_NOTE}` +
+    `Run no full build and no full suite. Before returning IMPL-DONE run your item's checks once, \`py -3 tools/run_criteria.py "${A.planPath}" --item ${it.id} --jobs auto --out "<your scratchpad>/item-${it.id}"\` (Bash timeout 600000), and fix what fails; an independent verifier runs them again after you. ` +
+    (s.attempts > 1 ? `This is attempt ${s.attempts}: after the previous attempt's IMPL-DONE the item's checks failed, and the verifier reported:\n${s.evidence}\nFix that, commit again, and return. ` : '') +
+    VERDICT_ASK
+  const fixPrompt = it => workorderLine(n) +
+    (it.kind === 'gate-fix'
+      ? `You are fixer '${it.id}': every item is done, and the workorder's whole-tree acceptance criteria then failed:\n${it.failed.map(c => `- ${c.criterion}: ${c.evidence}`).join('\n')}\nFix those failures and nothing else. `
+      : `You are fixer '${it.id}': a reviewer read committed work and raised these BLOCKING findings. Resolve exactly these, nothing else:\n` +
+        it.findings.map(f => `- [${f.reviewer}] ${f.where}: ${f.problem}${f.fix ? `\n  fix: ${f.fix}` : ''}`).join('\n') + '\n' +
+        `If a finding does not hold, change nothing for it and say why under DEVIATIONS: the reviewer re-reads your commit. `) +
+    `Your file set is ${fileWords(it)}${it.files === '*' ? '' : ': edit nothing outside it -- an edit you need outside it goes under NOT DONE with the path'}. ` +
+    `Run no git command that writes, except committing once, at the end, with exactly \`${commitCmd(it.id, '')}\` naming the files you changed. ${COMMIT_NOTE}` +
+    `Run no full build or suite: the whole-tree criteria run once the queue drains. ` + VERDICT_ASK
+  const checkPrompt = (it, s) => `Workorder: ${A.planPath}. Run item '${it.id}''s targeted checks and report what they printed: exactly ` +
+    `\`py -3 tools/run_criteria.py "${A.planPath}" --item ${it.id} --jobs auto --out "<your scratchpad>/item-${it.id}-a${s.attempts}"\`, with the Bash timeout at 600000. ` +
+    `These checks are your whole mandate this time: do not run the root suite or the workorder's acceptance criteria, which run once every item is done. ` +
+    `Report each check as a criterion, judged from what the runner printed. Other items are being edited in this checkout while you run: a failure you can trace to a file outside this item's set (${fileWords(it)}) goes in 'other_defects' naming that file, not in a criterion.` +
+    VERIFIER_CONTEXT_NOTE
+
+  async function runItem(it) {
+    const s = st[it.id]
+    for (;;) {
+      s.attempts++
+      const label = it.kind === 'item' ? `item-implementer:${it.id}:a${s.attempts}:r${n}` : `fix-implementer:${it.id}:r${n}`
+      const impl = await spawn(it.kind === 'item' ? itemPrompt(it, s) : fixPrompt(it), { label, phase: 'Implement', agentType: 'implementer', model: A.implementerModel || 'opus', schema: ITEM_IMPL_SCHEMA })
+      if (!impl) return { park: 'the implementer returned nothing' }
+      if (impl.commits && impl.commits.length) {
+        s.commits.push(...impl.commits)
+        landed.push({ id: it.id, paths: impl.paths || [], flags: impl.flags || '' })
+      }
+      if (impl.verdict !== 'IMPL-DONE') return { verdict: impl.verdict, evidence: impl.evidence || impl.question || '', progress: impl.progress_so_far }
+      if (it.kind !== 'item' || !it.checks.length) return { verdict: 'DONE' }
+      const v = await spawn(checkPrompt(it, s), { label: `item-verifier:${it.id}:a${s.attempts}:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA })
+      if (!v) return { park: 'the item-check verifier returned nothing' }
+      if (v.verdict === 'PASS' || v.verdict === 'PASS-PENDING-HUMAN') return { verdict: 'DONE', pending: v.pending_human || [] }
+      const failedChecks = (v.criteria || []).filter(c => c.status === 'fail')
+      s.evidence = failedChecks.map(c => `- FAILED ${c.criterion}: ${c.evidence}`).concat((v.other_defects || []).map(d => `- ${d}`)).join('\n') || `verdict ${v.verdict}`
+      if (v.verdict === 'PLAN-DEFECT') return { verdict: 'PLAN-DEFECT', evidence: s.evidence }
+      if (s.attempts >= ITEM_ATTEMPTS) return { park: `budget: ${s.attempts} attempts and its checks still fail`, evidence: s.evidence }
+      if (overCeiling()) return { park: 'the launch reached its ceiling with this item\'s checks failing', evidence: s.evidence }
+    }
+  }
+
+  const holdFixpoint = () => {
+    for (let held = newlyHeld(all, st); held.length; held = newlyHeld(all, st)) {
+      for (const h of held) { st[h.id].status = 'held'; st[h.id].reason = h.reason }
+    }
+  }
+  const settleItem = (it, r) => {
+    const s = st[it.id]
+    if (r && r.verdict === 'DONE') { s.status = 'done'; s.pending = r.pending || []; return }
+    s.status = 'parked'
+    if (!r) { s.reason = 'the item threw'; return }
+    if (r.park) { s.reason = r.park; s.evidence = r.evidence || s.evidence; return }
+    s.reason = r.verdict
+    s.evidence = r.evidence || ''
+    s.progress = r.progress || ''
+    if (r.verdict === 'PLAN-DEFECT') {
+      for (const id of invalidatedBy(all, st, it.id)) { st[id].status = 'held'; st[id].reason = `may be invalidated by ${it.id}'s PLAN-DEFECT` }
+    }
+  }
+
+  // A reviewer instance is due when commits landed since its last pass and
+  // it has never run, was blocking, or its trigger matches what landed.
+  // Past REVIEW_PASS_CAP passes it waits for the final catch-up, which runs
+  // once nothing else can.
+  const deltaOf = events => ({
+    paths: events.flatMap(e => e.paths), instrumentContent: events.some(e => /instrument/.test(e.flags)), sdkContent: events.some(e => /sdk/.test(e.flags)),
+  })
+  const inScope = (rv, paths) => !rv.scope || paths.some(p => (rv.scope.paths || []).some(g => pathsOverlap(g, p)))
+  const reviewerDue = (rv, finalCatchUp) => {
+    if (rv.running || rv.failed || rv.seen >= landed.length) return false
+    const fresh = landed.slice(rv.seen)
+    const d = deltaOf(fresh)
+    const wanted = rv.state === 'never' || rv.state === 'blocking' || ((TRIGGERS[rv.name] || (() => true))(d) && inScope(rv, d.paths))
+    if (!wanted) { rv.seen = landed.length; (passLog[rv.key] = passLog[rv.key] || { passes: 0, skipped: 0 }).skipped++; return false }
+    return rv.passes < REVIEW_PASS_CAP - 1 || finalCatchUp
+  }
+  const reviewScopeText = rv => [{ key: '.' }].concat(SUBMODULES.map(s => ({ key: s }))).map(({ key }) => {
+    const t = repoTarget(key), base = rv.base && rv.base[key]
+    const range = base ? `\`git -C ${t} log --oneline ${base}..<that sha>\` and \`git -C ${t} diff ${base} <that sha>\`` : `the commits since this workorder began (${HEADS_UNKNOWN})`
+    return `Reviewing ${repoWords(key)}: first run \`git -C ${t} rev-parse HEAD\` and report it in 'reviewed_heads' as {repo: '${key}', sha}; then read ${range}.`
+  }).join(' ') +
+    ' Other agents are editing the working tree while you read: read a file only as of that commit (`git show <that sha>:<path>`), never from the working tree, and run no `git status` or `git diff` without both commits.' +
+    (rv.scope ? ` Review only these paths: ${rv.scope.paths.map(p => `\`${p}\``).join(', ')}.` : '')
+  async function runReview(rv) {
+    rv.running = true
+    const upto = landed.length
+    const prior = rv.state === 'blocking' ? priorNote(rv.findings, PRIOR_ASK) : ''
+    const pending = inFlight()
+    const r = await spawn(
+      `You are reviewing committed work. You are NOT given the workorder; this is its intent:\n${A.goalExcerpt}\n${OUT_OF_SCOPE_NOTE}\n${reviewScopeText(rv)}\n` +
+      (rv.passes > 0 ? `${RERUN_NOTE}\n` : '') + prior +
+      (pending.length ? `Still being implemented, in files you will not see yet -- do not report as missing what these will cover: ${pending.map(it => `${it.id}${itemTitle(it)} [${it.files === '*' ? 'any file' : it.files.join(', ')}]`).join('; ')}.\n` : '') +
+      (rv.name === 'instrument-blindness-reviewer' && A.researchHeadings ? `Research findings to check are recorded in ${A.contextPath} under: ${A.researchHeadings}. Read only those subsections.\n` : '') +
+      `Do not run test suites or builds; run one targeted test only if a finding depends on its result. ` +
+      `Mark every finding BLOCKING or NON-BLOCKING; set plan_defect only when no implementation of the plan as written could satisfy its Goal -- a missing assert, pin or sentence the plan did not forbid goes to the implementer, not plan_defect; lead the summary with "no blocking findings" when true. ` +
+      `When you can state exactly how a BLOCKING finding is resolved -- the edit itself, at its path:line -- put it in that finding's 'fix'; leave 'fix' out when resolving it needs judgement or more research. Start each finding's 'where' with the file's path.`,
+      { label: `${rv.key}:p${rv.passes + 1}:r${n}`, phase: 'Verify', agentType: rv.name, model: MODELS[rv.name], schema: REVIEW_ITEMS_SCHEMA })
+    return { rv, r, upto }
+  }
+  const settleReview = ({ rv, r, upto }) => {
+    rv.running = false
+    rv.passes++
+    ;(passLog[rv.key] = passLog[rv.key] || { passes: 0, skipped: 0 }).passes++
+    if (!r) { rv.failed = true; return }
+    rv.seen = upto
+    const heads = headsMap(r.reviewed_heads)
+    if (heads) rv.base = { ...(rv.base || {}), ...heads }
+    const found = r.blocking.map(f => ({ reviewer: rv.key, ...f }))
+    nonBlocking.push(...r.non_blocking.map(f => ({ reviewer: rv.key, ...f })))
+    if (r.plan_defect) planDefects.push({ reviewer: rv.key, summary: r.summary, findings: found })
+    rv.findings = r.blocking
+    rv.state = found.length ? 'blocking' : 'clean'
+    if (!found.length || r.plan_defect) return
+    blocking.push(...found)
+    rv.fixes++
+    const paths = found.map(f => findingPath(f.where))
+    const id = `fix-${++fixSeq}`
+    add({ id, kind: 'fix', reviewer: rv.key, findings: found, files: paths.every(Boolean) ? [...new Set(paths)] : '*' })
+    if (rv.fixes > FIX_CAP) { st[id].status = 'parked'; st[id].reason = `budget: ${rv.key} raised findings ${rv.fixes} times` }
+  }
+  async function refill() {
+    refills++
+    return spawn(`Run exactly: py -3 tools/plan_lint.py "${A.planPath}" --items-json --known ${all.filter(it => it.kind === 'item').map(it => it.id).join(',') || '-'} --wait 480  (Bash timeout 600000) — ` +
+      `report its exit code, its whole output in 'raw_output', and, when it exited 0, the JSON on its last line as 'items' and 'complete'. Edit nothing.`,
+      { label: `refill:${refills}:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', schema: REFILL_SCHEMA })
+  }
+  const settleRefill = r => {
+    if (!r || r.exit_code !== 0) { streaming = false; lintFailure = r ? r.raw_output : 'the refill agent returned nothing'; return }
+    for (const raw of r.items || []) if (validItem(raw) && !st[raw.id]) add(raw)
+    if (r.complete || refills >= REFILL_CAP) streaming = false
+  }
+
+  // One pass of the event loop: start what may start, wait for whichever
+  // task ends first, settle it, repeat until nothing runs and nothing more
+  // can start.
+  async function drain() {
+    const tasks = new Map()
+    const launch = (key, p) => tasks.set(key, p.then(value => ({ key, value }), () => ({ key, value: null })))
+    let stopping = false
+    for (;;) {
+      holdFixpoint()
+      if (!stopping) {
+        for (const id of nextToStart(all, st, MAX_PARALLEL)) {
+          st[id].status = 'running'
+          st[id].touched = true
+          const it = all.find(x => x.id === id)
+          launch(`item:${id}`, runItem(it).then(r => ({ it, r }), () => ({ it, r: null })))
+        }
+        const quiet = !tasks.size && !streaming
+        for (const rv of reviewers) if (reviewerDue(rv, quiet)) launch(`review:${rv.key}`, runReview(rv))
+        if (streaming && !tasks.has('refill')) launch('refill', refill())
+      }
+      if (!tasks.size) return
+      const { key, value } = await Promise.race(tasks.values())
+      tasks.delete(key)
+      if (key.startsWith('item:')) settleItem(value ? value.it : all.find(x => `item:${x.id}` === key), value && value.r)
+      else if (key.startsWith('review:')) settleReview(value || { rv: reviewers.find(x => `review:${x.key}` === key), r: null, upto: 0 })
+      else settleRefill(value)
+      if (overCeiling()) stopping = true
+    }
+  }
+
+  const itemsLine = () => `items: ${all.filter(it => it.kind === 'item').map(it => `${it.id}=${st[it.id].status}`).join('; ')}`
+  const reviewersLine = () => `reviewers: ${reviewers.map(rv => `${rv.key}: ${rv.failed ? 'no result' : rv.state}`).join('; ') || 'none'}`
+  const openLine = () => `open defects: ${all.filter(it => st[it.id].status === 'parked').map(it => `${it.id}: ${st[it.id].reason}`).concat(planDefects.map(p => `${p.reviewer}: plan defect`)).join('; ') || 'none'}`
+  const block = outcome => {
+    const lines = [`### Round ${n} (items)`, '', `outcome: ${outcome}; ${all.filter(it => st[it.id].status === 'done').length} of ${all.length} done; ${agents} agents`]
+    for (const it of all) {
+      const s = st[it.id]
+      lines.push(`- ${it.id}${itemTitle(it)}: ${s.status}${s.reason ? ` -- ${s.reason}` : ''}${s.attempts ? ` (attempts ${s.attempts})` : ''}${s.commits.length ? `; commits ${s.commits.map(c => `${c.repo}:${String(c.sha).slice(0, 12)}`).join(', ')}` : ''}`)
+      if (s.status !== 'done' && s.evidence) lines.push(...String(s.evidence).split('\n').map(l => `  ${l}`))
+      if (s.status !== 'done' && s.progress) lines.push(`  progress: ${s.progress}`)
+    }
+    for (const g of gateRuns) {
+      lines.push('', `gate ${g.k}: ${g.verdict}${g.verifierSaid ? ` (the verifier said ${g.verifierSaid}; every failed criterion is gated on a gate not set in \`gates:\`)` : ''}`)
+      for (const c of g.failed) lines.push(`- FAILED ${c.criterion}: ${c.evidence}`)
+      for (const c of g.gatePending) lines.push(`- PENDING (gate ${c.gate} not set) ${c.criterion}`)
+    }
+    lines.push('', `BLOCKING (${blocking.length})`, ...blocking.map(findingLine))
+    lines.push('', `NON-BLOCKING (${nonBlocking.length})`, ...nonBlocking.map(nonBlockingLine))
+    lines.push('', `reviewer passes: ${Object.entries(passLog).map(([k, v]) => `${k} x${v.passes}${v.skipped ? ` (skipped ${v.skipped})` : ''}`).join('; ') || 'none'}`)
+    if (lintFailure) lines.push(`plan_lint stopped the refill: ${String(lintFailure).slice(0, 1500)}`)
+    return lines.join('\n')
+  }
+  const finish = async (outcome, extra = {}) => {
+    const clean = outcome === 'PASS' || outcome === 'PASS-PENDING-HUMAN'
+    const phase = clean ? 'pass' : outcome === 'PARKED' ? 'parked' : 'blocked'
+    const rec = await recordState(n, block(outcome), [`round: ${clean ? n : n + 1}`, `phase: ${phase}`, itemsLine(), reviewersLine(), openLine()].join('\n'))
+    const result = {
+      outcome, round: n, agents,
+      items: all.map(it => ({ id: it.id, kind: it.kind, status: st[it.id].status, reason: st[it.id].reason, attempts: st[it.id].attempts, commits: st[it.id].commits, evidence: st[it.id].evidence, progress: st[it.id].progress })),
+      gate: gateRuns, blocking, nonBlocking, ...extra,
+    }
+    const stop = recordStop(n, rec, outcome)
+    return stop ? { ...stop, ...result, outcome: stop.outcome, then: outcome } : result
+  }
+
+  for (let k = 1; ; k++) {
+    await drain()
+    // The gate reads a finished tree: anything still pending here could not
+    // be scheduled, and counts as held rather than as done.
+    for (const it of all) if (st[it.id].status === 'pending' && !overCeiling()) { st[it.id].status = 'held'; st[it.id].reason = 'could not be scheduled' }
+    if (reviewers.some(rv => rv.failed)) return finish('AGENT-FAILED', { detail: `no result from: ${reviewers.filter(rv => rv.failed).map(rv => rv.key).join(', ')}` })
+    if (overCeiling()) return finish('CEILING', { detail: `the launch spent ${agents} agents${A.tokenCeiling ? ` or ${A.tokenCeiling} output tokens` : ''}; relaunch to carry on from State's items: line` })
+    if (lintFailure) return finish('PLAN-DEFECT', { detail: 'plan_lint refused the items the planner released; the refill stopped', lint: lintFailure })
+    if (planDefects.length) return finish('PLAN-DEFECT', { detail: planDefects.map(p => `${p.reviewer}: ${p.summary}`).join(' || ') })
+    if (all.some(it => ['parked', 'held'].includes(st[it.id].status))) {
+      return finish('PARKED', { detail: 'every item that could run has run; the parked items need the driver, the rest wait on them' })
+    }
+    // 3b: the whole tree, once.
+    const v = await spawn(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${VERIFIER_CRITERIA_NOTE}${VERIFIER_CONTEXT_NOTE}`,
+      { label: k === 1 ? `verifier:r${n}` : `verifier:g${k}:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA })
+    if (!v) return finish('AGENT-FAILED', { detail: 'the gate verifier returned nothing' })
+    const gates = gatesSet(knownState)
+    const gatedUnset = c => !!gates && gateTokens(c.gate).some(t => !gates.has(t))
+    const allFailed = v.criteria.filter(c => c.status === 'fail')
+    const failed = allFailed.filter(c => !gatedUnset(c))
+    const gatePending = v.criteria.filter(c => c.status !== 'pass' && gatedUnset(c))
+    const onlyGated = v.verdict === 'IMPL-DEFECT' && allFailed.length > 0 && !failed.length && !(v.other_defects || []).length
+    const verdict = onlyGated ? 'PASS-PENDING-HUMAN' : v.verdict
+    const pendingHuman = [...new Set([...(v.pending_human || []), ...all.flatMap(it => st[it.id].pending || []),
+      ...gatePending.map(c => `${c.criterion} -> UNATTEMPTED (gate ${gateTokens(c.gate).filter(t => !gates.has(t)).join('; ')} not set)`)])]
+    gateRuns.push({ k, verdict, verifierSaid: onlyGated ? v.verdict : undefined, failed, gatePending })
+    if (verdict === 'PASS' || verdict === 'PASS-PENDING-HUMAN') return finish(verdict, { pending_human: pendingHuman })
+    if (verdict === 'PLAN-DEFECT') return finish('PLAN-DEFECT', { detail: 'the gate verifier found a criterion that cannot be run as written' })
+    if (k >= GATE_CAP) return finish('CAP', { detail: `the whole-tree criteria failed ${k} times; split the open failures into a new workorder` })
+    const why = failed.length ? failed : (v.other_defects || []).map(d => ({ criterion: 'structural', evidence: d }))
+    add({ id: `gate-fix-${k}`, kind: 'gate-fix', files: '*', failed: why })
+  }
+}
+
+if (ITEMS_IN.length) return await runItems(A.round || 0)
+
 const patchStateEntry = stateEntries(A.state).find(e => e.key === 'patch rounds')
 let patchCount = patchStateEntry ? (parseInt(patchStateEntry.text.replace(/^patch rounds:\s*/i, ''), 10) || 0) : 0
 let patchNext = null // the BLOCKING findings the next round patches, or null for an ordinary round

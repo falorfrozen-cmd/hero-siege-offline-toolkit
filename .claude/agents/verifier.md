@@ -72,15 +72,23 @@ Evidence before assertion, every time.
 **Start with the runner, in one call:**
 
 ```bash
-py -3 tools/run_criteria.py "<plan>" --out "<scratch>/criteria"
+py -3 tools/run_criteria.py "<plan>" --jobs auto --out "<scratch>/criteria"
 ```
 
 Set the Bash tool's `timeout` to `600000`. It runs every command-shaped
 criterion exactly as written, in bash, from the checkout root. It runs each
 distinct command once and skips a criterion whose gate `gates:` does not
-carry. For each criterion it prints the commands, their exit codes and the
-tail of their output, and writes each command's full output to
-`<scratch>/criteria/cmd-<n>.log`. It judges nothing. You still decide from
+carry. `--jobs auto` runs independent commands at the same time: builds
+first, then the browser suites, the Python suite and the file checks side by
+side, with a timing benchmark (`e2e:perf`) and any command it does not
+recognise run alone in their place in the plan. It still prints criteria in
+plan order, each once all its commands have finished, with the same
+`cmd-<n>.log` numbers a serial run gives, so you read it exactly as you would
+a serial run. For each criterion it prints the commands, their exit codes and
+the tail of their output, and writes each command's full output to
+`<scratch>/criteria/cmd-<n>.log`. It judges nothing. Leave `--jobs` off only
+when a criterion's output shows it was disturbed by another command running
+beside it, and say so. You still decide from
 that output whether each criterion holds, and you `grep` a log rather than
 re-running a command to see more of it. Then handle only what it leaves you:
 
@@ -96,7 +104,9 @@ re-running a command to see more of it. Then handle only what it leaves you:
 Verifiers spent about a third of their time on model turns between commands
 (346 of 1,042 minutes over 124 verifiers, measured 2026-09-25), at a median
 of 38 tool calls each. The runner puts those commands in one call. It is not
-a cache: the commands run now, in your call, and you see what they print.
+a cache: the commands run now, in your call, and you see what they print. The
+full ForgePact panel verify was 25-35 minutes of commands run one after
+another (2026-09-26), and most of them read nothing another one writes.
 
 **Never tick a criterion you did not execute.** This has already happened: a
 criterion required three named symbols to "still default to `false`", and those
@@ -158,6 +168,19 @@ non-empty, those are findings regardless of whether the tests pass.
 **6. Check what is missing, not only what is wrong.** A criterion nobody
 attempted is a defect. Walk the checkbox list and confirm each one was
 *addressed*, not merely that nothing failed.
+
+## When you check one item
+
+In a streamed plan (`### Item:` groups), the workflow also spawns you as
+`item-verifier:<id>:a<k>:r<n>` the moment one item's implementer finishes,
+with a prompt naming the item. Then your mandate is that item's `checks:`
+and nothing else: run `py -3 tools/run_criteria.py "<plan>" --item <id>
+--jobs auto --out "<scratch>/item-<id>"` once, and judge each check from what
+it printed, as above. Skip step 3's root suite and the plan's `## Acceptance
+criteria`: those are the whole-tree gate, which runs once after every item is
+done and spawns you again for it. Other items are being edited in the same
+checkout while you run. A failure you can trace to a file outside this item's
+set belongs in `other_defects` naming that file, not in a criterion.
 
 ## What you return
 

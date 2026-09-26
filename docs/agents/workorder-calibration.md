@@ -423,3 +423,142 @@ review passes it runs, the wall time from a finish review's first finding to
 its first fix, and whether a streamed fix ever collides with another. A fixer
 pair that touched the same file, or a pinned review that reported a finding
 the live tree had already fixed, would say the procedure needs tightening.
+
+# Streamed items: the round engine without hard gates (2026-09-26)
+
+## The question
+
+After the ForgePact UI redesign (the section above), the owner said: *"Going
+back to streamed workorder pipeline instead of hard gates. This could speed
+things up significantly."*, and asked *"do workorder/workflow agents spawn
+subagents? subagents can also speed up processes"*. The section above changed
+the driver's procedures. This one changes `workorder-rounds.js`, which still
+ran every workorder as implement everything, verify everything, route.
+
+## What was measured
+
+Read from the redesign's 14 plan and context files (gitignored, on the
+machine that ran them). None of them records a round's start or end time, only
+dates, so there is no per-round wall clock to compare against. What they do
+record:
+
+- **The gate was paid again and again.** 15 `verifier:` verdicts appear in
+  the Logs, and a 16th re-verify is recorded in the polish plan's header. The
+  ForgePact Python suite alone ran 1,037 s (1,616 tests) and 1,147 s (1,621
+  tests) in the ship workorder; that run includes the oracle tests, which
+  drive the e2e suites. `e2e:perf` ran 487-489 s. Both are longer than a
+  Bash call's 10-minute ceiling, and the Python run is longer than
+  `run_criteria.py`'s 900 s default per command, so the ship plan had to pass
+  `--timeout 1800`.
+- **Green items waited on one item.** Polish carried 9 owner items over three
+  rounds. In round 0, items 1-8 passed but stayed uncommitted while item 9's
+  design question went back to the owner. In round 2, a single flaky
+  criterion (`net::ERR_UNSAFE_PORT` on port 1719) took the whole workorder to
+  its cap "with one open finding". Every other item had already passed, and
+  the fix became a separate workorder followed by a full re-verify.
+- **Fixes waited for the whole review.** The ship workorder's finish review
+  started after the round in which every ungated criterion passed, returned
+  eight findings (F1-F8), and all eight went to the owner as one batch before
+  one implementer applied them and one full verify ran.
+- **Owner questions blocked unrelated work.** Besides polish round 0, polish
+  round 2 was reopened for two owner answers (F1, F6) and paid a whole
+  implement-and-verify round. In ship, three owner items became their own
+  round while steps 14-17 waited.
+- **The browser suites can run side by side.** Each ForgePact panel e2e
+  suite starts its own sandbox on an OS-assigned port (`port 0`, re-bound off
+  Chromium's restricted ports), with its own temp config and its own browser
+  profile, and none of them builds. They share only `panel/dist`, which a Vite
+  build empties and rewrites, and the CPU. Two suites assert wall-clock
+  budgets (`e2e:polish` expects the next tooltip within 50 ms, and
+  `e2e:review` checks a freeze bound), and `e2e:perf` is a timing benchmark.
+  Established by reading `panel/tests/lib/browser.mjs`,
+  `tests/panel_sandbox_server.py` and `tests/test_satanic_panel.py` on the
+  redesign branch; nothing was run.
+
+## What changed
+
+- **Items instead of rounds** (`workorder-rounds.js` 3a/3b). A plan's
+  `## Steps` may declare `### Item: <id>` groups, each with `files:` and
+  `checks:` (and optional `after:`, `shares:`, `owner:`). Each item flows
+  implement, then targeted checks by an independent verifier, then done, the
+  moment its files are free. Items on disjoint files run as parallel
+  implementers spawned by the engine, and items sharing a file queue in plan
+  order. Reviewers read committed ranges pinned to the `HEAD` they start from,
+  and each finished reviewer's BLOCKING findings become a fix item at once.
+  The `## Acceptance criteria` run once, when nothing is left: the only full
+  verify. An item that needs someone parks alone, and a PLAN-DEFECT holds only
+  the items its files, links or check commands overlap. Budgets are per item
+  (three attempts) under a launch ceiling (agents, and output tokens when
+  set). A plan without items runs in rounds exactly as before, and all 83
+  existing engine tests pass unchanged.
+- **Only the engine fans out agents.** Phase agents have no `Agent` tool, and
+  that stays so, because verifier and reviewer independence depends on it.
+  Every agent-level parallel step is in the engine (`nextToStart`, the event
+  loop, `reviewScopes`). Inside one agent, work runs in parallel as concurrent
+  processes: the implementer now starts independent suites with
+  `run_in_background` and waits on them with `Monitor`, and
+  `run_criteria.py --jobs` does the same for the verifier.
+- **Parallel criteria.** `run_criteria.py --jobs N|auto` runs builds first and
+  alone. After that it runs at most one whole suite, two browser suites
+  (`--browser-jobs`) and the file checks side by side. `e2e:perf`, anything
+  that drives the oracle, and any command it does not recognise act as a
+  barrier at their place in the plan. The report is unchanged: plan order, the
+  serial run's log numbers. A test pins that the parallel output of the
+  existing fixture plan equals the serial one line for line. The verifier uses
+  it by default, and without `--jobs` the tool runs serially as before.
+- **Locks across processes.** `tools/workorder_lock.py` holds an OS file lock
+  under the checkout's git dir, which the OS drops when its holder exits.
+  `tools/item_commit.py` commits one item's paths under the `commit` lock.
+  `run_criteria.py` takes `build` around a build and one of
+  `browser-0..browser-<n-1>` around a browser suite, so two items' checks
+  together still build one at a time and run at most `n` browser suites.
+- `tools/plan_lint.py` checks items (`item-overlap` unless declared,
+  `item-no-files`, `item-no-checks`, `item-dup-id`, `item-bad-id`,
+  `item-unknown-ref`, `item-cycle`, `items-and-lanes`). `--items-json` prints
+  the table the driver passes, and `--known ... --wait S` lets the engine pick
+  up items a streaming planner (`planning: streaming`) releases while the
+  first ones are already being implemented.
+
+What was tested: the scheduler as pure functions (disjoint items in
+parallel, shared-file items serialised in plan order, a parked item not
+blocking others, an item parked before it started not blocking its
+file-sharers, a fix with unknown files running alone, a PLAN-DEFECT holding
+only what it may invalidate). The engine was tested against stub agents that
+take a few milliseconds each, so overlap is observable: disjoint items
+overlapped, shared-file items never did, the gate ran once and only after the
+queue drained, a parked item kept the gate from running, a failed targeted
+check retried with its evidence and parked at three attempts, a finding became
+a fix that its reviewer re-read, a gate failure became one fix and a second
+gate, and a streaming plan's late item was picked up. Mutating the parallel
+cap, the file lock or the park check fails these tests.
+
+## Not yet measured
+
+Items have not run on a real workorder. The pilot is the next multi-item
+workorder. Record its numbers here against the redesign's rows:
+
+| | workorder | items | full verifies | launch wall-clock | item implementer minutes, added up | first finding to its fix starting |
+|---|---|---|---|---|---|---|
+| before | `forgepact-ui-polish` (rounds) | 9 | 3 rounds, a split workorder, 1 re-verify | not recorded | not recorded | no reviewer stream |
+| before | `forgepact-ui-ship` (rounds) | 8 fixes | 1 per round | not recorded | not recorded | the whole review, then an owner batch |
+| after | the first plan of items (to be chosen) | not yet measured | not yet measured | not yet measured | not yet measured | not yet measured |
+
+Take the after row from `py -3 tools/workorder_audit.py --session <id>
+--json`: the launch's span (first agent start to last agent end), the item
+implementers' wall minutes added up (their sum against the span is the
+parallelism bought), the count of `verifier:` gate runs, and each
+`fix-implementer`'s start against the end of the reviewer pass that raised
+it. The redesign recorded no round times, so this pilot also sets the first
+measured baseline. Three things would show the design needs tightening:
+
+- two items whose declared file sets missed a file both edited, which
+  `item_commit.py` would then commit with the wrong item or leave out;
+- a targeted check failed by another item's half-finished edit, visible as an
+  `other_defects` entry naming a file outside the item;
+- an e2e wall-clock check (`e2e:polish`'s 50 ms tooltip) failing only when it
+  runs beside the Python suite.
+
+`tools/workorder_audit.py` does not yet know the item labels
+(`item-implementer:`, `item-verifier:`, `fix-implementer:`,
+`<reviewer>:p<k>:`). They parse as ordinary roles in round `n`, so the audit
+reads them, but no rule is specific to them yet.
