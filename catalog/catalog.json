@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-26T01:43:55Z",
+  "generated": "2026-09-26T03:43:53Z",
   "tools": [
     {
       "id": "forgepact",
@@ -8,9 +8,9 @@
       "summary": "Offline gameplay modifiers: density, spawns, drop rates, map reveal.",
       "repo": "falorfrozen-cmd/ForgePact",
       "submodule": "ForgePact",
-      "version": "1.4.6",
-      "tag": "v1.4.6",
-      "published": "2026-09-25T17:18:11Z",
+      "version": "1.4.7",
+      "tag": "v1.4.7",
+      "published": "2026-09-26T03:43:25Z",
       "license": "AGPL-3.0",
       "requires": {
         "admin": false,
@@ -20,12 +20,12 @@
       },
       "artifact": {
         "kind": "zip",
-        "name": "ForgePact-1.4.6.zip",
-        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.4.6/ForgePact-1.4.6.zip",
-        "size": 17836007,
-        "sha256": "2ca25fddaf881309d33cac0efc7cfc89e5936950cccff68d13964ec2e93e44a9",
+        "name": "ForgePact-1.4.7.zip",
+        "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.4.7/ForgePact-1.4.7.zip",
+        "size": 17836524,
+        "sha256": "32d37a0032f209b248b827b9641133e393c6c9230a2c3d309b10b8dc82016146",
         "sha256_source": "published+verified",
-        "strip_prefix": "ForgePact-1.4.6/"
+        "strip_prefix": "ForgePact-1.4.7/"
       },
       "launch": {
         "exe": "ForgePact.exe",
@@ -43,8 +43,8 @@
           "timeout_s": 20
         }
       },
-      "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.4.6",
-      "notes": "# ForgePact 1.4.6\n\nGems of Incarnation drop Mythic, with the mods you pick, and every mod on them\nshows its best roll.\n\n## New\n\n- **Mythic Gems of Incarnation.** Most Gems of Incarnation used to drop with a\n  single weak mod. The game itself makes 1 in 50 of them Mythic, with 4 or 5\n  mods. With this switch on, every Gem of Incarnation that drops is Mythic. The\n  game still rolls the gem, and ForgePact hands it a seed the game has already\n  rolled Mythic for the same kind of drop, so what drops is an ordinary Mythic\n  gem. Gems you already own keep their mods. The first time the switch is on,\n  the game rolls sample gems quietly in the background, under a minute at the\n  main menu. Until that is done, a gem that drops keeps the game's own roll.\n  Mods tab → **Mythic Gems of Incarnation**, off by default.\n- **Gem mod filter.** Under the two switches, **Filter...** lists every mod a\n  Gem of Incarnation can roll - 36, in six groups (Attack, Skills, Elemental\n  skills, Defense, Life & mana, Loot). Tick the ones you want and save: every\n  Mythic gem that drops then carries as many of them as the game's own Mythic\n  rolls allow. Tick Increased Attack Speed and Increased Magic Find, and the\n  gems have both. It starts with every mod ticked, which is no filter.\n- **Max-roll Gems of Incarnation.** Every mod on every Gem of Incarnation, new or\n  old, shows the highest value its best tier can roll: Increased Attack Speed\n  reads 12, where a lower tier could have stopped at 8. A skill grant keeps its\n  skill. Nothing is written to your save: turn the switch off, and a gem shows\n  its own rolls again the next time the game loads it. Mods tab →\n  **Max-roll Gems of Incarnation**, off by default.\n\n## Changed\n\n- **The panel's address is now http://127.0.0.1:8780** (it was 8766). 8766 is\n  one of the ten ports the Item Editor keeps for itself. With the editor open,\n  the panel already ended up on 8780, and the Toolkit Hub, checking 8766 for\n  ForgePact, reached the editor instead. The panel now starts on 8780 whether or\n  not the editor is open, and the hub checks it there. If 8780 is taken, it\n  tries 8801, 8899, 9133 and 9777, as before. The panel still opens in its own\n  window; this only matters if you open it in a browser.\n\n## How to update\n\nDownload and extract the complete release, then reopen ForgePact. Your existing\nsettings are retained. Source users can run `Prepare-Plugin.bat` if plugin files\nare missing before using **Install Mod Plugin**. This change is in the plugin,\nso pressing **Install Mod Plugin** matters - updating only the panel leaves the\nold plugin in place.\n\nUse ForgePact only with an offline / EAC-disabled copy of Hero Siege.",
+      "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.4.7",
+      "notes": "# ForgePact 1.4.7\n\nBosses can drop their Prime Evil parts more often, the pieces for the Key of\nTerror.\n\n## New\n\n- **Prime Evil Parts (Key of Terror).** A new Drop Rates slider on the Loot tab\n  makes bosses drop their Prime Evil part more often: Gurag's Soul, Death's\n  Sigil, Damien's Eye, Anubis' Ankh, Karp King's Bellybutton and Satan's Horn.\n  It uses the game's own roll, on bosses only, and never touches Relics.\n  Checked in play: Karp King dropped about 0.7 bellybuttons per kill at x1, 3 at\n  x5 and 9 at x35. Above x35 nothing more changes. The infernal parts are\n  covered too, where bosses roll them the same way; uber bosses were not tested.\n  Off (x1) by default.\n\n## How to update\n\nDownload and extract the complete release, then reopen ForgePact. Your existing\nsettings are retained. Source users can run `Prepare-Plugin.bat` if plugin files\nare missing before using **Install Mod Plugin**. The slider is in the panel, but\npress **Install Mod Plugin** too: the updated plugin also counts Satan's Infernal\nHorn.\n\nUse ForgePact only with an offline / EAC-disabled copy of Hero Siege.",
       "guide": "docs/submodules/ForgePact/instructions.md",
       "source_launch": {
         "cmd": "py",
