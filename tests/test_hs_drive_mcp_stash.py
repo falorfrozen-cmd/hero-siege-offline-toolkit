@@ -412,6 +412,13 @@ class BagTabTests(StashBase):
                 self.assertEqual(result["verb_trail"], [])
         self.assertEqual(self.ipc.calls, [])
 
+    def test_unreadable_tab_selected_is_route_not_measured_before_any_send(self):
+        # derived() with no tab= prints no tabSelected field, as the live-2 build did.
+        self.use({BAG_READ: [combined(derived(), fx.BAG_SUBTABS_REPLY)]})
+        result = self.bag("materials")
+        self.assertRefused(result, "route_not_measured")
+        self.assertEqual((self.ipc.calls, result["verb_trail"]), ([BAG_READ], []))
+
     def test_no_stash_window_is_bag_not_open(self):
         self.use({BAG_READ: [combined(NO_WINDOW, fx.BAG_SUBTABS_REPLY)]})
         self.assertRefused(self.bag("socket"), "bag_not_open")

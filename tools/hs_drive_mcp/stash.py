@@ -479,6 +479,12 @@ def _bag_tab(tab, backup_id, tool, gate, pids, start_reader) -> dict[str, Any]:
                                                 f"uiNodeCallstack={BAG_TABS[name]}; nothing was sent.")
     session.proof.append(button.line)
     before = window.number("tabSelected")
+    if before is None:
+        # The proof is tabSelected moving; a build that does not print it
+        # (the live-2 research build) cannot confirm a switch, so send nothing.
+        return session.refuse("route_not_measured",
+                              "the stash window row carries no readable tabSelected, so a switch could "
+                              "not be confirmed; nothing was sent.")
     verb = session.verb(f"bagtab {name}")
     if isinstance(verb, dict):
         return verb
