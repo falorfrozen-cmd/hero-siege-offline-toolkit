@@ -20,6 +20,20 @@ Each rule is a defect measured in forgepact-issue-14 (2026-09-22..24):
                    repository's commands are `py -3`, and a verifier that
                    ran `python` got a false verdict (phase1j-record r0).
 
+And one measured in the ForgePact UI redesign (2026-09-24..26):
+
+  pinned-sha       a bare commit hash (7-40 lowercase hex characters, at
+                   least one digit and one letter, standing alone) in a
+                   backticked span. A plan written against `HEAD`,
+                   `origin/main` or the branch pins a head that moves: the
+                   next commit, merge or amendment makes the criterion
+                   compare against the wrong tree. Name a per-workorder tag
+                   (`git tag <slug>-base`) or a merge-base expression
+                   (`$(git merge-base HEAD origin/main)`) instead. A
+                   64-character digest, a `0x` literal, a `#rrggbb` colour
+                   and a hex run inside a longer word or a `-`-joined name
+                   are not flagged.
+
 It also checks the lanes a plan declares under `## Steps` (issue #176): a
 `### Lane: <name>` heading, then a `files:` line of backticked paths (globs
 allowed) that lane alone may edit, and one `### Join` the serial join
@@ -68,6 +82,10 @@ UNANCHORED_SLICE_RE = re.compile(r"\.(?:r?index|r?find)\(\s*['\"]#{1,6} ")
 COLLAPSED_TEXT_RE = re.compile(r"\.join\(.*\.split\(\)\)")
 CAPTURE_GREP_RE = re.compile(r"\bgrep\b[^`]*pass\\?\|")
 BARE_PYTHON_RE = re.compile(r"(?:^|[\s;&|(])python3?(?:\.exe)?\s")
+# A hex run standing alone: not inside a longer word, a `0x`/`#` literal or a
+# `-`-joined name (a worktree or UUID segment), and at most 40 characters, so
+# a sha256 digest never matches. Git prints hashes lowercase.
+HEX_RUN_RE = re.compile(r"(?<![0-9A-Za-z_#-])[0-9a-f]{7,40}(?![0-9A-Za-z_-])")
 
 STEPS_HEADING_RE = re.compile(r"^##\s+Steps\s*$")
 H3_RE = re.compile(r"^###\s")
@@ -111,7 +129,15 @@ def lint_criterion(text: str) -> list:
             found.append(("capture-grep", span))
         if BARE_PYTHON_RE.search(" " + span):
             found.append(("bare-python", span))
+        if any(_looks_like_sha(h) for h in HEX_RUN_RE.findall(span)):
+            found.append(("pinned-sha", span))
     return found
+
+
+def _looks_like_sha(run: str) -> bool:
+    """A hex run with a digit and a letter: `deadbeef` and `20260926` are
+    words and dates far more often than hashes."""
+    return any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
 
 
 def _lane_files(body: list) -> list | None:

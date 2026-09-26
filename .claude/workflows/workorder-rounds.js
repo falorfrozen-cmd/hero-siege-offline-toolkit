@@ -690,6 +690,10 @@ for (let n = START; n - patchCount < ROUND_CAP || patchNext; n++) {
   const nothingChangedNote = emptyDelta
     ? `Nothing changed this round: the implementer reports your previous BLOCKING finding does not hold. Its report: ${String(impl.report).slice(0, 1500)}\nConfirm the finding with the command and output that proves it, or withdraw it.\n`
     : ''
+  // A barrier on purpose, not a pipeline() into fixers: agent() returns only
+  // when a reviewer ends, and a fixer started on one reviewer's findings would
+  // edit the tree this verifier is reading. Streaming findings into fixes is
+  // the driver's procedure outside a round (SKILL.md "Spend each check once").
   const results = await parallel([
     () => nothingChanged ? Promise.resolve(lastVerifier) : agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${VERIFIER_CRITERIA_NOTE}${VERIFIER_CONTEXT_NOTE}`,
       { label: `verifier:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA }),

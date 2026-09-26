@@ -329,3 +329,97 @@ ordinary round's reviewers would have caught. Count that last one from the
 next round's findings. If patches often come back `not held`, the fix field
 is being used for work that is not a patch, and the prompt needs tightening
 rather than the limit raising.
+
+# Spending each check once: the ForgePact UI redesign (2026-09-26)
+
+## The question
+
+The ForgePact UI redesign (hub branch `claude/forgepact-ui-redesign`) ran as
+14 workorders over about 48 hours: a port, Figma directions and buildout, a
+restyle with its prep, features, gems and loot, polish, sandbox ports,
+responsive, a ship workorder, and three workorders that did nothing but merge
+`origin/main`. Watching its ETA stretch, the owner said: *"Make sure we
+parallelize efficiently as well as save time. If some checks can be done once
+for 2 things it's better than checking twice after each change"*, then
+*"Let's put some rules in .md files"*, then, about review and fixes: *"Waiting
+for something to end completely before picking it up sounds like a waste of
+time."*
+
+## What was measured
+
+Read from the 14 plan and context files (gitignored, on the machine that ran
+them), not from transcripts:
+
+- **The full verify is the cost.** For the ForgePact panel it is the Python
+  suite (11-17 minutes), the behaviour-oracle replay (about 4) and its
+  negative control (about 4), six e2e suites (about 6) and `e2e:perf` (about
+  8): 25-35 minutes. The feature paid it at least 15 times, often for a
+  round whose change could reach one screen.
+- **Read-only work queued behind the verifier.** Work such as a finish
+  review, the documenter or the Figma mirror was started after a verify
+  ended, though it read only a committed tree or wrote only its own file.
+- **Review, then fix, in series.** A finish review ran to completion, and
+  only then did the first fix start. Its findings arrived over its whole run.
+- **Main merges were workorders.** Plans said "main moved, stop", so each
+  main update became its own workorder at 1-2.5 hours. Once, the driver
+  merged a clean main by hand instead of opening one.
+- **No planner took lanes.** Every one that considered them declined because
+  the suites must run after the edits, which is what a `### Join` does.
+- **Plans pinned moving heads.** Across the 14 context files there were 12
+  `### Amendment` and 29 `### Replan` entries. About ten corrections came
+  from three defects: a criterion that pinned the hash `HEAD` or
+  `origin/main` had at planning time, backticked prose that
+  `tools/run_criteria.py` executed as a command, and a heading slice that
+  raised when its section was the last in the file. Run over all 14 plans,
+  the new `pinned-sha` rule matched 60-odd spans and every match was a real
+  commit hash.
+- **A flake was retried, not fixed.** The polish workorder reached its cap
+  on a Chromium `net::ERR_UNSAFE_PORT` failure: a sandbox server took a port
+  Chromium refuses to open.
+- **Owner decisions are plan inputs.** A question put to the owner after a
+  plan is written comes back as a replan; asked before it, with a build to
+  look at, the answer is an input.
+
+## What changed
+
+- `.claude/skills/workorder/SKILL.md` § "Spend each check once, and overlap
+  what does not wait": one round and one verify for everything ready
+  together; independent read-only or disjoint-file work started beside the
+  verifier; review findings streamed to fixers; a clean main merge that
+  misses the plan's files done in place; the owner's questions batched with
+  a snapshot build to look at; a flake fixed in the round that saw it. Step
+  0.5 says a chain of small dependent workorders is the wrong way to split.
+- **Streaming is a driver procedure, not a change to `workorder-rounds.js`.**
+  Reviewers split by dimension or screen run in parallel, each appending
+  findings as JSON lines to a scratch file outside the repository trees,
+  against a pinned snapshot (`git worktree add --detach` or `git archive`),
+  since fixers are changing the live tree. The driver watches the files with
+  `Monitor` and gives each finding to a fixer at once. Fixers run one at a
+  time, or in parallel on disjoint files, and one full verify runs after the
+  stream drains. The round driver was left alone because a workflow's
+  `agent()` returns only when the agent ends, so a script cannot see a
+  finding before its reviewer finishes. Handing each finished reviewer to a
+  fixer through `pipeline()` would put fixers in the tree while the round's
+  verifier reads it, and the verify's evidence would then belong to no
+  commit.
+- `.claude/agents/planner.md` § "Spend each check once": fewer, larger
+  workorders with lanes; tiered criteria (what the change can reach in a
+  middle workorder, the full set at a join and in the final workorder); tags
+  or merge-base expressions instead of hashes; backticks only on what should
+  run; slices safe at the end of a file; the "main moved" precondition that
+  merges when `git merge-tree --write-tree` is clean and main touches none of
+  the plan's files; a known flake fixed as a step.
+- `tools/plan_lint.py` gained `pinned-sha`, with a positive and a negative
+  test in `tests/test_workorder_plan_tools.py`.
+- The owner narrowed the merge-before-planning practice the same day: merge
+  `origin/main` before a plan when it touches files the plan will edit (or
+  the workorder tooling), and otherwise once before the pull requests.
+
+## Not yet measured
+
+None of this has run on a real workorder. The saving to look for next time
+is the number of full verifies a feature pays against the workorders and
+review passes it runs, the wall time from a finish review's first finding to
+its first fix, and whether a streamed fix ever collides with another. A fixer
+pair that touched the same file, or a pinned review that reported a finding
+the live tree had already fixed, would say the procedure needs tightening.
