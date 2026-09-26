@@ -1652,10 +1652,30 @@ class R17Tests(TempDirMixin, unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertFalse(self._operator(("Bash", {"command": cmd}), sub=str(abs(hash(cmd)))).passed)
 
-    def test_fail_git_writes_restores_and_force_stops(self):
+    def test_fail_git_writes_foreign_restores_and_force_stops(self):
         self.assertFalse(self._operator(("Bash", {"command": "git commit -am x"}), sub="g").passed)
         self.assertFalse(self._operator(("mcp__hs-drive__hs_saves_restore", {"backup_id": "b"}), sub="r").passed)
         self.assertFalse(self._operator(("mcp__hs-drive__hs_stop_game", {"force": True}), sub="f").passed)
+
+    def test_restoring_its_own_backup_is_its_teardown(self):
+        # Owner's rule, 2026-09-26: the session changed the state for a test,
+        # so it restores the backup it took, without asking.
+        r = self._operator(
+            ("mcp__hs-drive__hs_saves_backup", {"label": "x-live-2"}),
+            ("mcp__hs-drive__hs_stop_game", {}),
+            ("mcp__hs-drive__hs_saves_restore", {"backup_id": "20260926T101430Z_x-live-2",
+                                                 "confirm_backup_id": "20260926T101430Z_x-live-2"}),
+            sub="own")
+        self.assertTrue(r.passed, r.evidence)
+
+    def test_fail_restoring_another_sessions_backup(self):
+        r = self._operator(
+            ("mcp__hs-drive__hs_saves_backup", {"label": "x-live-2"}),
+            ("mcp__hs-drive__hs_saves_restore", {"backup_id": "20260925T175131Z_y-live-1",
+                                                 "confirm_backup_id": "20260925T175131Z_y-live-1"}),
+            sub="foreign")
+        self.assertFalse(r.passed)
+        self.assertTrue(any("did not take" in line for line in r.evidence), r.evidence)
 
     def test_fail_a_forced_lease_takeover(self):
         # A held lease is another session's live run; taking it is the

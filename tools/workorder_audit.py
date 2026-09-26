@@ -1320,7 +1320,10 @@ def rule_r17_live_operator_scope(session: Session) -> RuleResult:
     """`live-operator` runs the owner's game: it may write its own capture
     file and nothing else, never installs a build (the owner decides when the
     DLL their game loads changes), never runs a writing git command, never
-    restores saves or force-stops the game on its own, and never takes over
+    restores any backup but the one it took itself this session (restoring
+    its own is its teardown, by the owner's standing rule of 2026-09-26: a
+    test changed the state, so the test puts it back), never force-stops the
+    game, and never takes over
     another session's game lease: `hs_lease_acquire` with `force` is the
     owner's decision, made through the driver, and a held lease is the
     operator's `LIVE-ABORTED`."""
@@ -1328,6 +1331,7 @@ def rule_r17_live_operator_scope(session: Session) -> RuleResult:
     for agent in all_subagents(session):
         if agent.agent_type != "live-operator":
             continue
+        own_labels: set[str] = set()  # labels of the backups this operator took
         for call in agent.tool_calls:
             if call.name in EDIT_TOOLS:
                 fp = str(call.tool_input.get("file_path", "")).replace("\\", "/")
@@ -1340,8 +1344,16 @@ def rule_r17_live_operator_scope(session: Session) -> RuleResult:
                     evidence.append(f"{agent.label} ran git {'/'.join(dict.fromkeys(mutations))} at {call.ts_start}: {cmd[:120]}")
                 if DLL_INSTALL_RE.search(cmd):
                     evidence.append(f"{agent.label} installed a build at {call.ts_start}: {cmd[:120]}")
+            elif call.name.endswith("hs_saves_backup"):
+                label = str(call.tool_input.get("label", "")).strip()
+                if label:
+                    own_labels.add(label)
             elif call.name.endswith("hs_saves_restore"):
-                evidence.append(f"{agent.label} restored saves at {call.ts_start}")
+                # A backup id is `<UTC stamp>_<label>`; only one this operator
+                # took earlier in its own run is its own to restore.
+                bid = str(call.tool_input.get("backup_id", ""))
+                if not any(bid.endswith("_" + label) for label in own_labels):
+                    evidence.append(f"{agent.label} restored a backup it did not take ({bid!r}) at {call.ts_start}")
             elif call.name.endswith("hs_stop_game") and call.tool_input.get("force"):
                 evidence.append(f"{agent.label} force-stopped the game at {call.ts_start}")
             elif call.name.endswith("hs_lease_acquire") and call.tool_input.get("force"):

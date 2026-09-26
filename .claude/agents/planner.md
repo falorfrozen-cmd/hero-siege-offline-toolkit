@@ -134,8 +134,9 @@ cost three rounds and a split workorder on punctuation.
 workorder, not a new phase.** When the question a session raises can be
 answered with the DLL already installed, write it as `### Live procedure
 <n+1>` in this context file, with its own capture `<slug>-live-<n+1>.md` and
-its own criterion. Write its starting values against the state the previous
-session left, or have it restore first. Twice in forgepact-issue-14 such a
+its own criterion. Every session restores its own backup at teardown, so
+write its starting values against the state before the previous session, not
+the state that session left. Twice in forgepact-issue-14 such a
 follow-up (1c→1d, 1e→1f) became a whole new workorder that started 65 and 80
 minutes after the session before it.
 

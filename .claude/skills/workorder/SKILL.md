@@ -615,9 +615,13 @@ against a median driver of $12.
      `WHY` is another session driving the game: the user decides whether to
      wait or have you take the lease over (item 0).
 
-   Relay every `LEASE:` line's `restore_pending` and `warning` verbatim: the
-   operator backs up and does not restore, so a restore is owed until someone
-   runs `hs_saves_restore` on that backup.
+   The operator restores its own backup at teardown (the owner's standing
+   rule, 2026-09-26: a test changed the state, so the test puts it back), so
+   do not ask the owner about a restore. Report its `RESTORE:` line. A
+   `LEASE:` line still showing `restore_pending: true`, or a `RESTORE:` line
+   that is not clean or was skipped, means the saves still carry the session's
+   changes: say so, and restore that backup yourself (lease, restore, inspect,
+   release) unless the procedure deliberately kept the state.
 
    A capture `tools/live_checks.py` cannot read — a renamed, missing or
    unreadable check — is not repaired by anyone: report it, and re-run the
@@ -665,7 +669,8 @@ so in one line with the `resume` or `plan` command, and let the owner decide.
 
 `tools/workorder_audit.py` R17 fails a session whose operator wrote anything
 but its `<slug>-live-<n>.md`, installed a build, ran a writing git command,
-restored saves, force-stopped the game, or took over another holder's lease.
+restored a backup it did not take itself, force-stopped the game, or took
+over another holder's lease.
 R20 fails any other agent's edit to a capture, the driver's included.
 
 ### Step 5 — report
