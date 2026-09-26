@@ -375,6 +375,30 @@ active) — **measured** by read-only memory inspection.
   and `repeatGravity` change every frame. **Measured.**
   [toggle skills, Session 2](../ForgePact/docs/toggle-skills-research.md#session-2-1)
 
+### 5.9 The garbage collector
+
+Read with `gc_is_enabled`, `gc_get_target_frame_time` and `gc_get_stats` at the
+main menu on 2026-09-26 (`pe-6aaa6779-0cad4fc8`). All **measured**.
+
+- The collector is on, with the default 100 µs frame target, in five generations.
+  The menu holds about 577,600 objects, 482,474 of them in the oldest.
+- A struct that native code builds by calling a game script, and then lets go,
+  is collected like any other: after 20,000 items built one after another
+  through `InitItemFromJson` (§16.2) and one `gc_collect`, the object count was
+  back where it started (+20 in the generation that held them).
+- `gc_collect` collects at the end of the frame, not in the call: read in the
+  same frame nothing had changed; one frame later it had walked the heap, taking
+  12.7 ms with about 578,000 objects and 31.7 ms with about 692,000.
+- Memory the collector frees stays with the process. When 100,000-114,000 held
+  objects were released and collected, private bytes stayed at their high. Private bytes
+  therefore show the most the game has held, and never fall back after a burst.
+- About 45-126 s after launch, whether or not anything else runs, the game's
+  private bytes fall once by 240-370 MB (for example 3.15 → 2.78 GB) and stay there; brief
+  dips before it, up to 133 MB, come back. Measure a change against the level
+  after that fall.
+
+[Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#measurements)
+
 ---
 
 ## 6. Player and Global State
@@ -1339,6 +1363,7 @@ All **measured** unless marked.
 | Special content at 20× | dies at about 13.4k instances | §5.8 |
 | A creator acted on before `enemyCreatorTimer` is real | no crash — the pack never spawns | §11.2 |
 | Removing a stash item's map entry (`RemoveItemFromMap` on map 9) but leaving its cell in the tab | the game ends at its next stash save — measured twice, in two launches; `GridRemoveItem` on the cell in the same take avoids it | §17 |
+| A plugin DLL whose global `std::thread` is still joinable when the game exits | `std::terminate` while `ExitProcess` destroys that DLL's globals (the other threads are already gone): a WER report at close, `ucrtbase.dll` `0xc0000409`, fast-fail 7 (`abort`). HS-Offline-Tracker's producer does it; 9 of the 10 dumps Windows kept on 2026-09-25/26 show it, the game's own exit path under it | [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#the-crash-of-2026-09-26-013627) |
 
 ---
 
@@ -1381,9 +1406,20 @@ The argument and the numbers are in the Item Editor's
 - On the game thread, 342 of 342 queued items were built this way in about 2 s at
   the main menu, including items of a character that had never been loaded. The
   structs were left to the collector, never placed in a grid or saved.
+- **The collector does take them: a build keeps nothing.** At the main menu,
+  20,000 items built this way moved private bytes by +6.7 MB (white bases) and
+  +10.2 MB (white, unique, socketed and runeword items), and the level stayed
+  flat afterwards (§5.9). The same 20,000 kept on purpose, in a global struct,
+  grew private bytes by 106-117 MB and the collector's objects by 100,324-114,325
+  (two runs): a kept item costs about 5.4-6.0 KB and 5.0-5.7 objects. One session
+  built 197,704 items this way;
+  its crash dump records a peak commit of 3.14 GB, the same as a fresh launch
+  reaching the menu. A request builds about 430 items a second at ForgePact's
+  budget (4 ms and 200 items per frame).
 
 **Measured.**
-[Item Truth, step 2](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-2--the-game-checks-any-item-on-request-item-editor-2160-forgepact-145)
+[Item Truth, step 2](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-2--the-game-checks-any-item-on-request-item-editor-2160-forgepact-145),
+[Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md)
 
 ### 16.3 What a finished item carries
 
