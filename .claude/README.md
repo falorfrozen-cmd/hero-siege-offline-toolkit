@@ -553,7 +553,7 @@ Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
                    submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
                    lanes, join, items, streaming, answered, reviewScopes,
-                   maxParallel, maxAgents, tokenCeiling, itemAttempts } })
+                   maxParallel, maxAgents, tokenCeiling, itemAttempts, reviewPassCap } })
 ```
 
 `reviewers` is a map, one entry per applicable round-0 reviewer, valued

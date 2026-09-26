@@ -912,7 +912,7 @@ Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
                    lanes: [{ name, files: [...] }, ...], join,
                    items: [{ id, title, files, checks, after, shares, owner }, ...], streaming, answered: ['<id>', ...],
                    reviewScopes: { '<reviewer>': [{ label, paths: [...] }, ...] },
-                   maxParallel, maxAgents, tokenCeiling, itemAttempts } })
+                   maxParallel, maxAgents, tokenCeiling, itemAttempts, reviewPassCap } })
 ```
 
 `items` is pasted from `py -3 tools/plan_lint.py <plan> --items-json`
@@ -925,7 +925,9 @@ the planner releases, and it runs no gate before planning is complete.
 `### Decisions`. `reviewScopes` splits a reviewer into several that each read
 only their paths, run as separate reviewers. `maxParallel` (4),
 `maxAgents` (120), `tokenCeiling` (none) and `itemAttempts` (3) are the
-budgets in Step 2, "Items". Items that could not have come from that output
+budgets in Step 2, "Items"; `reviewPassCap` (4) is how many passes a
+reviewer makes as commits land before it waits for one final catch-up pass
+once nothing else is running. Items that could not have come from that output
 (a bad or duplicate id, no files, an `after:` naming no item, items beside
 lanes) are refused with `BAD-ARGS` before anything is spawned. A launch with
 no `items` runs in rounds exactly as below.

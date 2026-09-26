@@ -45,7 +45,8 @@ export const meta = {
 //                                       // is answered under '### Decisions'
 //   reviewScopes,                       // items mode: { '<reviewer>': [{ label, paths }] } splits a reviewer by scope
 //   maxParallel, maxAgents,             // items mode budgets: implementers at once (4), agents per launch (120),
-//   tokenCeiling, itemAttempts          // output tokens per launch (none), implement attempts per item (3)
+//   tokenCeiling, itemAttempts,         // output tokens per launch (none), implement attempts per item (3)
+//   reviewPassCap                       // passes a reviewer makes before it waits for the final catch-up (4)
 // }
 //
 // The count of patch rounds already spent (2i below) is read from `state`'s
