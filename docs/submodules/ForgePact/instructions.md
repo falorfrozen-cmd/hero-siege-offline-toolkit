@@ -2436,7 +2436,28 @@ How it works:
 The panel's first port moved from 8766 to 8780. `PORT_CANDIDATES` in
 `src/forgepact.py` is now `[8780, 8801, 8899, 9133, 9777]`, and `PORT` follows it.
 The pre-bind connect probe in `main()` is unchanged. After the list, the OS picks
-a port.
+a port, but never one the panel window refuses (see "Port-0 fallback" below).
+
+**Port-0 fallback (1.4.8, ForgePact#92).** When every candidate is busy,
+`main()` binds port 0. The OS can hand out a port on Chromium's restricted list
+(`CHROMIUM_RESTRICTED_PORTS` in `src/forgepact.py`: the Fetch standard's "bad
+port" list and Chromium's `net/base/port_util.cc` `kRestrictedPorts`, e.g. 1719,
+6000, 6665-6669, 10080). The window is pywebview on WebView2, which refuses such
+a port with `net::ERR_UNSAFE_PORT`, so the player saw a blank window. On a
+machine whose TCP dynamic range is 1024-15000 about 0.12% of port-0 binds hit
+one; Windows' default 49152-65535 range contains none.
+- `bind_safe_server(bind, max_attempts=SAFE_BIND_ATTEMPTS)` re-binds until the
+  port is not restricted, at most 10 times. A rejected server stays open until
+  a safe one is bound, so a sequential allocator cannot hand the same port back.
+- On exhaustion `main()` calls `refuse_to_start()`, which prints and shows a
+  Win32 message box (the exe is `--windowed`, so a print reaches nobody), and
+  returns without opening the window.
+- `tests/test_panel_port.py` injects the bind, so no test races the OS for a
+  real port. Given the same fake binds, the unfixed `main()` opened the window
+  on 6000.
+- The UI redesign's test sandbox (`tests/test_satanic_panel.py`) carries its own
+  copy of the list and helper; once both are on main, it should import them from
+  `forgepact` instead.
 
 **Why.**
 - 8766 is one of 8765-8774, the ten ports the Item Editor keeps for itself (see
