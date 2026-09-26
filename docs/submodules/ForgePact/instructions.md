@@ -921,6 +921,13 @@ own `ai-review.yml` does not do this: the redesign is ForgePact's.
 - **No browser in CI.** Captures and live checks (`impeccable-finish-reviewer`,
   impeccable's live mode and overlays, the panel's `e2e:*` suites) stay local.
 
+A pull request that edits `ai-review.yml` cannot be reviewed by it: the action
+skips with "Workflow validation failed. The workflow file must exist and have
+identical content to the version on the repository's default branch", and the
+"posted nothing" step then goes red (ForgePact #99, 2026-09-27). So a workflow
+change is proved only after it merges, on the next panel pull request that is
+labelled.
+
 The hub's `tests/test_ai_review_workflow.py` reads only the hub's file, but its
 assertions pass against ForgePact's copy too; keep them passing when editing
 either, by loading that module and pointing `WORKFLOW` at
