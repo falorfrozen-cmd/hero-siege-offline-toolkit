@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -548,6 +549,34 @@ class RunCriteriaTests(TempDirMixin, unittest.TestCase):
         run(run_criteria.main, [plan, "--out", str(self.tmp_path / "q")])
         self.assertGreaterEqual(time.monotonic() - started, 6)
 
+    def test_a_worker_that_raises_is_reported_not_hung(self):
+        # PR #239 review: an exception in a worker thread never reached the
+        # result queue, and the main loop waited on it forever.
+        real = run_criteria._run_one
+
+        def boom(bash, cmd, root, timeout):
+            if "explode" in cmd:
+                raise OSError("simulated spawn failure")
+            return real(bash, cmd, root, timeout)
+        run_criteria._run_one = boom
+        self.addCleanup(setattr, run_criteria, "_run_one", real)
+        plan = self.write("e-plan.md", "## Acceptance criteria\n\n- [ ] (class pure) `bash -c \"echo explode\"` ok\n"
+                                       "- [ ] (class pure) `bash -c \"echo after\"` ok\n")
+        box = {}
+        t = threading.Thread(target=lambda: box.update(r=run(run_criteria.main, [plan, "--jobs", "2", "--out",
+                                                                                  str(self.tmp_path / "e")])))
+        t.start()
+        t.join(30)
+        self.assertFalse(t.is_alive(), "the parallel run hung on a worker's exception")
+        rc, out = box["r"]
+        self.assertEqual(rc, 0, out)
+        self.assertIn("-> exit ERROR", out)
+        self.assertIn("simulated spawn failure", out)
+        self.assertIn("after", out, "the criterion after the failure was never printed")
+
+    def test_a_shell_that_does_not_exist_is_a_usage_error(self):
+        self.assertEqual(self.runner("--jobs", "2", "--shell", str(self.tmp_path / "no-such-bash.exe"))[0], 2)
+
     def test_item_runs_that_items_checks(self):
         plan = self.write("i-plan.md", ITEM_PLAN)
         rc, out = run(run_criteria.main, [plan, "--item", "toolbar", "--out", str(self.tmp_path / "i")])
@@ -814,6 +843,28 @@ class ItemCommitTests(TempDirMixin, unittest.TestCase):
         shown = self.git("show", "--name-only", "--format=", "HEAD").stdout.split()
         self.assertEqual(sorted(shown), ["mine.py", "new.py"])
         self.assertIn("theirs.py", self.git("diff", "--cached", "--name-only").stdout, "someone else's stage was lost")
+
+    def test_a_rename_inside_the_items_paths_commits_both_sides(self):
+        # PR #239 review: `diff --name-only` printed only the new path, so the
+        # old path's deletion stayed staged for someone else's commit.
+        (self.tmp_path / "d").mkdir()
+        self.write("d/a.txt", "a\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "d")
+        (self.tmp_path / "d" / "a.txt").rename(self.tmp_path / "d" / "b.txt")
+        rc, out = run(item_commit.main, ["--message", "item r", "--root", str(self.tmp_path), "--", "d/"])
+        self.assertEqual(rc, 0, out)
+        shown = self.git("show", "--name-status", "--no-renames", "--format=", "HEAD").stdout.split()
+        self.assertEqual(shown, ["D", "d/a.txt", "A", "d/b.txt"])
+        self.assertEqual(self.git("diff", "--cached", "--name-only").stdout.strip(), "", "a deletion was left staged")
+
+    def test_a_whole_submodule_path_is_every_path_inside_it_never_the_gitlink(self):
+        # PR #239 review: `ForgePact/` sliced to an empty pathspec, and a bare
+        # `ForgePact` went to the hub as a hand-made gitlink bump.
+        split = item_commit.split_by_repo(["ForgePact/", "ForgePact", "ForgePact/a.py", "docs/x.md", "docs/"],
+                                          ["ForgePact"])
+        self.assertEqual(split, {"ForgePact": [".", ".", "a.py"], ".": ["docs/x.md", "docs"]})
+        self.assertNotIn("", sum(split.values(), []))
 
     def test_nothing_to_commit_is_not_an_error(self):
         rc, out = run(item_commit.main, ["--message", "item a", "--root", str(self.tmp_path), "--", "mine.py"])

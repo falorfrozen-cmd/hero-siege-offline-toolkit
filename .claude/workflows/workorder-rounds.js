@@ -122,6 +122,17 @@ const pathsOverlap = (a, b) => {
 }
 const filesOverlap = (fa, fb) => fa === '*' || fb === '*' || fa.some(a => fb.some(b => pathsOverlap(a, b)))
 
+// Whether `item` waits, through its `after:` chain, on the item `id`.
+function waitsOn(byId, item, id, seen = new Set()) {
+  for (const d of item.after || []) {
+    if (d === id) return true
+    if (seen.has(d) || !byId[d]) continue
+    seen.add(d)
+    if (waitsOn(byId, byId[d], id, seen)) return true
+  }
+  return false
+}
+
 // The ids to start now, in plan order, at most `maxParallel` running in all.
 function nextToStart(items, st, maxParallel) {
   const byId = Object.fromEntries(items.map(it => [it.id, it]))
@@ -135,8 +146,11 @@ function nextToStart(items, st, maxParallel) {
     if (!(it.after || []).every(d => st[d] && st[d].status === 'done')) continue
     const busy = running.concat(out.map(id => byId[id]))
     if (busy.some(o => filesOverlap(o.files, it.files))) continue
-    const queuedAhead = items.slice(0, i).some(o => filesOverlap(o.files, it.files) && (st[o.id].status === 'pending' ||
-      ((st[o.id].status === 'parked' || st[o.id].status === 'held') && st[o.id].touched)))
+    // An earlier item that itself waits on this one (`after:`, directly or
+    // through others) is not ahead of it in the queue: holding this one for
+    // it would leave both pending forever.
+    const queuedAhead = items.slice(0, i).some(o => filesOverlap(o.files, it.files) && !waitsOn(byId, o, it.id) &&
+      (st[o.id].status === 'pending' || ((st[o.id].status === 'parked' || st[o.id].status === 'held') && st[o.id].touched)))
     if (queuedAhead) continue
     if (it.files === '*' && busy.length) continue
     out.push(it.id)
@@ -822,6 +836,9 @@ async function runItems(n) {
   const reviewers = Object.keys(A.reviewers).flatMap(name => (scopes[name] && scopes[name].length ? scopes[name] : [null]).map(sc => ({
     name, key: sc ? `${name}@${sc.label}` : name, scope: sc, state: A.reviewers[name], seen: 0, passes: 0, fixes: 0,
     base: baseHeads, findings: (A.priorFindings || {})[name] || [], failed: false, running: false,
+    // A reviewer entering as blocking re-reads the tree before any gate, even
+    // on a relaunch where every item is already done and nothing will land.
+    recheck: A.reviewers[name] === 'blocking' ? { initial: true } : null,
   })))
   const landed = [] // one entry per item or fix that committed: { id, paths, flags }
   const blocking = [], nonBlocking = [], planDefects = [], gateRuns = [], passLog = {}
@@ -869,6 +886,8 @@ async function runItems(n) {
         landed.push({ id: it.id, paths: impl.paths || [], flags: impl.flags || '' })
       }
       if (impl.verdict !== 'IMPL-DONE') return { verdict: impl.verdict, evidence: impl.evidence || impl.question || '', progress: impl.progress_so_far }
+      s.report = impl.report || ''
+      s.committed = !!(impl.commits && impl.commits.length)
       if (it.kind !== 'item' || !it.checks.length) return { verdict: 'DONE' }
       const v = await spawn(checkPrompt(it, s), { label: `item-verifier:${it.id}:a${s.attempts}:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA })
       if (!v) return { park: 'the item-check verifier returned nothing' }
@@ -888,6 +907,11 @@ async function runItems(n) {
   }
   const settleItem = (it, r) => {
     const s = st[it.id]
+    // A finished fix is always re-read by the reviewer that raised it --
+    // including one that committed nothing because it disputes the finding,
+    // which lands no commit that would otherwise make the reviewer due.
+    const raisedBy = it.kind === 'fix' && reviewers.find(rv => rv.key === it.reviewer)
+    if (raisedBy && r && r.verdict === 'DONE') raisedBy.recheck = s.committed ? null : { fix: it.id, report: s.report }
     if (r && r.verdict === 'DONE') { s.status = 'done'; s.pending = r.pending || []; return }
     s.status = 'parked'
     if (!r) { s.reason = 'the item threw'; return }
@@ -909,7 +933,9 @@ async function runItems(n) {
   })
   const inScope = (rv, paths) => !rv.scope || paths.some(p => (rv.scope.paths || []).some(g => pathsOverlap(g, p)))
   const reviewerDue = (rv, finalCatchUp) => {
-    if (rv.running || rv.failed || rv.seen >= landed.length) return false
+    if (rv.running || rv.failed) return false
+    if (rv.recheck) return true
+    if (rv.seen >= landed.length) return false
     const fresh = landed.slice(rv.seen)
     const d = deltaOf(fresh)
     const wanted = rv.state === 'never' || rv.state === 'blocking' || ((TRIGGERS[rv.name] || (() => true))(d) && inScope(rv, d.paths))
@@ -926,7 +952,12 @@ async function runItems(n) {
   async function runReview(rv) {
     rv.running = true
     const upto = landed.length
-    const prior = rv.state === 'blocking' ? priorNote(rv.findings, PRIOR_ASK) : ''
+    const disputed = rv.recheck && rv.recheck.fix && upto <= rv.seen ? rv.recheck : null
+    rv.recheck = null
+    const prior = rv.state === 'blocking'
+      ? priorNote(rv.findings, disputed ? 'This is the finding the fixer disputes.' : PRIOR_ASK) +
+        (disputed ? `The fixer (${disputed.fix}) committed nothing for it; there is no new commit to read. Its report: ${String(disputed.report).slice(0, 1500)}\nConfirm the finding with the command and output that proves it, against the commit HEAD points at, or withdraw it.\n` : '')
+      : ''
     const pending = inFlight()
     const r = await spawn(
       `You are reviewing committed work. You are NOT given the workorder; this is its intent:\n${A.goalExcerpt}\n${OUT_OF_SCOPE_NOTE}\n${reviewScopeText(rv)}\n` +
@@ -1048,6 +1079,12 @@ async function runItems(n) {
     if (planDefects.length) return finish('PLAN-DEFECT', { detail: planDefects.map(p => `${p.reviewer}: ${p.summary}`).join(' || ') })
     if (all.some(it => ['parked', 'held'].includes(st[it.id].status))) {
       return finish('PARKED', { detail: 'every item that could run has run; the parked items need the driver, the rest wait on them' })
+    }
+    // A BLOCKING finding is closed only by its reviewer, never by a fixer's
+    // word; one still open here has no fix left to run.
+    const stillBlocking = reviewers.filter(rv => rv.state === 'blocking')
+    if (stillBlocking.length) {
+      return finish('PARKED', { detail: `BLOCKING findings still open with no fix to run: ${stillBlocking.map(rv => rv.key).join(', ')}` })
     }
     // 3b: the whole tree, once.
     const v = await spawn(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${VERIFIER_CRITERIA_NOTE}${VERIFIER_CONTEXT_NOTE}`,

@@ -371,13 +371,18 @@ def run_parallel(rows: list, jobs: list, bash: str, root: Path, out: Path, timeo
     browser_slots = [f"browser-{i}" for i in range(browser_cap)]
 
     def worker(job):
-        names = "build" if job["cls"] == "build" else browser_slots if job["cls"] == "browser" else None
-        if names:
-            with workorder_lock.held(names, locks, timeout=timeout) as got:
-                result = _run_one(bash, job["cmd"], root, timeout) if got else \
-                    ("LOCKED", 0.0, f"[run_criteria: the {job['cls']} lock was not free after {timeout}s]")
-        else:
-            result = _run_one(bash, job["cmd"], root, timeout)
+        # Every path puts a result: a job that never reports would leave the
+        # main loop waiting on `finished` forever.
+        try:
+            names = "build" if job["cls"] == "build" else browser_slots if job["cls"] == "browser" else None
+            if names:
+                with workorder_lock.held(names, locks, timeout=timeout) as got:
+                    result = _run_one(bash, job["cmd"], root, timeout) if got else \
+                        ("LOCKED", 0.0, f"[run_criteria: the {job['cls']} lock was not free after {timeout}s]")
+            else:
+                result = _run_one(bash, job["cmd"], root, timeout)
+        except BaseException as exc:  # noqa: BLE001 -- reported as the job's result
+            result = ("ERROR", 0.0, f"[run_criteria: {type(exc).__name__}: {exc}]")
         finished.put((job["id"], result))
 
     printed = 0
@@ -480,6 +485,9 @@ def main(argv=None) -> int:
     bash = None if args.list else find_bash(args.shell)
     if not args.list and not bash:
         print("run_criteria: no bash found (pass --shell PATH)", file=sys.stderr)
+        return 2
+    if bash and not (Path(bash).is_file() or shutil.which(bash)):
+        print(f"run_criteria: --shell {bash} does not exist", file=sys.stderr)
         return 2
     gates = gates_set(text)
     root = checkout_root(plan)

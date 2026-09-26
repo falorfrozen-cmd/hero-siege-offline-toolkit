@@ -63,21 +63,27 @@ def submodules(root: Path) -> list:
 
 
 def split_by_repo(paths: list, subs: list) -> dict:
-    """{repo: [pathspec relative to that repo]}; '.' is the hub."""
+    """{repo: [pathspec relative to that repo]}; '.' is the hub. A path that
+    names a whole submodule (`ForgePact` or `ForgePact/`) is every path
+    inside it -- never the hub's gitlink, which only the submodule-dispatch
+    workflow bumps."""
     out: dict = {}
     for p in paths:
-        p = p.replace("\\", "/").removeprefix("./")
+        p = p.replace("\\", "/").removeprefix("./").rstrip("/") or "."
         owner = next((s for s in subs if p == s or p.startswith(s + "/")), None)
-        if owner and p != owner:
-            out.setdefault(owner, []).append(p[len(owner) + 1:])
+        if owner:
+            out.setdefault(owner, []).append(p[len(owner) + 1:] or ".")
         else:
             out.setdefault(".", []).append(p)
     return out
 
 
-def commit(root: Path, message: str, paths: list) -> list:
-    """Commit each repository's share of `paths`; return printed lines."""
-    lines, committed, flags = [], [], set()
+def commit(root: Path, message: str, paths: list, lines: list | None = None) -> list:
+    """Commit each repository's share of `paths`; return printed lines. The
+    `commit` lines go into `lines` as each repository commits, so a caller
+    that catches a later repository's failure still reports what landed."""
+    lines = [] if lines is None else lines
+    committed, flags = [], set()
     for repo_key, specs in split_by_repo(paths, submodules(root)).items():
         repo = root if repo_key == "." else root / repo_key
         if not (repo / ".git").exists():
@@ -89,7 +95,10 @@ def commit(root: Path, message: str, paths: list) -> list:
         if not specs:
             continue
         git(repo, "add", "-A", "--", *specs)
-        staged = [n for n in git(repo, "diff", "--cached", "--name-only", "--", *specs).stdout.splitlines() if n]
+        # --no-renames: a rename's old path must be committed too, or its
+        # deletion stays staged for someone else's commit to sweep up.
+        staged = [n for n in git(repo, "diff", "--cached", "--name-only", "--no-renames", "--",
+                                 *specs).stdout.splitlines() if n]
         if not staged:
             continue
         git(repo, "commit", "-q", "-m", message, "--", *staged)
@@ -130,10 +139,12 @@ def main(argv=None) -> int:
         if name is None:
             print("item_commit: the commit lock was not free after 600s", file=sys.stderr)
             return workorder_lock.LOCK_TIMEOUT_EXIT
+        lines: list = []
         try:
-            lines = commit(root, args.message, args.paths)
+            commit(root, args.message, args.paths, lines)
         except RuntimeError as exc:
-            print(str(exc))
+            # Repositories committed before the failure are reported too.
+            print("\n".join(lines + [str(exc)]))
             return 1
     print("\n".join(lines))
     return 0

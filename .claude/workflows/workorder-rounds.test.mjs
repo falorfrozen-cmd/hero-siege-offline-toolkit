@@ -1453,3 +1453,56 @@ test('items: a streaming plan pulls newly released items while the first ones ru
   assert.match(prompts['refill:1:r0'], /--items-json --known a,b,c --wait 480/)
   assert.ok(calls.indexOf('verifier:r0') > calls.indexOf('refill:2:r0'), 'the gate ran before planning was complete')
 })
+
+test('scheduler: an earlier item waiting (after:) on a later file-sharer does not hold it, so neither deadlocks', () => {
+  // PR #239 review: a (declared first, after: b) and b share x.css.
+  const items = [IT('a', ['x.css'], { after: ['b'] }), IT('b', ['x.css'])]
+  assert.deepEqual(sched.nextToStart(items, ST(items), 4), ['b'])
+  assert.deepEqual(sched.nextToStart(items, ST(items, { b: { status: 'done' } }), 4), ['a'])
+  // Through a chain, too: a after c, c after b.
+  const chain = [IT('a', ['x.css'], { after: ['c'] }), IT('b', ['x.css']), IT('c', ['y.css'], { after: ['b'] })]
+  assert.deepEqual(sched.nextToStart(chain, ST(chain), 4), ['b'])
+  // Control: an earlier sharer that does not wait on it still goes first.
+  const plain = [IT('a', ['x.css']), IT('b', ['x.css'])]
+  assert.deepEqual(sched.nextToStart(plain, ST(plain), 4), ['a'])
+})
+
+test('items: a fixer that disputes a finding and commits nothing is re-reviewed before any gate', async () => {
+  // PR #239 review: with no new commit the blocking reviewer was never due,
+  // and the gate still ran and passed.
+  let passes = 0
+  const finding = { where: 'panel/a.css:12', problem: 'wrong token', evidence: 'x' }
+  const docs = () => (passes++ === 0 ? { ...CLEAN, blocking: [finding], reviewed_heads: [{ repo: '.', sha: 'h1' }] }
+    : { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'h1' }] })
+  const disputes = { ...DONE, report: 'the token is right: tokens.css:4 defines it', commits: [], paths: [] }
+  const { result, calls, prompts } = await runTimed(ITEMS_BASE, itemsReply({ 'docs-sync-reviewer': docs, 'fix-implementer': disputes }))
+  assert.equal(result.outcome, 'PASS')
+  const recheck = calls.filter(c => c.startsWith('docs-sync-reviewer:')).pop()
+  assert.ok(calls.indexOf(recheck) > calls.indexOf('fix-implementer:fix-1:r0'), 'the disputed finding was never re-read')
+  assert.match(prompts[recheck], /the fixer disputes/)
+  assert.match(prompts[recheck], /tokens\.css:4 defines it/)
+  assert.ok(calls.indexOf('verifier:r0') > calls.indexOf(recheck), 'the gate ran before the reviewer confirmed or withdrew')
+  // Control: a reviewer that holds its finding after the dispute keeps the
+  // run from passing -- it raises another fix, and at its cap the run parks.
+  const stubborn = () => ({ ...CLEAN, blocking: [finding], reviewed_heads: [{ repo: '.', sha: 'h1' }] })
+  const held = await runTimed(ITEMS_BASE, itemsReply({ 'docs-sync-reviewer': stubborn, 'fix-implementer': disputes }))
+  assert.equal(held.result.outcome, 'PARKED')
+  assert.ok(!held.calls.includes('verifier:r0'), 'the gate ran over an open BLOCKING finding')
+})
+
+test('items: a relaunch with every item done still re-reads a reviewer that entered blocking', async () => {
+  const args = { ...ITEMS_BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' },
+    priorFindings: { 'docs-sync-reviewer': [{ where: 'docs/c.md', problem: 'stale command' }] },
+    state: '## State\nround: 1\nitems: a=done; b=done; c=done\n' }
+  const { result, calls, prompts } = await runTimed(args, itemsReply())
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(calls.includes('docs-sync-reviewer:p1:r1'), 'the blocking reviewer never ran')
+  assert.match(prompts['docs-sync-reviewer:p1:r1'], /stale command/)
+  assert.ok(calls.indexOf('verifier:r1') > calls.indexOf('docs-sync-reviewer:p1:r1'))
+  assert.ok(!calls.some(c => c.startsWith('item-implementer:')), 'a done item ran again')
+  // Control: if it still finds the problem, the gate does not run over it.
+  const still = { ...CLEAN, blocking: [{ where: 'docs/c.md', problem: 'stale command', evidence: 'x' }], reviewed_heads: [{ repo: '.', sha: 'h' }] }
+  const r = await runTimed(args, itemsReply({ 'docs-sync-reviewer': still }))
+  assert.ok(r.calls.includes('fix-implementer:fix-1:r1'))
+  assert.notEqual(r.result.outcome, 'PASS')
+})
