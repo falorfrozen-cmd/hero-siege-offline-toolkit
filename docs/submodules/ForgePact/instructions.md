@@ -879,6 +879,53 @@ commented on by Claude) goes red there too, with its reason. Each run
 uploads its full result as the `claude-execution-output` artifact, which is
 where per-model token counts and the names of any denied tools can be read.
 
+### Panel changes get the UI design tooling (ForgePact only)
+
+When a pull request changes panel source (`panel/**` `.svelte`, `.css`,
+`.html`, `.js`, `.ts`, `.mjs`, excluding `panel/tests/`, `panel/scripts/`,
+`panel/dist/`, `node_modules` and `*.config.js`), the review also runs the UI
+tooling the panel is developed with and posts it in the same comment, under
+`### impeccable audit` and `### review-animations` (plus `### taste-skill` if
+the reviewer used it). Each section carries its findings, "No findings." or
+why the tool did not run; the code-review command's confidence filter and
+early stops do not apply to them, and a last step, "Fail if the design tools
+went unreported", turns the job red when either heading is missing. The hub's
+own `ai-review.yml` does not do this: the redesign is ForgePact's.
+
+- **Plugins.** `impeccable@impeccable` and `taste-skill@taste-skill` load
+  beside `code-review`, from the same marketplaces the hub's
+  `.claude/settings.json` enables. They are unpinned, like `code-review`.
+- **impeccable's launcher runs in the workflow, not in the model.** The skill
+  would start by executing `scripts/impeccable context` and, for an audit,
+  `impeccable detect`. That path sits under the plugin's versioned install
+  directory, and a Bash permission rule can only name it with a leading `*`,
+  which Claude Code warns against. So a step sparse-checks out
+  `pbakaus/impeccable`'s `plugin/skills/impeccable` (the plugin's own source)
+  and runs both verbs over the changed files into `.review-tools/out/`; the
+  launcher fetches a self-contained engine binary and verifies its SHA-256, so
+  neither Node nor npx is needed. A failed scan does not fail the job; its exit
+  status and stderr reach the reviewer, who must say the detector did not run.
+  The detector's positive control (gradient text and a glow shadow in a scratch
+  CSS file) reports `gradient-text` with exit 2, and the redesign's 30 panel
+  source files scanned clean (`[]`, exit 0) on 2026-09-27.
+- **review-animations** comes from a sparse checkout of this hub's
+  `.claude/skills` (public, so the job's token reads it), rather than a copy in
+  ForgePact, so the vendored Emil skills keep one source of truth pinned by
+  `.claude/skills/THIRD_PARTY.md`. It is `disable-model-invocation`, so the
+  reviewer reads its `SKILL.md` with `Read`. A keyword scan of added lines
+  (`transition`, `animation`, `@keyframes`, `@starting-style`, `--motion-`,
+  `data-instant`, `prefers-reduced-motion`, ...) points it at likely motion
+  changes; the reviewer still decides.
+- **`--allowedTools` gains nothing.** `Skill` and `Read` cover everything the
+  design tools need once the launcher runs in the workflow.
+- **No browser in CI.** Captures and live checks (`impeccable-finish-reviewer`,
+  impeccable's live mode and overlays, the panel's `e2e:*` suites) stay local.
+
+The hub's `tests/test_ai_review_workflow.py` reads only the hub's file, but its
+assertions pass against ForgePact's copy too; keep them passing when editing
+either, by loading that module and pointing `WORKFLOW` at
+`ForgePact/.github/workflows/ai-review.yml`.
+
 This lives in its own section rather than on the "CI / Pipeline Availability"
 line above because that line is rewritten whenever a release workflow changes,
 and every such rewrite conflicted with it.
