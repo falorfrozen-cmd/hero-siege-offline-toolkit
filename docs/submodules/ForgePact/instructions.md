@@ -1954,6 +1954,7 @@ here before pressing Publish.
 | v1.4.5 | [35831690354](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/35831690354) | `5f7a8d728d3203b9184d345efe652b92c74cedc435eac4f37fd4d5b60228ac03` | yes: Install Mod Plugin from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`48a8450b02ef`) | `==== BloodPact plugin loaded ==== v1.4.5` | 1.4.5 | `hhlabel` -> `callback ok` | pass | 2026-09-23 | falorfrozen-cmd (install and checks run by Claude Code) |
 | v1.4.5 (tag at `0a55d97`) | [36051361059](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36051361059) | `ca29efd5ea8d79dde3de52b492733d513d9110b3d0933ffcf5d2d8329c9619ef` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`a14d7237ea4a`, `BUILD-INFO.json` `plugin_sha256`) | `==== BloodPact plugin loaded ==== v1.4.5`, first line of the session launched after the install | 1.4.5 (`/api/state`) | `hhlabel` -> `ON (0 active, callback ok)` | pass | 2026-09-25 | falorfrozen-cmd (install and checks run by Claude Code) |
 | v1.4.6 (tag at `d9aee6f`) | [36164948121](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36164948121) | `2ca25fddaf881309d33cac0efc7cfc89e5936950cccff68d13964ec2e93e44a9` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.6` folder; the installed `BloodPactPlugin.dll` matched the zip's (`6af792801764`, `BUILD-INFO.json` `plugin_sha256`). The AFK FARM and Seraph plugins in `mods/aurie` were left as they were. | `==== BloodPact plugin loaded ==== v1.4.6`, the first boot line of the session launched after the install (panel **Launch**, `POST /api/launch`) | 1.4.6 (`/api/state`), served on 8780 | `hhlabel` -> `ON (0 active, callback ok)` | pass | 2026-09-26 | falorfrozen-cmd (install and checks run by Claude Code) |
+| v1.4.7 (tag at `95bd1cd`) | [36215007747](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36215007747) | `32d37a0032f209b248b827b9641133e393c6c9230a2c3d309b10b8dc82016146` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.7` folder; the installed `BloodPactPlugin.dll` matched the zip's (`bd3bf3564a77`, `BUILD-INFO.json` `plugin_sha256`). The AFK FARM and Seraph plugins in `mods/aurie` were left as they were. | `==== BloodPact plugin loaded ==== v1.4.7`, the first boot line of the session launched after the install (panel **Launch**, `POST /api/launch`, 10 s) | 1.4.7 (`/api/state`, which lists the new `primeevil` slider), served on 8780 | `hhlabel` -> `ON (0 active, callback ok)`; also `droprate group primeevil 5` -> `x5, 12 esya (ornek: 27 -> 5)`, then back to x1 | pass | 2026-09-26 | falorfrozen-cmd (install and checks run by Claude Code) |
 
 The first `v1.4.5` row built an earlier `v1.4.5` tag. That draft was never
 published, and the tag was cut again at `0a55d97` on 2026-09-24. The second row
@@ -2459,3 +2460,71 @@ publishing, run Actions → Catalog → Run workflow with `only` set to `forgepa
 - In the launch gate (row above), the zip's panel came up on 8780.
 - This pull request was merged right before publishing.
 - Do not put a version number in a comment in `src/forgepact.py`. VersionStampTests allow the version exactly once, and a comment naming the *next* version passes until the tag workflow bumps to it. That is what failed the first `v1.4.6` build.
+
+## Prime Evil Parts slider (1.4.7, 2026-09-26)
+
+A player asked for a slider for the Key of Terror parts, like the Blood Pact's
+"Prime Evil part drop rate" row. The research record is ForgePact's
+`docs/prime-evil-parts-research.md`.
+
+**What changed.**
+- The Loot tab gets **Prime Evil Parts (Key of Terror)**:
+  `KEYS` entry `("primeevil", ..., None)`. With no drop type, it sends only
+  `droprate group primeevil <m>`: it scales the parts' own roll where the game
+  already rolls it, which is on bosses.
+- The parts share LoadDrops type 41 with Relics. So the slider never opens that
+  gate, and the Relic gate's part guard (`Hook_DropBossParts` /
+  `Hook_DropUberParts`) stays.
+- **Plugin fix:** the `primeevil` group's fragment was "satans_horn", which
+  missed `collectible_satans_infernal_horn`. It is now "satans_", which in
+  category 13 matches only the two horns: 12 of 12 parts.
+
+**Game facts.** Folded into `docs/RUNTIME_DATA_MODELS.md`: static reading of the
+Sep-17 build, plus the live kills.
+- `DropBossParts`, `DropBossPartsNext` and `DropUberParts` are called only from
+  `LoadDrops`.
+- `LoadDrops` is called only from `DropItem`. Monsters reach `DropItem` from
+  `Enemy_Parent_obj`'s Destroy event.
+- `DropBossParts` reads the part entry's drop rate and player stat 736.
+  `DropUberParts` reads no drop rate.
+
+**Measured.** 2026-09-26, research build, hero Suh (softcore), Act_01_01:
+
+| `droprate group primeevil` | Karp King kills | bellybuttons | per kill |
+| --- | --- | --- | --- |
+| x1 | 15 | 11 | about 0.7 |
+| x5 | 12 | 36 | 3.0 |
+| x35 | 15 | 138 | about 9.2 |
+
+These are M11 and M12 in `hs-game-sdk/curated/drop_roll_measurements.json`,
+pinned by `tests/test_drop_roll_model.py`. The measured x5/x1 ratio is 4.1; its
+95% band from the counts, 2.1-8.0, contains the lever's 5. Above x35 nothing
+more changes.
+
+**How the kills were made, without input.**
+1. HS-AFK-Expedition's `tools/game_session.py prepare`, then
+   `travel --room Act_01_01`, entered the hero.
+2. ForgePact's research build spawned the boss 1200 px away:
+   `cb instance_create_depth x+1200 y 0 2368`.
+3. It set the boss's protected HP to 0: `callnum PC_SetVariableGMLWrapper <enemy_hp> 0`.
+4. `bp_ipc\itemdrops.jsonl` was read.
+
+`tools/boss_drop_trial.py` repeats this loop.
+
+Things that do not work:
+- In town a boss removes itself.
+- `instance_destroy` on a live boss drops nothing.
+- A boss next to the hero killed them in about 15 s.
+
+**Not verified.**
+- Uber bosses: Uber Anubis did not die from HP 0, so infernal parts from
+  `DropUberParts` were not measured. That script reads no drop rate, so the
+  slider probably does not change them.
+- The meaning of stat 736.
+- Which bosses in which zones roll type 41 natively.
+
+Test: ForgePact `tests/test_prime_evil_parts_contract.py`.
+
+**Release build.** The 1.4.7 launch gate (its row is in "CI build launch
+gate") sent `droprate group primeevil 5` to the released plugin. It answered
+`x5, 12 esya (ornek: 27 -> 5)`, so the shipped group covers all 12 parts.
