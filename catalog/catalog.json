@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-26T03:43:53Z",
+  "generated": "2026-09-26T03:48:33Z",
   "tools": [
     {
       "id": "forgepact",
@@ -60,9 +60,9 @@
       "summary": "Item creator, stash editor and inventory customizer.",
       "repo": "falorfrozen-cmd/hero-siege-item-editor",
       "submodule": "hero-siege-item-editor",
-      "version": "2.16.2",
-      "tag": "v2.16.2",
-      "published": "2026-09-25T16:32:58Z",
+      "version": "2.16.3",
+      "tag": "v2.16.3",
+      "published": "2026-09-26T03:48:11Z",
       "license": "NOASSERTION",
       "requires": {
         "admin": false,
@@ -72,10 +72,10 @@
       },
       "artifact": {
         "kind": "exe",
-        "name": "HeroSiegeItemEditor-v2.16.2-s10.exe",
-        "url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/download/v2.16.2/HeroSiegeItemEditor-v2.16.2-s10.exe",
-        "size": 19744093,
-        "sha256": "506ba048b83385a1fcb74684c15d22ec30acc4ba084fbfd6c64df7342b13e89b",
+        "name": "HeroSiegeItemEditor-v2.16.3-s10.exe",
+        "url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/download/v2.16.3/HeroSiegeItemEditor-v2.16.3-s10.exe",
+        "size": 19771301,
+        "sha256": "288b540452affc0e00105840ca0a1cb6bad8d56102f02203b5fe769d754e154b",
         "sha256_source": "published+verified",
         "strip_prefix": "",
         "install_as": "HeroSiegeItemEditor.exe"
@@ -92,8 +92,8 @@
           "timeout_s": 25
         }
       },
-      "notes_url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/tag/v2.16.2",
-      "notes": "# Hero Siege Item Editor 2.16.2\n\n## What's fixed\n\n- **The editor starts while ForgePact's panel is open.** The editor keeps ten\n  local ports, 8765-8774, so that no older copy of it can start alongside.\n  ForgePact's panel prefers 8766, one of those ten. Now, when another program\n  already holds one of them, the editor leaves that port to it and takes the\n  rest. Before, it bound 8766 on top of the panel without noticing, or, where a\n  program would not share its port, refused to start (\"Local editor port … is\n  occupied by an unidentified or legacy process\").\n- **It still refuses to run beside another Item Editor** of a different\n  version. That now includes builds older than 2.7.2: before, the editor could\n  start beside one of those without noticing.\n- Starting the editor while the same version already runs still brings up the\n  running one.\n\nEverything else is as in 2.16.1. Download the exe and run it; no install.",
+      "notes_url": "https://github.com/falorfrozen-cmd/hero-siege-item-editor/releases/tag/v2.16.3",
+      "notes": "# Hero Siege Item Editor 2.16.3\n\n## What's fixed\n\n- **White bases come out white.** A white base's seed was chosen for its best\n  stat rolls only, and the game rolls rarity from the same seed. Built by the\n  game, 160 of the 363 white equipment bases the editor made came out Superior,\n  Rare or better (the yellow \"white\" bases players reported). Every white base\n  now takes a seed the running game itself built as Common, with its stats at\n  their top. Checked in the game: 308 of 308 Common. Amulets and rings are never\n  Common in the game, so nothing changes for them.\n- **Forged runewords form.** A runeword forms only on a Common base, and about a\n  third of the recipe x base pairs landed on a Superior or Rare one. Every\n  runeword is now forged on a Common seed. Checked in the game: 3,687 of 3,715\n  pairs formed; the other 28 are below.\n- **Sockets match the game.**\n  - A white base shows exactly the socket count you set, up to the most the game\n    rolls for that base (for example 5 on a Royal Shield, none on gloves or\n    belts).\n  - A unique has exactly the sockets its seed rolls; the game ignores any other\n    saved count. The editor now writes the game's count and keeps the socket\n    editor to it. 59 uniques used to show more sockets than they have in the\n    game (Zephy's Gown 4 instead of 3, most unique charms 2 instead of none),\n    which is why a gem could go into some sockets and not the rest. Seven of\n    them now get a seed that rolls the count the editor used to promise.\n- **Runeword bases the game refuses are closed.** Disaster and Celestus do not\n  form on some of the bases their targets name, even on a Common base with the\n  right sockets (20 and 8 bases). Those bases now show as unavailable instead of\n  forging an item that is not a runeword.\n- **A white Great Helm no longer becomes the Miner's Helmet.** A new item never\n  takes a seed that a Custom Forge item on the same base already uses.\n- **Perfect** on a white base gives it the best Common seed; **Reroll** on a white\n  base or a runeword stays on Common seeds. A dropped magic or rare item still\n  rerolls at random.\n- **Items you made with an earlier version keep their seed.** Use **Perfect** on a\n  white base or a runeword to move it to a Common seed; its runes and sockets\n  stay.\n- **The game's own view of an item notices a socket change.** A verified tooltip\n  of a non-unique item stops counting as the game's once its saved socket count\n  changes, until the game builds it again (the game reads that count).\n\n## How it was measured\n\nForgePact's Item Truth had the running game build about 135,000 items at the\nmain menu, through its own save loader, without touching a save: every white\nbase with 120 stat-ranked and 212 random seeds, every unique the editor claims\nsockets on, every runeword recipe x base. The results are in\n`hs_game_seeds.json`, keyed to the game build they were measured on\n(`pe-6aaa6779-0cad4fc8`); `build_game_seed_table.py` measures them again after\na game update. Details: GAME_TRUTH_DESIGN.md, step 4.\n\nEverything else is as in 2.16.2. Download the exe and run it; no install.",
       "guide": "docs/submodules/hero-siege-item-editor/instructions.md",
       "source_launch": {
         "cmd": "py",
