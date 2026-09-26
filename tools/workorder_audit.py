@@ -1486,6 +1486,11 @@ def rule_r21_verifier_interpreter(session: Session) -> RuleResult:
 # runs each suite once with a 240 s timeout into a scratch file.
 SUITE_RUN_RE = re.compile(
     r"(?:\bcd\s+(?P<cd>[^\s;&|]+)\s*(?:&&|;)\s*)?[^;&|]*?unittest\s+discover(?P<args>[^;&|>]*)", re.IGNORECASE)
+# ForgePact's tools/run_tests_parallel.py runs the same suite as its serial
+# `unittest discover -s tests`, so it gets the same key: running both is twice.
+PARALLEL_RUN_RE = re.compile(
+    r"(?:\bcd\s+(?P<cd>[^\s;&|]+)\s*(?:&&|;)\s*)?[^;&|]*?(?P<prefix>[^\s;&|]*?)"
+    r"tools[/\\]run_tests_parallel\.py(?P<args>[^;&|>]*)", re.IGNORECASE)
 
 
 def suite_key(cmd: str) -> Optional[str]:
@@ -1493,7 +1498,12 @@ def suite_key(cmd: str) -> Optional[str]:
     discover's own arguments -- or None if it runs none."""
     m = SUITE_RUN_RE.search(cmd)
     if not m:
-        return None
+        p = PARALLEL_RUN_RE.search(cmd)
+        if not p:
+            return None
+        where = p.group("cd") or p.group("prefix").strip(chr(34) + chr(39)).rstrip("/\\") or "."
+        start = re.search(r"(?:-s|--start-dir)[\s=]+(\S+)", p.group("args"))
+        return f"{where.strip(chr(34) + chr(39)).rstrip('/')} -s {start.group(1) if start else 'tests'}"
     where = m.group("cd") or "."
     args = re.sub(r"\s\d$", "", m.group("args").rstrip())  # the `2` of a `2>&1`
     return f"{where.strip(chr(34) + chr(39)).rstrip('/')} {' '.join(args.split())}".strip()

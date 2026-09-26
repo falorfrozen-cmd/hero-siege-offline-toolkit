@@ -135,7 +135,10 @@ hub suite takes 150-170 s, longer than Bash's 120 s default, which killed it in
 and re-runs to read another slice through `tail` or `grep`, cost about an hour
 across 37 rounds. Never run a suite a second time to read a different part of
 its output — grep the file. A submodule suite a criterion names is the same:
-one run, one file. R22 fails a verifier that runs one suite twice.
+one run, one file. R22 fails a verifier that runs one suite twice. ForgePact's
+full suite is `cd ForgePact && py -3 tools/run_tests_parallel.py` (about 65 s,
+the same tests and the same `Ran`/`OK` lines as its serial `unittest discover -s
+tests`, which takes about 170 s); R22 counts the two as one suite.
 
 A new failure outside the change's area is still a failure. Report it.
 
