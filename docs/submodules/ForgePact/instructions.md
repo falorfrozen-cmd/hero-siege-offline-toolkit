@@ -197,6 +197,7 @@ harness) and `test_miner_helmet_panel.py`. Evidence and design:
   - `include/ForgePact/CraftMatsMod.hpp`: The crafting-materials decision core (issue #14; the player build's `craftmats`, ForgePact 1.4.5, off by default). Game-independent - standard headers only, no runtime interface - so `tests/craft_mats_harness.cpp` compiles it whole. It decides everything the adapter in `ModuleMain.cpp` (`Cm*`, after `HandleProspectCommand`) acts on: the count (`CountAnswer`: the game's own `CountInventoryItem` answer, plus the two special tabs' stash count only with the switch on and inside the crafting route; an unreadable stash leaves the game's count and is named once); the walk (`MustWalk`/`KeepWalk`: display frames reuse one walk per game frame, the press walks fresh); the needs (`BeginFind`/`OnDecode`/`OnFindCount`/`Needs`: each count inside `CraftFindRecipeItems` takes the amount of the latest `PilipaliDecrypt` before it, the last count of a run after one decode is the one used, and a count with no decode makes the needs unreadable); the press gate (`PressStep`: the game's own press when no stash count was added, a refusal when the record cannot be paired, belongs to another recipe row or already served a press); per material a craft needs, need N, bag count k, stash count s -> take min(N-k, s) (`Plan`, from its Phase 0 arithmetic); the split (`Split`: whole entries first, then a partial from the last); the move outcome (`OnMoveReport`: confirmed only when the source dropped and the destination rose by exactly the amount, not-taken when neither side changed, anything else a loss that turns the mod off for the session); the craft gate (`MayCraft`: only when every take is confirmed); the consume check (`OnConsume`); the save (`SaveDue`: only after a confirmed move); and the per-press, refusal and loss lines. Its source enum is `StashMaterialTab = 1, StashSocketTab = 2` and nothing else (`docs/crafting-materials-research.md`, `## Ship design`). Phase 1e adds `CraftMatsKeptMap`, the kept stash map's currency rule - current only when the game's own `GetItemMap(9)` return refreshed it after the latest character load or room change, never on `ds_exists` alone (map indices are reused) - pinned by the harness's `kept_map` baseline and target scenarios and fed, so far, only by the research build's `mapkeep`.
   - `include/ForgePact/RestartAnytimeMod.hpp`: The "Restart zone at any time" decision core (issue #8, `restartanytime`) - the site script (`UiSetFocus`), the identifying member and value (`uiNodeCallstack` = `PauseRestart`), the gate member and its ready value (`manualDisable` = false), `RestartAnytimeModel::Decide` (Pass or Write) and the armed/pending/blind flags and four counters. Game-independent: no `RValue`, no builtin call.
   - `include/ForgePact/IncarnationGemsMod.hpp`: The Gems of Incarnation decision core (ForgePact 1.4.6; `gemmythic`, `gemfilter`, `gemmaxroll`). Game-independent - standard headers only, no runtime interface - so `tests/incarnation_gems_harness.cpp` compiles it whole. It holds the gem's identity (item type 15, base 136, `c` 0), the per-build tables (512 Mythic seeds per drop `n`, each with its affix stats, and the tier-4 range per affix stat; schema 2 JSON), the drop decision (`DropSeed`: a Mythic seed for the drop's own `n`, among the seeds carrying the most wanted mods when a filter is set), the filter's parser (`ParseFilter`) and the dress (`Dress`/`MaxRoll`). It avoids `std::min`/`std::max`: `ModuleMain.cpp` includes `<windows.h>` without `NOMINMAX`, so those break the plugin build while the harness still compiles.
+  - `include/ForgePact/ExitSafeThread.hpp`: `ForgePact::ExitSafeThread`, how a module global owns a background thread. The `std::thread` is heap-held and freed only after `JoinFor` has joined it, and the holder has no destructor, so the game's `ExitProcess` never destroys a joinable thread (Known Limitations item 26). It owns the coop receive thread. Game-independent: `tests/coop_thread_exit_probe.cpp` compiles it whole into a probe DLL.
 - `plugin_build/`: Plugin compiler script and build workspace.
   - `build.bat`: MSVC x64 batch script compiling `plugin/ModuleMain.cpp` into `BloodPactPlugin_ship.dll` (player build) or `BloodPactPlugin_rel.dll` (research build).
 - `modfiles_shipped/`: Shipped binaries deployed to the game's `bin/` directory upon mod installation.
@@ -1954,6 +1955,7 @@ here before pressing Publish.
 | v1.4.5 | [35831690354](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/35831690354) | `5f7a8d728d3203b9184d345efe652b92c74cedc435eac4f37fd4d5b60228ac03` | yes: Install Mod Plugin from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`48a8450b02ef`) | `==== BloodPact plugin loaded ==== v1.4.5` | 1.4.5 | `hhlabel` -> `callback ok` | pass | 2026-09-23 | falorfrozen-cmd (install and checks run by Claude Code) |
 | v1.4.5 (tag at `0a55d97`) | [36051361059](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36051361059) | `ca29efd5ea8d79dde3de52b492733d513d9110b3d0933ffcf5d2d8329c9619ef` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`a14d7237ea4a`, `BUILD-INFO.json` `plugin_sha256`) | `==== BloodPact plugin loaded ==== v1.4.5`, first line of the session launched after the install | 1.4.5 (`/api/state`) | `hhlabel` -> `ON (0 active, callback ok)` | pass | 2026-09-25 | falorfrozen-cmd (install and checks run by Claude Code) |
 | v1.4.6 (tag at `d9aee6f`) | [36164948121](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36164948121) | `2ca25fddaf881309d33cac0efc7cfc89e5936950cccff68d13964ec2e93e44a9` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.6` folder; the installed `BloodPactPlugin.dll` matched the zip's (`6af792801764`, `BUILD-INFO.json` `plugin_sha256`). The AFK FARM and Seraph plugins in `mods/aurie` were left as they were. | `==== BloodPact plugin loaded ==== v1.4.6`, the first boot line of the session launched after the install (panel **Launch**, `POST /api/launch`) | 1.4.6 (`/api/state`), served on 8780 | `hhlabel` -> `ON (0 active, callback ok)` | pass | 2026-09-26 | falorfrozen-cmd (install and checks run by Claude Code) |
+| v1.4.7 (tag at `95bd1cd`) | [36215007747](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36215007747) | `32d37a0032f209b248b827b9641133e393c6c9230a2c3d309b10b8dc82016146` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.7` folder; the installed `BloodPactPlugin.dll` matched the zip's (`bd3bf3564a77`, `BUILD-INFO.json` `plugin_sha256`). The AFK FARM and Seraph plugins in `mods/aurie` were left as they were. | `==== BloodPact plugin loaded ==== v1.4.7`, the first boot line of the session launched after the install (panel **Launch**, `POST /api/launch`, 10 s) | 1.4.7 (`/api/state`, which lists the new `primeevil` slider), served on 8780 | `hhlabel` -> `ON (0 active, callback ok)`; also `droprate group primeevil 5` -> `x5, 12 esya (ornek: 27 -> 5)`, then back to x1 | pass | 2026-09-26 | falorfrozen-cmd (install and checks run by Claude Code) |
 
 The first `v1.4.5` row built an earlier `v1.4.5` tag. That draft was never
 published, and the tag was cut again at `0a55d97` on 2026-09-24. The second row
@@ -2159,7 +2161,13 @@ manifest.
     - **What it is.** `modfiles_shipped/HSOfflineTrackerProducer.dll` (pinned from the 1.3.16 package, a 2026-09-07-or-earlier build) keeps its publisher in a global `std::thread` (`g_publish_worker` in HS-Offline-Tracker's `aurie-producer/src/module.cpp`) and joins it only in `StopPublishWorker`. When the game leaves through `ExitProcess`, its other threads are gone before the DLL's globals are destroyed, and a `std::thread` still joinable at destruction calls `std::terminate`. The dumps' thread is inside `LdrShutdownProcess`, in that DLL's exit-time destructors, with the game's ordinary exit path under it.
     - **How often.** 9 of the 10 dumps Windows kept (2026-09-25 13:17 to 2026-09-26 01:36) show it, one from a session that lived 70 s. None of the five closes by `CloseMainWindow` on 2026-09-26 left one; what separates an exit that aborts from one that does not was not determined.
     - **Why it matters here.** The session of 197,704 Item Truth evaluations that "crashed" at 01:36:27 is one of them; it was read as the evaluations running out of memory (they do not: "Item Truth for the Item Editor", Memory). Read a dump's stack before blaming a `ucrtbase` report on ForgePact or the game.
-    - **Not fixed here.** The fix belongs in HS-Offline-Tracker (join or detach the worker before the globals go); ForgePact then updates the pin. `ItemTruth.hpp` avoids the same trap for its own writer thread by never destroying its `Journal`.
+    - **Not fixed here.** The fix belongs in HS-Offline-Tracker (join or detach the worker before the globals go); ForgePact then updates the pin. `ItemTruth.hpp` avoids the same trap for its own writer thread by never destroying its `Journal`; ForgePact's own coop receive thread did not, until item 26.
+26. **ForgePact's own coop receive thread aborted research-build exits the same way (fixed in ForgePact PR #90, 2026-09-26; not run in the game):**
+    - **What it was.** `plugin/ModuleMain.cpp` kept the custom co-op transport's receive thread in `static std::thread g_CoopRecvThread`. `coopstart`, or a `bp_ipc\coop.ini` with `enabled=1` (read on the first frame), started it, and only `coopstop` joined it. Closing the game with coop still running therefore ended in item 25's abort, from ForgePact's own exit-time destructors.
+    - **Who could meet it.** Research builds only. No preprocessor guard keeps the coop code out of the player build, but no `coop*` verb is in `kPlayerCommands`, so `RunCommand` refuses them there, and the `coop.ini` auto-start and the per-frame `CoopTick` are inside `#ifndef FORGEPACT_RELEASE`.
+    - **The fix.** `plugin/include/ForgePact/ExitSafeThread.hpp`: the `std::thread` lives on the heap in a trivially destructible holder and is freed only after a join, so nothing runs for it at exit. It has the same shape as HS-Offline-Tracker PR #8's fix. `coopstop` closes the socket and waits at most 2 s (`kCoopStopJoinTimeout`) where it used to join without a bound on the frame thread. A thread that does not end is kept, and `coopstart` refuses until a later `coopstop` has joined it.
+    - **Not covered: an Aurie unload.** ForgePact exports no `ModuleUnload` and never restores the script-table entries `HookOneScript` writes, so the Aurie console's "Unload framework" leaves them pointing into an unmapped module with or without coop (static reading, not run). The holder changes nothing there: a receive thread still running when Aurie calls `FreeLibrary` is left in unmapped code, where the old shape aborted instead.
+    - **Tests.** `tests/test_coop_thread_exit_behavior.py` (with `coop_thread_exit_probe.cpp`, a DLL, and `coop_thread_exit_harness.cpp`) ends child processes with `ExitProcess`: the old static `std::thread` aborts (the baseline, caught as exit `0x7E2` so no dump is written), `ExitSafeThread` exits 0 (the target), and three cases cover `coopstop`. `tests/test_coop_thread_exit_contract.py` pins the wiring, the bound and the reachability above, and fails on any new named `std::thread` in the plugin that its `NAMED_THREADS` table does not list with a reason. Today that table lists only the Item Truth `Journal`'s thread.
 
 ---
 
@@ -2459,3 +2467,71 @@ publishing, run Actions → Catalog → Run workflow with `only` set to `forgepa
 - In the launch gate (row above), the zip's panel came up on 8780.
 - This pull request was merged right before publishing.
 - Do not put a version number in a comment in `src/forgepact.py`. VersionStampTests allow the version exactly once, and a comment naming the *next* version passes until the tag workflow bumps to it. That is what failed the first `v1.4.6` build.
+
+## Prime Evil Parts slider (1.4.7, 2026-09-26)
+
+A player asked for a slider for the Key of Terror parts, like the Blood Pact's
+"Prime Evil part drop rate" row. The research record is ForgePact's
+`docs/prime-evil-parts-research.md`.
+
+**What changed.**
+- The Loot tab gets **Prime Evil Parts (Key of Terror)**:
+  `KEYS` entry `("primeevil", ..., None)`. With no drop type, it sends only
+  `droprate group primeevil <m>`: it scales the parts' own roll where the game
+  already rolls it, which is on bosses.
+- The parts share LoadDrops type 41 with Relics. So the slider never opens that
+  gate, and the Relic gate's part guard (`Hook_DropBossParts` /
+  `Hook_DropUberParts`) stays.
+- **Plugin fix:** the `primeevil` group's fragment was "satans_horn", which
+  missed `collectible_satans_infernal_horn`. It is now "satans_", which in
+  category 13 matches only the two horns: 12 of 12 parts.
+
+**Game facts.** Folded into `docs/RUNTIME_DATA_MODELS.md`: static reading of the
+Sep-17 build, plus the live kills.
+- `DropBossParts`, `DropBossPartsNext` and `DropUberParts` are called only from
+  `LoadDrops`.
+- `LoadDrops` is called only from `DropItem`. Monsters reach `DropItem` from
+  `Enemy_Parent_obj`'s Destroy event.
+- `DropBossParts` reads the part entry's drop rate and player stat 736.
+  `DropUberParts` reads no drop rate.
+
+**Measured.** 2026-09-26, research build, hero Suh (softcore), Act_01_01:
+
+| `droprate group primeevil` | Karp King kills | bellybuttons | per kill |
+| --- | --- | --- | --- |
+| x1 | 15 | 11 | about 0.7 |
+| x5 | 12 | 36 | 3.0 |
+| x35 | 15 | 138 | about 9.2 |
+
+These are M11 and M12 in `hs-game-sdk/curated/drop_roll_measurements.json`,
+pinned by `tests/test_drop_roll_model.py`. The measured x5/x1 ratio is 4.1; its
+95% band from the counts, 2.1-8.0, contains the lever's 5. Above x35 nothing
+more changes.
+
+**How the kills were made, without input.**
+1. HS-AFK-Expedition's `tools/game_session.py prepare`, then
+   `travel --room Act_01_01`, entered the hero.
+2. ForgePact's research build spawned the boss 1200 px away:
+   `cb instance_create_depth x+1200 y 0 2368`.
+3. It set the boss's protected HP to 0: `callnum PC_SetVariableGMLWrapper <enemy_hp> 0`.
+4. `bp_ipc\itemdrops.jsonl` was read.
+
+`tools/boss_drop_trial.py` repeats this loop.
+
+Things that do not work:
+- In town a boss removes itself.
+- `instance_destroy` on a live boss drops nothing.
+- A boss next to the hero killed them in about 15 s.
+
+**Not verified.**
+- Uber bosses: Uber Anubis did not die from HP 0, so infernal parts from
+  `DropUberParts` were not measured. That script reads no drop rate, so the
+  slider probably does not change them.
+- The meaning of stat 736.
+- Which bosses in which zones roll type 41 natively.
+
+Test: ForgePact `tests/test_prime_evil_parts_contract.py`.
+
+**Release build.** The 1.4.7 launch gate (its row is in "CI build launch
+gate") sent `droprate group primeevil 5` to the released plugin. It answered
+`x5, 12 esya (ornek: 27 -> 5)`, so the shipped group covers all 12 parts.

@@ -336,6 +336,20 @@ and the exact tooltip for a saved item appears. Record a row here.
 | `v2.16.0` | [36075703309](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/36075703309) | yes: `f937bc13…a493cb` = `.sha256` asset = GitHub asset digest | yes: window title and `/api/instance` show `2.16.0-s10` | yes: 10 saves listed, slot 0 loaded (Hero Siege 1.4.5 was running; read-only checks) | yes: all 16 character and 127 Shared Stash items **Game verified** with the game's own text; game truth reports 0 unverified and 0 undrawn on `pe-6aaa6779-0cad4fc8`; 5059 profiles; Dice targets ready | 2026-09-25 | Claude Code, for the owner |
 | `v2.16.1` | [36116151604](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/36116151604) | yes: `ac18db5a…3b7dc6` = `.sha256` asset = GitHub asset digest | yes: window title and `/api/instance` show `2.16.1-s10` | yes: 10 saves listed, slot 0 loaded (Hero Siege was running; read-only checks) | yes: slot 0's 22 items and the Shared Stash's 167 are **Game verified**; game truth: 630/630 character, 167/167 Shared Stash and 6,805/6,805 Vault items verified, 0 missing, 13 character items not yet drawn by the game, on `pe-6aaa6779-0cad4fc8`; 5059 profiles; Dice targets ready | 2026-09-25 | Claude Code, for the owner |
 | `v2.16.2` | [36160683077](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/36160683077) (suite: 585 tests, 1 skipped) | yes: `506ba048…13e89b` = `.sha256` asset = GitHub asset digest | yes: window title and `/api/instance` show `2.16.2-s10`. It was started beside a ForgePact-like server on 8766, listened on 8765 and 8767-8774, and 8766 kept answering from that server | yes: 10 saves listed, slot 0 loaded (Hero Siege was running; read-only checks) | yes: slot 0's 22 items and the Shared Stash's 167 are **Game verified**; game truth: 630/630 character, 167/167 Shared Stash and 6,806/6,806 Vault items verified, 0 missing, 14 items not yet drawn by the game (13 character, 1 Vault), on `pe-6aaa6779-0cad4fc8`; 5059 profiles; Dice targets ready | 2026-09-25 | Claude Code, for the owner |
+| `v2.16.3` | [36215630830](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/36215630830) (suite: 608 tests, 1 skipped) | yes: `288b5404…54e154b` = `.sha256` asset = GitHub asset digest | yes: window title and `/api/instance` show `2.16.3-s10` | yes: 10 saves listed, slot 0 loaded (Hero Siege was running; read-only checks) | yes: slot 0's 22 items and the Shared Stash's 167 are **Game verified**; game truth: 630/630 character, 167/167 Shared Stash and 6,806/6,806 Vault items verified, 0 missing, 14 items not yet drawn by the game, on `pe-6aaa6779-0cad4fc8`; 5059 profiles; Dice targets ready. This release's own change: 875 catalog rows (the table's 308 white bases and 567 uniques) take their seed from the game-built table | 2026-09-26 | Claude Code, for the owner |
+
+The first `v2.16.3` tag, at `08c95d9`, failed its build
+([36214856028](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/36214856028))
+at "Tests": `test_build_game_seed_table.py` imports `build_game_seed_table.py`,
+which imported numpy at the top. The release build installs only
+`requirements-build.txt`, which has no numpy, and every local run had numpy
+installed. hero-siege-item-editor#12 moved the import into the CPR scan and
+added a test that loads the module with numpy blocked (`db70cdf`). The draft,
+which had no assets, and its tag were deleted, and `v2.16.3` was cut again at
+`db70cdf` on 2026-09-26. Before a tag, run the suite once with every package
+outside `requirements-build.txt` blocked (`sys.modules[name] = None`), since a
+test that imports a developer tool can pass locally and fail only there. The
+gate's download is in `HeroSiegeBackups\2026-09-26_editor-2.16.3-gate`.
 
 ## Infinite Vault deletion (2026-09-22)
 
@@ -632,6 +646,45 @@ Tests:
 Merged in falorfrozen-cmd/hero-siege-item-editor#9 and released as `v2.16.1` on 2026-09-25 (launch gate row above).
 
 **Live check** (2026-09-25): AFK FARM 0.9 took seven kinds with `take`, and the Vault lost exactly those counts. For type 13, this editor made a Battle Fragment (13:0) in an empty Shared Stash tab with the game closed and deposited it into AFK Materials. AFK FARM's town then took it, and the game made it again. It came back to AFK Materials.
+
+## Game-built seeds (2.16.3, 2026-09-26)
+
+Players reported yellow "white" bases and gems that go into only some sockets.
+Built by the game, 160 of 363 white bases came out Superior or better (rarity is
+rolled from `a`, which the roll profiles chose for stat draws only), about a
+third of the forged runewords never formed (a runeword forms only on a Common
+base), and 96 of 553 uniques had a different socket count from the one the
+editor claimed. The game facts are in
+[`RUNTIME_DATA_MODELS.md` §16.9](../../RUNTIME_DATA_MODELS.md#169-what-a-save-definition-decides-rarity-runewords-sockets);
+the design is `GAME_TRUTH_DESIGN.md`, step 4.
+
+- **`hs_game_seeds.json`** (bundled; the editor fails closed without it):
+  - per white equipment base, Common seeds that roll no socket, best CPR stat
+    score first, and `maxSockets`, the most sockets the game rolls for the base;
+  - per unique, the seed and the count the game gives it;
+  - `runewordBlocked`, recipe x base pairs the game does not form.
+  Amulets and rings have no entry (never Common).
+- **Generation.** `make_data` and `preferred_runeword_seeds` take the best table
+  seed no local Custom Forge item uses (Custom Forge matches type + `a`/`b`/`c`/`j`);
+  Perfect writes the best one; Reroll stays on table seeds for runewords and
+  editor-made white bases. Runewords keep their profile's `i` and write
+  `zz.sockets` = the rune count.
+- **Sockets.** A non-unique item shows max(`zz.sockets`, its seed's count), a
+  unique only its seed's count: the socket editor caps a white base at
+  `maxSockets` and keeps a unique at its count (`rolled_socket_count`).
+  `game_truth.identity_fields` keeps `zz.sockets` for non-unique items.
+- **Refreshing after a game update:** `build_game_seed_table.py` with Hero Siege
+  at the menu and Game truth on. One run builds the whole table: the game keeps
+  none of the items it evaluates (`RUNTIME_DATA_MODELS.md` §16.2). The tool keeps
+  what the game built in a work file, so a run that stops early (`--max-per-run`,
+  default 0 = no limit, or the game closing) carries on when run again.
+- **Tests:** `test_game_seeds.py`, and `test_build_game_seed_table.py` for the
+  tool's run limit and for loading it without numpy (only its CPR scan needs
+  numpy, which the release build does not install). Test classes that generate
+  items point `ROOT` at their temporary folder, since generation reads the
+  local Custom Forge store.
+- **Released** as v2.16.3 on 2026-09-26 (Latest). The launch gate row is under
+  "Release Automation"; the toolkit catalog lists 2.16.3 (hub #219).
 
 ## Ports shared with other tools (2.16.2, 2026-09-25)
 
