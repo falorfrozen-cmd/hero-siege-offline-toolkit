@@ -660,11 +660,13 @@ the design is `GAME_TRUTH_DESIGN.md`, step 4.
   `maxSockets` and keeps a unique at its count (`rolled_socket_count`).
   `game_truth.identity_fields` keeps `zz.sockets` for non-unique items.
 - **Refreshing after a game update:** `build_game_seed_table.py` with Hero Siege
-  at the menu and Game truth on. The game keeps every evaluated item in memory (a
-  session of about 200,000 crashed), so each run evaluates at most 30,000 and the
-  tool resumes from a work file: restart the game between runs.
-- **Tests:** `test_game_seeds.py`. Test classes that generate items point `ROOT`
-  at their temporary folder, since generation reads the local Custom Forge store.
+  at the menu and Game truth on. One run builds the whole table: the game keeps
+  none of the items it evaluates (`RUNTIME_DATA_MODELS.md` §16.2). The tool keeps
+  what the game built in a work file, so a run that stops early (`--max-per-run`,
+  default 0 = no limit, or the game closing) carries on when run again.
+- **Tests:** `test_game_seeds.py`, and `test_build_game_seed_table.py` for the
+  tool's run limit. Test classes that generate items point `ROOT` at their
+  temporary folder, since generation reads the local Custom Forge store.
 
 ## Ports shared with other tools (2.16.2, 2026-09-25)
 

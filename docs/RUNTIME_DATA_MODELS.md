@@ -1583,9 +1583,11 @@ the controls and the table are in the Item Editor's
   equal a forged item's**: two items that share a seed on one base are the same
   item to it. **Measured**: every white Great Helm built with the seed of the
   owner's forged Miner's Helmet came out as that Miner's Helmet.
-- **The game keeps every item it evaluates this way in memory** until it closes:
-  about 95 KB each; a session that evaluated about 200,000 crashed in
-  `ucrtbase.dll` (0xc0000409). **Measured.** Why is not established.
+- **The game keeps none of the items it evaluates this way** (§16.2), so the
+  table is built in one game session. The WER report (`ucrtbase.dll`,
+  `0xc0000409`) that ended a session of about 200,000 evaluations was the game
+  exiting while HS-Offline-Tracker's producer aborted (§15), not memory.
+  **Measured.**
 
 [Item Editor, game truth step 4](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-4--seeds-the-game-built-item-editor-2163)
 
