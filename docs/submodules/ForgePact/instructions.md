@@ -879,6 +879,10 @@ commented on by Claude) goes red there too, with its reason. Each run
 uploads its full result as the `claude-execution-output` artifact, which is
 where per-model token counts and the names of any denied tools can be read.
 
+This lives in its own section rather than on the "CI / Pipeline Availability"
+line above because that line is rewritten whenever a release workflow changes,
+and every such rewrite conflicted with it.
+
 ### Panel changes get the UI design tooling (ForgePact only)
 
 When a pull request changes panel source (`panel/**` `.svelte`, `.css`,
@@ -932,10 +936,6 @@ The hub's `tests/test_ai_review_workflow.py` reads only the hub's file, but its
 assertions pass against ForgePact's copy too; keep them passing when editing
 either, by loading that module and pointing `WORKFLOW` at
 `ForgePact/.github/workflows/ai-review.yml`.
-
-This lives in its own section rather than on the "CI / Pipeline Availability"
-line above because that line is rewritten whenever a release workflow changes,
-and every such rewrite conflicted with it.
 
 ## Safety, Installation & Backup Lifecycle
 
