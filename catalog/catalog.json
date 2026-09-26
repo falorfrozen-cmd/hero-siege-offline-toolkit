@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-26T03:48:33Z",
+  "generated": "2026-09-26T05:16:00Z",
   "tools": [
     {
       "id": "forgepact",
@@ -261,9 +261,9 @@
       "summary": "Character save editor for offline saves, with automatic backups.",
       "repo": "falorfrozen-cmd/HSSaveEditor",
       "submodule": "HSSaveEditor",
-      "version": "1.4.2",
-      "tag": "v1.4.2",
-      "published": "2026-09-26T01:43:48Z",
+      "version": "1.4.3",
+      "tag": "v1.4.3",
+      "published": "2026-09-26T05:15:33Z",
       "license": "NOASSERTION",
       "requires": {
         "admin": false,
@@ -273,10 +273,10 @@
       },
       "artifact": {
         "kind": "zip",
-        "name": "HSSaveEditor-Windows-v1.4.2.zip",
-        "url": "https://github.com/falorfrozen-cmd/HSSaveEditor/releases/download/v1.4.2/HSSaveEditor-Windows-v1.4.2.zip",
-        "size": 12012648,
-        "sha256": "b1c592a306d8fda7bd237b94c728dd62e86218ae5986a97904f6e37842287706",
+        "name": "HSSaveEditor-Windows-v1.4.3.zip",
+        "url": "https://github.com/falorfrozen-cmd/HSSaveEditor/releases/download/v1.4.3/HSSaveEditor-Windows-v1.4.3.zip",
+        "size": 12015297,
+        "sha256": "4a349bfb1d5afb12aed48e90be6a9b5659edd34854bad2052c568312b2df3f2e",
         "sha256_source": "published+verified",
         "strip_prefix": ""
       },
@@ -286,8 +286,8 @@
         "elevate": false,
         "ports": []
       },
-      "notes_url": "https://github.com/falorfrozen-cmd/HSSaveEditor/releases/tag/v1.4.2",
-      "notes": "# Hero Siege Save Editor v1.4.2\n\n## What changed\n\n- Fixed: a slot whose character was deleted in the game could not be used again. Hero Siege empties the slot's save file when you delete a character, and the editor only answered \"This save slot is empty\". Opening such a slot now asks whether to start a new character there. On yes the editor backs up the empty file, writes the same blank character the game keeps in a slot that was never played, and opens it for editing. Copying another slot's file over it by hand is no longer needed.\n- The save list shows these slots as `Empty slot - open to start a new character` instead of `Empty / unsupported`, and the character count at the top no longer counts empty or unreadable slots as characters.\n- No other behaviour changed.\n\n## Tested\n\n- All 98 automated tests pass, including 8 new ones for emptied slots.\n- The blank character decodes to exactly the text of the file the game writes into an unused slot, and an emptied slot is left untouched unless you confirm.\n\nThis tool is for offline/single-player characters only. Close Hero Siege before editing and keep the automatic backup.",
+      "notes_url": "https://github.com/falorfrozen-cmd/HSSaveEditor/releases/tag/v1.4.3",
+      "notes": "# Hero Siege Save Editor v1.4.3\n\n## What changed\n\n- New: the editor refuses to write while Hero Siege is running. Save Character, Save As, Save Ether, starting a character in an emptied slot and Delete Character Backups first check whether `Hero_Siege.exe` is running. If it is, nothing is written and the editor asks you to close the game and try again. Before, the editor only told you to close the game, and a game left running could save its own copy of the character over your changes.\n- If the editor cannot check (possible under Proton or Wine), it asks before writing instead of guessing.\n- No other behaviour changed.\n\n## Tested\n\n- All 105 automated tests pass, including 7 new ones: each of the five writes is refused while the game runs, goes through when it is closed, and asks first when the check cannot run.\n- The check was run against a live Hero Siege on Windows 11. It reported the running game, and reported nothing for a process that was not running.\n\nThis tool is for offline/single-player characters only. Close Hero Siege before editing and keep the automatic backup.",
       "guide": "docs/submodules/HSSaveEditor/instructions.md",
       "source_launch": {
         "cmd": "py",
