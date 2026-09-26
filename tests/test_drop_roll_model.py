@@ -320,6 +320,22 @@ class TargetTests(unittest.TestCase):
         self.assertGreater(r35, r5)
         self.assertGreater(r5, r1)
 
+    def test_m13_uber_bosses_roll_no_prime_evil_part_for_the_lever_to_scale(self):
+        # M13: at x35, ten uber boss kills dropped no part and no uber item, while
+        # Karp King at the same spot dropped 12 before them and 8 after.
+        m12, m13 = measured("M12")["x35"], measured("M13")["x35"]
+        self.assertGreater(m13["control_parts"], 0)       # the spot drops loot
+        self.assertEqual(m13["parts"], 0)                  # uber bosses roll no part
+        self.assertEqual(m13["uber_items"], 0)
+        # x35 floors every part's base at 1, so a boss that rolled the part would
+        # drop it on every roll: at Karp King's M12 rate, ten kills without one part
+        # has a Poisson probability far below any doubt.
+        self.assertEqual(DropRateGroup().apply("part", 27, 35), 1)
+        rate = m12["parts"] / m12["kills"]
+        self.assertLess(math.exp(-rate * m13["uber_kills"]), 1e-9)
+        # The controls kept Karp King's M12 pace, so the spot was not the reason.
+        self.assertGreater(m13["control_parts"] / m13["control_kills"], rate / 2)
+
 
 class FixtureShapeTests(unittest.TestCase):
     """`hs-game-sdk/curated/drop_roll_measurements.json` stays checkable."""

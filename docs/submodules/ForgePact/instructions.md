@@ -2493,7 +2493,10 @@ Sep-17 build, plus the live kills.
 - `LoadDrops` is called only from `DropItem`. Monsters reach `DropItem` from
   `Enemy_Parent_obj`'s Destroy event.
 - `DropBossParts` reads the part entry's drop rate and player stat 736.
-  `DropUberParts` reads no drop rate.
+- `DropUberParts` reads no drop rate and makes no Prime Evil part. It creates
+  one of these, or its infernal version (13:49-53):
+  - Soul of Anguish, Soul of Despair or Soul of Corruption;
+  - Scroll of Ra or Colosseum Fragment (13:14-18).
 
 **Measured.** 2026-09-26, research build, hero Suh (softcore), Act_01_01:
 
@@ -2523,10 +2526,33 @@ Things that do not work:
 - `instance_destroy` on a live boss drops nothing.
 - A boss next to the hero killed them in about 15 s.
 
+**Uber bosses (measured 2026-09-26, afternoon).** Same build, hero and room,
+with `droprate group primeevil` at x35:
+
+| Boss | how it died | kills | Prime Evil parts | items 13:14-18, 49-53 |
+| --- | --- | --- | --- | --- |
+| Karp King (control, before) | HP 0 | 1 | 12 | 0 |
+| Uber Damien | HP 0 | 3 | 0 | 0 |
+| Reaper (`Reaper_Uber_obj`) | HP 0 | 3 | 0 | 0 |
+| Uber Endrixia | HP 0, then `instance_destroy` | 2 | 0 | 0 |
+| Uber Anubis | HP 0, then `instance_destroy` | 2 | 0 | 0 |
+| Karp King (control, after) | HP 0 | 1 | 8 | 0 |
+
+- **Result.** Uber bosses roll no Prime Evil part, at least outside their own
+  realm, so the slider does nothing for them. Earlier x1 kills of the same four
+  agree.
+- **Test.** This is M13, pinned by `tests/test_drop_roll_model.py`.
+- **Controls.** Every result comes from a spot where a Karp King control dropped
+  loot. A boss that dies where loot cannot land, such as past the room's edge,
+  drops nothing.
+- **Tool.** `tools/boss_drop_trial.py` now takes `--dx` (where to spawn) and
+  `--destroy` (HP 0, then `instance_destroy`).
+
 **Not verified.**
-- Uber bosses: Uber Anubis did not die from HP 0, so infernal parts from
-  `DropUberParts` were not measured. That script reads no drop rate, so the
-  slider probably does not change them.
+- Uber bosses inside their own realm: `room_goto` to `Uber_Inoya_rm` closed the
+  game, so no kill there was measured.
+- Uber Luna: `instance_destroy` after HP 0 closed the game.
+- Where the infernal parts drop: no test dropped one.
 - The meaning of stat 736.
 - Which bosses in which zones roll type 41 natively.
 
