@@ -1087,13 +1087,36 @@ The data tables in this section are also in
   events. **Static reading** (direct-call scan of the Sep-17 build).
 - `DropBossParts` looks up the part's category-13 repository entry, reads its
   drop rate (`GetDropRate`) and player stat 736, then places the part with
-  `LootGroundCreate`. `DropUberParts` reads no drop rate. **Static reading.**
+  `LootGroundCreate`. **Static reading.**
+- `DropUberParts` reads no drop rate and makes no Prime Evil part. It creates
+  one of category 13's items 14-18, or one of their infernal versions, 49-53:
+  - Soul of Anguish, Soul of Despair or Soul of Corruption;
+  - Scroll of Ra or Colosseum Fragment.
+
+  **Static reading.**
+- `LoadDrops`' switch table:
+  - sends drop type 43 to `DropUberParts`;
+  - sends type 26 to `DropDimensionalShard`;
+  - makes type 41 check `LoadDrops`' fourth argument first. It does nothing when
+    that argument is false.
+
+  **Static reading.** The §6 type map (2026-08-27) recorded a Dimensional Shard
+  for type 43. The two disagree; not resolved.
+- `Enemy_Parent_obj`'s Destroy calls `DropItem` only when the protected HP is 0
+  or less. **Static reading.**
 - A boss kill rolls its part several times. Karp King in Act_01_01 dropped:
   - 11 bellybuttons in 15 kills at the vanilla base of 27;
   - 36 in 12 kills at base 5.4;
   - 138 in 15 kills at base 1, up to 14 in one kill.
 
   **Measured 2026-09-26** (M11/M12 in `hs-game-sdk/curated/drop_roll_measurements.json`).
+- Uber bosses spawned in Act_01_01 roll no Prime Evil part. With
+  `droprate group primeevil` at x35 (base 1):
+  - ten kills dropped no part and none of items 14-18 or 49-53: Uber Damien 3,
+    Reaper 3, Uber Endrixia 2, Uber Anubis 2;
+  - Karp King at the same spot dropped 12 parts before them and 8 after.
+
+  **Measured 2026-09-26** (M13).
 - Killing a monster from outside:
   - A boss spawned in a town removes itself within seconds and drops nothing.
   - `instance_destroy` on a live monster runs its Destroy event but drops
@@ -1101,7 +1124,13 @@ The data tables in this section are also in
   - Setting its protected HP to 0 kills it through its own death path, drops
     included. The key is the monster's `enemy_hp`; the call is
     `PC_SetVariableGMLWrapper(key, 0)`.
-  - Uber Anubis does not die that way.
+  - Uber Endrixia, Uber Anubis and Uber Luna do not die that way.
+  - For Endrixia and Anubis, HP 0 followed by `instance_destroy` works: the
+    Destroy event runs with HP at 0, and the drop path follows.
+  - `instance_destroy` on Uber Luna after HP 0 closed the game, with no crash
+    dump. So did `room_goto` to `Uber_Inoya_rm`.
+  - A boss that dies where loot cannot land drops nothing. One spawned past the
+    room's edge left no `Loot_Ground_obj`.
 
   **Measured 2026-09-26.**
 
@@ -1405,7 +1434,7 @@ All **measured** unless marked.
 | Special content at 20× | dies at about 13.4k instances | §5.8 |
 | A creator acted on before `enemyCreatorTimer` is real | no crash — the pack never spawns | §11.2 |
 | Removing a stash item's map entry (`RemoveItemFromMap` on map 9) but leaving its cell in the tab | the game ends at its next stash save — measured twice, in two launches; `GridRemoveItem` on the cell in the same take avoids it | §17 |
-| A plugin DLL whose global `std::thread` is still joinable when the game exits | `std::terminate` while `ExitProcess` destroys that DLL's globals (the other threads are already gone): a WER report at close, `ucrtbase.dll` `0xc0000409`, fast-fail 7 (`abort`). HS-Offline-Tracker's producer does it; 9 of the 10 dumps Windows kept on 2026-09-25/26 show it, the game's own exit path under it | [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#the-crash-of-2026-09-26-013627) |
+| A plugin DLL whose global `std::thread` is still joinable when the game exits | `std::terminate` while `ExitProcess` destroys that DLL's globals (the other threads are already gone): a WER report at close, `ucrtbase.dll` `0xc0000409`, fast-fail 7 (`abort`). HS-Offline-Tracker's producer does it; 9 of the 10 dumps Windows kept on 2026-09-25/26 show it, the game's own exit path under it, and a plain `CloseMainWindow` at the main menu does it too. A game started from a tool running under Git Bash inherits error mode `0x3` (`SEM_NOGPFAULTERRORBOX`) and aborts without a dump or an event: read the exit code | [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#the-crash-of-2026-09-26-013627) |
 
 ---
 

@@ -524,7 +524,7 @@ To add or modify a gameplay modifier or runtime command:
 | `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Executes all 1271 Python contract tests (including the native behavior harnesses, which skip without a C++ toolchain). | Read-only test execution; all tests pass | Verified 2026-09-22 |
 | `py -3 -m unittest tests.test_drop_roll_model -v` | hub root (not `ForgePact/`) | PowerShell / CMD | Python 3.10+; `ForgePact/` checked out for `LeverParityTests` | Runs the drop-roll model's baseline and target tests against the recorded measurements M1-M10 (`hs-game-sdk/curated/drop_roll_measurements.json`), and `LeverParityTests`, which pins the test's copies of `droprate group`, `dungeonkey` and the relic pre-roll to `plugin/ModuleMain.cpp` and `src/forgepact.py`. A lever change that moves either side fails here. See `docs/models/drop-roll-spec.md`. | Read-only; loads `src/forgepact.py` in-process to call `build_key_cmds` (no server, no bytecode written) | Verified 2026-09-24 (25 tests, OK, none skipped) |
 | `py tools/perf_panel.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Times the panel's two per-poll costs - the boot count and the process scan - against reference copies of the pre-1.3.20 implementations, and exits non-zero if either regressed below its floor. No game, no network. `--log-mb`, `--iterations`, `--min-speedup`. | Writes and deletes a synthetic log in a temp directory | Verified 2026-09-15 |
-| `py -3 tools/itemtruth_memrun.py run --items 20000 [--mix]` and `... control` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+ (standard library); Hero Siege closed; Item Truth on (`itemtruth\capture.request`); `control` needs the research DLL installed | `run` launches the game minimised to the main menu, waits until the menu's one-time memory release is behind it and the level is steady, queues one evaluation request of `--items` items from the journal's own evaluated shapes (`--mix`: white, unique, socketed and runeword items), samples private bytes every second and closes the game with `CloseMainWindow`. `summary.json`: baseline, peak while building, level after, KB per item. `control` runs two halves in one launch, the second under `truthmem hold on`: the positive control, which must grow. | Launches and closes the game; writes `samples.csv` and `summary.json` (and `truthmem.txt`) under `--out`; moves the run's own journal files there when every line in them is the run's | Verified 2026-09-26 (see "Item Truth for the Item Editor", Memory) |
+| `py -3 tools/itemtruth_memrun.py run --items 20000 [--mix]` and `... control` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+ (standard library); Hero Siege closed; Item Truth on (`itemtruth\capture.request`); `control` needs the research DLL installed | `run` launches the game minimised to the main menu, waits until the menu's one-time memory release is behind it and the level is steady, queues one evaluation request of `--items` items from the journal's own evaluated shapes (`--mix`: white, unique, socketed and runeword items), samples private bytes every second and closes the game with `CloseMainWindow`. The game starts with the default error mode (`CREATE_DEFAULT_ERROR_MODE`), so a crash is reported as for a player. `summary.json`: baseline, peak while building, level after, KB per item, and the game's `exit_code` (`0xC0000409` is an abort). `control` runs two halves in one launch, the second under `truthmem hold on`: the positive control, which must grow. | Launches and closes the game; writes `samples.csv` and `summary.json` (and `truthmem.txt`) under `--out`; moves the run's own journal files there when every line in them is the run's | Verified 2026-09-26 (see "Item Truth for the Item Editor", Memory) |
 | `py tools/cut_release.py --check --expect <version>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Reports the version at every site and fails if they disagree, or if the release notes are missing and `--allow-missing-notes` was not given. `py tools/cut_release.py <version>` moves them. `--allow-missing-notes` (only `--check`; only used by `forgepact-tag.yml`) reports a missing notes file without failing. **Do not hand-edit the version sites** - a mismatch here is the signal, not a nuisance. Touches no git, runs no build, stages no DLL. | `--check` is read-only; a bump rewrites two files | Verified 2026-09-16 |
 | `py tools/forgepact_tag.py --tag <version> --existing <tags…>` | `ForgePact/` | PowerShell / CMD (Git Bash for the real examples below) | Python 3.10+ | Checks a typed tag/version against the existing `v*` tags and the tree, and prints `version=`, `tag=`, `bump=`, `previous=`. Refuses a taken tag, a downgrade against the highest tag, a version below the tree, or a malformed input. | Read-only | Verified 2026-09-16 |
 | `py tools/forgepact_tag.py --compose-notes --version <v> --previous <tag> --generated <file> --out <file>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Composes the draft release body: the tagged version's own `release-notes-vX.Y.Z.md` if present (else the generated notes at `--generated`, under a banner), plus every skipped version's file, newest first. Prints `source=` and `versions=`. | Writes `--out`; reads notes files under `--root` (default: repo root) | Verified 2026-09-16 |
@@ -2159,8 +2159,8 @@ manifest.
 25. **The shipped HS-Offline-Tracker producer turns some game exits into a WER crash report (measured from crash dumps, 2026-09-26):**
     - **What a player sees.** At or after closing the game, Windows reports Hero Siege crashed: faulting module `ucrtbase.dll`, exception `0xc0000409`, fast-fail parameter 7 (`abort`). A dump lands in `%LOCALAPPDATA%\CrashDumps`.
     - **What it is.** `modfiles_shipped/HSOfflineTrackerProducer.dll` (pinned from the 1.3.16 package, a 2026-09-07-or-earlier build) keeps its publisher in a global `std::thread` (`g_publish_worker` in HS-Offline-Tracker's `aurie-producer/src/module.cpp`) and joins it only in `StopPublishWorker`. When the game leaves through `ExitProcess`, its other threads are gone before the DLL's globals are destroyed, and a `std::thread` still joinable at destruction calls `std::terminate`. The dumps' thread is inside `LdrShutdownProcess`, in that DLL's exit-time destructors, with the game's ordinary exit path under it.
-    - **How often.** 9 of the 10 dumps Windows kept (2026-09-25 13:17 to 2026-09-26 01:36) show it, one from a session that lived 70 s. None of the five closes by `CloseMainWindow` on 2026-09-26 left one; what separates an exit that aborts from one that does not was not determined.
-    - **A missing dump is not a clean exit (measured 2026-09-26, item 26's live check).** Git Bash runs with error mode `0x3` (`SEM_NOGPFAULTERRORBOX`), and a game launched from a tool running under it inherits that mode. Windows Error Reporting then never sees the fast fail: the exit still aborts with exit code `0xC0000409`, but leaves no dump and no Application Error event. PowerShell resets its own error mode to `0x8001`, without that flag. So read the game's exit code, or launch it with `CREATE_DEFAULT_ERROR_MODE`. Whether the five closes above were launched that way was not checked: they are "no dump observed", not "no abort".
+    - **How often.** Most likely on every exit once the producer's publisher runs. 9 of the 10 dumps Windows kept (2026-09-25 13:17 to 2026-09-26 01:36) show it, one from a session that lived 70 s. HS-Offline-Tracker PR #8's check, launched with `CREATE_DEFAULT_ERROR_MODE`, saw it on a plain `CloseMainWindow` at the main menu (exit `0xC0000409`, dump 56756). The five `CloseMainWindow` closes of 2026-09-26 that left no dump were games started by Python under Git Bash. That Python's error mode is `0x3` (`SEM_NOGPFAULTERRORBOX`, measured), and the games inherited it, so Windows did not report their exits. Their exit codes were not read. `tools/itemtruth_memrun.py` now starts the game with the default error mode and reads the exit code (ForgePact PR #97).
+    - **A missing dump is not a clean exit (measured 2026-09-26, item 26's live check).** That check's first `deaf068` run was also started by Python under Git Bash and inherited error mode `0x3`. It aborted with exit code `0xC0000409`, yet Windows wrote no dump and logged no Application Error event. The same run started with `CREATE_DEFAULT_ERROR_MODE` dumped. PowerShell resets its own error mode to `0x8001`, without `SEM_NOGPFAULTERRORBOX`. Judge a close by the game's exit code, not by the dump folder.
     - **Why it matters here.** The session of 197,704 Item Truth evaluations that "crashed" at 01:36:27 is one of them; it was read as the evaluations running out of memory (they do not: "Item Truth for the Item Editor", Memory). Read a dump's stack before blaming a `ucrtbase` report on ForgePact or the game.
     - **Not fixed here.** The fix belongs in HS-Offline-Tracker (join or detach the worker before the globals go); ForgePact then updates the pin. `ItemTruth.hpp` avoids the same trap for its own writer thread by never destroying its `Journal`; ForgePact's own coop receive thread did not, until item 26.
 26. **ForgePact's own coop receive thread aborted research-build exits the same way (fixed in ForgePact PR #90; verified live 2026-09-26):**
@@ -2498,7 +2498,10 @@ Sep-17 build, plus the live kills.
 - `LoadDrops` is called only from `DropItem`. Monsters reach `DropItem` from
   `Enemy_Parent_obj`'s Destroy event.
 - `DropBossParts` reads the part entry's drop rate and player stat 736.
-  `DropUberParts` reads no drop rate.
+- `DropUberParts` reads no drop rate and makes no Prime Evil part. It creates
+  one of these, or its infernal version (13:49-53):
+  - Soul of Anguish, Soul of Despair or Soul of Corruption;
+  - Scroll of Ra or Colosseum Fragment (13:14-18).
 
 **Measured.** 2026-09-26, research build, hero Suh (softcore), Act_01_01:
 
@@ -2528,10 +2531,33 @@ Things that do not work:
 - `instance_destroy` on a live boss drops nothing.
 - A boss next to the hero killed them in about 15 s.
 
+**Uber bosses (measured 2026-09-26, afternoon).** Same build, hero and room,
+with `droprate group primeevil` at x35:
+
+| Boss | how it died | kills | Prime Evil parts | items 13:14-18, 49-53 |
+| --- | --- | --- | --- | --- |
+| Karp King (control, before) | HP 0 | 1 | 12 | 0 |
+| Uber Damien | HP 0 | 3 | 0 | 0 |
+| Reaper (`Reaper_Uber_obj`) | HP 0 | 3 | 0 | 0 |
+| Uber Endrixia | HP 0, then `instance_destroy` | 2 | 0 | 0 |
+| Uber Anubis | HP 0, then `instance_destroy` | 2 | 0 | 0 |
+| Karp King (control, after) | HP 0 | 1 | 8 | 0 |
+
+- **Result.** Uber bosses roll no Prime Evil part, at least outside their own
+  realm, so the slider does nothing for them. Earlier x1 kills of the same four
+  agree.
+- **Test.** This is M13, pinned by `tests/test_drop_roll_model.py`.
+- **Controls.** Every result comes from a spot where a Karp King control dropped
+  loot. A boss that dies where loot cannot land, such as past the room's edge,
+  drops nothing.
+- **Tool.** `tools/boss_drop_trial.py` now takes `--dx` (where to spawn) and
+  `--destroy` (HP 0, then `instance_destroy`).
+
 **Not verified.**
-- Uber bosses: Uber Anubis did not die from HP 0, so infernal parts from
-  `DropUberParts` were not measured. That script reads no drop rate, so the
-  slider probably does not change them.
+- Uber bosses inside their own realm: `room_goto` to `Uber_Inoya_rm` closed the
+  game, so no kill there was measured.
+- Uber Luna: `instance_destroy` after HP 0 closed the game.
+- Where the infernal parts drop: no test dropped one.
 - The meaning of stat 736.
 - Which bosses in which zones roll type 41 natively.
 
