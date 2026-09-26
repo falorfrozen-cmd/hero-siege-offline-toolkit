@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-26T05:16:00Z",
+  "generated": "2026-09-26T07:13:43Z",
   "tools": [
     {
       "id": "forgepact",
@@ -44,7 +44,7 @@
         }
       },
       "notes_url": "https://github.com/falorfrozen-cmd/ForgePact/releases/tag/v1.4.7",
-      "notes": "# ForgePact 1.4.7\n\nBosses can drop their Prime Evil parts more often, the pieces for the Key of\nTerror.\n\n## New\n\n- **Prime Evil Parts (Key of Terror).** A new Drop Rates slider on the Loot tab\n  makes bosses drop their Prime Evil part more often: Gurag's Soul, Death's\n  Sigil, Damien's Eye, Anubis' Ankh, Karp King's Bellybutton and Satan's Horn.\n  It uses the game's own roll, on bosses only, and never touches Relics.\n  Checked in play: Karp King dropped about 0.7 bellybuttons per kill at x1, 3 at\n  x5 and 9 at x35. Above x35 nothing more changes. The infernal parts are\n  covered too, where bosses roll them the same way; uber bosses were not tested.\n  Off (x1) by default.\n\n## How to update\n\nDownload and extract the complete release, then reopen ForgePact. Your existing\nsettings are retained. Source users can run `Prepare-Plugin.bat` if plugin files\nare missing before using **Install Mod Plugin**. The slider is in the panel, but\npress **Install Mod Plugin** too: the updated plugin also counts Satan's Infernal\nHorn.\n\nUse ForgePact only with an offline / EAC-disabled copy of Hero Siege.",
+      "notes": "# ForgePact 1.4.7\n\nBosses can drop their Prime Evil parts more often, the pieces for the Key of\nTerror.\n\n## New\n\n- **Prime Evil Parts (Key of Terror).** A new Drop Rates slider on the Loot tab\n  makes bosses drop their Prime Evil part more often: Gurag's Soul, Death's\n  Sigil, Damien's Eye, Anubis' Ankh, Karp King's Bellybutton and Satan's Horn.\n  It uses the game's own roll, on bosses only, and never touches Relics.\n  Checked in play: Karp King dropped about 0.7 bellybuttons per kill at x1, 3 at\n  x5 and 9 at x35. Above x35 nothing more changes. The infernal parts are\n  covered too, where bosses roll them the same way. Checked after release:\n  uber bosses (Damien, Reaper, Endrixia, Anubis) drop no Prime Evil parts, even\n  at x35, so the slider does not change their drops. The game's uber drops\n  (Souls, Scrolls of Ra, Colosseum Fragments) come from a separate roll that no\n  slider scales.\n  Off (x1) by default.\n\n## How to update\n\nDownload and extract the complete release, then reopen ForgePact. Your existing\nsettings are retained. Source users can run `Prepare-Plugin.bat` if plugin files\nare missing before using **Install Mod Plugin**. The slider is in the panel, but\npress **Install Mod Plugin** too: the updated plugin also counts Satan's Infernal\nHorn.\n\nUse ForgePact only with an offline / EAC-disabled copy of Hero Siege.",
       "guide": "docs/submodules/ForgePact/instructions.md",
       "source_launch": {
         "cmd": "py",
