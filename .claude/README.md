@@ -99,7 +99,7 @@ next one a document rather than a conversation. They are driven by
 |---|---|---|
 | `planner` | opus | researches the change and writes `.claude/workorders/<slug>-plan.md`, whose acceptance criteria are commands and files, never prose |
 | `implementer` | opus | executes the steps; returns `PLAN-DEFECT` with evidence rather than improvising around a plan that turns out to be wrong |
-| `verifier` | haiku | runs the acceptance criteria (first through `tools/run_criteria.py`, which runs every command-shaped criterion in one call) and reports what they actually printed; read-only, and judges nothing it cannot execute |
+| `verifier` | haiku | runs the acceptance criteria (first through `tools/run_criteria.py --jobs auto`, which runs every command-shaped criterion in one call, independent ones at once), or one item's `checks:` in a streamed plan, and reports what they actually printed; read-only, and judges nothing it cannot execute |
 | `consultant` | opus | answers **one** narrow question from a phase that hit a decision above its tier, then stops; never implements, plans or reviews |
 | `live-operator` | sonnet | runs a workorder's written `### Live procedure <n>` against the real game through `hs-drive` — its own save backup, the positive control first, raw output to `<slug>-live-<n>.md` — and hands every in-game action a person must take back to the driver; never installs a build, never judges the mechanism |
 | `scribe` | haiku | pastes a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Edit` only; spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
@@ -552,7 +552,8 @@ Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
                    submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
-                   lanes, join } })
+                   lanes, join, items, streaming, answered, reviewScopes,
+                   maxParallel, maxAgents, tokenCeiling, itemAttempts, reviewPassCap } })
 ```
 
 `reviewers` is a map, one entry per applicable round-0 reviewer, valued
@@ -595,6 +596,24 @@ file set. Lanes that could not have come from `--lanes-json` are `BAD-ARGS`.
 Absent or empty `lanes` dispatches exactly the prompt a plan without lanes
 always got.
 
+**Items** (2026-09-26) replace rounds with a streamed pipeline for a plan
+whose `## Steps` declares `### Item: <id>` groups. `items` is pasted from
+`plan_lint.py <plan> --items-json`. Each item gets its own implementer
+(`item-implementer:<id>:a<k>:r<n>`) the moment no running item holds its
+files; items sharing a file queue in plan order. The implementer commits
+only its own paths through `tools/item_commit.py`, then an independent
+`item-verifier:<id>:a<k>:r<n>` runs its `checks:`. A failure sends it back
+with the evidence, up to three attempts. Reviewers (`<name>:p<k>:r<n>`) read
+committed ranges pinned to the `HEAD` they start from, re-run as new commits
+match their trigger, and each finished reviewer's `BLOCKING` findings become
+a `fix-implementer:fix-<k>:r<n>` on the files they name. An item that stops
+parks alone, holding only what depends on it. When nothing is left, the
+acceptance criteria run once (`verifier:r<n>`), and a failure there becomes
+one fix that runs alone before the gate runs again. It returns `PARKED`,
+`CEILING` or the round outcomes, with every item's status. Which item may
+start is a set of pure functions between the script's `@scheduler` markers,
+which the test file cuts out and tests directly.
+
 It returns to the driver on anything needing judgement — `PASS`,
 `PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`,
 `STATE-LOST`, `SCRIBE-FAILED` or `CAP` — so replans, consultations, human questions and the step-5 report stay with
@@ -607,7 +626,7 @@ trades away: every re-entry inside the script is a fresh spawn, never the
 measured, on this one real run, as no worse than a resumed implementer (a
 resumed round-1 implementer cost 14.6M tokens at 304K context per turn;
 losing the resume cost nothing). `.claude/workflows/workorder-rounds.test.mjs`
-(`node --test`, 70 cases, each with its own control) dry-runs the routing
+(`node --test`, 103 cases, each with its own control) dry-runs the routing
 above against stub agents.
 
 That makes the split a forcing function rather than just a workflow: a plan that
@@ -698,7 +717,7 @@ one object.
 | R19 gates-template | any agent's `Write`/`Edit` to a `-plan.md` whose `gates:` line holds `\|` or "or" alternatives (an "or" inside a backticked token does not count) or a `<placeholder>`, outside parentheses: a template of every possible gate, which sets none. Possible gates go on `gates pending:`, and outcome tokens go on `route tokens:` |
 | R20 live-capture-author | any agent but `live-operator` (the driver included) whose `Edit`/`Write` landed on a `.claude/workorders/<slug>-live-<n>.md` capture. A capture a criterion cannot read is reported, never repaired |
 | R21 verifier-interpreter | a verifier shell command that runs `python` or `python3` in command position (a `grep python` does not count) — this repository's commands are `py -3`, and the verifier runs a criterion exactly as written |
-| R22 verifier-suite-once | a verifier that runs the same `unittest discover` suite (same `cd` directory, same arguments) more than once — after a timeout, or to read another slice of the output |
+| R22 verifier-suite-once | a verifier that runs the same `unittest discover` suite (same `cd` directory, same arguments) more than once, counting ForgePact's `tools/run_tests_parallel.py` as the same suite as its serial `discover -s tests` — after a timeout, or to read another slice of the output |
 | R23 lane-git-mutation | a lane implementer (`implementer:<lane>:r<n>`, any lane but `join`) that ran a git command outside the read-only allow-list R16 uses. Lanes share one checkout and `.git/index.lock` fails instead of waiting, so only the join commits; the join and a laneless implementer are exempt |
 | R24 cheap-routes | an `amendment:` planner with no `tools/amend_check.py save` by the driver before it or no `check` after it; a second amendment with no implementer between it and the first; or two `patch-implementer` rounds back to back in one workflow launch. Both routes skip work, so each runs only where something other than the agent taking it has checked that it applies |
 
@@ -729,10 +748,14 @@ acceptance checks) that did not pass; a research check's `fail`,
 `not-observed` or `not-run (instrument: …)` is a finding and exits 0. It replaces the
 `| (pass|fail|not-observed)$` greps that cost forgepact-issue-14 three rounds
 and a split workorder on the operator's punctuation. `plan_lint.py <plan>`
-checks `## Acceptance criteria` for four defects that each cost a round there:
+checks `## Acceptance criteria` for four defects that each cost a round there
+(forgepact-issue-14):
 a prose criterion, a heading slice not anchored on `
 `, a grep over a live
-capture, and `python` where the repository runs `py -3`. The planner runs it
+capture, and `python` where the repository runs `py -3`. A fifth,
+`pinned-sha`, came from the ForgePact UI redesign: a bare commit hash in a
+backticked span, where a per-workorder tag or a merge-base expression belongs
+because the head it was copied from moves. The planner runs it
 before `PLAN-READY`; the driver runs it again before spawning an implementer.
 It also reads a plan's lanes (`### Lane: <name>` headings under `## Steps`,
 each with a `files:` line, plus one `### Join`) and reports five lane
@@ -751,9 +774,27 @@ command-shaped criterion (a backticked span starting with `py`, `git`, `grep`,
 root, once per distinct command. It skips a criterion whose gate `gates:`
 does not carry, and carries a criterion's opening `cd <dir>;` to its later
 spans. It prints each exit code with the output's tail, keeps full logs as
-`cmd-<n>.log`, and judges nothing. `amend_check.py save|check <plan>
-[<context>]` decides whether a plan change was an amendment or a replan
-(SKILL.md Step 2).
+`cmd-<n>.log`, and judges nothing. With `--jobs N|auto` it runs independent
+commands at the same time by resource class (builds first and alone; at most
+one whole suite and `--browser-jobs` browser suites, default 2; file checks
+and targeted tests up to N; a timing benchmark and any unrecognised command
+as a barrier at its place in the plan), declared per criterion as `(class
+<c>)` and `(after <k>)` or recognised from the command, and still prints in
+plan order with the serial run's log numbers. `--item <id>` runs one item's
+`checks:` instead of the acceptance criteria. Without `--jobs` it runs
+serially, as it always has.
+`plan_lint.py` also reads a plan's items (`### Item: <id>` under `## Steps`,
+each with `files:`, `checks:` and optional `after:`/`shares:`/`owner:`) and
+reports `item-overlap` (an overlap neither item declares), `item-no-files`,
+`item-no-checks`, `item-dup-id`, `item-bad-id`, `item-unknown-ref`,
+`item-cycle` and `items-and-lanes`. `--items-json` prints the item table and
+whether planning is complete, and `--known a,b --wait S` waits for the next
+item a streaming planner releases. `item_commit.py --message <m> -- <paths>`
+commits one item's paths, per repository, under the checkout's commit lock;
+`workorder_lock.py <name> -- <cmd>` is that lock (an OS file lock the system
+drops when its holder exits) for anything else that must not run twice at
+once. `amend_check.py save|check <plan> [<context>]` decides whether a plan
+change was an amendment or a replan (SKILL.md Step 2).
 Tests: `tests/test_workorder_plan_tools.py`.
 
 ### `tools/source_index.py` — go to the range, don't grep around

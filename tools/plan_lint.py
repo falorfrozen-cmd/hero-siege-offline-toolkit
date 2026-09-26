@@ -20,6 +20,20 @@ Each rule is a defect measured in forgepact-issue-14 (2026-09-22..24):
                    repository's commands are `py -3`, and a verifier that
                    ran `python` got a false verdict (phase1j-record r0).
 
+And one measured in the ForgePact UI redesign (2026-09-24..26):
+
+  pinned-sha       a bare commit hash (7-40 lowercase hex characters, at
+                   least one digit and one letter, standing alone) in a
+                   backticked span. A plan written against `HEAD`,
+                   `origin/main` or the branch pins a head that moves: the
+                   next commit, merge or amendment makes the criterion
+                   compare against the wrong tree. Name a per-workorder tag
+                   (`git tag <slug>-base`) or a merge-base expression
+                   (`$(git merge-base HEAD origin/main)`) instead. A
+                   64-character digest, a `0x` literal, a `#rrggbb` colour
+                   and a hex run inside a longer word or a `-`-joined name
+                   are not flagged.
+
 It also checks the lanes a plan declares under `## Steps` (issue #176): a
 `### Lane: <name>` heading, then a `files:` line of backticked paths (globs
 allowed) that lane alone may edit, and one `### Join` the serial join
@@ -37,16 +51,44 @@ one checkout, so their file sets must not meet:
   lane-bad-name    a name outside `[a-z0-9-]+`, or `join` (the join
                    implementer's label is `implementer:join:r<n>`).
 
+And the items a streamed plan declares under `## Steps` (2026-09-26): a
+`### Item: <id>` heading (optionally `— <title>`), then a `files:` line the
+item alone may edit, a `checks:` line or bullet list of the targeted checks
+its change can reach, and optionally `after:` (items that must be done
+first), `shares:` (items whose files overlap this one's on purpose, run one
+after the other) and `owner:` (the question the item waits on). Items run as
+parallel implementers, so file sets that meet must say so:
+
+  item-overlap     two items' file sets overlap (same rule as lanes) and
+                   neither names the other in `after:` or `shares:`.
+  item-no-files    an item with no `files:` line, or an empty one.
+  item-no-checks   an item with no backticked check.
+  item-dup-id      two items with the same id.
+  item-bad-id      an id outside `[a-z0-9-]+`.
+  item-unknown-ref `after:`/`shares:` naming an item the plan lacks.
+  item-cycle       `after:` edges that loop.
+  items-and-lanes  one plan declaring both, which the engine cannot run.
+
+Each check is linted like a criterion (prose, bare-python, ...).
+
 Usage:
     py -3 tools/plan_lint.py <slug>-plan.md [...]
     py -3 tools/plan_lint.py <slug>-plan.md --lanes-json
+    py -3 tools/plan_lint.py <slug>-plan.md --items-json [--known a,b --wait SECONDS]
 
-Prints `<plan>: criterion <k>: <rule>: <excerpt>` per criterion finding and
-`<plan>: lane <name>: <rule>: <excerpt>` per lane finding; both count in the
-`finding(s)` line. `--lanes-json` (one plan) then prints, only when the lint
-is clean, one JSON line `{"lanes": [{"name": ..., "files": [...]}, ...],
-"join": true|false}` -- the lane table the driver passes to the workflow, so
-it can never launch lanes a lint rejected.
+Prints `<plan>: criterion <k>: <rule>: <excerpt>` per criterion finding,
+`<plan>: lane <name>: <rule>: <excerpt>` per lane finding and `<plan>: item
+<id>: <rule>: <excerpt>` per item finding; all count in the `finding(s)`
+line. `--lanes-json` (one plan) then prints, only when the lint is clean, one
+JSON line `{"lanes": [{"name": ..., "files": [...]}, ...], "join":
+true|false}` -- the lane table the driver passes to the workflow, so it can
+never launch lanes a lint rejected. `--items-json` likewise prints `{"items":
+[{"id", "title", "files", "checks", "after", "shares", "owner"}, ...],
+"complete": true|false}`, `complete` false while `## State` says `planning:
+streaming`. With `--known` it prints only the items not in that list, and
+with `--wait` it first polls the plan (every 5 s, at most SECONDS) until an
+unknown item appears or planning is complete -- what the round engine's
+refill agent runs while the planner is still releasing items.
 Exit code: 0 clean, 1 a finding, 2 no file or no `## Acceptance criteria`.
 """
 
@@ -56,6 +98,7 @@ import fnmatch
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 CRITERIA_HEADING_RE = re.compile(r"^##\s+Acceptance criteria\s*$")
@@ -68,6 +111,10 @@ UNANCHORED_SLICE_RE = re.compile(r"\.(?:r?index|r?find)\(\s*['\"]#{1,6} ")
 COLLAPSED_TEXT_RE = re.compile(r"\.join\(.*\.split\(\)\)")
 CAPTURE_GREP_RE = re.compile(r"\bgrep\b[^`]*pass\\?\|")
 BARE_PYTHON_RE = re.compile(r"(?:^|[\s;&|(])python3?(?:\.exe)?\s")
+# A hex run standing alone: not inside a longer word, a `0x`/`#` literal or a
+# `-`-joined name (a worktree or UUID segment), and at most 40 characters, so
+# a sha256 digest never matches. Git prints hashes lowercase.
+HEX_RUN_RE = re.compile(r"(?<![0-9A-Za-z_#-])[0-9a-f]{7,40}(?![0-9A-Za-z_-])")
 
 STEPS_HEADING_RE = re.compile(r"^##\s+Steps\s*$")
 H3_RE = re.compile(r"^###\s")
@@ -78,6 +125,11 @@ FILES_LINE_RE = re.compile(r"^\s*(?:[-*]\s+)?\**files:\**\s*(.*)$")
 STEP_START_RE = re.compile(r"^\s*(?:\d+\.|[-*])\s")
 LANE_NAME_RE = re.compile(r"[a-z0-9-]+")
 GLOB_CHARS = "*?["
+ITEM_HEADING_RE = re.compile(r"^###\s+Item:\s*`?([^`\s—–]*)`?\s*(?:[—–-]+\s*(.*?))?\s*$")
+ITEM_FIELD_RE = re.compile(r"^\s*(?:[-*]\s+)?\**(files|checks|after|shares|owner):\**\s*(.*)$", re.I)
+NUMBERED_STEP_RE = re.compile(r"^\s*\d+\.\s")
+BULLET_RE = re.compile(r"^\s*[-*]\s+")
+STATE_HEADING_RE = re.compile(r"^##\s+State\s*$")
 
 
 def criteria(text: str) -> list | None:
@@ -111,7 +163,15 @@ def lint_criterion(text: str) -> list:
             found.append(("capture-grep", span))
         if BARE_PYTHON_RE.search(" " + span):
             found.append(("bare-python", span))
+        if any(_looks_like_sha(h) for h in HEX_RUN_RE.findall(span)):
+            found.append(("pinned-sha", span))
     return found
+
+
+def _looks_like_sha(run: str) -> bool:
+    """A hex run with a digit and a letter: `deadbeef` and `20260926` are
+    words and dates far more often than hashes."""
+    return any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
 
 
 def _lane_files(body: list) -> list | None:
@@ -212,27 +272,202 @@ def lint_lanes(declared: list, join: bool) -> list:
     return out
 
 
+def _ticked(text: str) -> list:
+    return [(a or b).strip().replace("\\", "/").removeprefix("./")
+            for a, b in BACKTICK_RE.findall(text) if (a or b).strip()]
+
+
+def _item_fields(body: list) -> dict:
+    """An item's fields, read before its first numbered step. `checks:` takes
+    its own line and any bullet lines under it, one check per bullet (or the
+    whole inline text as one check); `files:` continues onto lines that carry
+    a backtick, as a lane's does."""
+    fields = {"files": None, "checks": [], "after": [], "shares": [], "owner": None}
+    current = None
+    for line in body:
+        if NUMBERED_STEP_RE.match(line):
+            break
+        m = ITEM_FIELD_RE.match(line)
+        if m:
+            key, value = m.group(1).lower(), m.group(2).strip()
+            current = key
+            if key == "files":
+                fields["files"] = _ticked(value)
+            elif key == "checks" and value:
+                fields["checks"].append(value)
+            elif key in ("after", "shares"):
+                fields[key] = _ticked(value) or [v.strip() for v in re.split(r"[,\s]+", value) if v.strip()]
+            elif key == "owner":
+                fields["owner"] = value or None
+            continue
+        if not line.strip():
+            # A blank line between `checks:` and its first bullet is allowed.
+            if not (current == "checks" and not fields["checks"]):
+                current = None
+            continue
+        if current == "checks" and BULLET_RE.match(line):
+            fields["checks"].append(BULLET_RE.sub("", line, count=1).strip())
+        elif current == "checks" and fields["checks"] and line.startswith((" ", "\t")):
+            fields["checks"][-1] += "\n" + line.strip()
+        elif current == "files" and "`" in line:
+            fields["files"] = (fields["files"] or []) + _ticked(line)
+        else:
+            current = None
+    fields["checks"] = [c for c in fields["checks"] if c.strip()]
+    return fields
+
+
+def items(text: str) -> list:
+    """Each `### Item: <id>` under `## Steps` as a dict of `id`, `title`,
+    `files` (None when the item has no `files:` line), `checks` (the check
+    texts, backticks kept), `after`, `shares` and `owner`, in plan order. A
+    plan with no `### Item:` heading has no items and runs as it always has."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if STEPS_HEADING_RE.match(line)), None)
+    if start is None:
+        return []
+    found, current = [], None
+    for line in lines[start + 1:]:
+        if NEXT_H2_RE.match(line):
+            break
+        if H3_RE.match(line):
+            m = ITEM_HEADING_RE.match(line)
+            current = {"id": m.group(1).strip("`* "), "title": (m.group(2) or "").strip(), "body": []} if m else None
+            if current is not None:
+                found.append(current)
+            continue
+        if current is not None:
+            current["body"].append(line)
+    return [{"id": it["id"], "title": it["title"], **_item_fields(it["body"])} for it in found]
+
+
+def planning_complete(text: str) -> bool:
+    """False only while `## State` carries `planning: streaming` -- the
+    planner is still releasing items. Any other value, or no such line, is a
+    finished plan."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if STATE_HEADING_RE.match(line):
+            for body in lines[i + 1:]:
+                if NEXT_H2_RE.match(body):
+                    break
+                m = re.match(r"^\s*planning:\s*(\S+)", body, re.I)
+                if m:
+                    return m.group(1).strip("`").lower() != "streaming"
+    return True
+
+
+def lint_items(declared: list, has_lanes: bool) -> list:
+    """`(item, rule, excerpt)` per item finding. Overlap is checked over
+    every pair, and allowed only where one item names the other in `after:`
+    or `shares:` -- the engine then runs them one after the other."""
+    out, seen = [], set()
+    ids = {it["id"] for it in declared}
+    if declared and has_lanes:
+        out.append((declared[0]["id"], "items-and-lanes", "a plan declares `### Item:` or `### Lane:`, not both"))
+    for it in declared:
+        iid = it["id"]
+        if not LANE_NAME_RE.fullmatch(iid):
+            out.append((iid, "item-bad-id", f"`### Item: {iid}` (want [a-z0-9-]+)"))
+        if iid in seen:
+            out.append((iid, "item-dup-id", f"`### Item: {iid}` is declared twice"))
+        seen.add(iid)
+        if not it["files"]:
+            out.append((iid, "item-no-files", "no `files:` line of backticked paths before the item's first step"))
+        if not any(BACKTICK_RE.search(c) for c in it["checks"]):
+            out.append((iid, "item-no-checks", "no `checks:` with a backticked command before the item's first step"))
+        for ref in it["after"] + it["shares"]:
+            if ref not in ids:
+                out.append((iid, "item-unknown-ref", f"`{ref}` names no `### Item:` in this plan"))
+        for k, check in enumerate(it["checks"], 1):
+            for rule, excerpt in lint_criterion(check):
+                if rule != "prose":
+                    out.append((iid, rule, f"check {k}: {excerpt[:150]}"))
+    after = {it["id"]: [r for r in it["after"] if r in ids] for it in declared}
+    state: dict = {}
+
+    def cyclic(node) -> bool:
+        if state.get(node) == 1:
+            return True
+        if state.get(node) == 2:
+            return False
+        state[node] = 1
+        hit = any(cyclic(nxt) for nxt in after.get(node, []))
+        state[node] = 2
+        return hit
+    for it in declared:
+        if it["id"] not in state and cyclic(it["id"]):
+            out.append((it["id"], "item-cycle", "`after:` edges loop back to this item"))
+    for i, one in enumerate(declared):
+        for other in declared[i + 1:]:
+            linked = other["id"] in one["after"] + one["shares"] or one["id"] in other["after"] + other["shares"]
+            if linked:
+                continue
+            for a in one["files"] or []:
+                hit = next((b for b in other["files"] or [] if _overlap(a, b)), None)
+                if hit:
+                    out.append((one["id"], "item-overlap",
+                                f"`{a}` overlaps item {other['id']} `{hit}` -- declare `shares:` or `after:`"))
+                    break
+    return out
+
+
 def lint(path: Path) -> tuple:
     text = path.read_text(encoding="utf-8", errors="replace")
-    items = criteria(text)
-    if items is None:
+    items_ = criteria(text)
+    if items_ is None:
         return None, []
     out = []
-    for k, item in enumerate(items, 1):
+    for k, item in enumerate(items_, 1):
         for rule, excerpt in lint_criterion(item):
             out.append((f"criterion {k}", rule, excerpt if len(excerpt) <= 160 else excerpt[:157] + "..."))
-    for name, rule, excerpt in lint_lanes(*lanes(text)):
+    declared_lanes, join = lanes(text)
+    for name, rule, excerpt in lint_lanes(declared_lanes, join):
         out.append((f"lane {name}", rule, excerpt))
-    return len(items), out
+    for iid, rule, excerpt in lint_items(items(text), bool(declared_lanes)):
+        out.append((f"item {iid}", rule, excerpt))
+    return len(items_), out
+
+
+def _items_json(text: str, known: set) -> str:
+    return json.dumps({"items": [it for it in items(text) if it["id"] not in known],
+                       "complete": planning_complete(text)})
 
 
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     want_json = "--lanes-json" in args
-    paths = [Path(p) for p in args if p != "--lanes-json"]
-    if not paths or (want_json and len(paths) != 1):
+    want_items = "--items-json" in args
+    known, wait = set(), 0
+    for flag in ("--known", "--wait"):
+        if flag in args:
+            i = args.index(flag)
+            if i + 1 >= len(args):
+                print(f"plan_lint: {flag} needs a value", file=sys.stderr)
+                return 2
+            value = args.pop(i + 1)
+            args.pop(i)
+            if flag == "--known":
+                known = {v.strip() for v in value.split(",") if v.strip()}
+            else:
+                try:
+                    wait = max(0, int(value))
+                except ValueError:
+                    print("plan_lint: --wait takes whole seconds", file=sys.stderr)
+                    return 2
+    paths = [Path(p) for p in args if p not in ("--lanes-json", "--items-json")]
+    if not paths or ((want_json or want_items) and len(paths) != 1) or (want_json and want_items):
         print(__doc__.strip().split("\n\n")[-2], file=sys.stderr)
         return 2
+    if want_items and wait and paths[0].is_file():
+        # Poll until the planner releases an item this caller does not have,
+        # or says it is done; a lint finding is reported by the pass below.
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            text = paths[0].read_text(encoding="utf-8", errors="replace")
+            if planning_complete(text) or any(it["id"] not in known for it in items(text)):
+                break
+            time.sleep(min(5, max(0.0, deadline - time.monotonic())))
     rc = 0
     for path in paths:
         if not path.is_file():
@@ -251,6 +486,8 @@ def main(argv=None) -> int:
         declared, join = lanes(paths[0].read_text(encoding="utf-8", errors="replace"))
         print(json.dumps({"lanes": [{"name": lane["name"], "files": lane["files"]} for lane in declared],
                           "join": join}))
+    if want_items and rc == 0:
+        print(_items_json(paths[0].read_text(encoding="utf-8", errors="replace"), known))
     return rc
 
 

@@ -1197,3 +1197,312 @@ test('the verifier is sent to the criteria runner first, and told it judges noth
   assert.match(prompts['verifier:r0'], /--start/)
   assert.match(prompts['verifier:r0'], /A root suite the runner already ran is the suite run/)
 })
+
+// --- items mode (3a, 3b) -----------------------------------------------------
+//
+// The scheduler is tested as the pure functions it is, cut out of the script
+// between its @scheduler markers; the engine around it with stub agents that
+// take a few milliseconds each, so "at the same time" is observable.
+const schedSrc = src.slice(src.indexOf('// @scheduler-begin'), src.indexOf('// @scheduler-end'))
+const sched = new Function(`${schedSrc}\nreturn { nextToStart, newlyHeld, invalidatedBy, drainedItems, pathsOverlap }`)()
+const IT = (id, files, extra = {}) => ({ id, files, after: [], shares: [], checks: [], ...extra })
+const ST = (items, statuses = {}) => Object.fromEntries(items.map(it => [it.id, { status: 'pending', touched: false, ...(statuses[it.id] || {}) }]))
+
+test('scheduler: items on disjoint files start together, up to the parallel cap', () => {
+  const items = [IT('a', ['panel/a.css']), IT('b', ['panel/b.css']), IT('c', ['docs/c.md'])]
+  assert.deepEqual(sched.nextToStart(items, ST(items), 4), ['a', 'b', 'c'])
+  assert.deepEqual(sched.nextToStart(items, ST(items), 2), ['a', 'b'])
+})
+
+test('scheduler: items sharing a file run one at a time, in plan order', () => {
+  const items = [IT('a', ['panel/app.css', 'panel/a.js']), IT('b', ['panel/app.css']), IT('c', ['panel/c.js'])]
+  assert.deepEqual(sched.nextToStart(items, ST(items), 4), ['a', 'c'], 'b queues behind a; c is free')
+  assert.deepEqual(sched.nextToStart(items, ST(items, { a: { status: 'running' } }), 4), ['c'])
+  assert.deepEqual(sched.nextToStart(items, ST(items, { a: { status: 'done' } }), 4), ['b', 'c'])
+  // A glob in one and a literal in the other is the same file.
+  const globbed = [IT('x', ['panel/src/*.css']), IT('y', ['panel/src/toolbar.css'])]
+  assert.deepEqual(sched.nextToStart(globbed, ST(globbed), 4), ['x'])
+})
+
+test('scheduler: after: waits for its item; a parked one holds it, and only it', () => {
+  const items = [IT('tokens', ['t.css']), IT('toolbar', ['bar.css'], { after: ['tokens'] }), IT('docs', ['d.md'])]
+  assert.deepEqual(sched.nextToStart(items, ST(items), 4), ['tokens', 'docs'])
+  const st = ST(items, { tokens: { status: 'parked', touched: true } })
+  assert.deepEqual(sched.newlyHeld(items, st).map(h => h.id), ['toolbar'])
+  assert.deepEqual(sched.nextToStart(items, st, 4), ['docs'], 'the unrelated item keeps flowing')
+})
+
+test('scheduler: an item parked before it started does not block its file-sharers; one parked mid-edit does', () => {
+  const items = [IT('ask', ['panel/app.css']), IT('other', ['panel/app.css']), IT('free', ['x.md'])]
+  const untouched = ST(items, { ask: { status: 'parked', touched: false } })
+  assert.deepEqual(sched.nextToStart(items, untouched, 4), ['other', 'free'])
+  assert.deepEqual(sched.newlyHeld(items, untouched), [])
+  const touched = ST(items, { ask: { status: 'parked', touched: true } })
+  assert.deepEqual(sched.nextToStart(items, touched, 4), ['free'])
+  assert.deepEqual(sched.newlyHeld(items, touched).map(h => h.id), ['other'])
+})
+
+test('scheduler: a fix with unknown files runs alone, after everything before it', () => {
+  const items = [IT('a', ['a.css']), IT('b', ['b.css']), IT('fix-1', '*')]
+  assert.deepEqual(sched.nextToStart(items, ST(items), 4), ['a', 'b'])
+  assert.deepEqual(sched.nextToStart(items, ST(items, { a: { status: 'done' }, b: { status: 'running' } }), 4), [])
+  assert.deepEqual(sched.nextToStart(items, ST(items, { a: { status: 'done' }, b: { status: 'done' } }), 4), ['fix-1'])
+  const later = [...items, IT('c', ['c.css'])]
+  assert.deepEqual(sched.nextToStart(later, ST(later, { a: { status: 'done' }, b: { status: 'done' }, 'fix-1': { status: 'running' } }), 4), [], 'nothing beside it')
+})
+
+test('scheduler: a PLAN-DEFECT holds only the items it may invalidate', () => {
+  const items = [IT('bad', ['a.css'], { checks: ['`npm test` exits 0'] }), IT('sharer', ['a.css'], { shares: ['bad'] }),
+    IT('dependent', ['d.css'], { after: ['bad'] }), IT('same-check', ['e.css'], { checks: ['`npm test` passes'] }), IT('free', ['f.md'])]
+  assert.deepEqual(sched.invalidatedBy(items, ST(items), 'bad').sort(), ['dependent', 'same-check', 'sharer'])
+})
+
+test('scheduler: overlap matches plan_lint on its lane cases', () => {
+  for (const [a, b] of [['docs/**', 'docs/agents/*.md'], ['ForgePact/docs/', 'ForgePact/docs/x.md'], ['docs/', '*.md'], ['docs/agents/', 'docs/*.md']]) {
+    assert.ok(sched.pathsOverlap(a, b), `${a} / ${b}`)
+  }
+  assert.ok(!sched.pathsOverlap('tools/a*.py', 'tools/b*.py'), 'control: diverging prefixes')
+})
+
+const ITEMS_BASE = { ...BASE, reviewers: { 'docs-sync-reviewer': 'never' },
+  items: [
+    { id: 'a', title: 'toolbar', files: ['panel/a.css'], checks: ['`npm test` exits 0'] },
+    { id: 'b', title: 'tray', files: ['panel/b.css'], checks: ['`npm test` exits 0'] },
+    { id: 'c', title: 'docs', files: ['docs/c.md'], checks: ['`grep x docs/c.md` prints 1'] },
+  ] }
+const itemOf = label => (label.match(/^(?:item-implementer|item-verifier|fix-implementer):([a-z0-9-]+):/) || [])[1]
+const itemsReply = (overrides = {}) => label => {
+  for (const [prefix, value] of Object.entries(overrides)) if (label.startsWith(prefix)) return typeof value === 'function' ? value(label) : value
+  if (label.startsWith('snapshot')) return HEADS([{ repo: '.', sha: 'base000' }])
+  if (label.startsWith('item-implementer') || label.startsWith('fix-implementer')) {
+    const id = itemOf(label)
+    return { ...DONE, commits: [{ repo: '.', sha: `sha-${id}` }], paths: [`panel/${id}.css`], flags: '' }
+  }
+  if (label.startsWith('item-verifier') || label.startsWith('verifier')) return PASS
+  if (label.startsWith('scribe')) return { written: true, note: '' }
+  return { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'head' }] }
+}
+// Every stub takes a few ms, and the run records which agents overlapped.
+async function runTimed(args, reply) {
+  const calls = [], spans = {}, prompts = {}
+  let clock = 0
+  const agent = async (prompt, opts) => {
+    calls.push(opts.label); prompts[opts.label] = prompt
+    const start = ++clock
+    await new Promise(r => setTimeout(r, 15))
+    spans[opts.label] = [start, ++clock]
+    return reply(opts.label, prompt, opts)
+  }
+  const parallel = thunks => Promise.all(thunks.map(t => t().catch(() => null)))
+  const result = await script(args, agent, parallel, null, () => {}, () => {}, {}, null)
+  return { result, calls, spans, prompts }
+}
+const overlaps = (s, x, y) => s[x][0] < s[y][1] && s[y][0] < s[x][1]
+const impl = (calls, id) => calls.find(c => c.startsWith(`item-implementer:${id}:`))
+
+test('items: disjoint items are implemented at the same time, and the whole-tree gate runs once', async () => {
+  const { result, calls, spans } = await runTimed(ITEMS_BASE, itemsReply())
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(overlaps(spans, impl(calls, 'a'), impl(calls, 'b')) && overlaps(spans, impl(calls, 'b'), impl(calls, 'c')), 'items ran one after another')
+  assert.deepEqual(calls.filter(c => /^verifier:/.test(c)), ['verifier:r0'], 'the full verify ran more or less than once')
+  assert.equal(calls.filter(c => c.startsWith('item-verifier:')).length, 3, 'each item gets its own targeted check')
+  const before = calls.filter(c => c !== 'verifier:r0' && !c.startsWith('scribe'))
+  assert.ok(spans['verifier:r0'][0] > Math.max(...before.map(c => spans[c][1])), 'the gate ran before the queue drained')
+  assert.deepEqual(result.items.map(i => i.status), ['done', 'done', 'done'])
+})
+
+test('items: items sharing a file never overlap, and run in plan order', async () => {
+  const args = { ...ITEMS_BASE, items: [
+    { id: 'a', files: ['panel/app.css', 'panel/a.js'], checks: ['`npm test` ok'] },
+    { id: 'b', files: ['panel/app.css'], shares: ['a'], checks: ['`npm test` ok'] },
+    { id: 'c', files: ['docs/c.md'], checks: ['`grep x y` ok'] },
+  ] }
+  const { result, calls, spans } = await runTimed(args, itemsReply())
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(!overlaps(spans, impl(calls, 'a'), impl(calls, 'b')), 'a and b edited app.css at the same time')
+  assert.ok(spans[impl(calls, 'a')][0] < spans[impl(calls, 'b')][0], 'b went before a')
+  assert.ok(overlaps(spans, impl(calls, 'a'), impl(calls, 'c')), 'control: the disjoint item ran beside a')
+})
+
+test('items: a parked item does not block the others, and the gate waits for it', async () => {
+  const advice = { ...DONE, verdict: 'ADVICE-NEEDED', question: 'which token?', commits: [], paths: [] }
+  const { result, calls } = await runTimed(ITEMS_BASE, itemsReply({ 'item-implementer:b:': advice }))
+  assert.equal(result.outcome, 'PARKED')
+  assert.deepEqual(result.items.map(i => [i.id, i.status]), [['a', 'done'], ['b', 'parked'], ['c', 'done']])
+  assert.match(result.items[1].evidence, /which token/)
+  assert.ok(!calls.some(c => /^verifier:/.test(c)), 'the whole-tree gate ran with an item parked')
+})
+
+test('items: an owner question parks only its item until the driver passes it as answered', async () => {
+  const args = { ...ITEMS_BASE, items: [...ITEMS_BASE.items, { id: 'd', files: ['panel/d.css'], owner: 'keep the old tray?', checks: ['`npm test` ok'] }] }
+  let r = await runTimed(args, itemsReply())
+  assert.equal(r.result.outcome, 'PARKED')
+  assert.ok(!r.calls.some(c => c.startsWith('item-implementer:d:')))
+  assert.equal(r.result.items.find(i => i.id === 'd').reason, 'owner: keep the old tray?')
+  assert.deepEqual(r.result.items.filter(i => i.status === 'done').map(i => i.id), ['a', 'b', 'c'])
+  assert.match(r.prompts['scribe:r0'], /items: a=done; b=done; c=done; d=parked\n/)
+  // The relaunch: done items stay done, the answered item runs, the gate runs once.
+  let docs = 0
+  const blockingOnceOnD = () => (docs++ === 0
+    ? { ...CLEAN, blocking: [{ where: 'panel/d.css:1', problem: 'p', evidence: 'e' }], reviewed_heads: [{ repo: '.', sha: 'h' }] }
+    : { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'h2' }] })
+  const state = '## State\nround: 1\nitems: a=done; b=done; c=done; d=parked; fix-1=done\n'
+  r = await runTimed({ ...args, answered: ['d'], state, round: 1 }, itemsReply({ 'docs-sync-reviewer': blockingOnceOnD }))
+  assert.equal(r.result.outcome, 'PASS')
+  assert.deepEqual(r.calls.filter(c => c.startsWith('item-implementer:')), ['item-implementer:d:a1:r1'])
+  assert.match(r.prompts['item-implementer:d:a1:r1'], /### Decisions/)
+  assert.ok(r.calls.includes('fix-implementer:fix-1:r1'), 'a stale fix-1=done in State skipped this launch\'s own fix')
+})
+
+test('items: a failed targeted check retries the item with the evidence, within its budget', async () => {
+  let checks = 0
+  const failing = () => (checks++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'npm test', status: 'fail', evidence: 'expected 2 got 3' }], pending_human: [] } : PASS)
+  const { result, calls, prompts } = await runTimed(ITEMS_BASE, itemsReply({ 'item-verifier:a:': failing }))
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(calls.includes('item-implementer:a:a2:r0'))
+  assert.match(prompts['item-implementer:a:a2:r0'], /expected 2 got 3/)
+  const always = { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'npm test', status: 'fail', evidence: 'no' }], pending_human: [] }
+  const spent = await runTimed(ITEMS_BASE, itemsReply({ 'item-verifier:a:': always }))
+  assert.equal(spent.result.outcome, 'PARKED')
+  assert.match(spent.result.items[0].reason, /^budget: 3 attempts/)
+  assert.ok(!spent.calls.includes('item-implementer:a:a4:r0'))
+})
+
+test('items: a BLOCKING review finding becomes a fix on its file, re-reviewed, then the gate once', async () => {
+  let passes = 0
+  const docs = () => (passes++ === 0
+    ? { ...CLEAN, blocking: [{ where: 'panel/a.css:12', problem: 'wrong token', evidence: 'x', fix: 'use --accent' }], reviewed_heads: [{ repo: '.', sha: 'h1' }] }
+    : { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'h2' }] })
+  const { result, calls, prompts } = await runTimed(ITEMS_BASE, itemsReply({ 'docs-sync-reviewer': docs }))
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(calls.includes('fix-implementer:fix-1:r0'))
+  assert.match(prompts['fix-implementer:fix-1:r0'], /Your file set is `panel\/a\.css`/)
+  assert.match(prompts['fix-implementer:fix-1:r0'], /use --accent/)
+  const lastReview = calls.filter(c => c.startsWith('docs-sync-reviewer:')).pop()
+  assert.ok(calls.indexOf(lastReview) > calls.indexOf('fix-implementer:fix-1:r0'), 'the reviewer never re-read the fix')
+  assert.deepEqual(calls.filter(c => /^verifier:/.test(c)), ['verifier:r0'])
+})
+
+test('items: reviewers read pinned commits and are told what is still in flight', async () => {
+  const { prompts, calls } = await runTimed(ITEMS_BASE, itemsReply())
+  const first = prompts[calls.find(c => c.startsWith('docs-sync-reviewer:'))]
+  assert.match(first, /git -C \. rev-parse HEAD/)
+  assert.match(first, /git -C \. diff base000 <that sha>/)
+  assert.match(first, /never from the working tree/)
+  assert.ok(!/Workorder: p\.md/.test(first), 'a reviewer was handed the workorder')
+})
+
+test('items: a whole-tree failure becomes one fix that runs alone, then the gate again', async () => {
+  let gates = 0
+  const gate = () => (gates++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'suite', status: 'fail', evidence: 'FAILED (errors=1)' }], pending_human: [] } : PASS)
+  const { result, calls, prompts } = await runTimed(ITEMS_BASE, itemsReply({ 'verifier:': gate }))
+  assert.equal(result.outcome, 'PASS')
+  assert.deepEqual(calls.filter(c => /^verifier:/.test(c)), ['verifier:r0', 'verifier:g2:r0'])
+  assert.match(prompts['fix-implementer:gate-fix-1:r0'], /FAILED \(errors=1\)/)
+  assert.match(prompts['fix-implementer:gate-fix-1:r0'], /you run alone/)
+})
+
+test('items: a PLAN-DEFECT parks its item and holds only what it may invalidate', async () => {
+  const args = { ...ITEMS_BASE, maxParallel: 1, items: [
+    { id: 'a', files: ['panel/a.css'], checks: ['`npm test` ok'] },
+    { id: 'b', files: ['panel/b.css'], after: ['a'], checks: ['`grep b x` ok'] },
+    { id: 'c', files: ['docs/c.md'], checks: ['`grep c x` ok'] },
+  ] }
+  const defect = { ...DONE, verdict: 'PLAN-DEFECT', evidence: 'STEP 1: no such token', commits: [], paths: [] }
+  const { result } = await runTimed(args, itemsReply({ 'item-implementer:a:': defect }))
+  assert.equal(result.outcome, 'PARKED')
+  assert.deepEqual(result.items.map(i => [i.id, i.status]), [['a', 'parked'], ['b', 'held'], ['c', 'done']])
+})
+
+test('items: the scribe records every item and State carries the items line', async () => {
+  const { prompts } = await runTimed({ ...ITEMS_BASE, state: '## State\nround: 0\ngates: none\n' }, itemsReply())
+  assert.match(prompts['scribe:r0'], /### Round 0 \(items\)/)
+  assert.match(prompts['scribe:r0'], /items: a=done; b=done; c=done/)
+  assert.match(prompts['scribe:r0'], /gates: none/, 'a driver-owned State line was dropped')
+})
+
+test('items: args that could not have come from plan_lint --items-json are refused', async () => {
+  for (const items of [[{ id: 'Bad', files: ['a'] }], [{ id: 'a', files: [] }], [{ id: 'a', files: ['x'] }, { id: 'a', files: ['y'] }],
+    [{ id: 'a', files: ['x'], after: ['ghost'] }]]) {
+    const { result, calls } = await runTimed({ ...ITEMS_BASE, items }, itemsReply())
+    assert.equal(result.outcome, 'BAD-ARGS', JSON.stringify(items))
+    assert.equal(calls.length, 0)
+  }
+  const both = await runTimed({ ...ITEMS_BASE, lanes: [{ name: 'x', files: ['x'] }], join: true }, itemsReply())
+  assert.equal(both.result.outcome, 'BAD-ARGS')
+})
+
+test('items: the implementer commits through item_commit and runs its own checks first', async () => {
+  const { prompts } = await runTimed(ITEMS_BASE, itemsReply())
+  const p = prompts['item-implementer:a:a1:r0']
+  assert.match(p, /py -3 tools\/item_commit\.py --message "zz a: toolbar" -- <paths>/)
+  assert.match(p, /run_criteria\.py "p\.md" --item a --jobs auto/)
+  assert.match(p, /"When you are one item"/)
+  assert.match(prompts['item-verifier:a:a1:r0'], /--item a --jobs auto/)
+  assert.match(prompts['item-verifier:a:a1:r0'], /do not run the root suite/)
+})
+
+test('items: a streaming plan pulls newly released items while the first ones run', async () => {
+  let refills = 0
+  const refill = () => (refills++ === 0
+    ? { exit_code: 0, items: [{ id: 'late', title: 'late', files: ['late.md'], checks: ['`grep a b` ok'] }], complete: false, raw_output: '' }
+    : { exit_code: 0, items: [], complete: true, raw_output: '' })
+  const { result, calls, prompts } = await runTimed({ ...ITEMS_BASE, streaming: true }, itemsReply({ refill }))
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(calls.includes('item-implementer:late:a1:r0'))
+  assert.match(prompts['refill:1:r0'], /--items-json --known a,b,c --wait 480/)
+  assert.ok(calls.indexOf('verifier:r0') > calls.indexOf('refill:2:r0'), 'the gate ran before planning was complete')
+})
+
+test('scheduler: an earlier item waiting (after:) on a later file-sharer does not hold it, so neither deadlocks', () => {
+  // PR #239 review: a (declared first, after: b) and b share x.css.
+  const items = [IT('a', ['x.css'], { after: ['b'] }), IT('b', ['x.css'])]
+  assert.deepEqual(sched.nextToStart(items, ST(items), 4), ['b'])
+  assert.deepEqual(sched.nextToStart(items, ST(items, { b: { status: 'done' } }), 4), ['a'])
+  // Through a chain, too: a after c, c after b.
+  const chain = [IT('a', ['x.css'], { after: ['c'] }), IT('b', ['x.css']), IT('c', ['y.css'], { after: ['b'] })]
+  assert.deepEqual(sched.nextToStart(chain, ST(chain), 4), ['b'])
+  // Control: an earlier sharer that does not wait on it still goes first.
+  const plain = [IT('a', ['x.css']), IT('b', ['x.css'])]
+  assert.deepEqual(sched.nextToStart(plain, ST(plain), 4), ['a'])
+})
+
+test('items: a fixer that disputes a finding and commits nothing is re-reviewed before any gate', async () => {
+  // PR #239 review: with no new commit the blocking reviewer was never due,
+  // and the gate still ran and passed.
+  let passes = 0
+  const finding = { where: 'panel/a.css:12', problem: 'wrong token', evidence: 'x' }
+  const docs = () => (passes++ === 0 ? { ...CLEAN, blocking: [finding], reviewed_heads: [{ repo: '.', sha: 'h1' }] }
+    : { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'h1' }] })
+  const disputes = { ...DONE, report: 'the token is right: tokens.css:4 defines it', commits: [], paths: [] }
+  const { result, calls, prompts } = await runTimed(ITEMS_BASE, itemsReply({ 'docs-sync-reviewer': docs, 'fix-implementer': disputes }))
+  assert.equal(result.outcome, 'PASS')
+  const recheck = calls.filter(c => c.startsWith('docs-sync-reviewer:')).pop()
+  assert.ok(calls.indexOf(recheck) > calls.indexOf('fix-implementer:fix-1:r0'), 'the disputed finding was never re-read')
+  assert.match(prompts[recheck], /the fixer disputes/)
+  assert.match(prompts[recheck], /tokens\.css:4 defines it/)
+  assert.ok(calls.indexOf('verifier:r0') > calls.indexOf(recheck), 'the gate ran before the reviewer confirmed or withdrew')
+  // Control: a reviewer that holds its finding after the dispute keeps the
+  // run from passing -- it raises another fix, and at its cap the run parks.
+  const stubborn = () => ({ ...CLEAN, blocking: [finding], reviewed_heads: [{ repo: '.', sha: 'h1' }] })
+  const held = await runTimed(ITEMS_BASE, itemsReply({ 'docs-sync-reviewer': stubborn, 'fix-implementer': disputes }))
+  assert.equal(held.result.outcome, 'PARKED')
+  assert.ok(!held.calls.includes('verifier:r0'), 'the gate ran over an open BLOCKING finding')
+})
+
+test('items: a relaunch with every item done still re-reads a reviewer that entered blocking', async () => {
+  const args = { ...ITEMS_BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' },
+    priorFindings: { 'docs-sync-reviewer': [{ where: 'docs/c.md', problem: 'stale command' }] },
+    state: '## State\nround: 1\nitems: a=done; b=done; c=done\n' }
+  const { result, calls, prompts } = await runTimed(args, itemsReply())
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(calls.includes('docs-sync-reviewer:p1:r1'), 'the blocking reviewer never ran')
+  assert.match(prompts['docs-sync-reviewer:p1:r1'], /stale command/)
+  assert.ok(calls.indexOf('verifier:r1') > calls.indexOf('docs-sync-reviewer:p1:r1'))
+  assert.ok(!calls.some(c => c.startsWith('item-implementer:')), 'a done item ran again')
+  // Control: if it still finds the problem, the gate does not run over it.
+  const still = { ...CLEAN, blocking: [{ where: 'docs/c.md', problem: 'stale command', evidence: 'x' }], reviewed_heads: [{ repo: '.', sha: 'h' }] }
+  const r = await runTimed(args, itemsReply({ 'docs-sync-reviewer': still }))
+  assert.ok(r.calls.includes('fix-implementer:fix-1:r1'))
+  assert.notEqual(r.result.outcome, 'PASS')
+})

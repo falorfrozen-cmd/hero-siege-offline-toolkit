@@ -119,6 +119,40 @@ they are trying to get. Starting the implementation because the plan looked
 obviously right removes the review checkpoint they asked for, and it is the one
 outcome that makes the split worthless.
 
+## Spend Each Check Once, and Overlap What Does Not Wait
+
+A check shared between two changes is cheaper than the same check run after
+each one, and work that does not depend on a phase should not wait for it.
+So, in `/workorder` and anything run like it:
+
+- **Changes that are ready together get one round and one full verify**, not
+  one each. Plan fewer, larger workorders, with lanes and one join verify,
+  rather than a chain of small ones. A middle workorder's criteria run what
+  its change can reach; the full suite set runs at the join and in the
+  final workorder.
+- **Start read-only or disjoint-file work as soon as its input is
+  committed**, beside the verifier rather than behind it. Stream a review's
+  findings to fixers one by one against a pinned snapshot, and verify all the
+  fixes once, after the stream drains.
+- **Name commits by tag or merge-base in criteria, never by a hash of a
+  moving head.** `tools/plan_lint.py` flags a bare hash as `pinned-sha`.
+- **Merge a clean `origin/main` that misses the plan's files in place**; stop
+  only when it conflicts or touches them. Before a plan, merge `origin/main`
+  when it touches files the plan will edit; otherwise merge once before the
+  pull requests.
+- **Batch the owner's decisions before the next plan, and fix a flaky test
+  in the round that saw it**, rather than retrying it.
+
+Independence is not traded for speed: the verifier and every reviewer still
+run fresh, and a check is shared, never skipped. In the ForgePact UI redesign
+a full panel verify took 25-35 minutes and was paid at least 15 times over 14
+workorders.
+
+Procedure: `.claude/skills/workorder/SKILL.md` § "Spend each check once, and
+overlap what does not wait" and `.claude/agents/planner.md` § "Spend each
+check once". Story and evidence:
+[docs/agents/workorder-calibration.md](docs/agents/workorder-calibration.md#spending-each-check-once-the-forgepact-ui-redesign-2026-09-26)
+
 ## Legal: Decompiled Output Never Reaches Any Origin
 
 This toolkit reverse-engineers Hero Siege's runtime (memory layout, hooked functions,

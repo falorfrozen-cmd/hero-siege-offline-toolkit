@@ -160,8 +160,75 @@ Then run `py -3 tools/plan_lint.py .claude/workorders/<slug>-plan.md` and fix
 every finding before returning: a criterion in prose, a heading slice not
 anchored on `\n` (`t.index('\n## X\n')`, since a heading's name is often
 mentioned in backticks above the heading itself), a grep over a live capture
-instead of `live_checks.py`, or `python` where this repository runs `py -3`.
-Each has cost a round.
+instead of `live_checks.py`, `python` where this repository runs `py -3`, or
+a bare commit hash (see "Spend each check once" below). Each has cost a round.
+
+## Spend each check once
+
+A full verify is the expensive part of a round: for the ForgePact panel,
+25-35 minutes (the Python suite 11-17, the oracle replay and its negative
+control about 8, six e2e suites about 6, `e2e:perf` about 8), paid at least 15
+times across the UI redesign's 14 workorders. Plan so it is paid as rarely as
+the work allows (SKILL.md "Spend each check once, and overlap what does not
+wait"; evidence in `docs/agents/workorder-calibration.md`).
+
+- **Fewer, larger workorders, as items.** Prefer one workorder whose parts
+  are `### Item:` groups (see "Items" below) over a chain of small sequential
+  workorders, each paying its own full verify. Each item is implemented,
+  checked and committed on its own the moment its files are free, and the
+  whole-tree criteria run once at the end. "The suites must run after the
+  edits" is not a reason to decline items: that is what the final gate is,
+  and every planner in the redesign declined lanes on that ground. Split
+  only for the reason SKILL.md Step 0.5 gives, and remember an item has its
+  own budget, so one stubborn item no longer stops the others.
+- **Say what each criterion needs to run beside the others.** The verifier
+  runs `run_criteria.py --jobs auto`, which puts builds first and runs the
+  browser suites, the Python suite and the file checks side by side. It
+  recognises the usual commands; mark the rest `(class build)`, `(class
+  suite)`, `(class browser)`, `(class test)`, `(class pure)` or `(class
+  exclusive)`, and write `(after 3)` on a criterion that reads what
+  criterion 3's command writes. An unmarked command it does not recognise
+  runs alone in its place in the plan, which is safe and slow.
+- **Tier the verification.** A middle workorder, one whose output another
+  workorder in the same feature will build on and verify again, puts in its
+  criteria only what its change can reach: the module's `npm test`, the e2e
+  suite for the screen it touched, the Python tests of the module it changed
+  (`py -3 -m unittest tests.test_<x>`), the design checks for what it
+  restyled. The full set (the whole Python suite, every e2e suite, perf, the
+  oracle replay) runs at a join and in the feature's final or ship
+  workorder. Say in `## Context` which workorder carries the full set, so a
+  reviewer does not read the narrower criteria as a gap.
+- **Never pin a moving head.** A criterion names a commit through a
+  per-workorder tag a precondition step creates (`git tag <slug>-base`, e.g.
+  `forgepact-ui-polish-base`), or through a merge-base expression
+  (`$(git merge-base HEAD origin/main)`), never through a hash copied from
+  `HEAD`, `origin/main` or the branch at planning time. That applies to a
+  fixed commit too, such as the main commit a merge brings in: tag it, so a
+  re-merge moves one tag instead of editing ten criteria. `plan_lint.py`
+  flags a bare hash as `pinned-sha`. About ten of the redesign's amendments
+  came from pinned hashes and from the two defects below.
+- **Backtick only what should run.** `tools/run_criteria.py` runs every
+  backticked span whose first word is a command (`git`, `grep`, `py`,
+  `npm`, ...), so prose such as "the `git log` shows the merge" is executed
+  as written. Put expected output and descriptions outside backticks, or
+  phrase them so they do not start with a command word.
+- **Slice to the end of the file safely.** A heading slice that looks for the
+  next heading (`t.index('\n## ', start)`) raises when its section is the
+  last in the file. Use `find` and fall back to the end: `e = t.find('\n## ',
+  s + 1); e = len(t) if e < 0 else e`.
+- **Main moved: merge, stop only when it bites.** Write the precondition as:
+  if `origin/main` has commits `HEAD` lacks, merge it when `git merge-tree
+  --write-tree HEAD origin/main` exits 0 (no conflict) and `git diff
+  --name-only HEAD...origin/main` names none of this plan's files, and record
+  the merge in `## Log`; stop with `BLOCKED: main moved` only otherwise. Never
+  "if main moved, stop": a main-merge workorder of its own cost 1-2.5 hours
+  each time in the redesign.
+- **A flaky test is a step, not a retry.** If a suite the plan runs is known
+  to fail intermittently, or a failure without a code cause appears during
+  your research, add a step that makes it deterministic (a fixed safe port,
+  an awaited condition instead of a sleep), in this workorder. A verifier
+  that meets one routes it as a defect; nobody re-runs the suite hoping for a
+  green.
 
 **Planning while the previous phase is recorded.** The driver may start you
 while the last session's record round is still running (SKILL.md Step 4.5).
@@ -186,6 +253,7 @@ verdict: PLAN-READY
 
 ## State
 round: 0        phase: plan
+planning: complete        (`streaming` while items are still being released)
 gates: none
 gates pending: `build: complete`; `live1: complete`
 round base: <none yet>
@@ -222,6 +290,21 @@ files: `<path>`, ...
 
 ### Join
 The build, the full suite, and every step that reads another lane's output.
+```
+
+Or, instead of lanes, items (see "Items" below):
+
+```markdown
+### Item: <id> — <title>
+files: `<path>`, `<glob>`, ...
+checks:
+- `<the fast command this change can reach>` exits 0
+- `<another>` prints `<expected>`
+after: `<id>`            (optional: items that must be done first)
+shares: `<id>`           (optional: an item whose files overlap this one's)
+owner: <question>        (optional: the item waits for the owner's answer)
+
+1. The steps this item's implementer carries out, numbered.
 ```
 
 `.claude/workorders/<slug>-context.md`:
@@ -289,6 +372,49 @@ is a prefix of another's — checked over every pair of lanes, and
 conservative on purpose: narrow the globs), `lane-no-files` (a lane with no
 `files:` line or an empty one), `lane-no-join` (lanes and no `### Join`),
 `lane-dup-name`, and `lane-bad-name`. Run it before `PLAN-READY`.
+
+**Items: a plan that streams.** Declare items when the work is several
+changes that can each be finished and checked on their own: the polish
+workorder's nine owner items, the ship workorder's eight finish-review fixes.
+The workflow gives each item its own implementer, starts it as soon as no
+running item holds its files, runs the item's `checks:` through an
+independent verifier the moment it is done, and commits it. Reviewers read
+each commit as it lands, and their findings become fix items at once. The
+`## Acceptance criteria` are the whole-tree gate, run once when nothing is
+left to run: the full suite, every e2e suite, perf, the oracle. An item that
+parks (an owner question, a `PLAN-DEFECT`, three failed attempts) holds only
+what depends on it. Each item is a level-3 `### Item: <id>` heading under
+`## Steps` (id in `[a-z0-9-]+`, an optional `— <title>`), then, before its
+first numbered step:
+
+- `files:` — the backticked paths or globs it alone may edit. Items whose
+  files overlap must say so: `shares: `<id>`` (they run one after the other,
+  in plan order) or `after: `<id>`` (this one needs the other's result).
+  `plan_lint.py` refuses an undeclared overlap as `item-overlap`.
+- `checks:` — on the same line, or as bullets under it: the fast checks this
+  item's change can reach (the unit tests of the module it changed, the e2e
+  suite of the screen it touched, a grep). Each is a criterion in the usual
+  form, with `(class ...)` where it needs one. Never the full suite: that is
+  the gate's.
+- `owner:` — the question this item waits on, when the owner has not
+  answered it yet. Only this item waits; ask the others' questions up front.
+
+Steps above the first `### Item:` are preconditions for every item. A plan
+declares items or lanes, never both (`items-and-lanes`). `py -3
+tools/plan_lint.py <plan>` checks every rule above (`item-overlap`,
+`item-no-files`, `item-no-checks`, `item-dup-id`, `item-bad-id`,
+`item-unknown-ref`, `item-cycle`), and `--items-json` prints the table the
+driver passes to the workflow, only when the lint is clean.
+
+**Release items as they are settled.** When the driver asks for a streamed
+plan, write `planning: streaming` in `## State` first, together with `##
+Goal`, `## Out of scope` and the `## Acceptance criteria` heading. Then write
+each item the moment it is settled, in one `Edit`, and never change it
+afterwards: the workflow may already be implementing it, and a correction is
+an amendment the driver routes like any other. Write the independent items
+first, so the first implementers start while you plan the rest. When the
+last item and the whole-tree criteria are written, set `planning: complete`.
+The workflow runs no gate before that line says so.
 
 `### Round <n>` belongs to the rounds — the scribe and the driver write it —
 so the planner never uses it: the first plan logs under `### Plan`, each
