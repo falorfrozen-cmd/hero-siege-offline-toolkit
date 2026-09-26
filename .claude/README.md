@@ -729,10 +729,14 @@ acceptance checks) that did not pass; a research check's `fail` or
 `not-observed` is a finding and exits 0. It replaces the
 `| (pass|fail|not-observed)$` greps that cost forgepact-issue-14 three rounds
 and a split workorder on the operator's punctuation. `plan_lint.py <plan>`
-checks `## Acceptance criteria` for four defects that each cost a round there:
+checks `## Acceptance criteria` for four defects that each cost a round there
+(forgepact-issue-14):
 a prose criterion, a heading slice not anchored on `
 `, a grep over a live
-capture, and `python` where the repository runs `py -3`. The planner runs it
+capture, and `python` where the repository runs `py -3`. A fifth,
+`pinned-sha`, came from the ForgePact UI redesign: a bare commit hash in a
+backticked span, where a per-workorder tag or a merge-base expression belongs
+because the head it was copied from moves. The planner runs it
 before `PLAN-READY`; the driver runs it again before spawning an implementer.
 It also reads a plan's lanes (`### Lane: <name>` headings under `## Steps`,
 each with a `files:` line, plus one `### Join`) and reports five lane

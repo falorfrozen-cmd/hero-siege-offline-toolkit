@@ -142,6 +142,31 @@ class PlanLintTests(TempDirMixin, unittest.TestCase):
             self.assertIn(want, out)
         self.assertIn("9 criteria, 4 finding(s)", out)
 
+    def test_fail_a_pinned_commit_hash(self):
+        # ForgePact UI redesign (2026-09-24..26): criteria that pinned the sha
+        # a moving head had at plan time cost amendments once it moved.
+        for span in ("git -C ForgePact diff --quiet 3aa95f6e99a2c97a3bee72d7a359df9b86f07f3a HEAD -- panel/",
+                     "git -C ForgePact merge-base --is-ancestor e448110 HEAD",
+                     "py -3 -c \"import subprocess; M='2b127efadf097d829653235a2ab1636f23d7ab79'; print(M)\"",
+                     "git log --oneline HEAD..f1e2f57"):
+            with self.subTest(span=span):
+                self.assertEqual(plan_lint.lint_criterion(f"`{span}` exits 0"), [("pinned-sha", span)])
+
+    def test_pass_what_only_looks_like_a_hash(self):
+        # Negative control: the remedies the rule names, and hex that is not a
+        # commit, lint clean.
+        for span in ("git diff --quiet forgepact-ui-polish-base HEAD -- panel/",
+                     "git diff --quiet $(git merge-base HEAD origin/main) HEAD -- docs/",
+                     "certutil -hashfile x.dll SHA256 | grep 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                     "grep -c 0x1a2b3c4d plugin/ModuleMain.cpp",
+                     "grep -c '#a1b2c3' panel/src/app.css",
+                     "ls .claude/worktrees/workorder-parallelization-2d890c",
+                     "ls scratchpad/726ab7f9-55f8-459a-ab56-15cbfc7ee6f7",
+                     "grep -c deadbeef x.log",
+                     "grep -c 20260926 x.log"):
+            with self.subTest(span=span):
+                self.assertEqual(plan_lint.lint_criterion(f"`{span}` exits 0"), [])
+
     def test_continuation_lines_join_their_item(self):
         text = "## Acceptance criteria\n- [ ] the file\n      `docs/x.md` records it\n"
         self.assertEqual(plan_lint.criteria(text), ["the file `docs/x.md` records it"])

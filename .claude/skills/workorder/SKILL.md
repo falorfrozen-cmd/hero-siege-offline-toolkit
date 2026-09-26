@@ -130,6 +130,12 @@ Recommend splitting into one workorder per independent finding, or per
 submodule — say it and let the user decide; a plan this size is usually
 deliberate, and the warning is worth more than a refusal.
 
+The warning is about findings sharing one round cap, not about size as such.
+Where the work is a sequence of small dependent changes, the opposite advice
+holds: one larger workorder whose independent parts are lanes with disjoint
+`files:` and one join verify costs one full verify, where a chain of small
+workorders costs one each (planner.md "Fewer, larger workorders").
+
 ### Step 1 — plan
 
 If the request touches a submodule not initialized in this checkout, run
@@ -144,6 +150,17 @@ local-only build prerequisites (`.claude/skills/workorder/local_prereqs.json`,
 e.g. ForgePact's `plugin_build/include/`) from the main checkout when missing
 here, printing `copied prerequisite: <path>`. Removing this worktree later
 needs `git worktree remove --force` once it carries a submodule.
+
+**Bring `origin/main` in first when it reaches the plan's files.** Before
+every planner spawn (first plan, replan or amendment), `git fetch origin` in
+the hub and in each touched submodule and read `git diff --name-only
+HEAD...origin/main`. If it names a file the plan will edit, or the workorder
+tooling this pipeline runs on (`.claude/`, `tools/`), merge `origin/main`
+into the feature branch now: a merge, never a rebase, between rounds, never
+while an implementer may be committing. Otherwise do not merge for this plan;
+merge once before the pull requests open. Say which you did and what came in.
+The owner narrowed this on 2026-09-26 from "merge before every plan", which
+spent a merge and a re-read on commits that touched nothing the plan used.
 
 Spawn `planner` at the tier triage chose, with the request and the repository
 context. It writes `.claude/workorders/<slug>-plan.md` (frontmatter, `## State`,
@@ -167,7 +184,8 @@ runnable command or a checkable file, send it back now — an unrunnable
 criterion costs a full implement round to discover. `py -3
 tools/plan_lint.py <plan>` checks that statically, running no criterion:
 prose, a heading slice not anchored on `\n`, a grep over a live capture
-instead of `tools/live_checks.py`, `python` for `py -3`. A finding goes back
+instead of `tools/live_checks.py`, `python` for `py -3`, a bare commit hash
+where a per-workorder tag or a merge-base belongs. A finding goes back
 to the planner with the tool's output before any implementer is spawned. If `## Needs human
 judgement` is non-empty, show it to the user and get an answer before spawning
 the implementer.
@@ -702,13 +720,104 @@ owner's answer to its own design question is likely a replan: in
 forgepact-issue-14 the design moved under the owner's answers four times.
 "Plan only" still means plan only.
 
+## Spend each check once, and overlap what does not wait
+
+The owner, 2026-09-26: *"If some checks can be done once for 2 things it's
+better than checking twice after each change"*, and *"Waiting for something
+to end completely before picking it up sounds like a waste of time."* In the
+ForgePact UI redesign (14 workorders over about 48 hours) a full panel verify
+cost 25-35 minutes and was paid at least 15 times. The evidence is in
+[`workorder-calibration.md`](../../../docs/agents/workorder-calibration.md#spending-each-check-once-the-forgepact-ui-redesign-2026-09-26).
+Independence stays as it is: the verifier and every reviewer still run fresh
+and never see the implementer's reasoning. A check is **shared** between
+changes, never skipped.
+
+**1. One round and one verify for everything that is ready together.**
+Pending changes that are ready at the same time go into one implementer
+round and one full verify: owner feedback, the findings a review produced,
+a conflict-free main merge that touches none of the plan's files. Do not give
+each its own implement-and-verify round. The patch route (Step 4) and the
+3-round cap are unchanged; this is about not starting a second round while
+the first one's input is still arriving.
+
+**2. Start independent work as soon as its input is committed.** A read-only
+agent (`impeccable-finish-reviewer`, a design audit), a documenter writing
+only to a scratch path, or a Figma mirror does not wait behind the verifier.
+Launch it in the same message as the workflow or the verify, as a background
+`Agent` call, pointed at the commit it reads. Work that edits files runs
+alongside only when its files are disjoint from everything else in flight.
+
+**3. Stream review findings into fixes.** When a review is its own pass
+(a finish review, a design audit, owner feedback worked through by agents),
+do not wait for the whole review before fixing:
+
+- **Pin what the reviewer reads.** Fixers will be changing the tree, so the
+  reviewer reads a snapshot of one commit: `git worktree add --detach
+  <scratch>/review-<sha> <sha>`, or `git archive <sha> | tar -x -C <dir>`,
+  with the scratch path outside every repository tree. Remove the worktree
+  afterwards.
+- **Split the review, run the parts at once.** Several narrower reviewers,
+  one per dimension or per screen, in parallel, instead of one broad
+  reviewer. Each one appends every finding to its own file in one scratch
+  directory the moment it has it, as one JSON line: `{"id", "severity",
+  "files": [...], "where", "problem", "fix"}`. A reviewer whose contract says
+  it edits nothing writes only there, outside the repository trees; that is
+  its report, not an edit.
+- **Watch and dispatch.** The driver watches that directory with `Monitor`
+  and hands each new finding to a fixer (`implementer`, the finding as its
+  whole brief) at once. Fixers run one at a time, or in parallel only when
+  their `files` are disjoint from every fixer in flight; a file several
+  findings share (`app.css` and the like) serialises them. A fixer runs no
+  git write while another fixer is in flight; when one finishes with none
+  other running, it commits each finished finding's files as its own commit
+  (`git add -- <files>`), the way a lane join does. A finding that needs a
+  decision goes into the owner batch (5), never to a fixer.
+- **Verify once, after the stream drains.** A fixer runs at most a test
+  inside its own files. When every reviewer has returned and every fixer is
+  done, one full verify (plus the reviewers that raised blocking findings,
+  re-reading the fixed commit) covers every fix together, per rule 1.
+
+`workorder-rounds.js` does not stream, and should not be made to: `agent()`
+returns only when an agent ends, so a script never sees a finding before its
+reviewer has finished, and handing each finished reviewer to a fixer inside a
+round would have fixers editing the tree the round's verifier is reading at
+that moment, leaving the verify's evidence attached to no commit. Streaming
+is this driver procedure, run outside a round, and its output enters the
+next round as one batch.
+
+**4. Main moved: merge it when it is clean and misses the plan's files.** A
+plan's precondition is "main moved → merge it when `git merge-tree
+--write-tree HEAD origin/main` shows no conflict and `git diff --name-only
+HEAD...origin/main` names none of the plan's files; stop only otherwise"
+(`planner.md`). The implementer does that merge and records it in `## Log`.
+A separate main-merge workorder cost 1-2.5 hours each time in the redesign.
+
+**5. Batch the owner's decisions.** After a round that changed what the owner
+sees, serve a snapshot for them to look at, and collect every question the
+next plan needs into one `AskUserQuestion` batch before that plan is
+written, so the answers are plan inputs rather than mid-round replans. The
+snapshot is built from `git archive <sha>` into a scratch directory, never
+the working tree, and served through the module's own sandbox server with
+its stdin held open (for example `tail -f /dev/null | <serve command>`, run
+in the background), so the server does not exit when its input closes.
+
+**6. A flaky test is fixed the round it is seen.** A test that fails once
+without a code cause (a port the browser refuses, a timing race) is a defect
+for this round's implementer, or a split right away; it is never re-run in
+the hope of a green. The redesign's polish workorder spent its cap on a
+Chromium `ERR_UNSAFE_PORT` flake.
+
 ## Driver discipline
 
 **The driver never implements.** Its tool use is limited to: reading the
 workorder, `round_delta.py`, `tools/amend_check.py save`/`check` around an
 amendment, `git status`/`git diff` for a dispatch, `Edit` on
-`## State`/`## Log`, `Agent`, `SendMessage`, `AskUserQuestion`, and step
-4.5's one approved install. Log entries go in with `Edit`, under the one
+`## State`/`## Log`, `Agent`, `SendMessage`, `AskUserQuestion`, step
+4.5's one approved install, and the speed procedures above: `Monitor` on a
+findings directory, a pinned review snapshot (`git worktree add --detach`,
+`git archive`), a `git fetch`/`git merge-tree`/`git merge` of `origin/main`
+between rounds, and building and serving the owner's snapshot, which checks
+nothing and is for the owner's eyes only. Log entries go in with `Edit`, under the one
 `## Log` — not `cat >>` heredocs, which is how a context file ended up with two
 `## Log` headings and rounds recorded under the planner's. Running builds
 or tests, or editing source, makes it the implementer at the wrong tier and the
