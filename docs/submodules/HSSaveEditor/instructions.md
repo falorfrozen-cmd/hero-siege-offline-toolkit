@@ -45,7 +45,7 @@
 |       [ Save Decoder / Encoder ]           [ Shared Shop Engine ]             [ Ether Sidecar Engine ]
 |       - Base64 / zlib / XOR                - shop.ini parser                  - ether<N>.hss manager
 |       - Round-trip INI sections            - [shop] gold & professions        - StatEtherPoints logic
-|       - Preserves unknown data             - Atomic backup & write            - Loadout preservation
+|       - Preserves unknown data             - Backup then overwrite            - Loadout preservation
 +----------------------|-------------------------------|----------------------------------+
                        |                               |                                  |
                        +-------------------------------+----------------------------------+
@@ -184,7 +184,7 @@ All commands below are executed from the submodule root `HSSaveEditor/` unless o
 - **Preservation of Unknown Keys:** When parsing and rewriting `.hss` files, unrecognized INI sections and key-value pairs are preserved in their original ordering to prevent data loss across game patches.
 - **GameMaker Numeric Formatting:** Floating-point numbers written to `.hss` sections use 6 decimal places (e.g., `1.000000`, `0.000000`, `5.000000`) matching GameMaker Studio's native serialization format.
 - **Fail-Closed Progression:** Subskill rank inputs exceeding node caps or unverified class IDs are rejected immediately before file writes can occur.
-- **Atomic Operations:** File modifications generate backups prior to write, write normalized payloads, and verify buffer validity.
+- **Backup, Then In-Place Write (Not Atomic):** `write_hss_file`, `write_plain_ini_file` and `write_ether_file` copy an existing target to `<name>.bak_<YYYYMMDD_HHMMSS>` (`shutil.copy2`), then rewrite it in place (`Path.write_text` / `write_bytes`). With no temporary file, rename or `fsync`, a crash, power loss or full disk mid-write can leave the target truncated, and the backup is the way back. A character save that also changes `shop.ini` writes the two files one after the other, so a failed second write leaves the first in place. Payloads are normalized first (line endings; Ether data through `normalize_ether_data`). Only the Ether save reads its file back (`read_ether_file` right after the write), and a slot filled by `create_blank_character_slot` is reopened from disk; character and `shop.ini` saves are not re-read.
 
 ---
 
