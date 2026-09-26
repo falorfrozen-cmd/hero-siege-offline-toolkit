@@ -155,6 +155,51 @@
       "values": { "vanilla_base": 1500, "x5": 300, "x5_again": 300, "x1": 1500, "x5000": 1 },
       "model": "1500 -> 300; a second x5 still gives 300; x1 gives 1500; x5000 floors at 1; the probability ratio is 5 while unclamped.",
       "reproduced_by": "tests.test_drop_roll_model.TargetTests.test_m10_droprate_group_divides_the_vanilla_base_without_compounding"
+    },
+    {
+      "id": "M11",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-09-26",
+      "source": [
+        { "path": "ForgePact/docs/prime-evil-parts-research.md", "section": "## Measured" },
+        { "path": "docs/submodules/ForgePact/instructions.md", "section": "## Prime Evil Parts slider (1.4.7, 2026-09-26)" }
+      ],
+      "scripts": ["gml_Script_DropItem", "gml_Script_LoadDrops", "gml_Script_DropBossParts", "gml_Script_PC_SetVariableGMLWrapper"],
+      "what": "Karp King was spawned in Act_01_01 1200 px from the hero and killed through its own death path (its protected HP set to 0), 15 times, with every Prime Evil part at its vanilla droprate.base of 27: 11 Karp King's Bellybuttons.",
+      "values": { "kills": 15, "parts": 11, "vanilla_base": 27 },
+      "model": "A vanilla boss drops its part, but not on every kill: 11 in 15. Against the x35 run (every roll passes), that is about 0.08 per roll, which puts the inner scale s near 2 for this roll, outside the key rolls' 0.7-1.43.",
+      "reproduced_by": "tests.test_drop_roll_model.BaselineTests.test_m11_a_vanilla_boss_drops_its_part_on_some_kills"
+    },
+    {
+      "id": "M12",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-26",
+      "source": [
+        { "path": "ForgePact/docs/prime-evil-parts-research.md", "section": "## Measured" },
+        { "path": "docs/submodules/ForgePact/instructions.md", "section": "## Prime Evil Parts slider (1.4.7, 2026-09-26)" }
+      ],
+      "scripts": ["gml_Script_DropItem", "gml_Script_LoadDrops", "gml_Script_DropBossParts", "gml_Script_PC_SetVariableGMLWrapper"],
+      "what": "The same kills with droprate group primeevil x5 (base 27 -> 5.4) and x35 (base 27 -> 1): 36 parts in 12 kills, and 138 parts in 15 kills. A kill rolls the part several times; at x35 one kill dropped up to 14.",
+      "values": { "x5": { "kills": 12, "parts": 36 }, "x35": { "kills": 15, "parts": 138 } },
+      "model": "Parts per kill scale with the lever until the base floors at 1 (x27 for base 27). The x5/x1 ratio is 5 in the model whatever s is while unclamped. Measured it is 4.1, and its 95% band from the two counts (Poisson log-ratio), 2.1-8.0, contains 5. x35 is saturated, so it gives the most.",
+      "reproduced_by": "tests.test_drop_roll_model.TargetTests.test_m12_the_lever_multiplies_boss_part_drops_until_the_base_floors"
+    },
+    {
+      "id": "M13",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-26",
+      "source": [
+        { "path": "ForgePact/docs/prime-evil-parts-research.md", "section": "## Uber bosses (measured 2026-09-26, afternoon)" },
+        { "path": "docs/submodules/ForgePact/instructions.md", "section": "## Prime Evil Parts slider (1.4.7, 2026-09-26)" }
+      ],
+      "scripts": ["gml_Script_LoadDrops", "gml_Script_DropBossParts", "gml_Script_DropUberParts", "gml_Script_PC_SetVariableGMLWrapper"],
+      "what": "Uber bosses were spawned in Act_01_01 and killed with droprate group primeevil at x35 (every part's base at 1). Uber Damien (3 kills) and Reaper (3) died from HP 0. Uber Endrixia (2) and Uber Anubis (2) got HP 0 and then instance_destroy. None of the ten kills dropped a Prime Evil part or any of category 13's items 14-18 or 49-53. At the same spot, a Karp King control dropped 12 parts before them and 8 after.",
+      "values": { "x35": { "uber_kills": 10, "parts": 0, "uber_items": 0, "control_kills": 2, "control_parts": 20 } },
+      "model": "The lever divides the parts' own droprate.base, and only DropBossParts reads it. Uber bosses roll no part there, so the lever has nothing to scale. Had they rolled like Karp King at x35 (M12, 9.2 per kill), ten kills without one part would have a Poisson probability of about 1e-40. DropUberParts, drop type 43, makes items 14-18 or 49-53 and reads no drop rate (static reading).",
+      "reproduced_by": "tests.test_drop_roll_model.TargetTests.test_m13_uber_bosses_roll_no_prime_evil_part_for_the_lever_to_scale"
     }
   ]
 }

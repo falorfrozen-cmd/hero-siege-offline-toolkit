@@ -3,24 +3,24 @@
 ## Module Overview & Metadata
 - **Module Name:** HS Save Editor (Hero Siege Character Save Editor)
 - **Submodule Path:** `HSSaveEditor`
-- **Reviewed Git Revision:** `3c240f5474a65233893a8c88a098d829631dcc90` (Tag: `v1.4.1`, Branch: `main`)
-- **Revision Date:** `Mon Sep 7 09:14:30 2026 +0300`
-- **Commit Message:** `v1.4.1: Ether points floor odd quest stages like the game instead of refusing the save`
+- **Reviewed Git Revision:** `c01f9f968c9d85a8e0147c05df0ee78d237c5877` (v1.4.3, Branch: `fix/block-saves-while-game-runs`, [PR #5](https://github.com/falorfrozen-cmd/HSSaveEditor/pull/5); the `v1.4.3` tag follows the merge)
+- **Revision Date:** `Sat Sep 26 11:09:45 2026 +0700`
+- **Commit Message:** `v1.4.3: Refuse to write saves while Hero Siege is running`
 - **Source Availability:** Full application source is present (`hs_save_editor.py`, `test_hs_save_editor.py`, `README.md`, `RELEASE_NOTES.md`, `LICENSE.txt`, and standalone Windows distribution `HeroSiegeSaveEditor.exe`).
-- **CI / Pipeline Availability:** **Not available** (no remote GitHub Actions or external CI configurations exist; validation is conducted locally via Python `unittest` test suites and static code audits).
+- **CI / Pipeline Availability:** No test or build CI: no workflow runs `test_hs_save_editor.py` or builds `HeroSiegeSaveEditor.exe`, so validation is local (Python `unittest`, see the command table below). The repository has two GitHub Actions workflows, and both only notify this hub through the `HUB_DISPATCH_TOKEN` secret: `.github/workflows/notify-hub.yml` sends `submodule-updated` on every push to `main`, which the hub's `submodule-dispatch.yml` turns into the pointer-bump pull request, and `.github/workflows/notify-hub-release.yml` sends `release-published` when a stable release is published (or when run by hand), which the hub's `catalog.yml` uses to rebuild the tool catalog.
 - **License & Provenance:** Permissive offline-use license (`LICENSE.txt` — allows use, copying, modification, and redistribution provided it is not represented as an official Hero Siege tool, is not used for online/multiplayer/trading/anti-cheat modes, and license terms remain attached).
-- **Purpose & Scope:** Standalone offline save editor and Season 10 progression forge for Hero Siege character `.hss` save files. Operates strictly offline on local saves located in `%LOCALAPPDATA%\Hero_Siege` (`hs2saves/`), shared account data in `shop.ini`, and per-character Ether sidecars (`ether<N>.hss`). Enables modification of character attributes, gold and professions, difficulty unlocking via the Act 9 campaign clear gate, difficulty-scoped waypoint unlocking, complete 30-cell charm grid activation (`fallOfDarkness|4`), exact quest-derived Ether Point allocation (100–800), and comprehensive subskill tree rank customization for all 24 playable classes. All modifications fail closed when Hero Siege is running and generate pre-mutation timestamped backups.
+- **Purpose & Scope:** Standalone offline save editor and Season 10 progression forge for Hero Siege character `.hss` save files. Operates strictly offline on local saves located in `%LOCALAPPDATA%\Hero_Siege` (`hs2saves/`), shared account data in `shop.ini`, and per-character Ether sidecars (`ether<N>.hss`). Enables modification of character attributes, gold and professions, difficulty unlocking via the Act 9 campaign clear gate, difficulty-scoped waypoint unlocking, complete 30-cell charm grid activation (`fallOfDarkness|4`), exact quest-derived Ether Point allocation (100–800), and comprehensive subskill tree rank customization for all 24 playable classes. Modifications generate pre-mutation timestamped backups. Since v1.4.3 every write first checks that Hero Siege is closed and refuses while it runs (see [Game-Closed Check](#1-game-closed-check-since-v143)).
 
 ---
 
 ## Architecture & Repository Map
 
 ### Repository Layout
-- `hs_save_editor.py`: Primary application source code and desktop entry point. Implements a Tkinter desktop GUI styled with a responsive Season 10 Character Save Forge dark rune theme, save discovery routines, binary XOR/zlib/base64 encoding and decoding pipelines, INI section mutation helpers, `shop.ini` synchronization, Ether sidecar managers, translation table resolution with built-in audited EXE class fallbacks, subskill cap validation, and automated backup cleanup routines.
-- `test_hs_save_editor.py`: Python `unittest` test suite containing 90 unit and integration tests across `CharacterBackupCleanupTests` and `Season10ProgressTests`. Tests cover `.hss` round-trip serialization, odd quest stage flooring, Ether point validation, 24-class subskill tree verification, legacy tree migration, and link/junction safety.
+- `hs_save_editor.py`: Primary application source code and desktop entry point. Implements a Tkinter desktop GUI styled with a responsive Season 10 Character Save Forge dark rune theme, save discovery routines, binary XOR/zlib/base64 encoding and decoding pipelines, INI section mutation helpers, `shop.ini` synchronization, Ether sidecar managers, translation table resolution with built-in audited EXE class fallbacks, subskill cap validation, a running-game check before every write, and automated backup cleanup routines.
+- `test_hs_save_editor.py`: Python `unittest` test suite containing 105 unit and integration tests across `CharacterBackupCleanupTests`, `Season10ProgressTests`, `DeletedSlotTests` and `GameRunningGuardTests`. Tests cover `.hss` round-trip serialization, starting a character in a slot emptied by an in-game delete, the running-game check before every write, odd quest stage flooring, Ether point validation, 24-class subskill tree verification, legacy tree migration, and link/junction safety.
 - `HeroSiegeSaveEditor.exe`: Pre-compiled standalone Windows executable built via PyInstaller.
 - `README.md`: End-user documentation, feature overviews, Steam Deck / Proton directory guidance, and PyInstaller build instructions.
-- `RELEASE_NOTES.md`: Changelog documenting version changes from v1.3.0 through v1.4.1.
+- `RELEASE_NOTES.md`: Changelog documenting version changes from v1.3.0 through v1.4.3.
 - `LICENSE.txt`: Project license terms and offline safety notice.
 - `.gitignore`: Build artifact ignores (`dist/`, `build/`, `*.spec`, `*.bak*`, `__pycache__/`).
 
@@ -45,7 +45,7 @@
 |       [ Save Decoder / Encoder ]           [ Shared Shop Engine ]             [ Ether Sidecar Engine ]
 |       - Base64 / zlib / XOR                - shop.ini parser                  - ether<N>.hss manager
 |       - Round-trip INI sections            - [shop] gold & professions        - StatEtherPoints logic
-|       - Preserves unknown data             - Atomic backup & write            - Loadout preservation
+|       - Preserves unknown data             - Backup then overwrite            - Loadout preservation
 +----------------------|-------------------------------|----------------------------------+
                        |                               |                                  |
                        +-------------------------------+----------------------------------+
@@ -117,12 +117,24 @@ Hero Siege encodes character saves using a combination of character interleaving
   - Historical/renamed parent skills map via `S10_SUBTALENT_PARENT_ALIASES`.
   - Deprecated tree IDs migrate only when a single unambiguous verified native target exists (e.g., legacy Poison Nova `t119` -> `t118`); ambiguous historical IDs are preserved without guessing.
 
+### 5. Unused and Deleted Slots
+- **Unused slot:** the game keeps a blank character in a slot that never held one. Decoded it is `BLANK_SLOT_TEXT`: an `[inventory]` section with an empty inventory and `[0] version="8.000000"`. The list shows it as `Unnamed`, and it opens like any character.
+- **Deleted slot:** deleting a character in the game rewrites the slot's `herosiege<N>.hss`, `ether<N>.hss`, `incarnation<N>.hss` and `inventory_order_<N>.hss` as a single NUL byte ([Runtime Data Models § 8.2](../../RUNTIME_DATA_MODELS.md#82-main-menu-and-character-select)). `decode_hss_file` raises `EmptySlotError`, a subclass of `HssFormatError`, for it, and the list shows `Empty slot - open to start a new character`.
+- **Starting a character there (v1.4.2):** opening an emptied `herosiege<N>.hss` asks first (`offer_blank_character`). On yes, `create_blank_character_slot` backs up the empty file with the usual `.bak_<timestamp>` name and writes `BLANK_SLOT_TEXT`, then the slot opens for editing. It refuses any file that is not a still-empty `herosiege<N>.hss`, so a slot that gained a character meanwhile is never overwritten. The other three files stay as the game left them; `read_ether_file` already reads an emptied `ether<N>.hss` as no Ether data.
+- **Character count:** `list_label_is_character` leaves `Unnamed`, emptied, `Empty / unsupported` and `Not a character` entries out of the "N CHARACTERS" summary.
+- **Test fixture:** `GAME_UNUSED_SLOT_FILE` in `test_hs_save_editor.py` is the game's own unused-slot file. It pins `BLANK_SLOT_TEXT`; if a future season changes the blank character, refresh the fixture from a fresh install before changing the constant.
+
 ---
 
 ## Process Boundaries, Save Safety, & Backup Protection
 
-### 1. Game-Closed Requirement & Safeguards
+### 1. Game-Closed Check (Since v1.4.3)
 - Save editing must only occur while `Hero_Siege.exe` is completely terminated. Writing to saves while the game is running risks process file locks, memory overwrites, or save truncation.
+- **Every write checks first.** `HssEditorApp.ensure_game_closed()` runs right before `save_current`, `save_as`, `save_ether_changes`, `offer_blank_character` (before `create_blank_character_slot`) and `clean_character_backups` write or delete anything. It runs after their own confirmation dialogs, so a game started after the editor opened is caught too. Before v1.4.3 nothing checked; the README and release notes only asked the player to close the game.
+- **Detection:** `game_running_state()` returns True, False or None. `tasklist_says_running()` runs `tasklist /FI "IMAGENAME eq Hero_Siege.exe" /FO CSV /NH` and decodes the output leniently, because Turkish and German Windows print the "no tasks" notice in the OEM code page. `powershell_says_running()` asks `Get-Process` only when tasklist gave no answer. The approach follows the item editor's `game_running()` (`hero-siege-item-editor/hs_item_editor_gui.py`), with one difference: a check that cannot run is not counted as "running".
+- **Outcomes:** while the game runs, the write is refused with an error dialog and no file changes. When it is closed, the write goes ahead as before. When neither command answers (possible under Proton or Wine), the editor asks "Continue anyway?", defaulting to No, so a Steam Deck player is warned instead of locked out.
+- **Tests:** `GameRunningGuardTests` covers detection with captured `tasklist` and PowerShell output, and all five writes in all three states. A module-level patch in `test_hs_save_editor.py` makes every other test see "closed", so the suite does not depend on whether the game is open on the machine running it.
+- The hub's "Requires game closed" label (`requires.game_closed` in `catalog/sources.toml`) is still only a label, and the hub still launches the editor while the game runs; the editor's own check covers the writes.
 - The editor does not inject code into live game processes or modify game memory.
 
 ### 2. Pre-Mutation Backups
@@ -152,9 +164,11 @@ All commands below are executed from the submodule root `HSSaveEditor/` unless o
 | Command | Shell / Platform | Working Directory | Prerequisites | Expected Result | Side Effects | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `py -3 hs_save_editor.py` | PowerShell / CMD (Windows) | `HSSaveEditor/` | Python 3.10+ (Tkinter included) | Launches Tkinter Character Save Forge UI | Reads local saves in `%LOCALAPPDATA%\Hero_Siege` | Verified |
-| `py -3 -m unittest test_hs_save_editor.py` | PowerShell / CMD | `HSSaveEditor/` | Python 3.10+ | Runs all 90 automated unit and integration tests | Creates temporary directories in test sandbox | Verified |
+| `py -3 -m unittest test_hs_save_editor.py` | PowerShell / CMD | `HSSaveEditor/` | Python 3.10+ | Runs all 105 automated unit and integration tests | Creates temporary directories in test sandbox | Verified |
 | `py -3 -m unittest test_hs_save_editor.CharacterBackupCleanupTests` | PowerShell / CMD | `HSSaveEditor/` | Python 3.10+ | Runs 8 backup cleanup and safety tests | None | Verified |
 | `py -3 -m unittest test_hs_save_editor.Season10ProgressTests` | PowerShell / CMD | `HSSaveEditor/` | Python 3.10+ | Runs 82 Season 10 progression, talent, and Ether tests | None | Verified |
+| `py -3 -m unittest test_hs_save_editor.DeletedSlotTests` | PowerShell / CMD | `HSSaveEditor/` | Python 3.10+ | Runs 8 unused and deleted slot tests | Creates temporary directories in test sandbox | Verified |
+| `py -3 -m unittest test_hs_save_editor.GameRunningGuardTests` | PowerShell / CMD | `HSSaveEditor/` | Python 3.10+ | Runs 7 running-game check tests | Creates temporary directories in test sandbox | Verified |
 | `python -m PyInstaller --onefile --windowed --name HeroSiegeSaveEditor hs_save_editor.py` | PowerShell / CMD (Windows) | `HSSaveEditor/` | Python 3.13 (documented build environment), PyInstaller | Packages standalone GUI executable `dist/HeroSiegeSaveEditor.exe` | Creates `build/`, `dist/`, and `.spec` files | Inspected |
 
 ### Build Environment & Packaging Notes
@@ -166,11 +180,11 @@ All commands below are executed from the submodule root `HSSaveEditor/` unless o
 
 ## Coding Conventions & Persistence Invariants
 
-- **Standard Library Only:** Built entirely using Python standard libraries (`tkinter`, `sqlite3`, `zlib`, `base64`, `json`, `pathlib`, `re`, `shutil`, `argparse`, `dataclasses`, `math`). Requires no third-party package installations for development or execution.
+- **Standard Library Only:** Built entirely using Python standard libraries (`tkinter`, `sqlite3`, `subprocess`, `zlib`, `base64`, `json`, `pathlib`, `re`, `shutil`, `argparse`, `dataclasses`, `math`). Requires no third-party package installations for development or execution.
 - **Preservation of Unknown Keys:** When parsing and rewriting `.hss` files, unrecognized INI sections and key-value pairs are preserved in their original ordering to prevent data loss across game patches.
 - **GameMaker Numeric Formatting:** Floating-point numbers written to `.hss` sections use 6 decimal places (e.g., `1.000000`, `0.000000`, `5.000000`) matching GameMaker Studio's native serialization format.
 - **Fail-Closed Progression:** Subskill rank inputs exceeding node caps or unverified class IDs are rejected immediately before file writes can occur.
-- **Atomic Operations:** File modifications generate backups prior to write, write normalized payloads, and verify buffer validity.
+- **Backup, Then In-Place Write (Not Atomic):** `write_hss_file`, `write_plain_ini_file` and `write_ether_file` copy an existing target to `<name>.bak_<YYYYMMDD_HHMMSS>` (`shutil.copy2`), then rewrite it in place (`Path.write_text` / `write_bytes`). With no temporary file, rename or `fsync`, a crash, power loss or full disk mid-write can leave the target truncated, and the backup is the way back. A character save that also changes `shop.ini` writes the two files one after the other, so a failed second write leaves the first in place. Payloads are normalized first (line endings; Ether data through `normalize_ether_data`). Only the Ether save reads its file back (`read_ether_file` right after the write), and a slot filled by `create_blank_character_slot` is reopened from disk; character and `shop.ini` saves are not re-read.
 
 ---
 
@@ -178,8 +192,11 @@ All commands below are executed from the submodule root `HSSaveEditor/` unless o
 
 | Issue / Symptom | Root Cause | Solution |
 | --- | --- | --- |
-| Save slot appears as "Empty / unsupported" | File is empty, a Steam Cloud placeholder, or from an incompatible platform | Verify that the save slot contains an active character and that the selected directory matches the game's active save folder. |
+| Save slot appears as "Empty / unsupported" | File is not a readable save: a Steam Cloud placeholder, a save from an incompatible platform, or the wrong folder | Verify that the save slot contains an active character and that the selected directory matches the game's active save folder. |
+| Slot shows "Empty slot - open to start a new character" (before v1.4.2: "Empty / unsupported" and "This save slot is empty") | The character in that slot was deleted in the game, which empties the slot's files | Open the slot and confirm: the editor backs up the empty file and writes the game's blank character (v1.4.2+). On older versions, copy an unused slot's `herosiege<N>.hss` over it. |
 | Changes do not appear in-game | Hero Siege was running while saving, causing the game to overwrite files on exit | Close Hero Siege completely before editing. Re-open editor, apply modifications, save, and then start the game. |
+| Save refused with "Hero Siege is running" (v1.4.3+) | `Hero_Siege.exe` is running, and the editor refuses every write while it runs | Close the game completely, then save again. |
+| "Could not check whether Hero Siege is running" before a write (v1.4.3+) | Neither `tasklist` nor PowerShell answered, which can happen under Proton or Wine | Answer Yes only when Hero Siege is closed; No cancels the write. |
 | Steam Deck / Proton saves not found | Editor is pointing to local Windows AppData rather than the Proton prefix | On Linux/Steam Deck, direct the editor to the Hero Siege Proton prefix: `<SteamLibrary>/steamapps/compatdata/269210/pfx/drive_c/users/steamuser/AppData/Local/Hero_Siege/`. |
 | "Total points below allocated nodes" in Ether picker | Selected Ether total is lower than the points already allocated in the active Ether Tree | Choose an Ether Point preset equal to or higher than the number of nodes already allocated in the sidecar loadout. |
 | Backup cleanup does not remove old files | Files do not match `herosiegeN.hss.bak_YYYYMMDD_HHMMSS` or reside in symlinked folders | Ensure backup filenames follow the standard pattern. Symlinks and junctions are intentionally skipped for safety. |
@@ -194,6 +211,8 @@ All commands below are executed from the submodule root `HSSaveEditor/` unless o
   - Add test fixtures in `test_hs_save_editor.py` verifying the 14-node layout for new class trees.
 - **Save Encoding / XOR Key Changes:**
   - If GameMaker save obfuscation changes in a future season, update `HSS_XOR_KEY` and test round-trip encoding against new save samples.
+- **Game Executable Rename:**
+  - If a game update renames `Hero_Siege.exe`, update `GAME_PROCESS_NAME` in `hs_save_editor.py` (the PowerShell check uses its stem) and the captured `tasklist` fixtures in `GameRunningGuardTests`.
 - **Shared Toolkit Documentation Links:**
   - Submodule Index: [`../README.md`](../README.md)
   - ForgePact (Native Aurie Plugin): [`../ForgePact/instructions.md`](../ForgePact/instructions.md)

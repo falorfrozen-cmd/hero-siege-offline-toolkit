@@ -109,6 +109,12 @@ def extra_roll_gate_probability(chances, drop_type, gate_mult, *, preroll_scale=
     return pre * model.gate_probability(chances.get(KEY_TYPE, 0) * gate_mult, die_outcomes)
 
 
+def measured(entry_id):
+    """The `values` of one fixture entry, so a test reads the recorded counts."""
+    entries = json.loads(FIXTURE.read_text(encoding="utf-8"))["measurements"]
+    return next(e["values"] for e in entries if e["id"] == entry_id)
+
+
 # ---- the tests --------------------------------------------------------------
 
 
@@ -167,6 +173,15 @@ class BaselineTests(unittest.TestCase):
             model.inner_probability(0)
         with self.assertRaises(ValueError):
             model.dungeon_key_call_probability([])
+
+    def test_m11_a_vanilla_boss_drops_its_part_on_some_kills(self):
+        # M11: Karp King killed 15 times through its own death path, every
+        # Prime Evil part at its vanilla base of 27: 11 bellybuttons.
+        m11 = measured("M11")
+        self.assertGreater(m11["parts"], 0)              # the boss rolls type 41 itself
+        self.assertLess(m11["parts"], m11["kills"])      # but not on every kill
+        # The lever at x1 leaves the part's base exactly vanilla.
+        self.assertEqual(DropRateGroup().apply("part", m11["vanilla_base"], 1), 27)
 
 
 class TargetTests(unittest.TestCase):
@@ -280,6 +295,46 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(lever.apply("key", 1500, 5000), 1)      # floors at 1
         self.assertEqual(lever.apply("key", 1500, 0), 1500)      # 0 means vanilla
         self.assertAlmostEqual(model.inner_probability(first) / model.inner_probability(1500), 5.0)
+
+    def test_m12_the_lever_multiplies_boss_part_drops_until_the_base_floors(self):
+        # M11/M12: Karp King kills at x1, x5 and x35 of droprate group primeevil.
+        m11, m12 = measured("M11"), measured("M12")
+        base = m11["vanilla_base"]
+        lever = DropRateGroup()
+        x5 = lever.apply("part", base, 5)
+        self.assertAlmostEqual(x5, base / 5)
+        self.assertEqual(lever.apply("part", base, 35), 1)       # floored: every roll passes
+        # While unclamped the model's ratio is 5, whatever the inner scale s is.
+        for s in INNER_SCALES + (2.0,):
+            ratio = model.inner_probability(x5, s) / model.inner_probability(base, s)
+            self.assertAlmostEqual(ratio, 5.0, msg=s)
+        # Measured x5/x1 ratio of parts per kill, with a 95% band from the two
+        # counts (log-ratio of Poisson rates): it must contain the model's 5.
+        r1 = m11["parts"] / m11["kills"]
+        r5 = m12["x5"]["parts"] / m12["x5"]["kills"]
+        r35 = m12["x35"]["parts"] / m12["x35"]["kills"]
+        spread = 1.96 * math.sqrt(1 / m11["parts"] + 1 / m12["x5"]["parts"])
+        self.assertLessEqual((r5 / r1) * math.exp(-spread), 5.0)
+        self.assertGreaterEqual((r5 / r1) * math.exp(spread), 5.0)
+        # x35 floors the base at 1, so it gives the most.
+        self.assertGreater(r35, r5)
+        self.assertGreater(r5, r1)
+
+    def test_m13_uber_bosses_roll_no_prime_evil_part_for_the_lever_to_scale(self):
+        # M13: at x35, ten uber boss kills dropped no part and no uber item, while
+        # Karp King at the same spot dropped 12 before them and 8 after.
+        m12, m13 = measured("M12")["x35"], measured("M13")["x35"]
+        self.assertGreater(m13["control_parts"], 0)       # the spot drops loot
+        self.assertEqual(m13["parts"], 0)                  # uber bosses roll no part
+        self.assertEqual(m13["uber_items"], 0)
+        # x35 floors every part's base at 1, so a boss that rolled the part would
+        # drop it on every roll: at Karp King's M12 rate, ten kills without one part
+        # has a Poisson probability far below any doubt.
+        self.assertEqual(DropRateGroup().apply("part", 27, 35), 1)
+        rate = m12["parts"] / m12["kills"]
+        self.assertLess(math.exp(-rate * m13["uber_kills"]), 1e-9)
+        # The controls kept Karp King's M12 pace, so the spot was not the reason.
+        self.assertGreater(m13["control_parts"] / m13["control_kills"], rate / 2)
 
 
 class FixtureShapeTests(unittest.TestCase):
