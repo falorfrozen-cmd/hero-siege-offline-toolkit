@@ -160,8 +160,65 @@ Then run `py -3 tools/plan_lint.py .claude/workorders/<slug>-plan.md` and fix
 every finding before returning: a criterion in prose, a heading slice not
 anchored on `\n` (`t.index('\n## X\n')`, since a heading's name is often
 mentioned in backticks above the heading itself), a grep over a live capture
-instead of `live_checks.py`, or `python` where this repository runs `py -3`.
-Each has cost a round.
+instead of `live_checks.py`, `python` where this repository runs `py -3`, or
+a bare commit hash (see "Spend each check once" below). Each has cost a round.
+
+## Spend each check once
+
+A full verify is the expensive part of a round: for the ForgePact panel,
+25-35 minutes (the Python suite 11-17, the oracle replay and its negative
+control about 8, six e2e suites about 6, `e2e:perf` about 8), paid at least 15
+times across the UI redesign's 14 workorders. Plan so it is paid as rarely as
+the work allows (SKILL.md "Spend each check once, and overlap what does not
+wait"; evidence in `docs/agents/workorder-calibration.md`).
+
+- **Fewer, larger workorders.** Prefer one workorder whose independent parts
+  are lanes with disjoint `files:` and one `### Join` over a chain of small
+  sequential workorders, each paying its own full verify. "The suites must
+  run after the edits" is not a reason to decline lanes: running them once
+  after every lane is what the join is for. Every planner in the redesign
+  declined lanes on that ground. Split only for the reason SKILL.md Step 0.5
+  gives: independent findings that would share one round cap.
+- **Tier the verification.** A middle workorder, one whose output another
+  workorder in the same feature will build on and verify again, puts in its
+  criteria only what its change can reach: the module's `npm test`, the e2e
+  suite for the screen it touched, the Python tests of the module it changed
+  (`py -3 -m unittest tests.test_<x>`), the design checks for what it
+  restyled. The full set (the whole Python suite, every e2e suite, perf, the
+  oracle replay) runs at a join and in the feature's final or ship
+  workorder. Say in `## Context` which workorder carries the full set, so a
+  reviewer does not read the narrower criteria as a gap.
+- **Never pin a moving head.** A criterion names a commit through a
+  per-workorder tag a precondition step creates (`git tag <slug>-base`, e.g.
+  `forgepact-ui-polish-base`), or through a merge-base expression
+  (`$(git merge-base HEAD origin/main)`), never through a hash copied from
+  `HEAD`, `origin/main` or the branch at planning time. That applies to a
+  fixed commit too, such as the main commit a merge brings in: tag it, so a
+  re-merge moves one tag instead of editing ten criteria. `plan_lint.py`
+  flags a bare hash as `pinned-sha`. About ten of the redesign's amendments
+  came from pinned hashes and from the two defects below.
+- **Backtick only what should run.** `tools/run_criteria.py` runs every
+  backticked span whose first word is a command (`git`, `grep`, `py`,
+  `npm`, ...), so prose such as "the `git log` shows the merge" is executed
+  as written. Put expected output and descriptions outside backticks, or
+  phrase them so they do not start with a command word.
+- **Slice to the end of the file safely.** A heading slice that looks for the
+  next heading (`t.index('\n## ', start)`) raises when its section is the
+  last in the file. Use `find` and fall back to the end: `e = t.find('\n## ',
+  s + 1); e = len(t) if e < 0 else e`.
+- **Main moved: merge, stop only when it bites.** Write the precondition as:
+  if `origin/main` has commits `HEAD` lacks, merge it when `git merge-tree
+  --write-tree HEAD origin/main` exits 0 (no conflict) and `git diff
+  --name-only HEAD...origin/main` names none of this plan's files, and record
+  the merge in `## Log`; stop with `BLOCKED: main moved` only otherwise. Never
+  "if main moved, stop": a main-merge workorder of its own cost 1-2.5 hours
+  each time in the redesign.
+- **A flaky test is a step, not a retry.** If a suite the plan runs is known
+  to fail intermittently, or a failure without a code cause appears during
+  your research, add a step that makes it deterministic (a fixed safe port,
+  an awaited condition instead of a sleep), in this workorder. A verifier
+  that meets one routes it as a defect; nobody re-runs the suite hoping for a
+  green.
 
 **Planning while the previous phase is recorded.** The driver may start you
 while the last session's record round is still running (SKILL.md Step 4.5).

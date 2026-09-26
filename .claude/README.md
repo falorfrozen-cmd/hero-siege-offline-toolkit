@@ -698,7 +698,7 @@ one object.
 | R19 gates-template | any agent's `Write`/`Edit` to a `-plan.md` whose `gates:` line holds `\|` or "or" alternatives (an "or" inside a backticked token does not count) or a `<placeholder>`, outside parentheses: a template of every possible gate, which sets none. Possible gates go on `gates pending:`, and outcome tokens go on `route tokens:` |
 | R20 live-capture-author | any agent but `live-operator` (the driver included) whose `Edit`/`Write` landed on a `.claude/workorders/<slug>-live-<n>.md` capture. A capture a criterion cannot read is reported, never repaired |
 | R21 verifier-interpreter | a verifier shell command that runs `python` or `python3` in command position (a `grep python` does not count) — this repository's commands are `py -3`, and the verifier runs a criterion exactly as written |
-| R22 verifier-suite-once | a verifier that runs the same `unittest discover` suite (same `cd` directory, same arguments) more than once — after a timeout, or to read another slice of the output |
+| R22 verifier-suite-once | a verifier that runs the same `unittest discover` suite (same `cd` directory, same arguments) more than once, counting ForgePact's `tools/run_tests_parallel.py` as the same suite as its serial `discover -s tests` — after a timeout, or to read another slice of the output |
 | R23 lane-git-mutation | a lane implementer (`implementer:<lane>:r<n>`, any lane but `join`) that ran a git command outside the read-only allow-list R16 uses. Lanes share one checkout and `.git/index.lock` fails instead of waiting, so only the join commits; the join and a laneless implementer are exempt |
 | R24 cheap-routes | an `amendment:` planner with no `tools/amend_check.py save` by the driver before it or no `check` after it; a second amendment with no implementer between it and the first; or two `patch-implementer` rounds back to back in one workflow launch. Both routes skip work, so each runs only where something other than the agent taking it has checked that it applies |
 
@@ -729,10 +729,14 @@ acceptance checks) that did not pass; a research check's `fail` or
 `not-observed` is a finding and exits 0. It replaces the
 `| (pass|fail|not-observed)$` greps that cost forgepact-issue-14 three rounds
 and a split workorder on the operator's punctuation. `plan_lint.py <plan>`
-checks `## Acceptance criteria` for four defects that each cost a round there:
+checks `## Acceptance criteria` for four defects that each cost a round there
+(forgepact-issue-14):
 a prose criterion, a heading slice not anchored on `
 `, a grep over a live
-capture, and `python` where the repository runs `py -3`. The planner runs it
+capture, and `python` where the repository runs `py -3`. A fifth,
+`pinned-sha`, came from the ForgePact UI redesign: a bare commit hash in a
+backticked span, where a per-workorder tag or a merge-base expression belongs
+because the head it was copied from moves. The planner runs it
 before `PLAN-READY`; the driver runs it again before spawning an implementer.
 It also reads a plan's lanes (`### Lane: <name>` headings under `## Steps`,
 each with a `files:` line, plus one `### Join`) and reports five lane
