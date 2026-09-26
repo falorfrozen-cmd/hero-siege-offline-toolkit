@@ -1856,6 +1856,17 @@ class R22Tests(TempDirMixin, unittest.TestCase):
     def test_suite_key(self):
         self.assertEqual(wa.suite_key("cd ForgePact && py -m unittest discover -s tests 2>&1"), "ForgePact -s tests")
         self.assertIsNone(wa.suite_key("py -3 -m unittest tests.test_x"))
+        # The parallel runner is the same suite as serial discovery, so a
+        # verifier that runs both has run it twice.
+        self.assertEqual(wa.suite_key("cd ForgePact && py -3 tools/run_tests_parallel.py > p.txt 2>&1"),
+                         "ForgePact -s tests")
+        self.assertEqual(wa.suite_key("py -3 ForgePact/tools/run_tests_parallel.py -j 4"), "ForgePact -s tests")
+
+    def test_fail_serial_then_parallel_forgepact_suite(self):
+        r = _one_agent_rule(self.tmp_path, "R22", "verifier",
+                            ("Bash", {"command": "cd ForgePact && py -m unittest discover -s tests > f.txt 2>&1"}),
+                            ("Bash", {"command": "cd ForgePact && py -3 tools/run_tests_parallel.py > p.txt 2>&1"}))
+        self.assertFalse(r.passed)
 
 
 # --------------------------------------------------------------------------
