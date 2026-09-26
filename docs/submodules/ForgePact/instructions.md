@@ -2459,3 +2459,67 @@ publishing, run Actions → Catalog → Run workflow with `only` set to `forgepa
 - In the launch gate (row above), the zip's panel came up on 8780.
 - This pull request was merged right before publishing.
 - Do not put a version number in a comment in `src/forgepact.py`. VersionStampTests allow the version exactly once, and a comment naming the *next* version passes until the tag workflow bumps to it. That is what failed the first `v1.4.6` build.
+
+## Prime Evil Parts slider (1.4.7, 2026-09-26)
+
+A player asked for a slider for the Key of Terror parts, like the Blood Pact's
+"Prime Evil part drop rate" row. The research record is ForgePact's
+`docs/prime-evil-parts-research.md`.
+
+**What changed.**
+- The Loot tab gets **Prime Evil Parts (Key of Terror)**:
+  `KEYS` entry `("primeevil", ..., None)`. With no drop type, it sends only
+  `droprate group primeevil <m>`: it scales the parts' own roll where the game
+  already rolls it, which is on bosses.
+- The parts share LoadDrops type 41 with Relics. So the slider never opens that
+  gate, and the Relic gate's part guard (`Hook_DropBossParts` /
+  `Hook_DropUberParts`) stays.
+- **Plugin fix:** the `primeevil` group's fragment was "satans_horn", which
+  missed `collectible_satans_infernal_horn`. It is now "satans_", which in
+  category 13 matches only the two horns: 12 of 12 parts.
+
+**Game facts.** Folded into `docs/RUNTIME_DATA_MODELS.md`: static reading of the
+Sep-17 build, plus the live kills.
+- `DropBossParts`, `DropBossPartsNext` and `DropUberParts` are called only from
+  `LoadDrops`.
+- `LoadDrops` is called only from `DropItem`. Monsters reach `DropItem` from
+  `Enemy_Parent_obj`'s Destroy event.
+- `DropBossParts` reads the part entry's drop rate and player stat 736.
+  `DropUberParts` reads no drop rate.
+
+**Measured.** 2026-09-26, research build, hero Suh (softcore), Act_01_01:
+
+| `droprate group primeevil` | Karp King kills | bellybuttons | per kill |
+| --- | --- | --- | --- |
+| x1 | 15 | 11 | about 0.7 |
+| x5 | 12 | 36 | 3.0 |
+| x35 | 15 | 138 | about 9.2 |
+
+These are M11 and M12 in `hs-game-sdk/curated/drop_roll_measurements.json`,
+pinned by `tests/test_drop_roll_model.py`. The measured x5/x1 ratio is 4.1; its
+95% band from the counts, 2.1-8.0, contains the lever's 5. Above x35 nothing
+more changes.
+
+**How the kills were made, without input.**
+1. HS-AFK-Expedition's `tools/game_session.py prepare`, then
+   `travel --room Act_01_01`, entered the hero.
+2. ForgePact's research build spawned the boss 1200 px away:
+   `cb instance_create_depth x+1200 y 0 2368`.
+3. It set the boss's protected HP to 0: `callnum PC_SetVariableGMLWrapper <enemy_hp> 0`.
+4. `bp_ipc\itemdrops.jsonl` was read.
+
+`tools/boss_drop_trial.py` repeats this loop.
+
+Things that do not work:
+- In town a boss removes itself.
+- `instance_destroy` on a live boss drops nothing.
+- A boss next to the hero killed them in about 15 s.
+
+**Not verified.**
+- Uber bosses: Uber Anubis did not die from HP 0, so infernal parts from
+  `DropUberParts` were not measured. That script reads no drop rate, so the
+  slider probably does not change them.
+- The meaning of stat 736.
+- Which bosses in which zones roll type 41 natively.
+
+Test: ForgePact `tests/test_prime_evil_parts_contract.py`.

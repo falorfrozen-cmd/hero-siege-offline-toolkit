@@ -1080,7 +1080,32 @@ The data tables in this section are also in
 - The `blood_pact_*` names are translation keys, not variables; pact values
   arrive from the server (`httpBloodPactJoin`/`httpBloodPactRefresh` hold the
   request handles). **Static reading.**
+- Prime Evil parts: `DropBossParts`, `DropBossPartsNext` and `DropUberParts`
+  each have one direct call site, all in `LoadDrops`. `LoadDrops` is called only
+  from `DropItem`. Monsters reach `DropItem` from `Enemy_Parent_obj`'s Destroy
+  event; chests, goblins, destructibles and piles reach it from their own
+  events. **Static reading** (direct-call scan of the Sep-17 build).
+- `DropBossParts` looks up the part's category-13 repository entry, reads its
+  drop rate (`GetDropRate`) and player stat 736, then places the part with
+  `LootGroundCreate`. `DropUberParts` reads no drop rate. **Static reading.**
+- A boss kill rolls its part several times. Karp King in Act_01_01 dropped:
+  - 11 bellybuttons in 15 kills at the vanilla base of 27;
+  - 36 in 12 kills at base 5.4;
+  - 138 in 15 kills at base 1, up to 14 in one kill.
 
+  **Measured 2026-09-26** (M11/M12 in `hs-game-sdk/curated/drop_roll_measurements.json`).
+- Killing a monster from outside:
+  - A boss spawned in a town removes itself within seconds and drops nothing.
+  - `instance_destroy` on a live monster runs its Destroy event but drops
+    nothing.
+  - Setting its protected HP to 0 kills it through its own death path, drops
+    included. The key is the monster's `enemy_hp`; the call is
+    `PC_SetVariableGMLWrapper(key, 0)`.
+  - Uber Anubis does not die that way.
+
+  **Measured 2026-09-26.**
+
+[prime evil parts](../ForgePact/docs/prime-evil-parts-research.md),
 [blood pact §6](../ForgePact/docs/blood-pact-values-research.md#6-ölçüldü--damla-tipi-haritası-2026-08-27-akşam),
 [blood pact §1](../ForgePact/docs/blood-pact-values-research.md#1-kapatılan-yanlış-yol-blood_pact_-isimleri),
 [dungeon keys, LoadDrops](../ForgePact/docs/dungeon-key-research.md#kancalanacak-script-gml_script_loaddrops-adla-çözülür),
