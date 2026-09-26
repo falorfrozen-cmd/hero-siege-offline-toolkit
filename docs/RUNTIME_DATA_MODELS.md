@@ -616,6 +616,23 @@ All **measured** (2026-09-21).
 [character select, Results](../ForgePact/docs/character-select-research.md#results),
 [menu layout, Results](../ForgePact/docs/menu-layout-research.md#results)
 
+**Unused and deleted character slots.** A slot that never held a character is
+not empty on disk: it holds the game's blank character, a 581-byte encoded file
+that decodes to an `[inventory]` section with an empty inventory and
+`[0] version="8.000000"`, byte-identical in every unused slot. Deleting a
+character from character select does not restore that file or remove anything:
+the slot's `herosiege<N>.hss`, `ether<N>.hss`, `incarnation<N>.hss` and
+`inventory_order_<N>.hss` are each rewritten as a single NUL byte, all four
+within a few milliseconds. **Measured** (35 unused slots and four deletes in one
+save folder, 2026-09-08). Static reading of the offline branch of
+`UiACharacterDeleteConfirm`: it calls `SaveLocalFile` once per file type with a
+clearing flag. **Observed**: two emptied slots in that folder later held new
+characters while their `ether` and `incarnation` files were still the NUL byte
+from the delete, so the game itself treats an emptied slot as free. A tool that
+decodes `herosiege<N>.hss` has to read a NUL-only file as an empty slot, not as a
+damaged save.
+[HS Save Editor guide, Unused and Deleted Slots](submodules/HSSaveEditor/instructions.md#5-unused-and-deleted-slots)
+
 ### 8.3 In-game HUD
 
 - Each frame, with `self` = `Controller_obj`: `DrawHud` →
