@@ -112,3 +112,8 @@ Thumbs.db
 
 # Playwright MCP snapshots and screenshots (per-session output)
 .playwright-mcp/
+
+# The impeccable design hook's per-machine state. A shared .impeccable/config.json
+# is committed only if a suppression is ever kept (forgepact-ui-ship).
+.impeccable/hook.cache.json
+.impeccable/config.local.json
