@@ -60,8 +60,18 @@ THIRTEEN_TOOLS = CORE_AND_GAME_TOOLS | {"hs_input"}
 FOURTEEN_TOOLS = THIRTEEN_TOOLS | {"hs_select_character"}
 
 #: Plus the three game-lease tools, from `hs-drive-game-lease`.
-EXPECTED_TOOLS = FOURTEEN_TOOLS | {"hs_lease_acquire", "hs_lease_status",
-                                   "hs_lease_release"}
+SEVENTEEN_TOOLS = FOURTEEN_TOOLS | {"hs_lease_acquire", "hs_lease_status",
+                                    "hs_lease_release"}
+
+#: Plus the five skill tools, from `hs-drive-skill-actions`.
+SKILL_TOOLS = {"hs_skills_status", "hs_skill_cast", "hs_skill_bind",
+               "hs_talent_allocate", "hs_talent_reset"}
+TWENTY_TWO_TOOLS = SEVENTEEN_TOOLS | SKILL_TOOLS
+
+#: Plus the five stash and bag tools, from `hs-drive-stash-bag-actions`.
+STASH_TOOLS = {"hs_give_item", "hs_stash_open", "hs_stash_close",
+               "hs_stash_tab", "hs_bag_tab"}
+EXPECTED_TOOLS = TWENTY_TWO_TOOLS | STASH_TOOLS
 
 #: Three tools can take away something that was not theirs: a restore
 #: overwrites the live save directory, a forced stop terminates a process, and
@@ -74,9 +84,13 @@ EXPECTED_DESTRUCTIVE = {"hs_saves_restore", "hs_stop_game", "hs_lease_acquire"}
 #: write anywhere but a temporary directory of its own -- which is why the
 #: plugin ping is not a self-check any more: it wrote into the live install's
 #: `bp_ipc\\cmd.txt`, and an unconsumed ping is left there for the game to run
-#: at its next start.
+#: at its next start. `hs_skills_status` is the one exception, and a
+#: deliberate one (`hs-drive-skill-actions`): its one write is the
+#: `skillstate` line into `cmd.txt`, a command that changes nothing in the
+#: game, sent only while the lease allows it, exactly as `hs_command` sends.
 EXPECTED_READ_ONLY = {"hs_status", "hs_selfcheck", "hs_saves_list",
-                      "hs_saves_inspect", "hs_ipc_tail", "hs_lease_status"}
+                      "hs_saves_inspect", "hs_ipc_tail", "hs_lease_status",
+                      "hs_skills_status"}
 
 #: Every registered check, in registry order. Asserted as a whole rather than
 #: by absence, so a check that writes into the live game directory cannot be
@@ -185,8 +199,74 @@ class StdioSurfaceTests(unittest.TestCase):
         self.assertEqual(len(FOURTEEN_TOOLS), 14)
 
     def test_all_seventeen_tools_are_registered(self):
+        """Baseline: none of the seventeen `hs-drive-game-lease` left went
+        away. Kept under its old name now that the five skill tools make the
+        total twenty-two, for the same reason as the twelve, thirteen and
+        fourteen."""
+        missing = SEVENTEEN_TOOLS - {tool.name for tool in self.tools}
+        self.assertEqual(missing, set())
+        self.assertEqual(len(SEVENTEEN_TOOLS), 17)
+
+    def test_all_twenty_two_tools_are_registered(self):
+        """Baseline: none of the twenty-two `hs-drive-skill-actions` left went
+        away. Kept under its old name now that the five stash and bag tools
+        make the total twenty-seven, for the same reason as the others."""
+        missing = TWENTY_TWO_TOOLS - {tool.name for tool in self.tools}
+        self.assertEqual(missing, set())
+        self.assertLessEqual(SKILL_TOOLS, {tool.name for tool in self.tools})
+        self.assertEqual(len(TWENTY_TWO_TOOLS), 22)
+
+    def test_all_twenty_seven_tools_are_registered(self):
+        # The total it asserted before this change (22), plus five.
         self.assertEqual({tool.name for tool in self.tools}, EXPECTED_TOOLS)
-        self.assertEqual(len(self.tools), 17)
+        self.assertLessEqual(STASH_TOOLS, {tool.name for tool in self.tools})
+        self.assertEqual(len(self.tools), 22 + 5)
+        self.assertEqual(len(self.tools), 27)
+
+    def test_the_stash_tools_hints_and_required_inputs(self):
+        """All five act, destroy nothing and are not idempotent (a second give
+        is a second item; a second open is refused). The four that write game
+        state take `backup_id` as required; the close is the game's own save,
+        so it takes none."""
+        by_name = {tool.name: tool for tool in self.tools}
+        for name in sorted(STASH_TOOLS):
+            with self.subTest(tool=name):
+                hints = by_name[name].annotations.model_dump(by_alias=True)
+                self.assertFalse(hints["readOnlyHint"])
+                self.assertFalse(hints["destructiveHint"])
+                self.assertFalse(hints["idempotentHint"])
+        for name in ("hs_give_item", "hs_stash_open", "hs_stash_tab", "hs_bag_tab"):
+            with self.subTest(tool=name):
+                schema = by_name[name].model_dump(by_alias=True)["inputSchema"]
+                self.assertIn("backup_id", schema.get("required", []), schema)
+        close = by_name["hs_stash_close"].model_dump(by_alias=True)["inputSchema"]
+        self.assertNotIn("backup_id", close.get("properties", {}), close)
+        self.assertNotIn("backup_id", close.get("required", []), close)
+        give = by_name["hs_give_item"].model_dump(by_alias=True)["inputSchema"]
+        for name in ("to", "template"):
+            self.assertIn(name, give.get("required", []), give)
+
+    def test_the_skill_tools_hints_and_required_inputs(self):
+        """`hs_skills_status` reads; the other four act, destroy nothing and
+        are not idempotent (a second cast toggles back; a second allocation
+        is a second point). The three tools that could write a save take
+        `backup_id` as required; the cast takes no backup and requires `key`."""
+        by_name = {tool.name: tool for tool in self.tools}
+        status = by_name["hs_skills_status"].annotations.model_dump(by_alias=True)
+        self.assertTrue(status["readOnlyHint"])
+        for name in ("hs_skill_cast", "hs_skill_bind", "hs_talent_allocate", "hs_talent_reset"):
+            with self.subTest(tool=name):
+                hints = by_name[name].annotations.model_dump(by_alias=True)
+                self.assertFalse(hints["readOnlyHint"])
+                self.assertFalse(hints["destructiveHint"])
+                self.assertFalse(hints["idempotentHint"])
+        for name in ("hs_skill_bind", "hs_talent_allocate", "hs_talent_reset"):
+            with self.subTest(tool=name):
+                schema = by_name[name].model_dump(by_alias=True)["inputSchema"]
+                self.assertIn("backup_id", schema.get("required", []), schema)
+        cast = by_name["hs_skill_cast"].model_dump(by_alias=True)["inputSchema"]
+        self.assertIn("key", cast.get("required", []), cast)
+        self.assertNotIn("backup_id", cast["properties"])
 
     def test_hs_input_is_not_read_only_not_destructive_not_idempotent(self):
         """All three false, and each for its own reason.
@@ -243,7 +323,7 @@ class StdioSurfaceTests(unittest.TestCase):
                 destructive.append(tool.name)
         self.assertEqual(set(destructive), EXPECTED_DESTRUCTIVE)
 
-    def test_the_read_only_tools_are_exactly_the_documented_six(self):
+    def test_the_read_only_tools_are_exactly_the_documented_seven(self):
         """Baseline: the read-only set, over the wire, as a client sees it.
 
         `test_every_tool_carries_a_title_and_both_behaviour_hints` pins only the

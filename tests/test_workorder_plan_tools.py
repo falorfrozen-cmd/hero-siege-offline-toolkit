@@ -70,7 +70,7 @@ class LiveChecksTests(TempDirMixin, unittest.TestCase):
                                          "--require-pass", "dll-hash,marker,control"])
         self.assertEqual(rc, 0, out)
         self.assertIn("holders not-observed  (the var reply is capped)", out)
-        self.assertIn("checks: 5 (pass 3, fail 1, not-observed 1)", out)
+        self.assertIn("checks: 5 (pass 3, fail 1, not-observed 1, not-run 0)", out)
 
     def test_fail_a_renamed_check(self):
         # phase1h: the operator wrote `take-material (dropped)`.
@@ -93,10 +93,35 @@ class LiveChecksTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("control must be pass, read not-observed", out)
 
+    def test_not_run_is_a_finding_unless_it_must_pass(self):
+        # hs-drive-skill-actions-live-2: `not-run (instrument: ...)` on K1 made
+        # the whole capture unreadable. Only a --require-pass check fails on it.
+        text = CAPTURE.replace("observed: capped at 80 of 221 | not-observed (the var reply is capped)",
+                               "observed: none | not-run (instrument: budget spent before slot 0,6)")
+        path = self.write("c-live-1.md", text)
+        rc, out = run(live_checks.main, [path, "--expect", self.EXPECT, "--require-pass", "dll-hash,marker,control"])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("holders not-run  (instrument: budget spent before slot 0,6)", out)
+        self.assertIn("checks: 5 (pass 3, fail 1, not-observed 0, not-run 1)", out)
+        rc, out = run(live_checks.main, [path, "--require-pass", "holders"])
+        self.assertEqual(rc, 1)
+        self.assertIn("holders must be pass, read not-run (the instrument did not run it)", out)
+
+    def test_an_unknown_verdict_is_still_a_problem(self):
+        # Negative control: accepting not-run must not widen into accepting any word.
+        text = CAPTURE.replace("| not-observed (the var reply is capped)", "| skipped (instrument: x)")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text), "--expect", self.EXPECT])
+        self.assertEqual(rc, 1)
+        self.assertIn("holders UNREADABLE", out)
+        self.assertIn("no pass/fail/not-observed/not-run after the last '|'", out)
+
     def test_verdict_forms(self):
         self.assertEqual(live_checks.parse_line("- a | x | **pass**.")[1], "pass")
         self.assertEqual(live_checks.parse_line("- a | x | Not observed - timed out")[1:], ("not-observed", "- timed out"))
+        self.assertEqual(live_checks.parse_line("- a | x | not-run (instrument: x)")[1:], ("not-run", "(instrument: x)"))
+        self.assertEqual(live_checks.parse_line("- a | x | not run")[1:], ("not-run", ""))
         self.assertIsNone(live_checks.parse_line("- a | x | passed")[1])
+        self.assertIsNone(live_checks.parse_line("- a | x | not-running")[1])
 
     def test_usage_errors_exit_2(self):
         self.assertEqual(run(live_checks.main, [str(self.tmp_path / "missing.md")])[0], 2)

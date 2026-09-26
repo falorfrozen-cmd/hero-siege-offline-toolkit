@@ -114,11 +114,16 @@ bug report nobody can undo.
 
 ## Tools
 
-Seventeen. One tool per action, `hs_` prefixed, with annotations on every one.
-The six that drive or overwrite the game — `hs_launch`, `hs_stop_game`,
-`hs_command`, `hs_input`, `hs_select_character` and `hs_saves_restore` — ask
-the machine-wide game lease first and carry `lease: "held" | "none"` on
-every other answer; see "The game lease".
+Twenty-seven. One tool per action, `hs_` prefixed, with annotations on every one.
+The sixteen that drive or overwrite the game — `hs_launch`, `hs_stop_game`,
+`hs_command`, `hs_input`, `hs_select_character`, `hs_saves_restore`, the
+five skill tools `hs_skills_status`, `hs_skill_cast`, `hs_skill_bind`,
+`hs_talent_allocate` and `hs_talent_reset`, and the five stash and bag tools
+`hs_give_item`, `hs_stash_open`, `hs_stash_close`, `hs_stash_tab` and
+`hs_bag_tab` — ask the machine-wide game lease first and carry
+`lease: "held" | "none"` on every other answer; see "The game lease". The
+skill tools are described in "Skills and talents", the stash and bag tools in
+"Stash and bag".
 
 | Tool | Hints | Inputs | Returns |
 | --- | --- | --- | --- |
@@ -139,6 +144,16 @@ every other answer; see "The game lease".
 | `hs_lease_acquire` | **destructive** (with `force`) | `label` (1–80 of `A-Z a-z 0-9 . _ -`), `slot` ≥ 1 = null, `force=false` | `state`, `already_held`, `recovered_stale`, `took_over_from`, `lease_id`, `label`, `slot`, `holder`, `taken_utc`, `dll_path`, `dll_sha256`, `dll_status`, `backup_id`, `restore_pending`, `previous`, `lease_path`, and `warning` when the last holder still owed a restore |
 | `hs_lease_status` | read-only | — | `state` `free`\|`held`\|`held_by_me`\|`stale`\|`unavailable`, `detail`, `record`, `last`, `dll_sha256_now`, `dll_status_now`, `dll_path_now`, `dll_changed_since_taken`, `lease_path`, and `warning` when a released record still owes a restore |
 | `hs_lease_release` | writes, idempotent | — | `released`, the record's fields (`label`, `taken_utc`, `released_utc`, `backup_id`, `restore_pending`, …), and `warning` naming the backup when `restore_pending` is true |
+| `hs_skills_status` | read-only (one `skillstate` send, lease-gated) | — | `slots[]` (`row`, `index`, `talent_id`, `ability`, `timer`, `effect` or null), `learned[]` (`global.mySkills`), `subtalents{}` (`"<id>"` → `{"s<NN>": level}`, `{}` with no node, null when unreadable), `notes[]`, `proof[]` (the reply's lines), `verb_trail[]` |
+| `hs_skill_cast` | writes (one key) | `key` 1–254 (required), `slot` `"row,index"` **or** `ability`, `timeout_s` 1–60 = 10 | `confirmed`, `slot`, `talent_id`, `ability`, `effect_before`, `effect_after`, `effect_samples_before[]` (the three reads before the press, equal), `injected[]`, `focus_via`, `proof[]` (the slot's line before and after), `verb_trail[]` |
+| `hs_skill_bind` | writes (never, today) | `slot`, `ability`, `backup_id` (all required) | always refuses `route_not_measured`, `verb_trail: []` |
+| `hs_talent_allocate` | writes (a talent point) | `talent_id` ≥ 1, `backup_id` (both required), `sub` ≥ 1 = null | `confirmed`, `talent_id`, `sub`, `what`, `learned[]`, `subtalents{}`, `verb_lines[]` (the verb's own reply), `screen_closed`, `close_detail`, `proof[]` (the re-read lines), `verb_trail[]` |
+| `hs_talent_reset` | writes (never, today) | `backup_id` (required) | always refuses `route_not_measured`, `verb_trail: []` |
+| `hs_give_item` | writes (an item) | `to` `bag`\|`stash`, `template` (a fingerprint map 0 holds), `backup_id` (all required), `count` ≥ 1 = 1 | `confirmed`, `to`, `template`, `key` (the new fingerprint), `before`, `after` (items in the destination cells), `count`, `o`, `verb_trail[]`, `layout_trail[]`, `proof[]`; `to="stash"` always refuses `route_not_measured` |
+| `hs_stash_open` | writes (a position, a key) | `backup_id` (required), `timeout_s` > 0 = 60 | `phase` `stash_open`, `route` `interact`, `window_id`, `stash_tab_selected`, `target` (the warp point), `verb_trail[]`, `layout_trail[]` (the key), `proof[]` |
+| `hs_stash_close` | writes (the stash's own save) | — | `phase` `stash_closed`, `window_id`, `verb_trail[]`, `layout_trail[]`, `proof[]` |
+| `hs_stash_tab` | writes (a tab) | `tab` `socketable`\|`materials`\|`unique`\|`personal`\|`shared1`–`shared19`, `backup_id` (both required) | `tab`, `tab_number`, `selected_before`, `selected_after`, `handler` (or `already_selected: true`), `verb_trail[]`, `layout_trail[]`, `proof[]` |
+| `hs_bag_tab` | writes (a sub-tab) | `tab` `materials`\|`socket`, `backup_id` (both required) | `tab`, `selected_before`, `selected_after`, `activeNode_before`, `activeNode_after`, `focus_note`, `verb_trail[]`, `layout_trail[]`, `proof[]`; any other `tab`, or a stash window row with no readable `tabSelected`, refuses `route_not_measured` |
 
 `hs_input`'s actions are objects, in order, each with a `type`:
 
@@ -258,12 +273,36 @@ Tokens this server can return today:
 | `window_size_mismatch` | A `menulayout` listing's `window=` disagreed with the client size this server re-measures at that same read, on every read within the poll budget (30 reads 0.5 s apart) — the window never settled to the listing's size. A single disagreeing read is not this refusal by itself: `hs_launch`'s `plugin_ready` can precede the window reaching its configured size, so one mismatch just keeps the poll going. Its `win` points were computed for a different window, so none of them is clicked. Checked on the main menu's listing, before the first click, and on every listing read after. |
 | `button_not_found` | The button `hs_select_character` needed on a screen was not listed within the poll budget (30 reads 0.5 s apart): no single visible `UI_Button_obj` reading exactly `Play local` on the main menu, or save slot `slot` / the character panel's `Play` after the previous click. The detail quotes the last listing's header and the visible rows it did offer; the refusal's `last_listing` holds that listing whole. No click is sent for that screen. |
 | `slot_not_listed` | `Chose_rm` listed fewer visible save-slot cards than `slot` on two reads in a row. Only page 1 of the save-slot screen is reachable; no card is guessed. |
-| `click_not_delivered` | `hs_select_character`'s click went through `hs_input`'s injection without a refusal but was not delivered whole: `complete` was not true or `records_rejected` was above zero — `SendInput` accepted the call and UIPI dropped its records, or the foreground moved part way through. The click is not counted in `actions_sent` or `layout_trail`, and nothing further is clicked; the detail quotes the injection's own account. Without it, an undelivered click surfaced one screen later as `button_not_found`, which points at the listing rather than the input. |
+| `click_not_delivered` | `hs_select_character`'s click went through `hs_input`'s injection without a refusal but was not delivered whole: `complete` was not true or `records_rejected` was above zero — `SendInput` accepted the call and UIPI dropped its records, or the foreground moved part way through. The click is not counted in `actions_sent` or `layout_trail`, and nothing further is clicked; the detail quotes the injection's own account. Without it, an undelivered click surfaced one screen later as `button_not_found`, which points at the listing rather than the input. `hs_stash_open` applies the same check to its interact key F: an undelivered F is this refusal, and nothing is polled. |
 | `proof_not_armed` | `hs_select_character` armed `orbpickup` (`orbpickup 1`) and either got no acknowledgement, or `orbpickup stat` still read `player via (not tried)` on two reads at least a second apart. The resolver never ran; the instrument is blind, not the game — the same trap an earlier revision of this doc's own "`orbpickup stat` does not prove a character is loaded" section fell into. No click is sent. |
 | `character_already_loaded` | `hs_select_character`'s menu-time read of `orbpickup stat` already named a resolver route before any click was sent. |
-| `lease_held` | Another live hs-drive process holds the machine-wide game lease. Returned by the six gated tools before they touch anything — engine, process gate, save directory, `cmd.txt` or window — and by `hs_lease_acquire` without `force` and `hs_lease_release` by a non-holder. The detail reads "held by `<label>` (pid `<pid>`) since `<taken_utc>`", and `holder_label`, `holder_pid` and `taken_utc` carry the same. |
+| `lease_held` | Another live hs-drive process holds the machine-wide game lease. Returned by the sixteen gated tools (the six in "Who is gated", the five skill tools and the five stash and bag tools) before they touch anything — engine, process gate, save directory, `cmd.txt` or window — and by `hs_lease_acquire` without `force` and `hs_lease_release` by a non-holder. The detail reads "held by `<label>` (pid `<pid>`) since `<taken_utc>`", and `holder_label`, `holder_pid` and `taken_utc` carry the same. |
 | `lease_not_held` | `hs_lease_release` with nothing to release: no record, a record already released, or a stale one (its holder is gone — the detail says so, and that `hs_lease_acquire` recovers it). |
 | `lease_unavailable` | `lease.json` is present and cannot be read as a lease record, or the lock / the replace did not succeed within 5 s. **Never read as "free"**: the gated tools refuse on it, `hs_lease_status` reports the state `unavailable` naming the path, and `hs_lease_acquire(force=true)` replaces an unreadable record. A bad lease label reuses `invalid_label`. |
+| `skill_not_on_bar` | `hs_skill_cast`: no row-0 bar slot holds the `slot` or `ability` asked for, or that slot's talent is 0 (empty). Row 1 is the owned-skills list, not the bar. Returned after the `skillstate` read, before any key. |
+| `proof_unavailable` | `hs_skill_cast`: the slot's line carries no readable `effect=` count — its ability is not an entry of ForgePact's `kSkillTimerNames`, so the player build has no instance it could count. Before any key. |
+| `proof_unstable` | `hs_skill_cast`: the slot's `effect=` count moved (or turned unreadable) between the three reads taken 0.5 s apart before the press, with no key pressed, so a change after a press could not be told from one without it. `proof` holds the sampled lines and `effect_samples_before` the counts. No key is pressed. |
+| `key_not_delivered` | `hs_skill_cast`: the key went through `hs_input`'s injection without a refusal but was not delivered whole (`complete` not true or `records_rejected` above zero). Nothing is polled. |
+| `cast_not_confirmed` | `hs_skill_cast`: the key was delivered and the slot's `effect=` count did not move within `timeout_s`. The skill may be on cooldown, refused by the game, or the key may not be that slot's; `proof` holds the first and last reads. |
+| `talent_not_allocatable` | `hs_talent_allocate`: `talentalloc` refused `not allocatable` — no talent button (or sub-skill button, or `n`th node) carries the id — or the talent is already learned (only a first level, 0 → 1, is measured). |
+| `talent_screen_not_open` | `hs_talent_allocate`: `talentalloc` refused `screen not open` — the talent screen was not listed, and opening it by name did not list it. |
+| `alloc_not_confirmed` | `hs_talent_allocate`: after the verb, a re-read of `skillstate` shows no change — the id did not join `learned`, or no node of `sub=<id>` rose by one — whatever the verb's own line said. No point count is readable, so a missing free point reads the same as any other refusal of the game's own. |
+| `plugin_verb_missing` | A tool that needs a ForgePact verb got `command unavailable in player build: <verb>` — the installed plugin predates it — or a reply in a format this server was not written for. Defined for **every** hs-drive tool that writes game state (`results.ACTION_REASONS`); nothing is inferred from the reply. |
+| `route_not_measured` | A tool whose game route no live session reproduced by name refuses before sending anything (`verb_trail: []`): today `hs_skill_bind`, `hs_talent_reset`, `hs_give_item(to="stash")` and `hs_bag_tab` with any sub-tab but `materials`/`socket`, or on a stash window row that prints no readable `tabSelected` (the proof could not be read). `hs_stash_tab` also answers it after `stashtab` refused a tab whose handler is none of the shapes live 2 reproduced (nothing called). Shared by every hs-drive tool that writes game state. |
+| `no_session_backup` | `saves.session_backup_gate`: the `backup_id` given is whole, but it is not older than the running game process, no game is running, or the game's start time could not be read (never a pass). The detail names both times. A backup taken with `hs_saves_backup` before `hs_launch` in this session satisfies it. Shared by every hs-drive tool that writes game state. |
+| `stash_not_open` | `hs_stash_tab`, `hs_stash_close`: `menulayout` lists no single `UI_Stash_obj`, so nothing is sent. `hs_stash_open`: F was delivered beside the stash and no window was listed within the poll budget (30 reads 0.5 s apart) — the game refuses the open while an interface is open or loot blocks the use key. |
+| `stash_already_open` | `hs_stash_open`: a `UI_Stash_obj` is already listed; nothing is sent. |
+| `stash_not_reachable` | `hs_stash_open`: no single `Player_obj` or `Town_Stash_obj` row with a finite room position (the town stash exists only in town), so there is nowhere to warp to and nothing is sent. |
+| `stash_still_open` | `hs_stash_close`: after `stashclose` the window was still listed for the whole poll budget, or the verb refused for any reason but "stash not open". |
+| `bag_not_open` | `hs_bag_tab`: no `UI_Stash_obj` is listed. The bag's sub-tabs were measured only beside the open stash (the handler's `other` was the stash window); the bag on its own is not a case this tool acts on. |
+| `unknown_tab` | `hs_stash_tab`: a `tab` outside `socketable`, `materials`, `unique`, `personal`, `shared1`–`shared19`. Nothing is sent. |
+| `tab_not_listed` | `hs_stash_tab`/`hs_bag_tab`: no single tab row carries that tab (`tabNumber` for a stash tab, `uiNodeCallstack` for a bag sub-tab). Nothing is sent. |
+| `tab_not_selected` | `hs_stash_tab`: `stashTabSelected` did not reach the tab within the poll budget. `hs_bag_tab`: `tabSelected` on the stash window did not move (a sub-tab already on show reads the same as a call that did nothing). Also any other refusal of `stashtab`/`bagtab`, quoted. |
+| `count_unsupported` | `hs_give_item`: `count` is not a whole number ≥ 1 (before any send), or `giveitem` refused the count — above 1 for a non-stackable template, or above the template's own stack. Only 1 was measured. |
+| `warp_not_confirmed` | `hs_stash_open`: `playerwarp` refused, or the re-read `Player_obj` was not within 2 px of the target for the whole poll budget. No key is pressed. |
+| `template_not_found` | `hs_give_item`: `giveitem` found no item under `template` in map 0 (the character's own map). Nothing is made. |
+| `give_refused` | `hs_give_item`: any other `giveitem: refused - …`, quoted — a step of the loader's order that answered false or undefined, named; a unit no grid took is taken out of map 0 again. |
+| `give_not_confirmed` | `hs_give_item`: the reply carried no `giveitem: confirmed` line with one more item after than before in the destination cells (a `not confirmed` line, or none). |
 
 One shape does **not** come back as a refusal: a `route` that is neither
 `send_input` nor `post_message` is rejected by the SDK's own `Literal`
@@ -904,13 +943,32 @@ passed (or, for `hs_wait_ready`, deliberately skips); and `hs_selfcheck`'s
 backup round trip passes its own temporary `source`, which `saves.restore`
 does not gate, because no other session can see that directory.
 
-A lease record that cannot be parsed refuses the six `lease_unavailable` — a
+The five skill tools are gated the same way: `hs_skills_status`,
+`hs_skill_cast`, `hs_skill_bind`, `hs_talent_allocate` and `hs_talent_reset`
+ask `lease.guard` first, before the process gate and before any `skillstate`,
+`talentalloc`, `menulayout` send or key, and their sends and key presses pass
+`lease_checked=True`. `hs_skills_status` carries `readOnlyHint: true` although
+its one `skillstate` line goes through `cmd.txt`, exactly as `hs_command`
+sends one - which is why it is gated like the tools that act. Bind and reset
+refuse `route_not_measured` right after the guard, so a caller learns about
+another session's lease before it learns the route is unmeasured.
+
+The five stash and bag tools are gated the same way: `hs_give_item`,
+`hs_stash_open`, `hs_stash_close`, `hs_stash_tab` and `hs_bag_tab` ask
+`lease.guard` first, before the process gate, the backup gate and any
+`menulayout`, verb send or key, and their sends and the interact key pass
+`lease_checked=True`. `hs_give_item(to="stash")` and `hs_bag_tab` with a
+sub-tab other than `materials`/`socket` refuse `route_not_measured` right
+after the guard, with nothing sent.
+`tests.test_hs_drive_mcp_lease`'s `gated_calls` covers all sixteen.
+
+A lease record that cannot be parsed refuses all sixteen `lease_unavailable` — a
 record nobody can read must not compare equal to "free" (`AGENTS.md` § "Check
 a Permission Where It Is Used") — and `hs_lease_acquire(force=true)` replaces
 it.
 
 **A caller with no lease while nobody holds one is allowed, and labelled.** The
-six proceed and report `lease: "none"`; nothing is acquired implicitly. The
+sixteen proceed and report `lease: "none"`; nothing is acquired implicitly. The
 reasons, so the strict option is not proposed again: every recorded clash was
 two *sessions*, and a lone caller harms nobody; refusing would break every
 existing direct use of hs-drive — the owner's own ad-hoc calls, the suites'
@@ -1078,7 +1136,7 @@ rather than by falling back to another launcher:
   pydantic's default `extra='ignore'` applies; `validate_arguments` drops the
   unknown key at `model_validate`, and `model_dump_one_level` enumerates
   declared fields only. Every tool here registers through `@server.tool(...)`
-  → `Tool.from_function` → `func_metadata`, so all seventeen behave identically
+  → `Tool.from_function` → `func_metadata`, so all twenty-seven behave identically
   and **no code in `tools/hs_drive_mcp/` can see the dropped key** — by the
   time a tool body runs, the evidence is gone. Reproduced on a toy signature
   mirroring `hs_ipc_tail`: `{"lines": 5}` → `lines=5`, `{"n": 5}` → `lines=40`,
@@ -1097,7 +1155,7 @@ rather than by falling back to another launcher:
   before any handler sees it — but the SDK's own docstring calls it
   "Provisional - the signature may change in a 2.x minor release", and it
   would mean wrapping the whole request path to catch a typo. If this is ever
-  enforced, that middleware is the single place to do it; **not** seventeen tool
+  enforced, that middleware is the single place to do it; **not** twenty-seven tool
   bodies, none of which can. Until then: check the parameter names in
   `## Tools` above, and treat a suspiciously default-looking answer as a
   possible misspelling.
@@ -1163,6 +1221,37 @@ rather than by falling back to another launcher:
   arises with a redirected `HS_DRIVE_BACKUP_DIR`.
 - **Backups while the game is running are not supported and never will be**,
   for the reason in "Saves" above.
+- **The skill tools read no key, no point count and no level, and bind and
+  reset are not built.** `hs_skill_cast` presses the key its caller names,
+  since no per-slot key reader was found; `hs_talent_allocate` confirms by the
+  learned ids and the sub-talent map, so "no free point" and any other refusal
+  of the game's own both read `alloc_not_confirmed`; it allocates only a talent
+  not yet learned; `hs_skill_bind` and `hs_talent_reset` always refuse
+  `route_not_measured`. A cast is proven only for a skill with an effect
+  object in ForgePact's `kSkillTimerNames` (`proof_unavailable` otherwise)
+  whose count holds still before the press (`proof_unstable` otherwise); live
+  4 measured that proof on `manaOrb` (0,3), the player build's first positive
+  control for it, and Dark Oath (0,0, an aura) is still not observed - the
+  owner reported that no key switches it, only a click through the
+  bind/expanded-skills popup. Every read of 0,0's `effect=` count, before and
+  after that click, showed 0, while the owner's report of the click implies
+  the aura was on going in, so that `effect=0` is an inference from the
+  report, not proof the reader can see an armed aura. See "Skills and
+  talents".
+- **The stash and bag tools cover what live 2 measured, and no more.** No
+  by-name open (the key F is the route); no move between the bag and the
+  stash, and no give into the stash (`route_not_measured`; both are
+  `hs-drive-stash-move-research`'s); `hs_bag_tab` switches only the Materials
+  and Socket sub-tabs, only beside the open stash, and proves `tabSelected`,
+  not the focus (`activeNode`); `hs_stash_tab` refuses a tab whose handler is
+  none of the shapes live 2 reproduced (Unique's handler was never read); a
+  bag sub-tab already on show comes back `tab_not_selected`, since the state
+  does not move; `hs_give_item` copies an item the character already holds —
+  an item it has never held is out of scope by choice, not a measured limit —
+  and only a count of 1 was measured. `menulayout`'s `win=` for a child of a
+  scrolled container (the stash tab strip) and for a bag sub-tab row does not
+  land on the row (live 1 P0-5, live 2 P2-4), which is why every tab switch
+  goes by name. See "Stash and bag".
 - **Windows only.** The engine imports `ctypes.wintypes`; the tests skip with
   a named reason elsewhere, which is what lets the root suite run on CI's
   `ubuntu-latest` without any submodule checked out.
@@ -1250,13 +1339,259 @@ listing. Its ids start at M1.
 | M-L2b | **Second launch**: `hs_select_character(2)`. Its `layout_trail` slot row must have a greater `win` x than M-L2's and the same `win` y, and the screenshot must show a different character. | owner-run, same step | **Not run at attempts 2, 3 and 4** (all stopped at the identity control's `foreground_not_game`, see M-L2). **Attempt 5, 2026-09-21 17:38–17:39 — passed.** DLL re-hashed `d627486c…ec815` immediately before the launch. Backup `20260921T153853Z_pre-L2a5-slot2`; `hs_launch` → `plugin_ready` (`elapsed_s` about 16, pid 137036); `hs_select_character(2)` → `ok: true`, `phase: character_loaded`, `actions_sent: 3`, `elapsed_s: 17.834`; `proof_trail` `main_menu`/`local`/`slot` `player via none`, `play` `player via GetMyPlayer`; `layout_trail` slot row `Choose_Parent_obj` id 257049 `win=381,174` — greater x than M-L2's `177,174`, same y (row-major); `local` `win=336,534` and `play` `win=584,345` as in M-L2; `focus_trail` `local` `input_unlock`, `slot` `already_foreground`, `play` `already_foreground`; `orbpickup: left_on` (same reason as M-L2). Screenshot `%LOCALAPPDATA%\HSDriveMcp\screenshots\20260921T153928680504Z_L2a5-slot2.png`: a different character, `Miss Fortune`, level 100, in Town of Inoya. `hs_stop_game` `exited: true`, `forced: false`; inspect `changed: [herosiege1.hss, shop.ini]`, `added: []`, `missing: []`; restored (pre-restore `20260921T153932Z_pre-restore`), inspect `changed: []`, `missing: []`; live saves then hash-identical to the out-of-band copy (137 files). **pass** |
 | L1–L13 | The machine-wide game lease (`hs-drive-game-lease`): four real processes race and exactly one wins, the rest refused `lease_held` naming the winner's label and `taken_utc`; a killed holder reads `stale` and is recovered with `previous.outcome: "stale"`; the same PID with a different creation stamp reads `stale` (positive control: the unpatched stamp reads `held`); with no record each of the six gated domain functions reaches its own first gate and adds `lease: "none"` (the baseline); with another live holder each refuses before touching anything; read-only tools, `hs_wait_ready`'s ping and the self-check round trip never refuse; `force` records `took_over_from`; backup/restore/release keep `restore_pending` honest; an unreadable record is `unavailable`, never free | `py -3 -m unittest tests.test_hs_drive_mcp_lease -v` | `Ran 15 tests`, `OK (skipped=1)` — the skip is `test_two_stdio_servers_the_second_is_refused`, ForgePact not checked out in this worktree; the same two-server scenario, driven directly through that test's `two_servers` helper over real `py -3 -m tools.hs_drive_mcp` stdio sessions, returned `held` / `lease_held` / `lease_held` for B's status, acquire and `hs_command` — 2026-09-24. Instrument check: with the guard stubbed out 10 subtests fail, with liveness stubbed alive the stale and PID-reuse tests fail, and racers with the lock removed produced 2–3 winners in 4 of 5 runs. Whole root suite: `Ran 1051 tests in 123.485s`, `OK (skipped=111)` |
 
+The rows below belong to `hs-drive-skill-actions`, the workorder that added
+the five skill tools. The unit rows ran on 2026-09-25; the W rows are live 3
+of `ForgePact/docs/skill-actions-research.md` (`### Live procedure 3`, on the
+player build, 2026-09-26). W2's correction and the player-build positive
+control for the `effect=` reader are live 4's (`### Live procedure 4`, same
+document, same date).
+
+| # | Check | Command | Result |
+| --- | --- | --- | --- |
+| K-U1 | `skillstate` parser on live 2's verbatim `skillprobe state` frames and the same frames in `skillstate`'s format; negative controls (a bare line, a `slot=` line without `talent=`, an empty reply, a research-only line under the player header, a reply cut before its footer) | `py -3 -m unittest tests.test_hs_drive_mcp_skills -v` | `OK` — 2026-09-25 |
+| K-U2 | Cast baseline (`effect=` never moves → `cast_not_confirmed`, Q injected held 120 ms with focus forced) and target (moves only after the press → `confirmed`, `effect_samples_before` three equal reads spanning 1 s); a count that moves, or turns unreadable, between the pre-press reads → `proof_unstable` with nothing injected; an unreadable `global.mySkills` or `sub=` baseline never confirms; allocation baseline (`[236]` → `[236]` → `alloc_not_confirmed`) and target (`[236]` → `[236,239]` → `confirmed`, T pressed once, `screen_closed`); the same pair on `sub=239`; one test per `SKILL_REASONS` and `ACTION_REASONS` token | `py -3 -m unittest tests.test_hs_drive_mcp_skills -v` | `OK` — 2026-09-25 |
+| K-U3 | `session_backup_gate`: a whole backup older than the game passes; a newer one, an unreadable start and no game are `no_session_backup`; missing manifest, re-hashed mismatch and a path id refuse as `hs_saves_restore` would | `py -3 -m unittest tests.test_hs_drive_mcp_saves -v` | `OK` — 2026-09-25 |
+| K-U4 | Surface: twenty-two tools; `hs_skills_status` read-only, the other four neither read-only, destructive nor idempotent; `backup_id` required on bind, allocate and reset, `key` on cast; the lease gates all five before any send or key | `py -3 -m unittest tests.test_hs_drive_mcp_server tests.test_hs_drive_mcp_lease -v` | `OK` — 2026-09-25 |
+| W1 | `hs_skills_status()` on slot 14: `ok`, the 0,0 entry `darkOath` with an integer `effect`, `learned` and `subtalents` present; a second read at least 1 s later with no key pressed, every bar slot's `effect` value from both reads recorded (the negative control: the count without a press; any value at 1 or more is W2's positive control for the reader) | live 3 | **pass — 2026-09-26.** Both reads `ok`, 0,0 `darkOath` `effect=0` (an int), `learned` twelve ids, `subtalents` a dict; no bar slot's `effect` read above 0 in either read |
+| W2 | `hs_skill_cast(key=81, slot="0,0")`: `confirmed`, `effect_samples_before` flat, `effect=` differs before and after; a second cast `ok`. A fail with the key delivered and a flat pre-press count, or `proof_unstable`, is recorded as "not observed for Dark Oath" only if the `effect=` reader returned 1 or more elsewhere this session (W1's reads, or the second cast), else as undetermined: no positive control for the reader | live 3 | **not-observed (undetermined) — 2026-09-26.** Both casts refused `cast_not_confirmed`; the count never moved and no bar slot read `effect>=1` this session. Correction: Q (vk 81) is 0,3's key, not 0,0's - the same session's own `skillstate` frame shows a Q press moving 0,3 `manaOrb`'s `effect=` while 0,0 stayed 0. **Player-build proof measured — live 4, 2026-09-26.** `hs_skill_cast(key=81, slot="0,3")` answered `confirmed: true`, `effect_before` 0, `effect_after` 1, `effect_samples_before` flat; a full-bar read confirmed only 0,3 (`manaOrb`) moved |
+| W3 | `hs_skill_bind("0,6", "shadowBolt", backup_id=<live-3>)`: `route_not_measured`, `verb_trail: []` | live 3 | **pass — 2026-09-26.** Refused `route_not_measured`, `verb_trail: []` |
+| W4 | `hs_talent_allocate(244, backup_id="no-such-backup")` refused before any send; the point check (and the owner's one Reset Skills if the screen shows 0) | live 3 | **pass — 2026-09-26.** Refused `invalid_backup_id`, `verb_trail: []`; "Points Left: 0" on screen, so the owner clicked Reset Skills and confirmed; `learned` afterward `[236]`, shorter than W1's twelve ids, `darkOath` dropped off the bar |
+| W5 | `hs_talent_allocate(244, backup_id=<live-3>)` `confirmed` with 244 learned; then `sub=2` `confirmed` with one node of `subtalents["244"]` at 1; `screen_closed` recorded | live 3 | **pass — 2026-09-26.** Main call `confirmed: true`, `learned=[236,244]`, `screen_closed: true`; `sub=2` call `confirmed: true`, `subtalents["244"]={"s1":1}`, `screen_closed: false` (the sub-panel needs its own close button) |
+| W6 | Reload (stop, launch, select slot 14): 244 still learned and the node still set | live 3 | **pass — 2026-09-26.** After stop/launch/select, `learned=[236,244]` and `subtalents["244"]={"s1":1}` both persisted; `blackMass` had filled slot 1,3 by itself |
+| W7 | `hs_talent_reset(backup_id=<live-3>)`: `route_not_measured`, `verb_trail: []` | live 3 | **pass — 2026-09-26.** Refused `route_not_measured`, `verb_trail: []` |
+| W8 | Stop, inspect, restore the live-3 backup, inspect clean, release; the DLL hash unchanged | live 3 | **pass — 2026-09-26.** `hs_stop_game` exited cleanly; `hs_saves_inspect` changed `herosiege13.hss` and `shop.ini`; DLL hash unchanged since acquire; release recorded the restore as owed, relayed verbatim |
+
+The rows below belong to `hs-drive-stash-bag-actions`, the workorder that
+added the five stash and bag tools. The unit rows ran on 2026-09-26; the V
+rows are live 3 of `ForgePact/docs/stash-bag-layout-research.md` (the
+player-build verification session, its own launch) and are filled from its
+capture once it has run.
+
+| # | Check | Command | Result |
+| --- | --- | --- | --- |
+| S-U1 | `menulayout` parser on live 2's verbatim stash replies (`tests/hs_drive_mcp_stashlayout_fixtures.py`, cut by script from a byte copy of `bp_ipc\out.txt`): six listings in one send, the window, the 23 stash tab rows by `tabNumber`, the 7 bag sub-tab rows by `uiNodeCallstack`, `cell=` rows under their own grid only, `cellcap=1`; each matcher beside a negative control; each verb's `before=`/`after=`, refusal, confirmed and not-confirmed lines | `py -3 -m unittest tests.test_hs_drive_mcp_layout -v` | `OK` — 2026-09-26 |
+| S-U2 | The five tools on scripted IPC and injection doubles: each baseline (listings and verb reply never change → `stash_not_open`, `tab_not_selected`, `tab_not_selected`, `stash_still_open`, `give_not_confirmed`, send count asserted) and target (→ `ok`); one test per `STASH_REASONS` token; `route_not_measured` for the stash destination and the unmeasured sub-tabs before any send | `py -3 -m unittest tests.test_hs_drive_mcp_stash -v` | `OK`, 40 tests — 2026-09-26 |
+| S-U3 | Surface: twenty-seven tools; the five neither read-only, destructive nor idempotent; `backup_id` required on all but `hs_stash_close`, which has none; the lease gates all five before any send or key | `py -3 -m unittest tests.test_hs_drive_mcp_server tests.test_hs_drive_mcp_lease -v` | `OK` — 2026-09-26 |
+| dll-hash | The installed DLL is the Step 9 player build (the lease's `dll_sha256`) | live 3 | **pass — 2026-09-26.** `dll_sha256` `57aba60c…bffc` at lease acquire, unchanged (`dll_changed_since_taken: false`) at release |
+| control | Main menu `menulayout` → `Play local` at `win=336,534` under 1920x1080, then `hs_select_character(14)` → `character_loaded` | live 3 | **pass — 2026-09-26.** `UI_Button_obj` "Play local" `win=336,534` under `window=1920x1080`; `hs_select_character(slot=14)` → `character_loaded`, proof "player via GetMyPlayer" |
+| V0 | `hs_give_item(to="bag", template=<K_M>, count=1)`: `ok`, `confirmed: true`, a new `0-0-<S>-14` key, the verb's confirmed line in `verb_trail`; whether a `cell=` row shows the key after V1 recorded, not required; `to="stash"` refused `route_not_measured` with `verb_trail: []` | live 3 | **pass — 2026-09-26.** `confirmed:true`, key `0-0-212584560001-14`, `before=3 after=4 o=1`, verb_trail `"giveitem: confirmed - 0-0-212584560001-14 in map 0 and in the destination cells"`; the post-V1 `menulayout UI_Inventory_Grid_obj` read listed no `cell=` row carrying the key; why is not established - one untested explanation is that the Materials sub-tab (where a material's preferred grid lands it, RDM §9.7) was not the active bag sub-tab at read time (Main was), which was not itself checked; `to="stash"` refused `route_not_measured`, `verb_trail: []` |
+| V0b | (research, never required) `hs_give_item(to="bag", template=<K_J>, count=1)`: a new potion-grid item, or the verb's refusal quoted | live 3 | **pass (research/outlier, never required) — 2026-09-26.** Refused `give_refused`: "`GetItemPreferredGrid(1, item)` answered no grid; 0-0-212584570002-18 was taken out of map 0 again (craftmats' undo)" — the verb's reader `ApPreferredGrid` found no array `grid` in the result, or the call failed, for this one class-18 template; the non-stackable case beyond it is not established |
+| V1 | `hs_stash_open`: `ok`, `phase: stash_open`, `route: "interact"`, `playerwarp` with its before/after line in `verb_trail`; screenshot; `menulayout UI_Stash_obj` quoted verbatim | live 3 | **pass — 2026-09-26.** `ok phase:stash_open route:interact`; `verb_trail` `"playerwarp: before=912.0,822.0 after=884.0,628.0"`; screenshot `20260926T101631960592Z_v1-stash-open.png`; `menulayout UI_Stash_obj` quoted (`stashTabSelected=0 tabSelected=0`) |
+| V2 | `hs_stash_tab` materials → -4, socketable → -2 (the closure), personal → 0 | live 3 | **pass — 2026-09-26.** materials `0 -> -4` (`UiAStashMaterialTabClick`), socketable `-4 -> -2` (the closure handler), personal `-2 -> 0` (`UiAStashTabClick`) |
+| V3 | `hs_bag_tab` materials → -4 with `activeNode` read in `proof`; socket → its value; vault refused `route_not_measured`, nothing sent; a screenshot after each | live 3 | **pass — 2026-09-26.** materials `0 -> -4`, socket `-4 -> -2`, `activeNode` unchanged at 262324 through both (read, not proven); `vault` refused `route_not_measured`, `verb_trail: [] layout_trail: []`; screenshots after each |
+| V4 | Identity control: `hs_stash_tab("materials", backup_id="no-such-backup")` refused before anything is sent (`verb_trail` and `layout_trail` empty). The shared gate answers a missing id `invalid_backup_id`, a present id without a manifest `backup_incomplete` | live 3 | **pass — 2026-09-26.** Refused `invalid_backup_id` ("No backup 'no-such-backup' under ...; nothing was sent"), `verb_trail: [] layout_trail: []` |
+| V5 | `hs_stash_close` `ok` (the close is the save); then `hs_stash_tab` and `hs_stash_close` refused `stash_not_open` | live 3 | **pass — 2026-09-26.** `hs_stash_close` → `ok phase:stash_closed` (one transient "not confirmed" poll frame, resolved); a second `hs_stash_tab` and a second `hs_stash_close` both refused `stash_not_open` |
+| V6 | Stop, inspect (`stash.hss` and the character file changed), restore the live-3 backup, inspect clean, release; the DLL hash unchanged | live 3 | **pass — 2026-09-26.** `hs_stop_game` exited cleanly (`forced:false`); `hs_saves_inspect` changed `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini`, `stash.hss`, nothing added/missing; DLL hash after equalled before; restore performed afterward by the driver on the owner's word |
+
+## Skills and talents
+
+Five tools read and change the character's skill bar and talent tree, so a
+test session needs no one at the keyboard for them. Which route each takes is
+what ForgePact's skill research measured in two live sessions
+(`ForgePact/docs/skill-actions-research.md`, `## Decision`), not what was
+expected before it ran. `tools/hs_drive_mcp/skills.py` holds all five;
+`server.py` registers them.
+
+- **`hs_skills_status`** sends the player build's read-only `skillstate` and
+  parses it: one `slot=<row>,<i> talent=<id> ability=<abilityId> timer=<n>`
+  line per element of the bar's `row0` (the drawn bar) and `row1` (the
+  owned-skills list), `global.mySkills` (the learned ids) and one `sub=` line
+  per bar talent (its sub-talent nodes). The parser takes the research
+  build's `skillprobe state` too, whose body lines are the same, because
+  live 2 recorded that command's replies verbatim and the parser's tests run
+  on them. Any other line is refused (`plugin_verb_missing`), never read as
+  an empty bar.
+- **`hs_skill_cast`** is the thing a test exercises, so it takes the game's
+  input path: it presses the key **you** give (held 120 ms, `send_input`,
+  focus forced as `hs_select_character` forces it). No reader for a slot's
+  key was found — `keyBindKey` reads -1 on every slot and the HUD draws its
+  key letters through getters that name no slot (`castKeyRule: not
+  measured`) — so the tool does not guess one; the HUD's own label is the
+  caller's source. Q is now measured as 0,3 `manaOrb`'s key, not 0,0's
+  `darkOath` (live 3 and live 4, 2026-09-26); 0,0 shows no key on the HUD.
+  The proof is the slot's
+  `effect=` count: `skillstate` prints the number of live instances of the
+  ability's effect object, resolved by name through ForgePact's
+  `kSkillTimerNames`. The rule behind it is the toggle research's (a toggle
+  is on exactly while its effect instance exists), measured on five toggles;
+  the table itself is generated from the SDK's object names, so it is a name
+  match, not a measured list, and an ability being in it proves nothing about
+  that ability. A slot with no such object is refused `proof_unavailable`
+  rather than cast unproven. Before the press the tool reads the count three
+  times, 0.5 s apart, with no key pressed; if it moves it refuses
+  `proof_unstable` and presses nothing (a double-cast proc, an earlier effect
+  expiring or a respawning object would otherwise read as this cast), and
+  otherwise returns those reads as `effect_samples_before`, so a pass shows
+  the count flat without a press and moved after one. **Live 3 (W2) applied
+  the rule to `darkOath` (0,0) by mistake** - Q is not 0,0's key, so the
+  count staying flat there proved nothing either way - and **live 4 gave the
+  `effect=` reader its first positive control on the player build**, on
+  `manaOrb` (0,3) with Q: `confirmed: true`, `effect_before` 0, `effect_after`
+  1, a full-bar read confirming only 0,3 (and 1,13, its owned-skills-list
+  twin) moved. Live 4 also found `manaOrb` a timed effect, not a toggle: the
+  count returned to 0 on its own about 13 s after the press, with no further
+  key. Dark Oath's own `effect=` proof is still not observed on either build:
+  it is an aura (its slot element carries `auraSkill=true`), the toggle
+  research used the aura family as its negative controls and never measured
+  Dark Oath itself, and the owner reported that no key switches it - only a
+  click through the bind/expanded-skills popup, which also empties that bar
+  slot (reported, live 4). Every read of 0,0's `effect=` count, before and
+  after that click, showed 0, while the owner's report of the click implies
+  the aura was on going in - so `effect=0` on `darkOath` is an inference from
+  that report, not evidence the reader can tell an armed aura from an unarmed
+  one; this is not a finding about auras as a class. A cast takes no backup: it is play, not a save write. A by-name
+  `TalentUse` would skip the input's own mana and requirement gate, so it is
+  never used here.
+- **`hs_talent_allocate`** is setup, so it goes through the game's own
+  handlers by name: ForgePact's `talentalloc` opens the talent screen by
+  `UiAOpenTalents` if it is closed and runs `UiATalentScreenTalent` on the
+  talent's own button (or `UiAActivateSkillSpecialization` then
+  `UiAActivateSkillSubPoint` on the `n`th listed node, for `sub`) — the
+  shapes live 2 replayed and saw change `global.mySkills` and the sub-talent
+  map. The tool asks `saves.session_backup_gate` first (a whole backup older
+  than the game process), reads `skillstate`, sends the verb, maps the verb's
+  own refusals (`screen not open` → `talent_screen_not_open`, `not
+  allocatable` or already learned → `talent_not_allocatable`), then
+  **re-reads `skillstate` and confirms itself**: the id joined `learned`, or
+  one node of `sub=<id>` rose by one — whatever the verb's own line said.
+  No point count or level is read: live 2 found no reader for either
+  (`pointsReader: not measured`), so a talent with no free point comes back
+  `alloc_not_confirmed` like any other refusal of the game's own. Only a
+  first level (0 → 1) was measured, and the verb refuses a talent already
+  learned. Afterwards the tool lists `UI_Talent_Screen_obj` and, only if it
+  is listed, presses T once (the key that opens and closes it; no by-name
+  close was measured) and reports `screen_closed` from a second listing — a
+  screen still open (an open sub-panel closes only by its own close button)
+  is reported, not refused. If the verb had to open the screen and found no
+  button yet, it says so and the tool sends it once more: whether the
+  screen's buttons exist in the same frame as the open was not measured.
+- **`hs_skill_bind` and `hs_talent_reset` refuse `route_not_measured`**
+  right after the lease, before anything is sent (`verb_trail: []`). Live 2
+  identified both handlers (`UiATalentChange` on the expanded bar's popup
+  button; `UiATalentScreenResetTalents` then the confirm dialog's
+  `ClearPersistSkill`) and reproduced neither by name: the popup's buttons are
+  gone by the time a replay runs, and the reset's confirm chain dispatched
+  with no effect. ForgePact builds no `skillbind` or `talentreset` verb.
+  Both signatures already take `backup_id`, so they do not change when a
+  session measures the routes.
+
+The accepted risk (ForgePact's guide, Known Limitations item 27): an
+allocation happens outside a click the game saw, and whether the game's save
+keeps a by-name allocation across a reload was measured by live 3's W6, which
+passed (2026-09-26): the allocation and its sub-node were both still present
+after a stop, launch and reload. There is no by-name undo, so a session that
+allocates restores its backup afterwards — which is why the tool will not run
+without one.
+
+## Stash and bag
+
+Five tools put the character at the town stash, open and close it, switch a
+stash tab or a bag sub-tab, and create the items a test needs, so a test
+session reaches its starting state with no one at the keyboard and without
+walking menus or the town. They exist to **set up** state for other tests,
+so each goes through the game's own routine by name wherever ForgePact's stash
+and bag research measured one in its two live sessions
+(`ForgePact/docs/stash-bag-layout-research.md`, `## Decision`), and proves
+what it did by re-reading. `tools/hs_drive_mcp/stash.py` holds all five;
+`server.py` registers them. Each read is one send carrying one
+`menulayout <Obj>` line per object it needs, and every poll is 30 reads
+0.5 s apart, as `hs_select_character` polls. The listings are not checked
+against the client size (`window_size_mismatch`): these tools click no
+listed point, and ids, tab numbers and tab state read the same at any window
+size.
+
+- **`hs_stash_open`** (`warpRoute`, `stashOpenRoute: interact`) reads
+  `Player_obj` and `Town_Stash_obj`, sends ForgePact's `playerwarp` to the
+  stash's own room position 48 below it (the offset live 1 measured, 0 px
+  off in both sessions), confirms the warp by re-reading `Player_obj` within
+  2 px, then presses the interact key **F** (vk 70, held 120 ms, `send_input`
+  with focus forced, the `click_not_delivered` check `hs_select_character`
+  applies) and polls for a listed `UI_Stash_obj`. **There is no by-name
+  open**: live 2's one by-name `UiCreate` open, with the exact shape the key
+  logged, was followed by the game dying on the next command — causality not
+  established from one session, not re-called, not shipped.
+- **`hs_stash_close`** (`stashCloseRoute: byname`) sends `stashclose` —
+  `UiACloseButton` by name, self the close row whose `uiNodeCallstack` is
+  `InventoryClose`, other the stash window, the shape live 2's P2-7 supplied
+  and saw save the stash (`SaveStash` +1) — and polls for the window's
+  absence. It takes **no `backup_id`**: the game's own close is what saves the
+  stash, and a session that gave an item or switched anything closes the
+  stash before it stops (RUNTIME_DATA_MODELS § 17, the save invariant).
+- **`hs_stash_tab`** (`stashTabRoute: byname`) sends `stashtab <tabNumber>`,
+  which reads the tab button's own `activationFunc`: `UiAStashTabClick`
+  (Personal, Shared) and `UiAStashMaterialTabClick` (Materials) are called by
+  their SDK constants with other the tab-bar container; Socketable's handler
+  is a closure the tab bar made, called as the method value the button holds,
+  with other the button — both the shapes live 2 supplied. A tab whose
+  handler is neither (Unique's was never read) is refused by the verb, and the
+  tool answers `route_not_measured`. The proof is `stashTabSelected` on the
+  window reaching the tab number (`stashTabState`) — **never `tabSelected`**,
+  which is the bag's. The tab already on show is `ok` with
+  `already_selected: true` and nothing sent.
+- **`hs_bag_tab`** (`bagTabRoute: byname`) sends `bagtab materials|socket`:
+  `UiAInventoryMaterialTabClick`/`UiAInventorySocketTabClick` by name, self
+  the sub-tab row, other the stash window, no argument. **What it proves**:
+  `tabSelected` on the stash window, the member the game's own handler
+  writes (`bagTabState`; the page tabs write it too), moved. **What it does
+  not**: `activeNode` — the focus — which live 2 did not observe following a
+  by-name call; the result carries `activeNode_before`/`activeNode_after`
+  from the verb and a `focus_note` saying it is read, not proven. Only the
+  Materials and Socket sub-tabs, and only beside the open stash, were
+  measured, so every other sub-tab (the page tabs, `vault`, `key`, `tarot`,
+  `relic`) refuses `route_not_measured` before anything is sent, and no
+  stash window is `bag_not_open`. A sub-tab already on show reads the same
+  as a call that did nothing, so it comes back `tab_not_selected`.
+- **`hs_give_item`** (`giveItemRoute: bag: json`) sends
+  `giveitem bag <template> <count>`: a copy of an item the character's map 0
+  already holds, made by the game's own loader in the crafting-materials
+  mod's proven order (`CreateItemSaveStruct` → `o` set → `LootTimestamp` →
+  `InitItemFromJson` with the key text `0-0-<S>-<class>` → `AddItemToMap`
+  → `GridAddItem` into `GetItemPreferredGrid(1, item)`'s grid). It is
+  confirmed **only** by the verb's own re-read: a `giveitem: confirmed` line
+  with one more item in the destination cells after than before, and the key
+  in map 0. No window needs to be open — with none open only the HUD belt
+  grid is listed, so a `cell=` row showing the key is added to `proof` when
+  one is listed and never required. `count` is a whole number ≥ 1; the verb
+  refuses a count above 1 for a non-stackable template and above the
+  template's own stack for a stackable one (`count_unsupported`) — no stack
+  size reader is measured, and only 1 was measured. Live 3's V0 is this
+  workorder's own control on the bag route (a stackable material, count 1:
+  `confirmed: true`); the same session's V0b, research and never required,
+  tried a non-stackable template (class 18) and was refused `give_refused` —
+  the verb's reader `ApPreferredGrid` found no array `grid` in what
+  `GetItemPreferredGrid(1, item)` returned, or the call failed — so the
+  non-stackable case is not established as working. **The stash destination
+  refuses `route_not_measured`**: live 2's attempt stopped at the loader with
+  a key shape that was not the proven one; it is
+  `hs-drive-stash-move-research`'s, along with moving items between the bag
+  and the stash.
+
+**The backup rule.** Every tool that writes game state — all but
+`hs_stash_close` — takes a required `backup_id` and asks
+`saves.session_backup_gate` before its first send: a whole backup taken
+before this game process started (`hs_saves_backup` refuses while the game
+runs, so a write cannot back up at call time). `hs_give_item` writes the save
+the next time the game saves, so a session that gives restores its backup
+afterwards.
+
+The accepted risk (ForgePact's guide, Known Limitations): the verbs change
+game state by the game's own routines at a moment the game did not choose,
+and `giveitem` creates an item the game did not drop; whether the game's own
+checks accept such an item beyond what the crafting-materials research
+observed is measured only as far as live 3's V0 measured it - placement in
+map 0 and the preferred grid, confirmed by the verb's own re-read in the same
+session, with no drag, save or reload.
+
 ## What is deliberately not here
 
 - **Character creation, class, difficulty, season, and anything past a
   loaded character; gameplay.** `hs_select_character` takes an existing
   save from the main menu to a loaded character and stops there. It does
-  not create one or turn to a page other than the first, and nothing here
-  plays the game. See "Character select" and "Known limitations".
+  not create one or turn to a page other than the first. Past a loaded
+  character the only gameplay here is one cast by key (`hs_skill_cast`) and
+  one talent allocation through the game's own handlers
+  (`hs_talent_allocate`); nothing moves, fights or plays on. See "Character
+  select", "Skills and talents" and "Known limitations".
 - **Synthetic input anywhere but the game's own window.** Both tools refuse
   unless the target window belongs to a running `hero_siege.exe`, and on the
   `send_input` route both re-prove that the game holds the foreground
@@ -1298,8 +1633,10 @@ py -3 -m unittest tests.test_hs_drive_mcp_ipc -v               # the bp_ipc comm
 py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v        # window resolution and capture
 py -3 -m unittest tests.test_hs_drive_mcp_input -v             # what actually leaves the process
 py -3 -m unittest tests.test_hs_drive_mcp_charselect -v        # hs_select_character: clicks, proof, refusals
-py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # ForgePact's menulayout listing and the three matchers
-py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the game lease: race, stale, PID reuse, the six gates
+py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # ForgePact's menulayout listing, its matchers and the verbs' lines
+py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the game lease: race, stale, PID reuse, the sixteen gates
+py -3 -m unittest tests.test_hs_drive_mcp_skills -v            # the skill tools: skillstate parser, cast, allocate, the refusals
+py -3 -m unittest tests.test_hs_drive_mcp_stash -v             # the stash and bag tools: open, close, tabs, give, the refusals
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # nothing shipped knows it exists
 py -3 -m unittest discover -s tests                            # all of the above, plus the rest
 ```
@@ -1309,6 +1646,21 @@ envelope refuses an unknown token outright), its annotations in `server.py`,
 its row in the Tools table above, and its name to the expected set in
 `tests/test_hs_drive_mcp_server.py`. Adding a self-check means one
 `checks.register(...)` call and a row in the table above.
+
+A tool that writes game state reuses `results.ACTION_REASONS`
+(`plugin_verb_missing`, `route_not_measured`, `no_session_backup`) and calls
+`saves.session_backup_gate` before its first send, rather than defining its
+own. A skill tool whose route a later session measures (a bind or a reset)
+replaces its `route_not_measured` refusal with the verb and adds its own
+confirmation token to `SKILL_REASONS`; its test goes in
+`tests.test_hs_drive_mcp_skills`, fed only frames the plugin printed
+(`tests/hs_drive_mcp_skillstate_fixtures.py`, cut by script from a byte copy
+of `bp_ipc\out.txt`, never typed from a capture's summary). A stash or bag
+route a later session measures (the stash destination of `hs_give_item`, a
+bag sub-tab, a stash tab whose handler is not yet a measured shape) replaces
+its `route_not_measured` refusal in `stash.py` and in the ForgePact verb
+together; its test goes in `tests.test_hs_drive_mcp_stash`, fed from
+`tests/hs_drive_mcp_stashlayout_fixtures.py` the same way.
 
 `server.py` is still the only module that imports the MCP SDK — `ipc.py`,
 `capture.py` and `launch.py` import none of it, which is what lets the IPC suite
