@@ -197,6 +197,7 @@ harness) and `test_miner_helmet_panel.py`. Evidence and design:
   - `include/ForgePact/CraftMatsMod.hpp`: The crafting-materials decision core (issue #14; the player build's `craftmats`, ForgePact 1.4.5, off by default). Game-independent - standard headers only, no runtime interface - so `tests/craft_mats_harness.cpp` compiles it whole. It decides everything the adapter in `ModuleMain.cpp` (`Cm*`, after `HandleProspectCommand`) acts on: the count (`CountAnswer`: the game's own `CountInventoryItem` answer, plus the two special tabs' stash count only with the switch on and inside the crafting route; an unreadable stash leaves the game's count and is named once); the walk (`MustWalk`/`KeepWalk`: display frames reuse one walk per game frame, the press walks fresh); the needs (`BeginFind`/`OnDecode`/`OnFindCount`/`Needs`: each count inside `CraftFindRecipeItems` takes the amount of the latest `PilipaliDecrypt` before it, the last count of a run after one decode is the one used, and a count with no decode makes the needs unreadable); the press gate (`PressStep`: the game's own press when no stash count was added, a refusal when the record cannot be paired, belongs to another recipe row or already served a press); per material a craft needs, need N, bag count k, stash count s -> take min(N-k, s) (`Plan`, from its Phase 0 arithmetic); the split (`Split`: whole entries first, then a partial from the last); the move outcome (`OnMoveReport`: confirmed only when the source dropped and the destination rose by exactly the amount, not-taken when neither side changed, anything else a loss that turns the mod off for the session); the craft gate (`MayCraft`: only when every take is confirmed); the consume check (`OnConsume`); the save (`SaveDue`: only after a confirmed move); and the per-press, refusal and loss lines. Its source enum is `StashMaterialTab = 1, StashSocketTab = 2` and nothing else (`docs/crafting-materials-research.md`, `## Ship design`). Phase 1e adds `CraftMatsKeptMap`, the kept stash map's currency rule - current only when the game's own `GetItemMap(9)` return refreshed it after the latest character load or room change, never on `ds_exists` alone (map indices are reused) - pinned by the harness's `kept_map` baseline and target scenarios and fed, so far, only by the research build's `mapkeep`.
   - `include/ForgePact/RestartAnytimeMod.hpp`: The "Restart zone at any time" decision core (issue #8, `restartanytime`) - the site script (`UiSetFocus`), the identifying member and value (`uiNodeCallstack` = `PauseRestart`), the gate member and its ready value (`manualDisable` = false), `RestartAnytimeModel::Decide` (Pass or Write) and the armed/pending/blind flags and four counters. Game-independent: no `RValue`, no builtin call.
   - `include/ForgePact/IncarnationGemsMod.hpp`: The Gems of Incarnation decision core (ForgePact 1.4.6; `gemmythic`, `gemfilter`, `gemmaxroll`). Game-independent - standard headers only, no runtime interface - so `tests/incarnation_gems_harness.cpp` compiles it whole. It holds the gem's identity (item type 15, base 136, `c` 0), the per-build tables (512 Mythic seeds per drop `n`, each with its affix stats, and the tier-4 range per affix stat; schema 2 JSON), the drop decision (`DropSeed`: a Mythic seed for the drop's own `n`, among the seeds carrying the most wanted mods when a filter is set), the filter's parser (`ParseFilter`) and the dress (`Dress`/`MaxRoll`). It avoids `std::min`/`std::max`: `ModuleMain.cpp` includes `<windows.h>` without `NOMINMAX`, so those break the plugin build while the harness still compiles.
+  - `include/ForgePact/ExitSafeThread.hpp`: `ForgePact::ExitSafeThread`, how a module global owns a background thread. The `std::thread` is heap-held and freed only after `JoinFor` has joined it, and the holder has no destructor, so the game's `ExitProcess` never destroys a joinable thread (Known Limitations item 26). It owns the coop receive thread. Game-independent: `tests/coop_thread_exit_probe.cpp` compiles it whole into a probe DLL.
 - `plugin_build/`: Plugin compiler script and build workspace.
   - `build.bat`: MSVC x64 batch script compiling `plugin/ModuleMain.cpp` into `BloodPactPlugin_ship.dll` (player build) or `BloodPactPlugin_rel.dll` (research build).
 - `modfiles_shipped/`: Shipped binaries deployed to the game's `bin/` directory upon mod installation.
@@ -527,6 +528,7 @@ To add or modify a gameplay modifier or runtime command:
 | `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Executes all 1271 Python contract tests (including the native behavior harnesses, which skip without a C++ toolchain). | Read-only test execution; all tests pass | Verified 2026-09-22 |
 | `py -3 -m unittest tests.test_drop_roll_model -v` | hub root (not `ForgePact/`) | PowerShell / CMD | Python 3.10+; `ForgePact/` checked out for `LeverParityTests` | Runs the drop-roll model's baseline and target tests against the recorded measurements M1-M10 (`hs-game-sdk/curated/drop_roll_measurements.json`), and `LeverParityTests`, which pins the test's copies of `droprate group`, `dungeonkey` and the relic pre-roll to `plugin/ModuleMain.cpp` and `src/forgepact.py`. A lever change that moves either side fails here. See `docs/models/drop-roll-spec.md`. | Read-only; loads `src/forgepact.py` in-process to call `build_key_cmds` (no server, no bytecode written) | Verified 2026-09-24 (25 tests, OK, none skipped) |
 | `py tools/perf_panel.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Times the panel's two per-poll costs - the boot count and the process scan - against reference copies of the pre-1.3.20 implementations, and exits non-zero if either regressed below its floor. No game, no network. `--log-mb`, `--iterations`, `--min-speedup`. | Writes and deletes a synthetic log in a temp directory | Verified 2026-09-15 |
+| `py -3 tools/itemtruth_memrun.py run --items 20000 [--mix]` and `... control` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+ (standard library); Hero Siege closed; Item Truth on (`itemtruth\capture.request`); `control` needs the research DLL installed | `run` launches the game minimised to the main menu, waits until the menu's one-time memory release is behind it and the level is steady, queues one evaluation request of `--items` items from the journal's own evaluated shapes (`--mix`: white, unique, socketed and runeword items), samples private bytes every second and closes the game with `CloseMainWindow`. `summary.json`: baseline, peak while building, level after, KB per item. `control` runs two halves in one launch, the second under `truthmem hold on`: the positive control, which must grow. | Launches and closes the game; writes `samples.csv` and `summary.json` (and `truthmem.txt`) under `--out`; moves the run's own journal files there when every line in them is the run's | Verified 2026-09-26 (see "Item Truth for the Item Editor", Memory) |
 | `py tools/cut_release.py --check --expect <version>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Reports the version at every site and fails if they disagree, or if the release notes are missing and `--allow-missing-notes` was not given. `py tools/cut_release.py <version>` moves them. `--allow-missing-notes` (only `--check`; only used by `forgepact-tag.yml`) reports a missing notes file without failing. **Do not hand-edit the version sites** - a mismatch here is the signal, not a nuisance. Touches no git, runs no build, stages no DLL. | `--check` is read-only; a bump rewrites two files | Verified 2026-09-16 |
 | `py tools/forgepact_tag.py --tag <version> --existing <tags…>` | `ForgePact/` | PowerShell / CMD (Git Bash for the real examples below) | Python 3.10+ | Checks a typed tag/version against the existing `v*` tags and the tree, and prints `version=`, `tag=`, `bump=`, `previous=`. Refuses a taken tag, a downgrade against the highest tag, a version below the tree, or a malformed input. | Read-only | Verified 2026-09-16 |
 | `py tools/forgepact_tag.py --compose-notes --version <v> --previous <tag> --generated <file> --out <file>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Composes the draft release body: the tagged version's own `release-notes-vX.Y.Z.md` if present (else the generated notes at `--generated`, under a banner), plus every skipped version's file, newest first. Prints `source=` and `versions=`. | Writes `--out`; reads notes files under `--root` (default: repo root) | Verified 2026-09-16 |
@@ -680,13 +682,13 @@ UTF-8 / ASCII plain-text command queue. The panel appends lines to `cmd.txt`; th
     - Output: a `skillstate:` header; one `  slot=<row>,<i> talent=<id> ability=<abilityId|unreadable> timer=<refreshInfoTimer>` line per element of `UI_Hud_Talent_obj`'s `row0` and `row1`, ending ` effect=<n>` when the ability, lower-cased, is a `kSkillTimerNames` key - `n` is `instance_number` of that entry's object, resolved by name through the table (the toggle research's rule: a toggle is on exactly while its effect instance exists; `castProof`. The rule was measured on toggles, with auras as the negative controls, and the table is a generated name match, not a measured list; live 3's W2 pressed Q at the wrong slot (0,0, not 0,3) and read nothing about `darkOath`, and `darkOath`'s own count is still not observed on either build - live 4 measured the rule's first positive control on the player build on `manaOrb` instead); `  global.mySkills=[<id>,...]`; one `  sub=<id> s<NN>=<n> ...` line per talent on the bar from `global.subTalentMap[1].t<id>` (`none` without a node); a footer `skillstate: <n> talent(s) on the bar`. Every read has its own `try` and prints `unreadable` for that item.
     - These are `skillprobe state`'s own body lines: `SpState` takes the bar, the ability and the `sub=` text from the `SkillState*` readers, so the hub's parser was written against live 2's verbatim `skillprobe state` replies before `skillstate` ran live. No `points`, `level=`, `key=` or `hud.playerSlot` line: live 2 found no reader for a point count, a level or a slot's key (`pointsReader`, `castKeyRule`: `not measured`).
     - Reads only through `variable_*_get`, `array_*`, the talent map's `ds_map_*` lookup, `instance_find`/`instance_number` and `asset_get_index`; nothing is hooked, called, created or written, and nothing is on the per-frame path.
-  - `talentalloc <talentId>` / `talentalloc <talentId> sub <n>` (**player build**, in `kPlayerCommands`, dispatched from `HandleTalentAllocCommand` right after `skillstate`'s; tool-facing, changes the character's talents - Known Limitations item 25): one talent point, by the game's own handlers (`allocRoute`, `subAllocRoute`).
+  - `talentalloc <talentId>` / `talentalloc <talentId> sub <n>` (**player build**, in `kPlayerCommands`, dispatched from `HandleTalentAllocCommand` right after `skillstate`'s; tool-facing, changes the character's talents - Known Limitations item 27): one talent point, by the game's own handlers (`allocRoute`, `subAllocRoute`).
     - Main form: refuses before anything is called when the id is already in `global.mySkills` (only a first level, 0 → 1, was measured) or `global.mySkills` is unreadable; opens the talent screen by `UiAOpenTalents` (self = other = `Profile_Manager_obj`, arguments `1, 1`) when `UI_Talent_Screen_obj` is not listed, refusing `screen not open` when it still is not; finds the `UI_Button_Talent_Player_obj` whose `talentId` is the id (`not allocatable` when none is); runs `UiATalentScreenTalent` with that button as self and the screen as other, no arguments; prints `talentalloc: before=mySkills=[...] after=mySkills=[...]`, then `confirmed - global.mySkills gained <id>` or `not confirmed - ...` (the game's own refusal - no free point, say; there is no reader for the points left).
     - Sub form: the screen as above; the talent's sub-panel (`UI_Sub_Talents_obj` with that `talentId`) opened by `UiAActivateSkillSpecialization` on the `UI_Button_Sub_Skill_obj` carrying the id when it is not already open; the `n`th listed `UI_Button_Subtalent_obj` (1-based, `menulayout`'s order - the nodes carry no name; live 2's first listed node was a `Big` tier icon that changed nothing, the second set `s1`) run through `UiAActivateSkillSubPoint` with the sub-panel as other; prints `talentalloc: before=sub=<id> ... after=sub=<id> ...` and `confirmed` only when one `s<NN>` rose by exactly one (a node absent before counts as 0).
     - Every script is an `hs-game-sdk` constant that must resolve through `GetNamedRoutinePointer` before `asset_get_index` hands `script_execute` its index, with self and other passed apart; every instance by `asset_get_index`/`instance_number`/`instance_find`. Only those four scripts are ever run; no member named like a point count and no level reader is touched. Every line starts `talentalloc:`, and every refusal says what was not called. The verb leaves the screen open (no by-name close was measured); the hub closes it with T.
     - Not built: `skillbind` and `talentreset`. Live 2 did not reproduce either by name (`bindRoute`, `resetRoute`: `shape not reproduced`), so the hub's `hs_skill_bind` and `hs_talent_reset` refuse `route_not_measured` without sending anything.
     - `tests/test_skill_actions_contract.py` (`PlayerVerbs`) pins all of this on comment-stripped source.
-  - The stash and bag verbs `playerwarp`, `stashtab`, `bagtab`, `stashclose` and `giveitem` (**player build**, each in `kPlayerCommands`, each dispatched from its own `Handle*` helper right after `talentalloc`'s as a standalone early return; tool-facing, they change game state - Known Limitations item 26): what the hub's `hs_stash_open`, `hs_stash_tab`, `hs_bag_tab`, `hs_stash_close` and `hs_give_item` send, each in the shape live 2 supplied and the game accepted (`docs/stash-bag-layout-research.md` § Decision). Every instance by `asset_get_index`/`instance_number`/`instance_find` (the player by `HhResolveLocalPlayer`), every routine by its `hs-game-sdk` constant (through `TalentAllocDispatch`: `GetNamedRoutinePointer`, then `asset_get_index`, then `script_execute` with self and other apart); nothing hooked, nothing on the frame path. Every line starts `<verb>: `; each prints one `before=`/`after=` line from its own re-read, and a refusal says what was not called.
+  - The stash and bag verbs `playerwarp`, `stashtab`, `bagtab`, `stashclose` and `giveitem` (**player build**, each in `kPlayerCommands`, each dispatched from its own `Handle*` helper right after `talentalloc`'s as a standalone early return; tool-facing, they change game state - Known Limitations item 28): what the hub's `hs_stash_open`, `hs_stash_tab`, `hs_bag_tab`, `hs_stash_close` and `hs_give_item` send, each in the shape live 2 supplied and the game accepted (`docs/stash-bag-layout-research.md` § Decision). Every instance by `asset_get_index`/`instance_number`/`instance_find` (the player by `HhResolveLocalPlayer`), every routine by its `hs-game-sdk` constant (through `TalentAllocDispatch`: `GetNamedRoutinePointer`, then `asset_get_index`, then `script_execute` with self and other apart); nothing hooked, nothing on the frame path. Every line starts `<verb>: `; each prints one `before=`/`after=` line from its own re-read, and a refusal says what was not called.
     - `playerwarp <x> <y>` (`warpRoute`): writes the local player's `x` and `y` through `variable_instance_set` on its own id (the write `iset` made in live 1 and live 2); prints `playerwarp: before=<x>,<y> after=<x>,<y>`; refuses a non-finite argument or no resolvable player.
     - `stashclose` (`stashCloseRoute`): `UiACloseButton` with self the `UI_Button_Close_obj` whose `uiNodeCallstack` is `InventoryClose`, other the `UI_Stash_obj`, no argument (the game's own call passes one empty array; live 2 supplied none and the window closed and `SaveStash` ran); prints `stashclose: before=listed after=none` from whether a `UI_Stash_obj` is listed; refuses when either instance is missing. The window is never destroyed: the close route is what saves the stash.
     - `stashtab <tabNumber>` (`stashTabRoute`): the `UI_Button_Stash_Tab_obj` whose `tabNumber` is the number; its handler read from its own `activationFunc` (`method_get_index`, `script_get_name`). `UiAStashTabClick` (Personal, Shared) and `UiAStashMaterialTabClick` (Materials) are called by their SDK constants with self the button, other the `UI_Stash_Tab_Bar_Container_obj`; Socketable's handler, a closure the tab bar's Create made, is called as the method value itself with self = other = the button (the shape live 2 supplied through the research build). Arguments are the two scalars live 2 supplied, the number and the button (the game's own call passes them as one two-element array). A handler that is neither is refused as not a measured shape, before anything is called (Unique's was never read). Prints `stashtab: before=<stashTabSelected> after=<stashTabSelected> handler=<name>`; refuses an unchanged state.
@@ -1985,6 +1987,7 @@ here before pressing Publish.
 | v1.4.5 | [35831690354](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/35831690354) | `5f7a8d728d3203b9184d345efe652b92c74cedc435eac4f37fd4d5b60228ac03` | yes: Install Mod Plugin from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`48a8450b02ef`) | `==== BloodPact plugin loaded ==== v1.4.5` | 1.4.5 | `hhlabel` -> `callback ok` | pass | 2026-09-23 | falorfrozen-cmd (install and checks run by Claude Code) |
 | v1.4.5 (tag at `0a55d97`) | [36051361059](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36051361059) | `ca29efd5ea8d79dde3de52b492733d513d9110b3d0933ffcf5d2d8329c9619ef` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`a14d7237ea4a`, `BUILD-INFO.json` `plugin_sha256`) | `==== BloodPact plugin loaded ==== v1.4.5`, first line of the session launched after the install | 1.4.5 (`/api/state`) | `hhlabel` -> `ON (0 active, callback ok)` | pass | 2026-09-25 | falorfrozen-cmd (install and checks run by Claude Code) |
 | v1.4.6 (tag at `d9aee6f`) | [36164948121](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36164948121) | `2ca25fddaf881309d33cac0efc7cfc89e5936950cccff68d13964ec2e93e44a9` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.6` folder; the installed `BloodPactPlugin.dll` matched the zip's (`6af792801764`, `BUILD-INFO.json` `plugin_sha256`). The AFK FARM and Seraph plugins in `mods/aurie` were left as they were. | `==== BloodPact plugin loaded ==== v1.4.6`, the first boot line of the session launched after the install (panel **Launch**, `POST /api/launch`) | 1.4.6 (`/api/state`), served on 8780 | `hhlabel` -> `ON (0 active, callback ok)` | pass | 2026-09-26 | falorfrozen-cmd (install and checks run by Claude Code) |
+| v1.4.7 (tag at `95bd1cd`) | [36215007747](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36215007747) | `32d37a0032f209b248b827b9641133e393c6c9230a2c3d309b10b8dc82016146` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.7` folder; the installed `BloodPactPlugin.dll` matched the zip's (`bd3bf3564a77`, `BUILD-INFO.json` `plugin_sha256`). The AFK FARM and Seraph plugins in `mods/aurie` were left as they were. | `==== BloodPact plugin loaded ==== v1.4.7`, the first boot line of the session launched after the install (panel **Launch**, `POST /api/launch`, 10 s) | 1.4.7 (`/api/state`, which lists the new `primeevil` slider), served on 8780 | `hhlabel` -> `ON (0 active, callback ok)`; also `droprate group primeevil 5` -> `x5, 12 esya (ornek: 27 -> 5)`, then back to x1 | pass | 2026-09-26 | falorfrozen-cmd (install and checks run by Claude Code) |
 
 The first `v1.4.5` row built an earlier `v1.4.5` tag. That draft was never
 published, and the tag was cut again at `0a55d97` on 2026-09-24. The second row
@@ -2185,14 +2188,26 @@ manifest.
     - **Research build and mod in one session.** `craftmats 1` refuses while `craftprobe hook` already detours any of the six scripts, and `craftprobe hook` reports them `held by craftmats` once the mod's hooks are in - a second detour on one function would fail and read as a false `TABLE-ONLY`. Players never meet either: the player build has no `craftprobe`.
     - **Live confirmation:** Phase C, 2026-09-24, on the player DLL `BloodPactPlugin_ship.dll`, sha256 `eedc27c30c57236ecbf0e1dd8c04a423e257aaea927911e6e9d932edb01c46f3` (built from ForgePact `6f45abe`), slot 14, two launches. 13 of its 14 checks pass: the DLL and the player build's command set, the six hooks installed `both-routes`, a Socketable recipe (Ol, 2 moved onto the bag's own stack) and a Materials recipe (Greater Unstable Dust, 5 moved into a new bag stack) each unavailable with the switch off and crafting once with it on, one result per press, the stash saved after each press, and the lowered counts in the stash window, after the game's own quit and reload, and with the game stopped, with no flagged item observed. `bag-control` fails on the produced item's name only: a recipe the bag covered produced a Satanic Crystal Fragment in place of a Destiny Shard Fragment, while its count and the absent move line held and the mod did not touch that craft; the owner accepted it as an unrelated game bug ("Accept as game bug"). The owner added two cases, each observed live once: a multi-input recipe (Nut: 3 Sal and 1 Chipped Sapphire, both from the stash) and a multi-unit press of it (quantity 3: 9 and 3 moved in one line, 3 Nuts). The Cube's recipe list shows availability as computed when the Cube opened: after `craftmats 0` a recipe the stash had made available still read available while the window stayed open, and read unavailable at the next Cube open (observed once, on to off); a press on a row whose shown availability is stale was not observed. Record: `ForgePact/docs/crafting-materials-research.md` `## Phase C results`.
     - **Tests:** `tests/test_craft_mats_contract.py` (the `test_craftmats_*`, panel and research-doc tests), `tests/test_craft_mats_behavior.py` + `craft_mats_harness.cpp`.
-25. **`talentalloc` (toolkit issue #147) changes the character's talents through the game's own handlers at a moment the game did not choose - an accepted risk (2026-09-25):**
+25. **The shipped HS-Offline-Tracker producer turns some game exits into a WER crash report (measured from crash dumps, 2026-09-26):**
+    - **What a player sees.** At or after closing the game, Windows reports Hero Siege crashed: faulting module `ucrtbase.dll`, exception `0xc0000409`, fast-fail parameter 7 (`abort`). A dump lands in `%LOCALAPPDATA%\CrashDumps`.
+    - **What it is.** `modfiles_shipped/HSOfflineTrackerProducer.dll` (pinned from the 1.3.16 package, a 2026-09-07-or-earlier build) keeps its publisher in a global `std::thread` (`g_publish_worker` in HS-Offline-Tracker's `aurie-producer/src/module.cpp`) and joins it only in `StopPublishWorker`. When the game leaves through `ExitProcess`, its other threads are gone before the DLL's globals are destroyed, and a `std::thread` still joinable at destruction calls `std::terminate`. The dumps' thread is inside `LdrShutdownProcess`, in that DLL's exit-time destructors, with the game's ordinary exit path under it.
+    - **How often.** 9 of the 10 dumps Windows kept (2026-09-25 13:17 to 2026-09-26 01:36) show it, one from a session that lived 70 s. None of the five closes by `CloseMainWindow` on 2026-09-26 left one; what separates an exit that aborts from one that does not was not determined.
+    - **Why it matters here.** The session of 197,704 Item Truth evaluations that "crashed" at 01:36:27 is one of them; it was read as the evaluations running out of memory (they do not: "Item Truth for the Item Editor", Memory). Read a dump's stack before blaming a `ucrtbase` report on ForgePact or the game.
+    - **Not fixed here.** The fix belongs in HS-Offline-Tracker (join or detach the worker before the globals go); ForgePact then updates the pin. `ItemTruth.hpp` avoids the same trap for its own writer thread by never destroying its `Journal`; ForgePact's own coop receive thread did not, until item 26.
+26. **ForgePact's own coop receive thread aborted research-build exits the same way (fixed in ForgePact PR #90, 2026-09-26; not run in the game):**
+    - **What it was.** `plugin/ModuleMain.cpp` kept the custom co-op transport's receive thread in `static std::thread g_CoopRecvThread`. `coopstart`, or a `bp_ipc\coop.ini` with `enabled=1` (read on the first frame), started it, and only `coopstop` joined it. Closing the game with coop still running therefore ended in item 25's abort, from ForgePact's own exit-time destructors.
+    - **Who could meet it.** Research builds only. No preprocessor guard keeps the coop code out of the player build, but no `coop*` verb is in `kPlayerCommands`, so `RunCommand` refuses them there, and the `coop.ini` auto-start and the per-frame `CoopTick` are inside `#ifndef FORGEPACT_RELEASE`.
+    - **The fix.** `plugin/include/ForgePact/ExitSafeThread.hpp`: the `std::thread` lives on the heap in a trivially destructible holder and is freed only after a join, so nothing runs for it at exit. It has the same shape as HS-Offline-Tracker PR #8's fix. `coopstop` closes the socket and waits at most 2 s (`kCoopStopJoinTimeout`) where it used to join without a bound on the frame thread. A thread that does not end is kept, and `coopstart` refuses until a later `coopstop` has joined it.
+    - **Not covered: an Aurie unload.** ForgePact exports no `ModuleUnload` and never restores the script-table entries `HookOneScript` writes, so the Aurie console's "Unload framework" leaves them pointing into an unmapped module with or without coop (static reading, not run). The holder changes nothing there: a receive thread still running when Aurie calls `FreeLibrary` is left in unmapped code, where the old shape aborted instead.
+    - **Tests.** `tests/test_coop_thread_exit_behavior.py` (with `coop_thread_exit_probe.cpp`, a DLL, and `coop_thread_exit_harness.cpp`) ends child processes with `ExitProcess`: the old static `std::thread` aborts (the baseline, caught as exit `0x7E2` so no dump is written), `ExitSafeThread` exits 0 (the target), and three cases cover `coopstop`. `tests/test_coop_thread_exit_contract.py` pins the wiring, the bound and the reachability above, and fails on any new named `std::thread` in the plugin that its `NAMED_THREADS` table does not list with a reason. Today that table lists only the Item Truth `Journal`'s thread.
+27. **`talentalloc` (toolkit issue #147) changes the character's talents through the game's own handlers at a moment the game did not choose - an accepted risk (2026-09-25):**
     - **What it does.** A tool such as the hub's `hs_talent_allocate` sends it; the panel never does, and it has no switch. It opens the talent screen by name if it is closed and runs the talent's (or a sub-talent node's) own activation script with the real button as self, so the game does its own bookkeeping and its own hashing of the talent state - a raw write would trip that hash, which is why none is made. Design and every call shape: `ForgePact/docs/skill-actions-research.md` § Decision (`allocRoute`, `subAllocRoute`, `talentScreenOpenRoute`).
     - **The accepted risk.** The allocation happens outside a click the game saw. Live 3's W6 measured that the game's save accepts a by-name allocation, and its sub-node, across a stop, launch and reload (2026-09-26): both were still present, and the newly learned talent had filled a bar slot by itself. Quoting the owner's answer to the risk question (2026-09-25): "Accept" - for `talentalloc` and its sub-allocation, the verbs live 2 made shippable.
     - **What it cannot confirm.** No reader for the points left or a talent's level was found (`pointsReader: not measured`; `ReturnTalentLevel` by name threw), so the verb confirms by what live 2 measured changing: the id joining `global.mySkills`, or one `s<NN>` of the talent's `global.subTalentMap[1]` node rising by one. It refuses a talent already learned (a second level was never measured), and it cannot tell "no free point" from any other refusal of the game's own - both read `not confirmed`.
     - **What it does not undo.** No by-name undo exists (the right-click undo closures are not reproducible by name), so a test that allocates restores its save backup afterwards, as the hub's tools require one taken before the launch.
     - **Not built:** a bind to a bar slot and a reset of the tree (`shape not reproduced` in live 2).
     - **Tests:** `tests/test_skill_actions_contract.py` (`PlayerVerbs`); the hub's `tests/test_hs_drive_mcp_skills.py`.
-26. **The stash and bag verbs `playerwarp`, `stashtab`, `bagtab`, `stashclose` and `giveitem` (toolkit issue #147) change game state through the game's own routines at a moment the game did not choose, and `giveitem` creates an item the game did not drop - an accepted risk (2026-09-25):**
+28. **The stash and bag verbs `playerwarp`, `stashtab`, `bagtab`, `stashclose` and `giveitem` (toolkit issue #147) change game state through the game's own routines at a moment the game did not choose, and `giveitem` creates an item the game did not drop - an accepted risk (2026-09-25):**
     - **What they do.** A tool such as the hub's `hs_stash_open`, `hs_stash_tab`, `hs_bag_tab`, `hs_stash_close` or `hs_give_item` sends them; the panel never does, and none has a switch. `playerwarp` writes the player's room position by name; `stashtab` and `bagtab` run a tab's own handler by name with the self and other live 2 supplied; `stashclose` runs the close button's own handler, which is the route that saves the stash; `giveitem` makes a copy of an item the character already holds by the game's own loader (craftmats' proven json route, into the bag only), with a fresh key and timestamp, so the game builds and hashes it the way a load builds one - a raw write would trip the grid handlers' hash checks, which is why none is made. Design and every call shape: `ForgePact/docs/stash-bag-layout-research.md` § Decision.
     - **The accepted risk.** Quoting the owner's answers to the two risk questions (D16, 2026-09-25): for the write verbs `stashtab`, `bagtab`, `stashclose` and `playerwarp`, "Accept"; for `giveitem`, "Accept"; and for when `giveitem bag` ships, "Ship now, live 3 confirms (Recommended)". Live 3's V0 confirmed only the created unit's placement in map 0 and in the preferred grid, by `giveitem`'s own re-read in the same session, for a stackable material at count 1 (`confirmed: true`, key `0-0-212584560001-14`, `before=3 after=4`); V0 did not drag, save or reload the item, and the session's save backup was restored afterward. #14's own observation - that created units survived a drag, a save and a reload with no `ReportClient` call - is #14's, not live 3's. The same session's V0b tried a non-stackable template (class 18) and it was refused `give_refused` - the verb's reader `ApPreferredGrid` found no array `grid` in what `GetItemPreferredGrid(1, item)` returned, or the call failed - so only the stackable-material case is confirmed.
     - **What they do not prove.** `bagtab` proves `tabSelected`, not `activeNode` (the focus), which live 2 did not observe following a by-name call and live 3's V3 read as unchanged through the shipped verb; `stashtab` refuses a tab whose handler is not one live 2 reproduced (Unique's was never read); a `giveitem` count of 1 was measured for a stackable (V0); V0b's one class-18 non-stackable template was refused at the preferred-grid step (`ApPreferredGrid` found no `grid`), not at the count check, and no stack-size reader is measured.
@@ -2234,6 +2249,7 @@ manifest.
 - Satanic Zone SDK Data (shared, not ForgePact-specific): `../../../hs-game-sdk/curated/satanic_zone.json`
 - Stash & Crafting Cube Container Data (issue #14's shared-references fold, not ForgePact-specific): `../../RUNTIME_DATA_MODELS.md` § 17, `../../../hs-game-sdk/curated/stash_containers.json`
 - Live Plugin IPC Driver: `../../../ForgePact/tools/ipc.ps1` (send a command to the running game, print only the reply)
+- Item Truth Memory Harness: `../../../ForgePact/tools/itemtruth_memrun.py` (queue evaluation requests at the menu and sample the game's private bytes from outside; `control` is the positive control) and its record, `../../../ForgePact/docs/item-truth-memory-research.md`
 - Ghidra Symbol Importer: `../../../ForgePact/tools/ghidra/ImportSymbols.java` (name the stripped game binary from its own script table)
 - Out-of-Process Freeze Probe: `../../../tools/freeze_probe.ps1` (toolkit root, not ForgePact-specific)
 - Release Notes: `../../../ForgePact/release-notes-v*.md` (one per not-yet-published version, deleted once published; preferred source for every version bump, see Representative Change Workflow §6)
@@ -2370,6 +2386,28 @@ How it works:
   [Issue #173](https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit/issues/173)
   moves the reusable half of `ItemTruth.hpp` into `hs-game-sdk` once a second
   plugin needs it.
+- **Memory (measured 2026-09-26): an evaluation keeps nothing.** The game's own
+  collector frees every item a request builds.
+  - With the released 1.4.6, 20,000 evaluations at the main menu moved private
+    bytes by +6.7 MB (white bases) and +10.2 MB (white, unique, socketed and
+    runeword items), and the level stayed flat afterwards.
+  - The positive control (`truthmem hold on`, research build) kept the same items
+    in a global struct: +106-117 MB, 5.4-6.0 KB and 5.0-5.7 collector objects
+    per item (two runs).
+  - The player build of the change that added the tool, measured through the tool
+    itself, gave the same flat line (+10.7 MB for 20,000 mixed items).
+  - The session of 197,704 evaluations that ended in a WER report peaked at
+    3.14 GB, the same as a fresh launch. Its report was the process exiting: the
+    tracker producer's abort in its exit-time destructor (Known Limitations 25).
+  - So no limit on evaluations per session is needed for memory; the earlier
+    "95 KB each" divided the game's whole private memory by the item count.
+  - Measure with `tools/itemtruth_memrun.py` (Command Reference). The research
+    build's `truthmem` reads the collector (`stat`, `gc`) and holds or releases
+    items (`hold on|off`, `release`).
+  - `LogDrop` (research build) skips Item Truth's own builds, which it used to
+    keep in `g_SeenDrop` for the whole session.
+  - Record: `ForgePact/docs/item-truth-memory-research.md`; game facts:
+    `RUNTIME_DATA_MODELS.md` §5.9 and §16.2.
 
 ## Gems of Incarnation (1.4.6, simulated drops verified 2026-09-25)
 
@@ -2475,3 +2513,97 @@ publishing, run Actions → Catalog → Run workflow with `only` set to `forgepa
 - In the launch gate (row above), the zip's panel came up on 8780.
 - This pull request was merged right before publishing.
 - Do not put a version number in a comment in `src/forgepact.py`. VersionStampTests allow the version exactly once, and a comment naming the *next* version passes until the tag workflow bumps to it. That is what failed the first `v1.4.6` build.
+
+## Prime Evil Parts slider (1.4.7, 2026-09-26)
+
+A player asked for a slider for the Key of Terror parts, like the Blood Pact's
+"Prime Evil part drop rate" row. The research record is ForgePact's
+`docs/prime-evil-parts-research.md`.
+
+**What changed.**
+- The Loot tab gets **Prime Evil Parts (Key of Terror)**:
+  `KEYS` entry `("primeevil", ..., None)`. With no drop type, it sends only
+  `droprate group primeevil <m>`: it scales the parts' own roll where the game
+  already rolls it, which is on bosses.
+- The parts share LoadDrops type 41 with Relics. So the slider never opens that
+  gate, and the Relic gate's part guard (`Hook_DropBossParts` /
+  `Hook_DropUberParts`) stays.
+- **Plugin fix:** the `primeevil` group's fragment was "satans_horn", which
+  missed `collectible_satans_infernal_horn`. It is now "satans_", which in
+  category 13 matches only the two horns: 12 of 12 parts.
+
+**Game facts.** Folded into `docs/RUNTIME_DATA_MODELS.md`: static reading of the
+Sep-17 build, plus the live kills.
+- `DropBossParts`, `DropBossPartsNext` and `DropUberParts` are called only from
+  `LoadDrops`.
+- `LoadDrops` is called only from `DropItem`. Monsters reach `DropItem` from
+  `Enemy_Parent_obj`'s Destroy event.
+- `DropBossParts` reads the part entry's drop rate and player stat 736.
+- `DropUberParts` reads no drop rate and makes no Prime Evil part. It creates
+  one of these, or its infernal version (13:49-53):
+  - Soul of Anguish, Soul of Despair or Soul of Corruption;
+  - Scroll of Ra or Colosseum Fragment (13:14-18).
+
+**Measured.** 2026-09-26, research build, hero Suh (softcore), Act_01_01:
+
+| `droprate group primeevil` | Karp King kills | bellybuttons | per kill |
+| --- | --- | --- | --- |
+| x1 | 15 | 11 | about 0.7 |
+| x5 | 12 | 36 | 3.0 |
+| x35 | 15 | 138 | about 9.2 |
+
+These are M11 and M12 in `hs-game-sdk/curated/drop_roll_measurements.json`,
+pinned by `tests/test_drop_roll_model.py`. The measured x5/x1 ratio is 4.1; its
+95% band from the counts, 2.1-8.0, contains the lever's 5. Above x35 nothing
+more changes.
+
+**How the kills were made, without input.**
+1. HS-AFK-Expedition's `tools/game_session.py prepare`, then
+   `travel --room Act_01_01`, entered the hero.
+2. ForgePact's research build spawned the boss 1200 px away:
+   `cb instance_create_depth x+1200 y 0 2368`.
+3. It set the boss's protected HP to 0: `callnum PC_SetVariableGMLWrapper <enemy_hp> 0`.
+4. `bp_ipc\itemdrops.jsonl` was read.
+
+`tools/boss_drop_trial.py` repeats this loop.
+
+Things that do not work:
+- In town a boss removes itself.
+- `instance_destroy` on a live boss drops nothing.
+- A boss next to the hero killed them in about 15 s.
+
+**Uber bosses (measured 2026-09-26, afternoon).** Same build, hero and room,
+with `droprate group primeevil` at x35:
+
+| Boss | how it died | kills | Prime Evil parts | items 13:14-18, 49-53 |
+| --- | --- | --- | --- | --- |
+| Karp King (control, before) | HP 0 | 1 | 12 | 0 |
+| Uber Damien | HP 0 | 3 | 0 | 0 |
+| Reaper (`Reaper_Uber_obj`) | HP 0 | 3 | 0 | 0 |
+| Uber Endrixia | HP 0, then `instance_destroy` | 2 | 0 | 0 |
+| Uber Anubis | HP 0, then `instance_destroy` | 2 | 0 | 0 |
+| Karp King (control, after) | HP 0 | 1 | 8 | 0 |
+
+- **Result.** Uber bosses roll no Prime Evil part, at least outside their own
+  realm, so the slider does nothing for them. Earlier x1 kills of the same four
+  agree.
+- **Test.** This is M13, pinned by `tests/test_drop_roll_model.py`.
+- **Controls.** Every result comes from a spot where a Karp King control dropped
+  loot. A boss that dies where loot cannot land, such as past the room's edge,
+  drops nothing.
+- **Tool.** `tools/boss_drop_trial.py` now takes `--dx` (where to spawn) and
+  `--destroy` (HP 0, then `instance_destroy`).
+
+**Not verified.**
+- Uber bosses inside their own realm: `room_goto` to `Uber_Inoya_rm` closed the
+  game, so no kill there was measured.
+- Uber Luna: `instance_destroy` after HP 0 closed the game.
+- Where the infernal parts drop: no test dropped one.
+- The meaning of stat 736.
+- Which bosses in which zones roll type 41 natively.
+
+Test: ForgePact `tests/test_prime_evil_parts_contract.py`.
+
+**Release build.** The 1.4.7 launch gate (its row is in "CI build launch
+gate") sent `droprate group primeevil 5` to the released plugin. It answered
+`x5, 12 esya (ornek: 27 -> 5)`, so the shipped group covers all 12 parts.

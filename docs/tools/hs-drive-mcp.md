@@ -1475,7 +1475,7 @@ expected before it ran. `tools/hs_drive_mcp/skills.py` holds all five;
   Both signatures already take `backup_id`, so they do not change when a
   session measures the routes.
 
-The accepted risk (ForgePact's guide, Known Limitations item 25): an
+The accepted risk (ForgePact's guide, Known Limitations item 27): an
 allocation happens outside a click the game saw, and whether the game's save
 keeps a by-name allocation across a reload was measured by live 3's W6, which
 passed (2026-09-26): the allocation and its sub-node were both still present

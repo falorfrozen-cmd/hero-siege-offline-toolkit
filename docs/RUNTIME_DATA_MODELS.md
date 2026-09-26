@@ -375,6 +375,30 @@ active) — **measured** by read-only memory inspection.
   and `repeatGravity` change every frame. **Measured.**
   [toggle skills, Session 2](../ForgePact/docs/toggle-skills-research.md#session-2-1)
 
+### 5.9 The garbage collector
+
+Read with `gc_is_enabled`, `gc_get_target_frame_time` and `gc_get_stats` at the
+main menu on 2026-09-26 (`pe-6aaa6779-0cad4fc8`). All **measured**.
+
+- The collector is on, with the default 100 µs frame target, in five generations.
+  The menu holds about 577,600 objects, 482,474 of them in the oldest.
+- A struct that native code builds by calling a game script, and then lets go,
+  is collected like any other: after 20,000 items built one after another
+  through `InitItemFromJson` (§16.2) and one `gc_collect`, the object count was
+  back where it started (+20 in the generation that held them).
+- `gc_collect` collects at the end of the frame, not in the call: read in the
+  same frame nothing had changed; one frame later it had walked the heap, taking
+  12.7 ms with about 578,000 objects and 31.7 ms with about 692,000.
+- Memory the collector frees stays with the process. When 100,000-114,000 held
+  objects were released and collected, private bytes stayed at their high. Private bytes
+  therefore show the most the game has held, and never fall back after a burst.
+- About 45-126 s after launch, whether or not anything else runs, the game's
+  private bytes fall once by 240-370 MB (for example 3.15 → 2.78 GB) and stay there; brief
+  dips before it, up to 133 MB, come back. Measure a change against the level
+  after that fall.
+
+[Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#measurements)
+
 ---
 
 ## 6. Player and Global State
@@ -684,6 +708,23 @@ All **measured** (2026-09-21/22).
 All **measured** (2026-09-21).
 [character select, Results](../ForgePact/docs/character-select-research.md#results),
 [menu layout, Results](../ForgePact/docs/menu-layout-research.md#results)
+
+**Unused and deleted character slots.** A slot that never held a character is
+not empty on disk: it holds the game's blank character, a 581-byte encoded file
+that decodes to an `[inventory]` section with an empty inventory and
+`[0] version="8.000000"`, byte-identical in every unused slot. Deleting a
+character from character select does not restore that file or remove anything:
+the slot's `herosiege<N>.hss`, `ether<N>.hss`, `incarnation<N>.hss` and
+`inventory_order_<N>.hss` are each rewritten as a single NUL byte, all four
+within a few milliseconds. **Measured** (35 unused slots and four deletes in one
+save folder, 2026-09-08). Static reading of the offline branch of
+`UiACharacterDeleteConfirm`: it calls `SaveLocalFile` once per file type with a
+clearing flag. **Observed**: two emptied slots in that folder later held new
+characters while their `ether` and `incarnation` files were still the NUL byte
+from the delete, so the game itself treats an emptied slot as free. A tool that
+decodes `herosiege<N>.hss` has to read a NUL-only file as an empty slot, not as a
+damaged save.
+[HS Save Editor guide, Unused and Deleted Slots](submodules/HSSaveEditor/instructions.md#5-unused-and-deleted-slots)
 
 ### 8.3 In-game HUD
 
@@ -1154,7 +1195,61 @@ The data tables in this section are also in
 - The `blood_pact_*` names are translation keys, not variables; pact values
   arrive from the server (`httpBloodPactJoin`/`httpBloodPactRefresh` hold the
   request handles). **Static reading.**
+- Prime Evil parts: `DropBossParts`, `DropBossPartsNext` and `DropUberParts`
+  each have one direct call site, all in `LoadDrops`. `LoadDrops` is called only
+  from `DropItem`. Monsters reach `DropItem` from `Enemy_Parent_obj`'s Destroy
+  event; chests, goblins, destructibles and piles reach it from their own
+  events. **Static reading** (direct-call scan of the Sep-17 build).
+- `DropBossParts` looks up the part's category-13 repository entry, reads its
+  drop rate (`GetDropRate`) and player stat 736, then places the part with
+  `LootGroundCreate`. **Static reading.**
+- `DropUberParts` reads no drop rate and makes no Prime Evil part. It creates
+  one of category 13's items 14-18, or one of their infernal versions, 49-53:
+  - Soul of Anguish, Soul of Despair or Soul of Corruption;
+  - Scroll of Ra or Colosseum Fragment.
 
+  **Static reading.**
+- `LoadDrops`' switch table:
+  - sends drop type 43 to `DropUberParts`;
+  - sends type 26 to `DropDimensionalShard`;
+  - makes type 41 check `LoadDrops`' fourth argument first. It does nothing when
+    that argument is false.
+
+  **Static reading.** The §6 type map (2026-08-27) recorded a Dimensional Shard
+  for type 43. The two disagree; not resolved.
+- `Enemy_Parent_obj`'s Destroy calls `DropItem` only when the protected HP is 0
+  or less. **Static reading.**
+- A boss kill rolls its part several times. Karp King in Act_01_01 dropped:
+  - 11 bellybuttons in 15 kills at the vanilla base of 27;
+  - 36 in 12 kills at base 5.4;
+  - 138 in 15 kills at base 1, up to 14 in one kill.
+
+  **Measured 2026-09-26** (M11/M12 in `hs-game-sdk/curated/drop_roll_measurements.json`).
+- Uber bosses spawned in Act_01_01 roll no Prime Evil part. With
+  `droprate group primeevil` at x35 (base 1):
+  - ten kills dropped no part and none of items 14-18 or 49-53: Uber Damien 3,
+    Reaper 3, Uber Endrixia 2, Uber Anubis 2;
+  - Karp King at the same spot dropped 12 parts before them and 8 after.
+
+  **Measured 2026-09-26** (M13).
+- Killing a monster from outside:
+  - A boss spawned in a town removes itself within seconds and drops nothing.
+  - `instance_destroy` on a live monster runs its Destroy event but drops
+    nothing.
+  - Setting its protected HP to 0 kills it through its own death path, drops
+    included. The key is the monster's `enemy_hp`; the call is
+    `PC_SetVariableGMLWrapper(key, 0)`.
+  - Uber Endrixia, Uber Anubis and Uber Luna do not die that way.
+  - For Endrixia and Anubis, HP 0 followed by `instance_destroy` works: the
+    Destroy event runs with HP at 0, and the drop path follows.
+  - `instance_destroy` on Uber Luna after HP 0 closed the game, with no crash
+    dump. So did `room_goto` to `Uber_Inoya_rm`.
+  - A boss that dies where loot cannot land drops nothing. One spawned past the
+    room's edge left no `Loot_Ground_obj`.
+
+  **Measured 2026-09-26.**
+
+[prime evil parts](../ForgePact/docs/prime-evil-parts-research.md),
 [blood pact §6](../ForgePact/docs/blood-pact-values-research.md#6-ölçüldü--damla-tipi-haritası-2026-08-27-akşam),
 [blood pact §1](../ForgePact/docs/blood-pact-values-research.md#1-kapatılan-yanlış-yol-blood_pact_-isimleri),
 [dungeon keys, LoadDrops](../ForgePact/docs/dungeon-key-research.md#kancalanacak-script-gml_script_loaddrops-adla-çözülür),
@@ -1454,6 +1549,7 @@ All **measured** unless marked.
 | Special content at 20× | dies at about 13.4k instances | §5.8 |
 | A creator acted on before `enemyCreatorTimer` is real | no crash — the pack never spawns | §11.2 |
 | Removing a stash item's map entry (`RemoveItemFromMap` on map 9) but leaving its cell in the tab | the game ends at its next stash save — measured twice, in two launches; `GridRemoveItem` on the cell in the same take avoids it | §17 |
+| A plugin DLL whose global `std::thread` is still joinable when the game exits | `std::terminate` while `ExitProcess` destroys that DLL's globals (the other threads are already gone): a WER report at close, `ucrtbase.dll` `0xc0000409`, fast-fail 7 (`abort`). HS-Offline-Tracker's producer does it; 9 of the 10 dumps Windows kept on 2026-09-25/26 show it, the game's own exit path under it | [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#the-crash-of-2026-09-26-013627) |
 
 ---
 
@@ -1496,9 +1592,20 @@ The argument and the numbers are in the Item Editor's
 - On the game thread, 342 of 342 queued items were built this way in about 2 s at
   the main menu, including items of a character that had never been loaded. The
   structs were left to the collector, never placed in a grid or saved.
+- **The collector does take them: a build keeps nothing.** At the main menu,
+  20,000 items built this way moved private bytes by +6.7 MB (white bases) and
+  +10.2 MB (white, unique, socketed and runeword items), and the level stayed
+  flat afterwards (§5.9). The same 20,000 kept on purpose, in a global struct,
+  grew private bytes by 106-117 MB and the collector's objects by 100,324-114,325
+  (two runs): a kept item costs about 5.4-6.0 KB and 5.0-5.7 objects. One session
+  built 197,704 items this way;
+  its crash dump records a peak commit of 3.14 GB, the same as a fresh launch
+  reaching the menu. A request builds about 430 items a second at ForgePact's
+  budget (4 ms and 200 items per frame).
 
 **Measured.**
-[Item Truth, step 2](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-2--the-game-checks-any-item-on-request-item-editor-2160-forgepact-145)
+[Item Truth, step 2](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-2--the-game-checks-any-item-on-request-item-editor-2160-forgepact-145),
+[Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md)
 
 ### 16.3 What a finished item carries
 
@@ -1626,6 +1733,49 @@ virtual size), names a build.
 
 **Measured**: the Item Editor computes the id from the exe on disk, and ForgePact
 from the running process, and both gave the same id on 2026-09-24.
+
+### 16.9 What a save definition decides: rarity, runewords, sockets
+
+What the Item Editor's game-built seed table established on 2026-09-26 against
+`pe-6aaa6779-0cad4fc8`: the game built about 135,000 items through
+`InitItemFromJson` (§16.2) at the main menu, none placed or saved. The argument,
+the controls and the table are in the Item Editor's
+[`GAME_TRUTH_DESIGN.md`, step 4](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-4--seeds-the-game-built-item-editor-2163).
+
+- **Rarity is rolled from `a`.** The same definition always builds the same
+  rarity (info `"27"`, §16.4). Random seeds on white equipment bases came out
+  Common 61%, Superior 31%, Rare 6%, Mythic 1%. The CPR stat model (the stat
+  draws and the socket draw of the `a` chain) does not predict it: no single
+  draw separated Common from the rest across bases. **Measured.**
+- **Amulets and rings never came out Common** in about 16,000 builds. **Measured.**
+- **A runeword forms only on a Common base.** Of recipe x base items built with
+  the recipe's runes in `s1..sN`, 2,410 of 2,429 Common ones formed and 2 of
+  1,286 others. Disaster and Celestus also did not form on 20 and 8 of the bases
+  their targets name, even Common with the right socket count. **Measured.**
+- **Socket count (stat 20).** **Measured**, with probes of each case and 4,849
+  items built as the editor writes them:
+  - a non-unique item (`c` 0) shows the larger of the definition's
+    `zz.sockets` and the count its seed rolls; on a seed that rolls none,
+    `zz.sockets` 1-6 gave exactly that count on every equipment class, gloves
+    and belts included;
+  - a unique (`c` 1) shows the count its seed rolls and never reads
+    `zz.sockets`;
+  - filled payloads `s1..s6` never add a socket: payloads beyond the count stay
+    in the definition, unused (`s1..s5` on a seed that rolls 3 gave 3 sockets).
+- **Most sockets a white base rolls**, over 332 seeds per base: helmets 3-4,
+  body armours 4, boots 2-4, weapons 1-6, shields 2-5, gloves and belts none.
+  **Measured.**
+- **ForgePact's Custom Forge dresses every item whose type and `a`/`b`/`c`/`j`
+  equal a forged item's**: two items that share a seed on one base are the same
+  item to it. **Measured**: every white Great Helm built with the seed of the
+  owner's forged Miner's Helmet came out as that Miner's Helmet.
+- **The game keeps none of the items it evaluates this way** (§16.2), so the
+  table is built in one game session. The WER report (`ucrtbase.dll`,
+  `0xc0000409`) that ended a session of about 200,000 evaluations was the game
+  exiting while HS-Offline-Tracker's producer aborted (§15), not memory.
+  **Measured.**
+
+[Item Editor, game truth step 4](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-4--seeds-the-game-built-item-editor-2163)
 
 ---
 
