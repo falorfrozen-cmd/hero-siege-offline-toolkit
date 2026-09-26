@@ -574,8 +574,11 @@ against a median driver of $12.
    - `stale` → say so (the holder's process is gone) and carry on; the
      operator's acquire recovers it.
    - `free`, `held_by_me` → carry on. A `warning` on a free lease means the
-     last session backed up and never restored; relay it before the install
-     question.
+     last session backed up and never restored, which a session's own
+     teardown restore (step 5) should now prevent: say so before the install
+     question, and restore that backup yourself (lease, restore, inspect,
+     release) when it is this workorder's; another workorder's goes to the
+     owner.
    - `unavailable` → report its `detail` and stop.
 1. **Ask before anything changes on the owner's machine.** One question:
    install this build now, and is a session convenient now? Never install on

@@ -380,6 +380,7 @@ class ToolCall:
     result_bytes: int = 0
     is_error: bool = False
     guard_refused: bool = False  # the harness refused it: target outside the session's worktree
+    backup_id: Optional[str] = None  # the id a successful hs_saves_backup returned (R17)
 
     @property
     def duration_seconds(self) -> Optional[float]:
@@ -598,6 +599,8 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
                 call.result_bytes = len(text.encode("utf-8", errors="replace"))
                 call.is_error = bool(block.get("is_error"))
                 call.guard_refused = call.name in EDIT_TOOLS and WORKTREE_GUARD_MARKER in text
+                if call.name.endswith("hs_saves_backup"):
+                    call.backup_id = _returned_backup_id(text)
                 if call.name == "Read":
                     fp = call.tool_input.get("file_path")
                     if fp:
@@ -1316,6 +1319,20 @@ DLL_INSTALL_RE = re.compile(
     r"\b(cp|mv|copy|xcopy|robocopy|Copy-Item|Move-Item)\b[^|;&\n]*\.dll\b|\binstallmod\b", re.IGNORECASE)
 
 
+def _returned_backup_id(text: str) -> Optional[str]:
+    """The `backup_id` of an `hs_saves_backup` result that succeeded, else
+    None. A refusal is an ordinary result (`ok: false, refused: true`), not a
+    tool error, so the payload itself decides."""
+    try:
+        payload = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("ok") is not True:
+        return None
+    bid = payload.get("backup_id")
+    return bid if isinstance(bid, str) and bid else None
+
+
 def rule_r17_live_operator_scope(session: Session) -> RuleResult:
     """`live-operator` runs the owner's game: it may write its own capture
     file and nothing else, never installs a build (the owner decides when the
@@ -1331,7 +1348,7 @@ def rule_r17_live_operator_scope(session: Session) -> RuleResult:
     for agent in all_subagents(session):
         if agent.agent_type != "live-operator":
             continue
-        own_labels: set[str] = set()  # labels of the backups this operator took
+        own_ids: set[str] = set()  # ids of the backups this operator took and got back
         for call in agent.tool_calls:
             if call.name in EDIT_TOOLS:
                 fp = str(call.tool_input.get("file_path", "")).replace("\\", "/")
@@ -1345,14 +1362,14 @@ def rule_r17_live_operator_scope(session: Session) -> RuleResult:
                 if DLL_INSTALL_RE.search(cmd):
                     evidence.append(f"{agent.label} installed a build at {call.ts_start}: {cmd[:120]}")
             elif call.name.endswith("hs_saves_backup"):
-                label = str(call.tool_input.get("label", "")).strip()
-                if label:
-                    own_labels.add(label)
+                if call.backup_id:
+                    own_ids.add(call.backup_id)
             elif call.name.endswith("hs_saves_restore"):
-                # A backup id is `<UTC stamp>_<label>`; only one this operator
-                # took earlier in its own run is its own to restore.
+                # Only the exact id one of this operator's own successful
+                # backups returned: labels repeat when a live round is re-run,
+                # so a matching label proves nothing.
                 bid = str(call.tool_input.get("backup_id", ""))
-                if not any(bid.endswith("_" + label) for label in own_labels):
+                if bid not in own_ids:
                     evidence.append(f"{agent.label} restored a backup it did not take ({bid!r}) at {call.ts_start}")
             elif call.name.endswith("hs_stop_game") and call.tool_input.get("force"):
                 evidence.append(f"{agent.label} force-stopped the game at {call.ts_start}")
