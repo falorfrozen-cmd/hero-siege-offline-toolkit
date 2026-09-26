@@ -541,9 +541,102 @@ Shout and Berserk add theirs outside it.
   Pickup Truck 576, Dissipating Tornado 432. Relic companions (`Honey_Bee_obj`,
   `Minisect_obj`, `Karp_Head_obj`, `Zeppelin_obj`) sit under the ability parent at
   a constant -1. **Measured.**
+- Mana Orb (talent 253) is a **timed effect, not a toggle**: its object is
+  `White_Mage_Mana_Orb_obj`, and `skillstate`'s `effect=` reader
+  (`instance_number` of that object, resolved by name through
+  `kSkillTimerNames`) counted 0 → 1 on a Q press at slot 0,3, then read 0
+  again with no further press (last seen at 1 at 12:12:53Z, at 0 by
+  12:13:06Z - a 13 s gap between those two reads, not the effect's lifetime
+  from the press, which happened earlier still, so the true lifetime ran
+  longer than 13 s by an amount live 4 did not measure), and 2 right after an
+  immediate recast; why the recast read 2 instead of 1 is not established.
+  **M (live 4, 2026-09-26).**
+- This is the same `effect=` reader's **positive control on the player
+  build**: `hs_skill_cast(key=81, slot="0,3")` moved only 0,3's and 1,13's
+  (both `manaOrb`) `effect=` count in a full-bar read, every other slot
+  unchanged. Live 3's poll reads had already shown 0,3 at 1 after a Q
+  press, without a no-press control. Live 4 is the first read with a
+  negative control (`no-press`) and the tool's own confirmation.
+  **M (live 4, 2026-09-26).**
 
 [toggle skills, Toggle skill table](../ForgePact/docs/toggle-skills-research.md#toggle-skill-table),
-[Duration sweep](../ForgePact/docs/toggle-skills-research.md#duration-sweep-session-8-every-classs-timed-skill)
+[Duration sweep](../ForgePact/docs/toggle-skills-research.md#duration-sweep-session-8-every-classs-timed-skill),
+[skill actions, Results](../ForgePact/docs/skill-actions-research.md#results)
+
+### 7.4 The talent screen: who handles a click, and what an allocation changes
+
+- M: the talent screen's and the bar's buttons are handled by **named
+  activation scripts** the game wires to each button (`UiSetActivationFunc`),
+  not by the buttons' own Create closures. Each ran once per hand action with
+  the clicked button as `self` (2026-09-25): a talent allocation runs
+  `UiATalentScreenTalent` (self the talent's `UI_Button_Talent_Player_obj`,
+  other `UI_Talent_Screen_obj`, one empty-array argument); a sub-node
+  allocation runs `UiAActivateSkillSubPoint` (self the node's
+  `UI_Button_Subtalent_obj`, other `UI_Sub_Talents_obj`); opening a talent's
+  sub-panel runs `UiAActivateSkillSpecialization` (self its
+  `UI_Button_Sub_Skill_obj`, other the screen); a bind from the expanded bar
+  runs `UiATalentChange` (self the popup's `UI_Talent_Button_obj`, other
+  `UI_Hud_Talent_obj`) after `UiAActiveTalentSelect`; "Reset Skills" runs
+  `UiATalentScreenResetTalents` (self the `UI_Button_Small_obj`) and its
+  confirm dialog (`UI_Character_Reset_obj`) runs `ClearPersistSkill` with
+  `a0=1`. Undoing a level or a node (right-click) runs the Create closures
+  `UI_Button_Talent_Player_obj anon@23904` and `UI_Button_Subtalent_obj
+  anon@2428` (the latter then `ClearPersistSkill`).
+- M: the talent screen opens through **`UiAOpenTalents`**, self = other =
+  `Profile_Manager_obj`, two arguments `1, 1`; plain `UiCreate` does not fire.
+  Called by name with that shape it opens the screen as the key T does. T
+  closes it; an open sub-panel closes only by its own `UI_Button_Close_obj`
+  or with the screen.
+- M: by name, with the button instance as self and the screen (or sub-panel)
+  as other and **no arguments**, `UiATalentScreenTalent` and
+  `UiAActivateSkillSubPoint` reproduced the game's own allocation:
+  `global.mySkills` gained the talent's id (`[236]` → `[236,239]`) and
+  `global.subTalentMap[1].t<id>` gained a node at 1. That is what an
+  allocation visibly changes; only a first level (0 → 1) was measured. The
+  talent buttons, sub-skill buttons and sub-panels each carry the talent's
+  `talentId`; the sub-panel's nodes carry no name, and the first node listed
+  for Shadow Bolt (a `Big` sprite) changed nothing when activated.
+- M: two replays did **not** reproduce: a bind by name (the popup's buttons are
+  destroyed when it closes, so the logged instance no longer exists), and a
+  reset by name (both the reset button's script and the dialog's
+  `ClearPersistSkill` dispatched and changed nothing, while the owner's click
+  emptied `global.mySkills`). Not observed working, which is not "cannot work".
+- Not observed: a **points reader**. No numeric `Player_obj` member named like
+  a point count exists, and a whole-scope diff of the player across an
+  allocation changed only animation and mouse members; the profile object was
+  not walked. `ReturnTalentLevel` by name (self `Player_obj`, the id as `a0`)
+  threw. The talent screen shows "Points Left: N" to the eye.
+- R (the static reading that set the route): the allocation handlers hash the
+  talent state and report the client on a mismatch, so a raw write to it is
+  never a substitute for the game's own handler.
+- A by-name main allocation and its sub-node **survive a stop, a relaunch and
+  a save reload**: `global.mySkills` still held the allocated id and
+  `global.subTalentMap[1]` still showed the node after `hs_stop_game`,
+  `hs_launch` and `hs_select_character`; the bar had filled the newly learned
+  talent's slot by itself. **M (live 3 W6, 2026-09-26).**
+- The owner's own "Reset Skills" click (through the talent screen, confirmed)
+  emptied both `global.mySkills` and the drawn bar: W4's own `hs_skills_status`
+  reply reported `learned=[236]` and `darkOath` gone from the bar, and the raw
+  `skillstate` frames right after it (live 3, lines 14705 and 14732) read 0,0
+  and 0,3 as `talent=0`, not only the learned list shrinking - a separate
+  reading from the Dark Oath bullet below, which records a different action
+  (a mouse switch-off) later, in live 4. **M (live 3, frames 14705/14732,
+  2026-09-26).**
+- Dark Oath (an aura, talent 242) has no key of its own on the HUD (§8.3), and
+  no key switch for it was found: the only way found to switch it off is to
+  click its bar icon and choose the same aura again from the expanded skills
+  popup - a mouse action, not a keyboard key - which also empties that bar
+  slot, so the aura's own effect count could not be read afterwards. Every
+  read of 0,0's `effect=` count, before and after that action, showed 0,
+  while the owner's report of the action implies the aura was on going in;
+  `effect=0` on `darkOath` is therefore an inference from that report, not
+  evidence the reader can tell an armed aura from an unarmed one. **R,
+  reported by the owner (live 4, 2026-09-26), verbatim: "only way to turn off
+  aura is to click it and select the same aura from expanded skills
+  selection. i did it just now."**
+
+[skill actions, Results](../ForgePact/docs/skill-actions-research.md#results),
+[skill actions, Decision](../ForgePact/docs/skill-actions-research.md#decision)
 
 ---
 
@@ -604,11 +697,33 @@ All **measured** (2026-09-21).
   hidden. A skill's index in `row0` differs per character and can move. Its
   `playerSlot` behaves as a map with `bind_skill` and `subTalentMap` keys.
   **Measured.**
+- M (2026-09-25): on a White Mage, `row0` has 13 elements - 0,0 draws beside
+  the mana orb, 0,2 to 0,5 in the bottom-left row, 0,6 is the slot beside the
+  potions - and `row1` (16) lists the owned skills; an empty slot's `talentId`
+  is 0. An element also carries `abilityCooldown`, `auraSkill`, `slotNumber`,
+  a `timer` that jitters every frame on every slot, and **`keyBindKey`, which
+  reads -1 on every slot**: the key a slot casts with is not stored on the
+  slot. The HUD draws each slot's key letter through getters at draw time
+  (`GetSpecificKeyBind`, `GetSpecificKBKeyBind`, `GetSpecificGPKeyBind`; the
+  one that fired, `GetPlayerInputBindings`, returns the whole 78-entry
+  bindings table and names no slot). A per-slot key read by name is **not
+  observed** (an empty slot draws no key, so the getter for it never ran).
+  Q is measured as 0,3's key (`manaOrb`). On the research build the Q
+  press's armed `TalentUse` carried `a1=253` (`manaOrb`) (live 2 K2, IPC
+  line 11593). On the player build live 3's `skillstate` read 0,3's
+  `effect=` going from 0 to 1 after a Q press while 0,0 stayed 0, and live
+  4's `hs_skill_cast(key=81, slot="0,3")` confirmed it (2026-09-26). Slot
+  0,0 (`darkOath`, an aura) shows no key on the HUD. E and R sit on 0,4
+  (`healingZone`) and 0,5 (`soulSpurn`), read by eye only, never
+  name-resolved.
+  `hud.playerSlot.bind_skill` read `undefined`, and `playerSlot` itself is a
+  ds_map (`ref ds_map`). A newly learned skill appears in `row1` by itself.
 - `Hud_In_Combat_spr` is the HUD's in-combat icon. Read from the string table.
 
 [toggle skills, Session 1](../ForgePact/docs/toggle-skills-research.md#session-1-1),
 [Session 3](../ForgePact/docs/toggle-skills-research.md#session-3-1),
-[Sprite look probe](../ForgePact/docs/toggle-skills-research.md#sprite-look-probe)
+[Sprite look probe](../ForgePact/docs/toggle-skills-research.md#sprite-look-probe),
+[skill actions, Results](../ForgePact/docs/skill-actions-research.md#results)
 
 ### 8.4 Pause menu and the Restart gate
 
@@ -1818,6 +1933,130 @@ the craft's own items are placed there, at the press, and consumed at once.
 Live 1k (RD `### Phase 1k results`) named no container the curated JSON
 lacks: `inventoryMaterialGrid` (above) and `craftGrid` (`crafting_cube`,
 just above) already covered every grid it placed an item into.
+
+### The stash window, its tabs and the bag's sub-tabs (toolkit #147)
+
+Source: the stash and bag research (`ForgePact/docs/stash-bag-layout-research.md`,
+"SB" below), two research-build launches on 2026-09-25, slot 14 in
+`Town_01_rm`, the interaction-check control climbing in both, plus a
+player-build launch on 2026-09-26 ("live 3" below, the V0b and V3 readings);
+representative cases only. **M** measured live; **R** a static reading, not
+measured (one sentence, in the drag path bullet).
+
+- **The tab numbers.** M (#14, RD `M-stash-open`, and the game's own tab
+  table `global.defaultStashTabStruct`/`global.stashTabDataStruct` by name
+  and index only): the personal tab is 0, the shared tabs 1 to 19,
+  Socketable -2, Materials -4, Unique -5
+  ([crafting-materials research](../ForgePact/docs/crafting-materials-research.md)).
+  M (SB P0-3, P2-3): each `UI_Button_Stash_Tab_obj` carries that number as
+  `tabNumber`, equal to the first element of its `activationArgs` (23 rows),
+  and `tabType` 1 (the three special tabs) or 2; every row reads `visible=0`
+  although drawn.
+- **Two tab-state variables on `UI_Stash_obj`, not one.** M:
+  `stashTabSelected` is the stash tab on show - 0 on Personal, -4 on
+  Materials, -2 on Socketable (SB P0-3, P0-9, P2-3). `tabSelected` on the same
+  instance is the bag's: a click on a bag page tab moved it alone from 0 to
+  1, and the bag's Materials sub-tab click moved it from 1 to -4, while
+  `stashTabSelected` read 0 throughout (SB P2-4). They also diverge the other
+  way: the P2-3 dump read `stashTabSelected=-2` beside `tabSelected=0`. #14's
+  one reading of both at -2 was one observation, not an invariant. So a
+  stash tab is confirmed on `stashTabSelected` only, never on `tabSelected`.
+- **The bag's sub-tabs.** M (SB P2-4): seven `UI_Button_Inventory_Tab_Small_obj`
+  rows beside the open stash, told apart by `uiNodeCallstack` only
+  (`InventoryTabVaultActive`, `InventoryTabVault`, `InventoryTabSocket`,
+  `InventoryTabMaterial`, `InventoryTabKey`, `InventoryTabTarot`,
+  `InventoryTabRelic`); `text` is empty on every row and none carries
+  `tabNumber`. `UI_Stash_obj.invMaterialTab` and `.invSocketTab` hold the
+  Material and Socket rows' instances. The page tabs are
+  `UI_Button_Inventory_Tab_obj`, `tabNumber` 0 to 4 (Main, then four Extra).
+- **`activeNode`.** M: `UI_Stash_obj.activeNode` holds an instance - the stash
+  grid right after the open (SB P0-4), the clicked sub-tab's row after a real
+  click on a bag sub-tab (SB P2-4). After a by-name
+  `UiAInventoryMaterialTabClick` (argument list empty, where the game's own
+  call passed one empty array) it still held the previous sub-tab's row: it
+  was **not observed** to follow a by-name call. Live 3 (V3) read it again
+  around the same by-name `UiAInventoryMaterialTabClick` and
+  `UiAInventorySocketTabClick` calls: it stayed 262324 before and after both.
+  `activeNode` was read only in that session, with no positive control run for
+  it, so this is recorded as not observed to follow a by-name call, not as
+  settled that it never does.
+- **Who handles each click, as the game calls it.** M, each logged by a
+  research-build detour on a real hand action (SB § Results):
+  - the stash open on the interact key: `UiCreate`, self = other = the
+    `Town_Stash_obj`, three arguments (the `UI_Stash_obj` object reference,
+    1, 1), returning the new window (P0-3, P2-2);
+  - a shared stash tab: `UiAStashTabClick`, self the `UI_Button_Stash_Tab_obj`,
+    other the `UI_Stash_Tab_Bar_Container_obj`, one argument (its
+    `activationArgs` array, `[<tabNumber>, <the button>]`) (P2-3). The
+    Materials button's own handler is `UiAStashMaterialTabClick`; the
+    Socketable button's is a closure the tab bar's Create made, held in the
+    button's `activationFunc` (read hook-free);
+  - a bag sub-tab: `UiAInventoryMaterialTabClick` (and
+    `UiAInventorySocketTabClick` for Socket), self the sub-tab row, other the
+    `UI_Stash_obj`, one empty-array argument (P2-4);
+  - the stash's close row (`UI_Button_Close_obj`, `uiNodeCallstack`
+    `InventoryClose`): `UiACloseButton`, self the row, other the
+    `UI_Stash_obj`, one empty-array argument; `SaveStash` ran once on the
+    close (P0-9, P2-7).
+- **What reproduced by name.** M: `UiAStashMaterialTabClick` with self the
+  Materials button, other the tab-bar container and two scalars (-4, the
+  button) set `stashTabSelected` to -4; the Socketable closure, called as the
+  method value with self = other = the button and (-2, the button), set -2;
+  `UiAStashTabClick` with (0, the Personal button) set 0 (P2-3).
+  `UiACloseButton` with no argument closed a reopened window, and `SaveStash`
+  ran once more (P2-7). In live 2, `UiAInventoryMaterialTabClick` with no
+  argument read `tabSelected=-4` after it, but nothing read `tabSelected`
+  between the Socket click before it and the call, so that replay did not
+  separate a switch from no change (SB P2-4). Live 3 (V3) then read
+  `tabSelected` right before and after the shipped `bagtab` verb's call to the
+  same by-name handlers, same shape (self the sub-tab row, other the
+  `UI_Stash_obj`, no argument): `UiAInventoryMaterialTabClick` moved it from 0
+  to -4, and `UiAInventorySocketTabClick` then moved it from -4 to -2, with a
+  read before and after each call. The by-name bag-tab switch is measured as a
+  switch. The by-name `UiCreate`
+  open with the logged shape was dispatched once, and the game process died on
+  the next command; causality is not established from one session, and it was
+  not called again.
+- **A grid node.** M (SB P2-5, on `New_Inventory_Data_obj.potionGrid.0.0`):
+  a filled node is a struct of `nodeStartX`, `nodeStartY`, `nodeLocked`,
+  `nodeIsPermanent` and `nodeFingerprint` and nothing else - no count
+  (§ 9.1 reads the same on the prospect grids). The stash's personal grid
+  array (`stashPersonalGrid`, 18 long) read `undefined` at `.0.0`: an empty
+  cell or an indexing convention, not resolved.
+- **The drag path.** M (SB P0-7): on a hand drag from the bag into the stash
+  and a hand split of one unit into the bag, the only item writes logged
+  were two `s_InvNode` calls - the constructor whose self is the node struct
+  being built, with the destination grid as other and the cell's x, y and the
+  item struct as arguments - and one `UiASplitStack` (self the dialog's
+  button, other the `UI_Split_Stack_obj`). None of the twelve armed grid and
+  map routines was observed on the drag or the split (not observed, with the
+  control climbing); twelve rows are not every named grid routine. The
+  destination cell was written by `s_InvNode`, which the research build
+  could not replay by name: its self is a struct under construction, which
+  `call`/`callm` cannot supply. That is a limit of the instrument, not of the
+  game. R (static reading, not measured): the drag's own handling sits
+  inline, likely in `ProcessInventoryGridInput`.
+- **The warp.** M (SB P0-2, P2-2): the player's `x` and `y`, written by name,
+  set to the town stash's own position with `y` 48 below it, landed 0 px from
+  the target with no collision in both sessions, and the interact key F
+  opened the stash from there.
+- **`GetItemPreferredGrid`'s answer for one case.** M (SB live 3, V0b, one
+  case): for a copy of a held non-stackable template (class 18) built by the
+  game's own loader, ForgePact's reader `ApPreferredGrid` found no array
+  `grid` member in what `GetItemPreferredGrid(1, item)` returned, or the call
+  failed. The refusal did not record which, or the result's kind. ForgePact's
+  verb then removed the unit from map 0 itself (`RemoveItemFromMap`) - not the
+  game's loader, and not a rule for every step. For a stackable material
+  (class 14), the same loader (`InitItemFromJson`) built the item and
+  `GridAddItem` placed it without incident, confirmed by the verb's own
+  re-read in the same session (V0), with no drag, save or reload. The
+  template itself
+  sits in the bag's `PotionGrid` (live 2 P2-1), so whether the game has
+  another grid answer for such items (another first argument, or another
+  result shape) is not established.
+
+[stash and bag layout, Results](../ForgePact/docs/stash-bag-layout-research.md#results),
+[stash and bag layout, Decision](../ForgePact/docs/stash-bag-layout-research.md#decision)
 
 ## 18. Gems of Incarnation
 

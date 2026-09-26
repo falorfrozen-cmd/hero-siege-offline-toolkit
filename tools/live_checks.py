@@ -16,11 +16,14 @@ A check line is
     - <name> | expected: ... | observed: ... | <verdict> [note]
 
 The name is everything before the first ` | `. The verdict is the first word
-after the last `|`: `pass`, `fail` or `not-observed` (`not observed` is
-read as `not-observed`). Anything after that word is a note, printed and
-never dropped. A `fail` or `not-observed` is a finding, not an error here;
-`--require-pass` names the session-validity checks (dll-hash, marker,
-control) whose failure means nothing was measured.
+after the last `|`: `pass`, `fail`, `not-observed` or `not-run`
+(`not observed` and `not run` are read the same way). `not-run` means the
+instrument could not run the check, usually with its reason in parentheses:
+`not-run (instrument: budget spent before slot 0,6)`. Anything after that
+word is a note, printed and never dropped. A `fail`, `not-observed` or
+`not-run` is a finding, not an error here; `--require-pass` names the
+session-validity checks (dll-hash, marker, control) whose failure means
+nothing was measured, and any verdict but `pass` fails those.
 
 Usage:
     py -3 tools/live_checks.py <capture> [--expect a,b,c] [--require-pass a,b]
@@ -39,7 +42,7 @@ import re
 import sys
 from pathlib import Path
 
-VERDICTS = ("pass", "fail", "not-observed")
+VERDICTS = ("pass", "fail", "not-observed", "not-run")
 CHECKS_HEADING_RE = re.compile(r"^##\s+Checks\s*$")
 NEXT_H2_RE = re.compile(r"^##\s")
 
@@ -73,7 +76,7 @@ def parse_line(line: str) -> tuple:
     if "|" not in body:
         return name, None, ""
     tail = body.rsplit("|", 1)[1].strip()
-    m = re.match(r"[*_`]*(not[ -]observed|pass|fail)\b[*_`.,;:]*\s*(.*)$", tail, re.IGNORECASE)
+    m = re.match(r"[*_`]*(not[ -]observed|not[ -]run|pass|fail)\b[*_`.,;:]*\s*(.*)$", tail, re.IGNORECASE)
     if not m:
         return name, None, tail
     return name, m.group(1).lower().replace(" ", "-"), m.group(2).strip()
@@ -101,7 +104,7 @@ def main(argv=None) -> int:
         name, verdict, note = parse_line(line)
         print(f"{name} {verdict or 'UNREADABLE'}" + (f"  {note}" if note else ""))
         if verdict is None:
-            problems.append(f"no pass/fail/not-observed after the last '|': {line}")
+            problems.append(f"no pass/fail/not-observed/not-run after the last '|': {line}")
         if name in seen:
             problems.append(f"check listed twice: {name}")
         seen[name] = verdict
@@ -116,11 +119,12 @@ def main(argv=None) -> int:
                 problems.append(f"check the procedure does not name (renamed?): {name}")
     for name in _split_names(args.require_pass):
         if seen.get(name) != "pass":
-            problems.append(f"{name} must be pass, read {seen.get(name) or 'nothing'}")
+            why = " (the instrument did not run it)" if seen.get(name) == "not-run" else ""
+            problems.append(f"{name} must be pass, read {seen.get(name) or 'nothing'}{why}")
 
     counts = {v: sum(1 for x in seen.values() if x == v) for v in VERDICTS}
     print(f"checks: {len(lines)} (pass {counts['pass']}, fail {counts['fail']}, "
-          f"not-observed {counts['not-observed']})")
+          f"not-observed {counts['not-observed']}, not-run {counts['not-run']})")
     for p in problems:
         print(f"PROBLEM: {p}")
     return 1 if problems else 0

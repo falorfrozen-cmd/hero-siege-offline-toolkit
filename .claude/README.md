@@ -725,8 +725,8 @@ Both read a file and run nothing. `live_checks.py <capture> --expect <names>
 verdict is the first word after a line's last `|`, anything after it a note.
 It exits 1 on a missing, renamed, duplicated or unreadable check, or a
 `--require-pass` check (`dll-hash`, `marker`, `control`, a shipped feature's
-acceptance checks) that did not pass; a research check's `fail` or
-`not-observed` is a finding and exits 0. It replaces the
+acceptance checks) that did not pass; a research check's `fail`,
+`not-observed` or `not-run (instrument: …)` is a finding and exits 0. It replaces the
 `| (pass|fail|not-observed)$` greps that cost forgepact-issue-14 three rounds
 and a split workorder on the operator's punctuation. `plan_lint.py <plan>`
 checks `## Acceptance criteria` for four defects that each cost a round there:

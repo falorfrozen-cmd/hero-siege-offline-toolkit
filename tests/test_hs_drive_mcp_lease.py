@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tools.hs_drive_mcp import (  # noqa: E402
-    charselect, checks, ipc, launch, launcher_bridge, lease, procs, saves)
+    charselect, checks, ipc, launch, launcher_bridge, lease, procs, saves, skills, stash)
 from tools.hs_drive_mcp import input as input_module  # noqa: E402
 
 #: How long any one child may take to answer before the test gives up on it.
@@ -183,8 +183,9 @@ class LeaseBase(unittest.TestCase):
         return json.loads((self.lease_dir / lease.RECORD_NAME).read_text(encoding="utf-8"))
 
     def gated_calls(self, touched: dict[str, Recorder]):
-        """The six gated domain functions, each wired so the first thing it
-        would touch after the lease is a `Recorder` in `touched`."""
+        """The gated domain functions - the six the lease shipped with, the
+        five skill tools and the five stash and bag tools - each wired so the first thing it would touch after
+        the lease is a `Recorder` in `touched`."""
         def launch_call():
             with patch.object(procs, "load_engine", touched["hs_launch"]):
                 return launch.hs_launch(timeout_s=1)
@@ -207,10 +208,62 @@ class LeaseBase(unittest.TestCase):
             return saves.restore("no-such-backup", "no-such-backup",
                                  gate=touched["hs_saves_restore"])
 
+        # The five skill tools (`hs-drive-skill-actions`). Three reach the
+        # process gate first; bind and reset refuse `route_not_measured`
+        # without reaching anything, so their recorder stands in for the IPC
+        # send and the injection, which must stay untouched either way.
+        def skills_status_call():
+            return skills.hs_skills_status(gate=touched["hs_skills_status"])
+
+        def skill_cast_call():
+            return skills.hs_skill_cast(81, slot="0,0", timeout_s=1,
+                                        gate=touched["hs_skill_cast"])
+
+        def talent_allocate_call():
+            return skills.hs_talent_allocate(244, "no-such-backup",
+                                             gate=touched["hs_talent_allocate"])
+
+        def untouched(tool, call):
+            def wrapped():
+                with patch.object(skills.ipc, "send", touched[tool]), \
+                     patch.object(skills.input_module, "inject", touched[tool]):
+                    return call()
+            return wrapped
+
+        # The five stash and bag tools (`hs-drive-stash-bag-actions`). Each
+        # reaches the process gate first; the IPC send and the injection are
+        # the same recorder, so a send before the gate would count too.
+        def stashed(tool, call):
+            def wrapped():
+                with patch.object(stash.ipc, "send", touched[tool]), \
+                     patch.object(stash.input_module, "inject", touched[tool]):
+                    return call(touched[tool])
+            return wrapped
+
         return {"hs_launch": launch_call, "hs_stop_game": stop_call,
                 "hs_command": command_call, "hs_input": input_call,
                 "hs_select_character": select_call,
-                "hs_saves_restore": restore_call}
+                "hs_saves_restore": restore_call,
+                "hs_skills_status": skills_status_call,
+                "hs_skill_cast": skill_cast_call,
+                "hs_talent_allocate": talent_allocate_call,
+                "hs_skill_bind": untouched("hs_skill_bind", lambda: skills.hs_skill_bind(
+                    "0,6", "shadowBolt", "no-such-backup")),
+                "hs_talent_reset": untouched("hs_talent_reset", lambda: skills.hs_talent_reset(
+                    "no-such-backup")),
+                "hs_give_item": stashed("hs_give_item", lambda gate: stash.hs_give_item(
+                    "bag", "0-0-209564349884-14", "no-such-backup", gate=gate)),
+                "hs_stash_open": stashed("hs_stash_open", lambda gate: stash.hs_stash_open(
+                    "no-such-backup", timeout_s=1, gate=gate)),
+                "hs_stash_close": stashed("hs_stash_close", lambda gate: stash.hs_stash_close(gate=gate)),
+                "hs_stash_tab": stashed("hs_stash_tab", lambda gate: stash.hs_stash_tab(
+                    "materials", "no-such-backup", gate=gate)),
+                "hs_bag_tab": stashed("hs_bag_tab", lambda gate: stash.hs_bag_tab(
+                    "materials", "no-such-backup", gate=gate))}
+
+    #: The two tools whose first touch is nothing at all: they refuse
+    #: `route_not_measured` whoever holds the lease, and never send.
+    NEVER_TOUCH = ("hs_skill_bind", "hs_talent_reset")
 
     @staticmethod
     def recorders() -> dict[str, Recorder]:
@@ -222,6 +275,16 @@ class LeaseBase(unittest.TestCase):
             "hs_input": Recorder(not_running_gate()),
             "hs_select_character": Recorder(not_running_gate()),
             "hs_saves_restore": Recorder(running_gate()),
+            "hs_skills_status": Recorder(not_running_gate()),
+            "hs_skill_cast": Recorder(not_running_gate()),
+            "hs_talent_allocate": Recorder(not_running_gate()),
+            "hs_skill_bind": Recorder({"ok": True, "refused": False}),
+            "hs_talent_reset": Recorder({"ok": True, "refused": False}),
+            "hs_give_item": Recorder(not_running_gate()),
+            "hs_stash_open": Recorder(not_running_gate()),
+            "hs_stash_close": Recorder(not_running_gate()),
+            "hs_stash_tab": Recorder(not_running_gate()),
+            "hs_bag_tab": Recorder(not_running_gate()),
         }
 
 
@@ -324,11 +387,24 @@ class GateTests(LeaseBase):
                     "hs_command": "game_not_running",
                     "hs_input": "game_not_running",
                     "hs_select_character": "game_not_running",
-                    "hs_saves_restore": "game_running"}
+                    "hs_saves_restore": "game_running",
+                    "hs_skills_status": "game_not_running",
+                    "hs_skill_cast": "game_not_running",
+                    "hs_talent_allocate": "game_not_running",
+                    "hs_skill_bind": "route_not_measured",
+                    "hs_talent_reset": "route_not_measured",
+                    "hs_give_item": "game_not_running",
+                    "hs_stash_open": "game_not_running",
+                    "hs_stash_close": "game_not_running",
+                    "hs_stash_tab": "game_not_running",
+                    "hs_bag_tab": "game_not_running"}
         for tool, call in self.gated_calls(touched).items():
             with self.subTest(tool=tool):
                 result = call()
-                self.assertEqual(touched[tool].calls >= 1, True, (tool, result))
+                if tool in self.NEVER_TOUCH:
+                    self.assertEqual(touched[tool].calls, 0, (tool, result))
+                else:
+                    self.assertEqual(touched[tool].calls >= 1, True, (tool, result))
                 self.assertEqual(result.get("lease"), "none", result)
                 if tool == "hs_stop_game":
                     self.assertTrue(result["ok"], result)
