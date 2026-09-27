@@ -8,7 +8,7 @@ This directory serves as the centralized repository for development, architectur
 
 | Module Name | Submodule Path | Development Guide | Status | Description |
 | --- | --- | --- | --- | --- |
-| **ForgePact** | `ForgePact/` | [ForgePact Instructions](ForgePact/instructions.md) | Ready | Offline gameplay modifier panel and C++20 runtime hook plugin (`BloodPactPlugin`). |
+| **ForgePact** | `ForgePact/` | [ForgePact Instructions](ForgePact/instructions.md) | Ready | Offline gameplay modifier panel (Python backend, Svelte 5 + Vite panel; see [ADR 0004](../adr/0004-forgepact-panel-frontend-is-svelte-and-vite-on-a-python-backend.md), with its design system as built in `ForgePact/panel/DESIGN.md`) and C++20 runtime hook plugin (`BloodPactPlugin`). |
 | **HS Offline Launcher** | `HS-Offline-Launcher/` | [HS-Offline-Launcher Instructions](HS-Offline-Launcher/instructions.md) | Ready | Steam installation discovery and offline game launcher. |
 | **HS Offline Tracker** | `HS-Offline-Tracker/` | [HS-Offline-Tracker Instructions](HS-Offline-Tracker/instructions.md) | Ready | Session telemetry journal, rarity drop alert engine, and compact overlay with Aurie producer. |
 | **HS Value Scanner** | `HS-ValueEditor/` | [HS-ValueEditor Instructions](HS-ValueEditor/instructions.md) | Ready | Memory value scanner and offline runtime value editor. |
