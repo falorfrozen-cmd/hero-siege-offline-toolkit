@@ -677,8 +677,8 @@ const laneBlock = (n, outcome, lanes) => [`### Round ${n}`, '', `${outcome} (lan
 // So when every BLOCKING finding of a round carries the reviewer's exact
 // `fix`, nothing failed a criterion, and the verifier reported no other
 // defect, the next round is a patch round: one implementer applies those fixes
-// only, the verifier runs every criterion as usual (nothing says which
-// criteria a change can reach), and only the reviewers that raised the
+// only, the verifier re-verifies by reach when 2j allows it (every criterion
+// otherwise), and only the reviewers that raised the
 // findings re-run -- to confirm their own -- plus `decompile-output-guard`
 // whenever its trigger matches, because a legal finding is never skipped.
 //

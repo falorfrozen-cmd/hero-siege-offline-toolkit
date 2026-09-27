@@ -346,7 +346,8 @@ hand, outside the phase separation:
 - **A fix that is already known does not buy a full round.** When every
   BLOCKING finding of a round carries its reviewer's exact `fix`, and nothing
   else failed, the next round is a *patch round*. A `patch-implementer`
-  applies the fixes, the verifier runs every criterion, and only the finding
+  applies the fixes, the verifier re-verifies by reach when the last verify
+  allows it (every criterion otherwise), and only the finding
   reviewers and `decompile-output-guard` re-run. If `round_delta.py size`
   then shows at most 20 changed lines, no new file and no instrument path or
   release note, the round is not counted against the cap. The same idea
