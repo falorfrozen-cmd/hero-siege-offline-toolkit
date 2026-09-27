@@ -704,7 +704,7 @@ suite ran. Every run was OK.
 - `.claude/agents/planner.md` § "Spend each check once" ("Run each suite once
   per verify") and SKILL.md rule 1: a plan whose criteria run the panel's
   browser suites directly runs its full Python suite with `--exclude-module`
-  for the modules that wrap them. Release CI still runs everything serially.
+  for the modules that wrap them. Release CI still runs everything serially. (Later the same day, `forgepact-release.yml` was split to use this runner's `--only-group`/`--skip-group` in two parallel jobs, and now leaves `test_panel_perf` to the local run; see `docs/submodules/ForgePact/instructions.md`, "The build half (forgepact-release.yml)".)
 
 ## Not yet measured
 
