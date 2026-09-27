@@ -1,5 +1,7 @@
 #pragma once
+#include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
@@ -284,6 +286,67 @@ inline bool ArrayAt(YYTKInterface* yytk, const RValue& array, int index, RValue&
 
 } // namespace Detail
 
+/// A filled equipped slot that is not a relic slot, resolved as the scan's
+/// same-session positive control: the helmet slot, which ForgePact's Miner's
+/// Helmet has read through the same route live (2026-09-23).
+inline constexpr int kEquippedControlSlot = 0;
+
+/**
+ * What one ScanEquippedRelicSlots call did, stage by stage.
+ *
+ * The route has many ways to read nothing - an `mplr` out of range, a slots
+ * array that is too short, a resolver the runner refuses, an item whose class
+ * is not a relic - and a set of maxed ids reduces all of them to the same
+ * empty answer. This report keeps them apart, so a live read of "found 0" says
+ * which stage it stopped at. REPORTED 2026-09-27 by the instrument-blindness
+ * review of #93, before the route's first live measurement.
+ *
+ * C++ only: the Python binding reads saves, where equipped items are item
+ * structs keyed by fingerprint and no resolver is called.
+ */
+struct EquippedSlotScanReport {
+    /// A single scanned relic slot's relic.
+    struct SlotRelic {
+        int slot;
+        int id;
+        int level;
+    };
+
+    /// The stage that ended the scan early (`mplr`, `equippedItems`, `slots`,
+    /// `slots-short`, `global`, `owner`, `exception`), or nullptr when every
+    /// relic slot was read.
+    const char* stopped = nullptr;
+    /// `global.mplr` as read, -1 when it is not a whole number in range.
+    int mplr = -1;
+    /// RValue kind of `global.mplr` and `global.equippedItems`, -1 unread.
+    int mplrKind = -1;
+    int equippedItemsKind = -1;
+    /// Length of `equippedItems[mplr][0]`, -1 unread.
+    int slotsLength = -1;
+    /// Relic slots present in that array, and those holding a fingerprint.
+    int slotsInRange = 0;
+    int strings = 0;
+    /// Whether GetOnlinePlayerItemOwner returned success.
+    bool ownerResolved = false;
+    /// GetItemFromFingerprint calls the runner refused, and those it ran.
+    int resolverRefused = 0;
+    int itemsResolved = 0;
+    /// Of the calls it ran: results that were not a struct, structs without a
+    /// numeric `itemType`, and structs by class (relic, anything else).
+    int nonStructResults = 0;
+    int noClassResults = 0;
+    int relicInstances = 0;
+    int otherClassInstances = 0;
+    /// Every relic the relic slots yielded, in slot order, at any level.
+    std::vector<SlotRelic> relics;
+
+    /// The positive control on kEquippedControlSlot: `not-run`, `no-slot`,
+    /// `empty`, `global`, `owner`, `refused`, `non-struct`, `no-class` or
+    /// `resolved`. `controlItemType` is its class when `resolved`, else -1.
+    const char* controlStatus = "not-run";
+    int controlItemType = -1;
+};
+
 /**
  * Adds the relics worn in the equipped relic slots (#93).
  *
@@ -301,54 +364,205 @@ inline bool ArrayAt(YYTKInterface* yytk, const RValue& array, int index, RValue&
  * 0..kMaxLocalPlayerIndex reads nothing, and a slot that is not a non-empty
  * string, or whose fingerprint does not resolve to a struct, is skipped. Only
  * strings ever reach the game's resolver.
+ *
+ * With `report`, every stage is counted there (EquippedSlotScanReport), and
+ * kEquippedControlSlot is also resolved, once, as a positive control for the
+ * resolver in the same session; its item is never scanned for relics. Without
+ * one, the scan makes no call beyond the relic slots'.
  */
-inline void ScanEquippedRelicSlots(YYTKInterface* yytk, std::unordered_map<int, int>& outRelicLevels) {
+inline void ScanEquippedRelicSlots(
+    YYTKInterface* yytk,
+    std::unordered_map<int, int>& outRelicLevels,
+    EquippedSlotScanReport* report = nullptr
+) {
     if (!yytk) return;
+    const auto stop = [report](const char* stage) {
+        if (report) report->stopped = stage;
+    };
     try {
         const RValue mplr = YYTK::GetGlobalVariable(yytk, "mplr");
+        if (report) report->mplrKind = static_cast<int>(mplr.m_Kind);
         if (mplr.m_Kind != ::YYTK::VALUE_REAL && mplr.m_Kind != ::YYTK::VALUE_INT32
-            && mplr.m_Kind != ::YYTK::VALUE_INT64) return;
+            && mplr.m_Kind != ::YYTK::VALUE_INT64) return stop("mplr");
         const double index = mplr.ToDouble();
         if (!std::isfinite(index) || std::floor(index) != index
-            || index < 0 || index > kMaxLocalPlayerIndex) return;
+            || index < 0 || index > kMaxLocalPlayerIndex) return stop("mplr");
+        if (report) report->mplr = static_cast<int>(index);
 
         RValue ownerRows, slots;
         const RValue all = YYTK::GetGlobalVariable(yytk, "equippedItems");
+        if (report) report->equippedItemsKind = static_cast<int>(all.m_Kind);
         if (!Detail::ArrayAt(yytk, all, static_cast<int>(index), ownerRows)
-            || !Detail::ArrayAt(yytk, ownerRows, 0, slots)) return;
+            || !Detail::ArrayAt(yytk, ownerRows, 0, slots)) return stop("equippedItems");
+        if (slots.m_Kind != ::YYTK::VALUE_ARRAY) return stop("slots");
+        if (report) report->slotsLength = YYTK::GetArrayLength(yytk, slots);
 
         CInstance* global = nullptr;
         bool haveOwner = false;
         RValue owner;
+        // The owner is resolved once, and only when a slot needs it. Returns
+        // the stage that failed, or nullptr.
+        const auto resolveOwner = [&]() -> const char* {
+            if (haveOwner) return nullptr;
+            yytk->GetGlobalInstance(&global);
+            if (!global) return "global";
+            if (!::Aurie::AurieSuccess(yytk->CallGameScriptEx(
+                    owner, HeroSiege::Scripts::gml_Script_GetOnlinePlayerItemOwner,
+                    global, global, { RValue(index) }))) return "owner";
+            haveOwner = true;
+            if (report) report->ownerResolved = true;
+            return nullptr;
+        };
+
         for (int slot = kFirstRelicSlot; slot <= kLastRelicSlot; ++slot) {
             RValue fingerprint;
-            if (!Detail::ArrayAt(yytk, slots, slot, fingerprint)) break;
-            if (fingerprint.m_Kind != ::YYTK::VALUE_STRING || fingerprint.ToString().empty()) continue;
-
-            // The owner is resolved once, and only when a slot needs it.
-            if (!haveOwner) {
-                yytk->GetGlobalInstance(&global);
-                if (!global) return;
-                if (!::Aurie::AurieSuccess(yytk->CallGameScriptEx(
-                        owner, HeroSiege::Scripts::gml_Script_GetOnlinePlayerItemOwner,
-                        global, global, { RValue(index) }))) return;
-                haveOwner = true;
+            if (!Detail::ArrayAt(yytk, slots, slot, fingerprint)) {
+                stop("slots-short");
+                break;
             }
+            if (report) ++report->slotsInRange;
+            if (fingerprint.m_Kind != ::YYTK::VALUE_STRING || fingerprint.ToString().empty()) continue;
+            if (report) ++report->strings;
+
+            if (const char* failed = resolveOwner()) return stop(failed);
 
             RValue item;
             if (!::Aurie::AurieSuccess(yytk->CallGameScriptEx(
                     item, HeroSiege::Scripts::gml_Script_GetItemFromFingerprint,
-                    global, global, { fingerprint, owner }))) continue;
-            if (item.m_Kind != ::YYTK::VALUE_OBJECT || !item.m_Object) continue;
-            ScanContainerForRelics(yytk, item, outRelicLevels, ContainerKind::General, 0);
+                    global, global, { fingerprint, owner }))) {
+                if (report) ++report->resolverRefused;
+                continue;
+            }
+            if (report) ++report->itemsResolved;
+            if (item.m_Kind != ::YYTK::VALUE_OBJECT || !item.m_Object) {
+                if (report) ++report->nonStructResults;
+                continue;
+            }
+
+            if (!report) {
+                ScanContainerForRelics(yytk, item, outRelicLevels, ContainerKind::General, 0);
+                continue;
+            }
+
+            // Counted by class, then scanned on its own so each relic found is
+            // attributed to its slot before it joins the owned map.
+            int itemClass = -1;
+            if (YYTK::StructHasVariable(yytk, item, kItemInstanceTypeField)) {
+                const RValue cls = YYTK::GetStructVariable(yytk, item, kItemInstanceTypeField);
+                if (cls.m_Kind == ::YYTK::VALUE_REAL || cls.m_Kind == ::YYTK::VALUE_INT32
+                    || cls.m_Kind == ::YYTK::VALUE_INT64) {
+                    itemClass = static_cast<int>(cls.ToDouble());
+                }
+            }
+            if (itemClass < 0) ++report->noClassResults;
+            else if (itemClass == kRelicItemClass) ++report->relicInstances;
+            else ++report->otherClassInstances;
+
+            std::unordered_map<int, int> slotRelics;
+            ScanContainerForRelics(yytk, item, slotRelics, ContainerKind::General, 0);
+            for (const auto& [id, level] : slotRelics) {
+                report->relics.push_back({ slot, id, level });
+                const auto found = outRelicLevels.find(id);
+                if (found == outRelicLevels.end() || level > found->second) outRelicLevels[id] = level;
+            }
         }
-    } catch (...) {}
+
+        if (!report) return;
+
+        // The positive control: one filled non-relic slot through the same
+        // resolver, so "the resolver answers" is shown beside the relic slots.
+        RValue control;
+        if (!Detail::ArrayAt(yytk, slots, kEquippedControlSlot, control)) {
+            report->controlStatus = "no-slot";
+        } else if (control.m_Kind != ::YYTK::VALUE_STRING || control.ToString().empty()) {
+            report->controlStatus = "empty";
+        } else if (const char* failed = resolveOwner()) {
+            report->controlStatus = failed;
+        } else {
+            RValue item;
+            if (!::Aurie::AurieSuccess(yytk->CallGameScriptEx(
+                    item, HeroSiege::Scripts::gml_Script_GetItemFromFingerprint,
+                    global, global, { control, owner }))) {
+                report->controlStatus = "refused";
+            } else if (item.m_Kind != ::YYTK::VALUE_OBJECT || !item.m_Object) {
+                report->controlStatus = "non-struct";
+            } else {
+                report->controlStatus = "no-class";
+                if (YYTK::StructHasVariable(yytk, item, kItemInstanceTypeField)) {
+                    const RValue cls = YYTK::GetStructVariable(yytk, item, kItemInstanceTypeField);
+                    if (cls.m_Kind == ::YYTK::VALUE_REAL || cls.m_Kind == ::YYTK::VALUE_INT32
+                        || cls.m_Kind == ::YYTK::VALUE_INT64) {
+                        report->controlStatus = "resolved";
+                        report->controlItemType = static_cast<int>(cls.ToDouble());
+                    }
+                }
+            }
+        }
+    } catch (...) {
+        stop("exception");
+    }
+}
+
+/**
+ * One line naming what an equipped-slot scan did, for a log: e.g.
+ * `mplr=0 slots=15 inrange=5 strings=3 owner=ok resolved=3 refused=0
+ * nonstruct=0 noclass=0 relic=2 otherclass=1 relics=10:135@10,11:15@8
+ * control=resolved itemType=4 stopped=none`. A relic is `slot:id@level`.
+ */
+inline std::string FormatEquippedSlotScanReport(const EquippedSlotScanReport& r) {
+    std::string out;
+    out += "mplr=" + std::to_string(r.mplr);
+    if (r.mplr < 0) out += "(kind " + std::to_string(r.mplrKind) + ")";
+    out += " slots=" + std::to_string(r.slotsLength);
+    if (r.slotsLength < 0) out += "(equippedItems kind " + std::to_string(r.equippedItemsKind) + ")";
+    out += " inrange=" + std::to_string(r.slotsInRange);
+    out += " strings=" + std::to_string(r.strings);
+    out += std::string(" owner=") + (r.ownerResolved ? "ok" : "no");
+    out += " resolved=" + std::to_string(r.itemsResolved);
+    out += " refused=" + std::to_string(r.resolverRefused);
+    out += " nonstruct=" + std::to_string(r.nonStructResults);
+    out += " noclass=" + std::to_string(r.noClassResults);
+    out += " relic=" + std::to_string(r.relicInstances);
+    out += " otherclass=" + std::to_string(r.otherClassInstances);
+    out += " relics=";
+    if (r.relics.empty()) out += "none";
+    for (std::size_t i = 0; i < r.relics.size(); ++i) {
+        if (i) out += ",";
+        out += std::to_string(r.relics[i].slot) + ":" + std::to_string(r.relics[i].id)
+             + "@" + std::to_string(r.relics[i].level);
+    }
+    out += std::string(" control=") + (r.controlStatus ? r.controlStatus : "not-run");
+    out += " itemType=" + std::to_string(r.controlItemType);
+    out += std::string(" stopped=") + (r.stopped ? r.stopped : "none");
+    return out;
+}
+
+/// `id:level` for every relic in `relicLevels`, ascending by id, comma
+/// separated; `none` when empty. For logging the whole owned map.
+inline std::string FormatRelicLevels(const std::unordered_map<int, int>& relicLevels) {
+    std::vector<std::pair<int, int>> sorted(relicLevels.begin(), relicLevels.end());
+    std::sort(sorted.begin(), sorted.end());
+    if (sorted.empty()) return "none";
+    std::string out;
+    for (std::size_t i = 0; i < sorted.size(); ++i) {
+        if (i) out += ",";
+        out += std::to_string(sorted[i].first) + ":" + std::to_string(sorted[i].second);
+    }
+    return out;
 }
 
 /**
  * Returns a map of all owned relic IDs and their highest recorded level across equipped slots & inventory.
+ *
+ * `equippedReport`, when given, receives what the equipped-slot read did
+ * (ScanEquippedRelicSlots); it is left untouched when the player handle is
+ * unusable and the scan never reaches the slots.
  */
-inline std::unordered_map<int, int> GetOwnedRelicLevels(YYTKInterface* yytk, const RValue& player) {
+inline std::unordered_map<int, int> GetOwnedRelicLevels(
+    YYTKInterface* yytk,
+    const RValue& player,
+    EquippedSlotScanReport* equippedReport = nullptr
+) {
     std::unordered_map<int, int> relicMap;
     if (!yytk || !IsInstanceHandle(player)) return relicMap;
 
@@ -373,24 +587,36 @@ inline std::unordered_map<int, int> GetOwnedRelicLevels(YYTKInterface* yytk, con
 
         // 3. The equipped relic slots, held by the game as fingerprints in a
         //    global rather than on the player instance.
-        ScanEquippedRelicSlots(yytk, relicMap);
+        ScanEquippedRelicSlots(yytk, relicMap, equippedReport);
     } catch (...) {}
 
     return relicMap;
 }
 
 /**
- * Returns set of relic IDs that are at maximum level (>= kMaxedRelicLevel).
+ * The relic IDs in `relicLevels` at maximum level (>= kMaxedRelicLevel), for a
+ * caller that already holds the owned map (to log it whole beside the set).
  */
-inline std::unordered_set<int> GetMaxedRelicIds(YYTKInterface* yytk, const RValue& player) {
+inline std::unordered_set<int> MaxedRelicIdsOf(const std::unordered_map<int, int>& relicLevels) {
     std::unordered_set<int> maxed;
-    auto relicMap = GetOwnedRelicLevels(yytk, player);
-    for (const auto& [id, lvl] : relicMap) {
+    for (const auto& [id, lvl] : relicLevels) {
         if (lvl >= kMaxedRelicLevel) {
             maxed.insert(id);
         }
     }
     return maxed;
+}
+
+/**
+ * Returns set of relic IDs that are at maximum level (>= kMaxedRelicLevel).
+ * `equippedReport` as in GetOwnedRelicLevels.
+ */
+inline std::unordered_set<int> GetMaxedRelicIds(
+    YYTKInterface* yytk,
+    const RValue& player,
+    EquippedSlotScanReport* equippedReport = nullptr
+) {
+    return MaxedRelicIdsOf(GetOwnedRelicLevels(yytk, player, equippedReport));
 }
 
 #endif
