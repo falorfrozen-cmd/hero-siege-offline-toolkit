@@ -945,9 +945,13 @@ Claude Code and Codex read the same one. On a new machine run:
 py -3 tools/setup_agent_secrets.py
 ```
 
-It asks, with input hidden, for each token not set yet and saves it as a
-persistent user variable (`--list` shows which are set, `--force` asks again).
-Pressing Enter at the GitHub prompt uses `gh auth token` instead. Keeping the
+On Windows it asks, with input hidden, for each token not saved yet and saves
+it as a persistent user variable in `HKCU\Environment`. A value set only in
+the current shell does not count, because newly started programs will not see
+it; Enter saves it. `--list` shows `set`, `SESSION` or `MISSING`, and `--force`
+asks again. Pressing Enter at the GitHub prompt uses `gh auth token` instead.
+On macOS and Linux it saves nothing and asks for nothing: it prints the
+`export` line for each missing token, to add to your shell profile. Keeping the
 tokens between machines is up to you; a test fails if a server in `.mcp.json`
 reads a variable the script does not ask for.
 

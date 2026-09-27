@@ -10,13 +10,15 @@ you; this only puts them where the tools look.
 
     py -3 tools/setup_agent_secrets.py            # ask for anything missing
     py -3 tools/setup_agent_secrets.py --force    # ask again for every token
-    py -3 tools/setup_agent_secrets.py --list     # show which are set, never their values
+    py -3 tools/setup_agent_secrets.py --list     # set / SESSION (this shell only) / MISSING; never values
 
 Input is not echoed. An empty answer skips that token. Restart Claude Code and
 Codex afterwards: a process reads its environment only at launch.
 
-On Windows the value goes to HKCU\\Environment. Elsewhere the script prints the
-`export` line to add to your shell profile rather than editing it.
+On Windows the value goes to HKCU\\Environment, and only a value found there
+counts as set: one set for the current shell alone is offered for saving.
+Elsewhere the script asks for nothing and saves nothing; it prints the
+`export` line for each missing token, to add to your shell profile yourself.
 """
 
 from __future__ import annotations
@@ -56,26 +58,25 @@ SECRETS = (
 )
 
 
-def _user_value(name: str) -> str | None:
-    """The persisted user-level value, falling back to this process's
-    environment (a variable set this session is not in os.environ yet)."""
-    if sys.platform == "win32":
-        import winreg
+def _persisted(name: str) -> bool:
+    """Whether a newly launched program will see `name`. On Windows that is
+    the user's registry environment only: a value set for this shell session
+    alone (`$env:NAME = ...`, a CI variable) dies with it, so it must not
+    count. Elsewhere the script cannot tell where a variable came from, so it
+    goes by this process's environment."""
+    if sys.platform != "win32":
+        return bool(os.environ.get(name))
+    import winreg
 
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
-                value, _ = winreg.QueryValueEx(key, name)
-                if value:
-                    return value
-        except OSError:
-            pass
-    return os.environ.get(name) or None
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _ = winreg.QueryValueEx(key, name)
+            return bool(value)
+    except OSError:
+        return False
 
 
 def _save(name: str, value: str) -> None:
-    if sys.platform != "win32":
-        print(f"  Add this to your shell profile (~/.bashrc, ~/.zshrc):\n    export {name}='<the token>'")
-        return
     import ctypes
     import winreg
 
@@ -107,18 +108,35 @@ def main(argv: list[str] | None = None) -> int:
 
     changed = False
     for secret in SECRETS:
-        present = _user_value(secret.name) is not None
+        present = _persisted(secret.name)
+        session_only = not present and bool(os.environ.get(secret.name))
         if args.list:
-            print(f"{secret.name:16} {'set' if present else 'MISSING':8} ({secret.server} MCP server)")
+            state = "set" if present else ("SESSION" if session_only else "MISSING")
+            print(f"{secret.name:16} {state:8} ({secret.server} MCP server)")
             continue
         if present and not args.force:
             print(f"{secret.name} is already set; skipping (--force to replace it).")
             continue
         print(f"\n{secret.name}: {secret.how}, for the `{secret.server}` MCP server.")
+        if sys.platform != "win32":
+            # Nothing is written outside Windows, so asking for the token
+            # would only pretend to save it.
+            print("  Add this to your shell profile (~/.bashrc, ~/.zshrc), then open a new shell:\n"
+                  f"    export {secret.name}='<the token>'")
+            continue
+        if session_only:
+            print("  It is set in this shell only, so newly started programs will not see it.")
         prompt = "  Paste it (input hidden"
-        prompt += ", Enter to use your gh CLI login" if secret.gh_fallback else ", Enter to skip"
+        if session_only:
+            prompt += ", Enter to save this session's value"
+        elif secret.gh_fallback:
+            prompt += ", Enter to use your gh CLI login"
+        else:
+            prompt += ", Enter to skip"
         value = getpass.getpass(prompt + "): ").strip()
-        if not value and secret.gh_fallback:
+        if not value and session_only:
+            value = os.environ[secret.name]
+        elif not value and secret.gh_fallback:
             value = _gh_token() or ""
             if value:
                 print("  Using `gh auth token`. It goes stale if you `gh auth refresh` or log in again; re-run with --force then.")

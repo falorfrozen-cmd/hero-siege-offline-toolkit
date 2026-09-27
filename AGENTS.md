@@ -102,8 +102,9 @@ exception, because it drives Claude Code's own subagent and workflow tools.
   `playwright`. Use `playwright` to drive and screenshot a browser-based
   frontend, the same way `tauri-hub` drives the hub. `github` and `figma` need
   a personal access token; on a new machine, run
-  `py -3 tools/setup_agent_secrets.py` once. It asks for each missing token
-  and saves it as a user environment variable that both agents read.
+  `py -3 tools/setup_agent_secrets.py` once. On Windows it asks for each
+  missing token and saves it as a user environment variable that both agents
+  read; elsewhere it prints the `export` line to add to your shell profile.
 
 Codex loads `.codex/` only for a trusted project, asks you to approve
 `.codex/hooks.json` under `/hooks`, and should be started at the repository
