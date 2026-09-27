@@ -1421,10 +1421,12 @@ class CliTests(TempDirMixin, unittest.TestCase):
 # R24 cheap routes (amendments, patch rounds) and R11's amendment exemption
 # --------------------------------------------------------------------------
 
-def _amend_call(offset, idx, verb, failed=False):
-    """A driver `amend_check.py <verb>` call; `failed` marks a non-zero exit."""
+def _amend_call(offset, idx, verb, failed=False, scope=False):
+    """A driver `amend_check.py <verb>` call; `failed` marks a non-zero exit,
+    `scope` an owner-scope verdict."""
+    result = "REPLAN: ## goal changed" if failed else "SCOPE: 1 new owner decision(s)" if scope else "AMENDMENT"
     records = tool_turn(offset, idx, "Bash", {"command": f"py -3 tools/amend_check.py {verb} .claude/workorders/x-plan.md"},
-                        result="REPLAN: ## goal changed" if failed else "AMENDMENT")
+                        result=result)
     records[1]["message"]["content"][0]["is_error"] = failed
     return records
 
@@ -1521,6 +1523,44 @@ class CheapRouteTests(TempDirMixin, unittest.TestCase):
     def test_a_patch_implementer_is_not_read_as_a_lane(self):
         self.assertIsNone(wa.lane_of("patch-implementer:r1"))
         self.assertEqual(wa.parse_label("patch-implementer:r1"), ("patch-implementer", 1))
+
+
+class OwnerScopeTests(TempDirMixin, unittest.TestCase):
+    """R25: a `SCOPE:` verdict needs a message typed by the owner behind it.
+    Timeline: plan 0-100s, implementer 200-300s, [owner 320s], save 350s,
+    scope planner 400-450s, check 500s, implementer 600-700s."""
+
+    def _session(self, sub, owner_at=None, origin_kind="human"):
+        driver = [turn(0, 9000)]
+        if owner_at is not None:
+            driver.append(user_text(owner_at, "go with 2.0.0 instead", origin_kind=origin_kind))
+        driver += _amend_call(350, 9001, "save") + _amend_call(500, 9002, "check", scope=True)
+        b = SessionBuilder(self.tmp_path / sub).driver(driver)
+        b.subagent("planner", "Plan x", _span(0, 100, 100))
+        b.subagent("implementer", "implementer:r0", _span(200, 300, 200))
+        b.subagent("planner", "amendment: x owner renames the release", _span(400, 450, 300))
+        b.subagent("implementer", "implementer:r0", _span(600, 700, 500))
+        return b.evaluate()[1]
+
+    def test_pass_a_scope_verdict_after_the_owner_spoke(self):
+        results = self._session("spoke", owner_at=320)
+        self.assertTrue(get_rule(results, "R25").passed, get_rule(results, "R25").evidence)
+        # exit 0: not a replan either
+        self.assertEqual(get_rule(results, "R11").evidence, [])
+
+    def test_fail_a_scope_verdict_with_no_owner_message(self):
+        r = get_rule(self._session("silent"), "R25")
+        self.assertFalse(r.passed)
+        self.assertTrue(any("no owner message" in e for e in r.evidence), r.evidence)
+
+    def test_fail_a_task_notification_is_not_the_owner(self):
+        r = get_rule(self._session("notified", owner_at=320, origin_kind="task-notification"), "R25")
+        self.assertFalse(r.passed, r.evidence)
+
+    def test_fail_the_workorder_invocation_does_not_count(self):
+        # A message before the first planner started is the request itself.
+        r = get_rule(self._session("invocation", owner_at=-10), "R25")
+        self.assertFalse(r.passed, r.evidence)
 
 
 if __name__ == "__main__":

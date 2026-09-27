@@ -149,6 +149,19 @@ So, in `/workorder` and anything run like it:
   --changed-since`), and the full set runs at the final gate before push, or
   whenever the delta is unknown, touches a shared contract, or the verifier
   cannot tell.
+- **A question never idles the pipeline.** Before asking the owner, start
+  everything the answer cannot change. Spin off an out-of-scope bug instead
+  of asking about it. Apply the default to a reversible choice and say how
+  to undo it. In the ForgePact UI redesign, 19 of 60.75 hours passed with a
+  question open and nothing running.
+- **The owner's own scope is not a failure.** A plan change or round that
+  exists only to carry the owner's new decision costs no replan, no tier
+  step and no round of the cap (`amend_check.py`'s `SCOPE`, State's `scope
+  rounds:`, audit R25).
+- **Plan when the inputs exist, and review the design before building it.**
+  A plan that waits on another workorder's result stays `status: DRAFT`,
+  which `plan_lint` refuses. Design checks run on the comps and after the
+  first restyle round, not at ship.
 
 Independence is not traded for speed: the verifier and every reviewer still
 run fresh, and a check is shared, never skipped. In the ForgePact UI redesign

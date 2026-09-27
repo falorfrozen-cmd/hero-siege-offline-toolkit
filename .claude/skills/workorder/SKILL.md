@@ -189,8 +189,19 @@ criterion costs a full implement round to discover. `py -3
 tools/plan_lint.py <plan>` checks that statically, running no criterion:
 prose, a heading slice not anchored on `\n`, a grep over a live capture
 instead of `tools/live_checks.py`, `python` for `py -3`, a bare commit hash
-where a per-workorder tag or a merge-base belongs. A finding goes back
-to the planner with the tool's output before any implementer is spawned. If `## Needs human
+where a per-workorder tag or a merge-base belongs, a `.index` of "the next
+heading" that raises when the section is last (`eof-slice`), a range walk
+without `--first-parent` in a plan that merges main (`merge-walk`), and a
+plan still `status: DRAFT` (`plan-draft`). A finding goes back
+to the planner with the tool's output before any implementer is spawned.
+
+**Plan a workorder when its inputs exist.** A plan that depends on another
+workorder's result is written `status: DRAFT` with `depends on: <slug>, ...`
+(planner.md, "Spend each check once"), and `plan_lint` refuses it until it
+is re-planned against the finished result and set `READY`. The redesign's
+restyle and ship plans were rewritten nine times between them before either
+ran a round, each time because an earlier workorder had since changed what
+they were written against. If `## Needs human
 judgement` is non-empty, show it to the user and get an answer before spawning
 the implementer.
 
@@ -241,6 +252,8 @@ did not write the plan and knows nothing it does not say:
    initialized.
 2. **Check the plan is not already finished.** A `status:` of `PASS`,
    `DONE`, `CAP`, `SPLIT` or `SUPERSEDED` stops here — say so, spawn nothing.
+   A `DRAFT` goes back to Step 1 instead: check its `depends on:` workorders
+   passed, then spawn the planner to re-plan it against what they produced.
    A `READY` plan that arrived by copy (its header says "they travel by
    copy") may be a stale handover: ask the user whether it already ran
    before resuming it. Measured 2026-09-22: the main checkout held two
@@ -582,6 +595,28 @@ The line, when a reviewer's label looks wrong to you:
   not implementers: a laned round — every lane plus the join, then one
   verify — is one round. A patch round that held (below) is not counted.
 
+  **Owner scope is not a failure.** A round or a plan change that exists only
+  because the owner added or changed the work is the owner deciding, not the
+  pipeline failing, and it spends neither the cap nor the tier ladder:
+
+  - **A plan change:** run `tools/amend_check.py save`, *then* record the
+    owner's answer under `### Decisions` as `owner, <YYYY-MM-DD>: "<their
+    words>"`, then spawn the planner (labelled `amendment: <slug> owner
+    scope ...`), then `check`. `check` prints `SCOPE: <k> new owner
+    decision(s)` and exits 0 whenever the context gained an owner line since
+    `save`, whatever else changed: not a replan, no tier step.
+  - **A round:** when a relaunch exists only to carry owner decisions (the
+    finish review's approved fixes, a rename, a new tab), add one to `scope
+    rounds: <k>` in `## State` before the launch. `workorder-rounds.js` adds
+    it to the cap, at most 3 in all.
+
+  The audit keeps this honest: R25 fails a `SCOPE:` verdict with no message
+  typed by the owner behind it, so the exemption cannot relabel a failed plan.
+  In the ForgePact UI redesign, restyle's Amendment 1 (the owner's own ask)
+  counted as its third replan, polish met the cap on owner items and split
+  into `sandbox-ports`, and ship's round 3 was refused although rounds 1-2
+  were owner scope.
+
   **The patch route.** When a round's only defects are `BLOCKING` reviewer
   findings and *every* one carries its reviewer's `fix`, the next round is a
   patch round instead. "Only" means no failed criterion, no structural or
@@ -798,10 +833,14 @@ each procedure pins the counts the previous restore left, and two of the nine
 crashed the game on stash close.
 
 **Offer a fresh session at the next phase boundary** when this session has
-already driven a live session. The driver relays every hand-back at its own
-context size: in forgepact-issue-14, relays at 605-680K tokens a turn cost
-about $13 in one 22-hour session, where a fresh session starts near 90K. Say
-so in one line with the `resume` or `plan` command, and let the owner decide.
+already driven a live session, **or at any workorder boundary once the
+driver's context is past about 300K tokens**. The driver relays every
+hand-back at its own context size: in forgepact-issue-14, relays at 605-680K
+tokens a turn cost about $13 in one 22-hour session, where a fresh session
+starts near 90K. The ForgePact UI redesign drove all 14 workorders from one
+session: 504 of its 697 driver turns ran above 300K (peak 966K), and the
+driver alone cost $108. Say so in one line with the `resume` or `plan`
+command, and let the owner decide.
 
 `tools/workorder_audit.py` R17 fails a session whose operator wrote anything
 but its `<slug>-live-<n>.md`, installed a build, ran a writing git command,
@@ -949,6 +988,45 @@ after a verify that passed every other criterion runs the criteria the fix
 reaches plus the failed ones (`run_criteria.py --changed-since`), and the
 full set runs once at the final gate before the push. The conditions and
 fallbacks are in Step 4, "Re-verify what the fix reaches".
+
+**8. A question never idles the pipeline.** In the ForgePact UI redesign 19
+of 60.75 hours passed with a question open and nothing running; the four
+longest waits were 380, 273, 256 and 111 minutes, mostly overnight. Two of
+those questions did not need the owner at all. So, before you ask:
+
+- **Start everything the answer cannot change**, in the same message as the
+  question: the other items or findings, a record round, the final gate on
+  what is already settled, the next plan when its decisions are made. The
+  answer then lands on finished work, not on an idle queue.
+- **An out-of-scope bug is a spin-off, not a question.** Flag it as a
+  separate task (the app's spawn-task chip, or a one-line note in the
+  report) and carry on; the redesign waited 256 minutes on a port-fallback
+  bug that was spun off anyway.
+- **A reversible choice gets its default, not a wait.** A P2 or nit, or a
+  choice where one option is plainly the plan's: apply it, say so in one line
+  with how to undo it, and let the owner overrule it. The redesign's longest
+  wait, 380 minutes, was a P2 icon question asked before the push.
+- **Only a decision that changes what gets built, and cannot be undone
+  cheaply, stops the work it gates** — and only that work, as an item's
+  `owner:` line parks only its item.
+
+**9. Review the design before building it, not at ship.** For a chain of
+UI workorders:
+
+- Run the design tools on the direction comps before anything is bundled or
+  downloaded: the impeccable detector (its overused-font check included) and
+  a critique. The redesign bundled Geist, then the owner moved to IBM Plex,
+  costing three replans across prep, buildout and restyle.
+- Run `impeccable-finish-reviewer` after the first restyle round, not after
+  the last workorder: the redesign's eight finish findings (F1-F8) arrived
+  in ship and reopened a component choice already built.
+- A design export gets a structure check against the current panel when it
+  is made (its texts present in the page, its selectors inside the component
+  they name, no runtime values such as a version baked in), not at restyle,
+  where seven mismatches cost two restyle rounds and two Figma rounds.
+- A design finding names its class and checks the class ("every text glyph
+  on every tab"), not only the instances listed: PR #100's review found an
+  icon the F6 fix had missed.
 
 ## Driver discipline
 

@@ -34,6 +34,27 @@ And one measured in the ForgePact UI redesign (2026-09-24..26):
                    and a hex run inside a longer word or a `-`-joined name
                    are not flagged.
 
+And three measured when the redesign was reviewed (2026-09-27):
+
+  eof-slice        `.index('\n## ')` (or `### `) to find where a section
+                   *ends*: the next heading, of any name. `index` raises
+                   when the section is the last in the file, so the
+                   criterion fails on a correct tree (restyle, ship). Use
+                   `find` and treat -1 as the end of the text.
+  merge-walk       `git log`/`git rev-list` over a `A..B` range without
+                   `--first-parent`, in a plan that merges `origin/main`.
+                   The walk then counts or greps main's merged-in commits
+                   as the branch's own (main-merge R0, main-merge-2 R0).
+                   A criterion that means every parent says so with
+                   `(all-parents)`.
+  plan-draft       `status: DRAFT` at the top of the plan: it waits on
+                   another workorder's result (`depends on:` names the
+                   slugs), so no round may start from it. Written before
+                   its inputs existed, the redesign's restyle and ship plans
+                   were replanned nine times before either ran a round.
+                   Re-plan it against the finished dependencies, then set
+                   `status: READY`.
+
 It also checks the lanes a plan declares under `## Steps` (issue #176): a
 `### Lane: <name>` heading, then a `files:` line of backticked paths (globs
 allowed) that lane alone may edit, and one `### Join` the serial join
@@ -134,6 +155,13 @@ NEXT_H2_RE = re.compile(r"^##\s")
 ITEM_RE = re.compile(r"^\s*-\s+\[[ xX]\]\s*")
 BACKTICK_RE = re.compile(r"``(.+?)``|`([^`]+)`")
 UNANCHORED_SLICE_RE = re.compile(r"\.(?:r?index|r?find)\(\s*['\"]#{1,6} ")
+# `.index('\n## ')`: a search for whatever heading comes next, which is
+# absent when the section is the file's last.
+EOF_SLICE_RE = re.compile(r"\.r?index\(\s*(['\"])\\n#{1,6} ?\1")
+GIT_WALK_RE = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?(?:log|rev-list)\b[^`]*?\S\.\.\.?\S")
+PLAN_MERGES_RE = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?merge\b(?!-)|\bmerges?\s+`?origin/main\b|\bmain moved\b", re.I)
+STATUS_RE = re.compile(r"^\s*status:\s*`?([A-Za-z-]+)", re.I)
+DEPENDS_RE = re.compile(r"^\s*depends on:\s*(.*)$", re.I)
 # `' '.join(t.split())` collapses newlines on purpose, so there is no
 # newline to anchor on and the rule does not apply.
 COLLAPSED_TEXT_RE = re.compile(r"\.join\(.*\.split\(\)\)")
@@ -305,7 +333,10 @@ def tracked_files(plan: Path) -> tuple | None:
     return [p for p in listed.stdout.splitlines() if p], opaque
 
 
-def lint_criterion(text: str) -> list:
+def lint_criterion(text: str, merges: bool = False) -> list:
+    """`(rule, excerpt)` per finding. `merges` says the plan merges
+    `origin/main`, which is when a walk without `--first-parent` goes wrong."""
+    all_parents = "(all-parents)" in text
     text = without_reads(text)
     spans = [a or b for a, b in BACKTICK_RE.findall(text)]
     if not spans:
@@ -314,6 +345,10 @@ def lint_criterion(text: str) -> list:
     for span in spans:
         if UNANCHORED_SLICE_RE.search(span) and not COLLAPSED_TEXT_RE.search(span):
             found.append(("unanchored-slice", span))
+        if EOF_SLICE_RE.search(span):
+            found.append(("eof-slice", span))
+        if merges and not all_parents and GIT_WALK_RE.search(span) and "--first-parent" not in span:
+            found.append(("merge-walk", span))
         if "-live-" in span and CAPTURE_GREP_RE.search(span):
             found.append(("capture-grep", span))
         if BARE_PYTHON_RE.search(" " + span):
@@ -321,6 +356,45 @@ def lint_criterion(text: str) -> list:
         if any(_looks_like_sha(h) for h in HEX_RUN_RE.findall(span)):
             found.append(("pinned-sha", span))
     return found
+
+
+def plan_merges(text: str) -> bool:
+    """Whether the plan merges `origin/main` into its branch (a step, the
+    'main moved' precondition, or a criterion that says so)."""
+    return bool(PLAN_MERGES_RE.search(text))
+
+
+def draft(text: str, plan_dir: Path | None = None) -> list:
+    """`[(rule, excerpt)]` for a plan whose header (before the first `## `)
+    says `status: DRAFT`, naming each `depends on:` slug with its own plan's
+    status when that plan sits beside this one."""
+    status, deps = None, []
+    for line in text.splitlines():
+        if NEXT_H2_RE.match(line):
+            break
+        m = STATUS_RE.match(line)
+        if m and status is None:
+            status = m.group(1).upper()
+        d = DEPENDS_RE.match(line)
+        if d:
+            deps += _ticked(d.group(1)) or [v for v in re.split(r"[,\s]+", d.group(1)) if v]
+    if status != "DRAFT":
+        return []
+    shown = []
+    for slug in deps:
+        other = plan_dir / f"{slug}-plan.md" if plan_dir is not None else None
+        theirs = None
+        if other is not None and other.is_file():
+            for line in other.read_text(encoding="utf-8", errors="replace").splitlines():
+                if NEXT_H2_RE.match(line):
+                    break
+                m = STATUS_RE.match(line)
+                if m:
+                    theirs = m.group(1).upper()
+                    break
+        shown.append(f"{slug} ({theirs or 'no plan beside this one'})")
+    waits = ("waits on " + ", ".join(shown)) if shown else "names no `depends on:`"
+    return [("plan-draft", f"status: DRAFT, {waits}; re-plan against the finished result, then set READY")]
 
 
 def _looks_like_sha(run: str) -> bool:
@@ -572,9 +646,10 @@ def lint(path: Path) -> tuple:
     items_ = criteria(text)
     if items_ is None:
         return None, []
-    out = []
+    out = [("plan", rule, excerpt) for rule, excerpt in draft(text, path.parent)]
+    merges = plan_merges(text)
     for k, item in enumerate(items_, 1):
-        for rule, excerpt in lint_criterion(item):
+        for rule, excerpt in lint_criterion(item, merges):
             out.append((f"criterion {k}", rule, excerpt if len(excerpt) <= 160 else excerpt[:157] + "..."))
     declared_lanes, join = lanes(text)
     for name, rule, excerpt in lint_lanes(declared_lanes, join):

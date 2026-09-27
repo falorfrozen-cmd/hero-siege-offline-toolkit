@@ -156,6 +156,36 @@ test('three failing rounds stop at the cap', async () => {
   assert.equal(calls.filter(c => c.startsWith('implementer')).length, 3)
 })
 
+// Rounds the driver relaunched only to carry the owner's new decisions do not
+// count (SKILL.md Step 4, "Owner scope is not a failure"): the ForgePact UI
+// redesign's polish and ship workorders each met the cap on owner scope.
+test('owner-scope rounds from State extend the cap, at most SCOPE_CAP in all', async () => {
+  const fail = { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] }
+  for (const [scope, implementers] of [[0, 3], [2, 5], [9, 6]]) {
+    const state = `round: 0\nphase: implement${scope ? `\nscope rounds: ${scope}` : ''}`
+    const { result, calls } = await run({ ...BASE, state }, standard({ verifier: fail }))
+    assert.equal(result.outcome, 'CAP', `scope ${scope}`)
+    assert.equal(calls.filter(c => c.startsWith('implementer')).length, implementers, `scope ${scope}`)
+    if (scope) assert.match(result.detail, /owner-scope round/)
+    else assert.doesNotMatch(result.detail, /owner-scope/)
+  }
+})
+
+// The Log heading carries the snapshot's start time so round wall time and
+// owner waits can be read from the Log alone; a snapshot that printed no time
+// (or garbage) leaves the heading exactly as before.
+test('a round heading carries the snapshot time when one was printed', async () => {
+  for (const [taken, heading] of [['2026-09-27T10:11:12Z', '### Round 0 (started 2026-09-27T10:11:12Z)'], [undefined, '### Round 0\n'], ['soon', '### Round 0\n']]) {
+    const prompts = []
+    const { calls } = await run(BASE, (label, prompt, opts) => {
+      if (label.startsWith('scribe')) prompts.push(prompt)
+      return standard({ snapshot: DELTA([], taken ? { taken_utc: taken } : {}) })(label, prompt, opts)
+    })
+    assert.ok(calls.some(c => c.startsWith('scribe')))
+    assert.ok(prompts.some(p => p.includes(heading)), `${taken}: ${prompts[0] && prompts[0].slice(0, 400)}`)
+  }
+})
+
 test('when the scribe cannot write, the launch stops as SCRIBE-FAILED carrying the evidence', async () => {
   for (const scribe of [{ written: false, note: 'edit failed' }, null]) {
     const { result, calls } = await run(BASE, standard({
@@ -176,7 +206,8 @@ test('omitted repoRoot produces the exact commands as before', async () => {
   await run({ ...BASE, submodules: ['ForgePact'] }, reply)
   assert.equal(prompts['snapshot:r0'],
     'Run exactly: py -3 .claude/skills/workorder/round_delta.py snapshot zz 0  — then report its exit code and output. ' +
-    'Then run exactly: py -3 .claude/skills/workorder/round_delta.py heads zz 0  — report its exit code (3 if either command exited 3) and each printed line, split into repo and sha at the first tab, as heads: [{repo, sha}]. Edit nothing.')
+    'Then run exactly: py -3 .claude/skills/workorder/round_delta.py heads zz 0  — report its exit code (3 if either command exited 3) and each printed line, split into repo and sha at the first tab, as heads: [{repo, sha}]. ' +
+    'The snapshot command\'s `taken_utc: <time>` line, if it printed one, goes in taken_utc verbatim. Edit nothing.')
   assert.ok(prompts['delta:r0'].startsWith(
     'Run exactly: py -3 .claude/skills/workorder/round_delta.py delta zz 0  — report its exit code'))
   // No usable heads (the stub snapshot omits `heads`) -> the legacy HEAD-relative
@@ -622,6 +653,30 @@ test('control: a faithful scribe on a clean pass reports no STATE-LOST', async (
   const { result } = await run({ ...BASE, state: PLAN_STATE }, withPlan(file, faithfulScribe))
   assert.equal(result.outcome, 'PASS')
   assert.equal(result.lost, undefined)
+})
+
+// ForgePact UI redesign: four STATE-LOST stops on entries nothing removed --
+// a multi-line entry re-indented between the scribe's before and after
+// reports, and `<none yet>` reported back as `&lt;none yet&gt;`.
+test('re-indented continuation lines and escaped brackets are not a lost entry', async () => {
+  const multi = PLAN_STATE.replace('decisions in force: D1, D2 (context file, `### Decisions`)',
+    'decisions in force: D1 both repositories take `origin/main` by a merge\n  commit (never a rebase)')
+  const relayout = file => prompt => {
+    const res = faithfulScribe(file)(prompt)
+    return { ...res, state_after: res.state_after.replace('\n  commit (never', '\n    commit (never').replace('<none yet>', '&lt;none yet&gt;') }
+  }
+  const file = { plan: planFile(multi) }
+  const { result } = await run({ ...BASE, state: multi }, withPlan(file, relayout, { verifier: defectThenPass() }))
+  assert.equal(result.outcome, 'PASS', JSON.stringify(result.lost))
+  // control: an entry whose words changed is still lost
+  const dropper = file => prompt => {
+    const res = faithfulScribe(file)(prompt)
+    return { ...res, state_after: res.state_after.replace('never a rebase', 'rebase is fine') }
+  }
+  const file2 = { plan: planFile(multi) }
+  const { result: r2 } = await run({ ...BASE, state: multi }, withPlan(file2, dropper, { verifier: defectThenPass() }))
+  assert.equal(r2.outcome, 'STATE-LOST')
+  assert.ok(r2.lost.some(l => l.startsWith('decisions in force:')), JSON.stringify(r2.lost))
 })
 
 test('the implementer-verdict Record pass keeps reviewers: and open defects:', async () => {
