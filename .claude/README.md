@@ -866,7 +866,9 @@ exit code and seconds, replaced whole through a temporary file) and writes
 what it prints to `<out>/report.txt`. `run_criteria.py --status <out> [--wait
 S]` reads it and exits 0 when the run finished, 3 while it runs, 4 when it is
 stale (not finished and not updated for 1,900 s) and 2 without a status
-file; `--wait` polls for at most S ≤ 220 seconds, so a poll stays under audit
+file or for a run that refused before running anything. A new run clears an
+earlier run's `status.json` and `report.txt` from its `--out` before it can
+refuse, so a poll never reads the earlier one as this one; `--wait` polls for at most S ≤ 220 seconds, so a poll stays under audit
 R5. That is how the whole-tree verifiers run in the background: start the
 run with `run_in_background` and `--out`, poll `--status`, read
 `report.txt`.

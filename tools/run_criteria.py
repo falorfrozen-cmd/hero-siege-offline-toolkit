@@ -123,6 +123,13 @@ live run look stale. The verifier's procedure: start the whole-tree run with
 `--status <out> --wait 220` (Bash timeout 300000) while it exits 3, then read
 `<out>/report.txt`. Never read a status or out directory you did not start.
 
+A run into an `--out` that already holds an earlier run's files first
+removes that `report.txt` and replaces `status.json` with an unfinished one,
+before anything can refuse the run (2026-09-28), so a poll never reads the
+earlier run as this one. A run that then exits before it runs anything (a
+usage error, a missing plan, no bash) leaves its status `refused` with the
+last line it printed to stderr, and `--status` exits 2 on it.
+
 Usage:
     py -3 tools/run_criteria.py <slug>-plan.md [--out DIR] [--start K]
                                 [--timeout SECONDS] [--shell PATH] [--list]
@@ -148,6 +155,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import io
 import json
 import os
 import queue
@@ -595,6 +603,89 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime(UTC_FORMAT)
 
 
+def _replace_json(path: Path, doc: dict) -> None:
+    """Write `doc` to `path` through a temporary file and a replace, so a
+    reader in another process never sees half a file."""
+    tmp = path.with_name(f"{STATUS_FILE}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    # On Windows a replace fails while a `--status` reader holds the file
+    # open; it is open for milliseconds, so try again.
+    for _ in range(40):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(0.05)
+    os.replace(tmp, path)
+
+
+class _Starting:
+    """A new run into an `--out` that may hold an earlier run's files. Before
+    anything can refuse the run, the earlier `report.txt` goes and
+    `status.json` becomes an unfinished status with no criteria, so a
+    `--status` poll can never read the earlier run as this one. A run that
+    exits before `Status` takes over is recorded as refused, with the last
+    line it printed to stderr, so the poll stops instead of waiting for it
+    to go stale."""
+
+    def __init__(self, out: Path):
+        self.path = out / STATUS_FILE
+        self.handed_over = False
+        self.last_error = ""
+        now = _utc_now()
+        self.doc = {"plan": None, "item": None, "started_utc": now, "updated_utc": now,
+                    "finished": False, "error": None, "criteria": []}
+        try:
+            out.mkdir(parents=True, exist_ok=True)
+            _replace_json(self.path, self.doc)
+        except OSError:
+            pass  # main's own mkdir, or Status, reports an unwritable out dir
+        for _ in range(40):
+            try:
+                (out / REPORT_FILE).unlink()
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                time.sleep(0.05)
+
+    def write(self, text: str) -> None:
+        """`sys.stderr` hook: remember the last non-empty line printed."""
+        lines = [line for line in text.splitlines() if line.strip()]
+        if lines:
+            self.last_error = lines[-1].strip()
+
+    def end(self, error: str, code=None) -> None:
+        if self.handed_over:
+            return
+        self.doc.update(updated_utc=_utc_now(), finished=True, error=error)
+        if code is not None:
+            self.doc.update(refused=True, exit=code)
+        try:
+            _replace_json(self.path, self.doc)
+        except OSError:
+            pass
+
+
+class _StderrTap:
+    """Everything printed to stderr goes through unchanged; `_Starting`
+    sees it too, to name why a run refused."""
+
+    def __init__(self, stream, starting: _Starting):
+        self.stream = stream
+        self.starting = starting
+
+    def write(self, text: str) -> int:
+        self.starting.write(text)
+        return self.stream.write(text)
+
+    def flush(self) -> None:
+        self.stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
 class Status:
     """`<out>/status.json`, rewritten whole on every change so a reader in
     another process never sees half a file. Worker threads call `running`
@@ -630,18 +721,8 @@ class Status:
         doc = dict(self.doc, criteria=[{"k": c["k"], "state": self._criterion_state(c), "note": c["note"],
                                         "commands": [dict(self.cmds[j]) for j in c["jobs"]]}
                                        for c in self.criteria])
-        tmp = self.path.with_name(f"{STATUS_FILE}.{os.getpid()}.tmp")
         try:
-            tmp.write_text(json.dumps(doc, indent=1), encoding="utf-8")
-            # On Windows a replace fails while a `--status` reader holds the
-            # file open; it is open for milliseconds, so try again.
-            for _ in range(40):
-                try:
-                    os.replace(tmp, self.path)
-                    return
-                except PermissionError:
-                    time.sleep(0.05)
-            os.replace(tmp, self.path)
+            _replace_json(self.path, doc)
         except OSError as exc:
             if not self.warned:
                 self.warned = True
@@ -712,10 +793,13 @@ def read_status(out: Path) -> tuple:
 
 
 def status_state(doc: dict, now: datetime | None = None) -> tuple:
-    """`(state, exit code, age in seconds)`: finished 0, running 3, stale 4."""
+    """`(state, exit code, age in seconds)`: finished 0, running 3, stale 4,
+    and refused 2 for a run that exited before it ran anything."""
     now = now or datetime.now(timezone.utc)
     updated = datetime.strptime(doc["updated_utc"], UTC_FORMAT).replace(tzinfo=timezone.utc)
     age = max(0, int((now - updated).total_seconds()))
+    if doc.get("refused"):
+        return "refused", 2, age
     if doc.get("finished"):
         return "finished", 0, age
     if age > STALE_AFTER:
@@ -747,7 +831,7 @@ def show_status(out: Path, wait: float) -> int:
         doc, why = read_status(out)
         state = status_state(doc)[0] if doc else None
         left = deadline - time.monotonic()
-        if state in ("finished", "stale") or left <= 0:
+        if state in ("finished", "stale", "refused") or left <= 0:
             break
         time.sleep(min(POLL_SECONDS, left))
     if doc is None:
@@ -764,6 +848,9 @@ def show_status(out: Path, wait: float) -> int:
     if state == "stale":
         tail = (f"not finished and not updated for {age}s (over {STALE_AFTER}s): the runner has died; "
                 f"run it again")
+    elif state == "refused":
+        tail = (f"the run exited {doc.get('exit')} before running anything: {doc.get('error')}; "
+                f"nothing ran, so fix the command and start it again")
     elif state == "running":
         tail = f"updated {age}s ago; poll again with --status {out} --wait {MAX_WAIT}"
     elif doc.get("error"):
@@ -865,7 +952,41 @@ def _tail(text: str, n: int = TAIL_LINES) -> str:
     return "\n".join(head + ["    " + l for l in lines[-n:]])
 
 
+def _new_run_out(argv) -> Path | None:
+    """The `--out` of a run that will write one, known before anything can
+    refuse the run: None for `--status` and `--list`, which write nothing
+    there, and when `--out` is not given (a fresh temporary dir then)."""
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--out", default=None)
+    pre.add_argument("--status", default=None)
+    pre.add_argument("--list", action="store_true")
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            known, _ = pre.parse_known_args(sys.argv[1:] if argv is None else argv)
+    except SystemExit:
+        return None
+    if known.status is not None or known.list or not known.out:
+        return None
+    return Path(known.out)
+
+
 def main(argv=None) -> int:
+    out = _new_run_out(argv)
+    if out is None:
+        return _main(argv, None)
+    starting = _Starting(out)
+    try:
+        with contextlib.redirect_stderr(_StderrTap(sys.stderr, starting)):
+            code = _main(argv, starting)
+    except BaseException as exc:
+        starting.end(f"{type(exc).__name__}: {exc}")
+        raise
+    if code != 0:
+        starting.end(starting.last_error or f"run_criteria exited {code}", code)
+    return code
+
+
+def _main(argv, starting) -> int:
     parser = argparse.ArgumentParser(prog="run_criteria.py")
     parser.add_argument("plan", nargs="?", default=None)
     parser.add_argument("--status", default=None)
@@ -996,6 +1117,8 @@ def main(argv=None) -> int:
     out = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="run_criteria_"))
     out.mkdir(parents=True, exist_ok=True)
     rows, jobs = build_jobs(items, args.start, gates, scope)
+    if starting is not None:
+        starting.handed_over = True
     status = Status(out, plan, args.item, rows, jobs, args.start)
     tee = _Tee(sys.stdout, out / REPORT_FILE)
     error = None

@@ -163,6 +163,77 @@ class StatusFileTests(StatusTestBase):
         self.assertIn("stopped on an error", text)
 
 
+class ReusedOutDirTests(StatusTestBase):
+    """A verifier reuses one `--out` across its first run, `--start` resumes
+    and fix-round reach runs. A new run into it must never let a poll read
+    the earlier run's result as its own."""
+
+    def old_finished_run(self, name):
+        out = self.hand_written(name, True, 30)
+        (out / "report.txt").write_text("the earlier run's report\n", encoding="utf-8")
+        # Control: before the new run, the poll reports the old run finished.
+        self.assertEqual(run(["--status", str(out)])[0], 0)
+        return out
+
+    def test_a_new_run_that_refuses_early_is_not_the_old_finished_run(self):
+        refusals = (
+            lambda out: [str(self.tmp / "no-such-plan.md"), "--out", str(out)],
+            lambda out: [str(self.plan), "--out", str(out), "--jobs", "many"],
+            lambda out: [str(self.plan), "--out", str(out), "--start", "soon"],  # argparse's own refusal
+            lambda out: [str(self.plan), "--out", str(out), "--item", "nope"],
+        )
+        for i, argv in enumerate(refusals):
+            out = self.old_finished_run(f"reused-{i}")
+            self.assertEqual(run(argv(out))[0], 2, "control: the new run did refuse")
+            self.assertFalse((out / "report.txt").exists(), "the earlier run's report is still there")
+            doc = self.status_of(out)
+            self.assertTrue(doc["refused"])
+            self.assertEqual(doc["criteria"], [], "the earlier run's criteria are still reported")
+            started = time.monotonic()
+            rc, text = run(["--status", str(out), "--wait", "30"])
+            self.assertEqual(rc, 2, f"the poll read the old run as this one: {text}")
+            self.assertLess(time.monotonic() - started, 10, "the poll waited on a run that had already refused")
+            self.assertIn("status: refused", text)
+            self.assertNotIn("status: finished", text)
+            self.assertNotIn("criterion 1", text)
+        self.assertIn("no-such-plan.md", self.status_of(self.tmp / "reused-0")["error"],
+                      "the refusal names what the run printed to stderr")
+
+    def test_a_poll_during_startup_sees_a_run_not_the_old_one(self):
+        out = self.old_finished_run("startup")
+        seen = {}
+
+        def slow_build_jobs(*args, **kwargs):
+            seen["rc"], seen["text"] = run(["--status", str(out)])
+            return real(*args, **kwargs)
+        real = run_criteria.build_jobs
+        with mock.patch.object(run_criteria, "build_jobs", slow_build_jobs):
+            run([str(self.plan), "--out", str(out), "--shell", sys.executable, "--start", "99"])
+        self.assertEqual(seen["rc"], 3, seen.get("text"))
+        self.assertIn("status: running", seen["text"])
+
+    def test_a_normal_rerun_into_the_same_dir_ends_finished(self):
+        self.need_bash()
+        out = self.old_finished_run("rerun")
+        rc, stdout = run([str(self.plan), "--out", str(out)])
+        self.assertEqual(rc, 0, stdout)
+        doc = self.status_of(out)
+        self.assertTrue(doc["finished"])
+        self.assertIsNone(doc["error"])
+        self.assertNotIn("refused", doc)
+        self.assertEqual(len(doc["criteria"]), 5)
+        self.assertEqual((out / "report.txt").read_text(encoding="utf-8"), stdout)
+        rc, text = run(["--status", str(out)])
+        self.assertEqual(rc, 0, text)
+        self.assertIn("status: finished", text)
+
+    def test_a_run_without_out_or_with_list_touches_no_earlier_dir(self):
+        out = self.old_finished_run("listed")
+        self.assertEqual(run([str(self.plan), "--out", str(out), "--list"])[0], 0)
+        self.assertEqual(run(["--status", str(out)])[0], 0, "--list writes nothing, so the old run stands")
+        self.assertTrue((out / "report.txt").exists())
+
+
 class StatusPollTests(StatusTestBase):
     def test_a_finished_run_exits_0(self):
         rc, text = run(["--status", str(self.hand_written("done", True, 5000))])

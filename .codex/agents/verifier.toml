@@ -99,8 +99,9 @@ act on its exit code:
   status lines do not show as `done`, with `--start <that k>` and a fresh
   `--out` (`<scratch>/criteria-2`), and poll that one the same way. Judge
   each criterion from the report that ran it to the end.
-- **2, no status file** even after the wait: the run never started. Read the
-  background call's own output for why, and say so in your report.
+- **2, no status file** even after the wait, **or `refused`**: the run never
+  started. Read the background call's own output for why (a refused status
+  quotes its last stderr line), and say so in your report.
 
 Moving the run to the background changes when you read its output, not who
 runs it. You still run every command yourself: the runner is started by
