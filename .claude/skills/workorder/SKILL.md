@@ -602,9 +602,12 @@ The line, when a reviewer's label looks wrong to you:
   - **A plan change:** run `tools/amend_check.py save`, *then* record the
     owner's answer under `### Decisions` as `owner, <YYYY-MM-DD>: "<their
     words>"`, then spawn the planner (labelled `amendment: <slug> owner
-    scope ...`), then `check`. `check` prints `SCOPE: <k> new owner
-    decision(s)` and exits 0 whenever the context gained an owner line since
-    `save`, whatever else changed: not a replan, no tier step.
+    scope ...`), then `check`. When the change would otherwise be a replan
+    (the Goal or scope moved, a section came or went, more than 20 lines
+    changed) and the context gained an owner line since `save`, `check`
+    prints `SCOPE: <k> new owner decision(s)` and exits 0. A change small
+    enough to be an amendment anyway prints plain `AMENDMENT`. Either way it
+    is not a replan and costs no tier step.
   - **A round:** when a relaunch exists only to carry owner decisions (the
     finish review's approved fixes, a rename, a new tab), add one to `scope
     rounds: <k>` in `## State` before the launch. `workorder-rounds.js` adds

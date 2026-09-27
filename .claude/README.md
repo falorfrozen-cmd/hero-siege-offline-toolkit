@@ -822,10 +822,12 @@ commits one item's paths, per repository, under the checkout's commit lock;
 drops when its holder exits) for anything else that must not run twice at
 once. `amend_check.py save|check <plan> [<context>]` decides whether a plan
 change was an amendment, the owner's own scope, or a replan (SKILL.md
-Step 2 and Step 4, "Owner scope is not a failure"): `SCOPE:` when the context
-file gained an `owner, <date>:` decision line since `save`, which exempts the
-change from the replan cap and the tier ladder (audit R25 checks the owner
-did say something).
+Step 2 and Step 4, "Owner scope is not a failure"). It prints `SCOPE:` when a
+change that would otherwise be a replan follows an `owner, <date>:` decision
+line the context gained since `save`. That exempts the change from the
+replan cap and the tier ladder, and audit R25 checks the owner did say
+something. A change small enough to be an amendment anyway prints
+`AMENDMENT`.
 Tests: `tests/test_workorder_plan_tools.py`.
 
 ### `tools/source_index.py` — go to the range, don't grep around

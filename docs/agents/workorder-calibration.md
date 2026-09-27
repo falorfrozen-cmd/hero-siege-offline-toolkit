@@ -772,8 +772,10 @@ chain (items).
   start what the answer cannot change before asking, spin off an
   out-of-scope bug, apply the default to a reversible choice.
 - **Owner scope is not a failure** (SKILL.md Step 4):
-  - `tools/amend_check.py` prints `SCOPE:` and exits 0 when the context
-    gained an `owner, <date>:` decision since `save`.
+  - `tools/amend_check.py` prints `SCOPE:` and exits 0 when a change that
+    would otherwise be a replan follows an `owner, <date>:` decision the
+    context gained since `save`. A change within the amendment limits
+    prints `AMENDMENT` as before.
   - `workorder-rounds.js` adds State's `scope rounds:` to the cap, at most 3.
   - `tools/workorder_audit.py` R25 fails a `SCOPE:` verdict with no owner
     message behind it.
