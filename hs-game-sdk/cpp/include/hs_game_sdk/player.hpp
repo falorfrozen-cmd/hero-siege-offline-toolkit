@@ -312,10 +312,12 @@ struct EquippedSlotScanReport {
         int level;
     };
 
-    /// The stage that ended the scan early (`mplr`, `equippedItems`, `slots`,
-    /// `slots-short`, `global`, `owner`, `exception`), or nullptr when every
-    /// relic slot was read.
-    const char* stopped = nullptr;
+    /// The stage that ended the scan early (`yytk`, `mplr`, `equippedItems`,
+    /// `slots`, `slots-short`, `global`, `owner`, `exception`), or nullptr when
+    /// every relic slot was read. `not-run` until the scan starts, so a report
+    /// the scan never reached (an unusable player handle, an exception in an
+    /// earlier container) cannot read as a complete one.
+    const char* stopped = "not-run";
     /// `global.mplr` as read, -1 when it is not a whole number in range.
     int mplr = -1;
     /// RValue kind of `global.mplr` and `global.equippedItems`, -1 unread.
@@ -375,10 +377,11 @@ inline void ScanEquippedRelicSlots(
     std::unordered_map<int, int>& outRelicLevels,
     EquippedSlotScanReport* report = nullptr
 ) {
-    if (!yytk) return;
     const auto stop = [report](const char* stage) {
         if (report) report->stopped = stage;
     };
+    if (!yytk) return stop("yytk");
+    stop(nullptr);
     try {
         const RValue mplr = YYTK::GetGlobalVariable(yytk, "mplr");
         if (report) report->mplrKind = static_cast<int>(mplr.m_Kind);
@@ -555,8 +558,9 @@ inline std::string FormatRelicLevels(const std::unordered_map<int, int>& relicLe
  * Returns a map of all owned relic IDs and their highest recorded level across equipped slots & inventory.
  *
  * `equippedReport`, when given, receives what the equipped-slot read did
- * (ScanEquippedRelicSlots); it is left untouched when the player handle is
- * unusable and the scan never reaches the slots.
+ * (ScanEquippedRelicSlots); when the player handle is unusable, or an earlier
+ * container throws, the scan never reaches the slots and the report keeps
+ * `stopped == "not-run"`.
  */
 inline std::unordered_map<int, int> GetOwnedRelicLevels(
     YYTKInterface* yytk,
