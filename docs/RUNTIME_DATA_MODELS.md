@@ -93,14 +93,13 @@ Items in Hero Siege exist in memory as GameMaker Structs (`VALUE_OBJECT`) with t
 {
   "a": 104,           // Sprite index or base asset ID
   "b": 42,            // Item type ID / Relic ID / Base item category
-  "c": 16,            // Item Rarity Tier (16 = Relic, 10 = Angelic, 8 = Satanic, 6 = Heroic); c 16 has no measured match on a live relic (its c is 0), see below
+  "c": 0,             // Repository flag: 0 normal, 1 unique (§13.10). Not a rarity and not the class: a relic's c is 0 (below); class = save key suffix / instance itemType (§16.3)
   "j": 1,             // Item subtype / Class alignment
   "i": 100,           // Item quality / Item power level
   "s": 0,             // Sockets count / Socket metadata
   "p": 5,             // Star quality level (0 to 5)
   "o": 10,            // Relic: upgrade level (1 to 10). Stackable item: stack count
   "level": 10,        // Explicit level property (relics: used interchangeably with 'o')
-  "relicLevel": 10,   // Alternate relic level property in UI tooltips; not on a game relic's definition (see below)
   "itemStatStruct": { // Dynamic roll values, flat stats & proc bundles
     "1": 250,         // Stat ID 1 = Strength
     "116": 167,       // Stat ID 116 = Skill ID for "Chance When Striking"
@@ -125,9 +124,10 @@ relic, `g` is the equip slot (10-14), `o` the level, `b` the relic id, and `c` i
 - **the save entry**: a dict key `x-y-<stamp>-<class>` whose class is 16, with id
   and level from its `data.b` and `data.o`.
 
-`hs-game-sdk`'s relic scanners still accept `c == 16` and `relicLevel`, so earlier
-fixtures and callers behave the same, but neither has a measured match on a game
-item: treat them as a compatibility rule, not as how relics are found. An
+`hs-game-sdk`'s relic scanners still accept `c == 16` and `relicLevel`, which this
+section's sample used to show as the relic markers, so earlier fixtures and
+callers behave the same, but neither has a measured match on a game item: treat
+them as a compatibility rule, not as how relics are found. An
 equipped unique glove (`itemType` 4, definition `{b:18, c:1, g:4}`) and a
 material stack (`itemType` 14, `{b:51, o:99}`) are the negative controls beside
 the relic instance in the SDK's shared cases
