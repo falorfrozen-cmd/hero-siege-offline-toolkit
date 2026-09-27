@@ -1247,7 +1247,7 @@ test('the verifier is sent to the criteria runner first, and told it judges noth
   const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
   await run(BASE, reply)
   assert.ok(prompts['verifier:r0'].includes('py -3 tools/run_criteria.py "p.md"'), 'the runner gets the plan path')
-  assert.match(prompts['verifier:r0'], /Bash timeout at 600000/)
+  assert.match(prompts['verifier:r0'], /run_in_background: true/)
   assert.match(prompts['verifier:r0'], /it judges nothing/)
   assert.match(prompts['verifier:r0'], /--start/)
   assert.match(prompts['verifier:r0'], /A root suite the runner already ran is the suite run/)
@@ -1259,7 +1259,7 @@ test('the verifier is sent to the criteria runner first, and told it judges noth
 // between its @scheduler markers; the engine around it with stub agents that
 // take a few milliseconds each, so "at the same time" is observable.
 const schedSrc = src.slice(src.indexOf('// @scheduler-begin'), src.indexOf('// @scheduler-end'))
-const sched = new Function(`${schedSrc}\nreturn { nextToStart, newlyHeld, invalidatedBy, drainedItems, pathsOverlap }`)()
+const sched = new Function(`${schedSrc}\nreturn { nextToStart, newlyHeld, invalidatedBy, drainedItems, pathsOverlap, unblockedItems }`)()
 const IT = (id, files, extra = {}) => ({ id, files, after: [], shares: [], checks: [], ...extra })
 const ST = (items, statuses = {}) => Object.fromEntries(items.map(it => [it.id, { status: 'pending', touched: false, ...(statuses[it.id] || {}) }]))
 
@@ -1622,4 +1622,157 @@ test('a gate not set is a standing, not an unknown', async () => {
   const { prompts } = await reachRun([gated, PASS], {}, { ...BASE, state: '## State\ngates: none\n' })
   assert.ok(prompts['verifier:r1'].includes('--changed-since HUB-SHA'))
   assert.ok(prompts['verifier:r1'].includes('--failed 2 --out'), 'the gated criterion is not re-run as failed')
+})
+
+// --- goal 4: maxParallel is validated, its default named ---------------------
+//
+// Measured 2026-09-27: no item in the ForgePact bug batch waited on the cap
+// of 4, so the default stays and only the argument is checked. The speed
+// report's scope criterion reads DEFAULT_MAX_PARALLEL out of the source.
+test('maxParallel: 0, 17 and "x" are refused before a spawn; 1 and 16 run', async () => {
+  assert.match(src, /const DEFAULT_MAX_PARALLEL = 4\n/)
+  for (const maxParallel of [0, 17, 'x', 2.5, '4']) {
+    const { result, calls } = await runTimed({ ...ITEMS_BASE, maxParallel }, itemsReply())
+    assert.equal(result.outcome, 'BAD-ARGS', JSON.stringify(maxParallel))
+    assert.match(result.detail, /whole number from 1 to 16/)
+    assert.equal(calls.length, 0, `${JSON.stringify(maxParallel)}: an agent spawned before the refusal`)
+  }
+  // Rounds mode takes no items, and a bad value is still a typo worth refusing.
+  assert.equal((await run({ ...BASE, maxParallel: 0 }, standard())).result.outcome, 'BAD-ARGS')
+  // Controls: the ends of the range run, and 1 really is one at a time.
+  const one = await runTimed({ ...ITEMS_BASE, maxParallel: 1 }, itemsReply())
+  assert.equal(one.result.outcome, 'PASS')
+  assert.ok(!overlaps(one.spans, impl(one.calls, 'a'), impl(one.calls, 'b')), 'maxParallel 1 ran two implementers at once')
+  const sixteen = await runTimed({ ...ITEMS_BASE, maxParallel: 16 }, itemsReply())
+  assert.equal(sixteen.result.outcome, 'PASS')
+  assert.ok(overlaps(sixteen.spans, impl(sixteen.calls, 'a'), impl(sixteen.calls, 'b')))
+  const unset = await runTimed(ITEMS_BASE, itemsReply())
+  assert.equal(unset.result.outcome, 'PASS', 'no maxParallel is the default, not a refusal')
+})
+
+// --- goal 3: a reversible owner question runs on its default ----------------
+const OWNED = (id, extra) => ({ id, title: id, files: [`panel/${id}.css`], checks: [`\`grep ${id} x\` ok`], owner: `question ${id}?`, ...extra })
+
+test('owner: a reversible default runs and is listed under defaulted; an irreversible or unmarked item parks', async () => {
+  const args = { ...ITEMS_BASE, items: [...ITEMS_BASE.items,
+    OWNED('d', { default: 'keep the old tray', reversible: true }),
+    OWNED('e', { default: 'drop it', reversible: false }),
+    OWNED('f', { default: 'drop it' }),
+    OWNED('g', { default: 'none', reversible: true }),
+  ] }
+  const { result, calls, prompts } = await runTimed(args, itemsReply())
+  assert.equal(result.outcome, 'PARKED')
+  assert.deepEqual(result.items.map(i => [i.id, i.status]),
+    [['a', 'done'], ['b', 'done'], ['c', 'done'], ['d', 'done'], ['e', 'parked'], ['f', 'parked'], ['g', 'parked']])
+  assert.match(prompts['item-implementer:d:a1:r0'], /has not answered this item's question \("question d\?"\)/)
+  assert.match(prompts['item-implementer:d:a1:r0'], /default "keep the old tray": proceed on that default/)
+  assert.ok(!/has answered/.test(prompts['item-implementer:d:a1:r0']))
+  // Controls: `reversible: false`, no `reversible` field, and a `none` default all park, unspawned.
+  for (const id of ['e', 'f', 'g']) {
+    assert.ok(!calls.some(c => c.startsWith(`item-implementer:${id}:`)), `${id} ran`)
+    assert.equal(result.items.find(i => i.id === id).reason, `owner: question ${id}?`)
+  }
+  assert.deepEqual(result.defaulted.map(d => [d.id, d.question, d.default, d.status]), [['d', 'question d?', 'keep the old tray', 'done']])
+  assert.deepEqual(result.defaulted[0].commits, [{ repo: '.', sha: 'sha-d' }])
+  assert.match(result.defaulted[0].undo, /revert \.:sha-d, record the owner's answer under '### Decisions', and relaunch with 'd' in answered/)
+  assert.match(prompts['scribe:r0'], /defaulted \(1\):\n- d: "question d\?" -> default "keep the old tray" \(done\); undo: revert \.:sha-d/)
+  assert.match(prompts['scribe:r0'], /items: a=done; b=done; c=done; d=defaulted; e=parked; f=parked; g=parked\n/)
+})
+
+test('owner: a defaulted item stays done on a relaunch, and runs again once the owner answers', async () => {
+  const args = { ...ITEMS_BASE, round: 1, items: [...ITEMS_BASE.items, OWNED('d', { default: 'keep', reversible: true })],
+    state: '## State\nround: 1\nitems: a=done; b=done; c=done; d=defaulted\n' }
+  const again = await runTimed(args, itemsReply())
+  assert.equal(again.result.outcome, 'PASS')
+  assert.ok(!again.calls.some(c => c.startsWith('item-implementer:')), 'a defaulted item ran again with no answer')
+  assert.equal(again.result.defaulted[0].id, 'd', 'the defaulted item dropped off the list')
+  assert.match(again.prompts['scribe:r1'], /d=defaulted\n/)
+  const answered = await runTimed({ ...args, answered: ['d'] }, itemsReply())
+  assert.deepEqual(answered.calls.filter(c => c.startsWith('item-implementer:')), ['item-implementer:d:a1:r1'])
+  assert.match(answered.prompts['item-implementer:d:a1:r1'], /has answered this item's question/)
+  assert.deepEqual(answered.result.defaulted, [])
+  assert.match(answered.prompts['scribe:r1'], /d=done\n/)
+})
+
+// --- goal 3: a wait on a person names the work that does not wait on it -----
+test('unblocked: a PLAN-DEFECT independent of an owner-parked item is listed; the item after the owner one is not', async () => {
+  const args = { ...ITEMS_BASE, items: [
+    OWNED('o', { default: 'x', reversible: false }),
+    { id: 'w', title: 'w', files: ['panel/w.css'], after: ['o'], checks: ['`grep w x` ok'] },
+    { id: 'p', title: 'p', files: ['panel/p.css'], checks: ['`grep p x` ok'] },
+    { id: 'q', title: 'q', files: ['docs/q.md'], checks: ['`grep q x` ok'] },
+  ] }
+  const defect = { ...DONE, verdict: 'PLAN-DEFECT', evidence: 'STEP 1: no such token', commits: [], paths: [] }
+  const { result, prompts } = await runTimed(args, itemsReply({ 'item-implementer:p:': defect }))
+  assert.equal(result.outcome, 'PARKED')
+  assert.deepEqual(result.items.map(i => [i.id, i.status]), [['o', 'parked'], ['w', 'held'], ['p', 'parked'], ['q', 'done']])
+  assert.deepEqual(result.unblocked, [{ id: 'p', reason: 'PLAN-DEFECT', route: 'amend-or-replan' }])
+  assert.match(prompts['scribe:r0'], /\nunblocked: p \(PLAN-DEFECT -> amend-or-replan\)\n/)
+  // Control: the same PLAN-DEFECT with no owner question waits on no person, so no list.
+  const noOwner = { ...args, items: args.items.filter(it => it.id !== 'o').map(it => ({ ...it, after: [] })) }
+  const r = await runTimed(noOwner, itemsReply({ 'item-implementer:p:': defect }))
+  assert.equal(r.result.outcome, 'PARKED')
+  assert.ok(!('unblocked' in r.result), 'a result that waits on no person carried unblocked')
+  assert.ok(!/\nunblocked:/.test(r.prompts['scribe:r0']))
+})
+
+test('unblocked: every hold is traced to its root, and each route is named', () => {
+  const items = [IT('o', ['o.css']), IT('w', ['w.css'], { after: ['o'] }), IT('y', ['y.css'], { after: ['w'] }),
+    IT('p', ['p.css']), IT('h', ['h.css']), IT('a', ['a.css']), IT('b', ['b.css']), IT('z', ['z.css']), IT('k', ['k.css'])]
+  const st = ST(items, {
+    o: { status: 'parked', reason: 'owner: o?', ownerWait: true },
+    w: { status: 'held', reason: 'after o, which is parked', heldBy: 'o' },
+    y: { status: 'held', reason: 'after w, which is held', heldBy: 'w' },
+    p: { status: 'parked', reason: 'PLAN-DEFECT' },
+    h: { status: 'held', reason: "may be invalidated by p's PLAN-DEFECT", heldBy: 'p' },
+    a: { status: 'parked', reason: 'ADVICE-NEEDED' },
+    b: { status: 'parked', reason: 'budget: 3 attempts and its checks still fail' },
+    z: { status: 'held', reason: 'could not be scheduled' },
+    k: { status: 'done' },
+  })
+  assert.deepEqual(sched.unblockedItems(items, st).map(u => [u.id, u.route]),
+    [['p', 'amend-or-replan'], ['h', 'amend-or-replan'], ['a', 'consult'], ['b', 'split'], ['z', 'relaunch']])
+})
+
+test('unblocked: a pass pending a human carries an empty list, in items mode and in rounds', async () => {
+  const pending = { verdict: 'PASS-PENDING-HUMAN', criteria: [], pending_human: ['look at the panel'] }
+  const items = await runTimed(ITEMS_BASE, itemsReply({ 'verifier:': pending }))
+  assert.equal(items.result.outcome, 'PASS-PENDING-HUMAN')
+  assert.deepEqual(items.result.unblocked, [])
+  assert.match(items.prompts['scribe:r0'], /\nunblocked: none\n/)
+  const prompts = {}
+  const rounds = await run(BASE, (label, prompt) => { prompts[label] = prompt; return standard({ verifier: pending })(label) })
+  assert.equal(rounds.result.outcome, 'PASS-PENDING-HUMAN')
+  assert.deepEqual(rounds.result.unblocked, [])
+  assert.match(prompts['scribe:r0'], /\nunblocked: none\n/)
+  // Control: a plain PASS waits on no one.
+  const pass = await run(BASE, standard())
+  assert.ok(!('unblocked' in pass.result))
+})
+
+// --- goal 2: whole-tree runs go to the background, item checks do not -------
+test('background: the rounds verifier, a reach re-verify and the items gate poll --status; item checks stay in the foreground', async () => {
+  const background = p => {
+    assert.match(p, /run_in_background: true/)
+    assert.match(p, /py -3 tools\/run_criteria\.py --status "<your scratchpad>\/criteria" --wait 220/)
+    assert.match(p, /Bash timeout of 300000, re-issued while it exits 3/)
+    assert.match(p, /criteria\/report\.txt/)
+  }
+  const rounds = {}
+  await run(BASE, (label, prompt) => { rounds[label] = prompt; return standard()(label) })
+  background(rounds['verifier:r0'])
+  const scopedPass = { verdict: 'PASS', criteria: [CRIT(1, 'pass'), CRIT(2, 'pass'), CRIT(3, 'pass')], pending_human: [] }
+  const reach = await reachRun([FAILED_2, scopedPass])
+  assert.ok(reach.prompts['verifier:r1'].includes('--changed-since HUB-SHA'), 'control: this is the reach re-verify')
+  background(reach.prompts['verifier:r1'])
+  const items = await runTimed(ITEMS_BASE, itemsReply())
+  background(items.prompts['verifier:r0'])
+  // Controls: the item check and the item implementer keep their foreground run.
+  for (const label of ['item-verifier:a:a1:r0', 'item-implementer:a:a1:r0']) {
+    const p = items.prompts[label]
+    assert.ok(p.includes('--item a --jobs auto'), label)
+    assert.ok(!p.includes('--status'), `${label} was sent to the background`)
+    assert.ok(!p.includes('run_in_background'), `${label} was sent to the background`)
+    assert.match(p, /Bash timeout (at )?600000/)
+  }
 })
