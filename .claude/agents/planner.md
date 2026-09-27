@@ -219,6 +219,21 @@ wait"; evidence in `docs/agents/workorder-calibration.md`).
   everything. If the change has a contract that several criteria depend on
   without naming it, list it on `## State`'s `shared contract:` line: any
   change to it runs the full set.
+- **Run each suite once per verify.** ForgePact's Python suite re-runs the
+  panel's browser suites: `test_panel_oracle_replay`, `test_panel_e2e*` and
+  `test_panel_perf` each run one `npm run` suite. So when a plan's criteria
+  run those suites themselves (`npm run oracle:replay`, `npm run e2e`,
+  `e2e:gems`, `e2e:perf` and the rest), its full-Python-suite criterion
+  leaves those modules out, and the verify checks each suite once:
+  `cd ForgePact && py -3 tools/run_tests_parallel.py --exclude-module
+  "test_panel_e2e*" --exclude-module test_panel_oracle_replay
+  --exclude-module test_panel_perf`. Exclude only a module whose suite
+  another criterion of the same plan runs; the id-set check then expects
+  discovery less those modules, and a name that matches nothing is refused.
+  A plan that runs none of the browser suites directly keeps the whole
+  Python suite. Release CI (`forgepact-release.yml`) still runs everything.
+  The owner, 2026-09-26: *"If some checks can be done once for 2 things
+  it's better than checking twice after each change"*.
 - **Never pin a moving head.** A criterion names a commit through a
   per-workorder tag a precondition step creates (`git tag <slug>-base`, e.g.
   `forgepact-ui-polish-base`), or through a merge-base expression
