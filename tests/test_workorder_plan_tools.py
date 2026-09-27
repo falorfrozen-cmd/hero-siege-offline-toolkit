@@ -953,6 +953,12 @@ class ReachSelectionTests(unittest.TestCase):
         self.assertTrue(rp("ForgePact/panel", "ForgePact/panel/src/a.js"), "a literal directory covers what is under it")
         self.assertFalse(rp("ForgePact/panel", "ForgePact/panel-old/a.js"), "a prefix of a name is not its directory")
         self.assertTrue(rp("**/*.md", "README.md"))
+        # PR #256 review: a mid-pattern `**/` matches no directory too.
+        self.assertTrue(rp("ForgePact/panel/src/**/*.ts", "ForgePact/panel/src/main.ts"))
+        self.assertTrue(rp("ForgePact/panel/src/**/*.ts", "ForgePact/panel/src/sub/main.ts"))
+        self.assertTrue(rp("a/**/b/**/*.py", "a/b/x.py"))
+        self.assertFalse(rp("ForgePact/panel/src/**/*.ts", "ForgePact/panel/main.ts"), "control: not above the dir")
+        self.assertFalse(rp("ForgePact/panel/src/**/*.ts", "ForgePact/panel/src/main.js"), "control: not another type")
         self.assertTrue(rp("**", "anything/at/all"))
         self.assertTrue(rp("tools\\plan_lint.py", "tools/plan_lint.py"))
         self.assertFalse(rp("docs/*.md", "tools/x.md"))

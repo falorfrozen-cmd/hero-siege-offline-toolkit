@@ -205,15 +205,33 @@ def reads_path(glob: str, path: str) -> bool:
     """Whether a changed `path` is one a `(reads ...)` glob covers. `*`
     crosses `/` (fnmatch), so `dir/*` and `dir/**` both cover everything
     under `dir/`; a literal covers itself and, as a directory, everything
-    under it; `**/x` also covers a root-level `x`."""
+    under it. A `**/` anywhere also matches no directory at all, as a
+    globstar does: `**/x` covers a root-level `x`, and `dir/**/*.ts` covers
+    `dir/a.ts` (fnmatch alone keeps the `/` after `**` and misses both)."""
     glob = glob.replace("\\", "/").removeprefix("./")
     path = path.replace("\\", "/").removeprefix("./")
     if glob.rstrip("/") in ("", "*", "**"):
         return True
     if _is_glob(glob):
-        return fnmatch.fnmatchcase(path, glob) or (glob.startswith("**/") and fnmatch.fnmatchcase(path, glob[3:]))
+        return any(fnmatch.fnmatchcase(path, g) for g in _globstar_forms(glob))
     glob = glob.rstrip("/")
     return path == glob or path.startswith(glob + "/")
+
+
+def _globstar_forms(glob: str) -> set:
+    """`glob` and every form of it with one or more of its `**/` removed."""
+    forms, todo = {glob}, [glob]
+    while todo:
+        g = todo.pop()
+        i = g.find("**/")
+        while i >= 0:
+            if i == 0 or g[i - 1] == "/":
+                shorter = g[:i] + g[i + 3:]
+                if shorter not in forms:
+                    forms.add(shorter)
+                    todo.append(shorter)
+            i = g.find("**/", i + 1)
+    return forms
 
 
 def infer_reads(text: str) -> list:
