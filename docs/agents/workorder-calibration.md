@@ -562,3 +562,92 @@ measured baseline. Three things would show the design needs tightening:
 (`item-implementer:`, `item-verifier:`, `fix-implementer:`,
 `<reviewer>:p<k>:`). They parse as ordinary roles in round `n`, so the audit
 reads them, but no rule is specific to them yet.
+
+# Re-verifying only what a fix reaches (2026-09-27)
+
+## The question
+
+In the ForgePact UI redesign's ship workorder, the second patch of round 2
+found a real panel bug: a used undo toast's resumed timer hid the next toast
+early. The fix was one file, `panel/src/lib/enabled-mods-undo.js`, plus one
+regression check in `review-fixes.e2e.mjs`. The rules as written sent it to
+another full verify, behind a Python suite of about 20 minutes, because
+SKILL.md said the verifier "runs every criterion as usual, because nothing
+says which criteria a change can reach". The owner said: *"run relevant tests
+only if possible"*.
+
+## What was measured
+
+Read from the ship workorder's context file (gitignored, on the machine that
+ran it), not from transcripts:
+
+- **The driver chose the criteria by hand.** For a panel JavaScript fix it
+  ran the rebuild, `npm test`, the one or two e2e suites that cover the file
+  (`e2e:review` 28/28, and `e2e:perf` 26/26 alone because it was the
+  suite that had timed out), the oracle replay, and the frozen-file and docs
+  criteria. It skipped the full Python run. Its only tests that could see a
+  panel change wrap those same npm suites. The recorded scope was criteria
+  1-5, 7, 9-11, 16, 18, 19 and 23-25 of the plan's 29, plus `plan_lint`.
+- **The same scoping held for the next fix.** The PR review's Restore
+  defaults icon fix re-ran `npm test`, `e2e:finish` 14/14, `e2e` 32/32, the
+  oracle replay ("817 steps, 0 mismatches") and the two docs criteria.
+  Criterion 22 was not re-run.
+- **About 40 minutes saved per fix round**, the driver's estimate: the
+  Python suite and the e2e suites the fix could not reach.
+- **No independence lost.** A fresh verifier still ran every criterion it
+  reported. Only the set was smaller.
+
+The gap was that nothing written down said which criteria a change could
+reach. `implementer.md` already told a re-entered implementer to re-run
+"only what the defect touches". AGENTS.md's "a middle workorder's criteria
+run what its change can reach" is about writing a plan's criteria, not about
+re-checking them after a fix.
+
+## What changed
+
+- **A reach map on each criterion.** `(reads `<glob>`, ...)` names the files
+  whose change can alter the criterion's result. `tools/plan_lint.py` warns
+  `no-reads` on a criterion without one, and prints the paths its commands
+  mention as a starting point. It warns `reads-nothing` on a glob that
+  matches no tracked file. Warnings never fail the lint, so an old plan still
+  lints clean.
+- **`tools/run_criteria.py --changed-since <ref>`** (`DIR=<ref>` per
+  submodule, or `--changed-from <file>` for `round_delta.py delta`'s output)
+  and `--failed <k,...>` select the criteria a changed path reaches, plus the
+  failed ones, any criterion with no map, and any criterion a selected one
+  runs `(after ...)`. It prints the scope, meaning each criterion as `run` or
+  `skip` with its reason, before running anything. The selection is a pure
+  function (`select`). The runner falls back to every criterion when the
+  delta is unknown, and when a changed path is a shared contract:
+  `hs-game-sdk/`, `third_party/yytoolkit/`, `.gitmodules`, the selection's own
+  code, or the plan's `shared contract:` line.
+- **`workorder-rounds.js` (2j)** gives a round's fresh verifier the scoped
+  command when the previous verify left every criterion at `pass`, `fail` or
+  gated. The bases are the round's own snapshot heads, and `--failed` lists
+  the criteria that failed. The verifier reports each criterion's plan
+  number (`k`) and each skipped one as `not-selected`. A PASS reached this
+  way returns `verifyScope: 'reach'`.
+- **Rule text**: SKILL.md Step 4, "Re-verify what the fix reaches", with the
+  patch route's verifier bullet changed to match, and Step 5's `PASS
+  (scoped)`; verifier.md, "When you re-verify a fix"; planner.md, "Say what
+  each criterion reads"; and one line in AGENTS.md § "Spend Each Check Once".
+  The full set still runs at the final gate before a push. It also runs when
+  the delta is unknown (`round_delta.py` exit 3), when a shared contract
+  changed, when a criterion's standing is unknown, or when the verifier
+  cannot tell whether the fix reaches a skipped criterion.
+- Tests: `tests/test_workorder_plan_tools.py` (`ReachSelectionTests`,
+  `ReachRunTests`, `PlanLintReachTests`). The negative control is a change
+  outside every criterion's reads, which selects only the failed criteria.
+  A change to a file that several criteria declare selects each of them. One
+  run goes through a real hub and a submodule. The engine's route and its
+  four full-set fallbacks are in `.claude/workflows/workorder-rounds.test.mjs`.
+
+## Not yet measured
+
+No plan has carried a reach map yet, so the saving above comes from one
+hand-scoped workorder, not from the tool. Next time, measure the criteria a
+scoped verify ran against the plan's total, and the wall time per fix round
+against a full verify. One outcome would mean a map was too narrow: a
+criterion that a scoped verify skipped and the final gate then failed. When
+that happens, record the criterion, its `(reads ...)` and the path that
+reached it.

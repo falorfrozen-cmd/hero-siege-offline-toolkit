@@ -71,17 +71,48 @@ run. A command two criteria share runs once, with the stricter class.
 criteria`, numbered from 1 -- the targeted checks `workorder-rounds.js` has
 the verifier run as an item finishes.
 
+`--changed-since REF` (2026-09-27) runs only the criteria a change can
+reach, for a fix round after a verify that passed every other criterion. The
+owner, in the ForgePact UI redesign's ship workorder: "run relevant tests
+only if possible". What changed is `git diff --name-only REF` (committed and
+uncommitted) plus untracked files, in the hub and in every initialized
+submodule, submodule paths under their directory. A submodule's base is the
+commit the hub's REF records for it, unless `--changed-since DIR=REF` names
+one (the round's own heads, from `round_delta.py heads`). `--changed-from
+FILE` reads the changed paths from a file instead (`round_delta.py delta`'s
+output; `-` is stdin). A criterion is selected when:
+
+  * it failed last time: `--failed K[,K...]`, the plan numbers the previous
+    verify reported as failed;
+  * a changed path matches a glob its `(reads `<glob>`, ...)` declares
+    (`tools/plan_lint.py` warns on a criterion without one);
+  * it declares no `(reads ...)`: an unmapped criterion runs on every fix
+    round, so an old plan verifies fully;
+  * a selected criterion runs `(after K)` it: criterion K is selected too.
+
+Every criterion runs, as without the flag, when the delta is unknown (a base
+git cannot diff from, a submodule with no base, an unreadable
+`--changed-from` file) or a changed path is a shared contract: a glob in
+`SHARED_CONTRACT` below, or on the plan's `## State` `shared contract:` line.
+Before anything runs it prints the scope: the changed paths, then each
+criterion as `run` or `skip` with the reason; `scope: full -- <why>` when it
+fell back. An unselected criterion prints `NOT SELECTED (<why>)` in the
+report, where its commands would have been. The full set still runs at the
+final gate before a push; this is for the fix rounds before it.
+
 Usage:
     py -3 tools/run_criteria.py <slug>-plan.md [--out DIR] [--start K]
                                 [--timeout SECONDS] [--shell PATH] [--list]
                                 [--jobs N|auto] [--browser-jobs N] [--item ID]
+                                [--changed-since REF [--changed-since DIR=REF ...]
+                                 | --changed-from FILE] [--failed K[,K...]]
 
 `--start K` resumes at criterion K after a call that hit the Bash tool's
 ceiling; `--list` prints what would run and runs nothing (with `--jobs`, each
-command's class too). `--timeout` is per command (default 900). Without
-`--jobs` everything runs one command at a time in plan order, as it always
-has. Exit code: 0 when it ran (whatever the commands exited with), 2 on a
-usage error, no plan, no such item, or no bash.
+command's class too; with `--changed-since`, the scope). `--timeout` is per
+command (default 900). Without `--jobs` everything runs one command at a time
+in plan order, as it always has. Exit code: 0 when it ran (whatever the
+commands exited with), 2 on a usage error, no plan, no such item, or no bash.
 """
 
 from __future__ import annotations
@@ -136,6 +167,15 @@ PURE_SCRIPT_RE = re.compile(r"^(?:py(?:\s+-3)?|python3?)\s+(?:-c\b|\S*(?:plan_li
                             r"section|round_delta)\.py\b)|^node\s+-e\b")
 DEFAULT_BROWSER_JOBS = 2
 
+# A change here can alter what every criterion reads without touching a path
+# any criterion declares: the contract the C++/Python/TypeScript bindings
+# agree on, the distributed YYToolkit, which submodules exist, and this
+# selection itself. Any of them changed runs the full set.
+SHARED_CONTRACT = ("hs-game-sdk/**", "third_party/yytoolkit/**", ".gitmodules",
+                   "tools/run_criteria.py", "tools/plan_lint.py")
+CONTRACT_LINE_RE = re.compile(r"^\s*shared contract:", re.I)
+SCOPE_LIST = 20
+
 
 def _section(lines: list, heading_re) -> list | None:
     for i, line in enumerate(lines):
@@ -173,7 +213,7 @@ def commands(item: str) -> list:
     `cd <dir>; `."""
     out = []
     cd = None
-    for a, b in SPAN_RE.findall(item):
+    for a, b in SPAN_RE.findall(plan_lint.without_reads(item)):
         span = (a or b).strip()
         if not COMMAND_RE.match(span):
             continue
@@ -205,6 +245,138 @@ def gates_set(text: str) -> set | None:
     ticked = re.findall(r"`([^`]+)`", value)
     tokens = ticked if ticked else re.split(r"[;,]|\band\b", value, flags=re.I)
     return {_norm_gate(t) for t in tokens if _norm_gate(t) and _norm_gate(t) != "none"}
+
+
+def contract_globs(text: str) -> list:
+    """`SHARED_CONTRACT` plus the globs on the plan's `## State` `shared
+    contract:` line."""
+    body = _section(text.splitlines(), STATE_HEADING_RE) or []
+    extra = [(a or b).strip() for line in body if CONTRACT_LINE_RE.match(line)
+             for a, b in SPAN_RE.findall(line.split(":", 1)[1]) if (a or b).strip()]
+    return list(SHARED_CONTRACT) + extra
+
+
+def _hits(globs: list, changed: list) -> list:
+    return [p for p in changed if any(plan_lint.reads_path(g, p) for g in globs)]
+
+
+def _hit_text(globs: list, hits: list) -> str:
+    glob = next(g for g in globs if plan_lint.reads_path(g, hits[0]))
+    more = f" (+{len(hits) - 1} more)" if len(hits) > 1 else ""
+    return f"reads `{glob}` <- {hits[0]}{more}"
+
+
+def select(items: list, changed, failed=frozenset(), contract=SHARED_CONTRACT, unknown: str = "") -> tuple:
+    """`(full, why, scope)`: which criteria a change can reach, as a pure
+    function of the criteria texts, the changed paths and the criteria that
+    failed last time. `scope` maps each criterion number to `(selected,
+    reason)`. `changed` None means the delta is unknown (`unknown` says why):
+    then, as when a changed path is a shared contract, every criterion is
+    selected and `full` is True."""
+    ks = range(1, len(items) + 1)
+    if changed is None:
+        why = f"delta unknown: {unknown or 'no changed paths'}"
+    else:
+        hit = _hits(list(contract), changed)
+        why = f"shared contract changed: {_hit_text(list(contract), hit)}" if hit else ""
+    if why:
+        return True, why, {k: (True, why) for k in ks}
+    scope = {}
+    for k, item in zip(ks, items):
+        declared = plan_lint.reads(item)
+        hits = _hits(declared, changed) if declared else []
+        if k in failed:
+            scope[k] = (True, "failed last time (--failed)")
+        elif declared is None:
+            scope[k] = (True, "declares no (reads ...), so it runs whatever changed")
+        elif hits:
+            scope[k] = (True, _hit_text(declared, hits))
+        else:
+            scope[k] = (False, f"nothing it reads changed (reads {', '.join(f'`{g}`' for g in declared)})")
+    # A selected criterion that runs after another needs what that one's
+    # command writes (a build, most often), so the other runs too.
+    grew = True
+    while grew:
+        grew = False
+        for k, item in zip(ks, items):
+            if not scope[k][0]:
+                continue
+            for m in AFTER_DECL_RE.finditer(item):
+                for dep in (int(x) for x in re.findall(r"\d+", m.group(1))):
+                    if dep in scope and not scope[dep][0]:
+                        scope[dep] = (True, f"criterion {k} runs after it")
+                        grew = True
+    return False, "", scope
+
+
+def _submodule_dirs(root: Path) -> list:
+    """`.gitmodules` paths that are initialized checkouts, forward-slashed."""
+    if not (root / ".gitmodules").is_file():
+        return []
+    result = subprocess.run(["git", "config", "--file", ".gitmodules", "--get-regexp", r"^submodule\..*\.path$"],
+                            cwd=str(root), capture_output=True, text=True)
+    dirs = [line.partition(" ")[2].strip().replace("\\", "/") for line in result.stdout.splitlines()]
+    return [d for d in dirs if d and (root / d / ".git").exists()]
+
+
+def _git_lines(cwd: Path, *args) -> list | None:
+    result = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True,
+                            encoding="utf-8", errors="replace")
+    return result.stdout.splitlines() if result.returncode == 0 else None
+
+
+def changed_paths(root: Path, since: dict) -> tuple:
+    """`(paths, None)` changed since each repo's base, or `(None, why)`.
+    `since` maps `.` to the hub's base and a submodule dir to its own; a
+    submodule without one takes the commit the hub's base records for it.
+    Working-tree and untracked changes count, so work left uncommitted is
+    in scope too."""
+    subs = _submodule_dirs(root)
+    unknown = sorted(set(since) - {"."} - set(subs))
+    if unknown:
+        return None, f"not an initialized submodule: {', '.join(unknown)}"
+    paths: set = set()
+    for key in ["."] + subs:
+        repo = root if key == "." else root / key
+        base = since.get(key)
+        if base is None:
+            recorded = _git_lines(root, "rev-parse", f"{since['.']}:{key}")
+            if not recorded:
+                return None, f"no base for {key}: the hub's {since['.']} records no commit for it"
+            base = recorded[0].strip()
+        diff = _git_lines(repo, "diff", "--name-only", "--no-renames", base)
+        untracked = _git_lines(repo, "ls-files", "--others", "--exclude-standard")
+        if diff is None or untracked is None:
+            return None, f"git cannot diff {'the hub' if key == '.' else key} from {base}"
+        for p in diff + untracked:
+            p = p.strip().replace("\\", "/")
+            if not p or (key == "." and p in subs):
+                continue  # the hub's own line for a submodule is its gitlink, not a file
+            paths.add(p if key == "." else f"{key}/{p}")
+    return sorted(paths), None
+
+
+def _read_changed_from(source: str) -> tuple:
+    try:
+        text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return None, f"cannot read {source}: {exc}"
+    return sorted({l.strip().replace("\\", "/").removeprefix("./") for l in text.splitlines() if l.strip()}), None
+
+
+def print_scope(source: str, changed, full: bool, why: str, scope: dict, start: int) -> None:
+    if full:
+        print(f"scope: full -- {why}; running every criterion")
+        return
+    print(f"scope: changed {source}: {len(changed)} path(s)")
+    for p in changed[:SCOPE_LIST]:
+        print(f"  {p}")
+    if len(changed) > SCOPE_LIST:
+        print(f"  ... {len(changed) - SCOPE_LIST} more")
+    shown = {k: v for k, v in scope.items() if k >= start}
+    print(f"scope: running {sum(1 for s, _ in shown.values() if s)} of {len(shown)} criteria")
+    for k, (selected, reason) in shown.items():
+        print(f"  {'run ' if selected else 'skip'} criterion {k}: {reason}")
 
 
 def find_bash(explicit: str | None) -> str | None:
@@ -253,11 +425,12 @@ def classify(cmd: str) -> str:
     return "exclusive"
 
 
-def build_jobs(items: list, start: int, gates) -> tuple:
+def build_jobs(items: list, start: int, gates, scope: dict | None = None) -> tuple:
     """(rows, jobs): one row per criterion from `start` on -- its number, the
     first line, and either a skip reason or its commands as job ids -- and
     one job per distinct command, numbered in plan order (the serial run's
-    `cmd-<n>.log` numbers), with its class and the jobs it must follow."""
+    `cmd-<n>.log` numbers), with its class and the jobs it must follow.
+    `scope` is `select()`'s map; a criterion it did not select gets no job."""
     rows, jobs, by_cmd = [], [], {}
     job_of_criterion: dict = {}
     for k, item in enumerate(items, 1):
@@ -267,6 +440,9 @@ def build_jobs(items: list, start: int, gates) -> tuple:
         row = {"k": k, "first": first, "more": len(first) > 150 or len(item.splitlines()) > 1,
                "skip": None, "jobs": []}
         rows.append(row)
+        if scope is not None and not scope[k][0]:
+            row["skip"] = f"NOT SELECTED ({scope[k][1]})"
+            continue
         unset = [g for g in GATE_RE.findall(item) if gates is not None and _norm_gate(g) not in gates]
         if unset:
             row["skip"] = f"SKIPPED (gate {'; '.join(unset)} not set)"
@@ -447,10 +623,43 @@ def main(argv=None) -> int:
     parser.add_argument("--jobs", default=None)
     parser.add_argument("--browser-jobs", type=int, default=DEFAULT_BROWSER_JOBS)
     parser.add_argument("--item", default=None)
+    parser.add_argument("--changed-since", action="append", default=[])
+    parser.add_argument("--changed-from", default=None)
+    parser.add_argument("--failed", default=None)
     try:
         args = parser.parse_args(argv)
     except SystemExit:
         return 2
+    since: dict = {}
+    for value in args.changed_since:
+        key, _, ref = value.rpartition("=") if "=" in value else (".", "", value)
+        key = key.replace("\\", "/").strip("/") or "."
+        if not ref or key in since:
+            print(f"run_criteria: --changed-since {value}: want REF once, and DIR=REF once per submodule",
+                  file=sys.stderr)
+            return 2
+        since[key] = ref
+    scoped = bool(since) or args.changed_from is not None
+    if since and "." not in since:
+        print("run_criteria: --changed-since DIR=REF needs the hub's --changed-since REF too", file=sys.stderr)
+        return 2
+    if since and args.changed_from is not None:
+        print("run_criteria: --changed-since and --changed-from are alternatives", file=sys.stderr)
+        return 2
+    if (args.failed is not None or scoped) and args.item is not None:
+        print("run_criteria: --item runs an item's own checks; the reach selection is for the criteria",
+              file=sys.stderr)
+        return 2
+    if args.failed is not None and not scoped:
+        print("run_criteria: --failed needs --changed-since or --changed-from", file=sys.stderr)
+        return 2
+    failed: set = set()
+    if args.failed is not None:
+        parts = [p.strip() for p in args.failed.split(",") if p.strip()]
+        if not all(p.isdigit() and int(p) >= 1 for p in parts):
+            print("run_criteria: --failed takes criterion numbers, e.g. 3,7", file=sys.stderr)
+            return 2
+        failed = {int(p) for p in parts}
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     jobs_cap = None
@@ -491,13 +700,28 @@ def main(argv=None) -> int:
         return 2
     gates = gates_set(text)
     root = checkout_root(plan)
+    if failed - set(range(1, len(items) + 1)):
+        print(f"run_criteria: --failed names no criterion of {len(items)}: "
+              f"{', '.join(str(k) for k in sorted(failed - set(range(1, len(items) + 1))))}", file=sys.stderr)
+        return 2
+    scope = None
+    if scoped:
+        if since:
+            changed, why = changed_paths(root, since)
+            source = "since " + ", ".join(ref if key == "." else f"{key}={ref}" for key, ref in since.items())
+        else:
+            changed, why = _read_changed_from(args.changed_from)
+            source = f"per {args.changed_from}"
+        full, full_why, scope = select(items, changed, failed, contract_globs(text), why or "")
     out = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="run_criteria_"))
     if not args.list:
         out.mkdir(parents=True, exist_ok=True)
         print(f"checkout: {root}\nlogs: {out}\nshell: {bash}")
+    if scoped:
+        print_scope(source, changed, full, full_why, scope, args.start)
 
     if jobs_cap is not None:
-        rows, jobs = build_jobs(items, args.start, gates)
+        rows, jobs = build_jobs(items, args.start, gates, scope)
         if args.list:
             by_id = {j["id"]: j for j in jobs}
             for row in rows:
@@ -522,7 +746,10 @@ def main(argv=None) -> int:
         first = item.splitlines()[0]
         more = " ..." if len(first) > 150 or len(item.splitlines()) > 1 else ""
         print(f"\ncriterion {k}: {first[:150]}{more}")
-        unset = [g for g in GATE_RE.findall(item) if gates is not None and _norm_gate(g) not in gates]
+        if scope is not None and not scope[k][0]:
+            print(f"  NOT SELECTED ({scope[k][1]})")
+            continue
+        unset =[g for g in GATE_RE.findall(item) if gates is not None and _norm_gate(g) not in gates]
         if unset:
             print(f"  SKIPPED (gate {'; '.join(unset)} not set)")
             continue

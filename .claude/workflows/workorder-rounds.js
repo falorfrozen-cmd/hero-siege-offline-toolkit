@@ -253,8 +253,9 @@ const VERIFIER_SCHEMA = {
   properties: {
     verdict: { type: 'string', enum: ['PASS', 'PASS-PENDING-HUMAN', 'IMPL-DEFECT', 'PLAN-DEFECT'] },
     criteria: { type: 'array', items: { type: 'object', properties: {
-      criterion: { type: 'string' }, status: { type: 'string', enum: ['pass', 'fail', 'unattempted'] }, evidence: { type: 'string' },
+      criterion: { type: 'string' }, status: { type: 'string', enum: ['pass', 'fail', 'unattempted', 'not-selected'] }, evidence: { type: 'string' },
       gate: { type: 'string' }, // the gate token(s) the criterion names, e.g. 'live1: complete'; '' when ungated (2f)
+      k: { type: 'integer' }, // its number in plan order, as run_criteria prints it (2j)
     }, required: ['criterion', 'status', 'evidence'] } },
     pending_human: { type: 'array', items: { type: 'string' } },
     // STRUCTURAL FINDINGS and a non-empty NOT DONE/DEVIATIONS: an IMPL-DEFECT
@@ -408,6 +409,7 @@ const roundBlock = (n, record) => {
   for (const f of record.nonBlocking) lines.push(nonBlockingLine(f))
   lines.push('', `not re-run: ${record.notReRun.join(', ') || 'none'}`)
   if (record.patch) lines.push(`patch: ${record.patch}`)
+  if (record.verifyScope) lines.push(`verify scope: ${record.verifyScope}`)
   if (record.next) lines.push(`next: ${record.next}`)
   return lines.join('\n')
 }
@@ -590,10 +592,15 @@ const SECTION_CMD = file => `\`py -3 .claude/skills/workorder/section.py "${file
 // Measured 2026-09-22: 8 of 22 sessions failed R2 because a verifier, told
 // only "Workorder: <path>", read a 30-42KB plan whole to find its criteria.
 // Hand it the two extractions that are the whole of its mandate.
-const VERIFIER_CRITERIA_NOTE = ` Take the criteria and the gate tokens with exactly \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\` and \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'State'\`; do not Read the plan whole.` +
+const verifierCriteriaNote = (extra = '') => ` Take the criteria and the gate tokens with exactly \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\` and \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'State'\`; do not Read the plan whole.` +
   ` A gate is set only when the \`gates:\` line itself carries its token. \`gates pending:\` and \`route tokens:\` set nothing, and a \`gates:\` value with \`|\` alternatives is a template that sets nothing. Put the token a gated criterion names in its 'gate'. A criterion whose gate is not set is 'unattempted' (gate <token> not set), never 'fail'. Put each STRUCTURAL FINDING and each NOT DONE/DEVIATIONS finding in 'other_defects'.` +
-  ` First run every command-shaped criterion in one call: \`py -3 tools/run_criteria.py "${A.planPath}" --jobs auto --out "<your scratchpad>/criteria"\` with the Bash timeout at 600000. It runs each distinct command once, exactly as written, independent ones at the same time (builds first), skips criteria whose gate is not set, and prints each exit code and output tail in plan order (full output in cmd-<n>.log); it judges nothing, so decide each criterion from what it printed, check the ones it prints as 'no command' by reading, run by hand only a command that could not start in bash, and if its output stops early re-run it with --start <next criterion>. A root suite the runner already ran is the suite run: grep its log, never run it again.` +
+  ` Put each criterion's number in plan order, as the runner prints it, in 'k'.` +
+  ` First run every command-shaped criterion in one call: \`py -3 tools/run_criteria.py "${A.planPath}" --jobs auto${extra} --out "<your scratchpad>/criteria"\` with the Bash timeout at 600000. It runs each distinct command once, exactly as written, independent ones at the same time (builds first), skips criteria whose gate is not set, and prints each exit code and output tail in plan order (full output in cmd-<n>.log); it judges nothing, so decide each criterion from what it printed, check the ones it prints as 'no command' by reading, run by hand only a command that could not start in bash, and if its output stops early re-run it with --start <next criterion>. A root suite the runner already ran is the suite run: grep its log, never run it again.` +
   ` Run each criterion's command exactly as written: never swap \`py -3\` for \`python\`; a command that cannot start is a failed criterion with its error. Run each test suite once, with the Bash timeout at 240000 and its output sent to a scratch file you grep; never run a suite again to read another slice.`
+const VERIFIER_CRITERIA_NOTE = verifierCriteriaNote()
+// 2j: a fix round after a verify that passed every other criterion runs only
+// what the fix can reach, plus what failed (reachScope below).
+const VERIFIER_REACH_NOTE = ` This is a reach re-verify: the previous verify passed every criterion except the ones --failed names, so the runner selects only the criteria this round's change can reach (each criterion's \`(reads ...)\`) plus those, and prints the scope before it runs anything. Report each criterion it prints as NOT SELECTED with status 'not-selected' and its reason as the evidence, never as 'pass'. Skip your procedure's step 3 root suite unless a selected criterion runs it. If it prints \`scope: full\`, this is an ordinary full verify, step 3 included. If you cannot tell from its scope whether this round's change could reach a criterion it skipped, run the plan again without --changed-since and --failed, and say why.`
 const VERIFIER_CONTEXT_NOTE = A.contextPath !== A.planPath
   ? ` Context file: ${A.contextPath} -- open it only for a heading a criterion cites, with ${SECTION_CMD(A.contextPath)}; never read it whole, its '## Log' is the implementer's reasoning.`
   : ` This is a single-file plan: open a section a criterion cites with ${SECTION_CMD(A.planPath)} rather than reading on past the criteria; its '## Log' is the implementer's reasoning.`
@@ -670,8 +677,8 @@ const laneBlock = (n, outcome, lanes) => [`### Round ${n}`, '', `${outcome} (lan
 // So when every BLOCKING finding of a round carries the reviewer's exact
 // `fix`, nothing failed a criterion, and the verifier reported no other
 // defect, the next round is a patch round: one implementer applies those fixes
-// only, the verifier runs every criterion as usual (nothing says which
-// criteria a change can reach), and only the reviewers that raised the
+// only, the verifier re-verifies by reach when 2j allows it (every criterion
+// otherwise), and only the reviewers that raised the
 // findings re-run -- to confirm their own -- plus `decompile-output-guard`
 // whenever its trigger matches, because a legal finding is never skipped.
 //
@@ -1110,6 +1117,49 @@ async function runItems(n) {
 
 if (ITEMS_IN.length) return await runItems(A.round || 0)
 
+// --- 2j: after a small fix, re-run only the checks it can reach -----------
+//
+// The owner, 2026-09-27, in the ForgePact UI redesign's ship workorder: "run
+// relevant tests only if possible", as a one-file panel fix was about to pay
+// another full verify behind a ~20-minute Python suite whose only relevant
+// tests wrap the panel's own npm suites. Run by hand, the reach-only re-check
+// saved about 40 minutes per fix round (docs/agents/workorder-calibration.md,
+// "Re-verifying only what a fix reaches").
+//
+// So a round after a verify that passed every criterion but the failed ones
+// hands the fresh verifier `run_criteria.py --changed-since <this round's
+// base heads> --failed <those>`: the runner selects the criteria whose
+// `(reads ...)` a changed path matches, the failed ones, and any criterion
+// with no map, and falls back to the full set itself when the delta is
+// unknown or a shared contract changed. The engine asks for the full set when
+// this round's base heads or delta are unusable (`round_delta.py` exit 3),
+// when a criterion the last verify reported carries no number, or when any
+// criterion's standing is unknown. Independence is unchanged: the verifier is
+// still fresh and still runs what it reports. A PASS reached this way says so
+// (`verifyScope: 'reach'`); the full set runs at the final gate before push.
+const REACH_FINAL_NOTE = 'the last verify ran only the criteria this round could reach plus the failed ones; run the full set once at the final gate before push'
+const noteCriteria = (v, gatedUnset, full) => {
+  const criteria = v.criteria || []
+  critNumbered = criteria.length > 0 && criteria.every(c => Number.isInteger(c.k) && c.k >= 1)
+  if (full) { critState.clear(); critCount = criteria.length }
+  for (const c of criteria) {
+    if (!Number.isInteger(c.k)) continue
+    if (c.status === 'not-selected') { if (!critState.has(c.k)) critState.set(c.k, 'unknown'); continue }
+    critState.set(c.k, gatedUnset(c) && c.status !== 'pass' ? 'gated' : c.status === 'pass' ? 'pass' : c.status === 'fail' ? 'fail' : 'unknown')
+  }
+}
+// The runner arguments for a reach re-verify, or null for the full set.
+const reachScope = (heads, deltaUsable) => {
+  if (!rounds.length || !critNumbered || !deltaUsable || !heads || critState.size !== critCount) return null
+  if ([...critState.values()].some(s => s === 'unknown')) return null
+  const entries = Object.entries(heads)
+  if (!heads['.'] || entries.some(([, sha]) => !sha)) return null
+  const failedKs = [...critState].filter(([, s]) => s === 'fail').map(([k]) => k).sort((a, b) => a - b)
+  const since = [` --changed-since ${heads['.']}`, ...entries.filter(([k]) => k !== '.').map(([k, sha]) => ` --changed-since ${k}=${sha}`)].join('')
+  const failed = failedKs.length ? ` --failed ${failedKs.join(',')}` : ''
+  return { extra: since + failed, label: `reach since this round's base${failedKs.length ? `, plus failed criteria ${failedKs.join(', ')}` : ''}` }
+}
+
 const patchStateEntry = stateEntries(A.state).find(e => e.key === 'patch rounds')
 let patchCount = patchStateEntry ? (parseInt(patchStateEntry.text.replace(/^patch rounds:\s*/i, ''), 10) || 0) : 0
 let patchNext = null // the BLOCKING findings the next round patches, or null for an ordinary round
@@ -1117,6 +1167,14 @@ let patchNext = null // the BLOCKING findings the next round patches, or null fo
 let reviewerState = { ...A.reviewers }
 const lastFindings = { ...(A.priorFindings || {}) } // reviewer -> its BLOCKING findings from the round before
 let lastVerifier = null // the previous round's full verifier result, reused when nothing changed
+// 2j: each criterion's standing as of the last verify that ran it, by plan
+// number -- 'pass', 'fail', 'gated' (its gate not set) or 'unknown'. A reach
+// re-verify is allowed only while every criterion stands at one of the first
+// three and every one carries its number; a fresh launch starts empty, so its
+// first verify is always the full set.
+const critState = new Map()
+let critNumbered = false
+let critCount = 0
 let firstHeads = null // this invocation's first usable snapshot heads, for a `never` reviewer's base when args.baseHeads is absent
 const rounds = []
 
@@ -1216,6 +1274,7 @@ for (let n = START; n - patchCount < ROUND_CAP || patchNext; n++) {
     if (reviewerState[name] === 'never' || !deltaUsable) return wholeScope()
     return emptyDelta ? NOTHING_CHANGED_SCOPE : deltaScope()
   }
+  const reach = !nothingChanged ? reachScope(roundHeadsUsable ? roundHeads : null, deltaUsable) : null
   const nothingChangedNote = emptyDelta
     ? `Nothing changed this round: the implementer reports your previous BLOCKING finding does not hold. Its report: ${String(impl.report).slice(0, 1500)}\nConfirm the finding with the command and output that proves it, or withdraw it.\n`
     : ''
@@ -1224,7 +1283,7 @@ for (let n = START; n - patchCount < ROUND_CAP || patchNext; n++) {
   // edit the tree this verifier is reading. Streaming findings into fixes is
   // the driver's procedure outside a round (SKILL.md "Spend each check once").
   const results = await parallel([
-    () => nothingChanged ? Promise.resolve(lastVerifier) : agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${VERIFIER_CRITERIA_NOTE}${VERIFIER_CONTEXT_NOTE}`,
+    () => nothingChanged ? Promise.resolve(lastVerifier) : agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${reach ? verifierCriteriaNote(reach.extra) + VERIFIER_REACH_NOTE : VERIFIER_CRITERIA_NOTE}${VERIFIER_CONTEXT_NOTE}`,
       { label: `verifier:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA }),
     ...toRun.map(name => () => agent(
       `You are reviewing a change. You are NOT given the workorder; this is its intent:\n${A.goalExcerpt}\n${OUT_OF_SCOPE_NOTE}\n${scope(name)}\n` +
@@ -1264,6 +1323,8 @@ for (let n = START; n - patchCount < ROUND_CAP || patchNext; n++) {
   const pendingHuman = [...new Set([...(verifier.pending_human || []),
     ...gatePending.map(c => `${c.criterion} -> UNATTEMPTED (gate ${gateTokens(c.gate).filter(t => !gates.has(t)).join('; ')} not set)`)])]
   const record = { round: n, verifier: verdict, verifierSaid: onlyGated ? verifier.verdict : undefined, failed, gatePending, pending_human: pendingHuman, blocking, nonBlocking, notReRun: skipped, reviewerState: { ...reviewerState } }
+  if (!nothingChanged) noteCriteria(verifier, gatedUnset, !reach)
+  if (reach) record.verifyScope = reach.label
   if (isPatch) {
     record.patch = patchHeld
       ? `held (${delta.lines_changed} lines in ${delta.paths.length} file(s)); not counted against the cap`
@@ -1285,7 +1346,7 @@ for (let n = START; n - patchCount < ROUND_CAP || patchNext; n++) {
   if (stop) return { ...stop, rounds }
 
   if (planDefect) return { outcome: 'PLAN-DEFECT', round: n, rounds }
-  if (clean) return { outcome: verdict, round: n, pending_human: pendingHuman, rounds }
+  if (clean) return { outcome: verdict, round: n, pending_human: pendingHuman, rounds, ...(reach ? { verifyScope: 'reach', note: REACH_FINAL_NOTE } : {}) }
 }
 
 return { outcome: 'CAP', detail: `${ROUND_CAP} implement->verify rounds used; split the open findings into a new workorder`, rounds }
