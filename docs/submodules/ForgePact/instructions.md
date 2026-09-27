@@ -1817,7 +1817,9 @@ release, moves the version to match with `tools/cut_release.py`, pushes the
 tag, leaves a **draft** release whose body `tools/forgepact_tag.py`
 composes, and starts "ForgePact release" (`forgepact-release.yml`) against
 that tag. It still never publishes — see "The build is dispatched, never
-inlined" and "The build half (forgepact-release.yml)" below.
+inlined" and "The build half (forgepact-release.yml)" below. With its `recut`
+box ticked, it also re-cuts a version whose release is still an unpublished
+draft — see "Recutting a draft (`recut`)" below.
 
 ### How to run it
 
@@ -1827,6 +1829,11 @@ was made, where the draft notes came from (`source=file` / `files` /
 `generated` / `mixed`), and — when any section is generated — a bold
 reminder to rewrite it before publishing.
 
+To cut a version again after more work merged into it while its release was
+still a draft (2.0.0, say), run it the same way with the same version and tick
+**recut** (a boolean input, off by default). The job summary opens with a
+**Recut.** line when a draft was replaced.
+
 ### The five refusals
 
 Everything downstream trusts the tag, so anything wrong with it is decided
@@ -1835,8 +1842,9 @@ before any write:
 1. **The tag has the wrong shape.** Not three plain numbers, optionally
    `v`-prefixed (`vv1.3.21`, `V1.3.21`, `hub-v1.3.21`, a leading zero, a
    suffix like `-rc1`, and non-ASCII digits are all refused).
-2. **The tag already exists.** A second release on one tag makes
-   `releases/latest` ambiguous.
+2. **The tag already exists** — unless `recut` is on, in which case item
+   5's recut rule decides. A second release on one tag makes
+   `releases/latest` ambiguous. The refusal names the `recut` input.
 3. **The version is below the highest existing `v*` tag.** `releases/latest`
    would point backwards.
 4. **The version is below what `main` already holds.** ForgePact does not tag
@@ -1846,7 +1854,44 @@ before any write:
    today would relabel 1.3.20's code as 1.3.17.
 5. **The version already has a release, drafts included.** Catches a draft
    sitting on a tag that was never pushed, which the tag-existence check
-   alone cannot see.
+   alone cannot see. With `recut` on, exactly one release that is still a
+   draft is replaced instead (below). A published release, more than one
+   release, or a tag with no release is refused whatever `recut` says.
+
+### Recutting a draft (`recut`)
+
+With `recut` on, and exactly one release on the tag that is still a draft, one
+run replaces it: the draft and its tag are deleted (on origin and in the
+runner's clone), current `main` is tagged, a new draft is left with freshly
+composed notes, and "ForgePact release" is dispatched as usual, so the new zip
+lands on the new draft. Publishing is then only the swap to latest. The version
+bump is a no-op when `main` already carries the version, which is the normal
+case.
+
+- **Explicit, never accidental.** `recut` defaults to `false`; off, an
+  existing release refuses exactly as before. `tools/forgepact_tag.py
+  --recut` lifts only the "tag already exists" refusal, only for the tag being
+  cut, and drops that tag from the list so it is neither a tag to stay above
+  nor its own `previous`. Every other refusal still applies.
+- **A published tag is never deleted or moved.** The release check refuses a
+  published release, more than one release, and a tag with no release (that
+  last state is recovered by hand, see "Tag-without-release recovery").
+- **Two draft guards.** The release check decides whether to replace at all.
+  "The draft is still a draft (guard 2)", the step right before the delete,
+  queries again and requires the same single draft by id — the same pattern as
+  `forgepact-release.yml`'s re-check before upload. The delete asks origin
+  where the tag stands first (so a failed query deletes nothing), then deletes
+  the release by that id, then the tag.
+- **The delete runs before the notes are composed.** GitHub's generate-notes
+  endpoint ignores `target_commitish` for a tag that already exists and
+  measures up to it, so composing first would leave out everything merged
+  since the first cut.
+- **Hand edits to the old draft's body are lost**, since the body is composed
+  afresh. Put lasting text in `release-notes-vX.Y.Z.md`.
+- **Recovery.** If a recut fails after its deletes, nothing is left to
+  replace, and re-running (with `recut` on or off) cuts the version as new. If
+  it fails between deleting the release and deleting the tag, the tag is left
+  with no release: delete that tag by hand, then re-run.
 
 Release notes are **never** a refusal — see the composition rules below and
 `AGENTS.md`.
@@ -1959,7 +2004,13 @@ human can publish the draft during the build's ~15 minutes. `--clobber` on
 the upload is only safe because of those two guards; it exists so re-running
 a draft's build replaces its assets. The messages distinguish "no release —
 run ForgePact tag first", "already published — refusing to replace a
-published release's assets", and "more than one".
+published release's assets", and "more than one". The second guard also
+requires the tag to still point at the commit the job built (`gh api
+repos/<repo>/commits/refs/tags/<tag>` against `git rev-parse HEAD` of the tag
+checkout): a recut deletes the draft and tag and makes both again on a newer
+commit, so a build of the old commit still running would otherwise upload the
+old zip to the new draft. It refuses with "It was recut during this build; the
+recut's own build fills the new draft."
 
 **What comes from the tag, what comes from `main`, and the compile-line
 guard.** The plugin and panel source, `build_release.py`, `tools/cut_release.py`,
