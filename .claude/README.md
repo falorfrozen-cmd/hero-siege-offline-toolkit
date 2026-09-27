@@ -99,7 +99,7 @@ next one a document rather than a conversation. They are driven by
 |---|---|---|
 | `planner` | opus | researches the change and writes `.claude/workorders/<slug>-plan.md`, whose acceptance criteria are commands and files, never prose |
 | `implementer` | opus | executes the steps; returns `PLAN-DEFECT` with evidence rather than improvising around a plan that turns out to be wrong |
-| `verifier` | haiku | runs the acceptance criteria (first through `tools/run_criteria.py --jobs auto`, which runs every command-shaped criterion in one call, independent ones at once), or one item's `checks:` in a streamed plan, and reports what they actually printed; read-only, and judges nothing it cannot execute |
+| `verifier` | haiku | runs the acceptance criteria (first through `tools/run_criteria.py --jobs auto`, which runs every command-shaped criterion in one call, independent ones at once; after a fix, only the criteria the fix reaches plus the failed ones), or one item's `checks:` in a streamed plan, and reports what they actually printed; read-only, and judges nothing it cannot execute |
 | `consultant` | opus | answers **one** narrow question from a phase that hit a decision above its tier, then stops; never implements, plans or reviews |
 | `live-operator` | sonnet | runs a workorder's written `### Live procedure <n>` against the real game through `hs-drive` — its own save backup, the positive control first, raw output to `<slug>-live-<n>.md` — and hands every in-game action a person must take back to the driver; never installs a build, never judges the mechanism |
 | `scribe` | haiku | pastes a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Edit` only; spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
@@ -346,7 +346,8 @@ hand, outside the phase separation:
 - **A fix that is already known does not buy a full round.** When every
   BLOCKING finding of a round carries its reviewer's exact `fix`, and nothing
   else failed, the next round is a *patch round*. A `patch-implementer`
-  applies the fixes, the verifier runs every criterion, and only the finding
+  applies the fixes, the verifier re-verifies by reach when the last verify
+  allows it (every criterion otherwise), and only the finding
   reviewers and `decompile-output-guard` re-run. If `round_delta.py size`
   then shows at most 20 changed lines, no new file and no instrument path or
   release note, the round is not counted against the cap. The same idea
@@ -712,7 +713,7 @@ one object.
 | R14 reviewer-reruns-suite | a reviewer running test suites or builds more than twice (the two reviewers told to build and test are exempt) |
 | R15 edit-guard-workaround | a subagent whose `Edit`/`Write` was refused by the harness's worktree guard ("is in the base repo checkout") and which then made more than five further tool calls (its own return not counted) instead of returning `PLAN-DEFECT` — unless an edit of the same repo-relative path then landed inside a worktree, which is a mistyped path corrected, not a workaround (a same-named scratch copy is the workaround) |
 | R16 scribe-scope | a scribe (`agentType: "scribe"`, or the `scribe` role a workflow label like `scribe:r1` parses to) whose `Edit`/`Write` landed outside its own `.claude/workorders/`, judged against the transcript's own `cwd` rather than a bare substring test; which ran `git add`/`git commit` in any shell command; which wrote a file through a shell command instead (a redirect or heredoc, `tee`, a PowerShell content cmdlet, `cp`/`mv`/`rm`/`sed -i`, a Python file write) whatever the target path; or, for the restricted `scribe` agent type, ran any shell command at all |
-| R17 live-operator-scope | a `live-operator` that wrote anything but its own `.claude/workorders/<slug>-live-<n>.md`, installed a build (a `.dll` copied or moved, or `installmod`), ran a writing git command, restored saves, force-stopped the game, or took over another holder's game lease (`hs_lease_acquire` with `force`) |
+| R17 live-operator-scope | a `live-operator` that wrote anything but its own `.claude/workorders/<slug>-live-<n>.md`, installed a build (a `.dll` copied or moved, or `installmod`), ran a writing git command, restored a backup it did not take itself (restoring its own at teardown is required), force-stopped the game, or took over another holder's game lease (`hs_lease_acquire` with `force`) |
 | R18 scribe-state-preserved | a scribe `Edit` to a `-plan.md` whose `old_string` carries a `key:` State entry (`gates:`, `round base:`, `agents:`, … — a hand-written `round: 0        phase: plan` counts as two) that its `new_string` no longer has |
 | R19 gates-template | any agent's `Write`/`Edit` to a `-plan.md` whose `gates:` line holds `\|` or "or" alternatives (an "or" inside a backticked token does not count) or a `<placeholder>`, outside parentheses: a template of every possible gate, which sets none. Possible gates go on `gates pending:`, and outcome tokens go on `route tokens:` |
 | R20 live-capture-author | any agent but `live-operator` (the driver included) whose `Edit`/`Write` landed on a `.claude/workorders/<slug>-live-<n>.md` capture. A capture a criterion cannot read is reported, never repaired |
@@ -782,7 +783,15 @@ as a barrier at its place in the plan), declared per criterion as `(class
 <c>)` and `(after <k>)` or recognised from the command, and still prints in
 plan order with the serial run's log numbers. `--item <id>` runs one item's
 `checks:` instead of the acceptance criteria. Without `--jobs` it runs
-serially, as it always has.
+serially, as it always has. `--changed-since <ref>` (plus `DIR=<ref>` per
+submodule, or `--changed-from <file>`) and `--failed <k,...>` run only the
+criteria a fix can reach: each whose `(reads `<glob>`)` a changed path
+matches, the failed ones, and any criterion with no map. It prints what it
+selected and skipped and why, and falls back to every criterion when the
+delta is unknown or a shared contract changed (SKILL.md Step 4, "Re-verify
+what the fix reaches"). `plan_lint.py` warns, without failing, `no-reads` on
+a criterion with no map and `reads-nothing` on a glob that matches no tracked
+file.
 `plan_lint.py` also reads a plan's items (`### Item: <id>` under `## Steps`,
 each with `files:`, `checks:` and optional `after:`/`shares:`/`owner:`) and
 reports `item-overlap` (an overlap neither item declares), `item-no-files`,

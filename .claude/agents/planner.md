@@ -69,7 +69,8 @@ never a description of correct behaviour.
 ```
 ## Acceptance criteria
 
-- [ ] `py -3 -m unittest tests.test_relic_identification` exits 0
+- [ ] (reads `hs-game-sdk/python/**`, `tests/test_relic_identification.py`)
+      `py -3 -m unittest tests.test_relic_identification` exits 0
 - [ ] `tests/test_relic_identification.py` asserts a VALUE_REF player scans
       identically to a VALUE_OBJECT one
 - [ ] `docs/submodules/ForgePact/instructions.md` records the new command
@@ -134,8 +135,9 @@ cost three rounds and a split workorder on punctuation.
 workorder, not a new phase.** When the question a session raises can be
 answered with the DLL already installed, write it as `### Live procedure
 <n+1>` in this context file, with its own capture `<slug>-live-<n+1>.md` and
-its own criterion. Write its starting values against the state the previous
-session left, or have it restore first. Twice in forgepact-issue-14 such a
+its own criterion. Every session restores its own backup at teardown, so
+write its starting values against the state before the previous session, not
+the state that session left. Twice in forgepact-issue-14 such a
 follow-up (1c→1d, 1e→1f) became a whole new workorder that started 65 and 80
 minutes after the session before it.
 
@@ -162,6 +164,8 @@ anchored on `\n` (`t.index('\n## X\n')`, since a heading's name is often
 mentioned in backticks above the heading itself), a grep over a live capture
 instead of `live_checks.py`, `python` where this repository runs `py -3`, or
 a bare commit hash (see "Spend each check once" below). Each has cost a round.
+Its `no-reads` and `reads-nothing` warnings do not fail the lint, but clear
+them too. Every criterion without a reach map is re-run on every fix round.
 
 ## Spend each check once
 
@@ -198,6 +202,23 @@ wait"; evidence in `docs/agents/workorder-calibration.md`).
   oracle replay) runs at a join and in the feature's final or ship
   workorder. Say in `## Context` which workorder carries the full set, so a
   reviewer does not read the narrower criteria as a gap.
+- **Say what each criterion reads.** Put `(reads `<glob>`, ...)` on every
+  criterion: the files whose change could alter its result, from the
+  checkout root, with submodule files under their directory. For example,
+  `(reads `ForgePact/panel/src/**`, `ForgePact/panel/package.json`)` goes on
+  the panel's `npm test`, and `(reads `docs/submodules/ForgePact/instructions.md`)`
+  on a docs check. A fix round after a verify that passed everything else
+  then re-runs only the criteria the fix reaches, plus the failed ones
+  (`run_criteria.py --changed-since`, SKILL.md Step 4 "Re-verify what the
+  fix reaches"). A criterion without the declaration runs on every fix
+  round, which is safe and slow. `plan_lint.py` warns `no-reads` and prints
+  the paths its commands mention. Treat those as a start, not the answer,
+  because a whole suite reads far more than its command line names. It also
+  warns `reads-nothing` for a glob that matches no tracked file. Declare
+  what a suite really covers, and use `(reads `**`)` for one that reads
+  everything. If the change has a contract that several criteria depend on
+  without naming it, list it on `## State`'s `shared contract:` line: any
+  change to it runs the full set.
 - **Never pin a moving head.** A criterion names a commit through a
   per-workorder tag a precondition step creates (`git tag <slug>-base`, e.g.
   `forgepact-ui-polish-base`), or through a merge-base expression
@@ -261,6 +282,7 @@ agents: planner-tier=opus
 reviewers: <none yet>
 open defects: none
 decisions in force: none
+shared contract: none   (or backticked globs whose change runs every criterion)
 
 ## Goal
 One paragraph. What changes for a user of this toolkit.
@@ -272,6 +294,7 @@ Be specific; this is your main lever against scope drift.
 ## Acceptance criteria
 Mechanical checkboxes, per the section above. A conditional one names its
 gate token exactly as `gates pending:` spells it, e.g. "(gate `live1: complete`)".
+Each one declares what it reads, e.g. "(reads `ForgePact/panel/src/**`)".
 
 ## Steps
 Preconditions common to every step (branch, CRLF, do-not-revert) as

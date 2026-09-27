@@ -1849,7 +1849,9 @@ release, moves the version to match with `tools/cut_release.py`, pushes the
 tag, leaves a **draft** release whose body `tools/forgepact_tag.py`
 composes, and starts "ForgePact release" (`forgepact-release.yml`) against
 that tag. It still never publishes — see "The build is dispatched, never
-inlined" and "The build half (forgepact-release.yml)" below.
+inlined" and "The build half (forgepact-release.yml)" below. With its `recut`
+box ticked, it also re-cuts a version whose release is still an unpublished
+draft — see "Recutting a draft (`recut`)" below.
 
 ### How to run it
 
@@ -1859,6 +1861,11 @@ was made, where the draft notes came from (`source=file` / `files` /
 `generated` / `mixed`), and — when any section is generated — a bold
 reminder to rewrite it before publishing.
 
+To cut a version again after more work merged into it while its release was
+still a draft (2.0.0, say), run it the same way with the same version and tick
+**recut** (a boolean input, off by default). The job summary opens with a
+**Recut.** line when a draft was replaced.
+
 ### The five refusals
 
 Everything downstream trusts the tag, so anything wrong with it is decided
@@ -1867,8 +1874,9 @@ before any write:
 1. **The tag has the wrong shape.** Not three plain numbers, optionally
    `v`-prefixed (`vv1.3.21`, `V1.3.21`, `hub-v1.3.21`, a leading zero, a
    suffix like `-rc1`, and non-ASCII digits are all refused).
-2. **The tag already exists.** A second release on one tag makes
-   `releases/latest` ambiguous.
+2. **The tag already exists** — unless `recut` is on, in which case item
+   5's recut rule decides. A second release on one tag makes
+   `releases/latest` ambiguous. The refusal names the `recut` input.
 3. **The version is below the highest existing `v*` tag.** `releases/latest`
    would point backwards.
 4. **The version is below what `main` already holds.** ForgePact does not tag
@@ -1878,7 +1886,44 @@ before any write:
    today would relabel 1.3.20's code as 1.3.17.
 5. **The version already has a release, drafts included.** Catches a draft
    sitting on a tag that was never pushed, which the tag-existence check
-   alone cannot see.
+   alone cannot see. With `recut` on, exactly one release that is still a
+   draft is replaced instead (below). A published release, more than one
+   release, or a tag with no release is refused whatever `recut` says.
+
+### Recutting a draft (`recut`)
+
+With `recut` on, and exactly one release on the tag that is still a draft, one
+run replaces it: the draft and its tag are deleted (on origin and in the
+runner's clone), current `main` is tagged, a new draft is left with freshly
+composed notes, and "ForgePact release" is dispatched as usual, so the new zip
+lands on the new draft. Publishing is then only the swap to latest. The version
+bump is a no-op when `main` already carries the version, which is the normal
+case.
+
+- **Explicit, never accidental.** `recut` defaults to `false`; off, an
+  existing release refuses exactly as before. `tools/forgepact_tag.py
+  --recut` lifts only the "tag already exists" refusal, only for the tag being
+  cut, and drops that tag from the list so it is neither a tag to stay above
+  nor its own `previous`. Every other refusal still applies.
+- **A published tag is never deleted or moved.** The release check refuses a
+  published release, more than one release, and a tag with no release (that
+  last state is recovered by hand, see "Tag-without-release recovery").
+- **Two draft guards.** The release check decides whether to replace at all.
+  "The draft is still a draft (guard 2)", the step right before the delete,
+  queries again and requires the same single draft by id — the same pattern as
+  `forgepact-release.yml`'s re-check before upload. The delete asks origin
+  where the tag stands first (so a failed query deletes nothing), then deletes
+  the release by that id, then the tag.
+- **The delete runs before the notes are composed.** GitHub's generate-notes
+  endpoint ignores `target_commitish` for a tag that already exists and
+  measures up to it, so composing first would leave out everything merged
+  since the first cut.
+- **Hand edits to the old draft's body are lost**, since the body is composed
+  afresh. Put lasting text in `release-notes-vX.Y.Z.md`.
+- **Recovery.** If a recut fails after its deletes, nothing is left to
+  replace, and re-running (with `recut` on or off) cuts the version as new. If
+  it fails between deleting the release and deleting the tag, the tag is left
+  with no release: delete that tag by hand, then re-run.
 
 Release notes are **never** a refusal — see the composition rules below and
 `AGENTS.md`.
@@ -1991,7 +2036,13 @@ human can publish the draft during the build's ~15 minutes. `--clobber` on
 the upload is only safe because of those two guards; it exists so re-running
 a draft's build replaces its assets. The messages distinguish "no release —
 run ForgePact tag first", "already published — refusing to replace a
-published release's assets", and "more than one".
+published release's assets", and "more than one". The second guard also
+requires the tag to still point at the commit the job built (`gh api
+repos/<repo>/commits/refs/tags/<tag>` against `git rev-parse HEAD` of the tag
+checkout): a recut deletes the draft and tag and makes both again on a newer
+commit, so a build of the old commit still running would otherwise upload the
+old zip to the new draft. It refuses with "It was recut during this build; the
+recut's own build fills the new draft."
 
 **What comes from the tag, what comes from `main`, and the compile-line
 guard.** The plugin and panel source, `build_release.py`, `tools/cut_release.py`,
@@ -2668,7 +2719,28 @@ How it works:
 The panel's first port moved from 8766 to 8780. `PORT_CANDIDATES` in
 `src/forgepact.py` is now `[8780, 8801, 8899, 9133, 9777]`, and `PORT` follows it.
 The pre-bind connect probe in `main()` is unchanged. After the list, the OS picks
-a port.
+a port, but never one the panel window refuses (see "Port-0 fallback" below).
+
+**Port-0 fallback (1.4.8, ForgePact#92).** When every candidate is busy,
+`main()` binds port 0. The OS can hand out a port on Chromium's restricted list
+(`CHROMIUM_RESTRICTED_PORTS` in `src/forgepact.py`: the Fetch standard's "bad
+port" list and Chromium's `net/base/port_util.cc` `kRestrictedPorts`, e.g. 1719,
+6000, 6665-6669, 10080). The window is pywebview on WebView2, which refuses such
+a port with `net::ERR_UNSAFE_PORT`, so the player saw a blank window. On a
+machine whose TCP dynamic range is 1024-15000 about 0.12% of port-0 binds hit
+one; Windows' default 49152-65535 range contains none.
+- `bind_safe_server(bind, max_attempts=SAFE_BIND_ATTEMPTS)` re-binds until the
+  port is not restricted, at most 10 times. A rejected server stays open until
+  a safe one is bound, so a sequential allocator cannot hand the same port back.
+- On exhaustion `main()` calls `refuse_to_start()`, which prints and shows a
+  Win32 message box (the exe is `--windowed`, so a print reaches nobody), and
+  returns without opening the window.
+- `tests/test_panel_port.py` injects the bind, so no test races the OS for a
+  real port. Given the same fake binds, the unfixed `main()` opened the window
+  on 6000.
+- The UI redesign's test sandbox (`tests/test_satanic_panel.py`) carries its own
+  copy of the list and helper; once both are on main, it should import them from
+  `forgepact` instead.
 
 **Why.**
 - 8766 is one of 8765-8774, the ten ports the Item Editor keeps for itself (see

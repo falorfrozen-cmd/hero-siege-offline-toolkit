@@ -142,6 +142,13 @@ So, in `/workorder` and anything run like it:
   pull requests.
 - **Batch the owner's decisions before the next plan, and fix a flaky test
   in the round that saw it**, rather than retrying it.
+- **After a small fix, re-run only the checks it can reach** (the owner,
+  2026-09-27: *"run relevant tests only if possible"*): a fix round after a
+  verify that passed everything else runs the criteria whose `(reads ...)`
+  the fix touches plus the failed ones (`tools/run_criteria.py
+  --changed-since`), and the full set runs at the final gate before push, or
+  whenever the delta is unknown, touches a shared contract, or the verifier
+  cannot tell.
 
 Independence is not traded for speed: the verifier and every reviewer still
 run fresh, and a check is shared, never skipped. In the ForgePact UI redesign

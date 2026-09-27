@@ -1017,9 +1017,11 @@ owner's decision: the `live-operator` never passes `force` (a held lease is
   first step, before `hs_selfcheck`, with label `<slug>-live-<n>` and the
   dispatch's slot, and quotes `taken_utc` and `dll_sha256` into the capture.
   `lease_held` is `LIVE-ABORTED`, quoting the refusal's `detail`. It releases
-  after `hs_stop_game` and `hs_saves_inspect`; it never restores, so its
-  release reports `restore_pending: true` whenever it backed up, and that is
-  relayed, not fixed. `NEEDS-HUMAN` keeps the lease.
+  after `hs_stop_game`, `hs_saves_inspect`, `hs_saves_restore` of the backup
+  it took itself and a second, clean `hs_saves_inspect`: the session changed
+  the saves for a test, so it puts them back without asking (the owner's
+  rule, 2026-09-26), and its release reports `restore_pending: false`. It
+  never restores another session's backup. `NEEDS-HUMAN` keeps the lease.
 - **The driver** (`.claude/skills/workorder/SKILL.md` Step 4.5) calls
   `hs_lease_status` before the install question. The lease cannot block an
   install, because hs-drive never installs, so the driver is the one that has

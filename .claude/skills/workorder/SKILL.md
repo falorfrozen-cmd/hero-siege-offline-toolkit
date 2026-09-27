@@ -591,8 +591,9 @@ The line, when a reviewer's label looks wrong to you:
 
   - one implementer (`patch-implementer:r<n>`) applies those fixes and
     nothing else;
-  - `verifier` runs every criterion as usual, because nothing says which
-    criteria a change can reach;
+  - `verifier`, fresh as always, re-verifies only the criteria the patch can
+    reach (below, "Re-verify what the fix reaches"): the previous verify
+    failed no criterion, so nothing else is owed;
   - only the reviewers that raised the findings re-run, to confirm their own,
     plus `decompile-output-guard` whenever its trigger matches.
 
@@ -613,6 +614,51 @@ The line, when a reviewer's label looks wrong to you:
   cap allows. How many of them applied a fix the reviewer had already written
   out was not recorded; the `fix` field makes that countable. Details:
   [`docs/agents/workorder-calibration.md`](../../../docs/agents/workorder-calibration.md#the-cheap-routes-2026-09-25).
+
+  **Re-verify what the fix reaches.** The owner, 2026-09-27, as a one-file
+  panel fix in the ForgePact UI redesign's ship workorder was about to pay
+  another full verify behind a ~20-minute Python suite: *"run relevant tests
+  only if possible"*. A fix round, patch or ordinary, that follows a verify
+  which passed every criterion but the failed ones re-verifies only the
+  criteria the fix can reach, plus the failed ones:
+
+  ```bash
+  py -3 tools/run_criteria.py <plan> --jobs auto --changed-since <hub base> \
+      --changed-since <submodule>=<its base> --failed <k,...> --out <scratch>/criteria
+  ```
+
+  The bases are this round's, from `round_delta.py heads <slug> <round>`.
+  The runner selects each criterion whose `(reads ...)` (planner.md, "Spend
+  each check once") a changed path matches, each failed one, each one that
+  declares no `(reads ...)` and each one a selected criterion runs `(after
+  ...)`, and prints what it selected and skipped and why, so the report
+  shows the scope. The verifier reports a skipped criterion as
+  `not-selected`, never `pass`, and skips its step-3 root suite unless a
+  selected criterion runs it. `workorder-rounds.js` hands a round's verifier
+  this command itself (2j) and records `verify scope:` in the Log. The full
+  set still runs:
+
+  - **at the final gate before a push**, once: a PASS reached through a
+    scoped verify is `PASS (scoped)` in step 5 until a full verify covers
+    it, in this workorder or in the feature's final one;
+  - **when the delta is unknown**: `round_delta.py` exited 3, the base heads
+    are missing, or the runner itself prints `scope: full -- delta unknown`;
+  - **when the change touches a shared contract**: the runner falls back by
+    itself for `hs-game-sdk/`, `third_party/yytoolkit/`, `.gitmodules` and
+    its own selection code, and for any glob on the plan's `## State`
+    `shared contract:` line;
+  - **when a criterion's standing is not known**: it was unattempted for any
+    reason but an unset gate, or the last verify reported it without its
+    plan number;
+  - **when the verifier cannot tell** from the printed scope whether the
+    fix could reach a criterion the runner skipped. It then runs the full
+    set and says why.
+
+  Independence is unchanged: the verifier is still fresh, never sees the
+  implementer's reasoning, and runs every criterion it reports. The re-check
+  is smaller, not shared. In the ship workorder, run by hand, it saved about
+  40 minutes per fix round (evidence in
+  [`workorder-calibration.md`](../../../docs/agents/workorder-calibration.md#re-verifying-only-what-a-fix-reaches-2026-09-27)).
 
   **At the cap, split — never close it by hand.** Three failed rounds mean the
   pipeline lost the thread, regardless of plan size or how close it looks to
@@ -661,8 +707,11 @@ against a median driver of $12.
    - `stale` → say so (the holder's process is gone) and carry on; the
      operator's acquire recovers it.
    - `free`, `held_by_me` → carry on. A `warning` on a free lease means the
-     last session backed up and never restored; relay it before the install
-     question.
+     last session backed up and never restored, which a session's own
+     teardown restore (step 5) should now prevent: say so before the install
+     question, and restore that backup yourself (lease, restore, inspect,
+     release) when it is this workorder's; another workorder's goes to the
+     owner.
    - `unavailable` → report its `detail` and stop.
 1. **Ask before anything changes on the owner's machine.** One question:
    install this build now, and is a session convenient now? Never install on
@@ -702,9 +751,13 @@ against a median driver of $12.
      `WHY` is another session driving the game: the user decides whether to
      wait or have you take the lease over (item 0).
 
-   Relay every `LEASE:` line's `restore_pending` and `warning` verbatim: the
-   operator backs up and does not restore, so a restore is owed until someone
-   runs `hs_saves_restore` on that backup.
+   The operator restores its own backup at teardown (the owner's standing
+   rule, 2026-09-26: a test changed the state, so the test puts it back), so
+   do not ask the owner about a restore. Report its `RESTORE:` line. A
+   `LEASE:` line still showing `restore_pending: true`, or a `RESTORE:` line
+   that is not clean or was skipped, means the saves still carry the session's
+   changes: say so, and restore that backup yourself (lease, restore, inspect,
+   release) unless the procedure deliberately kept the state.
 
    A capture `tools/live_checks.py` cannot read — a renamed, missing or
    unreadable check — is not repaired by anyone: report it, and re-run the
@@ -752,7 +805,8 @@ so in one line with the `resume` or `plan` command, and let the owner decide.
 
 `tools/workorder_audit.py` R17 fails a session whose operator wrote anything
 but its `<slug>-live-<n>.md`, installed a build, ran a writing git command,
-restored saves, force-stopped the game, or took over another holder's lease.
+restored a backup it did not take itself, force-stopped the game, or took
+over another holder's lease.
 R20 fails any other agent's edit to a capture, the driver's included.
 
 ### Step 5 — report
@@ -760,6 +814,11 @@ R20 fails any other agent's edit to a capture, the driver's included.
 Set `status: PASS` in the workorder and tell the user:
 
 - what changed, and the acceptance criteria with their **real** output;
+- when the last verify was scoped (`verifyScope: 'reach'`, or `verify
+  scope:` in the round's Log), `PASS (scoped)` and the criteria it ran and
+  skipped, as the runner printed them. Before any push, run the full set
+  once as the final gate — a fresh `verifier` on the whole plan — unless a
+  later workorder in the feature runs it and says so in its plan;
 - every reviewer that ran and what it concluded, including the clean ones, and
   every reviewer skipped this round as `clean@round<n>, not re-run`;
 - anything left under `NOT DONE` or `Needs human judgement`;
@@ -878,6 +937,12 @@ without a code cause (a port the browser refuses, a timing race) is a defect
 for this round's implementer, or a split right away; it is never re-run in
 the hope of a green. The redesign's polish workorder spent its cap on a
 Chromium `ERR_UNSAFE_PORT` flake.
+
+**7. After a small fix, re-run only the checks it can reach.** A fix round
+after a verify that passed every other criterion runs the criteria the fix
+reaches plus the failed ones (`run_criteria.py --changed-since`), and the
+full set runs once at the final gate before the push. The conditions and
+fallbacks are in Step 4, "Re-verify what the fix reaches".
 
 ## Driver discipline
 

@@ -71,15 +71,42 @@ parallel implementers, so file sets that meet must say so:
 
 Each check is linted like a criterion (prose, bare-python, ...).
 
+And the reach map (2026-09-27), which lets a fix round re-run only the
+criteria its change can reach (`run_criteria.py --changed-since`): each
+criterion declares the files whose change can alter its result, as
+`(reads `<glob>`, `<glob>`, ...)` on the criterion, paths from the checkout
+root, submodule files under their directory (`ForgePact/panel/src/**`). These
+are *warnings*: they are printed, counted on the summary line, and never
+change the exit code, because a criterion without a map is not wrong -- it
+runs on every fix round, which is what every plan did before the map existed.
+
+  no-reads         a criterion that declares no `(reads ...)`. The warning
+                   names the paths its commands mention, as a starting
+                   point: a `cd <dir>` or `npm --prefix <dir>` reads
+                   `<dir>/**`, `-m unittest tests.test_x` reads
+                   `tests/test_x.py`, and a path-shaped word is itself. A
+                   suite reads far more than the paths on its command line,
+                   so check the inference before copying it.
+  reads-nothing    a declared glob that names no file tracked in this
+                   checkout (hub and initialized submodules), so no change
+                   would ever select its criterion. Checked only when the
+                   plan sits inside a git checkout, and never for a glob
+                   under a submodule that is not initialized there, whose
+                   files git cannot list. A file the plan creates is the
+                   usual false alarm. The `no-reads` hint is filtered the
+                   same way, which drops refs and repo slugs.
+
 Usage:
     py -3 tools/plan_lint.py <slug>-plan.md [...]
     py -3 tools/plan_lint.py <slug>-plan.md --lanes-json
     py -3 tools/plan_lint.py <slug>-plan.md --items-json [--known a,b --wait SECONDS]
 
-Prints `<plan>: criterion <k>: <rule>: <excerpt>` per criterion finding,
+Prints `<plan>: criterion <k>: warning <rule>: <excerpt>` per reach warning,
+`<plan>: criterion <k>: <rule>: <excerpt>` per criterion finding,
 `<plan>: lane <name>: <rule>: <excerpt>` per lane finding and `<plan>: item
-<id>: <rule>: <excerpt>` per item finding; all count in the `finding(s)`
-line. `--lanes-json` (one plan) then prints, only when the lint is clean, one
+<id>: <rule>: <excerpt>` per item finding; the findings count in the
+`finding(s)` line, and warnings, when there are any, in a `warning(s)` count
+after it. `--lanes-json` (one plan) then prints, only when the lint is clean, one
 JSON line `{"lanes": [{"name": ..., "files": [...]}, ...], "join":
 true|false}` -- the lane table the driver passes to the workflow, so it can
 never launch lanes a lint rejected. `--items-json` likewise prints `{"items":
@@ -97,6 +124,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -130,6 +158,14 @@ ITEM_FIELD_RE = re.compile(r"^\s*(?:[-*]\s+)?\**(files|checks|after|shares|owner
 NUMBERED_STEP_RE = re.compile(r"^\s*\d+\.\s")
 BULLET_RE = re.compile(r"^\s*[-*]\s+")
 STATE_HEADING_RE = re.compile(r"^##\s+State\s*$")
+# `(reads `a/**`, `b.py`)`: backticked globs, which may hold parentheses.
+READS_DECL_RE = re.compile(r"\(reads\s+((?:`[^`]*`|[^()`])*)\)")
+INFER_DIR_RE = re.compile(r"(?:\bcd\s+|--prefix[=\s]+)(\"[^\"]+\"|'[^']+'|[^\s;&|]+)")
+INFER_MODULE_RE = re.compile(r"-m\s+(?:unittest|pytest)\s+(?:-\S+\s+)*([A-Za-z_][\w.]*)")
+INFER_SPLIT_RE = re.compile(r"[\s;&|()<>=,'\"`{}\[\]]+")
+INFER_PATH_RE = re.compile(r"(?=.*[A-Za-z])[\w.*?/-]+")
+INFER_EXT_RE = re.compile(r"\.(?:py|md|mjs|cjs|js|ts|tsx|svelte|json|cpp|hpp|h|c|rs|toml|ya?ml|txt|css|html|"
+                          r"ps1|bat|sh|csv)$")
 
 
 def criteria(text: str) -> list | None:
@@ -151,7 +187,126 @@ def criteria(text: str) -> list | None:
     return None
 
 
+def reads(text: str) -> list | None:
+    """The globs a criterion's `(reads ...)` declares, forward-slashed; None
+    when it declares none (an empty declaration is none, not "reads
+    nothing": a criterion that read nothing could never fail)."""
+    found = [g for m in READS_DECL_RE.finditer(text) for g in _ticked(m.group(1))]
+    return found or None
+
+
+def without_reads(text: str) -> str:
+    """The criterion with its `(reads ...)` removed, so a declared path is
+    never mistaken for a command or linted as one."""
+    return READS_DECL_RE.sub("", text)
+
+
+def reads_path(glob: str, path: str) -> bool:
+    """Whether a changed `path` is one a `(reads ...)` glob covers. `*`
+    crosses `/` (fnmatch), so `dir/*` and `dir/**` both cover everything
+    under `dir/`; a literal covers itself and, as a directory, everything
+    under it. A `**/` anywhere also matches no directory at all, as a
+    globstar does: `**/x` covers a root-level `x`, and `dir/**/*.ts` covers
+    `dir/a.ts` (fnmatch alone keeps the `/` after `**` and misses both)."""
+    glob = glob.replace("\\", "/").removeprefix("./")
+    path = path.replace("\\", "/").removeprefix("./")
+    if glob.rstrip("/") in ("", "*", "**"):
+        return True
+    if _is_glob(glob):
+        return any(fnmatch.fnmatchcase(path, g) for g in _globstar_forms(glob))
+    glob = glob.rstrip("/")
+    return path == glob or path.startswith(glob + "/")
+
+
+def _globstar_forms(glob: str) -> set:
+    """`glob` and every form of it with one or more of its `**/` removed."""
+    forms, todo = {glob}, [glob]
+    while todo:
+        g = todo.pop()
+        i = g.find("**/")
+        while i >= 0:
+            if i == 0 or g[i - 1] == "/":
+                shorter = g[:i] + g[i + 3:]
+                if shorter not in forms:
+                    forms.add(shorter)
+                    todo.append(shorter)
+            i = g.find("**/", i + 1)
+    return forms
+
+
+def infer_reads(text: str) -> list:
+    """Paths a criterion's spans mention, as a suggestion for its `(reads
+    ...)`: never used to select anything, because a suite reads far more
+    than its command line names."""
+    out: list = []
+    for a, b in BACKTICK_RE.findall(without_reads(text)):
+        span = a or b
+        dirs = [m.group(1) for m in INFER_DIR_RE.finditer(span)]
+        out += [d.strip("\"'").rstrip("/") + "/**" for d in dirs]
+        if dirs:
+            continue
+        out += [m.group(1).replace(".", "/") + ".py" for m in INFER_MODULE_RE.finditer(span)
+                if m.group(1) != "discover"]
+        for token in INFER_SPLIT_RE.split(span):
+            token = token.removeprefix("./")
+            if (token and not token.startswith(("-", "$", "http")) and INFER_PATH_RE.fullmatch(token)
+                    and ("/" in token or INFER_EXT_RE.search(token)) and token.strip("./")):
+                out.append(token)
+    return list(dict.fromkeys(out))
+
+
+def reach_warnings(text: str, tracked: tuple | None = None) -> list:
+    """`(criterion k, rule, excerpt)` per reach-map warning. `tracked` is
+    `tracked_files()`'s `(files, opaque)`: every file in the checkout, and
+    the submodule directories whose files are unknown because they are not
+    initialized here. None when unknown: then `reads-nothing` is not checked
+    and the inferred paths are not filtered."""
+    files, opaque = tracked if tracked is not None else (None, [])
+
+    def known(glob: str) -> bool:
+        return any(reads_path(o, glob.rstrip("*/")) for o in opaque) or any(reads_path(glob, f) for f in files)
+    out = []
+    for k, item in enumerate(criteria(text) or [], 1):
+        declared = reads(item)
+        if declared is None:
+            # A ref (`origin/main`), a range or a repo slug looks like a path;
+            # keeping only what names a tracked file drops them.
+            inferred = [p for p in infer_reads(item) if files is None or known(p)]
+            hint = ("inferred from its commands, check before copying: " + ", ".join(f"`{p}`" for p in inferred)
+                    if inferred else "nothing to infer from; until it declares one it runs on every fix round")
+            out.append((f"criterion {k}", "no-reads", f"declare (reads `<glob>`, ...); {hint}"))
+            continue
+        if files is not None:
+            for glob in declared:
+                if not known(glob):
+                    out.append((f"criterion {k}", "reads-nothing",
+                                f"`{glob}` names no tracked file here, so no change would select this criterion"))
+    return out
+
+
+def tracked_files(plan: Path) -> tuple | None:
+    """`(files, opaque)` for the checkout the plan sits in: every tracked
+    file, submodule files under their directory, and the submodule
+    directories that are not initialized here, whose files git cannot list.
+    None when the plan is not inside a git checkout."""
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=str(plan.resolve().parent),
+                         capture_output=True, text=True)
+    if top.returncode != 0:
+        return None
+    root = Path(top.stdout.strip())
+    listed = subprocess.run(["git", "ls-files", "--recurse-submodules"], cwd=str(root),
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    staged = subprocess.run(["git", "ls-files", "-s"], cwd=str(root),
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if listed.returncode != 0 or staged.returncode != 0:
+        return None
+    gitlinks = [line.split("	", 1)[1] for line in staged.stdout.splitlines() if line.startswith("160000 ")]
+    opaque = [d for d in gitlinks if not (root / d / ".git").exists()]
+    return [p for p in listed.stdout.splitlines() if p], opaque
+
+
 def lint_criterion(text: str) -> list:
+    text = without_reads(text)
     spans = [a or b for a, b in BACKTICK_RE.findall(text)]
     if not spans:
         return [("prose", text)]
@@ -477,9 +632,13 @@ def main(argv=None) -> int:
         if n is None:
             print(f"plan_lint: {path} has no '## Acceptance criteria' heading", file=sys.stderr)
             return 2
+        warnings = reach_warnings(path.read_text(encoding="utf-8", errors="replace"), tracked_files(path))
+        for where, rule, excerpt in warnings:
+            print(f"{path}: {where}: warning {rule}: {excerpt}")
         for where, rule, excerpt in findings:
             print(f"{path}: {where}: {rule}: {excerpt}")
-        print(f"{path}: {n} criteria, {len(findings)} finding(s)")
+        print(f"{path}: {n} criteria, {len(findings)} finding(s)" +
+              (f", {len(warnings)} warning(s)" if warnings else ""))
         if findings:
             rc = 1
     if want_json and rc == 0:
