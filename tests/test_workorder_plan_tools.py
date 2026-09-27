@@ -1,5 +1,5 @@
-"""Tests for tools/live_checks.py, tools/plan_lint.py, tools/amend_check.py
-and tools/run_criteria.py.
+"""Tests for tools/live_checks.py, tools/plan_lint.py, tools/amend_check.py,
+tools/run_criteria.py, tools/workorder_lock.py and tools/item_commit.py.
 
 The first two are the static readers `/workorder` criteria use instead of a
 hand-written grep over a live capture and a before-the-round guess at whether
@@ -12,18 +12,25 @@ plans (2026-09-22..24), each the shape that cost a round.
 
 import contextlib
 import io
+import json
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 import amend_check  # noqa: E402
+import item_commit  # noqa: E402
 import live_checks  # noqa: E402
 import plan_lint  # noqa: E402
 import run_criteria  # noqa: E402
+import workorder_lock  # noqa: E402
 
 
 CAPTURE = """# forgepact-x live 1
@@ -509,6 +516,361 @@ class RunCriteriaTests(TempDirMixin, unittest.TestCase):
     def test_usage_errors_exit_2(self):
         self.assertEqual(run(run_criteria.main, [str(self.tmp_path / "missing-plan.md")])[0], 2)
         self.assertEqual(run(run_criteria.main, [self.write("y-plan.md", "## Goal\nx\n")])[0], 2)
+        for bad in ("0", "many", "-2"):
+            self.assertEqual(self.runner("--jobs", bad)[0], 2, bad)
+        self.assertEqual(self.runner("--item", "nope")[0], 2, "no such item")
+
+    def test_jobs_prints_what_a_serial_run_prints(self):
+        # The verifier reads the parallel report exactly as the serial one:
+        # same criteria, same order, same cmd-<n>.log numbers, same tails.
+        _, serial = self.runner()
+        shutil.rmtree(self.tmp_path / "logs")
+        for name in ("count.txt", "built.txt", "sub/where.txt", "sub/where2.txt", "multi.txt"):
+            (self.tmp_path / name).unlink(missing_ok=True)
+        rc, parallel = self.runner("--jobs", "4")
+        self.assertEqual(rc, 0, parallel)
+        self.assertIn("jobs: 4 (browser suites at most 2)", parallel)
+
+        def norm(text):
+            text = re.sub(r"\(\d+s\)", "(Ns)", text.replace("\r", ""))
+            return [l for l in text.splitlines() if not l.startswith(("checkout:", "logs:", "shell:", "jobs:"))]
+        self.assertEqual(norm(parallel), norm(serial))
+        self.assertEqual((self.tmp_path / "count.txt").read_text().count("once"), 1, "a shared command ran once")
+
+    def test_independent_commands_overlap_under_jobs(self):
+        spans = "\n".join(f"- [ ] (class pure) `bash -c \"sleep 2; echo {k}\"` exits 0" for k in range(3))
+        plan = self.write("p-plan.md", f"## Acceptance criteria\n\n{spans}\n")
+        started = time.monotonic()
+        rc, out = run(run_criteria.main, [plan, "--jobs", "3", "--out", str(self.tmp_path / "p")])
+        self.assertEqual(rc, 0, out)
+        self.assertLess(time.monotonic() - started, 5, "three 2 s pure checks ran one after another")
+        # Control: the same plan without --jobs is serial.
+        started = time.monotonic()
+        run(run_criteria.main, [plan, "--out", str(self.tmp_path / "q")])
+        self.assertGreaterEqual(time.monotonic() - started, 6)
+
+    def test_a_worker_that_raises_is_reported_not_hung(self):
+        # PR #239 review: an exception in a worker thread never reached the
+        # result queue, and the main loop waited on it forever.
+        real = run_criteria._run_one
+
+        def boom(bash, cmd, root, timeout):
+            if "explode" in cmd:
+                raise OSError("simulated spawn failure")
+            return real(bash, cmd, root, timeout)
+        run_criteria._run_one = boom
+        self.addCleanup(setattr, run_criteria, "_run_one", real)
+        plan = self.write("e-plan.md", "## Acceptance criteria\n\n- [ ] (class pure) `bash -c \"echo explode\"` ok\n"
+                                       "- [ ] (class pure) `bash -c \"echo after\"` ok\n")
+        box = {}
+        t = threading.Thread(target=lambda: box.update(r=run(run_criteria.main, [plan, "--jobs", "2", "--out",
+                                                                                  str(self.tmp_path / "e")])))
+        t.start()
+        t.join(30)
+        self.assertFalse(t.is_alive(), "the parallel run hung on a worker's exception")
+        rc, out = box["r"]
+        self.assertEqual(rc, 0, out)
+        self.assertIn("-> exit ERROR", out)
+        self.assertIn("simulated spawn failure", out)
+        self.assertIn("after", out, "the criterion after the failure was never printed")
+
+    def test_a_shell_that_does_not_exist_is_a_usage_error(self):
+        self.assertEqual(self.runner("--jobs", "2", "--shell", str(self.tmp_path / "no-such-bash.exe"))[0], 2)
+
+    def test_item_runs_that_items_checks(self):
+        plan = self.write("i-plan.md", ITEM_PLAN)
+        rc, out = run(run_criteria.main, [plan, "--item", "toolbar", "--out", str(self.tmp_path / "i")])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("criterion 1: `bash -c \"echo toolbar-check\"` exits 0", out)
+        self.assertIn("toolbar-check", out)
+        self.assertNotIn("tokens-check", out, "another item's check ran")
+        self.assertNotIn("acceptance-check", out, "the whole-tree criteria ran")
+
+    def test_list_with_jobs_names_each_class(self):
+        rc, out = self.runner("--jobs", "2", "--list")
+        self.assertEqual(rc, 0)
+        self.assertIn("would run: ls count.txt [class pure]", out)
+        self.assertIn('[class exclusive]', out, "an unrecognised command runs alone")
+        self.assertFalse((self.tmp_path / "count.txt").exists(), "--list ran something")
+
+
+class RunCriteriaSchedulingTests(unittest.TestCase):
+    """`startable` is the whole scheduling policy, as a pure function."""
+
+    def job(self, jid, cls, after=()):
+        return {"id": jid, "cmd": f"c{jid}", "cls": cls, "after": set(after)}
+
+    def drain(self, jobs, cap=8, browser=2):
+        """Start everything startable, finish all running together, repeat;
+        return the waves."""
+        done, waves = set(), []
+        while len(done) < len(jobs):
+            wave = run_criteria.startable(jobs, done, set(), cap, browser)
+            self.assertTrue(wave, f"stuck with {done}")
+            # Admit whatever else becomes startable while this wave runs.
+            running = set(wave)
+            more = run_criteria.startable(jobs, done, running, cap, browser)
+            while more:
+                running |= set(more)
+                more = run_criteria.startable(jobs, done, running, cap, browser)
+            waves.append(sorted(running))
+            done |= running
+        return waves
+
+    def test_classify(self):
+        cases = {
+            "cd ForgePact; build.bat dev": "build",
+            "npm --prefix ForgePact/panel run build": "build",
+            "cd ForgePact/panel && npm run e2e:perf": "exclusive",
+            "py -3 -m unittest tests.test_panel_oracle": "exclusive",
+            "cd ForgePact/panel && npm run e2e:gems": "browser",
+            "node ForgePact/panel/tests/ui.e2e.mjs": "browser",
+            "cd ForgePact && py -3 tools/run_tests_parallel.py": "suite",
+            "py -3 -m unittest discover -s tests": "suite",
+            "py -3 -m unittest tests.test_workorder_plan_tools": "test",
+            "node --test .claude/workflows/workorder-rounds.test.mjs": "test",
+            "cd ForgePact/panel && npm test": "test",
+            "grep -c x docs/a.md": "pure",
+            "git log --oneline -1": "pure",
+            'py -3 -c "print(1)"': "pure",
+            "py -3 tools/plan_lint.py x-plan.md": "pure",
+            "some-tool --flag": "exclusive",
+        }
+        for cmd, cls in cases.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(run_criteria.classify(cmd), cls)
+
+    def test_builds_run_first_and_one_at_a_time(self):
+        jobs = [self.job(1, "pure"), self.job(2, "build"), self.job(3, "build"), self.job(4, "test")]
+        self.assertEqual(self.drain(jobs), [[2], [3], [1, 4]])
+
+    def test_one_suite_and_capped_browsers_beside_pure_checks(self):
+        jobs = [self.job(1, "suite"), self.job(2, "suite"), self.job(3, "browser"), self.job(4, "browser"),
+                self.job(5, "browser"), self.job(6, "pure")]
+        waves = self.drain(jobs, browser=2)
+        self.assertEqual(waves[0], [1, 3, 4, 6], "one suite, two browsers and the pure check together")
+        self.assertEqual(waves[1], [2, 5])
+
+    def test_the_jobs_cap_holds(self):
+        jobs = [self.job(k, "pure") for k in range(1, 6)]
+        self.assertEqual(self.drain(jobs, cap=2), [[1, 2], [3, 4], [5]])
+
+    def test_exclusive_is_a_barrier_at_its_place_in_the_plan(self):
+        # What comes before it runs together; it runs alone; what follows waits.
+        jobs = [self.job(1, "pure"), self.job(2, "browser"), self.job(3, "exclusive"),
+                self.job(4, "pure"), self.job(5, "test")]
+        self.assertEqual(self.drain(jobs), [[1, 2], [3], [4, 5]])
+        self.assertEqual(run_criteria.startable(jobs, {1, 2}, {3}, 8, 2), [], "something started beside it")
+
+    def test_after_holds_a_job_and_cannot_deadlock(self):
+        jobs = [self.job(1, "pure"), self.job(2, "pure", after=[1])]
+        self.assertEqual(self.drain(jobs), [[1], [2]])
+        # A build declared after a pure check: builds-first alone would wait forever.
+        jobs = [self.job(1, "pure"), self.job(2, "build", after=[1]), self.job(3, "test")]
+        self.assertEqual(self.drain(jobs), [[1], [2], [3]])
+
+    def test_a_shared_command_takes_the_stricter_class_and_after_maps_to_commands(self):
+        items = ["(class pure) `grep a x` exits 0",
+                 "(class build) `grep a x` exits 0, then `git log -1` (after 1)"]
+        rows, jobs = run_criteria.build_jobs(items, 1, None)
+        self.assertEqual([r["jobs"] for r in rows], [[1], [1, 2]])
+        self.assertEqual(jobs[0]["cls"], "build")
+        self.assertEqual(jobs[0]["after"], set(), "a job never waits on itself")
+        self.assertEqual(jobs[1]["after"], {1})
+        items = ["`grep a x` exits 0", "`git log -1` (after 1)"]
+        _, jobs = run_criteria.build_jobs(items, 1, None)
+        self.assertEqual(jobs[1]["after"], {1})
+
+
+ITEM_PLAN = """# x
+
+## State
+planning: complete
+gates: none
+
+## Acceptance criteria
+- [ ] `bash -c "echo acceptance-check"` exits 0
+
+## Steps
+
+Preconditions: work in this checkout.
+
+### Item: tokens — colour tokens
+files: `panel/src/tokens.css`
+checks: `bash -c "echo tokens-check"` exits 0
+
+1. Add the tokens.
+
+### Item: toolbar — toolbar restyle
+files: `panel/src/toolbar.css`, `panel/src/toolbar.js`
+after: `tokens`
+checks:
+- `bash -c "echo toolbar-check"` exits 0
+- `grep -c toolbar panel/src/toolbar.js` prints `1`
+
+1. Restyle it.
+"""
+
+
+def itemised(*specs, lanes=False):
+    """ITEM_PLAN's Steps replaced by one `### Item:` per (id, fields) pair."""
+    body = ["## Steps", ""]
+    for iid, fields in specs:
+        body.append(f"### Item: {iid}")
+        body += [f"{k}: {v}" for k, v in fields.items()]
+        body += ["", "1. Do it.", ""]
+    if lanes:
+        body += ["### Lane: extra", "files: `x/y.py`", "", "1. More.", "", "### Join", "2. Join.", ""]
+    return ITEM_PLAN.split("## Steps")[0] + "\n".join(body)
+
+
+class PlanLintItemTests(TempDirMixin, unittest.TestCase):
+    def lint(self, text, *extra):
+        return run(plan_lint.main, [self.write("x-plan.md", text), *extra])
+
+    def test_items_parse_fields_and_bullet_checks(self):
+        found = plan_lint.items(ITEM_PLAN)
+        self.assertEqual([it["id"] for it in found], ["tokens", "toolbar"])
+        self.assertEqual(found[1]["title"], "toolbar restyle")
+        self.assertEqual(found[1]["files"], ["panel/src/toolbar.css", "panel/src/toolbar.js"])
+        self.assertEqual(found[1]["after"], ["tokens"])
+        self.assertEqual(len(found[1]["checks"]), 2)
+        self.assertEqual(found[0]["checks"], ['`bash -c "echo tokens-check"` exits 0'])
+        # Control: a laneless, itemless plan has no items.
+        self.assertEqual(plan_lint.items(PLAN), [])
+
+    def test_pass_a_clean_item_plan_and_print_the_item_table(self):
+        rc, out = self.lint(ITEM_PLAN, "--items-json")
+        self.assertEqual(rc, 0, out)
+        table = json.loads(out.strip().splitlines()[-1])
+        self.assertTrue(table["complete"])
+        self.assertEqual([it["id"] for it in table["items"]], ["tokens", "toolbar"])
+
+    def test_fail_an_undeclared_overlap_and_pass_a_declared_one(self):
+        overlapping = {"files": "`panel/src/app.css`", "checks": "`grep a b` exits 0"}
+        rc, out = self.lint(itemised(("one", overlapping), ("two", overlapping)))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("item one: item-overlap: `panel/src/app.css` overlaps item two", out)
+        for link in ("shares", "after"):
+            with self.subTest(link=link):
+                rc, out = self.lint(itemised(("one", overlapping), ("two", {**overlapping, link: "`one`"})))
+                self.assertEqual(rc, 0, out)
+
+    def test_fail_each_item_shape_defect(self):
+        rc, out = self.lint(itemised(
+            ("nofiles", {"checks": "`grep a b` exits 0"}),
+            ("nochecks", {"files": "`a/1.py`"}),
+            ("Bad_Id", {"files": "`a/2.py`", "checks": "`grep a b` exits 0"}),
+            ("dup", {"files": "`a/3.py`", "checks": "`grep a b` exits 0"}),
+            ("dup", {"files": "`a/4.py`", "checks": "`grep a b` exits 0"}),
+            ("ref", {"files": "`a/5.py`", "checks": "`python -c 1` exits 0", "after": "`ghost`"}),
+        ))
+        self.assertEqual(rc, 1, out)
+        for expected in ("item nofiles: item-no-files", "item nochecks: item-no-checks",
+                         "item Bad_Id: item-bad-id", "item dup: item-dup-id",
+                         "item ref: item-unknown-ref: `ghost`", "item ref: bare-python"):
+            self.assertIn(expected, out)
+
+    def test_fail_an_after_cycle_and_items_beside_lanes(self):
+        rc, out = self.lint(itemised(("a", {"files": "`a.py`", "checks": "`grep a b` ok", "after": "`b`"}),
+                                     ("b", {"files": "`b.py`", "checks": "`grep a b` ok", "after": "`a`"})))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("item-cycle", out)
+        rc, out = self.lint(itemised(("a", {"files": "`a.py`", "checks": "`grep a b` ok"}), lanes=True))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("items-and-lanes", out)
+
+    def test_known_and_wait_return_only_new_items_and_streaming_is_incomplete(self):
+        text = ITEM_PLAN.replace("planning: complete", "planning: streaming")
+        rc, out = self.lint(text, "--items-json", "--known", "tokens")
+        self.assertEqual(rc, 0, out)
+        table = json.loads(out.strip().splitlines()[-1])
+        self.assertFalse(table["complete"])
+        self.assertEqual([it["id"] for it in table["items"]], ["toolbar"])
+        # Nothing new and still streaming: --wait polls until its limit.
+        started = time.monotonic()
+        rc, out = self.lint(text, "--items-json", "--known", "tokens,toolbar", "--wait", "1")
+        self.assertGreaterEqual(time.monotonic() - started, 0.9)
+        self.assertEqual(json.loads(out.strip().splitlines()[-1]), {"items": [], "complete": False})
+        # Control: a complete plan returns at once.
+        started = time.monotonic()
+        self.lint(ITEM_PLAN, "--items-json", "--known", "tokens,toolbar", "--wait", "30")
+        self.assertLess(time.monotonic() - started, 5)
+
+
+class WorkorderLockTests(TempDirMixin, unittest.TestCase):
+    def test_a_held_lock_excludes_and_a_semaphore_hands_out_slots(self):
+        with workorder_lock.held("build", self.tmp_path, timeout=0) as first:
+            self.assertEqual(first, "build")
+            with workorder_lock.held("build", self.tmp_path, timeout=0.3) as second:
+                self.assertIsNone(second, "a second holder got the mutex")
+        with workorder_lock.held("build", self.tmp_path, timeout=0) as again:
+            self.assertEqual(again, "build", "released on exit")
+        slots = ["browser-0", "browser-1"]
+        with workorder_lock.held(slots, self.tmp_path, timeout=0) as a, \
+                workorder_lock.held(slots, self.tmp_path, timeout=0) as b:
+            self.assertEqual({a, b}, set(slots))
+            with workorder_lock.held(slots, self.tmp_path, timeout=0.3) as c:
+                self.assertIsNone(c, "a third browser suite got a slot")
+
+
+class ItemCommitTests(TempDirMixin, unittest.TestCase):
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.tmp_path), *args], capture_output=True, text=True, check=True)
+
+    def setUp(self):
+        super().setUp()
+        self.git("init", "-q")
+        self.git("config", "user.email", "t@example.invalid")
+        self.git("config", "user.name", "t")
+        self.write("mine.py", "x = 1\n")
+        self.write("theirs.py", "y = 1\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "base")
+
+    def test_commits_only_the_items_paths(self):
+        self.write("mine.py", "x = 2  # MmCreateHook\n")
+        self.write("new.py", "z = 1\n")
+        self.write("theirs.py", "y = 2\n")
+        self.git("add", "theirs.py")  # staged by someone else: must not ride along
+        rc, out = run(item_commit.main, ["--message", "item a", "--root", str(self.tmp_path), "--",
+                                         "mine.py", "new.py", "never-created.py"])
+        self.assertEqual(rc, 0, out)
+        self.assertRegex(out, r"commit\t\.\t[0-9a-f]{40}")
+        self.assertIn("path\tmine.py", out)
+        self.assertIn("path\tnew.py", out)
+        self.assertIn("flags\tinstrument", out)
+        shown = self.git("show", "--name-only", "--format=", "HEAD").stdout.split()
+        self.assertEqual(sorted(shown), ["mine.py", "new.py"])
+        self.assertIn("theirs.py", self.git("diff", "--cached", "--name-only").stdout, "someone else's stage was lost")
+
+    def test_a_rename_inside_the_items_paths_commits_both_sides(self):
+        # PR #239 review: `diff --name-only` printed only the new path, so the
+        # old path's deletion stayed staged for someone else's commit.
+        (self.tmp_path / "d").mkdir()
+        self.write("d/a.txt", "a\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "d")
+        (self.tmp_path / "d" / "a.txt").rename(self.tmp_path / "d" / "b.txt")
+        rc, out = run(item_commit.main, ["--message", "item r", "--root", str(self.tmp_path), "--", "d/"])
+        self.assertEqual(rc, 0, out)
+        shown = self.git("show", "--name-status", "--no-renames", "--format=", "HEAD").stdout.split()
+        self.assertEqual(shown, ["D", "d/a.txt", "A", "d/b.txt"])
+        self.assertEqual(self.git("diff", "--cached", "--name-only").stdout.strip(), "", "a deletion was left staged")
+
+    def test_a_whole_submodule_path_is_every_path_inside_it_never_the_gitlink(self):
+        # PR #239 review: `ForgePact/` sliced to an empty pathspec, and a bare
+        # `ForgePact` went to the hub as a hand-made gitlink bump.
+        split = item_commit.split_by_repo(["ForgePact/", "ForgePact", "ForgePact/a.py", "docs/x.md", "docs/"],
+                                          ["ForgePact"])
+        self.assertEqual(split, {"ForgePact": [".", ".", "a.py"], ".": ["docs/x.md", "docs"]})
+        self.assertNotIn("", sum(split.values(), []))
+
+    def test_nothing_to_commit_is_not_an_error(self):
+        rc, out = run(item_commit.main, ["--message", "item a", "--root", str(self.tmp_path), "--", "mine.py"])
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("commit\t", out)
+        self.assertIn("flags\t", out)
 
 
 if __name__ == "__main__":

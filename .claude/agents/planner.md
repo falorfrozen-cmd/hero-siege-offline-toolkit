@@ -172,13 +172,23 @@ times across the UI redesign's 14 workorders. Plan so it is paid as rarely as
 the work allows (SKILL.md "Spend each check once, and overlap what does not
 wait"; evidence in `docs/agents/workorder-calibration.md`).
 
-- **Fewer, larger workorders.** Prefer one workorder whose independent parts
-  are lanes with disjoint `files:` and one `### Join` over a chain of small
-  sequential workorders, each paying its own full verify. "The suites must
-  run after the edits" is not a reason to decline lanes: running them once
-  after every lane is what the join is for. Every planner in the redesign
-  declined lanes on that ground. Split only for the reason SKILL.md Step 0.5
-  gives: independent findings that would share one round cap.
+- **Fewer, larger workorders, as items.** Prefer one workorder whose parts
+  are `### Item:` groups (see "Items" below) over a chain of small sequential
+  workorders, each paying its own full verify. Each item is implemented,
+  checked and committed on its own the moment its files are free, and the
+  whole-tree criteria run once at the end. "The suites must run after the
+  edits" is not a reason to decline items: that is what the final gate is,
+  and every planner in the redesign declined lanes on that ground. Split
+  only for the reason SKILL.md Step 0.5 gives, and remember an item has its
+  own budget, so one stubborn item no longer stops the others.
+- **Say what each criterion needs to run beside the others.** The verifier
+  runs `run_criteria.py --jobs auto`, which puts builds first and runs the
+  browser suites, the Python suite and the file checks side by side. It
+  recognises the usual commands; mark the rest `(class build)`, `(class
+  suite)`, `(class browser)`, `(class test)`, `(class pure)` or `(class
+  exclusive)`, and write `(after 3)` on a criterion that reads what
+  criterion 3's command writes. An unmarked command it does not recognise
+  runs alone in its place in the plan, which is safe and slow.
 - **Tier the verification.** A middle workorder, one whose output another
   workorder in the same feature will build on and verify again, puts in its
   criteria only what its change can reach: the module's `npm test`, the e2e
@@ -243,6 +253,7 @@ verdict: PLAN-READY
 
 ## State
 round: 0        phase: plan
+planning: complete        (`streaming` while items are still being released)
 gates: none
 gates pending: `build: complete`; `live1: complete`
 round base: <none yet>
@@ -279,6 +290,21 @@ files: `<path>`, ...
 
 ### Join
 The build, the full suite, and every step that reads another lane's output.
+```
+
+Or, instead of lanes, items (see "Items" below):
+
+```markdown
+### Item: <id> — <title>
+files: `<path>`, `<glob>`, ...
+checks:
+- `<the fast command this change can reach>` exits 0
+- `<another>` prints `<expected>`
+after: `<id>`            (optional: items that must be done first)
+shares: `<id>`           (optional: an item whose files overlap this one's)
+owner: <question>        (optional: the item waits for the owner's answer)
+
+1. The steps this item's implementer carries out, numbered.
 ```
 
 `.claude/workorders/<slug>-context.md`:
@@ -346,6 +372,49 @@ is a prefix of another's — checked over every pair of lanes, and
 conservative on purpose: narrow the globs), `lane-no-files` (a lane with no
 `files:` line or an empty one), `lane-no-join` (lanes and no `### Join`),
 `lane-dup-name`, and `lane-bad-name`. Run it before `PLAN-READY`.
+
+**Items: a plan that streams.** Declare items when the work is several
+changes that can each be finished and checked on their own: the polish
+workorder's nine owner items, the ship workorder's eight finish-review fixes.
+The workflow gives each item its own implementer, starts it as soon as no
+running item holds its files, runs the item's `checks:` through an
+independent verifier the moment it is done, and commits it. Reviewers read
+each commit as it lands, and their findings become fix items at once. The
+`## Acceptance criteria` are the whole-tree gate, run once when nothing is
+left to run: the full suite, every e2e suite, perf, the oracle. An item that
+parks (an owner question, a `PLAN-DEFECT`, three failed attempts) holds only
+what depends on it. Each item is a level-3 `### Item: <id>` heading under
+`## Steps` (id in `[a-z0-9-]+`, an optional `— <title>`), then, before its
+first numbered step:
+
+- `files:` — the backticked paths or globs it alone may edit. Items whose
+  files overlap must say so: `shares: `<id>`` (they run one after the other,
+  in plan order) or `after: `<id>`` (this one needs the other's result).
+  `plan_lint.py` refuses an undeclared overlap as `item-overlap`.
+- `checks:` — on the same line, or as bullets under it: the fast checks this
+  item's change can reach (the unit tests of the module it changed, the e2e
+  suite of the screen it touched, a grep). Each is a criterion in the usual
+  form, with `(class ...)` where it needs one. Never the full suite: that is
+  the gate's.
+- `owner:` — the question this item waits on, when the owner has not
+  answered it yet. Only this item waits; ask the others' questions up front.
+
+Steps above the first `### Item:` are preconditions for every item. A plan
+declares items or lanes, never both (`items-and-lanes`). `py -3
+tools/plan_lint.py <plan>` checks every rule above (`item-overlap`,
+`item-no-files`, `item-no-checks`, `item-dup-id`, `item-bad-id`,
+`item-unknown-ref`, `item-cycle`), and `--items-json` prints the table the
+driver passes to the workflow, only when the lint is clean.
+
+**Release items as they are settled.** When the driver asks for a streamed
+plan, write `planning: streaming` in `## State` first, together with `##
+Goal`, `## Out of scope` and the `## Acceptance criteria` heading. Then write
+each item the moment it is settled, in one `Edit`, and never change it
+afterwards: the workflow may already be implementing it, and a correction is
+an amendment the driver routes like any other. Write the independent items
+first, so the first implementers start while you plan the rest. When the
+last item and the whole-tree criteria are written, set `planning: complete`.
+The workflow runs no gate before that line says so.
 
 `### Round <n>` belongs to the rounds — the scribe and the driver write it —
 so the planner never uses it: the first plan logs under `### Plan`, each

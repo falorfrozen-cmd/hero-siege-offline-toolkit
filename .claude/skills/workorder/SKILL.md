@@ -130,6 +130,10 @@ Recommend splitting into one workorder per independent finding, or per
 submodule — say it and let the user decide; a plan this size is usually
 deliberate, and the warning is worth more than a refusal.
 
+A plan of items (Step 2, "Items") does not share one cap: each item has its
+own three attempts, and an item that stops parks alone. The count warnings
+below do not apply to it.
+
 The warning is about findings sharing one round cap, not about size as such.
 Where the work is a sequence of small dependent changes, the opposite advice
 holds: one larger workorder whose independent parts are lanes with disjoint
@@ -201,6 +205,20 @@ files, lanes without a join, a duplicate or bad name all exit 1 without it —
 so lanes a lint rejected can never be launched. Paste its `lanes` and `join`
 into the workflow's args unchanged (see "Driver discipline").
 
+**A plan of items streams instead** (Step 2, "Items"). Run `py -3
+tools/plan_lint.py <plan> --items-json` and keep its last line, `{"items":
+[...], "complete": true|false}`; like the lane table it is printed only when
+the lint is clean (`item-overlap` and the other item rules exit 1 without
+it). Items suit a workorder of several changes that can each be finished and
+checked alone. When the request already has that shape, ask the planner for
+a streamed plan: it writes `planning: streaming`, then each item as it
+settles. Spawn it in the background, poll `plan_lint.py <plan> --items-json`
+(with `--wait 240`, re-issued) until the first item appears and the lint is
+clean, and launch the workflow with `streaming: true` then, while the planner
+keeps writing. Read `## Needs human judgement` first as always; a question
+that concerns one item belongs on that item's `owner:` line, where it parks
+only that item. `plan` mode never streams: there the plan is the product.
+
 **In `plan` mode, stop here.** Report:
 
 - the goal and what is explicitly out of scope;
@@ -263,6 +281,51 @@ else `ADVICE-NEEDED` — and what the lanes finished stays uncommitted in the
 tree for the relaunch. Lanes run in workflow mode only; in driver mode a
 laned plan gets one implementer that owns every file set, as a defect round
 does.
+
+**Items: a plan that streams** (Step 1's `--items-json` printed items). Its
+steps 2-4 run as one workflow launch with no rounds inside it
+(`workorder-rounds.js` 3b; workflow mode only):
+
+- Each item's implementer starts the moment no running item holds its files,
+  up to `maxParallel` (default 4) at once; items that share a file run one
+  after another in plan order. It commits only its own files through
+  `tools/item_commit.py`, under the checkout's commit lock.
+- The moment an implementer returns, an independent `verifier` runs that
+  item's `checks:` (`run_criteria.py --item <id>`). A failure sends the item
+  back to a fresh implementer with the evidence, up to three attempts.
+- Reviewers read the commits as they land, each pinned to the `HEAD` it
+  started from, never the working tree. A reviewer re-runs when new commits
+  match its trigger, and its `BLOCKING` findings become a fix item at once,
+  on the files the findings name (or, with no path, run alone once the rest
+  are done). A reviewer may be split by screen or dimension with
+  `reviewScopes`, and its scopes run as separate reviewers.
+- When nothing is left to run, the `## Acceptance criteria` run once, the
+  only full verify. A failure becomes one fix that runs alone, and the gate
+  runs again, three times at most.
+- An item that stops parks alone. What depends on it is held, and
+  everything else keeps flowing. The launch returns `PARKED` once nothing
+  else can run, before the gate, with every item's status, reason and
+  evidence.
+
+Route a `PARKED` result item by item, and relaunch once for all of them.
+Pass `state` as always: its `items:` line tells the relaunch which items are
+done, and they are not run again.
+
+- `owner: <question>`, or an item's question for the person → one
+  `AskUserQuestion` batch for every parked item. Record each answer under
+  `### Decisions`, then relaunch with those ids in `answered`.
+- `ADVICE-NEEDED` → "Consultation" below, the answer under `### Decisions`,
+  then relaunch.
+- `PLAN-DEFECT` → "Amend, or replan" below, for that item only: tell the
+  planner which item it is. The items held with it are relaunched with it.
+- `budget: ...` → the item failed its checks three times. Bring it to the
+  user with the evidence and offer to split it into its own workorder.
+
+The launch-wide ceiling is `maxAgents` (default 120) spawned agents and,
+when set, `tokenCeiling` output tokens. At the ceiling the launch finishes
+what is running and returns `CEILING`; relaunch, or stop and report. Pushing,
+installing and anything destructive stay gated on the owner's word exactly as
+before: nothing in items mode pushes.
 
 Spawn `implementer` with the plan and context paths. Three outcomes:
 
@@ -415,14 +478,20 @@ one `docs-sync-reviewer` that ran 40 turns twice:
 that the context file is opened one cited heading at a time with
 `section.py`, never whole.
 
-**The verifier starts with `tools/run_criteria.py <plan>`.** The script runs
-every command-shaped criterion in one call, exactly as written, once per
-distinct command, and skips gated ones. It prints each exit code with the tail
-of the command's output and judges nothing, so the verifier still decides
-every criterion and reads the prose ones. Verifiers spent about a third of
-their time on model turns between commands, so this cuts per-command turns
-and nothing the verifier observes. A root suite a criterion already ran is not
-run a second time for step 3 of `verifier.md`.
+**The verifier starts with `tools/run_criteria.py <plan> --jobs auto`.** The
+script runs every command-shaped criterion in one call, exactly as written,
+once per distinct command, and skips gated ones. With `--jobs` it runs
+independent commands at the same time by resource class: builds first and
+alone, then at most one whole suite, two browser suites and any number of
+file checks side by side, while a timing benchmark (`e2e:perf`) and any
+command it does not recognise run alone in their place in the plan. It
+prints criteria in plan order with the serial run's `cmd-<n>.log` numbers,
+each exit code with the tail of the command's output, and judges nothing, so
+the verifier still decides every criterion and reads the prose ones.
+Verifiers spent about a third of their time on model turns between commands,
+so this cuts per-command turns and nothing the verifier observes. A root
+suite a criterion already ran is not run a second time for step 3 of
+`verifier.md`.
 
 **Diff from the round base, never from `HEAD`** — implementers commit during
 the round, so `git diff HEAD` is empty afterwards. Take each repo's base sha
@@ -777,13 +846,16 @@ do not wait for the whole review before fixing:
   done, one full verify (plus the reviewers that raised blocking findings,
   re-reading the fixed commit) covers every fix together, per rule 1.
 
-`workorder-rounds.js` does not stream, and should not be made to: `agent()`
-returns only when an agent ends, so a script never sees a finding before its
-reviewer has finished, and handing each finished reviewer to a fixer inside a
-round would have fixers editing the tree the round's verifier is reading at
-that moment, leaving the verify's evidence attached to no commit. Streaming
-is this driver procedure, run outside a round, and its output enters the
-next round as one batch.
+A plan of items (Step 2, "Items") gets this from `workorder-rounds.js`
+itself: reviewers read pinned commits, each finished reviewer's findings go
+to a fixer at once, and one gate runs after the queue drains. The streaming
+is per reviewer, not per finding, because `agent()` returns only when an
+agent ends, so split a big review into narrower reviewers (`reviewScopes`)
+to get findings sooner. The gate reads a tree nobody is editing, because it
+runs only when no implementer is left. A plan with no items still runs in
+rounds, where no fixer may touch the tree the round's verifier is reading;
+for it, and for a review that is not a workorder's own reviewer pass, this
+driver procedure is the way to stream.
 
 **4. Main moved: merge it when it is clean and misses the plan's files.** A
 plan's precondition is "main moved → merge it when `git merge-tree
@@ -813,7 +885,8 @@ Chromium `ERR_UNSAFE_PORT` flake.
 workorder, `round_delta.py`, `tools/amend_check.py save`/`check` around an
 amendment, `git status`/`git diff` for a dispatch, `Edit` on
 `## State`/`## Log`, `Agent`, `SendMessage`, `AskUserQuestion`, step
-4.5's one approved install, and the speed procedures above: `Monitor` on a
+4.5's one approved install, `plan_lint.py --items-json` while a streamed plan
+is being written, and the speed procedures above: `Monitor` on a
 findings directory, a pinned review snapshot (`git worktree add --detach`,
 `git archive`), a `git fetch`/`git merge-tree`/`git merge` of `origin/main`
 between rounds, and building and serving the owner's snapshot, which checks
@@ -836,8 +909,28 @@ Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, checkoutRoot, goalExcerpt, implementerModel, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
                    submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
-                   lanes: [{ name, files: [...] }, ...], join } })
+                   lanes: [{ name, files: [...] }, ...], join,
+                   items: [{ id, title, files, checks, after, shares, owner }, ...], streaming, answered: ['<id>', ...],
+                   reviewScopes: { '<reviewer>': [{ label, paths: [...] }, ...] },
+                   maxParallel, maxAgents, tokenCeiling, itemAttempts, reviewPassCap } })
 ```
+
+`items` is pasted from `py -3 tools/plan_lint.py <plan> --items-json`
+unchanged, on every launch of a plan of items (the relaunch reads which are
+done from `state`'s `items:` line). `streaming: true` while the plan's State
+says `planning: streaming`: the workflow then runs a `refill` agent that waits
+on `plan_lint.py --items-json --known <ids> --wait 480` and adds each item
+the planner releases, and it runs no gate before planning is complete.
+`answered` lists the items whose `owner:` question now has an answer under
+`### Decisions`. `reviewScopes` splits a reviewer into several that each read
+only their paths, run as separate reviewers. `maxParallel` (4),
+`maxAgents` (120), `tokenCeiling` (none) and `itemAttempts` (3) are the
+budgets in Step 2, "Items"; `reviewPassCap` (4) is how many passes a
+reviewer makes as commits land before it waits for one final catch-up pass
+once nothing else is running. Items that could not have come from that output
+(a bad or duplicate id, no files, an `after:` naming no item, items beside
+lanes) are refused with `BAD-ARGS` before anything is spawned. A launch with
+no `items` runs in rounds exactly as below.
 
 `lanes` and `join` are pasted from `py -3 tools/plan_lint.py <plan>
 --lanes-json` (Step 1), and only for the first implementation of the plan's
@@ -896,7 +989,15 @@ It keeps `patch rounds: <k>` in State and reads it back on the next launch,
 so a patch that held stays uncounted across launches. A patch decided just
 before a launch ends is not carried over; the relaunch runs an ordinary round.
 
-It loops implement → verify+reviewers → route as code (same 3-round cap,
+A plan of items returns `PASS`, `PASS-PENDING-HUMAN`, `PARKED`, `PLAN-DEFECT`
+(a reviewer's plan defect, the gate's unrunnable criterion, or a refill that
+`plan_lint` refused), `CEILING`, `CAP` (the gate failed three times),
+`AGENT-FAILED`, `STATE-LOST` or `SCRIBE-FAILED`, always with `items:` beside
+it (each item's `id`, `status`, `reason`, `attempts`, `commits`, `evidence`
+and `progress`) and `gate:` (each gate run). Its Log entry is `### Round <n>
+(items)`, and State gains `items: <id>=<status>; ...`.
+
+A plan without items loops implement → verify+reviewers → route as code (same 3-round cap,
 scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,
 `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED` or `CAP`. One
 launch may cover several rounds; `PLAN-DEFECT` means relaunching after the

@@ -964,6 +964,60 @@ This lives in its own section rather than on the "CI / Pipeline Availability"
 line above because that line is rewritten whenever a release workflow changes,
 and every such rewrite conflicted with it.
 
+### Panel changes get the UI design tooling (ForgePact only)
+
+When a pull request changes panel source (`panel/**` `.svelte`, `.css`,
+`.html`, `.js`, `.ts`, `.mjs`, excluding `panel/tests/`, `panel/scripts/`,
+`panel/dist/`, `node_modules` and `*.config.js`), the review also runs the UI
+tooling the panel is developed with and posts it in the same comment, under
+`### impeccable audit` and `### review-animations` (plus `### taste-skill` if
+the reviewer used it). Each section carries its findings, "No findings." or
+why the tool did not run; the code-review command's confidence filter and
+early stops do not apply to them, and a last step, "Fail if the design tools
+went unreported", turns the job red when either heading is missing. The hub's
+own `ai-review.yml` does not do this: the redesign is ForgePact's.
+
+- **Plugins.** `impeccable@impeccable` and `taste-skill@taste-skill` load
+  beside `code-review`, from the same marketplaces the hub's
+  `.claude/settings.json` enables. They are unpinned, like `code-review`.
+- **impeccable's launcher runs in the workflow, not in the model.** The skill
+  would start by executing `scripts/impeccable context` and, for an audit,
+  `impeccable detect`. That path sits under the plugin's versioned install
+  directory, and a Bash permission rule can only name it with a leading `*`,
+  which Claude Code warns against. So a step sparse-checks out
+  `pbakaus/impeccable`'s `plugin/skills/impeccable` (the plugin's own source)
+  and runs both verbs over the changed files into `.review-tools/out/`; the
+  launcher fetches a self-contained engine binary and verifies its SHA-256, so
+  neither Node nor npx is needed. A failed scan does not fail the job; its exit
+  status and stderr reach the reviewer, who must say the detector did not run.
+  The detector's positive control (gradient text and a glow shadow in a scratch
+  CSS file) reports `gradient-text` with exit 2, and the redesign's 30 panel
+  source files scanned clean (`[]`, exit 0) on 2026-09-27.
+- **review-animations** comes from a sparse checkout of this hub's
+  `.claude/skills` (public, so the job's token reads it), rather than a copy in
+  ForgePact, so the vendored Emil skills keep one source of truth pinned by
+  `.claude/skills/THIRD_PARTY.md`. It is `disable-model-invocation`, so the
+  reviewer reads its `SKILL.md` with `Read`. A keyword scan of added lines
+  (`transition`, `animation`, `@keyframes`, `@starting-style`, `--motion-`,
+  `data-instant`, `prefers-reduced-motion`, ...) points it at likely motion
+  changes; the reviewer still decides.
+- **`--allowedTools` gains nothing.** `Skill` and `Read` cover everything the
+  design tools need once the launcher runs in the workflow.
+- **No browser in CI.** Captures and live checks (`impeccable-finish-reviewer`,
+  impeccable's live mode and overlays, the panel's `e2e:*` suites) stay local.
+
+A pull request that edits `ai-review.yml` cannot be reviewed by it: the action
+skips with "Workflow validation failed. The workflow file must exist and have
+identical content to the version on the repository's default branch", and the
+"posted nothing" step then goes red (ForgePact #99, 2026-09-27). So a workflow
+change is proved only after it merges, on the next panel pull request that is
+labelled.
+
+The hub's `tests/test_ai_review_workflow.py` reads only the hub's file, but its
+assertions pass against ForgePact's copy too; keep them passing when editing
+either, by loading that module and pointing `WORKFLOW` at
+`ForgePact/.github/workflows/ai-review.yml`.
+
 ## Safety, Installation & Backup Lifecycle
 
 ### Safe Mod Installation & Restoration
@@ -2252,14 +2306,19 @@ manifest.
     - **What a player sees.** At or after closing the game, Windows reports Hero Siege crashed: faulting module `ucrtbase.dll`, exception `0xc0000409`, fast-fail parameter 7 (`abort`). A dump lands in `%LOCALAPPDATA%\CrashDumps`.
     - **What it is.** `modfiles_shipped/HSOfflineTrackerProducer.dll` (pinned from the 1.3.16 package, a 2026-09-07-or-earlier build) keeps its publisher in a global `std::thread` (`g_publish_worker` in HS-Offline-Tracker's `aurie-producer/src/module.cpp`) and joins it only in `StopPublishWorker`. When the game leaves through `ExitProcess`, its other threads are gone before the DLL's globals are destroyed, and a `std::thread` still joinable at destruction calls `std::terminate`. The dumps' thread is inside `LdrShutdownProcess`, in that DLL's exit-time destructors, with the game's ordinary exit path under it.
     - **How often.** Most likely on every exit once the producer's publisher runs. 9 of the 10 dumps Windows kept (2026-09-25 13:17 to 2026-09-26 01:36) show it, one from a session that lived 70 s. HS-Offline-Tracker PR #8's check, launched with `CREATE_DEFAULT_ERROR_MODE`, saw it on a plain `CloseMainWindow` at the main menu (exit `0xC0000409`, dump 56756). The five `CloseMainWindow` closes of 2026-09-26 that left no dump were games started by Python under Git Bash. That Python's error mode is `0x3` (`SEM_NOGPFAULTERRORBOX`, measured), and the games inherited it, so Windows did not report their exits. Their exit codes were not read. `tools/itemtruth_memrun.py` now starts the game with the default error mode and reads the exit code (ForgePact PR #97).
+    - **A missing dump is not a clean exit (measured 2026-09-26, item 26's live check).** That check's first `deaf068` run was also started by Python under Git Bash and inherited error mode `0x3`. It aborted with exit code `0xC0000409`, yet Windows wrote no dump and logged no Application Error event. The same run started with `CREATE_DEFAULT_ERROR_MODE` dumped. PowerShell resets its own error mode to `0x8001`, without `SEM_NOGPFAULTERRORBOX`. Judge a close by the game's exit code, not by the dump folder.
     - **Why it matters here.** The session of 197,704 Item Truth evaluations that "crashed" at 01:36:27 is one of them; it was read as the evaluations running out of memory (they do not: "Item Truth for the Item Editor", Memory). Read a dump's stack before blaming a `ucrtbase` report on ForgePact or the game.
     - **Not fixed here.** The fix belongs in HS-Offline-Tracker (join or detach the worker before the globals go); ForgePact then updates the pin. `ItemTruth.hpp` avoids the same trap for its own writer thread by never destroying its `Journal`; ForgePact's own coop receive thread did not, until item 26.
-26. **ForgePact's own coop receive thread aborted research-build exits the same way (fixed in ForgePact PR #90, 2026-09-26; not run in the game):**
+26. **ForgePact's own coop receive thread aborted research-build exits the same way (fixed in ForgePact PR #90; verified live 2026-09-26):**
     - **What it was.** `plugin/ModuleMain.cpp` kept the custom co-op transport's receive thread in `static std::thread g_CoopRecvThread`. `coopstart`, or a `bp_ipc\coop.ini` with `enabled=1` (read on the first frame), started it, and only `coopstop` joined it. Closing the game with coop still running therefore ended in item 25's abort, from ForgePact's own exit-time destructors.
     - **Who could meet it.** Research builds only. No preprocessor guard keeps the coop code out of the player build, but no `coop*` verb is in `kPlayerCommands`, so `RunCommand` refuses them there, and the `coop.ini` auto-start and the per-frame `CoopTick` are inside `#ifndef FORGEPACT_RELEASE`.
     - **The fix.** `plugin/include/ForgePact/ExitSafeThread.hpp`: the `std::thread` lives on the heap in a trivially destructible holder and is freed only after a join, so nothing runs for it at exit. It has the same shape as HS-Offline-Tracker PR #8's fix. `coopstop` closes the socket and waits at most 2 s (`kCoopStopJoinTimeout`) where it used to join without a bound on the frame thread. A thread that does not end is kept, and `coopstart` refuses until a later `coopstop` has joined it.
     - **Not covered: an Aurie unload.** ForgePact exports no `ModuleUnload` and never restores the script-table entries `HookOneScript` writes, so the Aurie console's "Unload framework" leaves them pointing into an unmapped module with or without coop (static reading, not run). The holder changes nothing there: a receive thread still running when Aurie calls `FreeLibrary` is left in unmapped code, where the old shape aborted instead.
     - **Tests.** `tests/test_coop_thread_exit_behavior.py` (with `coop_thread_exit_probe.cpp`, a DLL, and `coop_thread_exit_harness.cpp`) ends child processes with `ExitProcess`: the old static `std::thread` aborts (the baseline, caught as exit `0x7E2` so no dump is written), `ExitSafeThread` exits 0 (the target), and three cases cover `coopstop`. `tests/test_coop_thread_exit_contract.py` pins the wiring, the bound and the reachability above, and fails on any new named `std::thread` in the plugin that its `NAMED_THREADS` table does not list with a reason. Today that table lists only the Item Truth `Journal`'s thread.
+    - **Live check (2026-09-26, at the owner's request).** Two research builds were run: `deaf068` (before #90) and `9915ca5` (#90 merged).
+      - **Procedure.** Each build was launched to the main menu and ran `coopstart 47801 127.0.0.1 47802` (reply `coop: started`). Then `CloseMainWindow` at the main menu, the close that left dump 19000 at 10:38 that day (a producer abort, by its stack). `HSOfflineTrackerProducer.dll` was moved out of `mods\aurie` for these runs, so its own abort could not be the one observed, and then put back (SHA-256 checked).
+      - **Result.** `deaf068` exited `0xC0000409` (abort); `9915ca5` exited `0`. A fast fail sets `0xC0000409` whatever the error mode, so the `9915ca5` exit is conclusive.
+      - **Attribution.** The first `deaf068` run left no dump (item 25, "A missing dump is not a clean exit"). A second `deaf068` run, launched with `CREATE_DEFAULT_ERROR_MODE`, wrote `Hero_Siege.exe.25484.dmp`. Its stack is `ucrtbase!abort` ← `terminate` ← `BloodPactPlugin.dll+0x3F7823` ← `_execute_onexit_table`. That frame is inside the 25-byte function at RVA `0x3F7810`, whose address the DLL hands to `atexit`: the static `std::thread`'s destructor. The `9915ca5` DLL has no such function; the shipped producer has the same one at `0x1A9F0`.
 27. **The panel's theme and slider switches live in `forgepact.json`, not in the browser, and an off slider reads `off` (2026-09-25):**
     - **Where they are kept.** The theme name (`theme`) and every slider switch that is off (`switches`) are saved through `/api/set` into `%LOCALAPPDATA%\Hero_Siege\forgepact.json`, like every other setting (Data Formats § 1). Nothing in `panel/src/` uses `localStorage`: the desktop window is pywebview, whose web storage is private to it and not the same store a browser pointed at `http://127.0.0.1:8780` sees, so a browser-side setting would differ between the two front ends and would not travel with the rest of the config.
     - **An off slider's value box reads `off`**, with class `val off`, as Monster Density's always has; the slider keeps its saved value and stays movable, and turning the switch back on sends that value. The number is not shown while off until the visual restyle decides how to draw it (owner, 2026-09-25: no new string before then).

@@ -182,6 +182,20 @@ genuinely balanced", not "I would prefer someone else confirm this."
    running the whole suite again for a different one (measured: the same
    suite three times in a row, to read one run's result).
 
+   **Run independent suites at the same time, not one after another.** Two
+   suites that share no build output (the hub's Python suite and a
+   submodule's `npm test`, two e2e suites, a lint and a unit run) go out in
+   one message as separate `Bash` calls with `run_in_background: true`, each
+   writing its own scratch file; wait on them with `Monitor` (an `until`
+   loop per file, or one on the exit markers) and read **every** result
+   before judging any. A build goes first and alone, since the suites read
+   what it writes, and a timing benchmark (`e2e:perf`) runs alone after the
+   rest, since a loaded machine fails its frame budgets. When the plan's
+   criteria are the thing to run, `py -3 tools/run_criteria.py <plan> --jobs
+   auto` does all of this in one call and prints the results in plan order.
+   Inside one agent this is how work runs in parallel: you cannot spawn
+   agents, and the workflow that runs you does that part.
+
    **Re-entered after a defect, re-run only what the defect touches**: the
    failed criteria, any criterion that reads a file you changed this round,
    and the suite once if code changed. The verifier runs every criterion
@@ -250,6 +264,41 @@ none of their work is committed yet. In this order:
 Report under `DEVIATIONS` any dirty path that is in no lane's file set and
 that you did not create yourself. A lane edited something it did not own,
 or something else wrote to the tree, and the reviewers need to know which.
+
+## When you are one item, or a fixer
+
+A streamed plan declares `### Item: <id>` groups under `## Steps`, each with
+a `files:` line and `checks:`. The workflow runs one implementer per item,
+several at once in this one checkout, and starts each the moment its files
+are free. Your label (`item-implementer:<id>:a<k>:r<n>`) and your prompt say
+which item you are. A `fix-implementer:<id>:r<n>` resolves reviewer findings,
+or a failed whole-tree criterion, the same way.
+
+- **Your file set is a boundary.** Carry out only your item's steps (and the
+  preconditions above the first `### Item:`), and edit only paths your
+  `files:` line names or its globs match. An edit you need outside it is a
+  `PLAN-DEFECT`: another item may be writing that file right now. A fixer
+  whose prompt says it runs alone may edit any file.
+- **Commit only your own files, once, with the tool.** At the end, run the
+  `py -3 tools/item_commit.py --message "..." -- <paths>` line your prompt
+  gives, naming your file set or the files you changed in it. It takes the
+  checkout's commit lock and commits only those paths, so another item's
+  half-finished edits never ride along and two commits never race on
+  `.git/index.lock`. Copy each `commit` line it prints into `commits`, each
+  `path` line into `paths`, and its `flags` value into `flags`; the reviewers
+  are chosen from them. Run no other git command that writes.
+- **Check your item before you return.** Run `py -3 tools/run_criteria.py
+  <plan> --item <id> --jobs auto` once, fix what fails, and commit again. An
+  independent verifier runs the same checks after you; a check that fails
+  there sends the item back to a fresh implementer with the evidence, up to
+  three attempts, and then the item parks.
+- **No full build and no full suite.** The whole-tree criteria run once,
+  after every item is done. A build inside your item's checks takes the
+  checkout's `build` lock by itself, so two items never build at once.
+- **Returning `PLAN-DEFECT` or `ADVICE-NEEDED` parks your item only.** The
+  items that do not depend on it keep running. Say in `PROGRESS SO FAR`
+  which of your files you left edited: the items that share them wait for
+  you.
 
 ## Rules you cannot implement around
 
