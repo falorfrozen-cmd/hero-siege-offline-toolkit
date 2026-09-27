@@ -3084,3 +3084,16 @@ frame in that session, and one warm World tab switch took 60.7 ms once in the
 with-motion window (no motion runs on a tab switch; not seen again).
 `perf.e2e.mjs` still builds no attach mode; the throwaway attach script and
 its raw samples stayed in that workorder's local evidence.
+
+
+### Local Ember UI integration (2026-09-28)
+
+The `codex/ember-ui-v2` branch ports the approved Ember artwork onto the 2.0
+Svelte panel at `8cfdd6b`, preserving the current Python backend and native plugin.
+The implementation is under `ForgePact/panel/src/ember/`; Ember is the fallback
+for default/unknown themes, and existing Ledger/Graphite/Sigil choices stay intact.
+Overview controls forward to the original setting handlers. No new game hooks,
+observers or polling loops are added. See `ForgePact/docs/ember-ui.md` for the
+asset provenance, theme behavior, build steps and `npm --prefix panel run e2e:ember`.
+The legacy/gems/Prime Evil oracle recordings remain immutable; the derived
+recording was regenerated for the fourth theme. Figma exports are unchanged.
