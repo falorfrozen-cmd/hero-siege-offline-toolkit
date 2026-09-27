@@ -2501,7 +2501,7 @@ manifest.
 - Modified YYToolkit, source of truth (hub patch series, build tool, provenance story): `../../../third_party/yytoolkit/README.md`, `../../../third_party/yytoolkit/NOTICE.md`, `../../../tools/build_yytoolkit.py`, `../../adr/0002-modified-yytoolkit-is-a-patch-series-in-the-hub.md`, `../../agents/yytoolkit-provenance.md`
 - `../../../ForgePact/yytoolkit-modified/NOTICE.md` now points at the hub series above, not at the `bb113eef…` DLL a player's installed copy still carries; for that DLL's own notice and what it left out, see the pin table above and [`docs/agents/yytoolkit-provenance.md`](../../agents/yytoolkit-provenance.md).
 - Credits & License Notices: `../../../ForgePact/CREDITS.md` (including the bundled IBM Plex Sans and IBM Plex Mono fonts, SIL Open Font License 1.1)
-- Panel design (Figma): `https://www.figma.com/design/75EleO8U3zngY8JU9adWpk` - the panel redesign's source. The owner picked the Graphite Console direction on 2026-09-25, and the unchanged Figma file carries the three flat palettes, **Ledger**, **Graphite** and **Sigil**. The runtime Theme choice now has four: **Ember Forge** is the default for fresh/unknown preferences, and explicit Ledger/Graphite/Sigil choices are preserved (`THEMES` in `panel/src/theme.js`). Ember follows the separately approved artwork documented in `ForgePact/panel/DESIGN.md`; its Figma library is deferred. The unchanged three-palette Figma file's export is committed as `panel/design/figma-export.json` (with `figma-manifest.json`), the contract `panel/src/tokens.css` is generated from with `panel/scripts/tokens-from-export.mjs` and that `design-match.mjs` measures the page against; its `motion.notes` are what `app.css`'s motion implements (forgepact-ui-ship). The latest local mirror of the frames design-match compares with is `.claude/workorders/forgepact-ui-main-merge-3/figma/` in the hub (gitignored workorder evidence).
+- Panel design (Figma): `https://www.figma.com/design/75EleO8U3zngY8JU9adWpk` - the panel redesign's source. The owner picked the Graphite Console direction on 2026-09-25, and the unchanged Figma file carries the three flat palettes, **Ledger**, **Graphite** and **Sigil**. Once ForgePact #105 merges, the runtime Theme choice will have four: **Ember Forge** will be the default for fresh/unknown preferences, and explicit Ledger/Graphite/Sigil choices will be preserved (`THEMES` in `panel/src/theme.js`). Ember follows the separately approved artwork documented in `ForgePact/panel/DESIGN.md`; its Figma library is deferred. The unchanged three-palette Figma file's export is committed as `panel/design/figma-export.json` (with `figma-manifest.json`), the contract `panel/src/tokens.css` is generated from with `panel/scripts/tokens-from-export.mjs` and that `design-match.mjs` measures the page against; its `motion.notes` are what `app.css`'s motion implements (forgepact-ui-ship). The latest local mirror of the frames design-match compares with is `.claude/workorders/forgepact-ui-main-merge-3/figma/` in the hub (gitignored workorder evidence).
 - Season 10 Special Content Notes: `../../../ForgePact/docs/S10-special-content-notes.md`
 - Dungeon Key & Drop Research: `../../../ForgePact/docs/dungeon-key-research.md`
 - Angelic Drop Research: `../../../ForgePact/docs/angelic-drop-research.md`
@@ -3097,3 +3097,19 @@ observers or polling loops are added. See `ForgePact/docs/ember-ui.md` for the
 asset provenance, theme behavior, build steps and `npm --prefix panel run e2e:ember`.
 The legacy/gems/Prime Evil oracle recordings remain immutable; the derived
 recording was regenerated for the fourth theme. Figma exports are unchanged.
+
+Ember's shell now keeps `#wrap` as the constrained scroll container: the base
+panel deliberately locks body scrolling, so making both the shell and `#wrap`
+auto-height removes user scrolling. The action footer belongs to `#appShell`
+as a separate grid row, reserving its actual height instead of covering the
+last controls. `nav.js` resets the content scroll on page/subtab changes.
+`npm --prefix panel run e2e:ember-scroll` exercises native scrollbar dragging,
+wheel and keyboard scrolling, all pages at six viewport sizes, and independent
+sidebar/Satanic/Gem-list scrolling. Its headless browser explicitly keeps native
+scrollbars visible; `tests/test_panel_e2e_ember_scroll.py` includes it in the
+`panel-browser` release-test group. Full-page screenshots or locator auto-scroll
+alone cannot prove that a player can reach off-screen settings.
+The theme menu and expanded Enabled mods list stay in the content flow and cap
+their list heights to the pane on open. The scroll suite exercises their last
+options/actions in short/mobile windows as well as the Ember inline/tray width
+transition; the original form suite seeds Ledger for its 1280px design contract.
