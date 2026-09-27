@@ -1621,10 +1621,19 @@ def rule_r23_lane_git_mutation(session: Session) -> RuleResult:
 #     amendment then counts as a replan (R11). An amendment with no `save`
 #     before it or no `check` after it was never checked at all, and two
 #     amendments with no implementer between them are one replan in two parts.
+#     `workorder-rounds.js` runs a confirmed amendment inside its launch:
+#     there the `save` and `check` calls come from agents of the same
+#     workflow run as the planner (`amend-save:<id>:r<n>`,
+#     `amend-check:<id>:r<n>`) and count exactly as the driver's would, never
+#     the planner's own. Its label names the item (`amendment: <slug>
+#     <id>:r<n>`), and since the engine queues one item's amendment behind
+#     another's, "two amendments with no implementer between" applies there
+#     only to two amendments of the same item.
 #   * a patch round is `patch-implementer:r<n>`, spawned only by
 #     `workorder-rounds.js`, which never runs two back to back; two in
 #     consecutive rounds of one workflow launch mean that guard failed.
 AMEND_LABEL_RE = re.compile(r"^\s*amendment:", re.I)
+AMEND_TARGET_RE = re.compile(r"^\s*amendment:\s*\S+\s+(\S+?):r\d+\s*$", re.I)
 PATCH_LABEL_RE = re.compile(r"^patch-implementer:r(\d+)$")
 
 
@@ -1632,23 +1641,38 @@ def is_amendment(agent: AgentTranscript) -> bool:
     return agent.agent_type == "planner" and bool(AMEND_LABEL_RE.match(agent.label or ""))
 
 
-def _driver_amend_calls(session: Session, verb: str) -> list:
-    """The driver's shell calls running `amend_check.py <verb>`, in order."""
+def _amend_target(agent: AgentTranscript) -> Optional[str]:
+    """The item or round an in-launch amendment names (`amendment: <slug>
+    <id>:r<n>` -> `<id>`); None for a driver's amendment or a free-form label."""
+    if agent.workflow_id is None:
+        return None
+    m = AMEND_TARGET_RE.match(agent.label or "")
+    return m.group(1) if m else None
+
+
+def _amend_calls(session: Session, verb: str, amendment: Optional[AgentTranscript] = None) -> list:
+    """Shell calls running `amend_check.py <verb>`, by start time: the
+    driver's, plus -- for an amendment planner a workflow launch spawned --
+    those of every other agent of that same launch. An amendment planner's
+    own calls never count: it would be checking itself."""
     pattern = re.compile(rf"amend_check\.py\"?\s+{verb}\b")
-    return [c for c in session.driver.tool_calls
-            if c.name in SHELL_TOOLS and pattern.search(_cmd_text(c))]
+    agents = [session.driver]
+    if amendment is not None and amendment.workflow_id is not None:
+        agents += [a for a in session.workflow_runs.get(amendment.workflow_id, []) if not is_amendment(a)]
+    calls = [c for a in agents for c in a.tool_calls
+             if c.name in SHELL_TOOLS and pattern.search(_cmd_text(c))]
+    return sorted(calls, key=lambda c: c.ts_start)
 
 
 def amendment_verdicts(session: Session) -> dict:
-    """`id(amendment planner)` -> True when the driver's first `amend_check.py
-    check` after it ended passed, False when it failed, None when there was
-    none."""
-    checks = _driver_amend_calls(session, "check")
+    """`id(amendment planner)` -> True when the first `amend_check.py check`
+    after it ended (the driver's, or one from its own launch) passed, False
+    when it failed, None when there was none."""
     out = {}
     for agent in all_subagents(session):
         if not is_amendment(agent) or agent.ts_last is None:
             continue
-        after = [c for c in checks if c.ts_start >= agent.ts_last]
+        after = [c for c in _amend_calls(session, "check", agent) if c.ts_start >= agent.ts_last]
         out[id(agent)] = (not after[0].is_error) if after else None
     return out
 
@@ -1656,7 +1680,6 @@ def amendment_verdicts(session: Session) -> dict:
 def rule_r24_cheap_routes(session: Session) -> RuleResult:
     evidence = []
     verdicts = amendment_verdicts(session)
-    saves = _driver_amend_calls(session, "save")
     planners = sorted((a for a in all_subagents(session) if a.agent_type == "planner" and a.ts_first),
                       key=lambda a: a.ts_first)
     implementers = [a for a in all_subagents(session) if a.agent_type == "implementer" and a.ts_first]
@@ -1665,10 +1688,17 @@ def rule_r24_cheap_routes(session: Session) -> RuleResult:
             continue
         prev = planners[i - 1] if i else None
         since = prev.ts_first if prev else None
+        saves = _amend_calls(session, "save", agent)
         if not any(c.ts_start <= agent.ts_first and (since is None or c.ts_start >= since) for c in saves):
             evidence.append(f"{agent.label}: no `amend_check.py save` before it")
         if verdicts.get(id(agent)) is None:
             evidence.append(f"{agent.label}: no `amend_check.py check` after it")
+        target = _amend_target(agent)
+        if target is not None:
+            # In a launch, the earlier amendment that matters is the same item's.
+            same = [p for p in planners[:i] if p.workflow_id == agent.workflow_id
+                    and is_amendment(p) and _amend_target(p) == target]
+            prev = same[-1] if same else None
         if prev is not None and is_amendment(prev) and prev.ts_last and not any(
                 prev.ts_last <= a.ts_first <= agent.ts_first for a in implementers):
             evidence.append(f"{agent.label}: a second amendment after {prev.label} with no implementer between")
@@ -1694,7 +1724,7 @@ SCOPE_VERDICT_RE = re.compile(r"^SCOPE:", re.M)
 
 def rule_r25_owner_scope(session: Session) -> RuleResult:
     evidence = []
-    checks = _driver_amend_calls(session, "check")
+    checks = _amend_calls(session, "check")
     planners = sorted((a.ts_first for a in all_subagents(session) if a.agent_type == "planner" and a.ts_first))
     human = [t for t, _ in session.driver.human_messages]
     since = planners[0] if planners else None
