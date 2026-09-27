@@ -1076,7 +1076,7 @@ collect instantly.
 [pet-quest research §1](../ForgePact/docs/pet-quest-collector-research.md#1-checkplayerinteraction--call-frequency-arguments-self-context)
 
 Two facts for anything that picks quest items one after another (**static
-reading**, ForgePact #94, 2026-09-27):
+reading**, ForgePact's dev2 bug batch, 2026-09-27):
 
 - `m_Questpickup` reads the objective's progress and its maximum before it
   updates the quest, so an item whose objective has just filled can be
@@ -1087,11 +1087,13 @@ reading**, ForgePact #94, 2026-09-27):
   pet read at most 64) can therefore stop before it reaches collectable items
   with a high index.
 
-A selector that picks the nearest item with no memory of a failed one re-picks
-the same item forever after either failure; ForgePact's pet now holds a failed
-target back and walks the family with a cursor. Not measured: no session named
-which cause the reported circling had.
-[dev2 bug batch, #94](../ForgePact/docs/dev2-bug-batch-research.md#94-the-pet-circles-one-quest-item-when-many-are-on-screen)
+A selector that picks the nearest item with no memory of a failed one can
+re-pick the same item after either failure; ForgePact's Pet Quest Collector
+therefore holds a failed target back and walks the family with a cursor. Not
+measured. (The report that prompted this turned out to be the game's own
+companion loot pickup, §10.6, not a quest-item selector.)
+[dev2 bug batch, the Pet Quest Collector's section](../ForgePact/docs/dev2-bug-batch-research.md),
+[pet loot stuck](../ForgePact/docs/pet-loot-stuck-research.md)
 
 On the 2026-09-11 build the closures were `m_QuestUseKey` `anon@1400`,
 `m_QuestActivate` `@1584`, `m_QuestDestructible` `@2113`, `m_Questpickup`
@@ -1119,6 +1121,56 @@ On the 2026-09-11 build the closures were `m_QuestUseKey` `anon@1400`,
 - Writing `Companion_obj`'s x/y (11 px a frame) moves the pet visibly.
 
 **Measured.** [pet-quest C, C0.4](../ForgePact/docs/pet-quest-collector-c-research.md#c04--dumps-of-the-objects-never-inspected)
+
+### 10.6 The companion's own loot pickup (`Companion_obj`)
+
+Every entry here is a **Static reading** of the current build's compiled
+`Companion_obj`, `Loot_Ground_obj` and `Coin_obj` events (2026-09-27); none is
+measured. Object events have no script-table entry, so none of it can be
+hooked by name. ForgePact #94 (the pet stays on one ground item it cannot pick
+up, with lots of loot around) is this mechanism; its mod is `petunstick`.
+
+- **Variables** (Create): `lootList` (a ds_list), `lootTarget` (-4 = none, an
+  instance id after; written as a real), `lootTimer` (0), `lootDistance`
+  (1500 px), `playerRange` (128 px), `seekSpeed` / `baseSpeed` / `deltaSpeed`
+  (0 at Create; Alarm 0 sets the speeds from character data, values not read),
+  `move`, `deltaTimer`. Begin Step sets the built-in `speed` to
+  `deltaSpeed * deltaTimer`, so the engine moves the pet by whatever
+  `deltaSpeed` the Step left.
+- **Scan radius and centre:** while `lootList` is empty and `lootTimer` has run
+  out, the Step lists `Loot_Ground_obj` instances within `lootDistance` of the
+  **player** (not the pet), nearest first, then adds **every** `Coin_obj` in
+  the same circle, unfiltered, and sets `lootTimer` to half a second of frames.
+- **Type filter:** a ground item joins the list only when its item type is a
+  tarot card, a socketable (except the affix-rolled socketable bases), a
+  crafting material, a key or one specific consumable, **and** `itemActive` is
+  true, **and** `itemCompanionTimer` is 0 or less, **and**
+  `lootFilterVisible` is true.
+- **Retarget rule:** a new `lootTarget` (the list's first entry) is chosen
+  **only** when the current one no longer exists. Nothing replaces a target
+  that still exists.
+- **Arrival rule and pickup radius:** within twice `deltaSpeed` of a ground
+  item the pet runs `PickupLoot` (item as `self`) on every ground item within
+  **144 px of the pet** that passes the filter; an item whose pickup succeeds
+  is destroyed, and every one is taken out of `lootList` whether it succeeded
+  or not. A coin target is moved onto the pet, and the pet's collision event
+  credits it. Arrival does **not** reset `deltaSpeed`, so the pet overshoots
+  and turns back each frame while a target survives.
+- **`itemCompanionTimer`** (on `Loot_Ground_obj` only; `Coin_obj` has none):
+  positive at Create, counted down by Alarm 9 in the game's frame units
+  (0.3 s of frames every 0.3 s); the scan skips an item while it is above 0.
+  The player's own pickup (`Loot_Manager_obj`, `playerLootTarget`) does not
+  read it.
+- **Consequence:** a ground item whose `PickupLoot` returns false (the script
+  returns false for a gone instance, an `ItemCheckHash` rejection, or, offline,
+  `AddToInventory` failing on a full grid or stack) stays on the ground, passes
+  the next scan and keeps `lootTarget` for as long as it lies there. Which of
+  these failures a player meets is not established.
+- **The loot block's gate:** an unnamed helper, most likely "the pet's player
+  is the local one and exists"; not established.
+
+[pet loot stuck, Static reading](../ForgePact/docs/pet-loot-stuck-research.md#static-reading),
+[Not established](../ForgePact/docs/pet-loot-stuck-research.md#not-established)
 
 ---
 
@@ -2466,8 +2518,11 @@ What a hidden ground item still is (ForgePact #95 part 1, 2026-09-27):
 
 - No automatic pickup was found. `Loot_Manager_obj`'s Step picks up only the
   targeted item (`playerLootTarget`) after an input: a key, a click or the
-  gamepad (§10.2). `Loot_Ground_obj` has no Step, and its `Alarm 9` only sets
-  visibility from the filter and the screen. No code in the exe or `data.win`
-  refers to the translation key `auto_pickup`. **Static reading.**
+  gamepad (§10.2). `Loot_Ground_obj` has no Step, and its `Alarm 9` sets
+  visibility from the filter and the screen (a later reading, §10.6, found it
+  also counts down the item's `itemCompanionTimer`). No code in the exe or
+  `data.win` refers to the translation key `auto_pickup`. The one pickup that
+  runs without the player's input is the pet's own (`Companion_obj`, §10.6),
+  which takes only some item types. **Static reading.**
 
 ["Auto loot"](../ForgePact/docs/incarnation-gems-research.md#auto-loot---static-reading)
