@@ -15,9 +15,11 @@ its own standalone `main()` still calls, so `py -3
 
 Gating reproduces the PostToolUse matcher group `settings.json` runs these
 hooks under, `Edit|Write|Bash|PowerShell|NotebookEdit`:
-  - TREE_TOOLS = {Edit, Write, Bash, PowerShell, NotebookEdit}, or an
-    unrecognised `tool_name` (a malformed payload ran the tree checks before
+  - TREE_TOOLS = {Edit, Write, Bash, PowerShell, NotebookEdit, apply_patch},
+    or an unrecognised `tool_name` (a malformed payload ran the tree checks before
     too, and still does -- the fail-safe direction) -> the four tree checks.
+`apply_patch` is Codex's file-edit tool: `.codex/hooks.json` runs this same
+dispatcher, and Codex names its edits that way.
 `HSTK_SKIP_HOOKS` short-circuits the tree checks.
 
 Each check runs inside its own `try/except`: a crash is reported as its own
@@ -36,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _common  # noqa: E402
 
-TREE_TOOLS = {"Edit", "Write", "Bash", "PowerShell", "NotebookEdit"}
+TREE_TOOLS = {"Edit", "Write", "Bash", "PowerShell", "NotebookEdit", "apply_patch"}
 
 # settings.json's old declaration order -- kept so a reader diffing the
 # blocking message against the pre-dispatcher output sees the same order.
