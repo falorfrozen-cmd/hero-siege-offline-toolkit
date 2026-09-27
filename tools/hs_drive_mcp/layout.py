@@ -34,7 +34,7 @@ different window, so none of them may be clicked.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 COMMAND = "menulayout"
@@ -71,6 +71,56 @@ PLAY_OBJECT = "UI_Button_obj"
 PLAY_TEXT = "Play"
 
 
+#: The skill bar (toolkit #147, ForgePact `docs/skill-actions-research.md`):
+#: its row is followed by one `  slot=<row>,<i> talent=<id|none>
+#: gui=<x>,<y> win=<cx>,<cy>` line per element of its `row0` and `row1`
+#: arrays, or one `  slot=<row>,* absent|empty|<read-failed>` line for an
+#: array it could not list.
+HUD_OBJECT = "UI_Hud_Talent_obj"
+SLOT_PREFIX = "slot="
+
+#: The stash and the bag (toolkit #147, ForgePact
+#: `docs/stash-bag-layout-research.md` § Decision). A grid's row is followed
+#: by one `  cell=<x>,<y> grid=<id> fp=<fingerprint|none> o=none` line per
+#: occupied node (`cellRule`: a node carries its fingerprint and no count);
+#: a grid past 200 occupied nodes carries `cellcap=1` on its own row.
+GRID_OBJECT = "UI_Inventory_Grid_obj"
+CELL_PREFIX = "cell="
+STASH_OBJECT = "UI_Stash_obj"
+STASH_TAB_OBJECT = "UI_Button_Stash_Tab_obj"
+BAG_SUBTAB_OBJECT = "UI_Button_Inventory_Tab_Small_obj"
+PLAYER_OBJECT = "Player_obj"
+TOWN_STASH_OBJECT = "Town_Stash_obj"
+#: `bagTabRule`: a bag sub-tab row is told apart by `uiNodeCallstack`.
+BAG_MAIN_GRID = "InventoryGrid"
+
+
+@dataclass(frozen=True)
+class CellRow:
+    """One occupied grid node. `fp` is `None` for `none` (a node with no
+    fingerprint); `o` is always `None` - a node carries no count."""
+    x: int | None
+    y: int | None
+    grid: int | None
+    fp: str | None
+    o: int | None
+    line: str = ""
+
+
+@dataclass(frozen=True)
+class SlotRow:
+    """One skill-bar slot line. `index` is `None` on a whole-array line
+    (`slot=<row>,* ...`); `talent` is `None` for `none` or an unreadable
+    id, never a plausible 0 -- an empty slot the game itself holds as 0
+    reads 0."""
+    row: int | None
+    index: int | None
+    talent: int | None
+    gui: tuple[float | None, float | None]
+    win: tuple[int | None, int | None]
+    line: str = ""
+
+
 @dataclass(frozen=True)
 class Row:
     """One listed instance. Numbers the plugin could not read are `None`."""
@@ -84,6 +134,33 @@ class Row:
     text: str
     extra: dict[str, str] = field(default_factory=dict)
     line: str = ""
+    slots: tuple[SlotRow, ...] = ()
+    cells: tuple[CellRow, ...] = ()
+
+    def number(self, name: str) -> int | None:
+        """An optional integer field (`tabNumber`, `stashTabSelected`,
+        `tabSelected`, ...), or `None` when the row does not carry it or it
+        is unreadable - never a plausible 0."""
+        value = self.extra.get(name)
+        return None if value is None else _int(value)
+
+    @property
+    def cellcap(self) -> bool:
+        """True when the grid had more occupied nodes than its cell rows."""
+        return self.extra.get("cellcap") == "1"
+
+    @property
+    def talent_id(self) -> int | None:
+        """The row's own `talentId` field (the talent screen's buttons and
+        sub-panel carry it), or `None` when it has none or it is unreadable."""
+        value = self.extra.get("talentId")
+        return None if value is None else _int(value)
+
+    @property
+    def name(self) -> str | None:
+        """The row's `name` field (a talent button's display name), which may
+        hold spaces; `None` when the row carries none."""
+        return self.extra.get("name")
 
     def summary(self) -> dict[str, Any]:
         """The `obj/id/win/text` a caller records for the row it clicked."""
@@ -190,26 +267,118 @@ def parse_row(line: str) -> Row | None:
     )
 
 
+def parse_slot(line: str) -> SlotRow | None:
+    """One `slot=<row>,<i> ...` line, or `None` if `line` is not one."""
+    line = line.strip()
+    if not line.startswith(SLOT_PREFIX):
+        return None
+    fields = _fields(line)
+    where = (fields.get("slot") or "").split(",")
+    if len(where) != 2:
+        return None
+    index = None if where[1] == "*" else _int(where[1])
+    talent = fields.get("talent")
+    return SlotRow(
+        row=_int(where[0]),
+        index=index,
+        talent=None if talent in (None, "none") else _int(talent),
+        gui=_pair(fields.get("gui"), ",", _float),
+        win=_pair(fields.get("win"), ",", _int),
+        line=line,
+    )
+
+
+def parse_cell(line: str) -> CellRow | None:
+    """One `cell=<x>,<y> grid=<id> fp=<fp|none> o=none` line, or `None` if
+    `line` is not one."""
+    line = line.strip()
+    if not line.startswith(CELL_PREFIX):
+        return None
+    fields = _fields(line)
+    x, y = _pair(fields.get("cell"), ",", _int)
+    fp = fields.get("fp")
+    o = fields.get("o")
+    return CellRow(x=x, y=y, grid=_int(fields.get("grid")),
+                   fp=None if fp in (None, "none", READ_FAILED) else fp,
+                   o=None if o in (None, "none") else _int(o), line=line)
+
+
+def _parse_from(lines: list[str], header_at: int) -> tuple[Listing, int]:
+    """The listing whose header is `lines[header_at]`, and the index of the
+    line after its footer (or `len(lines)` when it has none). A `slot=` line
+    belongs to the skill-bar row above it, a `cell=` line to the grid row
+    above it, and to no other row."""
+    header = lines[header_at]
+    fields = _fields(header[len("menulayout: "):])
+    rows: list[Row] = []
+    slots: list[SlotRow] = []
+    cells: list[CellRow] = []
+    footer: dict[str, str] = {}
+
+    def close_row() -> None:
+        if rows and (slots or cells):
+            rows[-1] = replace(rows[-1], slots=tuple(slots), cells=tuple(cells))
+        slots.clear()
+        cells.clear()
+
+    end = len(lines)
+    for i in range(header_at + 1, len(lines)):
+        line = lines[i]
+        if line.startswith(FOOTER_PREFIX):
+            footer = _fields(line[len("menulayout: "):])
+            end = i + 1
+            break
+        if line.startswith(HEADER_PREFIX):
+            end = i   # a listing with no footer ends where the next begins
+            break
+        slot = parse_slot(line)
+        if slot is not None:
+            if rows and rows[-1].obj == HUD_OBJECT:
+                slots.append(slot)
+            continue
+        cell = parse_cell(line)
+        if cell is not None:
+            if rows and rows[-1].obj == GRID_OBJECT:
+                cells.append(cell)
+            continue
+        row = parse_row(line)
+        if row is not None:
+            close_row()
+            rows.append(row)
+    close_row()
+    absent = footer.get("absent")
+    return _listing(fields, rows, footer, absent, header), end
+
+
 def parse(result: dict[str, Any]) -> Listing | None:
-    """The listing in one `ipc.send` reply, or `None` when it has no
+    """The first listing in one `ipc.send` reply, or `None` when it has no
     `menulayout:` header (not a listing at all)."""
     lines = reply_lines(result)
     header_at = next((i for i, l in enumerate(lines)
                       if l.startswith(HEADER_PREFIX)), None)
     if header_at is None:
         return None
-    header = lines[header_at]
-    fields = _fields(header[len("menulayout: "):])
-    rows: list[Row] = []
-    footer: dict[str, str] = {}
-    for line in lines[header_at + 1:]:
-        if line.startswith(FOOTER_PREFIX):
-            footer = _fields(line[len("menulayout: "):])
-            break
-        row = parse_row(line)
-        if row is not None:
-            rows.append(row)
-    absent = footer.get("absent")
+    return _parse_from(lines, header_at)[0]
+
+
+def parse_all(result: dict[str, Any]) -> list[Listing]:
+    """Every listing in one reply, in order: one `hs_command` send carrying
+    several `menulayout <Obj>` lines answers with one listing per line
+    (empty for an object with no instance). `[]` when there is none."""
+    lines = reply_lines(result)
+    out: list[Listing] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith(HEADER_PREFIX):
+            listing, i = _parse_from(lines, i)
+            out.append(listing)
+        else:
+            i += 1
+    return out
+
+
+def _listing(fields: dict[str, str], rows: list[Row], footer: dict[str, str],
+             absent: str | None, header: str) -> Listing:
     return Listing(
         room=fields.get("room", ""),
         gui=_pair(fields.get("gui"), "x", _int),
@@ -312,6 +481,14 @@ def match_play(listing: Listing) -> Row | None:
     return rows[0] if len(rows) == 1 else None
 
 
+def rows_with_talent(listing: Listing, obj: str, talent_id: int) -> list[Row]:
+    """Every `obj` row whose own `talentId` is `talent_id` -- how the talent
+    screen's button for one talent is told from the others (live 2 of the
+    skill research: the rows carry no other identifying field)."""
+    return [row for row in listing.rows
+            if row.obj == obj and row.talent_id == talent_id]
+
+
 def describe(listing: Listing, obj: str, limit: int = 30) -> str:
     """A refusal's quote of a listing: its header, how many rows it carried,
     and the visible `obj` rows it offered (text and `win`), so a caller can
@@ -322,3 +499,136 @@ def describe(listing: Listing, obj: str, limit: int = 30) -> str:
     more = f" (+{len(rows) - limit} more)" if len(rows) > limit else ""
     return (f"{listing.header!r}, {len(listing.rows)} row(s), "
             f"{len(rows)} visible {obj}: [{shown}]{more}")
+
+
+# --------------------------------------------------------------------------
+# The stash and the bag (hs-drive-stash-bag-actions)
+#
+# Each matcher answers exactly one row or None: two candidates are not an
+# answer. They take every listing of one reply (`parse_all`), since a stash
+# tool sends one `menulayout <Obj>` line per object it reads.
+# --------------------------------------------------------------------------
+
+def _rows(listings: Listing | list[Listing], obj: str) -> list[Row]:
+    if isinstance(listings, Listing):
+        listings = [listings]
+    return [row for listing in listings for row in listing.rows if row.obj == obj]
+
+
+def _one(rows: list[Row]) -> Row | None:
+    return rows[0] if len(rows) == 1 else None
+
+
+def match_stash_window(listings: Listing | list[Listing]) -> Row | None:
+    """The one `UI_Stash_obj` row: the open stash window, whose
+    `stashTabSelected` is the stash tab on show and `tabSelected` the bag
+    sub-tab beside it (`stashTabState`, `bagTabState`)."""
+    return _one(_rows(listings, STASH_OBJECT))
+
+
+def match_player(listings: Listing | list[Listing]) -> Row | None:
+    """The one `Player_obj` row; its `gui=` is a room position."""
+    return _one(_rows(listings, PLAYER_OBJECT))
+
+
+def match_town_stash(listings: Listing | list[Listing]) -> Row | None:
+    """The one `Town_Stash_obj` row; its `gui=` is a room position."""
+    return _one(_rows(listings, TOWN_STASH_OBJECT))
+
+
+def match_bag_grid(listings: Listing | list[Listing]) -> Row | None:
+    """The bag's main grid: the one `UI_Inventory_Grid_obj` whose
+    `uiNodeCallstack` is `InventoryGrid` (the bag panel of whichever window
+    shows it)."""
+    return _one([row for row in _rows(listings, GRID_OBJECT)
+                 if row.extra.get("uiNodeCallstack") == BAG_MAIN_GRID])
+
+
+def match_stash_tab(listings: Listing | list[Listing], tab_number: int) -> Row | None:
+    """The one `UI_Button_Stash_Tab_obj` whose `tabNumber` is `tab_number`
+    (`stashTabRule`) - never its text or position."""
+    return _one([row for row in _rows(listings, STASH_TAB_OBJECT)
+                 if row.number("tabNumber") == tab_number])
+
+
+def match_bag_subtab(listings: Listing | list[Listing], callstack: str) -> Row | None:
+    """The one `UI_Button_Inventory_Tab_Small_obj` whose `uiNodeCallstack` is
+    `callstack` (`bagTabRule`); its `text` is empty and it has no
+    `tabNumber`."""
+    return _one([row for row in _rows(listings, BAG_SUBTAB_OBJECT)
+                 if row.extra.get("uiNodeCallstack") == callstack])
+
+
+def cells_holding(listings: Listing | list[Listing], fp: str) -> list[CellRow]:
+    """Every cell row, in every grid, whose fingerprint is `fp` - one per
+    cell an item covers (`itemRule: fingerprint`)."""
+    return [cell for row in _rows(listings, GRID_OBJECT) for cell in row.cells if cell.fp == fp]
+
+
+def match_item_grid(listings: Listing | list[Listing], fp: str) -> Row | None:
+    """The one grid row whose cells hold `fp`, or None when no grid does or
+    more than one does."""
+    return _one([row for row in _rows(listings, GRID_OBJECT)
+                 if any(cell.fp == fp for cell in row.cells)])
+
+
+def free_cells(row: Row) -> int | None:
+    """How many of a grid's nodes hold nothing: its `nodeGridWidth` x
+    `nodeGridHeight` less its cell rows. None when either size is unreadable
+    or the grid was past the cell cap (its rows are then not all of them)."""
+    width, height = row.number("nodeGridWidth"), row.number("nodeGridHeight")
+    if width is None or height is None or row.cellcap:
+        return None
+    return width * height - len(row.cells)
+
+
+# --------------------------------------------------------------------------
+# The player verbs' reply lines
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class VerbReply:
+    """What one `playerwarp`/`stashtab`/`bagtab`/`stashclose`/`giveitem`
+    send printed: every line beginning `<verb>: `, the `before=`/`after=`
+    line's fields (`before`, `after` and whatever else it carries - `key`,
+    `o`, `handler`, `activeNode_before`, ...), and the refusal, confirmed and
+    not-confirmed texts after their prefixes."""
+    verb: str
+    lines: tuple[str, ...]
+    fields: dict[str, str]
+    refused: str | None
+    confirmed: str | None
+    not_confirmed: str | None
+    unavailable: bool
+
+    @property
+    def before(self) -> str | None:
+        return self.fields.get("before")
+
+    @property
+    def after(self) -> str | None:
+        return self.fields.get("after")
+
+
+def parse_verb(result: dict[str, Any], verb: str) -> VerbReply:
+    """The `<verb>: ...` lines of one reply. `unavailable` when the player
+    build predates the verb (`command unavailable in player build: <verb>`).
+    A reply with no line of the verb's own carries no fields and no verdict,
+    which a caller reads as "the verb said nothing", never as a pass."""
+    lines = reply_lines(result)
+    tag = verb + ": "
+    own = tuple(l for l in lines if l.startswith(tag))
+    fields: dict[str, str] = {}
+    refused = confirmed = not_confirmed = None
+    for line in own:
+        body = line[len(tag):]
+        if body.startswith("refused - "):
+            refused = refused or body[len("refused - "):]
+        elif body.startswith("confirmed - "):
+            confirmed = body[len("confirmed - "):]
+        elif body.startswith("not confirmed - "):
+            not_confirmed = body[len("not confirmed - "):]
+        elif " before=" in " " + body and " after=" in body:
+            fields = _fields(body)
+    unavailable = any(l == f"command unavailable in player build: {verb}" for l in lines)
+    return VerbReply(verb, own, fields, refused, confirmed, not_confirmed, unavailable)

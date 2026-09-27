@@ -41,7 +41,7 @@ import os
 import re
 import shutil
 import stat
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Callable, Iterable
 
@@ -314,6 +314,118 @@ def verify_backup(directory: Path) -> tuple[str, str] | None:
             return ("backup_corrupt",
                     f"{name} in {directory} hashes {actual}, but the manifest "
                     f"records {entry.get('sha256')}.")
+    return None
+
+
+# --------------------------------------------------------------------------
+# The backup a game-state-writing tool relies on
+# --------------------------------------------------------------------------
+
+#: Windows `FILETIME` counts 100 ns ticks from this instant.
+_FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
+
+#: A start-time reader: the running game's creation time as a UTC datetime,
+#: or None when it cannot be read.
+StartReader = Callable[[int], "datetime | None"]
+
+
+def game_start_utc(pid: int) -> datetime | None:
+    """When process `pid` was created, as a UTC datetime, or None.
+
+    `lease.process_start_for` answers a Windows creation `FILETIME` as one
+    integer; anything else it can answer (the Linux boot-id string, None for
+    a process that is gone) is not a time this can compare, so it is None --
+    never a guess.
+    """
+    from . import lease
+    value = lease.process_start_for(pid)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return _FILETIME_EPOCH + timedelta(microseconds=value // 10)
+
+
+def _parse_utc(text: Any) -> datetime | None:
+    try:
+        return datetime.strptime(str(text), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def session_backup_gate(tool: str, backup_id: Any, pids: Iterable[int] | None = None,
+                        start_reader: StartReader | None = None,
+                        root: Path | None = None) -> dict[str, Any] | None:
+    """None when `backup_id` may be relied on by a tool that writes game state.
+
+    Such a tool cannot back up at call time -- `hs_saves_backup` refuses
+    `game_running` -- so the only backup that protects a live session is one
+    taken before the game process started. Asked in this order, each a
+    refusal envelope the tool returns unchanged:
+
+    1. `invalid_backup_id` -- not a bare name, or no such directory under the
+       backup root;
+    2. `backup_incomplete` / `backup_corrupt` -- whatever `verify_backup`
+       answers after re-hashing every file;
+    3. `no_session_backup` -- no game process is running, a game's start time
+       cannot be read (never a pass), the manifest's `created_utc` cannot be
+       read, or it is not earlier than the game's start. The detail names both
+       times.
+
+    `pids` defaults to `procs.game_pids()`; `start_reader` to
+    `game_start_utc`, which reads the creation time the lease already reads
+    for process identity. With several game processes the earliest start
+    decides, so the backup predates all of them.
+    """
+    if not is_bare_name(backup_id):
+        return results.refuse(
+            tool, "invalid_backup_id",
+            f"{backup_id!r} is not a backup id. An id is one directory name "
+            "under the backup root, as reported by hs_saves_list -- not a path. "
+            "Nothing was sent to the game.")
+    directory = (backup_root() if root is None else Path(root)) / backup_id
+    if not directory.is_dir():
+        return results.refuse(
+            tool, "invalid_backup_id",
+            f"No backup {backup_id!r} under {directory.parent}. Take one with "
+            "hs_saves_backup before hs_launch in this session. Nothing was sent "
+            "to the game.")
+    problem = verify_backup(directory)
+    if problem is not None:
+        reason, detail = problem
+        return results.refuse(tool, reason, detail + " Nothing was sent to the game.")
+
+    how = ("Take one with hs_saves_backup before hs_launch in this session "
+           "and pass its id; nothing was sent to the game.")
+    if pids is None:
+        from . import procs
+        pids = procs.game_pids()
+    pids = list(pids)
+    if not pids:
+        return results.refuse(
+            tool, "no_session_backup",
+            f"No running game process was found, so whether backup "
+            f"{backup_id!r} predates it cannot be told. {how}")
+    reader = game_start_utc if start_reader is None else start_reader
+    starts = []
+    for pid in pids:
+        started = reader(pid)
+        if started is None:
+            return results.refuse(
+                tool, "no_session_backup",
+                f"The start time of game process {pid} could not be read, so "
+                f"whether backup {backup_id!r} predates it cannot be told "
+                f"(an unreadable time is never a pass). {how}")
+        starts.append(started)
+    game_start = min(starts)
+    manifest = read_manifest(directory) or {}
+    created = _parse_utc(manifest.get("created_utc"))
+    if created is None or not created < game_start:
+        created_text = manifest.get("created_utc", "unreadable")
+        return results.refuse(
+            tool, "no_session_backup",
+            f"Backup {backup_id!r} was created at {created_text}, which is not "
+            f"earlier than the running game's start at "
+            f"{game_start.strftime('%Y-%m-%dT%H:%M:%S.%fZ')}, so it does not "
+            f"hold the saves this session started from. {how}")
     return None
 
 

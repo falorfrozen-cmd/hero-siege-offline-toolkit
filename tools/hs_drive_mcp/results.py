@@ -117,8 +117,79 @@ LEASE_REASONS = (
     "lease_unavailable",
 )
 
+#: Added by `hs-drive-skill-actions` for its five skill tools (`skills.py`),
+#: and only these eight. `skill_not_on_bar` is a slot or ability no bar slot
+#: lists; `proof_unavailable` is a slot whose ability has no effect object the
+#: player build can count (no `effect=` field), so a cast could not be
+#: proven; `proof_unstable` is a count that moved between the reads taken
+#: before the key with no key pressed (added after round 0's review: without
+#: that control a moving count proves nothing about the press);
+#: `key_not_delivered` is an injection that did not deliver the whole
+#: key press; `cast_not_confirmed` a delivered press whose effect count never
+#: moved within the budget. `talent_not_allocatable` (no button carries the
+#: id, or the talent is already learned) and `talent_screen_not_open` are
+#: `talentalloc`'s own refusals, mapped by their words; `alloc_not_confirmed`
+#: is a re-read that shows no change, whatever the verb's line said. There is
+#: no points, level or key token: no reader for any of them was measured.
+SKILL_REASONS = (
+    "skill_not_on_bar",
+    "proof_unavailable",
+    "proof_unstable",
+    "key_not_delivered",
+    "cast_not_confirmed",
+    "talent_not_allocatable",
+    "talent_screen_not_open",
+    "alloc_not_confirmed",
+)
+
+#: Defined by `hs-drive-skill-actions` for **every** hs-drive tool that writes
+#: game state, not only its own; `hs-drive-stash-bag-actions` reuses these
+#: three and adds nothing beside them. `plugin_verb_missing` is a player build
+#: that answers `command unavailable` for the verb a tool needs (it predates
+#: the verb); `route_not_measured` is a tool whose game route was not
+#: reproduced by name in a live session, so it refuses before sending
+#: anything; `no_session_backup` is answered by `saves.session_backup_gate`:
+#: the `backup_id` given is not a whole backup taken before the running game
+#: process started, so nothing this session writes could be undone from it.
+ACTION_REASONS = (
+    "plugin_verb_missing",
+    "route_not_measured",
+    "no_session_backup",
+)
+
+#: Added by `hs-drive-stash-bag-actions` for its five stash and bag tools
+#: (`stash.py`), and only these thirteen; the three `ACTION_REASONS` above are
+#: reused, never spelled again. `stash_not_open`/`stash_already_open`: whether
+#: `menulayout` lists a `UI_Stash_obj`; `stash_not_reachable`: no `Player_obj`
+#: or `Town_Stash_obj` row with a finite position to warp by;
+#: `warp_not_confirmed`: `playerwarp` ran and the re-read player is not within
+#: 2 px of the target; `stash_still_open`: `stashclose` ran and the window is
+#: still listed. `bag_not_open`: no stash window, beside which the bag's
+#: sub-tabs were measured. `unknown_tab`: a tab name outside the tool's list;
+#: `tab_not_listed`: no tab row carries that tab; `tab_not_selected`: the
+#: state the game's handler writes did not reach the tab. `count_unsupported`,
+#: `template_not_found`, `give_refused` and `give_not_confirmed` are
+#: `hs_give_item`'s: a count it cannot make, a fingerprint map 0 does not
+#: hold, any other refusal of the verb's, and no `giveitem: confirmed` line
+#: with one more item after than before.
+STASH_REASONS = (
+    "stash_not_open",
+    "stash_already_open",
+    "stash_not_reachable",
+    "stash_still_open",
+    "bag_not_open",
+    "unknown_tab",
+    "tab_not_listed",
+    "tab_not_selected",
+    "count_unsupported",
+    "warp_not_confirmed",
+    "template_not_found",
+    "give_refused",
+    "give_not_confirmed",
+)
+
 REASONS = (CORE_REASONS + GAME_REASONS + INPUT_REASONS + SELECT_CHARACTER_REASONS
-           + LEASE_REASONS)
+           + LEASE_REASONS + SKILL_REASONS + ACTION_REASONS + STASH_REASONS)
 
 
 def ok(tool: str, **fields: Any) -> dict[str, Any]:

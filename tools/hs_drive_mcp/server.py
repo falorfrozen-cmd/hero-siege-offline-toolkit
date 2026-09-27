@@ -27,7 +27,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
-from . import capture, charselect, checks, ipc, launch, lease, procs, saves
+from . import capture, charselect, checks, ipc, launch, lease, procs, saves, skills, stash
 # `input` shadows nothing at module scope here, but a bare `input` in this file
 # would read as the builtin to every later reader of it.
 from . import input as input_module
@@ -550,6 +550,313 @@ def hs_select_character(
     """
     return charselect.hs_select_character(slot=slot, timeout_s=timeout_s,
                                           tool="hs_select_character")
+
+
+@server.tool(
+    name="hs_skills_status",
+    title="Read the skill bar and learned talents",
+    description=(
+        "Send ForgePact's read-only `skillstate` and return the skill bar's "
+        "slots (talent id, abilityId, and the effect-object count that proves "
+        "a toggle cast), the learned talent ids and each bar talent's "
+        "sub-talent nodes. Reads no key, point count or level: none has a "
+        "measured reader."),
+    annotations=_read_only("Read the skill bar and learned talents"),
+)
+def hs_skills_status() -> dict[str, Any]:
+    """`slots` (`row`, `index`, `talent_id`, `ability`, `timer`, `effect` or
+    null), `learned` (`global.mySkills`), `subtalents` (`"<id>"` ->
+    `{"s<NN>": level}`, `{}` without a node), `proof` (the reply's lines),
+    `verb_trail` (`["skillstate"]`). The send is lease-gated like
+    `hs_command`'s.
+
+    Refusals: `lease_held`, `lease_unavailable`, `game_not_running`,
+    `game_state_unknown`, `engine_source_missing`, `engine_import_failed`,
+    `not_consumed`, `bp_ipc_missing`, `forgepact_config_missing`,
+    `plugin_verb_missing` (the plugin predates `skillstate`, or answered in a
+    format this server cannot read).
+    """
+    return skills.hs_skills_status()
+
+
+@server.tool(
+    name="hs_skill_cast",
+    title="Cast a skill from the bar by its key",
+    description=(
+        "Press the key you name for one bar slot through the game's own input "
+        "path (held send_input, 120 ms) and prove the cast by that slot's "
+        "effect-object count changing in `skillstate`. The count is read "
+        "three times, 0.5 s apart, before the press and must not move without "
+        "one. The key is yours to supply: no per-slot key reader was found. A "
+        "slot whose skill has no effect object is refused, not guessed."),
+    annotations=_acts("Cast a skill from the bar by its key"),
+)
+def hs_skill_cast(
+    key: Annotated[int, Field(
+        description="The Windows virtual-key code that casts this slot, e.g. 81 "
+                    "for Q (the HUD's own label for slot 0,3 - measured, live 3 "
+                    "and live 4).",
+        ge=1, le=254)],
+    slot: Annotated[str | None, Field(
+        description="The bar slot as \"row,index\" (row 0 is the drawn bar). "
+                    "Give this or ability, not both.")] = None,
+    ability: Annotated[str | None, Field(
+        description="The abilityId as hs_skills_status prints it, e.g. "
+                    "\"darkOath\". Give this or slot, not both.")] = None,
+    timeout_s: Annotated[float, Field(
+        description="How long to poll skillstate for the effect count to move "
+                    "after the press.", ge=1, le=60)] = 10,
+) -> dict[str, Any]:
+    """`ok` with `confirmed: true`, `effect_before`/`effect_after`,
+    `effect_samples_before` (the flat pre-press reads) and `proof` (the slot's
+    line before and after) when the count moved; the key sent is in
+    `injected`. No backup is asked: a cast is play, not a save write.
+
+    Refusals: `lease_held`, `lease_unavailable`, `invalid_input`,
+    `game_not_running`, `game_state_unknown`, `engine_source_missing`,
+    `engine_import_failed`, `not_consumed`, `plugin_verb_missing`,
+    `skill_not_on_bar` (no row-0 slot holds it, or the slot is empty),
+    `proof_unavailable` (the slot has no effect= count), `proof_unstable` (the
+    count moved with no key pressed; nothing injected), `no_visible_window_for_pid`,
+    `window_minimized`, `foreground_not_game`, `key_not_delivered`,
+    `cast_not_confirmed` (delivered, and the count never moved).
+    """
+    return skills.hs_skill_cast(key, slot=slot, ability=ability, timeout_s=timeout_s)
+
+
+@server.tool(
+    name="hs_skill_bind",
+    title="Bind a skill to a bar slot (not measured: refuses)",
+    description=(
+        "Refuses route_not_measured and sends nothing: the skill research did "
+        "not reproduce a bind by name (bindRoute: shape not reproduced). The "
+        "signature is fixed for when a session measures it."),
+    annotations=_acts("Bind a skill to a bar slot (not measured: refuses)"),
+)
+def hs_skill_bind(
+    slot: Annotated[str, Field(description="The bar slot as \"row,index\".")],
+    ability: Annotated[str, Field(description="The abilityId to bind there.")],
+    backup_id: Annotated[str, Field(
+        description="A save backup taken before hs_launch in this session.")],
+) -> dict[str, Any]:
+    """Refusals: `lease_held`, `lease_unavailable`, `route_not_measured`
+    (always, with `verb_trail: []`)."""
+    return skills.hs_skill_bind(slot, ability, backup_id)
+
+
+@server.tool(
+    name="hs_talent_allocate",
+    title="Put one talent point in, by the game's own handler",
+    description=(
+        "Send ForgePact's `talentalloc`: open the talent screen if needed and "
+        "run the talent's (or a sub-talent node's) own button handler by name, "
+        "then confirm by re-reading skillstate - the id joining the learned "
+        "list, or one node rising by one - and close the screen with T. "
+        "Needs a save backup taken before this session's hs_launch."),
+    annotations=_acts("Put one talent point in, by the game's own handler"),
+)
+def hs_talent_allocate(
+    talent_id: Annotated[int, Field(
+        description="The talent's numeric id, as hs_skills_status and the talent "
+                    "screen's menulayout rows print it (e.g. 244 for Black Mass).",
+        ge=1)],
+    backup_id: Annotated[str, Field(
+        description="A whole save backup taken with hs_saves_backup before "
+                    "hs_launch in this session.")],
+    sub: Annotated[int | None, Field(
+        description="Put the point into the talent's nth sub-talent node instead "
+                    "(1-based, in the order menulayout lists the open panel's "
+                    "nodes; the nodes carry no name).", ge=1)] = None,
+) -> dict[str, Any]:
+    """`ok` with `confirmed: true`, `what` changed, `learned`, `subtalents`,
+    `proof` (the re-read lines), `verb_lines` (the verb's own reply),
+    `screen_closed` and `close_detail`. Only a talent not yet learned is
+    allocated (only 0 -> 1 was measured).
+
+    Refusals: `lease_held`, `lease_unavailable`, `invalid_input`,
+    `game_not_running`, `game_state_unknown`, `engine_source_missing`,
+    `engine_import_failed`, `invalid_backup_id`, `backup_incomplete`,
+    `backup_corrupt`, `no_session_backup` (the backup is not older than the
+    running game), `not_consumed`, `plugin_verb_missing`,
+    `talent_screen_not_open`, `talent_not_allocatable` (no button carries the
+    id, or it is already learned), `alloc_not_confirmed` (the re-read shows no
+    change: no point count is readable, so a missing free point reads the
+    same).
+    """
+    return skills.hs_talent_allocate(talent_id, backup_id, sub=sub)
+
+
+@server.tool(
+    name="hs_talent_reset",
+    title="Reset the talent tree (not measured: refuses)",
+    description=(
+        "Refuses route_not_measured and sends nothing: the skill research's "
+        "by-name reset dispatched and changed nothing (resetRoute: shape not "
+        "reproduced). The signature is fixed for when a session measures it."),
+    annotations=_acts("Reset the talent tree (not measured: refuses)"),
+)
+def hs_talent_reset(
+    backup_id: Annotated[str, Field(
+        description="A save backup taken before hs_launch in this session.")],
+) -> dict[str, Any]:
+    """Refusals: `lease_held`, `lease_unavailable`, `route_not_measured`
+    (always, with `verb_trail: []`)."""
+    return skills.hs_talent_reset(backup_id)
+
+
+_BACKUP_FIELD = Field(description="A whole save backup taken with hs_saves_backup before "
+                                  "hs_launch in this session.")
+
+
+@server.tool(
+    name="hs_give_item",
+    title="Give the character a copy of an item it holds",
+    description=(
+        "Send ForgePact's `giveitem bag <template> <count>`: a copy of an item "
+        "the character's map 0 already holds, made by the game's own loader and "
+        "placed in the bag grid the game prefers for it. Confirmed only by the "
+        "verb's own `giveitem: confirmed` line with one more item after than "
+        "before; no window needs to be open. to=\"stash\" refuses "
+        "route_not_measured. Needs a save backup taken before this session's "
+        "hs_launch."),
+    annotations=_acts("Give the character a copy of an item it holds"),
+)
+def hs_give_item(
+    to: Annotated[str, Field(description="\"bag\" (measured) or \"stash\" (refuses route_not_measured).")],
+    template: Annotated[str, Field(
+        description="The fingerprint of an item map 0 holds, as a menulayout `cell=` row "
+                    "prints it, e.g. 0-0-209564349884-14.")],
+    backup_id: Annotated[str, _BACKUP_FIELD],
+    count: Annotated[int, Field(
+        description="Units for a stackable copy, 1 up to the template's own stack; a "
+                    "non-stackable takes 1. Only 1 was measured.")] = 1,
+) -> dict[str, Any]:
+    """`ok` with `confirmed: true`, `key` (the new fingerprint), `before`
+    and `after` (items in the destination cells), `o`, `verb_trail`,
+    `layout_trail` and `proof` (the verb's lines, plus a `cell=` row when a
+    listed grid shows the key).
+
+    Refusals: the lease and process gates' (`lease_held`,
+    `lease_unavailable`, `game_not_running`, `game_state_unknown`,
+    `engine_source_missing`, `engine_import_failed`),`route_not_measured`, `invalid_input`,
+    `count_unsupported`, `invalid_backup_id`, `backup_incomplete`,
+    `backup_corrupt`, `no_session_backup`, `plugin_verb_missing`,
+    `template_not_found`, `give_refused`, `give_not_confirmed`.
+    """
+    return stash.hs_give_item(to, template, backup_id, count=count)
+
+
+@server.tool(
+    name="hs_stash_open",
+    title="Put the character at the town stash and open it",
+    description=(
+        "Warp the character beside the town stash with ForgePact's `playerwarp` "
+        "(the stash's own position, 48 below), confirm the warp by re-reading "
+        "Player_obj, press the interact key F, and poll menulayout until the "
+        "stash window is listed. There is no by-name open. Needs a save backup "
+        "taken before this session's hs_launch."),
+    annotations=_acts("Put the character at the town stash and open it"),
+)
+def hs_stash_open(
+    backup_id: Annotated[str, _BACKUP_FIELD],
+    timeout_s: Annotated[float, Field(
+        description="Budget for each poll (the warp, then the window), at most "
+                    "30 reads 0.5 s apart.", gt=0)] = 60,
+) -> dict[str, Any]:
+    """`ok` with `phase: "stash_open"`, `route: "interact"`, `window_id`,
+    `stash_tab_selected`, `target`, `verb_trail`, `layout_trail` (the key)
+    and `proof`.
+
+    Refusals: the lease and process gates' (`lease_held`,
+    `lease_unavailable`, `game_not_running`, `game_state_unknown`,
+    `engine_source_missing`, `engine_import_failed`),`invalid_backup_id`, `backup_incomplete`,
+    `backup_corrupt`, `no_session_backup`, `layout_command_missing`,
+    `stash_already_open`, `stash_not_reachable`, `plugin_verb_missing`,
+    `warp_not_confirmed`, `click_not_delivered` (F not delivered whole),
+    `stash_not_open`, and `hs_input`'s window refusals.
+    """
+    return stash.hs_stash_open(backup_id, timeout_s=timeout_s)
+
+
+@server.tool(
+    name="hs_stash_close",
+    title="Close the stash by its own close button's handler",
+    description=(
+        "Send ForgePact's `stashclose` (UiACloseButton by name, the stash's "
+        "close button as self and the window as other) and poll menulayout "
+        "until no stash window is listed. The game's own close is what saves "
+        "the stash, so a session that gave or switched anything closes before "
+        "it stops. Takes no backup."),
+    annotations=_acts("Close the stash by its own close button's handler"),
+)
+def hs_stash_close() -> dict[str, Any]:
+    """`ok` with `phase: "stash_closed"`, `window_id`, `verb_trail`, `proof`.
+
+    Refusals: the lease and process gates' (`lease_held`,
+    `lease_unavailable`, `game_not_running`, `game_state_unknown`,
+    `engine_source_missing`, `engine_import_failed`),`layout_command_missing`, `stash_not_open`,
+    `plugin_verb_missing`, `stash_still_open`.
+    """
+    return stash.hs_stash_close()
+
+
+@server.tool(
+    name="hs_stash_tab",
+    title="Switch the open stash to a tab",
+    description=(
+        "Send ForgePact's `stashtab <tabNumber>` (the tab button's own handler, "
+        "by name) and poll menulayout until the stash window's stashTabSelected "
+        "reads that tab. Needs a save backup taken before this session's "
+        "hs_launch."),
+    annotations=_acts("Switch the open stash to a tab"),
+)
+def hs_stash_tab(
+    tab: Annotated[str, Field(
+        description="socketable, materials, unique, personal, or shared1 to shared19.")],
+    backup_id: Annotated[str, _BACKUP_FIELD],
+) -> dict[str, Any]:
+    """`ok` with `tab_number`, `selected_before`, `selected_after`,
+    `handler` (or `already_selected: true` with nothing sent), `verb_trail`,
+    `proof`.
+
+    Refusals: the lease and process gates' (`lease_held`,
+    `lease_unavailable`, `game_not_running`, `game_state_unknown`,
+    `engine_source_missing`, `engine_import_failed`),`unknown_tab`, `invalid_backup_id`,
+    `backup_incomplete`, `backup_corrupt`, `no_session_backup`,
+    `layout_command_missing`, `stash_not_open`, `tab_not_listed`,
+    `plugin_verb_missing`, `route_not_measured` (the tab's handler is not a
+    shape live 2 reproduced), `tab_not_selected`.
+    """
+    return stash.hs_stash_tab(tab, backup_id)
+
+
+@server.tool(
+    name="hs_bag_tab",
+    title="Switch the bag beside the open stash to a sub-tab",
+    description=(
+        "Send ForgePact's `bagtab materials|socket` (the sub-tab's own handler, "
+        "by name) and poll menulayout until the stash window's tabSelected "
+        "moves. Proves tabSelected, not the focus (activeNode). Any other "
+        "sub-tab refuses route_not_measured, and the bag without the stash open "
+        "refuses bag_not_open. Needs a save backup taken before this session's "
+        "hs_launch."),
+    annotations=_acts("Switch the bag beside the open stash to a sub-tab"),
+)
+def hs_bag_tab(
+    tab: Annotated[str, Field(description="materials or socket (the two measured by name).")],
+    backup_id: Annotated[str, _BACKUP_FIELD],
+) -> dict[str, Any]:
+    """`ok` with `selected_before`, `selected_after`, `activeNode_before`,
+    `activeNode_after`, `focus_note`, `verb_trail`, `proof`.
+
+    Refusals: the lease and process gates' (`lease_held`,
+    `lease_unavailable`, `game_not_running`, `game_state_unknown`,
+    `engine_source_missing`, `engine_import_failed`),`route_not_measured`, `invalid_backup_id`,
+    `backup_incomplete`, `backup_corrupt`, `no_session_backup`,
+    `layout_command_missing`, `bag_not_open`, `tab_not_listed`,
+    `plugin_verb_missing`, `tab_not_selected`.
+    """
+    return stash.hs_bag_tab(tab, backup_id)
 
 
 @server.tool(

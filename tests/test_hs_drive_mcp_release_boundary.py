@@ -100,8 +100,10 @@ class McpConfigTests(unittest.TestCase):
         # ForgePact's `menulayout` listing, whose rows `hs_select_character`
         # takes every click point from) beside it, and `lease.py`, which the
         # six tools that drive or overwrite the game ask before they act.
+        # `skills.py` carries the five skill tools (`hs-drive-skill-actions`),
+        # `stash.py` the five stash and bag tools (`hs-drive-stash-bag-actions`).
         for name in ("ipc.py", "capture.py", "launch.py", "input.py",
-                     "charselect.py", "layout.py", "lease.py"):
+                     "charselect.py", "layout.py", "lease.py", "skills.py", "stash.py"):
             self.assertTrue((PACKAGE / name).is_file(),
                             f"{name} is missing; the game tools import it")
 

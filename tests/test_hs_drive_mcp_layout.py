@@ -21,6 +21,8 @@ sys.path.insert(0, str(ROOT))
 from tools.hs_drive_mcp import layout  # noqa: E402
 from tests.hs_drive_mcp_menulayout_fixtures import (  # noqa: E402
     CHOSE_RM_REPLY, MAIN_MENU_REPLY, PANEL_REPLY)
+from tests import hs_drive_mcp_skillstate_fixtures as skill_fixtures  # noqa: E402
+from tests import hs_drive_mcp_stashlayout_fixtures as stash_fixtures  # noqa: E402
 
 CLIENT_1080 = [1920, 1080]
 HEADER_CHOSE_RM = ("menulayout: room=Chose_rm gui=2560x1368 window=1920x1080 "
@@ -321,6 +323,252 @@ class FixtureTests(unittest.TestCase):
             listing = layout.parse(reply(text))
             self.assertEqual(len(listing.rows), listing.listed)
             self.assertEqual(listing.window, (1920, 1080))
+
+
+class SkillBarAndTalentScreenTests(unittest.TestCase):
+    """The skill bar's `slot=` rows and the talent screen's `talentId`/`name`
+    fields, on the `menulayout` replies live 2 of the skill research printed
+    (`tests/hs_drive_mcp_skillstate_fixtures.py`, cut from that session's
+    `out.txt`)."""
+
+    def test_the_bar_row_carries_its_29_slot_rows(self):
+        # 13 in row 0 (slots 0-12) and 16 in row 1 (0-15); live 2's capture
+        # summarised them as 28, the reply itself holds 29.
+        listing = layout.parse(reply(skill_fixtures.MENULAYOUT_HUD))
+        self.assertEqual(len(listing.rows), 1)
+        bar = listing.rows[0]
+        self.assertEqual((bar.obj, bar.id), ("UI_Hud_Talent_obj", 262341))
+        self.assertEqual(len(bar.slots), 29)
+        self.assertEqual([s.row for s in bar.slots].count(0), 13)
+        first = bar.slots[0]
+        self.assertEqual((first.row, first.index, first.talent), (0, 0, 242))
+        self.assertEqual(first.win, (6, 885))
+        self.assertEqual(first.gui, (7.6, 1121.0))
+        # An empty slot is the game's own 0, not an unreadable None.
+        self.assertEqual(bar.slots[6].talent, 0)
+        self.assertEqual([(s.row, s.index) for s in bar.slots[13:15]], [(1, 0), (1, 1)])
+        # The slot lines are the bar's, never rows of their own.
+        self.assertEqual(listing.listed, 1)
+
+    def test_a_slot_line_belongs_only_to_the_bar_row(self):
+        text = framed(HEADER_CHOSE_RM,
+                      "  obj=UI_Button_obj id=1 gui=0.0,0.0 win=0,0 bbox=0.0,0.0,1.0,1.0 visible=1 sprite=none text=",
+                      "  slot=0,0 talent=242 gui=7.6,1121.0 win=6,885",
+                      "menulayout: listed=1 absent=none capped=0")
+        listing = layout.parse(reply(text))
+        self.assertEqual(listing.rows[0].slots, ())
+        # A whole-array line and an unreadable id are not plausible values.
+        bar = layout.parse(reply(framed(
+            HEADER_CHOSE_RM,
+            "  obj=UI_Hud_Talent_obj id=2 gui=0.0,0.0 win=0,0 bbox=0.0,0.0,0.0,0.0 visible=1 sprite=none text=",
+            "  slot=0,* absent",
+            "  slot=1,0 talent=none gui=none,none win=none,none",
+            "menulayout: listed=1 absent=none capped=0"))).rows[0]
+        self.assertEqual([(s.row, s.index, s.talent) for s in bar.slots], [(0, None, None), (1, 0, None)])
+        self.assertEqual(bar.slots[1].win, (None, None))
+
+    def test_the_talent_buttons_carry_talent_id_and_a_name_with_spaces(self):
+        listing = layout.parse(reply(skill_fixtures.MENULAYOUT_TALENT_BUTTONS))
+        self.assertEqual(listing.listed, 18)
+        self.assertEqual(len(listing.rows), 18)
+        shadow = layout.rows_with_talent(listing, "UI_Button_Talent_Player_obj", 239)
+        self.assertEqual([(r.id, r.name) for r in shadow], [(275481, "Shadow Bolt")])
+        black = layout.rows_with_talent(listing, "UI_Button_Talent_Player_obj", 244)
+        self.assertEqual([r.name for r in black], ["Black Mass"])
+        # Negative control: no talent button carries an id nobody listed.
+        self.assertEqual(layout.rows_with_talent(listing, "UI_Button_Talent_Player_obj", 999), [])
+        # A name the game spells with a typographic apostrophe survives.
+        self.assertIn("Satan’s Mark", [r.name for r in listing.rows])
+
+    def test_the_sub_skill_buttons_and_the_nodes(self):
+        sub = layout.parse(reply(skill_fixtures.MENULAYOUT_SUB_SKILL_BUTTONS))
+        self.assertEqual([r.id for r in layout.rows_with_talent(sub, "UI_Button_Sub_Skill_obj", 239)], [275482])
+        nodes = layout.parse(reply(skill_fixtures.MENULAYOUT_SUBTALENT_NODES))
+        self.assertEqual(len(nodes.rows), 15)
+        # The nodes carry no talentId and no name: live 2's reason the verb
+        # takes the nth listed node.
+        self.assertEqual({r.talent_id for r in nodes.rows}, {None})
+        self.assertEqual({r.name for r in nodes.rows}, {None})
+        self.assertEqual([r.id for r in nodes.rows[:2]], [275677, 275678])
+
+    def test_the_talent_screen_open_and_closed(self):
+        opened = layout.parse(reply(skill_fixtures.MENULAYOUT_TALENT_SCREEN_OPEN))
+        self.assertEqual([(r.obj, r.id) for r in opened.rows], [("UI_Talent_Screen_obj", 275195)])
+        closed = layout.parse(reply(skill_fixtures.MENULAYOUT_TALENT_SCREEN_CLOSED))
+        self.assertEqual((closed.listed, closed.rows), (0, ()))
+
+
+# --------------------------------------------------------------------------
+# The stash and the bag (hs-drive-stash-bag-actions)
+# --------------------------------------------------------------------------
+
+STASH_FIXTURES = {name: getattr(stash_fixtures, name) for name in (
+    "STASH_WINDOW_REPLY", "STASH_TABS_REPLY", "BAG_SUBTABS_REPLY",
+    "STASH_CLOSE_BUTTON_REPLY", "MULTI_LISTING_REPLY")}
+
+
+def cell_line(x, y, grid, fp):
+    """A cell row in the format ForgePact's `MenuLayoutCells` prints
+    (`test_stash_bag_layout_contract.MenuLayoutCellRows` pins it); no live
+    reply carries one yet - live 3 captures the first."""
+    return f"  cell={x},{y} grid={grid} fp={fp} o=none"
+
+
+GRID_HEADER = ("menulayout: room=Town_01_rm gui=2560x1368 window=1920x1080 fullscreen=0 "
+               "view=244.0,268.0,1280.0,720.0")
+#: The bag's main grid row as live 2 attempt 1 listed it (MULTI_LISTING_REPLY).
+BAG_GRID_ROW = ("  obj=UI_Inventory_Grid_obj id=264099 gui=1572.0,765.7 win=1179,605 "
+                "bbox=1572.0,765.7,2484.0,1130.5 visible=1 sprite=none uiNodeCallstack=InventoryGrid "
+                "activationArgs=[] enabled=1 nodeGridWidth=15 nodeGridHeight=6 gridScale=1 gridName= text=")
+BELT_GRID_ROW = ("  obj=UI_Inventory_Grid_obj id=257745 gui=357.2,1337.6 win=268,1056 "
+                 "bbox=357.2,1337.6,358.2,1338.6 visible=1 sprite=none uiNodeCallstack=PotionGrid "
+                 "activationArgs=[] enabled=0 nodeGridWidth=4 nodeGridHeight=1 gridScale=0.5 gridName= text=")
+
+
+class StashFixtureTests(unittest.TestCase):
+    def test_every_stash_fixture_is_framed_crlf_and_parses(self):
+        for name, text in STASH_FIXTURES.items():
+            with self.subTest(fixture=name):
+                self.assertTrue(text.startswith("---- running command file ----\r\n"))
+                self.assertTrue(text.endswith("---- done ----\r\n"))
+                self.assertNotIn("\n", text.replace("\r\n", ""))
+                listings = layout.parse_all(reply(text))
+                self.assertTrue(listings)
+                for listing in listings:
+                    self.assertEqual(listing.listed, len(listing.rows), listing.header)
+                    self.assertEqual(listing.window, (1920, 1080))
+
+    def test_one_send_of_six_menulayout_lines_parses_to_six_listings(self):
+        listings = layout.parse_all(reply(stash_fixtures.MULTI_LISTING_REPLY))
+        self.assertEqual([l.listed for l in listings], [1, 23, 5, 6, 2, 0])
+        self.assertEqual({r.obj for r in listings[1].rows}, {"UI_Button_Stash_Tab_obj"})
+        # parse() still answers the first listing only.
+        self.assertEqual(layout.parse(reply(stash_fixtures.MULTI_LISTING_REPLY)).listed, 1)
+        # Negative control: a reply with no header has no listing.
+        self.assertEqual(layout.parse_all(reply(framed("pong"))), [])
+
+
+class StashMatcherTests(unittest.TestCase):
+    def setUp(self):
+        self.window = layout.parse_all(reply(stash_fixtures.STASH_WINDOW_REPLY))
+        self.tabs = layout.parse_all(reply(stash_fixtures.STASH_TABS_REPLY))
+        self.subtabs = layout.parse_all(reply(stash_fixtures.BAG_SUBTABS_REPLY))
+        self.multi = layout.parse_all(reply(stash_fixtures.MULTI_LISTING_REPLY))
+
+    def test_the_stash_window_and_its_tab_state(self):
+        row = layout.match_stash_window(self.window)
+        self.assertEqual((row.id, row.number("stashTabSelected")), (262983, 0))
+        # tabSelected is not printed by the live-2 build: None, never 0.
+        self.assertIsNone(row.number("tabSelected"))
+        # Negative control: no window in the tab listing, and two windows are not one.
+        self.assertIsNone(layout.match_stash_window(self.tabs))
+        self.assertIsNone(layout.match_stash_window(self.window + self.window))
+
+    def test_a_stash_tab_by_its_tab_number(self):
+        for number, row_id, text in ((-4, 263032, "Materials"), (-2, 263031, "Socketable"),
+                                     (-5, 263033, "Unique"), (0, 263034, "Personal"),
+                                     (19, 263053, "Shared19")):
+            row = layout.match_stash_tab(self.tabs, number)
+            self.assertEqual((row.id, row.text), (row_id, text))
+        # Negative control: a number no row carries, and the bag's tab rows.
+        self.assertIsNone(layout.match_stash_tab(self.tabs, 20))
+        self.assertIsNone(layout.match_stash_tab(self.subtabs, -4))
+
+    def test_a_bag_subtab_by_its_callstack(self):
+        self.assertEqual(layout.match_bag_subtab(self.subtabs, "InventoryTabMaterial").id, 263017)
+        self.assertEqual(layout.match_bag_subtab(self.subtabs, "InventoryTabSocket").id, 263016)
+        # Negative control: the text is empty on every row, so text is no key.
+        self.assertIsNone(layout.match_bag_subtab(self.subtabs, ""))
+        self.assertIsNone(layout.match_bag_subtab(self.tabs, "InventoryTabMaterial"))
+
+    def test_the_bag_grid_and_the_player_and_stash_positions(self):
+        grid = layout.match_bag_grid(self.multi)
+        self.assertEqual((grid.id, grid.number("nodeGridWidth"), grid.number("nodeGridHeight")),
+                         (264099, 15, 6))
+        self.assertIsNone(layout.match_bag_grid(self.window))
+        listing = layout.parse_all(reply(framed(
+            GRID_HEADER,
+            "  obj=Town_Stash_obj id=228465 gui=884.0,580.0 win=663,458 bbox=856.0,565.0,913.0,598.0 "
+            "visible=1 sprite=Stash_Act_01_spr text=",
+            "menulayout: listed=1 absent=none capped=0",
+            GRID_HEADER,
+            "  obj=Player_obj id=261723 gui=884.0,628.0 win=663,496 bbox=872.0,622.0,896.0,646.0 "
+            "visible=1 sprite=none name=Sorak text=",
+            "menulayout: listed=1 absent=none capped=0")))
+        self.assertEqual(layout.match_town_stash(listing).gui, (884.0, 580.0))
+        self.assertEqual(layout.match_player(listing).gui, (884.0, 628.0))
+        self.assertIsNone(layout.match_player(self.window))
+
+    def test_cell_rows_belong_to_their_grid_and_match_by_fingerprint(self):
+        text = framed(GRID_HEADER, BELT_GRID_ROW,
+                      cell_line(0, 0, 257745, "0-0-209492724983-18"),
+                      BAG_GRID_ROW,
+                      cell_line(3, 0, 264099, "0-0-209564349884-14"),
+                      cell_line(4, 0, 264099, "0-0-1-3"), cell_line(4, 1, 264099, "0-0-1-3"),
+                      "menulayout: listed=2 absent=none capped=0")
+        listings = layout.parse_all(reply(text))
+        belt, bag = listings[0].rows
+        self.assertEqual([c.fp for c in belt.cells], ["0-0-209492724983-18"])
+        self.assertEqual(len(bag.cells), 3)
+        cell = bag.cells[0]
+        self.assertEqual((cell.x, cell.y, cell.grid, cell.o), (3, 0, 264099, None))
+        self.assertEqual(layout.match_item_grid(listings, "0-0-209564349884-14").id, 264099)
+        self.assertEqual(len(layout.cells_holding(listings, "0-0-1-3")), 2)   # one row per cell covered
+        self.assertEqual(layout.free_cells(bag), 15 * 6 - 3)
+        # Negative controls: an absent key, and a cell line under a non-grid row.
+        self.assertIsNone(layout.match_item_grid(listings, "0-0-9-9"))
+        self.assertEqual(layout.cells_holding(listings, "0-0-9-9"), [])
+        stray = layout.parse_all(reply(framed(
+            GRID_HEADER, "  obj=UI_Stash_obj id=1 gui=0.0,0.0 win=0,0 bbox=0.0,0.0,0.0,0.0 visible=1 "
+            "sprite=none enabled=1 stashTabSelected=0 tabSelected=-4 text=",
+            cell_line(0, 0, 1, "0-0-2-14"), "menulayout: listed=1 absent=none capped=0")))
+        self.assertEqual(stray[0].rows[0].cells, ())
+        self.assertEqual(stray[0].rows[0].number("tabSelected"), -4)
+
+    def test_a_capped_grid_has_no_free_cell_count(self):
+        capped = layout.parse_row(BAG_GRID_ROW.replace(" text=", " cellcap=1 text="))
+        self.assertTrue(capped.cellcap)
+        self.assertIsNone(layout.free_cells(capped))
+        self.assertFalse(layout.parse_row(BAG_GRID_ROW).cellcap)
+
+
+class VerbReplyTests(unittest.TestCase):
+    """Each player verb's reply in the format
+    `ForgePact/tests/test_stash_bag_layout_contract.StashBagPlayerVerbs` pins."""
+
+    def test_before_after_and_the_fields_beside_them(self):
+        parsed = layout.parse_verb(reply(framed(
+            "bagtab: before=0 after=-4 activeNode_before=263016 activeNode_after=263016")), "bagtab")
+        self.assertEqual((parsed.before, parsed.after), ("0", "-4"))
+        self.assertEqual(parsed.fields["activeNode_after"], "263016")
+        self.assertIsNone(parsed.refused)
+        warp = layout.parse_verb(reply(framed("playerwarp: before=912.0,822.0 after=884.0,628.0")), "playerwarp")
+        self.assertEqual(warp.after, "884.0,628.0")
+
+    def test_giveitem_confirmed_and_not_confirmed(self):
+        good = layout.parse_verb(reply(framed(
+            "giveitem: key=0-0-212527295000-14 before=3 after=4 o=1",
+            "giveitem: confirmed - 0-0-212527295000-14 in map 0 and in the destination cells")), "giveitem")
+        self.assertEqual((good.fields["key"], good.before, good.after, good.fields["o"]),
+                         ("0-0-212527295000-14", "3", "4", "1"))
+        self.assertTrue(good.confirmed)
+        self.assertIsNone(good.not_confirmed)
+        bad = layout.parse_verb(reply(framed(
+            "giveitem: key=0-0-212527295000-14 before=3 after=3 o=1",
+            "giveitem: not confirmed - map 0 answers 1, the destination cells answer 0")), "giveitem")
+        self.assertIsNone(bad.confirmed)
+        self.assertTrue(bad.not_confirmed)
+
+    def test_a_refusal_and_an_older_build(self):
+        refused = layout.parse_verb(reply(framed(
+            "stashtab: refused - stash not open (no UI_Stash_obj is listed); nothing was called")), "stashtab")
+        self.assertTrue(refused.refused.startswith("stash not open"))
+        self.assertEqual(refused.fields, {})
+        old = layout.parse_verb(reply(framed("command unavailable in player build: stashtab")), "stashtab")
+        self.assertTrue(old.unavailable)
+        # Negative control: another verb's lines are not this verb's.
+        other = layout.parse_verb(reply(framed("bagtab: before=0 after=-4")), "stashtab")
+        self.assertEqual((other.lines, other.fields, other.unavailable), ((), {}, False))
 
 
 if __name__ == "__main__":

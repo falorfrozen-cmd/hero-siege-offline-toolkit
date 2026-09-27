@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -647,6 +648,90 @@ class ListAndInspectTests(SaveToolBase):
         self.assertEqual(seen["changed"], [])
         self.assertEqual(seen["added"], [])
         self.assertEqual(seen["missing"], [])
+
+
+class SessionBackupGateTests(SaveToolBase):
+    """`session_backup_gate`: the backup a tool that writes game state relies on.
+
+    A tool like that runs with the game up, when `hs_saves_backup` refuses, so
+    the only backup that protects the session is a whole one older than the
+    game process. The start time comes from an injected reader, the way the
+    real one reads the process's creation `FILETIME`.
+    """
+
+    TOOL = "hs_talent_allocate"
+    PIDS = [4242]
+
+    def made(self) -> tuple[str, datetime]:
+        result = saves.backup("session", gate=self.gate)
+        self.assertTrue(result["ok"], result)
+        created = datetime.strptime(result["created_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return result["backup_id"], created
+
+    def gate_for(self, backup_id, start):
+        return saves.session_backup_gate(self.TOOL, backup_id, pids=self.PIDS,
+                                         start_reader=lambda pid: start)
+
+    def test_a_whole_backup_taken_before_the_game_started_passes(self):
+        backup_id, created = self.made()
+        self.assertIsNone(self.gate_for(backup_id, created + timedelta(minutes=5)))
+
+    def test_a_backup_taken_after_the_game_started_is_no_session_backup(self):
+        backup_id, created = self.made()
+        started = created - timedelta(minutes=5)
+        refused = self.gate_for(backup_id, started)
+        self.assertEqual(refused["reason"], "no_session_backup", refused)
+        self.assertEqual(refused["tool"], self.TOOL)
+        # Both times are named, in ISO 8601 UTC, and the way out.
+        self.assertIn(created.strftime("%Y-%m-%dT%H:%M:%SZ"), refused["detail"])
+        self.assertIn(started.strftime("%Y-%m-%dT%H:%M:%S"), refused["detail"])
+        self.assertIn("before hs_launch", refused["detail"])
+        # The same second is not earlier either.
+        self.assertEqual(self.gate_for(backup_id, created)["reason"], "no_session_backup")
+
+    def test_an_unreadable_start_time_is_never_a_pass(self):
+        backup_id, _ = self.made()
+        refused = self.gate_for(backup_id, None)
+        self.assertEqual(refused["reason"], "no_session_backup", refused)
+        self.assertIn("could not be read", refused["detail"])
+
+    def test_no_running_game_is_no_session_backup(self):
+        backup_id, created = self.made()
+        refused = saves.session_backup_gate(self.TOOL, backup_id, pids=[],
+                                            start_reader=lambda pid: created + timedelta(hours=1))
+        self.assertEqual(refused["reason"], "no_session_backup", refused)
+
+    def test_a_missing_manifest_is_backup_incomplete(self):
+        partial = self.backups / "20260925T000000Z_partial"
+        (partial / saves.FILES_DIR).mkdir(parents=True)
+        (partial / saves.FILES_DIR / "herosiege1.hss").write_bytes(b"half")
+        refused = self.gate_for(partial.name, datetime.now(timezone.utc) + timedelta(hours=1))
+        self.assertEqual(refused["reason"], "backup_incomplete", refused)
+
+    def test_a_rehashed_mismatch_is_backup_corrupt(self):
+        backup_id, created = self.made()
+        (self.backups / backup_id / saves.FILES_DIR / "herosiege1.hss").write_bytes(b"not what was copied")
+        refused = self.gate_for(backup_id, created + timedelta(hours=1))
+        self.assertEqual(refused["reason"], "backup_corrupt", refused)
+
+    def test_a_path_or_an_unknown_id_is_invalid_backup_id(self):
+        later = datetime.now(timezone.utc) + timedelta(hours=1)
+        for backup_id in ("../hs2saves", "C:\\\\saves", "", None, "no-such-backup"):
+            with self.subTest(backup_id=backup_id):
+                refused = self.gate_for(backup_id, later)
+                self.assertEqual(refused["reason"], "invalid_backup_id", refused)
+
+    def test_the_default_reader_converts_a_filetime_and_nothing_else(self):
+        # 2026-09-25T18:00:00Z as a Windows FILETIME (100 ns ticks since 1601).
+        expected = datetime(2026, 9, 25, 18, 0, 0, tzinfo=timezone.utc)
+        ticks = int((expected - datetime(1601, 1, 1, tzinfo=timezone.utc)).total_seconds()) * 10_000_000
+        with patch("tools.hs_drive_mcp.lease.process_start_for", return_value=ticks):
+            self.assertEqual(saves.game_start_utc(4242), expected)
+        # Negative controls: a Linux identity string, a gone process, a bool.
+        for other in ("boot-id:12345", None, True):
+            with self.subTest(other=other), \
+                 patch("tools.hs_drive_mcp.lease.process_start_for", return_value=other):
+                self.assertIsNone(saves.game_start_utc(4242))
 
 
 if __name__ == "__main__":
