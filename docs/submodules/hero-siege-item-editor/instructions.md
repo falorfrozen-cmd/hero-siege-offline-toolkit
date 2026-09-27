@@ -337,6 +337,7 @@ and the exact tooltip for a saved item appears. Record a row here.
 | `v2.16.1` | [36116151604](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/36116151604) | yes: `ac18db5a…3b7dc6` = `.sha256` asset = GitHub asset digest | yes: window title and `/api/instance` show `2.16.1-s10` | yes: 10 saves listed, slot 0 loaded (Hero Siege was running; read-only checks) | yes: slot 0's 22 items and the Shared Stash's 167 are **Game verified**; game truth: 630/630 character, 167/167 Shared Stash and 6,805/6,805 Vault items verified, 0 missing, 13 character items not yet drawn by the game, on `pe-6aaa6779-0cad4fc8`; 5059 profiles; Dice targets ready | 2026-09-25 | Claude Code, for the owner |
 | `v2.16.2` | [36160683077](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/36160683077) (suite: 585 tests, 1 skipped) | yes: `506ba048…13e89b` = `.sha256` asset = GitHub asset digest | yes: window title and `/api/instance` show `2.16.2-s10`. It was started beside a ForgePact-like server on 8766, listened on 8765 and 8767-8774, and 8766 kept answering from that server | yes: 10 saves listed, slot 0 loaded (Hero Siege was running; read-only checks) | yes: slot 0's 22 items and the Shared Stash's 167 are **Game verified**; game truth: 630/630 character, 167/167 Shared Stash and 6,806/6,806 Vault items verified, 0 missing, 14 items not yet drawn by the game (13 character, 1 Vault), on `pe-6aaa6779-0cad4fc8`; 5059 profiles; Dice targets ready | 2026-09-25 | Claude Code, for the owner |
 | `v2.16.3` | [36215630830](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/36215630830) (suite: 608 tests, 1 skipped) | yes: `288b5404…54e154b` = `.sha256` asset = GitHub asset digest | yes: window title and `/api/instance` show `2.16.3-s10` | yes: 10 saves listed, slot 0 loaded (Hero Siege was running; read-only checks) | yes: slot 0's 22 items and the Shared Stash's 167 are **Game verified**; game truth: 630/630 character, 167/167 Shared Stash and 6,806/6,806 Vault items verified, 0 missing, 14 items not yet drawn by the game, on `pe-6aaa6779-0cad4fc8`; 5059 profiles; Dice targets ready. This release's own change: 875 catalog rows (the table's 308 white bases and 567 uniques) take their seed from the game-built table | 2026-09-26 | Claude Code, for the owner |
+| `v2.17.0` | [36289392675](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/36289392675) (suite: 626 tests, 1 skipped) | yes: `7db2a1d8…95452f9d` = `.sha256` asset = GitHub asset digest | yes: window title and `/api/instance` show `2.17.0-s10` | yes: 10 saves listed, slot 0 loaded (Hero Siege was running; read-only checks) | yes: slot 0's 22 items and the Shared Stash's 167 are **Game verified**; game truth: 630/630 character, 167/167 Shared Stash and 6,806/6,806 Vault items verified, 0 missing, 27 items not yet drawn by the game, on `pe-6aaa6779-0cad4fc8`; 5059 profiles; Dice targets ready. This release's own change: the Blacksmith route's read-only `items` listed 100 reforgeable pieces of equipment (`nextOffset` 236); nothing was offered or changed | 2026-09-27 | Claude Code, for the owner |
 
 The first `v2.16.3` tag, at `08c95d9`, failed its build
 ([36214856028](https://github.com/falorfrozen-cmd/hero-siege-item-editor/actions/runs/36214856028))
@@ -646,6 +647,59 @@ Tests:
 Merged in falorfrozen-cmd/hero-siege-item-editor#9 and released as `v2.16.1` on 2026-09-25 (launch gate row above).
 
 **Live check** (2026-09-25): AFK FARM 0.9 took seven kinds with `take`, and the Vault lost exactly those counts. For type 13, this editor made a Battle Fragment (13:0) in an empty Shared Stash tab with the game closed and deposited it into AFK Materials. AFK FARM's town then took it, and the game made it again. It came back to AFK Materials.
+
+## AFK FARM's Blacksmith (2.17.0, 2026-09-27)
+
+AFK FARM's Stronghold has a Blacksmith (its design B3, research R5). It reforges a
+**unique** item in the Vault: the running game rebuilds the same item with a new
+seed `a` through ForgePact's Item Truth, and the player keeps one of the
+candidates, or none.
+
+`POST /api/vault/afk-reforge` (`op_vault_afk_reforge`) has five actions:
+- **`items`** lists Vault equipment page by page (`limit`, `offset`, `nextOffset`),
+  each with whether it can be reforged and why not.
+- **`offer`** asks the game to build `tries` candidates (1, 2, 4, 8 or 16).
+  - The seeds are drawn from the request id (`_afk_reforge_seeds`), so an offer asked
+    again is the same offer, and a candidate never has the item's own seed.
+  - It needs game truth and game capture on. It fails when the game's queue did not
+    take the candidates.
+- **`status`** shows each candidate as the running build made it (`buildMatched`):
+  `ready`, `building`, `partial` or `failed`. A request that is gone is queued again;
+  a stopped one never is, because a candidate may have stopped the game.
+- **`choose`** replaces the item with candidate `index`, in place. It requires a
+  game-verified candidate and the item as offered (`itemSha`, checked again inside
+  the transaction).
+- **`cancel`** makes sure a request never reforges, or reports the reforge it made.
+
+What can be reforged: unique equipment only (data `c == 1`). On any other item the
+seed also rolls the rarity (2.16.3). These are refused, with the reason:
+- runewords and socketed items (`s1`-`s6`), because the socket count can change;
+- items whose seed chooses their skill;
+- items without an item key of their own, because the game cannot rebuild them;
+- Custom Forge items. That check fails closed when the Custom Forge list cannot be
+  read.
+
+How it stays exactly once: `InfiniteVault.reforge_item` checks the request id inside
+the write transaction and writes a `before-afk-item-reforged-*.bak` copy first. The
+`afk_item_reforged` event is an undo barrier. `cancel_reforge` records
+`afk_reforge_cancelled`. Error replies carry a `code` (`gone`, `changed`, `busy`,
+`refused`), so AFK FARM knows whether an offer can still finish.
+
+AFK FARM's client is `HS-AFK-Expedition/tools/blacksmith.py`.
+
+Tests: `test_vault_afk_reforge.py` (18). The whole suite is 626 tests (1 skipped),
+with `USERPROFILE` and `LOCALAPPDATA` pointed at a temporary folder.
+
+**Live check** (2026-09-27, ForgePact 1.4.7, `pe-6aaa6779-0cad4fc8`). It ran on a COPY
+of the Vault and of the truth store; only the Item Truth request folder was real.
+- The game built 4 and then 8 candidates of a Satanic boot within 3 seconds, each with
+  different Defense, Enhanced Defense, Dexterity and missile defense.
+- The choice replaced the item in place (only `a` changed), and a second choice
+  replayed.
+- The game verified the new item. The real Vault's hash did not change.
+
+Merged in falorfrozen-cmd/hero-siege-item-editor#13 and released as `v2.17.0` on
+2026-09-27 (launch gate row above).
 
 ## Game-built seeds (2.16.3, 2026-09-26)
 

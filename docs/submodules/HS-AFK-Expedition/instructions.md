@@ -169,8 +169,40 @@ Merged into `main` on 2026-09-25 (falorfrozen-cmd/HS-AFK-Expedition#3), not rele
   - Two sieges held, at levels 1 and 10. The hero's claim replayed 60 of 60 kills with XP. The town's shares replayed 80 of 80 and 185 of 185 kills, with no XP. All were saved.
   - Type 13 (fragments, shards and tarot cards), checked the same day. The Item Editor made a Battle Fragment (13:0) and put it in AFK Materials. The town took it, and the game made it again (`type 13`, `b 0`, `o 1`, a seed of its own). It came back to the Vault.
 
+## The Stronghold (2026-09-27)
+
+Merged into `main` on 2026-09-27 (falorfrozen-cmd/HS-AFK-Expedition#6 through #11),
+not released yet. The approved design is `docs/STRONGHOLD_DESIGN.md`. The rules are in
+`docs/DESIGN.md` and the API in `docs/UI_CONTRACT.md`. The browser UI comes last,
+from one brief (design decision D8).
+
+- **Single Gold.** The town's coffer is gone: the Stronghold spends and earns the
+  heroes' own gold. The plugin pays a ledger after a load, with one receipt per
+  request.
+- **Stronghold features:** Renown and the Stronghold Rank, the Temple's blessings
+  (native buffs), boss trophies and the Trophy Hall, the Contract Board and Collect
+  All.
+- **In the game:** a window and the Steward (F6), and live defense: a siege's waves
+  come in the game, the towers' kills make one native loot call each, and the result
+  replaces the wave's replay.
+- **More systems:** the Alchemist's elixirs (on play time), the Steward's Chronicle,
+  seasons, escorted wagons, rival towns (raids, allies, envoy contracts, allied
+  traders), achievements, titles and a banner.
+- **The Blacksmith** reforges a unique Vault item through Item Editor 2.17.0
+  (`/api/vault/afk-reforge`; see the editor guide). AFK FARM never writes the Vault.
+- **Tests** (main 74d134c): 620 Python tests and the C++ smokes (36 checks).
+  Independent reviews of every phase were fixed with regression tests.
+- **Live checks** (2026-09-27) of the plugin, all with the gold unchanged and the
+  regular plugin restored afterwards:
+  - the ledger, blessings and Pure mode;
+  - the window;
+  - live waves, including a stop naming its request and a wave never begun twice
+    across a restart;
+  - elixir time;
+  - the Blacksmith, on a Vault copy.
+
 ## Related Guides
-- [hero-siege-item-editor](../hero-siege-item-editor/instructions.md): Infinite Vault, AFK transfers, DISMANTLE, camp takes
+- [hero-siege-item-editor](../hero-siege-item-editor/instructions.md): Infinite Vault, AFK transfers, DISMANTLE, camp takes, the Blacksmith
 - [hs-game-sdk](../hs-game-sdk/instructions.md): reward scope, reward stats, native routine names
 - [ForgePact](../ForgePact/instructions.md): shared reward scope
 - [Shared Documentation Index](../README.md)
