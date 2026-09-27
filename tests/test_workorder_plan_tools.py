@@ -873,5 +873,261 @@ class ItemCommitTests(TempDirMixin, unittest.TestCase):
         self.assertIn("flags\t", out)
 
 
+# The ForgePact UI redesign's ship workorder (2026-09-27), shortened: a
+# one-file panel fix reaches the panel's npm tests and the e2e suite that
+# covers the file, not the Python suite or the docs check.
+REACH_PLAN = """# x
+
+## State
+gates: none
+
+## Acceptance criteria
+
+- [ ] (reads `ForgePact/panel/src/**`, `ForgePact/panel/package.json`) `npm --prefix ForgePact/panel test` exits 0
+- [ ] (reads `ForgePact/panel/src/lib/**`, `ForgePact/panel/tests/review-fixes.e2e.mjs`) `npm --prefix ForgePact/panel run e2e:review` exits 0
+- [ ] (reads `ForgePact/src/**`, `ForgePact/tests/**`) `cd ForgePact; py -3 tools/run_tests_parallel.py` exits 0
+- [ ] (reads `docs/submodules/ForgePact/instructions.md`) `grep -c e2e:review docs/submodules/ForgePact/instructions.md` prints a number
+- [ ] (reads `ForgePact/panel/src/app.css`) (after 1) `grep -c toast ForgePact/panel/dist/app.css` prints a number
+"""
+
+
+class ReachSelectionTests(unittest.TestCase):
+    """`select` is the whole reach policy, as a pure function: what a change
+    can reach, plus what failed, and everything whenever that is unknown."""
+
+    def setUp(self):
+        self.items = run_criteria.criteria(REACH_PLAN)
+
+    def chosen(self, changed, failed=()):
+        full, _, scope = run_criteria.select(self.items, changed, set(failed))
+        self.assertFalse(full)
+        return {k for k, (selected, _) in scope.items() if selected}
+
+    def test_a_change_outside_every_reads_selects_only_the_failed(self):
+        # Negative control: nothing any criterion reads changed.
+        self.assertEqual(self.chosen(["README.md", "ForgePact/plugin/ModuleMain.cpp"], failed=[4]), {4})
+        self.assertEqual(self.chosen(["README.md"]), set(), "a change nothing reads selected a criterion")
+        _, _, scope = run_criteria.select(self.items, ["README.md"], {4})
+        self.assertEqual(scope[4][1], "failed last time (--failed)")
+        self.assertIn("nothing it reads changed (reads `ForgePact/src/**`, `ForgePact/tests/**`)", scope[3][1])
+
+    def test_a_change_to_a_shared_file_selects_every_criterion_that_declares_it(self):
+        self.assertEqual(self.chosen(["ForgePact/panel/src/lib/enabled-mods-undo.js"]), {1, 2})
+        self.assertEqual(self.chosen(["ForgePact/panel/src/app.css"]), {1, 5},
+                         "the glob and the literal that both cover app.css")
+        self.assertEqual(self.chosen(["ForgePact/tests/test_x.py"]), {3}, "control: one reader, one criterion")
+
+    def test_a_criterion_without_reads_runs_whatever_changed(self):
+        # An old plan, with no map at all, still verifies fully.
+        items = run_criteria.criteria(RUNNER_PLAN)
+        full, _, scope = run_criteria.select(items, ["README.md"])
+        self.assertFalse(full)
+        self.assertTrue(all(selected for selected, _ in scope.values()))
+        self.assertIn("declares no (reads ...)", scope[1][1])
+
+    def test_an_unknown_delta_or_a_shared_contract_runs_everything(self):
+        full, why, scope = run_criteria.select(self.items, None, unknown="git cannot diff ForgePact from abc")
+        self.assertTrue(full)
+        self.assertIn("delta unknown: git cannot diff ForgePact", why)
+        self.assertEqual({k for k, (s, _) in scope.items() if s}, {1, 2, 3, 4, 5})
+        full, why, _ = run_criteria.select(self.items, ["README.md", "hs-game-sdk/python/hs_game_sdk/items.py"])
+        self.assertTrue(full)
+        self.assertIn("shared contract changed: reads `hs-game-sdk/**` <- hs-game-sdk/python", why)
+        # The plan can name its own contract; control: without the line, a
+        # change to that file reaches nothing.
+        text = REACH_PLAN.replace("gates: none", "gates: none\nshared contract: `ForgePact/panel/src/protocol.js`")
+        self.assertTrue(run_criteria.select(self.items, ["ForgePact/panel/src/protocol.js"], set(),
+                                            run_criteria.contract_globs(text))[0])
+        self.assertEqual(self.chosen(["ForgePact/panel/src/protocol.js"]), {1})
+
+    def test_a_selected_criterion_brings_the_one_it_runs_after(self):
+        full, _, scope = run_criteria.select(self.items, ["ForgePact/panel/src/app.css"])
+        self.assertEqual(scope[1][1], "reads `ForgePact/panel/src/**` <- ForgePact/panel/src/app.css")
+        items = self.items[:4] + ["(reads `ForgePact/panel/dist/**`) (after 1) `grep -c x ForgePact/panel/dist/a.css` ok"]
+        _, _, scope = run_criteria.select(items, ["ForgePact/panel/dist/a.css"])
+        self.assertEqual(scope[1], (True, "criterion 5 runs after it"))
+
+    def test_reads_path(self):
+        rp = plan_lint.reads_path
+        self.assertTrue(rp("ForgePact/panel/", "ForgePact/panel/src/a.js"))
+        self.assertTrue(rp("ForgePact/panel", "ForgePact/panel/src/a.js"), "a literal directory covers what is under it")
+        self.assertFalse(rp("ForgePact/panel", "ForgePact/panel-old/a.js"), "a prefix of a name is not its directory")
+        self.assertTrue(rp("**/*.md", "README.md"))
+        # PR #256 review: a mid-pattern `**/` matches no directory too.
+        self.assertTrue(rp("ForgePact/panel/src/**/*.ts", "ForgePact/panel/src/main.ts"))
+        self.assertTrue(rp("ForgePact/panel/src/**/*.ts", "ForgePact/panel/src/sub/main.ts"))
+        self.assertTrue(rp("a/**/b/**/*.py", "a/b/x.py"))
+        self.assertFalse(rp("ForgePact/panel/src/**/*.ts", "ForgePact/panel/main.ts"), "control: not above the dir")
+        self.assertFalse(rp("ForgePact/panel/src/**/*.ts", "ForgePact/panel/src/main.js"), "control: not another type")
+        self.assertTrue(rp("**", "anything/at/all"))
+        self.assertTrue(rp("tools\\plan_lint.py", "tools/plan_lint.py"))
+        self.assertFalse(rp("docs/*.md", "tools/x.md"))
+
+    def test_an_empty_declaration_is_no_declaration(self):
+        self.assertIsNone(plan_lint.reads("(reads ) `grep -c x a.md` ok"))
+        self.assertEqual(plan_lint.reads("(reads `a/**`, `b (1).md`) `ls` ok"), ["a/**", "b (1).md"])
+
+    def test_a_declared_path_is_never_run_as_a_command(self):
+        item = "(reads `tools/setup.sh`, `docs/x.md`) `grep -c x docs/x.md` prints 1"
+        self.assertEqual(run_criteria.commands(item), ["grep -c x docs/x.md"])
+        self.assertEqual([rule for rule, _ in plan_lint.lint_criterion("(reads `docs/x.md`) the file says so")],
+                         ["prose"], "a declaration is not a check")
+
+
+class ReachRunTests(TempDirMixin, unittest.TestCase):
+    """`--changed-since` end to end, in a throwaway hub with one submodule."""
+
+    def git(self, cwd, *args):
+        return subprocess.run(["git", "-C", str(cwd), "-c", "protocol.file.allow=always", *args],
+                              capture_output=True, text=True, check=True)
+
+    def init(self, path):
+        path.mkdir(parents=True, exist_ok=True)
+        self.git(path, "init", "-q")
+        self.git(path, "config", "user.email", "t@example.invalid")
+        self.git(path, "config", "user.name", "t")
+
+    def setUp(self):
+        super().setUp()
+        self.bash = run_criteria.find_bash(None)
+        if not self.bash:
+            self.skipTest("no bash on this machine")
+        source = self.tmp_path / "source"
+        self.init(source)
+        (source / "panel").mkdir()
+        (source / "panel" / "a.js").write_text("a\n", encoding="utf-8")
+        (source / "py.txt").write_text("p\n", encoding="utf-8")
+        self.git(source, "add", "-A")
+        self.git(source, "commit", "-q", "-m", "sub base")
+        self.hub = self.tmp_path / "hub"
+        self.init(self.hub)
+        (self.hub / "docs").mkdir()
+        (self.hub / "docs" / "guide.md").write_text("g\n", encoding="utf-8")
+        self.git(self.hub, "submodule", "add", "-q", str(source), "Mod")
+        self.git(self.hub / "Mod", "config", "user.email", "t@example.invalid")
+        self.git(self.hub / "Mod", "config", "user.name", "t")
+        self.git(self.hub, "add", "-A")
+        self.git(self.hub, "commit", "-q", "-m", "hub base")
+        self.git(self.hub, "tag", "base")
+        crit = [
+            "(reads `Mod/panel/**`) `bash -c \"echo 1 >> ran.txt\"` exits 0",
+            "(reads `Mod/py.txt`) `bash -c \"echo 2 >> ran.txt\"` exits 0",
+            "(reads `docs/**`) `bash -c \"echo 3 >> ran.txt\"` exits 0",
+            "(reads `tools/**`) `bash -c \"echo 4 >> ran.txt\"` exits 0",
+        ]
+        self.plan = self.hub / "x-plan.md"
+        self.plan.write_text("## Acceptance criteria\n\n" + "".join(f"- [ ] {c}\n" for c in crit), encoding="utf-8")
+
+    def runner(self, *extra):
+        (self.hub / "ran.txt").unlink(missing_ok=True)
+        rc, out = run(run_criteria.main, [str(self.plan), "--out", str(self.tmp_path / "logs"), *extra])
+        ran = (self.hub / "ran.txt").read_text().split() if (self.hub / "ran.txt").exists() else []
+        return rc, out, sorted(ran)
+
+    def test_runs_only_what_the_change_reaches_plus_the_failed(self):
+        (self.hub / "Mod" / "panel" / "a.js").write_text("a2\n", encoding="utf-8")
+        self.git(self.hub / "Mod", "commit", "-q", "-am", "panel fix")
+        rc, out, ran = self.runner("--changed-since", "base", "--failed", "4")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(ran, ["1", "4"], out)
+        self.assertIn("  Mod/panel/a.js", out)
+        self.assertIn("scope: running 2 of 4 criteria", out)
+        self.assertIn("run  criterion 1: reads `Mod/panel/**` <- Mod/panel/a.js", out)
+        self.assertIn("skip criterion 3: nothing it reads changed (reads `docs/**`)", out)
+        self.assertIn("NOT SELECTED (nothing it reads changed (reads `Mod/py.txt`))", out)
+        # The same under --jobs, which schedules only the selected commands.
+        rc, out, ran = self.runner("--changed-since", "base", "--failed", "4", "--jobs", "2")
+        self.assertEqual(ran, ["1", "4"], out)
+
+    def test_uncommitted_and_untracked_work_is_in_the_change(self):
+        (self.hub / "docs" / "new.md").write_text("n\n", encoding="utf-8")
+        (self.hub / "Mod" / "py.txt").write_text("p2\n", encoding="utf-8")
+        rc, out, ran = self.runner("--changed-since", "base")
+        self.assertEqual(ran, ["2", "3"], out)
+        self.assertNotIn("  Mod\n", out.replace("\r", ""), "the gitlink line is not a changed file")
+
+    def test_a_submodule_base_of_its_own_narrows_its_delta(self):
+        # The hub's base records the submodule's first commit; a round base
+        # after the first fix sees only the second.
+        self.git(self.hub / "Mod", "commit", "-q", "--allow-empty", "-m", "noop")
+        (self.hub / "Mod" / "panel" / "a.js").write_text("a2\n", encoding="utf-8")
+        self.git(self.hub / "Mod", "commit", "-q", "-am", "first fix")
+        round_base = self.git(self.hub / "Mod", "rev-parse", "HEAD").stdout.strip()
+        (self.hub / "Mod" / "py.txt").write_text("p2\n", encoding="utf-8")
+        self.git(self.hub / "Mod", "commit", "-q", "-am", "second fix")
+        self.assertEqual(self.runner("--changed-since", "base")[2], ["1", "2"], "control: from the hub's record")
+        rc, out, ran = self.runner("--changed-since", "base", "--changed-since", f"Mod={round_base}")
+        self.assertEqual(ran, ["2"], out)
+
+    def test_a_base_git_cannot_diff_from_runs_everything(self):
+        rc, out, ran = self.runner("--changed-since", "no-such-ref")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("scope: full -- delta unknown:", out)
+        self.assertEqual(ran, ["1", "2", "3", "4"])
+
+    def test_changed_from_reads_a_round_delta(self):
+        delta = self.tmp_path / "delta.txt"
+        delta.write_text("docs/guide.md\n", encoding="utf-8")
+        self.assertEqual(self.runner("--changed-from", str(delta))[2], ["3"])
+        rc, out, ran = self.runner("--changed-from", str(self.tmp_path / "missing.txt"))
+        self.assertIn("scope: full -- delta unknown: cannot read", out)
+        self.assertEqual(ran, ["1", "2", "3", "4"])
+
+    def test_usage_errors_exit_2(self):
+        for argv in (["--failed", "1"], ["--changed-since", "base", "--failed", "9"],
+                     ["--changed-since", "base", "--failed", "one"], ["--changed-since", "Mod=base"],
+                     ["--changed-since", "base", "--item", "a"], ["--changed-since", "base", "--changed-from", "-"],
+                     ["--changed-since", "base", "--changed-since", "base"]):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.runner(*argv)[0], 2)
+        self.assertEqual(self.runner()[2], ["1", "2", "3", "4"], "control: no flag runs every criterion")
+
+
+class PlanLintReachTests(TempDirMixin, unittest.TestCase):
+    def test_warn_a_criterion_with_no_reads_and_suggest_from_its_commands(self):
+        rc, out = run(plan_lint.main, [self.write("x-plan.md", PLAN)])
+        self.assertEqual(rc, 0, "a warning never fails the lint")
+        self.assertIn("criterion 1: warning no-reads: declare (reads `<glob>`, ...); inferred from its commands, "
+                      "check before copying: `tests/test_x.py`", out)
+        self.assertIn("criterion 4: warning no-reads", out)
+        self.assertIn("`ForgePact/plugin/ModuleMain.cpp`", out)
+        self.assertIn("5 criteria, 0 finding(s), 5 warning(s)", out)
+        rc, out = run(plan_lint.main, [self.write("r-plan.md", REACH_PLAN)])
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("warning", out, "control: a mapped plan warns about nothing")
+
+    def test_infer_reads(self):
+        self.assertEqual(plan_lint.infer_reads("`cd ForgePact; py -3 tools/run_tests_parallel.py` exits 0"),
+                         ["ForgePact/**"])
+        self.assertEqual(plan_lint.infer_reads("`npm --prefix ForgePact/panel run e2e:review` exits 0"),
+                         ["ForgePact/panel/**"])
+        self.assertEqual(plan_lint.infer_reads("`py -3 -m unittest tests.test_hub_x -v` exits 0"),
+                         ["tests/test_hub_x.py"])
+        self.assertEqual(plan_lint.infer_reads("`py -3 -m unittest discover -s tests` exits 0"), [])
+        self.assertEqual(plan_lint.infer_reads("`docs/x.md` records it"), ["docs/x.md"])
+
+    def test_warn_a_glob_that_names_no_tracked_file(self):
+        subprocess.run(["git", "-C", self._tmp, "init", "-q"], check=True)
+        (self.tmp_path / "docs").mkdir()
+        self.write("docs/a.md", "a\n")
+        subprocess.run(["git", "-C", self._tmp, "add", "-A"], check=True)
+        # An uninitialized submodule: git lists its gitlink, not its files.
+        subprocess.run(["git", "-C", self._tmp, "update-index", "--add", "--cacheinfo",
+                        "160000,1111111111111111111111111111111111111111,Mod"], check=True)
+        plan = self.write("x-plan.md", "## Acceptance criteria\n- [ ] (reads `docs/*.md`, `doc/*.md`) "
+                                       "`grep -c a docs/a.md` prints 1\n"
+                                       "- [ ] (reads `Mod/panel/src/**`) `grep -c x Mod/panel/src/a.js` prints 1\n"
+                                       "- [ ] `git log --oneline origin/main..HEAD -- docs/a.md falorfrozen-cmd/ForgePact` "
+                                       "lists commits\n")
+        rc, out = run(plan_lint.main, [plan])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("warning reads-nothing: `doc/*.md` names no tracked file", out)
+        self.assertNotIn("`docs/*.md` names no", out, "control: a glob that matches is not flagged")
+        self.assertNotIn("`Mod/panel/src/**` names no", out, "a submodule git cannot list is unknown, not empty")
+        self.assertIn("criterion 3: warning no-reads: declare (reads `<glob>`, ...); inferred from its commands, "
+                      "check before copying: `docs/a.md`\n", out.replace("\r", ""),
+                      "a ref, a range and a repo slug are not paths in this checkout")
+
+
 if __name__ == "__main__":
     unittest.main()

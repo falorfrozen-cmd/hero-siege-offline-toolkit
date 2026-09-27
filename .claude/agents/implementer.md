@@ -198,10 +198,15 @@ genuinely balanced", not "I would prefer someone else confirm this."
 
    **Re-entered after a defect, re-run only what the defect touches**: the
    failed criteria, any criterion that reads a file you changed this round,
-   and the suite once if code changed. The verifier runs every criterion
-   after you, from scratch, so a full sweep from you is the same work paid
+   and the suite once if code changed. A fresh verifier re-checks after
+   you, in full or by reach, so a full sweep from you is the same work paid
    twice — measured: a two-sentence release-notes fix re-ran all 23 criteria,
    the suite four times and both syntax checks, 41 turns for a one-file delta.
+   The runner computes that set from the plan's `(reads ...)` map: `py -3
+   tools/run_criteria.py <plan> --jobs auto --changed-since <this round's
+   base> --failed <k,...>`, with the base from `round_delta.py heads`. The
+   verifier after you re-checks the same way (SKILL.md Step 4, "Re-verify
+   what the fix reaches").
 
 7. **Match the surrounding code.** Comment density, naming, error style, test
    layout — a change that reads as foreign is a change the reader distrusts.
