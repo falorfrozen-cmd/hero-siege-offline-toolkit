@@ -809,6 +809,12 @@ each its own implement-and-verify round. The patch route (Step 4) and the
 3-round cap are unchanged; this is about not starting a second round while
 the first one's input is still arriving.
 
+The same goes for one verify's criteria: a check two criteria would both run
+is run by one of them. ForgePact's Python suite re-runs the panel's browser
+suites, so a plan whose criteria run those suites directly runs its full
+Python suite with `--exclude-module` for the modules that wrap them
+(`planner.md` § "Spend each check once", "Run each suite once per verify").
+
 **2. Start independent work as soon as its input is committed.** A read-only
 agent (`impeccable-finish-reviewer`, a design audit), a documenter writing
 only to a scratch path, or a Figma mirror does not wait behind the verifier.
