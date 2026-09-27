@@ -562,8 +562,9 @@ Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
                    submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
-                   lanes, join, items, streaming, answered, reviewScopes,
-                   maxParallel, maxAgents, tokenCeiling, itemAttempts, reviewPassCap } })
+                   lanes, join, items: [{ id, files, checks, after, shares, owner, default, reversible }, ...],
+                   streaming, answered, reviewScopes,
+                   maxParallel /* DEFAULT_MAX_PARALLEL, 4; 1-16 */, maxAgents, tokenCeiling, itemAttempts, reviewPassCap } })
 ```
 
 `reviewers` is a map, one entry per applicable round-0 reviewer, valued
@@ -622,12 +623,29 @@ acceptance criteria run once (`verifier:r<n>`), and a failure there becomes
 one fix that runs alone before the gate runs again. It returns `PARKED`,
 `CEILING` or the round outcomes, with every item's status. Which item may
 start is a set of pure functions between the script's `@scheduler` markers,
-which the test file cuts out and tests directly.
+which the test file cuts out and tests directly. `maxParallel` defaults to
+`DEFAULT_MAX_PARALLEL` (4) and anything but a whole number from 1 to 16 is
+`BAD-ARGS`: in the first real plan of items no start waited on the cap. An
+unanswered owner item with `reversible: true` and a default runs on that
+default and is listed under `defaulted` with its commits and how to undo it;
+every result that waits on a person lists under `unblocked` the parked work
+that does not wait on them.
+
+**Amendments run inside the launch** (2026-09-27). An item implementer's, a
+fixer's or a rounds implementer's `PLAN-DEFECT` whose `CORRECTION:` is not
+`none` goes through `amend-save:<id>:r<n>` (`tools/amend_check.py save`), a
+fresh planner labelled `amendment: <slug> <id>:r<n>`, and
+`amend-check:<id>:r<n>`. Only exit 0 with `AMENDMENT` re-runs the work, one
+amendment at a time; anything else goes back to the driver as a replan with
+its reason. A lane's and a reviewer's plan defect stay the driver's.
+The whole-tree verifiers (the rounds verifier, the reach re-verify and the
+items gate) start `run_criteria.py` in the background and poll it with
+`--status <out> --wait 220`; one item's checks stay in the foreground.
 
 It returns to the driver on anything needing judgement — `PASS`,
 `PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`,
 `STATE-LOST`, `SCRIBE-FAILED` or `CAP` — so replans, consultations, human questions and the step-5 report stay with
-the driver either way, and one launch may cover several rounds (a
+the driver either way (only a confirmed amendment runs inside), and one launch may cover several rounds (a
 `PLAN-DEFECT` hand-back means relaunching after the replan). A laned round
 that ends before its join also returns `lanes`, each lane's `name`,
 `verdict` and `progress_so_far`. What it still
@@ -636,7 +654,7 @@ trades away: every re-entry inside the script is a fresh spawn, never the
 measured, on this one real run, as no worse than a resumed implementer (a
 resumed round-1 implementer cost 14.6M tokens at 304K context per turn;
 losing the resume cost nothing). `.claude/workflows/workorder-rounds.test.mjs`
-(`node --test`, 103 cases, each with its own control) dry-runs the routing
+(`node --test`, 126 cases, each with its own control) dry-runs the routing
 above against stub agents.
 
 That makes the split a forcing function rather than just a workflow: a plan that
@@ -701,7 +719,7 @@ follows the table: each lane's wall minutes and cost, the round's span
 (earliest lane start to latest lane end) against the lanes' serial sum, and
 the join's wall minutes; `--json` carries it under `lanes`, which is what
 `docs/agents/workorder-calibration.md` § "Lanes" measures. It prints one table and the
-session's total cost, then twenty-four rules as `PASS`/`FAIL` with
+session's total cost, then twenty-five rules as `PASS`/`FAIL` with
 evidence (the agent, the time, the command or path), then each role's numbers
 against the pre-update averages as a percentage; `--json` emits the same as
 one object.
@@ -729,7 +747,7 @@ one object.
 | R21 verifier-interpreter | a verifier shell command that runs `python` or `python3` in command position (a `grep python` does not count) — this repository's commands are `py -3`, and the verifier runs a criterion exactly as written |
 | R22 verifier-suite-once | a verifier that runs the same `unittest discover` suite (same `cd` directory, same arguments) more than once, counting ForgePact's `tools/run_tests_parallel.py` as the same suite as its serial `discover -s tests` — after a timeout, or to read another slice of the output |
 | R23 lane-git-mutation | a lane implementer (`implementer:<lane>:r<n>`, any lane but `join`) that ran a git command outside the read-only allow-list R16 uses. Lanes share one checkout and `.git/index.lock` fails instead of waiting, so only the join commits; the join and a laneless implementer are exempt |
-| R24 cheap-routes | an `amendment:` planner with no `tools/amend_check.py save` by the driver before it or no `check` after it; a second amendment with no implementer between it and the first; or two `patch-implementer` rounds back to back in one workflow launch. Both routes skip work, so each runs only where something other than the agent taking it has checked that it applies |
+| R24 cheap-routes | an `amendment:` planner with no `tools/amend_check.py save` before it or no `check` after it, made by the driver or, for a planner a workflow launch spawned (`amendment: <slug> <id>:r<n>`), by another agent of that same launch (`amend-save:`/`amend-check:`), never the planner itself; a second amendment with no implementer between it and the first (inside a launch, of the same item); or two `patch-implementer` rounds back to back in one workflow launch. Both routes skip work, so each runs only where something other than the agent taking it has checked that it applies. R11 accepts the same in-launch `check` |
 | R25 owner-scope | a `tools/amend_check.py check` that printed `SCOPE:` (a plan change following a new owner decision, exempt from the replan cap and the tier ladder) with no message typed by the user since the previous `check`, or since the first planner started. The driver writes the decision line, so the audit checks the owner actually said something |
 
 Every budget is a named module-level constant in the tool itself
@@ -746,7 +764,39 @@ when every rule passes, 1 when any rule fails, 2 on a usage error.
 Tests (`tests/test_workorder_audit.py`) build synthetic transcripts in a temp
 directory; every rule has both a failing fixture and a passing control, plus
 coverage for message-id dedupe, workflow-subdirectory discovery, and the exit
-codes.
+codes. `parse_transcript` and `discover_session` take an optional cutoff
+that skips every record after it; left out, the audit's output is unchanged.
+
+### `tools/workorder_speed.py` — where the wall time went
+
+The audit answers "did one session break a rule". This answers "where did
+the time go", for one session or many, so a baseline and a later batch can
+be compared with the same figures. It imports the audit's parser and
+discovery, re-parses nothing itself, and opens files for reading only:
+
+```
+py -3 tools/workorder_speed.py [--transcript <driver .jsonl> ...] [--project-dir <dir> ...]
+    [--plan <plan.md>] [--until <UTC>] [--json]
+```
+
+`--transcript` reads one driver transcript, its subagents and its launch
+records (`<stem>/workflows/wf_*.json`); `--project-dir` reads every session
+in a directory that has a subagent. `--until` ignores every record after a
+UTC time, so a snapshot of a session that was still running can be
+reproduced once it has finished. `--plan` adds how many `owner:` items the
+plan has and how many carry `default:` and `reversible:`. Each session and
+the aggregate carry the span, busy and serial minutes, concurrency, the
+shares of busy time with one agent and with two or more, minutes per phase,
+each launch's item windows (`max_concurrent`, `minutes_at_cap`,
+`queued_behind_cap`, `finding_to_fix_minutes`), verifies by kind, the
+`run_criteria` calls the Bash limit killed, owner waits, the implementers'
+check catch rate, routes (amendments, in-launch amendments, replans,
+consultations) and the audit's lane summary. The module docstring defines
+each one. Exit 0 when the report was produced, 2 on a usage error.
+`docs/agents/workorder-calibration.md` § "Measuring where the pipeline spends
+its time" holds the 2026-09-27 baseline and the exact commands to re-run it.
+Tests: `tests/test_workorder_speed.py`, synthetic sessions only, each measure
+with a counting case and a control.
 
 ### `tools/live_checks.py` and `tools/plan_lint.py` — criteria that read, not guess
 
@@ -810,6 +860,24 @@ delta is unknown or a shared contract changed (SKILL.md Step 4, "Re-verify
 what the fix reaches"). `plan_lint.py` warns, without failing, `no-reads` on
 a criterion with no map and `reads-nothing` on a glob that matches no tracked
 file.
+Every run that is not `--list` keeps `<out>/status.json` current (started and
+updated times, `finished`, and each criterion's state with each command's
+exit code and seconds, replaced whole through a temporary file) and writes
+what it prints to `<out>/report.txt`. `run_criteria.py --status <out> [--wait
+S]` reads it and exits 0 when the run finished, 3 while it runs, 4 when it is
+stale (not finished and not updated for 1,900 s) and 2 without a status
+file; `--wait` polls for at most S ≤ 220 seconds, so a poll stays under audit
+R5. That is how the whole-tree verifiers run in the background: start the
+run with `run_in_background` and `--out`, poll `--status`, read
+`report.txt`.
+Owner questions carry a default: an item's `owner:` line needs `default:`
+and `reversible: yes|no` beside it, and so does each entry of `## Needs
+human judgement`, read in the plan and in its sibling `<slug>-context.md`.
+`plan_lint.py` reports `owner-no-default`, `owner-no-reversible`,
+`owner-reversible-no-default` (`reversible: yes` with no default, or
+`none`) and `owner-legal-default` (a legal or decompile-output question
+marked reversible or given a default), each exiting 1, and `--items-json`
+carries each item's `default` and `reversible`.
 `plan_lint.py` also reads a plan's items (`### Item: <id>` under `## Steps`,
 each with `files:`, `checks:` and optional `after:`/`shares:`/`owner:`) and
 reports `item-overlap` (an overlap neither item declares), `item-no-files`,
@@ -1060,6 +1128,9 @@ py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py + ensure_subm
 py -3 -m unittest tests.test_claude_workorder_section -v  # section.py, plus the sentences in agents/ and SKILL.md that carry the same lesson
 py -3 -m unittest tests.test_workorder_audit -v   # workorder_audit.py's rules, each with a failing fixture and a passing control
 py -3 -m unittest tests.test_workorder_plan_tools -v  # live_checks.py, plan_lint.py, amend_check.py and run_criteria.py, on the capture, criterion and plan-diff shapes that cost rounds
+py -3 -m unittest tests.test_workorder_plan_lint_owner -v  # plan_lint.py's owner-question rules, each with a failing fixture and a passing control
+py -3 -m unittest tests.test_workorder_run_criteria_status -v  # run_criteria.py's status.json, report.txt and --status exit codes
+py -3 -m unittest tests.test_workorder_speed -v   # workorder_speed.py's measures on synthetic sessions, each with a control
 py -3 -m unittest tests.test_source_index -v      # source_index.py against a synthetic fixture, plus a real-ModuleMain.cpp smoke test
 py -3 -m unittest tests.test_hs_drive_mcp_server -v            # the hs-drive tool surface, over a real stdio session
 py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v     # ENGINE_SYMBOLS still resolve, and importing the engine starts nothing

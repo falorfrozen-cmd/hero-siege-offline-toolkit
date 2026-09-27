@@ -238,21 +238,37 @@ How it will be measured: run `py -3 tools/workorder_audit.py --session <id>
 --json` on the first real laned workorder and read its `lanes` entry. The
 saving is `serial_minutes` minus `span_minutes`. The join's minutes are the
 cost of committing and building once at the end. The before row is round 0
-of `forgepact-issue-14-player-build`, from the same tool's table. Which
-workorder provides the after row is the owner's choice, still open. The
-table stays `not yet measured` until then, and the plan's gate
-`measured: complete` is set only when both rows hold numbers.
+of `forgepact-issue-14-player-build`, from the same tool's table. The after
+rows are every laned round `tools/workorder_speed.py` found in the 22-session
+baseline (2026-09-27, § "Measuring where the pipeline spends its time"
+below), one row per launch, named by its slug. That was the default of the
+workorder-speedup plan's owner question, which the owner left standing;
+deleting rows undoes it.
 
-| | workorder | round 0 implement wall time | implementer minutes, added up |
-|---|---|---|---|
-| before | `forgepact-issue-14-player-build`, one implementer | not yet measured | not yet measured |
-| after | first real laned workorder (to be chosen) | not yet measured | not yet measured |
+| | workorder (launch) | round 0 implement wall time | implementer minutes, added up | join minutes |
+|---|---|---|---|---|
+| before | `forgepact-issue-14-player-build` (`wf_a1b7b8b6-31b`), one implementer | 47.2 | 47.2 | no join |
+| after | `forgepact-ui-features` (`wf_57bb18ae-0e7`), 3 lanes | 20.0 | 30.3 | 24.1 |
+| after | `forgepact-ui-port` (`wf_9dd420f2-9c2`), 3 lanes | 46.8 | 63.7 | none in the lane summary |
+| after | `forgepact-ui-restyle-prep` (`wf_d360fa54-00b`), 3 lanes | 14.0 | 21.7 | 14.4 |
+| after | `forgepact-ui-restyle` (`wf_f137ae4e-2cd`), 2 lanes | 72.5 | 74.9 | 13.2 |
+| after | `hs-drive-skill-actions` (`wf_1bc765d2-f84`), 2 lanes | 6.5 | 13.0 | 7.6 |
+| after | `hs-drive-skill-actions` (`wf_414054ee-e13`), 2 lanes | 22.2 | 24.3 | 8.3 |
+| after | `hs-drive-skill-actions` (`wf_65b0bf5b-381`), 2 lanes | 9.7 | 15.2 | none in the lane summary |
 
-Not yet observed: lanes have not run on a real workorder. The fan-out, the
-join, the stop marker and the audit summary are tested against stub agents
-and synthetic transcripts only. Whether a real lane keeps to its file set,
-checks the marker before each step and leaves git alone is not established,
-and R23 is the instrument that will show it.
+The before row's round 0 was relaunched once after a replan
+(`wf_92baf19d-fa0`, one implementer, 4.7 minutes); the row is the first
+launch, the one this section's opening paragraph describes. Over the seven
+laned rounds the lanes' span was 191.7 minutes against 243.1 added up, so
+running them at once saved 51.4 minutes. In the five rounds that recorded a
+join, the joins took 67.6 minutes against a 29.0-minute saving. How much of
+that join time a one-implementer round would have spent anyway, building and
+committing, is not established.
+
+Lanes have now run in the seven real rounds above, and the fan-out and the
+join are measured. Whether a real lane keeps to its file set, checks the
+marker before each step and leaves git alone is not established, and R23 is
+the instrument that will show it.
 
 # The cheap routes (2026-09-25)
 
@@ -534,16 +550,20 @@ cap, the file lock or the park check fails these tests.
 
 ## Not yet measured
 
-Items have not run on a real workorder. The pilot is the next multi-item
-workorder. Record its numbers here against the redesign's rows:
+The first plan of items to run for real was `forgepact-dev2-bug-batch`
+(2026-09-27), in three launches (rounds 0, 1 and 2). Its row, from
+`tools/workorder_speed.py` (§ "Measuring where the pipeline spends its time"
+below), against the redesign's:
 
 | | workorder | items | full verifies | launch wall-clock | item implementer minutes, added up | first finding to its fix starting |
 |---|---|---|---|---|---|---|
 | before | `forgepact-ui-polish` (rounds) | 9 | 3 rounds, a split workorder, 1 re-verify | not recorded | not recorded | no reviewer stream |
 | before | `forgepact-ui-ship` (rounds) | 8 fixes | 1 per round | not recorded | not recorded | the whole review, then an owner batch |
-| after | the first plan of items (to be chosen) | not yet measured | not yet measured | not yet measured | not yet measured | not yet measured |
+| after | `forgepact-dev2-bug-batch` (items, 3 launches) | 8 in the plan, 9 item starts (2 + 2 + 5) | 2, both gate runs of round 2 | 157.1 min (48.4 + 37.3 + 71.4) | 100.5 (32.6 + 14.5 + 53.4, fixers included) | 0.04-5.4 min over 11 fixes, 8 of them under 1 min |
 
-Take the after row from `py -3 tools/workorder_audit.py --session <id>
+At most 3 items ran at once, against a cap of 4, and no start waited on the
+cap. The launch figures come from each launch's `launches` entry; the same
+numbers can be read from `py -3 tools/workorder_audit.py --session <id>
 --json`: the launch's span (first agent start to last agent end), the item
 implementers' wall minutes added up (their sum against the span is the
 parallelism bought), the count of `verifier:` gate runs, and each
@@ -820,3 +840,158 @@ Not done here:
   does not have to port main's new features (the redesign's `main-merge` and
   `main-merge-3` did), was considered and not made a rule. It is a
   feature-planning choice to weigh each time.
+
+# Measuring where the pipeline spends its time (2026-09-27)
+
+## The question
+
+The owner asked for `/workorder` to go faster without weakening any check,
+and for the measurement to come first: a goal would be dropped or shrunk
+where the numbers showed its problem was gone. The five goals were a
+re-runnable report, background criteria runs, owner questions that carry a
+default, a higher parallel cap, and consultations and amendments inside the
+launch. Until then, "where did the time go" had been answered by throwaway
+transcript scripts, run once for a study of 22 sessions. The question for
+this section is what those sessions and the first real plan of items, the
+ForgePact bug batch, spent their time on, and which goals that leaves.
+
+## What was measured
+
+`tools/workorder_speed.py` now answers it. It reuses
+`tools/workorder_audit.py`'s parser and session discovery, opens files for
+reading only, and its module docstring defines each figure. `--until` drops
+every record after a time, so a snapshot of a session that was still running
+can be reproduced once it has finished. It was run on:
+
+- **the baseline**: the study's 22 sessions in four project directories, up
+  to 2026-09-27T21:30:00Z;
+- **the snapshot**: the bug batch (`forgepact-dev2-bug-batch`, driver session
+  `a7e6f66d`) at 2026-09-27T21:21:31Z, while a fifth launch
+  (`forgepact-pet-loot-stuck`) was still running. The workorder-speedup plan
+  was scoped from this snapshot;
+- **the fresh run**: the same session read at 2026-09-27T22:12Z, its last
+  event at 22:12:10Z, still running.
+
+| measure | baseline (22 sessions) | bug batch, snapshot | bug batch, fresh |
+|---|---|---|---|
+| span / busy minutes (busy leaves out gaps of 2 h or more with no agent) | 16,171.9 / 10,071.1 | 410.1 / 410.1 | 460.7 / 460.7 |
+| agent minutes, added up | 9,663.1 | 601.9 | 709.8 |
+| concurrency (agent minutes / busy) | 0.96 | 1.47 | 1.54 |
+| busy time with one agent / with two or more | 63% / 13% | 61% / 30% | 58% / 32% |
+| `run_criteria` calls, killed at the limit, longest, longest `--item` | 253, 25, 605.3 s, none | 37, 0, 369.5 s, 61.4 s | 45, 0, 369.5 s, 79.1 s |
+| owner waits: count, minutes, largest | 80, 4,975.4 (3,912.6 in gaps over 2 h); 1,062.9, 552.8, 444.0 | 3, 23.1; 16.2 | 4, 25.9; 16.2 |
+| verifies: full / reach / item | 126 / 0 / 0 | 2 / 0 / 9 | 2 / 0 / 11 |
+| items: most at once, starts that waited on the cap | none ran | 3, 0 | 3, 0 |
+| implementers whose check failed and who then edited | 83 of the 144 that ran one (58%) | 8 of 20 (40%) | 10 of 26 (38%) |
+| amendments / replans / consultations | 23 / 32 / 1 | 5 / 0 / 0 | 7 / 0 / 0 |
+
+In the snapshot, the minutes with only one kind of agent running were:
+planner 102.7 (the plan and a Ghidra research run), live-operator 81.4,
+amendment 20.9, verifier 17.9, reviewer 9.9, record 9.5 and implementer 6.6.
+
+Three readings from the bug batch's timeline decided the scope:
+
+- **An amendment waited 41 minutes for a driver turn.** Item
+  `research-build` returned `PLAN-DEFECT` at 15:47:44Z. Its launch kept
+  running reviewers and fixes until 16:22:20Z, about 30 minutes after its
+  last item, and only then could the driver amend the plan (16:23:44Z to
+  16:26:14Z) and relaunch it (16:28:32Z).
+- **Its three `owner:` items waited on a live capture, not on a person's
+  decision.**
+- **A question with a default was still asked.** At 71.3 minutes the owner
+  answered one the driver put while a launch ran: *"Don't ask me, you can
+  reserve live spot for hs drive mcp"*.
+
+An owner wait is a gap of at least 120 s in the driver's records, with no
+subagent running at its midpoint, that ends in a message the owner typed or
+an `AskUserQuestion` answer. The study quoted 699, 453 and 401 minutes for
+its largest waits. This definition gives 1,062.9, 552.8 and 444.0, and where
+the study cut its gaps is not known. The baseline's `run_criteria` counts
+are the tool's (any shell call naming `run_criteria`), and differ slightly
+from the study's 24 of 237.
+
+To re-run it (the first two reproduce the figures above; the others read
+sessions that were still running, so their numbers grow):
+
+```
+py -3 tools/workorder_speed.py --until 2026-09-27T21:30:00Z --project-dir "C:/Users/stann/.claude/projects/C--Users-stann-Projects-hero-siege-offline-toolkit--claude-worktrees-hero-siege-issue-121-fcc1fd" --project-dir "C:/Users/stann/.claude/projects/C--Users-stann-Projects-hero-siege-offline-toolkit--claude-worktrees-workorder-parallelization-2d890c" --project-dir "C:/Users/stann/.claude/projects/C--Users-stann-Projects-hero-siege-offline-toolkit--claude-worktrees-forgepact-issue-52-0d1b54" --project-dir "C:/Users/stann/.claude/projects/C--Users-stann-Projects-hero-siege-offline-toolkit--claude-worktrees-hero-siege-offline-toolkit-72f6fd" --json
+py -3 tools/workorder_speed.py --until 2026-09-27T21:21:31Z --transcript "C:/Users/stann/.claude/projects/C--Users-stann-Projects-hero-siege-offline-toolkit--claude-worktrees-bridge-cse-01BPATbZGkDAktH2cu2P7ZZC/a7e6f66d-c830-5af9-a8a0-f7f95fe846b7.jsonl" --plan "C:/Users/stann/Projects/hero-siege-offline-toolkit/.claude/worktrees/bridge-cse_01BPATbZGkDAktH2cu2P7ZZC/.claude/workorders/forgepact-dev2-bug-batch-plan.md" --json
+py -3 tools/workorder_speed.py --transcript "C:/Users/stann/.claude/projects/C--Users-stann-Projects-hero-siege-offline-toolkit--claude-worktrees-bridge-cse-01BPATbZGkDAktH2cu2P7ZZC/a7e6f66d-c830-5af9-a8a0-f7f95fe846b7.jsonl" --plan "C:/Users/stann/Projects/hero-siege-offline-toolkit/.claude/worktrees/bridge-cse_01BPATbZGkDAktH2cu2P7ZZC/.claude/workorders/forgepact-dev2-bug-batch-plan.md" --json
+py -3 tools/workorder_speed.py --transcript "C:/Users/stann/.claude/projects/C--Users-stann-Projects-hero-siege-offline-toolkit--claude-worktrees-hero-siege-issue-121-fcc1fd/74b6b5dd-a6bc-4c71-883a-0c7cf47aab9d.jsonl" --json
+```
+
+The last is `forgepact-issue-14-player-build`, the lanes table's before row.
+The lanes table's after rows and the items table's after row (§ "Lanes" and
+§ "Streamed items" above) come from the baseline's and the fresh run's
+`lanes` and `launches` entries.
+
+## What changed
+
+Each goal kept what the snapshot still showed a problem for. The workorder's
+gate re-checks every rule against a fresh run of the report, and a rule that
+stops holding fails with a message naming its goal. That failure means the
+scope is wrong and the plan must change; it is not a code defect.
+
+- **Goal 1, the report: in full.** `tools/workorder_speed.py`, above.
+- **Goal 2, background runs: shrunk to whole-tree runs.** No `run_criteria`
+  call in the bug batch reached the 10-minute limit: the whole-tree gate took
+  6.2 minutes at most, and an item check 1.0 minute. So only whole-tree runs
+  go to the background: the rounds verifier, the reach re-verify, the items
+  gate, and an implementer's run of the plan's whole criteria set. Each run
+  keeps `<out>/status.json` and `<out>/report.txt`, and `run_criteria.py
+  --status <out> --wait 220` polls it (exit 0 finished, 3 running, 4 stale, 2
+  no status file). No wait can exceed 220 s, which keeps every poll under
+  R5's 240-second limit. The UI redesign's suite, which ran 1,037-1,302 s in
+  one command, is why the protection is kept at all. Item checks
+  (`--item`) stay in the foreground. Rule: the fresh report's
+  `run_criteria.item_max_seconds` is under 300 (79.1 s).
+- **Goal 3, owner defaults: in full.** Every `owner:` item and every entry of
+  `## Needs human judgement` carries `default:` and `reversible: yes|no`, and
+  `tools/plan_lint.py` refuses one without them (`owner-no-default`,
+  `owner-no-reversible`, `owner-reversible-no-default`). A legal or
+  decompile-output question can never be defaulted (`owner-legal-default`).
+  The engine runs an unanswered reversible item on its default and lists it
+  under `defaulted` with its commits and how to undo it. Every result that
+  waits on a person lists, under `unblocked`, the parked work that does not
+  wait on them. The bug batch waited only 23 minutes, because the owner stayed
+  at the keyboard through two live sessions. The baseline waited 4,975, and
+  the 71.3-minute message shows a question with a default still being asked.
+  There is no rule for this goal.
+- **Goal 4, the parallel cap: shrunk to validation.** At most 3 items ran
+  at once, against a cap of 4, and no start waited on it. So the default
+  stays 4, named `DEFAULT_MAX_PARALLEL` in `workorder-rounds.js`, and a
+  `maxParallel` that is not a whole number from 1 to 16 is refused with
+  `BAD-ARGS`. Raising it to min(8, CPUs−2) was rejected, and the engine
+  cannot see the CPU count anyway. Rule: the fresh report's
+  `items.queued_behind_cap` is 0.
+- **Goal 5: amendments moved into the launch, consultations stay with the
+  driver.** An item implementer's, a fixer's or a rounds implementer's
+  `PLAN-DEFECT` whose `CORRECTION:` is not `none` is amended inside the
+  launch: `amend-save:<id>:r<n>`, a planner labelled `amendment: <slug>
+  <id>:r<n>`, then `amend-check:<id>:r<n>`. Only `AMENDMENT` re-runs the work.
+  One amendment runs at a time, and a second `PLAN-DEFECT` after one is a
+  replan. The audit's R24 and R11 accept the save and check calls from the
+  same launch. There were no consultations in the bug batch and one
+  (4.7 minutes) in 22 sessions, and moving them would need the engine to
+  resume an implementer, which a workflow script cannot do. Rule: the fresh
+  report's `routes.consultations` is 0.
+
+The reviewer tail after the last item (about 30 minutes in the bug batch's
+first launch) is recorded here and nothing was changed for it.
+
+## Not yet measured
+
+None of goals 2 to 5 has run on a real workorder. On the next plan of items,
+compare with this section's rows:
+
+- the time from an item's `PLAN-DEFECT` to its re-run, against the
+  41 minutes above, and `routes.amendments_in_workflow`;
+- owner-wait minutes, and how many owner items ran on their defaults;
+- whether a whole-tree verify polled in the background ever met R5 or the
+  Bash limit;
+- `items.queued_behind_cap`, which reopens goal 4 the first time it is not
+  0.
+
+The implementers' check catch rate (38-58% above) is measured only, and
+nothing here changes their own check run. What the joins cost against the
+lanes' saving (§ "Lanes") is not established.

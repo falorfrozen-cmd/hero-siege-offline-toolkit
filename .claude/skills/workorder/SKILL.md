@@ -300,9 +300,20 @@ steps 2-4 run as one workflow launch with no rounds inside it
 (`workorder-rounds.js` 3b; workflow mode only):
 
 - Each item's implementer starts the moment no running item holds its files,
-  up to `maxParallel` (default 4) at once; items that share a file run one
-  after another in plan order. It commits only its own files through
-  `tools/item_commit.py`, under the checkout's commit lock.
+  up to `maxParallel` at once; items that share a file run one after another
+  in plan order. It commits only its own files through
+  `tools/item_commit.py`, under the checkout's commit lock. The default cap
+  is `DEFAULT_MAX_PARALLEL` in `workorder-rounds.js`, 4, and a `maxParallel`
+  that is not a whole number from 1 to 16 is refused with `BAD-ARGS` before
+  anything is spawned. Pass more only when `tools/workorder_speed.py` shows
+  `queued_behind_cap > 0` for your plans: in the first real plan of items no
+  start ever waited on the cap (docs/agents/workorder-calibration.md,
+  2026-09-27).
+- An unanswered `owner:` item that the plan marks `reversible: yes`, with a
+  default that is not `none`, is not parked. Its implementer is told the
+  question and proceeds on the default, and the result lists it under
+  `defaulted` with the question, the default, its commits and how to undo it.
+  Every other unanswered owner item parks.
 - The moment an implementer returns, an independent `verifier` runs that
   item's `checks:` (`run_criteria.py --item <id>`). A failure sends the item
   back to a fresh implementer with the evidence, up to three attempts.
@@ -319,18 +330,41 @@ steps 2-4 run as one workflow launch with no rounds inside it
   everything else keeps flowing. The launch returns `PARKED` once nothing
   else can run, before the gate, with every item's status, reason and
   evidence.
+- An item implementer's or a fixer's `PLAN-DEFECT` whose evidence carries a
+  `CORRECTION:` other than `none` is amended inside the launch, the way
+  "Amend, or replan" below does it: `amend_check.py save` through
+  `amend-save:<id>:r<n>`, a fresh `planner` labelled `amendment: <slug>
+  <id>:r<n>` with the correction verbatim, then `amend_check.py check`
+  through `amend-check:<id>:r<n>`. Only exit 0 with `AMENDMENT` re-runs the
+  item and releases what it held. One amendment runs at a time, since
+  `amend_check.py` keeps one saved copy per slug, and it counts only toward
+  `maxAgents`. `NOT AN AMENDMENT`, `REPLAN`, `SCOPE`, a `CORRECTION: none`,
+  or a second `PLAN-DEFECT` after the item's amendment parks the item for you
+  as a replan, with the reason. A reviewer's plan defect stays yours.
 
 Route a `PARKED` result item by item, and relaunch once for all of them.
 Pass `state` as always: its `items:` line tells the relaunch which items are
-done, and they are not run again.
+done (or `defaulted`), and they are not run again.
 
+- **Route `unblocked` first.** A result that waits on a person (`PARKED`
+  with an owner item, or `PASS-PENDING-HUMAN`) carries `unblocked`: every
+  parked or held item that waits on no owner question, each `{ id, reason,
+  route }` with `route` one of `amend-or-replan`, `replan`, `consult`,
+  `split` or `relaunch`. Start those routes in the same message as the
+  question (rule 8), so the answer lands on work already moving.
 - `owner: <question>`, or an item's question for the person → one
   `AskUserQuestion` batch for every parked item. Record each answer under
-  `### Decisions`, then relaunch with those ids in `answered`.
+  `### Decisions`, then relaunch with those ids in `answered`. A
+  `defaulted` item the owner answers differently: revert its listed commits,
+  record the answer, and relaunch with its id in `answered`.
 - `ADVICE-NEEDED` → "Consultation" below, the answer under `### Decisions`,
   then relaunch.
 - `PLAN-DEFECT` → "Amend, or replan" below, for that item only: tell the
-  planner which item it is. The items held with it are relaunched with it.
+  planner which item it is. An item that carries `replan` (the launch tried
+  its amendment, or its `CORRECTION:` was `none`; the Log's `amendments`
+  list says why) is a replan, counted and escalated: do not amend it a
+  second time. Otherwise (no `CORRECTION:` line, or a reviewer's plan
+  defect) decide as below. The items held with it are relaunched with it.
 - `budget: ...` → the item failed its checks three times. Bring it to the
   user with the evidence and offer to split it into its own workorder.
 
@@ -372,13 +406,27 @@ Spawn `implementer` with the plan and context paths. Three outcomes:
   a replan like any other, counted and escalated. Relaunch the rounds from
   the same round number either way.
 
+  **In workflow mode the launch runs this route itself** for an
+  implementer's, a fixer's or an item implementer's `CORRECTION:` (never a
+  lane's, never a reviewer's), with the same three steps as agents of the
+  launch (`amend-save:<id>:r<n>`, `amendment: <slug> <id>:r<n>`,
+  `amend-check:<id>:r<n>`, where `<id>` is the item, or `implementer` in
+  rounds mode), and re-runs the work, uncounted, only on `AMENDMENT`. So a
+  rounds-mode `PLAN-DEFECT` whose result carries `amendment` has already had
+  its amendment tried: `amendment.why` says why it did not hold, and it is a
+  replan. In the ForgePact bug batch (2026-09-27), item `research-build` sat
+  parked for 41 minutes waiting for the driver's turn to make a 2.5-minute
+  amendment (docs/agents/workorder-calibration.md).
+
   No two amendments run back to back: a second `PLAN-DEFECT` with no
   implementer round between it and the first amendment is a replan. The
   test is the files, never the planner's account of what it changed. Over
   2026-09-19..24, labels such as "fix criterion 11 anchoring" and "fix M3 row
   id collision" each counted as a full replan. `tools/workorder_audit.py` R24
   fails an `amendment:` planner that has no `save` before it or no `check`
-  after it, and R11 counts it as a replan unless its `check` passed.
+  after it (the driver's, or for a planner a launch spawned, one from an
+  agent of that same launch), and R11 counts it as a replan unless its
+  `check` passed.
 
   **Escalate the planner's model as it fails, rather than only counting.** A
   `PLAN-DEFECT` is the pipeline telling you this problem is harder than the tier
@@ -505,6 +553,22 @@ Verifiers spent about a third of their time on model turns between commands,
 so this cuts per-command turns and nothing the verifier observes. A root
 suite a criterion already ran is not run a second time for step 3 of
 `verifier.md`.
+
+**A whole-tree run goes to the background** (the rounds verifier, the reach
+re-verify, the items gate). The verifier starts `run_criteria.py <plan>
+--jobs auto --out <its scratchpad>/criteria` with `run_in_background: true`,
+so no Bash limit can kill it, then re-issues `py -3 tools/run_criteria.py
+--status <out> --wait 220` at a Bash timeout of 300000 while it exits 3, and
+reads `<out>/report.txt` once it exits 0. The runner keeps
+`<out>/status.json` current (each criterion's state and each command's exit
+code and seconds) and writes everything it prints to `report.txt`. Exit 4
+means the run went stale (not finished, and not updated for 1,900 s): the
+verifier re-runs the criteria not yet done in the background, with
+`--start`. Exit 2 means there is no status file. `--wait` can never exceed
+220 s, so a poll stays under audit R5's 240-second limit. The verifier still
+runs every command itself and never reads an out directory it did not
+start. One item's checks (`--item`) stay in the foreground: none took more
+than 1.0 minute in the bug batch, so a poll would only add turns.
 
 **Diff from the round base, never from `HEAD`** — implementers commit during
 the round, so `git diff HEAD` is empty afterwards. Take each repo's base sha
@@ -870,6 +934,14 @@ Set `status: PASS` in the workorder and tell the user:
   verbatim beside the round summary, with its `list-price cost` line — a
   workorder that passes its criteria and fails its cost budget says so, not
   silence;
+- for a plan of items, or when the owner asks where the time went, run `py -3
+  tools/workorder_speed.py --transcript <this session's .jsonl> --json` and
+  report its `concurrency`, owner-wait minutes, `items.queued_behind_cap`
+  and `routes`. A `queued_behind_cap` above 0 is the only evidence that
+  justifies a larger `maxParallel`. The figures and their definitions are in
+  the tool's docstring, and the baseline to compare against is in
+  docs/agents/workorder-calibration.md, "Measuring where the pipeline spends
+  its time";
 - if this plan came from a handover copy in another checkout, say that copy
   still reads `READY` and name its path — the harness will not let you edit it,
   and left alone it is cloned into every new worktree as work still to do;
@@ -1012,6 +1084,23 @@ those questions did not need the owner at all. So, before you ask:
 - **Only a decision that changes what gets built, and cannot be undone
   cheaply, stops the work it gates** — and only that work, as an item's
   `owner:` line parks only its item.
+- **Every owner question in a plan carries `default:` and `reversible:
+  yes|no`**, an item's `owner:` and each `## Needs human judgement` entry
+  alike, and `plan_lint.py` refuses one without them (`owner-no-default`,
+  `owner-no-reversible`, `owner-reversible-no-default`). A legal or
+  decompile-output question is `reversible: no` with a default of `none`
+  (`owner-legal-default`). So is a wait on a live capture or on data that does
+  not exist yet: the bug batch's three `owner:` items were of that kind. A
+  reversible one runs on its default inside the launch and comes back under
+  `defaulted`, with how to undo it; tell the owner in one line and move on.
+- **Route `unblocked` before you ask.** A result that waits on a person lists
+  under `unblocked` the parked work that does not wait on them, each with its
+  route. Start those routes in the same message as the question.
+- **Start what an `ASK` answer cannot change before relaying it.** A
+  `live-operator`'s `NEEDS-HUMAN` or a phase's question for the person goes
+  out with the independent work already started, not ahead of it. In the
+  bug batch the owner answered a question the driver asked while a launch
+  ran with *"Don't ask me, you can reserve live spot for hs drive mcp"*.
 
 **9. Review the design before building it, not at ship.** For a chain of
 UI workorders:
@@ -1062,7 +1151,7 @@ Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
                    submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
                    lanes: [{ name, files: [...] }, ...], join,
-                   items: [{ id, title, files, checks, after, shares, owner }, ...], streaming, answered: ['<id>', ...],
+                   items: [{ id, title, files, checks, after, shares, owner, default, reversible }, ...], streaming, answered: ['<id>', ...],
                    reviewScopes: { '<reviewer>': [{ label, paths: [...] }, ...] },
                    maxParallel, maxAgents, tokenCeiling, itemAttempts, reviewPassCap } })
 ```
@@ -1074,9 +1163,12 @@ says `planning: streaming`: the workflow then runs a `refill` agent that waits
 on `plan_lint.py --items-json --known <ids> --wait 480` and adds each item
 the planner releases, and it runs no gate before planning is complete.
 `answered` lists the items whose `owner:` question now has an answer under
-`### Decisions`. `reviewScopes` splits a reviewer into several that each read
-only their paths, run as separate reviewers. `maxParallel` (4),
-`maxAgents` (120), `tokenCeiling` (none) and `itemAttempts` (3) are the
+`### Decisions`; an unanswered item with `reversible: true` and a default
+runs on that default and comes back under `defaulted`. `reviewScopes` splits
+a reviewer into several that each read only their paths, run as separate
+reviewers. `maxParallel` (`DEFAULT_MAX_PARALLEL`, 4; a whole number from 1
+to 16, anything else is `BAD-ARGS`), `maxAgents` (120), `tokenCeiling`
+(none) and `itemAttempts` (3) are the
 budgets in Step 2, "Items"; `reviewPassCap` (4) is how many passes a
 reviewer makes as commits land before it waits for one final catch-up pass
 once nothing else is running. Items that could not have come from that output
@@ -1146,8 +1238,15 @@ A plan of items returns `PASS`, `PASS-PENDING-HUMAN`, `PARKED`, `PLAN-DEFECT`
 `plan_lint` refused), `CEILING`, `CAP` (the gate failed three times),
 `AGENT-FAILED`, `STATE-LOST` or `SCRIBE-FAILED`, always with `items:` beside
 it (each item's `id`, `status`, `reason`, `attempts`, `commits`, `evidence`
-and `progress`) and `gate:` (each gate run). Its Log entry is `### Round <n>
-(items)`, and State gains `items: <id>=<status>; ...`.
+and `progress`, and `replan` when an amendment was tried and did not hold)
+and `gate:` (each gate run). It also carries `defaulted` (each owner item
+that ran on its default: `id`, `question`, `default`, `status`, `commits`
+and `undo`), `amendments` (each amendment the launch tried, and whether it
+held), and, on a result that waits on a person (`PARKED` with an owner item,
+or `PASS-PENDING-HUMAN`), `unblocked` (Step 2, "Items"). Its Log entry is
+`### Round <n> (items)`, with `unblocked:`, `defaulted (k):` and
+`amendments (k):` lines when they apply, and State gains `items:
+<id>=<status>; ...`, where an item done on its default reads `defaulted`.
 
 A plan without items loops implement → verify+reviewers → route as code (same 3-round cap,
 scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,
@@ -1172,9 +1271,15 @@ then act on its `then` the same way. Before this outcome existed, the
 `hs-drive-game-lease` scribe's "N/A - files do not exist" report was read as a
 State with every driver-owned line gone and returned `STATE-LOST` for a round
 that had lost nothing.
-Replans, consultations, human questions and the step 5 report stay with the driver;
-every re-entry inside is a fresh spawn (no resume) — measured no worse than a
-resumed implementer. The scribe runs as the restricted `scribe` agent type
+A rounds-mode result whose implementer's `CORRECTION:` was tried carries
+`amendment` (`amended`, `why`, `verdict`), and a `PASS-PENDING-HUMAN` carries
+`unblocked`, empty when nothing else is left.
+An amendment that `amend_check.py` confirms now runs inside the launch
+(Step 2, "Amend, or replan"). Replans (including every amendment that did
+not hold), consultations, owner questions and the step 5 report stay with
+the driver: a workflow script cannot resume an implementer, and in 22
+sessions there was one consultation. Every re-entry inside is a fresh spawn
+(no resume) — measured no worse than a resumed implementer. The scribe runs as the restricted `scribe` agent type
 (`Read`, `Edit` only), never the unrestricted `workflow-subagent` every other
 Record-phase agent here still is; `tools/workorder_audit.py` R16 fails a run
 whose scribe edited outside `.claude/workorders/`, ran `git add`/`git commit`,
