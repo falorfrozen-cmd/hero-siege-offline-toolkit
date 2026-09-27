@@ -637,7 +637,10 @@ fixer's or a rounds implementer's `PLAN-DEFECT` whose `CORRECTION:` is not
 fresh planner labelled `amendment: <slug> <id>:r<n>`, and
 `amend-check:<id>:r<n>`. Only exit 0 with `AMENDMENT` re-runs the work, one
 amendment at a time; anything else goes back to the driver as a replan with
-its reason. A lane's and a reviewer's plan defect stay the driver's.
+its reason, after `amend-restore:<id>:r<n>` (`tools/amend_check.py restore`)
+has put the plan and context back as saved. No item starts while an
+amendment is queued or running. A lane's and a reviewer's plan defect stay
+the driver's.
 The whole-tree verifiers (the rounds verifier, the reach re-verify and the
 items gate) start `run_criteria.py` in the background and poll it with
 `--status <out> --wait 220`; one item's checks stay in the foreground.
@@ -890,14 +893,15 @@ item a streaming planner releases. `item_commit.py --message <m> -- <paths>`
 commits one item's paths, per repository, under the checkout's commit lock;
 `workorder_lock.py <name> -- <cmd>` is that lock (an OS file lock the system
 drops when its holder exits) for anything else that must not run twice at
-once. `amend_check.py save|check <plan> [<context>]` decides whether a plan
+once. `amend_check.py save|check|restore <plan> [<context>]` decides whether a plan
 change was an amendment, the owner's own scope, or a replan (SKILL.md
 Step 2 and Step 4, "Owner scope is not a failure"). It prints `SCOPE:` when a
 change that would otherwise be a replan follows an `owner, <date>:` decision
 line the context gained since `save`. That exempts the change from the
 replan cap and the tier ladder, and audit R25 checks the owner did say
 something. A change small enough to be an amendment anyway prints
-`AMENDMENT`.
+`AMENDMENT`. `restore` copies the saved files back, which the workflow
+launch does after any amendment it did not confirm.
 Tests: `tests/test_workorder_plan_tools.py`.
 
 ### `tools/source_index.py` — go to the range, don't grep around

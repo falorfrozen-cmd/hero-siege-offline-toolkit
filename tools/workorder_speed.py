@@ -94,7 +94,7 @@ TOP_OWNER_BLOCKS = 5
 
 PHASES = ("plan", "amend", "replan", "implement", "verify", "review", "record", "live", "consult", "other")
 REPLAN_RE = re.compile(r"replan|rescope|split", re.I)
-RECORD_HEADS = ("snapshot", "delta", "scribe", "refill", "amend-save", "amend-check", "items")
+RECORD_HEADS = ("snapshot", "delta", "scribe", "refill", "amend-save", "amend-check", "amend-restore", "items")
 ITEM_AGENT_RE = re.compile(r"^(item-implementer|fix-implementer|item-verifier):([^:]+):")
 FINDING_FIX_RE = re.compile(r"^fix-implementer:fix-\d+:")
 REVIEW_PASS_RE = re.compile(r":p\d+:r\d+$")

@@ -340,7 +340,12 @@ steps 2-4 run as one workflow launch with no rounds inside it
   `amend_check.py` keeps one saved copy per slug, and it counts only toward
   `maxAgents`. `NOT AN AMENDMENT`, `REPLAN`, `SCOPE`, a `CORRECTION: none`,
   or a second `PLAN-DEFECT` after the item's amendment parks the item for you
-  as a replan, with the reason. A reviewer's plan defect stays yours.
+  as a replan, with the reason. A reviewer's plan defect stays yours. No
+  item or fix starts while an amendment is queued or running, and every
+  outcome but a confirmed one first puts the plan and context back from the
+  saved copy (`amend_check.py restore`, `amend-restore:<id>:r<n>`), so no
+  item reads a rejected edit; if that restore fails, nothing else starts in
+  the launch and the pending items come back held, naming why.
 
 Route a `PARKED` result item by item, and relaunch once for all of them.
 Pass `state` as always: its `items:` line tells the relaunch which items are

@@ -812,10 +812,14 @@ const patchMiss = delta => {
 // planner was spawned, so `workorder_audit.py` R24 finds its save before it
 // and its check after it. `NOT AN AMENDMENT`, `REPLAN`, `SCOPE` (an owner
 // decision is the driver's to route), exit 2, or an agent that returned
-// nothing goes back to the driver as a replan, with that reason.
+// nothing goes back to the driver as a replan, with that reason -- and, once
+// `save` has run, only after `amend_check.py restore` has put the plan and
+// the context file back as they were before the planner touched them.
 //
 // Limits: one amendment at a time, because amend_check keeps one saved copy
-// per slug; a second PLAN-DEFECT from the same work after its amendment, with
+// per slug; no item or fix starts while one is queued or running, so none
+// reads a plan the planner is still rewriting or one the check rejected (work
+// already running carries on); a second PLAN-DEFECT from the same work after its amendment, with
 // no IMPL-DONE between, is a replan; and an amendment is not a round and not an
 // implement attempt -- it counts only toward maxAgents.
 const CORRECTION_LINE = /^\s*\**CORRECTION\**\s*:\s*/i
@@ -848,10 +852,30 @@ const amendCmd = verb => `py -3 tools/amend_check.py ${verb} ${AMEND_FILES}`
 const lastLine = t => String(t || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).pop() || ''
 const tail = t => String(t || '').trim().slice(-400)
 const AMENDED_NOTE = `The plan was amended in this launch after the previous attempt's PLAN-DEFECT: the planner's newest '### Amendment' entry under '## Log' says what changed, and amend_check.py confirmed it an amendment. Carry out your steps against the plan as it now reads; the previous attempt's edits may still be in the tree. `
-// The three agents of one amendment, in order. `who` names the work that
-// returned the PLAN-DEFECT, for the planner. Returns { confirmed, why, verdict }:
-// `why` is the replan reason when not confirmed, `verdict` the check's line.
+// A rejected amendment's edits must not outlive it: other work reads the plan
+// and the context file, and the driver's replan starts from them. So every
+// outcome other than a confirmed amendment, once `save` has run, puts both
+// back from that saved copy (`amend_check.py restore`, `amend-restore:<tag>`).
+// Returns `why`, extended when the restore failed; `restoreFailed` says so.
+async function restoreAmendment(spawnFn, tag, why) {
+  const r = await spawnFn(
+    `Run exactly: ${amendCmd('restore')}  — report its exit code and its whole output in 'raw_output'. Run nothing else, and edit nothing.`,
+    { label: `amend-restore:${tag}`, phase: 'Amend', model: 'haiku', effort: 'low', schema: AMEND_CMD_SCHEMA })
+  if (r && r.exit_code === 0) return { why, restoreFailed: false }
+  const failed = r ? `amend_check.py restore exited ${r.exit_code}: ${tail(r.raw_output)}` : 'the amend-restore agent returned nothing'
+  return { why: `${why}; restoring the saved plan failed (${failed}), so the plan may still carry the rejected edit`, restoreFailed: true }
+}
+// The three agents of one amendment, in order, and the restore after any
+// outcome but a confirmed one. `who` names the work that returned the
+// PLAN-DEFECT, for the planner. Returns { confirmed, why, verdict, saved,
+// restoreFailed }: `why` is the replan reason when not confirmed, `verdict`
+// the check's line, `saved` whether `save` ran (so a later refusal restores).
 async function amendPlan(spawnFn, tag, who, correction, evidence) {
+  const am = await amendOnce(spawnFn, tag, who, correction, evidence)
+  if (am.confirmed || !am.saved) return am
+  return { ...am, ...(await restoreAmendment(spawnFn, tag, am.why)) }
+}
+async function amendOnce(spawnFn, tag, who, correction, evidence) {
   const save = await spawnFn(
     `Run exactly: ${amendCmd('save')}  — report its exit code and its whole output in 'raw_output'. Run nothing else, and edit nothing.`,
     { label: `amend-save:${tag}`, phase: 'Amend', model: 'haiku', effort: 'low', schema: AMEND_CMD_SCHEMA })
@@ -869,12 +893,12 @@ async function amendPlan(spawnFn, tag, who, correction, evidence) {
     `Run exactly: ${amendCmd('check')}  — report its exit code, its whole output in 'raw_output', and its last line (\`AMENDMENT\`, \`SCOPE: ...\` or \`REPLAN: ...\`) verbatim in 'verdict_line'. Run nothing else, and edit nothing.`,
     { label: `amend-check:${tag}`, phase: 'Amend', model: 'haiku', effort: 'low', schema: AMEND_CMD_SCHEMA })
   const verdict = check ? (String(check.verdict_line || '').trim() || lastLine(check.raw_output)) : ''
-  if (!planner) return { confirmed: false, why: 'the amendment planner returned nothing', verdict }
-  if (planner.verdict !== 'PLAN-READY') return { confirmed: false, why: `NOT AN AMENDMENT: ${planner.reason || planner.report || 'no reason given'}`, verdict }
-  if (!check) return { confirmed: false, why: 'the amend-check agent returned nothing', verdict }
+  if (!planner) return { confirmed: false, why: 'the amendment planner returned nothing', verdict, saved: true }
+  if (planner.verdict !== 'PLAN-READY') return { confirmed: false, why: `NOT AN AMENDMENT: ${planner.reason || planner.report || 'no reason given'}`, verdict, saved: true }
+  if (!check) return { confirmed: false, why: 'the amend-check agent returned nothing', verdict, saved: true }
   if (check.exit_code === 0 && verdict === 'AMENDMENT') return { confirmed: true, why: '', verdict }
-  if (check.exit_code === 0 && /^SCOPE:/.test(verdict)) return { confirmed: false, why: `${verdict} -- an owner decision is the driver's to route`, verdict }
-  return { confirmed: false, why: /^REPLAN:/.test(verdict) ? verdict : `amend_check.py check exited ${check.exit_code}: ${verdict || tail(check.raw_output)}`, verdict }
+  if (check.exit_code === 0 && /^SCOPE:/.test(verdict)) return { confirmed: false, why: `${verdict} -- an owner decision is the driver's to route`, verdict, saved: true }
+  return { confirmed: false, why: /^REPLAN:/.test(verdict) ? verdict : `amend_check.py check exited ${check.exit_code}: ${verdict || tail(check.raw_output)}`, verdict, saved: true }
 }
 // --- 3b: items mode -- a streamed pipeline instead of rounds -----------------
 //
@@ -1052,6 +1076,9 @@ async function runItems(n) {
   let lintFailure = null
   const amendQueue = [], amendments = [] // 3d: ids waiting to be amended; one entry per amendment tried
   let amending = false
+  // Why the plan on disk may still carry a rejected amendment (its restore
+  // failed): no further item or fix starts in this launch.
+  let planUnsafe = ''
 
   const itemTitle = it => it.title ? ` (${it.title})` : ''
   const fileWords = it => it.files === '*' ? 'every file: you run alone, with no other implementer in the checkout' : it.files.map(f => `\`${f}\``).join(', ')
@@ -1149,24 +1176,30 @@ async function runItems(n) {
   }
 
   // 3d: one amendment at a time. A confirmed one is followed by a re-read of
-  // the item table, so the pending items run on the amended plan.
+  // the item table, so the pending items run on the amended plan; a lint
+  // refusal of it, or an amended table that drops the item, restores the
+  // plan like any other rejection.
   async function runAmendment(it) {
     const s = st[it.id]
+    const tag = `${it.id}:r${n}`
     const who = it.kind === 'item' ? `the implementer of item '${it.id}'${itemTitle(it)}` : `fixer '${it.id}'`
-    const am = await amendPlan(spawn, `${it.id}:r${n}`, who, s.correction, s.evidence)
+    const am = await amendPlan(spawn, tag, who, s.correction, s.evidence)
     if (!am.confirmed) return { it, am }
     const r = await spawn(`Run exactly: py -3 tools/plan_lint.py "${A.planPath}" --items-json  (Bash timeout 600000) — ` +
       `report its exit code, its whole output in 'raw_output', and, when it exited 0, the JSON on its last line as 'items' and 'complete'. Edit nothing.`,
-      { label: `amend-items:${it.id}:r${n}`, phase: 'Amend', model: 'haiku', effort: 'low', schema: REFILL_SCHEMA })
-    if (!r || r.exit_code !== 0) return { it, am: { ...am, confirmed: false, why: `plan_lint refused the amended plan: ${r ? tail(r.raw_output) : 'the agent returned nothing'}` } }
-    return { it, am, table: r.items || [] }
+      { label: `amend-items:${tag}`, phase: 'Amend', model: 'haiku', effort: 'low', schema: REFILL_SCHEMA })
+    let why = !r || r.exit_code !== 0 ? `plan_lint refused the amended plan: ${r ? tail(r.raw_output) : 'the agent returned nothing'}` : ''
+    const table = r && r.exit_code === 0 ? r.items || [] : []
+    if (!why && it.kind === 'item' && !table.some(raw => validItem(raw) && raw.id === it.id)) why = 'the amended plan no longer lists this item'
+    if (why) return { it, am: { ...am, confirmed: false, ...(await restoreAmendment(spawn, tag, why)) } }
+    return { it, am, table }
   }
   const settleAmendment = ({ it, am, table }) => {
     amending = false
     const s = st[it.id]
     const fresh = new Map((table || []).filter(validItem).map(raw => [raw.id, raw]))
-    let why = am.confirmed ? '' : am.why
-    if (!why && it.kind === 'item' && !fresh.has(it.id)) why = 'the amended plan no longer lists this item'
+    const why = am.confirmed ? '' : am.why
+    if (am.restoreFailed) planUnsafe = why
     amendments.push({ id: it.id, amended: !why, why, verdict: am.verdict || '' })
     if (why) { s.replan = why; return }
     // Release everything this item's PLAN-DEFECT held, directly or through
@@ -1279,18 +1312,23 @@ async function runItems(n) {
     for (;;) {
       holdFixpoint()
       if (!stopping) {
-        for (const id of nextToStart(all, st, MAX_PARALLEL)) {
-          st[id].status = 'running'
-          st[id].touched = true
-          const it = all.find(x => x.id === id)
-          launch(`item:${id}`, runItem(it).then(r => ({ it, r }), () => ({ it, r: null })))
+        // Nothing starts while an amendment is queued or running: an item
+        // started now would read a plan the planner is rewriting, or one the
+        // check is about to reject. Work already running carries on.
+        if (!amending && !amendQueue.length && !planUnsafe) {
+          for (const id of nextToStart(all, st, MAX_PARALLEL)) {
+            st[id].status = 'running'
+            st[id].touched = true
+            const it = all.find(x => x.id === id)
+            launch(`item:${id}`, runItem(it).then(r => ({ it, r }), () => ({ it, r: null })))
+          }
         }
-        // After the starts, so an item an amendment just released spawns first.
         if (!amending && amendQueue.length) {
           const next = amendQueue.shift()
           const it = all.find(x => x.id === next)
           amending = true
-          launch(`amend:${it.id}`, runAmendment(it).catch(() => ({ it, am: { confirmed: false, why: 'the amendment threw' } })))
+          // A throw leaves it unknown whether the plan was restored.
+          launch(`amend:${it.id}`, runAmendment(it).catch(() => ({ it, am: { confirmed: false, why: 'the amendment threw', restoreFailed: true } })))
         }
         const quiet = !tasks.size && !streaming
         for (const rv of reviewers) if (reviewerDue(rv, quiet)) launch(`review:${rv.key}`, runReview(rv))
@@ -1364,7 +1402,7 @@ async function runItems(n) {
     await drain()
     // The gate reads a finished tree: anything still pending here could not
     // be scheduled, and counts as held rather than as done.
-    for (const it of all) if (st[it.id].status === 'pending' && !overCeiling()) { st[it.id].status = 'held'; st[it.id].reason = 'could not be scheduled' }
+    for (const it of all) if (st[it.id].status === 'pending' && !overCeiling()) { st[it.id].status = 'held'; st[it.id].reason = planUnsafe ? `not started: ${planUnsafe}` : 'could not be scheduled' }
     if (reviewers.some(rv => rv.failed)) return finish('AGENT-FAILED', { detail: `no result from: ${reviewers.filter(rv => rv.failed).map(rv => rv.key).join(', ')}` })
     if (overCeiling()) return finish('CEILING', { detail: `the launch spent ${agents} agents${A.tokenCeiling ? ` or ${A.tokenCeiling} output tokens` : ''}; relaunch to carry on from State's items: line` })
     if (lintFailure) return finish('PLAN-DEFECT', { detail: 'plan_lint refused the items the planner released; the refill stopped', lint: lintFailure })
