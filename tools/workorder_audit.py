@@ -382,6 +382,8 @@ class ToolCall:
     guard_refused: bool = False  # the harness refused it: target outside the session's worktree
     backup_id: Optional[str] = None  # the id a successful hs_saves_backup returned (R17)
     scope_verdict: bool = False  # its output carried amend_check.py's `SCOPE:` verdict (R25)
+    timed_out: bool = False  # a shell call the harness stopped at its limit (workorder_speed.py)
+    failure_marker: bool = False  # a shell call whose output carries a test failure (workorder_speed.py)
 
     @property
     def duration_seconds(self) -> Optional[float]:
@@ -434,6 +436,7 @@ class AgentTranscript:
     read_kb: dict = field(default_factory=lambda: defaultdict(float))  # kind -> KB
     write_paths: list = field(default_factory=list)     # (path, ts) for Write calls
     human_messages: list = field(default_factory=list)  # (ts, text) typed by the user, in order
+    first_prompt: Optional[str] = None  # the text of the first non-tool-result `user` record
     ts_first: Optional[datetime] = None
     ts_last: Optional[datetime] = None
     cwd: Optional[str] = None  # first non-empty top-level "cwd" this transcript's records carry
@@ -517,9 +520,22 @@ def lane_of(label: Optional[str]) -> Optional[str]:
     return m.group(1) if m else None
 
 
+# What the harness writes when it stops a shell call at its limit: the
+# current wording moves the call to the background, older ones said
+# "timed out". `workorder_speed.py` counts these as killed runs.
+SHELL_TIMEOUT_RE = re.compile(r"did not complete within its \d+\s*s timeout|Command timed out|timed out after \d")
+# A test or criteria run's output that reports a failure: unittest's and
+# pytest's markers, `EXIT=<n>` echoed after a run, `run_criteria.py`'s
+# `-> exit <n>`. `workorder_speed.py` reads it for the implementers' catch rate.
+CHECK_FAILURE_RE = re.compile(r"\bFAIL:|\bERROR:|\bFAILED\b|\bEXIT=(?!0\b)-?\d+|-> exit (?!0\b)-?\d+")
+
+
 def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
                       round_: Optional[int] = None, workflow_id: Optional[str] = None,
-                      is_driver: bool = False) -> AgentTranscript:
+                      is_driver: bool = False, until: Optional[datetime] = None) -> AgentTranscript:
+    """Parse one transcript. `until`, when given, skips every timestamped
+    record after it, so a snapshot of a session that is still running can
+    be reproduced later; records without a timestamp are kept either way."""
     agent = AgentTranscript(
         agent_type=agent_type, label=label, session_id=session_id, path=path,
         round=round_, workflow_id=workflow_id, is_driver=is_driver,
@@ -531,6 +547,8 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
         rec_type = rec.get("type")
         ts_raw = rec.get("timestamp")
         ts = parse_ts(ts_raw) if ts_raw else None
+        if until is not None and ts is not None and ts > until:
+            continue
         if agent.cwd is None:
             rec_cwd = rec.get("cwd")
             if rec_cwd:
@@ -586,6 +604,8 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
             candidate = _user_message_candidate(rec, content)
             if candidate is not None and ts is not None:
                 user_candidates.append((ts, *candidate))
+            if agent.first_prompt is None and candidate is not None:
+                agent.first_prompt = candidate[0]
             if not isinstance(content, list):
                 continue
             for block in content:
@@ -603,6 +623,9 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
                 if call.name.endswith("hs_saves_backup"):
                     call.backup_id = _returned_backup_id(text)
                 call.scope_verdict = call.name in SHELL_TOOLS and bool(SCOPE_VERDICT_RE.search(text))
+                if call.name in SHELL_TOOLS:
+                    call.timed_out = bool(SHELL_TIMEOUT_RE.search(text))
+                    call.failure_marker = bool(CHECK_FAILURE_RE.search(text))
                 if call.name == "Read":
                     fp = call.tool_input.get("file_path")
                     if fp:
@@ -694,9 +717,12 @@ def locate_session(projects_dir: Path, project: str, session_prefix: Optional[st
 
 
 def discover_session(projects_dir: Path, project: str, session_id: str,
-                      session_path: Path) -> Session:
+                      session_path: Path, until: Optional[datetime] = None) -> Session:
+    """The driver and every subagent of one session. `until` is handed to
+    each `parse_transcript`; a subagent that began after it is still listed,
+    with no records (`ts_first` None)."""
     driver = parse_transcript(session_path, agent_type="driver", label="driver",
-                               session_id=session_id, is_driver=True)
+                               session_id=session_id, is_driver=True, until=until)
 
     session_dir = projects_dir / project / session_id
     subagents_dir = session_dir / "subagents"
@@ -712,7 +738,7 @@ def discover_session(projects_dir: Path, project: str, session_id: str,
             transcript = parse_transcript(
                 jsonl_path, agent_type=agent_type or role or "unknown",
                 label=description or jsonl_path.stem, session_id=session_id,
-                round_=round_, workflow_id=None,
+                round_=round_, workflow_id=None, until=until,
             )
             subagents.append(transcript)
 
@@ -726,7 +752,7 @@ def discover_session(projects_dir: Path, project: str, session_id: str,
                     transcript = parse_transcript(
                         jsonl_path, agent_type=agent_type or role or "unknown",
                         label=description or jsonl_path.stem, session_id=session_id,
-                        round_=round_, workflow_id=wf_dir.name,
+                        round_=round_, workflow_id=wf_dir.name, until=until,
                     )
                     workflow_runs[wf_dir.name].append(transcript)
 
