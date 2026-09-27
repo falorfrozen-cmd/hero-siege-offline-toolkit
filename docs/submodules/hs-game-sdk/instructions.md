@@ -401,8 +401,11 @@ cases.
 
 **The equipped relic slots are not on the player instance** (C++,
 `Player::ScanEquippedRelicSlots`, called by `GetOwnedRelicLevels` after the
-container passes). The game keeps the local character's equipped items as
-fingerprint strings in `global.equippedItems[global.mplr][0][slot]`. The scan reads
+container passes). Measured live on 2026-09-27 (ForgePact #93, Live 1): the
+player has no `equippedItems` variable at all (reading it answered "no such
+variable"), and the game keeps the local character's equipped items only as
+fingerprint strings in `global.equippedItems[global.mplr][0][slot]`, where
+`global.mplr` read 1 for the offline character. The scan reads
 slots 10-14 (`kFirstRelicSlot`..`kLastRelicSlot`), resolves each string with the
 game's own scripts, by `HeroSiege::Scripts` name through `CallGameScriptEx` with
 the global instance as self and other: `GetOnlinePlayerItemOwner(mplr)`, then
@@ -410,9 +413,22 @@ the global instance as self and other: `GetOnlinePlayerItemOwner(mplr)`, then
 Nothing is guessed: an `mplr` that is not a whole number in 0..4 reads nothing, a
 slot that is not a non-empty string is never passed to the resolver, and a
 fingerprint that resolves to anything but a struct is skipped. It is the route
-ForgePact's Miner's Helmet reads slot 0 through, confirmed live 2026-09-23; that
-the **relic** slots 10-14 of that global hold fingerprints that resolve is
-**UNVERIFIED** until a live session dumps them. `tests/cpp/test_sdk_player_hooks.cpp`'s
+ForgePact's Miner's Helmet reads slot 0 through, confirmed live 2026-09-23, and
+the **relic** slots 10-14 were measured on 2026-09-27: all five held `…-16`
+fingerprints, every one resolved to a relic instance, and the ids and levels
+equalled the character save's `equipped_items`. ForgePact's relic filter logged
+it at arm time:
+
+```
+relicfilter: scan found 3 maxed relics (ids 109,124,135)
+relicfilter: equipped slots mplr=1 slots=18 inrange=5 strings=5 owner=ok resolved=5 refused=0 nonstruct=0 noclass=0 relic=5 otherclass=0 relics=10:15@8,11:135@10,12:124@10,13:140@9,14:109@10 control=resolved itemType=0 stopped=none
+```
+
+The second line is `FormatEquippedSlotScanReport` of the
+`EquippedSlotScanReport` that `GetOwnedRelicLevels` and `GetMaxedRelicIds` fill
+when a caller passes one: each stage counted, the helmet slot resolved once as a
+positive control, and `stopped=` naming the stage that ended a short scan, so a
+zero says which stage read nothing. `tests/cpp/test_sdk_player_hooks.cpp`'s
 `TestEquippedSlots` drives it through a stub whose `CallGameScriptEx` answers per
 script name with a struct, a number or undefined.
 

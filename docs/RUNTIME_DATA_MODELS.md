@@ -50,6 +50,29 @@ The local character's equipped items are held in the global
 item structs on the player instance; each resolves to an item through the game's
 own scripts (§2, §6.1).
 
+**Measured on 2026-09-27** (ForgePact #93, Live 1, the offline character "Sorak"):
+
+- `global.equippedItems` is an array of six per-player entries. Only index 1 was
+  populated, and `global.mplr` read `real:1.000000`: the offline local character
+  is player **1**, not 0. Every other entry held empty strings.
+- `global.equippedItems[1][0]` is the worn gear, 18 strings long (indices 0-17).
+  Each filled slot is a fingerprint shaped like a save key, `0-0-<stamp>-<class>`,
+  whose suffix is that item's class, not the slot (the off hand at index 9 ended
+  in `-7`). Slots 10-14 held five `…-16` strings, the five equipped relics, and
+  15-17 were empty on this character.
+- `global.equippedItems[1][1]` is a second 18-string array, with seven
+  fingerprints in slots 0-8. What it holds was not established.
+- The player instance has **no** `equippedItems` variable: reading it answered
+  "no such variable".
+- All five relic fingerprints resolved through `GetOnlinePlayerItemOwner` and
+  `GetItemFromFingerprint` to item instances of class 16, and their definitions'
+  `b`/`o` equalled the save's `equipped_items` entries (below) slot for slot.
+
+A character save keeps the same items in its `[inventory]` JSON's
+`equipped_items` dict, keyed by those same `0-0-<stamp>-<class>` strings, each
+value `{"data": {...}}` with the slot in `g` (§2, read 2026-09-27).
+[dev2 bug batch, #93](../ForgePact/docs/dev2-bug-batch-research.md#93-the-relic-filter-did-not-see-equipped-relics)
+
 ### Player Runtime Stat Variables
 * `synergy_stat_map`: GameMaker struct containing dynamic stat multipliers and calculated synergy bonuses.
 * `talentStructMap`: Struct containing skill/talent allocation maps keyed by skill ID.
@@ -139,8 +162,9 @@ character's equipped items live in the global
 slot, and slots 10-14 are the relics. An item is reached by resolving the string
 through the game's own scripts, `GetOnlinePlayerItemOwner(mplr)` then
 `GetItemFromFingerprint(fingerprint, owner)`, which returns the item instance
-above. That route is measured for the helmet slot (2026-09-23); that relic slots
-10-14 hold fingerprints that resolve is **not yet measured**.
+above. That route was measured for the helmet slot on 2026-09-23, and for the
+relic slots 10-14 on 2026-09-27: all five resolved to relic instances whose ids
+and levels matched the save (§1, **measured**).
 
 **`o` means two things, depending on the item.** On a relic it is the upgrade
 level. On a stackable item, such as a socketable or a crafting material, it is the
@@ -463,6 +487,7 @@ main menu on 2026-09-26 (`pe-6aaa6779-0cad4fc8`). All **measured**.
   `GetOnlinePlayerItemOwner` and then `GetItemFromFingerprint`. A worn and a
   removed helmet were both recognised on the next reward. **Static reading**,
   **measured 2026-09-23.** This is the global, per-player form of §1's slot table.
+  The relic slots 10-14 resolve the same way, **measured 2026-09-27** (§1).
   [miner's helmet, Runtime](../ForgePact/docs/miner-helmet-prototype.md#runtime)
 
 ### 6.2 Buffs
@@ -619,6 +644,27 @@ Shout and Berserk add theirs outside it.
   press, without a no-press control. Live 4 is the first read with a
   negative control (`no-press`) and the tool's own confirmation.
   **M (live 4, 2026-09-26).**
+- Mana Orb's object, `White_Mage_Mana_Orb_obj` (**static reading**, 2026-09-27):
+  its Create runs the parent's Create, then sets `destroyTimer` to three seconds
+  of `game_get_speed()` (432 at 144), the orbit fields and `chosenOne`,
+  `haulingManaWell`, `compactingPower` and `arcaneBreakChance` to 0, and the
+  pulse timer from the game speed. Its Step orbits `host` when `orbitRadius` is
+  above 0, and with `chosenOne` truthy sets the orb's position to `host`'s every
+  frame, so the orb follows the player; the pulse it spawns
+  (`White_Mage_Mana_Pulse_obj`) copies `chosenOne` and the other upgrade fields.
+  Step never writes `destroyTimer`; the inherited parent step counts it down. The
+  Chosen One sub-talent is node s12 of talent 253 (§7.1).
+- With Chosen One allocated (**measured 2026-09-27**, ForgePact #83 Live 1):
+  `chosenOne` read `bool:true` and `orbitRadius` 0 while the orb existed.
+  `destroyTimer` read 4151.71 within 2 s of the cast and 1599.87 about 18 s
+  later, about 142 frames per second: it spans the cast. The duration sweep saw
+  it start at **5040** (35 s), not the Create's 432, so something lengthens it
+  after the Create; which script does was not read. The sweep read its owner
+  field as unreadable. The skill-timer rule never selected talent 253 (17 rule
+  rows, none Mana Orb); the likely reason, an `abilityDuration` of 0 (§7.1), was
+  not read for it. Without Chosen One: not observed (the cast was not
+  confirmed).
+  [dev2 bug batch, #83](../ForgePact/docs/dev2-bug-batch-research.md#83-mana-orb-showed-no-countdown-with-chosen-one)
 
 [toggle skills, Toggle skill table](../ForgePact/docs/toggle-skills-research.md#toggle-skill-table),
 [Duration sweep](../ForgePact/docs/toggle-skills-research.md#duration-sweep-session-8-every-classs-timed-skill),
@@ -1028,6 +1074,24 @@ The parent's Create sets the `lootType`/`canPickup`/`distanceForPickup` defaults
 collect instantly.
 [pet-quest C, C0.4](../ForgePact/docs/pet-quest-collector-c-research.md#c04--dumps-of-the-objects-never-inspected),
 [pet-quest research §1](../ForgePact/docs/pet-quest-collector-research.md#1-checkplayerinteraction--call-frequency-arguments-self-context)
+
+Two facts for anything that picks quest items one after another (**static
+reading**, ForgePact #94, 2026-09-27):
+
+- `m_Questpickup` reads the objective's progress and its maximum before it
+  updates the quest, so an item whose objective has just filled can be
+  "collected" and stay on the ground. With many items on screen that is the
+  likely case, not the rare one.
+- The `Quest_Object_Parent_obj` family also holds static quest props that are
+  never collected. An enumeration of the family capped per tick (ForgePact's
+  pet read at most 64) can therefore stop before it reaches collectable items
+  with a high index.
+
+A selector that picks the nearest item with no memory of a failed one re-picks
+the same item forever after either failure; ForgePact's pet now holds a failed
+target back and walks the family with a cursor. Not measured: no session named
+which cause the reported circling had.
+[dev2 bug batch, #94](../ForgePact/docs/dev2-bug-batch-research.md#94-the-pet-circles-one-quest-item-when-many-are-on-screen)
 
 On the 2026-09-11 build the closures were `m_QuestUseKey` `anon@1400`,
 `m_QuestActivate` `@1584`, `m_QuestDestructible` `@2113`, `m_Questpickup`
@@ -1469,6 +1533,13 @@ A monster that special content spawned carries a non-zero `specialType` in its s
 - **Gold** is account-wide, with separate pools for softcore, hardcore and Blood Pact (`hs2saves\shop.ini`, `[gold]`). The offline cap is 500,000,000.
   - `PickUpGoldCheck(GetCounterHash(), amount, …)` is the only call that changes the balance, both credits and debits. `GoldLogAdd` only writes the UI log.
   - AFK FARM's `worker pay` and `worker credit` (0.9) use `PickUpGoldCheck` with a fresh hash, one receipt per request. **Measured** 2026-09-25: a `worker credit` of 5,000 raised the balance by exactly 5,000.
+- **A monster's gold drop is one coin** (ForgePact #77, 2026-09-27):
+  - `DropMonsterGold` (six arguments) applies the profile's gold getters, rounds an amount down and calls `DropGold` **once**, directly, with nine arguments; it has no loop. `DropGold` creates **one** instance and sets its value with one call to that coin's `m_SetGoldValue` method, then sets its spread and log fields. **Static reading.**
+  - The coin is a `Coin_obj`, and coins are not `Loot_Ground_obj` instances: with each call repeated a hundred times (below), a count of `Coin_obj` by name rose from 0 to 20,000 over two drops while `Loot_Ground_obj` stayed at 23. **Measured.**
+  - `DropGold`'s arguments as logged on four x1 drops: argument 0 a 40-character hex string, the same on every call; 1 and 2 the drop position (equal to `DropMonsterGold`'s 0 and 1); 3 always 1; **4 the only one that varied per drop** (51, 59, 31, 29); 5-8 undefined. Index 4 is the amount's shape and the static reading's candidate, not cross-checked against a gold figure the game showed. **Measured.**
+  - One `DropGold` per `DropMonsterGold` at x1 (4 and 4). A mod that repeats both calls a hundred times multiplies, because each repeated `DropMonsterGold` reaches the hooked `DropGold` again: two drops made 200 hooked `DropGold` calls, each running the original a hundred times, and 20,000 coins; the frame stalled 8.4 s at the drop and 6.5 s again at the pickup, and the game recovered once the coins were gone. Scale the one coin's amount instead. **Measured.**
+
+  [dev2 bug batch, #77](../ForgePact/docs/dev2-bug-batch-research.md#77-dropmult-gold-100-froze-the-game)
 - **`LootGroundCreate(x, y, itemType, def, …)`** makes a floor item whose Create event builds it (`CreateItemNew`). `def` carries `b` (base), `j`, `c` (0 normal, 1 unique repository) and optional `o` (stack) and `a` (seed). Rarity is not an argument. **Measured** for types 14 and 15 through AFK FARM's workers. Type 12 was **measured** on 2026-09-25: a town delivery made Basic Keys (12:0) and Cellar Keys (12:10) with the right `b` and `o`. Type 13 was **measured** the same day: a town delivery made a Battle Fragment (13:0) with the right `b` and `o`, and the game gave it a new seed (`a`).
 
 [AFK FARM design, 0.9](../HS-AFK-Expedition/docs/DESIGN.md#09-the-town-defense-trade-merchants)
@@ -2369,6 +2440,27 @@ names are the stats' tooltip names (the Item Editor's game-verified stat table).
   and stays visible. **Static reading;** not measured live.
 
 [Why the loot filter never hides them](../ForgePact/docs/incarnation-gems-research.md#why-the-loot-filter-never-hides-them---static-reading)
+
+What a hidden ground item still is (ForgePact #95 part 1, 2026-09-27):
+
+- `Loot_Ground_obj`'s Create sets `lootFilterVisible`, `lootFilterHighlight`,
+  `skipLootFilter`, `inviewCheck`, `itemCompanionTimer`, `visible` and alarm 4,
+  and binds `m_LootFilter` and `m_LootGroundDeActiveStep`. Its Alarm 9 reads
+  `lootFilterVisible`, sets `visible` from it, and re-arms itself for 0.3 s of
+  game speed. So an item the filter hides stays a live instance that re-checks
+  its visibility every 0.3 s. **Static reading.**
+- At a strict filter, 281 of 291 `Loot_Ground_obj` instances read
+  `lootFilterVisible` false and `visible` false, and an earlier read gave 68 of
+  68. With the filter turned off (the game has no "Show all loot" key), none
+  read `lootFilterVisible` false, `ground` stayed 291, but 95 still read
+  `visible` false: visibility also follows something besides the filter, which
+  fits §18.6's reading that Alarm 9 consults the screen; which cause held those
+  95 was not established. **Measured.**
+- The frame cost of hidden items: **not observed**. The filter-off window read
+  7.08 ms average and 40.7 ms max; no clean strict-filter window was taken (the
+  one read held a 6.5 s stall from an unrelated gold pickup).
+
+[dev2 bug batch, #95 part 1](../ForgePact/docs/dev2-bug-batch-research.md#95-part-1-what-a-hidden-ground-item-still-costs)
 
 ### 18.6 No automatic pickup
 
