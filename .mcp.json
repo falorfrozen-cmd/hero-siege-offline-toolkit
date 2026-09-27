@@ -16,6 +16,13 @@
       "command": "npx",
       "args": ["-y", "@playwright/mcp@0.0.82", "--browser", "msedge", "--headless", "--isolated"]
     },
+    "figma": {
+      "command": "npx",
+      "args": ["-y", "figma-developer-mcp@0.13.2", "--stdio"],
+      "env": {
+        "FIGMA_API_KEY": "${FIGMA_API_KEY}"
+      }
+    },
     "github": {
       "type": "http",
       "url": "https://api.githubcopilot.com/mcp/",

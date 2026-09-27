@@ -261,7 +261,17 @@ hook takes text that is unmistakably a listing and the agent takes the question
 no pattern answers: has a paraphrase crossed from describing behaviour into
 reproducing expression?
 
-## Skills — `skills/`
+## Skills — `skills/`, mirrored from `../.agents/skills/`
+
+Every skill except `workorder` is written in `.agents/skills/`, the location
+Codex and most other agents scan, and `.claude/skills/<name>/` is a
+byte-for-byte copy made by `tools/sync_agent_tooling.py`, because Claude Code
+scans only `.claude/skills/`. Edit the `.agents/skills/` copy and re-run the
+sync; `tests/test_agent_tooling_sync.py` fails on a mirror that differs or a
+skill added under `.claude/skills/` alone. `workorder` stays Claude-only (see
+§ "Codex" below). A user-only skill also gets a generated
+`agents/openai.yaml` with `allow_implicit_invocation: false`, Codex's
+equivalent of `disable-model-invocation: true`.
 
 | Skill | Invocation | Purpose |
 |---|---|---|
@@ -272,9 +282,8 @@ reproducing expression?
 The remaining eleven directories are vendored, unmodified, from
 [`emilkowalski/skill`](https://github.com/emilkowalski/skill) (MIT) so every
 contributor's agent works from the same frontend and motion guidance —
-`skills/THIRD_PARTY.md` has the pinned commit and how to update them. Claude
-Code discovers them on its own; `AGENTS.md` § "Shared Agent Tooling" points
-other agents at them.
+`.agents/skills/THIRD_PARTY.md` has the pinned commit and how to update them.
+Claude Code and Codex both discover them on their own.
 
 | Skill | Invocation | Use for |
 |---|---|---|
@@ -878,6 +887,19 @@ the update check, and `IMPECCABLE_HOOK_DISABLED=1` turns off the hook for one
 contributor. `/impeccable hooks off` turns it off for everyone, because it writes
 the shared `.impeccable/config.json`.
 
+For Codex, which has no plugin marketplace for these, install the two design
+plugins per user, never into this project, so their files do not land in
+`.agents/skills/` or overwrite `.codex/hooks.json`:
+
+```bash
+npx impeccable install --providers=codex --scope=global
+npx skills add https://github.com/Leonxlnx/taste-skill -g -a codex
+```
+
+impeccable's Codex design-detector hook is project-local by its own design, so
+under Codex it does not run here; run `/impeccable audit` (Codex: `$impeccable
+audit`) on the changed UI instead. `.impeccable/config.json` is shared by both.
+
 ## MCP servers — `../.mcp.json`
 
 | Server | For |
@@ -886,6 +908,7 @@ the shared `.impeccable/config.json`.
 | `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close), under one machine-wide game lease (`hs_lease_acquire` / `hs_lease_status` / `hs_lease_release`) that stops a second session driving the same install — a local stdio server in `tools/hs_drive_mcp/` |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
 | `github` | releases, dispatches and pointer PRs across the eleven repositories |
+| `figma` | reading Figma designs (layout, styles, images) into code — [`figma-developer-mcp`](https://github.com/GLips/Figma-Context-MCP) (MIT), run locally and pinned, authenticated by the `FIGMA_API_KEY` personal access token |
 | `playwright` | driving a browser — the web submodules (`HSCraftSim`, `HS-Offline-Tracker`'s frontend) the way `tauri-hub` drives the hub; pinned to `@playwright/mcp@0.0.82`, run headless on Microsoft Edge (`--browser msedge --headless`) because Edge ships with Windows and the server's default, Chrome, is often not installed, and with `--isolated` (an in-memory profile per server) because concurrent sessions in `.claude/worktrees/` otherwise collide on one shared profile with "Browser is already in use" |
 
 `tauri-hub` is pinned to `@hypothesi/tauri-mcp-server@0.13.0` to match
@@ -925,13 +948,32 @@ token returns 200, without one 401. So `.mcp.json` sends
 `Bearer ${GITHUB_MCP_PAT}`, expanded from the environment — no token in the
 repository.
 
-Set it once, piping so the value is never displayed:
+### Tokens: `tools/setup_agent_secrets.py`, once per machine
 
-```powershell
-[Environment]::SetEnvironmentVariable('GITHUB_MCP_PAT', (gh auth token), 'User')
+`github` and `figma` read a personal access token from an environment variable
+(`GITHUB_MCP_PAT`, `FIGMA_API_KEY`), so no token is in the repository and both
+Claude Code and Codex read the same one. On a new machine run:
+
+```bash
+py -3 tools/setup_agent_secrets.py
 ```
 
-**Claude Code must be restarted afterwards.** A process reads its environment at
+On Windows it asks, with input hidden, for each token not saved yet and saves
+it as a persistent user variable in `HKCU\Environment`. A value set only in
+the current shell does not count, because newly started programs will not see
+it; Enter saves it. `--list` shows `set`, `SESSION` or `MISSING`, and `--force`
+asks again. Pressing Enter at the GitHub prompt uses `gh auth token` instead.
+On macOS and Linux it saves nothing and asks for nothing: it prints the
+`export` line for each missing token, to add to your shell profile. Keeping the
+tokens between machines is up to you; a test fails if a server in `.mcp.json`
+reads a variable the script does not ask for.
+
+`figma` is a local server rather than Figma's official one because
+`mcp.figma.com` accepts only an OAuth login, per program and per machine,
+never a token. It reads designs and cannot edit them; Claude sessions that
+also have Figma's claude.ai connector can use that for writing.
+
+**Claude Code and Codex must be restarted afterwards.** A process reads its environment at
 launch, so the session that sets the variable is never the session that can use
 it.
 
@@ -940,7 +982,7 @@ Three things worth knowing about that arrangement:
 - **It is a copy, and copies go stale.** That is the `gh` CLI's own OAuth token.
   `gh auth refresh`, `gh auth logout` or a re-login rotates it, and this copy
   then 401s while `gh` itself keeps working — so the symptom is "the MCP server
-  broke for no reason". Re-run the command above to resync.
+  broke for no reason". Re-run `tools/setup_agent_secrets.py --force` to resync.
 - **It is plaintext at rest**, in the user's registry environment, readable by
   anything running as that user. `gh` keeps its own copy in the OS keyring, so
   this is a deliberate downgrade accepted for convenience.
@@ -949,8 +991,41 @@ Three things worth knowing about that arrangement:
   restricted to the `falorfrozen-cmd` repos narrows the blast radius
   considerably and drops into the same variable.
 
-Until the variable is set the entry simply fails to connect, which is harmless —
+Until a variable is set its entry simply fails to connect, which is harmless —
 the `gh` CLI covers the same ground and keeps its token in the keyring.
+
+## Codex — `../.codex/` and `../.agents/`
+
+The same rules and tooling reach Codex. `AGENTS.md` is the rule file for both
+agents (Claude Code reads it through `CLAUDE.md`'s import).
+
+| Claude Code | Codex | How the two stay in step |
+|---|---|---|
+| `.claude/skills/` | `.agents/skills/` (the source) | `tools/sync_agent_tooling.py` mirrors it |
+| `.claude/agents/*.md` (the source) | `.codex/agents/*.toml` | generated by the same tool |
+| `.mcp.json` (the source) | `.codex/config.toml` `[mcp_servers.*]` | generated by the same tool |
+| `settings.json` `PostToolUse` | `.codex/hooks.json` `PostToolUse` | both run `hooks/post_tool_use.py`; a test pins it |
+
+Run `py -3 tools/sync_agent_tooling.py` after editing any source; `--check`
+only reports. Codex loads `.codex/` only once you trust the project, and asks
+you to approve `.codex/hooks.json` in `/hooks` (again whenever it changes).
+Start Codex at the repository root: the hook command is a relative path.
+
+The generated agents keep each Claude agent's instructions verbatim, with a
+preamble translating tool names. A Claude agent without write tools becomes
+`sandbox_mode = "read-only"`. Its `effort:` becomes `model_reasoning_effort`
+(`max` becomes `xhigh`), and a Haiku-tier agent asks for `low`. The Claude
+model tier is not translated: Codex has no fixed model per tier, so the agent
+inherits the session's model, and the tier is recorded in a comment.
+
+What does not carry over:
+
+- **`/workorder` and `workorder-rounds`** drive Claude Code's `Agent` and
+  `Workflow` tools and their scripts are called by `.claude/skills/workorder/`
+  path, so they stay Claude-only. Under Codex, run the phases by hand with the
+  generated `planner`, `implementer` and `verifier` agents.
+- **The `ai-review` CI job** runs Claude Code in GitHub Actions whichever agent
+  opened the pull request; the label works the same for both.
 
 ## A trap worth knowing: `#` in frontmatter
 
@@ -970,7 +1045,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Eighteen suites cover this page's tooling. Seventeen are Python and run
+Nineteen suites cover this page's tooling. Eighteen are Python and run
 automatically under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
@@ -978,6 +1053,7 @@ JavaScript and runs separately, under Node:
 py -3 -m unittest discover -s tests
 py -3 -m unittest tests.test_claude_hooks -v      # the hooks actually block
 py -3 -m unittest tests.test_claude_agents -v     # the definitions are well-formed
+py -3 -m unittest tests.test_agent_tooling_sync -v  # the Codex copies (.agents/, .codex/) match their sources
 py -3 -m unittest tests.test_claude_workorder -v  # round_delta.py + ensure_submodule.py, one round/submodule at a time
 py -3 -m unittest tests.test_claude_workorder_section -v  # section.py, plus the sentences in agents/ and SKILL.md that carry the same lesson
 py -3 -m unittest tests.test_workorder_audit -v   # workorder_audit.py's rules, each with a failing fixture and a passing control
