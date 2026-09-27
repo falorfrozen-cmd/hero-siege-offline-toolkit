@@ -3113,3 +3113,8 @@ The theme menu and expanded Enabled mods list stay in the content flow and cap
 their list heights to the pane on open. The scroll suite exercises their last
 options/actions in short/mobile windows as well as the Ember inline/tray width
 transition; the original form suite seeds Ledger for its 1280px design contract.
+These in-flow Ember menus open/close instantly to avoid delayed layout jumps;
+flat-palette popovers retain their motion tokens. The motion suite checks both.
+The action consistently reads **Apply all now**, status text uses at least the
+smallest font token, and IM Fell English ships as WOFF2 with unchanged outlines,
+metrics, character mappings and its existing OFL notice.
