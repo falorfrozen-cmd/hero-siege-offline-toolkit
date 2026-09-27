@@ -13,6 +13,7 @@ so: a drift check that never saw drift proves nothing.
 import importlib.util
 import io
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -76,6 +77,26 @@ class TestDerivedCopiesAreCurrent(unittest.TestCase):
                     self.assertEqual(codex[name].get("args", []), spec.get("args", []))
                 else:
                     self.assertEqual(codex[name]["url"], spec["url"])
+
+    def test_every_token_a_server_reads_is_asked_for_by_setup(self):
+        spec = importlib.util.spec_from_file_location("setup_agent_secrets", REPO / "tools" / "setup_agent_secrets.py")
+        setup = importlib.util.module_from_spec(spec)
+        sys.modules["setup_agent_secrets"] = setup
+        spec.loader.exec_module(setup)
+        asked = {s.name for s in setup.SECRETS}
+        referenced = set(re.findall(r"\$\{(\w+)\}", (REPO / ".mcp.json").read_text(encoding="utf-8")))
+        self.assertTrue(referenced)
+        self.assertEqual(referenced, asked)
+
+    def test_passthrough_env_reaches_codex_servers(self):
+        claude = json.loads((REPO / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]
+        codex = tomllib.loads((REPO / ".codex" / "config.toml").read_text(encoding="utf-8"))["mcp_servers"]
+        for name, spec in claude.items():
+            for key, value in (spec.get("env") or {}).items():
+                with self.subTest(server=name, var=key):
+                    if value == f"${{{key}}}":
+                        self.assertIn(key, codex[name]["env_vars"])
+                        self.assertNotIn(key, codex[name].get("env", {}))
 
     def test_user_only_skills_are_explicit_only_in_codex(self):
         for skill in (REPO / ".agents" / "skills").glob("*/SKILL.md"):

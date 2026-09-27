@@ -98,9 +98,12 @@ exception, because it drives Claude Code's own subagent and workflow tools.
   design-detector hook under Claude Code; set `IMPECCABLE_HOOK_DISABLED=1` to
   switch it off for yourself. Under Codex, run `$impeccable audit` on changed
   UI instead.
-- **MCP servers**: `tauri-hub`, `hs-drive`, `context7`, `github` and
+- **MCP servers**: `tauri-hub`, `hs-drive`, `context7`, `github`, `figma` and
   `playwright`. Use `playwright` to drive and screenshot a browser-based
-  frontend, the same way `tauri-hub` drives the hub.
+  frontend, the same way `tauri-hub` drives the hub. `github` and `figma` need
+  a personal access token; on a new machine, run
+  `py -3 tools/setup_agent_secrets.py` once. It asks for each missing token
+  and saves it as a user environment variable that both agents read.
 
 Codex loads `.codex/` only for a trusted project, asks you to approve
 `.codex/hooks.json` under `/hooks`, and should be started at the repository

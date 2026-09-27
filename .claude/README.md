@@ -895,6 +895,7 @@ audit`) on the changed UI instead. `.impeccable/config.json` is shared by both.
 | `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close), under one machine-wide game lease (`hs_lease_acquire` / `hs_lease_status` / `hs_lease_release`) that stops a second session driving the same install — a local stdio server in `tools/hs_drive_mcp/` |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
 | `github` | releases, dispatches and pointer PRs across the eleven repositories |
+| `figma` | reading Figma designs (layout, styles, images) into code — [`figma-developer-mcp`](https://github.com/GLips/Figma-Context-MCP) (MIT), run locally and pinned, authenticated by the `FIGMA_API_KEY` personal access token |
 | `playwright` | driving a browser — the web submodules (`HSCraftSim`, `HS-Offline-Tracker`'s frontend) the way `tauri-hub` drives the hub; pinned to `@playwright/mcp@0.0.82`, run headless on Microsoft Edge (`--browser msedge --headless`) because Edge ships with Windows and the server's default, Chrome, is often not installed, and with `--isolated` (an in-memory profile per server) because concurrent sessions in `.claude/worktrees/` otherwise collide on one shared profile with "Browser is already in use" |
 
 `tauri-hub` is pinned to `@hypothesi/tauri-mcp-server@0.13.0` to match
@@ -934,13 +935,28 @@ token returns 200, without one 401. So `.mcp.json` sends
 `Bearer ${GITHUB_MCP_PAT}`, expanded from the environment — no token in the
 repository.
 
-Set it once, piping so the value is never displayed:
+### Tokens: `tools/setup_agent_secrets.py`, once per machine
 
-```powershell
-[Environment]::SetEnvironmentVariable('GITHUB_MCP_PAT', (gh auth token), 'User')
+`github` and `figma` read a personal access token from an environment variable
+(`GITHUB_MCP_PAT`, `FIGMA_API_KEY`), so no token is in the repository and both
+Claude Code and Codex read the same one. On a new machine run:
+
+```bash
+py -3 tools/setup_agent_secrets.py
 ```
 
-**Claude Code must be restarted afterwards.** A process reads its environment at
+It asks, with input hidden, for each token not set yet and saves it as a
+persistent user variable (`--list` shows which are set, `--force` asks again).
+Pressing Enter at the GitHub prompt uses `gh auth token` instead. Keeping the
+tokens between machines is up to you; a test fails if a server in `.mcp.json`
+reads a variable the script does not ask for.
+
+`figma` is a local server rather than Figma's official one because
+`mcp.figma.com` accepts only an OAuth login, per program and per machine,
+never a token. It reads designs and cannot edit them; Claude sessions that
+also have Figma's claude.ai connector can use that for writing.
+
+**Claude Code and Codex must be restarted afterwards.** A process reads its environment at
 launch, so the session that sets the variable is never the session that can use
 it.
 
@@ -949,7 +965,7 @@ Three things worth knowing about that arrangement:
 - **It is a copy, and copies go stale.** That is the `gh` CLI's own OAuth token.
   `gh auth refresh`, `gh auth logout` or a re-login rotates it, and this copy
   then 401s while `gh` itself keeps working — so the symptom is "the MCP server
-  broke for no reason". Re-run the command above to resync.
+  broke for no reason". Re-run `tools/setup_agent_secrets.py --force` to resync.
 - **It is plaintext at rest**, in the user's registry environment, readable by
   anything running as that user. `gh` keeps its own copy in the OS keyring, so
   this is a deliberate downgrade accepted for convenience.
@@ -958,7 +974,7 @@ Three things worth knowing about that arrangement:
   restricted to the `falorfrozen-cmd` repos narrows the blast radius
   considerably and drops into the same variable.
 
-Until the variable is set the entry simply fails to connect, which is harmless —
+Until a variable is set its entry simply fails to connect, which is harmless —
 the `gh` CLI covers the same ground and keeps its token in the keyring.
 
 ## Codex — `../.codex/` and `../.agents/`

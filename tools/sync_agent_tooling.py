@@ -265,6 +265,15 @@ def codex_config_toml() -> str:
             raise ValueError(f"{name}: MCP transport {kind!r} is not translated")
         if unknown:
             raise ValueError(f"{name}: keys {sorted(unknown)} are not translated; extend codex_config_toml")
+        # `KEY: "${KEY}"` means "pass my variable through". Claude Code expands
+        # it; Codex forwards only what `env_vars` names, and would otherwise
+        # hand the server the literal text `${KEY}`.
+        passthrough = [k for k, v in env.items() if (m := _ENV_REF.match(v)) and m.group(1) == k]
+        if passthrough:
+            out.append("env_vars = [" + ", ".join(toml_str(k) for k in passthrough) + "]")
+        env = {k: v for k, v in env.items() if k not in passthrough}
+        if any("${" in v for v in env.values()):
+            raise ValueError(f"{name}: only same-name ${{VAR}} passthrough is translatable in env")
         if env:
             out.append("")
             out.append(f"[mcp_servers.{name}.env]")
