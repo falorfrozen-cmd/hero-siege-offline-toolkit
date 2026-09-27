@@ -651,3 +651,68 @@ against a full verify. One outcome would mean a map was too narrow: a
 criterion that a scoped verify skipped and the final gate then failed. When
 that happens, record the criterion, its `(reads ...)` and the path that
 reached it.
+
+# Checking the panel's browser suites once (2026-09-27)
+
+## The question
+
+After the redesign merged, ForgePact's full parallel Python run took about
+19 minutes, although all but two of its modules finished in the first
+minute. A verify that ran the panel's browser suites as their own criteria
+and then the full Python suite ran every one of those suites twice. The
+owner's rule from 2026-09-26 applies: *"If some checks can be done once for
+2 things it's better than checking twice after each change"*.
+
+## What was measured
+
+On one 12-logical-core machine, with `panel/dist` built so every browser
+suite ran. Every run was OK.
+
+| run | tests | wall |
+|---|---|---|
+| serial, `py -3 -m unittest discover -s tests` (`510f21e`) | 1635 | 1292 s |
+| serial, `forgepact-release.yml` Contract tests (`510f21e`, run 36307787871) | 1635 | 1449 s |
+| parallel, before the split (`0f613b3`) | 1642 | 1143 s |
+| parallel, split, browser cap 2 | 1650 | 778 s |
+| parallel, split, browser cap 3 | 1650 | 723 s |
+| parallel, split, browser cap 4 (the default) | 1650 | 650 s |
+| parallel, split, the browser modules excluded (two runs) | 1643 | 55.5 s |
+
+- **One module was most of the run.** `tools/run_tests_parallel.py`
+  parallelises by module, and `test_panel_oracle` ran the oracle replay and
+  five e2e suites back to back: 735 s on one worker. `test_panel_perf`
+  (`e2e:perf`, `PARALLEL_EXCLUSIVE`) then ran alone for 396 s.
+- **At a cap of 4 the browser suites cost one replay.** Split into one module
+  each, the six took about 259 s side by side, which is `oracle:replay` alone
+  (259 s at every cap). The others slowed under contention (polish 198 s at a
+  cap of 3 and 244 s at 4, motion 151 s at 3 and 158 s at 4), but none
+  failed. So a higher cap cannot help.
+- **`e2e:perf` is now the floor.** Its 391-395 s runs alone by design, and
+  its budgets do not change, so the full parallel run stays at about 11
+  minutes.
+- The serial number was not re-measured after the split. The split does not
+  change what a serial run executes, so the baseline and the CI run stand for
+  it.
+
+## What changed
+
+- ForgePact: one module per browser suite (`test_panel_oracle_replay`,
+  `test_panel_e2e*`), sharing `tests/panel_browser.py`'s skip check and npm
+  helper, each in `PARALLEL_GROUP = "panel-browser"`, which defaults to a cap
+  of 4. `run_tests_parallel.py --exclude-module` leaves named modules out,
+  says which, and checks the id set against discovery less those modules.
+- `.claude/agents/planner.md` § "Spend each check once" ("Run each suite once
+  per verify") and SKILL.md rule 1: a plan whose criteria run the panel's
+  browser suites directly runs its full Python suite with `--exclude-module`
+  for the modules that wrap them. Release CI still runs everything serially.
+
+## Not yet measured
+
+Each cap was measured once. If `e2e:polish`'s 50 ms tooltip check or another
+wall-clock assertion fails at a cap of 4 without a code cause, lower the
+default to 3 (723 s) rather than retrying. Checked, not changed:
+`run_criteria.py` classifies `py -3 -m unittest tests.test_panel_e2e_gems`
+as `test`, not `browser`, because `\be2e\b` does not match inside
+`test_panel_e2e_gems`, and `tests.test_panel_oracle_replay` as `exclusive`
+(safe, but alone). A criterion that names these modules directly should say
+`(class browser)`.
