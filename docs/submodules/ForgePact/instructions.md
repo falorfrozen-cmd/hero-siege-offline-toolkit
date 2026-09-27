@@ -2167,7 +2167,7 @@ checkouts, panel build, contract tests, compile and packaging, and keeps the
 zip as the `forgepact-release-zip` artifact on every run (on a dry run that
 artifact is the only output). `panel-browser-tests` runs beside it on its own
 runner: the tag's panel built with Node, then the six panel browser suites.
-`upload` (`ubuntu-latest`, the only job with `contents: write`) needs both,
+`upload` (`ubuntu-latest`, the only job that writes to the draft) needs both,
 skips on a dry run, downloads the artifact, refuses unless it hashes to the
 `zip_hash` `build` reported, then runs guard 2 and `gh release upload`.
 
@@ -2196,6 +2196,12 @@ timings to hard budgets, and on a shared four-core runner those measure the
 runner rather than the panel, as a parallel local run already showed; a
 flaky budget would block a release its local runs had cleared. The manual
 release checklist's full local run is where a release meets those budgets.
+
+`build` keeps `contents: write` although it writes nothing: guard 1 lists
+the tag's draft, and the Releases API lists drafts only to a token with push
+access, so `contents: read` would see no release and refuse every run
+(caught in review of ForgePact#104). `panel-browser-tests` is
+`contents: read`.
 
 **Dispatch-failure recovery.** If `forgepact-tag.yml`'s "Start the build" step
 fails, the draft exists with no build behind it — recovery is running
