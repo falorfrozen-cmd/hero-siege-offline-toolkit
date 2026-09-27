@@ -1311,6 +1311,16 @@ async function runItems(n) {
     let stopping = false
     for (;;) {
       holdFixpoint()
+      // After a failed restore no queued amendment is attempted: its
+      // `amend_check.py save` would overwrite the one known-good copy with the
+      // plan that may still carry the rejected edit. Its item stays parked,
+      // and goes back to the driver saying why.
+      if (planUnsafe) {
+        for (const id of amendQueue.splice(0)) {
+          st[id].replan = `its amendment was not attempted: ${planUnsafe}`
+          amendments.push({ id, amended: false, why: st[id].replan, verdict: '' })
+        }
+      }
       if (!stopping) {
         // Nothing starts while an amendment is queued or running: an item
         // started now would read a plan the planner is rewriting, or one the
@@ -1323,7 +1333,7 @@ async function runItems(n) {
             launch(`item:${id}`, runItem(it).then(r => ({ it, r }), () => ({ it, r: null })))
           }
         }
-        if (!amending && amendQueue.length) {
+        if (!amending && amendQueue.length && !planUnsafe) {
           const next = amendQueue.shift()
           const it = all.find(x => x.id === next)
           amending = true

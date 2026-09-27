@@ -1952,6 +1952,33 @@ test('amend: items mode -- a restore that fails starts nothing more, and says wh
   assert.match(c.reason, /^not started: REPLAN: .*restoring the saved plan failed/)
 })
 
+test('amend: items mode -- after a failed restore a queued amendment is not attempted, so its save cannot overwrite the good copy', async () => {
+  // a and c run at once and both return a CORRECTION; whichever settles first
+  // is amended, rejected, and its restore fails while the other waits queued.
+  const args = { ...ITEMS_BASE, items: [
+    { id: 'a', title: 'toolbar', files: ['panel/a.css'], checks: ['`grep a x` ok'] },
+    { id: 'c', title: 'docs', files: ['docs/c.md'], checks: ['`grep c x` ok'] },
+  ] }
+  const stubs = { 'item-implementer:a:a1:': CORRECTED(), 'item-implementer:c:a1:': CORRECTED(), ...AMEND_OK,
+    'amend-check:': { exit_code: 1, verdict_line: 'REPLAN: p.md: ## goal changed', raw_output: '' } }
+  const { result, calls, prompts } = await runAmend(args, itemsReply({ ...stubs, 'amend-restore:': { exit_code: 2, raw_output: 'amend_check: no saved copy' } }))
+  const saves = calls.filter(c => c.startsWith('amend-save:'))
+  assert.equal(saves.length, 1, `a second save overwrote the only saved copy: ${calls.join(', ')}`)
+  const first = saves[0].split(':')[1], second = first === 'a' ? 'c' : 'a'
+  assert.equal(result.outcome, 'PARKED')
+  const q = result.items.find(i => i.id === second)
+  assert.deepEqual([q.status, q.reason], ['parked', 'PLAN-DEFECT'])
+  assert.match(q.replan, /^its amendment was not attempted: REPLAN: p\.md: ## goal changed; restoring the saved plan failed/)
+  assert.deepEqual(result.amendments.map(x => [x.id, x.amended]), [[first, false], [second, false]])
+  assert.match(prompts['scribe:r0'], new RegExp(`\\n- ${second}: not amended -- its amendment was not attempted: `))
+  assert.ok(!calls.some(c => /^item-implementer:[ac]:a2:/.test(c)), 'an item re-ran on a plan that may carry the rejected edit')
+  // Control: with the restore succeeding, the second amendment does run.
+  const ok = await runAmend(args, itemsReply(stubs))
+  assert.equal(ok.calls.filter(c => c.startsWith('amend-save:')).length, 2, `control: ${ok.calls.join(', ')}`)
+  assert.deepEqual(ok.result.amendments.map(x => x.amended), [false, false])
+  assert.equal(ok.result.outcome, 'PARKED')
+})
+
 test('amend: rounds mode -- an amendment re-runs the same round, uncounted; a second PLAN-DEFECT returns PLAN-DEFECT', async () => {
   let impls = 0
   const prompts = {}
