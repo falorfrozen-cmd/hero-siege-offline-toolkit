@@ -45,6 +45,11 @@ The `equippedItems` array (or `inventory` equipped region) organizes items by nu
 | `10` – `14` | Relics (`0`–`4`) | 5 active relic slots |
 | `15` – `18` | Charms | Inventory charm slots |
 
+The local character's equipped items are held in the global
+`global.equippedItems[global.mplr][0][slot]`, as **fingerprint strings**, not as
+item structs on the player instance; each resolves to an item through the game's
+own scripts (§2, §6.1).
+
 ### Player Runtime Stat Variables
 * `synergy_stat_map`: GameMaker struct containing dynamic stat multipliers and calculated synergy bonuses.
 * `talentStructMap`: Struct containing skill/talent allocation maps keyed by skill ID.
@@ -88,14 +93,14 @@ Items in Hero Siege exist in memory as GameMaker Structs (`VALUE_OBJECT`) with t
 {
   "a": 104,           // Sprite index or base asset ID
   "b": 42,            // Item type ID / Relic ID / Base item category
-  "c": 16,            // Item Rarity Tier (16 = Relic, 10 = Angelic, 8 = Satanic, 6 = Heroic)
+  "c": 16,            // Item Rarity Tier (16 = Relic, 10 = Angelic, 8 = Satanic, 6 = Heroic); c 16 has no measured match on a live relic (its c is 0), see below
   "j": 1,             // Item subtype / Class alignment
   "i": 100,           // Item quality / Item power level
   "s": 0,             // Sockets count / Socket metadata
   "p": 5,             // Star quality level (0 to 5)
   "o": 10,            // Relic: upgrade level (1 to 10). Stackable item: stack count
   "level": 10,        // Explicit level property (relics: used interchangeably with 'o')
-  "relicLevel": 10,   // Alternate relic level property in UI tooltips
+  "relicLevel": 10,   // Alternate relic level property in UI tooltips; not on a game relic's definition (see below)
   "itemStatStruct": { // Dynamic roll values, flat stats & proc bundles
     "1": 250,         // Stat ID 1 = Strength
     "116": 167,       // Stat ID 116 = Skill ID for "Chance When Striking"
@@ -104,6 +109,38 @@ Items in Hero Siege exist in memory as GameMaker Structs (`VALUE_OBJECT`) with t
   }
 }
 ```
+
+**A game relic's definition carries none of the tier fields.** Read from a
+character save on 2026-09-27 (ForgePact #93): a save's `[inventory]` JSON has an
+`equipped_items` dict keyed `0-0-<stamp>-<class>`, whose trailing number is the
+item class (`ItemType`, 16 = relic), and each value is `{"data": {...}}`. For a
+relic, `g` is the equip slot (10-14), `o` the level, `b` the relic id, and `c` is
+**0** (1 on unique gear, so `c` is not a rarity tier there). The definition has no
+`relicLevel`, `cls` or `itemType`. In memory the class is `itemType` on the item
+**instance**, beside its `itemDefinitionStruct`. So a relic is identified by:
+
+- **the item instance**: a struct carrying `itemType` and `itemDefinitionStruct`,
+  where `itemType == 16`; the id and level are then read from the definition's
+  `b` and `o`;
+- **the save entry**: a dict key `x-y-<stamp>-<class>` whose class is 16, with id
+  and level from its `data.b` and `data.o`.
+
+`hs-game-sdk`'s relic scanners still accept `c == 16` and `relicLevel`, so earlier
+fixtures and callers behave the same, but neither has a measured match on a game
+item: treat them as a compatibility rule, not as how relics are found. An
+equipped unique glove (`itemType` 4, definition `{b:18, c:1, g:4}`) and a
+material stack (`itemType` 14, `{b:51, o:99}`) are the negative controls beside
+the relic instance in the SDK's shared cases
+([hs-game-sdk guide](submodules/hs-game-sdk/instructions.md)).
+
+**The equipped relic slots are fingerprint strings, not item structs.** The local
+character's equipped items live in the global
+`global.equippedItems[global.mplr][0][slot]` (§6.1), one fingerprint string per
+slot, and slots 10-14 are the relics. An item is reached by resolving the string
+through the game's own scripts, `GetOnlinePlayerItemOwner(mplr)` then
+`GetItemFromFingerprint(fingerprint, owner)`, which returns the item instance
+above. That route is measured for the helmet slot (2026-09-23); that relic slots
+10-14 hold fingerprints that resolve is **not yet measured**.
 
 **`o` means two things, depending on the item.** On a relic it is the upgrade
 level. On a stackable item, such as a socketable or a crafting material, it is the
@@ -114,7 +151,7 @@ Materials tab) between the stash's special tabs and the bag handed the game's ow
 routines an item whose `o` was the stack, or the part of the stack being moved;
 the Materials-to-bag leg was not observed. It is also the `data.o` that `tools/stash_tab_counts.py` sums from
 `stash.hss`, where a missing `o` counts as one. So identify the item first
-(rarity tier 16 is a relic) and only then read `o` as one or the other; `o`
+(item class 16 is a relic, as above) and only then read `o` as one or the other; `o`
 alone does not say which it is.
 
 What the game itself puts on a finished item (the rolled rarity, the name, the
