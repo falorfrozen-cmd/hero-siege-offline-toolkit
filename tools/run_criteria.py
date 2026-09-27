@@ -100,12 +100,36 @@ fell back. An unselected criterion prints `NOT SELECTED (<why>)` in the
 report, where its commands would have been. The full set still runs at the
 final gate before a push; this is for the fix rounds before it.
 
+Every run that is not `--list`, serial or `--jobs`, keeps `<out>/status.json`
+current and writes `<out>/report.txt` (2026-09-27), so a whole-tree run can
+go to the background and outlive the Bash tool's 10-minute ceiling. The
+status file is rewritten whole, through a temporary file and a replace, each
+time a command starts or finishes: `started_utc`, `updated_utc`, `finished`,
+and per criterion its number `k`, its state (`pending`, `running`, `done`,
+`skipped` or `not-selected`) and each command's exit code and seconds. A run
+that stopped on an exception is `finished` with its `error`. `report.txt` is
+everything the run prints to stdout, byte for byte, written as it prints.
+
+`--status DIR` reads that file, prints one line per criterion and a summary
+line, and exits 0 when the run has finished, 3 while it is still running, 4
+when it is stale (not finished, and `updated_utc` more than 1,900 s old:
+longer than the longest per-command timeout, so the runner has died), and 2
+when DIR has no status file or on a usage error. `--wait S` polls until the
+run finishes, goes stale or S seconds pass, and waits for the file to appear
+too; S may not exceed 220, so each poll stays under `workorder_audit.py`
+R5's 240-second blocking-call limit. A `--timeout` over 1,800 s can make a
+live run look stale. The verifier's procedure: start the whole-tree run with
+`run_in_background: true` and `--out` in its own scratchpad, re-issue
+`--status <out> --wait 220` (Bash timeout 300000) while it exits 3, then read
+`<out>/report.txt`. Never read a status or out directory you did not start.
+
 Usage:
     py -3 tools/run_criteria.py <slug>-plan.md [--out DIR] [--start K]
                                 [--timeout SECONDS] [--shell PATH] [--list]
                                 [--jobs N|auto] [--browser-jobs N] [--item ID]
                                 [--changed-since REF [--changed-since DIR=REF ...]
                                  | --changed-from FILE] [--failed K[,K...]]
+    py -3 tools/run_criteria.py --status DIR [--wait S]
 
 `--start K` resumes at criterion K after a call that hit the Bash tool's
 ceiling; `--list` prints what would run and runs nothing (with `--jobs`, each
@@ -116,12 +140,15 @@ ForgePact's Python suite ran 1,037-1,302 s in the UI redesign, past the old
 flat 900 s, and its ship plan had to pass `--timeout 1800` by hand. Without
 `--jobs` everything runs one command at a time
 in plan order, as it always has. Exit code: 0 when it ran (whatever the
-commands exited with), 2 on a usage error, no plan, no such item, or no bash.
+commands exited with), 2 on a usage error, no plan, no such item, or no bash;
+`--status` exits as above.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import json
 import os
 import queue
 import re
@@ -131,6 +158,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -550,8 +578,205 @@ def _run_one(bash: str, cmd: str, root: Path, timeout: int) -> tuple:
     return code, time.monotonic() - started, output
 
 
+STATUS_FILE = "status.json"
+REPORT_FILE = "report.txt"
+# Not finished and not rewritten for longer than the longest per-command
+# timeout (LONG_TIMEOUT): nothing the runner is doing can take that long
+# between two writes, so the runner is gone.
+STALE_AFTER = 1900
+# Each `--status --wait` call has to return inside workorder_audit.py R5's
+# 240-second blocking-call limit.
+MAX_WAIT = 220
+POLL_SECONDS = 1.0
+UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime(UTC_FORMAT)
+
+
+class Status:
+    """`<out>/status.json`, rewritten whole on every change so a reader in
+    another process never sees half a file. Worker threads call `running`
+    once their lock is held, so every write takes `self.lock`."""
+
+    def __init__(self, out: Path, plan: Path, item, rows: list, jobs: list, start: int):
+        self.path = out / STATUS_FILE
+        self.lock = threading.Lock()
+        self.warned = False
+        self.cmds = {j["id"]: {"n": j["id"], "cmd": j["cmd"], "class": j["cls"], "state": "pending",
+                               "exit": None, "seconds": None, "started_utc": None} for j in jobs}
+        self.criteria = [{"k": k, "state": "skipped", "note": f"before --start {start}", "jobs": []}
+                         for k in range(1, start)]
+        for row in rows:
+            skip = row["skip"]
+            state = None if not skip else "not-selected" if skip.startswith("NOT SELECTED") else "skipped"
+            self.criteria.append({"k": row["k"], "state": state, "note": skip, "jobs": list(row["jobs"])})
+        now = _utc_now()
+        self.doc = {"plan": str(plan), "item": item, "started_utc": now, "updated_utc": now,
+                    "finished": False, "error": None}
+        self._write()
+
+    def _criterion_state(self, c: dict) -> str:
+        if c["state"]:
+            return c["state"]
+        states = [self.cmds[j]["state"] for j in c["jobs"]]
+        if all(s == "done" for s in states):
+            return "done"
+        return "pending" if all(s == "pending" for s in states) else "running"
+
+    def _write(self) -> None:
+        self.doc["updated_utc"] = _utc_now()
+        doc = dict(self.doc, criteria=[{"k": c["k"], "state": self._criterion_state(c), "note": c["note"],
+                                        "commands": [dict(self.cmds[j]) for j in c["jobs"]]}
+                                       for c in self.criteria])
+        tmp = self.path.with_name(f"{STATUS_FILE}.{os.getpid()}.tmp")
+        try:
+            tmp.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+            # On Windows a replace fails while a `--status` reader holds the
+            # file open; it is open for milliseconds, so try again.
+            for _ in range(40):
+                try:
+                    os.replace(tmp, self.path)
+                    return
+                except PermissionError:
+                    time.sleep(0.05)
+            os.replace(tmp, self.path)
+        except OSError as exc:
+            if not self.warned:
+                self.warned = True
+                print(f"run_criteria: cannot write {self.path}: {exc}", file=sys.stderr)
+
+    def _set(self, jid: int, **fields) -> None:
+        with self.lock:
+            self.cmds[jid].update(fields)
+            self._write()
+
+    def waiting(self, jid: int) -> None:
+        """Started, but waiting for its `build` or browser lock."""
+        self._set(jid, state="waiting", started_utc=_utc_now())
+
+    def running(self, jid: int) -> None:
+        self._set(jid, state="running", started_utc=_utc_now())
+
+    def done(self, jid: int, result: tuple) -> None:
+        code, secs, _ = result
+        self._set(jid, state="done", exit=code, seconds=round(secs, 1))
+
+    def finish(self, error: str | None = None) -> None:
+        with self.lock:
+            self.doc.update(finished=True, error=error)
+            self._write()
+
+
+class _Tee:
+    """Everything the run prints goes to stdout unchanged and, as it is
+    printed, to `<out>/report.txt`."""
+
+    def __init__(self, stream, path: Path):
+        self.stream = stream
+        self.file = open(path, "w", encoding="utf-8", errors="replace", newline="")
+
+    def write(self, text: str) -> int:
+        self.stream.write(text)
+        if not self.file.closed:
+            self.file.write(text)
+            self.file.flush()
+        return len(text)
+
+    def flush(self) -> None:
+        self.stream.flush()
+        if not self.file.closed:
+            self.file.flush()
+
+    def close(self) -> None:
+        self.file.close()
+
+
+def read_status(out: Path) -> tuple:
+    """`(doc, None)` or `(None, why)`. A file being replaced this instant
+    can refuse the open on Windows, so an unreadable one is retried."""
+    path = out / STATUS_FILE
+    why = "unreadable"
+    for _ in range(20):
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            datetime.strptime(doc["updated_utc"], UTC_FORMAT)
+            return doc, None
+        except FileNotFoundError:
+            return None, f"no {STATUS_FILE} in {out}"
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            why = f"{path} is unreadable: {exc}"
+            time.sleep(0.05)
+    return None, why
+
+
+def status_state(doc: dict, now: datetime | None = None) -> tuple:
+    """`(state, exit code, age in seconds)`: finished 0, running 3, stale 4."""
+    now = now or datetime.now(timezone.utc)
+    updated = datetime.strptime(doc["updated_utc"], UTC_FORMAT).replace(tzinfo=timezone.utc)
+    age = max(0, int((now - updated).total_seconds()))
+    if doc.get("finished"):
+        return "finished", 0, age
+    if age > STALE_AFTER:
+        return "stale", 4, age
+    return "running", 3, age
+
+
+def _status_line(c: dict) -> str:
+    head = f"criterion {c['k']}: {c['state']}"
+    if c["state"] in ("skipped", "not-selected"):
+        return f"{head} -- {c.get('note')}"
+    parts = []
+    for cmd in c.get("commands", []):
+        if cmd["state"] == "done":
+            parts.append(f"cmd-{cmd['n']} exit {cmd['exit']} ({cmd['seconds']:.0f}s)")
+        elif cmd["state"] in ("running", "waiting"):
+            what = "waiting for its lock" if cmd["state"] == "waiting" else "running"
+            parts.append(f"cmd-{cmd['n']} {what} since {cmd['started_utc']}")
+        else:
+            parts.append(f"cmd-{cmd['n']} pending")
+    return f"{head} -- {'; '.join(parts)}" if parts else head
+
+
+def show_status(out: Path, wait: float) -> int:
+    """`--status`: poll until the run finishes, goes stale or `wait` runs
+    out, then print one line per criterion and a summary."""
+    deadline = time.monotonic() + wait
+    while True:
+        doc, why = read_status(out)
+        state = status_state(doc)[0] if doc else None
+        left = deadline - time.monotonic()
+        if state in ("finished", "stale") or left <= 0:
+            break
+        time.sleep(min(POLL_SECONDS, left))
+    if doc is None:
+        print(f"status: none -- {why}")
+        return 2
+    state, code, age = status_state(doc)
+    counts: dict = {}
+    for c in doc.get("criteria", []):
+        print(_status_line(c))
+        counts[c["state"]] = counts.get(c["state"], 0) + 1
+    tally = ", ".join(f"{counts[s]} {s}" for s in ("done", "running", "pending", "skipped", "not-selected")
+                      if counts.get(s))
+    report = out / REPORT_FILE
+    if state == "stale":
+        tail = (f"not finished and not updated for {age}s (over {STALE_AFTER}s): the runner has died; "
+                f"run it again")
+    elif state == "running":
+        tail = f"updated {age}s ago; poll again with --status {out} --wait {MAX_WAIT}"
+    elif doc.get("error"):
+        tail = f"the runner stopped on an error: {doc['error']}; what it printed is in {report}"
+    else:
+        tail = f"read {report}"
+    print(f"status: {state} -- {len(doc.get('criteria', []))} criteria ({tally or 'none'}); "
+          f"started {doc.get('started_utc')}, updated {doc['updated_utc']}; {tail}")
+    return code
+
+
 def run_parallel(rows: list, jobs: list, bash: str, root: Path, out: Path, explicit_timeout: int | None,
-                 jobs_cap: int, browser_cap: int) -> None:
+                 jobs_cap: int, browser_cap: int, status: Status | None = None) -> None:
     """Run `jobs` under `startable`'s rules on worker threads and print each
     criterion, in plan order, once all of its commands are done."""
     by_id = {j["id"]: j for j in jobs}
@@ -562,6 +787,11 @@ def run_parallel(rows: list, jobs: list, bash: str, root: Path, out: Path, expli
     locks = workorder_lock.lock_dir(root)
     browser_slots = [f"browser-{i}" for i in range(browser_cap)]
 
+    def run_now(job, timeout):
+        if status is not None:
+            status.running(job["id"])
+        return _run_one(bash, job["cmd"], root, timeout)
+
     def worker(job):
         # Every path puts a result: a job that never reports would leave the
         # main loop waiting on `finished` forever.
@@ -570,10 +800,10 @@ def run_parallel(rows: list, jobs: list, bash: str, root: Path, out: Path, expli
             names = "build" if job["cls"] == "build" else browser_slots if job["cls"] == "browser" else None
             if names:
                 with workorder_lock.held(names, locks, timeout=timeout) as got:
-                    result = _run_one(bash, job["cmd"], root, timeout) if got else \
+                    result = run_now(job, timeout) if got else \
                         ("LOCKED", 0.0, f"[run_criteria: the {job['cls']} lock was not free after {timeout}s]")
             else:
-                result = _run_one(bash, job["cmd"], root, timeout)
+                result = run_now(job, timeout)
         except BaseException as exc:  # noqa: BLE001 -- reported as the job's result
             result = ("ERROR", 0.0, f"[run_criteria: {type(exc).__name__}: {exc}]")
         finished.put((job["id"], result))
@@ -606,6 +836,8 @@ def run_parallel(rows: list, jobs: list, bash: str, root: Path, out: Path, expli
     while len(done) < len(jobs):
         for jid in startable(jobs, done, running, jobs_cap, browser_cap):
             running.add(jid)
+            if status is not None and by_id[jid]["cls"] in ("build", "browser"):
+                status.waiting(jid)
             threading.Thread(target=worker, args=(by_id[jid],), daemon=True).start()
         if not running:
             # Only an `after` cycle leaves nothing runnable and nothing running.
@@ -613,12 +845,16 @@ def run_parallel(rows: list, jobs: list, bash: str, root: Path, out: Path, expli
                 if job["id"] not in done:
                     results[job["id"]] = ("NOT RUN", 0.0, "[run_criteria: its (after ...) order loops]")
                     done.add(job["id"])
+                    if status is not None:
+                        status.done(job["id"], results[job["id"]])
             break
         jid, result = finished.get()
         running.discard(jid)
         done.add(jid)
         results[jid] = result
         (out / f"cmd-{jid}.log").write_text(f"$ {by_id[jid]['cmd']}\n{result[2]}", encoding="utf-8")
+        if status is not None:
+            status.done(jid, result)
         flush()
     flush()
 
@@ -631,7 +867,9 @@ def _tail(text: str, n: int = TAIL_LINES) -> str:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="run_criteria.py")
-    parser.add_argument("plan")
+    parser.add_argument("plan", nargs="?", default=None)
+    parser.add_argument("--status", default=None)
+    parser.add_argument("--wait", type=float, default=None)
     parser.add_argument("--out", default=None)
     parser.add_argument("--start", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=None)
@@ -646,6 +884,24 @@ def main(argv=None) -> int:
     try:
         args = parser.parse_args(argv)
     except SystemExit:
+        return 2
+    if args.wait is not None and args.status is None:
+        print("run_criteria: --wait goes with --status DIR", file=sys.stderr)
+        return 2
+    if args.status is not None:
+        if args.plan is not None:
+            print("run_criteria: --status DIR reads a run; it takes no plan", file=sys.stderr)
+            return 2
+        wait = 0.0 if args.wait is None else args.wait
+        if not 0 <= wait <= MAX_WAIT:
+            print(f"run_criteria: --wait takes 0 to {MAX_WAIT} seconds, so each poll stays under the "
+                  f"240-second blocking-call limit", file=sys.stderr)
+            return 2
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        return show_status(Path(args.status), wait)
+    if args.plan is None:
+        print("run_criteria: give a plan, or --status DIR", file=sys.stderr)
         return 2
     since: dict = {}
     for value in args.changed_since:
@@ -730,34 +986,56 @@ def main(argv=None) -> int:
             changed, why = _read_changed_from(args.changed_from)
             source = f"per {args.changed_from}"
         full, full_why, scope = select(items, changed, failed, contract_globs(text), why or "")
-    out = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="run_criteria_"))
-    if not args.list:
-        out.mkdir(parents=True, exist_ok=True)
-        print(f"checkout: {root}\nlogs: {out}\nshell: {bash}")
-    if scoped:
-        print_scope(source, changed, full, full_why, scope, args.start)
-
-    if jobs_cap is not None:
-        rows, jobs = build_jobs(items, args.start, gates, scope)
-        if args.list:
-            by_id = {j["id"]: j for j in jobs}
-            for row in rows:
-                print(f"\ncriterion {row['k']}: {row['first'][:150]}{' ...' if row['more'] else ''}")
-                if row["skip"]:
-                    print(f"  {row['skip']}")
-                for jid in row["jobs"]:
-                    job = by_id[jid]
-                    shown = job["cmd"] if "\n" not in job["cmd"] else job["cmd"].splitlines()[0] + " ...(multi-line)"
-                    after = f", after cmd {', '.join(str(a) for a in sorted(job['after']))}" if job["after"] else ""
-                    print(f"  would run: {shown} [class {job['cls']}{after}]")
-            return 0
-        print(f"jobs: {jobs_cap} (browser suites at most {args.browser_jobs})")
-        run_parallel(rows, jobs, bash, root, out, args.timeout, jobs_cap, args.browser_jobs)
+    if args.list:
+        # Runs nothing and writes nothing: no out dir, no status, no report.
+        if scoped:
+            print_scope(source, changed, full, full_why, scope, args.start)
+        list_only(items, args.start, gates, scope, jobs_cap is not None)
         return 0
 
-    ran: dict = {}  # command -> (n, exit, seconds, output)
+    out = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="run_criteria_"))
+    out.mkdir(parents=True, exist_ok=True)
+    rows, jobs = build_jobs(items, args.start, gates, scope)
+    status = Status(out, plan, args.item, rows, jobs, args.start)
+    tee = _Tee(sys.stdout, out / REPORT_FILE)
+    error = None
+    try:
+        with contextlib.redirect_stdout(tee):
+            print(f"checkout: {root}\nlogs: {out}\nshell: {bash}")
+            if scoped:
+                print_scope(source, changed, full, full_why, scope, args.start)
+            if jobs_cap is not None:
+                print(f"jobs: {jobs_cap} (browser suites at most {args.browser_jobs})")
+                run_parallel(rows, jobs, bash, root, out, args.timeout, jobs_cap, args.browser_jobs, status)
+            else:
+                run_serial(items, args.start, gates, scope, bash, root, out, args.timeout, jobs, status)
+    except BaseException as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        # The report is whole before the status says the run finished.
+        tee.close()
+        status.finish(error)
+    return 0
+
+
+def list_only(items: list, start: int, gates, scope: dict | None, with_classes: bool) -> None:
+    """`--list`: what would run, and with `--jobs` each command's class."""
+    if with_classes:
+        rows, jobs = build_jobs(items, start, gates, scope)
+        by_id = {j["id"]: j for j in jobs}
+        for row in rows:
+            print(f"\ncriterion {row['k']}: {row['first'][:150]}{' ...' if row['more'] else ''}")
+            if row["skip"]:
+                print(f"  {row['skip']}")
+            for jid in row["jobs"]:
+                job = by_id[jid]
+                shown = job["cmd"] if "\n" not in job["cmd"] else job["cmd"].splitlines()[0] + " ...(multi-line)"
+                after = f", after cmd {', '.join(str(a) for a in sorted(job['after']))}" if job["after"] else ""
+                print(f"  would run: {shown} [class {job['cls']}{after}]")
+        return
     for k, item in enumerate(items, 1):
-        if k < args.start:
+        if k < start:
             continue
         cmds = commands(item)
         first = item.splitlines()[0]
@@ -766,7 +1044,7 @@ def main(argv=None) -> int:
         if scope is not None and not scope[k][0]:
             print(f"  NOT SELECTED ({scope[k][1]})")
             continue
-        unset =[g for g in GATE_RE.findall(item) if gates is not None and _norm_gate(g) not in gates]
+        unset = [g for g in GATE_RE.findall(item) if gates is not None and _norm_gate(g) not in gates]
         if unset:
             print(f"  SKIPPED (gate {'; '.join(unset)} not set)")
             continue
@@ -775,34 +1053,51 @@ def main(argv=None) -> int:
             continue
         for cmd in cmds:
             shown = cmd if "\n" not in cmd else cmd.splitlines()[0] + " ...(multi-line)"
-            if args.list:
-                print(f"  would run: {shown}")
-                continue
+            print(f"  would run: {shown}")
+
+
+def run_serial(items: list, start: int, gates, scope: dict | None, bash: str, root: Path, out: Path,
+               explicit_timeout: int | None, jobs: list, status: Status) -> None:
+    """Without `--jobs`: one command at a time, in plan order. `jobs` is
+    `build_jobs`' list for the same selection, whose ids are the `cmd-<n>`
+    numbers this assigns, so the status file can name each command."""
+    job_of = {j["cmd"]: j["id"] for j in jobs}
+    ran: dict = {}  # command -> (n, exit, seconds, output)
+    for k, item in enumerate(items, 1):
+        if k < start:
+            continue
+        cmds = commands(item)
+        first = item.splitlines()[0]
+        more = " ..." if len(first) > 150 or len(item.splitlines()) > 1 else ""
+        print(f"\ncriterion {k}: {first[:150]}{more}")
+        if scope is not None and not scope[k][0]:
+            print(f"  NOT SELECTED ({scope[k][1]})")
+            continue
+        unset = [g for g in GATE_RE.findall(item) if gates is not None and _norm_gate(g) not in gates]
+        if unset:
+            print(f"  SKIPPED (gate {'; '.join(unset)} not set)")
+            continue
+        if not cmds:
+            print("  no command -- check by reading")
+            continue
+        for cmd in cmds:
+            shown = cmd if "\n" not in cmd else cmd.splitlines()[0] + " ...(multi-line)"
             if cmd in ran:
                 n, code, secs, _ = ran[cmd]
                 print(f"  `{shown}` -> exit {code} ({secs:.0f}s), same command as cmd-{n}.log, run once")
                 continue
             n = len(ran) + 1
             declared = CLASS_DECL_RE.search(item)
-            timeout = timeout_for(declared.group(1) if declared else classify(cmd), args.timeout)
-            started = time.monotonic()
-            try:
-                proc = subprocess.run([bash, "-c", cmd], cwd=str(root), capture_output=True,
-                                      timeout=timeout)
-                code = proc.returncode
-                output = (proc.stdout + proc.stderr).decode("utf-8", "replace")
-            except subprocess.TimeoutExpired as exc:
-                code = "TIMEOUT"
-                output = ((exc.stdout or b"") + (exc.stderr or b"")).decode("utf-8", "replace") + \
-                    f"\n[run_criteria: killed after {timeout}s]"
-            secs = time.monotonic() - started
+            timeout = timeout_for(declared.group(1) if declared else classify(cmd), explicit_timeout)
+            status.running(job_of[cmd])
+            code, secs, output = _run_one(bash, cmd, root, timeout)
             (out / f"cmd-{n}.log").write_text(f"$ {cmd}\n{output}", encoding="utf-8")
             ran[cmd] = (n, code, secs, output)
+            status.done(job_of[cmd], (code, secs, output))
             print(f"  `{shown}` -> exit {code} ({secs:.0f}s), cmd-{n}.log")
             if output.strip():
                 print(_tail(output))
             sys.stdout.flush()
-    return 0
 
 
 if __name__ == "__main__":
