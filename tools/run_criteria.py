@@ -110,7 +110,11 @@ Usage:
 `--start K` resumes at criterion K after a call that hit the Bash tool's
 ceiling; `--list` prints what would run and runs nothing (with `--jobs`, each
 command's class too; with `--changed-since`, the scope). `--timeout` is per
-command (default 900). Without `--jobs` everything runs one command at a time
+command. Without it, a `suite` or `exclusive` command (a whole test suite, or
+one the runner does not recognise) gets 1800 s and every other command 900 s:
+ForgePact's Python suite ran 1,037-1,302 s in the UI redesign, past the old
+flat 900 s, and its ship plan had to pass `--timeout 1800` by hand. Without
+`--jobs` everything runs one command at a time
 in plan order, as it always has. Exit code: 0 when it ran (whatever the
 commands exited with), 2 on a usage error, no plan, no such item, or no bash.
 """
@@ -521,6 +525,18 @@ def startable(jobs: list, done: set, running: set, jobs_cap: int, browser_cap: i
     return [ready[0]["id"]] if ready else []
 
 
+DEFAULT_TIMEOUT = 900
+LONG_TIMEOUT = 1800
+LONG_CLASSES = ("suite", "exclusive")
+
+
+def timeout_for(cls: str, explicit: int | None) -> int:
+    """A command's timeout: `--timeout` when given, else by its class."""
+    if explicit is not None:
+        return explicit
+    return LONG_TIMEOUT if cls in LONG_CLASSES else DEFAULT_TIMEOUT
+
+
 def _run_one(bash: str, cmd: str, root: Path, timeout: int) -> tuple:
     started = time.monotonic()
     try:
@@ -534,7 +550,7 @@ def _run_one(bash: str, cmd: str, root: Path, timeout: int) -> tuple:
     return code, time.monotonic() - started, output
 
 
-def run_parallel(rows: list, jobs: list, bash: str, root: Path, out: Path, timeout: int,
+def run_parallel(rows: list, jobs: list, bash: str, root: Path, out: Path, explicit_timeout: int | None,
                  jobs_cap: int, browser_cap: int) -> None:
     """Run `jobs` under `startable`'s rules on worker threads and print each
     criterion, in plan order, once all of its commands are done."""
@@ -550,6 +566,7 @@ def run_parallel(rows: list, jobs: list, bash: str, root: Path, out: Path, timeo
         # Every path puts a result: a job that never reports would leave the
         # main loop waiting on `finished` forever.
         try:
+            timeout = timeout_for(job["cls"], explicit_timeout)
             names = "build" if job["cls"] == "build" else browser_slots if job["cls"] == "browser" else None
             if names:
                 with workorder_lock.held(names, locks, timeout=timeout) as got:
@@ -617,7 +634,7 @@ def main(argv=None) -> int:
     parser.add_argument("plan")
     parser.add_argument("--out", default=None)
     parser.add_argument("--start", type=int, default=1)
-    parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument("--timeout", type=int, default=None)
     parser.add_argument("--shell", default=None)
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--jobs", default=None)
@@ -766,16 +783,18 @@ def main(argv=None) -> int:
                 print(f"  `{shown}` -> exit {code} ({secs:.0f}s), same command as cmd-{n}.log, run once")
                 continue
             n = len(ran) + 1
+            declared = CLASS_DECL_RE.search(item)
+            timeout = timeout_for(declared.group(1) if declared else classify(cmd), args.timeout)
             started = time.monotonic()
             try:
                 proc = subprocess.run([bash, "-c", cmd], cwd=str(root), capture_output=True,
-                                      timeout=args.timeout)
+                                      timeout=timeout)
                 code = proc.returncode
                 output = (proc.stdout + proc.stderr).decode("utf-8", "replace")
             except subprocess.TimeoutExpired as exc:
                 code = "TIMEOUT"
                 output = ((exc.stdout or b"") + (exc.stderr or b"")).decode("utf-8", "replace") + \
-                    f"\n[run_criteria: killed after {args.timeout}s]"
+                    f"\n[run_criteria: killed after {timeout}s]"
             secs = time.monotonic() - started
             (out / f"cmd-{n}.log").write_text(f"$ {cmd}\n{output}", encoding="utf-8")
             ran[cmd] = (n, code, secs, output)

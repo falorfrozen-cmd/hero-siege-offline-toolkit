@@ -51,9 +51,13 @@ export const meta = {
 //
 // The count of patch rounds already spent (2i below) is read from `state`'s
 // `patch rounds:` line, which this script writes; there is no separate arg.
+// `scope rounds:` is the driver's: the rounds it relaunched only to carry the
+// owner's new decisions (SKILL.md Step 4, "Owner scope is not a failure").
+// Each extends the cap by one, at most SCOPE_CAP in all.
 
 const A = args || {}
 const ROUND_CAP = 3
+const SCOPE_CAP = 3
 const SLUG = A.slug
 const REPO_ROOT = A.repoRoot || ''
 const SUBMODULES = A.submodules || []
@@ -227,6 +231,7 @@ const SNAPSHOT_SCHEMA = {
     heads: { type: 'array', items: { type: 'object', properties: {
       repo: { type: 'string' }, sha: { type: 'string' },
     }, required: ['repo', 'sha'] } },
+    taken_utc: { type: 'string' },
     raw_output: { type: 'string' },
   },
   required: ['exit_code', 'heads', 'raw_output'],
@@ -398,8 +403,14 @@ const findingLine = f => `- [${f.reviewer}] ${f.where}: ${f.problem} — evidenc
 // findings the round is told not to spend itself on. BLOCKING lines keep
 // theirs: the next implementer works from it.
 const nonBlockingLine = f => `- [${f.reviewer}] ${f.where}: ${f.problem}`
+// A round's heading carries the time its snapshot was taken, so a later
+// reader can measure round wall time and owner waits from the Log alone. The
+// ForgePact UI redesign's Logs recorded dates only, and its timeline had to be
+// rebuilt from transcripts (workorder-calibration.md, 2026-09-27).
+let roundStarted = ''
+const roundHeading = n => `### Round ${n}` + (roundStarted ? ` (started ${roundStarted})` : '')
 const roundBlock = (n, record) => {
-  const lines = [`### Round ${n}`, '', `verifier: ${record.verifier}` +
+  const lines = [roundHeading(n), '', `verifier: ${record.verifier}` +
     (record.verifierSaid ? ` (the verifier said ${record.verifierSaid}; every failed criterion is gated on a gate not set in \`gates:\`)` : '')]
   for (const c of record.failed) lines.push(`- FAILED ${c.criterion}: ${c.evidence}`)
   for (const c of record.gatePending || []) lines.push(`- PENDING (gate ${c.gate} not set) ${c.criterion}`)
@@ -420,7 +431,7 @@ const stateBlock = (n, record, clean, planDefect, patchRounds) => [
   `open defects: ${record.blocking.map(f => `${f.reviewer}: ${f.problem}`).join('; ') || 'none'}`,
   ...(patchRounds ? [`patch rounds: ${patchRounds}`] : []),
 ].join('\n')
-const implBlock = (n, impl) => [`### Round ${n}`, '', impl.verdict, '', impl.evidence || impl.question || ''].join('\n')
+const implBlock = (n, impl) => [roundHeading(n), '', impl.verdict, '', impl.evidence || impl.question || ''].join('\n')
 
 // --- 2e: State is merged, never replaced ------------------------------------
 //
@@ -460,7 +471,14 @@ const stateEntries = text => {
   }
   return out
 }
-const normEntry = t => t.split('\n').map(l => l.replace(/\s+$/, '')).join('\n').trim()
+// Compared as words, not layout. In the ForgePact UI redesign four launches
+// (145 agent-minutes) stopped STATE-LOST on entries nothing had removed: a
+// multi-line `decisions in force:` whose continuation lines the scribe
+// reported indented two spaces before its Edit and four after, and a
+// `round base: <none yet>` it reported back as `&lt;none yet&gt;`. An entry
+// whose words survived was not lost.
+const normEntry = t => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+  .replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim()
 // Old order kept; an updated key replaces its entry in place (a duplicate of
 // it is dropped); a key the old block lacked goes at the end.
 const mergeState = (old, updates) => {
@@ -661,7 +679,7 @@ const joinPrompt = (n, lanes) => workorderLine(n) + reentry(n) +
   `then carry out the steps under '### Join' in '## Steps' (the build, the full suite, and every step that reads another lane's output), and last commit what remains. ` +
   `Report under DEVIATIONS any dirty path that is in no lane's file set and that you did not create. ` +
   `The lanes reported:\n${lanes.map(l => `--- lane ${l.name} ---\n${l.report || ''}`).join('\n')}\n` + VERDICT_ASK
-const laneBlock = (n, outcome, lanes) => [`### Round ${n}`, '', `${outcome} (lanes: ${lanes.map(l => `${l.name} ${l.verdict}`).join(', ')}; the join did not run)`,
+const laneBlock = (n, outcome, lanes) => [roundHeading(n), '', `${outcome} (lanes: ${lanes.map(l => `${l.name} ${l.verdict}`).join(', ')}; the join did not run)`,
   ...lanes.flatMap(l => ['', `lane ${l.name}: ${l.verdict}`,
     ...(l.verdict !== 'IMPL-DONE' && (l.evidence || l.question) ? [l.evidence || l.question] : []),
     `progress: ${l.progress_so_far || 'none reported'}`])].join('\n')
@@ -832,7 +850,8 @@ async function runItems(n) {
 
   const snap = await spawn(
     `Run exactly: ${DELTA} snapshot ${SLUG} ${n}${DELTA_ROOT_ARG}  — then report its exit code and output. ` +
-    `Then run exactly: ${DELTA} heads ${SLUG} ${n}${DELTA_ROOT_ARG}  — report its exit code (3 if either command exited 3) and each printed line, split into repo and sha at the first tab, as heads: [{repo, sha}]. Edit nothing.`,
+    `Then run exactly: ${DELTA} heads ${SLUG} ${n}${DELTA_ROOT_ARG}  — report its exit code (3 if either command exited 3) and each printed line, split into repo and sha at the first tab, as heads: [{repo, sha}]. ` +
+    `The snapshot command's \`taken_utc: <time>\` line, if it printed one, goes in taken_utc verbatim. Edit nothing.`,
     { label: `snapshot:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', schema: SNAPSHOT_SCHEMA })
   const baseHeads = (A.baseHeads && Object.keys(A.baseHeads).length) ? A.baseHeads
     : (snap && snap.exit_code === 0 ? headsMap(snap.heads) : null)
@@ -1162,6 +1181,8 @@ const reachScope = (heads, deltaUsable) => {
 
 const patchStateEntry = stateEntries(A.state).find(e => e.key === 'patch rounds')
 let patchCount = patchStateEntry ? (parseInt(patchStateEntry.text.replace(/^patch rounds:\s*/i, ''), 10) || 0) : 0
+const scopeStateEntry = stateEntries(A.state).find(e => e.key === 'scope rounds')
+const scopeCount = Math.min(SCOPE_CAP, scopeStateEntry ? (parseInt(scopeStateEntry.text.replace(/^scope rounds:\s*/i, ''), 10) || 0) : 0)
 let patchNext = null // the BLOCKING findings the next round patches, or null for an ordinary round
 
 let reviewerState = { ...A.reviewers }
@@ -1178,18 +1199,20 @@ let critCount = 0
 let firstHeads = null // this invocation's first usable snapshot heads, for a `never` reviewer's base when args.baseHeads is absent
 const rounds = []
 
-// `n - patchCount` is the number of rounds counted against the cap so far; a
-// patch round already decided runs even at the cap, and counts only if it
-// does not hold (2i).
-for (let n = START; n - patchCount < ROUND_CAP || patchNext; n++) {
+// `n - patchCount - scopeCount` is the number of rounds counted against the
+// cap so far; a patch round already decided runs even at the cap, and counts
+// only if it does not hold (2i).
+for (let n = START; n - patchCount - scopeCount < ROUND_CAP || patchNext; n++) {
   const patchFindings = patchNext
   patchNext = null
   const isPatch = !!patchFindings
   const snap = await agent(
     `Run exactly: ${DELTA} snapshot ${SLUG} ${n}${DELTA_ROOT_ARG}  — then report its exit code and output. ` +
-    `Then run exactly: ${DELTA} heads ${SLUG} ${n}${DELTA_ROOT_ARG}  — report its exit code (3 if either command exited 3) and each printed line, split into repo and sha at the first tab, as heads: [{repo, sha}]. Edit nothing.`,
+    `Then run exactly: ${DELTA} heads ${SLUG} ${n}${DELTA_ROOT_ARG}  — report its exit code (3 if either command exited 3) and each printed line, split into repo and sha at the first tab, as heads: [{repo, sha}]. ` +
+    `The snapshot command's \`taken_utc: <time>\` line, if it printed one, goes in taken_utc verbatim. Edit nothing.`,
     { label: `snapshot:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', schema: SNAPSHOT_SCHEMA })
 
+  roundStarted = (snap && typeof snap.taken_utc === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?Z$/.test(snap.taken_utc.trim())) ? snap.taken_utc.trim() : ''
   const roundHeads = headsMap(snap && snap.heads)
   const roundHeadsUsable = !!(snap && snap.exit_code === 0 && roundHeads)
   if (n === START) firstHeads = roundHeadsUsable ? roundHeads : null
@@ -1349,4 +1372,4 @@ for (let n = START; n - patchCount < ROUND_CAP || patchNext; n++) {
   if (clean) return { outcome: verdict, round: n, pending_human: pendingHuman, rounds, ...(reach ? { verifyScope: 'reach', note: REACH_FINAL_NOTE } : {}) }
 }
 
-return { outcome: 'CAP', detail: `${ROUND_CAP} implement->verify rounds used; split the open findings into a new workorder`, rounds }
+return { outcome: 'CAP', detail: `${ROUND_CAP} implement->verify rounds used` + (scopeCount ? ` (plus ${scopeCount} owner-scope round(s))` : '') + `; split the open findings into a new workorder`, rounds }

@@ -103,8 +103,10 @@ class TestSnapshotAndDelta(RoundDeltaTestCase):
     def test_snapshot_prints_the_snapshot_name(self):
         snap = self.repo.run("snapshot", slug="wo", round_="3")
         self.assertEqual(snap.returncode, 0, snap.stderr)
-        printed = snap.stdout.strip()
+        printed, taken = snap.stdout.strip().splitlines()
         self.assertEqual(printed, ".claude/workorders/.rounds/wo/round-3.json")
+        # The round engine puts this in the round's Log heading.
+        self.assertRegex(taken, r"^taken_utc: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertTrue((self.repo.root / printed).exists())
 
     # Positive control: modified, new-untracked and deleted files are all

@@ -15,7 +15,18 @@ the files, never from what the planner says it did:
     (the driver's) and `## Log` (append-only history) are not compared.
 
 Anything else counts as a replan, with the same tier escalation and cap as
-one the driver asked for.
+one the driver asked for -- unless it carries the owner's new scope:
+
+  * SCOPE: the context file gained at least one owner decision since `save`
+    (a line `owner, <YYYY-MM-DD>: ...`, optionally bulleted, the form
+    `### Decisions` entries already take). A plan change that follows the
+    owner's own new decision is the owner changing the work, not the plan
+    failing, so it is neither a replan nor a step up the tier ladder
+    (SKILL.md Step 4, "Owner scope is not a failure"). In the ForgePact UI
+    redesign four cap hits and several Fable-tier replans were spent this
+    way. The driver runs `save`, *then* records the owner's answer, then
+    spawns the planner; `tools/workorder_audit.py` R25 fails a SCOPE verdict
+    with no message from the owner behind it.
 
 Usage:
     py -3 tools/amend_check.py save  <slug>-plan.md [<slug>-context.md]
@@ -26,9 +37,10 @@ Usage:
 rest of `.claude/workorders/`). `check`, run after it returns, compares each
 file against its copy and prints one `<file>: ## <heading>: +<a> -<d>` line
 per changed section, then `lines_changed: <N>` and one verdict line:
-`AMENDMENT` or `REPLAN: <reasons>`.
+`AMENDMENT`, `SCOPE: <k> new owner decision(s)` or `REPLAN: <reasons>`.
 
-Exit code: 0 an amendment, 1 a replan, 2 a usage error or no saved copy.
+Exit code: 0 an amendment or owner scope, 1 a replan, 2 a usage error or no
+saved copy.
 """
 
 import difflib
@@ -42,6 +54,13 @@ FROZEN = ("goal", "out of scope", "needs human judgement")
 IGNORED = ("state", "log")
 HEADING = re.compile(r"^##\s+(.+?)\s*$")
 FENCE = re.compile(r"^\s*(```|~~~)")
+OWNER_DECISION = re.compile(r"^\s*(?:[-*]\s+)?\**owner\**\s*,\s*\d{4}-\d\d-\d\d\b", re.I)
+
+
+def owner_decisions(text: str) -> int:
+    """How many owner decisions a context file records: lines beginning
+    `owner, <date>` (bulleted or not), the form `### Decisions` entries take."""
+    return sum(1 for line in text.splitlines() if OWNER_DECISION.match(line))
 
 
 def sections(text: str) -> dict:
@@ -136,6 +155,13 @@ def cmd_check(plan: Path, context) -> int:
     print(f"lines_changed: {total}")
     if total > MAX_LINES:
         reasons.append(f"{total} lines changed (limit {MAX_LINES})")
+    new_decisions = 0
+    if context is not None and _base(plan, "context").is_file() and context.is_file():
+        new_decisions = (owner_decisions(context.read_text(encoding="utf-8", errors="replace"))
+                         - owner_decisions(_base(plan, "context").read_text(encoding="utf-8", errors="replace")))
+    if reasons and new_decisions > 0:
+        print(f"SCOPE: {new_decisions} new owner decision(s); not a replan (was: {'; '.join(reasons)})")
+        return 0
     if reasons:
         print("REPLAN: " + "; ".join(reasons))
         return 1

@@ -716,3 +716,107 @@ as `test`, not `browser`, because `\be2e\b` does not match inside
 `test_panel_e2e_gems`, and `tests.test_panel_oracle_replay` as `exclusive`
 (safe, but alone). A criterion that names these modules directly should say
 `(class browser)`.
+
+# Why the ForgePact UI redesign took 60 hours (2026-09-27)
+
+## The question
+
+With the redesign merged (hub PR #244, ForgePact PR #100), the owner asked
+why it took so long, and whether the fixes already made (the sections above)
+cover every cause. Those sections were written from the 14 plan and context
+files, which record dates only. This one adds the wall clock, read from the
+driver's and every subagent's transcript timestamps, and the git and CI
+history.
+
+## What was measured
+
+- **The span**: first commit 09-24 20:11 UTC to both merges 09-27 08:56,
+  60.75 hours, driven from one session (`039722c8`) through 230 subagents
+  and 32 workflow launches, at $582 list price.
+- **Where it went**: 40.0 h (66%) with at least one subagent running; 19.1 h
+  (31%) with a question to the owner open and nothing running, 15.2 h of it
+  in four gaps of over two hours (380, 273, 256 and 111 minutes); 1.7 h of
+  the driver alone. Two or more agents ran at once for only 6.8 h (11%).
+- **Agent time**: implementers 43 runs, 20.2 wall-hours; the full verify 22
+  runs, 9.7 h at 15-55 minutes each; planners 10 plans, 13 replans and 13
+  amendments. Of the 32 launches, 11 passed, 14 ended `PLAN-DEFECT` (599
+  minutes), 4 `STATE-LOST` (145 minutes) and 2 `CAP`.
+- **GitHub was not the cost**: no CI test or build workflow ran on either
+  branch; the one AI review took 9-15 minutes and its findings were fixed
+  within 15 minutes. `origin/main` was merged into the branch six times.
+- **Causes, from the context Logs** (about 75 events):
+  - criteria that could never pass, about 15;
+  - the owner's own scope or design changing mid-stream, about 16, which
+    the cap and the tier ladder counted as failures four times;
+  - the Figma export disagreeing with the panel, 7, found only at restyle;
+  - plans written before their inputs existed, about 15 replans with no
+    implementer between them;
+  - flakes, 4;
+  - non-blocking docs findings carried from one workorder to the next, 9.
+- **The four STATE-LOSTs lost nothing.** Three flagged a multi-line
+  `decisions in force:` entry whose continuation lines the scribe reported
+  indented differently before and after its Edit; one flagged `round base:
+  <none yet>` reported back as `&lt;none yet&gt;`.
+- **The driver's context**: 504 of its 697 turns ran above 300K tokens,
+  peaking at 966K.
+
+Covered already (sections above, none yet run on a real workorder): the
+repeated full verify (reach-scoped re-verify, `--jobs`, one verify for
+changes ready together), main merges as workorders (merge in place), the
+flake (fixed in the round), pinned heads (`pinned-sha`), and the serial
+chain (items).
+
+## What changed
+
+- **A question never idles the pipeline** (SKILL.md rule 8, AGENTS.md):
+  start what the answer cannot change before asking, spin off an
+  out-of-scope bug, apply the default to a reversible choice.
+- **Owner scope is not a failure** (SKILL.md Step 4):
+  - `tools/amend_check.py` prints `SCOPE:` and exits 0 when a change that
+    would otherwise be a replan follows an `owner, <date>:` decision the
+    context gained since `save`. A change within the amendment limits
+    prints `AMENDMENT` as before.
+  - `workorder-rounds.js` adds State's `scope rounds:` to the cap, at most 3.
+  - `tools/workorder_audit.py` R25 fails a `SCOPE:` verdict with no owner
+    message behind it.
+- **Plan when the inputs exist** (planner.md, SKILL.md Step 1): a dependent
+  plan is `status: DRAFT` with `depends on:`, and `plan_lint` refuses it
+  (`plan-draft`).
+- **Design review first** (SKILL.md rule 9, planner.md): detector and
+  critique on the comps, the finish reviewer after the first restyle round,
+  an export structure check when the export is made, and class-wide checks
+  for design fixes.
+- **Two more lint rules**: `eof-slice` and `merge-walk`. Over the redesign's
+  14 plans they match 15 and 2 criteria respectively.
+- **Timeouts**: `run_criteria.py` gives a `suite` or `exclusive` command
+  1800 s by default (the Python suite ran 1,037-1,302 s against the old
+  900 s).
+- **STATE-LOST compares words, not layout**: whitespace runs and HTML
+  entities are normalised before an entry counts as lost.
+- **Round headings carry their start time**: `round_delta.py snapshot`
+  records and prints `taken_utc`, and the engine writes `### Round <n>
+  (started <time>)`. Round wall time and owner waits can then be read from
+  the Log next time.
+- **A fresh driver session** is offered at any workorder boundary once the
+  driver is past about 300K tokens, not only after a live session.
+
+## Not yet measured
+
+None of this has run on a real workorder. For the next multi-workorder
+feature, compare against this section's rows:
+- hours with a question open and nothing running;
+- `PLAN-DEFECT` launches and replans before round 0;
+- cap hits on owner scope;
+- STATE-LOST stops;
+- the share of wall time with two or more agents running.
+
+A `SCOPE:` verdict that R25 accepted but which reads as a failed plan would
+mean the owner-line test is too loose.
+
+Not done here:
+- The export structure check itself belongs in ForgePact's
+  `design-match.mjs`, a separate change in that repository.
+- Landing behaviour-identical foundations on main early, so a long branch
+  does not have to port main's new features (the redesign's `main-merge` and
+  `main-merge-3` did), was considered and not made a rule. It is a
+  feature-planning choice to weigh each time.

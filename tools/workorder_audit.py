@@ -381,6 +381,7 @@ class ToolCall:
     is_error: bool = False
     guard_refused: bool = False  # the harness refused it: target outside the session's worktree
     backup_id: Optional[str] = None  # the id a successful hs_saves_backup returned (R17)
+    scope_verdict: bool = False  # its output carried amend_check.py's `SCOPE:` verdict (R25)
 
     @property
     def duration_seconds(self) -> Optional[float]:
@@ -601,6 +602,7 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
                 call.guard_refused = call.name in EDIT_TOOLS and WORKTREE_GUARD_MARKER in text
                 if call.name.endswith("hs_saves_backup"):
                     call.backup_id = _returned_backup_id(text)
+                call.scope_verdict = call.name in SHELL_TOOLS and bool(SCOPE_VERDICT_RE.search(text))
                 if call.name == "Read":
                     fp = call.tool_input.get("file_path")
                     if fp:
@@ -1652,6 +1654,32 @@ def rule_r24_cheap_routes(session: Session) -> RuleResult:
     return RuleResult("R24", "cheap-routes", passed=not evidence, evidence=evidence)
 
 
+# R25 owner scope. `amend_check.py check` prints `SCOPE:` -- the plan change
+# is not a replan, and costs no cap or tier -- when the context file gained an
+# owner decision since `save`. The driver writes that line, so the audit asks
+# whether the owner actually said anything: a SCOPE verdict needs a message
+# typed by the user after the previous `check` (or, for the first, after the
+# first planner started, which leaves out the `/workorder` invocation itself).
+# The ForgePact UI redesign spent four cap hits and several Fable-tier replans
+# on the owner's own scope; this keeps the exemption from becoming a way to
+# relabel a failed plan.
+SCOPE_VERDICT_RE = re.compile(r"^SCOPE:", re.M)
+
+
+def rule_r25_owner_scope(session: Session) -> RuleResult:
+    evidence = []
+    checks = _driver_amend_calls(session, "check")
+    planners = sorted((a.ts_first for a in all_subagents(session) if a.agent_type == "planner" and a.ts_first))
+    human = [t for t, _ in session.driver.human_messages]
+    since = planners[0] if planners else None
+    for call in checks:
+        if call.scope_verdict and not any((since is None or t > since) and t <= call.ts_start for t in human):
+            evidence.append(f"SCOPE verdict at {call.ts_start} with no owner message since "
+                            f"{since if since else 'the session start'}")
+        since = call.ts_start
+    return RuleResult("R25", "owner-scope", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -1677,6 +1705,7 @@ ALL_RULES = [
     rule_r22_verifier_suite_once,
     rule_r23_lane_git_mutation,
     rule_r24_cheap_routes,
+    rule_r25_owner_scope,
 ]
 
 

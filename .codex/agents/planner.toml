@@ -251,7 +251,31 @@ wait"; evidence in `docs/agents/workorder-calibration.md`).
 - **Slice to the end of the file safely.** A heading slice that looks for the
   next heading (`t.index('\\n## ', start)`) raises when its section is the
   last in the file. Use `find` and fall back to the end: `e = t.find('\\n## ',
-  s + 1); e = len(t) if e < 0 else e`.
+  s + 1); e = len(t) if e < 0 else e`. `plan_lint.py` flags it as
+  `eof-slice`, even for a section that is not last today.
+- **Walk the branch's own commits.** In a plan that merges `origin/main`, a
+  `git log A..HEAD` or `git rev-list A..HEAD` also walks main's merged-in
+  commits, so a count or a message grep over it is wrong the moment the
+  merge lands. Add `--first-parent`, or write `(all-parents)` on a
+  criterion that means them. `plan_lint.py` flags it as `merge-walk`.
+- **Plan when the inputs exist.** A plan written against the output of a
+  workorder that has not finished is written against a guess. Write it as
+  `status: DRAFT` with a `depends on: <slug>, ...` line in the header, give
+  the driver its outline, and stop. `plan_lint.py` refuses a DRAFT
+  (`plan-draft`), so no round starts from it. When the dependencies pass, it
+  is re-planned against what they produced and set `READY`. Never edit a
+  sibling workorder's plan from yours: say what it should change in your
+  report. In the redesign, the restyle and ship plans were rewritten nine
+  times between them before either ran a round, and the port and prep
+  planners edited plans that were not theirs.
+- **Design review comes first in a UI chain.** When the feature is a
+  redesign or a new screen, put the design checks where they are cheap
+  (SKILL.md rule 9). Run the impeccable detector and a critique on the
+  direction comps before any font or asset is bundled. Run the finish
+  reviewer after the first restyle round. Give the export workorder a
+  structure check of its export against the current panel's page (texts,
+  selectors, no runtime values). Phrase a design fix's check over its whole
+  class, not only the listed instances.
 - **Main moved: merge, stop only when it bites.** Write the precondition as:
   if `origin/main` has commits `HEAD` lacks, merge it when `git merge-tree
   --write-tree HEAD origin/main` exits 0 (no conflict) and `git diff
@@ -282,7 +306,8 @@ Two files. The driver skill and both later phases parse them by section.
 ```markdown
 # <short title>
 
-status: READY
+status: READY        (`DRAFT` while it waits on another workorder's result)
+depends on: <slug>, ...        (only on a DRAFT; the workorders it waits on)
 round: 0
 module: <submodule directory, or "hub">
 verdict: PLAN-READY

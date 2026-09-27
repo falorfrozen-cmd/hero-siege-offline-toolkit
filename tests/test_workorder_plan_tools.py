@@ -22,6 +22,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
@@ -198,6 +199,43 @@ class PlanLintTests(TempDirMixin, unittest.TestCase):
                      "grep -c 20260926 x.log"):
             with self.subTest(span=span):
                 self.assertEqual(plan_lint.lint_criterion(f"`{span}` exits 0"), [])
+
+    def test_fail_a_slice_that_raises_when_its_section_is_last(self):
+        # ForgePact UI redesign restyle/ship: `index` of "the next heading"
+        # raised on a correct tree once the section was the file's last.
+        bad = r"""py -3 -c "t=open('d.md').read(); i=t.index('\n## Goal'); print(t[i:t.index('\n## ', i + 1)])" """.strip()
+        self.assertEqual(plan_lint.lint_criterion(f"`{bad}` exits 0"), [("eof-slice", bad)])
+        # control: the same slice with `find`, and an index of a named heading
+        for good in (bad.replace("t.index('\\n## ', i + 1)", "t.find('\\n## ', i + 1)"),
+                     r"""py -3 -c "t=open('d.md').read(); print(t[t.index('\n## Goal'):t.index('\n## Steps')])" """.strip()):
+            with self.subTest(good=good):
+                self.assertEqual(plan_lint.lint_criterion(f"`{good}` exits 0"), [])
+
+    def test_fail_a_walk_that_counts_merged_in_commits(self):
+        # main-merge R0 / main-merge-2 R0: a range walk over a branch that
+        # merges origin/main counted main's commits as the branch's.
+        walk = "git -C ForgePact log --oneline forgepact-ui-base..HEAD | wc -l"
+        self.assertEqual(plan_lint.lint_criterion(f"`{walk}` prints `3`", merges=True), [("merge-walk", walk)])
+        # controls: --first-parent, a declared (all-parents), or a plan that never merges
+        self.assertEqual(plan_lint.lint_criterion(
+            f"`{walk.replace('log ', 'log --first-parent ')}` prints `3`", merges=True), [])
+        self.assertEqual(plan_lint.lint_criterion(f"`{walk}` prints `9` (all-parents)", merges=True), [])
+        self.assertEqual(plan_lint.lint_criterion(f"`{walk}` prints `3`"), [])
+        self.assertTrue(plan_lint.plan_merges("1. If main moved, merge it when clean."))
+        self.assertTrue(plan_lint.plan_merges("Run `git merge --no-edit origin/main`."))
+        self.assertFalse(plan_lint.plan_merges("Run `git merge-base HEAD origin/main`."))
+
+    def test_fail_a_draft_plan_naming_what_it_waits_on(self):
+        self.write("x-restyle-prep-plan.md", "# prep\n\nstatus: CAP\n\n## Goal\ng\n")
+        head, rest = PLAN.split("\n", 1)
+        draft_plan = f"{head}\n\nstatus: DRAFT\ndepends on: `x-restyle-prep`, `x-missing`\n{rest}"
+        rc, out = run(plan_lint.main, [self.write("x-plan.md", draft_plan), "--lanes-json"])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("plan: plan-draft: status: DRAFT, waits on x-restyle-prep (CAP), x-missing (no plan beside this one)", out)
+        self.assertNotIn('"lanes"', out)  # nothing a driver could launch
+        # control: the same plan once READY lints clean
+        rc, out = run(plan_lint.main, [self.write("x-plan.md", draft_plan.replace("status: DRAFT", "status: READY"))])
+        self.assertEqual(rc, 0, out)
 
     def test_continuation_lines_join_their_item(self):
         text = "## Acceptance criteria\n- [ ] the file\n      `docs/x.md` records it\n"
@@ -430,6 +468,31 @@ class AmendCheckTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("lines_changed: 20", out)
 
+    def test_a_goal_change_after_a_new_owner_decision_is_scope(self):
+        self.edit(self.plan, "Make the flag right.", "Make the flag and the launcher right.")
+        self.edit(self.context, "written\n", 'written\n### Decisions\n- owner, 2026-09-27: "do the launcher too"\n')
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("SCOPE: 1 new owner decision(s)", out)
+        self.assertIn("## goal changed", out)  # what it would have been
+
+    def test_control_an_owner_decision_already_there_at_save_is_not_scope(self):
+        # The decision was recorded before `save`, so nothing new came from
+        # the owner: the same goal change is a replan.
+        self.edit(self.context, "written\n", 'written\n### Decisions\nowner, 2026-09-26: "earlier call"\n')
+        run(amend_check.main, ["save", self.plan, self.context])
+        self.edit(self.plan, "Make the flag right.", "Make the flag and the launcher right.")
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REPLAN:", out)
+        self.assertNotIn("SCOPE", out)
+
+    def test_control_a_decision_by_someone_else_is_not_scope(self):
+        self.edit(self.plan, "Make the flag right.", "Make the flag and the launcher right.")
+        self.edit(self.context, "written\n", "written\n### Decisions\n- consultant, 2026-09-27: launcher too\n")
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+
     def test_check_without_save_and_bad_usage_exit_2(self):
         other = self.write("y-plan.md", AMEND_PLAN)
         self.assertEqual(run(amend_check.main, ["check", other])[0], 2)
@@ -537,6 +600,34 @@ class RunCriteriaTests(TempDirMixin, unittest.TestCase):
         rc, out = run(run_criteria.main, [plan, "--timeout", "1", "--out", str(self.tmp_path / "t")])
         self.assertEqual(rc, 0)
         self.assertIn("-> exit TIMEOUT", out)
+
+    def test_a_whole_suite_gets_the_long_timeout_by_default(self):
+        # ForgePact UI redesign: the Python suite ran 1,037-1,302 s, past the
+        # old flat 900 s default. A suite (or an unrecognised command) now gets
+        # 1800 s; a quick check keeps 900 s, and --timeout still wins.
+        seen = []
+        real = subprocess.run
+
+        def spy(cmd, *a, **kw):
+            seen.append((cmd[-1], kw.get("timeout")))
+            return real(["bash", "-c", "true"], *a, **{k: v for k, v in kw.items() if k != "timeout"})
+        plan = self.write("s-plan.md", "## Acceptance criteria\n\n"
+                                       "- [ ] `py -3 tools/run_tests_parallel.py` exits 0\n"
+                                       "- [ ] `grep -c x docs/x.md` prints `1`\n"
+                                       "- [ ] (class suite) `bash -c \"echo declared\"` exits 0\n")
+        with mock.patch.object(run_criteria.subprocess, "run", spy):
+            run(run_criteria.main, [plan, "--out", str(self.tmp_path / "s")])
+        by_cmd = {c: t for c, t in seen}
+        self.assertEqual(by_cmd["py -3 tools/run_tests_parallel.py"], 1800)
+        self.assertEqual(by_cmd["grep -c x docs/x.md"], 900)
+        self.assertEqual(by_cmd['bash -c "echo declared"'], 1800)
+        seen.clear()
+        with mock.patch.object(run_criteria.subprocess, "run", spy):
+            run(run_criteria.main, [plan, "--timeout", "60", "--out", str(self.tmp_path / "s2")])
+        plan_cmds = {"py -3 tools/run_tests_parallel.py", "grep -c x docs/x.md", 'bash -c "echo declared"'}
+        self.assertEqual({t for c, t in seen if c in plan_cmds}, {60})
+        self.assertEqual(run_criteria.timeout_for("browser", None), 900)
+        self.assertEqual(run_criteria.timeout_for("exclusive", None), 1800)
 
     def test_usage_errors_exit_2(self):
         self.assertEqual(run(run_criteria.main, [str(self.tmp_path / "missing-plan.md")])[0], 2)

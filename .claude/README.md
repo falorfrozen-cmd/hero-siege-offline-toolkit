@@ -730,6 +730,7 @@ one object.
 | R22 verifier-suite-once | a verifier that runs the same `unittest discover` suite (same `cd` directory, same arguments) more than once, counting ForgePact's `tools/run_tests_parallel.py` as the same suite as its serial `discover -s tests` — after a timeout, or to read another slice of the output |
 | R23 lane-git-mutation | a lane implementer (`implementer:<lane>:r<n>`, any lane but `join`) that ran a git command outside the read-only allow-list R16 uses. Lanes share one checkout and `.git/index.lock` fails instead of waiting, so only the join commits; the join and a laneless implementer are exempt |
 | R24 cheap-routes | an `amendment:` planner with no `tools/amend_check.py save` by the driver before it or no `check` after it; a second amendment with no implementer between it and the first; or two `patch-implementer` rounds back to back in one workflow launch. Both routes skip work, so each runs only where something other than the agent taking it has checked that it applies |
+| R25 owner-scope | a `tools/amend_check.py check` that printed `SCOPE:` (a plan change following a new owner decision, exempt from the replan cap and the tier ladder) with no message typed by the user since the previous `check`, or since the first planner started. The driver writes the decision line, so the audit checks the owner actually said something |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
@@ -760,12 +761,18 @@ acceptance checks) that did not pass; a research check's `fail`,
 and a split workorder on the operator's punctuation. `plan_lint.py <plan>`
 checks `## Acceptance criteria` for four defects that each cost a round there
 (forgepact-issue-14):
-a prose criterion, a heading slice not anchored on `
-`, a grep over a live
+a prose criterion, a heading slice not anchored on `\n`, a grep over a live
 capture, and `python` where the repository runs `py -3`. A fifth,
 `pinned-sha`, came from the ForgePact UI redesign: a bare commit hash in a
 backticked span, where a per-workorder tag or a merge-base expression belongs
-because the head it was copied from moves. The planner runs it
+because the head it was copied from moves. Three more came from the
+redesign's review (2026-09-27): `eof-slice`, an `.index` of "the next
+heading" that raises once its section is the file's last; `merge-walk`, a
+`git log`/`rev-list` range without `--first-parent` in a plan that merges
+main (a criterion that means every parent writes `(all-parents)`); and
+`plan-draft`, a plan still `status: DRAFT` because it waits on another
+workorder's result, named with its status from its `depends on:` line. The
+planner runs it
 before `PLAN-READY`; the driver runs it again before spawning an implementer.
 It also reads a plan's lanes (`### Lane: <name>` headings under `## Steps`,
 each with a `files:` line, plus one `### Join`) and reports five lane
@@ -792,7 +799,9 @@ as a barrier at its place in the plan), declared per criterion as `(class
 <c>)` and `(after <k>)` or recognised from the command, and still prints in
 plan order with the serial run's log numbers. `--item <id>` runs one item's
 `checks:` instead of the acceptance criteria. Without `--jobs` it runs
-serially, as it always has. `--changed-since <ref>` (plus `DIR=<ref>` per
+serially, as it always has. Each command's timeout is `--timeout` when
+given, else 1800 s for a `suite` or `exclusive` command and 900 s for the
+rest. `--changed-since <ref>` (plus `DIR=<ref>` per
 submodule, or `--changed-from <file>`) and `--failed <k,...>` run only the
 criteria a fix can reach: each whose `(reads `<glob>`)` a changed path
 matches, the failed ones, and any criterion with no map. It prints what it
@@ -812,7 +821,13 @@ commits one item's paths, per repository, under the checkout's commit lock;
 `workorder_lock.py <name> -- <cmd>` is that lock (an OS file lock the system
 drops when its holder exits) for anything else that must not run twice at
 once. `amend_check.py save|check <plan> [<context>]` decides whether a plan
-change was an amendment or a replan (SKILL.md Step 2).
+change was an amendment, the owner's own scope, or a replan (SKILL.md
+Step 2 and Step 4, "Owner scope is not a failure"). It prints `SCOPE:` when a
+change that would otherwise be a replan follows an `owner, <date>:` decision
+line the context gained since `save`. That exempts the change from the
+replan cap and the tier ladder, and audit R25 checks the owner did say
+something. A change small enough to be an amendment anyway prints
+`AMENDMENT`.
 Tests: `tests/test_workorder_plan_tools.py`.
 
 ### `tools/source_index.py` — go to the range, don't grep around

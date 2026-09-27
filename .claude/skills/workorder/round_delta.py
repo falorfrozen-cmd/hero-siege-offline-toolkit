@@ -93,6 +93,7 @@ blindness must fail into.
 
 import argparse
 import hashlib
+import datetime
 import json
 import re
 import subprocess
@@ -297,10 +298,15 @@ def cmd_snapshot(root, slug, round_):
     # A replan relaunches the round under the same number; the previous
     # launch's stop marker must not stop this launch's lanes.
     _stop_path(root, slug, round_).unlink(missing_ok=True)
+    # When the round started, for the round's Log heading (the round engine
+    # reads this line): a Log that records dates only cannot say how long a
+    # round took or how long it waited on the owner.
+    taken = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     snapshot = {
         "version": 2,
         "heads": compute_heads(root),
         "files": compute_state(root),
+        "taken_utc": taken,
     }
     path = _snapshot_path(root, slug, round_)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -309,6 +315,7 @@ def cmd_snapshot(root, slug, round_):
         fh.write("\n")
     name = path.relative_to(root).as_posix()
     print(name)
+    print(f"taken_utc: {taken}")
     return 0
 
 
