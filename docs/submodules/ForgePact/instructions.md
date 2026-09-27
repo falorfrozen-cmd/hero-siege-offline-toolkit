@@ -1030,7 +1030,9 @@ own `ai-review.yml` does not do this: the redesign is ForgePact's.
 - **review-animations** comes from a sparse checkout of this hub's
   `.claude/skills` (public, so the job's token reads it), rather than a copy in
   ForgePact, so the vendored Emil skills keep one source of truth pinned by
-  `.claude/skills/THIRD_PARTY.md`. It is `disable-model-invocation`, so the
+  `THIRD_PARTY.md`. The hub's source is `.agents/skills/`, and
+  `.claude/skills/` is its byte-for-byte mirror, so the path read here is
+  unchanged. It is `disable-model-invocation`, so the
   reviewer reads its `SKILL.md` with `Read`. A keyword scan of added lines
   (`transition`, `animation`, `@keyframes`, `@starting-style`, `--motion-`,
   `data-instant`, `prefers-reduced-motion`, ...) points it at likely motion

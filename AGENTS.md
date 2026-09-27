@@ -49,6 +49,9 @@ replan. Neither is counted against the pipeline's caps, and the files decide
 whether one applied (`round_delta.py size`, `tools/amend_check.py`), not the
 agent that took it.
 
+Codex runs the same hook dispatcher and gets the same agents and skills, from
+`.codex/` and `.agents/skills/` (§ "Shared Agent Tooling" below).
+
 If a hook blocks an edit, it is quoting a rule from this file — read what it
 printed rather than working around it. If you add a rule here that is
 mechanically checkable, add the check too; `.claude/README.md` says how.
@@ -57,31 +60,52 @@ Story and evidence: [docs/agents/rules-enforced.md](docs/agents/rules-enforced.m
 where `/workorder`'s budgets and tiers come from:
 [docs/agents/workorder-calibration.md](docs/agents/workorder-calibration.md)
 
-## Shared Agent Tooling
+## Shared Agent Tooling, for Claude Code and Codex Alike
 
-So that work from different contributors meets the same bar, the repository
-carries the tooling rather than leaving it to each machine. Claude Code picks
-up all of it automatically. Other agents do not, so read the files named here
-directly when a task calls for them:
+This project is developed with both Claude Code and ChatGPT's Codex, and every
+rule and tool here must work for both. This file is the rule file for both
+(Claude Code reads it through `CLAUDE.md`'s import). Each piece of tooling has
+one source and a derived copy for the other agent:
 
-- **Frontend and motion skills** in `.claude/skills/` (vendored from
-  `emilkowalski/skill`, MIT, see `.claude/skills/THIRD_PARTY.md`). Before you
+| What | Claude Code reads | Codex reads |
+|---|---|---|
+| Skills | `.claude/skills/` (mirror) | `.agents/skills/` (**source**) |
+| Review and phase agents | `.claude/agents/*.md` (**source**) | `.codex/agents/*.toml` |
+| MCP servers | `.mcp.json` (**source**) | `.codex/config.toml` |
+| `PostToolUse` checks | `.claude/settings.json` | `.codex/hooks.json` |
+
+Edit the source, then run `py -3 tools/sync_agent_tooling.py`;
+`tests/test_agent_tooling_sync.py` fails on a copy edited by hand or left
+stale. Never add a skill, agent or server for one agent only without saying
+why in `.claude/README.md` § "Codex"; `/workorder` is the one current
+exception, because it drives Claude Code's own subagent and workflow tools.
+
+- **Frontend and motion skills** in `.agents/skills/` (vendored from
+  `emilkowalski/skill`, MIT, see `.agents/skills/THIRD_PARTY.md`). Before you
   build or review UI or animation in `hub/`, `HSCraftSim/` or
   `HS-Offline-Tracker/src`, read the matching `SKILL.md`: `animate`,
   `review-animations`, `improve-animations`, `find-animation-opportunities`,
   `emil-design-eng`, `apple-design`, `mobile-native`, `pick-ui-library`,
   `prototype`, `animation-vocabulary`, `ask-sonner`.
-- **MCP servers** in `.mcp.json`: `tauri-hub`, `hs-drive`, `context7`, `github`
-  and `playwright`. Use `playwright` to drive and screenshot a browser-based
+- **Design plugins**: `impeccable` (the frontend design audit and polish
+  skill) and the `taste-skill` design skills. Claude Code enables them, with
+  `claude-code-setup`, from `.claude/settings.json` and offers to install them
+  the first time a contributor trusts the folder. Codex users install them once
+  per machine, user-wide: `npx impeccable install --providers=codex
+  --scope=global` and `npx skills add https://github.com/Leonxlnx/taste-skill
+  -g -a codex`. Never install them into this project, where they would land in
+  `.agents/skills/` or overwrite `.codex/hooks.json`. `impeccable` also adds a
+  design-detector hook under Claude Code; set `IMPECCABLE_HOOK_DISABLED=1` to
+  switch it off for yourself. Under Codex, run `$impeccable audit` on changed
+  UI instead.
+- **MCP servers**: `tauri-hub`, `hs-drive`, `context7`, `github` and
+  `playwright`. Use `playwright` to drive and screenshot a browser-based
   frontend, the same way `tauri-hub` drives the hub.
-- **Plugins**: `impeccable` (the frontend design audit and polish skill), the
-  `taste-skill` design skills and `claude-code-setup`, enabled for the project
-  in `.claude/settings.json`. Claude Code offers to install them the first time
-  a contributor trusts the folder. `impeccable` also adds a design-detector hook
-  that runs after edits to UI files; set `IMPECCABLE_HOOK_DISABLED=1` in your
-  environment to switch it off for yourself.
 
-`.claude/README.md` describes each of these.
+Codex loads `.codex/` only for a trusted project, asks you to approve
+`.codex/hooks.json` under `/hooks`, and should be started at the repository
+root. `.claude/README.md` describes each of these, and § "Codex" there lists
+what does not carry over.
 
 ## Offer `/workorder` When the Work Has Shape, and Respect "Plan Only"
 
@@ -686,6 +710,41 @@ for the same feature in the same module.
 
 This is the rule that keeps concurrent sessions in `.claude/worktrees/` from
 turning one feature into several overlapping PRs and a merge-conflict queue.
+
+## Every Pull Request Gets `ai-review`, and Its Comments Are Fixed Before Merge
+
+Whichever agent opens a pull request, in the hub or in a submodule's own
+repository:
+
+1. **Add the `ai-review` label when you open it** (`gh pr create --label
+   ai-review`, or `gh pr edit <n> --add-label ai-review`). The label is what
+   starts the AI review; a pull request without it gets no reviewer.
+2. **Wait for the review, then fix what it found** on the same branch, per the
+   rule above. Reply to each comment with what changed, or why nothing did.
+   After fixing, comment `@claude review` to have the fixes reviewed; the label
+   does not re-run on later pushes.
+3. **Do not merge, and do not report the pull request ready to merge, while
+   the review has not posted or a comment of it is unaddressed** — nor while CI
+   is red. Merging is still the owner's call, per pull request.
+
+The review workflow (`.github/workflows/ai-review.yml`) exists in this hub and
+in `ForgePact`, `HS-Offline-Tracker`, `hero-siege-item-editor` and
+`HS-AFK-Expedition`. The other submodules have neither the workflow nor the
+label. Before opening a pull request in one of them, check
+(`gh api repos/<owner>/<repo>/contents/.github/workflows`), and if it is
+missing, **offer the owner two options** rather than skipping the review
+silently:
+
+- **add the workflow** to that repository, copied from the nearest submodule
+  that has one, with the label created (`gh label create ai-review`); it also
+  needs the Claude GitHub App installed and the `CLAUDE_CODE_OAUTH_TOKEN`
+  secret, which only the owner can provide; or
+- **open a GitHub issue** in that repository to track adding it, on the Hero
+  Siege Tools project board.
+
+A pull request that edits `ai-review.yml` itself cannot be reviewed by it
+(the action requires the workflow to match the default branch); say so in the
+pull request instead of waiting for a review that will not come.
 
 ## YYToolkit Integration
 
