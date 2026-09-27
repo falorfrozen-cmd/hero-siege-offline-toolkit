@@ -1506,3 +1506,65 @@ test('items: a relaunch with every item done still re-reads a reviewer that ente
   assert.ok(r.calls.includes('fix-implementer:fix-1:r1'))
   assert.notEqual(r.result.outcome, 'PASS')
 })
+
+// --- 2j: after a small fix, re-run only the checks it can reach -------------
+const CRIT = (k, status, extra = {}) => ({ criterion: `c${k}`, status, evidence: 'e', k, ...extra })
+const reachRun = async (verifies, overrides = {}, args = BASE) => {
+  const prompts = {}
+  let v = 0
+  const reply = (label, prompt) => {
+    prompts[label] = prompt
+    return standard({
+      snapshot: HEADS([{ repo: '.', sha: 'HUB-SHA' }, { repo: 'ForgePact', sha: 'FP-SHA' }]),
+      delta: DELTA(['ForgePact/panel/src/lib/undo.js']),
+      verifier: () => verifies[Math.min(v++, verifies.length - 1)],
+      ...overrides,
+    })(label)
+  }
+  const { result, calls } = await run(args, reply)
+  return { result, calls, prompts }
+}
+const FAILED_2 = { verdict: 'IMPL-DEFECT', criteria: [CRIT(1, 'pass'), CRIT(2, 'fail'), CRIT(3, 'pass')], pending_human: [] }
+
+test('a fix round after a verify that passed every other criterion re-verifies only what it reaches, plus the failed one', async () => {
+  const scopedPass = { verdict: 'PASS', criteria: [CRIT(1, 'not-selected'), CRIT(2, 'pass'), CRIT(3, 'pass')], pending_human: [] }
+  const { result, prompts } = await reachRun([FAILED_2, scopedPass])
+  assert.ok(!prompts['verifier:r0'].includes('--changed-since'), 'round 0 of a launch is always the full set')
+  assert.ok(prompts['verifier:r0'].includes("in 'k'"), 'every verifier is asked for the plan numbers')
+  assert.ok(prompts['verifier:r1'].includes('--jobs auto --changed-since HUB-SHA --changed-since ForgePact=FP-SHA --failed 2 --out'), prompts['verifier:r1'])
+  assert.match(prompts['verifier:r1'], /status 'not-selected'.*never as 'pass'/)
+  assert.equal(result.outcome, 'PASS')
+  assert.equal(result.verifyScope, 'reach')
+  assert.match(result.note, /full set once at the final gate before push/)
+})
+
+test('a criterion a reach verify did not select keeps its standing for the next round', async () => {
+  const stillFailing = { verdict: 'IMPL-DEFECT', criteria: [CRIT(1, 'not-selected'), CRIT(2, 'fail'), CRIT(3, 'pass')], pending_human: [] }
+  const { prompts } = await reachRun([FAILED_2, stillFailing, PASS])
+  assert.ok(prompts['verifier:r2'].includes('--changed-since HUB-SHA'), 'criterion 1 still stands at pass')
+  assert.ok(prompts['verifier:r2'].includes('--failed 2 --out'))
+})
+
+test('the full set runs when a standing is unknown, a number is missing, or the delta or heads are unusable', async () => {
+  // Controls for the route above: each takes away one thing it needs.
+  const unattempted = { verdict: 'IMPL-DEFECT', criteria: [CRIT(1, 'unattempted'), CRIT(2, 'fail'), CRIT(3, 'pass')], pending_human: [] }
+  const unnumbered = { verdict: 'IMPL-DEFECT', criteria: [CRIT(1, 'pass'), { criterion: 'c2', status: 'fail', evidence: 'e' }], pending_human: [] }
+  const cases = [
+    ['a criterion that could not run', [unattempted, PASS], {}],
+    ['a criterion with no number', [unnumbered, PASS], {}],
+    ['round_delta exit 3', [FAILED_2, PASS], { delta: DELTA(['x'], { exit_code: 3 }) }],
+    ['no heads', [FAILED_2, PASS], { snapshot: DELTA([]) }],
+  ]
+  for (const [why, verifies, overrides] of cases) {
+    const { prompts } = await reachRun(verifies, overrides)
+    assert.ok(prompts['verifier:r1'], why)
+    assert.ok(!prompts['verifier:r1'].includes('--changed-since'), `${why}: expected the full set`)
+  }
+})
+
+test('a gate not set is a standing, not an unknown', async () => {
+  const gated = { verdict: 'IMPL-DEFECT', criteria: [CRIT(1, 'unattempted', { gate: 'live1: complete' }), CRIT(2, 'fail'), CRIT(3, 'pass')], pending_human: [] }
+  const { prompts } = await reachRun([gated, PASS], {}, { ...BASE, state: '## State\ngates: none\n' })
+  assert.ok(prompts['verifier:r1'].includes('--changed-since HUB-SHA'))
+  assert.ok(prompts['verifier:r1'].includes('--failed 2 --out'), 'the gated criterion is not re-run as failed')
+})

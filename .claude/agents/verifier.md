@@ -169,6 +169,32 @@ non-empty, those are findings regardless of whether the tests pass.
 attempted is a defect. Walk the checkbox list and confirm each one was
 *addressed*, not merely that nothing failed.
 
+## When you re-verify a fix
+
+A fix round after a verify that passed every criterion but the failed ones
+is re-verified by reach (SKILL.md Step 4, "Re-verify what the fix
+reaches"). Your dispatch then gives you the runner command with
+`--changed-since <base>` (one per repo) and `--failed <k,...>`. Run exactly
+that command, in place of the plain one in step 2. The runner prints the
+scope before it runs anything: the changed paths, then each criterion as
+`run` or `skip` with its reason.
+
+- Report every criterion it selected exactly as in step 2.
+- Report every criterion it prints as `NOT SELECTED (<why>)` with the
+  status `not-selected` and that reason as its evidence. Never report one
+  as `pass`: you did not run it.
+- Skip step 3's root suite unless a selected criterion runs it. The full
+  set, suite included, runs at the final gate before the push.
+- If it prints `scope: full -- <why>`, the delta was unknown or a shared
+  contract changed. This is an ordinary full verify, step 3 included.
+- If you cannot tell from the scope whether the fix could reach a criterion
+  it skipped (a criterion whose command reads files its `(reads ...)` does
+  not name, for instance), run the plan again without `--changed-since` and
+  `--failed`, and say why in your report.
+
+Do not narrow a verify on your own. Without those flags in your dispatch,
+you run every criterion.
+
 ## When you check one item
 
 In a streamed plan (`### Item:` groups), the workflow also spawns you as
@@ -226,6 +252,12 @@ UNATTEMPTED:
   - <criteria nothing in the diff addresses>
   - <criterion> (gate <token> not set)
 ```
+
+Name each criterion by its number in plan order, as the runner prints it
+(`criterion 3: ...`). A reach re-verify decides from those numbers which
+criteria stand as passed. A scoped verify adds one line to any of the three
+shapes: `SCOPE: reach (ran <k,...>; not selected <k,...>)`, copied from the
+runner's scope.
 
 A criterion gated on a gate that is not set never makes the verdict
 `IMPL-DEFECT` by itself. If it is the only thing outstanding, the verdict is

@@ -202,6 +202,11 @@ genuinely balanced", not "I would prefer someone else confirm this."
    after you, from scratch, so a full sweep from you is the same work paid
    twice — measured: a two-sentence release-notes fix re-ran all 23 criteria,
    the suite four times and both syntax checks, 41 turns for a one-file delta.
+   The runner computes that set from the plan's `(reads ...)` map: `py -3
+   tools/run_criteria.py <plan> --jobs auto --changed-since <this round's
+   base> --failed <k,...>`, with the base from `round_delta.py heads`. The
+   verifier after you re-checks the same way (SKILL.md Step 4, "Re-verify
+   what the fix reaches").
 
 7. **Match the surrounding code.** Comment density, naming, error style, test
    layout — a change that reads as foreign is a change the reader distrusts.

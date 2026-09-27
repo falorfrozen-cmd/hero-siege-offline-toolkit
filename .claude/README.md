@@ -99,7 +99,7 @@ next one a document rather than a conversation. They are driven by
 |---|---|---|
 | `planner` | opus | researches the change and writes `.claude/workorders/<slug>-plan.md`, whose acceptance criteria are commands and files, never prose |
 | `implementer` | opus | executes the steps; returns `PLAN-DEFECT` with evidence rather than improvising around a plan that turns out to be wrong |
-| `verifier` | haiku | runs the acceptance criteria (first through `tools/run_criteria.py --jobs auto`, which runs every command-shaped criterion in one call, independent ones at once), or one item's `checks:` in a streamed plan, and reports what they actually printed; read-only, and judges nothing it cannot execute |
+| `verifier` | haiku | runs the acceptance criteria (first through `tools/run_criteria.py --jobs auto`, which runs every command-shaped criterion in one call, independent ones at once; after a fix, only the criteria the fix reaches plus the failed ones), or one item's `checks:` in a streamed plan, and reports what they actually printed; read-only, and judges nothing it cannot execute |
 | `consultant` | opus | answers **one** narrow question from a phase that hit a decision above its tier, then stops; never implements, plans or reviews |
 | `live-operator` | sonnet | runs a workorder's written `### Live procedure <n>` against the real game through `hs-drive` — its own save backup, the positive control first, raw output to `<slug>-live-<n>.md` — and hands every in-game action a person must take back to the driver; never installs a build, never judges the mechanism |
 | `scribe` | haiku | pastes a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Edit` only; spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
@@ -782,7 +782,15 @@ as a barrier at its place in the plan), declared per criterion as `(class
 <c>)` and `(after <k>)` or recognised from the command, and still prints in
 plan order with the serial run's log numbers. `--item <id>` runs one item's
 `checks:` instead of the acceptance criteria. Without `--jobs` it runs
-serially, as it always has.
+serially, as it always has. `--changed-since <ref>` (plus `DIR=<ref>` per
+submodule, or `--changed-from <file>`) and `--failed <k,...>` run only the
+criteria a fix can reach: each whose `(reads `<glob>`)` a changed path
+matches, the failed ones, and any criterion with no map. It prints what it
+selected and skipped and why, and falls back to every criterion when the
+delta is unknown or a shared contract changed (SKILL.md Step 4, "Re-verify
+what the fix reaches"). `plan_lint.py` warns, without failing, `no-reads` on
+a criterion with no map and `reads-nothing` on a glob that matches no tracked
+file.
 `plan_lint.py` also reads a plan's items (`### Item: <id>` under `## Steps`,
 each with `files:`, `checks:` and optional `after:`/`shares:`/`owner:`) and
 reports `item-overlap` (an overlap neither item declares), `item-no-files`,
