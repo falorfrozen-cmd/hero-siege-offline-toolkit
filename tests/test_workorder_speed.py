@@ -112,6 +112,25 @@ class ConcurrencyTests(SpeedCase):
         self.assertEqual(report["aggregate"]["concurrency"], 0.5)  # 2000 s of agents over 4000 s busy
         self.assertEqual([s["concurrency"] for s in report["sessions"]], [1.0, 0.333])
 
+    def test_a_workflow_agents_copy_in_subagents_counts_once(self):
+        # The harness can later copy a launch's agent transcript up into
+        # `subagents/`, without its meta file (the bug batch's session gained
+        # 118 such copies after its snapshot, doubling its agent minutes).
+        b = self.builder().driver([twa.turn(0, 0), twa.turn(1000, 1)])
+        b.workflow_agent("wf_a", "implementer", "item-implementer:x:a1:r0", span(100, 500, 10),
+                         agent_id="a00000000000000aa")
+        copy = b.projects_dir / b.project / b.session_id / "subagents" / "agent-a00000000000000aa.jsonl"
+        twa.write_jsonl(copy, span(100, 500, 10))
+        # Control: an ad-hoc agent of its own still counts.
+        b.subagent("planner", "Plan it", span(600, 800, 20))
+        a = self.aggregate(b)
+        self.assertEqual(a["serial_minutes"], round(600 / 60, 1))
+        self.assertEqual(a["concurrency"], 0.6)
+        self.assertEqual(a["parallel_share"], 0.0)
+        self.assertEqual(a["phases"]["implement"]["sole_minutes"], round(400 / 60, 3))
+        self.assertEqual(a["phases"]["other"]["agents"], 0)
+        self.assertEqual(a["phases"]["plan"]["agents"], 1)
+
 
 class OwnerWaitTests(SpeedCase):
     def test_a_typed_message_ends_an_owner_wait(self):

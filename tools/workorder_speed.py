@@ -154,6 +154,11 @@ def load(path: Path, until: Optional[datetime]) -> Loaded:
     session.subagents = [a for a in session.subagents if a.ts_first]
     session.workflow_runs = {k: [a for a in v if a.ts_first] for k, v in session.workflow_runs.items()}
     session.workflow_runs = {k: v for k, v in session.workflow_runs.items() if v}
+    # The harness can later copy a launch's agent transcript up into
+    # `subagents/` under the same file name and without its meta file; the
+    # launch's copy is the one with a label, so the other is not an agent.
+    in_launch = {a.path.name for v in session.workflow_runs.values() for a in v}
+    session.subagents = [a for a in session.subagents if a.path.name not in in_launch]
     raw = []
     for rec in wa.iter_jsonl(path):
         ts_raw = rec.get("timestamp")
