@@ -2231,8 +2231,9 @@ sandbox `_SandboxServer` (a queue of 128); ForgePact#112 carries the identical
 change, so either merges first, and repoints `test_sandbox_port.py`'s fake
 server at it. Running the group with the runner's four cores imitated locally
 (`start /affinity F`) showed what else that load does to the unchanged tree:
-a sandbox start past `startSandbox`'s old 30 s limit (it takes about 4.5 s
-idle, 3.7 s of it importing `hs_game_sdk`, and took up to 41 s there), after
+a sandbox start past `startSandbox`'s old 30 s limit (it took about 4.5 s
+idle, 3.7 s of it importing `hs_game_sdk`, and up to 41 s there; 0.76 s idle
+since the SDK loads its tables on first use, Known Limitations 31), after
 which the seed file of the sandbox still starting was deleted, so it failed
 on the missing file, and the sandbox was left running; that leaked sandbox
 held `npm run e2e:motion`'s pipes, and `_npm`'s `subprocess.run(timeout=900)`
@@ -2531,10 +2532,13 @@ manifest.
     - **What they do not undo.** There is no by-name undo for a created item or a moved position, so a test that uses them restores its save backup afterwards - the hub's tools require one taken before the launch - and closes the stash (`stashclose`) before it stops, since the close is the stash's save (RUNTIME_DATA_MODELS § 17, the save invariant).
     - **Not built:** `stashopen` (live 2's one by-name open was followed by the game dying on the next command; causality not established; not re-called) and `stashmove` (moved to `hs-drive-stash-move-research`).
     - **Tests:** `tests/test_stash_bag_layout_contract.py` (`StashBagPlayerVerbs`, `MenuLayoutCellRows`); the hub's `tests/test_hs_drive_mcp_stash.py`.
-31. **Starting a panel sandbox costs about 4.5 s, 3.7 s of it `hs_game_sdk`'s package import (measured 2026-09-28):**
-    - `import forgepact` imports `hs_game_sdk`, whose `__init__` imports every generated table, and building `hs_game_sdk.sprites.GameSprite`, an `IntEnum` of 32,280 members, takes about 3.7 s on an idle machine (`py -3 -X importtime`), every time: the bytecode is cached, the enum is built at import. `forgepact.py` uses none of the sprites.
+31. **RESOLVED 2026-09-28 — starting a panel sandbox cost about 4.5 s, 3.7 s of it `hs_game_sdk`'s package import; the SDK now loads its tables on first use:**
+    - `import forgepact` imported `hs_game_sdk`, whose `__init__` imported every generated table, and building `hs_game_sdk.sprites.GameSprite`, an `IntEnum` of 32,271 members, took about 3.7 s on an idle machine (`py -3 -X importtime`), every time: the bytecode is cached, the enum is built at import. `forgepact.py` uses none of the sprites.
     - Every browser suite starts several sandboxes, so beside three other suites on four cores a start took up to 41 s. That is why `startSandbox` allows 120 s (see "Parallel load and the panel sandbox" under "The build half").
-    - The panel itself imports the same package, so `ForgePact.exe` presumably pays the same at every start; not measured on the frozen build. A lazy package import (the tables loaded on first use) would cut both; not attempted.
+    - **The fix is in the hub's SDK.** `hs_game_sdk` now imports its five generated tables the first time one of their names is used, so the panel builds only `objects` and `scripts`. On Python 3.13 (medians), `import forgepact` went from 4.44 s to 0.56 s and a sandbox start (spawn to `port=`) from 4.49 s to 0.76 s.
+    - **The frozen build paid it too.** A ForgePact.exe built with `build_release.py`'s PyInstaller command answered `/api/state` 5.35 s after launch with the old SDK and 1.36 s with the new one. The CI-built 2.0.0 draft and 1.4.7 exes (Python 3.14) took 5.49 s and 6.38 s. No ForgePact change is needed: `forgepact-release.yml` checks `hs-game-sdk` out from the hub at build time, so the next package built after the hub change has it.
+    - Numbers, the enum cost on each Python version, and why PyInstaller still bundles the tables: hs-game-sdk guide, "Import cost: the tables load on first use".
+    - **Still paid:** `forgepact.py` imports nine SDK names it never uses (`GameObject`, `GameScript` and seven more; it uses only the Satanic pools), so the panel still builds `objects` and `scripts`: about 0.3 s on 3.13 and 2.4 s on 3.10. Importing only `SATANIC_BUFFS` and `SATANIC_DEBUFFS` would remove that; not attempted.
 
 ---
 
