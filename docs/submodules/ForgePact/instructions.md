@@ -2172,7 +2172,10 @@ checkouts, panel build, contract tests, compile and packaging, and keeps the
 zip as the `forgepact-release-zip` artifact on every run (on a dry run that
 artifact is the only output). `panel-browser-tests` runs beside it on its own
 runner: the tag's panel built with Node, then the panel browser suites (the
-`panel-browser` group, nine modules since 2026-09-28).
+`panel-browser` group, nine modules since 2026-09-28), with `hs-game-sdk`
+checked out from the hub at `hub_ref` beside ForgePact as `build` does (added
+2026-09-28: without it the Satanic pool is empty and five suites failed on the
+environment, release run 36371697982).
 `upload` (`ubuntu-latest`, the only job that writes to the draft) needs both,
 skips on a dry run, downloads the artifact, refuses unless it hashes to the
 `zip_hash` `build` reported, then runs guard 2 and `gh release upload`.
