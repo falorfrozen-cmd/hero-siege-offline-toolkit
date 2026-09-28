@@ -1584,7 +1584,7 @@ observed is measured only as far as live 3's V0 measured it - placement in
 map 0 and the preferred grid, confirmed by the verb's own re-read in the same
 session, with no drag, save or reload.
 
-**Moving items into the stash: plugin verbs, no tool yet.** ForgePact 2.0.2's
+**Moving items into the stash: plugin verbs, no tool yet.** ForgePact 2.1.0's
 Move all into the stash (ForgePact #68, `ForgePact/docs/stash-move-research.md`
 § Ship design) adds two player-build verbs a session can send through
 `hs_command` today: `stashmoveall 1|0|run` (the switch, and a run that moves
