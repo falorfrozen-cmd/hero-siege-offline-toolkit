@@ -2549,16 +2549,28 @@ part 2, workorder `forgepact-issue-95`, 2026-09-28):
 - The frame cost of hidden items: part 1 did not observe it (the filter-off
   window read 7.08 ms average and 40.7 ms max; no clean strict-filter window was
   taken, the one read holding a 6.5 s stall from an unrelated gold pickup).
-  Part 2 measured it: 2,736 hidden items awake against the same items put to
-  sleep with `instance_deactivate_object` added 6.66 ms (pair 2) and 10.57 ms
-  (pair 1, a mixed window) to the average frame interval, and frameprof's
-  `working` rose 10 and 12 points, saturating at 100%. That is **about
-  2.4-5.6 µs of frame time per hidden item per frame**, assuming the cost is
-  linear, which was not tested. The awake profile's heaviest event was
-  `Loot_Manager_obj`'s Begin Step (42.7% of the frame); what it does per item
-  was not read. Shown, the same items cost about 1.21 ms more (their Draw).
-  **Measured** (part 2, `forgepact-issue-95` Live 1, uncapped at about 140 fps
-  asleep).
+  Part 2 measured it for one arrangement of items: 2,736 copies of one
+  equipment template, spawned by `lootspawn` at random offsets within ±600 x
+  ±400 px of the player (so dense and near or on screen) and hidden by writing
+  `lootFilterVisible` with `loothide`, because the game's own filter showed the
+  template; in one zone, uncapped at about 140 fps asleep. Awake against the
+  same items put to sleep with `instance_deactivate_object`, they added
+  6.66 ms (pair 2) and 10.57 ms (pair 1, a mixed window) to the average frame
+  interval, and frameprof's `working` rose 10 and 12 points, saturating at
+  100%. That is **about 2.4-5.6 µs of frame time per hidden item per frame for
+  that pile**. Whether the per-item cost holds for items spread across a zone
+  or off screen, for items the game's filter hid, or at other counts (the
+  linearity) was not measured, and three things say it may not: Alarm 9 calls
+  `OnScreen`, so position takes a different path; the awake profile's heaviest
+  event, `Loot_Manager_obj`'s Begin Step (42.7% of the frame), does per-item
+  work that was neither read nor profiled asleep and may depend on proximity
+  or density; and 9-19% of the spawn calls returned no instance, which would
+  fit the pile running out of free positions (a cause not established, see
+  below). **Measured** (part 2,
+  `forgepact-issue-95` Live 1), under those conditions only. What the same
+  items cost shown was not established: one unpaired capture read 1.21 ms
+  more, taken while the check it annexes (`cost-visible-working`) failed and
+  not reconciled with that capture's profile; see the research doc.
 - A zone's end runs Clean Up, not Destroy, on each hidden ground item: 809 of
   809 Clean Up runs, 0 Destroy, and `instance_number(Loot_Ground_obj)` read 0
   after the exit. So a hidden item does not outlive its zone. **Measured**
