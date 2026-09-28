@@ -2235,10 +2235,13 @@ killed before its seed goes; `_npm` ends the suite's whole process tree at its
 900 s (`_run_tree`); `panel-browser-tests` has `timeout-minutes: 45`, which
 also covers tags cut before the fix; each sandbox's stderr line is labelled
 with its port and a failed `state()` says whether the sandbox was running;
-and an oracle mismatch lists how each of its POSTs ended. On that imitation
-the unchanged tree failed 4 of 8 modules (1,540 s, one hung) and the changed
-tree passed 9 of 9 tests (389 s). `DEFAULT_GROUP_LIMITS` stays at 4: the
-queue, not the number of suites, refused the connections.
+and an oracle mismatch lists how each of its POSTs ended. On that imitation,
+under the heavier of the loads seen (sandbox starts up to 41 s), the unchanged
+tree failed 4 of 8 modules (1,540 s, one hung); at a moderate load (starts
+under 14 s) `main`, #108's head and the changed tree all passed, as CI's
+attempt 2 did, so the reproduction above, not a green run, is what shows the
+fix. `DEFAULT_GROUP_LIMITS` stays at 4: the queue, not the number of suites,
+refused the connections.
 
 `test_panel_perf` is left out of release CI (`--exclude-module
 test_panel_perf`, passed only when the tag has that module). It holds frame
