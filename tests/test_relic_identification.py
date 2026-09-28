@@ -133,5 +133,45 @@ class TestContractAlignedWithCpp(unittest.TestCase):
         self.assertEqual(scan_relic_levels(container), {2: 10})
 
 
+# The shapes the game really produces for an equipped relic (#93, read
+# 2026-09-27 from a character save). A relic's definition carries `c: 0`, not
+# 16, and no `itemType`: the class lives in the save key's trailing number and,
+# in memory, on the item instance beside its `itemDefinitionStruct`. Neither
+# shape matched the tier-field rule, so the scan found no equipped relic at all.
+SAVE_EQUIPPED_ITEMS = {
+    "equipped_items": {
+        "0-0-209562107245-16": {"data": {"w": 1, "g": 11, "o": 10, "b": 135, "a": 473176577, "j": 0, "c": 0}},
+        "0-0-210021549852-16": {"data": {"g": 10, "o": 8, "b": 15, "c": 0}},
+        "0-0-210025648571-7": {"data": {"g": 7, "p": 5, "b": 49, "c": 1}},
+    }
+}
+RELIC_INSTANCE = {"itemType": 16, "itemDefinitionStruct": {"b": 109, "c": 0, "o": 10, "g": 14}}
+ORDINARY_GLOVE_INSTANCE = {"itemType": 4, "itemDefinitionStruct": {"b": 18, "c": 1, "g": 4}}
+MATERIAL_STACK_INSTANCE = {"itemType": 14, "itemDefinitionStruct": {"b": 51, "o": 99}}
+
+
+class TestMeasuredEquippedShapes(unittest.TestCase):
+    def test_equipped_relic_from_save_shape(self):
+        """The key's class 16 identifies the relic; `data.b` / `data.o` are id and level."""
+        self.assertEqual(scan_relic_levels(SAVE_EQUIPPED_ITEMS), {135: 10, 15: 8})
+        self.assertEqual(maxed_relic_ids(SAVE_EQUIPPED_ITEMS), {135})
+
+    def test_item_instance_shape(self):
+        """`itemType` 16 on the instance identifies it; id and level come from its definition."""
+        container = {"equippedItems": [RELIC_INSTANCE]}
+        self.assertEqual(scan_relic_levels(container), {109: 10})
+        self.assertEqual(maxed_relic_ids(container), {109})
+
+    def test_equipped_ordinary_item_is_not_a_relic(self):
+        """Negative control: an equipped unique glove, as an instance and as a save entry."""
+        self.assertEqual(scan_relic_levels({"equippedItems": [ORDINARY_GLOVE_INSTANCE]}), {})
+        save = {"equipped_items": {"0-0-210025648500-4": {"data": {"b": 18, "c": 1, "g": 4}}}}
+        self.assertEqual(scan_relic_levels(save), {})
+
+    def test_material_stack_instance_is_not_a_relic(self):
+        """Negative control: a stack's `o` is not a relic level without the relic class."""
+        self.assertEqual(scan_relic_levels({"inventory": [MATERIAL_STACK_INSTANCE]}), {})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -24,7 +24,10 @@ if str(SDK_PY_PATH) not in sys.path:
     sys.path.insert(0, str(SDK_PY_PATH))
 
 from hs_game_sdk import (  # noqa: E402
+    EquipmentSlot,
     GENERAL_CONTAINER_FIELDS,
+    ITEM_INSTANCE_DEFINITION_FIELD,
+    ITEM_INSTANCE_TYPE_FIELD,
     ItemType,
     MAX_SCAN_DEPTH,
     MAX_SCANNED_ARRAY_LENGTH,
@@ -32,6 +35,7 @@ from hs_game_sdk import (  # noqa: E402
     RELIC_CONTAINER_FIELDS,
     RELIC_ID_FIELDS,
     RELIC_ID_LIMIT,
+    RELIC_ITEM_CLASS,
     RELIC_LEVEL_FIELDS,
     RELIC_ONLY_FIELD,
     RELIC_RARITY_TIER,
@@ -61,6 +65,21 @@ CROSS_LANGUAGE_CASES = {
     "relic_levels_numeric": ({"relic_levels": [0, 0, 10]}, {2: 10}),
     "inventory_cls_item": ({"inventory": [{"b": 42, "cls": 16, "o": 10}]}, {42: 10}),
     "inventory_numeric_negative_control": ({"inventory": [0, 0, 10]}, {}),
+    # #93: the item instance the game really produces - the class on the
+    # instance, id and level on its definition (whose `c` is 0) - and two
+    # negative controls.
+    "equipped_slot_relic_instance": (
+        {"equippedItems": [{"itemType": 16, "itemDefinitionStruct": {"b": 109, "c": 0, "o": 10, "g": 14}}]},
+        {109: 10},
+    ),
+    "equipped_ordinary_instance_negative_control": (
+        {"equippedItems": [{"itemType": 4, "itemDefinitionStruct": {"b": 18, "c": 1, "g": 4}}]},
+        {},
+    ),
+    "material_stack_instance_negative_control": (
+        {"inventory": [{"itemType": 14, "itemDefinitionStruct": {"b": 51, "o": 99}}]},
+        {},
+    ),
 }
 
 
@@ -229,9 +248,23 @@ class TestCppSdkBehaviour(unittest.TestCase):
             ("maxed_level", str(MAXED_RELIC_LEVEL)),
             ("max_scan_depth", str(MAX_SCAN_DEPTH)),
             ("max_array_length", str(MAX_SCANNED_ARRAY_LENGTH)),
+            ("relic_item_class", str(RELIC_ITEM_CLASS)),
+            ("instance_type_field", ITEM_INSTANCE_TYPE_FIELD),
+            ("instance_definition_field", ITEM_INSTANCE_DEFINITION_FIELD),
         ]:
             with self.subTest(contract=label):
                 self.assertEqual(self._contract_fields(label), [str(python_value)])
+
+        # The equipped relic slots C++ reads are the RELIC_* members of
+        # EquipmentSlot, the Python binding's name for the same range.
+        self.assertEqual(
+            self._contract_fields("relic_slots"),
+            [str(int(slot)) for slot in EquipmentSlot if slot.name.startswith("RELIC_")],
+        )
+
+    def test_equipped_relic_slots_resolve_to_the_maxed_relics(self):
+        """#93: global.equippedItems' relic slots, resolved through the game's own scripts."""
+        self.assertIn("equipped_slot_maxed_relics=2", self.output, self.output)
 
     def test_compiled_item_type_table_matches_python(self):
         """The compiled kItemTypes, not the header text tests/test_item_type_parity.py parses.

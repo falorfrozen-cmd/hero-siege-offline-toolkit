@@ -1,8 +1,10 @@
 """Player instance structures, equipment slot definitions, and container scanning helpers."""
 
+import re
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Dict, List, Optional, Set, Any
+from .item_type import ItemType
 from .structs import ItemDefinitionStruct
 
 
@@ -76,13 +78,28 @@ RELIC_TIER_FIELDS = ("c", "cls", "itemType")
 RELIC_LEVEL_FIELDS = ("o", "level", "relicLevel")
 #: Relic-specific field whose mere presence identifies a relic.
 RELIC_ONLY_FIELD = "relicLevel"
+#: Item class (ItemType) of a relic. A relic's definition carries no class and
+#: `c` 0 (read from a character save, 2026-09-27; #93), so on the game's own
+#: items the class is on the item instance, or in the save key's last number.
+RELIC_ITEM_CLASS = int(ItemType.RELIC)
+#: Field of an item instance holding its class; a dict carrying it (with a
+#: definition) is an item instance.
+ITEM_INSTANCE_TYPE_FIELD = "itemType"
+#: Field of an item instance holding its definition (`b` id, `o` level, ...).
+ITEM_INSTANCE_DEFINITION_FIELD = "itemDefinitionStruct"
 #: Containers holding item structs only; a bare number here means nothing.
-GENERAL_CONTAINER_FIELDS = ("equippedItems", "inventory", "bags")
+#: `equipped_items` is the save file's name for the equipped items.
+GENERAL_CONTAINER_FIELDS = ("equippedItems", "equipped_items", "inventory", "bags")
 #: Containers where a numeric array really is `relic id -> level`.
 RELIC_CONTAINER_FIELDS = (
     "inventory_relic_tab", "pRelics", "relic_array", "relic_inventory",
     "relic_levels", "relic_tab", "relicPage", "relics", "relics_collected",
 )
+
+# A save's item key, `<x>-<y>-<stamp>-<class>` (for example
+# `0-0-209562107245-16`): its trailing number is the item's class. Python-only,
+# because only Python reads saves; C++ resolves equipped items in memory.
+_ITEM_KEY = re.compile(r"\d+-\d+-\d+-(\d+)")
 
 
 def _as_int(value: Any) -> Optional[int]:
@@ -99,12 +116,14 @@ def _record(out_levels: Dict[int, int], relic_id: int, level: int) -> None:
         out_levels[relic_id] = level
 
 
-def _scan_item(item: Dict[str, Any], out_levels: Dict[int, int]) -> None:
+def _scan_item(item: Dict[str, Any], out_levels: Dict[int, int], identified: bool = False) -> None:
     """Records `item` only on positive relic identification.
 
     A level-shaped field is not evidence: `p` is a star upgrade count and stacks
-    carry `amount`/`count`/`qty`, so identity comes from the rarity tier or the
-    relic-specific level field, and the level only from RELIC_LEVEL_FIELDS.
+    carry `amount`/`count`/`qty`, so identity comes from the rarity tier, the
+    relic-specific level field or, with `identified`, the class of the item
+    instance or save key that holds this definition; the level only from
+    RELIC_LEVEL_FIELDS.
     """
     relic_id = None
     for id_field in RELIC_ID_FIELDS:
@@ -114,7 +133,7 @@ def _scan_item(item: Dict[str, Any], out_levels: Dict[int, int]) -> None:
     if relic_id is None or not 0 <= relic_id < RELIC_ID_LIMIT:
         return
 
-    is_relic = any(_as_int(item.get(f)) == RELIC_RARITY_TIER for f in RELIC_TIER_FIELDS)
+    is_relic = identified or any(_as_int(item.get(f)) == RELIC_RARITY_TIER for f in RELIC_TIER_FIELDS)
     if RELIC_ONLY_FIELD in item:
         is_relic = True
     if not is_relic:
@@ -128,6 +147,28 @@ def _scan_item(item: Dict[str, Any], out_levels: Dict[int, int]) -> None:
                 level = value
 
     _record(out_levels, relic_id, level)
+
+
+def _scan_classified(container: Dict[Any, Any], out_levels: Dict[int, int]) -> None:
+    """The two shapes where an item's class sits outside its definition (#93).
+
+    An item instance (`itemType` beside `itemDefinitionStruct`, the in-memory
+    shape C++ reads too) and a save entry keyed `x-y-<stamp>-<class>` wrapping
+    `{"data": definition}`. Class RELIC_ITEM_CLASS identifies the definition as
+    a relic; any other class adds nothing.
+    """
+    definition = container.get(ITEM_INSTANCE_DEFINITION_FIELD)
+    if ITEM_INSTANCE_TYPE_FIELD in container and isinstance(definition, dict):
+        if _as_int(container[ITEM_INSTANCE_TYPE_FIELD]) == RELIC_ITEM_CLASS:
+            _scan_item(definition, out_levels, identified=True)
+
+    for key, value in container.items():
+        if not isinstance(key, str) or not isinstance(value, dict):
+            continue
+        match = _ITEM_KEY.fullmatch(key)
+        data = value.get("data")
+        if match and int(match.group(1)) == RELIC_ITEM_CLASS and isinstance(data, dict):
+            _scan_item(data, out_levels, identified=True)
 
 
 def scan_relic_levels(
@@ -151,6 +192,7 @@ def scan_relic_levels(
 
     if isinstance(container, dict):
         _scan_item(container, out_levels)
+        _scan_classified(container, out_levels)
         for key, value in container.items():
             scan_relic_levels(
                 value,
