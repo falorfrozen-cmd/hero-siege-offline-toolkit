@@ -1,0 +1,47 @@
+{
+  "$schema_note": "Hand-curated record of the numbers ForgePact's mining research measured, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/mining_reward_model.py never reads it; tests/test_mining_reward_model.py reads both and checks that the model, with ForgePact's levers written as input transforms, reproduces each entry. The mechanism, in our own words, is docs/models/mining-reward-spec.md. Every entry has `id` (MR1, MR2, ...), `kind` (`baseline` = vanilla, no lever; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`measured`, `qualitative`, `approximate` or `our_code`), `date` (the measurement date), `source` (a list of {path, section} or {repo, commit}; paths are relative to the hub root, `section` is text that appears in that file), `scripts` (every `gml_Script_*` the entry involves, all bound in hs_game_sdk.scripts.GameScript), `what` (the observation), `values` (the recorded numbers), `model` (what the model must show) and exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). MR1 to MR3 were recorded on 2026-09-23, with native HookOneScript detours in place; the results of issue #36's Live procedure 1 are added after it runs.",
+  "measurements": [
+    {
+      "id": "MR1",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-23",
+      "source": [
+        { "path": "ForgePact/docs/mining-ore-research.md", "section": "## Live verification (2026-09-23)" }
+      ],
+      "scripts": ["gml_Script_MiningNodeStepMain", "gml_Script_LootGroundCreate"],
+      "what": "Mining Ore Multiplier at x10, Miner's Helmet off: the adapter logged `first reward dispatched 6 -> 60 (one native drop call)`, and the owner confirmed the amounts in play. The vanilla side of the record is one ore stack of 6.",
+      "values": { "original": 6, "multiplier": 10, "dispatched": 60, "helmet": false, "native_drop_calls": 1 },
+      "model": "A node list with six entries of one kind drops one stack with o = 6 at rolls 1 and multiplier 1; the same stack at multiplier 10 is one stack of 60.",
+      "reproduced_by": "tests.test_mining_reward_model.BaselineTests.test_baseline_one_dig_pays_the_node_list_once"
+    },
+    {
+      "id": "MR2",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-23",
+      "source": [
+        { "path": "ForgePact/docs/mining-ore-research.md", "section": "## Live verification (2026-09-23)" }
+      ],
+      "scripts": ["gml_Script_MiningNodeStepMain", "gml_Script_LootGroundCreate"],
+      "what": "Miner's Helmet worn (x4, replacing the slider): two digs logged `10 -> 40` and `13 -> 52`.",
+      "values": { "helmet_factor": 4, "pairs": [[10, 40], [13, 52]] },
+      "model": "With the helmet, each stack is x4 whatever the multiplier; at three rolls every run's stack is x4 again.",
+      "reproduced_by": "tests.test_mining_reward_model.TargetTests.test_target_three_rolls_pay_three_sets_of_stacks"
+    },
+    {
+      "id": "MR3",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-09-23",
+      "source": [
+        { "path": "ForgePact/docs/miner-helmet-prototype.md", "section": "## Ownership fix (2026-09-23)" }
+      ],
+      "scripts": ["gml_Script_MiningNodeStepMain"],
+      "what": "Each reward was logged with the node's state `miningActive=true miningPlayer=-4 stop=0 range=48 rangeMax=48 dir=1 hp=1`, and the node read `hp=0` right after; a dig completes in the step of the key press.",
+      "values": { "hp_before": 1, "hp_after": 0, "range": 48, "rangeMax": 48, "miningPlayer": -4, "stop": 0 },
+      "model": "One vanilla dig pays the node's list once and leaves hp at 0; the extra-rolls transform also ends at hp 0, whatever the roll count and whether a re-run pays.",
+      "reproduced_by": "tests.test_mining_reward_model.BaselineTests.test_mr3_a_dig_leaves_the_node_at_hp_0"
+    }
+  ]
+}

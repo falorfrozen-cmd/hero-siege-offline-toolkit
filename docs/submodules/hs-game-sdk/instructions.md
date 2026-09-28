@@ -33,6 +33,7 @@ hs-game-sdk/
 │   ├── satanic_zone.json       # Satanic Zone buff/debuff ids/names/descriptions + Controller_obj var names
 │   ├── drop_types.json         # LoadDrops drop types + GetNormalRepoStruct repository categories (data only)
 │   ├── drop_roll_measurements.json # M1-M10: recorded drop-roll numbers drop_roll_model.py is tested against (data only)
+│   ├── mining_reward_measurements.json # MR1-MR3: recorded mining-dig numbers mining_reward_model.py is tested against (data only)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
@@ -49,6 +50,7 @@ hs-game-sdk/
 │   │   ├── player.py           # EquipmentSlot enums, PlayerEquipment, container scanners
 │   │   ├── item_type.py        # ItemType IntEnum: the item instance's itemType class (hand-written)
 │   │   ├── drop_roll_model.py  # Two-stage drop roll model, stdlib only, not exported from __init__ (hand-written)
+│   │   ├── mining_reward_model.py # What one mining dig pays (ore stacks, bonus rolls), stdlib only, not exported (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
 │   ├── pyproject.toml
@@ -106,6 +108,13 @@ a mod's levers are that mod's code and live in the test as input transforms. It 
 `from hs_game_sdk import drop_roll_model` and deliberately not exported from the generator-owned
 `__init__.py`. There is no C++ or TypeScript counterpart, so no parity across bindings is claimed.
 Why and how: `docs/agents/static-model-workflow.md`.
+
+`mining_reward_model.py` (2026-09-28, ForgePact issue #36) is the second model, built the same
+way: spec `docs/models/mining-reward-spec.md`, fixture `curated/mining_reward_measurements.json`
+(MR1-MR3), checks `tests/test_mining_reward_model.py`. It gives the ore stacks one dig drops from a
+node's list and the chance of a stat-gated bonus find; ForgePact's Mining Ore Multiplier, the Miner's
+Helmet and Mining Ore Extra Rolls stay in the test as transforms, pinned to `MiningOreMod.hpp` and
+`src/forgepact.py` by `RollsLeverParityTests`.
 
 ---
 
@@ -430,6 +439,7 @@ contributor can be assumed to have:
 | `test_object_hierarchy.py` → `TestObjectsJsonMatchesBindings` | `hs-game-sdk/data/` | skips |
 | `test_extractor_layout.py` | nothing (builds a synthetic `data.win`) | always runs |
 | `test_drop_roll_model.py` | nothing (the model, its fixture and the pilot docs); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/ModuleMain.cpp` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
+| `test_mining_reward_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `RollsLeverParityTests` | always runs; only `RollsLeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/MiningOreMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_sdk_lazy_import.py` | nothing (starts fresh interpreters of the Python running the suite) | always runs |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
@@ -643,8 +653,9 @@ re-run it; regeneration is idempotent, so a second run must produce no diff.
 `tools/generate_satanic_zone_sdk.py` and are regenerated from `curated/satanic_zone.json`.
 
 "Every file" is broader than the code, though: `player.py`/`.hpp`/`.ts`, `hooks.hpp`,
-`mod_registry.py`, `item_type.py`/`.hpp`/`.ts` and `drop_roll_model.py` are hand-written, and the
-generator neither writes nor deletes them. Edit those in place. `drop_roll_model.py` is not wired
+`mod_registry.py`, `item_type.py`/`.hpp`/`.ts`, `drop_roll_model.py` and `mining_reward_model.py`
+are hand-written, and the generator neither writes nor deletes them. Edit those in place. The two
+models are not wired
 into any aggregate on purpose (import it by its module name), and it has no C++ or TypeScript
 counterpart. They still have to be wired into the aggregates
 through the templates — `init_content`, `main_header` and `index_content` all include
