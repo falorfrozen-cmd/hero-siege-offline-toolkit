@@ -1295,13 +1295,46 @@ and online-client movement use other code. **Static reading.**
   (absent = 1). Material bases 27–32 are Copper, Iron, Gold, Ruby, Jade and
   Tarethium. Changing `o` on a shallow `variable_clone` scales the pickup.
   **Static reading**, **measured 2026-09-23.**
+- **The ore a node pays is decided when the node is created, not when it is dug.**
+  Each node holds an array of ore-kind entries (the variable's name is not
+  established). `Mining_Node_obj` (2775) fills it in its Create event from choices
+  gated by the runtime's `irandom` and by two `ReturnSpecificStat` queries (ids 692
+  and 703); `Asgard_Special_Node_obj` (299) fills it with fixed counts. At dig time
+  `MiningNodeStepMain` only counts the entries per kind and makes one
+  `LootGroundCreate` call per kind present, so at most six, writing `o` on the
+  params only when a kind's count is above 1. There is no draw at dig time for
+  which ore or how much. **Static reading** (2026-09-28).
+- **Bonus finds are drawn at dig time, gated by the digger's stats.** After the ore
+  the step makes several independent rolls, each asking `ReturnSpecificStat` for
+  one stat (query ids 693 to 700, in the five-argument query shape
+  `hs_game_sdk/reward_stats.hpp` records for Magic Find) and paying only when the
+  stat is above 0 and an `irandom(cap)` draw comes out below it. `irandom(n)` draws
+  0..n inclusive; the cap is the literal 99 at one site and computed at the others
+  (not established). What they pay: a type-15 item at base 109, 110 or 111 (itself
+  an inclusive draw); one to three `Goblin_Ore_obj` (1903) placed through
+  `CreateInFreePos`; type-14 materials at computed bases (three sites); two more
+  type-15 sites and one type-13 site. A character whose queried stats are all 0
+  never passes one. Which gear or talents raise ids 692-703 is not established.
+  **Static reading** (2026-09-28).
+- **The dig's side effects are direct calls from the step.** `MiningAdd` (the
+  mining skill's own XP); then, on each of two branches, `ExperienceUpdate` followed
+  by `GuildExperienceAdd`, each called by the step itself (`GuildExperienceAdd` is
+  not reached through `ExperienceUpdate`); `CombatText` floating text at several
+  sites; up to four `quest_exists`/`update_quest` pairs; `PlaySound3D`; a
+  `Mining_Effect_obj` (2773) hit effect; `NetworkSendClient` (nothing offline).
+  Every one is a direct call, so only a native `HookOneScript` detour sees it.
+  **Static reading** (2026-09-28). The node's `hp` then goes 1 -> 0 and the
+  instance survives the frame at 0: **measured 2026-09-23.** Nothing else in these
+  three bullets has been measured yet.
 - `material_mining_*` items have `droprate.base` 50,000,000, so no drop type
   produces them: ore comes only from mining (§13.2). **Measured.**
 
 [miner's helmet, Runtime](../ForgePact/docs/miner-helmet-prototype.md#runtime),
 [Ownership fix](../ForgePact/docs/miner-helmet-prototype.md#ownership-fix-2026-09-23),
 [mining ore, Observed interface](../ForgePact/docs/mining-ore-research.md#observed-interface),
-[Live verification](../ForgePact/docs/mining-ore-research.md#live-verification-2026-09-23)
+[Live verification](../ForgePact/docs/mining-ore-research.md#live-verification-2026-09-23),
+[what one dig pays, the spec and its model](models/mining-reward-spec.md),
+[extra rolls](../ForgePact/docs/mining-ore-research.md#extra-rolls)
 
 ---
 

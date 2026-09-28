@@ -67,9 +67,11 @@ names and object indices are all bound in `hs-game-sdk`.
   These are the "special mats" issue #36 asks for. A character whose eight queried
   stats are all zero never passes one of these rolls, however often the dig runs.
 - **The side effects follow the reward.** The step calls `gml_Script_MiningAdd`
-  (the mining skill's own experience) and `gml_Script_ExperienceUpdate` on two
-  branches, together with the floating text `gml_Script_CombatText` and
-  `gml_Script_GuildExperienceAdd`; up to four pairs of `gml_Script_quest_exists`
+  (the mining skill's own experience); then, on each of two branches,
+  `gml_Script_ExperienceUpdate` followed by `gml_Script_GuildExperienceAdd`, both
+  called directly by the step (the guild experience is not reached through
+  `ExperienceUpdate`); the floating text `gml_Script_CombatText` at several sites;
+  up to four pairs of `gml_Script_quest_exists`
   and `gml_Script_update_quest`; `gml_Script_PlaySound3D`; a `Mining_Effect_obj`
   (object 2773) hit effect; and `gml_Script_NetworkSendClient`, which does nothing
   offline. Then the node's `hp` goes from 1 to 0.
@@ -126,8 +128,12 @@ pinned by the test's `RollsLeverParityTests` where ForgePact is checked out.
   scales each stack, or, when the Miner's Helmet applies, x4 replaces M. Rolls and
   multiplier multiply: N runs, each stack x M.
 - **Experience, quests and floating text happen once.** The plugin passes
-  `MiningAdd`, `ExperienceUpdate`, `update_quest` and `CombatText` through during
-  the original run and skips them during the extra runs. Ore, bonus finds, sound
+  `MiningAdd`, `ExperienceUpdate`, `GuildExperienceAdd`, `update_quest` and
+  `CombatText` through during the original run and skips them during the extra
+  runs. `CombatText` is silenced inside the plugin's one shared detour on it
+  (`ForgePact/plugin/include/ForgePact/CombatTextHook.hpp`), the same detour the
+  Experience slider uses to rescale its "N XP" text, because a second detour on
+  one script would come up table-only. Ore, bonus finds, sound
   and the hit effect happen once per run. The helmet's own dispatch (the pulse,
   Vein Resonance) runs for the original dig only.
 - **No re-run without a first ore reward.** A dig that paid no ore starts no extra

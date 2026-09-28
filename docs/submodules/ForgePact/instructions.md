@@ -27,8 +27,8 @@ unchanged behind it. `BeWakeObject` now activates first and walks only if the
 count changed (`g_BeWakeSnapshot`), since the game never deactivates monsters.
 `packmarks stat|style|alpha|scale|ring|radius|list` (a player command: cosmetics
 and counters only) tunes the look live. RunCommand's `else if` chain is at MSVC's
-C1061 nesting limit, so `packmarks`, `miningore` and `minerhelm` are standalone
-early returns (main's `test_menu_probe_contract` pins the chain's length). Tests:
+C1061 nesting limit, so `packmarks`, `miningore` (and, since issue #36,
+`miningrolls`) and `minerhelm` are standalone early returns (main's `test_menu_probe_contract` pins the chain's length). Tests:
 `test_pack_markers_behavior.py` (real class against a fake runner), updated
 `beacon_wake_harness.cpp`, `test_map_reveal_contract.py`.
 MEASURED 2026-09-22 in-game: the enemy-family layer call arrives about once a
@@ -168,6 +168,96 @@ is not yet confirmed on screen. Tests: `test_mining_ore_behavior.py`,
 `test_mining_ore_panel.py`, `test_miner_helmet_behavior.py` (full runtime
 harness) and `test_miner_helmet_panel.py`. Evidence and design:
 `ForgePact/docs/mining-ore-research.md` and `ForgePact/docs/miner-helmet-prototype.md`.
+
+**Mining Ore Extra Rolls** (issue #36, notes 2.1.0, off by default; **not yet
+confirmed in a live game**) is the multiplier's child row: `drops.mining_ore_rolls`
+(integer 1-10, default 1, its own switch like every `drops` row) sends the player
+command `miningrolls N`, in `kPlayerCommands` and dispatched as a standalone early
+return right after `miningore` (the `else if` chain's C1061 limit). The loop lives in
+the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the same
+`activeNode` scope, and `HookOneScript` detours a function only on its first install.
+
+- **What a roll is.** After the game's own `MiningNodeStepMain` call returns inside
+  `HookStep`, and only when `HookLoot` recognised an ore stack during that call (a
+  per-call flag), the plugin sets the node's `hp` back to 1 and `miningQue` to true
+  through `variable_instance_set` (Vein Resonance's proven route) and calls the step
+  trampoline again with the original arguments, up to N - 1 times. Each run pays the
+  node's ore stacks again and rolls the dig's stat-gated bonus finds again (the
+  static reading is `docs/RUNTIME_DATA_MODELS.md` § 12 and
+  `docs/models/mining-reward-spec.md`). An extra run that pays no ore ends the loop;
+  whatever happened, the node's `hp` ends at 0. `kMaxRolls = 10`: the parser refuses
+  0, anything above 10 and anything that is not one whole number.
+- **Combination rule.** The two sliders are independent and multiply: N runs, each
+  stack x M, or the Miner's Helmet's x4 in place of M. The helmet's dispatch (pulse,
+  Vein Resonance) runs for the original run only; a vein it queues completes through
+  its own later step call and so gets the rolls too.
+- **Silenced side effects.** While an extra run is in progress a thread-local flag is
+  set, and five pass-through detours return without calling the game: `MiningAdd`,
+  `ExperienceUpdate`, `GuildExperienceAdd` and `update_quest` (hook ids
+  `fp_mining_rolls_add`, `_xp`, `_guild`, `_quest`, by SDK constant) and the shared
+  `CombatText` detour below. So mining XP, character and guild XP, quest progress and
+  the floating text happen once per node; ore, bonus finds, sound and hit effect once
+  per roll. Outside an extra run every one calls straight through.
+- **One `CombatText` detour, shared with the Experience slider.**
+  `plugin/include/ForgePact/CombatTextHook.hpp` (hook id `fp_ctext`) holds the only
+  `HookOneScript` call on `CombatText` in the plugin. StatsManager.hpp includes it
+  (so it precedes MiningOreMod.hpp) and hands it the Experience multiplier and
+  `RewardScope::Active`; the body rescales the "N XP" text as before and passes it
+  through unchanged at x1. Whichever asks first installs it, once a session: the
+  Experience slider (`stat EnemyCalculateExperience` set to anything but 1) or the
+  rolls. A second
+  install would come up table-only, blinding either the rolls or the XP text fix.
+  `ScopedSilence` is a thread-local depth, so silence nests.
+- **Install and readiness.** `miningrolls 1` is vanilla and installs nothing.
+  Above 1, `InstallRolls()` installs the step/loot pair, the four pass-through
+  detours and the shared `CombatText` detour, once a session; all seven must be
+  native, or the rolls stay at 1 with `miningrolls: unavailable - <script> came up
+  table-only|could not be hooked; each dig pays out once, the ore multiplier is
+  unaffected`. The rolls' readiness is kept apart from the multiplier's: a rolls-side
+  failure never touches `miningore`'s `ready`, and `miningore` above 1 still installs
+  only the pair.
+- **The research build installs the mining pair first.** `InstallHook` calls
+  `ForgePact::MiningOre::Install()` before `InstallItemInspectHooks()`, so the
+  mining detours hold the native route on `LootGroundCreate` and the inspect table
+  hook chains to them (pass-through while every mining lever is off). Do not run
+  `citrace nativetrace` before `miningrolls` in a session: it detours `update_quest`
+  directly and the rolls then refuse to arm.
+- **Research-only forms** (`#ifndef FORGEPACT_RELEASE`; refused by the number parser
+  in the player build): `miningrolls stat` (rolls, readiness, `steps`, `extraRuns`,
+  `extraRunsUnpaid`, `xpPassed`/`xpSilenced`, each silenced script's passed/silenced
+  counts, `CombatText`'s, and up to eight node snapshots of `hp`, `miningQue`,
+  `miningActive`, `stop`, `range`, `miningPlayer`, `sprite_index` before and after
+  each extra run), `miningrolls stats` (stat queries 692-700 and 703 through
+  `ReturnSpecificStat` by SDK name, `id=<n> value=<v>`), and `miningrolls dig` (queues
+  the nearest live `Mining_Node_obj` within 4096 px whose protected `miningReq` is at
+  most `GetMiningLevel()`, as Vein Resonance queues a vein, for at most 90 frames,
+  released by `MiningOre::DigTick()` from the frame callback).
+- **Mod state and log lines.** `modstate.json`'s `miningOre` object gains `rolls`,
+  `rollsReady`, `rollsUnavailable`, `extraRuns`, `extraRunsUnpaid` and
+  `silencedCalls` (the four pass-through detours' plus `CombatText`'s). Once a
+  session each: `miningrolls: x<N> (each dig rolled <N> times)` (or `x1 (vanilla)`),
+  `miningrolls: first extra roll paid <k> ore stacks`, `miningrolls: extra roll paid
+  nothing - stopped after <k> of <n> extra rolls`, `miningrolls: node left diggable,
+  hp reset to 0`, `miningrolls: could not re-arm the node - extra rolls stopped for
+  this dig`.
+- **Tests.** `tests/mining_ore_harness.cpp` via `test_mining_ore_behavior.py` (the
+  rolls scenarios `baseline/rolls1_single_step_no_extra_hooks`,
+  `target/rolls3_three_payouts_hp_ends_0`, `target/rolls3_with_multiplier_x5_each_stack`,
+  `target/helmet_x4_each_run_dispatch_once`, `target/unpaid_rerun_stops_and_restores_hp0`,
+  `target/no_first_reward_no_extra_run`, `target/xp_silenced_only_inside_extra_runs`,
+  `target/extra_run_exception_no_retry_hp0`,
+  `target/table_only_silence_hook_refuses_rolls_keeps_multiplier`,
+  `target/rolls_cap_10_and_bad_values`, `baseline/rolls_reset_is_vanilla`,
+  `target/nested_reward_not_scaled_twice` and both install orders of the shared
+  detour, `target/combattext_shared_with_xp_multiplier` and
+  `target/combattext_rolls_first_then_xp`; `MINING_ORE_BASELINE=1` swaps in a vanilla
+  pass-through adapter, under which the baseline scenarios pass and the targets
+  fail), `test_release_hook_contract.py`'s `test_combat_text_has_one_native_detour_site`
+  and `test_research_build_installs_mining_before_item_inspect`, the panel's
+  `test_mining_ore_panel.py`, and the hub's `tests/test_mining_reward_model.py`
+  (the model and its rolls lever, pinned to `kMaxRolls` and
+  `drop_multiplier('mining_ore_rolls', ...)`). Design, rejected routes and what the
+  live session must show: `ForgePact/docs/mining-ore-research.md` § "Extra rolls".
 
 ## Module Overview & Metadata
 - **Module Name:** ForgePact (Hero Siege Season 10 Offline Mod Panel & BloodPactPlugin)
@@ -902,6 +992,7 @@ UTF-8 / ASCII plain-text command queue. The panel appends lines to `cmd.txt`; th
     - `gemmaxroll 1` dresses every finished gem at the outermost `CreateItemNew` return, before Item Truth records it: each affix takes its stat's tier-4 range and top value, identifier stats 462 and 21 untouched, then `RefreshItemHash`.
     - The tables build in `FrameCallback` while either switch is on, 4 ms a frame at the menu and 1 ms in play (0.3 ms a candidate), kept in `%LOCALAPPDATA%\Hero_Siege\forgepact_gem_tables.json` per game build; `n` 4, 3 and none first, any other `n` once a drop needs it.
     - Log lines, once a session each: `incarnation gems: first Mythic drop - n=<n> seed <a> -> <b>`, `first gem at its best rolls (<k> affixes)`, `a gem dropped at n=<n> before its Mythic seeds were ready - it keeps the game's roll` and `no Mythic gem at n=<n> carries a ticked mod yet - this one takes any Mythic roll`; per table, `Mythic seeds ready for n=<n> (<k> gems built)`. `modstate.json` carries `incarnationGems`: `mythic`, `maxRoll`, `dropHook`, `mythicDrops`, `vanillaDrops`, `filter` (0 = every mod), `filterMisses`, `build`, `seeds`, `bestRanges`, `ready`, `error`.
+  - `miningore N` / `miningrolls N` (both player commands in `kPlayerCommands`, standalone early returns into `MiningOreMod.hpp`; + `miningore stat` and `miningrolls stat|stats|dig` in the research build only): the Loot tab's Mining Ore Multiplier (`drops.mining_ore`, x1-x10, each ore stack's `o` scaled) and Mining Ore Extra Rolls (`drops.mining_ore_rolls`, issue #36, 1-10, default 1, off by default: the game's own dig completion re-run on the same node up to N - 1 more times, with mining, character and guild XP, quest progress and the floating text silenced during the extra runs). Both refuse anything but one whole number in range (`miningrolls: use a whole-number roll count from 1 to 10`); 1 is vanilla and installs nothing. The two multiply. `miningrolls` above 1 arms only when all seven detours it needs are native, otherwise it stays at 1 with one `miningrolls: unavailable - ...` line and the multiplier is untouched. Mechanism, log lines, `modstate.json` fields and tests: "Mining Ore Amount and the Miner's Helmet" above.
   - `craftprobe hook [substr ...]` / `arm [budget=N] [inroute] [substr ...]` / `show [all]` / `reset` / `bag|stash|recipe [substr ...]` / `var <Obj|global> <nth> <name|a.b.c|*> [json]` / `var id:<n> <name|a.b.c|*> [json]` / `var <Obj> <nth>|id:<n> * from=<i>` / `find <Obj> <nth>|id:<n> [from=<i>] <text>` / `node id:<n>|<Obj> <nth>|stash|bag|socket [id:<n>]` / `node var <Obj|global> <nth> <a.b.c>` / `node var id:<n> <a.b.c>` (each `node` then takes any of `a1=<v>` `self=id:<n>` `class=<c>`) / `store [substr ...]` / `store names [substr ...]` / `backing on [substr ...]|off|dump|clear` / `dump` / `call <Row> <Obj> <nth>|id:<n> [other:<id>] [args ...] confirm` / `callm <Obj> <nth>|id:<n> <struct>|inst <member> [other:<id>] [args ...] [bind] confirm` / `methods <Obj> <nth>|id:<n>` / `set <struct> <member> <number> confirm` (struct also `kept:<row>[.a.b]`) / `inject <class> <b> <extra>|off` (**research build only**, not in `kPlayerCommands`, dispatched from `HandleCraftCommand`): the issue #14 instrument, Phase 1k build; see `ForgePact/docs/crafting-materials-research.md` § Instrument, its "Phase 1b additions", "Phase 1c readers", "Phase 1e instrument", "Phase 1g instrument", "Phase 1h instrument", "Phase 1i instrument", "Phase 1j instrument" and "Phase 1k instrument".
     - A bare `craftprobe` prints the usage, whose first line is the build's marker, `craftprobe: phase1k rows=286 - ...` since toolkit #147's four rows (below; the build its first stash and bag launch ran printed `rows=285`, before the `UiACloseButton` row); a live session checks it before anything else counts (#14's Phase 1k build printed `phase1k rows=282`; the first Phase 1k build, `d6a5582`, printed `phase1k rows=281` and was never installed; the Phase 1j build printed `phase1j` with 278 rows; the Phase 1i build printed `phase1i` with 254 rows; the Phase 1h build printed `phase1h` with the same 254 rows; the Phase 1g build printed `phase1g` with 252 rows; the Phase 1e build, which Phase 1f also ran, printed `phase1e` with the same 252 rows; the Phase 1c build, which Phase 1d also ran, printed `phase1c` with 223 rows; the Phase 1b build `phase1b` with 202; the Phase 1 build, `aa0c72a`, has 97 rows and no marker).
     - Phase 1e adds 29 rows (252): the online stash Take family and its add counterparts, `RemoveItemFromMap`, `OnlineRemoveItem`, `CheckInventoryOperation`, the validators, the online stash conversions, the split/online stack routines, `s_ItemOperation`, `s_ItemGridInfo` and `GetOnlinePlayerItemOwner`. A row whose function `mapkeep on` installed prints `held by mapkeep` in `hook` and counts neither as detoured nor as failed (`<N> detoured, 0 failed, 2 held by mapkeep`). `node var` reads up to 2000 entries (was 1000), so the 1626-entry stash map is read whole. `call` also takes `id:<n>` as its self and the arguments `fp9:<fingerprint>` (the game's own lookup with `a1=9`), `map9` / `map9:<key>` (the kept stash map or one entry of it, only while `mapkeep` calls it current) and `path:<Obj|global|id:n>.<a.b.c>` (what `var`'s walk reaches); each refuses before the call, naming what was supplied, when it cannot resolve.
@@ -2660,6 +2751,12 @@ with a hash manifest.
     - **The frozen build paid it too.** A ForgePact.exe built with `build_release.py`'s PyInstaller command answered `/api/state` 5.35 s after launch with the old SDK and 1.36 s with the new one. The CI-built 2.0.0 draft and 1.4.7 exes (Python 3.14) took 5.49 s and 6.38 s. No ForgePact change is needed: `forgepact-release.yml` checks `hs-game-sdk` out from the hub at build time, so the next package built after the hub change has it.
     - Numbers, the enum cost on each Python version, and why PyInstaller still bundles the tables: hs-game-sdk guide, "Import cost: the tables load on first use".
     - **Still paid:** `forgepact.py` imports nine SDK names it never uses (`GameObject`, `GameScript` and seven more; it uses only the Satanic pools), so the panel still builds `objects` and `scripts`: about 0.3 s on 3.13 and 2.4 s on 3.10. Importing only `SATANIC_BUFFS` and `SATANIC_DEBUFFS` would remove that; not attempted.
+39. **Mining Ore Extra Rolls re-runs the game's own dig completion, so what it repeats and what it cannot give are the game's (issue #36, `miningrolls`, off by default, notes 2.1.0, 2026-09-28; not yet confirmed in a live game):**
+    - **Repeats per roll, by design.** Only mining XP, character and guild XP, quest progress and the floating text are silenced during an extra run (§ "Mining Ore Amount and the Miner's Helmet"). The dig sound (`PlaySound3D`), the `Mining_Effect_obj` hit effect, and any other floating text the completion draws other than through `CombatText` run once per roll; `NetworkSendClient` also runs per roll and does nothing offline.
+    - **Bonus finds need the character's own stats.** An extra roll draws the dig's stat-gated bonus finds again (query ids 693-700), but a character whose stats are all 0 never passes one, however many rolls: the rolls then give only more ore. Which gear or talents raise those stats is not established (`docs/RUNTIME_DATA_MODELS.md` § 12).
+    - **A node whose re-run does not pay is left depleted.** An extra run that pays no ore stops the loop, logs `miningrolls: extra roll paid nothing - stopped after <k> of <n> extra rolls` once, and the node's `hp` is forced to 0 whatever happened; that node's remaining rolls are lost. Whether the completion pays again in the same frame at all is Live procedure 1's question, recorded in `ForgePact/docs/mining-ore-research.md` § "Extra rolls".
+    - **The rolls refuse to arm if any of their seven detours is table-only** (the step/loot pair, the four pass-through detours, the shared `CombatText` one), and name it in `miningrolls: unavailable - <script> came up table-only`. For example, after `citrace nativetrace` detoured `update_quest` directly in a research session. The multiplier is not affected.
+    - **Tests:** `tests/test_mining_ore_behavior.py` + `mining_ore_harness.cpp`, `tests/test_release_hook_contract.py`, the hub's `tests/test_mining_reward_model.py`.
 
 ---
 
@@ -2898,9 +2995,14 @@ How it works:
 - **Off by default**, like every mod (owner, 2026-09-25; ForgePact PR #84
   reversed the default-on that #82 shipped and removed its exception from
   `test_release_hook_contract.py`'s all-off test).
-- **In the research build**, `InstallItemInspectHooks` table-hooks
-  `LootGroundCreate` first, so the Mining Ore mod reports unavailable there;
-  the player build is unaffected. Test the gem mod's drops with `gems drop <n>`
+- **In the research build**, `InstallHook` installs the Mining Ore mod's
+  native pair (`MiningOre::Install()`) before `InstallItemInspectHooks`
+  table-hooks `LootGroundCreate`, so the mining detours hold the native route
+  and the inspect hook chains to them (issue #36; before it the inspect hook
+  came first and the Mining Ore mod reported unavailable in that build). One
+  research-only side effect: `angelicprobe`'s `loot-create` row now reports
+  blocked, since the saved original is no longer game code. The player build
+  is unaffected. Test the gem mod's drops with `gems drop <n>`
   (a gem built through the game's loader inside the drop scope), or with
   `gems convert 1`: every socketable a monster's `DropGems` call makes becomes
   a Gem of Incarnation before `CreateItemNew` reads it, so a few kills anywhere
