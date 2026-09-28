@@ -146,7 +146,7 @@
     }
   },
   "ui_node_api": {
-    "note": "The game's own UI node routines, as the in-game Move all button uses them (ForgePact #68). Measured in Live 1f and 1g unless an entry says R, a static reading. A node's click is its user event 15, run from the owning window's Step with self the node, other the window and one argument, the node's activationArgs, handed to its activationFunc; with activationFunc undefined the event does nothing (R; a click on such a node ran nothing of the game's, measured).",
+    "note": "The game's own UI node routines, as the in-game Move all button uses them (ForgePact #68). Measured in Live 1f and 1g unless an entry says R, a static reading. A node's click is its user event 15, run from the owning window's Step with self the node, other the window and one argument, the node's activationArgs, handed to its activationFunc; with activationFunc undefined the event does nothing (R; measured in Live 1g only that no armed routine logged a call with such a node as self and no dialog appeared).",
     "node_object": {
       "name": "UI_Button_Small_obj",
       "index": 5009

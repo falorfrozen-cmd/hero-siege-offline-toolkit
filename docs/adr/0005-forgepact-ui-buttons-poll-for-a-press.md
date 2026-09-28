@@ -64,7 +64,7 @@ Live procedure 1g measured it on the 1f build, with the game running
 throughout. A click on the unbound node left the game running with no dialog,
 the routines armed in that session counted no call with the node as self
 (the hover routine `UiSetFocus` aside, which the procedure allowed), and the
-poll counted it once. That no game code at all runs for such a
+poll counted it once (Live 1g `node-press-poll-unbound`). That no game code at all runs for such a
 click is the static reading of the node's click event (an undefined activation
 runs nothing), not something the session measured. A click
 on the window's background beside it counted only as a press elsewhere. A

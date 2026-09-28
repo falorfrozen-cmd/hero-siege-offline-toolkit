@@ -2495,8 +2495,10 @@ kind. **M** measured live; **R** a static reading, not measured.
   was called exactly so when clicked, and that script then raised "bool
   argument is unset" and ended the game (written for another object). R: when
   `activationFunc` is undefined the event does nothing - no sound, no call, no
-  write; M: a click on such a node ran nothing of the game's and ended
-  nothing (Live 1g). `UiRemoveNode(node)` with self the owning window removed
+  write; M (Live 1g): a click on such a node ended nothing, no dialog
+  appeared, and no routine armed in that session logged a call with the
+  node as self (UiSetFocus, the hover routine, aside); that nothing else
+  runs is the R above, not measured. `UiRemoveNode(node)` with self the owning window removed
   it; the window's close destroyed a node still in its list, so a reopen finds
   none; a bag or stash tab switch kept it. R: `UiMoveNode(node, x, y)` sets
   both and runs the node's own position update; not called live. The bag's Sort button is the
