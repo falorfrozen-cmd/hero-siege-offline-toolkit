@@ -2497,7 +2497,8 @@ names are the stats' tooltip names (the Item Editor's game-verified stat table).
 
 [Why the loot filter never hides them](../ForgePact/docs/incarnation-gems-research.md#why-the-loot-filter-never-hides-them---static-reading)
 
-What a hidden ground item still is (ForgePact #95 part 1, 2026-09-27):
+What a hidden ground item still is (ForgePact #95 part 1, 2026-09-27, and
+part 2, 2026-09-28):
 
 - `Loot_Ground_obj`'s Create sets `lootFilterVisible`, `lootFilterHighlight`,
   `skipLootFilter`, `inviewCheck`, `itemCompanionTimer`, `visible` and alarm 4,
@@ -2505,6 +2506,36 @@ What a hidden ground item still is (ForgePact #95 part 1, 2026-09-27):
   `lootFilterVisible`, sets `visible` from it, and re-arms itself for 0.3 s of
   game speed. So an item the filter hides stays a live instance that re-checks
   its visibility every 0.3 s. **Static reading.**
+- `Loot_Ground_obj` (2513) owns five events: Create, Destroy, Alarm 9, Draw and
+  Clean Up. It has no Step and no Alarm 4 event. Its parent is
+  `Pickup_Parent_obj` (3421), which owns Create, Alarm 9 and Clean Up, and no
+  Step. So the `alarm[4]` that Create sets counts down with no handler in the
+  object or its parent, and nothing runs. **Static reading** (part 2).
+- Create binds its three closures as methods and runs none of them. By role
+  (the `anon@N` numbers move, §5.3): a rare-drop announcement, the loot-filter
+  closure bound as `m_LootFilter` (reads `global.loot_filter_new`, calls
+  `LootFilterAffixTierVisible` and `LootFilterAffixTierHighlight`), and a small
+  dispatcher that calls `LootGroundRelicStep` or `LootGroundDeActiveStep`.
+  **Static reading** (part 2).
+- The filter verdict is computed in `LootGroundInit`, not in Create:
+  `LootGroundCreateFromItem(x, y, item)` calls `CreateLootInFreePos`, then
+  `LootGroundInit(instance, item)`, which reads the bound `m_LootFilter` off the
+  instance and calls it behind a guard that was not read (`skipLootFilter` is
+  the candidate). A player's bag drop, `LootGroundDrop`, calls `LootGroundInit`
+  too. So when `LootGroundCreateFromItem` returns, `lootFilterVisible` already
+  holds the game's verdict. Whether `LootGroundCreate` reaches `LootGroundInit`
+  was not read to the end. **Static reading** (part 2).
+- Alarm 9 never re-runs the filter: it reads `lootFilterVisible`, calls
+  `OnScreen`, sets `visible` from the two, re-arms itself and counts
+  `itemCompanionTimer` down, with no method call. Items already on the ground
+  are re-evaluated only from the loot filter's menu path (`LootFilterImport`
+  references the `m_LootFilter` slot), which is how part 1 saw `hidden` fall
+  to 0 with the filter off; how that pass walks the items, and so whether it
+  reaches a deactivated one, was not read. **Static reading** (part 2).
+- The Draw event tests one variable and calls `LootGroundDraw`; the runner does
+  not run Draw for an instance whose `visible` is false, but its draw pass still
+  walks the instance. **Static reading** (part 2); ForgePact #95 part 2's Live 1
+  measures whether a hidden item's Draw runs.
 - At a strict filter, 281 of 291 `Loot_Ground_obj` instances read
   `lootFilterVisible` false and `visible` false, and an earlier read gave 68 of
   68. With the filter turned off (the game has no "Show all loot" key), none
@@ -2516,7 +2547,8 @@ What a hidden ground item still is (ForgePact #95 part 1, 2026-09-27):
   7.08 ms average and 40.7 ms max; no clean strict-filter window was taken (the
   one read held a 6.5 s stall from an unrelated gold pickup).
 
-[dev2 bug batch, #95 part 1](../ForgePact/docs/dev2-bug-batch-research.md#95-part-1-what-a-hidden-ground-item-still-costs)
+[dev2 bug batch, #95 part 1](../ForgePact/docs/dev2-bug-batch-research.md#95-part-1-what-a-hidden-ground-item-still-costs);
+[#95 part 2, static reading and cost model](../ForgePact/docs/hidden-loot-research.md#static-reading)
 
 ### 18.6 No automatic pickup
 
