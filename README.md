@@ -275,6 +275,18 @@ state. It is the save-side cross-check for ForgePact issue #14's in-game reader
 py -3 tools/stash_tab_counts.py            # or --path <a backup's stash.hss>, --json
 ```
 
+`tools/save_item_keys.py` lists every item key (`0-0-<n>-<class>`) in one or
+more save files, grouped by the container it is saved under: the shared
+stash's tabs in `stash.hss`, the bag's tabs in `inventory_order_<slot>.hss`,
+and the personal stash and equipped items inside `herosiege<slot>.hss`. It uses
+the same decoder, read-only, with the game closed, and is how ForgePact issue
+#68's live sessions show a moved item is saved in the stash, not in the bag,
+and only once. See [its page](docs/tools/save-item-keys.md):
+
+```powershell
+py -3 tools/save_item_keys.py <stash.hss> <inventory_order_13.hss> <herosiege13.hss> --key <0-0-n-class>
+```
+
 ## Modified YYToolkit
 
 ForgePact and HS Offline Tracker load their plugins through a modified
