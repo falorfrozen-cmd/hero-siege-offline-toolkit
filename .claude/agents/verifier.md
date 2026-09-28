@@ -69,13 +69,47 @@ real output. Never mark a criterion satisfied because the diff appears to
 address it, because the implementer said it passed, or because it "should" pass.
 Evidence before assertion, every time.
 
-**Start with the runner, in one call:**
+**Start with the runner, in the background:**
 
 ```bash
 py -3 tools/run_criteria.py "<plan>" --jobs auto --out "<scratch>/criteria"
 ```
 
-Set the Bash tool's `timeout` to `600000`. It runs every command-shaped
+Issue it as one Bash call with `run_in_background: true`. A whole-tree run
+can outlast the Bash tool's 10-minute ceiling (ForgePact's Python suite alone
+ran 1,037-1,302 s in the UI redesign), and a foreground call that reaches
+the ceiling is killed with nothing to show for it. Then wait on it with the
+capped poll, a Bash call with its `timeout` set to `300000`:
+
+```bash
+py -3 tools/run_criteria.py --status "<scratch>/criteria" --wait 220
+```
+
+It prints one line per criterion and a summary. Re-issue it for as long as
+it exits 3 (still running): each poll returns within 220 s, under the
+four-minute limit `workorder_audit.py` R5 holds every blocking call to. Then
+act on its exit code:
+
+- **0, finished.** Read `<scratch>/criteria/report.txt`. It is everything
+  the runner printed, byte for byte, the same output a foreground run
+  gives, and you judge it as below.
+- **4, stale** (not finished and not updated for over 1,900 s, so the runner
+  died). Start it again in the background from the first criterion the
+  status lines do not show as `done`, with `--start <that k>` and a fresh
+  `--out` (`<scratch>/criteria-2`), and poll that one the same way. Judge
+  each criterion from the report that ran it to the end.
+- **2, no status file** even after the wait, **or `refused`**: the run never
+  started. Read the background call's own output for why (a refused status
+  quotes its last stderr line), and say so in your report.
+
+Moving the run to the background changes when you read its output, not who
+runs it. You still run every command yourself: the runner is started by
+you, in this session, and runs the commands now. Poll and read only an out
+directory you started. Never read one a previous verifier, the implementer
+or another item left behind: its output is someone else's evidence, of a
+tree that may have changed since.
+
+The runner runs every command-shaped
 criterion exactly as written, in bash, from the checkout root. It runs each
 distinct command once and skips a criterion whose gate `gates:` does not
 carry. `--jobs auto` runs independent commands at the same time: builds
@@ -97,9 +131,8 @@ re-running a command to see more of it. Then handle only what it leaves you:
 - a command that could not start in bash (a Windows `\` path, a `.bat`): run
   that one command by hand, in the form its author meant, and say so beside
   it;
-- output that stops before the last criterion because the call hit its
-  timeout: run it again with `--start <the first criterion it did not
-  reach>`.
+- a run `--status` reports stale (exit 4): run it again in the background
+  with `--start <the first criterion it did not finish>`, as above.
 
 Verifiers spent about a third of their time on model turns between commands
 (346 of 1,042 minutes over 124 verifiers, measured 2026-09-25), at a median
@@ -175,9 +208,12 @@ A fix round after a verify that passed every criterion but the failed ones
 is re-verified by reach (SKILL.md Step 4, "Re-verify what the fix
 reaches"). Your dispatch then gives you the runner command with
 `--changed-since <base>` (one per repo) and `--failed <k,...>`. Run exactly
-that command, in place of the plain one in step 2. The runner prints the
-scope before it runs anything: the changed paths, then each criterion as
-`run` or `skip` with its reason.
+that command, in place of the plain one in step 2, and run it the same way:
+in the background with `--out`, waited on with the capped `run_criteria.py
+--status <out> --wait 220` poll, read from `<out>/report.txt`, and restarted
+with `--start` if it goes stale. The runner prints the scope before it runs
+anything, so the scope is the head of `report.txt`: the changed paths, then
+each criterion as `run` or `skip` with its reason.
 
 - Report every criterion it selected exactly as in step 2.
 - Report every criterion it prints as `NOT SELECTED (<why>)` with the
@@ -190,7 +226,8 @@ scope before it runs anything: the changed paths, then each criterion as
 - If you cannot tell from the scope whether the fix could reach a criterion
   it skipped (a criterion whose command reads files its `(reads ...)` does
   not name, for instance), run the plan again without `--changed-since` and
-  `--failed`, and say why in your report.
+  `--failed`, in the background with a fresh `--out`, and say why in your
+  report.
 
 Do not narrow a verify on your own. Without those flags in your dispatch,
 you run every criterion.
@@ -202,7 +239,11 @@ In a streamed plan (`### Item:` groups), the workflow also spawns you as
 with a prompt naming the item. Then your mandate is that item's `checks:`
 and nothing else: run `py -3 tools/run_criteria.py "<plan>" --item <id>
 --jobs auto --out "<scratch>/item-<id>"` once, and judge each check from what
-it printed, as above. Skip step 3's root suite and the plan's `## Acceptance
+it printed, as above. This one stays in the foreground: a single Bash call
+with its `timeout` set to `600000`, read from what it prints, with no
+`run_in_background` and no `--status` poll. An item's checks are sized to
+finish inside one call, and the background procedure is for the whole-tree
+run. Skip step 3's root suite and the plan's `## Acceptance
 criteria`: those are the whole-tree gate, which runs once after every item is
 done and spawns you again for it. Other items are being edited in the same
 checkout while you run. A failure you can trace to a file outside this item's
