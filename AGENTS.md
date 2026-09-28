@@ -689,6 +689,42 @@ the argument, the negative results and the session history in the research
 doc, and link to it. A fact that exists only in one mod's research doc gets
 rediscovered by the next mod, at the price of another live session.
 
+## Every Piece of Work Belongs to an Issue on the Board
+
+The owner runs this project from the **"Hero Siege Tools"** board (user project
+1 of `falorfrozen-cmd`). Work that has no issue, or whose issue sits in the
+wrong column, is invisible to them. So, in the hub and in every submodule:
+
+1. **Find the issue first; create one if there is none.** Search the
+   repository the change lands in (`gh issue list --search ...`). If nothing
+   covers the work, open an issue there before the branch.
+2. **Titles start with a type prefix**: `[Bug]`, `[QoL]`, `[Mod]`,
+   `[Adjustment]`, `[Research]`, `[Tooling]` or `[Docs]` — e.g.
+   `[QoL] Stash tabs renaming`. `py -3 tools/issue_board.py check-title
+   "<title>"` checks one. When you touch an older issue without a prefix,
+   add one.
+3. **Attach the branch to the issue.** Create it with
+   `gh issue develop <n> -R <owner/repo> --name <branch>` (then fetch and
+   check it out), which lists it under the issue's Development section; for a
+   branch that already exists, put `Closes #<n>` (or `owner/repo#<n>` across
+   repositories) in the pull request body, which links it the same way. A
+   feature spanning modules has one issue per module it touches, each linked
+   to its own branch, per the next section.
+4. **Move the issue on the board as the work moves.** `Todo` when filed,
+   `In Progress` when work starts, with the running `Development` iteration:
+   `py -3 tools/issue_board.py move <owner/repo> <n> "In Progress"`. `Done`
+   follows from the pull request closing it; `Impossible` and `Backlog` are
+   the owner's call, or yours with the reason in a comment. An issue left
+   with no Status is on the project but in no column of the board.
+5. **Keep it maintained.** Comment when something material happens — a
+   finding that changes the scope, a blocker, a question for the owner, a
+   pull request opened — so the issue, not a session transcript, is where
+   the state of the work can be read.
+
+`gh` needs the `project` scope for step 4 (`gh auth refresh -s project`).
+If an edit fails, say which fields are still unset rather than reporting the
+issue as done.
+
 ## One Branch and One Pull Request per Module, per Feature
 
 A feature gets exactly **one branch and one pull request in each module it
