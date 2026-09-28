@@ -2378,10 +2378,10 @@ measured (one sentence, in the drag path bullet).
 ### Moving an item from the bag into the stash (ForgePact #68)
 
 Source: the stash move research (`ForgePact/docs/stash-move-research.md`, "SM"
-below): a static reading, then six research-build sessions on 2026-09-28
-(Live 1 to Live 1e), slot 14 in `Town_01_rm`, the interaction-check control
+below): a static reading, then eight research-build sessions on 2026-09-28
+(Live 1 to Live 1g), slot 14 in `Town_01_rm`, the interaction-check control
 climbing in each; Live 1c and Live 1e had the owner's own Ctrl + left click as
-the input, the others none. Representative cases: one or two items per tab
+the input, the others none (Live 1f's character pick was by hand). Representative cases: one or two items per tab
 kind. **M** measured live; **R** a static reading, not measured.
 
 - **The game's own quick move is Ctrl + left click.** M: with the stash open
@@ -2455,14 +2455,59 @@ kind. **M** measured live; **R** a static reading, not measured.
   moving several items must re-read the array's stacks before each call: an
   earlier item of the same batch can have made the stack a later one joins
   (ForgePact #68's round-2 review found a duplicated unit that way).
-- **The Socketable tab.** M (Live 1e, by hand only): the game refuses jewels
-  (base ids 109 and 110) and Incarnation Gems (136) for this tab after the
-  first `ValidateItem` and before any placement routine, with nothing in the
-  logged answers showing it; runes and gems were placed through the sequence
-  above into a one-row array that was different for each item and matched no
-  readable path (`Controller_obj.stashSocketItemSlot` read no fingerprint
-  while the tab held items, and `menulayout` lists one one-cell
-  `StashSocketGrid` node per item); an orb merged. None was replayed by name.
+- **The Socketable tab.** Its container: M (Live 1e, 1f, 1g) one
+  `UI_Inventory_Grid_obj` per item on the tab, each carrying `uiNodeCallstack`
+  `StashSocketGrid` and a one-cell `nodeGrid` holding that item, whose key
+  answers on map 9; the tab saves in `stash.hss` under `socket_tab`.
+  `Controller_obj.stashSocketItemSlot` is not the container: it read no
+  fingerprint while the tab held items (Live 1e). By hand, M (Live 1e): the
+  game refuses jewels (base ids 109 and 110) and Incarnation Gems (136) for
+  this tab after the first `ValidateItem` and before any placement routine,
+  with nothing in the logged answers showing it; runes and gems were placed
+  through the sequence above into a one-row array that was different for each
+  item, and an orb merged. **By name, the merge**, M (Live 1f, Live 1g):
+  `StashAddToStack` with self and other the bag's grid node (its Socket view
+  on show), the `nodeGrid` of the `StashSocketGrid` node holding the item's
+  identity, 9, 2, the item, its count (1) and 8, answered true, and that
+  node's item's `o` rose by exactly the count (an orb, base id 118, 81 to 82
+  in both sessions); `InvGridClearItemNode` (self and other the bag grid, the
+  bag cell's node, undefined) then emptied the bag cell, and the merged unit's
+  key reached no saved file after the stash's own close. A gem (base id 38)
+  merged the same way and gained `o=2`, so it is stackable: no
+  non-stackable answer was met on this tab, and Live 1e's missing `o` on it
+  was a count of 1. Placing a kind the tab does not hold yet was not
+  replayed by name (no accepted kind absent from the tab could be obtained
+  without a person).
+- **The UI node API** (the in-game Move all button, ForgePact #68). M (Live
+  1f, Live 1g) unless marked R. `UiCreateNode(x, y, object, activation,
+  callstack name)` with self the window that will own the node (here
+  `UI_Stash_obj`, as self and other): it made a `UI_Button_Small_obj` at that
+  x and y, stored the name as the node's `uiNodeCallstack`, drew it with the
+  object's own sprite, and answered the node (`visible` 0 in that frame, 1 the
+  next); a `text` set on the node was drawn as its label. With the fourth
+  argument undefined the node's `activationFunc` stays undefined (R: the
+  function binds a callable value as a method of the new node and leaves
+  anything else undefined, as `UiSetActivationFunc(node, f)` does). A node's
+  click is dispatched as the node's user event 15 (in the object events
+  `UI_Node_Parent_obj` defines), run from the owning window's Step, with self
+  the node, other the window, and one argument, the node's `activationArgs`,
+  handed to its `activationFunc`: M, a node bound to `UiSetFloatingToFalse`
+  was called exactly so when clicked, and that script then raised "bool
+  argument is unset" and ended the game (written for another object). R: when
+  `activationFunc` is undefined the event does nothing - no sound, no call, no
+  write; M: a click on such a node ran nothing of the game's and ended
+  nothing (Live 1g). `UiRemoveNode(node)` with self the owning window removed
+  it; the window's close destroyed a node still in its list, so a reopen finds
+  none; a bag or stash tab switch kept it. R: `UiMoveNode(node, x, y)` sets
+  both and runs the node's own position update; not called live. The bag's Sort button is the
+  `UI_Button_Small_obj` whose `uiNodeCallstack` is `InventorySort` (text
+  `Sort Tab`, `activationArgs` `[1]`, its activation `InventorySortTab`
+  bound with the Sort node itself as self); the stash side's is `StashSort`.
+  An end-of-frame `mouse_check_button_pressed(mb_left)` read sees a click
+  made in that frame, and `device_mouse_x_to_gui`/`device_mouse_y_to_gui` put
+  it inside the clicked node's `bbox` (Live 1f `sort-click-control`, Live 1g).
+  Not read: where the game creates the Sort button, and the part of the
+  window's Step that picks which node gets the click.
 - **`GetItemPreferredGrid`** logged only on the reverse move (stash to bag),
   never on a move from the bag into the stash (M, Live 1e).
 

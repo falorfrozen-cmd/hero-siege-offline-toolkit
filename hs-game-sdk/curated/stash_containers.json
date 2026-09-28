@@ -50,7 +50,7 @@
     }
   },
   "bag_to_stash_move": {
-    "note": "The routines the game's own Ctrl + left click runs to move one item from the bag into the stash tab on show, in that order, and the shapes that reproduced the move by name (ForgePact #68). Self and other are the two UI_Inventory_Grid_obj nodes told apart by uiNodeCallstack: InventoryGrid (the bag's, rebinding to the bag view on show) and StashGrid (the stash's, rebinding to the tab on show). The Socketable tab moved by hand only and has no by-name shape.",
+    "note": "The routines the game's own Ctrl + left click runs to move one item from the bag into the stash tab on show, in that order, and the shapes that reproduced the move by name (ForgePact #68). Self and other are the two UI_Inventory_Grid_obj nodes told apart by uiNodeCallstack: InventoryGrid (the bag's, rebinding to the bag view on show) and StashGrid (the stash's, rebinding to the tab on show). The Socketable tab merges by name (socket_merge, Live 1f and 1g); placing a kind it does not hold yet was moved by hand only and has no by-name shape.",
     "grid_node_object": {
       "name": "UI_Inventory_Grid_obj",
       "index": 5112
@@ -90,6 +90,20 @@
       "other_node": "InventoryGrid",
       "arguments": "the item's anchor cell node in the bag grid's nodeGrid, read [y][x], then undefined; after a by-name placement (which leaves the item in its bag cells) or a merge, while the item is still on map 0 and before the owner step"
     },
+    "socket_merge": {
+      "script": "gml_Script_StashAddToStack",
+      "index": 112,
+      "self_object": "UI_Inventory_Grid_obj",
+      "self_node": "InventoryGrid",
+      "other_node": "InventoryGrid",
+      "container": "the Socketable tab has no one array: one UI_Inventory_Grid_obj per item on the tab, its uiNodeCallstack StashSocketGrid, its nodeGrid one cell holding that item, whose key answers on map 9 (Controller_obj.stashSocketItemSlot is not the container); saved in stash.hss under socket_tab",
+      "arguments": "the nodeGrid of the StashSocketGrid node holding the item's identity; 9; 2; the item struct; its count (1 measured); 8. Self and other the bag's grid node with its Socket view on show; no ValidateItem before it. Then source_clear on the bag cell, only after that node's item's o rose by exactly the count",
+      "answer": "true, the node's o rising by the count (an orb, base id 118: 81 to 82, twice); a gem (base id 38) merged the same way and gained o=2, so no non-stackable answer was met on this tab",
+      "measured": {
+        "date": "2026-09-28",
+        "sessions": ["Live 1f", "Live 1g"]
+      }
+    },
     "owner_step": {
       "script": "gml_Script_ChangeItemOwner",
       "index": 2051,
@@ -115,19 +129,68 @@
         "saved_under": "stash.hss, material_tab"
       },
       "socketable": {
-        "map": "not read by name",
-        "owner_step": "0 to 9 for a new identity, by hand; none for a merge",
+        "map": 9,
+        "owner_step": "none for a merge (by name, Live 1f and 1g); 0 to 9 for a new identity, by hand only (Live 1e)",
         "saved_under": "stash.hss, socket_tab"
       }
     },
     "measured": {
       "date": "2026-09-28",
-      "sessions": ["Live 1c", "Live 1d", "Live 1e"],
+      "sessions": ["Live 1c", "Live 1d", "Live 1e", "Live 1f", "Live 1g"],
       "cases": [
         "a class-10 item by hand and by name into the personal page and shared page 1, and against the full shared page 2",
         "a new material identity by hand and by name into the Materials tab, one-unit and whole-stack (15) merges",
-        "a rune, a gem and an orb into the Socketable tab by hand; jewels and an Incarnation Gem refused by the game"
+        "a rune, a gem and an orb into the Socketable tab by hand; jewels and an Incarnation Gem refused by the game",
+        "an orb (base id 118) and a gem (base id 38) merged by name into their StashSocketGrid nodes on the Socketable tab, count 1"
       ]
+    }
+  },
+  "ui_node_api": {
+    "note": "The game's own UI node routines, as the in-game Move all button uses them (ForgePact #68). Measured in Live 1f and 1g unless an entry says R, a static reading. A node's click is its user event 15, run from the owning window's Step with self the node, other the window and one argument, the node's activationArgs, handed to its activationFunc; with activationFunc undefined the event does nothing (R; a click on such a node ran nothing of the game's, measured).",
+    "node_object": {
+      "name": "UI_Button_Small_obj",
+      "index": 5009
+    },
+    "owner_object": {
+      "name": "UI_Stash_obj",
+      "index": 5257
+    },
+    "sort_node": {
+      "uiNodeCallstack": "InventorySort",
+      "text": "Sort Tab",
+      "activation": "gml_Script_InventorySortTab, bound with the Sort node itself as self; activationArgs [1]"
+    },
+    "create": {
+      "script": "gml_Script_UiCreateNode",
+      "index": 4469,
+      "self_object": "UI_Stash_obj",
+      "arguments": "x; y; the object index; the activation (undefined leaves activationFunc undefined); the call-stack name, stored as the node's uiNodeCallstack. Self and other the window that will own the node. Answers the node (visible 0 that frame, 1 the next)",
+      "measured": "M"
+    },
+    "remove": {
+      "script": "gml_Script_UiRemoveNode",
+      "index": 4461,
+      "self_object": "UI_Stash_obj",
+      "arguments": "the node; self the window that owns it. The window's own close destroys a node still in its list; a tab switch keeps it",
+      "measured": "M"
+    },
+    "set_activation": {
+      "script": "gml_Script_UiSetActivationFunc",
+      "index": 4463,
+      "self_object": "UI_Stash_obj",
+      "arguments": "the node; a script, bound as a method whose self is the node when callable, else activationFunc left undefined. A node bound to UiSetFloatingToFalse ended the game when clicked (that script is written for another object)",
+      "measured": "M (the dispatch and the crash); the binding rule R"
+    },
+    "move": {
+      "script": "gml_Script_UiMoveNode",
+      "index": 4475,
+      "self_object": "UI_Stash_obj",
+      "arguments": "the node; x; y. Sets both and runs the node's own position update",
+      "measured": "R (not called live)"
+    },
+    "measured": {
+      "date": "2026-09-28",
+      "sessions": ["Live 1f", "Live 1g"]
     }
   },
   "measured": {
