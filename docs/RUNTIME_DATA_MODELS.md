@@ -2282,7 +2282,15 @@ kind. **M** measured live; **R** a static reading, not measured.
   of 15 (Live 1e, by name, `wholeStackMerge`); every hand merge logged 1. With
   no stack of that identity it answers false (Live 1, Live 1c). R: it takes
   only classes 12 to 15, merges through `InventoryStackUpdateAndRemove`, and
-  answers false when the stack's hash check fails.
+  answers false when the stack's hash check fails. Scope: every merge above
+  was on the Materials tab (`Controller_obj.stashMaterialTab`, 9, 2) with the
+  bag's Materials view on show, plus one by-hand orb on the Socketable tab. A
+  merge on a stash page with that page's own two numbers (0 and 13 personal, 9
+  and 2 shared) and the Materials tab fed from a bag page are not observed.
+  Because it merges into any stack of the identity on the array, a caller
+  moving several items must re-read the array's stacks before each call: an
+  earlier item of the same batch can have made the stack a later one joins
+  (ForgePact #68's round-2 review found a duplicated unit that way).
 - **The Socketable tab.** M (Live 1e, by hand only): the game refuses jewels
   (base ids 109 and 110) and Incarnation Gems (136) for this tab after the
   first `ValidateItem` and before any placement routine, with nothing in the
