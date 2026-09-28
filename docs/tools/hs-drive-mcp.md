@@ -1254,7 +1254,7 @@ rather than by falling back to another launcher:
   scrolled container (the stash tab strip) and for a bag sub-tab row does not
   land on the row (live 1 P0-5, live 2 P2-4), which is why every tab switch
   goes by name. See "Stash and bag".
-- **Three stash-tool gaps ForgePact #68's Live 2 met (2026-09-28), none
+- **Five stash-tool gaps ForgePact #68's Live 2 runs met (2026-09-28), none
   fixed.** `hs_give_item(to="bag")` refuses every grid-tab class tried
   (armour, weapon, charm: `giveitem: refused - GetItemPreferredGrid(1, item)
   answered no grid`), so a session that needs ordinary grid items in the bag
@@ -1265,6 +1265,15 @@ rather than by falling back to another launcher:
   own re-read raced the close, so re-read before treating that answer as a
   failure. `hs_stash_open` refused `stash_not_open` once right after a close
   (F delivered, no window within the poll budget) and opened on the retry.
+  In the third run, `hs_give_item` answered `template_not_found` for a
+  template the operator took from a tab that was not on show: the plugin's
+  `giveitem` looks its template up on map 0 only, the character's own map, so
+  an item on a Shared page or the Materials tab, whose key answers on no map 0
+  (RUNTIME_DATA_MODELS § 17), is never a template; whether a map 0 item off the
+  view on show also fails was not separated. And no tool gives the window
+  pixel of a stash or bag cell, which a Ctrl + left click on an item needs: the
+  operator computed it from the grid node's `gui` box and its
+  `nodeGridWidth`/`nodeGridHeight`.
 - **Windows only.** The engine imports `ctypes.wintypes`; the tests skip with
   a named reason elsewhere, which is what lets the root suite run on CI's
   `ubuntu-latest` without any submodule checked out.
