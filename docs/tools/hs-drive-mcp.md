@@ -1254,6 +1254,17 @@ rather than by falling back to another launcher:
   scrolled container (the stash tab strip) and for a bag sub-tab row does not
   land on the row (live 1 P0-5, live 2 P2-4), which is why every tab switch
   goes by name. See "Stash and bag".
+- **Three stash-tool gaps ForgePact #68's Live 2 met (2026-09-28), none
+  fixed.** `hs_give_item(to="bag")` refuses every grid-tab class tried
+  (armour, weapon, charm: `giveitem: refused - GetItemPreferredGrid(1, item)
+  answered no grid`), so a session that needs ordinary grid items in the bag
+  gets them from what the character holds, for example by the game's own
+  Ctrl + left click from the stash. `hs_stash_close` answered "not confirmed -
+  UI_Stash_obj is still listed" in its `verb_trail` twice while a
+  `menulayout UI_Stash_obj` sent straight after listed no window: the tool's
+  own re-read raced the close, so re-read before treating that answer as a
+  failure. `hs_stash_open` refused `stash_not_open` once right after a close
+  (F delivered, no window within the poll budget) and opened on the retry.
 - **Windows only.** The engine imports `ctypes.wintypes`; the tests skip with
   a named reason elsewhere, which is what lets the root suite run on CI's
   `ubuntu-latest` without any submodule checked out.
@@ -1594,7 +1605,12 @@ show). Both refuse `stashmoveall: refused - off` / `stashmove: refused - off`
 until `stashmoveall 1`; each item line reads `stashmoveall: item <key> -> cell
 <x>,<y>|stack|skipped: <answer>`, and a run ends with `stashmoveall: moved <n>
 of <m> from bag tab <t> to stash tab <s>; skipped <k>`. The Socketable tab
-and the bag's Socket view are refused. No `hs_*` tool wraps them yet, so
+takes only from the bag's Socket view, and only a single socketable whose
+kind is already on it (anything else stays in the bag, `skipped: <reason>`);
+the Unique tab and the bag's Key, Tarot and Relic views are refused. The
+player build also draws a **Move all** button beside the bag's Sort button
+while the switch is on; a scripted `hs_input` click at its `menulayout`
+`win=` point starts the same run (ForgePact #68's Live 2). No `hs_*` tool wraps them yet, so
 nothing here parses those lines or takes a backup for them; a session that
 sends them takes and restores its own backup, and closes the stash with
 `hs_stash_close`, which is the stash's save. The give into the stash and the
