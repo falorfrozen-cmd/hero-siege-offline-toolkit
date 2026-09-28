@@ -1247,7 +1247,7 @@ test('the verifier is sent to the criteria runner first, and told it judges noth
   const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
   await run(BASE, reply)
   assert.ok(prompts['verifier:r0'].includes('py -3 tools/run_criteria.py "p.md"'), 'the runner gets the plan path')
-  assert.match(prompts['verifier:r0'], /Bash timeout at 600000/)
+  assert.match(prompts['verifier:r0'], /run_in_background: true/)
   assert.match(prompts['verifier:r0'], /it judges nothing/)
   assert.match(prompts['verifier:r0'], /--start/)
   assert.match(prompts['verifier:r0'], /A root suite the runner already ran is the suite run/)
@@ -1259,7 +1259,7 @@ test('the verifier is sent to the criteria runner first, and told it judges noth
 // between its @scheduler markers; the engine around it with stub agents that
 // take a few milliseconds each, so "at the same time" is observable.
 const schedSrc = src.slice(src.indexOf('// @scheduler-begin'), src.indexOf('// @scheduler-end'))
-const sched = new Function(`${schedSrc}\nreturn { nextToStart, newlyHeld, invalidatedBy, drainedItems, pathsOverlap }`)()
+const sched = new Function(`${schedSrc}\nreturn { nextToStart, newlyHeld, invalidatedBy, drainedItems, pathsOverlap, unblockedItems }`)()
 const IT = (id, files, extra = {}) => ({ id, files, after: [], shares: [], checks: [], ...extra })
 const ST = (items, statuses = {}) => Object.fromEntries(items.map(it => [it.id, { status: 'pending', touched: false, ...(statuses[it.id] || {}) }]))
 
@@ -1622,4 +1622,406 @@ test('a gate not set is a standing, not an unknown', async () => {
   const { prompts } = await reachRun([gated, PASS], {}, { ...BASE, state: '## State\ngates: none\n' })
   assert.ok(prompts['verifier:r1'].includes('--changed-since HUB-SHA'))
   assert.ok(prompts['verifier:r1'].includes('--failed 2 --out'), 'the gated criterion is not re-run as failed')
+})
+
+// --- goal 4: maxParallel is validated, its default named ---------------------
+//
+// Measured 2026-09-27: no item in the ForgePact bug batch waited on the cap
+// of 4, so the default stays and only the argument is checked. The speed
+// report's scope criterion reads DEFAULT_MAX_PARALLEL out of the source.
+test('maxParallel: 0, 17 and "x" are refused before a spawn; 1 and 16 run', async () => {
+  assert.match(src, /const DEFAULT_MAX_PARALLEL = 4\n/)
+  for (const maxParallel of [0, 17, 'x', 2.5, '4']) {
+    const { result, calls } = await runTimed({ ...ITEMS_BASE, maxParallel }, itemsReply())
+    assert.equal(result.outcome, 'BAD-ARGS', JSON.stringify(maxParallel))
+    assert.match(result.detail, /whole number from 1 to 16/)
+    assert.equal(calls.length, 0, `${JSON.stringify(maxParallel)}: an agent spawned before the refusal`)
+  }
+  // Rounds mode takes no items, and a bad value is still a typo worth refusing.
+  assert.equal((await run({ ...BASE, maxParallel: 0 }, standard())).result.outcome, 'BAD-ARGS')
+  // Controls: the ends of the range run, and 1 really is one at a time.
+  const one = await runTimed({ ...ITEMS_BASE, maxParallel: 1 }, itemsReply())
+  assert.equal(one.result.outcome, 'PASS')
+  assert.ok(!overlaps(one.spans, impl(one.calls, 'a'), impl(one.calls, 'b')), 'maxParallel 1 ran two implementers at once')
+  const sixteen = await runTimed({ ...ITEMS_BASE, maxParallel: 16 }, itemsReply())
+  assert.equal(sixteen.result.outcome, 'PASS')
+  assert.ok(overlaps(sixteen.spans, impl(sixteen.calls, 'a'), impl(sixteen.calls, 'b')))
+  const unset = await runTimed(ITEMS_BASE, itemsReply())
+  assert.equal(unset.result.outcome, 'PASS', 'no maxParallel is the default, not a refusal')
+})
+
+// --- goal 3: a reversible owner question runs on its default ----------------
+const OWNED = (id, extra) => ({ id, title: id, files: [`panel/${id}.css`], checks: [`\`grep ${id} x\` ok`], owner: `question ${id}?`, ...extra })
+
+test('owner: a reversible default runs and is listed under defaulted; an irreversible or unmarked item parks', async () => {
+  const args = { ...ITEMS_BASE, items: [...ITEMS_BASE.items,
+    OWNED('d', { default: 'keep the old tray', reversible: true }),
+    OWNED('e', { default: 'drop it', reversible: false }),
+    OWNED('f', { default: 'drop it' }),
+    OWNED('g', { default: 'none', reversible: true }),
+  ] }
+  const { result, calls, prompts } = await runTimed(args, itemsReply())
+  assert.equal(result.outcome, 'PARKED')
+  assert.deepEqual(result.items.map(i => [i.id, i.status]),
+    [['a', 'done'], ['b', 'done'], ['c', 'done'], ['d', 'done'], ['e', 'parked'], ['f', 'parked'], ['g', 'parked']])
+  assert.match(prompts['item-implementer:d:a1:r0'], /has not answered this item's question \("question d\?"\)/)
+  assert.match(prompts['item-implementer:d:a1:r0'], /default "keep the old tray": proceed on that default/)
+  assert.ok(!/has answered/.test(prompts['item-implementer:d:a1:r0']))
+  // Controls: `reversible: false`, no `reversible` field, and a `none` default all park, unspawned.
+  for (const id of ['e', 'f', 'g']) {
+    assert.ok(!calls.some(c => c.startsWith(`item-implementer:${id}:`)), `${id} ran`)
+    assert.equal(result.items.find(i => i.id === id).reason, `owner: question ${id}?`)
+  }
+  assert.deepEqual(result.defaulted.map(d => [d.id, d.question, d.default, d.status]), [['d', 'question d?', 'keep the old tray', 'done']])
+  assert.deepEqual(result.defaulted[0].commits, [{ repo: '.', sha: 'sha-d' }])
+  assert.match(result.defaulted[0].undo, /revert \.:sha-d, record the owner's answer under '### Decisions', and relaunch with 'd' in answered/)
+  assert.match(prompts['scribe:r0'], /defaulted \(1\):\n- d: "question d\?" -> default "keep the old tray" \(done\); undo: revert \.:sha-d/)
+  assert.match(prompts['scribe:r0'], /items: a=done; b=done; c=done; d=defaulted; e=parked; f=parked; g=parked\n/)
+})
+
+test('owner: a defaulted item stays done on a relaunch, and runs again once the owner answers', async () => {
+  const args = { ...ITEMS_BASE, round: 1, items: [...ITEMS_BASE.items, OWNED('d', { default: 'keep', reversible: true })],
+    state: '## State\nround: 1\nitems: a=done; b=done; c=done; d=defaulted\n' }
+  const again = await runTimed(args, itemsReply())
+  assert.equal(again.result.outcome, 'PASS')
+  assert.ok(!again.calls.some(c => c.startsWith('item-implementer:')), 'a defaulted item ran again with no answer')
+  assert.equal(again.result.defaulted[0].id, 'd', 'the defaulted item dropped off the list')
+  assert.match(again.prompts['scribe:r1'], /d=defaulted\n/)
+  const answered = await runTimed({ ...args, answered: ['d'] }, itemsReply())
+  assert.deepEqual(answered.calls.filter(c => c.startsWith('item-implementer:')), ['item-implementer:d:a1:r1'])
+  assert.match(answered.prompts['item-implementer:d:a1:r1'], /has answered this item's question/)
+  assert.deepEqual(answered.result.defaulted, [])
+  assert.match(answered.prompts['scribe:r1'], /d=done\n/)
+})
+
+// --- goal 3: a wait on a person names the work that does not wait on it -----
+test('unblocked: a PLAN-DEFECT independent of an owner-parked item is listed; the item after the owner one is not', async () => {
+  const args = { ...ITEMS_BASE, items: [
+    OWNED('o', { default: 'x', reversible: false }),
+    { id: 'w', title: 'w', files: ['panel/w.css'], after: ['o'], checks: ['`grep w x` ok'] },
+    { id: 'p', title: 'p', files: ['panel/p.css'], checks: ['`grep p x` ok'] },
+    { id: 'q', title: 'q', files: ['docs/q.md'], checks: ['`grep q x` ok'] },
+  ] }
+  const defect = { ...DONE, verdict: 'PLAN-DEFECT', evidence: 'STEP 1: no such token', commits: [], paths: [] }
+  const { result, prompts } = await runTimed(args, itemsReply({ 'item-implementer:p:': defect }))
+  assert.equal(result.outcome, 'PARKED')
+  assert.deepEqual(result.items.map(i => [i.id, i.status]), [['o', 'parked'], ['w', 'held'], ['p', 'parked'], ['q', 'done']])
+  assert.deepEqual(result.unblocked, [{ id: 'p', reason: 'PLAN-DEFECT', route: 'amend-or-replan' }])
+  assert.match(prompts['scribe:r0'], /\nunblocked: p \(PLAN-DEFECT -> amend-or-replan\)\n/)
+  // Control: the same PLAN-DEFECT with no owner question waits on no person, so no list.
+  const noOwner = { ...args, items: args.items.filter(it => it.id !== 'o').map(it => ({ ...it, after: [] })) }
+  const r = await runTimed(noOwner, itemsReply({ 'item-implementer:p:': defect }))
+  assert.equal(r.result.outcome, 'PARKED')
+  assert.ok(!('unblocked' in r.result), 'a result that waits on no person carried unblocked')
+  assert.ok(!/\nunblocked:/.test(r.prompts['scribe:r0']))
+})
+
+test('unblocked: every hold is traced to its root, and each route is named', () => {
+  const items = [IT('o', ['o.css']), IT('w', ['w.css'], { after: ['o'] }), IT('y', ['y.css'], { after: ['w'] }),
+    IT('p', ['p.css']), IT('h', ['h.css']), IT('a', ['a.css']), IT('b', ['b.css']), IT('z', ['z.css']), IT('k', ['k.css'])]
+  const st = ST(items, {
+    o: { status: 'parked', reason: 'owner: o?', ownerWait: true },
+    w: { status: 'held', reason: 'after o, which is parked', heldBy: 'o' },
+    y: { status: 'held', reason: 'after w, which is held', heldBy: 'w' },
+    p: { status: 'parked', reason: 'PLAN-DEFECT' },
+    h: { status: 'held', reason: "may be invalidated by p's PLAN-DEFECT", heldBy: 'p' },
+    a: { status: 'parked', reason: 'ADVICE-NEEDED' },
+    b: { status: 'parked', reason: 'budget: 3 attempts and its checks still fail' },
+    z: { status: 'held', reason: 'could not be scheduled' },
+    k: { status: 'done' },
+  })
+  assert.deepEqual(sched.unblockedItems(items, st).map(u => [u.id, u.route]),
+    [['p', 'amend-or-replan'], ['h', 'amend-or-replan'], ['a', 'consult'], ['b', 'split'], ['z', 'relaunch']])
+})
+
+test('unblocked: a pass pending a human carries an empty list, in items mode and in rounds', async () => {
+  const pending = { verdict: 'PASS-PENDING-HUMAN', criteria: [], pending_human: ['look at the panel'] }
+  const items = await runTimed(ITEMS_BASE, itemsReply({ 'verifier:': pending }))
+  assert.equal(items.result.outcome, 'PASS-PENDING-HUMAN')
+  assert.deepEqual(items.result.unblocked, [])
+  assert.match(items.prompts['scribe:r0'], /\nunblocked: none\n/)
+  const prompts = {}
+  const rounds = await run(BASE, (label, prompt) => { prompts[label] = prompt; return standard({ verifier: pending })(label) })
+  assert.equal(rounds.result.outcome, 'PASS-PENDING-HUMAN')
+  assert.deepEqual(rounds.result.unblocked, [])
+  assert.match(prompts['scribe:r0'], /\nunblocked: none\n/)
+  // Control: a plain PASS waits on no one.
+  const pass = await run(BASE, standard())
+  assert.ok(!('unblocked' in pass.result))
+})
+
+// --- goal 2: whole-tree runs go to the background, item checks do not -------
+test('background: the rounds verifier, a reach re-verify and the items gate poll --status; item checks stay in the foreground', async () => {
+  const background = p => {
+    assert.match(p, /run_in_background: true/)
+    assert.match(p, /py -3 tools\/run_criteria\.py --status "<your scratchpad>\/criteria" --wait 220/)
+    assert.match(p, /Bash timeout of 300000, re-issued while it exits 3/)
+    assert.match(p, /criteria\/report\.txt/)
+  }
+  const rounds = {}
+  await run(BASE, (label, prompt) => { rounds[label] = prompt; return standard()(label) })
+  background(rounds['verifier:r0'])
+  const scopedPass = { verdict: 'PASS', criteria: [CRIT(1, 'pass'), CRIT(2, 'pass'), CRIT(3, 'pass')], pending_human: [] }
+  const reach = await reachRun([FAILED_2, scopedPass])
+  assert.ok(reach.prompts['verifier:r1'].includes('--changed-since HUB-SHA'), 'control: this is the reach re-verify')
+  background(reach.prompts['verifier:r1'])
+  const items = await runTimed(ITEMS_BASE, itemsReply())
+  background(items.prompts['verifier:r0'])
+  // Controls: the item check and the item implementer keep their foreground run.
+  for (const label of ['item-verifier:a:a1:r0', 'item-implementer:a:a1:r0']) {
+    const p = items.prompts[label]
+    assert.ok(p.includes('--item a --jobs auto'), label)
+    assert.ok(!p.includes('--status'), `${label} was sent to the background`)
+    assert.ok(!p.includes('run_in_background'), `${label} was sent to the background`)
+    assert.match(p, /Bash timeout (at )?600000/)
+  }
+})
+
+// --- goal 5: a stated correction is amended inside the launch ---------------
+//
+// Measured 2026-09-27: the bug batch's one round-borne amendment waited 41
+// minutes for a driver turn. Only `amend_check.py check`'s `AMENDMENT` may put
+// the work back in the queue; every other outcome is the driver's replan.
+const defectBlock = correction => `VERDICT: PLAN-DEFECT\nSTEP: 1\nEVIDENCE: \`grep -c x docs/c.md\` printed 0\n` +
+  `WHAT THE PLAN ASSUMED: x\nWHAT IS ACTUALLY TRUE: y\nCORRECTION: ${correction}\nPROGRESS SO FAR: nothing edited`
+const FIX_TEXT = 'criterion 3: grep `--item`, not `--items`'
+const CORRECTED = (correction = FIX_TEXT) => ({ ...DONE, verdict: 'PLAN-DEFECT', evidence: defectBlock(correction), commits: [], paths: [] })
+const AMEND_OK = {
+  'amend-save:': { exit_code: 0, raw_output: 'saved p.md -> .rounds/zz/amend-base-plan.md' },
+  'amendment: ': { verdict: 'PLAN-READY', report: 'criterion 3 now greps --item' },
+  'amend-check:': { exit_code: 0, verdict_line: 'AMENDMENT', raw_output: 'p.md: ## acceptance criteria: +1 -1\nlines_changed: 2\nAMENDMENT' },
+  'amend-restore:': { exit_code: 0, raw_output: 'restored .rounds/zz/amend-base-plan.md -> p.md' },
+}
+const tableOf = items => ({ exit_code: 0, items, complete: true, raw_output: '' })
+const AMEND_AGENT = /^(amend-save|amendment: |amend-check|amend-items|amend-restore)/
+const amendCalls = calls => calls.filter(c => AMEND_AGENT.test(c))
+// runTimed, also keeping each agent's options.
+async function runAmend(args, reply) {
+  const opts = {}
+  const r = await runTimed(args, (label, prompt, o) => { opts[label] = o; return reply(label, prompt, o) })
+  return { ...r, opts }
+}
+
+test('amend: items mode -- a stated CORRECTION is saved, amended, checked, the table re-read, and the item re-run to done', async () => {
+  // maxParallel 1, so b (after a) and d (same check command as a) are still
+  // pending when a parks: both are held for the amendment, c is not.
+  const args = { ...ITEMS_BASE, maxParallel: 1, items: [
+    { id: 'a', title: 'toolbar', files: ['panel/a.css'], checks: ['`npm test` exits 0'] },
+    { id: 'b', title: 'tray', files: ['panel/b.css'], after: ['a'], checks: ['`grep b x` ok'] },
+    { id: 'c', title: 'docs', files: ['docs/c.md'], checks: ['`grep c x` ok'] },
+    { id: 'd', title: 'badge', files: ['panel/d.css'], checks: ['`npm test` exits 0'] },
+  ] }
+  const amended = tableOf([{ ...args.items[0], files: ['panel/a2.css'] }, ...args.items.slice(1)])
+  const { result, calls, prompts, opts } = await runAmend(args, itemsReply({ 'item-implementer:a:a1:': CORRECTED(), ...AMEND_OK, 'amend-items:': amended }))
+  assert.equal(result.outcome, 'PASS')
+  assert.deepEqual(result.items.map(i => [i.id, i.status]), [['a', 'done'], ['b', 'done'], ['c', 'done'], ['d', 'done']])
+  const order = ['item-implementer:a:a1:r0', 'amend-save:a:r0', 'amendment: zz a:r0', 'amend-check:a:r0', 'amend-items:a:r0', 'item-implementer:a:a2:r0', 'item-implementer:b:a1:r0']
+  for (const [x, y] of order.slice(1).map((l, i) => [order[i], l])) assert.ok(calls.indexOf(x) >= 0 && calls.indexOf(x) < calls.indexOf(y), `${x} before ${y}: ${calls.join(', ')}`)
+  assert.ok(calls.indexOf('item-implementer:d:a1:r0') > calls.indexOf('amend-items:a:r0'), 'd ran before the amendment released it')
+  // Work the PLAN-DEFECT does not reach waits too, since it would read the plan
+  // mid-rewrite, and runs once the amendment is confirmed; nothing is restored.
+  assert.ok(calls.indexOf('item-implementer:c:a1:r0') > calls.indexOf('amend-items:a:r0'), 'c started while the plan was being amended')
+  assert.ok(!calls.some(c => c.startsWith('amend-restore:')), 'a confirmed amendment was restored')
+  assert.match(prompts['amend-save:a:r0'], /Run exactly: py -3 tools\/amend_check\.py save "p\.md" "c\.md"/)
+  assert.match(prompts['amend-check:a:r0'], /Run exactly: py -3 tools\/amend_check\.py check "p\.md" "c\.md"/)
+  assert.equal(opts['amendment: zz a:r0'].agentType, 'planner')
+  assert.equal(opts['amendment: zz a:r0'].model, undefined, 'the amendment planner runs at its own default tier')
+  assert.deepEqual(opts['amendment: zz a:r0'].schema.properties.verdict.enum, ['PLAN-READY', 'NOT AN AMENDMENT'])
+  // The correction verbatim, and only its own field; the whole evidence block follows it.
+  assert.equal(between(prompts['amendment: zz a:r0'], 'Apply this correction and nothing else:\n\n', '\n\nThe PLAN-DEFECT evidence'), FIX_TEXT)
+  assert.ok(prompts['amendment: zz a:r0'].includes(defectBlock(FIX_TEXT)), 'the evidence was not passed verbatim')
+  assert.match(prompts['amendment: zz a:r0'], /"When you are spawned as an amendment"/)
+  // The re-run reads the amended table and knows why it runs again.
+  assert.match(prompts['item-implementer:a:a2:r0'], /Your file set is `panel\/a2\.css`/)
+  assert.match(prompts['item-implementer:a:a2:r0'], /plan was amended in this launch/)
+  assert.ok(!/checks failed/.test(prompts['item-implementer:a:a2:r0']))
+  assert.deepEqual(result.amendments, [{ id: 'a', amended: true, why: '', verdict: 'AMENDMENT' }])
+  assert.match(prompts['scribe:r0'], /\namendments \(1\):\n- a: AMENDMENT; re-run\n/)
+})
+
+test('amend: items mode -- REPLAN, NOT AN AMENDMENT, SCOPE, a failed check or lint, and CORRECTION: none each park the item unrun', async () => {
+  const cases = [
+    ['REPLAN', { 'amend-check:': { exit_code: 1, verdict_line: 'REPLAN: p.md: ## goal changed', raw_output: 'lines_changed: 3\nREPLAN: p.md: ## goal changed' } }, /^REPLAN: p\.md: ## goal changed$/],
+    ['NOT AN AMENDMENT', { 'amendment: ': { verdict: 'NOT AN AMENDMENT', reason: 'the stated fix is wrong' } }, /^NOT AN AMENDMENT: the stated fix is wrong$/],
+    ['SCOPE', { 'amend-check:': { exit_code: 0, verdict_line: 'SCOPE: 1 new owner decision(s); not a replan (was: x)', raw_output: 'SCOPE: 1 new owner decision(s); not a replan (was: x)' } }, /^SCOPE: .*the driver's to route$/],
+    ['exit 2', { 'amend-check:': { exit_code: 2, raw_output: 'amend_check: missing p.md (run `save` before the amendment)' } }, /^amend_check\.py check exited 2: amend_check: missing/],
+    ['save failed', { 'amend-save:': { exit_code: 2, raw_output: 'amend_check: no such file: c.md' } }, /^amend_check\.py save exited 2/],
+    ['lint', { 'amend-items:': { exit_code: 1, items: [], complete: false, raw_output: 'p.md: item a: overlap: x' } }, /^plan_lint refused the amended plan: p\.md: item a: overlap/],
+  ]
+  for (const [why, stubs, reason] of cases) {
+    const { result, calls, prompts } = await runAmend(ITEMS_BASE, itemsReply({ 'item-implementer:a:a1:': CORRECTED(), ...AMEND_OK, 'amend-items:': tableOf(ITEMS_BASE.items), ...stubs }))
+    const a = result.items.find(i => i.id === 'a')
+    assert.equal(result.outcome, 'PARKED', why)
+    assert.deepEqual([a.status, a.reason], ['parked', 'PLAN-DEFECT'], why)
+    assert.match(a.replan, reason, why)
+    assert.ok(!calls.includes('item-implementer:a:a2:r0'), `${why}: the item was re-run`)
+    if (why !== 'save failed') {
+      assert.ok(calls.includes('amend-check:a:r0'), `${why}: a spawned planner had no check after it (R24)`)
+      // The rejected edit is put back before anything else can read it.
+      const last = why === 'lint' ? 'amend-items:a:r0' : 'amend-check:a:r0'
+      assert.ok(calls.indexOf('amend-restore:a:r0') > calls.indexOf(last), `${why}: no restore after ${last}: ${calls.join(', ')}`)
+      assert.match(prompts['amend-restore:a:r0'], /Run exactly: py -3 tools\/amend_check\.py restore "p\.md" "c\.md"/)
+    } else {
+      assert.ok(!calls.includes('amendment: zz a:r0'), 'a planner ran without a saved copy')
+      assert.ok(!calls.includes('amend-restore:a:r0'), 'control: nothing was saved, so nothing is restored')
+    }
+    assert.deepEqual(result.amendments.map(x => [x.id, x.amended]), [['a', false]], why)
+    assert.match(prompts['scribe:r0'], /\n- a: not amended -- /, why)
+    assert.match(prompts['scribe:r0'], /\n- a \(toolbar\): parked -- PLAN-DEFECT; replan: /, why)
+  }
+  // `CORRECTION: none` is the implementer's own "needs a replan": no amendment runs at all.
+  const none = await runAmend(ITEMS_BASE, itemsReply({ 'item-implementer:a:a1:': CORRECTED('none'), ...AMEND_OK }))
+  assert.deepEqual(amendCalls(none.calls), [])
+  assert.equal(none.result.items[0].replan, 'its CORRECTION is none')
+  assert.ok(!none.calls.includes('item-implementer:a:a2:r0'))
+  // Control: no CORRECTION line at all leaves the route to the driver, as before.
+  const bare = await runAmend(ITEMS_BASE, itemsReply({ 'item-implementer:a:a1:': { ...CORRECTED(), evidence: 'STEP 1: no such token' } }))
+  assert.deepEqual(amendCalls(bare.calls), [])
+  assert.equal(bare.result.items[0].replan, undefined)
+  // The driver is told which of the two routes a parked PLAN-DEFECT needs.
+  const items = [IT('p', ['p.css']), IT('r', ['r.css'])]
+  const st = ST(items, { p: { status: 'parked', reason: 'PLAN-DEFECT' }, r: { status: 'parked', reason: 'PLAN-DEFECT', replan: 'REPLAN: x' } })
+  assert.deepEqual(sched.unblockedItems(items, st).map(u => [u.id, u.route]), [['p', 'amend-or-replan'], ['r', 'replan']])
+})
+
+test('amend: items mode -- a second PLAN-DEFECT after its amendment parks; one after an IMPL-DONE is amended again', async () => {
+  const again = await runAmend(ITEMS_BASE, itemsReply({ 'item-implementer:a:': CORRECTED(), ...AMEND_OK, 'amend-items:': tableOf(ITEMS_BASE.items) }))
+  assert.equal(again.result.outcome, 'PARKED')
+  assert.equal(again.calls.filter(c => c.startsWith('amendment: ')).length, 1, 'a second amendment ran back to back')
+  assert.match(again.result.items[0].replan, /^PLAN-DEFECT again after its amendment in this launch, with no IMPL-DONE between$/)
+  assert.ok(!again.calls.includes('item-implementer:a:a3:r0'))
+  // Control: an IMPL-DONE between the two resets the limit, and neither
+  // amendment is charged to the item's check budget (4 attempts, 2 charged).
+  const failOnce = { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'npm test', status: 'fail', evidence: 'expected 2 got 3' }], pending_human: [] }
+  const later = await runAmend(ITEMS_BASE, itemsReply({ 'item-implementer:a:a1:': CORRECTED(), 'item-implementer:a:a3:': CORRECTED(),
+    'item-verifier:a:a2:': failOnce, ...AMEND_OK, 'amend-items:': tableOf(ITEMS_BASE.items) }))
+  assert.equal(later.result.outcome, 'PASS')
+  assert.equal(later.calls.filter(c => c.startsWith('amendment: ')).length, 2)
+  assert.equal(later.result.items[0].attempts, 4)
+  assert.match(later.prompts['item-implementer:a:a3:r0'], /checks failed.*\n- FAILED npm test: expected 2 got 3/s)
+  assert.match(later.prompts['item-implementer:a:a4:r0'], /This is attempt 4\. The plan was amended in this launch/)
+})
+
+test('amend: items mode -- two items amended in one launch never overlap', async () => {
+  const { result, calls, spans } = await runAmend(ITEMS_BASE, itemsReply({ 'item-implementer:a:a1:': CORRECTED(), 'item-implementer:c:a1:': CORRECTED(),
+    ...AMEND_OK, 'amend-items:': tableOf(ITEMS_BASE.items) }))
+  assert.equal(result.outcome, 'PASS')
+  assert.deepEqual(result.amendments.map(x => x.id).sort(), ['a', 'c'])
+  const span = id => [spans[`amend-save:${id}:r0`][0], spans[`amend-items:${id}:r0`][1]]
+  const s = { a: span('a'), c: span('c') }
+  assert.ok(!overlaps(s, 'a', 'c'), `two amendments ran at once: ${JSON.stringify(s)}`)
+  // Control: the two implementers that raised them did run at the same time.
+  assert.ok(overlaps(spans, 'item-implementer:a:a1:r0', 'item-implementer:c:a1:r0'))
+  assert.ok(calls.includes('item-implementer:a:a2:r0') && calls.includes('item-implementer:c:a2:r0'))
+})
+
+test('amend: items mode -- no item starts while an amendment runs; unrelated work starts once it is confirmed, or rejected and restored', async () => {
+  // maxParallel 1, so c (unrelated to a's PLAN-DEFECT) is still pending when a parks.
+  const args = { ...ITEMS_BASE, maxParallel: 1, items: [
+    { id: 'a', title: 'toolbar', files: ['panel/a.css'], checks: ['`grep a x` ok'] },
+    { id: 'c', title: 'docs', files: ['docs/c.md'], checks: ['`grep c x` ok'] },
+  ] }
+  const startOf = (spans, label) => spans[label][0]
+  const confirmed = await runAmend(args, itemsReply({ 'item-implementer:a:a1:': CORRECTED(), ...AMEND_OK, 'amend-items:': tableOf(args.items) }))
+  assert.equal(confirmed.result.outcome, 'PASS')
+  assert.ok(startOf(confirmed.spans, 'item-implementer:c:a1:r0') > confirmed.spans['amend-items:a:r0'][1],
+    `c started while a's amendment ran: ${confirmed.calls.join(', ')}`)
+  assert.ok(!confirmed.calls.includes('amend-restore:a:r0'), 'control: a confirmed amendment is not restored')
+  const rejected = await runAmend(args, itemsReply({ 'item-implementer:a:a1:': CORRECTED(), ...AMEND_OK,
+    'amend-check:': { exit_code: 1, verdict_line: 'REPLAN: p.md: ## goal changed', raw_output: 'REPLAN: p.md: ## goal changed' } }))
+  assert.equal(rejected.result.outcome, 'PARKED')
+  assert.deepEqual(rejected.result.items.map(i => [i.id, i.status]), [['a', 'parked'], ['c', 'done']])
+  assert.ok(startOf(rejected.spans, 'item-implementer:c:a1:r0') > rejected.spans['amend-restore:a:r0'][1],
+    `c started before the rejected amendment was restored: ${rejected.calls.join(', ')}`)
+  assert.match(rejected.result.items[0].replan, /^REPLAN: p\.md: ## goal changed$/)
+})
+
+test('amend: items mode -- a restore that fails starts nothing more, and says why', async () => {
+  const args = { ...ITEMS_BASE, maxParallel: 1, items: [
+    { id: 'a', title: 'toolbar', files: ['panel/a.css'], checks: ['`grep a x` ok'] },
+    { id: 'c', title: 'docs', files: ['docs/c.md'], checks: ['`grep c x` ok'] },
+  ] }
+  const { result, calls } = await runAmend(args, itemsReply({ 'item-implementer:a:a1:': CORRECTED(), ...AMEND_OK,
+    'amend-check:': { exit_code: 1, verdict_line: 'REPLAN: p.md: ## goal changed', raw_output: '' },
+    'amend-restore:': { exit_code: 2, raw_output: 'amend_check: no saved copy' } }))
+  assert.equal(result.outcome, 'PARKED')
+  assert.ok(!calls.includes('item-implementer:c:a1:r0'), 'c read a plan that may still carry the rejected edit')
+  const [a, c] = result.items
+  assert.match(a.replan, /^REPLAN: p\.md: ## goal changed; restoring the saved plan failed \(amend_check\.py restore exited 2: amend_check: no saved copy\)/)
+  assert.equal(c.status, 'held')
+  assert.match(c.reason, /^not started: REPLAN: .*restoring the saved plan failed/)
+})
+
+test('amend: items mode -- after a failed restore a queued amendment is not attempted, so its save cannot overwrite the good copy', async () => {
+  // a and c run at once and both return a CORRECTION; whichever settles first
+  // is amended, rejected, and its restore fails while the other waits queued.
+  const args = { ...ITEMS_BASE, items: [
+    { id: 'a', title: 'toolbar', files: ['panel/a.css'], checks: ['`grep a x` ok'] },
+    { id: 'c', title: 'docs', files: ['docs/c.md'], checks: ['`grep c x` ok'] },
+  ] }
+  const stubs = { 'item-implementer:a:a1:': CORRECTED(), 'item-implementer:c:a1:': CORRECTED(), ...AMEND_OK,
+    'amend-check:': { exit_code: 1, verdict_line: 'REPLAN: p.md: ## goal changed', raw_output: '' } }
+  const { result, calls, prompts } = await runAmend(args, itemsReply({ ...stubs, 'amend-restore:': { exit_code: 2, raw_output: 'amend_check: no saved copy' } }))
+  const saves = calls.filter(c => c.startsWith('amend-save:'))
+  assert.equal(saves.length, 1, `a second save overwrote the only saved copy: ${calls.join(', ')}`)
+  const first = saves[0].split(':')[1], second = first === 'a' ? 'c' : 'a'
+  assert.equal(result.outcome, 'PARKED')
+  const q = result.items.find(i => i.id === second)
+  assert.deepEqual([q.status, q.reason], ['parked', 'PLAN-DEFECT'])
+  assert.match(q.replan, /^its amendment was not attempted: REPLAN: p\.md: ## goal changed; restoring the saved plan failed/)
+  assert.deepEqual(result.amendments.map(x => [x.id, x.amended]), [[first, false], [second, false]])
+  assert.match(prompts['scribe:r0'], new RegExp(`\\n- ${second}: not amended -- its amendment was not attempted: `))
+  assert.ok(!calls.some(c => /^item-implementer:[ac]:a2:/.test(c)), 'an item re-ran on a plan that may carry the rejected edit')
+  // Control: with the restore succeeding, the second amendment does run.
+  const ok = await runAmend(args, itemsReply(stubs))
+  assert.equal(ok.calls.filter(c => c.startsWith('amend-save:')).length, 2, `control: ${ok.calls.join(', ')}`)
+  assert.deepEqual(ok.result.amendments.map(x => x.amended), [false, false])
+  assert.equal(ok.result.outcome, 'PARKED')
+})
+
+test('amend: rounds mode -- an amendment re-runs the same round, uncounted; a second PLAN-DEFECT returns PLAN-DEFECT', async () => {
+  let impls = 0
+  const prompts = {}
+  const once = await run(BASE, (label, prompt) => { prompts[label] = prompt; return standard({ implementer: () => (impls++ === 0 ? CORRECTED() : DONE), ...AMEND_OK })(label) })
+  assert.equal(once.result.outcome, 'PASS')
+  assert.equal(once.result.round, 0)
+  assert.deepEqual(once.calls.filter(c => c.startsWith('implementer')), ['implementer:r0', 'implementer:r0'])
+  assert.deepEqual(amendCalls(once.calls), ['amend-save:implementer:r0', 'amendment: zz implementer:r0', 'amend-check:implementer:r0'])
+  assert.deepEqual(once.calls.filter(c => c.startsWith('verifier')), ['verifier:r0'])
+  assert.match(prompts['implementer:r0'], /plan was amended in this launch/, 'the re-run was not told why it runs again')
+  assert.match(once.result.rounds[0].amendment, /^AMENDMENT; this round re-ran, not counted$/)
+  assert.match(prompts['scribe:r0'], /\namendment: AMENDMENT; this round re-ran, not counted\n/)
+  // The amendment spends no round: three failing verifies still make three rounds.
+  const fail = { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] }
+  impls = 0
+  const capped = await run(BASE, standard({ implementer: () => (impls++ === 0 ? CORRECTED() : DONE), ...AMEND_OK, verifier: fail }))
+  assert.equal(capped.result.outcome, 'CAP')
+  assert.deepEqual(capped.calls.filter(c => c.startsWith('verifier')), ['verifier:r0', 'verifier:r1', 'verifier:r2'])
+  // A second PLAN-DEFECT from the re-run is the driver's.
+  const twice = await run(BASE, standard({ implementer: CORRECTED(), ...AMEND_OK }))
+  assert.equal(twice.result.outcome, 'PLAN-DEFECT')
+  assert.equal(twice.calls.filter(c => c.startsWith('amendment: ')).length, 1)
+  assert.ok(!twice.calls.some(c => c.startsWith('verifier')))
+  assert.match(twice.result.amendment.why, /again after its amendment/)
+  // Control: an unconfirmed amendment returns PLAN-DEFECT without a re-run.
+  const replan = await run(BASE, standard({ implementer: CORRECTED(), ...AMEND_OK, 'amend-check:': { exit_code: 1, verdict_line: 'REPLAN: 30 lines changed (limit 20)', raw_output: '' } }))
+  assert.equal(replan.result.outcome, 'PLAN-DEFECT')
+  assert.deepEqual(replan.calls.filter(c => c.startsWith('implementer')), ['implementer:r0'])
+  assert.deepEqual(replan.result.amendment, { amended: false, why: 'REPLAN: 30 lines changed (limit 20)', verdict: 'REPLAN: 30 lines changed (limit 20)' })
+  // The driver's replan starts from the plan as it was, not the rejected edit;
+  // the confirmed amendment above was not restored (amendCalls lists restores).
+  assert.deepEqual(amendCalls(replan.calls), ['amend-save:implementer:r0', 'amendment: zz implementer:r0', 'amend-check:implementer:r0', 'amend-restore:implementer:r0'])
+})
+
+test('amend: rounds mode -- a lane\'s PLAN-DEFECT is unchanged; the join\'s is amended and re-run as one implementer', async () => {
+  const lane = { ...CORRECTED(), lane: 'code' }
+  const r = await run(LANED, laneReply({ code: lane }, AMEND_OK))
+  assert.equal(r.result.outcome, 'PLAN-DEFECT')
+  assert.deepEqual(amendCalls(r.calls), [], 'a lane PLAN-DEFECT was amended in the launch')
+  assert.ok(!r.calls.includes('implementer:join:r0'))
+  const prompts = {}
+  const joined = await run(LANED, (label, prompt, o) => { prompts[label] = prompt; return laneReply({}, { 'implementer:join': CORRECTED(), ...AMEND_OK })(label, prompt, o) })
+  assert.equal(joined.result.outcome, 'PASS')
+  assert.deepEqual(joined.calls.filter(c => c.startsWith('implementer')), ['implementer:code:r0', 'implementer:docs:r0', 'implementer:join:r0', 'implementer:r0'])
+  assert.match(prompts['implementer:r0'], /you own every lane's file set and the join's steps/)
 })

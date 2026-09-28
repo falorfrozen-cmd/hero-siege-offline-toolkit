@@ -117,6 +117,33 @@ runs on every fix round, which is what every plan did before the map existed.
                    usual false alarm. The `no-reads` hint is filtered the
                    same way, which drops refs and repo slugs.
 
+And the owner questions (workorder-speedup, 2026-09-27), so a question never
+idles the pipeline: the engine proceeds on a reversible default and parks
+only what an irreversible one gates. An item with `owner:` also carries
+`default: <what to do unanswered>` and `reversible: yes|no` (its first word
+counts: `yes. Revert the item's commit.`). So does each entry of `## Needs
+human judgement`, read in the plan and in its sibling `<slug>-context.md`: a
+`###` subsection, or, when the section has none, a top-level list item. A
+default is "none" when it is empty or its first word is `none`; a wait on a
+live capture or on data that does not exist yet is `reversible: no` with
+`default: none`. An item without `owner:` needs neither line.
+
+  owner-no-default the question has no `default:` line.
+  owner-no-reversible
+                   no `reversible:` line, or its first word is neither `yes`
+                   nor `no`.
+  owner-reversible-no-default
+                   `reversible: yes` with a default that is none: nothing to
+                   proceed on, so it would park anyway.
+  owner-legal-default
+                   the question's text (the whole entry, or an item's
+                   `owner:` and `default:`) matches `decompil|disassembl|
+                   legal|licen[cs]e|copyright|ghidra|\\bIDA\\b|
+                   UndertaleModTool|dnSpy` (any case) and it is `reversible:
+                   yes` or its default is not none. A legal or
+                   decompile-output question is never defaultable (AGENTS.md,
+                   "Legal: Decompiled Output Never Reaches Any Origin").
+
 Usage:
     py -3 tools/plan_lint.py <slug>-plan.md [...]
     py -3 tools/plan_lint.py <slug>-plan.md --lanes-json
@@ -131,8 +158,9 @@ after it. `--lanes-json` (one plan) then prints, only when the lint is clean, on
 JSON line `{"lanes": [{"name": ..., "files": [...]}, ...], "join":
 true|false}` -- the lane table the driver passes to the workflow, so it can
 never launch lanes a lint rejected. `--items-json` likewise prints `{"items":
-[{"id", "title", "files", "checks", "after", "shares", "owner"}, ...],
-"complete": true|false}`, `complete` false while `## State` says `planning:
+[{"id", "title", "files", "checks", "after", "shares", "owner", "default",
+"reversible"}, ...], "complete": true|false}` (`default` a string or null,
+`reversible` true, false or null), `complete` false while `## State` says `planning:
 streaming`. With `--known` it prints only the items not in that list, and
 with `--wait` it first polls the plan (every 5 s, at most SECONDS) until an
 unknown item appears or planning is complete -- what the round engine's
@@ -182,7 +210,14 @@ STEP_START_RE = re.compile(r"^\s*(?:\d+\.|[-*])\s")
 LANE_NAME_RE = re.compile(r"[a-z0-9-]+")
 GLOB_CHARS = "*?["
 ITEM_HEADING_RE = re.compile(r"^###\s+Item:\s*`?([^`\s—–]*)`?\s*(?:[—–-]+\s*(.*?))?\s*$")
-ITEM_FIELD_RE = re.compile(r"^\s*(?:[-*]\s+)?\**(files|checks|after|shares|owner):\**\s*(.*)$", re.I)
+ITEM_FIELD_RE = re.compile(r"^\s*(?:[-*]\s+)?\**(files|checks|after|shares|owner|default|reversible):\**\s*(.*)$",
+                           re.I)
+JUDGEMENT_HEADING_RE = re.compile(r"^##\s+Needs human judgement\s*$", re.I)
+FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
+# `default:` / `reversible:` inside a judgement entry, also as its own bullet.
+OWNER_FIELD_RE = re.compile(r"^\s*(?:[-*]\s+|\d+\.\s+)?\**(default|reversible):\**\s*(.*)$", re.I)
+TOP_ENTRY_RE = re.compile(r"^(?:[-*]|\d+\.)\s+")
+LEGAL_RE = re.compile(r"decompil|disassembl|legal|licen[cs]e|copyright|ghidra|\bIDA\b|UndertaleModTool|dnSpy", re.I)
 NUMBERED_STEP_RE = re.compile(r"^\s*\d+\.\s")
 BULLET_RE = re.compile(r"^\s*[-*]\s+")
 STATE_HEADING_RE = re.compile(r"^##\s+State\s*$")
@@ -511,7 +546,8 @@ def _item_fields(body: list) -> dict:
     its own line and any bullet lines under it, one check per bullet (or the
     whole inline text as one check); `files:` continues onto lines that carry
     a backtick, as a lane's does."""
-    fields = {"files": None, "checks": [], "after": [], "shares": [], "owner": None}
+    fields = {"files": None, "checks": [], "after": [], "shares": [], "owner": None, "default": None,
+              "reversible": None}
     current = None
     for line in body:
         if NUMBERED_STEP_RE.match(line):
@@ -528,6 +564,10 @@ def _item_fields(body: list) -> dict:
                 fields[key] = _ticked(value) or [v.strip() for v in re.split(r"[,\s]+", value) if v.strip()]
             elif key == "owner":
                 fields["owner"] = value or None
+            elif key == "default":
+                fields["default"] = value
+            elif key == "reversible":
+                fields["reversible"] = _reversible(value)
             continue
         if not line.strip():
             # A blank line between `checks:` and its first bullet is allowed.
@@ -540,6 +580,8 @@ def _item_fields(body: list) -> dict:
             fields["checks"][-1] += "\n" + line.strip()
         elif current == "files" and "`" in line:
             fields["files"] = (fields["files"] or []) + _ticked(line)
+        elif current == "default":
+            fields["default"] = (fields["default"] + " " + line.strip()).strip()
         else:
             current = None
     fields["checks"] = [c for c in fields["checks"] if c.strip()]
@@ -549,8 +591,10 @@ def _item_fields(body: list) -> dict:
 def items(text: str) -> list:
     """Each `### Item: <id>` under `## Steps` as a dict of `id`, `title`,
     `files` (None when the item has no `files:` line), `checks` (the check
-    texts, backticks kept), `after`, `shares` and `owner`, in plan order. A
-    plan with no `### Item:` heading has no items and runs as it always has."""
+    texts, backticks kept), `after`, `shares`, `owner`, `default` (the text,
+    None without a `default:` line) and `reversible` (True, False, or None
+    without a `yes`/`no` value), in plan order. A plan with no `### Item:`
+    heading has no items and runs as it always has."""
     lines = text.splitlines()
     start = next((i for i, line in enumerate(lines) if STEPS_HEADING_RE.match(line)), None)
     if start is None:
@@ -584,6 +628,139 @@ def planning_complete(text: str) -> bool:
                 if m:
                     return m.group(1).strip("`").lower() != "streaming"
     return True
+
+
+def _reversible(value: str) -> bool | None:
+    """`reversible:`'s answer from its first word (`yes. Revert ...`,
+    `` `no` ``); None when that word is neither."""
+    m = re.match(r"[`*_\s]*(yes|no)\b", value, re.I)
+    return None if m is None else m.group(1).lower() == "yes"
+
+
+def _no_default(value: str) -> bool:
+    """Whether a `default:` value offers nothing to proceed on: empty, or its
+    first word is `none` (`none (waits on the capture)`)."""
+    return not value.strip("`*_ .") or re.match(r"[`*_\s]*none\b", value, re.I) is not None
+
+
+def owner_findings(title: str, text: str, default: str | None, reversible: bool | None) -> list:
+    """`(rule, excerpt)` per finding on one owner question: an `owner:` item
+    or a `## Needs human judgement` entry. `text` is what the legal rule
+    searches: the whole entry, or an item's question and default."""
+    label = f'"{title[:60]}{"..." if len(title) > 60 else ""}"'
+    out = []
+    if default is None:
+        out.append(("owner-no-default", f"{label} has no `default:` line"))
+    if reversible is None:
+        out.append(("owner-no-reversible", f"{label} has no `reversible: yes` or `reversible: no` line"))
+    if reversible is True and default is not None and _no_default(default):
+        out.append(("owner-reversible-no-default",
+                    f"{label} is `reversible: yes` with no default to proceed on; give one, or mark it `no`"))
+    if LEGAL_RE.search(text) and (reversible is True or (default is not None and not _no_default(default))):
+        out.append(("owner-legal-default",
+                    f"{label} is a legal or decompile-output question: it takes `reversible: no` and "
+                    "`default: none`, never a default"))
+    return out
+
+
+def _unfenced(lines: list) -> list:
+    """`(line, fenced)` per line: whether it sits inside a ``` or ~~~ fence
+    (the fence lines themselves count as fenced)."""
+    out, fence = [], False
+    for line in lines:
+        if FENCE_RE.match(line):
+            out.append((line, True))
+            fence = not fence
+            continue
+        out.append((line, fence))
+    return out
+
+
+def judgement_entries(text: str) -> list:
+    """Each entry of `## Needs human judgement` as `{"title", "text",
+    "default", "reversible"}`: a `###` subsection, or, when the section has
+    none, a top-level (unindented) list item. A list line that is itself a
+    `default:` or `reversible:` belongs to the entry before it, and an entry
+    that only says `none` is no entry. Headings inside a fence are text."""
+    lines = _unfenced(text.splitlines())
+    start = next((i for i, (line, fenced) in enumerate(lines)
+                  if not fenced and JUDGEMENT_HEADING_RE.match(line)), None)
+    if start is None:
+        return []
+    body = []
+    for line, fenced in lines[start + 1:]:
+        if not fenced and NEXT_H2_RE.match(line):
+            break
+        body.append((line, fenced))
+    groups: list = []
+    if any(not fenced and H3_RE.match(line) for line, fenced in body):
+        for line, fenced in body:
+            if not fenced and H3_RE.match(line):
+                groups.append([line])
+            elif groups:
+                groups[-1].append(line)
+    else:
+        current, blank = None, False
+        for line, fenced in body:
+            if not line.strip():
+                blank = True
+                if current is not None:
+                    current.append(line)
+                continue
+            starts = not fenced and TOP_ENTRY_RE.match(line) and not OWNER_FIELD_RE.match(line)
+            if starts:
+                current = [line]
+                groups.append(current)
+            elif current is not None and blank and not line.startswith((" ", "\t")) \
+                    and not OWNER_FIELD_RE.match(line):
+                current = None  # prose after the list
+            elif current is not None:
+                current.append(line)
+            blank = False
+    out = []
+    for group in groups:
+        title = re.sub(r"^(?:###\s+|(?:[-*]|\d+\.)\s+)", "", group[0]).strip()
+        if re.fullmatch(r"[`*_\s]*(?:none|n/a)[`*_.\s]*", title, re.I) and not "".join(group[1:]).strip():
+            continue
+        default, reversible, current = None, None, None
+        for line in group[1:]:
+            m = OWNER_FIELD_RE.match(line)
+            if m:
+                current = m.group(1).lower()
+                if current == "default":
+                    default = m.group(2).strip()
+                else:
+                    reversible = _reversible(m.group(2))
+            elif current == "default" and line.strip():
+                default = (default + " " + line.strip()).strip()
+            else:
+                current = None
+        out.append({"title": title, "text": "\n".join(group), "default": default, "reversible": reversible})
+    return out
+
+
+def lint_owner(declared: list, text: str, context: str | None = None) -> list:
+    """`(where, rule, excerpt)` per owner-question finding: each item with an
+    `owner:`, each `## Needs human judgement` entry of the plan (`judgement
+    <k>`) and of its sibling context file (`context judgement <k>`)."""
+    out = []
+    for it in declared:
+        if it.get("owner"):
+            for rule, excerpt in owner_findings(it["owner"], it["owner"] + "\n" + (it.get("default") or ""),
+                                                it.get("default"), it.get("reversible")):
+                out.append((f"item {it['id']}", rule, excerpt))
+    for prefix, source in (("judgement", text), ("context judgement", context)):
+        for k, entry in enumerate(judgement_entries(source or ""), 1):
+            for rule, excerpt in owner_findings(entry["title"], entry["text"], entry["default"], entry["reversible"]):
+                out.append((f"{prefix} {k}", rule, excerpt))
+    return out
+
+
+def sibling_context(plan: Path) -> Path | None:
+    """`<slug>-context.md` beside `<slug>-plan.md`; None for any other name."""
+    if not plan.name.endswith("-plan.md"):
+        return None
+    return plan.with_name(plan.name[: -len("-plan.md")] + "-context.md")
 
 
 def lint_items(declared: list, has_lanes: bool) -> list:
@@ -654,8 +831,12 @@ def lint(path: Path) -> tuple:
     declared_lanes, join = lanes(text)
     for name, rule, excerpt in lint_lanes(declared_lanes, join):
         out.append((f"lane {name}", rule, excerpt))
-    for iid, rule, excerpt in lint_items(items(text), bool(declared_lanes)):
+    declared_items = items(text)
+    for iid, rule, excerpt in lint_items(declared_items, bool(declared_lanes)):
         out.append((f"item {iid}", rule, excerpt))
+    context = sibling_context(path)
+    context_text = context.read_text(encoding="utf-8", errors="replace") if context and context.is_file() else None
+    out += lint_owner(declared_items, text, context_text)
     return len(items_), out
 
 
