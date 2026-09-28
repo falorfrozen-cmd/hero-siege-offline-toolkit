@@ -3133,3 +3133,8 @@ suite runs in Ember (1600px for long inline names) and Ledger (1280px), includin
 focus, hold, timeout and byte-identical Undo posts/commands. Its new
 `tests/test_panel_e2e_review.py` wrapper includes it in release CI's
 `panel-browser` group.
+Search does not change an enabled standalone input's Tab order: only a
+disabled control's actual wrapping row gains tabindex=-1. Idle footer status
+text is visually clipped without removing its live region from the accessibility
+tree; the Ember browser suite verifies both keyboard traversal and the live
+region through Chromium's accessibility tree.
