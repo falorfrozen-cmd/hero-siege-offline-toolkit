@@ -181,12 +181,16 @@ statements inside `if TYPE_CHECKING:`. They never run, but PyInstaller's bytecod
 them, as type checkers and editors do. The ForgePact.exe built above holds the same twelve
 `hs_game_sdk` entries in its PYZ as the eager build, and PyInstaller warned about none.
 
-Without the block, the exe would still build and start. `build_release.py`'s check for `missing
-module named hs_game_sdk` would pass too, because the package itself is found. `forgepact.py`'s
-`except Exception` would then quietly fall back to empty Satanic pools: the 2026-09-14 failure in
-the ForgePact guide's Packaging Hazards, item 4. `tests/test_sdk_lazy_import.py` guards against
-this. A bundler that evaluates `TYPE_CHECKING` as false and drops the block would need the package
-named explicitly; every frozen app in this toolkit is built with PyInstaller.
+A build with the block deleted shows what the block prevents. PyInstaller still built that exe, but
+its PYZ held none of the five tables, and the running exe served no Satanic buffs: `forgepact.py`'s
+`except Exception` fell back to empty pools, the 2026-09-14 failure in the ForgePact guide's
+Packaging Hazards, item 4. That build's `warn-ForgePact.txt` listed `missing module named
+hs_game_sdk.GameObject` and `hs_game_sdk.GameScript`, because PyInstaller took the two names for
+submodules. `build_release.py`'s substring check for `missing module named hs_game_sdk` would
+therefore have refused the package. That warning exists only because ForgePact imports table names
+with `from hs_game_sdk import`; `tests/test_sdk_lazy_import.py` checks the block in the SDK itself.
+A bundler that evaluates `TYPE_CHECKING` as false and drops the block would need the package named
+explicitly; every frozen app in this toolkit is built with PyInstaller.
 
 **Editing it.** The loader is part of the generated `__init__.py`, so it lives in the `init_content`
 template of `tools/extract_and_generate_sdk.py` (see "Never hand-edit a generated file" below).
