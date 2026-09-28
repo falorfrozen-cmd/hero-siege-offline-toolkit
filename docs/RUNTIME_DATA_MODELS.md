@@ -2498,7 +2498,7 @@ names are the stats' tooltip names (the Item Editor's game-verified stat table).
 [Why the loot filter never hides them](../ForgePact/docs/incarnation-gems-research.md#why-the-loot-filter-never-hides-them---static-reading)
 
 What a hidden ground item still is (ForgePact #95 part 1, 2026-09-27, and
-part 2, 2026-09-28):
+part 2, workorder `forgepact-issue-95`, 2026-09-28):
 
 - `Loot_Ground_obj`'s Create sets `lootFilterVisible`, `lootFilterHighlight`,
   `skipLootFilter`, `inviewCheck`, `itemCompanionTimer`, `visible` and alarm 4,
@@ -2532,10 +2532,13 @@ part 2, 2026-09-28):
   references the `m_LootFilter` slot), which is how part 1 saw `hidden` fall
   to 0 with the filter off; how that pass walks the items, and so whether it
   reaches a deactivated one, was not read. **Static reading** (part 2).
-- The Draw event tests one variable and calls `LootGroundDraw`; the runner does
-  not run Draw for an instance whose `visible` is false, but its draw pass still
-  walks the instance. **Static reading** (part 2); ForgePact #95 part 2's Live 1
-  measures whether a hidden item's Draw runs.
+- The Draw event tests one variable and calls `LootGroundDraw`. **Static
+  reading** (part 2) of the event body only.
+- A hidden item's Draw does not run: 2,736 hidden `Loot_Ground_obj` instances
+  ran it 0 times in 10 s, and the same items, shown, ran it 1,477,440 times,
+  the positive control. That matches GameMaker's documented rule for a
+  `visible` false instance, whose draw pass still walks it (ForgePact's far
+  sleep research). **Measured** (part 2, `forgepact-issue-95` Live 1).
 - At a strict filter, 281 of 291 `Loot_Ground_obj` instances read
   `lootFilterVisible` false and `visible` false, and an earlier read gave 68 of
   68. With the filter turned off (the game has no "Show all loot" key), none
@@ -2543,12 +2546,41 @@ part 2, 2026-09-28):
   `visible` false: visibility also follows something besides the filter, which
   fits §18.6's reading that Alarm 9 consults the screen; which cause held those
   95 was not established. **Measured.**
-- The frame cost of hidden items: **not observed**. The filter-off window read
-  7.08 ms average and 40.7 ms max; no clean strict-filter window was taken (the
-  one read held a 6.5 s stall from an unrelated gold pickup).
+- The frame cost of hidden items: part 1 did not observe it (the filter-off
+  window read 7.08 ms average and 40.7 ms max; no clean strict-filter window was
+  taken, the one read holding a 6.5 s stall from an unrelated gold pickup).
+  Part 2 measured it: 2,736 hidden items awake against the same items put to
+  sleep with `instance_deactivate_object` added 6.66 ms (pair 2) and 10.57 ms
+  (pair 1, a mixed window) to the average frame interval, and frameprof's
+  `working` rose 10 and 12 points, saturating at 100%. That is **about
+  2.4-5.6 µs of frame time per hidden item per frame**, assuming the cost is
+  linear, which was not tested. The awake profile's heaviest event was
+  `Loot_Manager_obj`'s Begin Step (42.7% of the frame); what it does per item
+  was not read. Shown, the same items cost about 1.21 ms more (their Draw).
+  **Measured** (part 2, `forgepact-issue-95` Live 1, uncapped at about 140 fps
+  asleep).
+- A zone's end runs Clean Up, not Destroy, on each hidden ground item: 809 of
+  809 Clean Up runs, 0 Destroy, and `instance_number(Loot_Ground_obj)` read 0
+  after the exit. So a hidden item does not outlive its zone. **Measured**
+  (part 2 Live 1, items awake; whether a deactivated item is cleaned up the
+  same way was not measured).
+- `instance_activate_object` brings back every ground item
+  `instance_deactivate_object` put to sleep in the same zone (2,736 of 2,736,
+  twice), and `instance_number` does not count them while asleep. **Measured**
+  (part 2 Live 1).
+- `LootGroundCreateFromItem(x, y, item)` returned no live instance for 86-90 of
+  each 1,000 calls in one zone and 191 of 1,000 in another, and the ground count
+  rose only by the instances it returned. **Measured**; the cause was not
+  established.
+- Whether hidden ground items reach the save, or come back after a reload:
+  **not observed**. The save the game wrote at exit with 2,736 hidden items on
+  the ground did not grow (the slot file shrank by 8 bytes), but the check's
+  positive control failed, and the reload landed in town. A later finding would
+  cover the save written at exit, not a save written mid-zone.
 
 [dev2 bug batch, #95 part 1](../ForgePact/docs/dev2-bug-batch-research.md#95-part-1-what-a-hidden-ground-item-still-costs);
-[#95 part 2, static reading and cost model](../ForgePact/docs/hidden-loot-research.md#static-reading)
+[#95 part 2, static reading and cost model](../ForgePact/docs/hidden-loot-research.md#static-reading);
+[#95 part 2, Live 1 results](../ForgePact/docs/hidden-loot-research.md#live-1-results-2026-09-28)
 
 ### 18.6 No automatic pickup
 
