@@ -360,7 +360,8 @@ struct EquippedSlotScanReport {
  * `GetItemFromFingerprint(fingerprint, owner)`, which returns the item instance
  * that ScanContainerForRelics identifies by its class. This is the route
  * ForgePact's Miner's Helmet reads slot 0 through, confirmed live 2026-09-23;
- * that it reaches the relic slots 10-14 is UNVERIFIED until measured live.
+ * that it reaches the relic slots 10-14 was measured live on 2026-09-27: all
+ * five resolved to relic instances whose ids and levels matched the save.
  *
  * Nothing is guessed: an `mplr` that is not a whole number in
  * 0..kMaxLocalPlayerIndex reads nothing, and a slot that is not a non-empty
