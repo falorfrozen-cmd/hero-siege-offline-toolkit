@@ -38,6 +38,7 @@ hs-game-sdk/
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
 ├── python/                     # Python SDK package
 │   ├── hs_game_sdk/
+│   │   ├── __init__.py         # Re-exports; the five tables below load on first use (see "Import cost")
 │   │   ├── objects.py          # GameObject enum & index maps
 │   │   ├── scripts.py          # GameScript enum & index maps
 │   │   ├── rooms.py            # GameRoom enum & index maps
@@ -105,6 +106,101 @@ a mod's levers are that mod's code and live in the test as input transforms. It 
 `from hs_game_sdk import drop_roll_model` and deliberately not exported from the generator-owned
 `__init__.py`. There is no C++ or TypeScript counterpart, so no parity across bindings is claimed.
 Why and how: `docs/agents/static-model-workflow.md`.
+
+---
+
+## Import cost: the tables load on first use (2026-09-28)
+
+`hs_game_sdk/__init__.py` imports its six small modules (`stats`, `satanic_zone`, `structs`,
+`player`, `item_type`, `mod_registry`) when the package is imported. It imports the five
+generated tables (`objects`, `scripts`, `rooms`, `sprites`, `sounds`) only when one of their names
+is first used, through a module `__getattr__` (PEP 562). So `import hs_game_sdk` builds none of the
+table enums. `from hs_game_sdk import GameObject` builds `objects` only, and ForgePact's import list
+builds `objects` and `scripts`.
+
+Callers change nothing:
+- Every name is still importable from the package or from its own module, and is the same object
+  either way.
+- `hs_game_sdk.sprites` still works after a plain `import hs_game_sdk`, and `dir()` lists every name.
+- `from hs_game_sdk import *` still binds exactly `__all__`, so it builds every table.
+
+The first use of a name does the import, so `hasattr(hs_game_sdk, "GameSprite")` builds the sprite
+table too.
+
+**Why.** The cost was never the file size or a cold bytecode cache: an `IntEnum`'s class body
+builds every member at each import. On some CPython versions that takes time quadratic in the
+member count:
+- On 3.13 and 3.14, each new member runs `value not in enum_class._hashable_values_`, a scan of a
+  list holding every value before it (3.14's `Lib/enum.py` has the same line).
+- 3.10 is quadratic too, with a larger constant.
+- 3.11 is linear. 3.12 was not measured.
+
+`GameSprite` has 32,271 members:
+
+| Python | Building an `IntEnum` of 32,271 members | `import hs_game_sdk` before this change |
+| --- | --- | --- |
+| 3.10 | 45.7 s | 46.0 s (`sprites` 43.2 s, `objects` and `scripts` 1.2 s each) |
+| 3.11 | 0.24 s | 0.50 s (`sprites` 0.30 s) |
+| 3.13 | 3.6-4.0 s | 3.6-4.0 s (`sprites` 3.2-3.5 s, `objects` and `scripts` 0.15 s each) |
+| 3.14 | not run locally | not run locally; the CI-built ForgePact.exe (3.14) starts like the eager build, below |
+
+**Measured, before and after (2026-09-28).** This machine has 20 logical cores and was carrying other
+sessions' load, so the figures are medians of runs interleaved between the two SDK copies. Each
+import row times only the import statement, in a fresh interpreter.
+
+| Python 3.13, 7 runs | Before | After |
+| --- | --- | --- |
+| `import hs_game_sdk` | 4.04 s | 0.084 s |
+| `import forgepact` (ForgePact `src/`, a77c33e) | 4.44 s | 0.56 s |
+| `from hs_game_sdk import GameObject, GameScript, GameRoom` (HS-AFK-Expedition `tools/game_session.py`) | 3.88 s | 0.43 s |
+| `from hs_game_sdk import GameSprite` (control: still builds the sprite table, now without the other four) | 4.17 s | 3.92 s |
+| ForgePact `tests/panel_sandbox_server.py`, spawn to its `port=` line | 4.49 s | 0.76 s |
+
+On 3.11 (3 runs) the same rows went from 0.59, 0.79, 0.55, 0.56 and 0.96 s to 0.088, 0.45, 0.20,
+0.42 and 0.64 s. On 3.10 they went from 53.7, 55.4, 41.8, 43.4 and 38.8 s to 0.070, 2.5, 2.3, 34.5
+and 2.5 s. That was one run, made while the hub suite was running, so read it as an order of
+magnitude. On 3.10, `objects` and `scripts` alone still cost about 1.2 s each.
+
+**The packaged ForgePact.exe pays it too.** Each run launched the exe with a throwaway
+`USERPROFILE` and timed it until `/api/state` answered; the exe was then killed by pid. Medians of 7
+interleaved runs:
+
+| Build | Python | Launch to `/api/state` |
+| --- | --- | --- |
+| ForgePact a77c33e, `build_release.py`'s PyInstaller command (PyInstaller 6.20), SDK before this change | 3.13 | 5.35 s |
+| The same, with this SDK | 3.13 | 1.36 s |
+| CI-built 2.0.0 draft | 3.14 | 5.49 s |
+| CI-built 1.4.7, as the hub installed it | 3.14 | 6.38 s |
+
+Every run served 25 Satanic buffs, so each frozen `from hs_game_sdk import (...)` had succeeded.
+
+**PyInstaller needs the static imports.** A frozen app bundles only the modules PyInstaller's
+analysis sees imported. A module that `importlib.import_module` loads at run time is invisible to
+that analysis. So `__init__.py` repeats the table imports as plain `from .objects import (...)`
+statements inside `if TYPE_CHECKING:`. They never run, but PyInstaller's bytecode scan follows
+them, as type checkers and editors do. The ForgePact.exe built above holds the same twelve
+`hs_game_sdk` entries in its PYZ as the eager build, and PyInstaller warned about none.
+
+A build with the block deleted shows what the block prevents. PyInstaller still built that exe, but
+its PYZ held none of the five tables, and the running exe served no Satanic buffs: `forgepact.py`'s
+`except Exception` fell back to empty pools, the 2026-09-14 failure in the ForgePact guide's
+Packaging Hazards, item 4. That build's `warn-ForgePact.txt` listed `missing module named
+hs_game_sdk.GameObject` and `hs_game_sdk.GameScript`, because PyInstaller took the two names for
+submodules. `build_release.py`'s substring check for `missing module named hs_game_sdk` would
+therefore have refused the package. That warning exists only because ForgePact imports table names
+with `from hs_game_sdk import`; `tests/test_sdk_lazy_import.py` checks the block in the SDK itself.
+A bundler that evaluates `TYPE_CHECKING` as false and drops the block would need the package named
+explicitly; every frozen app in this toolkit is built with PyInstaller.
+
+**Editing it.** The loader is part of the generated `__init__.py`, so it lives in the `init_content`
+template of `tools/extract_and_generate_sdk.py` (see "Never hand-edit a generated file" below).
+The `TYPE_CHECKING` block and the loader's table, `_LAZY_MODULES`, list the same names. Change them
+together, in the template; the test fails if they drift. A new generated table belongs in both.
+
+**What still pays.** A caller that uses a table still builds it: `GameSprite` costs about 3.2-4 s on
+3.13. `forgepact.py` imports `GameObject`, `GameScript` and seven more names without using any of
+them. It uses only the Satanic pools, so the panel still builds `objects` and `scripts`, about
+0.3 s on 3.13. Narrowing that import is a ForgePact change.
 
 ---
 
@@ -315,6 +411,7 @@ import { GameObject, GameScripts, StatId, ItemType } from '@hero-siege/sdk';
 | `py -3 -m unittest discover -s tests` | Workspace Root | Run the SDK test suite. Passes in a clean checkout; extraction- and compiler-dependent suites skip (see below) | Verified 2026-09-12 |
 | `py -3 -m unittest tests.test_cpp_sdk -v` | Workspace Root | Compile and run the C++ relic/hook behavioural tests against the stubbed YYToolkit surface | Verified 2026-09-12 |
 | `py -3 -m unittest tests.test_item_type_parity -v` | Workspace Root | Check the Python, C++ and TypeScript `ItemType` declarations match value for value, the aggregates match their generator templates, and this guide's value table claims "measured in-game" for row 14 only | Verified 2026-09-20 (14 tests OK, node v24) |
+| `py -3 -m unittest tests.test_sdk_lazy_import -v` | Workspace Root | Check, in fresh interpreters, that `import hs_game_sdk` builds no table and ForgePact's import list builds only `objects` and `scripts`; that every name the eager package bound is still bound, as the same object; and that the static imports PyInstaller reads name every table (stdlib `modulefinder`, with a negative control). See "Import cost" above | Verified 2026-09-28 (14 tests OK). Against origin/main's eager `__init__.py`, the five import-cost tests fail (8 failures with subtests) and the other nine pass. With the `TYPE_CHECKING` block deleted, the scanner test and the block-matches-loader test fail |
 | `py -3 -m pip install -e hs-game-sdk/python` | Workspace Root | Install Python SDK in development mode | Verified |
 
 ### Which tests need a game install, and which do not
@@ -334,6 +431,7 @@ contributor can be assumed to have:
 | `test_extractor_layout.py` | nothing (builds a synthetic `data.win`) | always runs |
 | `test_drop_roll_model.py` | nothing (the model, its fixture and the pilot docs); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/ModuleMain.cpp` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
+| `test_sdk_lazy_import.py` | nothing (starts fresh interpreters of the Python running the suite) | always runs |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
 | `test_curated_stash_containers.py` | nothing (reads the tracked `curated/stash_containers.json`, the SDK and `docs/RUNTIME_DATA_MODELS.md`) | always runs |
 
@@ -491,6 +589,11 @@ counterpart. They still have to be wired into the aggregates
 through the templates — `init_content`, `main_header` and `index_content` all include
 `item_type` now, and `tests/test_item_type_parity.py` fails if a committed aggregate stops
 matching its template.
+
+`init_content` also carries the lazy loader (2026-09-28, "Import cost" above). Its `TYPE_CHECKING`
+imports and its `_LAZY_MODULES` table both list the five tables and their names.
+`tests/test_sdk_lazy_import.py` fails if the two disagree, or if a bytecode scanner stops finding a
+table.
 
 ---
 
