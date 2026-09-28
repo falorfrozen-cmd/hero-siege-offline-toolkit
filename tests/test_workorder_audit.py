@@ -1525,6 +1525,102 @@ class CheapRouteTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(wa.parse_label("patch-implementer:r1"), ("patch-implementer", 1))
 
 
+class InLaunchAmendmentTests(TempDirMixin, unittest.TestCase):
+    """An amendment `workorder-rounds.js` runs inside a launch: its
+    `amend-save:` and `amend-check:` agents, not the driver, run
+    `amend_check.py`. Timeline: plan 0-100s (driver's), then in wf_a:
+    item-implementer 200-300s, [amend-save 330-360s, save at 350s],
+    amendment 400-450s, [amend-check 480-520s, check at 500s], item-implementer
+    600-700s. The driver runs no `amend_check.py` at all."""
+
+    def _session(self, sub, save=True, check=True, check_failed=False, save_at=350, wf_calls="wf_a"):
+        b = SessionBuilder(self.tmp_path / sub).driver([turn(0, 9000)])
+        b.subagent("planner", "Plan x", _span(0, 100, 100))
+        b.workflow_agent("wf_a", "implementer", "item-implementer:x:a1:r0", _span(200, 300, 200))
+        if save:
+            b.workflow_agent(wf_calls, "general-purpose", "amend-save:x:r0",
+                             [turn(save_at - 20, 700)] + _amend_call(save_at, 701, "save") + [turn(save_at + 10, 702)])
+        b.workflow_agent("wf_a", "planner", "amendment: slug x:r0", _span(400, 450, 300))
+        if check:
+            b.workflow_agent(wf_calls, "general-purpose", "amend-check:x:r0",
+                             [turn(480, 800)] + _amend_call(500, 801, "check", failed=check_failed) + [turn(520, 802)])
+        b.workflow_agent("wf_a", "implementer", "item-implementer:x:a2:r0", _span(600, 700, 500))
+        return b.evaluate()[1]
+
+    def test_pass_both_calls_inside_the_launch_and_not_a_replan(self):
+        results = self._session("ok")
+        self.assertTrue(get_rule(results, "R24").passed, get_rule(results, "R24").evidence)
+        self.assertEqual(get_rule(results, "R11").evidence, [])
+        self.assertTrue(get_rule(results, "R11").passed)
+
+    def test_fail_no_check_inside_the_launch(self):
+        results = self._session("unchecked", check=False)
+        r = get_rule(results, "R24")
+        self.assertFalse(r.passed)
+        self.assertTrue(any("no `amend_check.py check`" in e for e in r.evidence), r.evidence)
+        self.assertEqual(len(get_rule(results, "R11").evidence), 1)
+
+    def test_a_failed_check_inside_the_launch_counts_as_a_replan(self):
+        results = self._session("failed", check_failed=True)
+        self.assertTrue(get_rule(results, "R24").passed, get_rule(results, "R24").evidence)
+        self.assertEqual(len(get_rule(results, "R11").evidence), 1)
+
+    def test_fail_a_save_after_the_planner(self):
+        r = get_rule(self._session("late-save", save_at=460), "R24")
+        self.assertFalse(r.passed)
+        self.assertTrue(any("no `amend_check.py save`" in e for e in r.evidence), r.evidence)
+
+    def test_control_calls_from_another_launch_do_not_count(self):
+        results = self._session("other-launch", wf_calls="wf_b")
+        r = get_rule(results, "R24")
+        self.assertFalse(r.passed)
+        self.assertTrue(any("no `amend_check.py save`" in e for e in r.evidence), r.evidence)
+        self.assertTrue(any("no `amend_check.py check`" in e for e in r.evidence), r.evidence)
+        self.assertEqual(len(get_rule(results, "R11").evidence), 1)
+
+    def test_control_the_planner_checking_itself_does_not_count(self):
+        b = SessionBuilder(self.tmp_path / "self-check").driver([turn(0, 9000)])
+        b.subagent("planner", "Plan x", _span(0, 100, 100))
+        b.workflow_agent("wf_a", "general-purpose", "amend-save:x:r0",
+                         [turn(330, 700)] + _amend_call(350, 701, "save") + [turn(360, 702)])
+        b.workflow_agent("wf_a", "planner", "amendment: slug x:r0",
+                         [turn(400, 300)] + _amend_call(440, 301, "check") + [turn(450, 302)])
+        _, results = b.evaluate()
+        r = get_rule(results, "R24")
+        self.assertFalse(r.passed)
+        self.assertTrue(any("no `amend_check.py check`" in e for e in r.evidence), r.evidence)
+        self.assertEqual(len(get_rule(results, "R11").evidence), 1)
+
+    def _two(self, sub, second_target):
+        """Two checked amendments one after the other in wf_a, the second at
+        550-580s, with no implementer between them."""
+        b = SessionBuilder(self.tmp_path / sub).driver([turn(0, 9000)])
+        b.subagent("planner", "Plan x", _span(0, 100, 100))
+        b.workflow_agent("wf_a", "implementer", "item-implementer:x:a1:r0", _span(200, 300, 200))
+        b.workflow_agent("wf_a", "implementer", "item-implementer:y:a1:r0", _span(210, 310, 210))
+        for k, (target, lo, hi) in enumerate((("x", 400, 450), (second_target, 550, 580))):
+            b.workflow_agent("wf_a", "general-purpose", f"amend-save:{target}:r0",
+                             [turn(lo - 30, 700 + 10 * k)] + _amend_call(lo - 20, 701 + 10 * k, "save"))
+            b.workflow_agent("wf_a", "planner", f"amendment: slug {target}:r0", _span(lo, hi, 300 + 10 * k))
+            b.workflow_agent("wf_a", "general-purpose", f"amend-check:{target}:r0",
+                             [turn(hi + 5, 800 + 10 * k)] + _amend_call(hi + 10, 801 + 10 * k, "check"))
+        b.workflow_agent("wf_a", "implementer", "item-implementer:x:a2:r0", _span(600, 700, 500))
+        return b.evaluate()[1]
+
+    def test_two_items_amended_back_to_back_in_one_launch_pass(self):
+        # The engine queues one amendment behind another (amend_check.py
+        # keeps one saved copy per slug), so two items' amendments can
+        # follow each other with no implementer between.
+        results = self._two("two-items", "y")
+        self.assertTrue(get_rule(results, "R24").passed, get_rule(results, "R24").evidence)
+        self.assertEqual(get_rule(results, "R11").evidence, [])
+
+    def test_fail_one_item_amended_twice_with_no_implementer_between(self):
+        r = get_rule(self._two("same-item", "x"), "R24")
+        self.assertFalse(r.passed)
+        self.assertTrue(any("second amendment" in e for e in r.evidence), r.evidence)
+
+
 class OwnerScopeTests(TempDirMixin, unittest.TestCase):
     """R25: a `SCOPE:` verdict needs a message typed by the owner behind it.
     Timeline: plan 0-100s, implementer 200-300s, [owner 320s], save 350s,

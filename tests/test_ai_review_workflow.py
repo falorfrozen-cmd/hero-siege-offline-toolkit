@@ -233,6 +233,34 @@ class TheReviewCanReadAndPost(unittest.TestCase):
         self.assertIn("uses: actions/upload-artifact@", body)
         self.assertIn("path: ${{ runner.temp }}/claude-execution-output.json", body)
 
+    def test_the_review_step_times_out_before_the_job(self):
+        # ForgePact #105's review hit the job's limit, so the whole job was
+        # cancelled. A shorter limit on the review step leaves the job time to
+        # run the checks and the upload after it.
+        text = workflow_text()
+        job = re.search(r"(?m)^    timeout-minutes: (\d+)\s*$", text)
+        step = re.search(
+            r"(?m)^      - uses: anthropics/claude-code-action@v1\s*\n"
+            r"        timeout-minutes: (\d+)\s*$",
+            text,
+        )
+        self.assertIsNotNone(job, "job timeout not found")
+        self.assertIsNotNone(step, "review step timeout not found")
+        self.assertLessEqual(int(step.group(1)) + 5, int(job.group(1)))
+
+    def test_the_notes_say_how_to_post_without_a_file(self):
+        # Write and shell redirection are not on the allow-list; ForgePact
+        # #105's review spent four refused turns trying them before posting.
+        text = workflow_text()
+        self.assertIn("gh pr comment <number> --body", text)
+        self.assertNotIn("Write", allowed_tools(text) or set())
+
+    def test_the_notes_list_files_not_worth_reading(self):
+        text = workflow_text()
+        self.assertIn("git diff --numstat --no-renames", text)
+        self.assertIn("'*/licenses/*'", text)
+        self.assertIn('printf -- \'- %s\\n\' "${skip[@]}"', text)
+
     def test_the_plugin_command_itself_is_allowed(self):
         # The prompt is `/code-review:code-review`, which the model loads
         # through the Skill tool; hub #59's run was denied that first call.

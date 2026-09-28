@@ -31,6 +31,7 @@ one the driver asked for -- unless it carries the owner's new scope:
 Usage:
     py -3 tools/amend_check.py save  <slug>-plan.md [<slug>-context.md]
     py -3 tools/amend_check.py check <slug>-plan.md [<slug>-context.md]
+    py -3 tools/amend_check.py restore <slug>-plan.md [<slug>-context.md]
 
 `save`, run before the planner is sent the amendment, copies each file to
 `<plan dir>/.rounds/<slug>/amend-base-<plan|context>.md` (ignored with the
@@ -38,9 +39,12 @@ rest of `.claude/workorders/`). `check`, run after it returns, compares each
 file against its copy and prints one `<file>: ## <heading>: +<a> -<d>` line
 per changed section, then `lines_changed: <N>` and one verdict line:
 `AMENDMENT`, `SCOPE: <k> new owner decision(s)` or `REPLAN: <reasons>`.
+`restore` copies each saved copy back over its file, so an amendment the
+check (or anything after it) rejected leaves no edit behind for other work to
+read; `workorder-rounds.js` runs it on every outcome but a confirmed one.
 
-Exit code: 0 an amendment or owner scope, 1 a replan, 2 a usage error or no
-saved copy.
+Exit code: 0 an amendment, owner scope or a restore, 1 a replan, 2 a usage
+error or no saved copy.
 """
 
 import difflib
@@ -169,14 +173,32 @@ def cmd_check(plan: Path, context) -> int:
     return 0
 
 
+def cmd_restore(plan: Path, context) -> int:
+    """Put each file back as `save` copied it. Every saved copy is checked
+    before any file is written, so a missing one restores nothing."""
+    pairs = [(path, _base(plan, kind)) for kind, path in _files(plan, context)]
+    for path, base in pairs:
+        if not base.is_file():
+            print(f"amend_check: no saved copy {base} for {path} (run `save` before the amendment)",
+                  file=sys.stderr)
+            return 2
+    for path, base in pairs:
+        shutil.copyfile(base, path)
+        print(f"restored {base} -> {path}")
+    return 0
+
+
+COMMANDS = {"save": cmd_save, "check": cmd_check, "restore": cmd_restore}
+
+
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) not in (2, 3) or args[0] not in ("save", "check"):
+    if len(args) not in (2, 3) or args[0] not in COMMANDS:
         print(__doc__.strip().split("\n\n")[-3], file=sys.stderr)
         return 2
     plan = Path(args[1])
     context = Path(args[2]) if len(args) == 3 else None
-    return cmd_save(plan, context) if args[0] == "save" else cmd_check(plan, context)
+    return COMMANDS[args[0]](plan, context)
 
 
 if __name__ == "__main__":
