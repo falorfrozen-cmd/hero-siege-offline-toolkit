@@ -231,7 +231,7 @@ wait"; evidence in `docs/agents/workorder-calibration.md`).
   another criterion of the same plan runs; the id-set check then expects
   discovery less those modules, and a name that matches nothing is refused.
   A plan that runs none of the browser suites directly keeps the whole
-  Python suite. Release CI (`forgepact-release.yml`) still runs everything.
+  Python suite. Release CI (`forgepact-release.yml`) runs the same split in two parallel jobs (`build` with `--skip-group panel-browser`, `panel-browser-tests` with `--only-group panel-browser`) and covers everything except `test_panel_perf`, which it leaves to the pre-release local run.
   The owner, 2026-09-26: *"If some checks can be done once for 2 things
   it's better than checking twice after each change"*.
 - **Never pin a moving head.** A criterion names a commit through a
