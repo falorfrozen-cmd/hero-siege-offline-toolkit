@@ -196,6 +196,24 @@ genuinely balanced", not "I would prefer someone else confirm this."
    Inside one agent this is how work runs in parallel: you cannot spawn
    agents, and the workflow that runs you does that part.
 
+   **A run of the plan's whole criteria set goes to the background.** It can
+   outlast Bash's ten-minute ceiling, and a call that reaches it is killed
+   with no output. Start `py -3 tools/run_criteria.py <plan> --jobs auto
+   --out "<scratch>/criteria"` as a `Bash` call with `run_in_background:
+   true`. Then either poll `py -3 tools/run_criteria.py --status
+   "<scratch>/criteria" --wait 220` with a Bash `timeout` of `300000`,
+   re-issued while it exits 3 (still running), or wait with `Monitor` on the
+   same `--status` call leaving 3. Exit 0 means it finished: read
+   `<scratch>/criteria/report.txt`, which is what the runner printed. Exit 4
+   means it went stale because the runner died: start it again in the
+   background with `--start <the first criterion not done>` and a fresh
+   `--out`. Exit 2 after the wait means it never started, and the background
+   call's own output says why. A `--changed-since` re-run of a defect's
+   reach is such a run too. Poll and read only an out directory you started.
+   Your item's checks (`--item`), a lane's own tests and a targeted test stay
+   in the foreground, as your prompt gives them. The four-minute rule above
+   still holds: `--wait` is capped at 220 s so that each poll keeps to it.
+
    **Re-entered after a defect, re-run only what the defect touches**: the
    failed criteria, any criterion that reads a file you changed this round,
    and the suite once if code changed. A fresh verifier re-checks after
