@@ -225,13 +225,21 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
 - **Research-only forms** (`#ifndef FORGEPACT_RELEASE`; refused by the number parser
   in the player build): `miningrolls stat` (rolls, readiness, `steps`, `extraRuns`,
   `extraRunsUnpaid`, `xpPassed`/`xpSilenced`, each silenced script's passed/silenced
-  counts, `CombatText`'s, and up to eight node snapshots of `hp`, `miningQue`,
+  counts, `CombatText`'s, `combatTextFirst=experience|rolls|none` (which caller
+  installed the shared detour first, read from the plugin rather than assumed from
+  command order), `snapshots=<k>`, then the node snapshots of `hp`, `miningQue`,
   `miningActive`, `stop`, `range`, `miningPlayer`, `sprite_index` before and after
-  each extra run), `miningrolls stats` (stat queries 692-700 and 703 through
+  each extra run and a `dig done`/`dig released` line; the budget is one dig's worst
+  case, `2 * (kMaxRolls - 1) + 1` = 19 lines, reset by each `miningrolls dig`, and past
+  it the first extra run's pair, an unpaid run's pair and the done line are still kept
+  up to a ceiling of 64), `miningrolls stats` (stat queries 692-700 and 703 through
   `ReturnSpecificStat` by SDK name, `id=<n> value=<v>`), and `miningrolls dig` (queues
   the nearest live `Mining_Node_obj` within 4096 px whose protected `miningReq` is at
   most `GetMiningLevel()`, as Vein Resonance queues a vein, for at most 90 frames,
-  released by `MiningOre::DigTick()` from the frame callback).
+  released by `MiningOre::DigTick()` from the frame callback). At rolls 1, `dig`
+  installs the step/loot pair and the four pass-through detours but not `CombatText`,
+  so their passed counts serve as the positive control and the Experience slider can
+  still be the first to install the shared detour afterwards.
 - **Mod state and log lines.** `modstate.json`'s `miningOre` object gains `rolls`,
   `rollsReady`, `rollsUnavailable`, `extraRuns`, `extraRunsUnpaid` and
   `silencedCalls` (the four pass-through detours' plus `CombatText`'s). Once a
