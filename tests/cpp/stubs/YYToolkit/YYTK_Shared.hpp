@@ -18,6 +18,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace YYTK {
@@ -65,6 +66,12 @@ struct RValue {
         return m_Real;
     }
 
+    /// The string for VALUE_STRING, empty otherwise. The real RValue converts
+    /// any kind; the SDK only ever calls this on a value it checked is a string.
+    [[nodiscard]] std::string ToString() const {
+        return m_Kind == VALUE_STRING ? m_String : std::string();
+    }
+
     [[nodiscard]] bool ToBoolean() const {
         if (m_Kind == VALUE_UNDEFINED) return false;
         if (m_Kind == VALUE_STRING) return !m_String.empty();
@@ -108,6 +115,15 @@ struct YYTKInterface {
 
     virtual RValue CallBuiltin(std::string_view name, std::vector<RValue> args) = 0;
     virtual RValue CallGameScript(std::string name, const std::vector<RValue>& args) = 0;
+    /// Same shape as YYToolkit's: the script by name, with an explicit self and
+    /// other, the result written through `result`.
+    virtual ::Aurie::AurieStatus CallGameScriptEx(
+        RValue& result,
+        std::string_view scriptName,
+        CInstance* self,
+        CInstance* other,
+        const std::vector<RValue>& args
+    ) = 0;
     virtual ::Aurie::AurieStatus GetGlobalInstance(CInstance** outInstance) = 0;
     virtual ::Aurie::AurieStatus GetNamedRoutinePointer(const char* name, PVOID* outPointer) = 0;
 };

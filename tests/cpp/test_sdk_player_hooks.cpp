@@ -11,6 +11,7 @@
 // the relic results against the Python SDK's scan_relic_levels().
 
 #include <cstdio>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -100,9 +101,38 @@ public:
 
     RValue CallGameScript(std::string, const std::vector<RValue>&) override { return RValue(); }
 
+    // Game scripts called by name with an explicit self/other. A script the
+    // map does not name is not found, the way an unresolvable name is; a
+    // script it does name answers whatever the fixture returns: a struct, a
+    // number or undefined.
+    using GameScriptFn = std::function<RValue(const std::vector<RValue>&)>;
+    std::map<std::string, GameScriptFn> gameScripts;
+    struct ScriptCall {
+        std::string name;
+        std::vector<RValue> args;
+        bool selfAndOtherAreGlobal = false;
+    };
+    std::vector<ScriptCall> scriptCalls;
+
+    ::Aurie::AurieStatus CallGameScriptEx(RValue& result, std::string_view scriptName,
+                                          CInstance* self, CInstance* other,
+                                          const std::vector<RValue>& args) override {
+        const std::string name(scriptName);
+        scriptCalls.push_back({ name, args, self == GlobalInstance() && other == GlobalInstance() });
+        auto it = gameScripts.find(name);
+        if (it == gameScripts.end()) return ::Aurie::AURIE_OBJECT_NOT_FOUND;
+        result = it->second(args);
+        return ::Aurie::AURIE_SUCCESS;
+    }
+
+    size_t CallsTo(std::string_view name) const {
+        size_t n = 0;
+        for (const auto& call : scriptCalls) n += call.name == name ? 1 : 0;
+        return n;
+    }
+
     ::Aurie::AurieStatus GetGlobalInstance(CInstance** outInstance) override {
-        static CInstance instance;
-        if (outInstance) *outInstance = &instance;
+        if (outInstance) *outInstance = GlobalInstance();
         return ::Aurie::AURIE_SUCCESS;
     }
 
@@ -114,6 +144,11 @@ public:
     }
 
 private:
+    static CInstance* GlobalInstance() {
+        static CInstance instance;
+        return &instance;
+    }
+
     static const FakeStruct* StructOf(const RValue& value) {
         return value.m_Struct ? value.m_Struct.get() : nullptr;
     }
@@ -313,6 +348,150 @@ static void TestRelicIdentification() {
 }
 
 // ---------------------------------------------------------------------------
+// #93: the equipped relic slots. A relic's definition carries `c: 0` and no
+// class field (read from a character save 2026-09-27), so the class is only on
+// the item INSTANCE (`itemType`, beside `itemDefinitionStruct`). The game keeps
+// the equipped items as fingerprint strings in
+// global.equippedItems[mplr][0][slot] and resolves one with
+// GetItemFromFingerprint(fingerprint, GetOnlinePlayerItemOwner(mplr)) - the
+// route ForgePact's Miner's Helmet reads slot 0 through, live.
+// ---------------------------------------------------------------------------
+
+static RValue RelicInstance(int id, int level, int slot) {
+    return RValue::Struct({
+        { "itemType", RValue(16) },
+        { "itemDefinitionStruct", RValue::Struct({
+            { "b", RValue(id) }, { "c", RValue(0) }, { "o", RValue(level) }, { "g", RValue(slot) },
+        }) },
+    });
+}
+
+static RValue OrdinaryGloveInstance() {
+    // An equipped unique glove: class 4, repository flag `c` 1.
+    return RValue::Struct({
+        { "itemType", RValue(4) },
+        { "itemDefinitionStruct", RValue::Struct({
+            { "b", RValue(18) }, { "c", RValue(1) }, { "g", RValue(4) },
+        }) },
+    });
+}
+
+static RValue MaterialStackInstance() {
+    // A material stack (class 14) whose `o` would read as maxed if the class
+    // were not checked.
+    return RValue::Struct({
+        { "itemType", RValue(14) },
+        { "itemDefinitionStruct", RValue::Struct({ { "b", RValue(51) }, { "o", RValue(99) } }) },
+    });
+}
+
+static const char* kFpRelic135 = "0-0-209562107245-16";
+static const char* kFpRelic109 = "0-0-209562107300-16";
+static const char* kFpRelic15 = "0-0-210021549852-16";
+static const char* kFpUnresolved = "0-0-210021549999-16";
+static const char* kFpOrdinary = "0-0-210025648571-7";
+
+// global.equippedItems as the game lays it out: one row per online player,
+// whose [0] array holds the local character's slots. Slot 8 holds an ordinary
+// weapon, 10-12 three relics (two maxed), 13 a fingerprint the resolver does
+// not know, 14 a number where a string belongs.
+static void FillEquippedSlots(ControlledYYTK& yytk) {
+    std::vector<RValue> slots(15);
+    slots[8] = RValue(std::string(kFpOrdinary));
+    slots[10] = RValue(std::string(kFpRelic135));
+    slots[11] = RValue(std::string(kFpRelic109));
+    slots[12] = RValue(std::string(kFpRelic15));
+    slots[13] = RValue(std::string(kFpUnresolved));
+    slots[14] = RValue(7);
+    const RValue row = RValue::Array({ RValue::Array(std::move(slots)) });
+    yytk.globals["mplr"] = RValue(0);
+    yytk.globals["equippedItems"] = RValue::Array({ row });
+
+    yytk.gameScripts[std::string(HeroSiege::Scripts::gml_Script_GetOnlinePlayerItemOwner)] =
+        [](const std::vector<RValue>&) { return RValue(0); };
+    yytk.gameScripts[std::string(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint)] =
+        [](const std::vector<RValue>& args) {
+            const std::string fp = args.empty() ? std::string() : args[0].m_String;
+            if (fp == kFpRelic135) return RelicInstance(135, 10, 11);
+            if (fp == kFpRelic109) return RelicInstance(109, 10, 14);
+            if (fp == kFpRelic15) return RelicInstance(15, 8, 10);
+            if (fp == kFpOrdinary) return OrdinaryGloveInstance();
+            return RValue();  // VALUE_UNDEFINED: resolves to nothing
+        };
+}
+
+static void TestEquippedSlots() {
+    using namespace HeroSiege::Player;
+    const std::string resolver(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint);
+
+    // 1. The relic slots resolve, through both player kinds, to exactly the
+    //    two maxed relics; the level-8 relic is owned but not maxed.
+    for (const RValue& player : { FakePlayerRef(), FakePlayer() }) {
+        ControlledYYTK yytk;
+        FillEquippedSlots(yytk);
+        const auto owned = GetOwnedRelicLevels(&yytk, player);
+        const auto maxed = GetMaxedRelicIds(&yytk, player);
+        CHECK_EQ(owned.size(), static_cast<size_t>(3));
+        if (owned.count(15)) CHECK_EQ(owned.at(15), 8);
+        CHECK_EQ(maxed.size(), static_cast<size_t>(2));
+        CHECK(maxed.count(135) == 1);
+        CHECK(maxed.count(109) == 1);
+
+        // Only the four string fingerprints in slots 10-14 reached the
+        // resolver: never slot 8, never the number in slot 14, and always
+        // with the owner and the global instance as self and other.
+        for (const auto& call : yytk.scriptCalls) {
+            CHECK(call.selfAndOtherAreGlobal);
+            if (call.name != resolver) continue;
+            CHECK(call.args.size() == 2);
+            if (call.args.size() != 2) continue;
+            CHECK(call.args[0].m_Kind == YYTK::VALUE_STRING);
+            CHECK(call.args[0].m_String != kFpOrdinary);
+            CHECK_EQ(call.args[1].ToDouble(), 0.0);
+        }
+        // Slots 10-13 once for the owned scan and once for the maxed scan.
+        CHECK_EQ(yytk.CallsTo(resolver), static_cast<size_t>(8));
+        if (player.m_Kind == YYTK::VALUE_REF) {
+            std::printf("C++: equipped_slot_maxed_relics=%d\n", static_cast<int>(maxed.size()));
+        }
+    }
+
+    // 2. Negative control: the fingerprint that resolves to nothing adds no
+    //    relic, on its own.
+    {
+        ControlledYYTK yytk;
+        FillEquippedSlots(yytk);
+        std::vector<RValue> slots(15);
+        slots[13] = RValue(std::string(kFpUnresolved));
+        yytk.globals["equippedItems"] = RValue::Array({ RValue::Array({ RValue::Array(std::move(slots)) }) });
+        CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef()).empty());
+        CHECK_EQ(yytk.CallsTo(resolver), static_cast<size_t>(1));
+    }
+
+    // 3. An unreadable or out-of-range `mplr` reads no slot at all.
+    for (const RValue& mplr : { RValue(), RValue(5), RValue(0.5), RValue(std::string("0")) }) {
+        ControlledYYTK yytk;
+        FillEquippedSlots(yytk);
+        yytk.globals["mplr"] = mplr;
+        CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef()).empty());
+        CHECK(yytk.scriptCalls.empty());
+    }
+
+    // 4. The equipped relics join, not replace, what the player's own
+    //    containers hold; the highest level still wins.
+    {
+        ControlledYYTK yytk;
+        FillEquippedSlots(yytk);
+        yytk.instanceFields["relic_levels"] = RValue::Array({ RValue(0), RValue(3) });
+        yytk.instanceFields["inventory"] = RValue::Array({ RelicInstance(15, 10, 0) });
+        const auto owned = GetOwnedRelicLevels(&yytk, FakePlayerRef());
+        CHECK_EQ(owned.size(), static_cast<size_t>(4));
+        if (owned.count(1)) CHECK_EQ(owned.at(1), 3);
+        if (owned.count(15)) CHECK_EQ(owned.at(15), 10);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The three cases from origin's second review, printed for the Python side of
 // tests/test_cpp_sdk.py to compare against scan_relic_levels() directly.
 // ---------------------------------------------------------------------------
@@ -346,6 +525,26 @@ static void TestCrossLanguageCases() {
         yytk.instanceFields["inventory"] = RValue::Array({ RValue(0), RValue(0), RValue(10) });
         PrintOwned("inventory_numeric_negative_control", yytk);
     }
+    // #93: the item instance shape the game really produces, and its two
+    // negative controls. Same fixtures as tests/test_relic_identification.py.
+    {
+        // Prints "CASE equipped_slot_relic_instance 109=10".
+        ControlledYYTK yytk;
+        yytk.instanceFields["equippedItems"] = RValue::Array({ RelicInstance(109, 10, 14) });
+        PrintOwned("equipped_slot_relic_instance", yytk);
+    }
+    {
+        // Prints "CASE equipped_ordinary_instance_negative_control" with no relic.
+        ControlledYYTK yytk;
+        yytk.instanceFields["equippedItems"] = RValue::Array({ OrdinaryGloveInstance() });
+        PrintOwned("equipped_ordinary_instance_negative_control", yytk);
+    }
+    {
+        // Prints "CASE material_stack_instance_negative_control" with no relic.
+        ControlledYYTK yytk;
+        yytk.instanceFields["inventory"] = RValue::Array({ MaterialStackInstance() });
+        PrintOwned("material_stack_instance_negative_control", yytk);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +575,14 @@ static void PrintContract() {
     std::printf("CONTRACT maxed_level %d\n", kMaxedRelicLevel);
     std::printf("CONTRACT max_scan_depth %d\n", kMaxScanDepth);
     std::printf("CONTRACT max_array_length %d\n", kMaxScannedArrayLength);
+    std::printf("CONTRACT relic_item_class %d\n", kRelicItemClass);
+    std::printf("CONTRACT instance_type_field %.*s\n",
+                static_cast<int>(kItemInstanceTypeField.size()), kItemInstanceTypeField.data());
+    std::printf("CONTRACT instance_definition_field %.*s\n",
+                static_cast<int>(kItemInstanceDefinitionField.size()), kItemInstanceDefinitionField.data());
+    std::printf("CONTRACT relic_slots");
+    for (int slot = kFirstRelicSlot; slot <= kLastRelicSlot; ++slot) std::printf(" %d", slot);
+    std::printf("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +804,7 @@ static void TestHookInstaller() {
 
 int main() {
     TestRelicIdentification();
+    TestEquippedSlots();
     TestCrossLanguageCases();
     PrintContract();
     PrintItemTypes();
