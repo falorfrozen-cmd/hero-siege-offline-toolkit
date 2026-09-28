@@ -231,7 +231,7 @@ wait"; evidence in `docs/agents/workorder-calibration.md`).
   another criterion of the same plan runs; the id-set check then expects
   discovery less those modules, and a name that matches nothing is refused.
   A plan that runs none of the browser suites directly keeps the whole
-  Python suite. Release CI (`forgepact-release.yml`) still runs everything.
+  Python suite. Release CI (`forgepact-release.yml`) runs the same split in two parallel jobs (`build` with `--skip-group panel-browser`, `panel-browser-tests` with `--only-group panel-browser`) and covers everything except `test_panel_perf`, which it leaves to the pre-release local run.
   The owner, 2026-09-26: *"If some checks can be done once for 2 things
   it's better than checking twice after each change"*.
 - **Never pin a moving head.** A criterion names a commit through a
@@ -366,6 +366,8 @@ checks:
 after: `<id>`            (optional: items that must be done first)
 shares: `<id>`           (optional: an item whose files overlap this one's)
 owner: <question>        (optional: the item waits for the owner's answer)
+default: <what to do unanswered, or none>   (required beside owner:)
+reversible: yes|no — <how to undo the default> (required beside owner:)
 
 1. The steps this item's implementer carries out, numbered.
 ```
@@ -383,6 +385,10 @@ this is two workorders.
 
 ## Needs human judgement
 Anything that cannot be a checkbox. Omit the heading if there is nothing.
+One `###` subsection per question, each ending:
+
+default: <what the pipeline does if nobody answers, or none>
+reversible: yes|no. <how to undo the default>
 
 ## Log
 ### Decisions
@@ -461,6 +467,7 @@ first numbered step:
   the gate's.
 - `owner:` — the question this item waits on, when the owner has not
   answered it yet. Only this item waits; ask the others' questions up front.
+  It always comes with `default:` and `reversible:`, below.
 
 Steps above the first `### Item:` are preconditions for every item. A plan
 declares items or lanes, never both (`items-and-lanes`). `py -3
@@ -468,6 +475,32 @@ tools/plan_lint.py <plan>` checks every rule above (`item-overlap`,
 `item-no-files`, `item-no-checks`, `item-dup-id`, `item-bad-id`,
 `item-unknown-ref`, `item-cycle`), and `--items-json` prints the table the
 driver passes to the workflow, only when the lint is clean.
+
+**Every owner question carries a default and says whether it can be
+undone.** An `owner:` item and every entry under `## Needs human judgement`
+(in the plan or the context file) carries two lines: `default:`, what the
+pipeline does if nobody answers, and `reversible: yes|no`, whose first word
+counts and whose rest says how to undo the default. The workflow runs a
+reversible item on its default, logs it as `defaulted` with how to undo it,
+and parks only what an irreversible question gates; a question with no
+default idles the pipeline, which is what this rule exists to stop (AGENTS.md
+§ "Spend Each Check Once": a question never idles the pipeline). Three cases
+have fixed answers:
+
+- **A legal or decompile-output question is never defaultable**: `reversible:
+  no` and `default: none`. Whether something may be quoted, committed or
+  licensed is the owner's call every time (AGENTS.md § "Legal").
+- **A wait on a live capture, or on data that does not exist yet**, is
+  `reversible: no` with `default: none`: there is nothing to proceed on. The
+  ForgePact bug batch's three `owner:` items were all of this kind.
+- **`reversible: yes` needs a real default.** One of `none` has nothing to
+  proceed on and would park anyway.
+
+`plan_lint.py` refuses the four ways to get this wrong (`owner-no-default`,
+`owner-no-reversible`, `owner-reversible-no-default`, `owner-legal-default`;
+its docstring spells out how each entry and value is read), and
+`--items-json` carries each item's `default` and `reversible` to the
+workflow.
 
 **Release items as they are settled.** When the driver asks for a streamed
 plan, write `planning: streaming` in `## State` first, together with `##
@@ -536,6 +569,17 @@ counts as a replan, with the replan's tier escalation. If the correction
 cannot be made without one of those — the stated fix is wrong, or the defect
 is bigger than the evidence says — make no edit, and return
 `NOT AN AMENDMENT: <why>`. The driver then runs an ordinary replan.
+
+**The workflow may spawn you for this too, inside a launch.** When an item
+implementer, a fixer or a rounds-mode implementer returns a `PLAN-DEFECT`
+whose `CORRECTION:` is not `none`, `workorder-rounds.js` saves the plan
+(`amend_check.py save`), spawns you labelled `amendment: <slug> <id>:r<n>`
+with that correction verbatim, and then runs `amend_check.py check` itself.
+The contract is exactly the one above, and so are your two answers:
+`PLAN-READY`, or `NOT AN AMENDMENT: <why>`. There is no driver turn between
+you and the check, so the same limits hold without anyone re-reading them:
+only `AMENDMENT` from the check puts the item back in the queue; anything
+else parks it for the driver as a replan.
 
 ## When the research reaches a decision above your tier
 
