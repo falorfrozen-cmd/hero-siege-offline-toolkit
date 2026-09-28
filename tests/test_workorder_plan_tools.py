@@ -504,6 +504,35 @@ class AmendCheckTests(TempDirMixin, unittest.TestCase):
         self.assertTrue((base / "amend-base-plan.md").is_file())
         self.assertTrue((base / "amend-base-context.md").is_file())
 
+    def test_restore_puts_a_rejected_amendment_back_as_saved(self):
+        # The workflow restores after a REPLAN, so no other item reads the
+        # rejected edit; the check after it finds nothing changed.
+        self.edit(self.plan, "Make the flag right.", "Make the flag and the launcher right.")
+        self.edit(self.context, "docs/x.md\n", "docs/y.md\n")
+        self.assertEqual(self.check()[0], 1, "control: the edit was a replan")
+        rc, out = run(amend_check.main, ["restore", self.plan, self.context])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("restored", out)
+        self.assertEqual(Path(self.plan).read_text(encoding="utf-8"), AMEND_PLAN)
+        self.assertEqual(Path(self.context).read_text(encoding="utf-8"), AMEND_CONTEXT)
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("lines_changed: 0", out)
+
+    def test_restore_without_a_saved_copy_exits_2_and_writes_nothing(self):
+        other = self.write("y-plan.md", AMEND_PLAN.replace("Make the flag right.", "edited"))
+        other_context = self.write("y-context.md", AMEND_CONTEXT)
+        before = Path(other).read_text(encoding="utf-8")
+        self.assertEqual(run(amend_check.main, ["restore", other, other_context])[0], 2)
+        self.assertEqual(Path(other).read_text(encoding="utf-8"), before)
+        # Control: the plan whose copy exists is restored, the context alone missing refuses both.
+        run(amend_check.main, ["save", other])
+        Path(other).write_text("changed\n", encoding="utf-8")
+        self.assertEqual(run(amend_check.main, ["restore", other, other_context])[0], 2)
+        self.assertEqual(Path(other).read_text(encoding="utf-8"), "changed\n", "a partial restore wrote the plan")
+        self.assertEqual(run(amend_check.main, ["restore", other])[0], 0)
+        self.assertEqual(Path(other).read_text(encoding="utf-8"), before)
+
 
 RUNNER_PLAN = """# x
 

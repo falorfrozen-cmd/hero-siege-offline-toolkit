@@ -382,6 +382,8 @@ class ToolCall:
     guard_refused: bool = False  # the harness refused it: target outside the session's worktree
     backup_id: Optional[str] = None  # the id a successful hs_saves_backup returned (R17)
     scope_verdict: bool = False  # its output carried amend_check.py's `SCOPE:` verdict (R25)
+    timed_out: bool = False  # a shell call the harness stopped at its limit (workorder_speed.py)
+    failure_marker: bool = False  # a shell call whose output carries a test failure (workorder_speed.py)
 
     @property
     def duration_seconds(self) -> Optional[float]:
@@ -434,6 +436,7 @@ class AgentTranscript:
     read_kb: dict = field(default_factory=lambda: defaultdict(float))  # kind -> KB
     write_paths: list = field(default_factory=list)     # (path, ts) for Write calls
     human_messages: list = field(default_factory=list)  # (ts, text) typed by the user, in order
+    first_prompt: Optional[str] = None  # the text of the first non-tool-result `user` record
     ts_first: Optional[datetime] = None
     ts_last: Optional[datetime] = None
     cwd: Optional[str] = None  # first non-empty top-level "cwd" this transcript's records carry
@@ -517,9 +520,22 @@ def lane_of(label: Optional[str]) -> Optional[str]:
     return m.group(1) if m else None
 
 
+# What the harness writes when it stops a shell call at its limit: the
+# current wording moves the call to the background, older ones said
+# "timed out". `workorder_speed.py` counts these as killed runs.
+SHELL_TIMEOUT_RE = re.compile(r"did not complete within its \d+\s*s timeout|Command timed out|timed out after \d")
+# A test or criteria run's output that reports a failure: unittest's and
+# pytest's markers, `EXIT=<n>` echoed after a run, `run_criteria.py`'s
+# `-> exit <n>`. `workorder_speed.py` reads it for the implementers' catch rate.
+CHECK_FAILURE_RE = re.compile(r"\bFAIL:|\bERROR:|\bFAILED\b|\bEXIT=(?!0\b)-?\d+|-> exit (?!0\b)-?\d+")
+
+
 def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
                       round_: Optional[int] = None, workflow_id: Optional[str] = None,
-                      is_driver: bool = False) -> AgentTranscript:
+                      is_driver: bool = False, until: Optional[datetime] = None) -> AgentTranscript:
+    """Parse one transcript. `until`, when given, skips every timestamped
+    record after it, so a snapshot of a session that is still running can
+    be reproduced later; records without a timestamp are kept either way."""
     agent = AgentTranscript(
         agent_type=agent_type, label=label, session_id=session_id, path=path,
         round=round_, workflow_id=workflow_id, is_driver=is_driver,
@@ -531,6 +547,8 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
         rec_type = rec.get("type")
         ts_raw = rec.get("timestamp")
         ts = parse_ts(ts_raw) if ts_raw else None
+        if until is not None and ts is not None and ts > until:
+            continue
         if agent.cwd is None:
             rec_cwd = rec.get("cwd")
             if rec_cwd:
@@ -586,6 +604,8 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
             candidate = _user_message_candidate(rec, content)
             if candidate is not None and ts is not None:
                 user_candidates.append((ts, *candidate))
+            if agent.first_prompt is None and candidate is not None:
+                agent.first_prompt = candidate[0]
             if not isinstance(content, list):
                 continue
             for block in content:
@@ -603,6 +623,9 @@ def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
                 if call.name.endswith("hs_saves_backup"):
                     call.backup_id = _returned_backup_id(text)
                 call.scope_verdict = call.name in SHELL_TOOLS and bool(SCOPE_VERDICT_RE.search(text))
+                if call.name in SHELL_TOOLS:
+                    call.timed_out = bool(SHELL_TIMEOUT_RE.search(text))
+                    call.failure_marker = bool(CHECK_FAILURE_RE.search(text))
                 if call.name == "Read":
                     fp = call.tool_input.get("file_path")
                     if fp:
@@ -694,9 +717,12 @@ def locate_session(projects_dir: Path, project: str, session_prefix: Optional[st
 
 
 def discover_session(projects_dir: Path, project: str, session_id: str,
-                      session_path: Path) -> Session:
+                      session_path: Path, until: Optional[datetime] = None) -> Session:
+    """The driver and every subagent of one session. `until` is handed to
+    each `parse_transcript`; a subagent that began after it is still listed,
+    with no records (`ts_first` None)."""
     driver = parse_transcript(session_path, agent_type="driver", label="driver",
-                               session_id=session_id, is_driver=True)
+                               session_id=session_id, is_driver=True, until=until)
 
     session_dir = projects_dir / project / session_id
     subagents_dir = session_dir / "subagents"
@@ -712,7 +738,7 @@ def discover_session(projects_dir: Path, project: str, session_id: str,
             transcript = parse_transcript(
                 jsonl_path, agent_type=agent_type or role or "unknown",
                 label=description or jsonl_path.stem, session_id=session_id,
-                round_=round_, workflow_id=None,
+                round_=round_, workflow_id=None, until=until,
             )
             subagents.append(transcript)
 
@@ -726,7 +752,7 @@ def discover_session(projects_dir: Path, project: str, session_id: str,
                     transcript = parse_transcript(
                         jsonl_path, agent_type=agent_type or role or "unknown",
                         label=description or jsonl_path.stem, session_id=session_id,
-                        round_=round_, workflow_id=wf_dir.name,
+                        round_=round_, workflow_id=wf_dir.name, until=until,
                     )
                     workflow_runs[wf_dir.name].append(transcript)
 
@@ -1595,10 +1621,19 @@ def rule_r23_lane_git_mutation(session: Session) -> RuleResult:
 #     amendment then counts as a replan (R11). An amendment with no `save`
 #     before it or no `check` after it was never checked at all, and two
 #     amendments with no implementer between them are one replan in two parts.
+#     `workorder-rounds.js` runs a confirmed amendment inside its launch:
+#     there the `save` and `check` calls come from agents of the same
+#     workflow run as the planner (`amend-save:<id>:r<n>`,
+#     `amend-check:<id>:r<n>`) and count exactly as the driver's would, never
+#     the planner's own. Its label names the item (`amendment: <slug>
+#     <id>:r<n>`), and since the engine queues one item's amendment behind
+#     another's, "two amendments with no implementer between" applies there
+#     only to two amendments of the same item.
 #   * a patch round is `patch-implementer:r<n>`, spawned only by
 #     `workorder-rounds.js`, which never runs two back to back; two in
 #     consecutive rounds of one workflow launch mean that guard failed.
 AMEND_LABEL_RE = re.compile(r"^\s*amendment:", re.I)
+AMEND_TARGET_RE = re.compile(r"^\s*amendment:\s*\S+\s+(\S+?):r\d+\s*$", re.I)
 PATCH_LABEL_RE = re.compile(r"^patch-implementer:r(\d+)$")
 
 
@@ -1606,23 +1641,38 @@ def is_amendment(agent: AgentTranscript) -> bool:
     return agent.agent_type == "planner" and bool(AMEND_LABEL_RE.match(agent.label or ""))
 
 
-def _driver_amend_calls(session: Session, verb: str) -> list:
-    """The driver's shell calls running `amend_check.py <verb>`, in order."""
+def _amend_target(agent: AgentTranscript) -> Optional[str]:
+    """The item or round an in-launch amendment names (`amendment: <slug>
+    <id>:r<n>` -> `<id>`); None for a driver's amendment or a free-form label."""
+    if agent.workflow_id is None:
+        return None
+    m = AMEND_TARGET_RE.match(agent.label or "")
+    return m.group(1) if m else None
+
+
+def _amend_calls(session: Session, verb: str, amendment: Optional[AgentTranscript] = None) -> list:
+    """Shell calls running `amend_check.py <verb>`, by start time: the
+    driver's, plus -- for an amendment planner a workflow launch spawned --
+    those of every other agent of that same launch. An amendment planner's
+    own calls never count: it would be checking itself."""
     pattern = re.compile(rf"amend_check\.py\"?\s+{verb}\b")
-    return [c for c in session.driver.tool_calls
-            if c.name in SHELL_TOOLS and pattern.search(_cmd_text(c))]
+    agents = [session.driver]
+    if amendment is not None and amendment.workflow_id is not None:
+        agents += [a for a in session.workflow_runs.get(amendment.workflow_id, []) if not is_amendment(a)]
+    calls = [c for a in agents for c in a.tool_calls
+             if c.name in SHELL_TOOLS and pattern.search(_cmd_text(c))]
+    return sorted(calls, key=lambda c: c.ts_start)
 
 
 def amendment_verdicts(session: Session) -> dict:
-    """`id(amendment planner)` -> True when the driver's first `amend_check.py
-    check` after it ended passed, False when it failed, None when there was
-    none."""
-    checks = _driver_amend_calls(session, "check")
+    """`id(amendment planner)` -> True when the first `amend_check.py check`
+    after it ended (the driver's, or one from its own launch) passed, False
+    when it failed, None when there was none."""
     out = {}
     for agent in all_subagents(session):
         if not is_amendment(agent) or agent.ts_last is None:
             continue
-        after = [c for c in checks if c.ts_start >= agent.ts_last]
+        after = [c for c in _amend_calls(session, "check", agent) if c.ts_start >= agent.ts_last]
         out[id(agent)] = (not after[0].is_error) if after else None
     return out
 
@@ -1630,7 +1680,6 @@ def amendment_verdicts(session: Session) -> dict:
 def rule_r24_cheap_routes(session: Session) -> RuleResult:
     evidence = []
     verdicts = amendment_verdicts(session)
-    saves = _driver_amend_calls(session, "save")
     planners = sorted((a for a in all_subagents(session) if a.agent_type == "planner" and a.ts_first),
                       key=lambda a: a.ts_first)
     implementers = [a for a in all_subagents(session) if a.agent_type == "implementer" and a.ts_first]
@@ -1639,10 +1688,17 @@ def rule_r24_cheap_routes(session: Session) -> RuleResult:
             continue
         prev = planners[i - 1] if i else None
         since = prev.ts_first if prev else None
+        saves = _amend_calls(session, "save", agent)
         if not any(c.ts_start <= agent.ts_first and (since is None or c.ts_start >= since) for c in saves):
             evidence.append(f"{agent.label}: no `amend_check.py save` before it")
         if verdicts.get(id(agent)) is None:
             evidence.append(f"{agent.label}: no `amend_check.py check` after it")
+        target = _amend_target(agent)
+        if target is not None:
+            # In a launch, the earlier amendment that matters is the same item's.
+            same = [p for p in planners[:i] if p.workflow_id == agent.workflow_id
+                    and is_amendment(p) and _amend_target(p) == target]
+            prev = same[-1] if same else None
         if prev is not None and is_amendment(prev) and prev.ts_last and not any(
                 prev.ts_last <= a.ts_first <= agent.ts_first for a in implementers):
             evidence.append(f"{agent.label}: a second amendment after {prev.label} with no implementer between")
@@ -1668,7 +1724,7 @@ SCOPE_VERDICT_RE = re.compile(r"^SCOPE:", re.M)
 
 def rule_r25_owner_scope(session: Session) -> RuleResult:
     evidence = []
-    checks = _driver_amend_calls(session, "check")
+    checks = _amend_calls(session, "check")
     planners = sorted((a.ts_first for a in all_subagents(session) if a.agent_type == "planner" and a.ts_first))
     human = [t for t, _ in session.driver.human_messages]
     since = planners[0] if planners else None
