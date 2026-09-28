@@ -208,6 +208,7 @@ harness) and `test_miner_helmet_panel.py`. Evidence and design:
   - `include/ForgePact/RestartAnytimeMod.hpp`: The "Restart zone at any time" decision core (issue #8, `restartanytime`) - the site script (`UiSetFocus`), the identifying member and value (`uiNodeCallstack` = `PauseRestart`), the gate member and its ready value (`manualDisable` = false), `RestartAnytimeModel::Decide` (Pass or Write) and the armed/pending/blind flags and four counters. Game-independent: no `RValue`, no builtin call.
   - `include/ForgePact/IncarnationGemsMod.hpp`: The Gems of Incarnation decision core (ForgePact 1.4.6; `gemmythic`, `gemfilter`, `gemmaxroll`). Game-independent - standard headers only, no runtime interface - so `tests/incarnation_gems_harness.cpp` compiles it whole. It holds the gem's identity (item type 15, base 136, `c` 0), the per-build tables (512 Mythic seeds per drop `n`, each with its affix stats, and the tier-4 range per affix stat; schema 2 JSON), the drop decision (`DropSeed`: a Mythic seed for the drop's own `n`, among the seeds carrying the most wanted mods when a filter is set), the filter's parser (`ParseFilter`) and the dress (`Dress`/`MaxRoll`). It avoids `std::min`/`std::max`: `ModuleMain.cpp` includes `<windows.h>` without `NOMINMAX`, so those break the plugin build while the harness still compiles.
   - `include/ForgePact/ExitSafeThread.hpp`: `ForgePact::ExitSafeThread`, how a module global owns a background thread. The `std::thread` is heap-held and freed only after `JoinFor` has joined it, and the holder has no destructor, so the game's `ExitProcess` never destroys a joinable thread (Known Limitations item 26). It owns the coop receive thread. Game-independent: `tests/coop_thread_exit_probe.cpp` compiles it whole into a probe DLL.
+  - `include/ForgePact/FrameProfiler.hpp`: `ForgePact::FrameProfiler`, the `frameprof` sampling profiler (2026-09-28, see "Frame profiler (`frameprof`)" below). A background thread (an `ExitSafeThread` held by a never-freed singleton) pauses the frame thread `rate` times a second in `CaptureOnce` - `SuspendThread`, `GetThreadContext`, a guarded `memcpy` of the live stack into a buffer allocated beforehand, `ResumeThread`, and nothing else - then, after the resume, `WalkCopy` moves every pointer into the old stack range into the copy and unwinds it with `RtlVirtualUnwind`, finding unwind entries by binary search in each module's own `.pdata` (`ModuleMap`, never `RtlLookupFunctionEntry`). `Symbolizer` names frames from the game's compiled-code table (`GmlEntry` = `YYGMLFuncs`, walked both ways from one row), the built-ins the adapter resolved and each system DLL's exports; `Classify` buckets a stack from the innermost frame out. `Profiler::BuildReport` writes `bp_ipc\perf\<stem>.json`, `.stacks.txt` and `.txt`. Game-independent (Win32 and the standard library, no `RValue`), so `tests/frame_profiler_harness.cpp` compiles it whole. Its companion `FrameProfilerBuiltins.hpp` holds `kBuiltinNames`, the 429 built-in names the adapter resolves. Avoids `std::min`/`std::max` for the `NOMINMAX` reason above.
 - `plugin_build/`: Plugin compiler script and build workspace.
   - `build.bat`: MSVC x64 batch script compiling `plugin/ModuleMain.cpp` into `BloodPactPlugin_ship.dll` (player build) or `BloodPactPlugin_rel.dll` (research build).
 - `modfiles_shipped/`: Shipped binaries deployed to the game's `bin/` directory upon mod installation.
@@ -240,6 +241,8 @@ harness) and `test_miner_helmet_panel.py`. Evidence and design:
   - `test_necro_balance_contract.py`: Validates Necromancer balance formulas, fail-closed runtime contracts, and panel visibility.
   - `test_map_reveal_contract.py`: Validates the map-reveal mod and its `map_reveal_packs` sub-toggle - defaults, `build_cmds` parent/child emission, the release-guarded `reveal stat`, and the guardrails that keep it from unlocking waypoints, writing the player's minimap options, or sweeping `isDiscovered`. Also pins the 2026-09-11 regression: the pack pass must wait for a creator to report a real `enemyCreatorTimer` before lying about distance, because firing during zone load leaves the spawners inert and the zone emptier than vanilla.
   - `test_map_reveal_behavior.py` + `map_reveal_harness.cpp`: **Behavioral** regression suite for the pack pass - compiles the real `MapRevealManager` and the real `Hook_distance_to_object` against controlled game-API responses and calls the hook at the point in the frame order where it matters (before the next `OnFrame`). Exists because the source-string assertions in `test_map_reveal_contract.py` passed throughout the period when the authorization was checked at the wrong point in the frame; see Known Limitations item 13. Skips without a C++ toolchain, like `test_headhunter_dispatch.py`.
+  - `test_frame_profiler.py` + `frame_profiler_harness.cpp`: The frame profiler. **Behaviour** (Windows, skips without MSVC): the harness compiles the real `FrameProfiler.hpp` and profiles a worker thread of its own that runs a known chain (`FpTop` -> `FpMiddle` -> `FpLeafSpin`) named through a fake compiled-code table (`gml_Object_Fake_Enemy_obj_Step_0`, `gml_Script_FakeMiddle`) and a fake built-in (`fake_spin`), calling `OnFrame` at its own frame boundaries. The JSON reports must name the event, the script and the built-in (>= 60% each), put the script first in `gmlSelf`, read a sleeping thread as idle, pin every slow frame on `FakeSlowWork`, carry the context callback's room and counts into the timeline, list stacks outermost first, end early on `stop` and on a vanished thread, cut the sampling rate when the pauses exceed the budget, count a frame limiter that spins on the clock (`FpFrameLimiter`, in no table) as waiting while a clock read under game code never is, and keep naming a row whose function a "mod" swapped for a function in another module (`FpMiddle`'s row pointed at `SleepEx`), read back from the harness exe on disk - the reason the fake table is a constant-initialised `FakeRow` array with typed function pointers. The heap-churn capture (2000 a second against a thread allocating in a loop) must finish: a lock taken while the thread is suspended would deadlock it, and the harness's watchdog ends the process if it ever does. Compiled with `/link /INCREMENTAL:NO` so a function's address is the function, not a thunk. **Contract**: `frameprof` is in `kPlayerCommands` and a standalone early return (the literal twice in the file); `FrameProfilerTick();` is `FrameCallback`'s first statement; `OnFrame` and `TakeSummary` start with one atomic load; the code between `SuspendThread(` and `ResumeThread(` in `CaptureOnce` holds no allocation, logging, lock, unwinder call or throw, and `WalkCopy` comes after it; `RtlLookupFunctionEntry(` never appears; the header names no `RValue`/`g_Yytk`/`YYTK`/`CInstance`/`Aurie`, no `std::min`/`std::max`; the adapter installs no hook and calls only `room_get_name`, `asset_get_index`, `instance_number` and reads `room` and `instance_count`; the defaults are 30 s at 250 a second.
+  - `test_frameprof_report.py`: `tools/frameprof_report.py` on a synthetic report and stacks file: the call tree adds up, labels pick their colour (event, script, built-in, runtime, graphics, mod, system), the summary lines, a hostile name is escaped and every section is on the page with nothing loaded from the network, a second without a monster reading is left out of the chart, a non-capture JSON is refused, and without a path the newest capture of the game in `forgepact.json` is taken.
   - `test_menu_probe_contract.py`: Pins the research stage of the character-select question - whether anything can drive the game's own main menu as far as a loaded character (`docs/character-select-research.md`; live session run 2026-09-21).
     - `menuprobe` is research-build only (the literal disappears from `strip_research_blocks`, header comment included), absent from `kPlayerCommands`, dispatched from `HandleMenuProbeCommand` as the third adjacent call after the Headhunter's and the prospect window's rather than a new top-level `else if` (C1061; the chain's length is pinned against `f5a3515`), and the literal occurs exactly once in `ModuleMain.cpp`.
     - The `event` and `script` subcommands check the literal token `confirm` - and print a usage line - before any `CallBuiltinEx`/`CallGameScriptEx`, each makes exactly one such call with no loop around it, and each prints the object, `nth`, instance `id`, position and the room index before *and* after, so a refusal, a no-op and a fault stay three outcomes.
@@ -399,6 +402,7 @@ harness) and `test_miner_helmet_panel.py`. Evidence and design:
   - `ipc.ps1`: Sends a command to the *running* plugin and prints only its reply. Resolves `bp_ipc` from the panel's own `forgepact.json`, records `out.txt`'s byte length before writing `cmd.txt`, waits for the game to actually consume it, then prints just the appended lines. Replaces the hand-driven "edit cmd.txt, then scroll a multi-megabyte out.txt" loop every research session used before 2026-09-11 - see `AGENTS.md`'s "Limit Rebuilds & Reruns". Usage: `.\ForgePact\tools\ipc.ps1 citrace methods`, `-Lines "petquest 1","petquest stat"` to batch, `-Tail 40` to just read. A timeout means the game is not running or the plugin did not load. Its MCP counterpart is the hub's `hs_command` tool (`tools/hs_drive_mcp/ipc.py`, documented in `../../tools/hs-drive-mcp.md`), which runs the same byte-offset algorithm from a Claude Code session and pairs with `hs_ipc_tail` for `-Tail`; the two differ in two places on purpose - with the game running, `hs_command` **waits a pending `cmd.txt` out** and then writes its own fresh, instead of overwriting it with a warning nothing reads (the plugin reads the whole file before deleting it, so a line added in between is deleted unread while the file still vanishes, and the previous command's output would come back as this command's reply; the timeout is split between that wait and this command's own, so a refusal never reports a wait longer than the one it made), and an unconsumed command comes back as a refusal token rather than a printed message - one that says whether the plugin was watched reading this channel at all, because "nothing reads it" and "it was busy with the earlier command" have different fixes.
   - `panel_smoke.py`: `--exe <path> [--timeout 60]` starts a packaged `ForgePact.exe`, finds the port it listens on (the panel's port candidates, first to answer `/api/state` with a `version`), GETs `/` (expects `<div id="app">`), the first `/assets/*.js` that `index.html` names (expects 200 and `text/javascript`) and `/api/state`, and looks for a top-level window titled `ForgePact`. Prints one line, `window=found|missing url=<url> index=ok|bad assets=ok|bad api=ok|bad`, exits 0 only when all four are good, and kills only the processes it started, by pid (the onefile exe runs a child), never by image name. Answers "does the package serve its panel" without a person opening it.
   - `package_size.py`: `--ref <git ref>` or `--tree <dir>` builds the package in a temporary directory (`git archive` for a ref; the working tree's `modfiles_shipped/` binaries, `plugin_build/BloodPactPlugin_ship.dll` and `yytoolkit-modified/` copied in, and a junction to the checkout's `hs-game-sdk` so the SDK guard passes; `npm ci && npm run build` first when the ref has `panel/`), prints `ForgePact.exe <ref> <bytes>` (`ForgePact.exe tree <bytes>` for `--tree`) and removes the temporary tree. Used to compare the exe size before and after a panel change. Like `build_release.py` itself, it kills a running `ForgePact.exe`.
+  - `frameprof_report.py`: `[capture.json] [--html <file>] [--no-html]` prints a `frameprof` capture's summary and writes `<stem>.html` beside it: a self-contained page (no network, no script) with the frame numbers, the time split, the heaviest events, game code (with and without what it calls), built-ins, innermost functions and modules, the slowest frames with what ran during each, a per-second chart with the monster count, an icicle chart of `.stacks.txt` (frames under 0.2% of the samples left out) and CPU per thread. Without a path it takes the newest `frameprof-*.json` under the configured game's `bp_ipc\perf` (`forgepact.json`'s `game_exe`, as `ipc.ps1` resolves it). Standard library only.
 
 ---
 
@@ -566,6 +570,9 @@ To add or modify a gameplay modifier or runtime command:
 | `py -m unittest discover -s tests -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | The serial reference run of the same suite: every test module in one process, in name order. Use it to compare against the parallel runner, or when a failure needs a single log. | Read-only test execution; all tests pass | Verified 2026-09-26 (1559 tests, OK, skipped=8, 168-201 s wall over three runs, the slowest the cold first one that compiled every native harness; 1271 tests on 2026-09-22). On the ForgePact UI redesign branch (2.0.0): 1622 tests, OK, 1302 s, with `panel/dist` built, at 2.0.0 after forgepact-ui-ship's finish review added `test_finish_e2e_suite_passes`; earlier the same day 1621 tests, OK, 1147 s, with `panel/dist` built, at 2.0.0 in forgepact-ui-ship's second round, after origin/main's Item Truth memory harness tests arrived with the main merge; earlier the same day 1617 tests, OK, skipped=8, 1149 s, with `panel/dist` built, at 2.0.0 after forgepact-ui-ship added `test_motion_e2e_suite_passes`; earlier the same day 1616 tests, OK, skipped=8, 1037 s, with `panel/dist` built, after the responsiveness workorder added `test_perf_e2e_suite_passes`; earlier the same day 1615 tests, OK, skipped=8, after the third origin/main merge; the eighth is `test_menu_layout_contract`'s notes check, since `release-notes-v1.4.5.md` left main when 1.4.5 was published |
 | `py -3 -m unittest tests.test_drop_roll_model -v` | hub root (not `ForgePact/`) | PowerShell / CMD | Python 3.10+; `ForgePact/` checked out for `LeverParityTests` | Runs the drop-roll model's baseline and target tests against the recorded measurements M1-M10 (`hs-game-sdk/curated/drop_roll_measurements.json`), and `LeverParityTests`, which pins the test's copies of `droprate group`, `dungeonkey` and the relic pre-roll to `plugin/ModuleMain.cpp` and `src/forgepact.py`. A lever change that moves either side fails here. See `docs/models/drop-roll-spec.md`. | Read-only; loads `src/forgepact.py` in-process to call `build_key_cmds` (no server, no bytecode written) | Verified 2026-09-24 (25 tests, OK, none skipped) |
 | `py tools/perf_panel.py` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Times the panel's two per-poll costs - the boot count and the process scan - against reference copies of the pre-1.3.20 implementations, and exits non-zero if either regressed below its floor. No game, no network. `--log-mb`, `--iterations`, `--min-speedup`. | Writes and deletes a synthetic log in a temp directory | Verified 2026-09-15 |
+| `.\tools\ipc.ps1 frameprof start [seconds] [rate]` (also `frameprof stop`, `frameprof stat`) | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree (player or research build) | Samples the game's frame thread for `seconds` (1-600, default 30) at `rate` a second (20-2000, default 250) and answers `frameprof: sampling the frame thread ...`; when it ends, the summary lines land in `out.txt` and the report in `<game>\bin\bp_ipc\perf\frameprof-<date>-<time>.json`, `.stacks.txt`, `.txt`. | Pauses the frame thread briefly per sample (the report states the cost; the rate halves while it exceeds 3%); writes the three files. Changes nothing in the game. | Harness-verified 2026-09-28; first live capture pending |
+| `py tools/frameprof_report.py [capture.json] [--no-html]` | `ForgePact/` | PowerShell / CMD | Python 3.10+ (standard library) | Prints the capture's summary and writes `<stem>.html` beside it (without a path: the newest capture of the configured game). | Writes the page | Verified 2026-09-28 on harness captures |
+| `py -m unittest tests.test_frame_profiler tests.test_frameprof_report -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the behaviour half (skips without it) | 22 + 8 tests: the harness's captures and the contract, then the report tool. About 35-60 s, most of it the harness compile and its six captures. | Writes `build/frame-profiler-behavior/` | Verified 2026-09-28 |
 | `py -3 tools/itemtruth_memrun.py run --items 20000 [--mix]` and `... control` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+ (standard library); Hero Siege closed; Item Truth on (`itemtruth\capture.request`); `control` needs the research DLL installed | `run` launches the game minimised to the main menu, waits until the menu's one-time memory release is behind it and the level is steady, queues one evaluation request of `--items` items from the journal's own evaluated shapes (`--mix`: white, unique, socketed and runeword items), samples private bytes every second and closes the game with `CloseMainWindow`. The game starts with the default error mode (`CREATE_DEFAULT_ERROR_MODE`), so a crash is reported as for a player. `summary.json`: baseline, peak while building, level after, KB per item, and the game's `exit_code` (`0xC0000409` is an abort). `control` runs two halves in one launch, the second under `truthmem hold on`: the positive control, which must grow. | Launches and closes the game; writes `samples.csv` and `summary.json` (and `truthmem.txt`) under `--out`; moves the run's own journal files there when every line in them is the run's | Verified 2026-09-26 (see "Item Truth for the Item Editor", Memory) |
 | `py tools/cut_release.py --check --expect <version>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Reports the version at every site and fails if they disagree, or if the release notes are missing and `--allow-missing-notes` was not given. `py tools/cut_release.py <version>` moves them. `--allow-missing-notes` (only `--check`; only used by `forgepact-tag.yml`) reports a missing notes file without failing. **Do not hand-edit the version sites** - a mismatch here is the signal, not a nuisance. Touches no git, runs no build, stages no DLL. | `--check` is read-only; a bump rewrites two files | Verified 2026-09-16 |
 | `py tools/forgepact_tag.py --tag <version> --existing <tags…>` | `ForgePact/` | PowerShell / CMD (Git Bash for the real examples below) | Python 3.10+ | Checks a typed tag/version against the existing `v*` tags and the tree, and prints `version=`, `tag=`, `bump=`, `previous=`. Refuses a taken tag, a downgrade against the highest tag, a version below the tree, or a malformed input. | Read-only | Verified 2026-09-16 |
@@ -3138,3 +3145,128 @@ disabled control's actual wrapping row gains tabindex=-1. Idle footer status
 text is visually clipped without removing its live region from the accessibility
 tree; the Ember browser suite verifies both keyboard traversal and the live
 region through Chromium's accessibility tree.
+
+## Frame profiler (`frameprof`, 2026-09-28)
+
+**Why.** Performance questions were answered one hook at a time: the
+population profile build (`build.bat profile`) times a fixed list of scripts,
+and the population analysis named the monster-scaled passes by reading the
+scripts. A general "what does a slow frame spend its time on?" needs a view of
+everything - the game's events and scripts, the GameMaker runtime, the
+graphics driver - without a list. The population analysis had already named
+the shape: sample the frame thread's instruction pointer from inside the
+plugin and bucket it by the game's own script table. The owner asked for the
+measuring tool first, before any general optimisation ("ölçeri hazırlamaya
+başla", 2026-09-28).
+
+**Shape.** `plugin/include/ForgePact/FrameProfiler.hpp` (game-independent) plus
+an adapter in `ModuleMain.cpp` just before `RunCommand`, with the 429 built-in
+names in `FrameProfilerBuiltins.hpp` (`kBuiltinNames`, resolved with
+`GetNamedRoutinePointer`, a missing one skipped; kept out of `ModuleMain.cpp`
+because that file's contract tests count built-in literals to pin call sites): `FrameProfContext` (once a second on the frame thread: `room` ->
+`room_get_name`, `instance_count`, `instance_number(Enemy_Parent_obj)` via
+`g_EnemyParentIdx`), `FrameProfGmlAnchor` (the first script's
+`CScript::m_Functions`, a row of the `YYGMLFuncs` table), `FrameProfCommand`
+(`start [seconds] [rate]`, `stop`, `stat`; it runs on the frame thread, so the
+duplicated thread handle and `GetCurrentThreadStackLimits` are the frame
+thread's own) and `FrameProfilerTick` (`FrameCallback`'s first statement:
+`OnFrame` records the frame boundary for a running capture, `TakeSummary`
+prints a finished capture's summary through `Out`, which only the frame thread
+may call). The verb is `frameprof`, not `perf`: the research build's `perf`
+reports the plugin's own hook timings (`PerfReport`, answered inside
+`HandleHeadhunterCommand`). It is a standalone early return in `RunCommand`
+(the C1061 rule) and in `kPlayerCommands`.
+
+**Why the player build carries it.** It is inert until started - two atomic
+loads a frame - and it changes nothing in the game, so a player can send a
+capture of a slow area. The stall watchdog stays research-only because it was
+a thread that woke twice a second all the time; `test_stall_watchdog_never_reaches_the_player_build`
+still passes because the suspension lives in the header, not in `ModuleMain.cpp`.
+
+**The rule that makes it safe.** Nothing that can take a lock runs while the
+frame thread is suspended: `CaptureOnce` is `SuspendThread`, `GetThreadContext`
+(`CONTEXT_CONTROL | CONTEXT_INTEGER`), a guarded `memcpy` of `[Rsp, stack top)`
+into a 512 KiB buffer allocated before sampling started, `ResumeThread` and two
+`QueryPerformanceCounter` reads. Everything else - relocating the copy's and the
+registers' pointers into the copy, `RtlVirtualUnwind` under SEH, interning the
+stack, naming, the report - runs after the resume on the sampler's thread.
+Unwind entries come from each module's own `.pdata` (binary search, chained
+entries followed to the function start), from a module list taken when the
+capture starts; `RtlLookupFunctionEntry` is never called. The heap-churn
+harness capture is the regression test for the rule.
+
+**Measured cost** (development PC, 2026-09-28, `scratchpad` benchmark against a
+spinning thread): suspend 10 us, get-context 41 us, resume 7 us - 61 us median,
+138 us p95 per sample; about 500 us with the PC busy compiling. Hence 250 a
+second by default and the budget: every half second the sampler halves its rate
+(down to 20) while its pauses exceed 3% of the frame thread's time and doubles
+it back (up to the request) under 0.75%. The report's `pausePercentOfTime` is
+an upper bound (it times the whole pause), with `hzLowest` and `rateCuts`.
+
+**The report.** `capture`, `frames` (only frames that ended inside the sampled
+window), `time`, `buckets`, `gmlTotal`, `gmlSelf`, `events`, `builtins`,
+`leafFunctions`, `leafModules` (40 rows each), `hitches` (the ten slowest frames
+over 50 ms with what ran in them), `timeline` (per second, with the context) and
+`threads` (CPU per thread from each thread's own two readings). A bucket is
+decided from the innermost frame out by the first graphics, game-code or mod
+frame; a blocking syscall at the leaf turns it into its waiting form (GPU /
+display, game code waiting, idle). Game code under a mod's hook is game code.
+`tools/frameprof_report.py` renders it.
+
+**Considered and not used.** YYToolkit's `EVENT_OBJECT_CALL` per-event timing
+(the `ExecuteIt` hook is off in the hub's YYToolkit build, patch `0003`, and it
+crash-looped on Season 10); more script-table hooks (blind to direct calls, and
+only a list); an external profiler through `ReadProcessMemory` (no plugin
+needed, but it would have to decode unwind codes for a remote image - worth it
+only for captures without ForgePact); ETW sampling (administrator rights).
+
+**Naming on the real game.** The table walk accepts a row whose function is
+null or inside any loaded module, because mods that hook a script through the
+table swap the row's function for their own: the first live capture's walk,
+which demanded a function inside the image, stopped after 680 of the installed
+build's 20,951 rows. A swapped row's original function is read back from the
+exe file on disk (the row's own bytes, moved by the load offset); on
+2026-09-28 15 rows were swapped and all 15 came back. All 429 built-in names
+resolved.
+
+**The frame limiter spins.** The runner busy-waits on the clock between frames
+(town at 60 fps: frame thread 94-96% of a core, 38-45% of its samples in one
+runtime function and its `QueryPerformanceCounter` calls). The report finds
+that function from the data (`FindSpinWait`: among runtime-only stacks whose
+leaf is a clock read, the caller holding at least half of them and at least 1%
+of all samples) and counts it, with the clock reads it makes, as a waiting
+bucket, `spin`; JSON `spinWait`.
+
+**First captures (2026-09-28, player settings: density 5x, pack markers).**
+Act_01_01: 51.5 fps, frame thread working 95%, GameMaker runtime with no game
+code on the stack 57%, game code 26%, graphics driver 9%, mods 3%; 6,072
+instances of which 78 monsters. Town: 58.9 fps, 54% working, the limiter
+spinning 44.5%; its two slow frames were GPU/display waits. Details and the
+table: `ForgePact/docs/frame-profiler.md`, "First captures".
+
+**`Out()` and YYToolkit's printing (fixed with this work).** `Out()` passed
+each line to `PrintInfo("[BP] %s", line)`. At the pinned YYToolkit commit,
+`PrintInfo` formats into a 4096-byte buffer with `vsprintf_s` and hands the
+result to `CmWriteInfo`, which runs it through `vsprintf_s` again as the
+format: a `%` in the line, or a line too long for the buffer, reaches the C
+runtime's invalid-parameter handler, and the default one ends the game
+(`0xC0000409` in `ucrtbase.dll`, exception data 5). It happened once, while a
+`frameprof` summary printed ("working 54%, waiting"); the line before the
+first `%` reached `out.txt` and that one did not. `Out()` now writes and closes
+`out.txt` first, doubles every `%` for the console copy and cuts that copy at
+1800 characters (`kOutPrintLimit`); `test_frame_profiler.py` pins it. Every
+other `Print*` call in the plugin uses a constant format. Any plugin that
+prints dynamic text through YYToolkit's `Print*` has the same exposure.
+
+**Crash A/B (2026-09-28).** A separate crash, `0xC0000005` at
+`Hero_Siege.exe+0xB488F3E` (the runtime's call-a-built-in-by-index helper, the
+address another session saw on `goto Act_01_06`), ended one close from
+Act_01_01 after captures. Six later closes from Act_01_01 after about 150 s
+there - the final build with captures (twice) and without, the build that
+crashed with the same captures, the player's own ForgePact - all exited 0, so
+it is read as an intermittent crash of the game's room teardown. The table is
+in `ForgePact/docs/frame-profiler.md`, "Crash tests".
+
+**Status.** Branch `claude/frame-profiler`; the player and research builds
+compile; `test_frame_profiler.py` (22) and `test_frameprof_report.py` (8)
+pass.
