@@ -2501,7 +2501,7 @@ manifest.
 - Modified YYToolkit, source of truth (hub patch series, build tool, provenance story): `../../../third_party/yytoolkit/README.md`, `../../../third_party/yytoolkit/NOTICE.md`, `../../../tools/build_yytoolkit.py`, `../../adr/0002-modified-yytoolkit-is-a-patch-series-in-the-hub.md`, `../../agents/yytoolkit-provenance.md`
 - `../../../ForgePact/yytoolkit-modified/NOTICE.md` now points at the hub series above, not at the `bb113eef…` DLL a player's installed copy still carries; for that DLL's own notice and what it left out, see the pin table above and [`docs/agents/yytoolkit-provenance.md`](../../agents/yytoolkit-provenance.md).
 - Credits & License Notices: `../../../ForgePact/CREDITS.md` (including the bundled IBM Plex Sans and IBM Plex Mono fonts, SIL Open Font License 1.1)
-- Panel design (Figma): `https://www.figma.com/design/75EleO8U3zngY8JU9adWpk` - the panel redesign's source. The owner picked the Graphite Console direction on 2026-09-25, and the file carries three palettes, **Ledger** (the default), **Graphite** and **Sigil** (`THEMES` in `panel/src/theme.js`, the Setup tab's Theme choice). Its export is committed as `panel/design/figma-export.json` (with `figma-manifest.json`), the contract `panel/src/tokens.css` is generated from with `panel/scripts/tokens-from-export.mjs` and that `design-match.mjs` measures the page against; its `motion.notes` are what `app.css`'s motion implements (forgepact-ui-ship). The latest local mirror of the frames design-match compares with is `.claude/workorders/forgepact-ui-main-merge-3/figma/` in the hub (gitignored workorder evidence).
+- Panel design (Figma): `https://www.figma.com/design/75EleO8U3zngY8JU9adWpk` - the panel redesign's source. The owner picked the Graphite Console direction on 2026-09-25, and the unchanged Figma file carries the three flat palettes, **Ledger**, **Graphite** and **Sigil**. Once ForgePact #105 merges, the runtime Theme choice will have four: **Ember Forge** will be the default for fresh/unknown preferences, and explicit Ledger/Graphite/Sigil choices will be preserved (`THEMES` in `panel/src/theme.js`). Ember follows the separately approved artwork documented in `ForgePact/panel/DESIGN.md`; its Figma library is deferred. The unchanged three-palette Figma file's export is committed as `panel/design/figma-export.json` (with `figma-manifest.json`), the contract `panel/src/tokens.css` is generated from with `panel/scripts/tokens-from-export.mjs` and that `design-match.mjs` measures the page against; its `motion.notes` are what `app.css`'s motion implements (forgepact-ui-ship). The latest local mirror of the frames design-match compares with is `.claude/workorders/forgepact-ui-main-merge-3/figma/` in the hub (gitignored workorder evidence).
 - Season 10 Special Content Notes: `../../../ForgePact/docs/S10-special-content-notes.md`
 - Dungeon Key & Drop Research: `../../../ForgePact/docs/dungeon-key-research.md`
 - Angelic Drop Research: `../../../ForgePact/docs/angelic-drop-research.md`
@@ -3084,3 +3084,57 @@ frame in that session, and one warm World tab switch took 60.7 ms once in the
 with-motion window (no motion runs on a tab switch; not seen again).
 `perf.e2e.mjs` still builds no attach mode; the throwaway attach script and
 its raw samples stayed in that workorder's local evidence.
+
+
+### Local Ember UI integration (2026-09-28)
+
+The `codex/ember-ui-v2` branch ports the approved Ember artwork onto the 2.0
+Svelte panel at `8cfdd6b`, preserving the current Python backend and native plugin.
+The implementation is under `ForgePact/panel/src/ember/`; Ember is the fallback
+for default/unknown themes, and existing Ledger/Graphite/Sigil choices stay intact.
+Overview controls forward to the original setting handlers. No new game hooks,
+observers or polling loops are added. See `ForgePact/docs/ember-ui.md` for the
+asset provenance, theme behavior, build steps and `npm --prefix panel run e2e:ember`.
+The legacy/gems/Prime Evil oracle recordings remain immutable; the derived
+recording was regenerated for the fourth theme. Figma exports are unchanged.
+
+Ember's shell now keeps `#wrap` as the constrained scroll container: the base
+panel deliberately locks body scrolling, so making both the shell and `#wrap`
+auto-height removes user scrolling. The action footer belongs to `#appShell`
+as a separate grid row, reserving its actual height instead of covering the
+last controls. `nav.js` resets the content scroll on page/subtab changes.
+`npm --prefix panel run e2e:ember-scroll` exercises native scrollbar dragging,
+wheel and keyboard scrolling, all pages at six viewport sizes, and independent
+sidebar/Satanic/Gem-list scrolling. Its headless browser explicitly keeps native
+scrollbars visible; `tests/test_panel_e2e_ember_scroll.py` includes it in the
+`panel-browser` release-test group. Full-page screenshots or locator auto-scroll
+alone cannot prove that a player can reach off-screen settings.
+The theme menu and expanded Enabled mods list stay in the content flow and cap
+their list heights to the pane on open. The scroll suite exercises their last
+options/actions in short/mobile windows as well as the Ember inline/tray width
+transition; the original form suite seeds Ledger for its 1280px design contract.
+These in-flow Ember menus open/close instantly to avoid delayed layout jumps;
+flat-palette popovers retain their motion tokens. The motion suite checks both.
+The action consistently reads **Apply all now**, status text uses at least the
+smallest font token, and IM Fell English ships as WOFF2 with unchanged outlines,
+metrics, character mappings and its existing OFL notice.
+
+Global search indexes the current range/checkbox/select controls rather than
+legacy CSS classes, excludes duplicate slider switches and pool entries, and
+routes Theme to its visible trigger. Mods column balancing moves rows on first
+reveal, so search focuses after layout. Disabled child controls focus their
+row without enabling anything. Undo lives in a wrapping footer row in Ember,
+fading without translation; the toast moves between layout hosts on theme
+change without replacing its action or timer. The scroll suite checks Undo
+and simultaneous instant status messages in separate footer rows; open menus
+use a small scroll inset once the status rail scrolls away. It covers Undo
+at four viewport sizes and after theme changes. The full review regression
+suite runs in Ember (1600px for long inline names) and Ledger (1280px), including
+focus, hold, timeout and byte-identical Undo posts/commands. Its new
+`tests/test_panel_e2e_review.py` wrapper includes it in release CI's
+`panel-browser` group.
+Search does not change an enabled standalone input's Tab order: only a
+disabled control's actual wrapping row gains tabindex=-1. Idle footer status
+text is visually clipped without removing its live region from the accessibility
+tree; the Ember browser suite verifies both keyboard traversal and the live
+region through Chromium's accessibility tree.
