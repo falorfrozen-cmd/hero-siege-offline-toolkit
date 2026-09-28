@@ -3118,3 +3118,18 @@ flat-palette popovers retain their motion tokens. The motion suite checks both.
 The action consistently reads **Apply all now**, status text uses at least the
 smallest font token, and IM Fell English ships as WOFF2 with unchanged outlines,
 metrics, character mappings and its existing OFL notice.
+
+Global search indexes the current range/checkbox/select controls rather than
+legacy CSS classes, excludes duplicate slider switches and pool entries, and
+routes Theme to its visible trigger. Mods column balancing moves rows on first
+reveal, so search focuses after layout. Disabled child controls focus their
+row without enabling anything. Undo lives in a wrapping footer row in Ember,
+fading without translation; the toast moves between layout hosts on theme
+change without replacing its action or timer. The scroll suite checks Undo
+and simultaneous instant status messages in separate footer rows; open menus
+use a small scroll inset once the status rail scrolls away. It covers Undo
+at four viewport sizes and after theme changes. The full review regression
+suite runs in Ember (1600px for long inline names) and Ledger (1280px), including
+focus, hold, timeout and byte-identical Undo posts/commands. Its new
+`tests/test_panel_e2e_review.py` wrapper includes it in release CI's
+`panel-browser` group.
