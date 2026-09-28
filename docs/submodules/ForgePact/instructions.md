@@ -2322,6 +2322,7 @@ here before pressing Publish.
 | v1.4.5 (tag at `0a55d97`) | [36051361059](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36051361059) | `ca29efd5ea8d79dde3de52b492733d513d9110b3d0933ffcf5d2d8329c9619ef` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.5` folder; the installed `BloodPactPlugin.dll` matched the zip's (`a14d7237ea4a`, `BUILD-INFO.json` `plugin_sha256`) | `==== BloodPact plugin loaded ==== v1.4.5`, first line of the session launched after the install | 1.4.5 (`/api/state`) | `hhlabel` -> `ON (0 active, callback ok)` | pass | 2026-09-25 | falorfrozen-cmd (install and checks run by Claude Code) |
 | v1.4.6 (tag at `d9aee6f`) | [36164948121](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36164948121) | `2ca25fddaf881309d33cac0efc7cfc89e5936950cccff68d13964ec2e93e44a9` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.6` folder; the installed `BloodPactPlugin.dll` matched the zip's (`6af792801764`, `BUILD-INFO.json` `plugin_sha256`). The AFK FARM and Seraph plugins in `mods/aurie` were left as they were. | `==== BloodPact plugin loaded ==== v1.4.6`, the first boot line of the session launched after the install (panel **Launch**, `POST /api/launch`) | 1.4.6 (`/api/state`), served on 8780 | `hhlabel` -> `ON (0 active, callback ok)` | pass | 2026-09-26 | falorfrozen-cmd (install and checks run by Claude Code) |
 | v1.4.7 (tag at `95bd1cd`) | [36215007747](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36215007747) | `32d37a0032f209b248b827b9641133e393c6c9230a2c3d309b10b8dc82016146` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-1.4.7` folder; the installed `BloodPactPlugin.dll` matched the zip's (`bd3bf3564a77`, `BUILD-INFO.json` `plugin_sha256`). The AFK FARM and Seraph plugins in `mods/aurie` were left as they were. | `==== BloodPact plugin loaded ==== v1.4.7`, the first boot line of the session launched after the install (panel **Launch**, `POST /api/launch`, 10 s) | 1.4.7 (`/api/state`, which lists the new `primeevil` slider), served on 8780 | `hhlabel` -> `ON (0 active, callback ok)`; also `droprate group primeevil 5` -> `x5, 12 esya (ornek: 27 -> 5)`, then back to x1 | pass | 2026-09-26 | falorfrozen-cmd (install and checks run by Claude Code) |
+| v2.0.0 (recut; tag at `6d55713`) | [36405528802](https://github.com/falorfrozen-cmd/ForgePact/actions/runs/36405528802) | `198559e19080f55251930ecbf9af1eefaeb20909db98d60a6b6eb07bbd046dbb` (= `.zip.sha256` asset = GitHub asset digest) | yes: Install Mod Plugin (`POST /api/installmod`) of the zip's own `ForgePact.exe`, run from the extracted `ForgePact-2.0.0` folder; the installed `BloodPactPlugin.dll` matched the zip's (`7ad9af2457aa`, `BUILD-INFO.json` `plugin_sha256`). The AFK FARM and Seraph plugins in `mods/aurie` were left as they were. | `==== BloodPact plugin loaded ==== v2.0.0`, the first boot line of the session launched after the install (panel **Launch**, `POST /api/launch`, 8 s) | 2.0.0 (`/api/state`), served on 8780 | `hhlabel` -> `ON (0 active, callback ok)`; also `farsleep` -> `farsleep: off` (the new Far scenery sleep command, off by default) | pass | 2026-09-28 | falorfrozen-cmd (install and checks run by Claude Code) |
 
 The first `v1.4.5` row built an earlier `v1.4.5` tag. That draft was never
 published, and the tag was cut again at `0a55d97` on 2026-09-24. The second row
@@ -2337,6 +2338,22 @@ comment. The draft, which had no assets, and its tag were deleted, and `v1.4.6`
 was cut again at `d9aee6f` on 2026-09-26. The files kept from before the
 install are in `HeroSiegeBackups\2026-09-26_forgepact-1.4.6-gate`, with a hash
 manifest.
+
+`v2.0.0` was cut three times before it shipped:
+1. The first draft, at `b4ceff1` on 2026-09-27, predated the Ember Forge theme.
+2. The first recut, at `755f7ec` on 2026-09-28, carried Ember and ForgePact#109. Its build zipped, but the
+   `panel-browser-tests` job had no `hs-game-sdk` beside ForgePact, so the Satanic Zone pool was empty and
+   the browser suites failed. ForgePact#110 fixed that, and a manual re-run uploaded the zip.
+3. The second recut, at `6d55713`, is the build above. It ships Far scenery sleep (ForgePact#113), the frame
+   profiler and the percent-sign fix (ForgePact#111). ForgePact#115 moved their notes from the 2.1.0 file
+   into 2.0.0's.
+
+The gate closed the game with `WM_CLOSE` to its `YYGameMakerYY` window, not `CloseMainWindow()`, which
+can hit YYToolkit's console. That close exited `0xC0000409`. The zip bundles `HSOfflineTrackerProducer.dll`
+`36608aa0`, which lacks the exit-abort fix: that fix is HS-Offline-Tracker PR #8 and is not released. With
+that PR build installed, the same close before the install exited 0, so the PR build was put back
+afterwards. The files kept from before the install are in `HeroSiegeBackups\2026-09-28_forgepact-2.0.0-gate`,
+with a hash manifest.
 
 ---
 
