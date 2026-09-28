@@ -1090,8 +1090,9 @@ reading**, ForgePact's dev2 bug batch, 2026-09-27):
 A selector that picks the nearest item with no memory of a failed one can
 re-pick the same item after either failure; ForgePact's Pet Quest Collector
 therefore holds a failed target back and walks the family with a cursor. Not
-measured. (The report that prompted this turned out to be the game's own
-companion loot pickup, §10.6, not a quest-item selector.)
+measured. (The owner has since said the report that prompted this is about
+the game's own companion loot pickup, §10.6, not a quest-item selector; that
+it acts through §10.6's mechanism is a static reading, not measured.)
 [dev2 bug batch, the Pet Quest Collector's section](../ForgePact/docs/dev2-bug-batch-research.md),
 [pet loot stuck](../ForgePact/docs/pet-loot-stuck-research.md)
 
@@ -1128,7 +1129,9 @@ Every entry here is a **Static reading** of the current build's compiled
 `Companion_obj`, `Loot_Ground_obj` and `Coin_obj` events (2026-09-27); none is
 measured. Object events have no script-table entry, so none of it can be
 hooked by name. ForgePact #94 (the pet stays on one ground item it cannot pick
-up, with lots of loot around) is this mechanism; its mod is `petunstick`.
+up, with lots of loot around) is, by the owner's report, this companion
+pickup; that the pinning rule below is its cause is a static reading, not yet
+measured (no live session has reproduced it). Its mod is `petunstick`.
 
 - **Variables** (Create): `lootList` (a ds_list), `lootTarget` (-4 = none, an
   instance id after; written as a real), `lootTimer` (0), `lootDistance`
