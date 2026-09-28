@@ -1584,6 +1584,22 @@ observed is measured only as far as live 3's V0 measured it - placement in
 map 0 and the preferred grid, confirmed by the verb's own re-read in the same
 session, with no drag, save or reload.
 
+**Moving items into the stash: plugin verbs, no tool yet.** ForgePact 2.0.1's
+Move all into the stash (ForgePact #68, `ForgePact/docs/stash-move-research.md`
+§ Ship design) adds two player-build verbs a session can send through
+`hs_command` today: `stashmoveall 1|0|run` (the switch, and a run that moves
+every item of the bag view on show into the stash tab on show - the same run
+its F4 key starts) and `stashmove <fingerprint>` (one item of the bag view on
+show). Both refuse `stashmoveall: refused - off` / `stashmove: refused - off`
+until `stashmoveall 1`; each item line reads `stashmoveall: item <key> -> cell
+<x>,<y>|stack|skipped: <answer>`, and a run ends with `stashmoveall: moved <n>
+of <m> from bag tab <t> to stash tab <s>; skipped <k>`. The Socketable tab
+and the bag's Socket view are refused. No `hs_*` tool wraps them yet, so
+nothing here parses those lines or takes a backup for them; a session that
+sends them takes and restores its own backup, and closes the stash with
+`hs_stash_close`, which is the stash's save. The give into the stash and the
+move from the stash into the bag are still not measured.
+
 ## What is deliberately not here
 
 - **Character creation, class, difficulty, season, and anything past a

@@ -33,6 +33,10 @@ ITEM_CLASS_MEMBERS = {
     "socketable": "SOCKETABLE",
 }
 
+# The bag-to-stash move's routines (ForgePact #68); the first three are the
+# ones every move needs, the last two the ones around them.
+MOVE_STEPS = ("grid", "stack", "source_clear", "validate", "owner_step")
+
 
 def _bare_script_name(script_name: str) -> str:
     prefix = "gml_Script_"
@@ -145,6 +149,48 @@ def validate(data: dict, doc_text: str) -> list:
     require("crafting_cube.item_map_owner", crafting_cube.get("item_map_owner"))
     require("crafting_cube.note", crafting_cube.get("note"))
 
+    # ForgePact #68: the bag-to-stash move. Every routine an SDK script at its
+    # SDK index, every self an SDK object, every routine named in section 17.
+    move = data.get("bag_to_stash_move")
+    if require("bag_to_stash_move", move):
+        node = move.get("grid_node_object", {})
+        node_name, node_index = node.get("name"), node.get("index")
+        if require("bag_to_stash_move.grid_node_object.name", node_name) and \
+                require("bag_to_stash_move.grid_node_object.index", node_index):
+            if node_name not in GameObject.__members__:
+                problems.append(f"bag_to_stash_move.grid_node_object.name {node_name!r} is not a GameObject member")
+            elif GameObject[node_name].value != node_index:
+                problems.append(
+                    f"bag_to_stash_move.grid_node_object.index {node_index!r} does not match "
+                    f"GameObject[{node_name!r}].value ({GameObject[node_name].value!r})"
+                )
+        for step in MOVE_STEPS:
+            entry = move.get(step)
+            if not require(f"bag_to_stash_move.{step}", entry):
+                continue
+            script = entry.get("script")
+            if require(f"bag_to_stash_move.{step}.script", script):
+                if script not in SCRIPT_NAME_TO_INDEX:
+                    problems.append(f"bag_to_stash_move.{step}.script {script!r} is not in SCRIPT_NAME_TO_INDEX")
+                elif SCRIPT_NAME_TO_INDEX[script] != entry.get("index"):
+                    problems.append(
+                        f"bag_to_stash_move.{step}.index {entry.get('index')!r} does not match "
+                        f"SCRIPT_NAME_TO_INDEX[{script!r}] ({SCRIPT_NAME_TO_INDEX[script]!r})"
+                    )
+                if _bare_script_name(script) not in section:
+                    problems.append(
+                        f"bag_to_stash_move.{step}.script {script!r} is absent from "
+                        "RUNTIME_DATA_MODELS.md section 17"
+                    )
+            self_object = entry.get("self_object")
+            if require(f"bag_to_stash_move.{step}.self_object", self_object) and \
+                    self_object not in GameObject.__members__:
+                problems.append(f"bag_to_stash_move.{step}.self_object {self_object!r} is not a GameObject member")
+            require(f"bag_to_stash_move.{step}.arguments", entry.get("arguments"))
+        owners = move.get("map_owner_by_tab", {})
+        for kind in ("personal", "shared"):
+            require(f"bag_to_stash_move.map_owner_by_tab.{kind}", owners.get(kind))
+
     for source in data.get("sources", []):
         source_file = source.get("file")
         section_heading = source.get("section")
@@ -181,6 +227,10 @@ class TestCuratedStashContainers(unittest.TestCase):
         bad["save"]["script"] = "gml_Script_NoSuchSave"
         bad["crafting_cube"]["variable"] = "noSuchGrid"
         bad["crafting_cube"]["index"] = 3068
+        bad["bag_to_stash_move"]["grid"]["index"] = 1971
+        bad["bag_to_stash_move"]["stack"]["script"] = "gml_Script_NoSuchStack"
+        bad["bag_to_stash_move"]["source_clear"]["self_object"] = "No_Such_obj"
+        del bad["bag_to_stash_move"]["map_owner_by_tab"]["shared"]
 
         problems = validate(bad, self.doc_text)
 
@@ -190,6 +240,10 @@ class TestCuratedStashContainers(unittest.TestCase):
         self.assertTrue(any("gml_Script_NoSuchSave" in p for p in problems), problems)
         self.assertTrue(any("noSuchGrid" in p for p in problems), problems)
         self.assertTrue(any("3068" in p for p in problems), problems)
+        self.assertTrue(any("1971" in p for p in problems), problems)
+        self.assertTrue(any("gml_Script_NoSuchStack" in p for p in problems), problems)
+        self.assertTrue(any("No_Such_obj" in p for p in problems), problems)
+        self.assertTrue(any("map_owner_by_tab.shared" in p for p in problems), problems)
 
     def test_validator_reports_a_missing_object_as_a_problem(self):
         missing = copy.deepcopy(self.data)

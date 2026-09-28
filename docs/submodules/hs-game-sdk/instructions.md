@@ -93,8 +93,9 @@ affix slots and the tooltip's stat-line call, from the Item Editor's game-truth 
 read as JSON, with no `tools/generate_*_sdk.py` counterpart; each file's `$schema_note` says so, and
 `docs/RUNTIME_DATA_MODELS.md` §13, §14 and §16 carry the prose and sources. `tests/test_sdk_all.py`
 checks every script and object they name is bound.
-`stash_containers.json` (ForgePact issue #14's stash and Crafting Cube container names, see
-`docs/RUNTIME_DATA_MODELS.md` § 17) is data-only too, with no generator and no consumer yet, checked
+`stash_containers.json` (ForgePact issue #14's stash and Crafting Cube container names, and
+ForgePact #68's `bag_to_stash_move`: the routines, selfs and argument order of a move from the
+bag into the stash, and the map owner per tab kind; see `docs/RUNTIME_DATA_MODELS.md` § 17) is data-only too, with no generator and no consumer yet, checked
 against the SDK and that doc section by `tests/test_curated_stash_containers.py`.
 
 **Models (`drop_roll_model.py`, 2026-09-24, issue #162):** a model is a hand-written, stdlib-only,
