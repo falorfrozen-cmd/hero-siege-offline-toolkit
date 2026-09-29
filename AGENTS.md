@@ -698,32 +698,52 @@ wrong column, is invisible to them. So, in the hub and in every submodule:
 1. **Find the issue first; create one if there is none.** Search the
    repository the change lands in (`gh issue list --search ...`). If nothing
    covers the work, open an issue there before the branch.
-2. **Titles start with a type prefix**: `[Bug]`, `[QoL]`, `[Mod]`,
+2. **Put the issue on the "Hero Siege Tools" project, in a column.** Every
+   repository in this toolkit feeds that one board, and an issue that is not
+   on it does not exist as far as the owner is concerned. Do it in the same
+   step that files the issue, not when work starts: `gh issue create
+   --project "Hero Siege Tools" ...`, then `py -3 tools/issue_board.py move
+   <owner/repo> <n> Todo`, which adds the issue if it is missing and sets its
+   Status and `Development` iteration. An issue you found in step 1 gets the
+   same check: if it is not on the project, or sits there with no Status,
+   run the same `move`. Being on the project is not enough on its own: an
+   issue the project's auto-add picked up has no Status, so it is on the
+   project but in no column of the board (ForgePact #74 went missing twice
+   that way).
+3. **Titles start with a type prefix**: `[Bug]`, `[QoL]`, `[Mod]`,
    `[Adjustment]`, `[Research]`, `[Tooling]` or `[Docs]` — e.g.
    `[QoL] Stash tabs renaming`. `py -3 tools/issue_board.py check-title
    "<title>"` checks one. When you touch an older issue without a prefix,
    add one.
-3. **Attach the branch to the issue.** Create it with
+4. **Attach the branch to the issue.** Create it with
    `gh issue develop <n> -R <owner/repo> --name <branch>` (then fetch and
    check it out), which lists it under the issue's Development section; for a
    branch that already exists, put `Closes #<n>` (or `owner/repo#<n>` across
    repositories) in the pull request body, which links it the same way. A
    feature spanning modules has one issue per module it touches, each linked
-   to its own branch, per the next section.
-4. **Move the issue on the board as the work moves.** `Todo` when filed,
-   `In Progress` when work starts, with the running `Development` iteration:
+   to its own branch and each on the project, per the next section.
+5. **Move the issue on the board as the work moves.** `In Progress` when work
+   starts, with the running `Development` iteration:
    `py -3 tools/issue_board.py move <owner/repo> <n> "In Progress"`. `Done`
    follows from the pull request closing it; `Impossible` and `Backlog` are
-   the owner's call, or yours with the reason in a comment. An issue left
-   with no Status is on the project but in no column of the board.
-5. **Keep it maintained.** Comment when something material happens — a
+   the owner's call, or yours with the reason in a comment.
+6. **Keep it maintained.** Comment when something material happens — a
    finding that changes the scope, a blocker, a question for the owner, a
    pull request opened — so the issue, not a session transcript, is where
    the state of the work can be read.
 
-`gh` needs the `project` scope for step 4 (`gh auth refresh -s project`).
-If an edit fails, say which fields are still unset rather than reporting the
-issue as done.
+`gh` needs the `project` scope for steps 2 and 5 (`gh auth refresh -s
+project`). Where there is no `gh` with that scope (a cloud session that
+reaches GitHub only through an MCP server, which can file an issue but not
+edit a user project), file the issue anyway and tell the owner, in your
+report and in a comment on the issue, that it still has to be added to the
+board. Never report an issue as filed and tracked while it is off the
+project, and if an edit fails, say which fields are still unset rather than
+reporting the issue as done.
+
+Every submodule's own `AGENTS.md` repeats this rule in short, for an agent
+working in a standalone clone; change those copies in the same feature when
+this one changes.
 
 ## One Branch and One Pull Request per Module, per Feature
 
