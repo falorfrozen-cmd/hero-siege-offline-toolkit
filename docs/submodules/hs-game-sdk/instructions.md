@@ -116,8 +116,8 @@ Why and how: `docs/agents/static-model-workflow.md`.
 `player`, `item_type`, `mod_registry`) when the package is imported. It imports the five
 generated tables (`objects`, `scripts`, `rooms`, `sprites`, `sounds`) only when one of their names
 is first used, through a module `__getattr__` (PEP 562). So `import hs_game_sdk` builds none of the
-table enums. `from hs_game_sdk import GameObject` builds `objects` only, and ForgePact's import list
-builds `objects` and `scripts`.
+table enums. `from hs_game_sdk import GameObject` builds `objects` only. ForgePact's import list, the
+two Satanic pools since ForgePact PR #116, builds none (it built `objects` and `scripts` before).
 
 Callers change nothing:
 - Every name is still importable from the package or from its own module, and is the same object
@@ -182,16 +182,22 @@ statements inside `if TYPE_CHECKING:`. They never run, but PyInstaller's bytecod
 them, as type checkers and editors do. The ForgePact.exe built above holds the same twelve
 `hs_game_sdk` entries in its PYZ as the eager build, and PyInstaller warned about none.
 
-A build with the block deleted shows what the block prevents. PyInstaller still built that exe, but
-its PYZ held none of the five tables, and the running exe served no Satanic buffs: `forgepact.py`'s
-`except Exception` fell back to empty pools, the 2026-09-14 failure in the ForgePact guide's
-Packaging Hazards, item 4. That build's `warn-ForgePact.txt` listed `missing module named
-hs_game_sdk.GameObject` and `hs_game_sdk.GameScript`, because PyInstaller took the two names for
-submodules. `build_release.py`'s substring check for `missing module named hs_game_sdk` would
-therefore have refused the package. That warning exists only because ForgePact imports table names
-with `from hs_game_sdk import`; `tests/test_sdk_lazy_import.py` checks the block in the SDK itself.
-A bundler that evaluates `TYPE_CHECKING` as false and drops the block would need the package named
-explicitly; every frozen app in this toolkit is built with PyInstaller.
+A build with the block deleted showed what the block prevented, while ForgePact still imported
+`GameObject` and `GameScript`. PyInstaller still built that exe, but its PYZ held none of the five
+tables, and the running exe served no Satanic buffs: `forgepact.py`'s `except Exception` fell back
+to empty pools, the 2026-09-14 failure in the ForgePact guide's Packaging Hazards, item 4. That
+build's `warn-ForgePact.txt` listed `missing module named hs_game_sdk.GameObject` and
+`hs_game_sdk.GameScript`, because PyInstaller took the two names for submodules.
+`build_release.py`'s substring check for `missing module named hs_game_sdk` would therefore have
+refused the package. That warning existed only because ForgePact imported table names with `from
+hs_game_sdk import`. Since ForgePact PR #116 it imports only `SATANIC_BUFFS` and
+`SATANIC_DEBUFFS`, which `__init__.py` binds when the package is imported, so a ForgePact.exe no
+longer needs the block: built against an SDK copy without it, the exe's PYZ held seven
+`hs_game_sdk` entries and no table, its warn file named no `hs_game_sdk` module, and it served 25
+Satanic buffs. The block still decides whether any other frozen app that imports a table name gets
+its tables; `tests/test_sdk_lazy_import.py` checks it in the SDK itself. A bundler that evaluates
+`TYPE_CHECKING` as false and drops the block would need the package named explicitly; every frozen
+app in this toolkit is built with PyInstaller.
 
 **Editing it.** The loader is part of the generated `__init__.py`, so it lives in the `init_content`
 template of `tools/extract_and_generate_sdk.py` (see "Never hand-edit a generated file" below).
@@ -199,9 +205,11 @@ The `TYPE_CHECKING` block and the loader's table, `_LAZY_MODULES`, list the same
 together, in the template; the test fails if they drift. A new generated table belongs in both.
 
 **What still pays.** A caller that uses a table still builds it: `GameSprite` costs about 3.2-4 s on
-3.13. `forgepact.py` imports `GameObject`, `GameScript` and seven more names without using any of
-them. It uses only the Satanic pools, so the panel still builds `objects` and `scripts`, about
-0.3 s on 3.13. Narrowing that import is a ForgePact change.
+3.13. ForgePact's panel no longer builds any: `forgepact.py` imported `GameObject`, `GameScript`
+and seven more names without using any of them, and so built `objects` and `scripts` at every start.
+ForgePact PR #116 narrowed the import to the two Satanic pools, and `import forgepact` then took
+0.21 s instead of 0.56 s on 3.13 and 0.18 s instead of 2.36 s on 3.10 (ForgePact guide, Known
+Limitations item 38).
 
 ---
 
@@ -412,7 +420,7 @@ import { GameObject, GameScripts, StatId, ItemType } from '@hero-siege/sdk';
 | `py -3 -m unittest discover -s tests` | Workspace Root | Run the SDK test suite. Passes in a clean checkout; extraction- and compiler-dependent suites skip (see below) | Verified 2026-09-12 |
 | `py -3 -m unittest tests.test_cpp_sdk -v` | Workspace Root | Compile and run the C++ relic/hook behavioural tests against the stubbed YYToolkit surface | Verified 2026-09-12 |
 | `py -3 -m unittest tests.test_item_type_parity -v` | Workspace Root | Check the Python, C++ and TypeScript `ItemType` declarations match value for value, the aggregates match their generator templates, and this guide's value table claims "measured in-game" for row 14 only | Verified 2026-09-20 (14 tests OK, node v24) |
-| `py -3 -m unittest tests.test_sdk_lazy_import -v` | Workspace Root | Check, in fresh interpreters, that `import hs_game_sdk` builds no table and ForgePact's import list builds only `objects` and `scripts`; that every name the eager package bound is still bound, as the same object; and that the static imports PyInstaller reads name every table (stdlib `modulefinder`, with a negative control). See "Import cost" above | Verified 2026-09-28 (14 tests OK). Against origin/main's eager `__init__.py`, the five import-cost tests fail (8 failures with subtests) and the other nine pass. With the `TYPE_CHECKING` block deleted, the scanner test and the block-matches-loader test fail |
+| `py -3 -m unittest tests.test_sdk_lazy_import -v` | Workspace Root | Check, in fresh interpreters, that `import hs_game_sdk` builds no table and ForgePact's import list (the two Satanic pools since ForgePact PR #116) builds none either; that every name the eager package bound is still bound, as the same object; and that the static imports PyInstaller reads name every table (stdlib `modulefinder`, with a negative control). See "Import cost" above | Verified 2026-09-28 (14 tests OK), and again with ForgePact's two-name list. Against the eager `__init__.py` from before this change (hub `a06a1a1`, before #286), the five import-cost tests fail (8 failures with subtests) and the other nine pass; the same with the two-name list. With the `TYPE_CHECKING` block deleted, the scanner test and the block-matches-loader test fail |
 | `py -3 -m pip install -e hs-game-sdk/python` | Workspace Root | Install Python SDK in development mode | Verified |
 
 ### Which tests need a game install, and which do not
