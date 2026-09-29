@@ -251,6 +251,7 @@ harness) and `test_miner_helmet_panel.py`. Evidence and design:
   - `test_frameprof_report.py`: `tools/frameprof_report.py` on a synthetic report and stacks file: the call tree adds up, labels pick their colour (event, script, built-in, runtime, graphics, mod, system), the summary lines, a hostile name is escaped and every section is on the page with nothing loaded from the network, a second without a monster reading is left out of the chart, a non-capture JSON is refused, and without a path the newest capture of the game in `forgepact.json` is taken.
   - `test_far_sleep_behavior.py` + `far_sleep_harness.cpp`: Far scenery sleep. The harness compiles the real `FarSleep.hpp` against a runner with an object table (the three families, the denied parents, a trap, an object with a Step event, a gap in the indices) and active/asleep instances; 38 scenarios: nothing asked while off, bounded runner calls, only scenery, settling, walking, jumps, two players, the hunt radius, a prop that moved, a prop broken while awake, the game waking props, the top-up scan, off, room changes, skipped rooms, a restart, a refusing runner.
   - `test_far_sleep_contract.py`: The wiring and the rules: `farsleep` is a player command with its own early return, `FrameCallback` runs `FarSleepTick()` after setup and the tick returns at once while off, the class starts off and calls only `CallBuiltin` (and only the documented built-ins), the families, the denied parents, the skipped rooms, and that `zonecensus`, `evcount` and `farsleep ids` stay in the research build.
+  - `test_rolling_density_contract.py`: Rolling density copies (`densityroll`, see "Rolling density copies (`densityroll`)" below): the player command and its early return, off at start, the budget seeing only the due copies, the pack markers told only while rolling, the reach rules (fill pass, hunts), the command's 1,500-20,000 px range, the modstate keys, the panel's `density_rolling` default and live `densityroll 1|0`, and the README row, section and 2.1.0 notes (the notes check skips once the cleanup workflow deletes them). The behaviour lives in `adaptive_population.cpp`, `density_population_harness.cpp` (`test_adaptive_population.py`) and `pack_markers_harness.cpp` (`copy/...`).
   - `test_menu_probe_contract.py`: Pins the research stage of the character-select question - whether anything can drive the game's own main menu as far as a loaded character (`docs/character-select-research.md`; live session run 2026-09-21).
     - `menuprobe` is research-build only (the literal disappears from `strip_research_blocks`, header comment included), absent from `kPlayerCommands`, dispatched from `HandleMenuProbeCommand` as the third adjacent call after the Headhunter's and the prospect window's rather than a new top-level `else if` (C1061; the chain's length is pinned against `f5a3515`), and the literal occurs exactly once in `ModuleMain.cpp`.
     - The `event` and `script` subcommands check the literal token `confirm` - and print a usage line - before any `CallBuiltinEx`/`CallGameScriptEx`, each makes exactly one such call with no loop around it, and each prints the object, `nth`, instance `id`, position and the room index before *and* after, so a refusal, a no-op and a fault stay three outcomes.
@@ -592,6 +593,8 @@ To add or modify a gameplay modifier or runtime command:
 | `py -m unittest tests.test_frame_profiler tests.test_frameprof_report -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the behaviour half (skips without it) | 22 + 8 tests: the harness's captures and the contract, then the report tool. About 35-60 s, most of it the harness compile and its six captures. | Writes `build/frame-profiler-behavior/` | Verified 2026-09-28 |
 | `.\tools\ipc.ps1 farsleep 1` (also `farsleep 0`, `farsleep stat`) | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree | Turns far scenery sleep on or off (the panel's Mods → Quality of Life switch sends the same) and prints its state: zone state, props known and asleep, the radii, sleeps/wakes/scans/passes, rooms skipped, errors and the first player's position |
 | `py -m unittest tests.test_far_sleep_behavior tests.test_far_sleep_contract -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the behaviour half (skips without it) | 16 + 16 tests: the harness's 38 scenarios, then the wiring and the rules |
+| `.\tools\ipc.ps1 densityroll 1` (also `densityroll 0`, `densityroll <px>`, `densityroll stat`) | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree | Turns rolling density copies on (reach 3,000 px) or off, or sets the reach (1,500-20,000 px); the panel's Mods → Quality of Life switch sends `1`/`0`. Prints on/off, the effective reach (or "every copy at once" while the map is being filled or a whole-map hunt is on) and the copies waiting, due and made |
+| `py -3 -m unittest discover -s tests -p "test_rolling_density_contract.py" -v` (and `-p "test_adaptive_population.py"`) | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the harness half (skips without it) | The rolling copies' wiring, rules, panel and player text; the adaptive-population run compiles the queue and the production `DensityCopiesTick` with a reach. Run `test_adaptive_population.py` through discovery, not as a module path |
 | `py -3 tools/itemtruth_memrun.py run --items 20000 [--mix]` and `... control` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+ (standard library); Hero Siege closed; Item Truth on (`itemtruth\capture.request`); `control` needs the research DLL installed | `run` launches the game minimised to the main menu, waits until the menu's one-time memory release is behind it and the level is steady, queues one evaluation request of `--items` items from the journal's own evaluated shapes (`--mix`: white, unique, socketed and runeword items), samples private bytes every second and closes the game with `CloseMainWindow`. The game starts with the default error mode (`CREATE_DEFAULT_ERROR_MODE`), so a crash is reported as for a player. `summary.json`: baseline, peak while building, level after, KB per item, and the game's `exit_code` (`0xC0000409` is an abort). `control` runs two halves in one launch, the second under `truthmem hold on`: the positive control, which must grow. | Launches and closes the game; writes `samples.csv` and `summary.json` (and `truthmem.txt`) under `--out`; moves the run's own journal files there when every line in them is the run's | Verified 2026-09-26 (see "Item Truth for the Item Editor", Memory) |
 | `py tools/cut_release.py --check --expect <version>` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | Reports the version at every site and fails if they disagree, or if the release notes are missing and `--allow-missing-notes` was not given. `py tools/cut_release.py <version>` moves them. `--allow-missing-notes` (only `--check`; only used by `forgepact-tag.yml`) reports a missing notes file without failing. **Do not hand-edit the version sites** - a mismatch here is the signal, not a nuisance. Touches no git, runs no build, stages no DLL. | `--check` is read-only; a bump rewrites two files | Verified 2026-09-16 |
 | `py tools/forgepact_tag.py --tag <version> --existing <tags…>` | `ForgePact/` | PowerShell / CMD (Git Bash for the real examples below) | Python 3.10+ | Checks a typed tag/version against the existing `v*` tags and the tree, and prints `version=`, `tag=`, `bump=`, `previous=`. Refuses a taken tag, a downgrade against the highest tag, a version below the tree, or a malformed input; then, per the release schedule (Representative Change Workflow §6), a step other than one minor, one major or a hotfix, an invalid release date in the version's notes file under `--root`, and a Friday release before its date (or, with no notes file, on a day that is not Friday). `--today YYYY-MM-DD` overrides the date it checks against (default: today at UTC+03:00). | Read-only | Verified 2026-09-16; schedule checks verified by `tests/test_forgepact_tag.py` 2026-09-28 |
@@ -3522,3 +3525,90 @@ restart in a room without `objMinimap` is not noticed.
 to `bp_ipc\zonecensus-<room>-<time>.json`), `evcount <row>|stat|reset` (counts
 an object event's calls through its compiled-code row, 4 slots). Record:
 `ForgePact/docs/far-sleep-research.md`.
+
+## Rolling density copies (`densityroll`, 2026-09-28)
+
+**Why.** The owner's next optimisation after far sleep ("tamam, sıradaki
+optimizasyona geç", 2026-09-28). At density 5x the frame profiler put
+`timer_system_update` (the game's timer list, walked every frame from
+`Menu_Controller_obj`'s Step) at 7-9% of the frame thread. Every
+`Enemy_Creator` instance, original or density copy, keeps a timer there that
+asks whether a player is within 1,050 px, and a 5x zone holds about 1,500 of
+them. The timer system pauses the timer of a deactivated owner instead of
+dropping it, so deactivation would not shorten the walk; not making the far
+copies does.
+
+**Shape.** `DeferredDensityCopies::TakeNearest(x, y, frame, reach)` leaves jobs
+beyond the reach queued (never dropped); `DueWithin(x, y, reach)` counts the
+ones inside it. In `ModuleMain.cpp`:
+
+- `g_DensityRollReach` is the player's setting (0 = off). `g_DensityReachNow`
+  is the effective reach; infinite is the old behaviour.
+- `DeferredDensityPending()` returns only the due count while rolling, so
+  waiting copies do not raise `AdaptivePopulationBudget`.
+- `DensityCopiesTick` takes the nearest due job. A copy made while rolling goes
+  to `PackMarkers::NoteCopy` through the `g_DensityCopyMade` hook, which the
+  density harness leaves null.
+- `DensityRollRefresh` runs once a second from `FrameCallback` and on every
+  command. `DensityRollCommand` handles `densityroll 1|0|<1500-20000>|stat`, a
+  player command.
+- The modstate JSON gains `deferredDensityCopies` and `densityRollReach`.
+- Panel: Mods → Quality of Life → **Extra packs as you approach**,
+  `density_rolling`, off by default. It sends `densityroll 1|0` and is a
+  `NATIVE_BOOLEANS` entry in the derived behaviour oracle.
+
+**Rules.**
+
+- The default reach is 3,000 px.
+- The reach is infinite while `reveal spawn` is on: the fill pass needs every
+  spawner. Pack markers alone do not change it.
+- While `HuntPolicy() != 0` (Beacon, or Tyrant's Crown alone for rares and
+  champions), the reach is at least `g_BeWakeRadius` + 500. It is infinite for
+  a whole-map radius, and for `beaconspawn` with the radius off, because that
+  lie then reaches every spawner.
+- A zone revisit restores every creator, copies included, through the game's
+  zone state. The placement guard keeps a copy from being made twice.
+- `PackMarkers::NoteCopy` raises the family's peak, so a rolled copy is not
+  listed as a new pack; real growth beyond the peak still is.
+
+**Measured (research build 139C81ECFC87, Suh, Act_01_01, density 5x, a fresh
+game per run).** Same zone and spot, rolling on against after `densityroll 0`:
+
+| | rolling on | after `densityroll 0` |
+| --- | --- | --- |
+| copies made (waiting) | 120 (1,140) | 1,260 (0) |
+| spawners | 430 | 1,570 |
+| monsters | 460 | 939 |
+| within 1,500 px: spawners / monsters | 34 / 184 | 34 / 184 |
+| instances | 8,543 | 11,193 |
+| `timer_system_update` share of samples | 2.1% | 8.7% |
+| frame work at the 60 fps cap | 69.7% | 84.0% |
+
+- All 479 extra monsters are idle `*_Passive_obj` monsters, none within
+  1,500 px of the player.
+- The rolling capture had one 65.8 ms frame while standing still with nothing
+  due. The cause was not identified; p99 was 16.9 ms against 18.9 ms.
+- With far scenery sleep as well, another fresh game ran at 53.1%. The layout
+  and entry point differ between games, so this is not a like-for-like figure.
+
+**Verified live.**
+
+- Three `playerwarp` hops of about 4,500 px, onto spawners more than 4,500 px
+  from every earlier spot, made 212, 200 and 304 copies. `due` was 0 at the
+  first check, 3.2-4.0 s after each warp.
+- `densityroll 0` then made the other 392, and the spawners within 1,500 px
+  stayed at 228.
+- Spawner positions came from the research `cb` command: `instance_find` and
+  `variable_instance_get` on object 1415, which is `Enemy_Creator_obj` in the
+  Sep-17 build. Use the index: `asset_get_index` returns a ref that prints the
+  object's name, not its index.
+
+**Not known.**
+
+- A walk at normal speed (the hops are the harder case).
+- A live Beacon or Tyrant's Crown hunt with rolling on. The reach rule for it
+  is pinned by `test_rolling_density_contract.py`.
+- Other acts.
+
+**Record:** `ForgePact/docs/population-performance-analysis.md` section 8. The
+player text is in the ForgePact README and `release-notes-v2.1.0.md`.
