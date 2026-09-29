@@ -20,7 +20,10 @@ after the last `|`: `pass`, `fail`, `not-observed` or `not-run`
 (`not observed` and `not run` are read the same way). `not-run` means the
 instrument could not run the check, usually with its reason in parentheses:
 `not-run (instrument: budget spent before slot 0,6)`. Anything after that
-word is a note, printed and never dropped. A `fail`, `not-observed` or
+word is a note, printed and never dropped. A leading `crash` (the game ended
+during the check: `crash (fail) - ...`) is read as `fail`, and the whole tail,
+the word included, is kept as the note; the operator's own form is
+`fail (crash - <the ERROR line>)`, verdict word first. A `fail`, `not-observed` or
 `not-run` is a finding, not an error here; `--require-pass` names the
 session-validity checks (dll-hash, marker, control) whose failure means
 nothing was measured, and any verdict but `pass` fails those.
@@ -43,6 +46,9 @@ import sys
 from pathlib import Path
 
 VERDICTS = ("pass", "fail", "not-observed", "not-run")
+# A leading `crash` is a `fail`: forgepact-68-move-all Live 1f's operator wrote
+# `crash (fail) ...` when a click ended the game, and the capture is never edited.
+CRASH_RE = re.compile(r"[*_`]*crash\b(?![-'])", re.IGNORECASE)
 CHECKS_HEADING_RE = re.compile(r"^##\s+Checks\s*$")
 NEXT_H2_RE = re.compile(r"^##\s")
 
@@ -76,6 +82,8 @@ def parse_line(line: str) -> tuple:
     if "|" not in body:
         return name, None, ""
     tail = body.rsplit("|", 1)[1].strip()
+    if CRASH_RE.match(tail):
+        return name, "fail", tail
     m = re.match(r"[*_`]*(not[ -]observed|not[ -]run|pass|fail)\b[*_`.,;:]*\s*(.*)$", tail, re.IGNORECASE)
     if not m:
         return name, None, tail

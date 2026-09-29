@@ -33,6 +33,14 @@ ITEM_CLASS_MEMBERS = {
     "socketable": "SOCKETABLE",
 }
 
+# The bag-to-stash move's routines (ForgePact #68); the first three are the
+# ones every move needs, the next two the ones around them, and the last the
+# Socketable tab's merge (Live 1f and 1g).
+MOVE_STEPS = ("grid", "stack", "source_clear", "validate", "owner_step", "socket_merge")
+
+# The UI node routines the in-game Move all button uses (ForgePact #68).
+UI_NODE_STEPS = ("create", "remove", "set_activation", "move")
+
 
 def _bare_script_name(script_name: str) -> str:
     prefix = "gml_Script_"
@@ -145,6 +153,92 @@ def validate(data: dict, doc_text: str) -> list:
     require("crafting_cube.item_map_owner", crafting_cube.get("item_map_owner"))
     require("crafting_cube.note", crafting_cube.get("note"))
 
+    # ForgePact #68: the bag-to-stash move. Every routine an SDK script at its
+    # SDK index, every self an SDK object, every routine named in section 17.
+    move = data.get("bag_to_stash_move")
+    if require("bag_to_stash_move", move):
+        node = move.get("grid_node_object", {})
+        node_name, node_index = node.get("name"), node.get("index")
+        if require("bag_to_stash_move.grid_node_object.name", node_name) and \
+                require("bag_to_stash_move.grid_node_object.index", node_index):
+            if node_name not in GameObject.__members__:
+                problems.append(f"bag_to_stash_move.grid_node_object.name {node_name!r} is not a GameObject member")
+            elif GameObject[node_name].value != node_index:
+                problems.append(
+                    f"bag_to_stash_move.grid_node_object.index {node_index!r} does not match "
+                    f"GameObject[{node_name!r}].value ({GameObject[node_name].value!r})"
+                )
+        for step in MOVE_STEPS:
+            entry = move.get(step)
+            if not require(f"bag_to_stash_move.{step}", entry):
+                continue
+            script = entry.get("script")
+            if require(f"bag_to_stash_move.{step}.script", script):
+                if script not in SCRIPT_NAME_TO_INDEX:
+                    problems.append(f"bag_to_stash_move.{step}.script {script!r} is not in SCRIPT_NAME_TO_INDEX")
+                elif SCRIPT_NAME_TO_INDEX[script] != entry.get("index"):
+                    problems.append(
+                        f"bag_to_stash_move.{step}.index {entry.get('index')!r} does not match "
+                        f"SCRIPT_NAME_TO_INDEX[{script!r}] ({SCRIPT_NAME_TO_INDEX[script]!r})"
+                    )
+                if _bare_script_name(script) not in section:
+                    problems.append(
+                        f"bag_to_stash_move.{step}.script {script!r} is absent from "
+                        "RUNTIME_DATA_MODELS.md section 17"
+                    )
+            self_object = entry.get("self_object")
+            if require(f"bag_to_stash_move.{step}.self_object", self_object) and \
+                    self_object not in GameObject.__members__:
+                problems.append(f"bag_to_stash_move.{step}.self_object {self_object!r} is not a GameObject member")
+            require(f"bag_to_stash_move.{step}.arguments", entry.get("arguments"))
+        owners = move.get("map_owner_by_tab", {})
+        for kind in ("personal", "shared"):
+            require(f"bag_to_stash_move.map_owner_by_tab.{kind}", owners.get(kind))
+        socket = move.get("socket_merge") or {}
+        container = socket.get("container")
+        if require("bag_to_stash_move.socket_merge.container", container) and "StashSocketGrid" not in container:
+            problems.append("bag_to_stash_move.socket_merge.container does not name the StashSocketGrid nodes")
+
+    # ForgePact #68's button: the UI node API. Every script an SDK script at
+    # its SDK index and named in section 17, every object an SDK object at its
+    # index.
+    ui = data.get("ui_node_api")
+    if require("ui_node_api", ui):
+        for key in ("node_object", "owner_object"):
+            obj = ui.get(key) or {}
+            name, index = obj.get("name"), obj.get("index")
+            if require(f"ui_node_api.{key}.name", name) and require(f"ui_node_api.{key}.index", index):
+                if name not in GameObject.__members__:
+                    problems.append(f"ui_node_api.{key}.name {name!r} is not a GameObject member")
+                elif GameObject[name].value != index:
+                    problems.append(
+                        f"ui_node_api.{key}.index {index!r} does not match GameObject[{name!r}].value "
+                        f"({GameObject[name].value!r})"
+                    )
+        sort_node = ui.get("sort_node") or {}
+        callstack = sort_node.get("uiNodeCallstack")
+        if require("ui_node_api.sort_node.uiNodeCallstack", callstack) and callstack not in section:
+            problems.append(f"ui_node_api.sort_node.uiNodeCallstack {callstack!r} is absent from RUNTIME_DATA_MODELS.md section 17")
+        for step in UI_NODE_STEPS:
+            entry = ui.get(step)
+            if not require(f"ui_node_api.{step}", entry):
+                continue
+            script = entry.get("script")
+            if require(f"ui_node_api.{step}.script", script):
+                if script not in SCRIPT_NAME_TO_INDEX:
+                    problems.append(f"ui_node_api.{step}.script {script!r} is not in SCRIPT_NAME_TO_INDEX")
+                elif SCRIPT_NAME_TO_INDEX[script] != entry.get("index"):
+                    problems.append(
+                        f"ui_node_api.{step}.index {entry.get('index')!r} does not match "
+                        f"SCRIPT_NAME_TO_INDEX[{script!r}] ({SCRIPT_NAME_TO_INDEX[script]!r})"
+                    )
+                if _bare_script_name(script) not in section:
+                    problems.append(f"ui_node_api.{step}.script {script!r} is absent from RUNTIME_DATA_MODELS.md section 17")
+            self_object = entry.get("self_object")
+            if require(f"ui_node_api.{step}.self_object", self_object) and self_object not in GameObject.__members__:
+                problems.append(f"ui_node_api.{step}.self_object {self_object!r} is not a GameObject member")
+            require(f"ui_node_api.{step}.arguments", entry.get("arguments"))
+
     for source in data.get("sources", []):
         source_file = source.get("file")
         section_heading = source.get("section")
@@ -181,6 +275,17 @@ class TestCuratedStashContainers(unittest.TestCase):
         bad["save"]["script"] = "gml_Script_NoSuchSave"
         bad["crafting_cube"]["variable"] = "noSuchGrid"
         bad["crafting_cube"]["index"] = 3068
+        bad["bag_to_stash_move"]["grid"]["index"] = 1971
+        bad["bag_to_stash_move"]["stack"]["script"] = "gml_Script_NoSuchStack"
+        bad["bag_to_stash_move"]["source_clear"]["self_object"] = "No_Such_obj"
+        del bad["bag_to_stash_move"]["map_owner_by_tab"]["shared"]
+        bad["bag_to_stash_move"]["socket_merge"]["index"] = 113
+        bad["bag_to_stash_move"]["socket_merge"]["container"] = "Controller_obj.stashSocketItemSlot"
+        bad["ui_node_api"]["create"]["script"] = "gml_Script_NoSuchCreateNode"
+        bad["ui_node_api"]["remove"]["index"] = 4462
+        bad["ui_node_api"]["node_object"]["index"] = 5010
+        bad["ui_node_api"]["move"]["self_object"] = "No_Such_Window_obj"
+        bad["ui_node_api"]["sort_node"]["uiNodeCallstack"] = "NoSuchSort"
 
         problems = validate(bad, self.doc_text)
 
@@ -190,16 +295,31 @@ class TestCuratedStashContainers(unittest.TestCase):
         self.assertTrue(any("gml_Script_NoSuchSave" in p for p in problems), problems)
         self.assertTrue(any("noSuchGrid" in p for p in problems), problems)
         self.assertTrue(any("3068" in p for p in problems), problems)
+        self.assertTrue(any("1971" in p for p in problems), problems)
+        self.assertTrue(any("gml_Script_NoSuchStack" in p for p in problems), problems)
+        self.assertTrue(any("No_Such_obj" in p for p in problems), problems)
+        self.assertTrue(any("map_owner_by_tab.shared" in p for p in problems), problems)
+        self.assertTrue(any("socket_merge.index 113" in p for p in problems), problems)
+        self.assertTrue(any("socket_merge.container" in p for p in problems), problems)
+        self.assertTrue(any("gml_Script_NoSuchCreateNode" in p for p in problems), problems)
+        self.assertTrue(any("remove.index 4462" in p for p in problems), problems)
+        self.assertTrue(any("node_object.index 5010" in p for p in problems), problems)
+        self.assertTrue(any("No_Such_Window_obj" in p for p in problems), problems)
+        self.assertTrue(any("NoSuchSort" in p for p in problems), problems)
 
     def test_validator_reports_a_missing_object_as_a_problem(self):
         missing = copy.deepcopy(self.data)
         del missing["save"]
         del missing["crafting_cube"]
+        del missing["ui_node_api"]
+        del missing["bag_to_stash_move"]["socket_merge"]
 
         problems = validate(missing, self.doc_text)
 
         self.assertTrue(any("save" in p for p in problems), problems)
         self.assertTrue(any("crafting_cube" in p for p in problems), problems)
+        self.assertTrue(any("ui_node_api" in p for p in problems), problems)
+        self.assertTrue(any("bag_to_stash_move.socket_merge" in p for p in problems), problems)
 
 
 if __name__ == "__main__":

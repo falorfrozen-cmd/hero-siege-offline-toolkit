@@ -2231,7 +2231,10 @@ for the indices; neither is a call target here. The container names above
 them from `data.win`, and no extractor currently produces them or ties them
 to `Controller_obj`, so they are recorded as hand-verified data in
 `hs-game-sdk/curated/stash_containers.json`, checked against this section and
-the SDK by `tests/test_curated_stash_containers.py`.
+the SDK by `tests/test_curated_stash_containers.py`. The same file's
+`bag_to_stash_move` records the move below (§ "Moving an item from the bag
+into the stash"): each routine by SDK name and index, its self and other, its
+arguments in words, and the map owner per tab kind.
 
 M: two more curated entries, added after Live 1j (RD `### Phase 1j
 results`): `save` names the close's own save route (`SaveLocalFile`,
@@ -2371,6 +2374,147 @@ measured (one sentence, in the drag path bullet).
 
 [stash and bag layout, Results](../ForgePact/docs/stash-bag-layout-research.md#results),
 [stash and bag layout, Decision](../ForgePact/docs/stash-bag-layout-research.md#decision)
+
+### Moving an item from the bag into the stash (ForgePact #68)
+
+Source: the stash move research (`ForgePact/docs/stash-move-research.md`, "SM"
+below): a static reading, then eight research-build sessions on 2026-09-28
+(Live 1 to Live 1g), slot 14 in `Town_01_rm`, the interaction-check control
+climbing in each; Live 1c and Live 1e had the owner's own Ctrl + left click as
+the input, the others none (Live 1f's character pick was by hand). Representative cases: one or two items per tab
+kind. **M** measured live; **R** a static reading, not measured.
+
+- **The game's own quick move is Ctrl + left click.** M: with the stash open
+  the bag window's hint strip reads `CTRL + LMB: Quick Move` (SM § Static
+  reading 2), and the owner's Ctrl + left click moved an item from the bag
+  into the tab on show in Live 1c and Live 1e. A plain click sent by
+  `hs_input` reached `ProcessInventoryGridInput` once and never started a
+  pick-up (Live 1b `click-control`), so no scripted gesture is measured.
+- **The routines a quick move runs, in order.** M (Live 1c, Live 1e, each
+  logged by a research-build detour on the hand move): `ValidateItem` (self
+  and other the bag's grid node, the item), `StashAddToStack` (the same self
+  and other, the shown tab's cell array, two numbers, the item, 1, a small
+  number), then - when that answers false - `GridAddItem` (the same self,
+  other and array, the item, 0, undefined), `s_InvNode` per covered cell,
+  `ValidateItem` with self the stash's grid node and other the bag's, and on
+  a stash-map destination `ChangeItemOwner` (self the stash grid, other the
+  bag grid, 0, 9, the key as text). The two numbers are 0 and 13 into the
+  personal page, 9 and 2 into a shared page, the Materials tab and the
+  Socketable tab. When `StashAddToStack` answers true (a merge) the next call
+  is `InvGridClearItemNode` on the bag cell. No `GetStashMaxTabs` and no other
+  tab was logged on any bag-to-stash move.
+- **The grid nodes.** M: the bag's grid node is the `UI_Inventory_Grid_obj`
+  whose `uiNodeCallstack` is `InventoryGrid`, the stash's the one whose
+  `uiNodeCallstack` is `StashGrid`; each rebinds to the view on show (the
+  bag's to its Materials or Socket view after `bagtab`, the stash's to the
+  tab after `stashtab`), keeping its instance id. Their `nodeGrid` is indexed
+  `[y][x]`. Only the shown tab's array is readable this way.
+- **By name, the same sequence moves the item.** M (Live 1d, into the
+  personal page and shared page 1; Live 1e, a new identity into the Materials
+  tab, with `Controller_obj.stashMaterialTab` as the array): the replayed
+  sequence, `s_InvNode` left out, placed the item at `GridAddItem`'s answer
+  (`tabNumber`, `x`, `y`, `tabType`, `success=true`), which held through a
+  close, a reopen and the saved files. A by-name `GridAddItem` leaves the item
+  in its bag cells too: `InvGridClearItemNode` (self and other the bag grid,
+  the anchor cell's node, undefined) empties them, and it must run while the
+  item is still on map 0, before the owner step.
+- **Which map an item is in.** M: a personal-page item stays on map 0, with no
+  owner step, and saves in the character's file under
+  `inventory.personal_stash` (Live 1c, Live 1d). A shared-page item needs the
+  owner step 0 to 9 after the placement; afterwards its key answers
+  `undefined` on map 0 **and** on map 9 by `GetItemFromFingerprint`, as every
+  shared-page key did, and it saves in `stash.hss` under `stash_tab_<n>` (Live
+  1d). Which map holds a shared-page entry is not established. A Materials
+  item answers on map 9 after the owner step and saves under `material_tab`;
+  a Socketable item saves under `socket_tab` (Live 1e). R: the owner table
+  has no personal-stash owner (0 the character ... 9 the stash, 10 and 11 the
+  pact and guild stashes); an item carries an `inPersonalStash` member.
+- **The owner step alone breaks the save invariant the other way.** M (Live
+  1c step 8): `ChangeItemOwner` 0 to 9 on an item still in a bag cell left its
+  key on no map while it sat in the bag; it was reversed before the close.
+  Run it only after a placement the re-read confirmed.
+- **`GridAddItem` places only into the array it is handed.** M: against the
+  full shared page 2 (306 of 306), the owner's Ctrl + left click logged
+  `StashAddToStack` false and `GridAddItem` `success=false` on that page's own
+  array and nothing after; the item stayed in the bag and no other tab
+  changed (Live 1c `hand-full`); the by-name call answered the same (Live 1d).
+  Its answer's `tabNumber` read 0 on shared page 1 as well, so it does not
+  name the tab.
+- **Merges.** M: `StashAddToStack` answers true only when a stack of the
+  item's identity is on the array and the stack then rose by the fifth
+  argument's count: one unit (Live 1c, by name and by hand) and a whole stack
+  of 15 (Live 1e, by name, `wholeStackMerge`); every hand merge logged 1. With
+  no stack of that identity it answers false (Live 1, Live 1c). R: it takes
+  only classes 12 to 15, merges through `InventoryStackUpdateAndRemove`, and
+  answers false when the stack's hash check fails. Scope: every merge above
+  was on the Materials tab (`Controller_obj.stashMaterialTab`, 9, 2) with the
+  bag's Materials view on show, plus one by-hand orb on the Socketable tab. A
+  merge on a stash page with that page's own two numbers (0 and 13 personal, 9
+  and 2 shared) and the Materials tab fed from a bag page are not observed.
+  Because it merges into any stack of the identity on the array, a caller
+  moving several items must re-read the array's stacks before each call: an
+  earlier item of the same batch can have made the stack a later one joins
+  (ForgePact #68's round-2 review found a duplicated unit that way).
+- **The Socketable tab.** Its container: M (Live 1e, 1f, 1g) one
+  `UI_Inventory_Grid_obj` per item on the tab, each carrying `uiNodeCallstack`
+  `StashSocketGrid` and a one-cell `nodeGrid` holding that item, whose key
+  answers on map 9; the tab saves in `stash.hss` under `socket_tab`.
+  `Controller_obj.stashSocketItemSlot` is not the container: it read no
+  fingerprint while the tab held items (Live 1e). By hand, M (Live 1e): the
+  game refuses jewels (base ids 109 and 110) and Incarnation Gems (136) for
+  this tab after the first `ValidateItem` and before any placement routine,
+  with nothing in the logged answers showing it; runes and gems were placed
+  through the sequence above into a one-row array that was different for each
+  item, and an orb merged. **By name, the merge**, M (Live 1f, Live 1g):
+  `StashAddToStack` with self and other the bag's grid node (its Socket view
+  on show), the `nodeGrid` of the `StashSocketGrid` node holding the item's
+  identity, 9, 2, the item, its count (1) and 8, answered true, and that
+  node's item's `o` rose by exactly the count (an orb, base id 118, 81 to 82
+  in both sessions); `InvGridClearItemNode` (self and other the bag grid, the
+  bag cell's node, undefined) then emptied the bag cell, and the merged unit's
+  key reached no saved file after the stash's own close. A gem (base id 38)
+  merged the same way and gained `o=2`, so it is stackable: no
+  non-stackable answer was met on this tab, and Live 1e's missing `o` on it
+  was a count of 1. Placing a kind the tab does not hold yet was not
+  replayed by name (no accepted kind absent from the tab could be obtained
+  without a person).
+- **The UI node API** (the in-game Move all button, ForgePact #68). M (Live
+  1f, Live 1g) unless marked R. `UiCreateNode(x, y, object, activation,
+  callstack name)` with self the window that will own the node (here
+  `UI_Stash_obj`, as self and other): it made a `UI_Button_Small_obj` at that
+  x and y, stored the name as the node's `uiNodeCallstack`, drew it with the
+  object's own sprite, and answered the node (`visible` 0 in that frame, 1 the
+  next); a `text` set on the node was drawn as its label. With the fourth
+  argument undefined the node's `activationFunc` stays undefined (R: the
+  function binds a callable value as a method of the new node and leaves
+  anything else undefined, as `UiSetActivationFunc(node, f)` does). A node's
+  click is dispatched as the node's user event 15 (in the object events
+  `UI_Node_Parent_obj` defines), run from the owning window's Step, with self
+  the node, other the window, and one argument, the node's `activationArgs`,
+  handed to its `activationFunc`: M, a node bound to `UiSetFloatingToFalse`
+  was called exactly so when clicked, and that script then raised "bool
+  argument is unset" and ended the game (written for another object). R: when
+  `activationFunc` is undefined the event does nothing - no sound, no call, no
+  write; M (Live 1g): a click on such a node ended nothing, no dialog
+  appeared, and no routine armed in that session logged a call with the
+  node as self (UiSetFocus, the hover routine, aside); that nothing else
+  runs is the R above, not measured. `UiRemoveNode(node)` with self the owning window removed
+  it; the window's close destroyed a node still in its list, so a reopen finds
+  none; a bag or stash tab switch kept it. R: `UiMoveNode(node, x, y)` sets
+  both and runs the node's own position update; not called live. The bag's Sort button is the
+  `UI_Button_Small_obj` whose `uiNodeCallstack` is `InventorySort` (text
+  `Sort Tab`, `activationArgs` `[1]`, its activation `InventorySortTab`
+  bound with the Sort node itself as self); the stash side's is `StashSort`.
+  An end-of-frame `mouse_check_button_pressed(mb_left)` read sees a click
+  made in that frame, and `device_mouse_x_to_gui`/`device_mouse_y_to_gui` put
+  it inside the clicked node's `bbox` (Live 1f `sort-click-control`, Live 1g).
+  Not read: where the game creates the Sort button, and the part of the
+  window's Step that picks which node gets the click.
+- **`GetItemPreferredGrid`** logged only on the reverse move (stash to bag),
+  never on a move from the bag into the stash (M, Live 1e).
+
+[stash move, Decision](../ForgePact/docs/stash-move-research.md#decision),
+[stash move, Ship design](../ForgePact/docs/stash-move-research.md#ship-design)
 
 ## 18. Gems of Incarnation
 
