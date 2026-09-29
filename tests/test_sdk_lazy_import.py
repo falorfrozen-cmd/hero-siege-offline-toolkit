@@ -39,8 +39,10 @@ import hs_game_sdk  # noqa: E402
 TABLES = ("objects", "scripts", "rooms", "sprites", "sounds")
 
 # Every name hs_game_sdk/__init__.py bound before the tables became lazy (hub
-# ef15a74), by the module that defines it. The satanic_zone names were bound
-# but never listed in __all__, and that stays as it was.
+# ef15a74), by the module that defines it, plus the three relic-identification
+# names issue #93 added to player (RELIC_ITEM_CLASS and the two item-instance
+# fields). The satanic_zone names were bound but never listed in __all__, and
+# that stays as it was.
 EXPORTS = {
     "objects": (
         "GameObject",
@@ -87,6 +89,9 @@ EXPORTS = {
         "RELIC_ONLY_FIELD",
         "GENERAL_CONTAINER_FIELDS",
         "RELIC_CONTAINER_FIELDS",
+        "RELIC_ITEM_CLASS",
+        "ITEM_INSTANCE_TYPE_FIELD",
+        "ITEM_INSTANCE_DEFINITION_FIELD",
     ),
     "item_type": ("ItemType",),
     "mod_registry": ("ModDefinition", "ModRegistry", "GLOBAL_MOD_REGISTRY"),

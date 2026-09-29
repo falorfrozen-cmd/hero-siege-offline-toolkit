@@ -131,6 +131,18 @@ class LiveChecksTests(TempDirMixin, unittest.TestCase):
         self.assertIsNone(live_checks.parse_line("- a | x | passed")[1])
         self.assertIsNone(live_checks.parse_line("- a | x | not-running")[1])
 
+    def test_crash_reads_as_fail_and_keeps_the_tail(self):
+        # forgepact-68-move-all Live 1f: the operator wrote `crash (fail) ...`
+        # after a click ended the game. The capture is evidence and is never
+        # edited, so the tool reads the word; the note keeps it visible.
+        self.assertEqual(live_checks.parse_line("- x | e | o | crash (fail) - the game ended"),
+                         ("x", "fail", "crash (fail) - the game ended"))
+        self.assertEqual(live_checks.parse_line("- x | e | o | **Crash** - gone")[1], "fail")
+        self.assertEqual(live_checks.parse_line("- x | e | o | fail (crash - ERROR in ...)")[1:],
+                         ("fail", "(crash - ERROR in ...)"))
+        self.assertIsNone(live_checks.parse_line("- x | e | o | crashed")[1])
+        self.assertIsNone(live_checks.parse_line("- x | e | o | no crash, pass")[1])
+
     def test_usage_errors_exit_2(self):
         self.assertEqual(run(live_checks.main, [str(self.tmp_path / "missing.md")])[0], 2)
         self.assertEqual(run(live_checks.main, [self.write("c-live-1.md", "## Step 1\n- a | pass\n")])[0], 2)

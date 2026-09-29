@@ -1254,6 +1254,26 @@ rather than by falling back to another launcher:
   scrolled container (the stash tab strip) and for a bag sub-tab row does not
   land on the row (live 1 P0-5, live 2 P2-4), which is why every tab switch
   goes by name. See "Stash and bag".
+- **Five stash-tool gaps ForgePact #68's Live 2 runs met (2026-09-28), none
+  fixed.** `hs_give_item(to="bag")` refuses every grid-tab class tried
+  (armour, weapon, charm: `giveitem: refused - GetItemPreferredGrid(1, item)
+  answered no grid`), so a session that needs ordinary grid items in the bag
+  gets them from what the character holds, for example by the game's own
+  Ctrl + left click from the stash. `hs_stash_close` answered "not confirmed -
+  UI_Stash_obj is still listed" in its `verb_trail` twice while a
+  `menulayout UI_Stash_obj` sent straight after listed no window: the tool's
+  own re-read raced the close, so re-read before treating that answer as a
+  failure. `hs_stash_open` refused `stash_not_open` once right after a close
+  (F delivered, no window within the poll budget) and opened on the retry.
+  In the third run, `hs_give_item` answered `template_not_found` for a
+  template the operator took from a tab that was not on show: the plugin's
+  `giveitem` looks its template up on map 0 only, the character's own map, so
+  an item on a Shared page or the Materials tab, whose key answers on no map 0
+  (RUNTIME_DATA_MODELS § 17), is never a template; whether a map 0 item off the
+  view on show also fails was not separated. And no tool gives the window
+  pixel of a stash or bag cell, which a Ctrl + left click on an item needs: the
+  operator computed it from the grid node's `gui` box and its
+  `nodeGridWidth`/`nodeGridHeight`.
 - **Windows only.** The engine imports `ctypes.wintypes`; the tests skip with
   a named reason elsewhere, which is what lets the root suite run on CI's
   `ubuntu-latest` without any submodule checked out.
@@ -1583,6 +1603,27 @@ checks accept such an item beyond what the crafting-materials research
 observed is measured only as far as live 3's V0 measured it - placement in
 map 0 and the preferred grid, confirmed by the verb's own re-read in the same
 session, with no drag, save or reload.
+
+**Moving items into the stash: plugin verbs, no tool yet.** ForgePact 2.1.0's
+Move all into the stash (ForgePact #68, `ForgePact/docs/stash-move-research.md`
+§ Ship design) adds two player-build verbs a session can send through
+`hs_command` today: `stashmoveall 1|0|run` (the switch, and a run that moves
+every item of the bag view on show into the stash tab on show - the same run
+its F4 key starts) and `stashmove <fingerprint>` (one item of the bag view on
+show). Both refuse `stashmoveall: refused - off` / `stashmove: refused - off`
+until `stashmoveall 1`; each item line reads `stashmoveall: item <key> -> cell
+<x>,<y>|stack|skipped: <answer>`, and a run ends with `stashmoveall: moved <n>
+of <m> from bag tab <t> to stash tab <s>; skipped <k>`. The Socketable tab
+takes only from the bag's Socket view, and only a single socketable whose
+kind is already on it (anything else stays in the bag, `skipped: <reason>`);
+the Unique tab and the bag's Key, Tarot and Relic views are refused. The
+player build also draws a **Move all** button beside the bag's Sort button
+while the switch is on; a scripted `hs_input` click at its `menulayout`
+`win=` point starts the same run (ForgePact #68's Live 2). No `hs_*` tool wraps them yet, so
+nothing here parses those lines or takes a backup for them; a session that
+sends them takes and restores its own backup, and closes the stash with
+`hs_stash_close`, which is the stash's save. The give into the stash and the
+move from the stash into the bag are still not measured.
 
 ## What is deliberately not here
 

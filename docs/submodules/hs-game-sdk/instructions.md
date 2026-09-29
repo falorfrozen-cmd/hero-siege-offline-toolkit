@@ -94,8 +94,9 @@ affix slots and the tooltip's stat-line call, from the Item Editor's game-truth 
 read as JSON, with no `tools/generate_*_sdk.py` counterpart; each file's `$schema_note` says so, and
 `docs/RUNTIME_DATA_MODELS.md` §13, §14 and §16 carry the prose and sources. `tests/test_sdk_all.py`
 checks every script and object they name is bound.
-`stash_containers.json` (ForgePact issue #14's stash and Crafting Cube container names, see
-`docs/RUNTIME_DATA_MODELS.md` § 17) is data-only too, with no generator and no consumer yet, checked
+`stash_containers.json` (ForgePact issue #14's stash and Crafting Cube container names, and
+ForgePact #68's `bag_to_stash_move`: the routines, selfs and argument order of a move from the
+bag into the stash, and the map owner per tab kind; see `docs/RUNTIME_DATA_MODELS.md` § 17) is data-only too, with no generator and no consumer yet, checked
 against the SDK and that doc section by `tests/test_curated_stash_containers.py`.
 
 **Models (`drop_roll_model.py`, 2026-09-24, issue #162):** a model is a hand-written, stdlib-only,
@@ -208,7 +209,7 @@ together, in the template; the test fails if they drift. A new generated table b
 and seven more names without using any of them, and so built `objects` and `scripts` at every start.
 ForgePact PR #116 narrowed the import to the two Satanic pools, and `import forgepact` then took
 0.21 s instead of 0.56 s on 3.13 and 0.18 s instead of 2.36 s on 3.10 (ForgePact guide, Known
-Limitations item 31).
+Limitations item 38).
 
 ---
 
@@ -477,8 +478,66 @@ instance id), the scan still returns empty rather than guessing: convert an id
 with `GetInstanceObject` first.
 
 An item counts as a relic only on **positive identification**: rarity tier 16 via
-`c` / `cls` / `itemType`, or the relic-specific `relicLevel` field. Level is read
-only from `o`, `level` and `relicLevel`.
+`c` / `cls` / `itemType`, the relic-specific `relicLevel` field, or the **item
+class** of the instance or save entry that holds the definition (below). Level is
+read only from `o`, `level` and `relicLevel`.
+
+**The game's own relics carry none of the tier fields on their definition**
+(#93, read from a character save 2026-09-27). A save's `[inventory]` JSON has an
+`equipped_items` dict keyed `0-0-<stamp>-<class>`, whose trailing number is the
+item class (`ItemType`, 16 = relic), each value `{"data": {...}}`: for a relic,
+`g` is the equip slot (10-14), `o` the level, `b` the relic id, and `c` is **0**
+(1 on unique gear; it is not a rarity tier). There is no `relicLevel`, `cls` or
+`itemType` in the definition. In memory the class is `itemType` on the item
+**instance**, beside its `itemDefinitionStruct`. So the scanners also recognise:
+
+- **an item instance**: a struct/dict carrying `itemType` and
+  `itemDefinitionStruct`; `itemType == 16` identifies it, and `b`/`o` are read
+  from the definition, which is scanned with that identification carried (both
+  bindings);
+- **a save entry**: a dict key `x-y-<stamp>-<class>` whose class is 16, with id
+  and level from its `data.b` / `data.o` (Python only, since only Python reads
+  saves; the traversal difference below).
+
+The `c == 16` rule is kept, so every earlier fixture and caller still behaves the
+same, but it has **no measured match** on a game item: treat it as a
+compatibility rule, not as how relics are found. An equipped unique glove
+(`itemType` 4, `{b:18, c:1, g:4}`) and a material stack (`itemType` 14,
+`{b:51, o:99}`) are the negative controls beside the relic instance in the shared
+cases.
+
+**The equipped relic slots are not on the player instance** (C++,
+`Player::ScanEquippedRelicSlots`, called by `GetOwnedRelicLevels` after the
+container passes). Measured live on 2026-09-27 (ForgePact #93, Live 1): the
+player has no `equippedItems` variable at all (reading it answered "no such
+variable"), and the game keeps the local character's equipped items only as
+fingerprint strings in `global.equippedItems[global.mplr][0][slot]`, where
+`global.mplr` read 1 for the offline character. The scan reads
+slots 10-14 (`kFirstRelicSlot`..`kLastRelicSlot`), resolves each string with the
+game's own scripts, by `HeroSiege::Scripts` name through `CallGameScriptEx` with
+the global instance as self and other: `GetOnlinePlayerItemOwner(mplr)`, then
+`GetItemFromFingerprint(fingerprint, owner)`, and scans the returned item instance.
+Nothing is guessed: an `mplr` that is not a whole number in 0..4 reads nothing, a
+slot that is not a non-empty string is never passed to the resolver, and a
+fingerprint that resolves to anything but a struct is skipped. It is the route
+ForgePact's Miner's Helmet reads slot 0 through, confirmed live 2026-09-23, and
+the **relic** slots 10-14 were measured on 2026-09-27: all five held `…-16`
+fingerprints, every one resolved to a relic instance, and the ids and levels
+equalled the character save's `equipped_items`. ForgePact's relic filter logged
+it at arm time:
+
+```
+relicfilter: scan found 3 maxed relics (ids 109,124,135)
+relicfilter: equipped slots mplr=1 slots=18 inrange=5 strings=5 owner=ok resolved=5 refused=0 nonstruct=0 noclass=0 relic=5 otherclass=0 relics=10:15@8,11:135@10,12:124@10,13:140@9,14:109@10 control=resolved itemType=0 stopped=none
+```
+
+The second line is `FormatEquippedSlotScanReport` of the
+`EquippedSlotScanReport` that `GetOwnedRelicLevels` and `GetMaxedRelicIds` fill
+when a caller passes one: each stage counted, the helmet slot resolved once as a
+positive control, and `stopped=` naming the stage that ended a short scan, so a
+zero says which stage read nothing. `tests/cpp/test_sdk_player_hooks.cpp`'s
+`TestEquippedSlots` drives it through a stub whose `CallGameScriptEx` answers per
+script name with a struct, a number or undefined.
 
 A level-shaped field is not evidence of relic-ness, and this was a real defect
 (REPORTED 2026-09-12 against PR #3): the scanner accepted `isRelic || level > 0`,
@@ -492,7 +551,7 @@ Container shape matters too, via `Player::ContainerKind`:
 
 | Kind | Containers | A bare number means |
 | --- | --- | --- |
-| `General` | `equippedItems`, `inventory`, `bags` | nothing - item structs only |
+| `General` | `equippedItems`, `equipped_items`, `inventory`, `bags` | nothing - item structs only |
 | `RelicTable` | `relic_levels`, `relics`, `relic_tab`, `relic_array`, `pRelics`, `relic_inventory`, `relics_collected`, `inventory_relic_tab`, `relicPage` | `relic id -> level` |
 
 #### The contract shared with the Python SDK
@@ -509,6 +568,9 @@ declare one contract, as enumerable constants on both sides:
 | Rarity-tier fields (`== 16` means relic) | `c`, `cls`, `itemType` | `kRelicTierFields` | `RELIC_TIER_FIELDS` |
 | Level fields (highest present wins) | `o`, `level`, `relicLevel` | `kRelicLevelFields` | `RELIC_LEVEL_FIELDS` |
 | Relic-only field (presence means relic) | `relicLevel` | `kRelicOnlyField` | `RELIC_ONLY_FIELD` |
+| Relic item class (instance `itemType` or save-key class) | `16` | `kRelicItemClass` | `RELIC_ITEM_CLASS` |
+| Item instance fields (class, definition) | `itemType`, `itemDefinitionStruct` | `kItemInstanceTypeField`, `kItemInstanceDefinitionField` | `ITEM_INSTANCE_TYPE_FIELD`, `ITEM_INSTANCE_DEFINITION_FIELD` |
+| Equipped relic slots | `10 .. 14` | `kFirstRelicSlot`, `kLastRelicSlot` | `EquipmentSlot.RELIC_0` .. `RELIC_4` |
 | General containers | see table above | `kGeneralContainerFields` | `GENERAL_CONTAINER_FIELDS` |
 | Relic containers | see table above | `kRelicContainerFields` | `RELIC_CONTAINER_FIELDS` |
 | Plausible id range | `0 .. 159` | `kRelicIdLimit` | `RELIC_ID_LIMIT` |
