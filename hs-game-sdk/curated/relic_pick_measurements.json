@@ -1,0 +1,39 @@
+{
+  "$schema_note": "Live counts that hs_game_sdk.relic_pick_model is checked against (tests/test_relic_pick_model.py, MeasuredTests); the mechanism is docs/models/relic-pick-spec.md. Each relic was placed by a direct DropRelic call with the chance roll skipped, and the relic the game built was counted from CreateItemNew's research log (class 16, by id b). Character: Suh, equipped 68@10, 140@10, 109@2, 15@10, 29@10, relic tab maxed 92@10 and 128@10.",
+  "measurements": [
+    {
+      "id": "R1",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-09-30",
+      "source": [{"path": "docs/submodules/ForgePact/instructions.md", "section": "Remove owned relics answers `GetRelicQuest`"}],
+      "scripts": ["gml_Script_DropRelic", "gml_Script_GetRelicQuest", "gml_Script_ReturnRandomPlayerRelic", "gml_Script_CreateItemNew"],
+      "what": "Filter off: 150 relics built, 8 of them one of the six maxed relics (15, 29, 68, 140 once each, 92 three times, 128 once), and none a quest relic (141..155).",
+      "values": {"drops": 150, "maxed_ids": [15, 29, 68, 92, 128, 140], "maxed_drops": 8, "quest_drops": 0,
+                 "equipped": [[68, 10], [140, 10], [109, 2], [15, 10], [29, 10]]},
+      "model": "Uniform pick over the 141 non-quest relics plus the equipped copy of 109: a maxed relic comes out at (1 - copy/5) x 6/141, between 0.034 and 0.043 for any copy chance, and a quest relic never does."
+    },
+    {
+      "id": "R2",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-30",
+      "source": [{"path": "docs/submodules/ForgePact/instructions.md", "section": "Remove owned relics answers `GetRelicQuest`"}],
+      "scripts": ["gml_Script_DropRelic", "gml_Script_GetRelicQuest", "gml_Script_CreateItemNew"],
+      "what": "Filter on (GetRelicQuest answering true for the six maxed relics): 150 relics built, none of them maxed and none a quest relic; the filter logged 10 skips.",
+      "values": {"drops": 150, "maxed_ids": [15, 29, 68, 92, 128, 140], "maxed_drops": 0, "quest_drops": 0, "skips": 10},
+      "model": "With the six maxed ids added to the quest answer, the pick cannot yield them; the equipped copy never copies a relic at 10."
+    },
+    {
+      "id": "R3",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-30",
+      "source": [{"path": "docs/submodules/ForgePact/instructions.md", "section": "Remove owned relics answers `GetRelicQuest`"}],
+      "scripts": ["gml_Script_DropRelic", "gml_Script_GetRelicQuest", "gml_Script_CreateItemNew"],
+      "what": "Filter on with every droppable id but 7 and 109 treated as maxed (research `relicfilter testmaxed 0-140 except 7,109`): 20 relics built, relic 7 ten times and 109 ten times.",
+      "values": {"drops": 20, "left": [7, 109], "ids": {"7": 10, "109": 10}},
+      "model": "The pick can only yield 7 or 109, equally, and the equipped copy adds only 109."
+    }
+  ]
+}

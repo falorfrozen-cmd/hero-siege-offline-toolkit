@@ -79,7 +79,7 @@ value `{"data": {...}}` with the slot in `g` (§2, read 2026-09-27).
 * `cur_stats`: Active combat statistics (Life, Mana, Physical Damage, Elemental Resistances).
 * `p_gold` / `p_rubies`: Player currency counters.
 * `inventory`: Primary inventory array containing serialized item structs or nested bag structs.
-* `inventory_relic_tab` / `bags`: Extended bag containers. `inventory_relic_tab` is the name of the relic tab in a save file (`inventory_order_<slot>.hss`); in memory the relic tab is `Controller_obj.inventoryData[key].inventoryRelicGrid` (§1, "The relic tab").
+* `inventory_relic_tab` / `bags`: Extended bag containers. `inventory_relic_tab` is the name of the relic tab in a save file (`inventory_order_<slot>.hss`); in memory the relic tab is `Controller_obj.inventoryData[key - 1].inventoryRelicGrid` (§1, "The relic tab").
 
 ### How the local player arrives: `VALUE_REF`, not `VALUE_OBJECT`
 
@@ -167,14 +167,19 @@ relic slots 10-14 on 2026-09-27: all five resolved to relic instances whose ids
 and levels matched the save (§1, **measured**).
 
 **The relic tab is a grid indexed by relic id.** The relics a character owns but
-does not wear sit in `Controller_obj.inventoryData[key].inventoryRelicGrid`, where
-`[relicId][0][0]` holds the owned copy's fingerprint. `key` is 1 when `global.onl`
-is 1, and the player row (`global.mplr`) otherwise. The game's own `PickupRelic` and
-`RelicCheckAchievement` read it that way, the latter walking ids 0..155, and resolve
-the fingerprint with the owner and resolver above (**static reading**, Sep-17 build,
-2026-09-30; hub `docs/models/relic-pick-spec.md`). `GetProfileInventoryData(key)`
-returns the same `inventoryData[key]`; read the variables instead of calling it
-(§9.4). A save stores the same tab as `inventory_relic_tab` in
+does not wear sit in `Controller_obj.inventoryData[key - 1].inventoryRelicGrid`,
+where `[relicId][0][0]` holds a grid node, `{nodeStartX, nodeStartY, nodeLocked,
+nodeIsPermanent, nodeFingerprint}`, or undefined. The node's `nodeFingerprint` is
+the owned copy's fingerprint. `key` is 1 when `global.onl` is 1, and the player row
+(`global.mplr`) otherwise. The game's own `PickupRelic` and `RelicCheckAchievement`
+hand that key to `GetProfileInventoryData`, which reads index `key - 1`, and the
+latter walks ids 0..155 (**static reading**, Sep-17 build, 2026-09-30; hub
+`docs/models/relic-pick-spec.md`). **Measured** 2026-09-30 (ForgePact #125 Live 1,
+offline, `mplr` 1): `inventoryData` held one element, a reference to a
+`New_Inventory_Data_obj` instance. Its grid had 156 cells, each `[[node]]` or
+`[[undefined]]`, and all 100 of the save's tab relics resolved through the owner and
+resolver above, with the levels the save holds. Read the variables instead of
+calling `GetProfileInventoryData` (§9.4). A save stores the same tab as `inventory_relic_tab` in
 `inventory_order_<slot>.hss`: keyed `x-y-<stamp>-16`, each `{data: {b, a, j, c}}`,
 with `o` absent at level 1 (the owner's slot 1, 14 entries, **read** 2026-09-30).
 The SDK reads the in-memory grid as `Player::ScanRelicTab` (C++), for ForgePact #125.
@@ -1470,7 +1475,10 @@ draw `irandom(155)` and draw again while `GetRelicQuest` answers true, which it 
 for the quest relics 141..155 only, so every other relic is equally likely
 whatever its base. `DropRelic` and the Feast routine may then copy one of the five
 equipped relics below level 10 in place of the pick. The whole mechanism, with each
-claim labelled, is hub `docs/models/relic-pick-spec.md`.
+claim labelled, is hub `docs/models/relic-pick-spec.md`. **Measured** 2026-09-30
+(ForgePact #125 Live 1, 320 relics built through `DropRelic`): no quest relic ever
+came out. With six relics maxed, 8 of 150 relics were one of them without a filter
+and 0 of 150 with `GetRelicQuest` answering true for them.
 [blood pact §3](../ForgePact/docs/blood-pact-values-research.md#3-eşya-kategorisi-haritası-yeni)
 
 ### 13.3 Dungeon keys

@@ -149,6 +149,71 @@ class TargetTests(unittest.TestCase):
                          model.pick_distribution())
 
 
+FIXTURE = ROOT / "hs-game-sdk" / "curated" / "relic_pick_measurements.json"
+
+
+class MeasuredTests(unittest.TestCase):
+    """The model against Live 1's counts (ForgePact#125, 2026-09-30)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import json
+        from hs_game_sdk import drop_roll_model
+        cls.band = staticmethod(drop_roll_model.observation_within)
+        data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        cls.entries = {entry["id"]: entry for entry in data["measurements"]}
+
+    def _maxed_share(self, entry, copy_chance, quest=None):
+        values = entry["values"]
+        equipped = [tuple(slot) for slot in values.get("equipped", [])]
+        dist = model.pick_distribution(quest, equipped=equipped, copy_chance=copy_chance)
+        return float(sum(dist.get(i, 0) for i in values["maxed_ids"]))
+
+    def test_every_source_names_a_real_section_and_script(self):
+        from hs_game_sdk.scripts import GameScript
+        for entry in self.entries.values():
+            for source in entry["source"]:
+                path = ROOT / source["path"]
+                self.assertTrue(path.is_file(), f"{entry['id']}: {source['path']}")
+                self.assertIn(source["section"], path.read_text(encoding="utf-8"), entry["id"])
+            for script in entry["scripts"]:
+                self.assertIn(script, GameScript.__members__, f"{entry['id']}: {script}")
+
+    def test_r1_baseline_maxed_relics_drop_at_their_uniform_rate(self):
+        entry = self.entries["R1"]
+        low = self._maxed_share(entry, 1)      # the copy step's chance is not established
+        high = self._maxed_share(entry, 0)
+        self.assertTrue(self.band(entry["values"]["maxed_drops"], entry["values"]["drops"], low, high))
+
+    def test_quest_relics_never_came_out(self):
+        for key in ("R1", "R2"):
+            self.assertEqual(self.entries[key]["values"]["quest_drops"], 0)
+        self.assertFalse(set(model.pick_distribution()) & set(QUEST))
+
+    def test_r2_target_no_maxed_relic_and_the_zero_is_not_luck(self):
+        entry = self.entries["R2"]
+        values = entry["values"]
+        quest = forgepact_quest(model.quest_relic_ids(), values["maxed_ids"])
+        self.assertEqual(self._maxed_share(dict(entry, values=dict(values, equipped=self.entries["R1"]["values"]["equipped"])),
+                                           1, quest), 0.0)
+        self.assertEqual(values["maxed_drops"], 0)
+        # Under the baseline, 150 drops with no maxed relic has less than a 1% chance.
+        baseline = self._maxed_share(self.entries["R1"], 1)
+        self.assertLess((1 - baseline) ** values["drops"], 0.01)
+
+    def test_r3_only_the_two_relics_left_came_out_about_evenly(self):
+        values = self.entries["R3"]["values"]
+        left = set(values["left"])
+        quest = forgepact_quest(model.quest_relic_ids(), set(DROPPABLE) - left)
+        equipped = [tuple(slot) for slot in self.entries["R1"]["values"]["equipped"]]
+        support = set(model.pick_distribution(quest, equipped=equipped, copy_chance=1))
+        self.assertEqual(support, left)
+        self.assertEqual({int(k) for k in values["ids"]}, left)
+        low = float(model.pick_distribution(quest, equipped=equipped, copy_chance=1)[7])
+        high = float(model.pick_distribution(quest, equipped=equipped, copy_chance=0)[7])
+        self.assertTrue(self.band(values["ids"]["7"], values["drops"], low, high))
+
+
 class NoDecompilerOutputTests(unittest.TestCase):
     """The spec and the model were written clean-room; nothing they ship may carry listing text."""
 

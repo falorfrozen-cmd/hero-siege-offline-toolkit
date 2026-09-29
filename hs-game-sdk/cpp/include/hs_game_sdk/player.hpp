@@ -545,12 +545,19 @@ inline std::string FormatEquippedSlotScanReport(const EquippedSlotScanReport& r)
 // The relic tab (ForgePact#125).
 //
 // Relics the character owns but does not wear sit in the backpack's relic tab,
-// which has one cell per relic id: `Controller_obj.inventoryData[key]
-// .inventoryRelicGrid[relicId][0][0]` holds the owned copy's fingerprint.
+// which has one cell per relic id: `Controller_obj.inventoryData[key - 1]
+// .inventoryRelicGrid[relicId][0][0]` holds a grid node whose `nodeFingerprint`
+// is the owned copy's fingerprint (an empty cell holds undefined).
 // `key` is kOnlineProfileKey when `global.onl` is 1, and the player row
-// (`global.mplr`) otherwise. That is the rule the game's own PickupRelic and
-// RelicCheckAchievement use; the latter walks ids 0..155 the same way (static
+// (`global.mplr`) otherwise. The game's own PickupRelic and
+// RelicCheckAchievement use that rule and hand the key to GetProfileInventoryData,
+// which reads index `key - 1`; the latter walks ids 0..155 the same way (static
 // reading of the Sep-17 build, 2026-09-30; docs/models/relic-pick-spec.md).
+// Measured live 2026-09-30 (#125, Live 1): offline, `mplr` is 1 and
+// `inventoryData` holds one element, a reference to the New_Inventory_Data_obj
+// instance carrying `inventoryRelicGrid`: 156 cells, each `[[node]]` or
+// `[[undefined]]`, a node being `{nodeStartX, nodeStartY, nodeLocked,
+// nodeIsPermanent, nodeFingerprint}`.
 // PickupRelic refuses a pickup when that copy's `o` has reached 10, so a relic
 // maxed here is as unobtainable as a maxed equipped one.
 //
@@ -561,8 +568,10 @@ inline std::string FormatEquippedSlotScanReport(const EquippedSlotScanReport& r)
 
 /// Controller_obj's variable holding the profiles' inventory data, indexed by key.
 inline constexpr std::string_view kRelicTabHolderField = "inventoryData";
-/// The profile's relic grid: `[relicId][0][0]` is the owned copy's fingerprint.
+/// The profile's relic grid: `[relicId][0][0]` is a grid node, or undefined.
 inline constexpr std::string_view kRelicTabGridField = "inventoryRelicGrid";
+/// A grid node's field holding the owned copy's fingerprint.
+inline constexpr std::string_view kGridNodeFingerprintField = "nodeFingerprint";
 /// `global.onl`: 1 while the game runs online, when the profile key is kOnlineProfileKey.
 inline constexpr std::string_view kOnlineFlagGlobal = "onl";
 inline constexpr int kOnlineProfileKey = 1;
@@ -577,18 +586,22 @@ inline constexpr int kOnlineProfileKey = 1;
  * resolver is called.
  */
 struct RelicTabScanReport {
-    /// The stage that ended the scan early (`yytk`, `mplr`, `controller`,
+    /// The stage that ended the scan early (`yytk`, `mplr`, `key`, `controller`,
     /// `inventoryData`, `profile`, `grid`, `global`, `owner`, `exception`), or
     /// nullptr when the whole grid was read. `not-run` until the scan starts,
     /// so a report the scan never reached cannot read as a complete one.
     const char* stopped = "not-run";
-    /// The profile key used, -1 unread, and whether `global.onl` read 1.
+    /// The profile key used (the game's: 1 online, the player row offline) and
+    /// the `inventoryData` index it reads (`key - 1`), -1 unread; and whether
+    /// `global.onl` read 1.
     int key = -1;
+    int profile = -1;
     bool online = false;
     /// Length of the relic grid, -1 unread; cells read within kRelicIdLimit,
-    /// and those holding a fingerprint.
+    /// those holding a grid node, and nodes carrying a fingerprint string.
     int gridLength = -1;
     int cells = 0;
+    int nodes = 0;
     int strings = 0;
     /// Whether GetOnlinePlayerItemOwner returned success.
     bool ownerResolved = false;
@@ -613,7 +626,8 @@ struct RelicTabScanReport {
  *   nothing;
  * - Controller_obj is found by name, through the runner's own
  *   `asset_get_index` and `instance_find`;
- * - a cell that is not a non-empty string is skipped;
+ * - a cell that is not a grid node with a non-empty `nodeFingerprint` string
+ *   is skipped;
  * - only strings ever reach the game's resolver.
  *
  * The owner and the resolver are the equipped-slot route's
@@ -644,10 +658,14 @@ inline void ScanRelicTab(
                              || onl.m_Kind == ::YYTK::VALUE_INT64 || onl.m_Kind == ::YYTK::VALUE_BOOL)
                             && onl.ToDouble() == 1.0;
         const int key = online ? kOnlineProfileKey : static_cast<int>(row);
+        // GetProfileInventoryData reads `inventoryData[key - 1]`.
+        const int profileIndex = key - 1;
         if (report) {
             report->online = online;
             report->key = key;
+            report->profile = profileIndex;
         }
+        if (profileIndex < 0) return stop("key");
 
         const RValue objectIndex = yytk->CallBuiltin("asset_get_index", {
             RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Controller_obj))) });
@@ -660,7 +678,7 @@ inline void ScanRelicTab(
         if (!YYTK::InstanceHasVariable(yytk, controller, kRelicTabHolderField)) return stop("inventoryData");
         const RValue profiles = YYTK::GetInstanceVariable(yytk, controller, kRelicTabHolderField);
         RValue profile;
-        if (!Detail::ArrayAt(yytk, profiles, key, profile)) return stop("inventoryData");
+        if (!Detail::ArrayAt(yytk, profiles, profileIndex, profile)) return stop("inventoryData");
 
         RValue grid;
         if (profile.m_Kind == ::YYTK::VALUE_OBJECT
@@ -696,7 +714,12 @@ inline void ScanRelicTab(
             RValue column, first, fingerprint;
             if (!Detail::ArrayAt(yytk, grid, relicId, column)) continue;
             if (report) ++report->cells;
-            if (!Detail::ArrayAt(yytk, column, 0, first) || !Detail::ArrayAt(yytk, first, 0, fingerprint)) continue;
+            RValue node;
+            if (!Detail::ArrayAt(yytk, column, 0, first) || !Detail::ArrayAt(yytk, first, 0, node)) continue;
+            if (node.m_Kind != ::YYTK::VALUE_OBJECT || !node.m_Object) continue;
+            if (report) ++report->nodes;
+            if (!YYTK::StructHasVariable(yytk, node, kGridNodeFingerprintField)) continue;
+            fingerprint = YYTK::GetStructVariable(yytk, node, kGridNodeFingerprintField);
             if (fingerprint.m_Kind != ::YYTK::VALUE_STRING || fingerprint.ToString().empty()) continue;
             if (report) ++report->strings;
 
@@ -744,16 +767,19 @@ inline void ScanRelicTab(
 }
 
 /**
- * One line naming what a relic-tab scan did, for a log: e.g. `key=1
- * online=no grid=156 cells=156 strings=14 owner=ok resolved=14 refused=0
- * nonstruct=0 noclass=0 relic=14 otherclass=0 maxed=40@10 stopped=none`.
+ * One line naming what a relic-tab scan did, for a log: e.g. `key=1 profile=0
+ * online=no grid=156 cells=156 nodes=14 strings=14 owner=ok resolved=14
+ * refused=0 nonstruct=0 noclass=0 relic=14 otherclass=0 maxed=40@10
+ * stopped=none`.
  */
 inline std::string FormatRelicTabScanReport(const RelicTabScanReport& r) {
     std::string out;
     out += "key=" + std::to_string(r.key);
+    out += " profile=" + std::to_string(r.profile);
     out += std::string(" online=") + (r.online ? "yes" : "no");
     out += " grid=" + std::to_string(r.gridLength);
     out += " cells=" + std::to_string(r.cells);
+    out += " nodes=" + std::to_string(r.nodes);
     out += " strings=" + std::to_string(r.strings);
     out += std::string(" owner=") + (r.ownerResolved ? "ok" : "no");
     out += " resolved=" + std::to_string(r.itemsResolved);

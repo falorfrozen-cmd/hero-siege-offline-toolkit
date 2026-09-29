@@ -56,21 +56,48 @@ Every claim carries one of four labels, and a source:
 - **Where the player's own relics live.**
   - Equipped relics are fingerprints in `global.equippedItems[mplr][0][10..14]`.
     This was also measured live on 2026-09-27 (#93).
-  - The relic tab is `Controller_obj.inventoryData[key].inventoryRelicGrid`, with
-    one cell per relic id. A cell holds the owned copy's fingerprint at
-    `[relicId][0][0]`.
+  - The relic tab is `Controller_obj.inventoryData[key - 1].inventoryRelicGrid`,
+    with one cell per relic id. `[relicId][0][0]` holds a grid node whose
+    `nodeFingerprint` is the owned copy's fingerprint.
     - `key` is 1 when `global.onl` is 1, and otherwise the player row, which is
       `mplr` offline.
-    - `PickupRelic` and `RelicCheckAchievement` both read it this way. The latter
-      walks ids 0..155.
+    - `PickupRelic` and `RelicCheckAchievement` both pass `key` to
+      `GetProfileInventoryData`, which reads index `key - 1`. The latter walks
+      ids 0..155.
     - The game resolves a fingerprint with `GetItemFromFingerprint`, passing the
       owner from `GetOnlinePlayerItemOwner`.
+    - Live 1 measured this path (see Measured).
 - **A 10/10 relic cannot be picked up.** `PickupRelic` finds the owned copy, first
   in the relic tab and then in the equipped slots, and raises its level only while
   `o` is below 10.
 
 ## Measured
 
+- **Live 1, 2026-09-30** ([`relic_pick_measurements.json`](../../hs-game-sdk/curated/relic_pick_measurements.json),
+  R1–R3).
+  - **Setup.** ForgePact#125's research build ran on the character Suh:
+    - 68, 140, 15 and 29 were worn at 10/10, and 109 at level 2;
+    - 92 and 128 were at 10/10 in the relic tab.
+  - **Method.**
+    - Each relic was placed by a direct `DropRelic` call with the chance roll
+      skipped.
+    - The relic the game built was counted from `CreateItemNew`'s research
+      log.
+  - **Filter off (R1).** 150 relics built. 8 of them were maxed relics, which
+    fits the uniform pick. None of them was a quest relic.
+  - **Filter on (R2).** 150 relics built. None was maxed, and none was a quest
+    relic. With the filter off, a run of 150 with no maxed relic has less than
+    a 1% chance.
+  - **One droppable id left (R3).** With every droppable id but 7 and 109
+    treated as maxed, only 7 and 109 came out, ten times each.
+  - **The relic tab's in-memory shape.**
+    - `inventoryData` held one element, a `New_Inventory_Data_obj`
+      reference, read at index 0 for the offline key 1.
+    - Its `inventoryRelicGrid` had 156 cells. Each was `[[node]]` or
+      `[[undefined]]`, and a node is `{nodeStartX, nodeStartY, nodeLocked,
+      nodeIsPermanent, nodeFingerprint}`.
+    - The SDK's scan resolved all 100 of the save's tab relics and named 92@10
+      and 128@10.
 - **Relics kept dropping with every relic base at 25,000,000** (drop-roll M7,
   2026-08-28). This agrees with the static reading that the pick never reads the
   base.

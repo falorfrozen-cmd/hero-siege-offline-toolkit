@@ -542,25 +542,37 @@ script name with a struct, a number or undefined.
 **The relic tab is read the same way** (C++, `Player::ScanRelicTab`, called by
 `GetOwnedRelicLevels` after the equipped slots; ForgePact #125, hub #324). The
 relics a character owns but does not wear sit in
-`Controller_obj.inventoryData[key].inventoryRelicGrid[relicId][0][0]`, one
-fingerprint per relic id, where `key` is 1 when `global.onl` is 1 and the player
-row (`global.mplr`) otherwise: the rule the game's own `PickupRelic` and
-`RelicCheckAchievement` use (static reading of the Sep-17 build, 2026-09-30; hub
-`docs/models/relic-pick-spec.md`). `Controller_obj` is found by name
+`Controller_obj.inventoryData[key - 1].inventoryRelicGrid[relicId][0][0]`, one
+grid node per owned relic id, whose `nodeFingerprint` is the fingerprint. `key` is
+1 when `global.onl` is 1 and the player row (`global.mplr`) otherwise. That is the
+rule the game's own `PickupRelic` and `RelicCheckAchievement` use, with
+`GetProfileInventoryData` reading index `key - 1` (static reading of the Sep-17
+build, 2026-09-30; hub `docs/models/relic-pick-spec.md`). Measured live the same
+day (ForgePact #125, Live 1): offline, `mplr` is 1, `inventoryData` holds one
+`New_Inventory_Data_obj` reference, and its 156-cell grid holds `[[node]]` or
+`[[undefined]]`. The scan resolved all 100 of the character's tab relics and named
+its two maxed ones:
+
+```
+relicfilter: relic tab key=1 profile=0 online=no grid=156 cells=156 nodes=100 strings=100 owner=ok resolved=100 refused=0 nonstruct=0 noclass=0 relic=100 otherclass=0 maxed=92@10,128@10 stopped=none
+```
+ `Controller_obj` is found by name
 (`GetObjectName`, then the runner's `asset_get_index` and `instance_find(obj, 0)`),
 the profile entry may be a struct or an instance reference, and each fingerprint
 goes through the same owner and resolver as the equipped slots. The route reads
 variables only and never calls `GetProfileInventoryData`, which has crashed the
 game when called cold (RUNTIME_DATA_MODELS §9.4). `RelicTabScanReport` and
 `FormatRelicTabScanReport` count each stage and name the one a short scan stopped
-at, beside the maxed relics it found (`key=1 online=no grid=156 ... maxed=40@10
-stopped=none`); pass one as `GetOwnedRelicLevels`/`GetMaxedRelicIds`' fourth
-argument. C++ only, like the equipped-slot route: the Python binding reads the
+at, beside the maxed relics it found; pass one as
+`GetOwnedRelicLevels`/`GetMaxedRelicIds`' fourth argument. Only a node with a
+non-empty `nodeFingerprint` string reaches the resolver. C++ only, like the equipped-slot route: the Python binding reads the
 same tab from a save (`inventory_relic_tab`, keyed `x-y-<stamp>-16`, `o` absent at
 level 1), pinned by `tests/test_relic_identification.py` (`TestSaveRelicTab`).
 `TestRelicTab` in `tests/cpp/test_sdk_player_hooks.cpp` drives the C++ route:
-offline and online keys, a missing controller, a key past the profiles, a profile
-without a grid, a refused owner, and the tab joining the equipped slots.
+the offline and online keys and their `key - 1` index, a row of 0 with no profile,
+a missing controller, a key past the profiles, a profile without a grid, a bare
+string where a node belongs, a refused owner, and the tab joining the equipped
+slots.
 
 A level-shaped field is not evidence of relic-ness, and this was a real defect
 (REPORTED 2026-09-12 against PR #3): the scanner accepted `isRelic || level > 0`,

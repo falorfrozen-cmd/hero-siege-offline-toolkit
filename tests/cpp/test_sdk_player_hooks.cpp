@@ -411,8 +411,9 @@ static const char* kFpOrdinary = "0-0-210025648571-7";
 // global.equippedItems as the game lays it out: one row per online player,
 // whose [0] array holds the local character's slots. Slot 8 holds an ordinary
 // weapon, 10-12 three relics (two maxed), 13 a fingerprint the resolver does
-// not know, 14 a number where a string belongs.
-static void FillEquippedSlots(ControlledYYTK& yytk) {
+// not know, 14 a number where a string belongs. `mplr` picks the row the
+// character sits on; the rows before it are empty.
+static void FillEquippedSlots(ControlledYYTK& yytk, int mplr = 0) {
     std::vector<RValue> slots(15);
     slots[8] = RValue(std::string(kFpOrdinary));
     slots[10] = RValue(std::string(kFpRelic135));
@@ -420,9 +421,10 @@ static void FillEquippedSlots(ControlledYYTK& yytk) {
     slots[12] = RValue(std::string(kFpRelic15));
     slots[13] = RValue(std::string(kFpUnresolved));
     slots[14] = RValue(7);
-    const RValue row = RValue::Array({ RValue::Array(std::move(slots)) });
-    yytk.globals["mplr"] = RValue(0);
-    yytk.globals["equippedItems"] = RValue::Array({ row });
+    std::vector<RValue> rows(static_cast<size_t>(mplr) + 1, RValue::Array({}));
+    rows[static_cast<size_t>(mplr)] = RValue::Array({ RValue::Array(std::move(slots)) });
+    yytk.globals["mplr"] = RValue(mplr);
+    yytk.globals["equippedItems"] = RValue::Array(std::move(rows));
 
     yytk.gameScripts[std::string(HeroSiege::Scripts::gml_Script_GetOnlinePlayerItemOwner)] =
         [](const std::vector<RValue>&) { return RValue(0); };
@@ -510,10 +512,12 @@ static void TestEquippedSlots() {
 
 // ---------------------------------------------------------------------------
 // ForgePact#125: the relic tab. Relics owned but not worn sit in
-// Controller_obj.inventoryData[key].inventoryRelicGrid[relicId][0][0] as the
-// owned copy's fingerprint; key is 1 online and the player row (mplr)
-// offline. The fixture below lays that out, with the negative cases beside
-// the real ones.
+// Controller_obj.inventoryData[key - 1].inventoryRelicGrid[relicId][0][0] as
+// a grid node carrying the owned copy's `nodeFingerprint`; key is 1 online and
+// the player row (mplr) offline. Measured live 2026-09-30 (Live 1): offline
+// mplr is 1, inventoryData holds one instance reference, and a cell is
+// `[[node]]` or `[[undefined]]`. The fixture below lays that out, with the
+// negative cases beside the real ones.
 // ---------------------------------------------------------------------------
 
 static const char* kFpTab40 = "0-0-211821263155-16";
@@ -523,29 +527,37 @@ static const char* kFpTabOnline = "0-0-210869184312-16";
 static constexpr double kControllerObject = 984.0;
 
 static RValue TabCell(const char* fingerprint) {
-    return RValue::Array({ RValue::Array({ RValue(std::string(fingerprint)) }) });
+    const RValue node = RValue::Struct({
+        { "nodeStartX", RValue(0) }, { "nodeStartY", RValue(0) }, { "nodeLocked", RValue(false) },
+        { "nodeIsPermanent", RValue(0) }, { "nodeFingerprint", RValue(std::string(fingerprint)) },
+    });
+    return RValue::Array({ RValue::Array({ node }) });
 }
 
 // One profile's relic grid, 45 cells long: 40 holds a relic at 10/10, 7 one
 // with no `o` at all (level 1, as the save stores it), 12 a fingerprint the
-// resolver does not know, 20 a number and 30 nothing. `onlineOnly` puts one
-// relic, 42 at 10/10, in the online profile instead.
-static RValue RelicGrid(bool onlineOnly) {
+// resolver does not know, 20 a number, 25 a bare fingerprint string (not the
+// measured node shape, so never read) and 30 nothing. `secondProfile` puts
+// one relic, 42 at 10/10, in that profile instead.
+static RValue RelicGrid(bool secondProfile) {
     std::vector<RValue> cells(45, RValue::Array({ RValue::Array({ RValue() }) }));
-    if (onlineOnly) {
+    if (secondProfile) {
         cells[42] = TabCell(kFpTabOnline);
     } else {
         cells[40] = TabCell(kFpTab40);
         cells[7] = TabCell(kFpTab7);
         cells[12] = TabCell(kFpTabUnresolved);
         cells[20] = RValue::Array({ RValue::Array({ RValue(-4) }) });
+        cells[25] = RValue::Array({ RValue::Array({ RValue(std::string(kFpTab40)) }) });
         cells[30] = RValue();
     }
     return RValue::Array(std::move(cells));
 }
 
+// inventoryData[0] is the profile the game reads for key 1 (offline mplr 1,
+// or online), inventoryData[1] the one for key 2.
 static void FillRelicTab(ControlledYYTK& yytk) {
-    yytk.globals["mplr"] = RValue(0);
+    yytk.globals["mplr"] = RValue(1);
     yytk.globals["onl"] = RValue(0);
     yytk.assets["Controller_obj"] = kControllerObject;
     RValue controller;
@@ -578,8 +590,9 @@ static void TestRelicTab() {
     using namespace HeroSiege::Player;
     const std::string resolver(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint);
 
-    // 1. Offline: the player row's profile. 40 is maxed, 7 is owned at level
-    //    1, and only the three fingerprint strings reached the resolver.
+    // 1. Offline, mplr 1: key 1 reads inventoryData[0]. 40 is maxed, 7 is
+    //    owned at level 1, and only the three nodes' fingerprints reached the
+    //    resolver; the bare string in cell 25 is not a node and is never read.
     {
         ControlledYYTK yytk;
         FillRelicTab(yytk);
@@ -589,10 +602,12 @@ static void TestRelicTab() {
         if (owned.count(40)) CHECK_EQ(owned.at(40), 10);
         if (owned.count(7)) CHECK_EQ(owned.at(7), 1);
         CHECK(report.stopped == nullptr);
-        CHECK_EQ(report.key, 0);
+        CHECK_EQ(report.key, 1);
+        CHECK_EQ(report.profile, 0);
         CHECK(!report.online);
         CHECK_EQ(report.gridLength, 45);
         CHECK_EQ(report.cells, 45);          // every entry within the limit, arrays or not
+        CHECK_EQ(report.nodes, 3);
         CHECK_EQ(report.strings, 3);
         CHECK(report.ownerResolved);
         CHECK_EQ(report.itemsResolved, 3);
@@ -607,24 +622,48 @@ static void TestRelicTab() {
             if (call.args.size() == 2) CHECK(call.args[0].m_Kind == YYTK::VALUE_STRING);
         }
         CHECK(FormatRelicTabScanReport(report) ==
-              "key=0 online=no grid=45 cells=45 strings=3 owner=ok resolved=3 refused=0 nonstruct=1 "
-              "noclass=0 relic=2 otherclass=0 maxed=40@10 stopped=none");
+              "key=1 profile=0 online=no grid=45 cells=45 nodes=3 strings=3 owner=ok resolved=3 refused=0 "
+              "nonstruct=1 noclass=0 relic=2 otherclass=0 maxed=40@10 stopped=none");
         const auto maxed = GetMaxedRelicIds(&yytk, FakePlayerRef());
         std::printf("C++: relic_tab_maxed_relics=%d id40=%d\n", static_cast<int>(maxed.size()),
                     maxed.count(40) ? 1 : 0);
     }
 
-    // 2. Online: the profile key is 1 whatever mplr says.
+    // 2. The key: offline it is the player row, so mplr 2 reads
+    //    inventoryData[1]; online it is 1 whatever mplr says, so the same
+    //    world reads inventoryData[0]; and a row of 0 has no profile at all.
     {
         ControlledYYTK yytk;
         FillRelicTab(yytk);
+        yytk.globals["mplr"] = RValue(2);
+        RelicTabScanReport report;
+        const auto maxed = GetMaxedRelicIds(&yytk, FakePlayerRef(), nullptr, &report);
+        CHECK_EQ(report.key, 2);
+        CHECK_EQ(report.profile, 1);
+        CHECK_EQ(maxed.size(), static_cast<size_t>(1));
+        CHECK(maxed.count(42) == 1);
+    }
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.globals["mplr"] = RValue(2);
         yytk.globals["onl"] = RValue(1);
         RelicTabScanReport report;
         const auto maxed = GetMaxedRelicIds(&yytk, FakePlayerRef(), nullptr, &report);
         CHECK_EQ(report.key, 1);
+        CHECK_EQ(report.profile, 0);
         CHECK(report.online);
-        CHECK_EQ(maxed.size(), static_cast<size_t>(1));
-        CHECK(maxed.count(42) == 1);
+        CHECK(maxed.count(40) == 1);
+        CHECK(maxed.count(42) == 0);
+    }
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.globals["mplr"] = RValue(0);
+        RelicTabScanReport report;
+        CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report).empty());
+        CHECK(report.stopped != nullptr && std::string(report.stopped) == "key");
+        CHECK(yytk.scriptCalls.empty());
     }
 
     // 3. No Controller_obj: the scan stops there and calls nothing.
@@ -643,7 +682,7 @@ static void TestRelicTab() {
     {
         ControlledYYTK yytk;
         FillRelicTab(yytk);
-        yytk.globals["mplr"] = RValue(3);
+        yytk.globals["mplr"] = RValue(4);
         RelicTabScanReport report;
         CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report).empty());
         CHECK(report.stopped != nullptr && std::string(report.stopped) == "inventoryData");
@@ -669,10 +708,10 @@ static void TestRelicTab() {
     }
 
     // 6. The relic tab joins the equipped slots: two maxed relics worn, one in
-    //    the tab.
+    //    the tab, both read for the offline character on row 1.
     {
         ControlledYYTK yytk;
-        FillEquippedSlots(yytk);
+        FillEquippedSlots(yytk, 1);
         const auto equippedFingerprints = yytk.gameScripts[resolver];
         FillRelicTab(yytk);
         const auto tabFingerprints = yytk.gameScripts[resolver];
