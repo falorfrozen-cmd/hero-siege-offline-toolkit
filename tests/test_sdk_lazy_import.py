@@ -97,18 +97,12 @@ EXPORTS = {
     "mod_registry": ("ModDefinition", "ModRegistry", "GLOBAL_MOD_REGISTRY"),
 }
 
-# ForgePact's src/forgepact.py import list (ForgePact a77c33e): the panel, and
-# every sandbox its browser tests start, import exactly these.
+# ForgePact's src/forgepact.py import list: the panel, and every sandbox its
+# browser tests start, import exactly these. Until ForgePact PR #116 it also
+# imported GameObject, GameScript and seven more names it never used, and so
+# built the objects and scripts tables. ForgePact's
+# tests/test_panel_sdk_import.py pins the same list: change both together.
 FORGEPACT_NAMES = (
-    "GameObject",
-    "GameScript",
-    "StatId",
-    "PROC_FAMILIES",
-    "EquipmentSlot",
-    "PlayerEquipment",
-    "scan_relic_levels",
-    "ModDefinition",
-    "GLOBAL_MOD_REGISTRY",
     "SATANIC_BUFFS",
     "SATANIC_DEBUFFS",
 )
@@ -167,9 +161,9 @@ class TestTablesLoadOnFirstUse(unittest.TestCase):
                 for name in EXPORTS[module]:
                     self.assertIn(name, listed)
 
-    def test_forgepact_import_list_builds_objects_and_scripts_only(self):
+    def test_forgepact_import_list_builds_no_table(self):
         loaded, _ = _fresh(f"from hs_game_sdk import {', '.join(FORGEPACT_NAMES)}")
-        self.assertEqual(loaded & set(TABLES), {"objects", "scripts"})
+        self.assertEqual(loaded & set(TABLES), set())
 
     def test_a_name_builds_only_its_own_table(self):
         # sprites is left out only because building it costs seconds; the
