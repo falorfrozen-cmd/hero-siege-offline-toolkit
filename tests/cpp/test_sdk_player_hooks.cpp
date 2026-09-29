@@ -96,8 +96,25 @@ public:
             if (index < 0 || index >= static_cast<int>(args[0].m_Elements->size())) return RValue();
             return (*args[0].m_Elements)[static_cast<size_t>(index)];
         }
+        // An asset the map does not name is -1, as the runner answers for an
+        // unknown name; an object with no instance listed has none (`noone`).
+        if (name == "asset_get_index") {
+            const std::string asset = args.empty() ? std::string() : args[0].m_String;
+            auto it = assets.find(asset);
+            return RValue(it == assets.end() ? -1.0 : it->second);
+        }
+        if (name == "instance_find") {
+            const double object = args.empty() ? -1.0 : args[0].ToDouble();
+            auto it = firstInstances.find(object);
+            return it == firstInstances.end() ? RValue(-4.0) : it->second;
+        }
         return RValue();
     }
+
+    /// Asset name -> index (`asset_get_index`), and an object's first instance
+    /// (`instance_find(object, 0)`).
+    std::map<std::string, double> assets;
+    std::map<double, RValue> firstInstances;
 
     RValue CallGameScript(std::string, const std::vector<RValue>&) override { return RValue(); }
 
@@ -492,6 +509,186 @@ static void TestEquippedSlots() {
 }
 
 // ---------------------------------------------------------------------------
+// ForgePact#125: the relic tab. Relics owned but not worn sit in
+// Controller_obj.inventoryData[key].inventoryRelicGrid[relicId][0][0] as the
+// owned copy's fingerprint; key is 1 online and the player row (mplr)
+// offline. The fixture below lays that out, with the negative cases beside
+// the real ones.
+// ---------------------------------------------------------------------------
+
+static const char* kFpTab40 = "0-0-211821263155-16";
+static const char* kFpTab7 = "0-0-210869177253-16";
+static const char* kFpTabUnresolved = "0-0-210869177999-16";
+static const char* kFpTabOnline = "0-0-210869184312-16";
+static constexpr double kControllerObject = 984.0;
+
+static RValue TabCell(const char* fingerprint) {
+    return RValue::Array({ RValue::Array({ RValue(std::string(fingerprint)) }) });
+}
+
+// One profile's relic grid, 45 cells long: 40 holds a relic at 10/10, 7 one
+// with no `o` at all (level 1, as the save stores it), 12 a fingerprint the
+// resolver does not know, 20 a number and 30 nothing. `onlineOnly` puts one
+// relic, 42 at 10/10, in the online profile instead.
+static RValue RelicGrid(bool onlineOnly) {
+    std::vector<RValue> cells(45, RValue::Array({ RValue::Array({ RValue() }) }));
+    if (onlineOnly) {
+        cells[42] = TabCell(kFpTabOnline);
+    } else {
+        cells[40] = TabCell(kFpTab40);
+        cells[7] = TabCell(kFpTab7);
+        cells[12] = TabCell(kFpTabUnresolved);
+        cells[20] = RValue::Array({ RValue::Array({ RValue(-4) }) });
+        cells[30] = RValue();
+    }
+    return RValue::Array(std::move(cells));
+}
+
+static void FillRelicTab(ControlledYYTK& yytk) {
+    yytk.globals["mplr"] = RValue(0);
+    yytk.globals["onl"] = RValue(0);
+    yytk.assets["Controller_obj"] = kControllerObject;
+    RValue controller;
+    controller.m_Kind = YYTK::VALUE_REF;
+    controller.m_Real = 100002.0;
+    yytk.firstInstances[kControllerObject] = controller;
+    yytk.instanceFields["inventoryData"] = RValue::Array({
+        RValue::Struct({ { "inventoryRelicGrid", RelicGrid(false) } }),
+        RValue::Struct({ { "inventoryRelicGrid", RelicGrid(true) } }),
+    });
+
+    yytk.gameScripts[std::string(HeroSiege::Scripts::gml_Script_GetOnlinePlayerItemOwner)] =
+        [](const std::vector<RValue>&) { return RValue(0); };
+    yytk.gameScripts[std::string(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint)] =
+        [](const std::vector<RValue>& args) {
+            const std::string fp = args.empty() ? std::string() : args[0].m_String;
+            if (fp == kFpTab40) return RelicInstance(40, 10, 0);
+            if (fp == kFpTabOnline) return RelicInstance(42, 10, 0);
+            if (fp == kFpTab7) {
+                return RValue::Struct({
+                    { "itemType", RValue(16) },
+                    { "itemDefinitionStruct", RValue::Struct({ { "b", RValue(7) }, { "c", RValue(0) } }) },
+                });
+            }
+            return RValue();  // VALUE_UNDEFINED: resolves to nothing
+        };
+}
+
+static void TestRelicTab() {
+    using namespace HeroSiege::Player;
+    const std::string resolver(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint);
+
+    // 1. Offline: the player row's profile. 40 is maxed, 7 is owned at level
+    //    1, and only the three fingerprint strings reached the resolver.
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        RelicTabScanReport report;
+        const auto owned = GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report);
+        CHECK_EQ(owned.size(), static_cast<size_t>(2));
+        if (owned.count(40)) CHECK_EQ(owned.at(40), 10);
+        if (owned.count(7)) CHECK_EQ(owned.at(7), 1);
+        CHECK(report.stopped == nullptr);
+        CHECK_EQ(report.key, 0);
+        CHECK(!report.online);
+        CHECK_EQ(report.gridLength, 45);
+        CHECK_EQ(report.cells, 45);          // every entry within the limit, arrays or not
+        CHECK_EQ(report.strings, 3);
+        CHECK(report.ownerResolved);
+        CHECK_EQ(report.itemsResolved, 3);
+        CHECK_EQ(report.nonStructResults, 1);
+        CHECK_EQ(report.relicInstances, 2);
+        CHECK_EQ(report.maxed.size(), static_cast<size_t>(1));
+        CHECK_EQ(yytk.CallsTo(resolver), static_cast<size_t>(3));
+        for (const auto& call : yytk.scriptCalls) {
+            CHECK(call.selfAndOtherAreGlobal);
+            if (call.name != resolver) continue;
+            CHECK(call.args.size() == 2);
+            if (call.args.size() == 2) CHECK(call.args[0].m_Kind == YYTK::VALUE_STRING);
+        }
+        CHECK(FormatRelicTabScanReport(report) ==
+              "key=0 online=no grid=45 cells=45 strings=3 owner=ok resolved=3 refused=0 nonstruct=1 "
+              "noclass=0 relic=2 otherclass=0 maxed=40@10 stopped=none");
+        const auto maxed = GetMaxedRelicIds(&yytk, FakePlayerRef());
+        std::printf("C++: relic_tab_maxed_relics=%d id40=%d\n", static_cast<int>(maxed.size()),
+                    maxed.count(40) ? 1 : 0);
+    }
+
+    // 2. Online: the profile key is 1 whatever mplr says.
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.globals["onl"] = RValue(1);
+        RelicTabScanReport report;
+        const auto maxed = GetMaxedRelicIds(&yytk, FakePlayerRef(), nullptr, &report);
+        CHECK_EQ(report.key, 1);
+        CHECK(report.online);
+        CHECK_EQ(maxed.size(), static_cast<size_t>(1));
+        CHECK(maxed.count(42) == 1);
+    }
+
+    // 3. No Controller_obj: the scan stops there and calls nothing.
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.firstInstances.clear();
+        RelicTabScanReport report;
+        CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report).empty());
+        CHECK(report.stopped != nullptr && std::string(report.stopped) == "controller");
+        CHECK(yytk.scriptCalls.empty());
+    }
+
+    // 4. A key past the profiles, and a profile without a grid, stop at their
+    //    own stages.
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.globals["mplr"] = RValue(3);
+        RelicTabScanReport report;
+        CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report).empty());
+        CHECK(report.stopped != nullptr && std::string(report.stopped) == "inventoryData");
+    }
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.instanceFields["inventoryData"] = RValue::Array({ RValue::Struct({ { "other", RValue(1) } }) });
+        RelicTabScanReport report;
+        CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report).empty());
+        CHECK(report.stopped != nullptr && std::string(report.stopped) == "profile");
+    }
+
+    // 5. The owner script is refused: the stage is named, no item is resolved.
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.gameScripts.erase(std::string(HeroSiege::Scripts::gml_Script_GetOnlinePlayerItemOwner));
+        RelicTabScanReport report;
+        CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report).empty());
+        CHECK(report.stopped != nullptr && std::string(report.stopped) == "owner");
+        CHECK_EQ(yytk.CallsTo(resolver), static_cast<size_t>(0));
+    }
+
+    // 6. The relic tab joins the equipped slots: two maxed relics worn, one in
+    //    the tab.
+    {
+        ControlledYYTK yytk;
+        FillEquippedSlots(yytk);
+        const auto equippedFingerprints = yytk.gameScripts[resolver];
+        FillRelicTab(yytk);
+        const auto tabFingerprints = yytk.gameScripts[resolver];
+        yytk.gameScripts[resolver] = [equippedFingerprints, tabFingerprints](const std::vector<RValue>& args) {
+            RValue item = tabFingerprints(args);
+            return item.m_Kind == YYTK::VALUE_UNDEFINED ? equippedFingerprints(args) : item;
+        };
+        const auto maxed = GetMaxedRelicIds(&yytk, FakePlayerRef());
+        CHECK_EQ(maxed.size(), static_cast<size_t>(3));
+        CHECK(maxed.count(135) == 1);
+        CHECK(maxed.count(109) == 1);
+        CHECK(maxed.count(40) == 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The three cases from origin's second review, printed for the Python side of
 // tests/test_cpp_sdk.py to compare against scan_relic_levels() directly.
 // ---------------------------------------------------------------------------
@@ -805,6 +1002,7 @@ static void TestHookInstaller() {
 int main() {
     TestRelicIdentification();
     TestEquippedSlots();
+    TestRelicTab();
     TestCrossLanguageCases();
     PrintContract();
     PrintItemTypes();

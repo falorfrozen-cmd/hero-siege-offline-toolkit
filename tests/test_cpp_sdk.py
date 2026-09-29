@@ -266,6 +266,10 @@ class TestCppSdkBehaviour(unittest.TestCase):
         """#93: global.equippedItems' relic slots, resolved through the game's own scripts."""
         self.assertIn("equipped_slot_maxed_relics=2", self.output, self.output)
 
+    def test_the_relic_tab_resolves_to_its_maxed_relic(self):
+        """ForgePact#125: Controller_obj.inventoryData[key].inventoryRelicGrid, resolved the same way."""
+        self.assertIn("relic_tab_maxed_relics=1 id40=1", self.output, self.output)
+
     def test_compiled_item_type_table_matches_python(self):
         """The compiled kItemTypes, not the header text tests/test_item_type_parity.py parses.
 

@@ -539,6 +539,29 @@ zero says which stage read nothing. `tests/cpp/test_sdk_player_hooks.cpp`'s
 `TestEquippedSlots` drives it through a stub whose `CallGameScriptEx` answers per
 script name with a struct, a number or undefined.
 
+**The relic tab is read the same way** (C++, `Player::ScanRelicTab`, called by
+`GetOwnedRelicLevels` after the equipped slots; ForgePact #125, hub #324). The
+relics a character owns but does not wear sit in
+`Controller_obj.inventoryData[key].inventoryRelicGrid[relicId][0][0]`, one
+fingerprint per relic id, where `key` is 1 when `global.onl` is 1 and the player
+row (`global.mplr`) otherwise: the rule the game's own `PickupRelic` and
+`RelicCheckAchievement` use (static reading of the Sep-17 build, 2026-09-30; hub
+`docs/models/relic-pick-spec.md`). `Controller_obj` is found by name
+(`GetObjectName`, then the runner's `asset_get_index` and `instance_find(obj, 0)`),
+the profile entry may be a struct or an instance reference, and each fingerprint
+goes through the same owner and resolver as the equipped slots. The route reads
+variables only and never calls `GetProfileInventoryData`, which has crashed the
+game when called cold (RUNTIME_DATA_MODELS §9.4). `RelicTabScanReport` and
+`FormatRelicTabScanReport` count each stage and name the one a short scan stopped
+at, beside the maxed relics it found (`key=1 online=no grid=156 ... maxed=40@10
+stopped=none`); pass one as `GetOwnedRelicLevels`/`GetMaxedRelicIds`' fourth
+argument. C++ only, like the equipped-slot route: the Python binding reads the
+same tab from a save (`inventory_relic_tab`, keyed `x-y-<stamp>-16`, `o` absent at
+level 1), pinned by `tests/test_relic_identification.py` (`TestSaveRelicTab`).
+`TestRelicTab` in `tests/cpp/test_sdk_player_hooks.cpp` drives the C++ route:
+offline and online keys, a missing controller, a key past the profiles, a profile
+without a grid, a refused owner, and the tab joining the equipped slots.
+
 A level-shaped field is not evidence of relic-ness, and this was a real defect
 (REPORTED 2026-09-12 against PR #3): the scanner accepted `isRelic || level > 0`,
 so the ordinary item `{b:15, c:8, level:100}` was reported as maxed relic 15.

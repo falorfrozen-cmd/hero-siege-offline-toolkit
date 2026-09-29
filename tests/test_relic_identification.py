@@ -173,5 +173,33 @@ class TestMeasuredEquippedShapes(unittest.TestCase):
         self.assertEqual(scan_relic_levels({"inventory": [MATERIAL_STACK_INSTANCE]}), {})
 
 
+# The relic tab as `inventory_order_<slot>.hss` stores it (ForgePact#125, read
+# 2026-09-30 from the owner's slot 1, which holds 14 such entries and no `o`
+# on any of them): keyed like an equipped relic, class 16 in the key, and `o`
+# absent at level 1. In memory the same relics are the fingerprints of
+# Controller_obj.inventoryData[key].inventoryRelicGrid, which only the C++
+# binding reads (tests/cpp/test_sdk_player_hooks.cpp, TestRelicTab).
+SAVE_RELIC_TAB = {
+    "inventory_relic_tab": {
+        "0-0-211821263155-16": {"data": {"b": 40, "a": 340839652, "j": 0, "c": 0.0, "o": 10}},
+        "0-0-210869177253-16": {"data": {"b": 7, "a": 627597529, "j": 0, "c": 0.0}},
+        "0-0-210869184312-16": {"data": {"b": 42, "a": 260287116, "j": 0, "c": 0.0, "o": 9}},
+    }
+}
+
+
+class TestSaveRelicTab(unittest.TestCase):
+    def test_relic_tab_entries_are_owned_relics(self):
+        """`o` absent is level 1; the class in the key identifies each entry."""
+        self.assertEqual(scan_relic_levels(SAVE_RELIC_TAB), {40: 10, 7: 1, 42: 9})
+
+    def test_only_a_ten_in_the_relic_tab_is_maxed(self):
+        self.assertEqual(maxed_relic_ids(SAVE_RELIC_TAB), {40})
+
+    def test_the_relic_tab_joins_the_equipped_relics(self):
+        save = {**SAVE_EQUIPPED_ITEMS, **SAVE_RELIC_TAB}
+        self.assertEqual(maxed_relic_ids(save), {135, 40})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -79,7 +79,7 @@ value `{"data": {...}}` with the slot in `g` (§2, read 2026-09-27).
 * `cur_stats`: Active combat statistics (Life, Mana, Physical Damage, Elemental Resistances).
 * `p_gold` / `p_rubies`: Player currency counters.
 * `inventory`: Primary inventory array containing serialized item structs or nested bag structs.
-* `inventory_relic_tab` / `bags`: Extended bag containers.
+* `inventory_relic_tab` / `bags`: Extended bag containers. `inventory_relic_tab` is the name of the relic tab in a save file (`inventory_order_<slot>.hss`); in memory the relic tab is `Controller_obj.inventoryData[key].inventoryRelicGrid` (§1, "The relic tab").
 
 ### How the local player arrives: `VALUE_REF`, not `VALUE_OBJECT`
 
@@ -165,6 +165,26 @@ through the game's own scripts, `GetOnlinePlayerItemOwner(mplr)` then
 above. That route was measured for the helmet slot on 2026-09-23, and for the
 relic slots 10-14 on 2026-09-27: all five resolved to relic instances whose ids
 and levels matched the save (§1, **measured**).
+
+**The relic tab is a grid indexed by relic id.** The relics a character owns but
+does not wear sit in `Controller_obj.inventoryData[key].inventoryRelicGrid`, where
+`[relicId][0][0]` holds the owned copy's fingerprint. `key` is 1 when `global.onl`
+is 1, and the player row (`global.mplr`) otherwise. The game's own `PickupRelic` and
+`RelicCheckAchievement` read it that way, the latter walking ids 0..155, and resolve
+the fingerprint with the owner and resolver above (**static reading**, Sep-17 build,
+2026-09-30; hub `docs/models/relic-pick-spec.md`). `GetProfileInventoryData(key)`
+returns the same `inventoryData[key]`; read the variables instead of calling it
+(§9.4). A save stores the same tab as `inventory_relic_tab` in
+`inventory_order_<slot>.hss`: keyed `x-y-<stamp>-16`, each `{data: {b, a, j, c}}`,
+with `o` absent at level 1 (the owner's slot 1, 14 entries, **read** 2026-09-30).
+The SDK reads the in-memory grid as `Player::ScanRelicTab` (C++), for ForgePact #125.
+
+**What 10/10 means** (owner, ForgePact #124/#125). A relic always drops at level 1.
+Each pickup of the same relic raises the owned copy's level by one, up to 10, so a
+10/10 relic is one picked up ten times. `PickupRelic` finds the owned copy (relic
+tab first, then the equipped slots) and raises it only while `o` is below 10, so a
+relic at 10/10 cannot be picked up again (**static reading**). A dropped relic's own
+level therefore says nothing; the check is the owned copy's `o`.
 
 **`o` means two things, depending on the item.** On a relic it is the upgrade
 level. On a stackable item, such as a socketable or a crafting material, it is the
@@ -1444,10 +1464,13 @@ keys 1500. **Measured 2026-08-27.**
 `DropRelic`'s drop is not a 1-in-`droprate.base` roll: all 156 relics carried
 25,000,000 and relics still dropped constantly, so dividing every relic's base by
 the same factor (the `droprate group relic` lever) changed nothing observable.
-**Measured 2026-08-28** (ForgePact `c0a6a6b`). Whether it reads the base at all,
-for example as a weight in the pick between relics, is **not established**: every
-relic had the same value, and a uniform divide leaves a weighted pick unchanged.
-Changing one relic's base would settle it.
+**Measured 2026-08-28** (ForgePact `c0a6a6b`). It does not read the base at all
+(**static reading**, 2026-09-30): `DropRelic` and both Satanic kill relic routines
+draw `irandom(155)` and draw again while `GetRelicQuest` answers true, which it does
+for the quest relics 141..155 only, so every other relic is equally likely
+whatever its base. `DropRelic` and the Feast routine may then copy one of the five
+equipped relics below level 10 in place of the pick. The whole mechanism, with each
+claim labelled, is hub `docs/models/relic-pick-spec.md`.
 [blood pact §3](../ForgePact/docs/blood-pact-values-research.md#3-eşya-kategorisi-haritası-yeni)
 
 ### 13.3 Dungeon keys
@@ -1701,6 +1724,7 @@ All **measured** unless marked.
 | Most game scripts called cold (global `self`, no args) | access violation inside game code; process survives | §5.7 |
 | A GML builtin called off the game thread | crash | §5.6 |
 | Installing a `DropRelic` hook during character select | the runner stalls | §5.7 |
+| `GetRelicQuest` answering true for every relic 0..155 | a relic pick's draw-again loop never ends (**static reading**) | §13.2 |
 | `DropItemAngelic` when the zone has no candidates | infinite loop, game freezes | §13.4 ([angelic drop](../ForgePact/docs/angelic-drop-research.md#oyunun-kendi-mekanizması-statik-okuma-canlı-ölçülen-yalnızca-buff-yokken-zarın-hiç-atılmaması)) |
 | Writing `dropTable` on piles, destructibles, `Cursed_Orb_obj` | GML error (static reading) | §13.1 |
 | `DropDungeonKeys` with argument 5 undefined | GML error (static reading) | §13.3 |
