@@ -198,6 +198,20 @@ def validate(data: dict, doc_text: str) -> list:
         container = socket.get("container")
         if require("bag_to_stash_move.socket_merge.container", container) and "StashSocketGrid" not in container:
             problems.append("bag_to_stash_move.socket_merge.container does not name the StashSocketGrid nodes")
+        # ForgePact #131: the merge's cap, a static reading (R) until a live
+        # session measures it (M); both numbers stated in section 17 too.
+        cap = move.get("stack_cap")
+        if require("bag_to_stash_move.stack_cap", cap):
+            for key, want in (("default_cap", 999), ("flag_8_cap", 999999)):
+                value = cap.get(key)
+                if require(f"bag_to_stash_move.stack_cap.{key}", value) and value != want:
+                    problems.append(f"bag_to_stash_move.stack_cap.{key} {value!r} is not {want}")
+                elif value is not None and str(value) not in section:
+                    problems.append(f"bag_to_stash_move.stack_cap.{key} {value!r} is absent from RUNTIME_DATA_MODELS.md section 17")
+            require("bag_to_stash_move.stack_cap.rule", cap.get("rule"))
+            measured = cap.get("measured")
+            if require("bag_to_stash_move.stack_cap.measured", measured) and measured not in ("R", "M"):
+                problems.append(f"bag_to_stash_move.stack_cap.measured {measured!r} is neither R nor M")
 
     # ForgePact #68's button: the UI node API. Every script an SDK script at
     # its SDK index and named in section 17, every object an SDK object at its
@@ -219,6 +233,11 @@ def validate(data: dict, doc_text: str) -> list:
         callstack = sort_node.get("uiNodeCallstack")
         if require("ui_node_api.sort_node.uiNodeCallstack", callstack) and callstack not in section:
             problems.append(f"ui_node_api.sort_node.uiNodeCallstack {callstack!r} is absent from RUNTIME_DATA_MODELS.md section 17")
+        # ForgePact #131: where a node's x, y put it - the button's origin is
+        # its bbox centre, Sort's its top-left.
+        origin = ui.get("node_origin")
+        if require("ui_node_api.node_origin", origin) and not ("centre" in origin and "top-left" in origin):
+            problems.append("ui_node_api.node_origin does not say which origin is the bbox centre and which the top-left")
         for step in UI_NODE_STEPS:
             entry = ui.get(step)
             if not require(f"ui_node_api.{step}", entry):
@@ -286,6 +305,9 @@ class TestCuratedStashContainers(unittest.TestCase):
         bad["ui_node_api"]["node_object"]["index"] = 5010
         bad["ui_node_api"]["move"]["self_object"] = "No_Such_Window_obj"
         bad["ui_node_api"]["sort_node"]["uiNodeCallstack"] = "NoSuchSort"
+        bad["bag_to_stash_move"]["stack_cap"]["default_cap"] = 1000
+        bad["bag_to_stash_move"]["stack_cap"]["measured"] = "guessed"
+        bad["ui_node_api"]["node_origin"] = "the node's x, y"
 
         problems = validate(bad, self.doc_text)
 
@@ -306,6 +328,9 @@ class TestCuratedStashContainers(unittest.TestCase):
         self.assertTrue(any("node_object.index 5010" in p for p in problems), problems)
         self.assertTrue(any("No_Such_Window_obj" in p for p in problems), problems)
         self.assertTrue(any("NoSuchSort" in p for p in problems), problems)
+        self.assertTrue(any("stack_cap.default_cap 1000" in p for p in problems), problems)
+        self.assertTrue(any("stack_cap.measured 'guessed'" in p for p in problems), problems)
+        self.assertTrue(any("ui_node_api.node_origin" in p for p in problems), problems)
 
     def test_validator_reports_a_missing_object_as_a_problem(self):
         missing = copy.deepcopy(self.data)
@@ -313,6 +338,7 @@ class TestCuratedStashContainers(unittest.TestCase):
         del missing["crafting_cube"]
         del missing["ui_node_api"]
         del missing["bag_to_stash_move"]["socket_merge"]
+        del missing["bag_to_stash_move"]["stack_cap"]
 
         problems = validate(missing, self.doc_text)
 
@@ -320,6 +346,7 @@ class TestCuratedStashContainers(unittest.TestCase):
         self.assertTrue(any("crafting_cube" in p for p in problems), problems)
         self.assertTrue(any("ui_node_api" in p for p in problems), problems)
         self.assertTrue(any("bag_to_stash_move.socket_merge" in p for p in problems), problems)
+        self.assertTrue(any("bag_to_stash_move.stack_cap" in p for p in problems), problems)
 
 
 if __name__ == "__main__":

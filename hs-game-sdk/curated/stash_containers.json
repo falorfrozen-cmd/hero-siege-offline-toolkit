@@ -71,7 +71,14 @@
       "self_node": "InventoryGrid",
       "other_node": "InventoryGrid",
       "arguments": "the shown tab's cell array; 0 and 13 into the personal page, 9 and 2 into a shared page, the Materials tab and the Socketable tab; the item struct; the count to merge (1 on every hand move; the whole count merged by name); a small number (0 on a page and the Materials tab, 8 on the Socketable tab)",
-      "answer": "true after merging into a stack of the item's identity on that array; false when there is none, and then the grid placement follows"
+      "answer": "true after merging into a stack of the item's identity on that array with room for the count (stack_cap); false when there is none, and then the grid placement follows"
+    },
+    "stack_cap": {
+      "default_cap": 999,
+      "flag_8_cap": 999999,
+      "rule": "StashAddToStack takes its cap from its sixth argument: 999 when it lacks flag 8 (0 on the pages and the Materials tab), 999999 when it carries it (8 on the Socketable tab). It walks the array in order and merges into the first stack of the item's identity whose count plus the moved count stays at or below the cap, answering true; a stack that would pass the cap is passed over, and with none left it answers false. The whole count or none: a stack is never topped up with part of an item. The Materials tab holds several stacks of one kind, the Socketable tab one per kind (the owner, 2026-09-30). Not read: whether the count added is the fifth argument or the item's own o, and the walk order beyond array order",
+      "measured": "R",
+      "source": "ForgePact #131; ForgePact/docs/stash-move-research.md, Static reading 4 (2026-09-30)"
     },
     "grid": {
       "script": "gml_Script_GridAddItem",
@@ -160,6 +167,7 @@
       "text": "Sort Tab",
       "activation": "gml_Script_InventorySortTab, bound with the Sort node itself as self; activationArgs [1]"
     },
+    "node_origin": "UiCreateNode's x and y are the new node's origin, not its top-left (M, Live 1f and 1g, the same numbers both times; ForgePact #131): for UI_Button_Small_obj (sprite Menu_Button_Chat_spr) the origin lies at its bbox centre (made at 2113.1, 1198.9, bbox 2016.2, 1176.1, 2211.9, 1221.7), while the Sort node's origin is its bbox top-left (2303.5, 1198.9, bbox 2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. The width, 195.7, is not a whole sprite size (a GUI scale is in play), so a node's extents about its origin are read from the node, not its sprite",
     "create": {
       "script": "gml_Script_UiCreateNode",
       "index": 4469,

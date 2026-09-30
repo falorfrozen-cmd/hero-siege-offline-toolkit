@@ -2483,10 +2483,22 @@ kind. **M** measured live; **R** a static reading, not measured.
   bag's Materials view on show, plus one by-hand orb on the Socketable tab. A
   merge on a stash page with that page's own two numbers (0 and 13 personal, 9
   and 2 shared) and the Materials tab fed from a bag page are not observed.
-  Because it merges into any stack of the identity on the array, a caller
-  moving several items must re-read the array's stacks before each call: an
-  earlier item of the same batch can have made the stack a later one joins
-  (ForgePact #68's round-2 review found a duplicated unit that way).
+  Because it merges into any stack of the identity on the array that has
+  room, a caller moving several items must re-read the array's stacks before
+  each call: an earlier item of the same batch can have made or filled the
+  stack a later one meets (ForgePact #68's round-2 review found a duplicated
+  unit that way). **The cap** (R, 2026-09-30, ForgePact #131): the routine
+  takes a cap from its sixth argument - 999 when it is 0 or lacks flag 8,
+  999999 when it carries flag 8 - and walks the array in order, merging into
+  the first stack of the identity whose count plus the moved count stays at
+  or below the cap; a stack that would pass it is passed over, and when none
+  fits it answers false. So a merge takes the whole count or none, and never
+  tops a stack up with part of an item. The measured merges pass 0 on the
+  pages and the Materials tab (cap 999) and 8 on the Socketable tab (cap
+  999999). The owner (2026-09-30): the Materials tab holds several stacks of
+  one kind, 999 each, and the Socketable tab one stack per kind. Not read:
+  whether the count added is the fifth argument or the item's own `o`, and the
+  walk order beyond array order.
 - **The Socketable tab.** Its container: M (Live 1e, 1f, 1g) one
   `UI_Inventory_Grid_obj` per item on the tab, each carrying `uiNodeCallstack`
   `StashSocketGrid` and a one-cell `nodeGrid` holding that item, whose key
@@ -2516,7 +2528,16 @@ kind. **M** measured live; **R** a static reading, not measured.
   `UI_Stash_obj`, as self and other): it made a `UI_Button_Small_obj` at that
   x and y, stored the name as the node's `uiNodeCallstack`, drew it with the
   object's own sprite, and answered the node (`visible` 0 in that frame, 1 the
-  next); a `text` set on the node was drawn as its label. With the fourth
+  next); a `text` set on the node was drawn as its label. **The x and y are
+  the node's origin, not its top-left** (M, Live 1f and 1g, the same numbers
+  both times; ForgePact #131): for `UI_Button_Small_obj` (sprite
+  `Menu_Button_Chat_spr`) the origin lies at its bbox centre - made at x
+  2113.1, y 1198.9, its bbox read 2016.2, 1176.1, 2211.9, 1221.7 - while the
+  bag's Sort node's origin is its bbox top-left (x 2303.5, y 1198.9, bbox
+  2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. Its width, 195.7, is
+  not a whole sprite size, so a GUI scale is in play: read a node's extents
+  about its origin from the node itself rather than from its sprite. With the
+  fourth
   argument undefined the node's `activationFunc` stays undefined (R: the
   function binds a callable value as a method of the new node and leaves
   anything else undefined, as `UiSetActivationFunc(node, f)` does). A node's
