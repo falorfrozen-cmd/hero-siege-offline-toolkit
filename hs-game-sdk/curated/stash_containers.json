@@ -76,9 +76,9 @@
     "stack_cap": {
       "default_cap": 999,
       "flag_8_cap": 999999,
-      "rule": "StashAddToStack takes its cap from its sixth argument: 999 when it lacks flag 8 (0 on the pages and the Materials tab), 999999 when it carries it (8 on the Socketable tab). It walks the array in order and merges into the first stack of the item's identity whose count plus the moved count stays at or below the cap, answering true; a stack that would pass the cap is passed over, and with none left it answers false. The whole count or none: a stack is never topped up with part of an item. The Materials tab holds several stacks of one kind, the Socketable tab one per kind (the owner, 2026-09-30). Not read: whether the count added is the fifth argument or the item's own o, and the walk order beyond array order",
-      "measured": "R",
-      "source": "ForgePact #131; ForgePact/docs/stash-move-research.md, Static reading 4 (2026-09-30)"
+      "rule": "StashAddToStack takes its cap from its sixth argument: 999 when it lacks flag 8 (0 on the pages and the Materials tab), 999999 when it carries it (8 on the Socketable tab). It walks the array in order and merges into the first stack of the item's identity whose count plus the moved count stays at or below the cap, answering true; a stack that would pass the cap is passed over, and with none left it answers false. The whole count or none: a stack is never topped up with part of an item. The Materials tab holds several stacks of one kind, the Socketable tab one per kind (the owner, 2026-09-30). Not read: whether the count added is the fifth argument or the item's own o, and the walk order beyond array order. Measured (Live 3, 2026-09-30) for the 999 cap on the Materials tab through ForgePact's Move all: beside a kind's one stack of 875, a unit of 125 was placed as a new stack in a free cell and the 875 left unchanged, and a unit of 129 then passed over the 875 and merged into the stack of 125 (254); no stack read above 999. The 999999 cap with flag 8 remains a static reading",
+      "measured": "M",
+      "source": "ForgePact #131; ForgePact/docs/stash-move-research.md, Static reading 4 (2026-09-30) and Live 3 results (material-overflow, material-partial)"
     },
     "grid": {
       "script": "gml_Script_GridAddItem",
@@ -105,7 +105,7 @@
       "other_node": "InventoryGrid",
       "container": "the Socketable tab has no one array: one UI_Inventory_Grid_obj per item on the tab, its uiNodeCallstack StashSocketGrid, its nodeGrid one cell holding that item, whose key answers on map 9 (Controller_obj.stashSocketItemSlot is not the container); saved in stash.hss under socket_tab",
       "arguments": "the nodeGrid of the StashSocketGrid node holding the item's identity; 9; 2; the item struct; its count (1 measured); 8. Self and other the bag's grid node with its Socket view on show; no ValidateItem before it. Then source_clear on the bag cell, only after that node's item's o rose by exactly the count",
-      "answer": "true, the node's o rising by the count (an orb, base id 118: 81 to 82, twice); a gem (base id 38) merged the same way and gained o=2, so no non-stackable answer was met on this tab",
+      "answer": "true, the node's o rising by the count (an orb, base id 118: 81 to 82, twice); a gem (base id 38) merged the same way and gained o=2, so no non-stackable answer was met on this tab. A whole stack merges too: a unit of 3 of the orb, merged through ForgePact's Move all, raised the node's o by exactly 3, 92 to 95 (Live 3, 2026-09-30, ForgePact #131)",
       "measured": {
         "date": "2026-09-28",
         "sessions": ["Live 1f", "Live 1g"]
@@ -167,7 +167,7 @@
       "text": "Sort Tab",
       "activation": "gml_Script_InventorySortTab, bound with the Sort node itself as self; activationArgs [1]"
     },
-    "node_origin": "UiCreateNode's x and y are the new node's origin, not its top-left (M, Live 1f and 1g, the same numbers both times; ForgePact #131): for UI_Button_Small_obj (sprite Menu_Button_Chat_spr) the origin lies at its bbox centre (made at 2113.1, 1198.9, bbox 2016.2, 1176.1, 2211.9, 1221.7), while the Sort node's origin is its bbox top-left (2303.5, 1198.9, bbox 2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. The Sort node is a UI_Button_Small_obj too, drawn with Inventory_Tab_Button_Solid_spr, so the origin follows the sprite, not the object. The width, 195.7, is not a whole sprite size (a GUI scale is in play), so a node's extents about its origin are read from the node, not its sprite, and on a later frame once it is visible and its box reads the same twice, not in the frame it was made",
+    "node_origin": "UiCreateNode's x and y are the new node's origin, not its top-left (M, Live 1f and 1g, the same numbers both times; ForgePact #131): for UI_Button_Small_obj (sprite Menu_Button_Chat_spr) the origin lies at its bbox centre (made at 2113.1, 1198.9, bbox 2016.2, 1176.1, 2211.9, 1221.7), while the Sort node's origin is its bbox top-left (2303.5, 1198.9, bbox 2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. The Sort node is a UI_Button_Small_obj too, drawn with Inventory_Tab_Button_Solid_spr, so the origin follows the sprite, not the object. Live 3 (2026-09-30) read the same relation at another GUI scale: the node made at 2178.0, 1295.0 read the bbox 2076.0, 1271.0, 2282.0, 1319.0, and Sort sat at 2290.0, 1262.0 with the bbox 2290.0, 1262.0, 2482.0, 1328.0. The width, 195.7 in Live 1f and 1g, is not a whole sprite size (a GUI scale is in play), so a node's extents about its origin are read from the node, not its sprite, and on a later frame once it is visible and its box reads the same twice, not in the frame it was made",
     "create": {
       "script": "gml_Script_UiCreateNode",
       "index": 4469,

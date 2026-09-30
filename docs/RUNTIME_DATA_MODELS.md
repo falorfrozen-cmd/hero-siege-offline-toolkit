@@ -2487,13 +2487,20 @@ kind. **M** measured live; **R** a static reading, not measured.
   room, a caller moving several items must re-read the array's stacks before
   each call: an earlier item of the same batch can have made or filled the
   stack a later one meets (ForgePact #68's round-2 review found a duplicated
-  unit that way). **The cap** (R, 2026-09-30, ForgePact #131): the routine
+  unit that way). **The cap** (M for 999, Live 3, 2026-09-30; R for 999999
+  and the walk order; ForgePact #131): the routine
   takes a cap from its sixth argument - 999 when it is 0 or lacks flag 8,
   999999 when it carries flag 8 - and walks the array in order, merging into
   the first stack of the identity whose count plus the moved count stays at
   or below the cap; a stack that would pass it is passed over, and when none
   fits it answers false. So a merge takes the whole count or none, and never
-  tops a stack up with part of an item. The measured merges pass 0 on the
+  tops a stack up with part of an item. Live 3 measured the 999 cap through
+  ForgePact's Move all on the Materials tab: beside a kind's one stack of
+  875, a unit of 125 was placed as a new stack in a free cell and the 875
+  left unchanged, and a unit of 129 then passed over the 875 and merged into
+  the stack of 125 (254); no stack read above 999
+  (`ForgePact/docs/stash-move-research.md` § Live 3 results). The measured
+  merges pass 0 on the
   pages and the Materials tab (cap 999) and 8 on the Socketable tab (cap
   999999). The owner (2026-09-30): the Materials tab holds several stacks of
   one kind, 999 each, and the Socketable tab one stack per kind. Not read:
@@ -2519,7 +2526,9 @@ kind. **M** measured live; **R** a static reading, not measured.
   key reached no saved file after the stash's own close. A gem (base id 38)
   merged the same way and gained `o=2`, so it is stackable: no
   non-stackable answer was met on this tab, and Live 1e's missing `o` on it
-  was a count of 1. Placing a kind the tab does not hold yet was not
+  was a count of 1. A whole stack merges too, M (Live 3, 2026-09-30,
+  ForgePact #131): a unit of 3 of the orb merged through ForgePact's Move
+  all, and the node's `o` rose by exactly 3 (92 to 95). Placing a kind the tab does not hold yet was not
   replayed by name (no accepted kind absent from the tab could be obtained
   without a person).
 - **The UI node API** (the in-game Move all button, ForgePact #68). M (Live
@@ -2536,7 +2545,11 @@ kind. **M** measured live; **R** a static reading, not measured.
   bag's Sort node's origin is its bbox top-left (x 2303.5, y 1198.9, bbox
   2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. The Sort node is a
   `UI_Button_Small_obj` too, drawn with `Inventory_Tab_Button_Solid_spr`, so
-  the origin follows the sprite, not the object. Its width, 195.7, is
+  the origin follows the sprite, not the object. Live 3 (2026-09-30) read
+  the same relation at another GUI scale: the Move all node made at x
+  2178.0, y 1295.0 read the bbox 2076.0, 1271.0, 2282.0, 1319.0, and Sort
+  sat at x 2290.0, y 1262.0 with the bbox 2290.0, 1262.0, 2482.0, 1328.0.
+  Its width, 195.7 in Live 1f and 1g, is
   not a whole sprite size, so a GUI scale is in play: read a node's extents
   about its origin from the node itself rather than from its sprite, and on a
   later frame, once it is visible and its box reads the same twice, not in the
