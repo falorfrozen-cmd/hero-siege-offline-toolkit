@@ -562,6 +562,9 @@ convenience.
 Files land in `%LOCALAPPDATA%\HSDriveMcp\screenshots\<UTC stamp>[_label].png` at
 full resolution and nothing prunes them.
 
+To measure whether a button's label is drawn centred inside its box on such a
+capture, use [`tools/button_label_check.py`](button-label-check.md).
+
 ## Character select
 
 After `hs_launch` the game sits at its main menu, and most ForgePact gameplay
