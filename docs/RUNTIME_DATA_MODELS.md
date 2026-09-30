@@ -2553,7 +2553,23 @@ kind. **M** measured live; **R** a static reading, not measured.
   not a whole sprite size, so a GUI scale is in play: read a node's extents
   about its origin from the node itself rather than from its sprite, and on a
   later frame, once it is visible and its box reads the same twice, not in the
-  frame it was made (ForgePact's Move all button checks it that way). With the
+  frame it was made (ForgePact's Move all button checks it that way).
+  **A copied sprite and scale persist, and the bbox follows them** (M,
+  Live 4, 2026-09-30, ForgePact #131): with `sprite_index`, `image_xscale` and
+  `image_yscale` read off the Sort node by name and written onto a fresh
+  `UiCreateNode` node, the node read Sort's sprite
+  (`Inventory_Tab_Button_Solid_spr`) through `menulayout` and by name two
+  ensure steps later and after a stash tab switch, its origin moved to its
+  bbox top-left with the sprite, and its bbox read Sort's size (made at x
+  2090, y 1262: bbox 2090.0, 1262.0, 2282.0, 1328.0, 192x66, beside Sort's
+  2290.0, 1262.0, 2482.0, 1328.0). No read in that session found the object's own
+  sprite put back on that member. **The drawn result was not Sort's
+  button**, seen on a screenshot only: the node's `text` was no longer drawn
+  inside its box (a clipped end of it showed at about the box's top-left
+  corner, the node's new x, y), and the box did not read as Sort's to the
+  owner. Where the game draws a node's label (centred on its x, y is the
+  inference) and how the Sort node gets its own label centred are not read.
+  With the
   fourth
   argument undefined the node's `activationFunc` stays undefined (R: the
   function binds a callable value as a method of the new node and leaves
