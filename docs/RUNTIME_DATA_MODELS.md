@@ -2534,9 +2534,13 @@ kind. **M** measured live; **R** a static reading, not measured.
   `Menu_Button_Chat_spr`) the origin lies at its bbox centre - made at x
   2113.1, y 1198.9, its bbox read 2016.2, 1176.1, 2211.9, 1221.7 - while the
   bag's Sort node's origin is its bbox top-left (x 2303.5, y 1198.9, bbox
-  2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. Its width, 195.7, is
+  2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. The Sort node is a
+  `UI_Button_Small_obj` too, drawn with `Inventory_Tab_Button_Solid_spr`, so
+  the origin follows the sprite, not the object. Its width, 195.7, is
   not a whole sprite size, so a GUI scale is in play: read a node's extents
-  about its origin from the node itself rather than from its sprite. With the
+  about its origin from the node itself rather than from its sprite, and on a
+  later frame, once it is visible and its box reads the same twice, not in the
+  frame it was made (ForgePact's Move all button checks it that way). With the
   fourth
   argument undefined the node's `activationFunc` stays undefined (R: the
   function binds a callable value as a method of the new node and leaves

@@ -167,7 +167,7 @@
       "text": "Sort Tab",
       "activation": "gml_Script_InventorySortTab, bound with the Sort node itself as self; activationArgs [1]"
     },
-    "node_origin": "UiCreateNode's x and y are the new node's origin, not its top-left (M, Live 1f and 1g, the same numbers both times; ForgePact #131): for UI_Button_Small_obj (sprite Menu_Button_Chat_spr) the origin lies at its bbox centre (made at 2113.1, 1198.9, bbox 2016.2, 1176.1, 2211.9, 1221.7), while the Sort node's origin is its bbox top-left (2303.5, 1198.9, bbox 2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. The width, 195.7, is not a whole sprite size (a GUI scale is in play), so a node's extents about its origin are read from the node, not its sprite",
+    "node_origin": "UiCreateNode's x and y are the new node's origin, not its top-left (M, Live 1f and 1g, the same numbers both times; ForgePact #131): for UI_Button_Small_obj (sprite Menu_Button_Chat_spr) the origin lies at its bbox centre (made at 2113.1, 1198.9, bbox 2016.2, 1176.1, 2211.9, 1221.7), while the Sort node's origin is its bbox top-left (2303.5, 1198.9, bbox 2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. The Sort node is a UI_Button_Small_obj too, drawn with Inventory_Tab_Button_Solid_spr, so the origin follows the sprite, not the object. The width, 195.7, is not a whole sprite size (a GUI scale is in play), so a node's extents about its origin are read from the node, not its sprite, and on a later frame once it is visible and its box reads the same twice, not in the frame it was made",
     "create": {
       "script": "gml_Script_UiCreateNode",
       "index": 4469,
