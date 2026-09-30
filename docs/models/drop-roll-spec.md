@@ -104,15 +104,11 @@ some other route.
   more or less likely, and the form of the luck term. The 2026-09-24 pass did not
   follow the code that far. The model carries the whole adjustment as one scale `s`
   (default 1, a hypothesis). The M3–M5 checks hold for `s` in {0.7, 1, 1/0.7}.
-- **Whether `DropRelic` reads `droprate.base` at all**, for example as a weight
-  in the pick between relics. M7 cannot tell: every relic carried the same value,
-  and a weighted pick over equal weights looks exactly like a uniform one, as does
-  one divided by the same factor throughout. No run changed a single relic's
-  base, which is the control that would settle it. Only relic drops were
-  observed, not the other direct callers of `DropRelic`
-  ([RUNTIME_DATA_MODELS §5](../RUNTIME_DATA_MODELS.md)).
-- **What `DropRelic` does after it runs**: which relic it picks, and any filter.
-  This is not modelled.
+- **Whether `DropRelic` reads `droprate.base` at all** was open here until a
+  static reading answered it on 2026-09-30: no relic pick reads the base, and the
+  pick is uniform over every relic that is not a quest relic. Which relic comes
+  out, and ForgePact's filter on it, have their own spec and model,
+  [`relic-pick-spec.md`](relic-pick-spec.md). M7 remains the measured half.
 
 One trace would pin both N and `s`: log the gate's draw range and the dungeon-key
 inner bound on one monster that lists type 12 natively. It would also be the
