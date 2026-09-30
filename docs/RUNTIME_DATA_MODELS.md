@@ -2567,8 +2567,37 @@ kind. **M** measured live; **R** a static reading, not measured.
   button**, seen on a screenshot only: the node's `text` was no longer drawn
   inside its box (a clipped end of it showed at about the box's top-left
   corner, the node's new x, y), and the box did not read as Sort's to the
-  owner. Where the game draws a node's label (centred on its x, y is the
-  inference) and how the Sort node gets its own label centred are not read.
+  owner. **Which members carry the label's place and look** (M, Live 5 and
+  Live 6, 2026-09-30, ForgePact #131): such a node, already wearing Sort's
+  sprite and scale, differed from InventorySort in exactly 13 writable
+  members beyond its identity, place, text and activation - `textFont`,
+  `dropShadow`, `createX`, `drawXOffset`, `drawYOffset`, `navBboxX`,
+  `navBboxY`, `navBboxWidth`, `navBboxHeight`, `naviDown`, `naviDownPrev`,
+  `naviRight`, `naviRightPrev` - and with those read off Sort by name and
+  written onto the node as read, its label was drawn centred in its box like
+  Sort's (Live 5 by a research copy; Live 6 on ForgePact's shipped path, on
+  the first node and on one made after a close and reopen). The label is drawn
+  at the node's x, y plus `drawXOffset`/`drawYOffset` (Sort: x 2290 + 48 =
+  2338, its label's left edge). `textFont` reads as an asset reference
+  (`ref font __newfont2` on Sort), `dropShadow` and the four `navi*` members
+  as bools, the rest as numbers. `createX`, `navBboxX` and `navBboxY` hold an
+  absolute GUI position (on Sort, its own box's corner); written raw as Sort's
+  onto a node 196 units to its left, the label was still drawn inside the
+  node's own box. **Copied label members persist:** they read back equal at
+  once (Live 5), equal to Sort's again in a member diff seconds later, and on
+  a reopened node's copy (Live 6). Not read: which of the 13 places the label
+  (they were written together), what the `navi*` and `navBbox*` members do
+  beyond the label (gamepad navigation, for example), and whether the game
+  rewrites any of them in longer play. **The Mercenary button** (M, Live 5
+  and Live 6): with the bag open on its own (the `C` key) the game lists a
+  `UI_Button_Open_Mercenary_obj` (SDK object 5004, `uiNodeCallstack`
+  `InventoryMercenary`, `text` `Mercenary`, Sort's sprite) through
+  `menulayout`, its bbox 2094, 1262, 2286, 1328 beside InventorySort's 2290,
+  1262, 2482, 1328 at a 2560x1440 GUI: Sort's width and height, the same top,
+  its left edge 196/192 of Sort's width left of Sort's left edge (its right
+  edge 4 GUI units short of Sort's). With the stash open it is not listed,
+  while InventorySort's box reads the same; after the stash's close neither
+  is listed. One GUI scale only.
   With the
   fourth
   argument undefined the node's `activationFunc` stays undefined (R: the

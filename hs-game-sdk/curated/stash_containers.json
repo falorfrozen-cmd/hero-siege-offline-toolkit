@@ -168,6 +168,27 @@
       "activation": "gml_Script_InventorySortTab, bound with the Sort node itself as self; activationArgs [1]"
     },
     "node_origin": "UiCreateNode's x and y are the new node's origin, not its top-left (M, Live 1f and 1g, the same numbers both times; ForgePact #131): for UI_Button_Small_obj (sprite Menu_Button_Chat_spr) the origin lies at its bbox centre (made at 2113.1, 1198.9, bbox 2016.2, 1176.1, 2211.9, 1221.7), while the Sort node's origin is its bbox top-left (2303.5, 1198.9, bbox 2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. The Sort node is a UI_Button_Small_obj too, drawn with Inventory_Tab_Button_Solid_spr, so the origin follows the sprite, not the object. Live 3 (2026-09-30) read the same relation at another GUI scale: the node made at 2178.0, 1295.0 read the bbox 2076.0, 1271.0, 2282.0, 1319.0, and Sort sat at 2290.0, 1262.0 with the bbox 2290.0, 1262.0, 2482.0, 1328.0. The width, 195.7 in Live 1f and 1g, is not a whole sprite size (a GUI scale is in play), so a node's extents about its origin are read from the node, not its sprite, and on a later frame once it is visible and its box reads the same twice, not in the frame it was made",
+    "mercenary_button": {
+      "name": "UI_Button_Open_Mercenary_obj",
+      "index": 5004,
+      "uiNodeCallstack": "InventoryMercenary",
+      "text": "Mercenary",
+      "sprite": "Inventory_Tab_Button_Solid_spr",
+      "listed": "Only with the bag open on its own (the C key). With the stash open menulayout lists none, and after the stash's close neither it nor InventorySort is listed",
+      "box_relation": "Relative to InventorySort's bbox: its left edge 196/192 of Sort's width left of Sort's left edge, the same top, Sort's width and height, so its right edge is 4 GUI units short of Sort's left. Read 2094,1262,2286,1328 beside Sort's 2290,1262,2482,1328 at a 2560x1440 GUI in Live 5 and again in Live 6; InventorySort's box is the same with the stash open. One GUI scale only",
+      "measured": "M",
+      "sessions": ["Live 5", "Live 6"]
+    },
+    "label_members": {
+      "members": ["textFont", "dropShadow", "createX", "drawXOffset", "drawYOffset", "navBboxX", "navBboxY", "navBboxWidth", "navBboxHeight", "naviDown", "naviDownPrev", "naviRight", "naviRightPrev"],
+      "label_place": "A node's text is drawn at the node's x, y plus drawXOffset/drawYOffset (Sort: x 2290 + 48 = 2338, its label box's left edge). A UiCreateNode button already wearing Sort's sprite and scale differed from InventorySort in exactly these 13 writable members, besides its identity, place, text and activation; with them copied from Sort by name (and Sort's sprite_index and scale) the node's label is drawn centred in its box like Sort's",
+      "kinds": "textFont reads as an asset reference (ref font __newfont2 on Sort); dropShadow and the four navi* flags as bools; the rest as numbers",
+      "absolute_members": "createX, navBboxX and navBboxY hold an absolute GUI position (on Sort, its box's corner). Written raw as Sort's onto a node 196 units to its left, the label was still drawn inside the node's own box",
+      "persist": "Copied onto the node and read back equal at once (Live 5), and again equal to Sort's in a probe diff seconds later and on a node made after a close and reopen (Live 6)",
+      "not_established": "which of the 13 places the label (they were written together); what the navi* flags and navBbox* members do beyond the label, such as gamepad navigation; whether the game rewrites any of them in longer play",
+      "measured": "M",
+      "sessions": ["Live 5", "Live 6"]
+    },
     "create": {
       "script": "gml_Script_UiCreateNode",
       "index": 4469,

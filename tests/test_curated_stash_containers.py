@@ -218,7 +218,7 @@ def validate(data: dict, doc_text: str) -> list:
     # index.
     ui = data.get("ui_node_api")
     if require("ui_node_api", ui):
-        for key in ("node_object", "owner_object"):
+        for key in ("node_object", "owner_object", "mercenary_button"):
             obj = ui.get(key) or {}
             name, index = obj.get("name"), obj.get("index")
             if require(f"ui_node_api.{key}.name", name) and require(f"ui_node_api.{key}.index", index):
@@ -238,6 +238,27 @@ def validate(data: dict, doc_text: str) -> list:
         origin = ui.get("node_origin")
         if require("ui_node_api.node_origin", origin) and not ("centre" in origin and "top-left" in origin):
             problems.append("ui_node_api.node_origin does not say which origin is the bbox centre and which the top-left")
+        # ForgePact #131, Live 5 and 6: the Mercenary button the Move all
+        # button takes the place of, and the members that carry a node's label
+        # place and look. Each named in section 17 and labelled R or M.
+        merc = ui.get("mercenary_button") or {}
+        merc_callstack = merc.get("uiNodeCallstack")
+        if require("ui_node_api.mercenary_button.uiNodeCallstack", merc_callstack) and merc_callstack not in section:
+            problems.append(
+                f"ui_node_api.mercenary_button.uiNodeCallstack {merc_callstack!r} is absent from RUNTIME_DATA_MODELS.md section 17"
+            )
+        require("ui_node_api.mercenary_button.box_relation", merc.get("box_relation"))
+        label = ui.get("label_members")
+        if require("ui_node_api.label_members", label):
+            members = label.get("members")
+            if require("ui_node_api.label_members.members", members):
+                for member in members:
+                    if member not in section:
+                        problems.append(f"ui_node_api.label_members member {member!r} is absent from RUNTIME_DATA_MODELS.md section 17")
+        for key in ("mercenary_button", "label_members"):
+            measured = (ui.get(key) or {}).get("measured")
+            if require(f"ui_node_api.{key}.measured", measured) and measured not in ("R", "M"):
+                problems.append(f"ui_node_api.{key}.measured {measured!r} is neither R nor M")
         for step in UI_NODE_STEPS:
             entry = ui.get(step)
             if not require(f"ui_node_api.{step}", entry):
@@ -308,6 +329,10 @@ class TestCuratedStashContainers(unittest.TestCase):
         bad["bag_to_stash_move"]["stack_cap"]["default_cap"] = 1000
         bad["bag_to_stash_move"]["stack_cap"]["measured"] = "guessed"
         bad["ui_node_api"]["node_origin"] = "the node's x, y"
+        bad["ui_node_api"]["mercenary_button"]["index"] = 5005
+        bad["ui_node_api"]["mercenary_button"]["uiNodeCallstack"] = "NoSuchMercenary"
+        bad["ui_node_api"]["label_members"]["members"].append("noSuchLabelMember")
+        bad["ui_node_api"]["label_members"]["measured"] = "assumed"
 
         problems = validate(bad, self.doc_text)
 
@@ -331,6 +356,10 @@ class TestCuratedStashContainers(unittest.TestCase):
         self.assertTrue(any("stack_cap.default_cap 1000" in p for p in problems), problems)
         self.assertTrue(any("stack_cap.measured 'guessed'" in p for p in problems), problems)
         self.assertTrue(any("ui_node_api.node_origin" in p for p in problems), problems)
+        self.assertTrue(any("mercenary_button.index 5005" in p for p in problems), problems)
+        self.assertTrue(any("NoSuchMercenary" in p for p in problems), problems)
+        self.assertTrue(any("noSuchLabelMember" in p for p in problems), problems)
+        self.assertTrue(any("label_members.measured 'assumed'" in p for p in problems), problems)
 
     def test_validator_reports_a_missing_object_as_a_problem(self):
         missing = copy.deepcopy(self.data)
