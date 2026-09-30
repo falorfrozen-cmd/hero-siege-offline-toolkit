@@ -290,9 +290,9 @@ py -3 tools/save_item_keys.py <stash.hss> <inventory_order_13.hss> <herosiege13.
 
 `tools/button_label_check.py` measures, on a game screenshot, whether a
 button's label is drawn centred inside its box, against a button the game
-draws itself as the reference. No member a mod can read says where the game
-draws a node's label, so ForgePact issue #131's live sessions read it from the
-picture. See [its page](docs/tools/button-label-check.md):
+draws itself as the reference. Which member, if any, says where the game draws
+a node's label is not established, so ForgePact issue #131's live sessions
+judge the label from the picture. See [its page](docs/tools/button-label-check.md):
 
 ```powershell
 py -3 tools/button_label_check.py <png> --gui 2560x1440 --box <l,t,r,b> --ref <l,t,r,b>

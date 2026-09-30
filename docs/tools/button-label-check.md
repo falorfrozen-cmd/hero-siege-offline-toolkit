@@ -4,9 +4,13 @@
 centred inside the button's box, on a screenshot of the game. It exists for
 ForgePact #131. In Live 4 the in-game **Move all** button passed every numeric
 check (its box, its size, its sprite read back by name), while the screenshot
-showed its `Move all` label drawn at the box's top-left corner and clipped. No
-member the mod can read says where the game draws a node's `text`, so the
-picture is the only instrument, and this tool reads it.
+showed its `Move all` label drawn at the box's top-left corner and clipped.
+Which member, if any, says where the game draws a node's `text` is not
+established: static reading could not name one, and the research build's
+`stashmoveall probe dump`/`diff`/`lookcopy` look for it live
+(`ForgePact/docs/stash-move-research.md` § Live procedure 5). Until one is
+found, and to confirm any fix, the drawn picture is the instrument, and this
+tool reads it.
 
 Nothing here ships to a player. It is a script under `tools/`, the way
 `stash_tab_counts.py` and `source_index.py` are, and ForgePact never runs or
@@ -70,7 +74,7 @@ button_label_check: the box's label is not centred (exit 1)
 | --- | --- |
 | 0 | the box and the reference are both centred |
 | 1 | the reference is centred and the box is not |
-| exit 2 | the reference is not centred, so the tool proved nothing about the box; or a usage error, an unreadable image, Pillow missing, or an aspect mismatch |
+| 2 | the reference is not centred, so the tool proved nothing about the box; or a usage error, an unreadable image, Pillow missing, or an aspect mismatch |
 
 A live procedure reads the `ref:` line first. A reference that is not centred
 is the instrument failing, never a verdict on the button.

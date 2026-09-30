@@ -144,6 +144,23 @@ class ButtonLabelCheckTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertTrue(self.line(out, "ref:").startswith("ref: not centred"), out)
 
+    def test_a_reference_with_an_off_centre_label_exits_2(self):
+        # The reference draws a label, but off-centre: the tool's own rule is
+        # wrong for this picture, so even a centred box proves nothing.
+        img, draw = self.picture()
+        _label(draw, SORT, width=60, height=12, dx=20)
+        _label(draw, NODE, width=56, height=12)
+        code, out = self.run_tool(img)
+        self.assertEqual(code, 2, out)
+        self.assertTrue(self.line(out, "ref:").startswith("ref: not centred"), out)
+        # And one touching the reference box's edge.
+        img, draw = self.picture()
+        draw.rectangle([SORT[0], SORT[1], SORT[0] + 60, SORT[1] + 11], fill=TEXT)
+        _label(draw, NODE, width=56, height=12)
+        code, out = self.run_tool(img)
+        self.assertEqual(code, 2, out)
+        self.assertTrue(self.line(out, "ref:").startswith("ref: not centred"), out)
+
     def test_an_aspect_mismatch_exits_2(self):
         img, draw = self.picture()
         _label(draw, SORT, width=60, height=12)

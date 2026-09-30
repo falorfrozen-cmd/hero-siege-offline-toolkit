@@ -3,9 +3,10 @@
 
 ForgePact #131's Live 4 passed every numeric check on the Move all button - its
 box, its size, its sprite read back by name - while the screenshot showed its
-`Move all` label drawn at the box's top-left corner and clipped. No member the
-mod can read says where the game draws a node's `text`, so the picture is the
-only instrument. This tool measures it.
+`Move all` label drawn at the box's top-left corner and clipped. Which member,
+if any, says where the game draws a node's `text` is not established (the
+research build's `stashmoveall probe dump`/`diff`/`lookcopy` look for it), so
+the drawn picture is the instrument that judges a fix. This tool measures it.
 
 Given a screenshot, the GUI size (`menulayout`'s header `gui=WxH`) and two
 GUI-unit boxes - `--box`, the button under test, and `--ref`, a button the game
