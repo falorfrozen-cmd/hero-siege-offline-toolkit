@@ -770,6 +770,55 @@ Shout and Berserk add theirs outside it.
 [skill actions, Results](../ForgePact/docs/skill-actions-research.md#results),
 [skill actions, Decision](../ForgePact/docs/skill-actions-research.md#decision)
 
+### 7.5 Skill Haste and All Skills: the stats and where the game reads them
+
+Written for ForgePact#114 (hub #337); the mechanism, labelled claim by claim,
+is [`docs/models/skill-stat-spec.md`](models/skill-stat-spec.md).
+
+- **`ReturnSpecificStat(player, statId, ...)` is the stat dispatcher.** A switch
+  on the stat id sends it to one `Stat*` script; the function fills in its own
+  case table on first run. Ids: **2** `StatAllSkills`, **36** `StatMaxLife`,
+  **37** `StatMaxMana`, **103** `StatSpellHaste`, **106** `StatFasterCastRate`.
+  `StatSpellHaste` and `StatAllSkills` each have exactly one direct caller,
+  `ReturnSpecificStat`. **Static reading.**
+- **Both return a fresh array; element 0 is the total.** Each builds its result
+  with `@@NewGMLArray@@` on every call (**static reading**). On the way out,
+  `ReturnSpecificStat` does more arithmetic with elements 0 to 3 of an array
+  result (**static reading, not fully read**). Skill Haste's usable total stops
+  at 200 somewhere after `StatSpellHaste` returns (**measured**, below).
+- **Skill Haste runs cooldowns down faster.** `Controller_obj`'s Step event walks
+  the active cooldowns and, each step, lowers one's time left by
+  `(1 + rate) × deltaSpd`. For a skill cooldown `rate` = Skill Haste (stat 103) ×
+  0.005; entries of another kind take stat 105 × 0.01 instead, and cooldown id
+  75 takes 0. The talent tooltip, the only other constant-103 read found,
+  scales by the same 0.005. **Static reading.** `GetTalentCooldown`, which sets
+  a cooldown's base time, does not read Skill Haste.
+- **Measured** (ForgePact#114 Live 1, 2026-09-30, Suh, a Samurai with 40 Skill
+  Haste from gear, Blade Barrier's 8 s cooldown cast from code by `TalentUse`):
+  - The step read Skill Haste once per step (60 reads a second) while the
+    cooldown ran, and never while no cooldown ran.
+  - The cooldown ran for 392 and 397 steps with no bonus, 280 with +100, 265
+    with +120, and 238 with +160, +200 and +300. That is base / (1 + total/200)
+    with the total stopped at 200: totals of 240 and 340 took exactly as long as
+    200.
+  - [`hs-game-sdk/curated/skill_stat_measurements.json`](../hs-game-sdk/curated/skill_stat_measurements.json)
+    holds the counts, checked by `tests/test_skill_stat_model.py`.
+- **`ReturnTalentLevel` has no direct caller in this build.** Its body adds the
+  bonuses it reads through `ReturnSpecificStat`, All Skills among them, only when
+  its third argument is true and the allocated level is above 0, with no clamp
+  (**static reading**). Calling it by name with only a talent id raises the
+  runner error "I32 argument is undefined" (**measured**, `skillprobe state`,
+  2026-09-30; the game carried on). Which of the many scripts that pass stat id 2
+  to `ReturnSpecificStat` turn it into a skill's level is **not established**.
+- **`StatAllSkills` can call `ReportClient`.** It compares one of the values its
+  caller passes in against twice a global constant and reports the client when
+  it is larger, inside the script, on the game's own numbers. `ReportClient`
+  builds a state report (sha256, base64) and sends it through the online API
+  (`ApiRequestRegion`, `reportSendPendingMap`). `CheatDetection`, which calls
+  `ReportClient` from `Client_obj`'s Step, checks hashes (gold, experience, the
+  crafting trades, mercenary talents), game speed and items, and reads neither
+  stat. **Static reading.**
+
 ---
 
 ## 8. HUD, Menus and UI Nodes
