@@ -203,6 +203,25 @@ class MeasuredTests(unittest.TestCase):
                 self.assertLess(abs(run["reads"] - predicted) / predicted, self.TOLERANCE,
                                 (run, predicted))
 
+    def test_a1_all_skills_joins_the_level_a_cast_uses(self):
+        values = self.entries["A1"]["values"]
+        before = model.talent_level(values["points"], values["native_all_skills"])
+        after = model.talent_level(values["points"], values["native_all_skills"] + values["bonus"])
+        self.assertEqual((before, after), (29, 48))
+        # For Honor's buff is the level times a fixed vector at both levels,
+        # so the +19 reached the level the cast used, not only the stat.
+        for index in (0, 1):
+            with self.subTest(element=index):
+                per_level_before = values["buff_value_at_0"][index] / float(before)
+                per_level_after = values["buff_value_at_bonus"][index] / float(after)
+                self.assertAlmostEqual(per_level_before, per_level_after, delta=0.01)
+        self.assertEqual(values["buff_value_at_0"][2], values["buff_value_at_bonus"][2])
+
+    def test_a1_no_cheat_report_and_a_clean_save(self):
+        values = self.entries["A1"]["values"]
+        self.assertEqual(values["report_client_calls"], 0)
+        self.assertEqual(values["save_fields_changed"], ["playtime", "shop.ini class_time8"])
+
     def test_s2_past_200_the_uncapped_formula_is_wrong(self):
         for run in self.entries["S2"]["values"]["runs"]:
             if run["total"] <= model.SKILL_HASTE_CAP:

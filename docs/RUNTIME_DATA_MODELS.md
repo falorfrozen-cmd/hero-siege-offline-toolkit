@@ -810,6 +810,12 @@ is [`docs/models/skill-stat-spec.md`](models/skill-stat-spec.md).
   runner error "I32 argument is undefined" (**measured**, `skillprobe state`,
   2026-09-30; the game carried on). Which of the many scripts that pass stat id 2
   to `ReturnSpecificStat` turn it into a skill's level is **not established**.
+- **All Skills joins the level a cast uses** (**measured**, ForgePact#114 Live 1,
+  2026-10-01, Suh). For Honor (talent 142, one point) adds buff type 42, whose
+  `buffValue` was [137.8, 72.5, 0] with the character's own All Skills total of
+  28, and [228, 120, 0] with 19 more added through `StatAllSkills`: the level
+  (29, then 48) times [4.75, 2.5]. `ReportClient` was not called, and the save
+  kept every field but `playtime`.
 - **`StatAllSkills` can call `ReportClient`.** It compares one of the values its
   caller passes in against twice a global constant and reports the client when
   it is larger, inside the script, on the game's own numbers. `ReportClient`

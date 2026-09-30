@@ -60,7 +60,8 @@ Every claim carries one of four labels, and a source:
   - A direct-call scan of the Sep-17 build finds no caller of `ReturnTalentLevel`
     at all. Many scripts pass stat id 2 to `ReturnSpecificStat` themselves (the
     cast and class-talent scripts among them), so the level a cast uses is built
-    elsewhere, and whether that path follows the same rule is not established.
+    elsewhere. Live 1 measured that it does include All Skills (see Measured);
+    whether it too leaves a talent with no points at 0 is not established.
   - Allocating points is what puts a skill on the bar at all; All Skills allocates
     none, so it cannot unlock a skill.
 - **Both scripts return an array whose element 0 is the total.** `StatSpellHaste`
@@ -104,6 +105,20 @@ the range the game's own items give:
   - **Calling `ReturnTalentLevel` by name** with only a talent id raised the runner
     error "I32 argument is undefined" 17 times (`skillprobe state`); the game
     carried on.
+- **ForgePact#114 Live 1, session 2, 2026-10-01** (A1 in the same file).
+  - **Method.** For Honor (talent 142, one point allocated) was cast from code with
+    `statadd allskills` at 0 and then at +19, and the buff it adds (buff type 42)
+    was read, its `buffValue`.
+  - **The stat.** The hook's first-call line read the character's own All Skills
+    total, 28, and returned 47.
+  - **The level.** The buff was [137.8, 72.5, 0] at 0 and [228, 120, 0] at +19.
+    Both are the level times [4.75, 2.5], at level 29 (1 point + 28) and 48
+    (29 + 19). So All Skills joins the level a cast uses, and the +19 reached it.
+  - **No cheat report.** `ReportClient` was never called, on `skillprobe`'s row with
+    its controls climbing.
+  - **The save.** After a clean close it differed from the copy taken before the
+    session only in `playtime` and the class's time (`shop.ini`
+    `class_time8`).
 
 ## Our code
 
@@ -127,6 +142,8 @@ The test file expresses both as transforms of the stat total, and
   covers skill cooldowns only.
 - **`deltaSpd`'s value** in a given frame. The model counts in steps of 1 and takes
   `deltaSpd` as a parameter.
+- **Which script builds the level a cast uses.** Live 1 measured that it includes
+  All Skills; the script was not identified.
 - **Where the Skill Haste cap is applied**, and whether its value comes from the
   stat array (Movement Speed's array, `[305.1, 0, 0, 600]`, suggests element 3 is
   a limit).

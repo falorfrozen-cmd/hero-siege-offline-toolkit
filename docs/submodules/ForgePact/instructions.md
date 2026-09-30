@@ -2731,6 +2731,13 @@ with a hash manifest.
       - **Skill Haste.** First-call lines `40 -> 140` and `40 -> 340`. Steps: 392 and 397 with no bonus, 280 (+100), 265 (+120), 238 (+160, total 200), 238 (+200), 238 (+300).
       - **Interrupted.** At 23:57 another tool closed the game through AFK FARM's `game_session.py close` (a clean exit) and relaunched it for its own work, so the All Skills and save checks ran in a second session (below).
       - **Found on the way.** `ReturnTalentLevel` has no direct caller in this build, and calling it by name with only an id raises "I32 argument is undefined" (`skillprobe state`'s level lines); the game carried on.
+    - **Live 1, session 2 (2026-10-01, dev build `42FD7566...`, the same character):**
+      - **All Skills.** For Honor (142, one point) cast from code at 0 and at +19. First-call line `statadd StatAllSkills: first boosted call 28 -> 47`. Its buff (type 42) read `buffValue=[137.8,72.5,0]` at 0 and `[228,120,0]` at +19 (`skillprobe state bind=id:<buff>.buffValue`): the level times [4.75, 2.5], at 29 (1 point + 28 from gear) and 48.
+      - **Blade Barrier** carries no level-dependent variable on its object: only its timers and orbit changed between casts at 0, +19 and 0.
+      - **`ReportClient`:** 0 calls through both sessions, on `skillprobe`'s row with its controls climbing.
+      - **Save.** After `game_session.py close` (clean exit), Suh's save differed from the copy taken before the session only in `playtime`, and `shop.ini` only in `class_time8`; talents, sub-talents, inventory and quests were equal once their JSON and quest order were normalised.
+      - **Restored.** ForgePact 2.0.0's DLL (7AD9AF2457AA...) is back and verified.
+      - Capture: workorder `forgepact-114-skill-haste-all-skills-live-1.md`.
 
 ---
 
