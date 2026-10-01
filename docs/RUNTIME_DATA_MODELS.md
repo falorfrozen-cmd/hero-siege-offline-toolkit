@@ -536,6 +536,7 @@ switching Holy Form off does call it.
 |---|---|---|
 | 1 | Berserk | 720 per hit, stacking to 8; a new instance each time it reappears |
 | 9 | Defensive Shout | 14400, re-added in full about 180 times over 89 frames |
+| 21 | Master Mechanic (Marksman) | 1500 (25 s at 60 fps), `host` = the player's `id`; measured 2026-10-01 on a test copy, ForgePact #122 |
 | 22 | Agility | 3600 |
 | 86 | Martyr (White Mage passive during life drain) | about 445–563 |
 | 104 | Counter | 1036.8; held constant with Give No Quarter |
@@ -590,7 +591,8 @@ switching Holy Form off does call it.
   Healing Zone, 358 Lunar Orbit, 283 Crematus, 301 Counter, 377 Submerged Knives,
   430 Maelstrom of Frost, 224 Meteor Storm, 134 Bushido, 364/365 Holy/Unholy
   Form, 137 Blade Barrier, 334 Blizzard, 6 Defensive Shout, 18 Berserk, 307 Last
-  Stand, 45 Agility. Whether they survive a game build is not known.
+  Stand, 45 Agility, 49 Beacon, 54 Master Mechanic. Whether they survive a game
+  build is not known.
 
 [toggle skills, Toggle skill table](../ForgePact/docs/toggle-skills-research.md#toggle-skill-table),
 [After session 6](../ForgePact/docs/toggle-skills-research.md#after-session-6),
@@ -652,6 +654,16 @@ Shout and Berserk add theirs outside it.
   Pickup Truck 576, Dissipating Tornado 432. Relic companions (`Honey_Bee_obj`,
   `Minisect_obj`, `Karp_Head_obj`, `Zeppelin_obj`) sit under the ability parent at
   a constant -1. **Measured.**
+- The Marksman's Beacon (`Marksman_Beacon_obj`, talent 49) is a timed effect:
+  its own `destroyTimer` started at **516** (8.6 s at 60 fps) on each of two
+  clean casts and fell about one per frame. `instance_number` stayed 1 in both
+  cleared windows and a recast replaced the live beacon (the fresh timer back
+  at 516), so it is single instance; ownership is unreadable (no `isMyClient`),
+  and its parent is `Player_Ability_Parent_obj`, not the sentry parent. Its
+  talent reads `abilityDuration=0`, `abilityCooldown=10` and tags `[15,18,10]`
+  — the tag the turrets, totems and hydra share. **Measured 2026-10-01**, on a
+  test copy of the class (ForgePact #122).
+  [ForgePact #122](../ForgePact/docs/toggle-skills-research.md#issue-122-2026-10-01-the-marksmans-beacon)
 - Mana Orb (talent 253) is a **timed effect, not a toggle**: its object is
   `White_Mage_Mana_Orb_obj`, and `skillstate`'s `effect=` reader
   (`instance_number` of that object, resolved by name through
