@@ -562,7 +562,7 @@ Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
                    submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
-                   lanes, join, items: [{ id, files, checks, after, shares, owner, default, reversible }, ...],
+                   lanes, join, items: [{ id, files, checks, after, shares, owner, default, reversible, build_reads }, ...],
                    streaming, answered, reviewScopes,
                    maxParallel /* DEFAULT_MAX_PARALLEL, 4; 1-16 */, maxAgents, tokenCeiling, itemAttempts, reviewPassCap } })
 ```
