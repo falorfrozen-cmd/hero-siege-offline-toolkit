@@ -1058,6 +1058,15 @@ commented on by Claude) goes red there too, with its reason. Each run
 uploads its full result as the `claude-execution-output` artifact, which is
 where per-model token counts and the names of any denied tools can be read.
 
+A comment on the pull request is not taken as proof of a review: on ForgePact
+#141 the model skipped the command's agents, read the diff itself in 20 seconds
+and posted "No issues found". So `claude_args` sets `--model opus` (an alias, the latest Opus), the
+notes say the agents are not optional, `cat`/`head`/`tail`/`wc`/`sed -n` are
+allowed, and "Fail if the review skipped the command's agents" fails a run
+that launched fewer than seven agents, finished in under a minute or admitted
+skipping, printing the agents it did launch. The job summary carries the
+run's numbers and last message and points at the artifact (hub #366).
+
 This lives in its own section rather than on the "CI / Pipeline Availability"
 line above because that line is rewritten whenever a release workflow changes,
 and every such rewrite conflicted with it.
