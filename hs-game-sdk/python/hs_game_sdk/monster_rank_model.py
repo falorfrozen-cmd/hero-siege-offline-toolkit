@@ -18,10 +18,11 @@ the checks, against `hs-game-sdk/curated/monster_rank_measurements.json`.
 - Whether a boss built at rank 3 or 4 follows the same rows is asked once per
   dimension in `HYPOTHESES`, so a session that measured one dimension cannot
   answer the others. On one Karp King raised to rank 4, Live procedure 1b
-  measured XP on the table's row (x6.2505 against x6.25) and damage above it
-  (x2.0968 against x1.90). Health stays open: two sessions read x5.65 and
-  x4.73 on the same boss, each with a different ForgePact affix top-up built
-  into it and no health control.
+  measured XP on the table's row (x6.2505 against x6.25) and damage at
+  x2.0968 against x1.90; whether a boss's damage follows the row is not
+  established (one spawn, its affixes unmatched by the control). Health
+  stays open: two sessions read x5.65 and x4.73 on the same boss, each with
+  a different ForgePact affix top-up built into it and no health control.
 
 This module models the game only. ForgePact's Bosses control (ForgePact#44),
 which writes rank 3 or 4 onto a rank-1 boss, is that mod's own code and lives
@@ -95,12 +96,15 @@ HYPOTHESES: Dict[str, Optional[bool]] = {
     # rank 3 and x5.31 at rank 4, MK17). So these are the feature's effect,
     # not the game's rank scaling for a boss alone.
     "boss_hp_follows_rank_table": None,
-    # False: Live 1b (`ancient-damage` pass) read `damage`, proven by the
+    # None: Live 1b (`ancient-damage` pass) read `damage`, proven by the
     # identity control (MK15, x1.40 / x2.00 on an ordinary monster), at
-    # x2.0968 its rank-1 value (217 -> 455; MK21), 10.4% above MK1's x1.90 and
-    # so outside the control's 10%. One boss, one spawn; whether the extra is
-    # the boss, its different affixes or spread is not established.
-    "boss_damage_follows_rank_table": False,
+    # x2.0968 its rank-1 value (217 -> 455; MK21), 10.4% above MK1's x1.90,
+    # 0.4% outside the control's 10%. Not established: the control itself
+    # read 8.4% below the table at rank 3 and 5.5% above it at rank 4, the
+    # boss's ForgePact affix top-up (12, 20, 31) differed from the control's
+    # rank-4 one (5, 12, 18), and it is one spawn. So whether a boss's damage
+    # follows the row stays open.
+    "boss_damage_follows_rank_table": None,
     # True: Live 1b (`ancient-xp` pass) read `killExperience`, proven by the
     # identity control (MK16), at x6.2505 its rank-1 value (4,950 -> 30,940;
     # MK22) against MK1's exact x6.25.
@@ -143,8 +147,8 @@ def scaled(rank: int, base_hp: Number, base_damage: Number, base_xp: Number) -> 
 
     Rank 1 returns the bases unchanged. For a boss each result is a prediction
     only while its own `HYPOTHESES["boss_<hp|damage|xp>_follows_rank_table"]`
-    is true: XP only, on the one boss measured; damage measured above its
-    row, and health is open (`None`).
+    is true: XP only, on the one boss measured. Damage (one read at x2.0968
+    against the row's x1.90, affixes unmatched) and health are open (`None`).
     """
     rank_row = row(rank)
     bases = (Fraction(base_hp), Fraction(base_damage), Fraction(base_xp))
