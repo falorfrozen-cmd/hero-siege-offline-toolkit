@@ -852,6 +852,10 @@ static void TestGroundRelic() {
         return read;
     };
 
+    // A ground instance with no `itemInstance` at all stops at the first
+    // stage, before any class is looked for.
+    CHECK(refuse(FakePlayerRef(), nullptr).stage == GroundRelicStage::NoItemInstance);
+
     // An ordinary unique glove (class 4) and a material stack (class 14) whose
     // `o` would read as maxed: the class says not a relic.
     const RValue glove = OrdinaryGloveInstance();
