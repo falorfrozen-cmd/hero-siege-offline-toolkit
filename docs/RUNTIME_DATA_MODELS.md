@@ -1589,9 +1589,17 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
 - With it, `DropItemAngelicChance` runs once per roll, always inside `DropItem`,
   with `self` = the dying monster and four arguments (two position reals, the
   chance, undefined). It returned undefined on all 374 misses; a hit was not
-  observed. The chance read 1195 or 1526 even with 3000 supplied by the buff, so
-  its composition is not established. One roll reads about 8 unique definitions
-  through `GetUniqueRepoStruct`. **Measured 2026-09-23.**
+  observed in that session. The chance read 1195 or 1526 even with 3000 supplied
+  by the buff, so its composition is not established. One roll reads about 8
+  unique definitions through `GetUniqueRepoStruct`. **Measured 2026-09-23.**
+- Hits were observed in Live 1 (#74), with the roll's chance argument raised by
+  a research lever, not at the natural chance: 98 hits over 108 rolls, each
+  detected as a `CreateDefaultParams` call while the roll ran (inline detour,
+  `cdpCalls` above zero as its positive control), each followed by the game's
+  own Angelic or Unholy item on the ground. A hit at the natural chance has
+  still not been observed. ForgePact's validated pool read 47 candidates and 11
+  rejected once the two signature items were out of it. **Measured (Live 1,
+  2026-10-02, research dll 4534c0ff…).**
 - Unique definition records have the shape `{w, j, b, a, c}` (`c` = 1 marks the
   unique repository, `j` the weapon subtype); there is no Angelic flag, and base
   items with flag 40 set are skipped. **Headhunter and Tyrant's Crown have no
@@ -1621,7 +1629,11 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   `Loot_Manager_obj` it was **not observed** (2026-09-23:
   `variable_instance_exists` answered false on the instance found by name; no
   positive control on that instance was recorded); which scope holds it has
-  not been established. **Static reading (2026-10-02, issue #74).**
+  not been established. **Static reading (2026-10-02, issue #74).** Neither
+  the `lootListUnique` global (`variable_global_exists` false) nor a
+  `lootListUnique` instance variable on `Loot_Manager_obj`
+  (`variable_instance_exists` false) answered, so the scope is still not
+  identified. **Measured (Live 1, 2026-10-02, research dll 4534c0ff…).**
 - **The die.** The rate comes from a zero-argument method on a member of the
   picked definition, scaled by one global value read when the roll starts;
   neither is identified (`droprate.base` is the plausible reading). The roll
@@ -1652,6 +1664,7 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   **Measured.**
 
 [angelic roll, Results](../ForgePact/docs/angelic-roll-hook-research.md#results),
+[Session 2 (#74) Results](../ForgePact/docs/angelic-roll-hook-research.md#results-1),
 [Decision](../ForgePact/docs/angelic-roll-hook-research.md#decision),
 [angelic drop, the game's own mechanism](../ForgePact/docs/angelic-drop-research.md#oyunun-kendi-mekanizması-statik-okuma-canlı-ölçülen-yalnızca-buff-yokken-zarın-hiç-atılmaması),
 [ForgePact guide, Known Limitations](submodules/ForgePact/instructions.md#known-limitations--gaps)
