@@ -171,7 +171,8 @@ harness) and `test_miner_helmet_panel.py`. Evidence and design:
 
 **Mining Ore Extra Rolls** (issue #36, notes 2.2.0, off by default; **verified in
 play on the shipped build 2026-10-02**, after the research build on 2026-09-28) is
-the multiplier's child row: `drops.mining_ore_rolls`
+a separate option beside Mining Ore Multiplier (the two work independently and
+multiply when both are on): `drops.mining_ore_rolls`
 (integer 1-10, default 1, its own switch like every `drops` row) sends the player
 command `miningrolls N`, in `kPlayerCommands` and dispatched as a standalone early
 return right after `miningore` (the `else if` chain's C1061 limit). The loop lives in
