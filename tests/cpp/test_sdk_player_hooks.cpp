@@ -56,16 +56,23 @@ public:
     FakeStruct instanceFields;
     std::map<std::string, RValue> globals;
     std::map<std::string, PVOID> routines;
+    // Instances other than the one instanceFields stands for, by the id a
+    // VALUE_REF carries: a reference whose id is listed here reads these
+    // fields through `variable_instance_*`, the way the runner follows a
+    // reference to its own target. Any other value reads instanceFields.
+    std::map<double, FakeStruct> refInstances;
 
     RValue CallBuiltin(std::string_view name, std::vector<RValue> args) override {
         const std::string key = args.size() >= 2 ? args[1].m_String : std::string();
 
         if (name == "variable_instance_exists") {
-            return RValue(instanceFields.count(key) > 0);
+            const FakeStruct& fields = InstanceOf(args.empty() ? RValue() : args[0]);
+            return RValue(fields.count(key) > 0);
         }
         if (name == "variable_instance_get") {
-            auto it = instanceFields.find(key);
-            return it == instanceFields.end() ? RValue() : it->second;
+            const FakeStruct& fields = InstanceOf(args.empty() ? RValue() : args[0]);
+            auto it = fields.find(key);
+            return it == fields.end() ? RValue() : it->second;
         }
         if (name == "variable_struct_exists") {
             const FakeStruct* fields = StructOf(args.empty() ? RValue() : args[0]);
@@ -168,6 +175,14 @@ private:
 
     static const FakeStruct* StructOf(const RValue& value) {
         return value.m_Struct ? value.m_Struct.get() : nullptr;
+    }
+
+    const FakeStruct& InstanceOf(const RValue& value) const {
+        if (value.m_Kind == YYTK::VALUE_REF) {
+            auto it = refInstances.find(value.m_Real);
+            if (it != refInstances.end()) return it->second;
+        }
+        return instanceFields;
     }
 };
 
@@ -729,15 +744,24 @@ static void TestRelicTab() {
 
 // ---------------------------------------------------------------------------
 // ForgePact#124: a relic lying on the ground. A dropped item is a
-// Loot_Ground_obj instance whose own variables carry the item class
-// (`itemType`) and the definition (`itemDefinitionStruct`, `b` the id) - a
-// static reading of the ground item's Create, not yet confirmed live. The
-// fields are filled as the instance's variables, and the instance handed over
-// both as a struct-shaped instance and as the reference this runner produces.
+// Loot_Ground_obj instance whose `itemInstance` variable holds the item
+// instance, and that item instance carries the item class (`itemType`) and the
+// definition (`itemDefinitionStruct`, `b` the id) - a static reading of the
+// ground item's Create, not yet confirmed live. The whole item struct is
+// filled under the ground instance's `itemInstance`, and the ground instance
+// handed over both as a struct-shaped instance and as the reference this
+// runner produces.
 // ---------------------------------------------------------------------------
 
 static void FillGroundItem(ControlledYYTK& yytk, const RValue& item) {
-    for (const auto& [name, value] : *item.m_Struct) yytk.instanceFields[name] = value;
+    yytk.instanceFields["itemInstance"] = item;
+}
+
+static RValue FakeRef(double id) {
+    RValue ref;
+    ref.m_Kind = YYTK::VALUE_REF;
+    ref.m_Real = id;
+    return ref;
 }
 
 static void TestGroundRelic() {
@@ -770,6 +794,48 @@ static void TestGroundRelic() {
         CHECK(ok);
         CHECK(read.stage == GroundRelicStage::Ok);
         CHECK_EQ(read.relicId, 42);
+    }
+
+    // 2b. The item instance, and then its definition too, as a VALUE_REF the
+    //     runner may hand back for a nested value: read through
+    //     `variable_instance_*`, the same relic 42.
+    {
+        ControlledYYTK yytk;
+        yytk.instanceFields["itemInstance"] = FakeRef(200001.0);
+        yytk.refInstances[200001.0] = *RelicInstance(42, 1, 0).m_Struct;
+        GroundRelicRead read;
+        const bool ok = ReadGroundRelic(&yytk, FakePlayerRef(), read);
+        CHECK(ok);
+        CHECK(read.stage == GroundRelicStage::Ok);
+        CHECK_EQ(read.relicId, 42);
+
+        yytk.refInstances[200001.0]["itemDefinitionStruct"] = FakeRef(200002.0);
+        yytk.refInstances[200002.0] = FakeStruct{ { "b", RValue(42) }, { "c", RValue(0) }, { "o", RValue(1) } };
+        GroundRelicRead refDefinition;
+        const bool refOk = ReadGroundRelic(&yytk, FakePlayerRef(), refDefinition);
+        std::printf("C++: ground_relic_nested_reference read=%d id=%d stage=%s\n", refOk ? 1 : 0,
+                    refDefinition.relicId, GroundRelicStageName(refDefinition.stage));
+        CHECK(refOk);
+        CHECK(refDefinition.stage == GroundRelicStage::Ok);
+        CHECK_EQ(refDefinition.relicId, 42);
+        CHECK(FormatGroundRelicRead(refDefinition) == "stage=ok class=16 id=42");
+    }
+
+    // 2c. Negative control for the nesting: the relic's fields copied flat
+    //     onto the ground instance, with no `itemInstance`, identify nothing.
+    //     A top-level `itemType` is never read.
+    {
+        ControlledYYTK yytk;
+        const RValue flat = RelicInstance(42, 1, 0);
+        for (const auto& [name, value] : *flat.m_Struct) yytk.instanceFields[name] = value;
+        GroundRelicRead read;
+        const bool ok = ReadGroundRelic(&yytk, FakePlayerRef(), read);
+        std::printf("C++: ground_relic_flat read=%d id=%d stage=%s\n", ok ? 1 : 0, read.relicId,
+                    GroundRelicStageName(read.stage));
+        CHECK(!ok);
+        CHECK(read.stage == GroundRelicStage::NoItemInstance);
+        CHECK_EQ(read.itemClass, -1);
+        CHECK_EQ(read.relicId, -1);
     }
 
     // 3. Refusals, each naming the stage it stopped at. A refusal also clears
