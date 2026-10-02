@@ -1710,11 +1710,14 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   sub and b it hands to `GetUniqueRepoStruct`, otherwise it draws again. The
   three builtin names come from the same name records (`FindWrites` and
   `FindPointers` on their pointer globals: 0 hits each). So
-  `Controller_obj.lootListUnique` is an array of six `ds_list` ids and the
-  Angelic roll draws from the `ds_list` at index 5, whose entries are arrays
-  of three numbers. **Static reading (2026-10-02, issue #74, replan 2)**; the
-  name and the outer length of 6 are confirmed by Live 1 (below). **Not
-  established**: what the other five elements hold or are keyed by (the roll
+  `Controller_obj.lootListUnique` is an array of length 6 (measured, Live 1)
+  whose element 5 the Angelic roll uses as a `ds_list` (static reading; a ds
+  container reads as `ref ds_list` on this runner, §5.4, so the element is not
+  expected to arrive as a number); what elements 0-4 hold is not established.
+  The entries of element 5 are arrays of three numbers. **Static reading
+  (2026-10-02, issue #74, replan 2)**; the name and the outer length of 6 are
+  confirmed by Live 1 (below). **Not established**: what the other five
+  elements hold or are keyed by (the roll
   reads only `[5]`; `lootListNormal`, outer length 5 on the same instance, is
   not read by this roll), the sub-list's size (the validated pool's 47 + 11 =
   58 definitions is the order of magnitude to expect, not a prediction), and
