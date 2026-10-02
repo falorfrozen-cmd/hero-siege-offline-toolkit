@@ -141,9 +141,11 @@ inferred, not checked on screen (`docs/RUNTIME_DATA_MODELS.md` § 13.7).
   King raised to rank 4 at ×5.65 (MK7) and ×4.73 (MK20), each with a different
   affix top-up built into the same health and no health control, so
   `HYPOTHESES["boss_hp_follows_rank_table"]` stays `None`.
-- **Why a boss's damage rose past the table's row.** MK21's ×2.0968 is one boss,
-  one spawn, with affixes other than the control's; whether the extra is the
-  boss's own scaling, an affix's or one sample's spread is not established.
+- **Whether a boss's damage follows the rank table.** MK21's ×2.0968 is one boss,
+  one spawn, with affixes other than the control's, 0.4% outside a window the
+  control itself spent 8.4% of; whether the gap is the boss's own scaling, an
+  affix's or one sample's spread is not established, so
+  `HYPOTHESES["boss_damage_follows_rank_table"]` stays `None`.
 - **A boss at rank 3, and every boss but the Karp King,** for damage, XP and the
   drop rank: not measured. Nor MK2's protected drop values on a boss (the probe's
   unproven reads of `dCommonChance` and `dCommonDropMult` stayed 58 and 70 at
@@ -193,8 +195,9 @@ A pure function of numbers, with exact fractions
   with the rank table: `boss_hp_follows_rank_table`,
   `boss_damage_follows_rank_table`, `boss_xp_follows_rank_table` and
   `boss_drop_rank_reaches_dropitem`. Health and damage are `None`, not
-  established (MK7, MK20 and MK21 are confounded by the Bosses control's 3-affix
-  top-up); XP is `True` (MK22) and the drop rank `True` (MK23). Each becomes a bool
+  established (MK7 and MK20 are confounded by the 3-affix top-up; MK21 by an
+  unmatched top-up and its control's own spread); XP `True` (MK22) and the drop
+  rank `True` (MK23). Each becomes a bool
   only from a measured row naming that dimension and a boss object, with its ratio
   to the boss's rank-1 self, and either nothing else changed on the boss or the
   row names the identity control that matched the top-up (`controlled_by`);
