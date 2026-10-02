@@ -36,11 +36,12 @@ inferred, not checked on screen (`docs/RUNTIME_DATA_MODELS.md` § 13.7).
   and exit state identical, the health bar not yet made), so this item is measured
   as well as read. Its body was not read in full: which values it scales, and by
   how much, is not established from the reading (see Not established).
-- **The kill pays out through `DropItem` with the rank as its first argument.**
-  `Enemy_Parent_obj`'s Destroy event calls `DropItem` only when the monster's
-  protected HP is 0 or less (`docs/RUNTIME_DATA_MODELS.md` § 13.1). Drops read
-  `enemyRarity` off the dying enemy (§ 13.5), and `DropItem`'s first argument is the
-  same number (§ 13.7, measured).
+- **An ordinary monster's kill pays out through `DropItem` with the rank as its
+  first argument.** `Enemy_Parent_obj`'s Destroy event calls `DropItem` only when
+  the monster's protected HP is 0 or less (`docs/RUNTIME_DATA_MODELS.md` § 13.1).
+  Drops read `enemyRarity` off the dying enemy (§ 13.5), and `DropItem`'s first
+  argument is the same number (§ 13.7, measured on ordinary monsters). For a
+  boss it is not established (see Not established, MK12).
 - **Which objects are bosses.** `hs-game-sdk`'s object parent table gives
   `Enemy_Child_Boss_obj` (index 1407) 41 descendants, among them `Karp_King_obj`
   (2368), `Damien_obj` (1115), `Uber_Damien_obj` (4945), `Uber_Anubis_obj` (4938)
@@ -77,16 +78,44 @@ inferred, not checked on screen (`docs/RUNTIME_DATA_MODELS.md` § 13.7).
   in MK1, and its base, its rank and how it was read are unknown. It is why the
   sliders leave bosses alone, and it is not evidence either way about the rank
   table.
+- **ForgePact#44's Live procedure 1, 2026-10-02** (MK6-MK14; Nightmare, Outskirts
+  of Inoya, zone level 170; each boss spawned by `instance_create_depth` with the
+  Bosses control set, read with the research build's `bossprobe`, killed by
+  writing its protected health to 0; the session's record is
+  `ForgePact/docs/boss-rarity-research.md` § "Live procedure 1"):
+  - **MK6, a boss's health at rank 1**: `Karp_King_obj` 44,625,000, the same on two
+    spawns, read through the protected-store getter the probe's own control proved.
+  - **MK7, a boss's health at rank 4**: the same boss raised to rank 4 by the
+    Bosses control had 252,242,812, ×5.65 its rank-1 health (5.6525). MK1's rank-4
+    row is ×4.23, so this boss rose 1.34 times as far as the ordinary monsters'
+    median: on health, **a boss does not follow the rank table**, and
+    `HYPOTHESES["boss_hp_follows_rank_table"]` is `False`. One boss, one kill, one
+    zone. It fits MK5 (a report above every health row) without confirming it.
+  - **MK8, the rank written held through the setup**: at the exit of
+    `EnemyRaritySettings` the rank the control wrote at its entry was still 3 or 4
+    on `Karp_King_obj`, `Damien_obj`, `Uber_Damien_obj` and `Uber_Anubis_obj`. This
+    is a readback of our own write, not something the game built.
+  - **MK9, three more rank-4 bosses' health, no rank-1 base**: `Damien_obj`
+    159,906,250, `Uber_Damien_obj` 1,306,210,937, `Uber_Anubis_obj` 4,451,343,750.
+  - **MK14, the drop rank instrument's control**: an ordinary
+    `Skeleton_Mage_Fire_obj` the sliders raised to rank 4 died with `DropItem`'s
+    first argument 4, as MK2 says.
 
 ## Not established
 
-- **Whether a boss follows the rank table.** Whether a boss built at rank 3 or 4
-  takes MK1's health, damage and XP multipliers and MK2's drop values, or something
-  of its own, is Live procedure 1's question for ForgePact#44. The model carries it
-  as `HYPOTHESES["boss_follows_rank_table"]`, `None` until a measured row about a
-  boss is in the curated file; the `live1-record` step sets it from that session.
-  The panel text, the README and the release notes claim only what that session
-  measured.
+- **Whether a boss follows the rank table in damage, XP and drop rank.** Whether a
+  boss built at rank 3 or 4 takes MK1's damage and XP multipliers and MK2's drop
+  values is still open: Live procedure 1 measured health only (above). The model
+  carries one hypothesis per dimension, so the health answer cannot be read as the
+  others': `HYPOTHESES["boss_damage_follows_rank_table"]` (MK10: the probe's only
+  damage-named variable was an unproven key read), `boss_xp_follows_rank_table`
+  (MK11: the same for `killExperience` and `experience`) and
+  `boss_drop_rank_reaches_dropitem` (MK12: no `DropItem` line at a rank-1 boss's
+  traced death, so no anchor; the one rank-3 boss line, first argument 3, is
+  uncontrolled) stay `None`. MK13, the drops per kill, was not observed: the two
+  traced deaths that mattered dropped nothing at all. ForgePact#44's Live
+  procedure 1b is the next session for these. The panel text, the README and the
+  release notes claim only what was measured.
 - **What `forceRarity` does.** Enemies carry a `forceRarity` variable beside
   `enemyRarity` (ForgePact's research probes read and write it); what in the game
   reads it, and when, is not known.
@@ -126,8 +155,14 @@ A pure function of numbers, with exact fractions
   whole rank 1-4.
 - `scaled(rank, base_hp, base_damage, base_xp)`: a rank-1 monster's health, damage
   and XP taken to `rank`. Rank 1 returns the bases unchanged.
-- `HYPOTHESES`: one entry, `boss_follows_rank_table`, `None` (not established)
-  until measured.
+- `HYPOTHESES`: four entries, one per dimension a boss might or might not share
+  with the rank table: `boss_hp_follows_rank_table` (`False`, MK7),
+  `boss_damage_follows_rank_table`, `boss_xp_follows_rank_table` and
+  `boss_drop_rank_reaches_dropitem` (`None`, not established). Each becomes a bool
+  only from a measured row naming that dimension and a boss object, with its ratio
+  to the boss's rank-1 self; within 5% of the table's ratio follows it.
+- `BOSS_PARENT` and `boss_family()`: `Enemy_Child_Boss_obj` and the names of its
+  descendants in `hs-game-sdk`'s parent table, the objects a boss row may name.
 
 Nothing draws a random number, so the kill mix (MK4) and the drop table (MK3) are
 recorded but not modelled.

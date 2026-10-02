@@ -1376,8 +1376,10 @@ All **measured** (2026-09-10/11).
   ForgePact README § "Tyrant's Crown"). Bosses, the `Enemy_Child_Boss_obj`
   family, descend from `Enemy_Parent_obj` and so take the same alarm; that the
   rarity sliders raised an Anubis boss's health about ninefold (a player report
-  against ForgePact 1.4.1) shows they reach this hook, which ForgePact has not
-  yet traced itself. The game's body of the script was not read: its call sites
+  against ForgePact 1.4.1) shows they reach this hook, and ForgePact traced it
+  itself on 2026-10-02: `Karp_King_obj`, `Damien_obj`, `Uber_Damien_obj` and
+  `Uber_Anubis_obj` each entered and left it (**Measured**; § 13.7, "Bosses at
+  a forced rank"). The game's body of the script was not read: its call sites
   sit in a region the decompiler refuses, so whether a boss takes a branch of
   its own there is **not established**.
   [boss rarity, Static reading](../ForgePact/docs/boss-rarity-research.md#static-reading)
@@ -1746,6 +1748,20 @@ From AFK FARM's 6,471 recorded packets and 214 capture sessions, 2026-09-17 to 0
   - protected health, damage and XP.
 
   So AFK FARM's town builds a bestiary of real monsters from them.
+- **Bosses at a forced rank.** A boss is an instance whose object descends from `Enemy_Child_Boss_obj`. None is in AFK FARM's packets; these rows are ForgePact's Bosses control (issue #44) writing the rank at the entry of `EnemyRaritySettings`, from Live procedure 1, 2026-10-02 (Nightmare, Outskirts of Inoya, zone level 170; one spawn and one kill per row; [boss rarity, Live procedure 1](../ForgePact/docs/boss-rarity-research.md#live-procedure-1)). Health was read through the protected-store getter the probe's own control proved. Damage and XP were read only through unproven keys, so they are **not observed**, not "unchanged".
+
+  | Boss | Rank written | Health | Health ratio to its rank-1 self | Damage, XP | `DropItem` rank argument | Drops per kill (`itemdrops.jsonl` lines) |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | `Karp_King_obj` | none (rank 1) | 44,625,000 (two spawns) | 1 | not observed | no line at its traced death | 0 traced; 20 on an untraced kill |
+  | `Karp_King_obj` | 4 | 252,242,812 | **×5.65** (5.6525) | not observed | no line at its traced death | 0 (traced) |
+  | `Karp_King_obj` | 3 | not read | — | not observed | 3 (one line, no rank-1 anchor) | 20 (traced) |
+  | `Damien_obj` | 4 | 159,906,250 | no rank-1 base | not observed | not traced | not counted |
+  | `Uber_Damien_obj` | 4 | 1,306,210,937 | no rank-1 base | not observed | not traced | not counted |
+  | `Uber_Anubis_obj` | 4 | 4,451,343,750 | no rank-1 base | not observed | not traced | not counted |
+
+  - **Health. Measured 2026-10-02.** A Karp King built at rank 4 had ×5.65 its rank-1 health, 1.34 times the ordinary monsters' rank-4 median (×4.23): on health a boss does not follow the rank table above (one boss, one zone). `hs_game_sdk.monster_rank_model`'s `boss_hp_follows_rank_table` is `False`; MK6, MK7 and MK9 in `hs-game-sdk/curated/monster_rank_measurements.json`.
+  - **The rank written holds through the setup. Measured 2026-10-02** (a readback of the hook's own write): each of the five raised bosses entered `EnemyRaritySettings` at `enemyRarity` 1 and still carried 3 or 4 at its exit. The Monster Rarity sliders at 100% ancient left a Karp King at 1.
+  - **Drop rank and drops: not observed.** With `droptrace` armed, the rank-1 and rank-4 Karp Kings' deaths printed no `DropItem` line and dropped nothing at all, while an untraced rank-1 kill and the traced rank-3 kill dropped 20 lines each; so there is no rank-1 anchor and no count. The same session's control, an ordinary `Skeleton_Mage_Fire_obj` the sliders raised to 4, died with `DropItem`'s first argument 4 (**Measured 2026-10-02**, MK14). `DropBossGems`, `DropBossRunes` and `DropBossParts` were not instrumented.
 
 ### 13.8 Monsters of special content (`specialType`)
 

@@ -10,8 +10,10 @@ checked out.
 Baseline: what the game does with no mod. Target: what the Bosses control must
 turn it into. That is the order `AGENTS.md` § "Mod Development Workflow" asks
 for. Whether a boss built at rank 3 or 4 actually takes the rank table's rows is
-not established; `HypothesisTests` keeps the model honest about that until a
-measured row about a boss is in the curated file.
+asked once per dimension (health, damage, XP, drop rank); `HypothesisTests`
+keeps each answer `None` until a measured row about that dimension on a boss is
+in the curated file, and then holds it to that row's ratio. ForgePact#44's Live
+procedure 1 (2026-10-02, MK6-MK14) answered health only.
 
 Each entry of `hs-game-sdk/curated/monster_rank_measurements.json` names the
 test that reproduces it (`reproduced_by`) or says why none can
@@ -146,6 +148,22 @@ class TargetTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             force_boss_rank("legion")
 
+    def test_mk8_the_hook_wrote_the_tier(self):
+        # Live 1's readbacks at the exit of EnemyRaritySettings: what the
+        # transform says the control writes is what was still there.
+        entry = _entries()["MK8"]
+        values = entry["values"]
+        modes = {3: "rare", 4: "ancient"}
+        family = model.boss_family()
+        for name, ranks in values["written"].items():
+            self.assertIn(name, family, name)
+            for rank in ranks:
+                with self.subTest(boss=name, rank=rank):
+                    self.assertEqual(force_boss_rank(modes[rank], rank=values["entry_rank"]), rank)
+                    self.assertEqual(values["affixes_after"][str(rank)], FORGEPACT_BOSS_AFFIXES[rank])
+        for name, rank in values["sliders_on_control_off"].items():
+            self.assertEqual(force_boss_rank("off", rank=values["entry_rank"]), rank)
+
 
 class MeasuredTests(unittest.TestCase):
     """The model against the curated rows (`monster_rank_measurements.json`)."""
@@ -181,20 +199,132 @@ class MeasuredTests(unittest.TestCase):
         self.assertGreater(ratio, max(model.RANK_TABLE[rank].hp for rank in model.RANKS))
         self.assertEqual(self.entries["MK5"]["status"], "reported")
 
+    def test_mk6_the_rank_one_karp_king(self):
+        values = self.entries["MK6"]["values"]
+        self.assertIn(values["object"], model.boss_family())
+        self.assertEqual(values["rank"], 1)
+        first, second = values["health"]
+        self.assertEqual(first, second, "two rank-1 spawns in one zone read the same")
+        self.assertEqual(model.scaled(1, first, 0, 0).hp, first)
+        self.assertEqual(self.entries["MK7"]["values"]["rank_1_value"], first)
+
+    def test_mk14_an_ordinary_monster_drops_at_its_rank(self):
+        values = self.entries["MK14"]["values"]
+        self.assertNotIn(values["object"], model.boss_family())
+        self.assertIn(values["rank_written"], model.RANKS)
+        self.assertEqual(values["dropitem_first_argument"], values["rank_written"])
+        self.assertEqual(values["verdict"], "pass")
+
+
+#: Which hypothesis a row answers: the word its `what` must name, and the
+#: rank-table field its ratio is compared with (`None`: the drop rank, which is
+#: compared with the rank written, not a ratio).
+DIMENSIONS = {
+    "boss_hp_follows_rank_table": (re.compile(r"\bhealth\b", re.I), "hp"),
+    "boss_damage_follows_rank_table": (re.compile(r"\bdamage\b", re.I), "damage"),
+    "boss_xp_follows_rank_table": (re.compile(r"\bXP\b"), "xp"),
+    "boss_drop_rank_reaches_dropitem": (re.compile(r"\bdrop rank\b", re.I), None),
+}
+#: A row within this share of the table's ratio follows it.
+TOLERANCE = Fraction(5, 100)
+
+
+def _entries():
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    return {entry["id"]: entry for entry in data["measurements"]}
+
+
+def _names_a_boss(entry, family):
+    return any(name in family for name in re.findall(r"\b[A-Za-z0-9_]+_obj\b", entry["what"]))
+
+
+def _keyed_rows(entries, hypothesis, family):
+    """The measured rows that answer `hypothesis`: `what` names its dimension and
+    an object of the boss family, and `values` carries what decides it."""
+    word, field = DIMENSIONS[hypothesis]
+    decides = "ratio" if field else "dropitem_first_argument"
+    return [e for e in entries
+            if e["status"] == "measured" and word.search(e["what"])
+            and _names_a_boss(e, family) and decides in e["values"]]
+
+
+def _row_follows(entry, field):
+    """The bool one keyed row gives: within TOLERANCE of the table's ratio, or
+    (drop rank) the first DropItem argument equal to the rank written."""
+    values = entry["values"]
+    if field is None:
+        return values["dropitem_first_argument"] == values["rank_written"]
+    exact = Fraction(values["value"], values["rank_1_value"])
+    assert abs(exact - Fraction(values["ratio"])) < Fraction(1, 1000), (entry["id"], float(exact))
+    table = getattr(model.row(values["rank"]), field)
+    return abs(exact / table - 1) <= TOLERANCE
+
 
 class HypothesisTests(unittest.TestCase):
-    """What a forced rank does to a boss stays open until a session measures it."""
+    """What a forced rank does to a boss stays open until a session measures it,
+    one dimension at a time, and then agrees with what was measured."""
 
     def test_boss_rows_are_not_established_until_measured(self):
-        data = json.loads(FIXTURE.read_text(encoding="utf-8"))
-        boss_rows = [e["id"] for e in data["measurements"]
-                     if e["status"] == "measured" and "boss" in e["what"].lower()]
-        self.assertEqual(set(model.HYPOTHESES), {"boss_follows_rank_table"})
-        answer = model.HYPOTHESES["boss_follows_rank_table"]
-        if boss_rows:
-            self.assertIsInstance(answer, bool, boss_rows)
-        else:
-            self.assertIsNone(answer, "set from no measured boss row")
+        entries = list(_entries().values())
+        family = model.boss_family()
+        self.assertEqual(set(model.HYPOTHESES), set(DIMENSIONS))
+        for hypothesis, (_, field) in DIMENSIONS.items():
+            answer = model.HYPOTHESES[hypothesis]
+            rows = _keyed_rows(entries, hypothesis, family)
+            with self.subTest(hypothesis=hypothesis, rows=[e["id"] for e in rows]):
+                if rows:
+                    self.assertIsInstance(answer, bool)
+                    self.assertEqual(answer, all(_row_follows(e, field) for e in rows))
+                else:
+                    self.assertIsNone(answer, "set from no measured row about it on a boss")
+
+    def test_live_one_answered_health_only(self):
+        # The curated file as it stands: MK7 decides health (x5.65 against
+        # x4.23), and nothing decides damage, XP or the drop rank.
+        entries = list(_entries().values())
+        family = model.boss_family()
+        self.assertEqual([e["id"] for e in _keyed_rows(entries, "boss_hp_follows_rank_table", family)],
+                         ["MK7"])
+        self.assertIs(model.HYPOTHESES["boss_hp_follows_rank_table"], False)
+        for hypothesis in ("boss_damage_follows_rank_table", "boss_xp_follows_rank_table",
+                           "boss_drop_rank_reaches_dropitem"):
+            with self.subTest(hypothesis=hypothesis):
+                self.assertEqual(_keyed_rows(entries, hypothesis, family), [])
+                self.assertIsNone(model.HYPOTHESES[hypothesis])
+
+    def test_the_key_is_a_boss_object_not_a_word(self):
+        # Controls on the selection itself. Positive: a synthetic boss row at the
+        # table's own ratio follows it, one at MK7's does not. Negative: an
+        # ordinary monster's row (MK14 names the drop rank), a row that says
+        # "boss" but names no boss object, a not-observed row and a report never
+        # decide anything.
+        family = model.boss_family()
+
+        def row(what, status="measured", **values):
+            return {"id": "X", "status": status, "what": what, "values": values}
+
+        at_table = row("Karp_King_obj health at rank 4", rank=4, rank_1_value=100,
+                       value=423, ratio="4.23")
+        above = row("Karp_King_obj health at rank 4", rank=4, rank_1_value=44625000,
+                    value=252242812, ratio="5.6525")
+        self.assertEqual(_keyed_rows([at_table], "boss_hp_follows_rank_table", family), [at_table])
+        self.assertTrue(_row_follows(at_table, "hp"))
+        self.assertFalse(_row_follows(above, "hp"))
+        drop = row("Damien_obj drop rank", rank_written=4, dropitem_first_argument=4)
+        self.assertEqual(_keyed_rows([drop], "boss_drop_rank_reaches_dropitem", family), [drop])
+        self.assertTrue(_row_follows(drop, None))
+
+        entries = _entries()
+        negatives = [
+            entries["MK14"],
+            row("a boss's health at rank 4", rank=4, rank_1_value=1, value=4, ratio="4"),
+            row("Karp_King_obj health at rank 4", status="not_observed", rank=4,
+                rank_1_value=1, value=4, ratio="4"),
+            entries["MK5"],
+        ]
+        for hypothesis in DIMENSIONS:
+            with self.subTest(hypothesis=hypothesis):
+                self.assertEqual(_keyed_rows(negatives, hypothesis, family), [])
 
     def test_a_report_does_not_count_as_a_measurement(self):
         # Negative control: the fixture does carry a row about a boss (MK5),
@@ -352,7 +482,7 @@ class SpecTests(unittest.TestCase):
                         "The model", "What the model cannot catch"):
             self.assertRegex(spec, re.compile("^## " + heading + "$", re.M))
         for name in ("EnemyRaritySettings", "Enemy_Child_Boss_obj", "DropItem", "monster_rank_model",
-                     "boss_follows_rank_table", "monster_rank_measurements.json"):
+                     "monster_rank_measurements.json", *DIMENSIONS):
             self.assertIn(name, spec)
 
 
