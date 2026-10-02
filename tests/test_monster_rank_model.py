@@ -312,16 +312,45 @@ def _keyed_rows(entries, hypothesis, family):
             and (not e["values"].get("affixes_written") or e["values"].get("controlled_by"))]
 
 
-def _row_follows(entry, field):
-    """The bool one keyed row gives: within TOLERANCE of the table's ratio, or
-    (drop rank) the first DropItem argument equal to the rank written."""
+def _control_spread(entry, field, entries):
+    """How far the identity control the row names (`controlled_by`) itself read
+    from the table, at its worst rank: MK15 read damage 8.4% below the row at
+    rank 3 and 5.5% above it at rank 4, so 8.4%. A row naming no control: 0."""
+    control_id = entry["values"].get("controlled_by")
+    if not control_id or entries is None:
+        return Fraction(0)
+    ratios = entries[control_id]["values"]["ratio"]
+    return max(abs(Fraction(ratio) / getattr(model.row(int(rank)), field) - 1)
+               for rank, ratio in ratios.items())
+
+
+def _row_follows(entry, field, entries=None):
+    """What one keyed row gives: True within TOLERANCE of the table's ratio,
+    False outside it, or (drop rank) the first DropItem argument against the
+    rank written. None, open, when the ratio misses the tolerance's edge by
+    less than its control's own spread from the table (`entries`, by id, to
+    find it): the instrument cannot tell that miss from its own error."""
     values = entry["values"]
     if field is None:
         return values["dropitem_first_argument"] == values["rank_written"]
     exact = Fraction(values["value"], values["rank_1_value"])
     assert abs(exact - Fraction(values["ratio"])) < Fraction(1, 1000), (entry["id"], float(exact))
     table = getattr(model.row(values["rank"]), field)
-    return abs(exact / table - 1) <= TOLERANCES[field]
+    off = abs(exact / table - 1)
+    if abs(off - TOLERANCES[field]) < _control_spread(entry, field, entries):
+        return None
+    return off <= TOLERANCES[field]
+
+
+def _answer(rows, field, entries):
+    """The hypothesis the keyed rows give together: False if any decided row
+    misses the table, else None if any is open (or there is none), else True."""
+    answers = [_row_follows(e, field, entries) for e in rows]
+    if False in answers:
+        return False
+    if not answers or None in answers:
+        return None
+    return True
 
 
 class HypothesisTests(unittest.TestCase):
@@ -329,7 +358,8 @@ class HypothesisTests(unittest.TestCase):
     one dimension at a time, and then agrees with what was measured."""
 
     def test_boss_rows_are_not_established_until_measured(self):
-        entries = list(_entries().values())
+        by_id = _entries()
+        entries = list(by_id.values())
         family = model.boss_family()
         self.assertEqual(set(model.HYPOTHESES), set(DIMENSIONS))
         for hypothesis, (_, field) in DIMENSIONS.items():
@@ -337,8 +367,7 @@ class HypothesisTests(unittest.TestCase):
             rows = _keyed_rows(entries, hypothesis, family)
             with self.subTest(hypothesis=hypothesis, rows=[e["id"] for e in rows]):
                 if rows:
-                    self.assertIsInstance(answer, bool)
-                    self.assertEqual(answer, all(_row_follows(e, field) for e in rows))
+                    self.assertIs(answer, _answer(rows, field, by_id))
                 else:
                     self.assertIsNone(answer, "set from no measured row about it on a boss")
 
@@ -364,16 +393,19 @@ class HypothesisTests(unittest.TestCase):
                 self.assertEqual(_keyed_rows(live_one, hypothesis, family), [])
 
     def test_live_1b_answers_damage_xp_and_drop_rank(self):
-        # Live 1b's rows (MK15-MK24): each of damage, XP and the drop rank is
-        # decided by exactly one boss row, which names the identity control that
-        # matched the Bosses control's affix top-up on an ordinary monster; the
-        # health row (MK20) has no control and stays confounded.
+        # Live 1b's rows (MK15-MK24): XP and the drop rank are each decided by
+        # exactly one boss row, which names the identity control that matched
+        # the Bosses control's affix top-up on an ordinary monster. Health
+        # (MK20) has no control, and damage (MK21) is x2.0968 against x1.90,
+        # 0.4% outside the 10% while its control itself read 8.4% below the
+        # table at rank 3 and 5.5% above it at rank 4, with unmatched affixes
+        # and one spawn: both carry `confounds` and stay open.
         entries = _entries()
         family = model.boss_family()
         live_1b = [entries["MK%d" % n] for n in range(15, 25)]
         expected = {
             "boss_hp_follows_rank_table": ([], None),
-            "boss_damage_follows_rank_table": (["MK21"], False),  # x2.0968 against x1.90
+            "boss_damage_follows_rank_table": ([], None),
             "boss_xp_follows_rank_table": (["MK22"], True),  # x6.2505 against x6.25
             "boss_drop_rank_reaches_dropitem": (["MK23"], True),  # 1 -> 4
         }
@@ -383,8 +415,9 @@ class HypothesisTests(unittest.TestCase):
             with self.subTest(hypothesis=hypothesis):
                 self.assertEqual([e["id"] for e in rows], ids)
                 self.assertIs(model.HYPOTHESES[hypothesis], answer)
+                self.assertIs(_answer(rows, field, entries), answer)
                 for entry in rows:
-                    self.assertIs(_row_follows(entry, field), answer)
+                    self.assertIs(_row_follows(entry, field, entries), answer)
                     # The control the row names: an ordinary monster, measured
                     # `pass`, on the same variable (or the drop rank trace).
                     control = entries[entry["values"]["controlled_by"]]
@@ -396,17 +429,40 @@ class HypothesisTests(unittest.TestCase):
                     self.assertEqual(entry["values"]["verdict"], "pass")
                     self.assertTrue(entry["what"].startswith("Live 1b:"))
         self.assertTrue(entries["MK20"]["confounds"])
-        # Negative control: the damage row without the control it names is a
-        # topped-up boss with nothing to match the top-up, and decides nothing.
         mk21 = entries["MK21"]
-        uncontrolled = dict(mk21, values={k: v for k, v in mk21["values"].items()
-                                          if k != "controlled_by"})
+        self.assertTrue(mk21["confounds"])
+        # Positive control: without its confounds MK21 would be keyed, so it is
+        # the confounds, not a mismatched word or object, that keep it out.
+        unconfounded = {k: v for k, v in mk21.items() if k != "confounds"}
+        self.assertEqual(_keyed_rows([unconfounded], "boss_damage_follows_rank_table", family),
+                         [unconfounded])
+        # Negative control: that row without the control it names is a
+        # topped-up boss with nothing to match the top-up, and decides nothing.
+        uncontrolled = dict(unconfounded, values={k: v for k, v in mk21["values"].items()
+                                                  if k != "controlled_by"})
         self.assertEqual(_keyed_rows([uncontrolled], "boss_damage_follows_rank_table", family), [])
-        # And the damage verdict turns on the control's 10%, not on a looser
-        # rule: at 5% or 10% x2.0968 is outside x1.90, at 15% it would follow.
+        # And even keyed it would stay open, because its miss is inside the
+        # control's own spread, not because of a looser tolerance: x2.0968 is
+        # 10.4% above x1.90, outside the 10% (and inside 15%), while MK15 read
+        # 8.4% below the table at rank 3 and 5.5% above it at rank 4.
+        self.assertIsNone(_row_follows(unconfounded, "damage", entries))
+        self.assertIsNone(_answer([unconfounded], "damage", entries))
         exact = Fraction(mk21["values"]["value"], mk21["values"]["rank_1_value"])
-        self.assertGreater(exact / model.row(4).damage - 1, TOLERANCES["damage"])
-        self.assertLess(exact / model.row(4).damage - 1, Fraction(15, 100))
+        off = exact / model.row(4).damage - 1
+        self.assertGreater(off, TOLERANCES["damage"])
+        self.assertLess(off, Fraction(15, 100))
+        spread = _control_spread(mk21, "damage", entries)
+        self.assertEqual(round(float(spread), 3), 0.084)
+        self.assertLess(off - TOLERANCES["damage"], spread)
+        # Negative control: with no control to measure the spread by, the same
+        # ratio is decided, and does not follow the row.
+        self.assertIs(_row_follows(mk21, "damage"), False)
+        # Positive control: a ratio farther past the 10% than MK15's spread,
+        # against the same control, is decided, and does not follow the row.
+        far = dict(mk21, values=dict(mk21["values"], value=491, ratio="2.2627"))
+        self.assertGreater(Fraction(491, 217) / model.row(4).damage - 1
+                           - TOLERANCES["damage"], spread)
+        self.assertIs(_row_follows(far, "damage", entries), False)
 
     def test_the_key_is_a_boss_object_not_a_word(self):
         # Controls on the selection itself. Positive: a synthetic boss row at the
