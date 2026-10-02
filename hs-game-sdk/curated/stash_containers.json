@@ -179,6 +179,15 @@
       "measured": "M",
       "sessions": ["Live 5", "Live 6"]
     },
+    "page_tabs": {
+      "name": "UI_Button_Inventory_Tab_obj",
+      "index": 4988,
+      "uiNodeCallstacks": ["InventoryTab_1", "InventoryTab_2", "InventoryTab_3", "InventoryTab_4", "InventoryTab_5"],
+      "listed": "With the stash open, all five, tabNumber 0 to 4 in uiNodeCallstack order, text Main then Extra, visible=1 (toolkit #147's stash-bag-layout live 2, attempt 1). Not read with the bag open on its own",
+      "column_relation": "The row is contiguous, each bbox InventorySort's width (182.4), top 1136.2, bottom 1198.9, lefts 1573.9, 1756.3, 1938.7, 2121.1 and 2303.5, the pitch the width; InventorySort's bbox (2303.5,1198.9,2485.9,1261.6, Live 1f and 1g) lies directly under the row, its left and right InventoryTab_5's, so InventoryTab_4's column, above the slot left of Sort, is 2121.1 to 2303.5: Sort's left minus one Sort width, up to Sort's left. At a 2560x1368 GUI (window 1920x1080, Town_01_rm) only",
+      "measured": "M",
+      "sessions": ["toolkit #147 stash-bag-layout live 2", "ForgePact #68 Live 1f", "ForgePact #68 Live 1g"]
+    },
     "label_members": {
       "members": ["textFont", "dropShadow", "createX", "drawXOffset", "drawYOffset", "navBboxX", "navBboxY", "navBboxWidth", "navBboxHeight", "naviDown", "naviDownPrev", "naviRight", "naviRightPrev"],
       "label_place": "Measured: the label is drawn centred in the box on both axes (the node's label box 2140,1286,2242,1303 in its box 2094,1262,2286,1328 in Live 6; 2136,1286,2238,1303 in 2090,1262,2282,1328 in Live 5; Sort's own label left edge 2338). Inferred, and not separated from plain centring: that left edge also sits within 2 of the node's x plus drawXOffset (Sort 2290 + 48 = 2338; the node 2094 + 48 = 2142 against 2140 in Live 6, 2090 + 48 = 2138 against 2136 in Live 5), but a label centred in the box fits the same numbers to within 1, so they do not tell the two apart. Vertically the glyph top (1286) is 15 below the node's y plus drawYOffset (1262 + 9 = 1271 on Sort); the label tool reads drawn pixels, not the draw origin, so whether drawYOffset anchors the text, a font's own top spacing included, is not separated. Which of the 13 places the label on either axis is not separated either: they were written together. A UiCreateNode button already wearing Sort's sprite and scale differed from InventorySort in exactly these 13 writable members, besides its identity, place, text and activation; with them copied from Sort by name (and Sort's sprite_index and scale) the node's label is drawn centred in its box like Sort's",

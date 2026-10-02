@@ -218,7 +218,7 @@ def validate(data: dict, doc_text: str) -> list:
     # index.
     ui = data.get("ui_node_api")
     if require("ui_node_api", ui):
-        for key in ("node_object", "owner_object", "mercenary_button"):
+        for key in ("node_object", "owner_object", "mercenary_button", "page_tabs"):
             obj = ui.get(key) or {}
             name, index = obj.get("name"), obj.get("index")
             if require(f"ui_node_api.{key}.name", name) and require(f"ui_node_api.{key}.index", index):
@@ -248,6 +248,17 @@ def validate(data: dict, doc_text: str) -> list:
                 f"ui_node_api.mercenary_button.uiNodeCallstack {merc_callstack!r} is absent from RUNTIME_DATA_MODELS.md section 17"
             )
         require("ui_node_api.mercenary_button.box_relation", merc.get("box_relation"))
+        # ForgePact #131, the owner 2026-10-02: the bag's page tabs, whose 4th
+        # column the Move all button now takes; InventoryTab_4 named in
+        # section 17, the relation stated, and labelled R or M.
+        tabs = ui.get("page_tabs") or {}
+        tab_callstacks = tabs.get("uiNodeCallstacks")
+        if require("ui_node_api.page_tabs.uiNodeCallstacks", tab_callstacks):
+            if "InventoryTab_4" not in tab_callstacks:
+                problems.append("ui_node_api.page_tabs.uiNodeCallstacks does not list InventoryTab_4")
+            elif "InventoryTab_4" not in section:
+                problems.append("ui_node_api.page_tabs InventoryTab_4 is absent from RUNTIME_DATA_MODELS.md section 17")
+        require("ui_node_api.page_tabs.column_relation", tabs.get("column_relation"))
         label = ui.get("label_members")
         if require("ui_node_api.label_members", label):
             members = label.get("members")
@@ -255,7 +266,7 @@ def validate(data: dict, doc_text: str) -> list:
                 for member in members:
                     if member not in section:
                         problems.append(f"ui_node_api.label_members member {member!r} is absent from RUNTIME_DATA_MODELS.md section 17")
-        for key in ("mercenary_button", "label_members"):
+        for key in ("mercenary_button", "page_tabs", "label_members"):
             measured = (ui.get(key) or {}).get("measured")
             if require(f"ui_node_api.{key}.measured", measured) and measured not in ("R", "M"):
                 problems.append(f"ui_node_api.{key}.measured {measured!r} is neither R nor M")
@@ -333,6 +344,7 @@ class TestCuratedStashContainers(unittest.TestCase):
         bad["ui_node_api"]["mercenary_button"]["uiNodeCallstack"] = "NoSuchMercenary"
         bad["ui_node_api"]["label_members"]["members"].append("noSuchLabelMember")
         bad["ui_node_api"]["label_members"]["measured"] = "assumed"
+        bad["ui_node_api"]["page_tabs"]["index"] = 4989
 
         problems = validate(bad, self.doc_text)
 
@@ -360,6 +372,7 @@ class TestCuratedStashContainers(unittest.TestCase):
         self.assertTrue(any("NoSuchMercenary" in p for p in problems), problems)
         self.assertTrue(any("noSuchLabelMember" in p for p in problems), problems)
         self.assertTrue(any("label_members.measured 'assumed'" in p for p in problems), problems)
+        self.assertTrue(any("page_tabs.index 4989" in p for p in problems), problems)
 
     def test_validator_reports_a_missing_object_as_a_problem(self):
         missing = copy.deepcopy(self.data)

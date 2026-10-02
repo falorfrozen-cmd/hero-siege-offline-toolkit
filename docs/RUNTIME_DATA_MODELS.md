@@ -2401,6 +2401,19 @@ measured (one sentence, in the drag path bullet).
   `tabNumber`. `UI_Stash_obj.invMaterialTab` and `.invSocketTab` hold the
   Material and Socket rows' instances. The page tabs are
   `UI_Button_Inventory_Tab_obj`, `tabNumber` 0 to 4 (Main, then four Extra).
+  Their grid, M at one GUI scale (2560x1368, window 1920x1080, Town_01_rm)
+  from two sessions - toolkit #147's stash-bag-layout live 2, attempt 1, with
+  the stash open, for the tabs, and ForgePact #68's Live 1f and 1g for
+  InventorySort: `uiNodeCallstack` `InventoryTab_1` to `InventoryTab_5` in
+  `tabNumber` order, all `visible=1` and listed with the stash open; each
+  bbox 182.4 wide (InventorySort's width), top 1136.2, bottom 1198.9, lefts
+  1573.9, 1756.3, 1938.7, 2121.1 and 2303.5, so the row is contiguous (the
+  pitch is the width). The row sits directly above InventorySort's
+  (InventorySort 2303.5,1198.9,2485.9,1261.6: its top is the row's bottom),
+  and InventorySort's left and right equal `InventoryTab_5`'s, so the slot
+  left of Sort is under `InventoryTab_4`, whose column is 2121.1 to 2303.5:
+  Sort's left minus one Sort width, up to Sort's left. Not measured: the row
+  at any other GUI scale, and with the bag open on its own.
 - **`activeNode`.** M: `UI_Stash_obj.activeNode` holds an instance - the stash
   grid right after the open (SB P0-4), the clicked sub-tab's row after a real
   click on a bag sub-tab (SB P2-4). After a by-name
