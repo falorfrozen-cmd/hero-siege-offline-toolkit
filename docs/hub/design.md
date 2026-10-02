@@ -727,6 +727,15 @@ deliberate stop red: the command skips a pull request that is closed, a draft,
 or already commented on by Claude. That is on purpose, since a review was
 requested and none was posted, and the printed message says why.
 
+The "already commented" stop, though, turned every re-review red. A bare
+`@claude review` after fixes (hub #382, 2026-10-02) and a rerun after an
+outage (#350) both stopped there and failed the gate. Only a request with
+text after the trigger was told that an earlier review is no reason to stop.
+Every run is a request (the label was just added, or someone commented), so
+every run now gets that note. It also tells the reviewer to name the commits
+that are new since the last review, and to say whether each earlier finding
+is now resolved. Closed and draft pull requests still stop.
+
 A posted comment is not proof of a review either. On hub #365 and ForgePact
 #141 (2026-10-02) the model skipped the command's agents altogether, read part
 of the diff itself in 10-20 seconds, posted "No issues found", and said in its

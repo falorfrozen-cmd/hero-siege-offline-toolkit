@@ -513,6 +513,31 @@ class TheGateScriptsRun(unittest.TestCase):
 TRIGGER = "@claude review"
 
 
+def usable_bash():
+    """A bash that is not WSL's System32 launcher, or None."""
+    found = shutil.which("bash")
+    return found if found and "system32" not in found.lower() else None
+
+
+def run_request_step(comment):
+    """The "Read the request" script run with `gh` and `git` stubbed out (a
+    `main` base, no binaries); returns the `notes` output it wrote."""
+    body = step_body(workflow_text(), "Read the request")
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, out in (("gh", "main"), ("git", "")):
+            stub = Path(tmp, name)
+            stub.write_text(f"#!/bin/sh\necho '{out}'\n" if out else "#!/bin/sh\nexit 0\n", encoding="utf-8", newline="\n")
+            stub.chmod(0o755)
+        output = Path(tmp, "output")
+        env = dict(os.environ, GITHUB_OUTPUT=str(output), GH_TOKEN="x", PR="1", COMMENT_BODY=comment,
+                   GITHUB_REPOSITORY="o/r", PATH=tmp + os.pathsep + os.environ.get("PATH", ""))
+        proc = subprocess.run([usable_bash(), "-e", "-c", step_script(body)], env=env,
+                              capture_output=True, text=True, encoding="utf-8")
+        if proc.returncode != 0:
+            raise AssertionError(proc.stdout + proc.stderr)
+        return output.read_text(encoding="utf-8")
+
+
 class TheRequestCarriesItsInstructions(unittest.TestCase):
     """Text after `@claude review` reaches the reviewer as scope instructions."""
 
@@ -535,6 +560,20 @@ class TheRequestCarriesItsInstructions(unittest.TestCase):
         # output early and write further step outputs.
         body = step_body(workflow_text(), "Read the request") or ""
         self.assertIn('delim="EOF_$(openssl rand -hex 16)"', body)
+
+    @unittest.skipUnless(usable_bash() and shutil.which("openssl"), "needs bash and openssl")
+    def test_every_request_says_an_earlier_review_is_no_reason_to_stop(self):
+        # hub #382 (run 37051071633): a bare `@claude review` after fixes hit
+        # the command's "Claude has already commented" stop, posted nothing
+        # and failed the gate; the note only went to a request with
+        # instructions. A label run (empty body) gets it too: hub #350's
+        # reruns after an outage stopped the same way.
+        for comment in ("@claude review", "@claude review only tools/", ""):
+            with self.subTest(comment=comment):
+                notes = run_request_step(comment)
+                self.assertIn("an earlier review on this pull request is not a reason", notes)
+                self.assertIn("which commits are new since that review", notes)
+                self.assertEqual("<requester-instructions>" in notes, comment.startswith("@claude review "), notes)
 
     def test_the_prompt_carries_the_notes(self):
         step = review_step(workflow_text()) or ""
