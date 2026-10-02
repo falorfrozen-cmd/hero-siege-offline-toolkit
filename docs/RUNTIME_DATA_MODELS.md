@@ -3093,7 +3093,9 @@ names are the stats' tooltip names (the Item Editor's game-verified stat table).
 
 [Why the loot filter never hides them](../ForgePact/docs/incarnation-gems-research.md#why-the-loot-filter-never-hides-them---static-reading)
 
-What a hidden ground item still is (ForgePact #95 part 1, 2026-09-27):
+What a hidden ground item still is (ForgePact #95 part 1, 2026-09-27, part 2,
+workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
+`forgepact-issue-95-mod`, 2026-09-28 and 2026-10-02):
 
 - `Loot_Ground_obj`'s Create sets `lootFilterVisible`, `lootFilterHighlight`,
   `skipLootFilter`, `inviewCheck`, `itemCompanionTimer`, `visible` and alarm 4,
@@ -3101,6 +3103,45 @@ What a hidden ground item still is (ForgePact #95 part 1, 2026-09-27):
   `lootFilterVisible`, sets `visible` from it, and re-arms itself for 0.3 s of
   game speed. So an item the filter hides stays a live instance that re-checks
   its visibility every 0.3 s. **Static reading.**
+- `Loot_Ground_obj` (2513) owns five events: Create, Destroy, Alarm 9, Draw and
+  Clean Up. It has no Step and no Alarm 4 event. Its parent is
+  `Pickup_Parent_obj` (3421), which owns Create, Alarm 9 and Clean Up, and no
+  Step. So the `alarm[4]` that Create sets counts down with no handler in the
+  object or its parent, and nothing runs. **Static reading** (part 2).
+- Create binds its three closures as methods and runs none of them. By role
+  (the `anon@N` numbers move, §5.3): a rare-drop announcement, the loot-filter
+  closure bound as `m_LootFilter` (reads `global.loot_filter_new`, calls
+  `LootFilterAffixTierVisible` and `LootFilterAffixTierHighlight`), and a small
+  dispatcher that calls `LootGroundRelicStep` or `LootGroundDeActiveStep`.
+  **Static reading** (part 2).
+- The filter verdict is computed in `LootGroundInit`, not in Create:
+  `LootGroundCreateFromItem(x, y, item)` calls `CreateLootInFreePos`, then
+  `LootGroundInit(instance, item)`, which reads the bound `m_LootFilter` off the
+  instance and calls it behind a guard that was not read (`skipLootFilter` is
+  the candidate). A player's bag drop, `LootGroundDrop`, calls `LootGroundInit`
+  too. So when `LootGroundCreateFromItem` returns, `lootFilterVisible` already
+  holds the game's verdict. **Static reading** (part 2).
+- All three ground-drop entry points call `LootGroundInit`:
+  `LootGroundCreateFromItem` once, after making the instance; `LootGroundDrop`
+  at two sites; and `LootGroundCreate`, whose listing of callees names it once.
+  No path through `LootGroundCreate`'s long body was traced, so whether every
+  item it makes gets its verdict there is not established. **Static reading**
+  (part 2b, workorder `forgepact-issue-95-mod`, 2026-09-28;
+  [The mod](../ForgePact/docs/hidden-loot-research.md#the-mod)).
+- Alarm 9 never re-runs the filter: it reads `lootFilterVisible`, calls
+  `OnScreen`, sets `visible` from the two, re-arms itself and counts
+  `itemCompanionTimer` down, with no method call. Items already on the ground
+  are re-evaluated only from the loot filter's menu path (`LootFilterImport`
+  references the `m_LootFilter` slot), which is how part 1 saw `hidden` fall
+  to 0 with the filter off; how that pass walks the items, and so whether it
+  reaches a deactivated one, was not read. **Static reading** (part 2).
+- The Draw event tests one variable and calls `LootGroundDraw`. **Static
+  reading** (part 2) of the event body only.
+- A hidden item's Draw does not run: 2,736 hidden `Loot_Ground_obj` instances
+  ran it 0 times in 10 s, and the same items, shown, ran it 1,477,440 times,
+  the positive control. That matches GameMaker's documented rule for a
+  `visible` false instance, whose draw pass still walks it (ForgePact's far
+  sleep research). **Measured** (part 2, `forgepact-issue-95` Live 1).
 - At a strict filter, 281 of 291 `Loot_Ground_obj` instances read
   `lootFilterVisible` false and `visible` false, and an earlier read gave 68 of
   68. With the filter turned off (the game has no "Show all loot" key), none
@@ -3108,11 +3149,111 @@ What a hidden ground item still is (ForgePact #95 part 1, 2026-09-27):
   `visible` false: visibility also follows something besides the filter, which
   fits §18.6's reading that Alarm 9 consults the screen; which cause held those
   95 was not established. **Measured.**
-- The frame cost of hidden items: **not observed**. The filter-off window read
-  7.08 ms average and 40.7 ms max; no clean strict-filter window was taken (the
-  one read held a 6.5 s stall from an unrelated gold pickup).
+- The frame cost of hidden items: part 1 did not observe it (the filter-off
+  window read 7.08 ms average and 40.7 ms max; no clean strict-filter window was
+  taken, the one read holding a 6.5 s stall from an unrelated gold pickup).
+  Part 2 measured it for one arrangement of items: 2,736 copies of one
+  equipment template, spawned by `lootspawn` at random offsets within ±600 x
+  ±400 px of the player (so dense and near or on screen) and hidden by writing
+  `lootFilterVisible` with `loothide`, because the game's own filter showed the
+  template; in one zone, uncapped at about 140 fps asleep. Awake against the
+  same items put to sleep with `instance_deactivate_object`, they added
+  6.66 ms (pair 2) and 10.57 ms (pair 1, a mixed window) to the average frame
+  interval, and frameprof's `working` rose 10 and 12 points, saturating at
+  100%. That is **about 2.4-5.6 µs of frame time per hidden item per frame for
+  that pile**. Whether the per-item cost holds for items spread across a zone
+  or off screen, for items the game's filter hid, or at other counts (the
+  linearity) was not measured, and three things say it may not: Alarm 9 calls
+  `OnScreen`, so position takes a different path; the awake profile's heaviest
+  event, `Loot_Manager_obj`'s Begin Step (42.7% of the frame), does per-item
+  work that was neither read nor profiled asleep and may depend on proximity
+  or density; and 9-19% of the spawn calls returned no instance, which would
+  fit the pile running out of free positions (a cause not established, see
+  below). **Measured** (part 2,
+  `forgepact-issue-95` Live 1), under those conditions only. What the same
+  items cost shown was not established: one unpaired capture read 1.21 ms
+  more, taken while the check it annexes (`cost-visible-working`) failed and
+  not reconciled with that capture's profile; see the research doc.
+- A zone's end runs Clean Up, not Destroy, on each hidden ground item: 809 of
+  809 Clean Up runs, 0 Destroy, and `instance_number(Loot_Ground_obj)` read 0
+  after the exit. So a hidden item does not outlive its zone. **Measured**
+  (part 2 Live 1, items awake; for items asleep, see the next bullets).
+- A sleeping (deactivated) ground item is cleaned up at the zone's end the same
+  way: with 1,495 `Loot_Ground_obj` instances asleep, leaving the zone ran
+  Clean Up 1,495 times and Destroy 0, and none were left. **Measured** (part
+  2b, workorder `forgepact-issue-95-mod`, Live 2, `zone-end-asleep`;
+  [Live 2 results](../ForgePact/docs/hidden-loot-research.md#live-2-results-2026-09-28)).
+- `instance_activate_object` brings back every ground item
+  `instance_deactivate_object` put to sleep in the same zone (2,736 of 2,736,
+  twice), and `instance_number` does not count them while asleep. **Measured**
+  (part 2 Live 1). `instance_find` does not reach them either: with 1,495
+  asleep and none awake, a walk with it found none (`lootcensus` read
+  `ground=0 walked=0`), while every one was still there for its Clean Up at the
+  zone's end. **Measured** (`forgepact-issue-95-mod` Live 2).
+- A hook on `LootGroundInit` installed with both routes (`HookOneScript`'s
+  table swap and inline detour) sees the game's own compiled drop calls: about
+  60 s of killing monsters at a strict filter gave 531 calls, each carrying a
+  live `Loot_Ground_obj`, 522 of them with a hidden verdict; 1,000
+  `lootspawn` calls to `LootGroundCreateFromItem` added 971, the number that
+  returned a live instance. Which route carried each call was not separated.
+  **Measured** (part 2b, workorder `forgepact-issue-95-mod`, Live 2,
+  `route-both` and `create-slept`;
+  [Live 2 results](../ForgePact/docs/hidden-loot-research.md#live-2-results-2026-09-28)).
+- `LootGroundInit`'s argument 0 is the new ground instance: in 473 of 473
+  calls from the game's own monster drops, and 1,000 of 1,000 from
+  `lootspawn`'s by-name `LootGroundCreateFromItem` calls, argument 0 named a
+  live `Loot_Ground_obj` at the end of the frame, and argument 1 and `self`
+  never did. Argument 0 never arrived as an object (`obj-a0=0` over all 1,473
+  calls), so it was a number or a reference every time; the last call's kind
+  was a reference (`VALUE_REF`), and the kind of each call was not recorded,
+  so code reading it must accept both. Argument 1
+  never arrived as an object (`VALUE_OBJECT`) in any of the 1,473 calls, and
+  the last call's kind was none of a number, a reference, an object or
+  undefined (which kind exactly was not recorded). `self` on a monster drop
+  was a live instance with a numeric `id` every time. So the static reading
+  `LootGroundInit(instance, item)` holds for argument 0; that argument 1 is
+  the item's data stays a reading, and it is not an object-kind value on this
+  build. **Measured** (part 2b, workorder `forgepact-issue-95-mod`, Live 3,
+  2026-10-02, `candidate-slots` and `arg-kinds`;
+  [Live 3 results](../ForgePact/docs/hidden-loot-research.md#which-argument-carries-the-item-candidate-slots-arg-kinds)).
+- What `instance_exists` answers for an item struct inside `LootGroundInit`:
+  **not observed**. Since argument 1 never arrived as an object, no item
+  struct reached it (`obj-a1=0`). Inside the same call it answered false for
+  an object that is not an instance, the runner's global instance passed as
+  `self` by `lootspawn`, 1,000 times out of 1,000 (`dropped=1000`, `errors=0`),
+  and YYToolkit's runner-error count did not move over those calls; it
+  answered true for a monster's `self` 473 times of 473. **Measured**
+  (`forgepact-issue-95-mod` Live 3, `struct-safe` and `spawn-inits`). That
+  session's runner errors (`REAL argument incorrect type undefined`) came
+  from a research-only ForgePact hook on `DropKeys` that reads the built-in
+  `room` through `variable_global_get`, which answers undefined for it: our
+  own code, not the game, and not the `LootGroundInit` hook (attributed from
+  the research DLL's own function table, not separately measured;
+  [`struct-safe`](../ForgePact/docs/hidden-loot-research.md#struct-safe-what-the-runner-errors-were)).
+- A `lootFilterVisible` written true on a hidden item stays true: Alarm 9's
+  refresh did not write it back (522 woken items, `hidden=0` 1 s and 2 s after
+  the write), as the reading above that Alarm 9 never re-runs the filter
+  predicts. With the built-in `visible` written true as well, 462 of the 522
+  still read `visible` false at both readings while woken loot was drawn on
+  screen; Alarm 9 sets `visible` from the verdict and `OnScreen`, which fits
+  those being off screen, but which were off screen was not established.
+  **Measured** (`forgepact-issue-95-mod` Live 2, `hold-shows`;
+  [Live 2 results](../ForgePact/docs/hidden-loot-research.md#what-hold-shows-measured)).
+- `LootGroundCreateFromItem(x, y, item)` returned no live instance for 86-90 of
+  each 1,000 calls in one zone and 191 of 1,000 in another, and the ground count
+  rose only by the instances it returned. **Measured**; the cause was not
+  established.
+- Whether hidden ground items reach the save, or come back after a reload:
+  **not observed**. The save the game wrote at exit with 2,736 hidden items on
+  the ground did not grow (the slot file shrank by 8 bytes), but the check's
+  positive control failed, and the reload landed in town. A later finding would
+  cover the save written at exit, not a save written mid-zone.
 
-[dev2 bug batch, #95 part 1](../ForgePact/docs/dev2-bug-batch-research.md#95-part-1-what-a-hidden-ground-item-still-costs)
+[dev2 bug batch, #95 part 1](../ForgePact/docs/dev2-bug-batch-research.md#95-part-1-what-a-hidden-ground-item-still-costs);
+[#95 part 2, static reading and cost model](../ForgePact/docs/hidden-loot-research.md#static-reading);
+[#95 part 2, Live 1 results](../ForgePact/docs/hidden-loot-research.md#live-1-results-2026-09-28);
+[#95 part 2b, Live 2 results](../ForgePact/docs/hidden-loot-research.md#live-2-results-2026-09-28);
+[#95 part 2b, Live 3 results](../ForgePact/docs/hidden-loot-research.md#live-3-results-2026-10-02)
 
 ### 18.6 No automatic pickup
 
