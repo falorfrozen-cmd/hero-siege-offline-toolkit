@@ -2872,7 +2872,7 @@ names are the stats' tooltip names (the Item Editor's game-verified stat table).
 
 What a hidden ground item still is (ForgePact #95 part 1, 2026-09-27, part 2,
 workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
-`forgepact-issue-95-mod`, 2026-09-28):
+`forgepact-issue-95-mod`, 2026-09-28 and 2026-10-02):
 
 - `Loot_Ground_obj`'s Create sets `lootFilterVisible`, `lootFilterHighlight`,
   `skipLootFilter`, `inviewCheck`, `itemCompanionTimer`, `visible` and alarm 4,
@@ -2976,6 +2976,34 @@ workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
   **Measured** (part 2b, workorder `forgepact-issue-95-mod`, Live 2,
   `route-both` and `create-slept`;
   [Live 2 results](../ForgePact/docs/hidden-loot-research.md#live-2-results-2026-09-28)).
+- `LootGroundInit`'s argument 0 is the new ground instance, passed as a
+  reference (`VALUE_REF`): in 473 of 473 calls from the game's own monster
+  drops, and 1,000 of 1,000 from `lootspawn`'s by-name
+  `LootGroundCreateFromItem` calls, argument 0 named a live `Loot_Ground_obj`
+  at the end of the frame, and argument 1 and `self` never did. Argument 1
+  never arrived as an object (`VALUE_OBJECT`) in any of the 1,473 calls, and
+  the last call's kind was none of a number, a reference, an object or
+  undefined (which kind exactly was not recorded). `self` on a monster drop
+  was a live instance with a numeric `id` every time. So the static reading
+  `LootGroundInit(instance, item)` holds for argument 0; that argument 1 is
+  the item's data stays a reading, and it is not an object-kind value on this
+  build. **Measured** (part 2b, workorder `forgepact-issue-95-mod`, Live 3,
+  2026-10-02, `candidate-slots` and `arg-kinds`;
+  [Live 3 results](../ForgePact/docs/hidden-loot-research.md#which-argument-carries-the-item-candidate-slots-arg-kinds)).
+- What `instance_exists` answers for an item struct inside `LootGroundInit`:
+  **not observed**. Since argument 1 never arrived as an object, no item
+  struct reached it (`obj-a1=0`). Inside the same call it answered false for
+  an object that is not an instance, the runner's global instance passed as
+  `self` by `lootspawn`, 1,000 times out of 1,000 (`dropped=1000`, `errors=0`),
+  and YYToolkit's runner-error count did not move over those calls; it
+  answered true for a monster's `self` 473 times of 473. **Measured**
+  (`forgepact-issue-95-mod` Live 3, `struct-safe` and `spawn-inits`). That
+  session's runner errors (`REAL argument incorrect type undefined`) came
+  from a research-only ForgePact hook on `DropKeys` that reads the built-in
+  `room` through `variable_global_get`, which answers undefined for it: our
+  own code, not the game, and not the `LootGroundInit` hook (attributed from
+  the research DLL's own function table, not separately measured;
+  [`struct-safe`](../ForgePact/docs/hidden-loot-research.md#struct-safe-what-the-runner-errors-were)).
 - A `lootFilterVisible` written true on a hidden item stays true: Alarm 9's
   refresh did not write it back (522 woken items, `hidden=0` 1 s and 2 s after
   the write), as the reading above that Alarm 9 never re-runs the filter
@@ -2998,7 +3026,8 @@ workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
 [dev2 bug batch, #95 part 1](../ForgePact/docs/dev2-bug-batch-research.md#95-part-1-what-a-hidden-ground-item-still-costs);
 [#95 part 2, static reading and cost model](../ForgePact/docs/hidden-loot-research.md#static-reading);
 [#95 part 2, Live 1 results](../ForgePact/docs/hidden-loot-research.md#live-1-results-2026-09-28);
-[#95 part 2b, Live 2 results](../ForgePact/docs/hidden-loot-research.md#live-2-results-2026-09-28)
+[#95 part 2b, Live 2 results](../ForgePact/docs/hidden-loot-research.md#live-2-results-2026-09-28);
+[#95 part 2b, Live 3 results](../ForgePact/docs/hidden-loot-research.md#live-3-results-2026-10-02)
 
 ### 18.6 No automatic pickup
 
