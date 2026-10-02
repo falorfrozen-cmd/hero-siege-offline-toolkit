@@ -1287,11 +1287,12 @@ below instead). Its mod is `petunstick`.
 
 Every entry here is a **Static reading** of the Sep-17 build's compiled
 scripts (2026-10-02, ForgePact #124), in our own words, unless marked
-otherwise. None of it is measured yet: ForgePact #124's Live 1 is where the
-call shape and the ground-relic read are first checked on the running game.
-Variable names were recovered from the binary's own name-slot table, which
-has matched every live read it was checked against; none of these has been
-read live.
+otherwise. ForgePact #124's Live 1 (2026-10-02, research build, offline,
+relics placed by the research command `forcerelic`) checked the call shape
+and the ground-relic read on the running game; what it confirmed is marked
+**Measured** below, and the rest keeps its label. Variable names were
+recovered from the binary's own name-slot table, which has matched every live
+read it was checked against.
 
 - **A dropped relic is a `Loot_Ground_obj`**, item class 16, placed by
   `LootGroundCreate` ([relic pick spec](models/relic-pick-spec.md)). It is not
@@ -1307,7 +1308,14 @@ read live.
   seen (the companion's Step and the ground item's own Create-defined
   function) take the class through `itemInstance`. Whether the instance also
   carries a top-level `itemType` copy is not established (`LootGroundInit`
-  was not read). **Static reading.**
+  was not read). **Static reading.** **Measured** (#124 Live 1): on 42 ground
+  relics read at once, `itemInstance` held a struct whose `itemType` was 16
+  and whose `itemDefinitionStruct.b` was the relic id, and the instance
+  carried `itemActive`. The other names here are still the reading.
+- **`itemActive` comes on after placement.** A relic read straight after
+  `LootGroundCreateFromItem` placed it showed `itemActive` 0 (two relics);
+  every relic read after the next 45 s showed 1. When it turns on was not
+  measured. **Measured.**
 - **`isRelic`** is set true by that Create-defined function while the item is
   visible and its class is 16; whether every ground relic carries it, and
   from when, is not established, so it is not a positive signal for "this is a
@@ -1347,7 +1355,15 @@ read live.
   "not set" sentinel turned into `undefined`). The player's pickup passes
   `other` = the `Loot_Manager_obj` and the same arguments except the third,
   which is the item's `itemIsLocal` through `GetVariable`. **Static
-  reading**; the companion's `other` on the running game is not established.
+  reading.** **Measured** for the player's pickup (#124 Live 1, a click
+  traced by a hook on both call routes): `self` = `Loot_Ground_obj`,
+  `other` = `Loot_Manager_obj`, `argc` 5, arguments `real 1` (`global.mplr`
+  offline), the item struct, `real 1`, `true`, `real 0`, returning `true`.
+  A call with the companion's shape (`other` = the `Companion_obj`, third and
+  fourth `true`, fifth `undefined`) made by ForgePact returned true 31 times
+  out of 31, each raising the owned level. The game's companion never picks
+  up a relic (its type filter takes classes 11 to 15), so a call of its own
+  was not traced and its `other` stays the reading.
 - **Neither `PickupLoot` nor `PickupRelic` destroys the ground instance.**
   Each caller does, after a true return: the companion destroys the item and
   then takes it out of `lootList` whatever the result; the player's pickup
@@ -1355,7 +1371,9 @@ read live.
   item from its on-screen label array and destroys it. **Static reading**;
   the destroy helper is unnamed in the binary and is read as the runtime's
   instance destroy (§10.6 records the companion's successful pickups removing
-  the item).
+  the item). **Measured** (#124 Live 1): after each of 32 true returns of
+  `PickupLoot` on a relic (one player pickup, 31 ForgePact calls) the ground
+  instance still existed when the script returned.
 - **`PickupRelic(mplr, itemStruct)`** finds the owned copy the way §2
   describes (the relic tab cell `inventoryRelicGrid[b][0][0]` first, then the
   five equipped slots), compares the owned relic's id with the dropped one's,
@@ -1364,13 +1382,18 @@ read live.
   (**Static reading**):
   - a relic the player does not own goes into a new relic tab entry
     (`GridAddItem`, `AddItemToMap`, `CreateItemSaveStruct`): true;
-  - an owned copy below 10/10 is raised by one: true;
+  - an owned copy below 10/10 is raised by one: true. **Measured** (#124
+    Live 1): through `PickupLoot`'s class-16 branch, relic 1 went 7 -> 8 by
+    the player's pickup, and relics 73, 106 and 131 went 9 -> 10 by
+    ForgePact's companion-shaped call, one level per pickup;
   - an **equipped** copy at 10/10: nothing is raised and the script returns
     **false**, so the ground relic stays. This is the "a 10/10 relic cannot
     be picked up" the owner reports for #124;
   - a **relic tab** copy at 10/10: nothing is raised, but the script returns
     **true**, the same as a raise, so a caller destroys the ground relic for
-    nothing. **Not established** on the running game.
+    nothing. **Not established** on the running game: Live 1 never called
+    the pickup on a maxed relic, so neither 10/10 branch was exercised, and
+    a relic the player does not yet own was not available (all 141 owned).
 
   So a true return alone is not evidence that a level rose, and whether a
   relic can be picked up is decided by the owned copy's level (§2, "What
@@ -1385,7 +1408,36 @@ read live.
   the running game's memory, and the Python binding reads saves, so there is
   no Python twin and no parity claim
   ([hs-game-sdk guide](submodules/hs-game-sdk/instructions.md)). The variable
-  names it reads are this section's static reading until #124's Live 1.
+  names it reads were this section's static reading; #124's Live 1
+  **measured** them, reading 42 of 42 ground relics on screen (`read stages:
+  ok=42`), each with the id the research command had placed.
+- **Placing a relic with `LootGroundCreateFromItem`, the player as `self`.**
+  Static reading: it creates a `Loot_Ground_obj` through
+  `CreateLootInFreePos`, sets its `itemInstance` to the item it is handed,
+  runs `LootGroundInit` and returns the new instance (negative when none
+  exists), with no create pool, no online branch and no zone gate; every
+  earlier measurement (`sigdrop`, `angelicdrop`) had a dying enemy as `self`
+  and an equipment item. **Measured** (#124 Live 1): with the player instance
+  as `self` and `other`, it placed 49 of 49 relics, each built by
+  `InitItemFromJson` from a relic tab entry's fields (`b`, `a`, `j`, `c`) and
+  a key ending in `-16`, each read back as a class-16 relic with the
+  requested id, and each could be picked up by hand or through `PickupLoot`.
+  They lay at the player's position rather than spread out.
+- **`DropRelic` and its force flag.** Static reading: it takes up to six
+  arguments, x, y, two more, a fifth that when true skips the chance roll,
+  and a sixth handed on to `LootGroundCreate`; without the fifth it compares
+  a roll against the fourth and returns false when that fails (always, with
+  no fourth), and it returns true only after its `LootGroundCreate` call. So a
+  two-argument call builds nothing: ForgePact #124's first `forcerelic` made
+  91 such calls and **measured** no relic on the ground. **Measured** (#124
+  Live 1): five calls with `(x, y, 0, 0, true)`, the sixth left out and the
+  player as `self` and `other`, each returned true and each put a relic on
+  the ground (ground items 17 -> 22, five relics read with `itemActive` 1
+  three seconds later). #125's six-argument call `(x, y, 0, 0, 1, 0)` had
+  built relics and placed none; which difference matters is not established.
+  `DropRelic` is not named in the local decompiler project, so its reading
+  rests on the one unnamed caller of both `ReturnRandomPlayerRelic` and
+  `GetRelicQuest` outside the Satanic kill routines.
 
 ForgePact's Pet collects relics (`petrelic`) is built on this section: it
 calls `PickupLoot` with the companion's shape, destroys the ground relic
@@ -1393,7 +1445,8 @@ itself only after a true return whose raise it sees in the owned level, and
 never targets a relic the player owns at 10/10.
 [pet relic collector, Static reading](../ForgePact/docs/pet-relic-collector-research.md#static-reading),
 [Not established](../ForgePact/docs/pet-relic-collector-research.md#not-established),
-[The mechanism](../ForgePact/docs/pet-relic-collector-research.md#the-mechanism)
+[The mechanism](../ForgePact/docs/pet-relic-collector-research.md#the-mechanism),
+[Live 1 results](../ForgePact/docs/pet-relic-collector-research.md#live-1-results-2026-10-02)
 
 ---
 
