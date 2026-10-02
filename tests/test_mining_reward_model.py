@@ -83,9 +83,11 @@ def rolled_dig(kinds, rolls=1, multiplier=1, helmet=False, rerun_pays=True):
     The game's completion runs once; if it paid ore, the plugin re-runs it up
     to `rolls - 1` more times on the same node, each run scaled by the quantity
     lever. An extra run that pays nothing ends the loop (`rerun_pays` False is
-    Live procedure 1's open question, not a claim). Experience, quests and the
-    floating text happen once per dig; the helmet's own dispatch once; every
-    run draws each bonus site once; the node ends at hp 0 whatever happened.
+    the plugin's guard: Live procedure 1 saw 13 of 13 re-runs pay, MR4-MR6,
+    so an unpaid re-run is not observed live, not ruled out). Experience,
+    quests and the floating text happen once per dig; the helmet's own
+    dispatch once; every run draws each bonus site once; the node ends at hp 0
+    whatever happened.
     """
     if not 1 <= rolls <= MAX_ROLLS:
         raise ValueError(f"rolls must be 1..{MAX_ROLLS}, got {rolls!r}")
@@ -247,6 +249,94 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(unpaid["hp_after"], 0)
 
 
+class LiveProcedure1Tests(unittest.TestCase):
+    """Issue #36's Live procedure 1 (2026-09-28), MR4-MR9: the transforms above
+    reproduce what the plugin's counters read in the game. Every dig was a
+    Copper Vein, one ore kind, so one stack per completion run."""
+
+    def test_mr4_rolls_3_pays_three_completion_runs(self):
+        mr4 = measured("MR4")
+        vein = ["copper"] * 4                    # the stack's quantity was not logged at x1
+        dig = rolled_dig(vein, rolls=mr4["rolls"], multiplier=mr4["multiplier"])
+        self.assertEqual(dig["extra_runs"], mr4["extra_runs"])
+        self.assertEqual(dig["extra_runs_unpaid"], mr4["extra_runs_unpaid"])
+        self.assertEqual(sum(len(run) for run in dig["runs"]), mr4["loot_calls"])
+        self.assertTrue(all(len(run) == mr4["stacks_per_run"] for run in dig["runs"]))
+        self.assertEqual(len(dig["runs"]), mr4["owner_saw_drops"])
+        self.assertEqual((mr4["hp_before_each_extra_run"], mr4["hp_after_each_extra_run"]), (1, 0))
+        self.assertEqual(dig["hp_after"], mr4["hp_after_each_extra_run"])
+        # Negative control: had the re-run paid nothing, the counters would differ.
+        unpaid = rolled_dig(vein, rolls=mr4["rolls"], rerun_pays=False)
+        self.assertNotEqual((unpaid["extra_runs_unpaid"], sum(len(r) for r in unpaid["runs"])),
+                            (mr4["extra_runs_unpaid"], mr4["loot_calls"]))
+
+    def test_mr5_rolls_3_at_x5_scales_every_run(self):
+        mr5 = measured("MR5")
+        vein = ["copper"] * mr5["original"]
+        dig = rolled_dig(vein, rolls=mr5["rolls"], multiplier=mr5["multiplier"])
+        self.assertEqual(dig["runs"], [[{"b": 27, "o": mr5["dispatched"]}]] * mr5["rolls"])
+        self.assertEqual(dig["extra_runs"], mr5["extra_runs"])
+        self.assertEqual(dig["extra_runs_unpaid"], mr5["extra_runs_unpaid"])
+        self.assertEqual(sum(len(run) for run in dig["runs"]), mr5["loot_calls"])
+        scaled = sum(1 for run in dig["runs"] for stack in run
+                     if model.stack_quantity(stack) != mr5["original"])
+        self.assertEqual(scaled, mr5["scaled_stacks"])
+        # Negative control: at x1 the same dig scales nothing.
+        plain = rolled_dig(vein, rolls=mr5["rolls"])
+        self.assertTrue(all(model.stack_quantity(s) == mr5["original"]
+                            for run in plain["runs"] for s in run))
+
+    def test_mr6_rolls_10_runs_ten_times_and_ends_at_hp_0(self):
+        mr6 = measured("MR6")
+        self.assertEqual(mr6["rolls"], MAX_ROLLS)
+        dig = rolled_dig(["copper"] * 4, rolls=mr6["rolls"], multiplier=mr6["multiplier"])
+        self.assertEqual(dig["extra_runs"], mr6["extra_runs"])
+        self.assertEqual(dig["extra_runs_unpaid"], mr6["extra_runs_unpaid"])
+        self.assertEqual(sum(len(run) for run in dig["runs"]), mr6["loot_calls"])
+        self.assertEqual(len(dig["runs"]), mr6["owner_saw_stacks"])
+        self.assertEqual(dig["hp_after"], mr6["hp_after"])
+        self.assertTrue(mr6["game_answered_ping"])
+
+    def test_mr7_xp_passes_once_and_each_extra_run_is_silenced_once(self):
+        mr7 = measured("MR7")
+        per_run = mr7["calls_per_completion_run"]
+        series = {"ExperienceUpdate": mr7["experience_update"],
+                  "GuildExperienceAdd": mr7["guild_experience_add"]}
+        digs = [rolled_dig(["copper"] * 4, rolls=r) for r in (1, 3, 3, 10)]
+        self.assertEqual([d["extra_runs"] for d in digs], mr7["extra_runs_per_dig"])
+        for name, reads in series.items():
+            silenced = [s for _, s in reads]
+            deltas = [b - a for a, b in zip([0] + silenced, silenced)]
+            # Silenced calls per dig = extra runs x one call per completion run.
+            self.assertEqual(deltas, [d["extra_runs"] * per_run for d in digs], name)
+        # The clean rolls-3 dig (between the first two reads) let one call through.
+        passed = [p for p, _ in mr7["experience_update"]]
+        self.assertEqual(passed[1] - passed[0], mr7["passed_at_the_clean_rolls_3_dig"])
+        self.assertEqual(digs[1]["xp_awards"] * per_run, mr7["passed_at_the_clean_rolls_3_dig"])
+        # Negative control: had XP repeated per run, that dig would pass three.
+        self.assertNotEqual(len(digs[1]["runs"]) * per_run, mr7["passed_at_the_clean_rolls_3_dig"])
+
+    def test_mr9_stats_at_0_predict_no_bonus_find(self):
+        mr9 = measured("MR9")
+        self.assertEqual(len(mr9["stat_ids"]), len(mr9["stat_values"]))
+        self.assertTrue(set(range(693, 701)) <= set(mr9["stat_ids"]))
+        runs = mr9["paid_completion_runs"]
+        self.assertEqual(runs, sum(len(rolled_dig(["copper"], rolls=r)["runs"])
+                                   for r in (1, 3, 3, 10)))
+        for stat in mr9["stat_values"]:
+            self.assertEqual(model.probability_of_no_bonus(stat, runs), 1.0)
+            self.assertEqual(model.expected_bonus_hits(stat, runs), mr9["bonus_finds_seen"])
+        # Negative control: a stat of 5 would expect finds over the same runs.
+        self.assertGreater(model.expected_bonus_hits(5, runs), 0.0)
+
+    def test_mr8_is_recorded_as_not_observed(self):
+        entries = json.loads(FIXTURE.read_text(encoding="utf-8"))["measurements"]
+        mr8 = next(e for e in entries if e["id"] == "MR8")
+        self.assertEqual(mr8["status"], "not_observed")
+        self.assertIn("not_reproduced", mr8)
+        self.assertNotIn("does not happen", mr8["what"].lower())
+
+
 class FixtureShapeTests(unittest.TestCase):
     """`hs-game-sdk/curated/mining_reward_measurements.json` stays checkable."""
 
@@ -267,7 +357,8 @@ class FixtureShapeTests(unittest.TestCase):
                 self.assertIn(field, entry, entry.get("id"))
             self.assertRegex(entry["id"], r"^MR\d+$")
             self.assertIn(entry["kind"], ("baseline", "target", "our_code"), entry["id"])
-            self.assertIn(entry["status"], ("measured", "qualitative", "approximate", "our_code"),
+            self.assertIn(entry["status"],
+                          ("measured", "not_observed", "qualitative", "approximate", "our_code"),
                           entry["id"])
             self.assertRegex(entry["date"], r"^\d{4}-\d{2}-\d{2}$", entry["id"])
             self.assertEqual(("reproduced_by" in entry) + ("not_reproduced" in entry), 1,
