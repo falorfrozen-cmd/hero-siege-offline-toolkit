@@ -334,7 +334,7 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   - `include/ForgePact/PetLootUnstickMod.hpp`: The "Pet moves on from loot it cannot pick up" decision core (issue #94, `petunstick`, off by default; `docs/pet-loot-stuck-research.md`). `PetLootStuckWatch` and `PetLootRepickRing` are game-independent - frame numbers, target ids and a distance in pixels, never an instance - so `tests/pet_loot_unstick_harness.cpp` compiles them whole. The watch answers "give this target up" on the frame the same target's run within `kPetLootStuckRadiusPx` (160) reaches `kPetLootStuckFrames` (90) consecutive frames, and re-arms on answering, so a target taken straight back and still in reach is given up again every 90 frames. The tick's routing question is header code too (`PetLootTargetRoute { Watch, DropOnSight }` / `PetLootRoute(kindRead, isGround, isCoin)`): a live target whose `object_index` is from neither family is dropped on the tick that sees it - a stale id the game reused (Live 2) - and never fed to the watch; an unreadable kind keeps the watch route, because a failed read is not evidence of a wrong id. `PetLootRepickRing` (with its kind enum `PetLootKind { Other, Ground, Coin }` and `PetLootRepick`) keeps the last eight give-ups and decides whether a live target is one of them taken back within `kPetLootHoldFrames`, after the pet left it or straight back on the next tick, counting it once per give-up by kind. `kPetLootHoldFrames` (600) is also the value `PetLootUnstickTick()` in `ModuleMain.cpp` writes into the given-up ground item's `itemCompanionTimer`, and only after `variable_instance_exists` says the item carries that name (otherwise it writes nothing to the item and counts `timer absent=`). `PetLootUnstickMod` holds the switch, the watch, the ring and the counters `petunstick 0` prints (`StatLine()` / `FullStatLine()`: held back, coins released, longest same-target run between give-ups, where the ticks went, and the read-refusals); the tick's own counters (`give-up failed=`, `other kind=`, `timer absent=`) live in `ModuleMain.cpp` (the on-sight drops counted `other kind=` with the index), and `PetLootLocalStatSuffix()` appends them with the ring's `re-picked while held=` and its ground/coin split.
   - `include/ForgePact/ExitSafeThread.hpp`: `ForgePact::ExitSafeThread`, how a module global owns a background thread. The `std::thread` is heap-held and freed only after `JoinFor` has joined it, and the holder has no destructor, so the game's `ExitProcess` never destroys a joinable thread (Known Limitations item 26). It owns the coop receive thread. Game-independent: `tests/coop_thread_exit_probe.cpp` compiles it whole into a probe DLL.
   - `include/ForgePact/FrameProfiler.hpp`: `ForgePact::FrameProfiler`, the `frameprof` sampling profiler (2026-09-28, see "Frame profiler (`frameprof`)" below). A background thread (an `ExitSafeThread` held by a never-freed singleton) pauses the frame thread `rate` times a second in `CaptureOnce` - `SuspendThread`, `GetThreadContext`, a guarded `memcpy` of the live stack into a buffer allocated beforehand, `ResumeThread`, and nothing else - then, after the resume, `WalkCopy` moves every pointer into the old stack range into the copy and unwinds it with `RtlVirtualUnwind`, finding unwind entries by binary search in each module's own `.pdata` (`ModuleMap`, never `RtlLookupFunctionEntry`). `Symbolizer` names frames from the game's compiled-code table (`GmlEntry` = `YYGMLFuncs`, walked both ways from one row), the built-ins the adapter resolved and each system DLL's exports; `Classify` buckets a stack from the innermost frame out. `Profiler::BuildReport` writes `bp_ipc\perf\<stem>.json`, `.stacks.txt` and `.txt`. Game-independent (Win32 and the standard library, no `RValue`), so `tests/frame_profiler_harness.cpp` compiles it whole. Its companion `FrameProfilerBuiltins.hpp` holds `kBuiltinNames`, the 429 built-in names the adapter resolves. Avoids `std::min`/`std::max` for the `NOMINMAX` reason above.
-  - `include/ForgePact/IncidentMonitor.hpp`: `ForgePact::Incident`, the incident monitor (issue #76, 2.2.0, always on in both builds; see "Incident reports (issue #76, 2.2.0)" below). Game-independent - Win32 and the standard library only - so `tests/incident_monitor_harness.cpp` compiles it whole: the 600-frame ring (single writer: the frame thread), the per-mod accounting and `IncidentScope` with its in-hook tag, `Analyze` (hitch / sustained / freeze / none from the ring, the last frame's clock reading and the grace and focus inputs passed in as plain values), the rate limits, the report text builders (pure functions over structs), the `%USERPROFILE%` scrub, the thresholds as named constants, and the clean-shutdown static whose destructor writes `==== clean shutdown ====` with Win32 file calls only. The adapter in `ModuleMain.cpp` sits under `// ===== Incident monitor (issue #76) =====`.
+  - `include/ForgePact/IncidentMonitor.hpp`: `ForgePact::Incident`, the incident monitor (issue #76, 2.2.0, always on in both builds; see "Incident reports (issue #76, 2.2.0)" below). Game-independent - Win32 and the standard library only - so `tests/incident_monitor_harness.cpp` compiles it whole: the 600-frame ring (single writer: the frame thread), the per-mod accounting and `IncidentScope` (the in-mod channel), the in-hook id channel with `TaggedThunks<Fn>` (the installer's per-slot thunks, `kHookSlots = 128`) and `IncidentHookTag`, `Analyze` (hitch / sustained / freeze / none from the ring, the last frame's clock reading and the grace and focus inputs passed in as plain values; a freeze is held until it ends or `kFreezeHoldMs`), the rate limits, the report text builders (pure functions over structs), the `JsonStringField`/`JsonNumberField` readers of the panel's `exit.json`/`panel.json`, the `%USERPROFILE%` scrub, the thresholds as named constants, and `ShutdownMarker` (`Write(route)`, once-only, Win32 file calls only: `==== clean shutdown ====` from the adapter's `ExitProcess` hook, `==== clean shutdown (detach) ====` from its static destructor). The adapter in `ModuleMain.cpp` sits under `// ===== Incident monitor (issue #76) =====`.
   - `include/ForgePact/FarSleep.hpp`: `ForgePact::FarSleep`, far scenery sleep (2026-09-28, `farsleep`, see "Far scenery sleep (`farsleep`)" below). Classifies the object table once a session (leaf descendants of `Visual_Parent_obj`, `Destructible_NoCollision_Parent_obj`, `Collision_Prop_obj`, minus denied parents, `Trap_*` and objects owning per-frame events), scans a settled zone a slice a frame, then every 10 frames sleeps props beyond the sleep radius of every player (`instance_deactivate_object`) and wakes those inside a wake radius (`instance_activate_object`); a player jump starts an urgent pass. Reaches the game only through `CallBuiltin`, every call counted against a per-frame budget, so `tests/far_sleep_harness.cpp` compiles the real class against a controlled runner.
   - `include/ForgePact/HiddenLootMod.hpp`: `ForgePact::HiddenLootMod`, hidden loot sleep (2026-09-28, `hiddenloot`, #95 part 2b, see "Hidden loot sleep (`hiddenloot`)" below). `OnInit` takes what a `LootGroundInit` call carried (argument 0, argument 1, `self`) from the adapter's hook and, still inside the call, reduces each to a durable handle (`Durable`: a number or a reference kept as it is; an instance pointer asked `instance_exists` and replaced by its own `id`, read with `variable_instance_get`; anything else undefined), with those two reads only, no write and no deactivation, so no raw pointer outlives the call; `OnFrame`, at the end of the frame, identifies the handle that is a live `Loot_Ground_obj` by `object_index` (any value kind), reads `lootFilterVisible` after `variable_instance_exists` and puts a hidden one to sleep (`instance_deactivate_object`); polls the show key (starts at 164, Left Alt) through an injected key-state and foreground test, waking and writing visible on the key-down edge and writing hidden and re-sleeping on release; `Enable` walks the ground once (capped at 8,192), `Disable` wakes everything it slept; a room change forgets without a call, a persistent room sleeps nothing; a pass every 18 frames stands in when the route is not `Both`. Reaches the game only through `CallBuiltin`, so `tests/hidden_loot_harness.cpp` compiles the real class against a controlled runner.
 - `plugin_build/`: Plugin compiler script and build workspace.
@@ -376,9 +376,10 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   - `test_map_reveal_behavior.py` + `map_reveal_harness.cpp`: **Behavioral** regression suite for the pack pass - compiles the real `MapRevealManager` and the real `Hook_distance_to_object` against controlled game-API responses and calls the hook at the point in the frame order where it matters (before the next `OnFrame`). Exists because the source-string assertions in `test_map_reveal_contract.py` passed throughout the period when the authorization was checked at the wrong point in the frame; see Known Limitations item 13. Skips without a C++ toolchain, like `test_headhunter_dispatch.py`.
   - `test_frame_profiler.py` + `frame_profiler_harness.cpp`: The frame profiler. **Behaviour** (Windows, skips without MSVC): the harness compiles the real `FrameProfiler.hpp` and profiles a worker thread of its own that runs a known chain (`FpTop` -> `FpMiddle` -> `FpLeafSpin`) named through a fake compiled-code table (`gml_Object_Fake_Enemy_obj_Step_0`, `gml_Script_FakeMiddle`) and a fake built-in (`fake_spin`), calling `OnFrame` at its own frame boundaries. The JSON reports must name the event, the script and the built-in (>= 60% each), put the script first in `gmlSelf`, read a sleeping thread as idle, pin every slow frame on `FakeSlowWork`, carry the context callback's room and counts into the timeline, list stacks outermost first, end early on `stop` and on a vanished thread, cut the sampling rate when the pauses exceed the budget, count a frame limiter that spins on the clock (`FpFrameLimiter`, in no table) as waiting while a clock read under game code never is, and keep naming a row whose function a "mod" swapped for a function in another module (`FpMiddle`'s row pointed at `SleepEx`), read back from the harness exe on disk - the reason the fake table is a constant-initialised `FakeRow` array with typed function pointers. The heap-churn capture (2000 a second against a thread allocating in a loop) must finish: a lock taken while the thread is suspended would deadlock it, and the harness's watchdog ends the process if it ever does. Compiled with `/link /INCREMENTAL:NO` so a function's address is the function, not a thunk. **Contract**: `frameprof` is in `kPlayerCommands` and a standalone early return (the literal twice in the file); `FrameProfilerTick();` is `FrameCallback`'s first statement; `OnFrame` and `TakeSummary` start with one atomic load; the code between `SuspendThread(` and `ResumeThread(` in `CaptureOnce` holds no allocation, logging, lock, unwinder call or throw, and `WalkCopy` comes after it; `RtlLookupFunctionEntry(` never appears; the header names no `RValue`/`g_Yytk`/`YYTK`/`CInstance`/`Aurie`, no `std::min`/`std::max`; the adapter installs no hook and calls only `room_get_name`, `asset_get_index`, `instance_number` and reads `room` and `instance_count`; the defaults are 30 s at 250 a second.
   - `test_frameprof_report.py`: `tools/frameprof_report.py` on a synthetic report and stacks file: the call tree adds up, labels pick their colour (event, script, built-in, runtime, graphics, mod, system), the summary lines, a hostile name is escaped and every section is on the page with nothing loaded from the network, a second without a monster reading is left out of the chart, a non-capture JSON is refused, and without a path the newest capture of the game in `forgepact.json` is taken.
-  - `test_incident_monitor_behavior.py` + `incident_monitor_harness.cpp` + `incident_shutdown_probe.cpp`: The incident monitor's behaviour (Windows, `/W4`, writes `build/incident-monitor-behavior/`). The harness compiles the real `IncidentMonitor.hpp` and drives it with synthetic frame times, printing one `<name> | <pass|fail> | <detail>` line per scenario: `steady-60fps-with-zone-change` (the baseline: no episode, the slow frames inside the room-change grace), `single-400ms-frame`, `sustained-2.5x-3s`, `freeze-4s-in-hook`, `freeze-4s-no-hook`, `unfocused-suppressed`, `rate-limit-30s`, `per-mod-accounting`, `scrub-username`, and, through the probe DLL (`/MD /LD`, loaded in a child process), `exit-clean` (`ExitProcess` leaves the marker) and `exit-terminated` (`TerminateProcess` does not).
-  - `test_incident_monitor_contract.py`: The incident monitor's wiring and rules: the header is game-independent, `IncidentFrameTick();` is `FrameCallback`'s second statement, `incident` is a player command with its own early return, the monitor thread and adapter never touch the runtime, every player-build `QueryPerformanceCounter` lies in the incident region or the header, the shutdown destructor uses Win32 only, the thread is an `ExitSafeThread` on a heap-held singleton, and the thresholds by name and value.
-  - `test_incident_panel.py`: The panel's half of incident reports: the exit code read from a held handle (a stand-in process exiting with `0xC0000005`), the Application-log parser on an inline record and the real `wevtutil` read as a positive control (skips with a message on a machine with no records), `exit.json` only for a non-zero exit, the toast command builder, `notify_lag` off silencing PERF toasts only, the reports listing, `panel.json`, and `DEFAULTS["notify_lag"]`.
+  - `test_incident_monitor_behavior.py` + `incident_monitor_harness.cpp` + `incident_shutdown_probe.cpp`: The incident monitor's behaviour (Windows, `/W4`, writes `build/incident-monitor-behavior/`). The harness compiles the real `IncidentMonitor.hpp` and drives it with synthetic frame times, printing one `<name> | <pass|fail> | <detail>` line per scenario: `steady-60fps-with-zone-change` (the baseline: no episode, the slow frames inside the room-change grace), `single-400ms-frame`, `sustained-2.5x-3s`, `freeze-4s-in-hook` and `freeze-4s-no-hook` (the episode appears once frames resume and the room-change lead has passed, naming `in-hook` and `in-mod`), `freeze-load-room-change` (a 3.5 s gap ending in a new room key: no episode, `quiet` + 1), `freeze-never-ends` (16 s with no frame: one freeze at `kFreezeHoldMs`), `worst-judged-vs-overall` (a 400 ms frame inside the grace is the overall worst, not judged; a 300 ms judged frame is the worst judged), `hook-tag-thunk` (a `TaggedThunks<int(*)(int)>`: the thunk returns the target's value, the id is set inside and restored after, one slot per `dest`, the mod channel untouched), `stat-line-prefix` (`StatLines` starts `incident: frames `; the third line `incident: hooks tagged `), `exit-json-fixture` (reads `tests/fixtures/incident/` through the header's parsers), `marker-once` (two `ShutdownMarker::Write` calls leave one line), `unfocused-suppressed`, `rate-limit-30s`, `per-mod-accounting`, `scrub-username`, and, through the probe DLL (`/MD /LD`, loaded in a child process), `exit-clean` (`ExitProcess` leaves the marker) and `exit-terminated` (`TerminateProcess` does not).
+  - `test_incident_monitor_contract.py`: The incident monitor's wiring and rules: the header is game-independent, `IncidentFrameTick();` is `FrameCallback`'s second statement, `incident` is a player command with its own early return, the monitor thread and adapter never touch the runtime, every player-build `QueryPerformanceCounter` lies in the incident region or the header, the shutdown destructor uses Win32 only, the thread is an `ExitSafeThread` on a heap-held singleton, the thresholds by name and value, every installer hands both routes the `Tagged(...)` thunk (`HookOneScript`, `HookBuiltin`, `InstallSlotHook`; `HookProtGet` opens with an `IncidentHookTag`; the population install counts an untagged hook), the stat line's `incident: frames ` prefix, `Out` and `OutRaw` sharing one lock, the `exit.json`/`panel.json` keys the plugin reads matching the fixture and `src/forgepact.py`, and the `ExitProcess` hook (`fp_exit_marker`) resolved by name and writing the marker before the trampoline.
+  - `test_incident_panel.py`: The panel's half of incident reports: the exit code read from a held handle (a stand-in process exiting with `0xC0000005`), the Application-log parser on an inline record and the real `wevtutil` read as a positive control (skips with a message on a machine with no records), `exit.json` only for a non-zero exit, the toast command builder, `notify_lag` off silencing PERF toasts only, the reports listing, `panel.json`, `DEFAULTS["notify_lag"]`, the `exitWatch` and `toasts` counters, an exit after a clean shutdown recorded with `after_clean_shutdown: true` and not toasted, and the writers' key sets held equal to `tests/fixtures/incident/`.
+  - `fixtures/incident/exit.json` + `fixtures/incident/panel.json`: The one shared fixture of the panel-to-plugin incident files (issue #76): `exit.json`'s eight keys and `panel.json`'s `version`/`pid`. The C++ harness's `exit-json-fixture` reads it through `IncidentMonitor.hpp`'s parsers and `test_incident_panel.py` holds `record_game_exit`'s and `write_panel_json`'s key sets equal to it, so a key renamed on one side fails a test instead of reading `unknown`.
   - `test_release_pdb_symbols.py` + `pdb_codegen_probe.cpp`: Evidence that the release workflow's `CL`/`_LINK_` symbol options change no instruction (Windows, skips without MSVC, writes `build/release-pdb-symbols/`). Compiles the probe with `build.bat`'s own options plain and under exactly the workflow's values, then asserts every `.text` COFF section of the object (a `/bigobj` header) is byte-identical with the same relocation offsets and types, that the linked `.text` keeps its address and size, and that only the symbols build writes a PDB and names it by `/PDBALTPATH`; an `/Od` compile is the negative control for both readers. The linked `.text` is not byte-identical (see "Incident reports (issue #76, 2.2.0)").
   - `test_far_sleep_behavior.py` + `far_sleep_harness.cpp`: Far scenery sleep. The harness compiles the real `FarSleep.hpp` against a runner with an object table (the three families, the denied parents, a trap, an object with a Step event, a gap in the indices) and active/asleep instances; 38 scenarios: nothing asked while off, bounded runner calls, only scenery, settling, walking, jumps, two players, the hunt radius, a prop that moved, a prop broken while awake, the game waking props, the top-up scan, off, room changes, skipped rooms, a restart, a refusing runner.
   - `test_far_sleep_contract.py`: The wiring and the rules: `farsleep` is a player command with its own early return, `FrameCallback` runs `FarSleepTick()` after setup and the tick returns at once while off, the class starts off and calls only `CallBuiltin` (and only the documented built-ins), the families, the denied parents, the skipped rooms, and that `zonecensus`, `evcount` and `farsleep ids` stay in the research build.
@@ -732,8 +733,8 @@ To add or modify a gameplay modifier or runtime command:
 | `.\tools\ipc.ps1 frameprof start [seconds] [rate]` (also `frameprof stop`, `frameprof stat`) | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree (player or research build) | Samples the game's frame thread for `seconds` (1-600, default 30) at `rate` a second (20-2000, default 250) and answers `frameprof: sampling the frame thread ...`; when it ends, the summary lines land in `out.txt` and the report in `<game>\bin\bp_ipc\perf\frameprof-<date>-<time>.json`, `.stacks.txt`, `.txt`. | Pauses the frame thread briefly per sample (the report states the cost; the rate halves while it exceeds 3%); writes the three files. Changes nothing in the game. | Harness-verified 2026-09-28; first live capture pending |
 | `py tools/frameprof_report.py [capture.json] [--no-html]` | `ForgePact/` | PowerShell / CMD | Python 3.10+ (standard library) | Prints the capture's summary and writes `<stem>.html` beside it (without a path: the newest capture of the configured game). | Writes the page | Verified 2026-09-28 on harness captures |
 | `py -m unittest tests.test_frame_profiler tests.test_frameprof_report -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the behaviour half (skips without it) | 22 + 8 tests: the harness's captures and the contract, then the report tool. About 35-60 s, most of it the harness compile and its six captures. | Writes `build/frame-profiler-behavior/` | Verified 2026-09-28 |
-| `.\tools\ipc.ps1 incident stat` | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree (player or research build) | Prints the incident monitor's view: frames seen, the baseline median and the worst frame this session, whether the room-change grace is active, focus, the in-hook tag, episodes and report folders written, and the per-mod table (average and worst ms a frame over the last minute). The live control that the monitor is counting. | Read-only | Added 2026-10-02 (issue #76); live check pending Live 1 |
-| `py -3 -m unittest tests.test_incident_monitor_behavior tests.test_incident_monitor_contract tests.test_incident_panel -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the behaviour harness and its probe | The incident monitor's harness scenarios and shutdown probe, its wiring contract, then the panel's half (exit code, event log, toast, `notify_lag`, reports listing). `test_incident_monitor_behavior` must print `OK` with no `skipped` on a machine with MSVC. | Writes `build/incident-monitor-behavior/` and temp files only | Added 2026-10-02 (issue #76) |
+| `.\tools\ipc.ps1 incident stat` | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree (player or research build) | Prints the incident monitor's view. The first line starts `incident: frames ` (the live marker): frames seen, the baseline median, the worst frame this session and whether it was judged, the worst judged frame, the slow judged frames (`kHitchMs` or more) and `window yes|no`. Then whether the room-change grace is active, focus, the in-hook id and in-mod tag, episodes and report folders written, `hooks tagged N, untagged M | report write errors W`, and the per-mod table (average and worst ms a frame over the last minute). The live control that the monitor is counting. | Read-only | Added 2026-10-02 (issue #76); live check pending Live 1 |
+| `py -3 -m unittest tests.test_incident_monitor_behavior tests.test_incident_monitor_contract tests.test_incident_panel -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the behaviour harness and its probe | The incident monitor's harness scenarios (including `freeze-load-room-change`, `freeze-never-ends`, `worst-judged-vs-overall`, `hook-tag-thunk`, `stat-line-prefix`, `exit-json-fixture` against `tests/fixtures/incident/`, `marker-once`) and shutdown probe, its wiring contract, then the panel's half (exit code, event log, toast, `notify_lag`, reports listing, the `exitWatch`/`toasts` counters, the shared fixture). `test_incident_monitor_behavior` must print `OK` with no `skipped` on a machine with MSVC. | Writes `build/incident-monitor-behavior/` and temp files only | Added 2026-10-02 (issue #76) |
 | `py -3 -m unittest tests.test_forgepact_release_workflow tests.test_release_pdb_symbols tests.test_build_bat_contract -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for `test_release_pdb_symbols` (skips without it) | The release workflow's shape, including the PDB artifact and the compile step's `CL`/`_LINK_`; the probe compiled plain and under those values; `build.bat`'s verbatim `cl ` line. | Writes `build/release-pdb-symbols/` | Added 2026-10-02 (issue #76) |
 | `.\tools\ipc.ps1 farsleep 1` (also `farsleep 0`, `farsleep stat`) | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree | Turns far scenery sleep on or off (the panel's Mods → Quality of Life switch sends the same) and prints its state: zone state, props known and asleep, the radii, sleeps/wakes/scans/passes, rooms skipped, errors and the first player's position |
 | `py -m unittest tests.test_far_sleep_behavior tests.test_far_sleep_contract -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the behaviour half (skips without it) | 16 + 16 tests: the harness's 38 scenarios, then the wiring and the rules |
@@ -2780,7 +2781,7 @@ with a hash manifest.
     - **How often.** Most likely on every exit once the producer's publisher runs. 9 of the 10 dumps Windows kept (2026-09-25 13:17 to 2026-09-26 01:36) show it, one from a session that lived 70 s. HS-Offline-Tracker PR #8's check, launched with `CREATE_DEFAULT_ERROR_MODE`, saw it on a plain `CloseMainWindow` at the main menu (exit `0xC0000409`, dump 56756). The five `CloseMainWindow` closes of 2026-09-26 that left no dump were games started by Python under Git Bash. That Python's error mode is `0x3` (`SEM_NOGPFAULTERRORBOX`, measured), and the games inherited it, so Windows did not report their exits. Their exit codes were not read. `tools/itemtruth_memrun.py` now starts the game with the default error mode and reads the exit code (ForgePact PR #97).
     - **A missing dump is not a clean exit (measured 2026-09-26, item 26's live check).** That check's first `deaf068` run was also started by Python under Git Bash and inherited error mode `0x3`. It aborted with exit code `0xC0000409`, yet Windows wrote no dump and logged no Application Error event. The same run started with `CREATE_DEFAULT_ERROR_MODE` dumped. PowerShell resets its own error mode to `0x8001`, without `SEM_NOGPFAULTERRORBOX`. Judge a close by the game's exit code, not by the dump folder.
     - **Why it matters here.** The session of 197,704 Item Truth evaluations that "crashed" at 01:36:27 is one of them; it was read as the evaluations running out of memory (they do not: "Item Truth for the Item Editor", Memory). Read a dump's stack before blaming a `ucrtbase` report on ForgePact or the game.
-    - **Not fixed here.** The fix belongs in HS-Offline-Tracker (join or detach the worker before the globals go); ForgePact then updates the pin. `ItemTruth.hpp` avoids the same trap for its own writer thread by never destroying its `Journal`; ForgePact's own coop receive thread did not, until item 26.
+    - **Not fixed here.** The fix belongs in HS-Offline-Tracker (join or detach the worker before the globals go); ForgePact then updates the pin. `ItemTruth.hpp` avoids the same trap for its own writer thread by never destroying its `Journal`; ForgePact's own coop receive thread did not, until item 26. The incident monitor (2.2.0) writes its clean-shutdown marker at `ExitProcess`, which runs before any DLL's exit-time destructors (the order is not yet observed live), and records the abort that follows as an exit after a clean shutdown instead of reporting a crash (see "Incident reports (issue #76, 2.2.0)").
 26. **ForgePact's own coop receive thread aborted research-build exits the same way (fixed in ForgePact PR #90; verified live 2026-09-26):**
     - **What it was.** `plugin/ModuleMain.cpp` kept the custom co-op transport's receive thread in `static std::thread g_CoopRecvThread`. `coopstart`, or a `bp_ipc\coop.ini` with `enabled=1` (read on the first frame), started it, and only `coopstop` joined it. Closing the game with coop still running therefore ended in item 25's abort, from ForgePact's own exit-time destructors.
     - **Who could meet it.** Research builds only. No preprocessor guard keeps the coop code out of the player build, but no `coop*` verb is in `kPlayerCommands`, so `RunCommand` refuses them there, and the `coop.ini` auto-start and the per-frame `CoopTick` are inside `#ifndef FORGEPACT_RELEASE`.
@@ -4055,32 +4056,111 @@ someone had to ask for. The player build now notices a crash, a freeze (no
 frame for 3 s) or a significant FPS drop (one frame over 250 ms, or 2.5 times
 the median for 2 s), tells the player, and writes
 `<game>\bin\bp_ipc\reports\<yyyymmdd-HHMMSS>_<perf|freeze|crash>\`, a folder
-that answers: was it our code, which mod was on or busy, and how much frame
-time our hooks took. The design, every decision and the limits are in
+that answers: which of our hooks the game was inside, which mod was on or
+busy, and how much frame time our hooks took (`none` is not an exoneration,
+and a crash cannot know the first; see "Known limits" below). The design,
+every decision and the limits are in
 `ForgePact/docs/incident-report.md`; the player text is the README's
 "Incident reports" section and `release-notes-v2.2.0.md`.
 
 **Shape.** `plugin/include/ForgePact/IncidentMonitor.hpp` (game-independent)
 plus the adapter under `// ===== Incident monitor (issue #76) =====` in
 `ModuleMain.cpp`: `IncidentFrameTick()` as `FrameCallback`'s second statement
-(`FrameProfilerTick();` stays first), an `IncidentScope` at the top of each
-mod's hook body (including the dropmult bodies in `DropManager.hpp`), the
-monitor thread's `Run`, the next-load crash check, and the `incident stat`
-verb (a standalone early return and in `kPlayerCommands`). The context counts
-come from the frame profiler's `FrameProfContext()`, so the incident code adds
-no built-in name. The panel (`src/forgepact.py`) holds a handle to the game
-process, reads its exit code and the Application log's `Application Error`
-record when it closes, writes `bp_ipc\exit.json` and `bp_ipc\panel.json`,
-watches `reports\` for toasts, and shows the Setup tab's **Incident reports**
-card with the `notify_lag` switch (default on; off silences PERF toasts only).
+(`FrameProfilerTick();` stays first), the installer tag in `HookOneScript`
+and `HookBuiltin` (below), an `IncidentScope` at the top of each mod's hook
+body (including the dropmult bodies in `DropManager.hpp`), the
+`ExitProcess` marker hook, the monitor thread's `Run`, the next-load crash
+check, and the `incident stat` verb (a standalone early return and in
+`kPlayerCommands`). The context counts come from the frame profiler's
+`FrameProfContext()`, so the incident code adds no built-in name. The panel
+(`src/forgepact.py`) holds a handle to the game process, reads its exit code
+and the Application log's `Application Error` record when it closes, writes
+`bp_ipc\exit.json` and `bp_ipc\panel.json`, watches `reports\` for toasts,
+counts what it did (`/api/state`'s `incidents.exitWatch`: `pidHeld`,
+`exitsSeen`, `lastCode`; `incidents.toasts`: `sent`, `failed`,
+`lastError`), and shows the Setup tab's **Incident reports** card with the
+`notify_lag` switch (default on; off silences PERF toasts only).
+
+**The files this feature adds under `bp_ipc\`.**
+
+- `exit.json`: written by the panel when the game exits with a non-zero
+  code (`exit_code`, `exit_utc`, `faulting_module`, `faulting_offset`,
+  `exception_code`, `event_record_id`, `event_probe`,
+  `after_clean_shutdown`); read and deleted by the plugin at the next load.
+- `panel.json`: `{"version", "pid"}`, written by the panel, rewritten only
+  when it changes; the plugin reads it to decide whether a live panel will
+  toast.
+- `reports\<yyyymmdd-HHMMSS>_<perf|freeze|crash>\`: written by the plugin
+  only (built under a dot-name and renamed whole), the ten newest kept; the
+  panel only lists it.
+
+`tests/fixtures/incident/exit.json` and `panel.json` are the one fixture both
+bindings are tested against for the first two.
+
+**The installer tag: two channels.** The in-hook id is set by the
+installer, not by the bodies (owner decision 2026-10-02, "Tag in the
+installer"; round 0 tagged eleven bodies by hand and left about seventy hooks
+reporting `none`). `HookOneScript` and `HookBuiltin` hand both routes - the
+table swap and the `MmCreateHook` detour - a per-slot thunk from
+`TaggedThunks<PFUNC_YYGMLScript>` or `TaggedThunks<TRoutine>` instead of the
+caller's `dest`; the body still receives `*origOut` = the trampoline, so the
+dual route is untouched and the thunk is only a different `dest`. The thunk
+sets the id on entry, restores the previous one on exit, and takes no clock
+reading. `Tagged(id, dest)` reuses the slot of a `dest` seen before (re-install
+is how the file stays idempotent), copies the id into the slot, and past
+`kHookSlots` (128) returns `dest` itself and counts an untagged install.
+`InstallSlotHook` (`bp_getslot`) tags its detour through the same table;
+`HookProtGet` (`fp_acgetvar`) opens with an `IncidentHookTag`;
+`PreparePopulationCapacity`'s ten `fp_population_*` detours have ten native
+signatures and stay untagged, counted (`CountUntagged()`). A hook added
+through either installer is tagged with no extra step. The second channel,
+the mod, comes from the named `IncidentScope`s, which also time the mods for
+the per-mod table.
+
+**The clean-shutdown marker is written at `ExitProcess`, the destructor
+second.** Item 25's tracker producer aborts most exits from its exit-time
+destructors inside `LdrShutdownProcess`, and whether our static destructor
+runs before that abort depends on detach order; after it, every exit on a
+tracker user's machine would read as a crash. So `IncidentMonitorStart()`
+calls `IncidentInstallExitHook()`, which resolves `ExitProcess` by name
+(`GetModuleHandleW(L"kernelbase.dll")` + `GetProcAddress`, `kernel32.dll` as
+the fallback) and installs an `MmCreateHook` detour under id
+`fp_exit_marker` whose body writes the marker and calls the trampoline: on
+the game thread, with every DLL mapped, before any detach. A crash (WER,
+`TerminateProcess`, a fast fail) never calls `ExitProcess`.
+`ShutdownMarker::Write(route)` is once-only: `==== clean shutdown ====`
+from the hook, `==== clean shutdown (detach) ====` from the destructor; the
+crash check matches the prefix. When the panel then reads a non-zero exit,
+it checks `out.txt`'s last session for that prefix and writes `exit.json`
+with `after_clean_shutdown: true` and no toast, and the next load logs
+`incident: the previous session shut down cleanly; the panel recorded exit
+... after it` with no bundle. UNVERIFIED until Live 1 (`clean-shutdown`):
+that the game's close reaches kernelbase's `ExitProcess` export.
+
+**A freeze verdict waits for its end.** A load blocks the frame thread, which
+is the thread that samples `CurrentRoomKey()`, so the room-change grace
+cannot cover a load-length gap before it ends. The detector marks a freeze
+when the gap crosses `kFreezeMs`, captures both tags and the last frame time,
+and emits nothing yet. When frames resume it waits `kRoomLeadMs` for a room
+change: one means the gap was a load (counted quiet, logged `after a room
+change: a load, not reported`); otherwise the episode is emitted with the gap
+as its length. A gap that reaches `kFreezeHoldMs` (15 s) is emitted without
+waiting.
+
+**Telling the player.** With a live panel (`panel.json`'s pid is running), a
+PowerShell toast per new report folder, PERF only while `notify_lag` is on.
+Without one, the plugin's monitor thread shows a `MessageBoxW` for a FREEZE
+bundle and for a CRASH bundle found at the next load, never for PERF.
 
 **Why the player build carries an always-on thread now.** The stall watchdog
 stays research-only (Known Limitations item 6), and `frameprof`'s thread
 starts only on command. The incident monitor is different in kind, so it ships in both builds and
 is always on, with no command to arm it and no panel switch:
 
-- it is a diagnostic, not a mod: it installs no hook, writes nothing into the
-  game, and reads only ForgePact's own atomics and ring buffer, so the
+- it is a diagnostic, not a mod: it hooks no game script (the installer's
+  thunk only names ForgePact's own hooks, and its one detour is on Windows'
+  `ExitProcess`, to write the marker), writes nothing into the game, and
+  reads only ForgePact's own atomics and ring buffer, so the
   no-mod-on-by-default rule does not apply, and a report missing because a
   switch was off is the failure the feature exists to prevent;
 - the frame thread only takes `QueryPerformanceCounter` readings and does
@@ -4090,10 +4170,15 @@ is always on, with no command to arm it and no panel switch:
   does every analysis and every write, never calls YYToolkit, never touches a
   `CInstance` or `RValue`, never calls `Out()` (it appends through `OutRaw`,
   which moved out of the research block), and suspends no thread;
-- a crash is detected after the fact: a namespace-scope static's destructor
-  writes `==== clean shutdown ====` to `out.txt` with Win32 file calls only on
-  a normal exit, and the next load treats a previous session without it as a
-  crash, folding in the panel's `exit.json`.
+- a crash is detected after the fact: the `ExitProcess` hook (or, as the
+  fallback, a namespace-scope static's destructor) writes a line starting
+  `==== clean shutdown` to `out.txt` with Win32 file calls only on a normal
+  exit, and the next load treats a previous session without it as a crash,
+  folding in the panel's `exit.json`;
+- `Out` (frame thread) and `OutRaw` (monitor thread) append to `out.txt`
+  under one lock, because two `std::ofstream`s in append mode can overwrite
+  each other's line and the crash check reads banner lines from that file;
+  the shutdown marker never takes the lock.
 
 `test_incident_monitor_contract.py` pins these rules;
 `test_incident_monitor_behavior.py` drives the real header through the
@@ -4123,15 +4208,27 @@ default; the alternative is a symbols build compiled first with its PDB set
 aside, then a plain build shipped, whose PDB would not match the DLL's GUID.
 UNVERIFIED for the whole plugin until a dry-run release build.
 
-**Known limits.** A crash during exit (another DLL's exit-time abort, item 25)
-may run after our destructor, so that session reads as clean. A report holds a
-module and an offset, never a function name. FPS drops are not reported for 5
-s after a room change, while the game is unfocused or minimised, or more than
-once per 30 s (50 episodes and 10 folders a session, one folder per 5 minutes,
-10 kept). Without the panel, a crash report has no exit code or faulting
+**Known limits.** `none` is not an exoneration: it means "not inside a
+tagged hook", and the ten `fp_population_*` detours (and any install past a
+table's 128 slots) are untagged, shown as `untagged` in `incident stat`. A
+crash report's `inHook`/`inMod` are `"unknown"`. An exit-time abort (item 25)
+after our marker is recorded as an exit after a clean shutdown; one before
+any marker would make every exit read as a crash, which the `ExitProcess`
+route exists to prevent; neither direction is observed live yet. A real
+freeze that ends with a room change is taken for a load; one that never ends
+is reported at `kFreezeHoldMs`. A report holds a module and an offset, never
+a function name, and the PDB artifact's file (`BloodPactPlugin_ship.pdb`)
+must be renamed to `BloodPactPlugin.pdb`, the name `/PDBALTPATH` embeds,
+before a debugger will load it. FPS drops are not reported for 5 s after a
+room change, while the game is unfocused or minimised, or more than once per
+30 s (50 episodes and 10 folders a session, one folder per 5 minutes, 10
+kept). Without the panel, a crash report has no exit code or faulting
 module.
 
-**Verification.** Harness, probe and contract tests as above. Live 1 (the
-shipping DLL in the game: no report in a normal session, the clean-shutdown
-line, a PERF report in a heavy scene with its per-mod table, the toast) is
-pending; results go to `ForgePact/docs/incident-report.md` § "Live results".
+**Verification.** Harness, probe and contract tests as above, and
+`tests/fixtures/incident/` shared by the C++ harness and the panel tests.
+Live 1 (the shipping DLL in the game: the tagged/untagged counts, no report
+in a normal session, which clean-shutdown route fired and the exit code with
+the tracker producer present, a PERF report in a heavy scene with its
+per-mod table, the toast counters, no freeze on a zone load) is pending;
+results go to `ForgePact/docs/incident-report.md` § "Live results".
