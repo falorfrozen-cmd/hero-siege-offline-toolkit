@@ -2426,8 +2426,9 @@ does not reproduce locally is a place to look.
 
 **Three jobs, and the perf suite stays local.** `build` does the guards,
 checkouts, panel build, contract tests, compile and packaging, and keeps the
-zip as the `forgepact-release-zip` artifact on every run (on a dry run that
-artifact is the only output). `panel-browser-tests` runs beside it on its own
+zip as the `forgepact-release-zip` artifact on every run (on a dry run nothing
+reaches a draft release; the artifacts, this one and the PDB below, are the
+output). `panel-browser-tests` runs beside it on its own
 runner: the tag's panel built with Node, then the panel browser suites (the
 `panel-browser` group, nine modules since 2026-09-28), with `hs-game-sdk`
 checked out from the hub at `hub_ref` beside ForgePact as `build` does (added
