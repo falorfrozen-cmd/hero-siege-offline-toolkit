@@ -1059,3 +1059,56 @@ each `.meta.json`):
   change, against 69 KB and 134 KB a run above. R26 is calibrated to fail
   none of the 527 implementer and planner runs measured, so it guards
   against a regression rather than measuring this one.
+
+# A build is re-run after a fix lands on its sources (2026-10-02)
+
+## The question
+
+In streamed items, a build item (`build-dev`, check `cd ForgePact && cmd //c
+"plugin_build\build.bat dev"`) was marked done the moment its check passed.
+Reviewers keep reading commits after that, and their `BLOCKING` findings
+become fix items that commit to the very sources the build compiled. Nothing
+sent the build back, so a launch could return `PARKED` with
+`build-dev=done` and a DLL older than the last fix.
+
+## What was measured
+
+In workorder `forgepact-124-pet-relics` on 2026-10-02 this happened three
+times in one day. Each time the DLL was a few minutes older than the fix
+commit: 17:50 against 17:53, 18:33 against 18:36, 19:33 against 19:35. Each
+one cost the driver a hand edit of State (`build-dev=held`) and a relaunch.
+
+## What changed
+
+- `plan_lint.py --items-json` adds `build_reads` to every item: the
+  `(reads ...)` globs of its `build`/`exclusive` checks (a declared
+  `(class ...)`, or a command `run_criteria.py` recognises as a build or a
+  barrier; a command it calls `exclusive` only because it does not know it
+  does not count). A build check that declares no `(reads ...)` gives `["*"]`.
+  An item with no such check gives `[]` and is scheduled as before.
+- `workorder-rounds.js` will not start an item with `build_reads` while a fix
+  that may land on those globs is queued or running, or while any other item
+  editing them runs. Waiting for a plan item that is only pending is left to
+  `after:`. A fix with unknown files no longer queues behind a build that is
+  waiting for it, so the two cannot deadlock.
+- When any other item or fix commits a path those globs cover, a done build
+  goes back to pending, and a running one goes back as soon as it finishes.
+  Its implementer is told which commit and paths made it stale, its attempt
+  budget starts over, and its result row carries `rebuilds`. A sixth re-run
+  parks it instead, so two builds that commit into what the other reads
+  cannot loop. This also
+  applies to a build that State's `items:` line carried in as done from an
+  earlier launch.
+- The planner's item rules ask for `(reads ...)` on a build check.
+  `workorder-rounds.test.mjs` replays the sequence with the fix landing after
+  the build and during it, plus a relaunch. With the change switched off,
+  five of the new tests fail.
+
+## Not yet measured
+
+- How many rebuilds a real launch pays. It is one build per fix that lands
+  on the build's sources after the build ran. A build check with no
+  `(reads ...)` pays one for every commit, so watch the `rebuilds` counts in
+  the next plans of items.
+- Whether holding a build behind an overlapping running item costs more
+  wall time than it saves in builds that would have gone stale.
