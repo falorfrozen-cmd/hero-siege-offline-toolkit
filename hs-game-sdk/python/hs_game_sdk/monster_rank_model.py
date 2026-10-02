@@ -17,8 +17,10 @@ the checks, against `hs-game-sdk/curated/monster_rank_measurements.json`.
   `RANK_TABLE` (AFK FARM, 2026-09-17 to 09-24, ordinary monsters only).
 - Whether a boss built at rank 3 or 4 follows the same rows is asked once per
   dimension in `HYPOTHESES`, so a session that measured one dimension cannot
-  answer the others. Live procedure 1 measured health only: one Karp King at
-  rank 4 had x5.65 its rank-1 health, not the table's x4.23.
+  answer the others. Live procedure 1 read health only: one Karp King at rank
+  4 had x5.65 its rank-1 health against the table's x4.23, but that boss also
+  carried ForgePact's 3-affix top-up, so the sample does not settle whether a
+  boss scales differently; every dimension is still open.
 
 This module models the game only. ForgePact's Bosses control (ForgePact#44),
 which writes rank 3 or 4 onto a rank-1 boss, is that mod's own code and lives
@@ -76,15 +78,19 @@ RANK_TABLE = {
 #: Whether a boss built at rank 3 or 4 takes the rows above, one entry per
 #: dimension, kept beside the numbers so a caller cannot miss what is open.
 #: `None` is "not established"; a bool only once that dimension's own live
-#: check was measured on a boss (a measured row in the curated file naming the
-#: dimension and a boss object, with its ratio to the boss's rank-1 self).
-#: A row within 5% of the table's ratio follows it; one outside does not.
+#: check was measured on a boss with nothing else changed (a measured row in
+#: the curated file naming the dimension and a boss object, with its ratio to
+#: the boss's rank-1 self). A row within 5% of the table's ratio follows it;
+#: one outside does not.
 HYPOTHESES: Dict[str, Optional[bool]] = {
-    # False: Live 1 (2026-10-02, `ancient-hp` pass) measured Karp_King_obj at
-    # rank 4 with x5.65 its rank-1 health (44,625,000 -> 252,242,812), not
-    # MK1's x4.23 (MK6, MK7). The raise does change a boss's health, by more
-    # than an ordinary monster's row; one boss, one zone.
-    "boss_hp_follows_rank_table": False,
+    # None: Live 1 (2026-10-02, `ancient-hp` pass) read Karp_King_obj at rank 4
+    # with x5.65 its rank-1 health (44,625,000 -> 252,242,812) against MK1's
+    # x4.23 (MK6, MK7). Not established: one boss in one zone, the spread of
+    # the ordinary rank-1/rank-4 pairs behind that median is not recorded, and
+    # the same boss got ForgePact's 3-affix top-up (16, 17, 25), which is built
+    # into the same health. So x5.65 is the feature's effect, not the game's
+    # rank scaling for a boss alone.
+    "boss_hp_follows_rank_table": None,
     # None: `ancient-damage` was not observed in Live 1; the only
     # damage-named variable was read through an unproven key route (MK10).
     "boss_damage_follows_rank_table": None,
@@ -127,7 +133,7 @@ def scaled(rank: int, base_hp: Number, base_damage: Number, base_xp: Number) -> 
 
     Rank 1 returns the bases unchanged. For a boss each result is a prediction
     only while its own `HYPOTHESES["boss_<hp|damage|xp>_follows_rank_table"]`
-    is true; the health one is false (a measured boss rose more).
+    is true; all of them are open (`None`).
     """
     rank_row = row(rank)
     bases = (Fraction(base_hp), Fraction(base_damage), Fraction(base_xp))
