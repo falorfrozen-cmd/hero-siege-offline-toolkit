@@ -4307,8 +4307,8 @@ originals a multiplier calls included; a freeze inside that work still names
 it as `in-mod <mod> (game original)`. Nobody is told a report was written:
 the player finds it only on the card or in `reports\`. A real
 freeze that ends with a room change is taken for a load; one that never ends
-is reported at `kFreezeHoldMs`. A gap that begins in a menu room is never
-reported, so a hang at the main menu or the character screen leaves no
+is reported at `kFreezeHoldMs`. A freeze gap (3 s or more) that begins in a menu room is
+never reported as a freeze; a shorter gap stays under the FPS-drop rules. So a hang at the main menu or the character screen leaves no
 freeze report (a crash there is still found at the next load), and a menu
 room the table lacks is judged like any other room. The start-up setup's
 about 2.5-2.7 s frame (Live 3) shows as the `setup` row's worst for a minute after it. A report holds a module and an offset, never

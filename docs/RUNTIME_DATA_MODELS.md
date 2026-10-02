@@ -868,7 +868,8 @@ All **measured** (2026-09-21/22).
   without a room change, and holds the frame thread for roughly 2.5-3.5 s:
   3.53 s measured in Live 2 of the ForgePact incident report (2026-10-02),
   2.84 s the worst in its Live 3. **Measured.** The rooms ForgePact's incident
-  monitor treats as menus, where such a gap is not reported, are `Init_rm`,
+  monitor treats as menus, where a gap of 3 s or more (a freeze) is treated
+  as a load and not reported (a shorter gap stays under its FPS-drop rules), are `Init_rm`,
   `Game_Start_rm`, `Login_rm`, `Login_Valhalla_rm`, `Main_Menu_rm`,
   `Main_Menu_Valhalla_rm`, `Char_Select_rm` and `Chose_rm` (names from
   `hs-game-sdk`'s `HeroSiege::Rooms::GameRoom`); see
