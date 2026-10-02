@@ -727,12 +727,33 @@ deliberate stop red: the command skips a pull request that is closed, a draft,
 or already commented on by Claude. That is on purpose, since a review was
 requested and none was posted, and the printed message says why.
 
+A posted comment is not proof of a review either. On hub #365 and ForgePact
+#141 (2026-10-02) the model skipped the command's agents altogether, read part
+of the diff itself in 10-20 seconds, posted "No issues found", and said in its
+last message that it had not run the multi-agent review; both jobs went green.
+Four changes answer that (#366). `claude_args` pins the model that follows the
+command (`--model`), since the command takes no effort or level argument. The
+notes tell it that the agents are not optional and that only the eligibility
+agent may decide a pull request needs no review. The read-only text tools a
+review reaches for (`cat`, `head`, `tail`, `wc`, `sed -n`) are on the
+allow-list, because ForgePact #141 was denied a compound `head`/`cat` command
+and stopped short. And a step after the posted-nothing check, "Fail if the
+review skipped the command's agents", reads the transcript: it fails a run that
+launched fewer than the seven agents steps 1 to 4 launch, finished in under a
+minute, or said in its last message that it skipped the review. It prints each
+agent the run did launch and the last message, so an eligibility stop reads as
+one rather than as a skip, though it is red all the same.
+
 The action's log shows a trimmed result -- no per-model token counts, and a
 denial *count* but not which tools were denied. The full result is written to
 `${{ runner.temp }}/claude-execution-output.json` and deleted with the runner, so
 the workflow uploads it as the `claude-execution-output` artifact (14 days,
 uploaded even when the review fails). It includes the review transcript, visible
 to anyone with read access to the repository.
+The job's summary page (`Summarize the review run`, which runs whatever
+happened) shows the model, the agents launched, turns, duration, cost, any
+denied calls and the last message, and names that artifact as the place to
+read the full transcript.
 
 ### Tool notifications
 
