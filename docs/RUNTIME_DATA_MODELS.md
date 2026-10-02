@@ -1595,8 +1595,50 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
 - Unique definition records have the shape `{w, j, b, a, c}` (`c` = 1 marks the
   unique repository, `j` the weapon subtype); there is no Angelic flag, and base
   items with flag 40 set are skipped. **Headhunter and Tyrant's Crown have no
-  unique-repository entry, so the game's own roll never drops them.** **Static
-  reading.**
+  unique-repository entry, so the game's own roll never picks them.** **Static
+  reading.** ForgePact adds them beside a hit while their switch is on (#74):
+  see the guide's Known Limitations item 42.
+- **The return value.** `DropItemAngelicChance` sets its result to undefined on
+  entry and never assigns it again, so a hit returns undefined exactly like a
+  miss: the return cannot tell the two apart. This is why the 374 measured
+  misses were undefined. **Static reading (2026-10-02, issue #74).**
+- **The arguments.** Position x and y fall back to the caller's own x and y when
+  absent; the chance (argument 2) falls back to 0; argument 3 (undefined in
+  every measured call) is never read by the roll and is handed on, unchanged, to
+  the placement as its sixth argument. **Static reading (2026-10-02, issue
+  #74)**, consistent with the four arguments measured.
+- **The pick.** The roll takes a random entry from a list of unique
+  identifiers; each entry is an array of three numbers (type, sub, b) that it
+  looks up through `GetUniqueRepoStruct`. It throws the definition away and
+  picks again when the base-info flag 40 (hidden or development item) is set, or
+  when the definition's rarity field 27 is neither 7 (Angelic) nor 10 (Unholy),
+  and it keeps re-picking until one passes. These are the same two filters
+  ForgePact's `BuildAngelicPool` applies. Roughly one entry in eight passes,
+  which accounts for the ~8 definition reads per roll measured above. **Static
+  reading (2026-10-02, issue #74).**
+- **Where the list lives.** The list is read through a reference-typed scope
+  whose variable slot is resolved at run time. It is **not** an instance
+  variable of `Loot_Manager_obj` (measured above); which scope it is has not
+  been established. **Static reading (2026-10-02, issue #74).**
+- **The die.** The rate comes from a zero-argument method on a member of the
+  picked definition, scaled by one global value read when the roll starts;
+  neither is identified (`droprate.base` is the plausible reading). The roll
+  draws a uniform integer up to that rate and hits when the draw is below the
+  chance. With the measured chances of 1195-1526 against rates in the millions,
+  that is about one hit in several thousand rolls, so a session should not
+  expect a natural hit. **Static reading (2026-10-02, issue #74).**
+- **A hit.** Only on a hit does the roll call `CreateDefaultParams` (sub, b and
+  a constant), and then, by a direct call, the routine ForgePact hooks as
+  `LootGroundCreate`, with six arguments: x, y, the type, the params, a
+  constant, and argument 3. `CreateDefaultParams` is called nowhere else inside
+  the roll, so **a `CreateDefaultParams` call while the roll is running marks a
+  hit**. **Static reading (2026-10-02, issue #74)**, consistent with the
+  measured count of zero `CreateDefaultParams` calls inside the roll over 374
+  misses. A table-only hook on `LootGroundCreate` cannot see that direct call
+  (§ 5.1); the `CreateDefaultParams` inline detour does, **measured** in
+  session 1, which is why ForgePact #74 detects hits there.
+- **The chance's composition** is computed by the caller, `DropItem`, and is
+  **not established** (out of scope for #74).
 - `droprate.base` of some uniques: Marcher's of Hatred 4,266,000; Annihilator
   4,158,450; Tayrel's Chestplate 25,000,000; Lucifer's Crown 111,111,111.
   **Measured.**
