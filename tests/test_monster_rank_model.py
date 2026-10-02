@@ -295,6 +295,7 @@ class HypothesisTests(unittest.TestCase):
         unconfounded = {k: v for k, v in mk7.items() if k != "confounds"}
         self.assertEqual(_keyed_rows([unconfounded], "boss_hp_follows_rank_table", family),
                          [unconfounded])
+        self.assertFalse(_row_follows(unconfounded, "hp"))  # x5.6525 against x4.23
         for hypothesis in DIMENSIONS:
             with self.subTest(hypothesis=hypothesis):
                 self.assertEqual(_keyed_rows(list(entries.values()), hypothesis, family), [])

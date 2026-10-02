@@ -88,9 +88,11 @@ inferred, not checked on screen (`docs/RUNTIME_DATA_MODELS.md` § 13.7).
   - **MK7, a boss's health at rank 4**: the same boss raised to rank 4 by the
     Bosses control had 252,242,812, ×5.65 its rank-1 health (5.6525). MK1's rank-4
     row is ×4.23, so this boss rose 1.34 times as far as the ordinary monsters'
-    median: on health, **a boss does not follow the rank table**, and
-    `HYPOTHESES["boss_hp_follows_rank_table"]` is `False`. One boss, one kill, one
-    zone. It fits MK5 (a report above every health row) without confirming it.
+    median, but the sample is confounded (the Bosses control also wrote a
+    3-affix top-up on this boss: 16 Multishot, 17 Treasure Gobbler, 25
+    Pyromaniac), so it decides nothing:
+    `HYPOTHESES["boss_hp_follows_rank_table"]` stays `None`. One boss, one kill,
+    one zone. It fits MK5 (a report above every health row) without confirming it.
   - **MK8, the rank written held through the setup**: at the exit of
     `EnemyRaritySettings` the rank the control wrote at its entry was still 3 or 4
     on `Karp_King_obj`, `Damien_obj`, `Uber_Damien_obj` and `Uber_Anubis_obj`. This
@@ -156,9 +158,11 @@ A pure function of numbers, with exact fractions
 - `scaled(rank, base_hp, base_damage, base_xp)`: a rank-1 monster's health, damage
   and XP taken to `rank`. Rank 1 returns the bases unchanged.
 - `HYPOTHESES`: four entries, one per dimension a boss might or might not share
-  with the rank table: `boss_hp_follows_rank_table` (`False`, MK7),
+  with the rank table: `boss_hp_follows_rank_table`,
   `boss_damage_follows_rank_table`, `boss_xp_follows_rank_table` and
-  `boss_drop_rank_reaches_dropitem` (`None`, not established). Each becomes a bool
+  `boss_drop_rank_reaches_dropitem`, all four `None`, not established (MK7 is
+  confounded by the Bosses control's 3-affix top-up, so it decides none of
+  them). Each becomes a bool
   only from a measured row naming that dimension and a boss object, with its ratio
   to the boss's rank-1 self; within 5% of the table's ratio follows it.
 - `BOSS_PARENT` and `boss_family()`: `Enemy_Child_Boss_obj` and the names of its
