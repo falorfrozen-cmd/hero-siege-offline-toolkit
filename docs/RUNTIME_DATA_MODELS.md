@@ -2401,6 +2401,26 @@ measured (one sentence, in the drag path bullet).
   `tabNumber`. `UI_Stash_obj.invMaterialTab` and `.invSocketTab` hold the
   Material and Socket rows' instances. The page tabs are
   `UI_Button_Inventory_Tab_obj`, `tabNumber` 0 to 4 (Main, then four Extra).
+  Their grid, M at two GUI scales, 2560x1368 (window 1920x1080, Town_01_rm)
+  from two sessions, and 2560x1440 from Live 7 (below) - toolkit #147's
+  stash-bag-layout live 2, attempt 1, with the stash open, for the tabs, and
+  ForgePact #68's Live 1f and 1g for InventorySort: `uiNodeCallstack` `InventoryTab_1` to `InventoryTab_5` in
+  `tabNumber` order, all `visible=1` and listed with the stash open; each
+  bbox 182.4 wide (InventorySort's width), top 1136.2, bottom 1198.9, lefts
+  1573.9, 1756.3, 1938.7, 2121.1 and 2303.5, so the row is contiguous (the
+  pitch is the width). The row sits directly above InventorySort's
+  (InventorySort 2303.5,1198.9,2485.9,1261.6: its top is the row's bottom),
+  and InventorySort's left and right equal `InventoryTab_5`'s, so the slot
+  left of Sort is under `InventoryTab_4`, whose column is 2121.1 to 2303.5:
+  Sort's left minus one Sort width, up to Sort's left. Live 7 (ForgePact #131,
+  2026-10-02, GUI and window 2560x1440) read the same relation there: each tab
+  192 wide, top 1196, bottom 1262, lefts 1522, 1714, 1906, 2098 and 2290,
+  InventorySort 2290,1262,2482,1328 (left and right `InventoryTab_5`'s, top the
+  row's bottom), so `InventoryTab_4`'s column is 2098 to 2290; all five read
+  `visible=1` with the bag open on its own; with the stash open the same five
+  boxes were listed, `InventoryTab_4` and `InventoryTab_5` read `visible=1`,
+  and the first three's visibility was not quoted. Not measured: the row at
+  any other GUI scale.
 - **`activeNode`.** M: `UI_Stash_obj.activeNode` holds an instance - the stash
   grid right after the open (SB P0-4), the clicked sub-tab's row after a real
   click on a bag sub-tab (SB P2-4). After a by-name
@@ -2566,10 +2586,29 @@ kind. **M** measured live; **R** a static reading, not measured.
   bag's Materials view on show, plus one by-hand orb on the Socketable tab. A
   merge on a stash page with that page's own two numbers (0 and 13 personal, 9
   and 2 shared) and the Materials tab fed from a bag page are not observed.
-  Because it merges into any stack of the identity on the array, a caller
-  moving several items must re-read the array's stacks before each call: an
-  earlier item of the same batch can have made the stack a later one joins
-  (ForgePact #68's round-2 review found a duplicated unit that way).
+  Because it merges into any stack of the identity on the array that has
+  room, a caller moving several items must re-read the array's stacks before
+  each call: an earlier item of the same batch can have made or filled the
+  stack a later one meets (ForgePact #68's round-2 review found a duplicated
+  unit that way). **The cap** (M for 999, Live 3, 2026-09-30; R for 999999
+  and the walk order; ForgePact #131): the routine
+  takes a cap from its sixth argument - 999 when it is 0 or lacks flag 8,
+  999999 when it carries flag 8 - and walks the array in order, merging into
+  the first stack of the identity whose count plus the moved count stays at
+  or below the cap; a stack that would pass it is passed over, and when none
+  fits it answers false. So a merge takes the whole count or none, and never
+  tops a stack up with part of an item. Live 3 measured the 999 cap through
+  ForgePact's Move all on the Materials tab: beside a kind's one stack of
+  875, a unit of 125 was placed as a new stack in a free cell and the 875
+  left unchanged, and a unit of 129 then passed over the 875 and merged into
+  the stack of 125 (254); no stack read above 999
+  (`ForgePact/docs/stash-move-research.md` § Live 3 results). The measured
+  merges pass 0 on the
+  pages and the Materials tab (cap 999) and 8 on the Socketable tab (cap
+  999999). The owner (2026-09-30): the Materials tab holds several stacks of
+  one kind, 999 each, and the Socketable tab one stack per kind. Not read:
+  whether the count added is the fifth argument or the item's own `o`, and the
+  walk order beyond array order.
 - **The Socketable tab.** Its container: M (Live 1e, 1f, 1g) one
   `UI_Inventory_Grid_obj` per item on the tab, each carrying `uiNodeCallstack`
   `StashSocketGrid` and a one-cell `nodeGrid` holding that item, whose key
@@ -2590,7 +2629,9 @@ kind. **M** measured live; **R** a static reading, not measured.
   key reached no saved file after the stash's own close. A gem (base id 38)
   merged the same way and gained `o=2`, so it is stackable: no
   non-stackable answer was met on this tab, and Live 1e's missing `o` on it
-  was a count of 1. Placing a kind the tab does not hold yet was not
+  was a count of 1. A whole stack merges too, M (Live 3, 2026-09-30,
+  ForgePact #131): a unit of 3 of the orb merged through ForgePact's Move
+  all, and the node's `o` rose by exactly 3 (92 to 95). Placing a kind the tab does not hold yet was not
   replayed by name (no accepted kind absent from the tab could be obtained
   without a person).
 - **The UI node API** (the in-game Move all button, ForgePact #68). M (Live
@@ -2599,7 +2640,80 @@ kind. **M** measured live; **R** a static reading, not measured.
   `UI_Stash_obj`, as self and other): it made a `UI_Button_Small_obj` at that
   x and y, stored the name as the node's `uiNodeCallstack`, drew it with the
   object's own sprite, and answered the node (`visible` 0 in that frame, 1 the
-  next); a `text` set on the node was drawn as its label. With the fourth
+  next); a `text` set on the node was drawn as its label. **The x and y are
+  the node's origin, not its top-left** (M, Live 1f and 1g, the same numbers
+  both times; ForgePact #131): for `UI_Button_Small_obj` (sprite
+  `Menu_Button_Chat_spr`) the origin lies at its bbox centre - made at x
+  2113.1, y 1198.9, its bbox read 2016.2, 1176.1, 2211.9, 1221.7 - while the
+  bag's Sort node's origin is its bbox top-left (x 2303.5, y 1198.9, bbox
+  2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. The Sort node is a
+  `UI_Button_Small_obj` too, drawn with `Inventory_Tab_Button_Solid_spr`, so
+  the origin follows the sprite, not the object. Live 3 (2026-09-30) read
+  the same relation at another GUI scale: the Move all node made at x
+  2178.0, y 1295.0 read the bbox 2076.0, 1271.0, 2282.0, 1319.0, and Sort
+  sat at x 2290.0, y 1262.0 with the bbox 2290.0, 1262.0, 2482.0, 1328.0.
+  Its width, 195.7 in Live 1f and 1g, is
+  not a whole sprite size, so a GUI scale is in play: read a node's extents
+  about its origin from the node itself rather than from its sprite, and on a
+  later frame, once it is visible and its box reads the same twice, not in the
+  frame it was made (ForgePact's Move all button checks it that way).
+  **A copied sprite and scale persist, and the bbox follows them** (M,
+  Live 4, 2026-09-30, ForgePact #131): with `sprite_index`, `image_xscale` and
+  `image_yscale` read off the Sort node by name and written onto a fresh
+  `UiCreateNode` node, the node read Sort's sprite
+  (`Inventory_Tab_Button_Solid_spr`) through `menulayout` and by name two
+  ensure steps later and after a stash tab switch, its origin moved to its
+  bbox top-left with the sprite, and its bbox read Sort's size (made at x
+  2090, y 1262: bbox 2090.0, 1262.0, 2282.0, 1328.0, 192x66, beside Sort's
+  2290.0, 1262.0, 2482.0, 1328.0). No read in that session found the object's own
+  sprite put back on that member. **The drawn result was not Sort's
+  button**, seen on a screenshot only: the node's `text` was no longer drawn
+  inside its box (a clipped end of it showed at about the box's top-left
+  corner, the node's new x, y), and the box did not read as Sort's to the
+  owner. **Which members carry the label's place and look** (M, Live 5 and
+  Live 6, 2026-09-30, ForgePact #131): such a node, already wearing Sort's
+  sprite and scale, differed from InventorySort in exactly 13 writable
+  members beyond its identity, place, text and activation - `textFont`,
+  `dropShadow`, `createX`, `drawXOffset`, `drawYOffset`, `navBboxX`,
+  `navBboxY`, `navBboxWidth`, `navBboxHeight`, `naviDown`, `naviDownPrev`,
+  `naviRight`, `naviRightPrev` - and with those read off Sort by name and
+  written onto the node as read, its label was drawn centred in its box like
+  Sort's (Live 5 by a research copy; Live 6 on ForgePact's shipped path, on
+  the first node and on one made after a close and reopen). `textFont` reads as an asset reference
+  (`ref font __newfont2` on Sort), `dropShadow` and the four `navi*` members
+  as bools, the rest as numbers. `createX`, `navBboxX` and `navBboxY` hold an
+  absolute GUI position (on Sort, its own box's corner); written raw as Sort's
+  onto a node 200 units to its left in Live 5 and 196 in Live 6, the label was
+  still drawn inside the node's own box. **Copied label members persist:** they read back equal at
+  once (Live 5), equal to Sort's again in a member diff seconds later, and on
+  a reopened node's copy (Live 6). **Where the label sits:** measured, it is drawn
+  centred in the box on both axes (the node's label box 2140,1286,2242,1303
+  in its box 2094,1262,2286,1328 in Live 6; 2136,1286,2238,1303 in
+  2090,1262,2282,1328 in Live 5; Sort's own label left edge 2338). Inferred,
+  and not separated from plain centring: that left edge also sits within 2 of
+  the node's x plus `drawXOffset` (Sort 2290 + 48 = 2338; the node 2094 + 48 =
+  2142 against 2140 in Live 6, 2090 + 48 = 2138 against 2136 in Live 5), but a
+  label centred in the box fits the same numbers to within 1, so they do not
+  tell the two apart. Vertically the glyph top (1286) is 15 below the node's y
+  plus `drawYOffset` (1262 + 9 = 1271 on Sort); the label tool reads drawn
+  pixels, not the draw origin, so whether `drawYOffset` anchors the text, a
+  font's own top spacing included, is not separated. Not read: which of the 13
+  places the label on either axis (they were written together, in Live 5's
+  trial and in the shipped copy), what the `navi*` and `navBbox*` members do
+  beyond the label (gamepad navigation, for example), and whether the game
+  rewrites any of them in longer play. **The Mercenary button** (M, Live 5
+  and Live 6): with the bag open on its own (the `C` key) the game lists a
+  `UI_Button_Open_Mercenary_obj` (SDK object 5004, `uiNodeCallstack`
+  `InventoryMercenary`, `text` `Mercenary`, Sort's sprite) through
+  `menulayout`, its bbox 2094, 1262, 2286, 1328 beside InventorySort's 2290,
+  1262, 2482, 1328 at a 2560x1440 GUI: Sort's width and height, the same top,
+  its left edge 196/192 of Sort's width left of Sort's left edge (its right
+  edge 4 GUI units short of Sort's). With the stash open it is not listed
+  (Live 5 alone: Live 6 ran no Mercenary query with the stash open), while
+  InventorySort's box reads the same in both sessions; after the stash's close
+  neither is listed (Live 5 alone). One GUI scale only.
+  With the
+  fourth
   argument undefined the node's `activationFunc` stays undefined (R: the
   function binds a callable value as a method of the new node and leaves
   anything else undefined, as `UiSetActivationFunc(node, f)` does). A node's

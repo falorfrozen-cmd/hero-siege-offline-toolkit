@@ -198,13 +198,27 @@ def validate(data: dict, doc_text: str) -> list:
         container = socket.get("container")
         if require("bag_to_stash_move.socket_merge.container", container) and "StashSocketGrid" not in container:
             problems.append("bag_to_stash_move.socket_merge.container does not name the StashSocketGrid nodes")
+        # ForgePact #131: the merge's cap, a static reading (R) until a live
+        # session measures it (M); both numbers stated in section 17 too.
+        cap = move.get("stack_cap")
+        if require("bag_to_stash_move.stack_cap", cap):
+            for key, want in (("default_cap", 999), ("flag_8_cap", 999999)):
+                value = cap.get(key)
+                if require(f"bag_to_stash_move.stack_cap.{key}", value) and value != want:
+                    problems.append(f"bag_to_stash_move.stack_cap.{key} {value!r} is not {want}")
+                elif value is not None and str(value) not in section:
+                    problems.append(f"bag_to_stash_move.stack_cap.{key} {value!r} is absent from RUNTIME_DATA_MODELS.md section 17")
+            require("bag_to_stash_move.stack_cap.rule", cap.get("rule"))
+            measured = cap.get("measured")
+            if require("bag_to_stash_move.stack_cap.measured", measured) and measured not in ("R", "M"):
+                problems.append(f"bag_to_stash_move.stack_cap.measured {measured!r} is neither R nor M")
 
     # ForgePact #68's button: the UI node API. Every script an SDK script at
     # its SDK index and named in section 17, every object an SDK object at its
     # index.
     ui = data.get("ui_node_api")
     if require("ui_node_api", ui):
-        for key in ("node_object", "owner_object"):
+        for key in ("node_object", "owner_object", "mercenary_button", "page_tabs"):
             obj = ui.get(key) or {}
             name, index = obj.get("name"), obj.get("index")
             if require(f"ui_node_api.{key}.name", name) and require(f"ui_node_api.{key}.index", index):
@@ -219,6 +233,43 @@ def validate(data: dict, doc_text: str) -> list:
         callstack = sort_node.get("uiNodeCallstack")
         if require("ui_node_api.sort_node.uiNodeCallstack", callstack) and callstack not in section:
             problems.append(f"ui_node_api.sort_node.uiNodeCallstack {callstack!r} is absent from RUNTIME_DATA_MODELS.md section 17")
+        # ForgePact #131: where a node's x, y put it - the button's origin is
+        # its bbox centre, Sort's its top-left.
+        origin = ui.get("node_origin")
+        if require("ui_node_api.node_origin", origin) and not ("centre" in origin and "top-left" in origin):
+            problems.append("ui_node_api.node_origin does not say which origin is the bbox centre and which the top-left")
+        # ForgePact #131, Live 5 and 6: the Mercenary button the Move all
+        # button takes the place of, and the members that carry a node's label
+        # place and look. Each named in section 17 and labelled R or M.
+        merc = ui.get("mercenary_button") or {}
+        merc_callstack = merc.get("uiNodeCallstack")
+        if require("ui_node_api.mercenary_button.uiNodeCallstack", merc_callstack) and merc_callstack not in section:
+            problems.append(
+                f"ui_node_api.mercenary_button.uiNodeCallstack {merc_callstack!r} is absent from RUNTIME_DATA_MODELS.md section 17"
+            )
+        require("ui_node_api.mercenary_button.box_relation", merc.get("box_relation"))
+        # ForgePact #131, the owner 2026-10-02: the bag's page tabs, whose 4th
+        # column the Move all button now takes; InventoryTab_4 named in
+        # section 17, the relation stated, and labelled R or M.
+        tabs = ui.get("page_tabs") or {}
+        tab_callstacks = tabs.get("uiNodeCallstacks")
+        if require("ui_node_api.page_tabs.uiNodeCallstacks", tab_callstacks):
+            if "InventoryTab_4" not in tab_callstacks:
+                problems.append("ui_node_api.page_tabs.uiNodeCallstacks does not list InventoryTab_4")
+            elif "InventoryTab_4" not in section:
+                problems.append("ui_node_api.page_tabs InventoryTab_4 is absent from RUNTIME_DATA_MODELS.md section 17")
+        require("ui_node_api.page_tabs.column_relation", tabs.get("column_relation"))
+        label = ui.get("label_members")
+        if require("ui_node_api.label_members", label):
+            members = label.get("members")
+            if require("ui_node_api.label_members.members", members):
+                for member in members:
+                    if member not in section:
+                        problems.append(f"ui_node_api.label_members member {member!r} is absent from RUNTIME_DATA_MODELS.md section 17")
+        for key in ("mercenary_button", "page_tabs", "label_members"):
+            measured = (ui.get(key) or {}).get("measured")
+            if require(f"ui_node_api.{key}.measured", measured) and measured not in ("R", "M"):
+                problems.append(f"ui_node_api.{key}.measured {measured!r} is neither R nor M")
         for step in UI_NODE_STEPS:
             entry = ui.get(step)
             if not require(f"ui_node_api.{step}", entry):
@@ -286,6 +337,14 @@ class TestCuratedStashContainers(unittest.TestCase):
         bad["ui_node_api"]["node_object"]["index"] = 5010
         bad["ui_node_api"]["move"]["self_object"] = "No_Such_Window_obj"
         bad["ui_node_api"]["sort_node"]["uiNodeCallstack"] = "NoSuchSort"
+        bad["bag_to_stash_move"]["stack_cap"]["default_cap"] = 1000
+        bad["bag_to_stash_move"]["stack_cap"]["measured"] = "guessed"
+        bad["ui_node_api"]["node_origin"] = "the node's x, y"
+        bad["ui_node_api"]["mercenary_button"]["index"] = 5005
+        bad["ui_node_api"]["mercenary_button"]["uiNodeCallstack"] = "NoSuchMercenary"
+        bad["ui_node_api"]["label_members"]["members"].append("noSuchLabelMember")
+        bad["ui_node_api"]["label_members"]["measured"] = "assumed"
+        bad["ui_node_api"]["page_tabs"]["index"] = 4989
 
         problems = validate(bad, self.doc_text)
 
@@ -306,6 +365,14 @@ class TestCuratedStashContainers(unittest.TestCase):
         self.assertTrue(any("node_object.index 5010" in p for p in problems), problems)
         self.assertTrue(any("No_Such_Window_obj" in p for p in problems), problems)
         self.assertTrue(any("NoSuchSort" in p for p in problems), problems)
+        self.assertTrue(any("stack_cap.default_cap 1000" in p for p in problems), problems)
+        self.assertTrue(any("stack_cap.measured 'guessed'" in p for p in problems), problems)
+        self.assertTrue(any("ui_node_api.node_origin" in p for p in problems), problems)
+        self.assertTrue(any("mercenary_button.index 5005" in p for p in problems), problems)
+        self.assertTrue(any("NoSuchMercenary" in p for p in problems), problems)
+        self.assertTrue(any("noSuchLabelMember" in p for p in problems), problems)
+        self.assertTrue(any("label_members.measured 'assumed'" in p for p in problems), problems)
+        self.assertTrue(any("page_tabs.index 4989" in p for p in problems), problems)
 
     def test_validator_reports_a_missing_object_as_a_problem(self):
         missing = copy.deepcopy(self.data)
@@ -313,6 +380,7 @@ class TestCuratedStashContainers(unittest.TestCase):
         del missing["crafting_cube"]
         del missing["ui_node_api"]
         del missing["bag_to_stash_move"]["socket_merge"]
+        del missing["bag_to_stash_move"]["stack_cap"]
 
         problems = validate(missing, self.doc_text)
 
@@ -320,6 +388,7 @@ class TestCuratedStashContainers(unittest.TestCase):
         self.assertTrue(any("crafting_cube" in p for p in problems), problems)
         self.assertTrue(any("ui_node_api" in p for p in problems), problems)
         self.assertTrue(any("bag_to_stash_move.socket_merge" in p for p in problems), problems)
+        self.assertTrue(any("bag_to_stash_move.stack_cap" in p for p in problems), problems)
 
 
 if __name__ == "__main__":
