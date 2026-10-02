@@ -148,6 +148,95 @@ class LiveChecksTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(run(live_checks.main, [self.write("c-live-1.md", "## Step 1\n- a | pass\n")])[0], 2)
 
 
+TABLE_CAPTURE = """# forgepact-x live 1
+
+## Step 1
+reroll -> pays out
+
+## Checks summary
+
+| Check | Result |
+|---|---|
+| dll-hash | pass — e1c5eb99..., matches dispatch |
+| rerun-pays-out | pass (finding: rerun: pays-out) |
+| bonus-finds | not-observed (ids 693-700 all 0 all session) |
+| helmet-rolls3 | not-run (no helmet) |
+
+## Teardown
+restored
+"""
+
+
+class LiveChecksTableTests(TempDirMixin, unittest.TestCase):
+    # forgepact-issue-36 Live 1 (2026-09-28): the operator wrote a table under
+    # `## Checks summary` instead of the list. The capture is never edited
+    # (audit R20), so the tool reads the table with the list form's rules.
+    EXPECT = "dll-hash,rerun-pays-out,bonus-finds,helmet-rolls3"
+
+    def test_a_table_capture_passes_with_the_expected_names(self):
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", TABLE_CAPTURE), "--expect", self.EXPECT,
+                                         "--require-pass", "dll-hash,rerun-pays-out"])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("dll-hash pass  — e1c5eb99..., matches dispatch", out)
+        self.assertIn("rerun-pays-out pass  (finding: rerun: pays-out)", out)
+        self.assertIn("bonus-finds not-observed  (ids 693-700 all 0 all session)", out)
+        self.assertIn("helmet-rolls3 not-run  (no helmet)", out)
+        self.assertIn("checks: 4 (pass 2, fail 0, not-observed 1, not-run 1)", out)
+        self.assertNotIn("Check ", out)  # the header row is not a check
+        self.assertNotIn("---", out)     # nor the separator
+
+    def test_a_table_under_checks_reads_the_same(self):
+        text = TABLE_CAPTURE.replace("## Checks summary", "## Checks")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text), "--expect", self.EXPECT])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("checks: 4 (pass 2, fail 0, not-observed 1, not-run 1)", out)
+
+    def test_a_wider_table_reads_the_last_cell_and_crash_is_fail(self):
+        text = ("## Checks summary\n\n| Check | Expected | Observed | Result |\n|:--|---|---|--:|\n"
+                "| a | x | y | crash (fail) - the game ended |\n| b | x | y | Not observed - timed out |\n")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text), "--expect", "a,b"])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("a fail  crash (fail) - the game ended", out)
+        self.assertIn("b not-observed  - timed out", out)
+
+    def test_fail_a_table_with_a_missing_check(self):
+        text = TABLE_CAPTURE.replace("| bonus-finds | not-observed (ids 693-700 all 0 all session) |\n", "")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text), "--expect", self.EXPECT])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing check: bonus-finds", out)
+
+    def test_fail_a_table_with_a_duplicate_and_an_unreadable_row(self):
+        text = TABLE_CAPTURE.replace("| helmet-rolls3 | not-run (no helmet) |",
+                                     "| helmet-rolls3 | not-run (no helmet) |\n| dll-hash | looked fine |")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text), "--expect", self.EXPECT])
+        self.assertEqual(rc, 1)
+        self.assertIn("dll-hash UNREADABLE", out)
+        self.assertIn("check listed twice: dll-hash", out)
+
+    def test_fail_a_table_require_pass_check_that_did_not_run(self):
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", TABLE_CAPTURE), "--expect", self.EXPECT,
+                                         "--require-pass", "helmet-rolls3"])
+        self.assertEqual(rc, 1)
+        self.assertIn("helmet-rolls3 must be pass, read not-run (the instrument did not run it)", out)
+
+    def test_a_table_under_an_unrelated_heading_is_not_read(self):
+        # Negative control: a table elsewhere in the capture is not a checks block.
+        text = TABLE_CAPTURE.replace("## Checks summary", "## Results")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text), "--expect", self.EXPECT])
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, "")
+
+    def test_the_list_wins_over_a_table(self):
+        # A capture carrying both keeps the list form's reading; the table is
+        # only a fallback for a capture with no list.
+        text = CAPTURE + "\n" + TABLE_CAPTURE.split("## Step 1", 1)[1].replace("## Teardown\nrestored\n", "")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text),
+                                         "--expect", LiveChecksTests.EXPECT])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("checks: 5 (pass 3, fail 1, not-observed 1, not-run 0)", out)
+        self.assertNotIn("helmet-rolls3", out)
+
+
 PLAN = """# x
 
 ## State
