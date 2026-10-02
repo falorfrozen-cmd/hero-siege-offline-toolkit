@@ -323,9 +323,10 @@ steps 2-4 run as one workflow launch with no rounds inside it
   on the files the findings name (or, with no path, run alone once the rest
   are done). A reviewer may be split by screen or dimension with
   `reviewScopes`, and its scopes run as separate reviewers.
-- When nothing is left to run, the `## Acceptance criteria` run once, the
-  only full verify. A failure becomes one fix that runs alone, and the gate
-  runs again, three times at most.
+- When nothing is left to run, the `## Acceptance criteria` run once, as a
+  development verify (`--dev`: whole suites and `(final)` criteria wait for
+  the final gate before the pull request). A failure becomes one fix that
+  runs alone, and the gate runs again, three times at most.
 - An item that stops parks alone. What depends on it is held, and
   everything else keeps flowing. The launch returns `PARKED` once nothing
   else can run, before the gate, with every item's status, reason and
@@ -544,6 +545,21 @@ one `docs-sync-reviewer` that ran 40 turns twice:
 that the context file is opened one cited heading at a time with
 `section.py`, never whole.
 
+**Every verify before the pull request is a development verify.** The
+owner, 2026-10-02: *"full suite runs shouldnt be run so frequently. it should
+be reserved to the last step before the pr. during development only relevant
+subset should be run."* So a round's first verify, and the items gate, run
+`run_criteria.py <plan> --jobs auto --dev`: every criterion except a whole
+suite (`unittest discover`, `run_tests_parallel.py`, a bare `pytest`) or one
+marked `(final)`, which it prints as `NOT SELECTED (final gate only: ...)`;
+the verifier skips its step-3 root suite. A fix round runs by reach (Step 4,
+"Re-verify what the fix reaches"), which defers the same criteria. The full
+set runs once, as the final gate before the pull request (Step 5).
+`workorder-rounds.js` hands each verifier its scope; under `fullVerify: true`
+every verify of the launch is the full set. A criterion about a file the
+change forgot to touch still runs under `--dev`, which is why a first verify
+is not a reach selection.
+
 **The verifier starts with `tools/run_criteria.py <plan> --jobs auto`.** The
 script runs every command-shaped criterion in one call, exactly as written,
 once per distinct command, and skips gated ones. With `--jobs` it runs
@@ -727,7 +743,10 @@ The line, when a reviewer's label looks wrong to you:
   another full verify behind a ~20-minute Python suite: *"run relevant tests
   only if possible"*. A fix round, patch or ordinary, that follows a verify
   which passed every criterion but the failed ones re-verifies only the
-  criteria the fix can reach, plus the failed ones:
+  criteria the fix can reach, plus the failed ones. A criterion the earlier
+  verify deferred to the final gate counts as a known standing here, not an
+  unknown one (2026-10-02), and the runner defers it again unless `--failed`
+  names it:
 
   ```bash
   py -3 tools/run_criteria.py <plan> --jobs auto --changed-since <hub base> \
@@ -927,9 +946,16 @@ Set `status: PASS` in the workorder and tell the user:
 - what changed, and the acceptance criteria with their **real** output;
 - when the last verify was scoped (`verifyScope: 'reach'`, or `verify
   scope:` in the round's Log), `PASS (scoped)` and the criteria it ran and
-  skipped, as the runner printed them. Before any push, run the full set
-  once as the final gate — a fresh `verifier` on the whole plan — unless a
-  later workorder in the feature runs it and says so in its plan;
+  skipped, as the runner printed them. Every PASS before the final gate is
+  scoped (`verifyScope: 'dev'` or `'reach'`);
+- **the final gate, as the last step before the pull request** is opened or
+  pushed to: a fresh `verifier` on the whole plan with no `--dev`,
+  `--changed-since` or `--item` (or a launch with `fullVerify: true`), so
+  the whole suites, `(final)` criteria and the root suite run once. It is
+  the only full verify of the feature: a middle workorder whose result a
+  later one builds on does not run it, and says which workorder does. A
+  failure there is fixed and re-verified by reach plus `--failed`, which
+  re-runs the failed suite itself;
 - every reviewer that ran and what it concluded, including the clean ones, and
   every reviewer skipped this round as `clean@round<n>, not re-run`;
 - anything left under `NOT DONE` or `Needs human judgement`;
@@ -1063,11 +1089,29 @@ for this round's implementer, or a split right away; it is never re-run in
 the hope of a green. The redesign's polish workorder spent its cap on a
 Chromium `ERR_UNSAFE_PORT` flake.
 
-**7. After a small fix, re-run only the checks it can reach.** A fix round
-after a verify that passed every other criterion runs the criteria the fix
-reaches plus the failed ones (`run_criteria.py --changed-since`), and the
-full set runs once at the final gate before the push. The conditions and
-fallbacks are in Step 4, "Re-verify what the fix reaches".
+**7. During development run the relevant subset; the full set runs once,
+before the pull request.** A first verify and the items gate run `--dev`, a
+fix round after a verify that passed every other criterion runs the
+criteria the fix reaches plus the failed ones (`run_criteria.py
+--changed-since`), and both defer the whole suites and `(final)` criteria.
+The full set runs once at the final gate before the push (Step 5). The
+conditions and fallbacks are in Step 3 and Step 4, "Re-verify what the fix
+reaches".
+
+**7b. After a write, read the diff, not the file.** The owner, 2026-10-02:
+after each write, agents *"spend lots of times on reads ... make sure only
+difference or relevant things are read after every write instead"*. An agent
+checks its own edit with `git diff -- <path>`, a grep or a ranged read, and
+every agent downstream of a write reads the diff since its base: reviewers
+already get `git diff <base> -- <paths>`, a re-entered implementer gets the
+failed criteria, the evidence and `git diff <base> -- <path>` for what
+earlier rounds changed, a replanning planner reads the Log since its last
+plan and the sections the defect names, and the scribe reads the `## State`
+range and the Log's tail. Measured over the 14 days before: scribes read
+both workorder files whole every round (about 13 MB over 228 runs), and
+fix-round implementers averaged 22 reads and 134 KB each, 105 of them the
+whole plan. `tools/workorder_audit.py` R26 fails an implementer or planner
+that reads a file it wrote whole more than twice.
 
 **8. A question never idles the pipeline.** In the ForgePact UI redesign 19
 of 60.75 hours passed with a question open and nothing running; the four
