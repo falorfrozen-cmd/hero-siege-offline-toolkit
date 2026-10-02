@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Hand-curated record of the numbers recorded about what a monster's rank (enemyRarity 1-4) does to it, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/monster_rank_model.py never reads it; tests/test_monster_rank_model.py reads both and checks that the model reproduces each entry, and that each of the model's four boss hypotheses (health, damage, XP, drop rank) stays None until a `measured` entry names that dimension (the words health, damage, XP or drop rank in `what`) and an object descending from Enemy_Child_Boss_obj, and carries `values.ratio`, and carries no `confounds` (nothing but the rank changed on that boss), and is then the bool that ratio gives (within 5% of the rank table's ratio follows it). A row with `confounds` decides no hypothesis, however its ratio compares: it stays a measurement of what the feature did, not of the game's rank scaling for a boss alone. The mechanism, in our own words, is docs/models/monster-rank-spec.md. Every entry has `id` (MK1, MK2, ...), `kind` (`baseline` = vanilla, no lever; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`measured`, `reported` = a player's report, not a measurement of ours, `qualitative`, `approximate`, `not_observed` or `our_code`), `date` (the measurement date, or the date a report was recorded), `source` (a list of {path, section} or {repo, commit}; paths are relative to the hub root, `section` is text that appears in that file), `scripts` (every `gml_Script_*` the entry involves, all bound in hs_game_sdk.scripts.GameScript), `what` (the observation; the word boss appears only in an entry about a boss), `values`, `model` (what the model must show), optionally `confounds` (a list: what else changed on the boss besides its rank, or what keeps the sample from deciding anything) and exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). MK1-MK4 are AFK FARM's ordinary monsters (6,471 packets, 214 capture sessions, 2026-09-17 to 09-24, game builds pe6aaa6779 and pe6a9ed3ee). MK6-MK14 are ForgePact#44's Live procedure 1 (rerun of 2026-10-02, research DLL f85bc1d5...289cf, Nightmare, Outskirts of Inoya, zone level 170, every boss spawned with instance_create_depth and killed by writing its protected health to 0); the session's checks and their verdicts are in ForgePact/docs/boss-rarity-research.md, Live procedure 1. A value the research probe printed as `->?` (a number read as if it were a protected-store key, the key unproven) is kept under `unproven_reads` and is never evidence.",
+  "$schema_note": "Hand-curated record of the numbers recorded about what a monster's rank (enemyRarity 1-4) does to it, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/monster_rank_model.py never reads it; tests/test_monster_rank_model.py reads both and checks that the model reproduces each entry, and that each of the model's four boss hypotheses (health, damage, XP, drop rank) stays None until a `measured` entry names that dimension (the words health, damage, XP or drop rank in `what`) and an object descending from Enemy_Child_Boss_obj, and carries `values.ratio`, and carries no `confounds` (nothing but the rank changed on that boss, or what else changed, the Bosses control's affix top-up in `values.affixes_written`, was matched by the same session's identity control, which `values.controlled_by` names: an ordinary monster the Monster Rarity sliders raised with the same top-up, measured `pass` on that dimension), and is then the bool that ratio gives (within the identity control's tolerance of the rank table's ratio follows it: 10% for damage, 2% for XP, 5% for health, which has no control; the drop rank follows when the first DropItem argument is the rank written). A row with `confounds` decides no hypothesis, however its ratio compares: it stays a measurement of what the feature did, not of the game's rank scaling for a boss alone. The mechanism, in our own words, is docs/models/monster-rank-spec.md. Every entry has `id` (MK1, MK2, ...), `kind` (`baseline` = vanilla, no lever; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`measured`, `reported` = a player's report, not a measurement of ours, `qualitative`, `approximate`, `not_observed` or `our_code`), `date` (the measurement date, or the date a report was recorded), `source` (a list of {path, section} or {repo, commit}; paths are relative to the hub root, `section` is text that appears in that file), `scripts` (every `gml_Script_*` the entry involves, all bound in hs_game_sdk.scripts.GameScript), `what` (the observation; the word boss appears only in an entry about a boss), `values`, `model` (what the model must show), optionally `confounds` (a list: what else changed on the boss besides its rank, or what keeps the sample from deciding anything) and exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). MK1-MK4 are AFK FARM's ordinary monsters (6,471 packets, 214 capture sessions, 2026-09-17 to 09-24, game builds pe6aaa6779 and pe6a9ed3ee). MK6-MK14 are ForgePact#44's Live procedure 1 (rerun of 2026-10-02, research DLL f85bc1d5...289cf, Nightmare, Outskirts of Inoya, zone level 170, every boss spawned with instance_create_depth and killed by writing its protected health to 0); the session's checks and their verdicts are in ForgePact/docs/boss-rarity-research.md, Live procedure 1. MK15-MK24 are ForgePact#44's Live procedure 1b (2026-10-02, research DLL 6c6dfd8e...63cb09, the same zone and difficulty, the same spawn and kill routes; capture .claude/workorders/forgepact-issue-44-uber-bosses-live-1b.md, hub, local): MK15-MK18 are its identity control on an ordinary Skeleton_Mage_Fire_obj, which proved `damage` and `killExperience` against MK1 on the probe's own read path, and MK19-MK24 the Karp King at rank 1 and raised to rank 4; the session's record is ForgePact/docs/boss-rarity-research.md, Live procedure 1b. A value the research probe printed as `->?` (a number read as if it were a protected-store key, the key unproven) is kept under `unproven_reads` and is never evidence on its own; in Live 1b the same `->?` reads of `damage` and `killExperience` count only because the identity control (MK15, MK16) showed, on the same instrument, that they move with an ordinary monster's rank by MK1's ratios.",
   "measurements": [
     {
       "id": "MK1",
@@ -279,6 +279,250 @@
       },
       "model": "An ordinary monster's drop rank is its rank (MK2); the drop rank instrument sees a raised rank.",
       "reproduced_by": "tests.test_monster_rank_model.MeasuredTests.test_mk14_an_ordinary_monster_drops_at_its_rank"
+    },
+    {
+      "id": "MK15",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        { "path": "ForgePact/docs/boss-rarity-research.md", "section": "## Live procedure 1b" }
+      ],
+      "scripts": ["gml_Script_EnemyRaritySettings"],
+      "what": "Live 1b: the identity control for damage (rank-damage-control). An ordinary Skeleton_Mage_Fire_obj spawned at rank 1, then raised by the Monster Rarity sliders to rank 3 and to rank 4 (each with the sliders' affix top-up: 30, 6 at rank 3; 5, 12, 18 at rank 4), read through the same probe as the Karp King: the variable `damage` read 257, 360 and 515, x1.4008 and x2.0039, within the check's 10% of MK1's x1.53 and x1.90. So `damage` holds a monster's damage on this instrument.",
+      "values": {
+        "object": "Skeleton_Mage_Fire_obj",
+        "variable": "damage",
+        "by_rank": { "1": 257, "3": 360, "4": 515 },
+        "ratio": { "3": "1.4008", "4": "2.0039" },
+        "tolerance": "0.10",
+        "affixes_written": { "3": [30, 6], "4": [5, 12, 18] },
+        "check": "rank-damage-control",
+        "verdict": "pass"
+      },
+      "model": "Each ratio is within 10% of RANK_TABLE[rank].damage (rank 3: 0.916 of 1.53; rank 4: 1.055 of 1.90).",
+      "reproduced_by": "tests.test_monster_rank_model.MeasuredTests.test_mk15_mk16_the_identity_control"
+    },
+    {
+      "id": "MK16",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        { "path": "ForgePact/docs/boss-rarity-research.md", "section": "## Live procedure 1b" }
+      ],
+      "scripts": ["gml_Script_EnemyRaritySettings"],
+      "what": "Live 1b: the identity control for XP (rank-xp-control), on MK15's three Skeleton_Mage_Fire_obj spawns: `killExperience` read 221, 943 and 1387 (x4.2670, x6.2760) and `experience` 96, 410 and 603 (x4.2708, x6.2813), each within the check's 2% of MK1's x4.25 and x6.25. The check named `killExperience`.",
+      "values": {
+        "object": "Skeleton_Mage_Fire_obj",
+        "variable": "killExperience",
+        "by_rank": { "1": 221, "3": 943, "4": 1387 },
+        "ratio": { "3": "4.2670", "4": "6.2760" },
+        "also": { "experience": { "by_rank": { "1": 96, "3": 410, "4": 603 }, "ratio": { "3": "4.2708", "4": "6.2813" } } },
+        "tolerance": "0.02",
+        "check": "rank-xp-control",
+        "verdict": "pass"
+      },
+      "model": "Each ratio, of both variables, is within 2% of RANK_TABLE[rank].xp (4.25 and 6.25).",
+      "reproduced_by": "tests.test_monster_rank_model.MeasuredTests.test_mk15_mk16_the_identity_control"
+    },
+    {
+      "id": "MK17",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        { "path": "ForgePact/docs/boss-rarity-research.md", "section": "## Live procedure 1b" }
+      ],
+      "scripts": ["gml_Script_EnemyRaritySettings"],
+      "what": "Live 1b: the same three Skeleton_Mage_Fire_obj spawns' health (`enemy_hp`, through the proven getter), not a control: 35,475 at rank 1, 201,764 at rank 3 (x5.6875) and 188,460 at rank 4 (x5.3125), against MK1's medians x2.98 and x4.23. The rank-4 spawn read less than the rank-3 one.",
+      "values": {
+        "object": "Skeleton_Mage_Fire_obj",
+        "by_rank": { "1": 35475, "3": 201764, "4": 188460 },
+        "ratio": { "3": "5.6875", "4": "5.3125" }
+      },
+      "model": "None: one spawn per rank is not MK1's median, and this one is not monotone in rank.",
+      "not_reproduced": "One spawn per rank, each with a different affix top-up (MK15), reads well above MK1's health medians and falls from rank 3 to rank 4. Recorded because it shows one ordinary monster's health at a forced rank can sit far from the median, which is why a single boss's health ratio (MK7, MK20) decides nothing."
+    },
+    {
+      "id": "MK18",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        { "path": "ForgePact/docs/boss-rarity-research.md", "section": "## Live procedure 1b" }
+      ],
+      "scripts": ["gml_Script_EnemyRaritySettings", "gml_Script_DropItem"],
+      "what": "Live 1b: the drop rank instrument's control (drop-rank-control), repeated: MK15's rank-4 Skeleton_Mage_Fire_obj died with `droptrace` armed and printed one DropItem line whose first argument was 4, as MK2 says of every ordinary monster.",
+      "values": {
+        "object": "Skeleton_Mage_Fire_obj",
+        "check": "drop-rank-control",
+        "verdict": "pass",
+        "rank_written": 4,
+        "dropitem_first_argument": 4
+      },
+      "model": "An ordinary monster's drop rank is its rank (MK2), as MK14.",
+      "reproduced_by": "tests.test_monster_rank_model.MeasuredTests.test_mk14_an_ordinary_monster_drops_at_its_rank"
+    },
+    {
+      "id": "MK19",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        { "path": "ForgePact/docs/boss-rarity-research.md", "section": "## Live procedure 1b" },
+        { "path": "docs/RUNTIME_DATA_MODELS.md", "section": "Live procedure 1b" }
+      ],
+      "scripts": ["gml_Script_EnemyRaritySettings", "gml_Script_DropItem"],
+      "what": "Live 1b: Karp_King_obj, a boss, unraised (Bosses control off; the game's own setup traced at enemyRarity 1), on three spawns: max_hp 44,625,000 each (enemy_hp 44,604,656.89, 44,605,214.39 and 44,611,567.5, the hero already hitting it; largest gap 6,910.61), `damage` 217, `killExperience` 4,950 and `experience` 2,152 on every read; its traced death printed one DropItem line with first argument 1 (baseline-drop-trace pass), the anchor MK23 is compared with.",
+      "values": {
+        "object": "Karp_King_obj",
+        "rank": 1,
+        "max_hp": [44625000, 44625000, 44625000],
+        "enemy_hp": ["44604656.89", "44605214.39", "44611567.5"],
+        "gap": { "enemy_hp": "6910.61", "damage": 0, "killExperience": 0, "experience": 0 },
+        "damage": [217, 217, 217],
+        "killExperience": [4950, 4950, 4950],
+        "experience": [2152, 2152, 2152],
+        "anchor_dropitem_first_argument": 1,
+        "check": "baseline-drop-trace",
+        "verdict": "pass"
+      },
+      "model": "scaled(1, ...) returns these bases unchanged; MK20-MK22's rank-1 values are these.",
+      "reproduced_by": "tests.test_monster_rank_model.MeasuredTests.test_mk19_the_rank_one_karp_king_again"
+    },
+    {
+      "id": "MK20",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        { "path": "ForgePact/docs/boss-rarity-research.md", "section": "## Live procedure 1b" },
+        { "path": "docs/RUNTIME_DATA_MODELS.md", "section": "Live procedure 1b" }
+      ],
+      "scripts": ["gml_Script_EnemyRaritySettings"],
+      "what": "Live 1b: Karp_King_obj, a boss, raised to rank 4 by ForgePact's Bosses control with that control's 3-affix top-up (12 Fire Enchanted, 20 Punisher, 31 Antimagus): health 210,992,578 (max_hp) against 44,625,000 at rank 1 (MK19), a ratio of 4.7281, above MK1's rank-4 health median of 4.23 (ancient-hp pass: enemy_hp 210,980,848.512 against the largest rank-1 read 44,611,567.5, x4.7293, far past the gap). Live 1 read x5.6525 on the same boss with other affixes (MK7).",
+      "values": {
+        "object": "Karp_King_obj",
+        "rank": 4,
+        "rank_1_value": 44625000,
+        "value": 210992578,
+        "ratio": "4.7281",
+        "check_reads": { "A": "210980848.512", "B": "44611567.5", "G": "6910.61", "ratio": "4.7293" },
+        "affixes_written": [12, 20, 31],
+        "check": "ancient-hp",
+        "verdict": "pass"
+      },
+      "model": "HYPOTHESES['boss_hp_follows_rank_table'] stays None: this row carries `confounds`, so it decides no hypothesis. Its ratio is 1.118 times RANK_TABLE[4].hp = 4.23.",
+      "confounds": [
+        "The Bosses control's 3-affix top-up (12 Fire Enchanted, 20 Punisher, 31 Antimagus) was built into the same health, and the session has no health control: the identity control's own health did not follow MK1 (MK17).",
+        "Two sessions on the same boss read x5.6525 (MK7, other affixes) and x4.7281, so one sample's health ratio does not say how a boss scales.",
+        "One boss, one kill, one zone."
+      ],
+      "not_reproduced": "Not established: a confounded sample (see `confounds`), recorded as the measured health of a raised, topped-up boss. What a boss's health does at a forced rank with nothing else changed stays open."
+    },
+    {
+      "id": "MK21",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        { "path": "ForgePact/docs/boss-rarity-research.md", "section": "## Live procedure 1b" },
+        { "path": "docs/RUNTIME_DATA_MODELS.md", "section": "Live procedure 1b" }
+      ],
+      "scripts": ["gml_Script_EnemyRaritySettings"],
+      "what": "Live 1b: Karp_King_obj, a boss, raised to rank 4 by the Bosses control (same spawn as MK20): its damage, the variable `damage` that MK15 proved, read 455 against 217 at rank 1 (MK19), a ratio of 2.0968 (ancient-damage pass). MK1's rank-4 damage median is x1.90; 2.0968 is 1.104 times that, just outside the 10% the identity control was held to, so this boss's damage did not follow the table's row. The control itself read x2.0039 at rank 4.",
+      "values": {
+        "object": "Karp_King_obj",
+        "variable": "damage",
+        "rank": 4,
+        "rank_1_value": 217,
+        "value": 455,
+        "ratio": "2.0968",
+        "affixes_written": [12, 20, 31],
+        "controlled_by": "MK15",
+        "check": "ancient-damage",
+        "verdict": "pass"
+      },
+      "model": "HYPOTHESES['boss_damage_follows_rank_table'] is False: the ratio is outside MK15's 10% of RANK_TABLE[4].damage. What the extra is due to (the boss, its different affixes, or one sample's spread) is not established.",
+      "reproduced_by": "tests.test_monster_rank_model.HypothesisTests.test_live_1b_answers_damage_xp_and_drop_rank"
+    },
+    {
+      "id": "MK22",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        { "path": "ForgePact/docs/boss-rarity-research.md", "section": "## Live procedure 1b" },
+        { "path": "docs/RUNTIME_DATA_MODELS.md", "section": "Live procedure 1b" }
+      ],
+      "scripts": ["gml_Script_EnemyRaritySettings"],
+      "what": "Live 1b: Karp_King_obj, a boss, raised to rank 4 by the Bosses control (same spawn as MK20): its XP, the variable `killExperience` that MK16 proved, read 30,940 against 4,950 at rank 1 (MK19), a ratio of 6.2505 (ancient-xp pass; `experience` 13,452 against 2,152, x6.2509). MK1's rank-4 XP is exactly x6.25, so this boss's XP followed the table's row.",
+      "values": {
+        "object": "Karp_King_obj",
+        "variable": "killExperience",
+        "rank": 4,
+        "rank_1_value": 4950,
+        "value": 30940,
+        "ratio": "6.2505",
+        "also": { "experience": { "rank_1_value": 2152, "value": 13452, "ratio": "6.2509" } },
+        "affixes_written": [12, 20, 31],
+        "controlled_by": "MK16",
+        "check": "ancient-xp",
+        "verdict": "pass"
+      },
+      "model": "HYPOTHESES['boss_xp_follows_rank_table'] is True: the ratio is within MK16's 2% of RANK_TABLE[4].xp = 6.25.",
+      "reproduced_by": "tests.test_monster_rank_model.HypothesisTests.test_live_1b_answers_damage_xp_and_drop_rank"
+    },
+    {
+      "id": "MK23",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        { "path": "ForgePact/docs/boss-rarity-research.md", "section": "## Live procedure 1b" },
+        { "path": "docs/RUNTIME_DATA_MODELS.md", "section": "Live procedure 1b" }
+      ],
+      "scripts": ["gml_Script_DropItem"],
+      "what": "Live 1b: Karp_King_obj's drop rank, the first DropItem argument at its death (ancient-drop-rank pass): 1 at the unraised boss's traced death (MK19's anchor), 4 at the traced death of the boss the Bosses control raised to rank 4 (same spawn as MK20). No DropItemBoss line was printed at either death.",
+      "values": {
+        "object": "Karp_King_obj",
+        "anchor_dropitem_first_argument": 1,
+        "rank_written": 4,
+        "dropitem_first_argument": 4,
+        "affixes_written": [12, 20, 31],
+        "controlled_by": "MK18",
+        "check": "ancient-drop-rank",
+        "verdict": "pass"
+      },
+      "model": "HYPOTHESES['boss_drop_rank_reaches_dropitem'] is True: the first argument at the raised boss's death is the rank written, and the unraised boss's was 1.",
+      "reproduced_by": "tests.test_monster_rank_model.HypothesisTests.test_live_1b_answers_damage_xp_and_drop_rank"
+    },
+    {
+      "id": "MK24",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        { "path": "ForgePact/docs/boss-rarity-research.md", "section": "## Live procedure 1b" },
+        { "path": "docs/RUNTIME_DATA_MODELS.md", "section": "Live procedure 1b" }
+      ],
+      "scripts": ["gml_Script_DropItem"],
+      "what": "Live 1b: Karp_King_obj's drops per kill (ancient-drops), as new lines in ForgePact's itemdrops.jsonl, with the research build's dropstats counters beside them (boss-drop-routine): the unraised boss's traced kill added 10 lines, the rank-4 boss's traced kill 12; one kill each. The untraced control kill added none and moved no counter; three other kills moved counters (two of them rank 4 by oset, not by the Bosses control). ItemBoss, BossGems and BossRunes stayed 0 at every kill.",
+      "values": {
+        "object": "Karp_King_obj",
+        "itemdrops_lines": { "rank_1_traced": 10, "rank_4_traced": 12 },
+        "kills": [
+          { "kill": "control, rank 1", "traced": false, "seconds_after_spawn": 63, "itemdrops_lines": 0, "dropstats_delta": {} },
+          { "kill": "step 3, rank 1", "traced": true, "seconds_after_spawn": 24, "itemdrops_lines": 10, "dropstats_delta": { "Item": 1, "Gold": 1, "MonsterGold": 1, "ChaosKey": 4, "Bifrost": 2 } },
+          { "kill": "step 4, oset to 4", "traced": false, "seconds_after_spawn": 89, "itemdrops_lines": 14, "dropstats_delta": { "Item": 1, "ChaosKey": 8, "Bifrost": 6 } },
+          { "kill": "step 4 repeat, oset to 4", "traced": false, "seconds_after_spawn": 22, "itemdrops_lines": 12, "dropstats_delta": { "Item": 1, "ChaosKey": 4, "Bifrost": 4 } },
+          { "kill": "step 5, Bosses control rank 4", "traced": true, "seconds_after_spawn": 51, "itemdrops_lines": 12, "dropstats_delta": { "Item": 1, "ChaosKey": 4, "Bifrost": 6 } }
+        ],
+        "checks": { "ancient-drops": "pass", "boss-drop-routine": "fail (control kill moved none, untraced)" }
+      },
+      "model": "Not modelled: the model carries no drop count.",
+      "not_reproduced": "One kill per rank, and the hero's own attacks killed nearby monsters between reads, so a counter delta can include a death that was not the boss's. 10 against 12 lines is recorded, never a verdict on whether a raised boss drops more."
     }
   ]
 }

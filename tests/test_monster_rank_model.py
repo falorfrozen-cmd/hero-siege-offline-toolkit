@@ -13,7 +13,10 @@ for. Whether a boss built at rank 3 or 4 actually takes the rank table's rows is
 asked once per dimension (health, damage, XP, drop rank); `HypothesisTests`
 keeps each answer `None` until a measured row about that dimension on a boss is
 in the curated file, and then holds it to that row's ratio. ForgePact#44's Live
-procedure 1 (2026-10-02, MK6-MK14) answered health only.
+procedure 1 (2026-10-02, MK6-MK14) answered none: its one boss health row is
+confounded. Live procedure 1b (2026-10-02, MK15-MK24) answered damage, XP and
+the drop rank, each on a variable or a trace its identity control on an
+ordinary monster proved first; health is still open.
 
 Each entry of `hs-game-sdk/curated/monster_rank_measurements.json` names the
 test that reproduces it (`reproduced_by`) or says why none can
@@ -209,11 +212,65 @@ class MeasuredTests(unittest.TestCase):
         self.assertEqual(self.entries["MK7"]["values"]["rank_1_value"], first)
 
     def test_mk14_an_ordinary_monster_drops_at_its_rank(self):
-        values = self.entries["MK14"]["values"]
-        self.assertNotIn(values["object"], model.boss_family())
-        self.assertIn(values["rank_written"], model.RANKS)
-        self.assertEqual(values["dropitem_first_argument"], values["rank_written"])
-        self.assertEqual(values["verdict"], "pass")
+        # Live 1's drop rank control (MK14) and Live 1b's repeat of it (MK18).
+        for mk in ("MK14", "MK18"):
+            values = self.entries[mk]["values"]
+            with self.subTest(entry=mk):
+                self.assertNotIn(values["object"], model.boss_family())
+                self.assertIn(values["rank_written"], model.RANKS)
+                self.assertEqual(values["dropitem_first_argument"], values["rank_written"])
+                self.assertEqual((values["check"], values["verdict"]), ("drop-rank-control", "pass"))
+
+    def test_mk15_mk16_the_identity_control(self):
+        # Live 1b's identity control: an ordinary monster raised by the sliders
+        # (with their affix top-up) moves `damage` and `killExperience` by MK1's
+        # rows, within the check's own tolerance, on the probe's read path.
+        family = model.boss_family()
+        for mk, field in (("MK15", "damage"), ("MK16", "xp")):
+            entry = self.entries[mk]
+            values = entry["values"]
+            self.assertNotIn(values["object"], family)
+            self.assertEqual(values["verdict"], "pass")
+            self.assertEqual(Fraction(values["tolerance"]), TOLERANCES[field], mk)
+            reads = [(values["by_rank"], values["ratio"])]
+            reads += [(v["by_rank"], v["ratio"]) for v in values.get("also", {}).values()]
+            for by_rank, ratios in reads:
+                for rank in ("3", "4"):
+                    with self.subTest(entry=mk, rank=rank):
+                        exact = Fraction(by_rank[rank], by_rank["1"])
+                        self.assertLess(abs(exact - Fraction(ratios[rank])), Fraction(1, 1000))
+                        table = getattr(model.row(int(rank)), field)
+                        self.assertLessEqual(abs(exact / table - 1), TOLERANCES[field])
+        # Negative control: the same spawns' health (MK17) is not a control; it
+        # misses MK1's health rows by far more than any tolerance here.
+        hp = self.entries["MK17"]["values"]["by_rank"]
+        self.assertGreater(Fraction(hp["4"], hp["1"]) / model.row(4).hp - 1, Fraction(1, 4))
+        self.assertLess(hp["4"], hp["3"])
+        self.assertIn("not_reproduced", self.entries["MK17"])
+
+    def test_mk19_the_rank_one_karp_king_again(self):
+        # Live 1b's unraised Karp King: the same health as Live 1's (MK6), the
+        # same damage and XP on three spawns, so the gap G is 0 on both, and
+        # the rank-1 values MK20-MK22 compare with.
+        values = self.entries["MK19"]["values"]
+        self.assertIn(values["object"], model.boss_family())
+        self.assertEqual(values["rank"], 1)
+        self.assertEqual(set(values["max_hp"]), {self.entries["MK6"]["values"]["health"][0]})
+        for name in ("damage", "killExperience", "experience"):
+            with self.subTest(variable=name):
+                self.assertEqual(len(set(values[name])), 1)
+                self.assertEqual(values["gap"][name], 0)
+        gap = max(map(Fraction, values["enemy_hp"])) - min(map(Fraction, values["enemy_hp"]))
+        self.assertEqual(gap, Fraction(values["gap"]["enemy_hp"]))
+        self.assertEqual(model.scaled(1, values["max_hp"][0], values["damage"][0],
+                                      values["killExperience"][0]),
+                         (values["max_hp"][0], values["damage"][0], values["killExperience"][0]))
+        self.assertEqual(self.entries["MK20"]["values"]["rank_1_value"], values["max_hp"][0])
+        self.assertEqual(self.entries["MK21"]["values"]["rank_1_value"], values["damage"][0])
+        self.assertEqual(self.entries["MK22"]["values"]["rank_1_value"], values["killExperience"][0])
+        self.assertEqual(self.entries["MK23"]["values"]["anchor_dropitem_first_argument"],
+                         values["anchor_dropitem_first_argument"])
+        self.assertEqual(values["anchor_dropitem_first_argument"], 1)
 
 
 #: Which hypothesis a row answers: the word its `what` must name, and the
@@ -225,8 +282,10 @@ DIMENSIONS = {
     "boss_xp_follows_rank_table": (re.compile(r"\bXP\b"), "xp"),
     "boss_drop_rank_reaches_dropitem": (re.compile(r"\bdrop rank\b", re.I), None),
 }
-#: A row within this share of the table's ratio follows it.
-TOLERANCE = Fraction(5, 100)
+#: A row within this share of the table's ratio follows it: the tolerance the
+#: dimension's identity control was held to (Live 1b's `rank-damage-control`
+#: 10%, `rank-xp-control` 2%, MK15 and MK16); health has no control, 5%.
+TOLERANCES = {"hp": Fraction(5, 100), "damage": Fraction(10, 100), "xp": Fraction(2, 100)}
 
 
 def _entries():
@@ -241,13 +300,16 @@ def _names_a_boss(entry, family):
 def _keyed_rows(entries, hypothesis, family):
     """The measured rows that answer `hypothesis`: `what` names its dimension and
     an object of the boss family, `values` carries what decides it, and the row
-    carries no `confounds` (nothing but the rank changed on that boss)."""
+    carries no `confounds`: nothing but the rank changed on that boss, or the
+    Bosses control's affix top-up (`affixes_written`) was matched by an identity
+    control the row names (`controlled_by`)."""
     word, field = DIMENSIONS[hypothesis]
     decides = "ratio" if field else "dropitem_first_argument"
     return [e for e in entries
             if e["status"] == "measured" and word.search(e["what"])
             and _names_a_boss(e, family) and decides in e["values"]
-            and not e.get("confounds")]
+            and not e.get("confounds")
+            and (not e["values"].get("affixes_written") or e["values"].get("controlled_by"))]
 
 
 def _row_follows(entry, field):
@@ -259,7 +321,7 @@ def _row_follows(entry, field):
     exact = Fraction(values["value"], values["rank_1_value"])
     assert abs(exact - Fraction(values["ratio"])) < Fraction(1, 1000), (entry["id"], float(exact))
     table = getattr(model.row(values["rank"]), field)
-    return abs(exact / table - 1) <= TOLERANCE
+    return abs(exact / table - 1) <= TOLERANCES[field]
 
 
 class HypothesisTests(unittest.TestCase):
@@ -281,12 +343,13 @@ class HypothesisTests(unittest.TestCase):
                     self.assertIsNone(answer, "set from no measured row about it on a boss")
 
     def test_live_one_established_nothing_about_a_boss(self):
-        # The curated file as it stands: MK7 is a boss's health at rank 4
-        # (x5.65 against x4.23), but the Bosses control's 3-affix top-up was
-        # built into the same health, so it carries `confounds` and decides
-        # nothing. Nothing decides damage, XP or the drop rank either.
+        # Live 1's rows (MK6-MK14): MK7 is a boss's health at rank 4 (x5.65
+        # against x4.23), but the Bosses control's 3-affix top-up was built into
+        # the same health, so it carries `confounds` and decides nothing.
+        # Nothing of Live 1 decides damage, XP or the drop rank either.
         entries = _entries()
         family = model.boss_family()
+        live_one = [entries["MK%d" % n] for n in range(6, 15)]
         mk7 = entries["MK7"]
         self.assertTrue(mk7["confounds"])
         self.assertNotIn("reproduced_by", mk7)
@@ -298,16 +361,60 @@ class HypothesisTests(unittest.TestCase):
         self.assertFalse(_row_follows(unconfounded, "hp"))  # x5.6525 against x4.23
         for hypothesis in DIMENSIONS:
             with self.subTest(hypothesis=hypothesis):
-                self.assertEqual(_keyed_rows(list(entries.values()), hypothesis, family), [])
-                self.assertIsNone(model.HYPOTHESES[hypothesis])
+                self.assertEqual(_keyed_rows(live_one, hypothesis, family), [])
+
+    def test_live_1b_answers_damage_xp_and_drop_rank(self):
+        # Live 1b's rows (MK15-MK24): each of damage, XP and the drop rank is
+        # decided by exactly one boss row, which names the identity control that
+        # matched the Bosses control's affix top-up on an ordinary monster; the
+        # health row (MK20) has no control and stays confounded.
+        entries = _entries()
+        family = model.boss_family()
+        live_1b = [entries["MK%d" % n] for n in range(15, 25)]
+        expected = {
+            "boss_hp_follows_rank_table": ([], None),
+            "boss_damage_follows_rank_table": (["MK21"], False),  # x2.0968 against x1.90
+            "boss_xp_follows_rank_table": (["MK22"], True),  # x6.2505 against x6.25
+            "boss_drop_rank_reaches_dropitem": (["MK23"], True),  # 1 -> 4
+        }
+        for hypothesis, (ids, answer) in expected.items():
+            _, field = DIMENSIONS[hypothesis]
+            rows = _keyed_rows(live_1b, hypothesis, family)
+            with self.subTest(hypothesis=hypothesis):
+                self.assertEqual([e["id"] for e in rows], ids)
+                self.assertIs(model.HYPOTHESES[hypothesis], answer)
+                for entry in rows:
+                    self.assertIs(_row_follows(entry, field), answer)
+                    # The control the row names: an ordinary monster, measured
+                    # `pass`, on the same variable (or the drop rank trace).
+                    control = entries[entry["values"]["controlled_by"]]
+                    self.assertEqual(control["status"], "measured")
+                    self.assertEqual(control["values"]["verdict"], "pass")
+                    self.assertNotIn(control["values"]["object"], family)
+                    self.assertEqual(control["values"].get("variable"),
+                                     entry["values"].get("variable"))
+                    self.assertEqual(entry["values"]["verdict"], "pass")
+                    self.assertTrue(entry["what"].startswith("Live 1b:"))
+        self.assertTrue(entries["MK20"]["confounds"])
+        # Negative control: the damage row without the control it names is a
+        # topped-up boss with nothing to match the top-up, and decides nothing.
+        mk21 = entries["MK21"]
+        uncontrolled = dict(mk21, values={k: v for k, v in mk21["values"].items()
+                                          if k != "controlled_by"})
+        self.assertEqual(_keyed_rows([uncontrolled], "boss_damage_follows_rank_table", family), [])
+        # And the damage verdict turns on the control's 10%, not on a looser
+        # rule: at 5% or 10% x2.0968 is outside x1.90, at 15% it would follow.
+        exact = Fraction(mk21["values"]["value"], mk21["values"]["rank_1_value"])
+        self.assertGreater(exact / model.row(4).damage - 1, TOLERANCES["damage"])
+        self.assertLess(exact / model.row(4).damage - 1, Fraction(15, 100))
 
     def test_the_key_is_a_boss_object_not_a_word(self):
         # Controls on the selection itself. Positive: a synthetic boss row at the
         # table's own ratio follows it, one at MK7's does not. Negative: an
         # ordinary monster's row (MK14 names the drop rank), a row that says
-        # "boss" but names no boss object, a not-observed row, a report and a
-        # boss row at the table's own ratio that carries `confounds` never
-        # decide anything.
+        # "boss" but names no boss object, a not-observed row, a report, a
+        # boss row at the table's own ratio that carries `confounds`, and one
+        # whose affix top-up no identity control matched never decide anything.
         family = model.boss_family()
 
         def row(what, status="measured", **values):
@@ -332,6 +439,7 @@ class HypothesisTests(unittest.TestCase):
                 rank_1_value=1, value=4, ratio="4"),
             entries["MK5"],
             dict(at_table, confounds=["an affix top-up built into the same health"]),
+            dict(at_table, values=dict(at_table["values"], affixes_written=[12, 20, 31])),
         ]
         for hypothesis in DIMENSIONS:
             with self.subTest(hypothesis=hypothesis):

@@ -41,7 +41,8 @@ inferred, not checked on screen (`docs/RUNTIME_DATA_MODELS.md` § 13.7).
   the monster's protected HP is 0 or less (`docs/RUNTIME_DATA_MODELS.md` § 13.1).
   Drops read `enemyRarity` off the dying enemy (§ 13.5), and `DropItem`'s first
   argument is the same number (§ 13.7, measured on ordinary monsters). For a
-  boss it is not established (see Not established, MK12).
+  boss it was measured on one Karp King in Live procedure 1b (1 unraised, 4
+  raised; MK23, below), after Live procedure 1 had no anchor (MK12).
 - **Which objects are bosses.** `hs-game-sdk`'s object parent table gives
   `Enemy_Child_Boss_obj` (index 1407) 41 descendants, among them `Karp_King_obj`
   (2368), `Damien_obj` (1115), `Uber_Damien_obj` (4945), `Uber_Anubis_obj` (4938)
@@ -102,22 +103,50 @@ inferred, not checked on screen (`docs/RUNTIME_DATA_MODELS.md` § 13.7).
   - **MK14, the drop rank instrument's control**: an ordinary
     `Skeleton_Mage_Fire_obj` the sliders raised to rank 4 died with `DropItem`'s
     first argument 4, as MK2 says.
+- **ForgePact#44's Live procedure 1b, 2026-10-02** (MK15-MK24; the same zone,
+  spawn route, probe and kill route; the session's record is
+  `ForgePact/docs/boss-rarity-research.md` § "Live procedure 1b"):
+  - **MK15-MK16, the identity control.** An ordinary `Skeleton_Mage_Fire_obj`
+    raised by the sliders (which write the rank and the same affix top-up as the
+    Bosses control) to rank 3 and 4, read on the probe's own path: `damage`
+    ×1.4008 and ×2.0039 (within 10% of MK1's ×1.53 and ×1.90), `killExperience`
+    ×4.2670 and ×6.2760 (within 2% of ×4.25 and ×6.25; `experience` the same). So
+    these two variables hold a monster's damage and XP, which is what lets a
+    boss's reads of them count. **MK17**: the same spawns' health is not a
+    control (×5.69 at rank 3, ×5.31 at rank 4, one spawn each). **MK18**: the
+    drop rank control passed again (first argument 4 at rank 4).
+  - **MK19, the rank-1 Karp King** on three spawns: health 44,625,000, `damage`
+    217, `killExperience` 4,950, and a `DropItem` first argument of 1 at its
+    traced death, the anchor.
+  - **MK21, a boss's damage at rank 4**: ×2.0968 (217 -> 455). MK1's rank-4 row is
+    ×1.90; this is 10.4% above it, outside the control's 10%, so
+    `HYPOTHESES["boss_damage_follows_rank_table"]` is `False`.
+  - **MK22, a boss's XP at rank 4**: ×6.2505 (4,950 -> 30,940), the table's exact
+    ×6.25: `boss_xp_follows_rank_table` is `True`.
+  - **MK23, a boss's drop rank at rank 4**: `DropItem`'s first argument 1 at the
+    unraised boss's death, 4 at the raised one's: `boss_drop_rank_reaches_dropitem`
+    is `True`.
+  - **MK20, a boss's health at rank 4**: ×4.7281 (44,625,000 -> 210,992,578), with
+    a different 3-affix top-up (12 Fire Enchanted, 20 Punisher, 31 Antimagus) built
+    into it and no health control; confounded like MK7, so health stays open.
+  - **MK24, drops per kill**: 10 lines at the rank-1 traced kill, 12 at the rank-4
+    one, one kill each: recorded, not a verdict.
 
 ## Not established
 
-- **Whether a boss follows the rank table in damage, XP and drop rank.** Whether a
-  boss built at rank 3 or 4 takes MK1's damage and XP multipliers and MK2's drop
-  values is still open: Live procedure 1 measured health only (above). The model
-  carries one hypothesis per dimension, so the health answer cannot be read as the
-  others': `HYPOTHESES["boss_damage_follows_rank_table"]` (MK10: the probe's only
-  damage-named variable was an unproven key read), `boss_xp_follows_rank_table`
-  (MK11: the same for `killExperience` and `experience`) and
-  `boss_drop_rank_reaches_dropitem` (MK12: no `DropItem` line at a rank-1 boss's
-  traced death, so no anchor; the one rank-3 boss line, first argument 3, is
-  uncontrolled) stay `None`. MK13, the drops per kill, was not observed: the two
-  traced deaths that mattered dropped nothing at all. ForgePact#44's Live
-  procedure 1b is the next session for these. The panel text, the README and the
-  release notes claim only what was measured.
+- **Whether a boss follows the rank table in health.** Two sessions read one Karp
+  King raised to rank 4 at ×5.65 (MK7) and ×4.73 (MK20), each with a different
+  affix top-up built into the same health and no health control, so
+  `HYPOTHESES["boss_hp_follows_rank_table"]` stays `None`.
+- **Why a boss's damage rose past the table's row.** MK21's ×2.0968 is one boss,
+  one spawn, with affixes other than the control's; whether the extra is the
+  boss's own scaling, an affix's or one sample's spread is not established.
+- **A boss at rank 3, and every boss but the Karp King,** for damage, XP and the
+  drop rank: not measured. Nor MK2's protected drop values on a boss (the probe's
+  unproven reads of `dCommonChance` and `dCommonDropMult` stayed 58 and 70 at
+  rank 1 and rank 4; no check covered them), nor whether a raised boss drops more
+  (MK13, MK24). The panel text, the README and the release notes claim only what
+  was measured.
 - **What `forceRarity` does.** Enemies carry a `forceRarity` variable beside
   `enemyRarity` (ForgePact's research probes read and write it); what in the game
   reads it, and when, is not known.
@@ -160,11 +189,14 @@ A pure function of numbers, with exact fractions
 - `HYPOTHESES`: four entries, one per dimension a boss might or might not share
   with the rank table: `boss_hp_follows_rank_table`,
   `boss_damage_follows_rank_table`, `boss_xp_follows_rank_table` and
-  `boss_drop_rank_reaches_dropitem`, all four `None`, not established (MK7 is
-  confounded by the Bosses control's 3-affix top-up, so it decides none of
-  them). Each becomes a bool
+  `boss_drop_rank_reaches_dropitem`. Health is `None`, not established (MK7 and
+  MK20 are confounded by the Bosses control's 3-affix top-up); damage is `False`
+  (MK21), XP `True` (MK22) and the drop rank `True` (MK23). Each becomes a bool
   only from a measured row naming that dimension and a boss object, with its ratio
-  to the boss's rank-1 self; within 5% of the table's ratio follows it.
+  to the boss's rank-1 self, and either nothing else changed on the boss or the
+  row names the identity control that matched the top-up (`controlled_by`);
+  within the control's tolerance of the table's ratio (damage 10%, XP 2%, health
+  5%) follows it.
 - `BOSS_PARENT` and `boss_family()`: `Enemy_Child_Boss_obj` and the names of its
   descendants in `hs-game-sdk`'s parent table, the objects a boss row may name.
 
