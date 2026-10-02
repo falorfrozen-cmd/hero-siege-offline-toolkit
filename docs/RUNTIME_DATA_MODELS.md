@@ -368,7 +368,7 @@ this runner:
 | `object_index` on an instance | `VALUE_REF`, not a plain number |
 | `object_index` on a struct `self` | undefined |
 | the `room` builtin | a room `VALUE_REF`, not a number; `variable_global_exists("room")` is false, so `variable_global_get("room")` answers undefined and converting that to a number raises the runner error `REAL argument incorrect type undefined` (one per call, measured 2026-10-02, ForgePact#144). Read it with `GetBuiltin("room", ...)`, name it with `room_get_name`; `room_width`/`room_height` are built-ins too |
-| an array or a string converted to a number (`RValue::ToDouble`) | no number: the runner raises its own error and the call then fails, and a C++ `catch` that swallows the failure does not take back the runner's report. For an array the message is `REAL argument incorrect type array` (**measured**, #74 Live 3's capture, 2026-10-02). That ForgePact's research scan over `Controller_obj`'s array variables raised one such error per array or string element it converted (18 per scan) is an arithmetic fit on Live 2's and Live 3's counts, which Live 4 is to confirm. Refuse a kind that can never be a number before converting it (ForgePact's `SigNeverAHandle`, ForgePact#74) |
+| an array, string, struct, undefined or null converted to a number (`RValue::ToDouble`) | no number: the runner raises its own error and the call then fails, and a C++ `catch` that swallows the failure does not take back the runner's report. An array raises `REAL argument incorrect type array` (**measured**, #74 Live 3's capture, 2026-10-02); undefined raises `REAL argument incorrect type undefined` (**measured**, ForgePact#144, the `room` row above). For a string, a struct and null it is a **source reading**, not a measurement: `ToDouble` is the runner's own `REAL_RValue`, which raises for every kind it cannot turn into a number; their error text has not been captured. That ForgePact's research scan over `Controller_obj`'s array variables raised one error per array or string element it converted (18 per scan) is an arithmetic fit on Live 2's and Live 3's counts, and the string elements' share of it rests on the fit alone. Live 4 cannot settle that share: ForgePact's gate (§13.4) refuses strings before converting them, so it can show only that the total stops rising, not that a string conversion raises. Refuse a kind that can never be a number before converting it (ForgePact's `SigNeverAHandle`, ForgePact#74) |
 | a ds container | "ref ds_map" / "ref ds_list" |
 | an item | `VALUE_OBJECT` struct (§2) |
 | a bound `m_*` method value | `VALUE_OBJECT` with object kind 0, not a script ref (§10) |
@@ -2004,7 +2004,9 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   on the element as it was read, with no allow-list of handle kinds. It first
   refuses, before any conversion, an element of a kind that can never be a
   handle (array, string, struct, undefined or null) as `never a handle`,
-  because converting one raises a runner error (§5.4); a real, a ref and
+  because converting one is the runner's own REAL conversion, which raises
+  a runner error for an array and for undefined (measured) and, by source
+  reading, for a string, a struct and null (§5.4); a real, a ref and
   every other kind go on. Then a numeric conversion serves only to refuse a
   value that cannot be converted, is non-finite or is negative, and then
   `ds_exists` is asked of the value itself with 2 (`ds_type_list`). A value
