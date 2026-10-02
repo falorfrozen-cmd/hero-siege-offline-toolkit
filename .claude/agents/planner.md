@@ -491,7 +491,9 @@ first numbered step:
   item's change can reach (the unit tests of the module it changed, the e2e
   suite of the screen it touched, a grep). Each is a criterion in the usual
   form, with `(class ...)` where it needs one. Never the full suite: that is
-  the gate's.
+  the gate's. A build check carries `(reads ...)` naming the sources it
+  builds from: the workflow re-runs a done build when a later fix lands on
+  them, and a build check with no `(reads ...)` re-runs after any commit.
 - `owner:` — the question this item waits on, when the owner has not
   answered it yet. Only this item waits; ask the others' questions up front.
   It always comes with `default:` and `reversible:`, below.

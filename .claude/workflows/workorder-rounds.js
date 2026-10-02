@@ -44,7 +44,7 @@ export const meta = {
 //                                       // and only for a first implementation of the plan's steps (round 0, or the
 //                                       // relaunch after a replan; never after an IMPL-DEFECT). Absent or [] runs
 //                                       // exactly as a plan without lanes (2h below)
-//   items,                              // [{ id, title, files, checks, after, shares, owner, default, reversible }, ...]
+//   items,                              // [{ id, title, files, checks, after, shares, owner, default, reversible, build_reads }, ...]
 //                                       // pasted from `plan_lint.py <plan> --items-json`: the launch streams (3b below)
 //                                       // instead of running rounds. Absent or [] runs in rounds exactly as before
 //   streaming, answered,                // items mode: the planner is still releasing items; ids whose owner: question
@@ -137,6 +137,44 @@ const pathsOverlap = (a, b) => {
 }
 const filesOverlap = (fa, fb) => fa === '*' || fb === '*' || fa.some(a => fb.some(b => pathsOverlap(a, b)))
 
+// Whether a changed `path` is one a `(reads ...)` glob covers -- plan_lint's
+// `reads_path`: `*` crosses `/`, a `**/` may match no directory at all, and a
+// literal covers itself and, as a directory, everything under it.
+const readsPath = (glob, path) => {
+  const g = String(glob).replace(/\\/g, '/').replace(/^\.\//, ''), p = String(path).replace(/\\/g, '/').replace(/^\.\//, '')
+  if (['', '*', '**'].includes(g.replace(/\/+$/, ''))) return true
+  if (!SCHED_GLOB.test(g)) { const d = g.replace(/\/+$/, ''); return p === d || p.startsWith(d + '/') }
+  const forms = new Set([g]), todo = [g]
+  while (todo.length) {
+    const f = todo.pop()
+    for (let i = f.indexOf('**/'); i >= 0; i = f.indexOf('**/', i + 1)) {
+      if (i > 0 && f[i - 1] !== '/') continue
+      const shorter = f.slice(0, i) + f.slice(i + 3)
+      if (!forms.has(shorter)) { forms.add(shorter); todo.push(shorter) }
+    }
+  }
+  return [...forms].some(f => schedGlobRe(f).test(p))
+}
+// Whether a file set (globs, literals or '*') can touch what `reads` covers.
+const readsOverlap = (reads, files) => files === '*' || filesOverlap(reads, files) || reads.some(g => files.some(f => readsPath(g, f)))
+// A build item -- one whose `build`/`exclusive` checks read something
+// (`build_reads` from plan_lint) -- waits while a fix that may land on what
+// it reads is queued or running, or while any other item doing so runs. A
+// pending plan item does not hold it: `after:` orders those, and one that
+// lands later puts the build back to pending (staleBuilds) instead.
+function buildWaitsFor(items, st, it) {
+  if (!(it.buildReads || []).length) return null
+  return items.find(o => o !== it && (st[o.id].status === 'running' || (st[o.id].status === 'pending' && o.kind && o.kind !== 'item')) &&
+    readsOverlap(it.buildReads, o.files)) || null
+}
+// The build items a commit by `by` on `paths` made stale: every item but
+// `by` with a `build_reads` glob covering one of the paths that is done (its
+// build names the old tree) or running (it may have built before the commit).
+function staleBuilds(items, st, by, paths) {
+  return items.filter(it => it.id !== by && (it.buildReads || []).length && ['done', 'running'].includes(st[it.id].status) &&
+    paths.some(p => it.buildReads.some(g => readsPath(g, p))))
+}
+
 // Whether `item` waits, through its `after:` chain, on the item `id`.
 function waitsOn(byId, item, id, seen = new Set()) {
   for (const d of item.after || []) {
@@ -163,11 +201,15 @@ function nextToStart(items, st, maxParallel) {
     if (busy.some(o => filesOverlap(o.files, it.files))) continue
     // An earlier item that itself waits on this one (`after:`, directly or
     // through others) is not ahead of it in the queue: holding this one for
-    // it would leave both pending forever.
+    // it would leave both pending forever. Nor is a build waiting for a fix
+    // (buildWaitsFor), which may be this one.
     const queuedAhead = items.slice(0, i).some(o => filesOverlap(o.files, it.files) && !waitsOn(byId, o, it.id) &&
-      (st[o.id].status === 'pending' || ((st[o.id].status === 'parked' || st[o.id].status === 'held') && st[o.id].touched)))
+      ((st[o.id].status === 'pending' && !buildWaitsFor(items, st, o)) || ((st[o.id].status === 'parked' || st[o.id].status === 'held') && st[o.id].touched)))
     if (queuedAhead) continue
     if (it.files === '*' && busy.length) continue
+    // A build waits for a fix queued or running on what it reads: built
+    // first, it would only be built again once that fix lands.
+    if (buildWaitsFor(items, st, it)) continue
     out.push(it.id)
     slots--
     if (it.files === '*') break
@@ -964,6 +1006,7 @@ const ITEMS_IN = Array.isArray(A.items) ? A.items : []
 const ITEM_ATTEMPTS = A.itemAttempts || 3
 const FIX_CAP = 3
 const GATE_CAP = 3
+const REBUILD_CAP = 5
 const REFILL_CAP = 40
 // Measured 2026-09-27 (workorder-calibration.md, "Measuring where the pipeline
 // spends its time"): in the ForgePact bug batch at most 3 items ran at once and
@@ -1046,11 +1089,11 @@ async function runItems(n) {
   const all = []
   const st = {}
   const add = raw => {
-    const it = { id: raw.id, title: raw.title || '', files: raw.files, after: raw.after || [], shares: raw.shares || [], owner: raw.owner || null, default: raw.default, reversible: raw.reversible, checks: raw.checks || [], kind: raw.kind || 'item', findings: raw.findings, reviewer: raw.reviewer, failed: raw.failed }
+    const it = { id: raw.id, title: raw.title || '', files: raw.files, after: raw.after || [], shares: raw.shares || [], owner: raw.owner || null, default: raw.default, reversible: raw.reversible, checks: raw.checks || [], buildReads: Array.isArray(raw.build_reads) ? raw.build_reads : [], kind: raw.kind || 'item', findings: raw.findings, reviewer: raw.reviewer, failed: raw.failed }
     all.push(it)
     // Only a plan item carries over from State: fix ids are this launch's own.
     const prior = it.kind === 'item' ? itemsState[it.id] : undefined
-    const s = { status: 'pending', touched: false, attempts: 0, amendCount: 0, reason: '', commits: [], evidence: '' }
+    const s = { status: 'pending', touched: false, attempts: 0, amendCount: 0, chargeFrom: 0, rebuilds: 0, reason: '', commits: [], evidence: '' }
     const unanswered = it.owner && !answered.has(it.id)
     // 3c: a defaulted item stays `defaulted` in State's items: line, so the
     // relaunch that carries the owner's answer (its id in `answered`) runs it
@@ -1112,6 +1155,7 @@ async function runItems(n) {
     `Run no full build and no full suite. Before returning IMPL-DONE run your item's checks once, \`py -3 tools/run_criteria.py "${A.planPath}" --item ${it.id} --jobs auto --out "<your scratchpad>/item-${it.id}"\` (Bash timeout 600000), and fix what fails; an independent verifier runs them again after you. ` +
     (s.retry === 'checks' ? `This is attempt ${s.attempts}: after the previous attempt's IMPL-DONE the item's checks failed, and the verifier reported:\n${s.evidence}\nFix that, commit again, and return. ` : '') +
     (s.retry === 'amended' ? `This is attempt ${s.attempts}. ${AMENDED_NOTE}` : '') +
+    (s.retry === 'rebuild' ? `This item was done, then ${s.staleBy} committed ${s.stalePaths}, which its build checks read, so what it built names the old tree. Carry out its steps again against the tree as it is now, commit only if a file in your set changed, and run its checks. ` : '') +
     VERDICT_ASK
   const fixPrompt = (it, s) => workorderLine(n) +
     (it.kind === 'gate-fix'
@@ -1138,6 +1182,7 @@ async function runItems(n) {
       if (impl.commits && impl.commits.length) {
         s.commits.push(...impl.commits)
         landed.push({ id: it.id, paths: impl.paths || [], flags: impl.flags || '' })
+        ;(s.landedPaths = s.landedPaths || []).push(...(impl.paths || []))
       }
       // `fromImplementer`: only an implementer's or a fixer's own PLAN-DEFECT
       // may be amended in the launch (3d), never the item-check verifier's.
@@ -1154,7 +1199,7 @@ async function runItems(n) {
       s.retry = 'checks'
       if (v.verdict === 'PLAN-DEFECT') return { verdict: 'PLAN-DEFECT', evidence: s.evidence }
       // An attempt that ended in an amendment (3d) is not charged to the budget.
-      const charged = s.attempts - s.amendCount
+      const charged = s.attempts - s.chargeFrom - s.amendCount
       if (charged >= ITEM_ATTEMPTS) return { park: `budget: ${charged} attempts and its checks still fail`, evidence: s.evidence }
       if (overCeiling()) return { park: 'the launch reached its ceiling with this item\'s checks failing', evidence: s.evidence }
     }
@@ -1165,6 +1210,29 @@ async function runItems(n) {
       for (const h of held) { st[h.id].status = 'held'; st[h.id].reason = h.reason; st[h.id].heldBy = h.by }
     }
   }
+  // A build is re-run, not trusted, once a later commit lands on what it
+  // reads: in forgepact-124-pet-relics (2026-10-02) a reviewer's fix landed
+  // three times minutes after `build-dev` passed, and each launch came back
+  // PARKED with build-dev=done and a DLL older than the fix. A done build goes
+  // back to pending at once; a running one finishes, then goes back.
+  const repend = id => {
+    const s = st[id]
+    // Two builds that each commit into what the other reads would re-run
+    // each other for ever; past the cap the item parks for the driver.
+    if (s.rebuilds >= REBUILD_CAP) { Object.assign(s, { status: 'parked', stale: false, reason: `budget: re-run ${s.rebuilds} times after commits landed on what it reads (last by ${s.staleBy})` }); return }
+    Object.assign(s, { status: 'pending', reason: '', stale: false, retry: 'rebuild', chargeFrom: s.attempts, amendCount: 0 })
+    s.rebuilds++
+  }
+  const markStale = (by, paths) => {
+    for (const b of staleBuilds(all, st, by, paths)) {
+      const s = st[b.id]
+      const hit = paths.filter(p => b.buildReads.some(g => readsPath(g, p)))
+      s.staleBy = by
+      s.stalePaths = hit.slice(0, 8).map(p => `\`${p}\``).join(', ') + (hit.length > 8 ? ` and ${hit.length - 8} more` : '')
+      if (s.status === 'done') repend(b.id)
+      else s.stale = true
+    }
+  }
   const settleItem = (it, r) => {
     const s = st[it.id]
     // A finished fix is always re-read by the reviewer that raised it --
@@ -1172,6 +1240,9 @@ async function runItems(n) {
     // which lands no commit that would otherwise make the reviewer due.
     const raisedBy = it.kind === 'fix' && reviewers.find(rv => rv.key === it.reviewer)
     if (raisedBy && r && r.verdict === 'DONE') raisedBy.recheck = s.committed ? null : { fix: it.id, report: s.report }
+    // Whatever its verdict, what it committed may have made a build stale.
+    if (s.landedPaths && s.landedPaths.length) { markStale(it.id, s.landedPaths); s.landedPaths = [] }
+    if (r && r.verdict === 'DONE' && s.stale) { repend(it.id); return }
     if (r && r.verdict === 'DONE') { s.status = 'done'; s.pending = r.pending || []; return }
     s.status = 'parked'
     if (!r) { s.reason = 'the item threw'; return }
@@ -1237,6 +1308,7 @@ async function runItems(n) {
       x.title = raw.title || x.title
       x.files = raw.files
       x.checks = raw.checks || []
+      x.buildReads = Array.isArray(raw.build_reads) ? raw.build_reads : []
       x.after = (raw.after || []).filter(d => st[d])
       x.shares = (raw.shares || []).filter(d => st[d])
     }
@@ -1394,7 +1466,7 @@ async function runItems(n) {
     }
     for (const it of all) {
       const s = st[it.id]
-      lines.push(`- ${it.id}${itemTitle(it)}: ${s.status}${s.reason ? ` -- ${s.reason}` : ''}${s.status !== 'done' && s.replan ? `; replan: ${s.replan}` : ''}${s.attempts ? ` (attempts ${s.attempts})` : ''}${s.commits.length ? `; commits ${s.commits.map(c => `${c.repo}:${String(c.sha).slice(0, 12)}`).join(', ')}` : ''}`)
+      lines.push(`- ${it.id}${itemTitle(it)}: ${s.status}${s.reason ? ` -- ${s.reason}` : ''}${s.status !== 'done' && s.replan ? `; replan: ${s.replan}` : ''}${s.attempts ? ` (attempts ${s.attempts})` : ''}${s.rebuilds ? ` (rebuilt ${s.rebuilds}x after ${s.staleBy})` : ''}${s.commits.length ? `; commits ${s.commits.map(c => `${c.repo}:${String(c.sha).slice(0, 12)}`).join(', ')}` : ''}`)
       if (s.status !== 'done' && s.evidence) lines.push(...String(s.evidence).split('\n').map(l => `  ${l}`))
       if (s.status !== 'done' && s.progress) lines.push(`  progress: ${s.progress}`)
     }
@@ -1420,7 +1492,7 @@ async function runItems(n) {
     const rec = await recordState(n, block(outcome, defaulted, unblocked), [`round: ${clean ? n : n + 1}`, `phase: ${phase}`, itemsLine(), reviewersLine(), openLine()].join('\n'))
     const result = {
       outcome, round: n, agents,
-      items: all.map(it => ({ id: it.id, kind: it.kind, status: st[it.id].status, reason: st[it.id].reason, attempts: st[it.id].attempts, commits: st[it.id].commits, evidence: st[it.id].evidence, progress: st[it.id].progress, ...(st[it.id].replan ? { replan: st[it.id].replan } : {}) })),
+      items: all.map(it => ({ id: it.id, kind: it.kind, status: st[it.id].status, reason: st[it.id].reason, attempts: st[it.id].attempts, ...(st[it.id].rebuilds ? { rebuilds: st[it.id].rebuilds } : {}), commits: st[it.id].commits, evidence: st[it.id].evidence, progress: st[it.id].progress, ...(st[it.id].replan ? { replan: st[it.id].replan } : {}) })),
       gate: gateRuns, blocking, nonBlocking, defaulted, amendments, ...(unblocked ? { unblocked } : {}), ...extra,
     }
     const stop = recordStop(n, rec, outcome)

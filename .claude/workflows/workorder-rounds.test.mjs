@@ -1268,7 +1268,7 @@ test('the verifier is sent to the criteria runner first, and told it judges noth
 // between its @scheduler markers; the engine around it with stub agents that
 // take a few milliseconds each, so "at the same time" is observable.
 const schedSrc = src.slice(src.indexOf('// @scheduler-begin'), src.indexOf('// @scheduler-end'))
-const sched = new Function(`${schedSrc}\nreturn { nextToStart, newlyHeld, invalidatedBy, drainedItems, pathsOverlap, unblockedItems }`)()
+const sched = new Function(`${schedSrc}\nreturn { nextToStart, newlyHeld, invalidatedBy, drainedItems, pathsOverlap, unblockedItems, buildWaitsFor, staleBuilds, readsPath }`)()
 const IT = (id, files, extra = {}) => ({ id, files, after: [], shares: [], checks: [], ...extra })
 const ST = (items, statuses = {}) => Object.fromEntries(items.map(it => [it.id, { status: 'pending', touched: false, ...(statuses[it.id] || {}) }]))
 
@@ -1552,6 +1552,138 @@ test('items: a fixer that disputes a finding and commits nothing is re-reviewed 
   const held = await runTimed(ITEMS_BASE, itemsReply({ 'docs-sync-reviewer': stubborn, 'fix-implementer': disputes }))
   assert.equal(held.result.outcome, 'PARKED')
   assert.ok(!held.calls.includes('verifier:r0'), 'the gate ran over an open BLOCKING finding')
+})
+
+// --- a build is re-run after a commit lands on what it reads --------------
+//
+// forgepact-124-pet-relics, 2026-10-02: `build-dev` passed, a reviewer's fix
+// then committed to ForgePact/plugin, and the launch came back PARKED with
+// build-dev=done and a DLL older than the fix -- three times in one day.
+const BUILD = (extra = {}) => IT('build-dev', ['ForgePact/plugin_build/build.log'], { kind: 'item', buildReads: ['ForgePact/plugin/**'], ...extra })
+
+test('scheduler: readsPath matches plan_lint.reads_path on its cases', () => {
+  for (const [g, p] of [['*', 'a/b.c'], ['ForgePact/plugin/**', 'ForgePact/plugin/x/y.cpp'], ['ForgePact/plugin', 'ForgePact/plugin/a.cpp'],
+    ['**/x.py', 'x.py'], ['dir/**/*.ts', 'dir/a.ts'], ['tools/x.py', 'tools/x.py']]) assert.ok(sched.readsPath(g, p), `${g} / ${p}`)
+  for (const [g, p] of [['ForgePact/plugin/**', 'ForgePact/panel/a.js'], ['ForgePact/plugin', 'ForgePact/plugin2/a.cpp'], ['tools/x.py', 'tools/x.pyc']]) {
+    assert.ok(!sched.readsPath(g, p), `control: ${g} / ${p}`)
+  }
+})
+
+test('scheduler: a build waits for a fix queued on what it reads, and only for that', () => {
+  const fix = IT('fix-1', ['ForgePact/plugin/a.cpp'], { kind: 'fix' })
+  const items = [BUILD(), IT('docs', ['docs/d.md'], { kind: 'item' }), fix]
+  assert.deepEqual(sched.nextToStart(items, ST(items), 4), ['docs', 'fix-1'], 'the build started under a queued fix on its sources')
+  assert.deepEqual(sched.nextToStart(items, ST(items, { 'fix-1': { status: 'running' } }), 4), ['docs'])
+  assert.deepEqual(sched.nextToStart(items, ST(items, { 'fix-1': { status: 'done' } }), 4), ['build-dev', 'docs'])
+  // Control: a fix elsewhere, or an item without build_reads, does not wait.
+  const elsewhere = [BUILD(), IT('fix-1', ['docs/d.md'], { kind: 'fix' })]
+  assert.deepEqual(sched.nextToStart(elsewhere, ST(elsewhere), 4), ['build-dev', 'fix-1'])
+  const plain = [BUILD({ buildReads: [] }), fix]
+  assert.deepEqual(sched.nextToStart(plain, ST(plain), 4), ['build-dev', 'fix-1'])
+  // A pending plan item on its sources does not hold it: `after:` orders those.
+  const planned = [BUILD(), IT('src', ['ForgePact/plugin/a.cpp'], { kind: 'item' })]
+  assert.deepEqual(sched.nextToStart(planned, ST(planned), 4), ['build-dev', 'src'])
+})
+
+test('scheduler: a fix with unknown files is not queued behind the build that waits for it', () => {
+  const items = [BUILD(), IT('fix-1', '*', { kind: 'fix' })]
+  assert.deepEqual(sched.nextToStart(items, ST(items), 4), ['fix-1'], 'build and fix each waited on the other')
+  assert.ok(sched.buildWaitsFor(items, ST(items), items[0]))
+})
+
+test('scheduler: staleBuilds names the done or running builds a commit reached, never its own author', () => {
+  const items = [BUILD(), IT('panel-build', ['x.log'], { kind: 'item', buildReads: ['ForgePact/panel/**'] }), IT('src', ['ForgePact/plugin/a.cpp'], { kind: 'item' })]
+  const ids = (st, by, paths) => sched.staleBuilds(items, st, by, paths).map(it => it.id)
+  assert.deepEqual(ids(ST(items, { 'build-dev': { status: 'done' }, 'panel-build': { status: 'done' } }), 'fix-1', ['ForgePact/plugin/a.cpp']), ['build-dev'])
+  assert.deepEqual(ids(ST(items, { 'build-dev': { status: 'running' } }), 'fix-1', ['ForgePact/plugin/a.cpp']), ['build-dev'])
+  assert.deepEqual(ids(ST(items, { 'build-dev': { status: 'pending' } }), 'fix-1', ['ForgePact/plugin/a.cpp']), [], 'a pending build has not built yet')
+  assert.deepEqual(ids(ST(items, { 'build-dev': { status: 'done' } }), 'build-dev', ['ForgePact/plugin/a.cpp']), [], 'its own commit')
+  assert.deepEqual(ids(ST(items, { 'build-dev': { status: 'done' } }), 'fix-1', ['docs/x.md']), [], 'control: a path it does not read')
+})
+
+// The 2026-10-02 sequence: `src` lands, `build-dev` (after src) builds, the
+// reviewer reads src and raises a finding on it, and fix-1 commits to it.
+const BUILD_ITEMS = { ...ITEMS_BASE, items: [
+  { id: 'src', title: 'relic drop', files: ['ForgePact/plugin/a.cpp'], checks: ['`grep -c x ForgePact/plugin/a.cpp` prints 1'] },
+  { id: 'build-dev', title: 'dev build', files: ['ForgePact/plugin_build/build.log'], after: ['src'],
+    checks: ['`cd ForgePact && cmd //c "plugin_build\\build.bat dev"` exits 0 (reads `ForgePact/plugin/**`)'], build_reads: ['ForgePact/plugin/**'] },
+] }
+const buildReply = where => {
+  let passes = 0
+  return itemsReply({
+    'item-implementer:src:': { ...DONE, commits: [{ repo: 'ForgePact', sha: 's1' }], paths: ['ForgePact/plugin/a.cpp'], flags: '' },
+    'item-implementer:build-dev:': { ...DONE, commits: [], paths: [], flags: '' },
+    'fix-implementer:fix-1:': { ...DONE, commits: [{ repo: 'ForgePact', sha: 'f1' }], paths: [where], flags: '' },
+    'docs-sync-reviewer': () => (passes++ === 0
+      ? { ...CLEAN, blocking: [{ where: `${where}:3`, problem: 'p', evidence: 'e' }], reviewed_heads: [{ repo: '.', sha: 'h1' }] }
+      : { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'h2' }] }),
+  })
+}
+// runTimed with a per-label delay, so which of build and fix ends first is set.
+async function runDelayed(args, reply, delays) {
+  const calls = [], spans = {}, prompts = {}
+  let clock = 0
+  const agent = async (prompt, opts) => {
+    calls.push(opts.label); prompts[opts.label] = prompt
+    const start = ++clock
+    const ms = Object.entries(delays).find(([k]) => opts.label.startsWith(k))
+    await new Promise(r => setTimeout(r, ms ? ms[1] : 15))
+    spans[opts.label] = [start, ++clock]
+    return reply(opts.label, prompt, opts)
+  }
+  const parallel = thunks => Promise.all(thunks.map(t => t().catch(() => null)))
+  const result = await script(args, agent, parallel, null, () => {}, () => {}, {}, null)
+  return { result, calls, spans, prompts }
+}
+const builds = calls => calls.filter(c => c.startsWith('item-implementer:build-dev:'))
+
+for (const [when, delays] of [['after the build is done', { 'docs-sync-reviewer': 120 }], ['while the build runs', { 'item-implementer:build-dev:a1': 150 }]]) {
+  test(`items: a fix that lands on what a build read ${when} re-runs the build after it`, async () => {
+    const { result, calls, spans, prompts } = await runDelayed(BUILD_ITEMS, buildReply('ForgePact/plugin/a.cpp'), delays)
+    assert.equal(result.outcome, 'PASS')
+    const b = builds(calls)
+    assert.equal(b.length, 2, `the build ran ${b.length} time(s): ${calls.join(', ')}`)
+    assert.ok(spans[b[1]][0] > spans['fix-implementer:fix-1:r0'][1], 'the second build started before the fix landed')
+    assert.match(prompts[b[1]], /fix-1 committed `ForgePact\/plugin\/a\.cpp`/)
+    const row = result.items.find(i => i.id === 'build-dev')
+    assert.equal(row.rebuilds, 1)
+    assert.equal(row.status, 'done')
+    assert.ok(spans['verifier:r0'][0] > spans[b[1]][1], 'the gate ran on the old build')
+  })
+}
+
+test('items: control -- a fix outside what the build reads, or a build with no build_reads, is not re-run', async () => {
+  let r = await runDelayed(BUILD_ITEMS, buildReply('docs/c.md'), { 'docs-sync-reviewer': 120 })
+  assert.equal(r.result.outcome, 'PASS')
+  assert.equal(builds(r.calls).length, 1)
+  const plain = { ...BUILD_ITEMS, items: BUILD_ITEMS.items.map(it => ({ ...it, build_reads: undefined })) }
+  r = await runDelayed(plain, buildReply('ForgePact/plugin/a.cpp'), { 'docs-sync-reviewer': 120 })
+  assert.equal(r.result.outcome, 'PASS')
+  assert.equal(builds(r.calls).length, 1, 'without build_reads the engine has nothing to compare a commit with')
+})
+
+test('items: a relaunch re-runs a build State left done once this launch\'s fix lands on it', async () => {
+  const args = { ...BUILD_ITEMS, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' },
+    priorFindings: { 'docs-sync-reviewer': [{ where: 'ForgePact/plugin/a.cpp:3', problem: 'p' }] },
+    state: '## State\nround: 1\nitems: src=done; build-dev=done\n' }
+  const { result, calls } = await runDelayed(args, buildReply('ForgePact/plugin/a.cpp'), {})
+  assert.equal(result.outcome, 'PASS')
+  assert.deepEqual(builds(calls), ['item-implementer:build-dev:a1:r1'], calls.join(', '))
+  assert.ok(calls.indexOf('fix-implementer:fix-1:r1') < calls.indexOf('item-implementer:build-dev:a1:r1'), calls.join(', '))
+  assert.match(result.items.find(i => i.id === 'build-dev').reason, /^$/)
+})
+
+test('items: two builds that commit into what the other reads park at the rebuild cap instead of looping', async () => {
+  const args = { ...ITEMS_BASE, reviewers: {}, items: [
+    { id: 'panel', files: ['ForgePact/panel/dist/x.js'], checks: ['`npm --prefix ForgePact/panel run build` exits 0 (reads `ForgePact/plugin/**`)'], build_reads: ['ForgePact/plugin/**'] },
+    { id: 'plugin', files: ['ForgePact/plugin/gen.h'], checks: ['`cd ForgePact && cmd //c "plugin_build\build.bat dev"` exits 0 (reads `ForgePact/panel/dist/**`)'], build_reads: ['ForgePact/panel/dist/**'] },
+  ] }
+  const commits = path => ({ ...DONE, commits: [{ repo: 'ForgePact', sha: 'x' }], paths: [path], flags: '' })
+  const { result, calls } = await runDelayed(args, itemsReply({
+    'item-implementer:panel:': commits('ForgePact/panel/dist/x.js'), 'item-implementer:plugin:': commits('ForgePact/plugin/gen.h') }), {})
+  assert.equal(result.outcome, 'PARKED')
+  assert.ok(result.items.some(i => /^budget: re-run 5 times/.test(i.reason)), JSON.stringify(result.items.map(i => i.reason)))
+  assert.ok(calls.filter(c => c.startsWith('item-implementer:')).length <= 12, `${calls.length} calls`)
 })
 
 test('items: a relaunch with every item done still re-reads a reviewer that entered blocking', async () => {

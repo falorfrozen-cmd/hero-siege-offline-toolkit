@@ -323,6 +323,21 @@ steps 2-4 run as one workflow launch with no rounds inside it
   on the files the findings name (or, with no path, run alone once the rest
   are done). A reviewer may be split by screen or dimension with
   `reviewScopes`, and its scopes run as separate reviewers.
+- A build is never trusted past a later commit on what it reads. An item
+  whose `build`/`exclusive` checks declare `(reads ...)` (`plan_lint.py
+  --items-json` hands the workflow their globs as `build_reads`; a build
+  check with no `(reads ...)` reads everything) does not start while a fix
+  that may land on those globs is queued or running, or while another item
+  editing them runs. If a commit by any other item or fix lands on them after
+  the build passed, the build goes back to pending and runs again once that
+  commit is in (a build still running when it lands runs again when it
+  finishes); its attempt budget starts over, and the result's row carries
+  `rebuilds`; a sixth re-run parks it instead (`REBUILD_CAP`), so two builds
+  that commit into what the other reads cannot loop. In
+  forgepact-124-pet-relics (2026-10-02) a reviewer's fix landed minutes after
+  `build-dev` passed, three times, and each launch came back `PARKED` with
+  `build-dev=done` and a DLL older than the fix. So give a build check its
+  `(reads ...)`: without one any commit re-runs it.
 - When nothing is left to run, the `## Acceptance criteria` run once, as a
   development verify (`--dev`: whole suites and `(final)` criteria wait for
   the final gate before the pull request). A failure becomes one fix that
@@ -1200,7 +1215,7 @@ Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
                    submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
                    lanes: [{ name, files: [...] }, ...], join,
-                   items: [{ id, title, files, checks, after, shares, owner, default, reversible }, ...], streaming, answered: ['<id>', ...],
+                   items: [{ id, title, files, checks, after, shares, owner, default, reversible, build_reads }, ...], streaming, answered: ['<id>', ...],
                    reviewScopes: { '<reviewer>': [{ label, paths: [...] }, ...] },
                    maxParallel, maxAgents, tokenCeiling, itemAttempts, reviewPassCap } })
 ```
