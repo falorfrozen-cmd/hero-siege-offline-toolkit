@@ -1630,11 +1630,12 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   `Loot_Manager_obj` it was **not observed** (2026-09-23:
   `variable_instance_exists` answered false on the instance found by name; no
   positive control on that instance was recorded); which scope holds it has
-  not been established. **Static reading (2026-10-02, issue #74).** Neither
-  the `lootListUnique` global (`variable_global_exists` false) nor a
-  `lootListUnique` instance variable on `Loot_Manager_obj`
-  (`variable_instance_exists` false) answered, so the scope is still not
-  identified. **Measured (Live 1, 2026-10-02, research dll 4534c0ff…).**
+  not been established. **Static reading (2026-10-02, issue #74).** The list
+  was not observed in either scope (no positive control on the same instance
+  or the global scope): neither the `lootListUnique` global
+  (`variable_global_exists` false) nor a `lootListUnique` instance variable
+  on `Loot_Manager_obj` (`variable_instance_exists` false) answered, so the
+  scope is still not identified. **Measured (Live 1, 2026-10-02, research dll 4534c0ff…).**
 - **The die.** The rate comes from a zero-argument method on a member of the
   picked definition, scaled by one global value read when the roll starts;
   neither is identified (`droprate.base` is the plausible reading). The roll
@@ -1644,8 +1645,8 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   expect a natural hit. **Static reading (2026-10-02, issue #74).**
 - **A hit.** Only on a hit does the roll call `CreateDefaultParams` (sub, b and
   a constant), and then, by a direct call, the routine ForgePact hooks as
-  `LootGroundCreate`, with six arguments: x, y, the type, the params, a
-  constant, and argument 3. `CreateDefaultParams` is called nowhere else inside
+  `LootGroundCreate`, with the roll's position and the picked item's
+  parameters. `CreateDefaultParams` is called nowhere else inside
   the roll, so **a `CreateDefaultParams` call while the roll is running marks a
   hit**. **Static reading (2026-10-02, issue #74)**, consistent with the
   measured count of zero `CreateDefaultParams` calls inside the roll over 374
