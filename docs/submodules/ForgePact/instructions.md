@@ -2070,6 +2070,10 @@ the draft stays a human act at
 `https://github.com/falorfrozen-cmd/ForgePact/releases`, and it is what fires
 `notify-hub-release.yml`.
 
+Once the release is published, announce it on Discord. Write the post from the
+release notes using [`discord-announcement.md`](discord-announcement.md), which
+has the template, the rules and an earlier post to follow.
+
 ### The `GITHUB_TOKEN` bump does not notify the hub
 
 The version-bump commit this workflow pushes is authored by
