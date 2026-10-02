@@ -754,7 +754,7 @@ static void TestRelicTab() {
 // ---------------------------------------------------------------------------
 
 static void FillGroundItem(ControlledYYTK& yytk, const RValue& item) {
-    yytk.instanceFields["itemInstance"] = item;
+    yytk.instanceFields[std::string(HeroSiege::Player::kGroundItemInstanceField)] = item;
 }
 
 static RValue FakeRef(double id) {
@@ -801,7 +801,7 @@ static void TestGroundRelic() {
     //     `variable_instance_*`, the same relic 42.
     {
         ControlledYYTK yytk;
-        yytk.instanceFields["itemInstance"] = FakeRef(200001.0);
+        yytk.instanceFields[std::string(kGroundItemInstanceField)] = FakeRef(200001.0);
         yytk.refInstances[200001.0] = *RelicInstance(42, 1, 0).m_Struct;
         GroundRelicRead read;
         const bool ok = ReadGroundRelic(&yytk, FakePlayerRef(), read);
@@ -856,6 +856,18 @@ static void TestGroundRelic() {
     // stage, before any class is looked for.
     CHECK(refuse(FakePlayerRef(), nullptr).stage == GroundRelicStage::NoItemInstance);
 
+    // An `itemInstance` that is no item: a plain number is neither a struct
+    // nor a reference, and a VALUE_OBJECT with no object behind it holds
+    // nothing. Both stop before any class is looked for.
+    const RValue numberItem = RValue(42);
+    RValue nullObjectItem;
+    nullObjectItem.m_Kind = ::YYTK::VALUE_OBJECT;
+    nullObjectItem.m_Object = nullptr;
+    const GroundRelicRead notAnItem = refuse(FakePlayerRef(), &numberItem);
+    CHECK(notAnItem.stage == GroundRelicStage::NoItemInstance);
+    CHECK_EQ(notAnItem.itemClass, -1);
+    CHECK(refuse(FakePlayerRef(), &nullObjectItem).stage == GroundRelicStage::NoItemInstance);
+
     // An ordinary unique glove (class 4) and a material stack (class 14) whose
     // `o` would read as maxed: the class says not a relic.
     const RValue glove = OrdinaryGloveInstance();
@@ -902,9 +914,10 @@ static void TestGroundRelic() {
     CHECK(undefined.stage == GroundRelicStage::NoHandle);
     CHECK(refuse(RValue(42), &relic).stage == GroundRelicStage::NoHandle);
 
-    std::printf("C++: ground_relic_refused ordinary=%s material=%s classless=%s undefined=%s\n",
+    std::printf("C++: ground_relic_refused ordinary=%s material=%s classless=%s undefined=%s notitem=%s\n",
                 GroundRelicStageName(ordinary.stage), GroundRelicStageName(stack.stage),
-                GroundRelicStageName(noClass.stage), GroundRelicStageName(undefined.stage));
+                GroundRelicStageName(noClass.stage), GroundRelicStageName(undefined.stage),
+                GroundRelicStageName(notAnItem.stage));
 
     // No interface at all reads nothing.
     {
