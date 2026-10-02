@@ -1367,6 +1367,27 @@ All **measured** (2026-09-10/11).
   `visible` reads 0 far away and is rewritten by the game within a second;
   `inviewCheck` is not the culling flag; `Enemy_Parent_obj` has 312 variables, none
   a minimap flag. **Measured.**
+- **Rarity setup.** `EnemyRaritySettings(typeId)` runs from `Enemy_Parent_obj`'s
+  Alarm 4 with the monster as `self`, after the spawner has set `enemyRarity`
+  (1 normal, 2 champion, 3 rare, 4 ancient) and filled `enemyAffix`/`affixList`,
+  and before the stats, affix effects and health bar are built; a rarity or
+  affix written at its entry is built by the game as if it had rolled that way.
+  **Measured** 2026-09-05 on ordinary monsters (entry and exit state identical;
+  ForgePact README § "Tyrant's Crown"). Bosses, the `Enemy_Child_Boss_obj`
+  family, descend from `Enemy_Parent_obj` and so take the same alarm; that the
+  rarity sliders raised an Anubis boss's health about ninefold (a player report
+  against ForgePact 1.4.1) shows they reach this hook, which ForgePact has not
+  yet traced itself. The game's body of the script was not read: its call sites
+  sit in a region the decompiler refuses, so whether a boss takes a branch of
+  its own there is **not established**.
+  [boss rarity, Static reading](../ForgePact/docs/boss-rarity-research.md#static-reading)
+- ForgePact's rarity mods all write at that entry, through one shared hook.
+  The Monster Rarity sliders and Tyrant's Crown raise ordinary monsters, and
+  the sliders skip any instance whose object descends from
+  `Enemy_Child_Boss_obj` (ancestry, `IsDescendantOf`, not a health threshold);
+  the Bosses control (`bossrarity`, issue #44) raises only those, at rarity 1,
+  to 3 or 4. Instances a monster creates are left alone by all three, because
+  a re-raised split child splits again. **Our code**, not a game fact.
 
 [population performance §2.2](../ForgePact/docs/population-performance-analysis.md#22-who-gets-a-step),
 [§2.3](../ForgePact/docs/population-performance-analysis.md#23-what-runs-for-every-living-monster-every-frame),
