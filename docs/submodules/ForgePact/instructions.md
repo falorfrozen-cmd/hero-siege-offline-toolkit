@@ -3923,8 +3923,9 @@ number or a reference is kept as it is with no read, an instance pointer is
 asked `instance_exists` and replaced by its own `id`
 (`variable_instance_get(v, "id")`, a reference on this runner), so no raw
 pointer reaches the frame's end, where `self` may be a monster already freed.
-A value of a kind other than an object is kept as undefined, with no read and
-no count. An object-kind value is handed to `instance_exists` inside the call
+A value of any other kind (neither a number, a reference nor an object) is kept
+as undefined, with no read and no count. An object-kind value is handed to
+`instance_exists` inside the call
 like any instance pointer, and only one that it answers false for, or whose
 `id` does not read as a number, or whose read threw, is kept as undefined and
 counted `dropped`. The reading took argument 1 for the item struct, an object;
