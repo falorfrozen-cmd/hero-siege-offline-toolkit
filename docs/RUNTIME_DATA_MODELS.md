@@ -1630,7 +1630,7 @@ Drops read `enemyRarity`, `x` and `y` off the dying enemy. **Measured.**
   - That path is **measured** for treasure, rune and shadow goblins: 15 packets AFK FARM recorded on 2026-09-24. Orb and ore goblins were not observed.
   - A goblin's gold shower (`DropGold`) and the shadow goblin's Dimensional Shards (`LootGroundCreate`, type 13, base 1) are made outside `DropItem`, so a `DropItem` replay does not bring them. **Static reading.**
 
-[AFK FARM design, 0.8](../HS-AFK-Expedition/docs/DESIGN.md#08-the-camp-traits-and-three-more-worker-types)
+AFK FARM design, 0.8 (a private repository)
 
 ### 13.7 Monster ranks: names, health, damage, XP and drop values
 
@@ -1712,7 +1712,7 @@ A monster that special content spawned carries a non-zero `specialType` in its s
   [dev2 bug batch, #77](../ForgePact/docs/dev2-bug-batch-research.md#77-dropmult-gold-100-froze-the-game)
 - **`LootGroundCreate(x, y, itemType, def, …)`** makes a floor item whose Create event builds it (`CreateItemNew`). `def` carries `b` (base), `j`, `c` (0 normal, 1 unique repository) and optional `o` (stack) and `a` (seed). Rarity is not an argument. **Measured** for types 14 and 15 through AFK FARM's workers. Type 12 was **measured** on 2026-09-25: a town delivery made Basic Keys (12:0) and Cellar Keys (12:10) with the right `b` and `o`. Type 13 was **measured** the same day: a town delivery made a Battle Fragment (13:0) with the right `b` and `o`, and the game gave it a new seed (`a`).
 
-[AFK FARM design, 0.9](../HS-AFK-Expedition/docs/DESIGN.md#09-the-town-defense-trade-merchants)
+AFK FARM design, 0.9 (a private repository)
 
 ---
 
