@@ -368,6 +368,7 @@ this runner:
 | `object_index` on an instance | `VALUE_REF`, not a plain number |
 | `object_index` on a struct `self` | undefined |
 | the `room` builtin | a room `VALUE_REF`, not a number; `variable_global_exists("room")` is false, so `variable_global_get("room")` answers undefined and converting that to a number raises the runner error `REAL argument incorrect type undefined` (one per call, measured 2026-10-02, ForgePact#144). Read it with `GetBuiltin("room", ...)`, name it with `room_get_name`; `room_width`/`room_height` are built-ins too |
+| an array or a string converted to a number (`RValue::ToDouble`) | no number: the runner raises its own error and the call then fails, and a C++ `catch` that swallows the failure does not take back the runner's report. For an array the message is `REAL argument incorrect type array` (**measured**, #74 Live 3's capture, 2026-10-02). That ForgePact's research scan over `Controller_obj`'s array variables raised one such error per array or string element it converted (18 per scan) is an arithmetic fit on Live 2's and Live 3's counts, which Live 4 is to confirm. Refuse a kind that can never be a number before converting it (ForgePact's `SigNeverAHandle`, ForgePact#74) |
 | a ds container | "ref ds_map" / "ref ds_list" |
 | an item | `VALUE_OBJECT` struct (§2) |
 | a bound `m_*` method value | `VALUE_OBJECT` with object kind 0, not a script ref (§10) |
@@ -2000,15 +2001,19 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   at least 10 entries, each an array of three numbers, and prints it on the
   status lines as `list=<name>[<index>]:<size>` (for example
   `lootListUnique[5]:58`), or `none` / `missing`. The live-list check decides
-  on the element as it was read, never on its kind: a numeric conversion
-  serves only to refuse a value that cannot be converted, is non-finite or is
-  negative, and then `ds_exists` is asked of the value itself with 2
-  (`ds_type_list`). A value that cannot be converted is refused before
-  `ds_exists` is asked; that is a failed conversion, not a kind rule. The
+  on the element as it was read, with no allow-list of handle kinds. It first
+  refuses, before any conversion, an element of a kind that can never be a
+  handle (array, string, struct, undefined or null) as `never a handle`,
+  because converting one raises a runner error (§5.4); a real, a ref and
+  every other kind go on. Then a numeric conversion serves only to refuse a
+  value that cannot be converted, is non-finite or is negative, and then
+  `ds_exists` is asked of the value itself with 2 (`ds_type_list`). A value
+  that cannot be converted is refused before `ds_exists` is asked; that is a
+  failed conversion, not a kind rule. The
   refusal reads `Controller_obj.<name>[<i>] is not a ds_list (kind=<kind>,
   <step>)`, naming the kind it got (`real`, `int32`, `int64`, `bool`,
   `string`, `struct`, `array`, `ptr`, `undefined`, `null`, `ref`, else
-  `kind<N>`) and the step that refused (`id unreadable`, `id non-finite`,
+  `kind<N>`) and the step that refused (`never a handle`, `id unreadable`, `id non-finite`,
   `id <value>`, `ds_exists threw` or `ds_exists false`); an element that
   cannot be read at all is `[<i>] array_get threw`.
 
@@ -2033,7 +2038,8 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   refusal: the record is put back, the game builds its stand-in, and the item
   stays off for the session), and the game's `CreateItemNew` builds it from
   that record, where the forge selector above recognises it (**measured**,
-  Live 3, below: 46 of 46 Headhunters and 11 of 11 Tyrant's Crowns built by
+  Live 3, below: 48 of 48 Headhunters (46 with Headhunter alone on, 2 with
+  both on) and 11 of 11 Tyrant's Crowns built by
   the game from a record written there). One hit is one item, in place of what
   the roll would have dropped. The switch is honoured only while all four
   hooks (`DropItemAngelicChance`, `CreateDefaultParams`,
@@ -2102,7 +2108,11 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   to 19 between the read just before the layout dump and the end of the
   first kill batch, all of it before anything was pushed (`report#2` x15, message
   `REAL argument incorrect type array`), and then held; which step raises it
-  is not established. A hit at the natural chance was not observed (the
+  is not established. An arithmetic fit on Live 2's and Live 3's counts puts
+  it on the research scan's numeric conversion of 15 array and 3 string
+  variables (18 per scan, §5.4); ForgePact's list check now refuses those
+  kinds as `never a handle` before converting, and Live 4 is to confirm that
+  the count no longer rises. A hit at the natural chance was not observed (the
   research lever held the chance at 1e9).
 - **The die.** The rate comes from a zero-argument method on a member of the
   picked definition, scaled by one global value read when the roll starts;
