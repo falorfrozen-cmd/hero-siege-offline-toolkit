@@ -1591,6 +1591,24 @@ test('scheduler: a fix with unknown files is not queued behind the build that wa
   assert.ok(sched.buildWaitsFor(items, ST(items), items[0]))
 })
 
+test('scheduler: a build, a fix and an item after the build never wait on each other forever (PR #382 review)', () => {
+  // X and W feed build B; Y runs after B on src; fix-1 has no path, so '*'.
+  const items = [IT('x', ['src/x.cpp'], { kind: 'item' }), IT('w', ['docs/w.md'], { kind: 'item' }),
+    IT('b', ['out/b.log'], { kind: 'item', after: ['x', 'w'], buildReads: ['src/**'] }),
+    IT('y', ['src/y.cpp'], { kind: 'item', after: ['b'] }), IT('fix-1', '*', { kind: 'fix' })]
+  const st = ST(items, { x: { status: 'done' }, w: { status: 'done' } })
+  assert.deepEqual(sched.nextToStart(items, st, 4), ['fix-1'], 'y, queued only behind the waiting build, held the fix')
+  // The fallback: whatever holds the fix, a pass that would start nothing
+  // with nothing running drops the build wait and starts the build.
+  const stuck = [IT('b2', ['out/b.log'], { kind: 'item', buildReads: ['src/**'] }), IT('fix-2', ['src/a.cpp'], { kind: 'fix', after: ['gone'] })]
+  const st2 = ST(stuck, {}); st2.gone = { status: 'pending' }
+  assert.deepEqual(sched.nextToStart(stuck, st2, 4), ['b2'])
+  // Control: with something running, the build keeps waiting.
+  const busy = [...stuck, IT('r', ['z.md'], { kind: 'item' })]
+  const st3 = ST(busy, { r: { status: 'running' } }); st3.gone = { status: 'pending' }
+  assert.deepEqual(sched.nextToStart(busy, st3, 4), [])
+})
+
 test('scheduler: staleBuilds names the done or running builds a commit reached, never its own author', () => {
   const items = [BUILD(), IT('panel-build', ['x.log'], { kind: 'item', buildReads: ['ForgePact/panel/**'] }), IT('src', ['ForgePact/plugin/a.cpp'], { kind: 'item' })]
   const ids = (st, by, paths) => sched.staleBuilds(items, st, by, paths).map(it => it.id)

@@ -328,7 +328,8 @@ steps 2-4 run as one workflow launch with no rounds inside it
   --items-json` hands the workflow their globs as `build_reads`; a build
   check with no `(reads ...)` reads everything) does not start while a fix
   that may land on those globs is queued or running, or while another item
-  editing them runs. If a commit by any other item or fix lands on them after
+  editing them runs. That wait never starves the queue: a pass it would
+  leave with nothing running and nothing started runs without it. If a commit by any other item or fix lands on them after
   the build passed, the build goes back to pending and runs again once that
   commit is in (a build still running when it lands runs again when it
   finishes); its attempt budget starts over, and the result's row carries

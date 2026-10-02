@@ -187,7 +187,25 @@ function waitsOn(byId, item, id, seen = new Set()) {
 }
 
 // The ids to start now, in plan order, at most `maxParallel` running in all.
+// The build wait (buildWaitsFor) is a preference, never a reason to start
+// nothing: when honouring it would leave nothing running and nothing
+// started, the pass is redone without it, as the scheduler ran before it
+// existed (PR #382 review: build, fix and an item `after:` the build could
+// otherwise wait on each other forever).
 function nextToStart(items, st, maxParallel) {
+  const out = startPass(items, st, maxParallel, true)
+  if (out.length || items.some(it => st[it.id].status === 'running')) return out
+  return startPass(items, st, maxParallel, false)
+}
+// Whether a pending item is, or waits through `after:` on, a pending build
+// held by buildWaitsFor: such an item is not ahead of anything in the queue.
+function behindWaitingBuild(byId, items, st, it, seen = new Set()) {
+  if (seen.has(it.id)) return false
+  seen.add(it.id)
+  if (st[it.id].status === 'pending' && buildWaitsFor(items, st, it)) return true
+  return (it.after || []).some(d => byId[d] && st[d] && st[d].status === 'pending' && behindWaitingBuild(byId, items, st, byId[d], seen))
+}
+function startPass(items, st, maxParallel, buildWait) {
   const byId = Object.fromEntries(items.map(it => [it.id, it]))
   const running = items.filter(it => st[it.id].status === 'running')
   if (running.some(it => it.files === '*')) return []
@@ -202,14 +220,14 @@ function nextToStart(items, st, maxParallel) {
     // An earlier item that itself waits on this one (`after:`, directly or
     // through others) is not ahead of it in the queue: holding this one for
     // it would leave both pending forever. Nor is a build waiting for a fix
-    // (buildWaitsFor), which may be this one.
+    // (buildWaitsFor), which may be this one, or an item `after:` such a build.
     const queuedAhead = items.slice(0, i).some(o => filesOverlap(o.files, it.files) && !waitsOn(byId, o, it.id) &&
-      ((st[o.id].status === 'pending' && !buildWaitsFor(items, st, o)) || ((st[o.id].status === 'parked' || st[o.id].status === 'held') && st[o.id].touched)))
+      ((st[o.id].status === 'pending' && !(buildWait && behindWaitingBuild(byId, items, st, o))) || ((st[o.id].status === 'parked' || st[o.id].status === 'held') && st[o.id].touched)))
     if (queuedAhead) continue
     if (it.files === '*' && busy.length) continue
     // A build waits for a fix queued or running on what it reads: built
     // first, it would only be built again once that fix lands.
-    if (buildWaitsFor(items, st, it)) continue
+    if (buildWait && buildWaitsFor(items, st, it)) continue
     out.push(it.id)
     slots--
     if (it.files === '*') break
