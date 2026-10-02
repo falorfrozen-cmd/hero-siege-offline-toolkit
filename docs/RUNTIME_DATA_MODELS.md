@@ -2583,15 +2583,20 @@ kind. **M** measured live; **R** a static reading, not measured.
   onto a node 200 units to its left in Live 5 and 196 in Live 6, the label was
   still drawn inside the node's own box. **Copied label members persist:** they read back equal at
   once (Live 5), equal to Sort's again in a member diff seconds later, and on
-  a reopened node's copy (Live 6). **Inferred, not measured, where the label
-  sits:** the label's left edge was at the node's x plus `drawXOffset` on Sort
-  (2290 + 48 = 2338) and within 2 on the node (2094 + 48 = 2142 against a left
-  edge of 2140 in Live 6; 2090 + 48 = 2138 against 2136 in Live 5), so the
-  horizontal place is read from those numbers alone. Vertically the label was
-  centred in the box (top 1286 with the node at y 1262 and `drawYOffset` 9),
-  not at y plus `drawYOffset`, and which member places it vertically is not
-  separated. Not read: which of the 13 places the label on either axis (they
-  were written together, in Live 5's trial and in the shipped copy), what the `navi*` and `navBbox*` members do
+  a reopened node's copy (Live 6). **Where the label sits:** measured, it is drawn
+  centred in the box on both axes (the node's label box 2140,1286,2242,1303
+  in its box 2094,1262,2286,1328 in Live 6; 2136,1286,2238,1303 in
+  2090,1262,2282,1328 in Live 5; Sort's own label left edge 2338). Inferred,
+  and not separated from plain centring: that left edge also sits within 2 of
+  the node's x plus `drawXOffset` (Sort 2290 + 48 = 2338; the node 2094 + 48 =
+  2142 against 2140 in Live 6, 2090 + 48 = 2138 against 2136 in Live 5), but a
+  label centred in the box fits the same numbers to within 1, so they do not
+  tell the two apart. Vertically the glyph top (1286) is 15 below the node's y
+  plus `drawYOffset` (1262 + 9 = 1271 on Sort); the label tool reads drawn
+  pixels, not the draw origin, so whether `drawYOffset` anchors the text, a
+  font's own top spacing included, is not separated. Not read: which of the 13
+  places the label on either axis (they were written together, in Live 5's
+  trial and in the shipped copy), what the `navi*` and `navBbox*` members do
   beyond the label (gamepad navigation, for example), and whether the game
   rewrites any of them in longer play. **The Mercenary button** (M, Live 5
   and Live 6): with the bag open on its own (the `C` key) the game lists a
