@@ -1696,16 +1696,45 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   question. Each measured only that the name it asked for is absent from the
   scope it asked; neither asked `Controller_obj`, so neither is a measurement
   of the list and both say nothing about it.
-- **The list's variable name is not established.** The variable slot the roll
-  loads is filled at startup by a pattern the slot-name recovery does not
-  match: no code stores to it or takes its address, and no initialised pointer
-  or RVA table holds it (`FindSlotNames`, `SlotRefs`, `FindPointers` and
-  `FindRvaTable` each found 0 hits for the slot globals). So the name is read
-  live: `variable_instance_get_names` on the first `Controller_obj` instance,
-  filtered by shape (an array whose entries are arrays of three numbers).
-  The curated record `hs-game-sdk/curated/angelic_list_measurements.json`
-  holds it once measured (`list_variable`, null until then). **Static
-  reading (2026-10-02, issue #74).**
+- **The list's layout: `Controller_obj.lootListUnique[5]`, a `ds_list` of
+  `[type, sub, b]` entries.** The runtime keeps, beside each variable slot and
+  builtin-pointer global, a record of its name; read for the slot the roll
+  loads, it names `lootListUnique`. (The four slot-name scripts of the first
+  reading, `FindSlotNames`, `SlotRefs`, `FindPointers` and `FindRvaTable`,
+  found 0 hits because they looked for stores and tables, not for that
+  record.) The roll does not use `lootListUnique` itself as the list: its
+  read carries the constant array index 5, so it takes the **sixth element**.
+  On that element it calls `ds_list_size`, then `ds_list_find_value` at a
+  random index drawn up to that size, then `is_array` on the value; only when
+  `is_array` holds does it take the value's elements 0, 1 and 2 as the type,
+  sub and b it hands to `GetUniqueRepoStruct`, otherwise it draws again. The
+  three builtin names come from the same name records (`FindWrites` and
+  `FindPointers` on their pointer globals: 0 hits each). So
+  `Controller_obj.lootListUnique` is an array of six `ds_list` ids and the
+  Angelic roll draws from the `ds_list` at index 5, whose entries are arrays
+  of three numbers. **Static reading (2026-10-02, issue #74, replan 2)**; the
+  name and the outer length of 6 are confirmed by Live 1 (below). **Not
+  established**: what the other five elements hold or are keyed by (the roll
+  reads only `[5]`; `lootListNormal`, outer length 5 on the same instance, is
+  not read by this roll), the sub-list's size (the validated pool's 47 + 11 =
+  58 definitions is the order of magnitude to expect, not a prediction), and
+  whether the random index can equal the size, an off-by-one the `is_array`
+  re-draw would absorb. The curated record
+  `hs-game-sdk/curated/angelic_list_measurements.json` holds this as
+  `list_layout`; its `list_variable` stays null until a session's reach
+  check has passed on the named list.
+- **Measured (Live 1, list injection, 2026-10-02, research dll f7560e80…).**
+  The first `Controller_obj` instance (one instance, read as `VALUE_REF`)
+  answered `variable_instance_get_names` with 221 names in town and 222 after
+  a zone change, among them `lootListUnique` with `array_length` 6 and
+  `lootListNormal` with `array_length` 5, both before and after the zone
+  change. The research build's shape check of that session expected a flat
+  array of `[type, sub, b]` triples and refused both (`entry 0 is not three
+  numbers`), as it refused every other array, so it accepted no list
+  (`candidates=0`) and nothing was ever pushed. In the same session no
+  `lootListUnique` global (`variable_global_exists` false) and none on
+  `Loot_Manager_obj` (`variable_instance_exists` false) were found again:
+  measured on other scopes than `Controller_obj`, the variable's own.
 - **Other readers of the list.** The same slot is loaded by `DropUniqueItems`,
   `DropItemHeroic`, `DropItemDebug`, `DropItem` itself, the traveling merchant
   and black market grids (`PopulateTravelingMerchantGrid`,
@@ -1746,23 +1775,34 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   **measured** (`sigdrop`, 30 of 30 and 17 of 17 on 2026-09-18).
 - **How #74 uses the list: a stand-in entry for the length of the roll.** While
   Headhunter's or Tyrant's Crown's panel switch is on, ForgePact pushes one
-  entry per enabled item onto the `Controller_obj` list before the roll's
-  first original call and removes them after its last, under a scope guard, so
-  between rolls the list is exactly the game's own and none of the other
+  entry per enabled item onto the list the roll draws from, the `ds_list` at
+  `Controller_obj.lootListUnique[5]` (the layout above; never the outer
+  array), with `ds_list_add` before the roll's first original call, and cuts
+  them off its tail with `ds_list_delete` after its last, under a scope guard,
+  so between rolls the list is exactly the game's own and none of the other
   readers above ever sees the entries. Each entry is a **stand-in**: a real
   Angelic unique of the same `type`, because the picker's filters and the
   rate need a real definition and the item's type comes from the entry
   (Headhunter's stand-in is Liquor Holster `{8, 0, 51}`; Tyrant's Crown's is a
   helmet chosen when the pool is built, named in the switch-on log line).
-  Right after the push ForgePact reads the variable again by name off the
-  `Controller_obj` instance (a fresh read, never the handle it pushed onto)
-  and checks that its length and tail hold what was pushed (the **held
-  read-back**). When they do not, because the runtime handed back a copy or
-  another array, it takes the entries off again, logs one line, counts the
-  roll in `anomalies=` and attributes nothing in it. The read-back catches a
-  copy; it cannot show that the roll reads that variable. The removal checks
-  the same tail: if the list changed during the roll, nothing is removed, one
-  anomaly line is logged and the roll is counted in `anomalies=`.
+  Right after the push ForgePact reads the outer variable again by name off
+  the `Controller_obj` instance (a fresh `variable_instance_get`, never the
+  handle it pushed onto), takes the element at the same index, and counts the
+  push as visible only when that element is the same `ds_list` id and the
+  sub-list's size and tail hold what was pushed (the **held read-back**).
+  When they do not (another id, not a list, or a short tail), it takes the
+  entries off the id it pushed onto, logs one line, counts the roll in
+  `anomalies=` and attributes nothing in it. A `ds_list` id is a handle into
+  the runtime's own store, so the read-back cannot be fooled by a copy of the
+  sub-list; it still cannot show that the roll reads that element. The
+  removal checks the same tail: if the sub-list changed during the roll,
+  nothing is removed, one anomaly line is logged and the roll is counted in
+  `anomalies=`. ForgePact resolves the list by a name and an index
+  (`kAngelicListVar`, empty until a live session's reach check has passed,
+  and `kAngelicListIndex` 5), checks that the element is a live `ds_list`
+  (`ds_exists`) of at least 10 entries, each an array of three numbers, and
+  prints it on the status lines as `list=<name>[<index>]:<size>` (for example
+  `lootListUnique[5]:58`), or `none` / `missing`.
 
   A hit is **typed** before anything is attributed to it. A third inline
   detour, on `GetUniqueRepoStruct`, records the `(type, sub, b)` of the latest
@@ -1775,8 +1815,8 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   stand-in's sub and b under a different type (Liquor Holster's `0/51` is also
   a type 10 unique's) is never taken for it. The picker cannot tell the added
   entry from the vanilla ones, so a candidate is the mod item's with
-  probability 1 / (n + 1), `n` being how often the vanilla list holds that
-  same whole triple. The player build always pushes one entry per item; the
+  probability 1 / (n + 1), `n` being how often the vanilla sub-list holds
+  that same whole triple. The player build always pushes one entry per item; the
   research build's `angelicprobe inject copies <k>` pushes k, which makes the
   share m·k / (n + m·k) for m items sharing a stand-in. On the mod item's hit
   ForgePact rewrites the returned `CreateDefaultParams` struct's `a`, `b`,
@@ -1786,15 +1826,27 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   selector above recognises it. One hit is one item, in place of what the
   roll would have dropped. The switch is honoured only while all three hooks
   (`DropItemAngelicChance`, `CreateDefaultParams`, `GetUniqueRepoStruct`) are
-  inline detours. **Design, #74 (2026-10-02, replan 1)**, as the plugin
-  implements it. Three things are **not established** until #74's Live 1,
-  which has **not yet run**: whether the roll's picker draws the entries the
-  plugin pushes (**reach**; the held read-back shows only that the variable
-  holds them); whether the latest definition read before `CreateDefaultParams`
-  is the picked entry's (**typing**; that the roll reads inside itself through
-  `GetUniqueRepoStruct` is measured, Session 1, but the order pick -> read ->
-  filters -> die -> parameters is a static reading); and whether the game
-  builds exactly one dressed item per such hit.
+  inline detours. **Design, #74 (2026-10-02, replan 1; the sub-list since
+  replan 2)**, as the plugin implements it. Of the three questions only a live
+  session answers, Live 1 answered **typing** (below). Still **not
+  established**, and asked by #74's Live 2: whether the roll's picker draws
+  the entries the plugin pushes (**reach**; the held read-back shows only
+  that the sub-list holds them; Live 1 could not ask, because its shape check
+  accepted no list), and whether the game builds exactly one dressed item per
+  such hit.
+- **Measured (Live 1, list injection, 2026-10-02, research dll f7560e80…):
+  typing.** With the roll's chance raised by the research lever and both
+  switches off, 59 rolls gave 57 hits (`cdpCalls=70`, `detect=detoured`, the
+  detection's positive control). Every one was typed: `untyped=0`, and on
+  each the built item's `itemType` equalled the type of the latest
+  `GetUniqueRepoStruct` read inside the roll (`typeAgree=57`,
+  `typeDisagree=0`; 85 and then 87 of 87 later in the session). Every hit line
+  carried a `builtType` number and `lootDelta=1`: one `Loot_Ground_obj`
+  instance per hit. So the latest definition read before
+  `CreateDefaultParams` is the picked entry's, for the game's own entries; a
+  hit on a pushed entry has not been seen. With nothing pushed, one of the 57
+  hits carried a stand-in's sub and b (`standinPicks=1`), the baseline share
+  1/57 that reach is measured against.
 - **The die.** The rate comes from a zero-argument method on a member of the
   picked definition, scaled by one global value read when the roll starts;
   neither is identified (`droprate.base` is the plausible reading). The roll
@@ -1821,7 +1873,7 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   observed**: `variable_instance_exists` answered false on the instance found
   by name, with no positive control on that instance recorded (2026-09-23).
   The static reading of 2026-10-02 puts the list on `Controller_obj` (above),
-  so this asked the wrong scope.
+  so this was measured on another scope than the list's.
 - `DropItem` also runs for breakable props, and ordinary drops call
   `LootGroundCreate` (and `CreateDefaultParams`) directly from inside it.
   **Measured.**
@@ -1829,6 +1881,7 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
 [angelic roll, Results](../ForgePact/docs/angelic-roll-hook-research.md#results),
 [Session 2 (#74) Results](../ForgePact/docs/angelic-roll-hook-research.md#results-1),
 [Session 3 (#74, list injection)](../ForgePact/docs/angelic-roll-hook-research.md#session-3-list-injection-issue-74),
+[Session 4 (#74, the list layout)](../ForgePact/docs/angelic-roll-hook-research.md#session-4-the-list-layout-issue-74),
 [curated record](../hs-game-sdk/curated/angelic_list_measurements.json),
 [Decision](../ForgePact/docs/angelic-roll-hook-research.md#decision),
 [angelic drop, the game's own mechanism](../ForgePact/docs/angelic-drop-research.md#oyunun-kendi-mekanizması-statik-okuma-canlı-ölçülen-yalnızca-buff-yokken-zarın-hiç-atılmaması),
