@@ -273,6 +273,122 @@ inline bool IsInstanceHandle(const RValue& value) {
     return value.m_Kind == ::YYTK::VALUE_OBJECT || value.m_Kind == ::YYTK::VALUE_REF;
 }
 
+// ---------------------------------------------------------------------------
+// A relic lying on the ground (ForgePact#124).
+//
+// A dropped item is a Loot_Ground_obj instance. Its own instance variables
+// carry the item class (kItemInstanceTypeField) and the definition
+// (kItemInstanceDefinitionField, `b` the id) - the same two names an item
+// instance carries anywhere else. STATIC READING of the ground item's Create
+// (2026-10-02), not yet confirmed live: ForgePact#124's Live 1 settles it.
+//
+// C++ only: a ground instance exists only in the running game's memory, and
+// the Python binding reads saves.
+// ---------------------------------------------------------------------------
+
+/// Where a ReadGroundRelic call stopped. Every stage but Ok is a refusal.
+enum class GroundRelicStage {
+    NotRun,        ///< never read: the struct has not been through a call
+    NoHandle,      ///< no interface, the value is not an instance handle, or reading it threw
+    NoClass,       ///< the instance has no numeric kItemInstanceTypeField
+    NotRelic,      ///< the class is read and is not kRelicItemClass
+    NoDefinition,  ///< a relic class, but no definition struct
+    NoId,          ///< the definition holds no id in 0 .. kRelicIdLimit - 1
+    Ok,            ///< a relic, its id in relicId
+};
+
+/// The stage's name for a log line: `not-run`, `no-handle`, `no-class`,
+/// `not-relic`, `no-definition`, `no-id`, `ok`.
+inline const char* GroundRelicStageName(GroundRelicStage stage) {
+    switch (stage) {
+    case GroundRelicStage::NotRun: return "not-run";
+    case GroundRelicStage::NoHandle: return "no-handle";
+    case GroundRelicStage::NoClass: return "no-class";
+    case GroundRelicStage::NotRelic: return "not-relic";
+    case GroundRelicStage::NoDefinition: return "no-definition";
+    case GroundRelicStage::NoId: return "no-id";
+    case GroundRelicStage::Ok: return "ok";
+    }
+    return "unknown";
+}
+
+/// What one ReadGroundRelic call read. `itemClass` and `relicId` are -1 until
+/// read; `relicId` is set only on Ok.
+struct GroundRelicRead {
+    GroundRelicStage stage = GroundRelicStage::NotRun;
+    int itemClass = -1;
+    int relicId = -1;
+};
+
+/**
+ * Is this ground item a relic, and which one?
+ *
+ * Positive identification only: the instance's class must read
+ * kRelicItemClass, and the id comes from its definition's kRelicIdFields. An
+ * id-shaped or level-shaped field - `relicLevel` included - is never evidence
+ * on its own, and neither is a definition without a class: a relic's
+ * definition carries `c` 0 and no class (#93), so the instance is the only
+ * place the class lives.
+ *
+ * Both instance kinds are accepted (IsInstanceHandle): the instance is read
+ * through `variable_instance_*`, which takes a reference straight through.
+ *
+ * Returns true only on GroundRelicStage::Ok. `out` is reset first, so a
+ * refusal never leaves an earlier read's id behind.
+ */
+inline bool ReadGroundRelic(YYTKInterface* yytk, const RValue& instance, GroundRelicRead& out) {
+    out = GroundRelicRead{};
+    const auto stop = [&out](GroundRelicStage stage) {
+        out.stage = stage;
+        return stage == GroundRelicStage::Ok;
+    };
+    const auto isNumber = [](const RValue& value) {
+        return value.m_Kind == ::YYTK::VALUE_REAL || value.m_Kind == ::YYTK::VALUE_INT32
+            || value.m_Kind == ::YYTK::VALUE_INT64;
+    };
+    if (!yytk || !IsInstanceHandle(instance)) return stop(GroundRelicStage::NoHandle);
+    try {
+        if (!YYTK::InstanceHasVariable(yytk, instance, kItemInstanceTypeField)) {
+            return stop(GroundRelicStage::NoClass);
+        }
+        const RValue itemClass = YYTK::GetInstanceVariable(yytk, instance, kItemInstanceTypeField);
+        if (!isNumber(itemClass) || !std::isfinite(itemClass.ToDouble())) return stop(GroundRelicStage::NoClass);
+        out.itemClass = static_cast<int>(itemClass.ToDouble());
+        if (out.itemClass != kRelicItemClass) return stop(GroundRelicStage::NotRelic);
+
+        if (!YYTK::InstanceHasVariable(yytk, instance, kItemInstanceDefinitionField)) {
+            return stop(GroundRelicStage::NoDefinition);
+        }
+        const RValue definition = YYTK::GetInstanceVariable(yytk, instance, kItemInstanceDefinitionField);
+        if (definition.m_Kind != ::YYTK::VALUE_OBJECT || !definition.m_Object) {
+            return stop(GroundRelicStage::NoDefinition);
+        }
+
+        for (const std::string_view idField : kRelicIdFields) {
+            if (!YYTK::StructHasVariable(yytk, definition, idField)) continue;
+            const RValue id = YYTK::GetStructVariable(yytk, definition, idField);
+            if (!isNumber(id)) break;
+            const double value = id.ToDouble();
+            if (!std::isfinite(value) || std::floor(value) != value
+                || value < 0 || value >= kRelicIdLimit) break;
+            out.relicId = static_cast<int>(value);
+            return stop(GroundRelicStage::Ok);
+        }
+        return stop(GroundRelicStage::NoId);
+    } catch (...) {
+        out.itemClass = -1;
+        return stop(GroundRelicStage::NoHandle);
+    }
+}
+
+/// One line naming what a ground read did, for a log: e.g. `stage=ok class=16
+/// id=42`, or `stage=not-relic class=4 id=-1`.
+inline std::string FormatGroundRelicRead(const GroundRelicRead& r) {
+    return std::string("stage=") + GroundRelicStageName(r.stage)
+        + " class=" + std::to_string(r.itemClass)
+        + " id=" + std::to_string(r.relicId);
+}
+
 namespace Detail {
 
 /// `array[index]`, only when `array` is an array that long. An out-of-range

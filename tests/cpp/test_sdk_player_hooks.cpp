@@ -728,6 +728,123 @@ static void TestRelicTab() {
 }
 
 // ---------------------------------------------------------------------------
+// ForgePact#124: a relic lying on the ground. A dropped item is a
+// Loot_Ground_obj instance whose own variables carry the item class
+// (`itemType`) and the definition (`itemDefinitionStruct`, `b` the id) - a
+// static reading of the ground item's Create, not yet confirmed live. The
+// fields are filled as the instance's variables, and the instance handed over
+// both as a struct-shaped instance and as the reference this runner produces.
+// ---------------------------------------------------------------------------
+
+static void FillGroundItem(ControlledYYTK& yytk, const RValue& item) {
+    for (const auto& [name, value] : *item.m_Struct) yytk.instanceFields[name] = value;
+}
+
+static void TestGroundRelic() {
+    using namespace HeroSiege::Player;
+
+    // 1. A relic instance handed over as VALUE_OBJECT reads as relic 42.
+    {
+        ControlledYYTK yytk;
+        FillGroundItem(yytk, RelicInstance(42, 1, 0));
+        GroundRelicRead read;
+        const bool ok = ReadGroundRelic(&yytk, FakePlayer(), read);
+        std::printf("C++: ground_relic_object read=%d id=%d stage=%s\n", ok ? 1 : 0, read.relicId,
+                    GroundRelicStageName(read.stage));
+        CHECK(ok);
+        CHECK(read.stage == GroundRelicStage::Ok);
+        CHECK_EQ(read.relicId, 42);
+        CHECK_EQ(read.itemClass, kRelicItemClass);
+        CHECK(FormatGroundRelicRead(read) == "stage=ok class=16 id=42");
+    }
+
+    // 2. The same instance as the VALUE_REF this runner hands back reads the
+    //    same. A struct-only accessor would read nothing off a reference.
+    {
+        ControlledYYTK yytk;
+        FillGroundItem(yytk, RelicInstance(42, 1, 0));
+        GroundRelicRead read;
+        const bool ok = ReadGroundRelic(&yytk, FakePlayerRef(), read);
+        std::printf("C++: ground_relic_reference read=%d id=%d stage=%s\n", ok ? 1 : 0, read.relicId,
+                    GroundRelicStageName(read.stage));
+        CHECK(ok);
+        CHECK(read.stage == GroundRelicStage::Ok);
+        CHECK_EQ(read.relicId, 42);
+    }
+
+    // 3. Refusals, each naming the stage it stopped at. A refusal also clears
+    //    what an earlier read left in the same struct.
+    const auto refuse = [](const RValue& instance, const RValue* item) {
+        ControlledYYTK yytk;
+        if (item) FillGroundItem(yytk, *item);
+        GroundRelicRead read;
+        read.relicId = 99;
+        read.stage = GroundRelicStage::Ok;
+        const bool ok = ReadGroundRelic(&yytk, instance, read);
+        CHECK(!ok);
+        CHECK_EQ(read.relicId, -1);
+        return read;
+    };
+
+    // An ordinary unique glove (class 4) and a material stack (class 14) whose
+    // `o` would read as maxed: the class says not a relic.
+    const RValue glove = OrdinaryGloveInstance();
+    const RValue material = MaterialStackInstance();
+    const GroundRelicRead ordinary = refuse(FakePlayerRef(), &glove);
+    const GroundRelicRead stack = refuse(FakePlayerRef(), &material);
+    CHECK(ordinary.stage == GroundRelicStage::NotRelic);
+    CHECK_EQ(ordinary.itemClass, 4);
+    CHECK(stack.stage == GroundRelicStage::NotRelic);
+
+    // A definition but no class field. Id-shaped and level-shaped fields -
+    // the relic-only `relicLevel` included - are never evidence on their own.
+    const RValue classless = RValue::Struct({
+        { "b", RValue(42) }, { "relicLevel", RValue(3) },
+        { "itemDefinitionStruct", RValue::Struct({ { "b", RValue(42) }, { "c", RValue(16) }, { "o", RValue(3) } }) },
+    });
+    const GroundRelicRead noClass = refuse(FakePlayerRef(), &classless);
+    CHECK(noClass.stage == GroundRelicStage::NoClass);
+
+    // A class that is not a number is no class either.
+    const RValue stringClass = RValue::Struct({
+        { "itemType", RValue(std::string("16")) },
+        { "itemDefinitionStruct", RValue::Struct({ { "b", RValue(42) } }) },
+    });
+    CHECK(refuse(FakePlayerRef(), &stringClass).stage == GroundRelicStage::NoClass);
+
+    // A relic class with no definition, a definition that is not a struct, a
+    // definition with no id, and an id outside the relic range.
+    const RValue noDefinition = RValue::Struct({ { "itemType", RValue(16) } });
+    const RValue numberDefinition = RValue::Struct({ { "itemType", RValue(16) }, { "itemDefinitionStruct", RValue(42) } });
+    const RValue noId = RValue::Struct({
+        { "itemType", RValue(16) }, { "itemDefinitionStruct", RValue::Struct({ { "o", RValue(1) } }) },
+    });
+    const RValue idOutOfRange = RelicInstance(kRelicIdLimit, 1, 0);
+    CHECK(refuse(FakePlayerRef(), &noDefinition).stage == GroundRelicStage::NoDefinition);
+    CHECK(refuse(FakePlayerRef(), &numberDefinition).stage == GroundRelicStage::NoDefinition);
+    CHECK(refuse(FakePlayerRef(), &noId).stage == GroundRelicStage::NoId);
+    CHECK(refuse(FakePlayerRef(), &idOutOfRange).stage == GroundRelicStage::NoId);
+
+    // Negative control for accepting a reference: an undefined value is not an
+    // instance, even with relic fields on offer.
+    const RValue relic = RelicInstance(42, 1, 0);
+    const GroundRelicRead undefined = refuse(RValue(), &relic);
+    CHECK(undefined.stage == GroundRelicStage::NoHandle);
+    CHECK(refuse(RValue(42), &relic).stage == GroundRelicStage::NoHandle);
+
+    std::printf("C++: ground_relic_refused ordinary=%s material=%s classless=%s undefined=%s\n",
+                GroundRelicStageName(ordinary.stage), GroundRelicStageName(stack.stage),
+                GroundRelicStageName(noClass.stage), GroundRelicStageName(undefined.stage));
+
+    // No interface at all reads nothing.
+    {
+        GroundRelicRead read;
+        CHECK(!ReadGroundRelic(nullptr, FakePlayerRef(), read));
+        CHECK(read.stage == GroundRelicStage::NoHandle);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The three cases from origin's second review, printed for the Python side of
 // tests/test_cpp_sdk.py to compare against scan_relic_levels() directly.
 // ---------------------------------------------------------------------------
@@ -1042,6 +1159,7 @@ int main() {
     TestRelicIdentification();
     TestEquippedSlots();
     TestRelicTab();
+    TestGroundRelic();
     TestCrossLanguageCases();
     PrintContract();
     PrintItemTypes();
