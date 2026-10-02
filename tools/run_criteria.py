@@ -72,9 +72,10 @@ criteria`, numbered from 1 -- the targeted checks `workorder-rounds.js` has
 the verifier run as an item finishes.
 
 `--changed-since REF` (2026-09-27) runs only the criteria a change can
-reach, for a fix round after a verify that passed every other criterion. The
-owner, in the ForgePact UI redesign's ship workorder: "run relevant tests
-only if possible". What changed is `git diff --name-only REF` (committed and
+reach. The owner, in the ForgePact UI redesign's ship workorder: "run
+relevant tests only if possible"; and on 2026-10-02, widening it from fix
+rounds to every verify during development: "full suite runs ... should be
+reserved to the last step before the pr". What changed is `git diff --name-only REF` (committed and
 uncommitted) plus untracked files, in the hub and in every initialized
 submodule, submodule paths under their directory. A submodule's base is the
 commit the hub's REF records for it, unless `--changed-since DIR=REF` names
@@ -90,6 +91,11 @@ output; `-` is stdin). A criterion is selected when:
     round, so an old plan verifies fully;
   * a selected criterion runs `(after K)` it: criterion K is selected too.
 
+except that a criterion that declares `(final)`, or whose every command is
+a whole suite (`unittest discover`, `run_tests_parallel.py`, a bare
+`pytest`), is deferred to the final gate unless `--failed` names it: the
+targeted criteria beside it cover development.
+
 Every criterion runs, as without the flag, when the delta is unknown (a base
 git cannot diff from, a submodule with no base, an unreadable
 `--changed-from` file) or a changed path is a shared contract: a glob in
@@ -97,8 +103,14 @@ git cannot diff from, a submodule with no base, an unreadable
 Before anything runs it prints the scope: the changed paths, then each
 criterion as `run` or `skip` with the reason; `scope: full -- <why>` when it
 fell back. An unselected criterion prints `NOT SELECTED (<why>)` in the
-report, where its commands would have been. The full set still runs at the
-final gate before a push; this is for the fix rounds before it.
+report, where its commands would have been. The full set, run without the
+flag, is the final gate: once, right before the pull request is opened or
+pushed to. Every verify before it is scoped.
+
+`--dev` (2026-10-02) is the development verify with no delta: every
+criterion except the final-gate ones above. A workorder's first verify, and
+an items gate, take it; a reach run already defers them, so the two flags
+are alternatives.
 
 Every run that is not `--list`, serial or `--jobs`, keeps `<out>/status.json`
 current and writes `<out>/report.txt` (2026-09-27), so a whole-tree run can
@@ -135,7 +147,7 @@ Usage:
                                 [--timeout SECONDS] [--shell PATH] [--list]
                                 [--jobs N|auto] [--browser-jobs N] [--item ID]
                                 [--changed-since REF [--changed-since DIR=REF ...]
-                                 | --changed-from FILE] [--failed K[,K...]]
+                                 | --changed-from FILE] [--failed K[,K...]] [--dev]
     py -3 tools/run_criteria.py --status DIR [--wait S]
 
 `--start K` resumes at criterion K after a call that hit the Bash tool's
@@ -194,6 +206,9 @@ CLASSES = ("build", "exclusive", "suite", "browser", "test", "pure")
 STRICTNESS = {c: i for i, c in enumerate(CLASSES)}
 CLASS_DECL_RE = re.compile(r"\(class\s+`?(" + "|".join(CLASSES) + r")`?\)")
 AFTER_DECL_RE = re.compile(r"\(after\s+([\d,\s]+)\)")
+# `(final)` keeps a criterion for the full run before the pull request; a
+# scoped run defers it, as it defers a whole suite (`select()`).
+FINAL_DECL_RE = re.compile(r"\(final\)")
 ANY_CD_RE = re.compile(r"^(?:cd\s+(?:\"[^\"]+\"|'[^']+'|\S+?)\s*(?:;|&&)\s*)+")
 BUILD_RE = re.compile(r"\bbuild\.(?:bat|ps1|sh)\b|\bcargo\s+build\b|\btauri\s+build\b|\bcmake\s+--build\b|"
                       r"\bmsbuild\b|\bvite\s+build\b|\bnpm\s+(?:--prefix\s+\S+\s+)?run\s+build\b")
@@ -306,6 +321,23 @@ def _hit_text(globs: list, hits: list) -> str:
     return f"reads `{glob}` <- {hits[0]}{more}"
 
 
+FINAL_REASON = "final gate only: a whole suite or `(final)`, run once by the full verify before the pull request"
+
+
+def final_only(item: str) -> bool:
+    """Whether a scoped run defers this criterion to the final gate: it
+    declares `(final)`, or every command it runs is a whole suite (`unittest
+    discover`, `run_tests_parallel.py`, a bare `pytest`). The owner,
+    2026-10-02: "full suite runs ... should be reserved to the last step
+    before the pr. during development only relevant subset should be run."
+    A targeted test (`-m unittest tests.test_x`, `npm test`) is not deferred."""
+    if FINAL_DECL_RE.search(item):
+        return True
+    cmds = commands(item)
+    declared = CLASS_DECL_RE.search(item)
+    return bool(cmds) and all((declared.group(1) if declared else classify(c)) == "suite" for c in cmds)
+
+
 def select(items: list, changed, failed=frozenset(), contract=SHARED_CONTRACT, unknown: str = "") -> tuple:
     """`(full, why, scope)`: which criteria a change can reach, as a pure
     function of the criteria texts, the changed paths and the criteria that
@@ -333,6 +365,8 @@ def select(items: list, changed, failed=frozenset(), contract=SHARED_CONTRACT, u
             scope[k] = (True, _hit_text(declared, hits))
         else:
             scope[k] = (False, f"nothing it reads changed (reads {', '.join(f'`{g}`' for g in declared)})")
+        if scope[k][0] and k not in failed and final_only(item):
+            scope[k] = (False, FINAL_REASON)
     # A selected criterion that runs after another needs what that one's
     # command writes (a build, most often), so the other runs too.
     grew = True
@@ -347,6 +381,15 @@ def select(items: list, changed, failed=frozenset(), contract=SHARED_CONTRACT, u
                         scope[dep] = (True, f"criterion {k} runs after it")
                         grew = True
     return False, "", scope
+
+
+def develop(items: list) -> dict:
+    """`--dev`'s scope: every criterion but the final-gate ones
+    (`final_only`). A workorder's first verify takes it rather than a reach
+    selection, so a criterion about a file the change forgot to touch still
+    runs; the whole suites wait for the full run before the pull request."""
+    return {k: (False, FINAL_REASON) if final_only(item) else (True, "development verify")
+            for k, item in enumerate(items, 1)}
 
 
 def _submodule_dirs(root: Path) -> list:
@@ -408,11 +451,14 @@ def print_scope(source: str, changed, full: bool, why: str, scope: dict, start: 
     if full:
         print(f"scope: full -- {why}; running every criterion")
         return
-    print(f"scope: changed {source}: {len(changed)} path(s)")
-    for p in changed[:SCOPE_LIST]:
-        print(f"  {p}")
-    if len(changed) > SCOPE_LIST:
-        print(f"  ... {len(changed) - SCOPE_LIST} more")
+    if changed is None:
+        print(f"scope: {source}: every criterion but the final-gate ones")
+    else:
+        print(f"scope: changed {source}: {len(changed)} path(s)")
+        for p in changed[:SCOPE_LIST]:
+            print(f"  {p}")
+        if len(changed) > SCOPE_LIST:
+            print(f"  ... {len(changed) - SCOPE_LIST} more")
     shown = {k: v for k, v in scope.items() if k >= start}
     print(f"scope: running {sum(1 for s, _ in shown.values() if s)} of {len(shown)} criteria")
     for k, (selected, reason) in shown.items():
@@ -1002,6 +1048,7 @@ def _main(argv, starting) -> int:
     parser.add_argument("--changed-since", action="append", default=[])
     parser.add_argument("--changed-from", default=None)
     parser.add_argument("--failed", default=None)
+    parser.add_argument("--dev", action="store_true")
     try:
         args = parser.parse_args(argv)
     except SystemExit:
@@ -1040,9 +1087,13 @@ def _main(argv, starting) -> int:
     if since and args.changed_from is not None:
         print("run_criteria: --changed-since and --changed-from are alternatives", file=sys.stderr)
         return 2
-    if (args.failed is not None or scoped) and args.item is not None:
+    if (args.failed is not None or scoped or args.dev) and args.item is not None:
         print("run_criteria: --item runs an item's own checks; the reach selection is for the criteria",
               file=sys.stderr)
+        return 2
+    if args.dev and scoped:
+        print("run_criteria: --dev is the development verify of every criterion; --changed-since and "
+              "--changed-from already defer the final-gate ones", file=sys.stderr)
         return 2
     if args.failed is not None and not scoped:
         print("run_criteria: --failed needs --changed-since or --changed-from", file=sys.stderr)
@@ -1107,6 +1158,9 @@ def _main(argv, starting) -> int:
             changed, why = _read_changed_from(args.changed_from)
             source = f"per {args.changed_from}"
         full, full_why, scope = select(items, changed, failed, contract_globs(text), why or "")
+    elif args.dev:
+        scoped, changed, full, full_why, source = True, None, False, "", "development verify"
+        scope = develop(items)
     if args.list:
         # Runs nothing and writes nothing: no out dir, no status, no report.
         if scoped:

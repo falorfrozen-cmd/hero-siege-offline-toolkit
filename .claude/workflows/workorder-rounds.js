@@ -55,7 +55,9 @@ export const meta = {
 //                                       // number from 1 to 16, anything else is BAD-ARGS before a spawn), agents per
 //                                       // launch (120),
 //   tokenCeiling, itemAttempts,         // output tokens per launch (none), implement attempts per item (3)
-//   reviewPassCap                       // passes a reviewer makes before it waits for the final catch-up (4)
+//   reviewPassCap,                      // passes a reviewer makes before it waits for the final catch-up (4)
+//   fullVerify                          // true only for the final gate before the PR: every verify runs the full
+//                                       // set. Absent, a first verify is `--dev` and a later one by reach (2j)
 // }
 //
 // The count of patch rounds already spent (2i below) is read from `state`'s
@@ -584,7 +586,9 @@ const scribe = (n, block, updates) => {
     `and never resolve them against another checkout or directory. In ${SCRIBE_CONTEXT}, append this block verbatim under '## Log' ` +
     `(if a '### Round ${n}' heading is already there, append under it instead of duplicating it):\n\n${block}\n\n` +
     stateAsk +
-    `Before your first Edit, Read ${SCRIBE_PLAN} and return every line under '## State' exactly as it was in 'state_before'; after your last Edit, Read it again and return every line under '## State' exactly as it now is in 'state_after'. ` +
+    `Before your first Edit, read only the lines you paste beside, never either file whole (the owner, 2026-10-02: after a write, read only the difference or the relevant part). ` +
+    `In ${SCRIBE_PLAN}: Grep -n '^## ' to find '## State' and the heading after it, then Read ${SCRIBE_PLAN} and return every line under '## State' exactly as it was in 'state_before', reading only that range (offset at the State heading, limit up to the next heading); after your last Edit, Read the same range again and return every line under '## State' exactly as it now is in 'state_after'. ` +
+    `In ${SCRIBE_CONTEXT}: '## Log' is the last section, so the block goes at the end of the file. Grep -n '^### Round ${n}\\b' to see whether its heading is already there, Grep pattern '$' with output_mode 'count' for the file's line count, and Read only its last 30 lines (offset = count - 30) to anchor your Edit on the final lines. ` +
     `Paste both blocks verbatim with the Edit tool. Do not reword, relabel, merge lists, or change any count in a heading. ` +
     `Edit nothing except these two files. If either file cannot be read, do not create it -- return written: false with the error in 'note' instead of improvising one. ` +
     `Never run git, never build or test, never edit source: you have no tools that could do any of that. ` +
@@ -673,9 +677,20 @@ const verifierCriteriaNote = (extra = '') => ` Take the criteria and the gate to
   ` The runner runs each distinct command once, exactly as written, independent ones at the same time (builds first), skips criteria whose gate is not set, and prints each exit code and output tail in plan order (full output in cmd-<n>.log); it judges nothing, so decide each criterion from what it printed, check the ones it prints as 'no command' by reading, run by hand only a command that could not start in bash, and if its output stops early re-run it with --start <next criterion>. A root suite the runner already ran is the suite run: grep its log, never run it again.` +
   ` Run each criterion's command exactly as written: never swap \`py -3\` for \`python\`; a command that cannot start is a failed criterion with its error. Run each test suite once, with the Bash timeout at 240000 and its output sent to a scratch file you grep; never run a suite again to read another slice.`
 const VERIFIER_CRITERIA_NOTE = verifierCriteriaNote()
+// 2j: during development no verify runs the whole suites. The owner,
+// 2026-10-02: "full suite runs shouldnt be run so frequently. it should be
+// reserved to the last step before the pr. during development only relevant
+// subset should be run." A first verify and the items gate run `--dev`:
+// every criterion but a whole suite or one marked `(final)`, so a criterion
+// about a file the change forgot to touch still runs. `fullVerify` (the final
+// gate before the PR) restores the full set.
+const DEV = !A.fullVerify
+const DEV_FINAL_NOTE = 'the last verify deferred the whole suites and the (final) criteria; run the full set once at the final gate before push'
+const VERIFIER_DEV_NOTE = ` This is a development verify: the runner defers each whole-suite criterion and each one marked \`(final)\` to the final gate before the PR and prints it as NOT SELECTED. Report each one it prints that way with status 'not-selected' and its reason as the evidence, never as 'pass', and skip your procedure's step 3 root suite.`
+const devCriteriaNote = () => DEV ? verifierCriteriaNote(' --dev') + VERIFIER_DEV_NOTE : VERIFIER_CRITERIA_NOTE
 // 2j: a fix round after a verify that passed every other criterion runs only
 // what the fix can reach, plus what failed (reachScope below).
-const VERIFIER_REACH_NOTE = ` This is a reach re-verify: the previous verify passed every criterion except the ones --failed names, so the runner selects only the criteria this round's change can reach (each criterion's \`(reads ...)\`) plus those, and prints the scope before it runs anything. Report each criterion it prints as NOT SELECTED with status 'not-selected' and its reason as the evidence, never as 'pass'. Skip your procedure's step 3 root suite unless a selected criterion runs it. If it prints \`scope: full\`, this is an ordinary full verify, step 3 included. If you cannot tell from its scope whether this round's change could reach a criterion it skipped, run the plan again without --changed-since and --failed, and say why.`
+const VERIFIER_REACH_NOTE = ` This is a reach re-verify: the previous verify passed every criterion except the ones --failed names, so the runner selects only the criteria this round's change can reach (each criterion's \`(reads ...)\`) plus those, defers whole suites and \`(final)\` criteria to the final gate before the PR, and prints the scope before it runs anything. Report each criterion it prints as NOT SELECTED with status 'not-selected' and its reason as the evidence, never as 'pass'. Skip your procedure's step 3 root suite unless a selected criterion runs it. If it prints \`scope: full\`, this is an ordinary full verify, step 3 included. If you cannot tell from its scope whether this round's change could reach a criterion it skipped, run the plan again without --changed-since and --failed, and say why.`
 const VERIFIER_CONTEXT_NOTE = A.contextPath !== A.planPath
   ? ` Context file: ${A.contextPath} -- open it only for a heading a criterion cites, with ${SECTION_CMD(A.contextPath)}; never read it whole, its '## Log' is the implementer's reasoning.`
   : ` This is a single-file plan: open a section a criterion cites with ${SECTION_CMD(A.planPath)} rather than reading on past the criteria; its '## Log' is the implementer's reasoning.`
@@ -708,7 +723,11 @@ const workorderLine = n => `Workorder: ${A.planPath}${A.contextPath !== A.planPa
 // memory of it (the gap priorFindings closes for reviewers).
 const reentry = n => n > 0 ? `You are re-entered after a defect: read '## Log' > '### Round ${n - 1}'` +
   `, and '### Round ${n}' if it is already there (this round was relaunched after a replan or a consultation, and that entry is the newer evidence),` +
-  ` for the evidence before anything else. ` : ''
+  ` for the evidence before anything else. ` +
+  // The owner, 2026-10-02: after a write, read only the difference or the
+  // relevant part. Fix-round implementers averaged 22 reads and 134 KB each
+  // over the 14 days before, 105 of them the whole plan.
+  `Then read only what that evidence needs: the failed criteria (\`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\`) and the steps, Context subsections and files it names -- not the whole plan, and not a file earlier rounds changed: read its diff (\`git diff <base> -- <path>\`, the base from \`${DELTA} heads ${SLUG} ${n - 1}${DELTA_ROOT_ARG}\`) and the ranges around those hunks. ` : ''
 const LANE_NAMES = LANES.map(l => l.name).join(', ')
 const LANED_LATER_NOTE = `This plan declares lanes (${LANE_NAMES}), but this round runs one implementer, not lanes: you own every lane's file set and the join's steps, and the lane-only rules (no git writes, the stop marker) do not apply to you. `
 // `amended`: the re-run after an in-launch amendment (3d). It is one
@@ -1427,7 +1446,7 @@ async function runItems(n) {
       return finish('PARKED', { detail: `BLOCKING findings still open with no fix to run: ${stillBlocking.map(rv => rv.key).join(', ')}` })
     }
     // 3b: the whole tree, once.
-    const v = await spawn(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${VERIFIER_CRITERIA_NOTE}${VERIFIER_CONTEXT_NOTE}`,
+    const v = await spawn(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${devCriteriaNote()}${VERIFIER_CONTEXT_NOTE}`,
       { label: k === 1 ? `verifier:r${n}` : `verifier:g${k}:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA })
     if (!v) return finish('AGENT-FAILED', { detail: 'the gate verifier returned nothing' })
     const gates = gatesSet(knownState)
@@ -1440,7 +1459,7 @@ async function runItems(n) {
     const pendingHuman = [...new Set([...(v.pending_human || []), ...all.flatMap(it => st[it.id].pending || []),
       ...gatePending.map(c => `${c.criterion} -> UNATTEMPTED (gate ${gateTokens(c.gate).filter(t => !gates.has(t)).join('; ')} not set)`)])]
     gateRuns.push({ k, verdict, verifierSaid: onlyGated ? v.verdict : undefined, failed, gatePending })
-    if (verdict === 'PASS' || verdict === 'PASS-PENDING-HUMAN') return finish(verdict, { pending_human: pendingHuman })
+    if (verdict === 'PASS' || verdict === 'PASS-PENDING-HUMAN') return finish(verdict, { pending_human: pendingHuman, ...(DEV ? { verifyScope: 'dev', note: DEV_FINAL_NOTE } : {}) })
     if (verdict === 'PLAN-DEFECT') return finish('PLAN-DEFECT', { detail: 'the gate verifier found a criterion that cannot be run as written' })
     if (k >= GATE_CAP) return finish('CAP', { detail: `the whole-tree criteria failed ${k} times; split the open failures into a new workorder` })
     const why = failed.length ? failed : (v.other_defects || []).map(d => ({ criterion: 'structural', evidence: d }))
@@ -1474,16 +1493,19 @@ const REACH_FINAL_NOTE = 'the last verify ran only the criteria this round could
 const noteCriteria = (v, gatedUnset, full) => {
   const criteria = v.criteria || []
   critNumbered = criteria.length > 0 && criteria.every(c => Number.isInteger(c.k) && c.k >= 1)
-  if (full) { critState.clear(); critCount = criteria.length }
+  if (full || !critCount) { critState.clear(); critCount = criteria.length }
   for (const c of criteria) {
     if (!Number.isInteger(c.k)) continue
-    if (c.status === 'not-selected') { if (!critState.has(c.k)) critState.set(c.k, 'unknown'); continue }
+    // Not selected: out of this verify's reach, or deferred to the final
+    // gate. Either way its earlier standing holds; with none, it is
+    // 'deferred' -- known, and owed to the final gate's full set.
+    if (c.status === 'not-selected') { if (!critState.has(c.k)) critState.set(c.k, DEV ? 'deferred' : 'unknown'); continue }
     critState.set(c.k, gatedUnset(c) && c.status !== 'pass' ? 'gated' : c.status === 'pass' ? 'pass' : c.status === 'fail' ? 'fail' : 'unknown')
   }
 }
 // The runner arguments for a reach re-verify, or null for the full set.
 const reachScope = (heads, deltaUsable) => {
-  if (!rounds.length || !critNumbered || !deltaUsable || !heads || critState.size !== critCount) return null
+  if (!rounds.length || !critCount || !critNumbered || !deltaUsable || !heads || critState.size !== critCount) return null
   if ([...critState.values()].some(s => s === 'unknown')) return null
   const entries = Object.entries(heads)
   if (!heads['.'] || entries.some(([, sha]) => !sha)) return null
@@ -1503,10 +1525,11 @@ let reviewerState = { ...A.reviewers }
 const lastFindings = { ...(A.priorFindings || {}) } // reviewer -> its BLOCKING findings from the round before
 let lastVerifier = null // the previous round's full verifier result, reused when nothing changed
 // 2j: each criterion's standing as of the last verify that ran it, by plan
-// number -- 'pass', 'fail', 'gated' (its gate not set) or 'unknown'. A reach
-// re-verify is allowed only while every criterion stands at one of the first
-// three and every one carries its number; a fresh launch starts empty, so its
-// first verify is always the full set.
+// number -- 'pass', 'fail', 'gated' (its gate not set), 'deferred' (to the
+// final gate) or 'unknown'. A reach re-verify is allowed only while no
+// criterion is 'unknown' and every one carries its number; a fresh launch
+// starts empty, so its first verify is `--dev` (or the full set under
+// fullVerify).
 const critState = new Map()
 let critNumbered = false
 let critCount = 0
@@ -1643,7 +1666,7 @@ for (let n = START; n - patchCount - scopeCount < ROUND_CAP || patchNext; n++) {
   // edit the tree this verifier is reading. Streaming findings into fixes is
   // the driver's procedure outside a round (SKILL.md "Spend each check once").
   const results = await parallel([
-    () => nothingChanged ? Promise.resolve(lastVerifier) : agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${reach ? verifierCriteriaNote(reach.extra) + VERIFIER_REACH_NOTE : VERIFIER_CRITERIA_NOTE}${VERIFIER_CONTEXT_NOTE}`,
+    () => nothingChanged ? Promise.resolve(lastVerifier) : agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${reach ? verifierCriteriaNote(reach.extra) + VERIFIER_REACH_NOTE : devCriteriaNote()}${VERIFIER_CONTEXT_NOTE}`,
       { label: `verifier:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA }),
     ...toRun.map(name => () => agent(
       `You are reviewing a change. You are NOT given the workorder; this is its intent:\n${A.goalExcerpt}\n${OUT_OF_SCOPE_NOTE}\n${scope(name)}\n` +
@@ -1685,6 +1708,7 @@ for (let n = START; n - patchCount - scopeCount < ROUND_CAP || patchNext; n++) {
   const record = { round: n, verifier: verdict, verifierSaid: onlyGated ? verifier.verdict : undefined, failed, gatePending, pending_human: pendingHuman, blocking, nonBlocking, notReRun: skipped, reviewerState: { ...reviewerState } }
   if (!nothingChanged) noteCriteria(verifier, gatedUnset, !reach)
   if (reach) record.verifyScope = reach.label
+  else if (DEV && !nothingChanged) record.verifyScope = 'development: every criterion but the whole suites and (final) ones'
   if (amendmentWords) record.amendment = amendmentWords
   if (isPatch) {
     record.patch = patchHeld
@@ -1710,7 +1734,7 @@ for (let n = START; n - patchCount - scopeCount < ROUND_CAP || patchNext; n++) {
   if (stop) return { ...stop, rounds, ...(record.unblocked ? { unblocked: record.unblocked } : {}) }
 
   if (planDefect) return { outcome: 'PLAN-DEFECT', round: n, rounds }
-  if (clean) return { outcome: verdict, round: n, pending_human: pendingHuman, rounds, ...(record.unblocked ? { unblocked: record.unblocked } : {}), ...(reach ? { verifyScope: 'reach', note: REACH_FINAL_NOTE } : {}) }
+  if (clean) return { outcome: verdict, round: n, pending_human: pendingHuman, rounds, ...(record.unblocked ? { unblocked: record.unblocked } : {}), ...(reach ? { verifyScope: 'reach', note: REACH_FINAL_NOTE } : DEV ? { verifyScope: 'dev', note: DEV_FINAL_NOTE } : {}) }
 }
 
 return { outcome: 'CAP', detail: `${ROUND_CAP} implement->verify rounds used` + (scopeCount ? ` (plus ${scopeCount} owner-scope round(s))` : '') + `; split the open findings into a new workorder`, rounds }

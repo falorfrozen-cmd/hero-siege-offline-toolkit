@@ -22,7 +22,7 @@ each at its own pinned model tier and effort (`planner`, `implementer`,
 escalating the whole phase, a `live-operator` that runs a workorder's written
 live-game procedure so the driver only relays to the person, a `scribe` that
 pastes a round's precomputed Log/State text into a workorder's own files with
-`Read`/`Edit` only, and three skills:
+`Read`/`Grep`/`Edit` only, and three skills:
 `/catalog-rebuild`, `/workorder` (drives those phases
 and routes defects back to the phase that caused them), and
 `submodule-context` (loads the guide named above). MCP servers are in
@@ -170,13 +170,24 @@ So, in `/workorder` and anything run like it:
   pull requests.
 - **Batch the owner's decisions before the next plan, and fix a flaky test
   in the round that saw it**, rather than retrying it.
-- **After a small fix, re-run only the checks it can reach** (the owner,
-  2026-09-27: *"run relevant tests only if possible"*): a fix round after a
-  verify that passed everything else runs the criteria whose `(reads ...)`
-  the fix touches plus the failed ones (`tools/run_criteria.py
-  --changed-since`), and the full set runs at the final gate before push, or
-  whenever the delta is unknown, touches a shared contract, or the verifier
-  cannot tell.
+- **During development run only the relevant subset; the full suite runs
+  once, as the last step before the pull request** (the owner, 2026-09-27:
+  *"run relevant tests only if possible"*, widened 2026-10-02: *"full suite
+  runs shouldnt be run so frequently. it should be reserved to the last step
+  before the pr"*). A first verify and an items gate run every criterion but
+  the whole suites and the ones marked `(final)` (`tools/run_criteria.py
+  --dev`); a fix round after a verify that passed everything else runs the
+  criteria whose `(reads ...)` the fix touches plus the failed ones
+  (`--changed-since`), deferring the same. The full set runs at the final
+  gate before the PR, or whenever the delta is unknown, touches a shared
+  contract, or the verifier cannot tell. So every module a change touches
+  needs a targeted criterion beside its whole suite.
+- **After a write, read the diff, not the file** (the owner, 2026-10-02):
+  an agent checks its own edit with `git diff -- <path>`, a grep or a ranged
+  read, and an agent after it (verifier, reviewer, re-entered implementer,
+  replanning planner, scribe) reads the diff since its base or the one
+  section it needs, never the whole file again. `workorder_audit.py` R26
+  fails an implementer or planner that does.
 - **A question never idles the pipeline.** Before asking the owner, start
   everything the answer cannot change. Spin off an out-of-scope bug instead
   of asking about it. Apply the default to a reversible choice and say how

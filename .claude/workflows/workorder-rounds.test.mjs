@@ -489,9 +489,12 @@ test('a fresh launch past round 0 tells the implementer it is re-entered; round 
   // A relaunch after a PLAN-DEFECT raised in round 1 itself keeps `round: 1`,
   // and the newer evidence is under that round's own heading.
   assert.match(prompts['implementer:r1'], /and '### Round 1' if it is already there/)
-  assert.match(prompts['implementer:r1'], /newer evidence\), for the evidence before anything else\. Return your usual verdict/)
+  assert.match(prompts['implementer:r1'], /newer evidence\), for the evidence before anything else\. Then read only what that evidence needs/)
+  // The owner, 2026-10-02: after a write, read the diff, not the file.
+  assert.match(prompts['implementer:r1'], /not the whole plan, and not a file earlier rounds changed: read its diff \(`git diff <base> -- <path>`/)
+  assert.ok(prompts['implementer:r1'].includes('round_delta.py heads zz 0'), prompts['implementer:r1'])
   await run(BASE, reply)
-  assert.doesNotMatch(prompts['implementer:r0'], /re-entered after a defect/)
+  assert.doesNotMatch(prompts['implementer:r0'], /re-entered after a defect|read its diff/)
 })
 
 test('an empty delta on a fresh launch gives the blocking reviewer no phantom diff either', async () => {
@@ -735,6 +738,12 @@ test('the scribe is handed absolute paths under checkoutRoot, never relative one
   assert.ok(p.includes('In C:\\wt\\here/.claude/workorders/zz-context.md, append'), p)
   assert.ok(p.includes('Read C:\\wt\\here/.claude/workorders/zz-plan.md and return'), p)
   assert.doesNotMatch(p, /relative to your current working directory/)
+  // The owner, 2026-10-02: after a write, read only what changed. The scribe
+  // reads the State range and the Log's tail, never either file whole.
+  assert.match(p, /never either file whole/)
+  assert.match(p, /reading only that range \(offset at the State heading/)
+  assert.match(p, /Read only its last 30 lines \(offset = count - 30\)/)
+  assert.ok(p.includes("Grep -n '^### Round 0\\b'"), p)
   // An already-absolute path is used as it is.
   await run({ ...BASE, planPath: 'D:/x/p.md', contextPath: 'D:/x/c.md' }, reply)
   assert.ok(prompts['scribe:r0'].includes('In D:/x/c.md, append'))
@@ -1584,7 +1593,7 @@ const FAILED_2 = { verdict: 'IMPL-DEFECT', criteria: [CRIT(1, 'pass'), CRIT(2, '
 test('a fix round after a verify that passed every other criterion re-verifies only what it reaches, plus the failed one', async () => {
   const scopedPass = { verdict: 'PASS', criteria: [CRIT(1, 'not-selected'), CRIT(2, 'pass'), CRIT(3, 'pass')], pending_human: [] }
   const { result, prompts } = await reachRun([FAILED_2, scopedPass])
-  assert.ok(!prompts['verifier:r0'].includes('--changed-since'), 'round 0 of a launch is always the full set')
+  assert.ok(!prompts['verifier:r0'].includes('--changed-since'), 'round 0 of a launch has no delta to select by')
   assert.ok(prompts['verifier:r0'].includes("in 'k'"), 'every verifier is asked for the plan numbers')
   assert.ok(prompts['verifier:r1'].includes('--jobs auto --changed-since HUB-SHA --changed-since ForgePact=FP-SHA --failed 2 --out'), prompts['verifier:r1'])
   assert.match(prompts['verifier:r1'], /status 'not-selected'.*never as 'pass'/)
@@ -1622,6 +1631,33 @@ test('a gate not set is a standing, not an unknown', async () => {
   const { prompts } = await reachRun([gated, PASS], {}, { ...BASE, state: '## State\ngates: none\n' })
   assert.ok(prompts['verifier:r1'].includes('--changed-since HUB-SHA'))
   assert.ok(prompts['verifier:r1'].includes('--failed 2 --out'), 'the gated criterion is not re-run as failed')
+})
+
+// The owner, 2026-10-02: "full suite runs ... should be reserved to the last
+// step before the pr. during development only relevant subset should be run."
+test('development verifies defer the whole suites; only fullVerify runs the full set', async () => {
+  // Round 0 runs --dev: every criterion but the final-gate ones.
+  const deferred = { verdict: 'IMPL-DEFECT', criteria: [CRIT(1, 'not-selected'), CRIT(2, 'fail'), CRIT(3, 'pass')], pending_human: [] }
+  const dev = await reachRun([deferred, PASS])
+  assert.ok(dev.prompts['verifier:r0'].includes('--jobs auto --dev --out'), dev.prompts['verifier:r0'])
+  assert.match(dev.prompts['verifier:r0'], /development verify.*never as 'pass'.*skip your procedure's step 3 root suite/)
+  // A deferred criterion is a known standing, so the fix round goes by reach.
+  assert.ok(dev.prompts['verifier:r1'].includes('--changed-since HUB-SHA --changed-since ForgePact=FP-SHA --failed 2 --out'), dev.prompts['verifier:r1'])
+  assert.equal(dev.result.verifyScope, 'reach')
+  const once = await reachRun([PASS])
+  assert.equal(once.result.outcome, 'PASS')
+  assert.equal(once.result.verifyScope, 'dev')
+  assert.match(once.result.note, /full set once at the final gate before push/)
+  // Control: the final gate before the PR runs every criterion, suites included.
+  const full = await reachRun([deferred, PASS], {}, { ...BASE, fullVerify: true })
+  assert.ok(!full.prompts['verifier:r0'].includes('--dev'), full.prompts['verifier:r0'])
+  assert.ok(!full.prompts['verifier:r1'].includes('--changed-since'), 'under fullVerify an unselected criterion is unknown')
+  assert.ok(!('verifyScope' in full.result))
+  // The items gate is a development verify too.
+  const items = await runTimed(ITEMS_BASE, itemsReply())
+  assert.ok(items.prompts['verifier:r0'].includes('--jobs auto --dev --out'), items.prompts['verifier:r0'])
+  const itemsFull = await runTimed({ ...ITEMS_BASE, fullVerify: true }, itemsReply())
+  assert.ok(!itemsFull.prompts['verifier:r0'].includes('--dev'))
 })
 
 // --- goal 4: maxParallel is validated, its default named ---------------------

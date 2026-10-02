@@ -995,3 +995,67 @@ compare with this section's rows:
 The implementers' check catch rate (38-58% above) is measured only, and
 nothing here changes their own check run. What the joins cost against the
 lanes' saving (§ "Lanes") is not established.
+
+# The full suite once, before the pull request; the diff after a write (2026-10-02)
+
+## The question
+
+The owner asked for two more cuts: *"full suite runs shouldnt be run so
+frequently. it should be reserved to the last step before the pr. during
+development only relevant subset should be run"*, and, since agents *"seem to
+spend lots of times on reads"* after each write, *"make sure only difference
+or relevant things are read after every write instead"*.
+
+## What was measured
+
+Over the 491 subagent transcripts of the 14 days before (`agentType` from
+each `.meta.json`):
+
+- Only a fix round after an otherwise clean verify was scoped (the
+  2026-09-27 section above). Every round 0 and every items gate ran the full
+  set, and the verifier's step 3 ran the hub's root suite on top of it.
+- Reads after writes did not go where expected. Whole-file re-reads of a
+  file the same agent had just edited were rare: at most one per implementer
+  or planner, none over two. The volume was elsewhere. The scribe, which
+  pastes one Log entry and a few State lines, read both workorder files
+  whole every round: 13 MB over 228 runs, 69 KB a run. Fix-round
+  implementers, fresh agents with no memory of round 0, averaged 22 reads and
+  134 KB each; 105 of their reads were the whole plan and 253 were ranges of
+  the context file, against 90 `section.py` calls.
+
+## What changed
+
+- `run_criteria.py --dev` runs every criterion except a whole suite
+  (`unittest discover`, `run_tests_parallel.py`, a bare `pytest`) and any
+  marked `(final)`; a reach run (`--changed-since`) defers the same ones
+  unless `--failed` names them. `workorder-rounds.js` gives a launch's first
+  verify and the items gate `--dev`, counts a deferred criterion as a known
+  standing so the next fix round can still go by reach, and reports
+  `verifyScope: 'dev'` with a note to run the full set at the final gate.
+  `fullVerify: true` makes a launch the final gate. The verifier skips its
+  step-3 root suite on any development verify. A first verify is `--dev`
+  rather than a reach selection on purpose: a criterion about a file the
+  change forgot to touch would not be selected by reach, and would first
+  fail at the final gate.
+- The scribe reads the `## State` range and the Log's last 30 lines through
+  `Grep` and ranged `Read`s; it now has `Grep`, still no shell. A re-entered
+  implementer is told to read the failed criteria, what the evidence names
+  and `git diff <base> -- <path>` for what earlier rounds changed, not the
+  plan or the files whole. A replanning planner reads the Log since its last
+  plan, not all of it, and no agent reads back a file it just edited.
+- `tools/workorder_audit.py` R26 fails an implementer or planner with more
+  than two whole-file reads of files it wrote.
+
+## Not yet measured
+
+- How much a development verify saves per round. It is the suite's own
+  time (ForgePact's Python suite 11-17 minutes in the UI redesign, the hub's
+  150-170 s) for each round before the final gate, if the plan carries
+  targeted criteria beside it.
+- What deferring finds late: a regression only a whole suite catches now
+  shows at the final gate. Count the final-gate failures a development
+  verify would have caught.
+- The scribe's and the fix-round implementers' read volume after the
+  change, against 69 KB and 134 KB a run above. R26 is calibrated to fail
+  none of the 527 implementer and planner runs measured, so it guards
+  against a regression rather than measuring this one.
