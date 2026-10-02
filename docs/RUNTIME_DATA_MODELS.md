@@ -1849,14 +1849,17 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   that same whole triple. The player build always pushes one entry per item; the
   research build's `angelicprobe inject copies <k>` pushes k, which makes the
   share m·k / (n + m·k) for m items sharing a stand-in. On the mod item's hit
-  ForgePact rewrites the returned `CreateDefaultParams` struct's `a`, `b`,
-  `c`, `j` to the item's own and reads them back (refusing, and leaving the
-  game's stand-in, when a field is missing), and the game's
-  `LootGroundCreate` -> `CreateItemNew` builds and places it, where the forge
-  selector above recognises it. One hit is one item, in place of what the
-  roll would have dropped. The switch is honoured only while all three hooks
-  (`DropItemAngelicChance`, `CreateDefaultParams`, `GetUniqueRepoStruct`) are
-  inline detours. **Design, #74 (2026-10-02, replan 1; the sub-list since
+  ForgePact rewrites, at `CreateItemNew`'s entry, the item's
+  `itemDefinitionStruct` (a missing field is created) to the item's own `a`,
+  `b`, `c` 0, `j` 0 and reads them back (a value that does not read back is a
+  refusal: the record is put back, the game builds its stand-in, and the item
+  stays off for the session), and the game's `CreateItemNew` builds it from
+  that record, where the forge selector above recognises it (static reading,
+  Live 3 pending: no live session has yet shown the game building a playable
+  item from a record written there). One hit is one item, in place of what
+  the roll would have dropped. The switch is honoured only while all four
+  hooks (`DropItemAngelicChance`, `CreateDefaultParams`,
+  `GetUniqueRepoStruct` and `CreateItemNew`) are inline detours. **Design, #74 (2026-10-02, replan 1; the sub-list since
   replan 2)**, as the plugin implements it. Of the three questions only a live
   session answers, Live 1 answered **typing** and Live 2 **reach**: the
   roll's picker draws the entries the plugin pushes (below; the held
