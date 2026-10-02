@@ -651,9 +651,11 @@ if (HeroSiege::Player::ReadGroundRelic(yytk, groundInstance, read)) {
 ```
 
 Added for ForgePact#124 (the pet collecting relics). A dropped item is a `Loot_Ground_obj`
-instance, and the read looks at that instance's own variables: the class in
-`kItemInstanceTypeField` (`itemType`) and the definition in `kItemInstanceDefinitionField`
-(`itemDefinitionStruct`), whose first present `kRelicIdFields` entry (`b`) is the id. It is
+instance, and the read goes through the item instance it holds in `kGroundItemInstanceField`
+(`itemInstance`): the class in that item's `kItemInstanceTypeField` (`itemType`) and the
+definition in its `kItemInstanceDefinitionField` (`itemDefinitionStruct`), whose first present
+`kRelicIdFields` entry (`b`) is the id. A class-shaped variable on the ground instance itself
+is never read. It is
 the same positive identification the owned-relic scan uses: the class must equal
 `kRelicItemClass`, never a literal `16`, and an id-shaped or level-shaped field (`relicLevel`
 included) is never evidence on its own. A definition with no class beside it is refused,
@@ -668,7 +670,8 @@ the read stopped at:
 | Stage (`GroundRelicStageName`) | Meaning |
 | --- | --- |
 | `no-handle` | no interface, the value is not an instance handle, or the read threw |
-| `no-class` | no numeric `itemType` on the instance |
+| `no-item-instance` | no `itemInstance` on the ground instance, or one that holds no struct or reference |
+| `no-class` | no numeric `itemType` on the item instance |
 | `not-relic` | the class is read (`itemClass`) and is not `kRelicItemClass` |
 | `no-definition` | a relic class, but no `itemDefinitionStruct` struct |
 | `no-id` | the definition has no id, or one outside `0 .. kRelicIdLimit - 1` |
@@ -678,10 +681,15 @@ the read stopped at:
 
 **C++ only.** A ground instance exists only in the running game's memory, and the Python
 binding reads saves, so there is no Python twin and no parity claim beyond the shared
-constants the read uses. **The two instance variable names are a static reading** of the
-ground item's Create (2026-10-02), not yet a measurement: ForgePact#124's Live 1 confirms
-them, and until then a read that refuses every ground item on screen points at the names
-before it points at the item. `tests/cpp/test_sdk_player_hooks.cpp` (`TestGroundRelic`, driven
+constants the read uses. **The variable names are measured** (ForgePact#124 Live 1,
+2026-10-02, research build): `petrelic census` read 42 of 42 ground relics on screen
+(`read stages: ok=42`) through `itemInstance`, its `itemType` (16) and its
+`itemDefinitionStruct.b` (the relic id the research command had placed). They came first
+from a static reading of the ground item's Create. Whether the ground instance also carries
+a top-level `itemType` copy is still **not established**: the capture did not record the
+census's `first relic vars:` dump, so the read never looks for one. Should a later game build
+make the read refuse every ground item on screen, suspect the names before the item.
+`tests/cpp/test_sdk_player_hooks.cpp` (`TestGroundRelic`, driven
 by `tests/test_cpp_sdk.py`) pins a relic through both kinds, an ordinary glove and a
 material stack refused as `not-relic`, a classless instance refused as `no-class`, and an
 undefined value refused as `no-handle` as the negative control for accepting a reference.
