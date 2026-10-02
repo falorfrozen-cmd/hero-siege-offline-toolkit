@@ -1595,8 +1595,9 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
 - Hits were observed in Live 1 (#74), with the roll's chance argument raised by
   a research lever, not at the natural chance: 98 hits over 108 rolls, each
   detected as a `CreateDefaultParams` call while the roll ran (inline detour,
-  `cdpCalls` above zero as its positive control), each followed by the game's
-  own Angelic or Unholy item on the ground. A hit at the natural chance has
+  `cdpCalls` above zero as its positive control), with the ground filling with
+  the game's own Angelic and Unholy items (seen in screenshots, not counted
+  against the hits). A hit at the natural chance has
   still not been observed. ForgePact's validated pool read 47 candidates and 11
   rejected once the two signature items were out of it. **Measured (Live 1,
   2026-10-02, research dll 4534c0ff…).**
