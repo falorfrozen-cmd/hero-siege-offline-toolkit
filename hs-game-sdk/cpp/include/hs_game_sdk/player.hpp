@@ -298,19 +298,21 @@ inline constexpr std::string_view kGroundItemInstanceField = "itemInstance";
 enum class GroundRelicStage {
     NotRun,        ///< never read: the struct has not been through a call
     NoHandle,      ///< no interface, the value is not an instance handle, or reading it threw
-    NoClass,       ///< no item instance, or one with no numeric kItemInstanceTypeField
+    NoItemInstance, ///< no kGroundItemInstanceField, or one that holds no struct or reference
+    NoClass,       ///< an item instance with no numeric kItemInstanceTypeField
     NotRelic,      ///< the class is read and is not kRelicItemClass
     NoDefinition,  ///< a relic class, but no definition struct
     NoId,          ///< the definition holds no id in 0 .. kRelicIdLimit - 1
     Ok,            ///< a relic, its id in relicId
 };
 
-/// The stage's name for a log line: `not-run`, `no-handle`, `no-class`,
-/// `not-relic`, `no-definition`, `no-id`, `ok`.
+/// The stage's name for a log line: `not-run`, `no-handle`, `no-item-instance`,
+/// `no-class`, `not-relic`, `no-definition`, `no-id`, `ok`.
 inline const char* GroundRelicStageName(GroundRelicStage stage) {
     switch (stage) {
     case GroundRelicStage::NotRun: return "not-run";
     case GroundRelicStage::NoHandle: return "no-handle";
+    case GroundRelicStage::NoItemInstance: return "no-item-instance";
     case GroundRelicStage::NoClass: return "no-class";
     case GroundRelicStage::NotRelic: return "not-relic";
     case GroundRelicStage::NoDefinition: return "no-definition";
@@ -377,10 +379,17 @@ inline bool ReadGroundRelic(YYTKInterface* yytk, const RValue& instance, GroundR
     };
     if (!yytk || !IsInstanceHandle(instance)) return stop(GroundRelicStage::NoHandle);
     try {
+        // The class is taken from the item instance only. A class-shaped
+        // variable on the ground instance itself is never read: no reader
+        // seen takes one from there, so a ground instance without an item
+        // instance is refused here, whatever else it carries.
         if (!YYTK::InstanceHasVariable(yytk, instance, kGroundItemInstanceField)) {
-            return stop(GroundRelicStage::NoClass);
+            return stop(GroundRelicStage::NoItemInstance);
         }
         const RValue item = YYTK::GetInstanceVariable(yytk, instance, kGroundItemInstanceField);
+        if (!IsInstanceHandle(item) || (item.m_Kind == ::YYTK::VALUE_OBJECT && !item.m_Object)) {
+            return stop(GroundRelicStage::NoItemInstance);
+        }
         RValue itemClass;
         if (!field(item, kItemInstanceTypeField, itemClass)) return stop(GroundRelicStage::NoClass);
         if (!isNumber(itemClass) || !std::isfinite(itemClass.ToDouble())) return stop(GroundRelicStage::NoClass);
