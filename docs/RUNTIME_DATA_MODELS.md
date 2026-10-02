@@ -2976,11 +2976,14 @@ workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
   **Measured** (part 2b, workorder `forgepact-issue-95-mod`, Live 2,
   `route-both` and `create-slept`;
   [Live 2 results](../ForgePact/docs/hidden-loot-research.md#live-2-results-2026-09-28)).
-- `LootGroundInit`'s argument 0 is the new ground instance, passed as a
-  reference (`VALUE_REF`): in 473 of 473 calls from the game's own monster
-  drops, and 1,000 of 1,000 from `lootspawn`'s by-name
-  `LootGroundCreateFromItem` calls, argument 0 named a live `Loot_Ground_obj`
-  at the end of the frame, and argument 1 and `self` never did. Argument 1
+- `LootGroundInit`'s argument 0 is the new ground instance: in 473 of 473
+  calls from the game's own monster drops, and 1,000 of 1,000 from
+  `lootspawn`'s by-name `LootGroundCreateFromItem` calls, argument 0 named a
+  live `Loot_Ground_obj` at the end of the frame, and argument 1 and `self`
+  never did. Argument 0 never arrived as an object (`obj-a0=0` over all 1,473
+  calls), so it was a number or a reference every time; the last call's kind
+  was a reference (`VALUE_REF`), and the kind of each call was not recorded,
+  so code reading it must accept both. Argument 1
   never arrived as an object (`VALUE_OBJECT`) in any of the 1,473 calls, and
   the last call's kind was none of a number, a reference, an object or
   undefined (which kind exactly was not recorded). `self` on a monster drop
