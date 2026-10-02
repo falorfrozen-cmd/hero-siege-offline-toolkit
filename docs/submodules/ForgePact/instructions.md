@@ -169,8 +169,9 @@ is not yet confirmed on screen. Tests: `test_mining_ore_behavior.py`,
 harness) and `test_miner_helmet_panel.py`. Evidence and design:
 `ForgePact/docs/mining-ore-research.md` and `ForgePact/docs/miner-helmet-prototype.md`.
 
-**Mining Ore Extra Rolls** (issue #36, notes 2.2.0, off by default; **not yet
-confirmed in a live game**) is the multiplier's child row: `drops.mining_ore_rolls`
+**Mining Ore Extra Rolls** (issue #36, notes 2.2.0, off by default; **verified in
+play on the shipped build 2026-10-02**, after the research build on 2026-09-28) is
+the multiplier's child row: `drops.mining_ore_rolls`
 (integer 1-10, default 1, its own switch like every `drops` row) sends the player
 command `miningrolls N`, in `kPlayerCommands` and dispatched as a standalone early
 return right after `miningore` (the `else if` chain's C1061 limit). The loop lives in
@@ -195,9 +196,18 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   set, and five pass-through detours return without calling the game: `MiningAdd`,
   `ExperienceUpdate`, `GuildExperienceAdd` and `update_quest` (hook ids
   `fp_mining_rolls_add`, `_xp`, `_guild`, `_quest`, by SDK constant) and the shared
-  `CombatText` detour below. So mining XP, character and guild XP, quest progress and
-  the floating text happen once per node; ore, bonus finds, sound and hit effect once
-  per roll. Outside an extra run every one calls straight through.
+  `CombatText` detour below; ore, bonus finds, sound and hit effect come once per
+  roll. Outside an extra run every one calls straight through. Character and guild
+  XP were measured once per dig (2026-09-28: `ExperienceUpdate` and
+  `GuildExperienceAdd` let one call through per dig and silenced the extra runs').
+  Mining XP, quest progress and the floating text are **not established**: no dig
+  in the 2026-09-28 session was seen calling `MiningAdd`, `CombatText` or
+  `update_quest`, so the dig may pay them by a route these detours do not hold, and
+  then once per roll. (On 2026-10-02 `silencedCalls` read 4 after two extra runs,
+  which fits the two XP calls alone, but the player build does not break the count
+  down.) The 2026-10-02 check (`mining-xp-per-dig`) could not read
+  mining XP, because the character's mining level was at the 5000 cap, and the
+  owner chose to ship without measuring it.
 - **One `CombatText` detour, shared with the Experience slider.**
   `plugin/include/ForgePact/CombatTextHook.hpp` (hook id `fp_ctext`) holds the only
   `HookOneScript` call on `CombatText` in the plugin. StatsManager.hpp includes it
@@ -264,8 +274,22 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   and `test_research_build_installs_mining_before_item_inspect`, the panel's
   `test_mining_ore_panel.py`, and the hub's `tests/test_mining_reward_model.py`
   (the model and its rolls lever, pinned to `kMaxRolls` and
-  `drop_multiplier('mining_ore_rolls', ...)`). Design, rejected routes and what the
-  live session must show: `ForgePact/docs/mining-ore-research.md` § "Extra rolls".
+  `drop_multiplier('mining_ore_rolls', ...)`). Design, rejected routes and the
+  research build's live session: `ForgePact/docs/mining-ore-research.md` § "Extra
+  rolls".
+- **Verified in play.** Research build (2026-09-28, `build.bat dev`, sha256
+  `e1c5eb99...`): 13 of 13 extra runs paid ore, rolls 3 and 10 gave three and ten
+  stacks, x5 scaled every run, rolls 10 left the game answering. Shipped build
+  (2026-10-02, `plugin_build\build.bat release` at ForgePact `552a4b9`, sha256
+  `58bdd9d5461b80a6cffb6c6d26760fb080b78f82a8869b5f6522278ddb21fee9`, hero Suh, slot
+  2), set from the panel's Loot tab with the multiplier at 1: rolls 3 logged
+  `miningrolls: x3 (each dig rolled 3 times)` and `miningrolls: first extra roll paid
+  1 ore stacks`, `modstate.json` read `extraRuns` 2 and `extraRunsUnpaid` 0, and a
+  Copper Vein dropped 3 stacks (copper 0 -> 14); back at 1 it logged
+  `miningrolls: x1 (vanilla)` and the next Copper Vein dropped 1 stack (14 -> 17),
+  with `extraRuns` unchanged. The stack count was exactly 3x; the ore per stack
+  varied between the two digs and why was not measured. Bonus finds and the Miner's
+  Helmet case were not observed live.
 
 ## Module Overview & Metadata
 - **Module Name:** ForgePact (Hero Siege Season 10 Offline Mod Panel & BloodPactPlugin)
@@ -2850,10 +2874,10 @@ with a hash manifest.
       - **Restored.** ForgePact 2.0.0's DLL (7AD9AF2457AA...) is back and verified.
       - Capture: workorder `forgepact-114-skill-haste-all-skills-live-1.md`.
 
-42. **Mining Ore Extra Rolls re-runs the game's own dig completion, so what it repeats and what it cannot give are the game's (issue #36, `miningrolls`, off by default, notes 2.2.0, 2026-09-28; not yet confirmed in a live game):**
-    - **Repeats per roll, by design.** Only mining XP, character and guild XP, quest progress and the floating text are silenced during an extra run (§ "Mining Ore Amount and the Miner's Helmet"). The dig sound (`PlaySound3D`), the `Mining_Effect_obj` hit effect, and any other floating text the completion draws other than through `CombatText` run once per roll; `NetworkSendClient` also runs per roll and does nothing offline.
+42. **Mining Ore Extra Rolls re-runs the game's own dig completion, so what it repeats and what it cannot give are the game's (issue #36, `miningrolls`, off by default, notes 2.2.0, 2026-09-28; verified in play on the shipped build 2026-10-02):**
+    - **Repeats per roll, by design.** Only mining XP, character and guild XP, quest progress and the floating text are silenced during an extra run (§ "Mining Ore Amount and the Miner's Helmet"), and of those only character and guild XP were measured once per dig. No dig was seen calling `MiningAdd`, `CombatText` or `update_quest`, so mining XP, quest progress and the floating text may still repeat per roll: not established, and not measured on 2026-10-02 because the test character's mining level was at the 5000 cap (the owner chose to ship without it). The dig sound (`PlaySound3D`), the `Mining_Effect_obj` hit effect, and any other floating text the completion draws other than through `CombatText` run once per roll; `NetworkSendClient` also runs per roll and does nothing offline.
     - **Bonus finds need the character's own stats.** An extra roll draws the dig's stat-gated bonus finds again (query ids 693-700), but a character whose stats are all 0 never passes one, however many rolls: the rolls then give only more ore. Which gear or talents raise those stats is not established (`docs/RUNTIME_DATA_MODELS.md` § 12).
-    - **A node whose re-run does not pay is left depleted.** An extra run that pays no ore stops the loop, logs `miningrolls: extra roll paid nothing - stopped after <k> of <n> extra rolls` once, and the node's `hp` is forced to 0 whatever happened; that node's remaining rolls are lost. Whether the completion pays again in the same frame at all is Live procedure 1's question, recorded in `ForgePact/docs/mining-ore-research.md` § "Extra rolls".
+    - **A node whose re-run does not pay is left depleted.** An extra run that pays no ore stops the loop, logs `miningrolls: extra roll paid nothing - stopped after <k> of <n> extra rolls` once, and the node's `hp` is forced to 0 whatever happened; that node's remaining rolls are lost. The completion did pay again in the same frame in every measured case (13 of 13 extra runs on 2026-09-28, 2 of 2 on 2026-10-02), so this is a guard, not an observed outcome; `ForgePact/docs/mining-ore-research.md` § "Extra rolls".
     - **The rolls refuse to arm if any of their seven detours is table-only** (the step/loot pair, the four pass-through detours, the shared `CombatText` one), and name it in `miningrolls: unavailable - <script> came up table-only`. For example, after `citrace nativetrace` detoured `update_quest` directly in a research session. The multiplier is not affected.
     - **Tests:** `tests/test_mining_ore_behavior.py` + `mining_ore_harness.cpp`, `tests/test_release_hook_contract.py`, the hub's `tests/test_mining_reward_model.py`.
 
