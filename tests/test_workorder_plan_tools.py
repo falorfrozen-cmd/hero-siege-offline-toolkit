@@ -992,6 +992,28 @@ class PlanLintItemTests(TempDirMixin, unittest.TestCase):
         self.assertTrue(table["complete"])
         self.assertEqual([it["id"] for it in table["items"]], ["tokens", "toolbar"])
 
+    def test_items_json_reports_what_each_items_build_checks_read(self):
+        # forgepact-124-pet-relics, 2026-10-02: the round engine left a build
+        # done after a fix landed on its sources; it re-runs one only if this
+        # field says what the build reads.
+        build = '`cd ForgePact && cmd //c "plugin_build\\build.bat dev"` exits 0'
+        self.assertEqual(plan_lint.build_reads([build + " (reads `ForgePact/plugin/**`, `hs-game-sdk/cpp/**`)"]),
+                         ["ForgePact/plugin/**", "hs-game-sdk/cpp/**"])
+        self.assertEqual(plan_lint.build_reads([build]), ["*"], "a build declaring no reads reads whatever changed")
+        self.assertEqual(plan_lint.build_reads(["`py -3 -m unittest tests.test_x` exits 0 (class exclusive) (reads `tools/x.py`)"]),
+                         ["tools/x.py"])
+        # Controls: a targeted test, and a command classify() only calls
+        # `exclusive` because it does not recognise it, are not builds.
+        self.assertEqual(plan_lint.build_reads(["`npm test` exits 0 (reads `panel/**`)", '`bash -c "echo x"` exits 0']), [])
+        rc, out = self.lint(itemised(("build-dev", {"files": "`ForgePact/plugin_build/build.log`",
+                                                    "checks": build + " (reads `ForgePact/plugin/**`)"}),
+                                     ("docs", {"files": "`docs/d.md`", "checks": "`grep -c x docs/d.md` prints `1`"})),
+                            "--items-json")
+        self.assertEqual(rc, 0, out)
+        table = {it["id"]: it for it in json.loads(out.strip().splitlines()[-1])["items"]}
+        self.assertEqual(table["build-dev"]["build_reads"], ["ForgePact/plugin/**"])
+        self.assertEqual(table["docs"]["build_reads"], [])
+
     def test_fail_an_undeclared_overlap_and_pass_a_declared_one(self):
         overlapping = {"files": "`panel/src/app.css`", "checks": "`grep a b` exits 0"}
         rc, out = self.lint(itemised(("one", overlapping), ("two", overlapping)))
