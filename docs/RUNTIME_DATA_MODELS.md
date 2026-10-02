@@ -2412,8 +2412,13 @@ measured (one sentence, in the drag path bullet).
   (InventorySort 2303.5,1198.9,2485.9,1261.6: its top is the row's bottom),
   and InventorySort's left and right equal `InventoryTab_5`'s, so the slot
   left of Sort is under `InventoryTab_4`, whose column is 2121.1 to 2303.5:
-  Sort's left minus one Sort width, up to Sort's left. Not measured: the row
-  at any other GUI scale, and with the bag open on its own.
+  Sort's left minus one Sort width, up to Sort's left. Live 7 (ForgePact #131,
+  2026-10-02, GUI and window 2560x1440) read the same relation there: each tab
+  192 wide, top 1196, bottom 1262, lefts 1522, 1714, 1906, 2098 and 2290,
+  InventorySort 2290,1262,2482,1328 (left and right `InventoryTab_5`'s, top the
+  row's bottom), so `InventoryTab_4`'s column is 2098 to 2290; all five tabs
+  were `visible=1` with the stash open and with the bag open on its own. Not
+  measured: the row at any other GUI scale.
 - **`activeNode`.** M: `UI_Stash_obj.activeNode` holds an instance - the stash
   grid right after the open (SB P0-4), the clicked sub-tab's row after a real
   click on a bag sub-tab (SB P2-4). After a by-name
