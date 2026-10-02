@@ -368,7 +368,7 @@ this runner:
 | `object_index` on an instance | `VALUE_REF`, not a plain number |
 | `object_index` on a struct `self` | undefined |
 | the `room` builtin | a room `VALUE_REF`, not a number; `variable_global_exists("room")` is false, so `variable_global_get("room")` answers undefined and converting that to a number raises the runner error `REAL argument incorrect type undefined` (one per call, measured 2026-10-02, ForgePact#144). Read it with `GetBuiltin("room", ...)`, name it with `room_get_name`; `room_width`/`room_height` are built-ins too |
-| an array, string, struct, undefined or null converted to a number (`RValue::ToDouble`) | no number: the runner raises its own error and the call then fails, and a C++ `catch` that swallows the failure does not take back the runner's report. An array raises `REAL argument incorrect type array` (**measured**, #74 Live 3's capture, 2026-10-02); undefined raises `REAL argument incorrect type undefined` (**measured**, ForgePact#144, the `room` row above). For a string, a struct and null it is a **source reading**, not a measurement: the reading (which is also all that identifies the two) is that `ToDouble` is the runner's own `REAL_RValue`, which raises for every kind it cannot turn into a number; their error text has not been captured. That ForgePact's research scan over `Controller_obj`'s array variables raised one error per array or string element it converted (18 per scan) is an arithmetic fit on Live 2's and Live 3's counts, and the string elements' share of it rests on the fit alone. Live 4 cannot settle that share: ForgePact's gate (§13.4) refuses strings before converting them, so it can show only that the total stops rising, not that a string conversion raises. Refuse a kind that can never be a number before converting it (ForgePact's `SigNeverAHandle`, ForgePact#74) |
+| an array, string, struct, undefined or null converted to a number (`RValue::ToDouble`) | no number: the runner raises its own error and the call then fails, and a C++ `catch` that swallows the failure does not take back the runner's report. An array raises `REAL argument incorrect type array` (**measured**, #74 Live 3's capture, 2026-10-02); undefined raises `REAL argument incorrect type undefined` (**measured**, ForgePact#144, the `room` row above). For a string, a struct and null it is a **source reading**, not a measurement: the reading (which is also all that identifies the two) is that `ToDouble` is the runner's own `REAL_RValue`, which raises for every kind it cannot turn into a number; their error text has not been captured. That ForgePact's research scan over `Controller_obj`'s array variables raised one error per array or string element it converted (18 per scan) is an arithmetic fit on Live 2's and Live 3's counts, and the string elements' share of it rests on the fit alone. Live 4 cannot settle that share: ForgePact's gate (§13.4) refuses strings before converting them, so it can show only that the total stops rising, not that a string conversion raises. Live 4 (2026-10-02, **measured**) showed that it does stop: with the 15 arrays and 3 strings refused before any conversion, two scans left the total at 1 where each had added 18 before, so the scan's conversions are measured as the cause of the rise, and the strings' share of it is still the fit. Refuse a kind that can never be a number before converting it (ForgePact's `SigNeverAHandle`, ForgePact#74) |
 | a ds container | "ref ds_map" / "ref ds_list" |
 | an item | `VALUE_OBJECT` struct (§2) |
 | a bound `m_*` method value | `VALUE_OBJECT` with object kind 0, not a script ref (§10) |
@@ -2118,6 +2118,21 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   count stops rising, not the strings' share of it, since strings are no
   longer converted. A hit at the natural chance was not observed (the
   research lever held the chance at 1e9).
+- **Measured (Live 4, list injection, 2026-10-02, research dll 4b5994c3…,
+  ForgePact `ed59983`): the research scan's runner errors.** With the list
+  check refusing a kind that can never be a handle before converting it, in
+  town with no kills, a lone `angelicprobe inject auto` (`list
+  lootListUnique[5]:380`) and then `angelicprobe list` left the runner's
+  YYError total at 1 with no new report, each read taken at least 35 s after
+  the command. That one report was raised in the menus before any command
+  (`Unable to find any instance for object index ...`). The scan refused the
+  same 15 array and 3 string variables as `never a handle`, none as
+  `id unreadable`, and still accepted the real list, a ref
+  (`candidate lootListUnique array_length=6 at=5 ds_list_size=380`). On the
+  earlier builds each scan had added 18. So the scan's numeric conversions of
+  those elements are measured as the cause of Live 2's and Live 3's rise; how
+  the 18 split between arrays and strings stays the arithmetic fit (§5.4),
+  since Live 4 refused both kinds. A struct or a null element was not met.
 - **The die.** The rate comes from a zero-argument method on a member of the
   picked definition, scaled by one global value read when the roll starts;
   neither is identified (`droprate.base` is the plausible reading). The roll
