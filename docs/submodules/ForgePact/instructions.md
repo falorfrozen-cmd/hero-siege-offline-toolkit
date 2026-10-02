@@ -169,7 +169,7 @@ is not yet confirmed on screen. Tests: `test_mining_ore_behavior.py`,
 harness) and `test_miner_helmet_panel.py`. Evidence and design:
 `ForgePact/docs/mining-ore-research.md` and `ForgePact/docs/miner-helmet-prototype.md`.
 
-**Mining Ore Extra Rolls** (issue #36, notes 2.1.0, off by default; **not yet
+**Mining Ore Extra Rolls** (issue #36, notes 2.2.0, off by default; **not yet
 confirmed in a live game**) is the multiplier's child row: `drops.mining_ore_rolls`
 (integer 1-10, default 1, its own switch like every `drops` row) sends the player
 command `miningrolls N`, in `kPlayerCommands` and dispatched as a standalone early
@@ -2850,7 +2850,7 @@ with a hash manifest.
       - **Restored.** ForgePact 2.0.0's DLL (7AD9AF2457AA...) is back and verified.
       - Capture: workorder `forgepact-114-skill-haste-all-skills-live-1.md`.
 
-42. **Mining Ore Extra Rolls re-runs the game's own dig completion, so what it repeats and what it cannot give are the game's (issue #36, `miningrolls`, off by default, notes 2.1.0, 2026-09-28; not yet confirmed in a live game):**
+42. **Mining Ore Extra Rolls re-runs the game's own dig completion, so what it repeats and what it cannot give are the game's (issue #36, `miningrolls`, off by default, notes 2.2.0, 2026-09-28; not yet confirmed in a live game):**
     - **Repeats per roll, by design.** Only mining XP, character and guild XP, quest progress and the floating text are silenced during an extra run (§ "Mining Ore Amount and the Miner's Helmet"). The dig sound (`PlaySound3D`), the `Mining_Effect_obj` hit effect, and any other floating text the completion draws other than through `CombatText` run once per roll; `NetworkSendClient` also runs per roll and does nothing offline.
     - **Bonus finds need the character's own stats.** An extra roll draws the dig's stat-gated bonus finds again (query ids 693-700), but a character whose stats are all 0 never passes one, however many rolls: the rolls then give only more ore. Which gear or talents raise those stats is not established (`docs/RUNTIME_DATA_MODELS.md` § 12).
     - **A node whose re-run does not pay is left depleted.** An extra run that pays no ore stops the loop, logs `miningrolls: extra roll paid nothing - stopped after <k> of <n> extra rolls` once, and the node's `hp` is forced to 0 whatever happened; that node's remaining rolls are lost. Whether the completion pays again in the same frame at all is Live procedure 1's question, recorded in `ForgePact/docs/mining-ore-research.md` § "Extra rolls".
