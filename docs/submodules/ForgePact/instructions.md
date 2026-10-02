@@ -1055,7 +1055,7 @@ where per-model token counts and the names of any denied tools can be read.
 
 A comment on the pull request is not taken as proof of a review: on ForgePact
 #141 the model skipped the command's agents, read the diff itself in 20 seconds
-and posted "No issues found". So the model is pinned in `claude_args`, the
+and posted "No issues found". So `claude_args` sets `--model opus` (an alias, the latest Opus), the
 notes say the agents are not optional, `cat`/`head`/`tail`/`wc`/`sed -n` are
 allowed, and "Fail if the review skipped the command's agents" fails a run
 that launched fewer than seven agents, finished in under a minute or admitted

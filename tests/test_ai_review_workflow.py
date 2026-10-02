@@ -45,7 +45,7 @@ next variant of this bug is red instead of silent.
 **That a posted comment is not taken for a review.** On hub #365 and ForgePact
 #141 the model skipped the command's agents, read part of the diff itself in
 10-20 seconds, posted "No issues found" and said in its last message that it
-had not run the review; both jobs went green. The model is now pinned, the notes
+had not run the review; both jobs went green. The model is now set (by family alias), the notes
 say the agents are not optional, the read-only text tools a review reaches for
 are allowed, and a step reads the transcript and fails a run that launched
 fewer agents than steps 1 to 4 of the command do, finished in seconds, or
@@ -387,10 +387,13 @@ def claude_args(text):
 class TheReviewFollowsTheCommand(unittest.TestCase):
     """hub #365, ForgePact #141: a comment was posted, and no review was run."""
 
-    def test_the_model_that_follows_the_command_is_pinned(self):
+    def test_the_model_that_follows_the_command_is_set_by_alias(self):
+        # A family alias, so each run gets the latest model in it; a dated
+        # version would need bumping by hand.
         args = claude_args(workflow_text())
         self.assertIsNotNone(args, "claude_args not found")
-        self.assertRegex(args, r"--model claude-[a-z0-9-]+ ")
+        self.assertRegex(args, r"--model (opus|sonnet|haiku) ")
+        self.assertNotRegex(args, r"--model claude-")
 
     def test_the_notes_say_the_agents_are_not_optional(self):
         body = step_body(workflow_text(), "Read the request") or ""

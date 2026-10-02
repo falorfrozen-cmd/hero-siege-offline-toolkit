@@ -325,7 +325,7 @@ installed on this repository; without the app the run fails with
 
 The request predicate is written out twice (job `if` and concurrency group);
 change both together. Everything else about the workflow's shape -- the full
-`--allowedTools` list, the pinned `--model`, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`,
+`--allowedTools` list, `--model opus`, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`,
 the step that fails a run which posted nothing, the one that fails a run which
 skipped the code-review command's agents, and the job summary -- is explained in the hub's
 [`docs/hub/design.md`](../../hub/design.md) under "Asking for a review" and

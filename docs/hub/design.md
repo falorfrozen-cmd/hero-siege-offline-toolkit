@@ -731,8 +731,10 @@ A posted comment is not proof of a review either. On hub #365 and ForgePact
 #141 (2026-10-02) the model skipped the command's agents altogether, read part
 of the diff itself in 10-20 seconds, posted "No issues found", and said in its
 last message that it had not run the multi-agent review; both jobs went green.
-Four changes answer that (#366). `claude_args` pins the model that follows the
-command (`--model`), since the command takes no effort or level argument. The
+Four changes answer that (#366). `claude_args` sets the model that follows the
+command to `--model opus`, an alias that always means the latest Opus, since the
+command takes no effort or level argument and both skips ran on the default
+Sonnet. The
 notes tell it that the agents are not optional and that only the eligibility
 agent may decide a pull request needs no review. The read-only text tools a
 review reaches for (`cat`, `head`, `tail`, `wc`, `sed -n`) are on the
