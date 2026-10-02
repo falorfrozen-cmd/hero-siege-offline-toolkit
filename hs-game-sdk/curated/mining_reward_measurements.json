@@ -1,0 +1,137 @@
+{
+  "$schema_note": "Hand-curated record of the numbers ForgePact's mining research measured, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/mining_reward_model.py never reads it; tests/test_mining_reward_model.py reads both and checks that the model, with ForgePact's levers written as input transforms, reproduces each entry. The mechanism, in our own words, is docs/models/mining-reward-spec.md. Every entry has `id` (MR1, MR2, ...), `kind` (`baseline` = vanilla, no lever; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`measured`, `not_observed` = looked for through a working instrument and not seen, which is never `does not happen`, `qualitative`, `approximate` or `our_code`), `date` (the measurement date), `source` (a list of {path, section} or {repo, commit}; paths are relative to the hub root, `section` is text that appears in that file), `scripts` (every `gml_Script_*` the entry involves, all bound in hs_game_sdk.scripts.GameScript), `what` (the observation), `values` (the recorded numbers), `model` (what the model must show) and exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). MR1 to MR3 were recorded on 2026-09-23, with native HookOneScript detours in place. MR4 to MR9 are issue #36's Live procedure 1, run on 2026-09-28 on the research DLL built at ForgePact 98dbf53 (sha256 e1c5eb99...), hero Suh, Copper Veins in The Highland Mines, the owner digging by hand; every counter was read through `miningrolls stat` / `miningore stat`, and `rollsReady=1` means all seven detours the rolls need came up native.",
+  "measurements": [
+    {
+      "id": "MR1",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-23",
+      "source": [
+        { "path": "ForgePact/docs/mining-ore-research.md", "section": "## Live verification (2026-09-23)" }
+      ],
+      "scripts": ["gml_Script_MiningNodeStepMain", "gml_Script_LootGroundCreate"],
+      "what": "Mining Ore Multiplier at x10, Miner's Helmet off: the adapter logged `first reward dispatched 6 -> 60 (one native drop call)`, and the owner confirmed the amounts in play. The vanilla side of the record is one ore stack of 6.",
+      "values": { "original": 6, "multiplier": 10, "dispatched": 60, "helmet": false, "native_drop_calls": 1 },
+      "model": "A node list with six entries of one kind drops one stack with o = 6 at rolls 1 and multiplier 1; the same stack at multiplier 10 is one stack of 60.",
+      "reproduced_by": "tests.test_mining_reward_model.BaselineTests.test_baseline_one_dig_pays_the_node_list_once"
+    },
+    {
+      "id": "MR2",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-23",
+      "source": [
+        { "path": "ForgePact/docs/mining-ore-research.md", "section": "## Live verification (2026-09-23)" }
+      ],
+      "scripts": ["gml_Script_MiningNodeStepMain", "gml_Script_LootGroundCreate"],
+      "what": "Miner's Helmet worn (x4, replacing the slider): two digs logged `10 -> 40` and `13 -> 52`.",
+      "values": { "helmet_factor": 4, "pairs": [[10, 40], [13, 52]] },
+      "model": "With the helmet, each stack is x4 whatever the multiplier; at three rolls every run's stack is x4 again.",
+      "reproduced_by": "tests.test_mining_reward_model.TargetTests.test_target_three_rolls_pay_three_sets_of_stacks"
+    },
+    {
+      "id": "MR3",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-09-23",
+      "source": [
+        { "path": "ForgePact/docs/miner-helmet-prototype.md", "section": "## Ownership fix (2026-09-23)" }
+      ],
+      "scripts": ["gml_Script_MiningNodeStepMain"],
+      "what": "Each reward was logged with the node's state `miningActive=true miningPlayer=-4 stop=0 range=48 rangeMax=48 dir=1 hp=1`, and the node read `hp=0` right after; a dig completes in the step of the key press.",
+      "values": { "hp_before": 1, "hp_after": 0, "range": 48, "rangeMax": 48, "miningPlayer": -4, "stop": 0 },
+      "model": "One vanilla dig pays the node's list once and leaves hp at 0; the extra-rolls transform also ends at hp 0, whatever the roll count and whether a re-run pays.",
+      "reproduced_by": "tests.test_mining_reward_model.BaselineTests.test_mr3_a_dig_leaves_the_node_at_hp_0"
+    },
+    {
+      "id": "MR4",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-28",
+      "source": [
+        { "path": "ForgePact/docs/mining-ore-research.md", "section": "### Live procedure 1 (2026-09-28)" },
+        { "repo": "ForgePact", "commit": "98dbf53" }
+      ],
+      "scripts": ["gml_Script_MiningNodeStepMain", "gml_Script_LootGroundCreate"],
+      "what": "Mining Ore Extra Rolls at 3, multiplier x1, one Copper Vein dug by hand: the plugin logged `first extra roll paid 1 ore stacks`, `miningrolls stat` moved extraRuns 0 -> 2 with extraRunsUnpaid 0, `miningore stat` moved scopedLoot 0 -> 3 (one LootGroundCreate per completion run), and the owner saw three drops. Each extra run's node snapshot read hp=1 miningQue=true before and hp=0 miningQue=false after: re-arming the node and calling the step again in the same Step pays the completion again (route token `rerun: pays-out`).",
+      "values": { "rolls": 3, "multiplier": 1, "extra_runs": 2, "extra_runs_unpaid": 0, "loot_calls": 3, "stacks_per_run": 1, "hp_before_each_extra_run": 1, "hp_after_each_extra_run": 0, "owner_saw_drops": 3 },
+      "model": "rolled_dig at rolls 3 on a one-kind node: three runs of one stack each, two extra runs, none unpaid, hp 0 after.",
+      "reproduced_by": "tests.test_mining_reward_model.LiveProcedure1Tests.test_mr4_rolls_3_pays_three_completion_runs"
+    },
+    {
+      "id": "MR5",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-28",
+      "source": [
+        { "path": "ForgePact/docs/mining-ore-research.md", "section": "### Live procedure 1 (2026-09-28)" },
+        { "repo": "ForgePact", "commit": "98dbf53" }
+      ],
+      "scripts": ["gml_Script_MiningNodeStepMain", "gml_Script_LootGroundCreate"],
+      "what": "Rolls 3 with Mining Ore Multiplier x5, one Copper Vein dug by hand: the adapter logged `first reward dispatched 5 -> 25 (one native drop call)`, extraRuns moved 2 -> 4 with extraRunsUnpaid 0, scopedLoot 3 -> 6 and changed 0 -> 3 (every stack of every run scaled). The owner saw three stacks, each much larger than usual.",
+      "values": { "rolls": 3, "multiplier": 5, "original": 5, "dispatched": 25, "extra_runs": 2, "extra_runs_unpaid": 0, "loot_calls": 3, "scaled_stacks": 3 },
+      "model": "rolled_dig at rolls 3, multiplier 5, on a node of five of one kind: three runs, each one stack of 25.",
+      "reproduced_by": "tests.test_mining_reward_model.LiveProcedure1Tests.test_mr5_rolls_3_at_x5_scales_every_run"
+    },
+    {
+      "id": "MR6",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-28",
+      "source": [
+        { "path": "ForgePact/docs/mining-ore-research.md", "section": "### Live procedure 1 (2026-09-28)" },
+        { "repo": "ForgePact", "commit": "98dbf53" }
+      ],
+      "scripts": ["gml_Script_MiningNodeStepMain", "gml_Script_LootGroundCreate"],
+      "what": "Rolls 10, multiplier x1, one Copper Vein dug by hand: extraRuns moved 4 -> 13 with extraRunsUnpaid 0, scopedLoot 6 -> 16, all nine extra runs' snapshots read hp 1 -> 0 and miningQue true -> false, and `ping` answered `pong (YYTK 4.0.1)` afterwards. Ten completion runs in one Step left the game responding; the owner saw ten stacks and no hitch.",
+      "values": { "rolls": 10, "multiplier": 1, "extra_runs": 9, "extra_runs_unpaid": 0, "loot_calls": 10, "hp_after": 0, "game_answered_ping": true, "owner_saw_stacks": 10 },
+      "model": "rolled_dig at rolls 10 (the cap) on a one-kind node: ten runs, nine extra, none unpaid, hp 0 after.",
+      "reproduced_by": "tests.test_mining_reward_model.LiveProcedure1Tests.test_mr6_rolls_10_runs_ten_times_and_ends_at_hp_0"
+    },
+    {
+      "id": "MR7",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-28",
+      "source": [
+        { "path": "ForgePact/docs/mining-ore-research.md", "section": "### Live procedure 1 (2026-09-28)" },
+        { "repo": "ForgePact", "commit": "98dbf53" }
+      ],
+      "scripts": ["gml_Script_MiningNodeStepMain", "gml_Script_ExperienceUpdate", "gml_Script_GuildExperienceAdd"],
+      "what": "XP counters (passed/silenced) of the native pass-through detours, read after each dig. ExperienceUpdate and GuildExperienceAdd: 2/0 after the rolls-1 dig, 3/2 after the rolls-3 dig, 52/4 after the rolls-3 x5 dig, 71/13 after the rolls-10 dig. Each script's silenced count grew by exactly the extra runs of that dig (2, 2, 9), so one completion run calls each of them once, and the rolls-3 dig let exactly one call of each through. The passed counts after the x5 and rolls-10 digs also include kill XP from nearby combat (the Experience slider was at x2), so only the rolls-3 dig's +1 is a clean per-dig count.",
+      "values": { "experience_update": [[2, 0], [3, 2], [52, 4], [71, 13]], "guild_experience_add": [[2, 0], [3, 2], [52, 4], [71, 13]], "extra_runs_per_dig": [0, 2, 2, 9], "passed_at_the_clean_rolls_3_dig": 1, "calls_per_completion_run": 1 },
+      "model": "rolled_dig awards XP once per dig (measured here for character and guild XP only), and the silenced calls equal the extra runs times one call per run, for each of the two scripts.",
+      "reproduced_by": "tests.test_mining_reward_model.LiveProcedure1Tests.test_mr7_xp_passes_once_and_each_extra_run_is_silenced_once"
+    },
+    {
+      "id": "MR8",
+      "kind": "target",
+      "status": "not_observed",
+      "date": "2026-09-28",
+      "source": [
+        { "path": "ForgePact/docs/mining-ore-research.md", "section": "### Live procedure 1 (2026-09-28)" },
+        { "repo": "ForgePact", "commit": "98dbf53" }
+      ],
+      "scripts": ["gml_Script_MiningNodeStepMain", "gml_Script_MiningAdd", "gml_Script_CombatText", "gml_Script_update_quest"],
+      "what": "The static reading has the step call MiningAdd, CombatText and update_quest directly. Through native detours (rollsReady=1) none of them was observed from a dig: MiningAdd read 0/0 after all four digs (17 completion runs: 1 + 3 + 3 + 10); CombatText's silenced count stayed 0 over all 13 extra runs, and its passed count did not move across the whole rolls-3 dig (149 before and after), while the same detour counted kill XP text elsewhere (0 -> 149 -> 197 -> 215), which is its positive control; update_quest read 0/0 all session, likely because no quest was active (its quest_exists gate, not established). Not observed live, not 'not called': which branch of the step skips them is not established.",
+      "values": { "mining_add": [0, 0], "combat_text_silenced_over_extra_runs": 0, "extra_runs": 13, "combat_text_passed_before_and_after_rolls_3_dig": [149, 149], "combat_text_passed_series": [149, 149, 197, 215], "update_quest": [0, 0], "digs": 4, "completion_runs": 17 },
+      "model": "None: the model covers what a dig drops, not which side-effect scripts a completion run calls.",
+      "not_reproduced": "A call count of the game's side-effect scripts is not something the stdlib model computes; the plugin harness (ForgePact tests/mining_ore_harness.cpp) covers the silencing, and this entry records only that the game did not reach these three detours from a dig in this session."
+    },
+    {
+      "id": "MR9",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-09-28",
+      "source": [
+        { "path": "ForgePact/docs/mining-ore-research.md", "section": "### Live procedure 1 (2026-09-28)" },
+        { "repo": "ForgePact", "commit": "98dbf53" }
+      ],
+      "scripts": ["gml_Script_ReturnSpecificStat", "gml_Script_MiningNodeStepMain"],
+      "what": "`miningrolls stats` read the ten stat queries the node's Create event and the dig use (ids 692 to 700 and 703) on hero Suh: every one was 0, at every read of the session. No bonus find was seen over the session's 17 paid completion runs (four digs: 1 + 3 + 3 + 10) (route token `bonus: not-observed`). That agrees with the static reading (a stat of 0 never passes) and does not test it: no character with a bonus-find stat above 0 was available.",
+      "values": { "stat_ids": [692, 693, 694, 695, 696, 697, 698, 699, 700, 703], "stat_values": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "paid_completion_runs": 17, "bonus_finds_seen": 0 },
+      "model": "With every bonus-find stat at 0, the chance of no bonus find over 17 runs is 1 and the expected count is 0.",
+      "reproduced_by": "tests.test_mining_reward_model.LiveProcedure1Tests.test_mr9_stats_at_0_predict_no_bonus_find"
+    }
+  ]
+}

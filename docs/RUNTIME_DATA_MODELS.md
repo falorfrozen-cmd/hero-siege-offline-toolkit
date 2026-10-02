@@ -367,7 +367,7 @@ this runner:
 | `instance_find(obj, n)`, an instance's `id` | `VALUE_REF` (kind 15), "ref instance N" |
 | `object_index` on an instance | `VALUE_REF`, not a plain number |
 | `object_index` on a struct `self` | undefined |
-| the `room` builtin | a room `VALUE_REF`, not a number; `variable_global_exists("room")` is false |
+| the `room` builtin | a room `VALUE_REF`, not a number; `variable_global_exists("room")` is false, so `variable_global_get("room")` answers undefined and converting that to a number raises the runner error `REAL argument incorrect type undefined` (one per call, measured 2026-10-02, ForgePact#144). Read it with `GetBuiltin("room", ...)`, name it with `room_get_name`; `room_width`/`room_height` are built-ins too |
 | a ds container | "ref ds_map" / "ref ds_list" |
 | an item | `VALUE_OBJECT` struct (§2) |
 | a bound `m_*` method value | `VALUE_OBJECT` with object kind 0, not a script ref (§10) |
@@ -1388,28 +1388,85 @@ and online-client movement use other code. **Static reading.**
 - `Mining_Node_obj` variables: `miningActive`, `miningPlayer`, `stop`,
   `range`/`rangeMax` (48/48), `dir`, `miningQue`, `hp` (1, then 0 on reward),
   `miningActivateDistance` (16 px) and a protected `miningReq` (the level
-  requirement). **Measured.**
+  requirement). **Measured.** `range` is a pulse, not dig progress: with a
+  character standing at the node and no dig completing it cycles 0 -> about
+  45-48 -> 0 while `hp` stays 1, and `miningQue` reads false at every read from
+  outside the step (consumed in the frame it is set). **Measured 2026-09-28.**
 - A dig finishes inside the Step of the key press: level check, then the reward at
   once. Setting `miningQue` sends the node through that same completion on its
   next Step (hit effect, ore, XP, quests, depletion, network message) if the player
-  is within `miningActivateDistance`. **Measured.**
+  is within `miningActivateDistance`. **Measured.** Setting `hp` back to 1 and
+  `miningQue` to true right after a completion and calling `MiningNodeStepMain`
+  again with the same arguments pays the completion again in the same Step: 13 of
+  13 such re-runs paid ore and each left `hp=0 miningQue=false`; ten completions
+  in one Step left the game responding. **Measured 2026-09-28** (ForgePact Mining
+  Ore Extra Rolls, `hs-game-sdk/curated/mining_reward_measurements.json` MR4-MR6).
 - `miningPlayer` starts as `noone` (-4) and is still `noone` when a keyboard dig
   pays out; ground loot this client creates is credited to the local player.
   `GetMiningLevel()` returns the character's mining level. **Measured** and
-  **static reading.**
+  **static reading.** On 2026-09-28 (Highland Mines Copper Veins) every node
+  snapshot, before and after completions, read `miningPlayer` as an instance
+  reference (`312664r`), not `noone`; whether that instance is the local player
+  was not checked, and when the game sets it is not established.
 - **The ore reward:** `MiningNodeStepMain` calls `LootGroundCreate` directly.
   Argument 2 (zero-based) is the item type (Material, 14); argument 3 is a params
   struct whose `b` is the base definition and optional `o` the stack quantity
   (absent = 1). Material bases 27–32 are Copper, Iron, Gold, Ruby, Jade and
   Tarethium. Changing `o` on a shallow `variable_clone` scales the pickup.
   **Static reading**, **measured 2026-09-23.**
+- **The ore a node pays is decided when the node is created, not when it is dug.**
+  Each node holds an array of ore-kind entries (the variable's name is not
+  established). `Mining_Node_obj` (2775) fills it in its Create event from choices
+  gated by the runtime's `irandom` and by two `ReturnSpecificStat` queries (ids 692
+  and 703); `Asgard_Special_Node_obj` (299) fills it with fixed counts. At dig time
+  `MiningNodeStepMain` only counts the entries per kind and makes one
+  `LootGroundCreate` call per kind present, so at most six, writing `o` on the
+  params only when a kind's count is above 1. There is no draw at dig time for
+  which ore or how much. **Static reading** (2026-09-28), **measured 2026-09-28**
+  for one-kind nodes: a Copper Vein made exactly one `LootGroundCreate` call per
+  completion run (16 calls over the 16 runs counted), and a re-run of the completion paid the same
+  kind again.
+- **Bonus finds are drawn at dig time, gated by the digger's stats.** After the ore
+  the step makes several independent rolls, each asking `ReturnSpecificStat` for
+  one stat (query ids 693 to 700, in the five-argument query shape
+  `hs_game_sdk/reward_stats.hpp` records for Magic Find) and paying only when the
+  stat is above 0 and an `irandom(cap)` draw comes out below it. `irandom(n)` draws
+  0..n inclusive; the cap is the literal 99 at one site and computed at the others
+  (not established). What they pay: a type-15 item at base 109, 110 or 111 (itself
+  an inclusive draw); one to three `Goblin_Ore_obj` (1903) placed through
+  `CreateInFreePos`; type-14 materials at computed bases (three sites); two more
+  type-15 sites and one type-13 site. A character whose queried stats are all 0
+  never passes one. Which gear or talents raise ids 692-703 is not established.
+  **Static reading** (2026-09-28). Measured data, 2026-09-28: on one character
+  (hero Suh, digging Copper Veins in a zone-level-33 mine) all ten queries the node and the dig
+  use, ids 692-700 and 703, read 0 through `ReturnSpecificStat`, and no bonus
+  find was seen over 17 completion runs. That agrees with the reading but does
+  not test it, so a bonus find is **not observed live** (MR9).
+- **The dig's side effects are direct calls from the step.** `MiningAdd` (the
+  mining skill's own XP); then, on each of two branches, `ExperienceUpdate` followed
+  by `GuildExperienceAdd`, each called by the step itself (`GuildExperienceAdd` is
+  not reached through `ExperienceUpdate`); `CombatText` floating text at several
+  sites; up to four `quest_exists`/`update_quest` pairs; `PlaySound3D`; a
+  `Mining_Effect_obj` (2773) hit effect; `NetworkSendClient` (nothing offline).
+  Every one is a direct call, so only a native `HookOneScript` detour sees it.
+  **Static reading** (2026-09-28). The node's `hp` then goes 1 -> 0 and the
+  instance survives the frame at 0: **measured 2026-09-23.** Through native
+  detours on 2026-09-28: `ExperienceUpdate` and `GuildExperienceAdd` are each
+  called once per completion run (**static reading, measured 2026-09-28**, MR7).
+  `MiningAdd`, `CombatText` and `update_quest` were **not observed** from a dig
+  over four digs and 17 completion runs (`MiningAdd` 0 calls; `CombatText` 0
+  calls across a whole dig while the same detour counted kill XP text;
+  `update_quest` 0, probably no active quest), against the static reading; which
+  branch skips them is not established (MR8).
 - `material_mining_*` items have `droprate.base` 50,000,000, so no drop type
   produces them: ore comes only from mining (§13.2). **Measured.**
 
 [miner's helmet, Runtime](../ForgePact/docs/miner-helmet-prototype.md#runtime),
 [Ownership fix](../ForgePact/docs/miner-helmet-prototype.md#ownership-fix-2026-09-23),
 [mining ore, Observed interface](../ForgePact/docs/mining-ore-research.md#observed-interface),
-[Live verification](../ForgePact/docs/mining-ore-research.md#live-verification-2026-09-23)
+[Live verification](../ForgePact/docs/mining-ore-research.md#live-verification-2026-09-23),
+[what one dig pays, the spec and its model](models/mining-reward-spec.md),
+[extra rolls](../ForgePact/docs/mining-ore-research.md#extra-rolls)
 
 ---
 
