@@ -3907,7 +3907,10 @@ your filter hides**, `mod_hidden_loot` (off by default), sending `hiddenloot
 1|0`, with the child row **Show hidden loot while held**, `mod_hidden_loot_key`
 (a `<select>` of `panel/src/hidden-loot-keys.js`'s keys, Left Alt 164 by
 default, None 0), sending `hiddenloot key <vk>`; a `NATIVE_BOOLEANS` entry and
-three derived key-select steps in the behaviour oracle.
+three derived key-select steps in the behaviour oracle. While the switch is off
+the select is disabled, the panel's only disabled select: 45% opacity, a
+not-allowed cursor and no hover fill in every theme (`panel/DESIGN.md`),
+checked by `e2e:polish`'s `mods-disabled-select` and by `e2e:ember`.
 
 **Rules.** The verdict is the game's: the mod never evaluates the filter or
 refuses a drop. One hook, on `LootGroundInit`, because monster drops
