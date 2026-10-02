@@ -1405,8 +1405,9 @@ and online-client movement use other code. **Static reading.**
   pays out; ground loot this client creates is credited to the local player.
   `GetMiningLevel()` returns the character's mining level. **Measured** and
   **static reading.** On 2026-09-28 (Highland Mines Copper Veins) every node
-  snapshot, before and after completions, read `miningPlayer` as a reference to
-  the local player instead; when the game sets it is not established.
+  snapshot, before and after completions, read `miningPlayer` as an instance
+  reference (`312664r`), not `noone`; whether that instance is the local player
+  was not checked, and when the game sets it is not established.
 - **The ore reward:** `MiningNodeStepMain` calls `LootGroundCreate` directly.
   Argument 2 (zero-based) is the item type (Material, 14); argument 3 is a params
   struct whose `b` is the base definition and optional `o` the stack quantity
