@@ -240,12 +240,14 @@ def _names_a_boss(entry, family):
 
 def _keyed_rows(entries, hypothesis, family):
     """The measured rows that answer `hypothesis`: `what` names its dimension and
-    an object of the boss family, and `values` carries what decides it."""
+    an object of the boss family, `values` carries what decides it, and the row
+    carries no `confounds` (nothing but the rank changed on that boss)."""
     word, field = DIMENSIONS[hypothesis]
     decides = "ratio" if field else "dropitem_first_argument"
     return [e for e in entries
             if e["status"] == "measured" and word.search(e["what"])
-            and _names_a_boss(e, family) and decides in e["values"]]
+            and _names_a_boss(e, family) and decides in e["values"]
+            and not e.get("confounds")]
 
 
 def _row_follows(entry, field):
@@ -278,25 +280,32 @@ class HypothesisTests(unittest.TestCase):
                 else:
                     self.assertIsNone(answer, "set from no measured row about it on a boss")
 
-    def test_live_one_answered_health_only(self):
-        # The curated file as it stands: MK7 decides health (x5.65 against
-        # x4.23), and nothing decides damage, XP or the drop rank.
-        entries = list(_entries().values())
+    def test_live_one_established_nothing_about_a_boss(self):
+        # The curated file as it stands: MK7 is a boss's health at rank 4
+        # (x5.65 against x4.23), but the Bosses control's 3-affix top-up was
+        # built into the same health, so it carries `confounds` and decides
+        # nothing. Nothing decides damage, XP or the drop rank either.
+        entries = _entries()
         family = model.boss_family()
-        self.assertEqual([e["id"] for e in _keyed_rows(entries, "boss_hp_follows_rank_table", family)],
-                         ["MK7"])
-        self.assertIs(model.HYPOTHESES["boss_hp_follows_rank_table"], False)
-        for hypothesis in ("boss_damage_follows_rank_table", "boss_xp_follows_rank_table",
-                           "boss_drop_rank_reaches_dropitem"):
+        mk7 = entries["MK7"]
+        self.assertTrue(mk7["confounds"])
+        self.assertNotIn("reproduced_by", mk7)
+        # Positive control: without its confounds MK7 would be keyed, so it is
+        # the confounds, not a mismatched word or object, that keep it out.
+        unconfounded = {k: v for k, v in mk7.items() if k != "confounds"}
+        self.assertEqual(_keyed_rows([unconfounded], "boss_hp_follows_rank_table", family),
+                         [unconfounded])
+        for hypothesis in DIMENSIONS:
             with self.subTest(hypothesis=hypothesis):
-                self.assertEqual(_keyed_rows(entries, hypothesis, family), [])
+                self.assertEqual(_keyed_rows(list(entries.values()), hypothesis, family), [])
                 self.assertIsNone(model.HYPOTHESES[hypothesis])
 
     def test_the_key_is_a_boss_object_not_a_word(self):
         # Controls on the selection itself. Positive: a synthetic boss row at the
         # table's own ratio follows it, one at MK7's does not. Negative: an
         # ordinary monster's row (MK14 names the drop rank), a row that says
-        # "boss" but names no boss object, a not-observed row and a report never
+        # "boss" but names no boss object, a not-observed row, a report and a
+        # boss row at the table's own ratio that carries `confounds` never
         # decide anything.
         family = model.boss_family()
 
@@ -321,6 +330,7 @@ class HypothesisTests(unittest.TestCase):
             row("Karp_King_obj health at rank 4", status="not_observed", rank=4,
                 rank_1_value=1, value=4, ratio="4"),
             entries["MK5"],
+            dict(at_table, confounds=["an affix top-up built into the same health"]),
         ]
         for hypothesis in DIMENSIONS:
             with self.subTest(hypothesis=hypothesis):
