@@ -1662,8 +1662,9 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   unique repository, `j` the weapon subtype); there is no Angelic flag, and base
   items with flag 40 set are skipped. **Headhunter and Tyrant's Crown have no
   unique-repository entry, so the game's own roll never picks them.** **Static
-  reading.** ForgePact adds them beside a hit while their switch is on (#74):
-  see the guide's Known Limitations item 42.
+  reading.** How ForgePact #74 lets the roll pick them anyway is the bullet
+  "How #74 uses the list" below (a stand-in entry for the length of the roll)
+  and the guide's Known Limitations item 42.
 - **The return value.** `DropItemAngelicChance` sets its result to undefined on
   entry and never assigns it again, so a hit returns undefined exactly like a
   miss: the return cannot tell the two apart. This is why the 374 measured
@@ -1682,17 +1683,86 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   ForgePact's `BuildAngelicPool` applies. Roughly one entry in eight passes,
   which accounts for the ~8 definition reads per roll measured above. **Static
   reading (2026-10-02, issue #74).**
-- **Where the list lives.** The list is read through a reference-typed scope
-  whose variable slot is resolved at run time. As an instance variable of
-  `Loot_Manager_obj` it was **not observed** (2026-09-23:
-  `variable_instance_exists` answered false on the instance found by name; no
-  positive control on that instance was recorded); which scope holds it has
-  not been established. **Static reading (2026-10-02, issue #74).** The list
-  was not observed in either scope (no positive control on the same instance
-  or the global scope): neither the `lootListUnique` global
-  (`variable_global_exists` false) nor a `lootListUnique` instance variable
-  on `Loot_Manager_obj` (`variable_instance_exists` false) answered, so the
-  scope is still not identified. **Measured (Live 1, 2026-10-02, research dll 4534c0ff…).**
+- **Where the list lives.** The roll reads the list as a variable of an
+  object-scoped reference whose constant encodes object index 984, which the
+  SDK names `Controller_obj` (`HeroSiege::Objects::GameObject::Controller_obj`):
+  in GameMaker terms, a variable of the first active `Controller_obj`
+  instance. **Static reading (2026-10-02, issue #74, list injection).** The
+  two earlier negatives asked the wrong scopes, so they say nothing about the
+  list itself: a `lootListUnique` instance variable on `Loot_Manager_obj`
+  (`variable_instance_exists` false, 2026-09-23) and, in #74's first Live 1,
+  a `lootListUnique` global (`variable_global_exists` false) beside the same
+  `Loot_Manager_obj` question. **Measured (Live 1, 2026-10-02, research dll
+  4534c0ff…)**, relabelled by the static reading above.
+- **The list's variable name is not established.** The variable slot the roll
+  loads is filled at startup by a pattern the slot-name recovery does not
+  match: no code stores to it or takes its address, and no initialised pointer
+  or RVA table holds it (`FindSlotNames`, `SlotRefs`, `FindPointers` and
+  `FindRvaTable` each found 0 hits for the slot globals). So the name is read
+  live: `variable_instance_get_names` on the first `Controller_obj` instance,
+  filtered by shape (an array whose entries are arrays of three numbers).
+  The curated record `hs-game-sdk/curated/angelic_list_measurements.json`
+  holds it once measured (`list_variable`, null until then). **Static
+  reading (2026-10-02, issue #74).**
+- **Other readers of the list.** The same slot is loaded by `DropUniqueItems`,
+  `DropItemHeroic`, `DropItemDebug`, `DropItem` itself, the traveling merchant
+  and black market grids (`PopulateTravelingMerchantGrid`,
+  `PopulateBlackMarketGrid`), `ReturnRandomSatanic`, `CreateShrineEffect`,
+  `DoCraftResult` and several unnamed object events. An entry left in the list
+  between rolls would be seen by all of them. Who builds the list, and whether
+  it is rebuilt per zone or per load, is **not established**. **Static reading
+  (2026-10-02, issue #74).**
+- **The unique repository.** `GetUniqueRepoStruct(type, sub, b)` indexes a
+  `global` three-level array `repo[type][sub][b]` (its slot name is also
+  unresolved; type 3 takes a separate branch) with GameMaker's own bounds
+  checks, so a list entry whose indices are out of range raises the runtime's
+  array error rather than missing quietly. `sub` is 0 for the unique
+  repository and `b` is the unique's own index: Liquor Holster is
+  `{8, 0, 51}`, Lucifer's Crown `{0, 0, 85}` (ForgePact's validated pool table
+  `kAngelicBases` holds exactly such triples). **Static reading (2026-10-02,
+  issue #74)**, consistent with the pool's 47 validated entries measured in
+  Live 1.
+- **What a hit's placement reads.** `CreateDefaultParams(sub, b, 1.0)` builds
+  its parameter struct from exactly its three arguments plus the result of one
+  zero-argument builtin, and reads no repository. `LootGroundCreate` and its
+  callees `CreateLootInFreePos` and `LootGroundInit` read no repository
+  either. `CreateItemNew` is missing from the local import, so whether it looks
+  the unique up by `(c, b)` is **not established** (for `c` = 1 it must).
+  **Static reading (2026-10-02, issue #74).** Note that `type` reaches the
+  placement from the list entry, not from the parameter struct, so rewriting
+  the struct cannot change an item's type.
+- **The forge selector.** The item the game builds carries the parameters as
+  its `itemDefinitionStruct` `{w, j, b, a, c}`: `c` = 1 selects the unique
+  repository and `b` the unique; `c` = 0 selects the normal repository, `b`
+  the base item and `a` the seed or affix id. ForgePact's Custom Forge hook on
+  `CreateItemNew` recognises an item by comparing every selector field, `t`
+  against the item's `itemType` and `a`, `b`, `c`, `j` against its
+  `itemDefinitionStruct`; its built-in entries are Headhunter
+  `{t 8, a 777002, b 2, c 0, j 0}` and Tyrant's Crown
+  `{t 0, a 777001, b 7, c 0, j 0}`. **Source reading** (ForgePact's own code);
+  that an item built from those parameters is dressed as the signature item is
+  **measured** (`sigdrop`, 30 of 30 and 17 of 17 on 2026-09-18).
+- **How #74 uses the list: a stand-in entry for the length of the roll.** While
+  Headhunter's or Tyrant's Crown's panel switch is on, ForgePact pushes one
+  entry per enabled item onto the `Controller_obj` list before the roll's
+  first original call and removes them after its last, under a scope guard, so
+  between rolls the list is exactly the game's own and none of the other
+  readers above ever sees the entries. Each entry is a **stand-in**: a real
+  Angelic unique of the same `type`, because the picker's filters and the
+  rate need a real definition and the item's type comes from the entry
+  (Headhunter's stand-in is Liquor Holster `{8, 0, 51}`; Tyrant's Crown's is a
+  helmet chosen when the pool is built, named in the switch-on log line). The
+  picker cannot tell the added entry from the vanilla one, so a hit on a
+  stand-in's `(sub, b)` is attributed to the mod item with probability
+  1 / (n + 1), `n` being how often the vanilla list already holds that triple;
+  on such a hit ForgePact rewrites the returned `CreateDefaultParams` struct's
+  `a`, `b`, `c`, `j` to the item's own, and the game's `LootGroundCreate` ->
+  `CreateItemNew` builds and places it, where the forge selector above
+  recognises it. One hit is one item, in place of what the roll would have
+  dropped. If the list's length changed during the roll, nothing is removed
+  and one anomaly line is logged. **Design, #74 (2026-10-02);** whether the
+  game builds exactly one dressed item per such hit is what #74's Live 1
+  measures, and it has **not yet run**.
 - **The die.** The rate comes from a zero-argument method on a member of the
   picked definition, scaled by one global value read when the roll starts;
   neither is identified (`droprate.base` is the plausible reading). The roll
@@ -1718,12 +1788,16 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
 - A `lootListUnique` instance variable on `Loot_Manager_obj` was **not
   observed**: `variable_instance_exists` answered false on the instance found
   by name, with no positive control on that instance recorded (2026-09-23).
+  The static reading of 2026-10-02 puts the list on `Controller_obj` (above),
+  so this asked the wrong scope.
 - `DropItem` also runs for breakable props, and ordinary drops call
   `LootGroundCreate` (and `CreateDefaultParams`) directly from inside it.
   **Measured.**
 
 [angelic roll, Results](../ForgePact/docs/angelic-roll-hook-research.md#results),
 [Session 2 (#74) Results](../ForgePact/docs/angelic-roll-hook-research.md#results-1),
+[Session 3 (#74, list injection)](../ForgePact/docs/angelic-roll-hook-research.md#session-3-list-injection-issue-74),
+[curated record](../hs-game-sdk/curated/angelic_list_measurements.json),
 [Decision](../ForgePact/docs/angelic-roll-hook-research.md#decision),
 [angelic drop, the game's own mechanism](../ForgePact/docs/angelic-drop-research.md#oyunun-kendi-mekanizması-statik-okuma-canlı-ölçülen-yalnızca-buff-yokken-zarın-hiç-atılmaması),
 [ForgePact guide, Known Limitations](submodules/ForgePact/instructions.md#known-limitations--gaps)

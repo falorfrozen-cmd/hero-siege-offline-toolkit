@@ -1,0 +1,35 @@
+{
+  "$schema_note": "Hand-curated record of the list the game's own Angelic roll (DropItemAngelicChance) picks its unique from, and the stand-in entries ForgePact #74 adds to it for the length of one roll while Headhunter's or Tyrant's Crown's panel switch is on. The mechanism, in words, is docs/RUNTIME_DATA_MODELS.md section 13.4 and ForgePact/docs/angelic-roll-hook-research.md section 'Session 3: list injection (issue #74)'. No model or generator reads this file: tests/test_sdk_all.py checks only that curated/ is tracked, and the #74 workorder's acceptance criteria read controller_object, list_variable and measurements. list_variable stays null until a live session measures the variable's name (it could not be recovered statically); measurements is filled from that session's capture, one entry per check, in the style of relic_pick_measurements.json. Static readings below are our own words from a local reading of the game, never its text.",
+  "controller_object": "Controller_obj",
+  "controller_object_index": 984,
+  "controller_object_sdk": "HeroSiege::Objects::GameObject::Controller_obj (hs-game-sdk/cpp/include/hs_game_sdk/objects.hpp)",
+  "list_variable": null,
+  "list_entry_shape": "array of three numbers [type, sub, b], resolved by GetUniqueRepoStruct(type, sub, b)",
+  "repository": {
+    "scope": "global",
+    "shape": "three-level array [type][sub][b]",
+    "sub_for_uniques": 0,
+    "bounds": "GameMaker's own array bounds checks: an out-of-range triple raises the runtime's array error rather than missing quietly, so only triples ForgePact's validated pool accepted are ever added",
+    "slot_name": null
+  },
+  "stand_ins": {
+    "Headhunter": {"type": 8, "sub": 0, "b": 51, "name": "Liquor Holster", "item": {"t": 8, "a": 777002, "b": 2, "c": 0, "j": 0}, "chosen_by": "owner, ForgePact #74"},
+    "Tyrant's Crown": {"type": 0, "sub": 0, "b": null, "name": null, "item": {"t": 0, "a": 777001, "b": 7, "c": 0, "j": 0}, "chosen_by": "default until the owner names one: the validated type 0 entry of ForgePact's kAngelicBases with the lowest droprate.base, picked when the pool is built and named in the switch-on log line"}
+  },
+  "static_reading": {
+    "date": "2026-10-02",
+    "source": "local Ghidra project (bare script names), planning session of workorder forgepact-74-angelic-list-injection; nothing decompiled is kept in this repository",
+    "claims": [
+      "The roll reads its unique list as a variable of an object-scoped reference whose constant encodes object index 984, Controller_obj: the variable of the first active Controller_obj instance.",
+      "The earlier negatives (no lootListUnique global, no lootListUnique instance variable on Loot_Manager_obj) asked the wrong scopes; they say nothing about the list itself.",
+      "The variable's name was not recovered: FindSlotNames, SlotRefs, FindPointers and FindRvaTable each found 0 hits for the slot globals, so the name is read live, by shape (an array whose entries are arrays of three numbers).",
+      "The same list slot is also read by DropUniqueItems, DropItemHeroic, DropItemDebug, DropItem, the traveling merchant and black market grids, ReturnRandomSatanic, CreateShrineEffect, DoCraftResult and several unnamed object events; who builds it, and whether per zone or per load, is not established.",
+      "GetUniqueRepoStruct(type, sub, b) indexes a global three-level array repo[type][sub][b] with bounds checks; sub is 0 for the unique repository and b the unique's own index (Liquor Holster {8, 0, 51}).",
+      "The picker re-picks while the definition's base-info flag 40 is set or its rarity field 27 is neither 7 nor 10, then hits when a uniform integer up to the definition's rate is below the chance.",
+      "On a hit CreateDefaultParams(sub, b, 1.0) builds the parameter struct from its three arguments and one zero-argument builtin; it, LootGroundCreate, CreateLootInFreePos and LootGroundInit read no repository.",
+      "CreateItemNew is missing from the import, so whether it looks the unique up by (c, b) is not established.",
+      "The built item carries the parameters as itemDefinitionStruct {w, j, b, a, c}; the Custom Forge hook recognises Headhunter and Tyrant's Crown by the selector {t, a, b, c, j} = {8, 777002, 2, 0, 0} and {0, 777001, 7, 0, 0}."
+    ]
+  },
+  "measurements": []
+}
