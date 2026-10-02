@@ -1617,9 +1617,11 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   which accounts for the ~8 definition reads per roll measured above. **Static
   reading (2026-10-02, issue #74).**
 - **Where the list lives.** The list is read through a reference-typed scope
-  whose variable slot is resolved at run time. It is **not** an instance
-  variable of `Loot_Manager_obj` (measured above); which scope it is has not
-  been established. **Static reading (2026-10-02, issue #74).**
+  whose variable slot is resolved at run time. As an instance variable of
+  `Loot_Manager_obj` it was **not observed** (2026-09-23:
+  `variable_instance_exists` answered false on the instance found by name; no
+  positive control on that instance was recorded); which scope holds it has
+  not been established. **Static reading (2026-10-02, issue #74).**
 - **The die.** The rate comes from a zero-argument method on a member of the
   picked definition, scaled by one global value read when the roll starts;
   neither is identified (`droprate.base` is the plausible reading). The roll
@@ -1642,8 +1644,9 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
 - `droprate.base` of some uniques: Marcher's of Hatred 4,266,000; Annihilator
   4,158,450; Tayrel's Chestplate 25,000,000; Lucifer's Crown 111,111,111.
   **Measured.**
-- `Loot_Manager_obj` has no `lootListUnique` instance variable, although the
-  instance exists. **Measured.**
+- A `lootListUnique` instance variable on `Loot_Manager_obj` was **not
+  observed**: `variable_instance_exists` answered false on the instance found
+  by name, with no positive control on that instance recorded (2026-09-23).
 - `DropItem` also runs for breakable props, and ordinary drops call
   `LootGroundCreate` (and `CreateDefaultParams`) directly from inside it.
   **Measured.**
