@@ -536,6 +536,7 @@ switching Holy Form off does call it.
 |---|---|---|
 | 1 | Berserk | 720 per hit, stacking to 8; a new instance each time it reappears |
 | 9 | Defensive Shout | 14400, re-added in full about 180 times over 89 frames |
+| 21 | Master Mechanic (Marksman) | 1500 (25 s at 60 fps), `host` = the player's `id`; measured 2026-10-01 on a test copy, ForgePact #122 |
 | 22 | Agility | 3600 |
 | 86 | Martyr (White Mage passive during life drain) | about 445–563 |
 | 104 | Counter | 1036.8; held constant with Give No Quarter |
@@ -590,7 +591,8 @@ switching Holy Form off does call it.
   Healing Zone, 358 Lunar Orbit, 283 Crematus, 301 Counter, 377 Submerged Knives,
   430 Maelstrom of Frost, 224 Meteor Storm, 134 Bushido, 364/365 Holy/Unholy
   Form, 137 Blade Barrier, 334 Blizzard, 6 Defensive Shout, 18 Berserk, 307 Last
-  Stand, 45 Agility. Whether they survive a game build is not known.
+  Stand, 45 Agility, 49 Beacon, 54 Master Mechanic. Whether they survive a game
+  build is not known.
 
 [toggle skills, Toggle skill table](../ForgePact/docs/toggle-skills-research.md#toggle-skill-table),
 [After session 6](../ForgePact/docs/toggle-skills-research.md#after-session-6),
@@ -652,6 +654,16 @@ Shout and Berserk add theirs outside it.
   Pickup Truck 576, Dissipating Tornado 432. Relic companions (`Honey_Bee_obj`,
   `Minisect_obj`, `Karp_Head_obj`, `Zeppelin_obj`) sit under the ability parent at
   a constant -1. **Measured.**
+- The Marksman's Beacon (`Marksman_Beacon_obj`, talent 49) is a timed effect:
+  its own `destroyTimer` started at **516** (8.6 s at 60 fps) on each of two
+  clean casts and fell about one per frame. `instance_number` stayed 1 in both
+  cleared windows and a recast replaced the live beacon (the fresh timer back
+  at 516), so it is single instance; ownership is unreadable (no `isMyClient`),
+  and its parent is `Player_Ability_Parent_obj`, not the sentry parent. Its
+  talent reads `abilityDuration=0`, `abilityCooldown=10` and tags `[15,18,10]`
+  — the tag the turrets, totems and hydra share. **Measured 2026-10-01**, on a
+  test copy of the class (ForgePact #122).
+  [ForgePact #122](../ForgePact/docs/toggle-skills-research.md#issue-122-2026-10-01-the-marksmans-beacon)
 - Mana Orb (talent 253) is a **timed effect, not a toggle**: its object is
   `White_Mage_Mana_Orb_obj`, and `skillstate`'s `effect=` reader
   (`instance_number` of that object, resolved by name through
@@ -769,6 +781,61 @@ Shout and Berserk add theirs outside it.
 
 [skill actions, Results](../ForgePact/docs/skill-actions-research.md#results),
 [skill actions, Decision](../ForgePact/docs/skill-actions-research.md#decision)
+
+### 7.5 Skill Haste and All Skills: the stats and where the game reads them
+
+Written for ForgePact#114 (hub #337); the mechanism, labelled claim by claim,
+is [`docs/models/skill-stat-spec.md`](models/skill-stat-spec.md).
+
+- **`ReturnSpecificStat(player, statId, ...)` is the stat dispatcher.** A switch
+  on the stat id sends it to one `Stat*` script; the function fills in its own
+  case table on first run. Ids: **2** `StatAllSkills`, **36** `StatMaxLife`,
+  **37** `StatMaxMana`, **103** `StatSpellHaste`, **106** `StatFasterCastRate`.
+  `StatSpellHaste` and `StatAllSkills` each have exactly one direct caller,
+  `ReturnSpecificStat`. **Static reading.**
+- **Both return a fresh array; element 0 is the total.** Each builds its result
+  with `@@NewGMLArray@@` on every call (**static reading**). On the way out,
+  `ReturnSpecificStat` does more arithmetic with elements 0 to 3 of an array
+  result (**static reading, not fully read**). Skill Haste's usable total stops
+  at 200 somewhere after `StatSpellHaste` returns (**measured**, below).
+- **Skill Haste runs cooldowns down faster.** `Controller_obj`'s Step event walks
+  the active cooldowns and, each step, lowers one's time left by
+  `(1 + rate) × deltaSpd`. For a skill cooldown `rate` = Skill Haste (stat 103) ×
+  0.005; entries of another kind take stat 105 × 0.01 instead, and cooldown id
+  75 takes 0. The talent tooltip, the only other constant-103 read found,
+  scales by the same 0.005. **Static reading.** `GetTalentCooldown`, which sets
+  a cooldown's base time, does not read Skill Haste.
+- **Measured** (ForgePact#114 Live 1, 2026-09-30, Suh, a Samurai with 40 Skill
+  Haste from gear, Blade Barrier's 8 s cooldown cast from code by `TalentUse`):
+  - The step read Skill Haste once per step (60 reads a second) while the
+    cooldown ran, and never while no cooldown ran.
+  - The cooldown ran for 392 and 397 steps with no bonus, 280 with +100, 265
+    with +120, and 238 with +160, +200 and +300. That is base / (1 + total/200)
+    with the total stopped at 200: totals of 240 and 340 took exactly as long as
+    200.
+  - [`hs-game-sdk/curated/skill_stat_measurements.json`](../hs-game-sdk/curated/skill_stat_measurements.json)
+    holds the counts, checked by `tests/test_skill_stat_model.py`.
+- **`ReturnTalentLevel` has no direct caller in this build.** Its body adds the
+  bonuses it reads through `ReturnSpecificStat`, All Skills among them, only when
+  its third argument is true and the allocated level is above 0, with no clamp
+  (**static reading**). Calling it by name with only a talent id raises the
+  runner error "I32 argument is undefined" (**measured**, `skillprobe state`,
+  2026-09-30; the game carried on). Which of the many scripts that pass stat id 2
+  to `ReturnSpecificStat` turn it into a skill's level is **not established**.
+- **All Skills joins the level a cast uses** (**measured**, ForgePact#114 Live 1,
+  2026-10-01, Suh). For Honor (talent 142, one point) adds buff type 42, whose
+  `buffValue` was [137.8, 72.5, 0] with the character's own All Skills total of
+  28, and [228, 120, 0] with 19 more added through `StatAllSkills`: the level
+  (29, then 48) times [4.75, 2.5]. `ReportClient` was not called, and the save
+  kept every field but `playtime`.
+- **`StatAllSkills` can call `ReportClient`.** It compares one of the values its
+  caller passes in against twice a global constant and reports the client when
+  it is larger, inside the script, on the game's own numbers. `ReportClient`
+  builds a state report (sha256, base64) and sends it through the online API
+  (`ApiRequestRegion`, `reportSendPendingMap`). `CheatDetection`, which calls
+  `ReportClient` from `Client_obj`'s Step, checks hashes (gold, experience, the
+  crafting trades, mercenary talents), game speed and items, and reads neither
+  stat. **Static reading.**
 
 ---
 
@@ -1151,12 +1218,13 @@ On the 2026-09-11 build the closures were `m_QuestUseKey` `anon@1400`,
 ### 10.6 The companion's own loot pickup (`Companion_obj`)
 
 Every entry here is a **Static reading** of the current build's compiled
-`Companion_obj`, `Loot_Ground_obj` and `Coin_obj` events (2026-09-27); none is
-measured. Object events have no script-table entry, so none of it can be
-hooked by name. ForgePact #94 (the pet stays on one ground item it cannot pick
-up, with lots of loot around) is, by the owner's report, this companion
+`Companion_obj`, `Loot_Ground_obj` and `Coin_obj` events (2026-09-27) unless
+marked measured. Object events have no script-table entry, so none of it can
+be hooked by name. ForgePact #94 (the pet stays on one ground item it cannot
+pick up, with lots of loot around) is, by the owner's report, this companion
 pickup; that the pinning rule below is its cause is a static reading, not yet
-measured (no live session has reproduced it). Its mod is `petunstick`.
+measured (Live 1 did not reproduce it; Live 2 measured the stale-target shape
+below instead). Its mod is `petunstick`.
 
 - **Variables** (Create): `lootList` (a ds_list), `lootTarget` (-4 = none, an
   instance id after; written as a real), `lootTimer` (0), `lootDistance`
@@ -1177,6 +1245,20 @@ measured (no live session has reproduced it). Its mod is `petunstick`.
 - **Retarget rule:** a new `lootTarget` (the list's first entry) is chosen
   **only** when the current one no longer exists. Nothing replaces a target
   that still exists.
+- **A reused instance id keeps a stale target "alive"** (**Measured**,
+  2026-10-02, ForgePact #138): `instance_exists(lootTarget)` is the only
+  validity check there is, so when the game frees a destroyed instance's id
+  and re-mints it for whatever is created next, `lootTarget` starts naming a
+  stranger that passes the check and is never replaced. Measured live: the
+  pet's target named `Abyss_Jungle_Dead_Aztec_Skeleton_01_obj` (object 15, a
+  child of `Visual_Parent_obj`; `itemType=undefined`, `visible=0`), and the
+  pet travelled to it and ground at it (52-88 px, `move=true`,
+  `deltaSpeed=21.9`, the travel speed) while the player walked thousands of
+  pixels away; both captures came within seconds of a zone change. The pet's
+  list only ever holds `Loot_Ground_obj` and `Coin_obj` descendants, so an id
+  naming neither is stale by construction and dropping it cannot lose an
+  item; this is what `petunstick`'s on-sight rule acts on
+  ([Live 2](../ForgePact/docs/pet-loot-stuck-research.md#live-2-results-2026-10-02)).
 - **Arrival rule and pickup radius:** within twice `deltaSpeed` of a ground
   item the pet runs `PickupLoot` (item as `self`) on every ground item within
   **144 px of the pet** that passes the filter; an item whose pickup succeeds
@@ -1198,6 +1280,7 @@ measured (no live session has reproduced it). Its mod is `petunstick`.
   is the local one and exists"; not established.
 
 [pet loot stuck, Static reading](../ForgePact/docs/pet-loot-stuck-research.md#static-reading),
+[Live 2 results](../ForgePact/docs/pet-loot-stuck-research.md#live-2-results-2026-10-02),
 [Not established](../ForgePact/docs/pet-loot-stuck-research.md#not-established)
 
 ---
@@ -1547,7 +1630,7 @@ Drops read `enemyRarity`, `x` and `y` off the dying enemy. **Measured.**
   - That path is **measured** for treasure, rune and shadow goblins: 15 packets AFK FARM recorded on 2026-09-24. Orb and ore goblins were not observed.
   - A goblin's gold shower (`DropGold`) and the shadow goblin's Dimensional Shards (`LootGroundCreate`, type 13, base 1) are made outside `DropItem`, so a `DropItem` replay does not bring them. **Static reading.**
 
-[AFK FARM design, 0.8](../HS-AFK-Expedition/docs/DESIGN.md#08-the-camp-traits-and-three-more-worker-types)
+AFK FARM design, 0.8 (a private repository)
 
 ### 13.7 Monster ranks: names, health, damage, XP and drop values
 
@@ -1629,7 +1712,7 @@ A monster that special content spawned carries a non-zero `specialType` in its s
   [dev2 bug batch, #77](../ForgePact/docs/dev2-bug-batch-research.md#77-dropmult-gold-100-froze-the-game)
 - **`LootGroundCreate(x, y, itemType, def, …)`** makes a floor item whose Create event builds it (`CreateItemNew`). `def` carries `b` (base), `j`, `c` (0 normal, 1 unique repository) and optional `o` (stack) and `a` (seed). Rarity is not an argument. **Measured** for types 14 and 15 through AFK FARM's workers. Type 12 was **measured** on 2026-09-25: a town delivery made Basic Keys (12:0) and Cellar Keys (12:10) with the right `b` and `o`. Type 13 was **measured** the same day: a town delivery made a Battle Fragment (13:0) with the right `b` and `o`, and the game gave it a new seed (`a`).
 
-[AFK FARM design, 0.9](../HS-AFK-Expedition/docs/DESIGN.md#09-the-town-defense-trade-merchants)
+AFK FARM design, 0.9 (a private repository)
 
 ---
 

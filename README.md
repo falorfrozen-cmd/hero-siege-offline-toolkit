@@ -84,11 +84,6 @@ project. Codex is a release-only integration and has no source submodule.
 Existing Toolkit 1.0.5 users can refresh the library while online to see it
 under All or search; a Toolkit application upgrade is not required.
 
-AFK FARM ([HS-AFK-Expedition](https://github.com/falorfrozen-cmd/HS-AFK-Expedition))
-is out of the hub for now: the hub no longer lists or installs it, while its
-source, releases and [developer guide](docs/submodules/HS-AFK-Expedition/instructions.md)
-stay public.
-
 ---
 
 ## Notes
