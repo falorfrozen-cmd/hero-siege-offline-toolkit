@@ -86,7 +86,8 @@ def rolled_dig(kinds, rolls=1, multiplier=1, helmet=False, rerun_pays=True):
     lever. An extra run that pays nothing ends the loop (`rerun_pays` False is
     the plugin's guard: Live procedure 1 saw 13 of 13 re-runs pay, MR4-MR6,
     so an unpaid re-run is not observed live, not ruled out). Experience,
-    quests and the floating text happen once per dig; the helmet's own
+    quests and the floating text are meant to happen once per dig, the
+    plugin's design (MR7 measured it for character and guild XP only); the helmet's own
     dispatch once; every run draws each bonus site once; the node ends at hp 0
     whatever happened.
     """
@@ -203,7 +204,8 @@ class TargetTests(unittest.TestCase):
         # Rolls alone repeat the list; they never change which kinds drop.
         plain = rolled_dig(MIXED, rolls=3)
         self.assertEqual(plain["runs"], [vanilla] * 3)
-        # Experience, quests and the floating text still happen once.
+        # Experience, quests and the floating text are meant to happen once
+        # (the plugin's design; MR7 measured character and guild XP only).
         self.assertEqual(dig["xp_awards"], 1)
         # MR2: the helmet's x4 replaces the multiplier in every run, and its own
         # dispatch runs once per dig.

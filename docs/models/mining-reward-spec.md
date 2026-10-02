@@ -182,7 +182,10 @@ pinned by the test's `RollsLeverParityTests` where ForgePact is checked out.
 - **Each run is scaled as today.** Inside every run the quantity multiplier M
   scales each stack, or, when the Miner's Helmet applies, x4 replaces M. Rolls and
   multiplier multiply: N runs, each stack x M.
-- **Experience, quests and floating text happen once.** The plugin passes
+- **Experience, quests and floating text are meant to happen once.** That is the
+  plugin's design; of these only character and guild experience were measured
+  once per dig (MR7), and mining experience, quests and the floating text were
+  not observed from a dig at all (MR8, "Not established" above). The plugin passes
   `MiningAdd`, `ExperienceUpdate`, `GuildExperienceAdd`, `update_quest` and
   `CombatText` through during the original run and skips them during the extra
   runs. `CombatText` is silenced inside the plugin's one shared detour on it

@@ -100,7 +100,7 @@
       "scripts": ["gml_Script_MiningNodeStepMain", "gml_Script_ExperienceUpdate", "gml_Script_GuildExperienceAdd"],
       "what": "XP counters (passed/silenced) of the native pass-through detours, read after each dig. ExperienceUpdate and GuildExperienceAdd: 2/0 after the rolls-1 dig, 3/2 after the rolls-3 dig, 52/4 after the rolls-3 x5 dig, 71/13 after the rolls-10 dig. Each script's silenced count grew by exactly the extra runs of that dig (2, 2, 9), so one completion run calls each of them once, and the rolls-3 dig let exactly one call of each through. The passed counts after the x5 and rolls-10 digs also include kill XP from nearby combat (the Experience slider was at x2), so only the rolls-3 dig's +1 is a clean per-dig count.",
       "values": { "experience_update": [[2, 0], [3, 2], [52, 4], [71, 13]], "guild_experience_add": [[2, 0], [3, 2], [52, 4], [71, 13]], "extra_runs_per_dig": [0, 2, 2, 9], "passed_at_the_clean_rolls_3_dig": 1, "calls_per_completion_run": 1 },
-      "model": "rolled_dig awards XP once per dig, and the silenced calls equal the extra runs times one call per run, for each of the two scripts.",
+      "model": "rolled_dig awards XP once per dig (measured here for character and guild XP only), and the silenced calls equal the extra runs times one call per run, for each of the two scripts.",
       "reproduced_by": "tests.test_mining_reward_model.LiveProcedure1Tests.test_mr7_xp_passes_once_and_each_extra_run_is_silenced_once"
     },
     {
