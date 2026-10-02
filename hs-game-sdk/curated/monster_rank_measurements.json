@@ -1,0 +1,92 @@
+{
+  "$schema_note": "Hand-curated record of the numbers recorded about what a monster's rank (enemyRarity 1-4) does to it, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/monster_rank_model.py never reads it; tests/test_monster_rank_model.py reads both and checks that the model reproduces each entry, and that the model's boss hypothesis stays None until an entry about a boss is `measured`. The mechanism, in our own words, is docs/models/monster-rank-spec.md. Every entry has `id` (MK1, MK2, ...), `kind` (`baseline` = vanilla, no lever; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`measured`, `reported` = a player's report, not a measurement of ours, `qualitative`, `approximate`, `not_observed` or `our_code`), `date` (the measurement date, or the date a report was recorded), `source` (a list of {path, section} or {repo, commit}; paths are relative to the hub root, `section` is text that appears in that file), `scripts` (every `gml_Script_*` the entry involves, all bound in hs_game_sdk.scripts.GameScript), `what` (the observation; the word boss appears only in an entry about a boss), `values`, `model` (what the model must show) and exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). MK1-MK4 are AFK FARM's ordinary monsters (6,471 packets, 214 capture sessions, 2026-09-17 to 09-24, game builds pe6aaa6779 and pe6a9ed3ee). ForgePact#44's Live procedure 1 rows are added by that workorder's live1-record step.",
+  "measurements": [
+    {
+      "id": "MK1",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-09-24",
+      "source": [
+        { "path": "docs/RUNTIME_DATA_MODELS.md", "section": "From AFK FARM's 6,471 recorded packets and 214 capture sessions" }
+      ],
+      "scripts": ["gml_Script_EnemyRaritySettings"],
+      "what": "Rank multipliers next to the same monster object at rank 1 in the same room, medians over 41-48 pairs: health x1.84, x2.98, x4.23; damage x1.27, x1.53, x1.90; XP x2.75, x4.25, x6.25 for ranks 2, 3 and 4. The XP multipliers are exact constants.",
+      "values": {
+        "hp": { "2": "1.84", "3": "2.98", "4": "4.23" },
+        "damage": { "2": "1.27", "3": "1.53", "4": "1.90" },
+        "xp": { "2": "2.75", "3": "4.25", "4": "6.25" },
+        "pairs_min": 41,
+        "pairs_max": 48
+      },
+      "model": "RANK_TABLE[rank].hp, .damage and .xp equal these values exactly, and scaled(rank, ...) multiplies the rank-1 bases by them.",
+      "reproduced_by": "tests.test_monster_rank_model.MeasuredTests.test_mk1_the_rank_multipliers"
+    },
+    {
+      "id": "MK2",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-09-24",
+      "source": [
+        { "path": "docs/RUNTIME_DATA_MODELS.md", "section": "From AFK FARM's 6,471 recorded packets and 214 capture sessions" }
+      ],
+      "scripts": ["gml_Script_EnemyRaritySettings", "gml_Script_DropItem"],
+      "what": "Protected drop values by rank, identical within a rank: dCommonChance 4/20/36/50, dCommonDropMult 11/20/42/58, dSatanicDropMult 1/0.925/0.475/0.285, dSlots 1, 1-3, 2-5, 4-8 for ranks 1-4. DropItem's first argument equals the rank in every packet.",
+      "values": {
+        "common_chance": { "1": 4, "2": 20, "3": 36, "4": 50 },
+        "common_drop_mult": { "1": 11, "2": 20, "3": 42, "4": 58 },
+        "satanic_drop_mult": { "1": "1", "2": "0.925", "3": "0.475", "4": "0.285" },
+        "slots": { "1": [1, 1], "2": [1, 3], "3": [2, 5], "4": [4, 8] }
+      },
+      "model": "RANK_TABLE[rank]'s common_chance, common_drop_mult, satanic_drop_mult and slots equal these values exactly.",
+      "reproduced_by": "tests.test_monster_rank_model.MeasuredTests.test_mk2_the_drop_values_by_rank"
+    },
+    {
+      "id": "MK3",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-09-24",
+      "source": [
+        { "path": "docs/RUNTIME_DATA_MODELS.md", "section": "From AFK FARM's 6,471 recorded packets and 214 capture sessions" }
+      ],
+      "scripts": ["gml_Script_DropItem", "gml_Script_LoadDrops"],
+      "what": "The monster's drop table rises with rank: runes (drop type 4) 12/22/34/100 and dungeon keys (type 12) 5/40/75/100 for ranks 1-4.",
+      "values": {
+        "type_4_runes": { "1": 12, "2": 22, "3": 34, "4": 100 },
+        "type_12_dungeon_keys": { "1": 5, "2": 40, "3": 75, "4": 100 }
+      },
+      "model": "Not modelled: the model carries the protected drop values, not the monster's drop table.",
+      "not_reproduced": "The drop table is per monster and per drop type; these are two examples, not a rule the model could state. Recorded so a boss's drop table can be compared with them."
+    },
+    {
+      "id": "MK4",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-09-24",
+      "source": [
+        { "path": "docs/RUNTIME_DATA_MODELS.md", "section": "From AFK FARM's 6,471 recorded packets and 214 capture sessions" }
+      ],
+      "scripts": ["gml_Script_DropItem"],
+      "what": "Kill mix by rank: without ForgePact's rarity sliders 70.1/16.9/10.4/0.1 % of 2,994 kills at ranks 1-4; with the sliders on, 35.1/18.9/32.1/13.8 % of 21,122 kills.",
+      "values": {
+        "without_sliders": { "kills": 2994, "percent": { "1": 70.1, "2": 16.9, "3": 10.4, "4": 0.1 } },
+        "with_sliders": { "kills": 21122, "percent": { "1": 35.1, "2": 18.9, "3": 32.1, "4": 13.8 } }
+      },
+      "model": "Not modelled: the model draws no random number, and the mix is the spawner's roll (and the sliders'), which it does not cover.",
+      "not_reproduced": "The kill mix is a spawn-time roll, outside EnemyRaritySettings' arithmetic, and the model is deterministic."
+    },
+    {
+      "id": "MK5",
+      "kind": "target",
+      "status": "reported",
+      "date": "2026-09-18",
+      "source": [
+        { "path": "ForgePact/tests/test_rarity_boss_exclusion_contract.py", "section": "went from ~500k to ~4.5M HP" }
+      ],
+      "scripts": ["gml_Script_EnemyRaritySettings"],
+      "what": "A player's report on ForgePact v1.4.1: with the Monster Rarity sliders at 20% rare and 20% ancient, an Anubis boss went from about 500k to about 4.5M HP.",
+      "values": { "hp_before": 500000, "hp_after": 4500000, "rare_pct": 20, "ancient_pct": 20 },
+      "model": "None: a report sets no hypothesis. Its ratio (about x9) is above every health multiplier in MK1.",
+      "not_reproduced": "A report, not a measurement of ours: the boss's rank, its rank-1 base and how the numbers were read are unknown. It is why the sliders leave bosses alone, not evidence about whether a boss follows the rank table."
+    }
+  ]
+}
