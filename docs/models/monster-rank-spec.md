@@ -111,12 +111,16 @@ inferred, not checked on screen (`docs/RUNTIME_DATA_MODELS.md` § 13.7).
     Bosses control) to rank 3 and 4, read on the probe's own path: `damage`
     ×1.4008 and ×2.0039 (within 10% of MK1's ×1.53 and ×1.90), `killExperience`
     ×4.2670 and ×6.2760 (within 2% of ×4.25 and ×6.25; `experience` the same). So
-    these two variables hold a monster's damage and XP, which is what lets a
-    boss's reads of them count. **MK17**: the same spawns' health is not a
+    the protected-store records named by the keys these two variables hold (read
+    with `PC_GetVariableGMLWrapper(key)`, as `enemy_hp` is) are a monster's
+    damage and XP; reading the variables directly returns the key (176880,
+    176863), not the value. That is what lets a boss's reads through those keys
+    count. **MK17**: the same spawns' health is not a
     control (×5.69 at rank 3, ×5.31 at rank 4, one spawn each). **MK18**: the
     drop rank control passed again (first argument 4 at rank 4).
-  - **MK19, the rank-1 Karp King** on three spawns: health 44,625,000, `damage`
-    217, `killExperience` 4,950, and a `DropItem` first argument of 1 at its
+  - **MK19, the rank-1 Karp King** on three spawns: health 44,625,000, damage
+    217 and XP on kill 4,950, read through the keys in `damage` and
+    `killExperience`, and a `DropItem` first argument of 1 at its
     traced death, the anchor.
   - **MK21, a boss's damage at rank 4**: ×2.0968 (217 -> 455). MK1's rank-4 row is
     ×1.90; this is 10.4% above it, 0.4% outside the control's 10%, but the row
