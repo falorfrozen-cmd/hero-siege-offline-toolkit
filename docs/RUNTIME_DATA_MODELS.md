@@ -2401,10 +2401,10 @@ measured (one sentence, in the drag path bullet).
   `tabNumber`. `UI_Stash_obj.invMaterialTab` and `.invSocketTab` hold the
   Material and Socket rows' instances. The page tabs are
   `UI_Button_Inventory_Tab_obj`, `tabNumber` 0 to 4 (Main, then four Extra).
-  Their grid, M at one GUI scale (2560x1368, window 1920x1080, Town_01_rm)
-  from two sessions - toolkit #147's stash-bag-layout live 2, attempt 1, with
-  the stash open, for the tabs, and ForgePact #68's Live 1f and 1g for
-  InventorySort: `uiNodeCallstack` `InventoryTab_1` to `InventoryTab_5` in
+  Their grid, M at two GUI scales, 2560x1368 (window 1920x1080, Town_01_rm)
+  from two sessions, and 2560x1440 from Live 7 (below) - toolkit #147's
+  stash-bag-layout live 2, attempt 1, with the stash open, for the tabs, and
+  ForgePact #68's Live 1f and 1g for InventorySort: `uiNodeCallstack` `InventoryTab_1` to `InventoryTab_5` in
   `tabNumber` order, all `visible=1` and listed with the stash open; each
   bbox 182.4 wide (InventorySort's width), top 1136.2, bottom 1198.9, lefts
   1573.9, 1756.3, 1938.7, 2121.1 and 2303.5, so the row is contiguous (the
@@ -2416,9 +2416,11 @@ measured (one sentence, in the drag path bullet).
   2026-10-02, GUI and window 2560x1440) read the same relation there: each tab
   192 wide, top 1196, bottom 1262, lefts 1522, 1714, 1906, 2098 and 2290,
   InventorySort 2290,1262,2482,1328 (left and right `InventoryTab_5`'s, top the
-  row's bottom), so `InventoryTab_4`'s column is 2098 to 2290; all five tabs
-  were `visible=1` with the stash open and with the bag open on its own. Not
-  measured: the row at any other GUI scale.
+  row's bottom), so `InventoryTab_4`'s column is 2098 to 2290; all five read
+  `visible=1` with the bag open on its own; with the stash open the same five
+  boxes were listed, `InventoryTab_4` and `InventoryTab_5` read `visible=1`,
+  and the first three's visibility was not quoted. Not measured: the row at
+  any other GUI scale.
 - **`activeNode`.** M: `UI_Stash_obj.activeNode` holds an instance - the stash
   grid right after the open (SB P0-4), the clicked sub-tab's row after a real
   click on a bag sub-tab (SB P2-4). After a by-name
