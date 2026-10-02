@@ -33,7 +33,7 @@ hs-game-sdk/
 │   ├── satanic_zone.json       # Satanic Zone buff/debuff ids/names/descriptions + Controller_obj var names
 │   ├── drop_types.json         # LoadDrops drop types + GetNormalRepoStruct repository categories (data only)
 │   ├── drop_roll_measurements.json # M1-M10: recorded drop-roll numbers drop_roll_model.py is tested against (data only)
-│   ├── mining_reward_measurements.json # MR1-MR3: recorded mining-dig numbers mining_reward_model.py is tested against (data only)
+│   ├── mining_reward_measurements.json # MR1-MR9: recorded mining-dig numbers mining_reward_model.py is tested against (data only)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
@@ -112,7 +112,7 @@ Why and how: `docs/agents/static-model-workflow.md`.
 
 `mining_reward_model.py` (2026-09-28, ForgePact issue #36) is the second model, built the same
 way: spec `docs/models/mining-reward-spec.md`, fixture `curated/mining_reward_measurements.json`
-(MR1-MR3), checks `tests/test_mining_reward_model.py`. It gives the ore stacks one dig drops from a
+(MR1-MR9: MR1-MR3 from 2026-09-23, MR4-MR9 from issue #36's Live procedure 1 on 2026-09-28), checks `tests/test_mining_reward_model.py`. It gives the ore stacks one dig drops from a
 node's list and the chance of a stat-gated bonus find; ForgePact's Mining Ore Multiplier, the Miner's
 Helmet and Mining Ore Extra Rolls stay in the test as transforms, pinned to `MiningOreMod.hpp` and
 `src/forgepact.py` by `RollsLeverParityTests`.

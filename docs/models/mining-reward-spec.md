@@ -20,9 +20,13 @@ Every claim below carries one of three labels, and a source:
 A claim that is none of these is under "Not established", and the model carries it
 as a parameter or leaves it out.
 
-Measured entries are cited by their fixture id (MR1–MR3). All three were recorded
+Measured entries are cited by their fixture id (MR1–MR9). MR1–MR3 were recorded
 on 2026-09-23, after `HookOneScript` gained its native detour, so the hooks that
-logged them saw the direct calls the dig makes.
+logged them saw the direct calls the dig makes. MR4–MR9 are issue #36's Live
+procedure 1, run on 2026-09-28 on the research build at ForgePact `98dbf53`, with
+all seven native detours the extra rolls need in place (`rollsReady=1`), on one
+character digging Copper Veins by hand. MR8 is `not_observed`; the rest are
+`measured`.
 
 ## Static reading
 
@@ -91,8 +95,43 @@ names and object indices are all bound in `hs-game-sdk`.
   caught an intermediate slider position, because a dig completes in the step of
   the key press (MR3, 2026-09-23). Source:
   [`ForgePact/docs/miner-helmet-prototype.md`, "Ownership fix (2026-09-23)"](../../ForgePact/docs/miner-helmet-prototype.md#ownership-fix-2026-09-23).
-- **Not measured:** mining experience, bonus finds and non-ore rewards under any
-  lever. The records above say nothing about them.
+
+The entries below are Live procedure 1, all dated 2026-09-28. Source for each:
+[`ForgePact/docs/mining-ore-research.md`, "Live procedure 1 (2026-09-28)"](../../ForgePact/docs/mining-ore-research.md#live-procedure-1-2026-09-28).
+
+- **Re-running the completion pays it again, in the same step.** With ForgePact's
+  extra rolls at 3 and the multiplier at x1, one dig made two extra runs, none of
+  them unpaid, and three ore drop calls, one per run; the owner saw three drops.
+  Before each extra run the node read `hp` 1 and `miningQue` true, and after it
+  `hp` 0 and `miningQue` false (MR4, measured). Over the session 13 of 13 extra
+  runs paid ore.
+- **The multiplier scales every run.** At rolls 3 and x5 the adapter logged
+  `first reward dispatched 5 -> 25`, and all three runs' stacks were scaled: three
+  runs, each one stack of 25 (MR5, measured).
+- **Ten runs in one step complete and leave the node at `hp` 0.** At rolls 10 one
+  dig made nine extra runs, none unpaid, and ten drop calls; every extra run ended
+  at `hp` 0, the game answered `ping` afterwards, and the owner saw ten stacks and
+  no hitch (MR6, measured).
+- **`ExperienceUpdate` and `GuildExperienceAdd` run once per completion run.**
+  Each script's silenced count grew by exactly the extra runs of each dig (2, 2
+  and 9), and the rolls-3 dig let exactly one call of each through. Later passed
+  counts also carry kill XP from nearby combat, so that rolls-3 dig is the one
+  clean per-dig count (MR7, measured).
+- **`MiningAdd`, `CombatText` and `update_quest` were not observed from a dig**
+  (MR8, not observed live). The static reading above has the step call all three,
+  but through native detours `MiningAdd` counted no call over four digs and 17
+  completion runs; `CombatText` counted none across a whole dig while the same
+  detour counted kill XP text elsewhere, which is its positive control; and
+  `update_quest` counted none, probably because no quest was active. That is not
+  "not called": which branch of the step skips them is not established.
+- **Every bonus-find stat read 0, and no bonus find was seen.** The ten stat
+  queries the node and the dig use (ids 692–700 and 703) all read 0 on the
+  session's character, and no bonus find was seen over 17 paid completion runs
+  (MR9, measured stats; the bonus find itself is not observed live). That agrees
+  with the static reading and does not test it.
+- **Not measured:** mining experience (the skill's own XP), bonus finds and
+  non-ore rewards under any lever, and the Miner's Helmet with rolls above 1 (not
+  run in Live procedure 1). The records above say nothing about them.
 
 ## Not established
 
@@ -105,12 +144,28 @@ names and object indices are all bound in `hs-game-sdk`.
 - **What raises stats 692 to 703.** `hs_game_sdk.stats` does not name them, and
   which gear or talents feed them was not read. So whether a given character can
   see a bonus find at all is open.
-- **Whether the completion pays again in the same frame.** ForgePact's extra rolls
-  restore `hp` to 1 and set `miningQue` before re-running the step. Whether the
-  step reads some other flag the first run set (`stop`, `range`, `miningActive`, a
-  sprite index) and so pays nothing the second time, and whether ten runs in one
-  frame are harmless, is Live procedure 1's question for issue #36. The model
-  assumes a re-run pays exactly like the first; the test marks that as an input.
+- **Mining experience and the floating text under extra rolls: once per dig, or
+  once per roll.** ForgePact silences `MiningAdd` and `CombatText` during an extra
+  run, but Live procedure 1 never saw either detour reached from a dig (MR8), and
+  Live procedure 2 (the shipped build, 2026-10-02) had no way to read it: the
+  character's mining level was at its cap, the player build has no back-end read
+  of mining XP, and no floating-text count was taken. The owner chose to ship with
+  this left not observed (2026-10-02).
+- **A bonus find under extra rolls.** No character with a bonus-find stat above 0
+  was available (MR9), so no bonus site could pass.
+- **The Miner's Helmet with rolls above 1** (x4 per stack in every run, one pulse
+  per dig). Not run in Live procedure 1: the helmet was not worn.
+- **Nodes holding more than one ore kind.** Every measured dig was a one-kind
+  Copper Vein, one drop call per completion run. The model's per-kind stacks for a
+  mixed list are the static reading only.
+- **Why ore per stack varied in Live procedure 2.** On the shipped build, rolls 3
+  dropped exactly three stacks (copper 0 -> 14) and rolls 1 one stack (14 -> 17);
+  the stack count was exactly 3x, the quantity per stack was not, and why was not
+  measured. Source:
+  [`docs/submodules/ForgePact/instructions.md`](../submodules/ForgePact/instructions.md),
+  "Verified in play".
+- **Whether an extra run can ever pay nothing.** Never observed (13 of 13 paid);
+  the plugin's stop and `hp` reset cover it.
 - **The order in which the six kinds are placed.** The model lists stacks in kind
   order, Copper to Tarethium, as a convention; no claim about the game's order.
 
@@ -165,8 +220,9 @@ and the helmet as transforms of the model's output.
 The model is a pure function of numbers. Everything below still needs code review
 or a live run, and a green model test says nothing about any of it:
 
-- **Whether the re-run pays at all** (see "Not established"). The model assumes it
-  does; Live procedure 1 measures it.
+- **Whether the re-run pays at all.** The model assumes it does; Live procedure 1
+  measured that it does, 13 of 13 extra runs on one-kind nodes (MR4–MR6). A future
+  game build that changes the step can break it, and only a live run shows that.
 - **Whether a hook attaches, and whether the silenced side effects are really
   silenced.** A table-only install cannot see this build's direct calls; only the
   plugin's harness and a live positive control show the detours run.
