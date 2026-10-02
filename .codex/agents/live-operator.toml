@@ -118,6 +118,9 @@ is the planner's to fix.
   phase1h's criteria unreadable and cost a round. The verdict is the first
   word after the line's last `|`; a note may follow it. The criterion reads
   the block with `py -3 tools/live_checks.py <capture> --expect <names>`.
+  That list is the form you must write: the tool reads a `| Check | Result |`
+  table under `## Checks summary` only as a fallback for a capture that has no
+  list.
 - **Never force-stop the game, and never restore any backup but the one you
   took in this session.** Restoring your own at step 8 is required; restoring
   someone else's overwrites their evidence, and R17 fails it.
