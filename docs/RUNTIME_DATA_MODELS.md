@@ -1753,13 +1753,15 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   (Headhunter's stand-in is Liquor Holster `{8, 0, 51}`; Tyrant's Crown's is a
   helmet chosen when the pool is built, named in the switch-on log line). The
   picker cannot tell the added entry from the vanilla one, so a hit whose
-  whole triple (type, sub, b) equals a stand-in's is attributed to the mod
-  item with probability 1 / (n + 1), `n` being how often the vanilla list
-  already holds that same triple (all three numbers). The hit's type is read
-  from the roll's latest `GetUniqueRepoStruct` definition read, accepted only
-  when its sub and b equal the `CreateDefaultParams` call's; with no such
-  record the hit stays vanilla (`untyped=`). The type is never inferred from
-  sub and b; on such a hit ForgePact rewrites the returned `CreateDefaultParams` struct's
+  `CreateDefaultParams` arguments name a stand-in's `(sub, b)` is attributed
+  to the mod item with probability 1 / (n + 1), `n` being how often the
+  vanilla list already holds the stand-in's whole triple (type, sub, b).
+  `CreateDefaultParams` names only sub and b, not the type, so a stand-in is
+  refused when another validated unique of a different type shares its
+  `(sub, b)` (reported as not validated, `ambiguous: <name> shares its
+  sub/b`), so among the validated uniques a hit on that pair can only be the
+  stand-in. The plugin does not read the hit's type. On such a hit ForgePact
+  rewrites the returned `CreateDefaultParams` struct's
   `a`, `b`, `c`, `j` to the item's own, and the game's `LootGroundCreate` ->
   `CreateItemNew` builds and places it, where the forge selector above
   recognises it. One hit is one item, in place of what the roll would have
