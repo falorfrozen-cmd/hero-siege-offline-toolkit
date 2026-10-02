@@ -159,8 +159,9 @@ JSON line `{"lanes": [{"name": ..., "files": [...]}, ...], "join":
 true|false}` -- the lane table the driver passes to the workflow, so it can
 never launch lanes a lint rejected. `--items-json` likewise prints `{"items":
 [{"id", "title", "files", "checks", "after", "shares", "owner", "default",
-"reversible"}, ...], "complete": true|false}` (`default` a string or null,
-`reversible` true, false or null), `complete` false while `## State` says `planning:
+"reversible", "build_reads"}, ...], "complete": true|false}` (`default` a string or null,
+`reversible` true, false or null, `build_reads` what the item's `build`/`exclusive`
+checks read, see `build_reads()`), `complete` false while `## State` says `planning:
 streaming`. With `--known` it prints only the items not in that list, and
 with `--wait` it first polls the plan (every 5 s, at most SECONDS) until an
 unknown item appears or planning is complete -- what the round engine's
@@ -840,8 +841,41 @@ def lint(path: Path) -> tuple:
     return len(items_), out
 
 
+def build_reads(checks: list) -> list:
+    """What an item's `build`/`exclusive` checks read (declared with `(class
+    ...)`, or a command `run_criteria` recognises as one): the union of their
+    `(reads ...)` globs, `["*"]` when one of them declares none (it then
+    reads whatever changed, as `run_criteria.select` treats it), and `[]`
+    when the item has no such check. The round engine re-runs a done item
+    with a non-empty list when a later commit lands on a path it covers:
+    a build that passed before a reviewer's fix still names the old tree
+    (forgepact-124-pet-relics, 2026-10-02: three relaunches for a DLL that
+    predated the last fix commit)."""
+    import run_criteria  # imports this module; deferred so neither import loops
+    out: list = []
+    for check in checks:
+        cmds = run_criteria.commands(check)
+        declared = run_criteria.CLASS_DECL_RE.search(check)
+        if declared:
+            builds = declared.group(1) in ("build", "exclusive")
+        else:
+            # `classify` calls any command it does not recognise `exclusive`
+            # too; only a recognised build or barrier counts here, or every
+            # `grep`-and-`bash` check would re-run on every commit.
+            bodies = [run_criteria.ANY_CD_RE.sub("", c.strip()) for c in cmds]
+            builds = any(run_criteria.BUILD_RE.search(b) or run_criteria.EXCLUSIVE_RE.search(b) for b in bodies)
+        if not cmds or not builds:
+            continue
+        globs = reads(check)
+        if globs is None:
+            return ["*"]
+        out += [g for g in globs if g not in out]
+    return out
+
+
 def _items_json(text: str, known: set) -> str:
-    return json.dumps({"items": [it for it in items(text) if it["id"] not in known],
+    return json.dumps({"items": [{**it, "build_reads": build_reads(it["checks"])}
+                                 for it in items(text) if it["id"] not in known],
                        "complete": planning_complete(text)})
 
 
