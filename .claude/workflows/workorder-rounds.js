@@ -1194,6 +1194,9 @@ async function runItems(n) {
     const s = st[it.id]
     for (;;) {
       s.attempts++
+      // A commit that made an earlier attempt stale is already in the tree
+      // this one starts from (a check retry, or a re-run after an amendment).
+      s.stale = false
       const label = it.kind === 'item' ? `item-implementer:${it.id}:a${s.attempts}:r${n}` : `fix-implementer:${it.id}:r${n}`
       const impl = await spawn(it.kind === 'item' ? itemPrompt(it, s) : fixPrompt(it, s), { label, phase: 'Implement', agentType: 'implementer', model: A.implementerModel || 'opus', schema: ITEM_IMPL_SCHEMA })
       if (!impl) return { park: 'the implementer returned nothing' }

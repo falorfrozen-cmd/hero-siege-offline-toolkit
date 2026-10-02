@@ -1670,6 +1670,17 @@ for (const [when, delays] of [['after the build is done', { 'docs-sync-reviewer'
   })
 }
 
+test('items: a fix that lands during an attempt whose checks then fail is in the retry, so no extra rebuild (PR #382 review)', async () => {
+  let checks = 0
+  const failsOnce = () => (checks++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'build', status: 'fail', evidence: 'link error' }], pending_human: [] } : PASS)
+  const reply = buildReply('ForgePact/plugin/a.cpp')
+  const { result, calls } = await runDelayed(BUILD_ITEMS, (label, ...rest) => label.startsWith('item-verifier:build-dev:') ? failsOnce() : reply(label, ...rest),
+    { 'item-implementer:build-dev:a1': 150 })
+  assert.equal(result.outcome, 'PASS')
+  assert.deepEqual(builds(calls), ['item-implementer:build-dev:a1:r0', 'item-implementer:build-dev:a2:r0'], 'the retry already built the fixed tree')
+  assert.equal(result.items.find(i => i.id === 'build-dev').rebuilds, undefined)
+})
+
 test('items: control -- a fix outside what the build reads, or a build with no build_reads, is not re-run', async () => {
   let r = await runDelayed(BUILD_ITEMS, buildReply('docs/c.md'), { 'docs-sync-reviewer': 120 })
   assert.equal(r.result.outcome, 'PASS')
