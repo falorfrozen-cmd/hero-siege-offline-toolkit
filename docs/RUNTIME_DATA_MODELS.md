@@ -864,6 +864,16 @@ All **measured** (2026-09-21/22).
 
 - Flow: `Main_Menu_rm` → *Play local* → `Chose_rm` (save slots, then the character
   panel, same room) → *PLAY* → `Town_01_rm`.
+- Clicking a save-slot card loads that character's save inside `Chose_rm`,
+  without a room change, and holds the frame thread for roughly 2.5-3.5 s:
+  3.53 s measured in Live 2 of the ForgePact incident report (2026-10-02),
+  2.84 s the worst in its Live 3. **Measured.** The rooms ForgePact's incident
+  monitor treats as menus, where such a gap is not reported, are `Init_rm`,
+  `Game_Start_rm`, `Login_rm`, `Login_Valhalla_rm`, `Main_Menu_rm`,
+  `Main_Menu_Valhalla_rm`, `Char_Select_rm` and `Chose_rm` (names from
+  `hs-game-sdk`'s `HeroSiege::Rooms::GameRoom`); see
+  [ForgePact/docs/incident-report.md](../ForgePact/docs/incident-report.md)
+  (D17).
 - The main menu has 13 `UI_Button_obj` (told apart by `text`), one
   `Menu_Controller_obj`, one `Profile_Manager_obj`, plus
   `UI_Button_Close_obj`, `UI_Button_Menu_DLC_obj`, `UI_Button_Language_obj` and

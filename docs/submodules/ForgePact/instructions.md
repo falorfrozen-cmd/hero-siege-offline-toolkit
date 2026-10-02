@@ -4181,8 +4181,8 @@ slowest installers, name and ms>)`. `InstallHook` marks a lap
 (`SetupLap("<installer>")`) after each installer of its normal path, which
 in the shipping build stops after the custom-item, item-truth, auto-arm and
 Headhunter installers; a later `InstallHook` call records no lap. Making the
-setup faster or spreading it over frames is not decided; Live 3 measures the
-installers first.
+setup faster or spreading it over frames is not decided; Live 3 measured them
+(see Verification); bounding the setup is ForgePact#151.
 
 **No notice.** Every bundle, PERF, FREEZE or CRASH, is written without a
 notice from either side (owner, 2026-10-02: "No notice at all"): the panel
@@ -4286,7 +4286,7 @@ is reported at `kFreezeHoldMs`. A gap that begins in a menu room is never
 reported, so a hang at the main menu or the character screen leaves no
 freeze report (a crash there is still found at the next load), and a menu
 room the table lacks is judged like any other room. The start-up setup's
-2-4 s frame shows as the `setup` row's worst for a minute after it. A report holds a module and an offset, never
+about 2.5-2.7 s frame (Live 3) shows as the `setup` row's worst for a minute after it. A report holds a module and an offset, never
 a function name, and the PDB artifact's file (`BloodPactPlugin_ship.pdb`)
 must be renamed to `BloodPactPlugin.pdb`, the name `/PDBALTPATH` embeds,
 before a debugger will load it. FPS drops are not reported for 5 s after a
@@ -4303,6 +4303,10 @@ clean-shutdown route fired and the exit code with the tracker producer
 present, a PERF report in a heavy scene with its per-mod table, no freeze on
 a zone load) is recorded in `ForgePact/docs/incident-report.md` § "Live
 results"; Live 2 (the self-time, no-notice build) is recorded there too,
-with its finding (the slot-click FREEZE that D17 and D18 answer); Live 3,
-not yet run, re-runs that character load and reads the `incident: setup`
-line.
+with its finding (the slot-click FREEZE that D17 and D18 answer); Live 3
+(2026-10-02) is recorded there too: the setup measured 2491.1 ms (2701.2 ms
+at the relaunch), nearly all of it `InstallCustomForgeItemHooks+InstallItemTruth`
+at 2486.2 ms, so the `setup` row and its line are observed live; the
+menu-room load rule was not exercised live (the session's largest gap,
+2838.7 ms, was under 3 s) and rests on the harness scenarios. Bounding the
+setup is tracked in falorfrozen-cmd/ForgePact#151.
