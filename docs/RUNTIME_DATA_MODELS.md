@@ -1218,12 +1218,13 @@ On the 2026-09-11 build the closures were `m_QuestUseKey` `anon@1400`,
 ### 10.6 The companion's own loot pickup (`Companion_obj`)
 
 Every entry here is a **Static reading** of the current build's compiled
-`Companion_obj`, `Loot_Ground_obj` and `Coin_obj` events (2026-09-27); none is
-measured. Object events have no script-table entry, so none of it can be
-hooked by name. ForgePact #94 (the pet stays on one ground item it cannot pick
-up, with lots of loot around) is, by the owner's report, this companion
+`Companion_obj`, `Loot_Ground_obj` and `Coin_obj` events (2026-09-27) unless
+marked measured. Object events have no script-table entry, so none of it can
+be hooked by name. ForgePact #94 (the pet stays on one ground item it cannot
+pick up, with lots of loot around) is, by the owner's report, this companion
 pickup; that the pinning rule below is its cause is a static reading, not yet
-measured (no live session has reproduced it). Its mod is `petunstick`.
+measured (Live 1 did not reproduce it; Live 2 measured the stale-target shape
+below instead). Its mod is `petunstick`.
 
 - **Variables** (Create): `lootList` (a ds_list), `lootTarget` (-4 = none, an
   instance id after; written as a real), `lootTimer` (0), `lootDistance`
@@ -1244,6 +1245,20 @@ measured (no live session has reproduced it). Its mod is `petunstick`.
 - **Retarget rule:** a new `lootTarget` (the list's first entry) is chosen
   **only** when the current one no longer exists. Nothing replaces a target
   that still exists.
+- **A reused instance id keeps a stale target "alive"** (**Measured**,
+  2026-10-02, ForgePact #138): `instance_exists(lootTarget)` is the only
+  validity check there is, so when the game frees a destroyed instance's id
+  and re-mints it for whatever is created next, `lootTarget` starts naming a
+  stranger that passes the check and is never replaced. Measured live: the
+  pet's target named `Abyss_Jungle_Dead_Aztec_Skeleton_01_obj` (object 15, a
+  child of `Visual_Parent_obj`; `itemType=undefined`, `visible=0`), and the
+  pet travelled to it and ground at it (52-88 px, `move=true`,
+  `deltaSpeed=21.9`, the travel speed) while the player walked thousands of
+  pixels away; both captures came within seconds of a zone change. The pet's
+  list only ever holds `Loot_Ground_obj` and `Coin_obj` descendants, so an id
+  naming neither is stale by construction and dropping it cannot lose an
+  item; this is what `petunstick`'s on-sight rule acts on
+  ([Live 2](../ForgePact/docs/pet-loot-stuck-research.md#live-2-results-2026-10-02)).
 - **Arrival rule and pickup radius:** within twice `deltaSpeed` of a ground
   item the pet runs `PickupLoot` (item as `self`) on every ground item within
   **144 px of the pet** that passes the filter; an item whose pickup succeeds
@@ -1265,6 +1280,7 @@ measured (no live session has reproduced it). Its mod is `petunstick`.
   is the local one and exists"; not established.
 
 [pet loot stuck, Static reading](../ForgePact/docs/pet-loot-stuck-research.md#static-reading),
+[Live 2 results](../ForgePact/docs/pet-loot-stuck-research.md#live-2-results-2026-10-02),
 [Not established](../ForgePact/docs/pet-loot-stuck-research.md#not-established)
 
 ---
