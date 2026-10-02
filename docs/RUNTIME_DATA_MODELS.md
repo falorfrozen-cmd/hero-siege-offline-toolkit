@@ -1936,14 +1936,23 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   its parameter struct from its three arguments, and reads no repository. The
   struct it returns is exactly `{j, b, c}`: `j` the first argument (the sub),
   `b` the second (the unique's index), `c` the third (1, the unique
-  repository); it has no field `a` (**measured**, Live 2, below). So the
-  built item's `a` is set after the struct is returned, somewhere in the
-  placement or the constructor; where is **not established**.
-  `LootGroundCreate` and its callees `CreateLootInFreePos` and
-  `LootGroundInit` read no repository either. `CreateItemNew` is missing from
-  the local import, so whether it looks the unique up by `(c, b)` is **not
-  established** (for `c` = 1 it must). **Static reading (2026-10-02, issue
-  #74).** Note that `type` reaches the
+  repository); it has no field `a` (**measured**, Live 2, below). The built
+  item's `a` comes from `LootGroundCreate` itself: on both of its branches
+  that build an item locally it stores a value of its own into the record's
+  `a`, unconditionally and before the item instance exists, then hands the
+  same struct (a second reference, not a copy) to the new item as its
+  `itemDefinitionStruct`, sets the item's `itemType` from its own type
+  argument, and calls `CreateItemNew` directly. `CreateItemNew` reads the
+  item's `itemType` and the definition's `b`, `c` and `j` to look the item up
+  (`c` choosing the unique or the normal repository) and the definition's
+  `a` once, as the seed of the item's random rolls; it stores into none of
+  those fields. An `a` written onto the struct when `CreateDefaultParams`
+  returns is therefore overwritten, and one written at `CreateItemNew`'s
+  entry is the one the item is built with. `LootGroundCreate`,
+  `CreateLootInFreePos` and `LootGroundInit` read no repository. **Static
+  reading (2026-10-02, issue #74; the chain read a second time for where the
+  `a` is set)**; the record at `CreateItemNew`'s entry and what it keeps are
+  **measured** (Live 3, below). Note that `type` reaches the
   placement from the list entry, not from the parameter struct, so rewriting
   the struct cannot change an item's type.
 - **The forge selector.** The item the game builds carries the parameters as
@@ -1956,7 +1965,11 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   `{t 8, a 777002, b 2, c 0, j 0}` and Tyrant's Crown
   `{t 0, a 777001, b 7, c 0, j 0}`. **Source reading** (ForgePact's own code);
   that an item built from those parameters is dressed as the signature item is
-  **measured** (`sigdrop`, 30 of 30 and 17 of 17 on 2026-09-18).
+  **measured** (`sigdrop`, 30 of 30 and 17 of 17 on 2026-09-18; and through
+  the game's own placement and `CreateItemNew`, Live 3, below). An item the
+  Angelic roll builds carries `{b, a, j, c}` and no `w` (**measured**, Live 3,
+  six vanilla hits); a `sigdrop` item, built through `InitItemFromJson`,
+  carries `w` and `o` as well.
 - **How #74 uses the list: a stand-in entry for the length of the roll.** While
   Headhunter's or Tyrant's Crown's panel switch is on, ForgePact pushes one
   entry per enabled item onto the list the roll draws from, the `ds_list` at
@@ -2019,21 +2032,20 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   `b`, `c` 0, `j` 0 and reads them back (a value that does not read back is a
   refusal: the record is put back, the game builds its stand-in, and the item
   stays off for the session), and the game's `CreateItemNew` builds it from
-  that record, where the forge selector above recognises it (static reading,
-  Live 3 pending: no live session has yet shown the game building a playable
-  item from a record written there). One hit is one item, in place of what
+  that record, where the forge selector above recognises it (**measured**,
+  Live 3, below: 46 of 46 Headhunters and 11 of 11 Tyrant's Crowns built by
+  the game from a record written there). One hit is one item, in place of what
   the roll would have dropped. The switch is honoured only while all four
   hooks (`DropItemAngelicChance`, `CreateDefaultParams`,
   `GetUniqueRepoStruct` and `CreateItemNew`) are inline detours. **Design, #74 (2026-10-02, replan 1; the sub-list since
   replan 2)**, as the plugin implements it. Of the three questions only a live
-  session answers, Live 1 answered **typing** and Live 2 **reach**: the
-  roll's picker draws the entries the plugin pushes (below; the held
-  read-back alone shows only that the sub-list holds them). Still **not
-  established**: whether the game builds exactly one dressed item per such
-  hit. Live 2 could not ask it, because the rewrite refused on every hit: the
-  struct has no field `a` to rewrite (below), so the game was never handed
-  the item's parameters. Where the built item's `a` is set is #74's next
-  question (Live 3).
+  session answers, Live 1 answered **typing**, Live 2 **reach** (the roll's
+  picker draws the entries the plugin pushes; the held read-back alone shows
+  only that the sub-list holds them) and Live 3 the **build**: the game
+  builds exactly one dressed item per hit that falls to a mod item (below).
+  Live 2 could not ask that, because its rewrite, on the struct
+  `CreateDefaultParams` returns, refused on every hit: the struct has no
+  field `a` to rewrite. The rewrite has sat at `CreateItemNew`'s entry since.
 - **Measured (Live 1, list injection, 2026-10-02, research dll f7560e80…):
   typing.** With the roll's chance raised by the research lever and both
   switches off, 59 rolls gave 57 hits (`cdpCalls=70`, `detect=detoured`, the
@@ -2065,6 +2077,33 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   stand-in removed and the item spawned in its place) worked on 42 of 42
   hits. The runner's YYError count rose from 1 to 37 in the first kill batch
   (`report#2` x30) and then held; its cause is not established.
+- **Measured (Live 3, list injection, 2026-10-02, research dll e0749368…):
+  where the id reaches the built item, and the build.** With the rewrite
+  moved to `CreateItemNew`'s entry and both switches off, six vanilla hits
+  printed the record there and the built definition: the record's fields are
+  `b`, `a`, `j`, `c`, its `a` already a number (for example
+  `{"b":9.0,"a":270500966.0,"j":6.0,"c":1.0}`, built as `itemType=3` with the
+  same four values), so `LootGroundCreate`'s `a` is on the record by then and
+  the built definition keeps every value. Typing held (47 of 47, `untyped=0`,
+  `typeDisagree=0`; p0 = 2/47). With Headhunter forced and 200 copies pushed
+  per roll, 46 of the next 62 hits fell on Liquor Holster's entry (p1 = 0.742,
+  `heldMiss=0`), and on every one the record went from
+  `{"b":51.0,"a":648002927.0,"j":0.0,"c":1.0}` (its own `a` each time) to
+  `{"b":2.0,"a":777002.0,"j":0.0,"c":0.0}` and the game built
+  `itemType=8` with exactly those values: `built=` and `belt=` +46,
+  `refused=0`, `lootDelta=1` on every hit, the ground labelled
+  `Headhunter`, and the owner, hovering one, read a Headhunter. With both
+  forced, 11 of 15 hits built Tyrant's Crown (`picked 0/0/86`, stand-in Mask
+  of the Celestial) and 2 Headhunter, `built=` growth equal to `ourHits=`
+  growth. Switching both off left the next 22 hits vanilla and the list's six
+  sizes as before. So a `c` 0 record written at `CreateItemNew`'s entry is
+  built through the game's own placement and constructor as the signature
+  item, one per hit, in place of the stand-in. The YYError count rose from 1
+  to 19 between the read just before the layout dump and the end of the
+  first kill batch, all of it before anything was pushed (`report#2` x15, message
+  `REAL argument incorrect type array`), and then held; which step raises it
+  is not established. A hit at the natural chance was not observed (the
+  research lever held the chance at 1e9).
 - **The die.** The rate comes from a zero-argument method on a member of the
   picked definition, scaled by one global value read when the roll starts;
   neither is identified (`droprate.base` is the plausible reading). The roll
@@ -2100,6 +2139,7 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
 [Session 2 (#74) Results](../ForgePact/docs/angelic-roll-hook-research.md#results-1),
 [Session 3 (#74, list injection)](../ForgePact/docs/angelic-roll-hook-research.md#session-3-list-injection-issue-74),
 [Session 4 (#74, the list layout)](../ForgePact/docs/angelic-roll-hook-research.md#session-4-the-list-layout-issue-74),
+[Session 5 (#74, the id on the built item)](../ForgePact/docs/angelic-roll-hook-research.md#session-5-the-id-on-the-built-item-issue-74),
 [curated record](../hs-game-sdk/curated/angelic_list_measurements.json),
 [Decision](../ForgePact/docs/angelic-roll-hook-research.md#decision),
 [angelic drop, the game's own mechanism](../ForgePact/docs/angelic-drop-research.md#oyunun-kendi-mekanizması-statik-okuma-canlı-ölçülen-yalnızca-buff-yokken-zarın-hiç-atılmaması),
