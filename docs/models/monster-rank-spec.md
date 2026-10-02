@@ -108,9 +108,10 @@ inferred, not checked on screen (`docs/RUNTIME_DATA_MODELS.md` § 13.7).
   `ForgePact/docs/boss-rarity-research.md` § "Live procedure 1b"):
   - **MK15-MK16, the identity control.** An ordinary `Skeleton_Mage_Fire_obj`
     raised by the sliders (which write the rank and the same affix top-up as the
-    Bosses control) to rank 3 and 4, read on the probe's own path: `damage`
-    ×1.4008 and ×2.0039 (within 10% of MK1's ×1.53 and ×1.90), `killExperience`
-    ×4.2670 and ×6.2760 (within 2% of ×4.25 and ×6.25; `experience` the same). So
+    Bosses control) to rank 3 and 4, read on the probe's own path through the
+    keys in `damage` and `killExperience`: damage ×1.4008 and ×2.0039 (within 10%
+    of MK1's ×1.53 and ×1.90), XP on kill ×4.2670 and ×6.2760 (within 2% of
+    ×4.25 and ×6.25; the record behind `experience` the same). So
     the protected-store records named by the keys these two variables hold (read
     with `PC_GetVariableGMLWrapper(key)`, as `enemy_hp` is) are a monster's
     damage and XP; reading the variables directly returns the key (176880,
@@ -129,7 +130,8 @@ inferred, not checked on screen (`docs/RUNTIME_DATA_MODELS.md` § 13.7).
     and 5.5% above at rank 4; one spawn), so
     `HYPOTHESES["boss_damage_follows_rank_table"]` stays `None`.
   - **MK22, a boss's XP at rank 4**: ×6.2505 (4,950 -> 30,940), the table's exact
-    ×6.25: `boss_xp_follows_rank_table` is `True`.
+    ×6.25: `boss_xp_follows_rank_table` is `True`, for what was measured: rank 4,
+    one Karp King, one spawn; the rank-3 row was not measured on a boss.
   - **MK23, a boss's drop rank at rank 4**: `DropItem`'s first argument 1 at the
     unraised boss's death, 4 at the raised one's: `boss_drop_rank_reaches_dropitem`
     is `True`.

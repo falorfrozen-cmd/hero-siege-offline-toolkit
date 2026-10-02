@@ -96,8 +96,10 @@ HYPOTHESES: Dict[str, Optional[bool]] = {
     # rank 3 and x5.31 at rank 4, MK17). So these are the feature's effect,
     # not the game's rank scaling for a boss alone.
     "boss_hp_follows_rank_table": None,
-    # None: Live 1b (`ancient-damage` pass) read `damage`, proven by the
-    # identity control (MK15, x1.40 / x2.00 on an ordinary monster), at
+    # None: Live 1b (`ancient-damage` pass) read the record the protected-store
+    # key held in `damage` names (not the variable's value, which is the key),
+    # a read proven by the identity control (MK15, x1.40 / x2.00 on an
+    # ordinary monster), at
     # x2.0968 its rank-1 value (217 -> 455; MK21), 10.4% above MK1's x1.90,
     # 0.4% outside the control's 10%. Not established: the control itself
     # read 8.4% below the table at rank 3 and 5.5% above it at rank 4, the
@@ -105,9 +107,12 @@ HYPOTHESES: Dict[str, Optional[bool]] = {
     # rank-4 one (5, 12, 18), and it is one spawn. So whether a boss's damage
     # follows the row stays open.
     "boss_damage_follows_rank_table": None,
-    # True: Live 1b (`ancient-xp` pass) read `killExperience`, proven by the
-    # identity control (MK16), at x6.2505 its rank-1 value (4,950 -> 30,940;
-    # MK22) against MK1's exact x6.25.
+    # True, for what was measured: Live 1b (`ancient-xp` pass) read the record
+    # the protected-store key held in `killExperience` names (not the
+    # variable's value, which is the key), a read proven by the identity
+    # control (MK16), at x6.2505 its rank-1 value (4,950 -> 30,940; MK22)
+    # against MK1's exact x6.25. That is rank 4 on one boss, a Karp King, from
+    # one spawn; the rank-3 row (x4.25) was not measured on a boss.
     "boss_xp_follows_rank_table": True,
     # True: Live 1b (`ancient-drop-rank` pass): `DropItem`'s first argument
     # was 1 at the unraised Karp King's death and 4 at the raised one's, with

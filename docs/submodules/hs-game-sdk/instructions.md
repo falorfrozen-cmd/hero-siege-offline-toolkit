@@ -34,7 +34,7 @@ hs-game-sdk/
 │   ├── drop_types.json         # LoadDrops drop types + GetNormalRepoStruct repository categories (data only)
 │   ├── drop_roll_measurements.json # M1-M10: recorded drop-roll numbers drop_roll_model.py is tested against (data only)
 │   ├── mining_reward_measurements.json # MR1-MR9: recorded mining-dig numbers mining_reward_model.py is tested against (data only)
-│   ├── monster_rank_measurements.json # MK1-MK5: what a monster's rank does (§13.7) and the boss report, for monster_rank_model.py (data only)
+│   ├── monster_rank_measurements.json # MK1-MK24: what a monster's rank does (§13.7), the boss report, and ForgePact #44's Live 1 and 1b on bosses, for monster_rank_model.py (data only)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
@@ -120,12 +120,18 @@ Helmet and Mining Ore Extra Rolls stay in the test as transforms, pinned to `Min
 `src/forgepact.py` by `RollsLeverParityTests`.
 
 `monster_rank_model.py` (2026-10-02, ForgePact issue #44, hub #379) is built the same way: spec
-`docs/models/monster-rank-spec.md`, fixture `curated/monster_rank_measurements.json` (MK1-MK4 from
-AFK FARM's § 13.7 rank table, MK5 the reported Anubis HP jump, `reported`, not measured), checks
+`docs/models/monster-rank-spec.md`, fixture `curated/monster_rank_measurements.json` (MK1-MK24:
+MK1-MK4 AFK FARM's § 13.7 rank table, MK5 the reported Anubis HP jump, `reported`, not measured,
+and MK6-MK24 ForgePact #44's Live procedures 1 and 1b on bosses), checks
 `tests/test_monster_rank_model.py`. It gives a rank's health, damage and XP multipliers and its
-protected drop values. Whether a boss follows the same rows is carried as
-`HYPOTHESES["boss_follows_rank_table"]`, `None` until a measured row about a boss lands in the
-fixture. ForgePact's Bosses control stays in the test as `force_boss_rank`, pinned to
+protected drop values. Whether a boss follows the same rows is carried one dimension at a time in
+`monster_rank_model.HYPOTHESES`, each `None` (not established) until a measured row about a boss,
+with nothing else changed or the change matched by an identity control, decides it:
+`boss_hp_follows_rank_table` `None` (the boss's health carried a ForgePact affix top-up and had no
+control), `boss_damage_follows_rank_table` `None` (one confounded spawn, 0.4% outside the
+control's tolerance), `boss_xp_follows_rank_table` `True` (rank 4, one Karp King, one spawn; rank 3
+not measured on a boss) and `boss_drop_rank_reaches_dropitem` `True`. The test fails when a
+hypothesis and the fixture disagree. ForgePact's Bosses control stays in the test as `force_boss_rank`, pinned to
 `BossRarityMod.hpp` and `src/forgepact.py` by `LeverParityTests`.
 
 ---
