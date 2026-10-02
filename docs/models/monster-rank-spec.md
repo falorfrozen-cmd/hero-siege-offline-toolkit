@@ -119,8 +119,11 @@ inferred, not checked on screen (`docs/RUNTIME_DATA_MODELS.md` § 13.7).
     217, `killExperience` 4,950, and a `DropItem` first argument of 1 at its
     traced death, the anchor.
   - **MK21, a boss's damage at rank 4**: ×2.0968 (217 -> 455). MK1's rank-4 row is
-    ×1.90; this is 10.4% above it, outside the control's 10%, so
-    `HYPOTHESES["boss_damage_follows_rank_table"]` is `False`.
+    ×1.90; this is 10.4% above it, 0.4% outside the control's 10%, but the row
+    carries `confounds` (the affix top-up 12, 20, 31 was not matched by the
+    control's 5, 12, 18; the control itself read 8.4% below the table at rank 3
+    and 5.5% above at rank 4; one spawn), so
+    `HYPOTHESES["boss_damage_follows_rank_table"]` stays `None`.
   - **MK22, a boss's XP at rank 4**: ×6.2505 (4,950 -> 30,940), the table's exact
     ×6.25: `boss_xp_follows_rank_table` is `True`.
   - **MK23, a boss's drop rank at rank 4**: `DropItem`'s first argument 1 at the
@@ -189,9 +192,9 @@ A pure function of numbers, with exact fractions
 - `HYPOTHESES`: four entries, one per dimension a boss might or might not share
   with the rank table: `boss_hp_follows_rank_table`,
   `boss_damage_follows_rank_table`, `boss_xp_follows_rank_table` and
-  `boss_drop_rank_reaches_dropitem`. Health is `None`, not established (MK7 and
-  MK20 are confounded by the Bosses control's 3-affix top-up); damage is `False`
-  (MK21), XP `True` (MK22) and the drop rank `True` (MK23). Each becomes a bool
+  `boss_drop_rank_reaches_dropitem`. Health and damage are `None`, not
+  established (MK7, MK20 and MK21 are confounded by the Bosses control's 3-affix
+  top-up); XP is `True` (MK22) and the drop rank `True` (MK23). Each becomes a bool
   only from a measured row naming that dimension and a boss object, with its ratio
   to the boss's rank-1 self, and either nothing else changed on the boss or the
   row names the identity control that matched the top-up (`controlled_by`);
