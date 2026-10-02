@@ -49,6 +49,189 @@
       "session": "Live 1j"
     }
   },
+  "bag_to_stash_move": {
+    "note": "The routines the game's own Ctrl + left click runs to move one item from the bag into the stash tab on show, in that order, and the shapes that reproduced the move by name (ForgePact #68). Self and other are the two UI_Inventory_Grid_obj nodes told apart by uiNodeCallstack: InventoryGrid (the bag's, rebinding to the bag view on show) and StashGrid (the stash's, rebinding to the tab on show). The Socketable tab merges by name (socket_merge, Live 1f and 1g); placing a kind it does not hold yet was moved by hand only and has no by-name shape.",
+    "grid_node_object": {
+      "name": "UI_Inventory_Grid_obj",
+      "index": 5112
+    },
+    "validate": {
+      "script": "gml_Script_ValidateItem",
+      "index": 1128,
+      "self_object": "UI_Inventory_Grid_obj",
+      "self_node": "InventoryGrid",
+      "other_node": "InventoryGrid",
+      "arguments": "the item struct; called again after the placement with self the StashGrid node",
+      "answer": "empty text, a refusal included (the Socketable tab's refusal of jewels shows nothing in it)"
+    },
+    "stack": {
+      "script": "gml_Script_StashAddToStack",
+      "index": 112,
+      "self_object": "UI_Inventory_Grid_obj",
+      "self_node": "InventoryGrid",
+      "other_node": "InventoryGrid",
+      "arguments": "the shown tab's cell array; 0 and 13 into the personal page, 9 and 2 into a shared page, the Materials tab and the Socketable tab; the item struct; the count to merge (1 on every hand move; the whole count merged by name); a small number (0 on a page and the Materials tab, 8 on the Socketable tab)",
+      "answer": "true after merging into a stack of the item's identity on that array with room for the count (stack_cap); false when there is none, and then the grid placement follows"
+    },
+    "stack_cap": {
+      "default_cap": 999,
+      "flag_8_cap": 999999,
+      "rule": "StashAddToStack takes its cap from its sixth argument: 999 when it lacks flag 8 (0 on the pages and the Materials tab), 999999 when it carries it (8 on the Socketable tab). It walks the array in order and merges into the first stack of the item's identity whose count plus the moved count stays at or below the cap, answering true; a stack that would pass the cap is passed over, and with none left it answers false. The whole count or none: a stack is never topped up with part of an item. The Materials tab holds several stacks of one kind, the Socketable tab one per kind (the owner, 2026-09-30). Not read: whether the count added is the fifth argument or the item's own o, and the walk order beyond array order. Measured (Live 3, 2026-09-30) for the 999 cap on the Materials tab through ForgePact's Move all: beside a kind's one stack of 875, a unit of 125 was placed as a new stack in a free cell and the 875 left unchanged, and a unit of 129 then passed over the 875 and merged into the stack of 125 (254); no stack read above 999. The 999999 cap with flag 8 remains a static reading",
+      "measured": "M",
+      "source": "ForgePact #131; ForgePact/docs/stash-move-research.md, Static reading 4 (2026-09-30) and Live 3 results (material-overflow, material-partial)"
+    },
+    "grid": {
+      "script": "gml_Script_GridAddItem",
+      "index": 1970,
+      "self_object": "UI_Inventory_Grid_obj",
+      "self_node": "InventoryGrid",
+      "other_node": "InventoryGrid",
+      "arguments": "the shown tab's cell array (the StashGrid node's nodeGrid on a page, Controller_obj.stashMaterialTab on the Materials tab), the item struct, 0, undefined",
+      "answer": "a struct of tabNumber, x, y, tabType, success; success=false when that array has no room, and no other tab is tried; tabNumber read 0 on shared page 1 too"
+    },
+    "source_clear": {
+      "script": "gml_Script_InvGridClearItemNode",
+      "index": 1988,
+      "self_object": "UI_Inventory_Grid_obj",
+      "self_node": "InventoryGrid",
+      "other_node": "InventoryGrid",
+      "arguments": "the item's anchor cell node in the bag grid's nodeGrid, read [y][x], then undefined; after a by-name placement (which leaves the item in its bag cells) or a merge, while the item is still on map 0 and before the owner step"
+    },
+    "socket_merge": {
+      "script": "gml_Script_StashAddToStack",
+      "index": 112,
+      "self_object": "UI_Inventory_Grid_obj",
+      "self_node": "InventoryGrid",
+      "other_node": "InventoryGrid",
+      "container": "the Socketable tab has no one array: one UI_Inventory_Grid_obj per item on the tab, its uiNodeCallstack StashSocketGrid, its nodeGrid one cell holding that item, whose key answers on map 9 (Controller_obj.stashSocketItemSlot is not the container); saved in stash.hss under socket_tab",
+      "arguments": "the nodeGrid of the StashSocketGrid node holding the item's identity; 9; 2; the item struct; its count (1 measured); 8. Self and other the bag's grid node with its Socket view on show; no ValidateItem before it. Then source_clear on the bag cell, only after that node's item's o rose by exactly the count",
+      "answer": "true, the node's o rising by the count (an orb, base id 118: 81 to 82, twice); a gem (base id 38) merged the same way and gained o=2, so no non-stackable answer was met on this tab. A whole stack merges too: a unit of 3 of the orb, merged through ForgePact's Move all, raised the node's o by exactly 3, 92 to 95 (Live 3, 2026-09-30, ForgePact #131)",
+      "measured": {
+        "date": "2026-09-28",
+        "sessions": ["Live 1f", "Live 1g"]
+      }
+    },
+    "owner_step": {
+      "script": "gml_Script_ChangeItemOwner",
+      "index": 2051,
+      "self_object": "UI_Inventory_Grid_obj",
+      "self_node": "StashGrid",
+      "other_node": "InventoryGrid",
+      "arguments": "0, 9, the item's key as text; only after a placement the re-read confirmed (alone, on an item still in the bag, it leaves the key on no map)"
+    },
+    "map_owner_by_tab": {
+      "personal": {
+        "map": 0,
+        "owner_step": "none",
+        "saved_under": "the character's file, inventory.personal_stash"
+      },
+      "shared": {
+        "map": "not established: after the owner step the key answers on neither map 0 nor map 9 by GetItemFromFingerprint, as every shared-page key does",
+        "owner_step": "0 to 9 after the placement",
+        "saved_under": "stash.hss, stash_tab_<n>"
+      },
+      "materials": {
+        "map": 9,
+        "owner_step": "0 to 9 for a new identity; none for a merge",
+        "saved_under": "stash.hss, material_tab"
+      },
+      "socketable": {
+        "map": 9,
+        "owner_step": "none for a merge (by name, Live 1f and 1g); 0 to 9 for a new identity, by hand only (Live 1e)",
+        "saved_under": "stash.hss, socket_tab"
+      }
+    },
+    "measured": {
+      "date": "2026-09-28",
+      "sessions": ["Live 1c", "Live 1d", "Live 1e", "Live 1f", "Live 1g"],
+      "cases": [
+        "a class-10 item by hand and by name into the personal page and shared page 1, and against the full shared page 2",
+        "a new material identity by hand and by name into the Materials tab, one-unit and whole-stack (15) merges",
+        "a rune, a gem and an orb into the Socketable tab by hand; jewels and an Incarnation Gem refused by the game",
+        "an orb (base id 118) and a gem (base id 38) merged by name into their StashSocketGrid nodes on the Socketable tab, count 1"
+      ]
+    }
+  },
+  "ui_node_api": {
+    "note": "The game's own UI node routines, as the in-game Move all button uses them (ForgePact #68). Measured in Live 1f and 1g unless an entry says R, a static reading. A node's click is its user event 15, run from the owning window's Step with self the node, other the window and one argument, the node's activationArgs, handed to its activationFunc; with activationFunc undefined the event does nothing (R; measured in Live 1g only that no armed routine logged a call with such a node as self and no dialog appeared).",
+    "node_object": {
+      "name": "UI_Button_Small_obj",
+      "index": 5009
+    },
+    "owner_object": {
+      "name": "UI_Stash_obj",
+      "index": 5257
+    },
+    "sort_node": {
+      "uiNodeCallstack": "InventorySort",
+      "text": "Sort Tab",
+      "activation": "gml_Script_InventorySortTab, bound with the Sort node itself as self; activationArgs [1]"
+    },
+    "node_origin": "UiCreateNode's x and y are the new node's origin, not its top-left (M, Live 1f and 1g, the same numbers both times; ForgePact #131): for UI_Button_Small_obj (sprite Menu_Button_Chat_spr) the origin lies at its bbox centre (made at 2113.1, 1198.9, bbox 2016.2, 1176.1, 2211.9, 1221.7), while the Sort node's origin is its bbox top-left (2303.5, 1198.9, bbox 2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. The Sort node is a UI_Button_Small_obj too, drawn with Inventory_Tab_Button_Solid_spr, so the origin follows the sprite, not the object. Live 3 (2026-09-30) read the same relation at another GUI scale: the node made at 2178.0, 1295.0 read the bbox 2076.0, 1271.0, 2282.0, 1319.0, and Sort sat at 2290.0, 1262.0 with the bbox 2290.0, 1262.0, 2482.0, 1328.0. The width, 195.7 in Live 1f and 1g, is not a whole sprite size (a GUI scale is in play), so a node's extents about its origin are read from the node, not its sprite, and on a later frame once it is visible and its box reads the same twice, not in the frame it was made",
+    "mercenary_button": {
+      "name": "UI_Button_Open_Mercenary_obj",
+      "index": 5004,
+      "uiNodeCallstack": "InventoryMercenary",
+      "text": "Mercenary",
+      "sprite": "Inventory_Tab_Button_Solid_spr",
+      "listed": "Only with the bag open on its own (the C key). With the stash open menulayout lists none, and after the stash's close neither it nor InventorySort is listed (Live 5 alone: Live 6 ran no Mercenary query with the stash open or after a close)",
+      "box_relation": "Relative to InventorySort's bbox: its left edge 196/192 of Sort's width left of Sort's left edge, the same top, Sort's width and height, so its right edge is 4 GUI units short of Sort's left. Read 2094,1262,2286,1328 beside Sort's 2290,1262,2482,1328 at a 2560x1440 GUI in Live 5 and again in Live 6; InventorySort's box is the same with the stash open. One GUI scale only",
+      "measured": "M",
+      "sessions": ["Live 5", "Live 6"]
+    },
+    "page_tabs": {
+      "name": "UI_Button_Inventory_Tab_obj",
+      "index": 4988,
+      "uiNodeCallstacks": ["InventoryTab_1", "InventoryTab_2", "InventoryTab_3", "InventoryTab_4", "InventoryTab_5"],
+      "listed": "With the stash open, all five, tabNumber 0 to 4 in uiNodeCallstack order, text Main then Extra, visible=1 (toolkit #147's stash-bag-layout live 2, attempt 1). Read with the bag open on its own in Live 7: the same five, visible=1",
+      "column_relation": "The row is contiguous, each bbox InventorySort's width (182.4), top 1136.2, bottom 1198.9, lefts 1573.9, 1756.3, 1938.7, 2121.1 and 2303.5, the pitch the width; InventorySort's bbox (2303.5,1198.9,2485.9,1261.6, Live 1f and 1g) lies directly under the row, its left and right InventoryTab_5's, so InventoryTab_4's column, above the slot left of Sort, is 2121.1 to 2303.5: Sort's left minus one Sort width, up to Sort's left. At a 2560x1368 GUI (window 1920x1080, Town_01_rm). Live 7 (ForgePact #131, 2026-10-02, 2560x1440 GUI and window) read the same relation at that scale: each tab 192 wide, top 1196, bottom 1262, lefts 1522, 1714, 1906, 2098 and 2290, with the stash open and with the bag open on its own (so the tabs are listed in both, unlike the earlier reading), InventorySort 2290,1262,2482,1328 with its left and right InventoryTab_5's and its top the row's bottom, so InventoryTab_4's column is 2098 to 2290. Measured at two GUI scales, 2560x1368 (above) and 2560x1440 (ForgePact #131 Live 7); not at any other",
+      "measured": "M",
+      "sessions": ["toolkit #147 stash-bag-layout live 2", "ForgePact #68 Live 1f", "ForgePact #68 Live 1g", "ForgePact #131 Live 7"]
+    },
+    "label_members": {
+      "members": ["textFont", "dropShadow", "createX", "drawXOffset", "drawYOffset", "navBboxX", "navBboxY", "navBboxWidth", "navBboxHeight", "naviDown", "naviDownPrev", "naviRight", "naviRightPrev"],
+      "label_place": "Measured: the label is drawn centred in the box on both axes (the node's label box 2140,1286,2242,1303 in its box 2094,1262,2286,1328 in Live 6; 2136,1286,2238,1303 in 2090,1262,2282,1328 in Live 5; Sort's own label left edge 2338). Inferred, and not separated from plain centring: that left edge also sits within 2 of the node's x plus drawXOffset (Sort 2290 + 48 = 2338; the node 2094 + 48 = 2142 against 2140 in Live 6, 2090 + 48 = 2138 against 2136 in Live 5), but a label centred in the box fits the same numbers to within 1, so they do not tell the two apart. Vertically the glyph top (1286) is 15 below the node's y plus drawYOffset (1262 + 9 = 1271 on Sort); the label tool reads drawn pixels, not the draw origin, so whether drawYOffset anchors the text, a font's own top spacing included, is not separated. Which of the 13 places the label on either axis is not separated either: they were written together. A UiCreateNode button already wearing Sort's sprite and scale differed from InventorySort in exactly these 13 writable members, besides its identity, place, text and activation; with them copied from Sort by name (and Sort's sprite_index and scale) the node's label is drawn centred in its box like Sort's",
+      "kinds": "textFont reads as an asset reference (ref font __newfont2 on Sort); dropShadow and the four navi* flags as bools; the rest as numbers",
+      "absolute_members": "createX, navBboxX and navBboxY hold an absolute GUI position (on Sort, its box's corner). Written raw as Sort's onto a node 200 units to its left in Live 5 and 196 in Live 6, the label was still drawn inside the node's own box",
+      "persist": "Copied onto the node and read back equal at once (Live 5), and again equal to Sort's in a probe diff seconds later and on a node made after a close and reopen (Live 6)",
+      "not_established": "which of the 13 places the label on either axis (they were written together); what the navi* flags and navBbox* members do beyond the label, such as gamepad navigation; whether the game rewrites any of them in longer play",
+      "measured": "M",
+      "inferred": ["label_place"],
+      "sessions": ["Live 5", "Live 6"]
+    },
+    "create": {
+      "script": "gml_Script_UiCreateNode",
+      "index": 4469,
+      "self_object": "UI_Stash_obj",
+      "arguments": "x; y; the object index; the activation (undefined leaves activationFunc undefined); the call-stack name, stored as the node's uiNodeCallstack. Self and other the window that will own the node. Answers the node (visible 0 that frame, 1 the next)",
+      "measured": "M"
+    },
+    "remove": {
+      "script": "gml_Script_UiRemoveNode",
+      "index": 4461,
+      "self_object": "UI_Stash_obj",
+      "arguments": "the node; self the window that owns it. The window's own close destroys a node still in its list; a tab switch keeps it",
+      "measured": "M"
+    },
+    "set_activation": {
+      "script": "gml_Script_UiSetActivationFunc",
+      "index": 4463,
+      "self_object": "UI_Stash_obj",
+      "arguments": "the node; a script, bound as a method whose self is the node when callable, else activationFunc left undefined. A node bound to UiSetFloatingToFalse ended the game when clicked (that script is written for another object)",
+      "measured": "M (the dispatch and the crash); the binding rule R"
+    },
+    "move": {
+      "script": "gml_Script_UiMoveNode",
+      "index": 4475,
+      "self_object": "UI_Stash_obj",
+      "arguments": "the node; x; y. Sets both and runs the node's own position update",
+      "measured": "R (not called live)"
+    },
+    "measured": {
+      "date": "2026-09-28",
+      "sessions": ["Live 1f", "Live 1g"]
+    }
+  },
   "measured": {
     "date": "2026-09-24",
     "session": "Live 1i",
@@ -60,6 +243,7 @@
   },
   "sources": [
     { "file": "ForgePact/docs/crafting-materials-research.md", "section": "### Phase 1i results" },
+    { "file": "ForgePact/docs/stash-move-research.md", "section": "## Decision" },
     { "file": "docs/RUNTIME_DATA_MODELS.md", "section": "## 17. Stash Special Tabs & the Crafting Route" }
   ]
 }

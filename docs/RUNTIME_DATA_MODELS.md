@@ -79,7 +79,7 @@ value `{"data": {...}}` with the slot in `g` (§2, read 2026-09-27).
 * `cur_stats`: Active combat statistics (Life, Mana, Physical Damage, Elemental Resistances).
 * `p_gold` / `p_rubies`: Player currency counters.
 * `inventory`: Primary inventory array containing serialized item structs or nested bag structs.
-* `inventory_relic_tab` / `bags`: Extended bag containers.
+* `inventory_relic_tab` / `bags`: Extended bag containers. `inventory_relic_tab` is the name of the relic tab in a save file (`inventory_order_<slot>.hss`); in memory the relic tab is `Controller_obj.inventoryData[key - 1].inventoryRelicGrid` (§1, "The relic tab").
 
 ### How the local player arrives: `VALUE_REF`, not `VALUE_OBJECT`
 
@@ -165,6 +165,31 @@ through the game's own scripts, `GetOnlinePlayerItemOwner(mplr)` then
 above. That route was measured for the helmet slot on 2026-09-23, and for the
 relic slots 10-14 on 2026-09-27: all five resolved to relic instances whose ids
 and levels matched the save (§1, **measured**).
+
+**The relic tab is a grid indexed by relic id.** The relics a character owns but
+does not wear sit in `Controller_obj.inventoryData[key - 1].inventoryRelicGrid`,
+where `[relicId][0][0]` holds a grid node, `{nodeStartX, nodeStartY, nodeLocked,
+nodeIsPermanent, nodeFingerprint}`, or undefined. The node's `nodeFingerprint` is
+the owned copy's fingerprint. `key` is 1 when `global.onl` is 1, and the player row
+(`global.mplr`) otherwise. The game's own `PickupRelic` and `RelicCheckAchievement`
+hand that key to `GetProfileInventoryData`, which reads index `key - 1`, and the
+latter walks ids 0..155 (**static reading**, Sep-17 build, 2026-09-30; hub
+`docs/models/relic-pick-spec.md`). **Measured** 2026-09-30 (ForgePact #125 Live 1,
+offline, `mplr` 1): `inventoryData` held one element, a reference to a
+`New_Inventory_Data_obj` instance. Its grid had 156 cells, each `[[node]]` or
+`[[undefined]]`, and all 100 of the save's tab relics resolved through the owner and
+resolver above, with the levels the save holds. Read the variables instead of
+calling `GetProfileInventoryData` (§9.4). A save stores the same tab as `inventory_relic_tab` in
+`inventory_order_<slot>.hss`: keyed `x-y-<stamp>-16`, each `{data: {b, a, j, c}}`,
+with `o` absent at level 1 (the owner's slot 1, 14 entries, **read** 2026-09-30).
+The SDK reads the in-memory grid as `Player::ScanRelicTab` (C++), for ForgePact #125.
+
+**What 10/10 means** (owner, ForgePact #124/#125). A relic always drops at level 1.
+Each pickup of the same relic raises the owned copy's level by one, up to 10, so a
+10/10 relic is one picked up ten times. `PickupRelic` finds the owned copy (relic
+tab first, then the equipped slots) and raises it only while `o` is below 10, so a
+relic at 10/10 cannot be picked up again (**static reading**). A dropped relic's own
+level therefore says nothing; the check is the owned copy's `o`.
 
 **`o` means two things, depending on the item.** On a relic it is the upgrade
 level. On a stackable item, such as a socketable or a crafting material, it is the
@@ -511,6 +536,7 @@ switching Holy Form off does call it.
 |---|---|---|
 | 1 | Berserk | 720 per hit, stacking to 8; a new instance each time it reappears |
 | 9 | Defensive Shout | 14400, re-added in full about 180 times over 89 frames |
+| 21 | Master Mechanic (Marksman) | 1500 (25 s at 60 fps), `host` = the player's `id`; measured 2026-10-01 on a test copy, ForgePact #122 |
 | 22 | Agility | 3600 |
 | 86 | Martyr (White Mage passive during life drain) | about 445–563 |
 | 104 | Counter | 1036.8; held constant with Give No Quarter |
@@ -565,7 +591,8 @@ switching Holy Form off does call it.
   Healing Zone, 358 Lunar Orbit, 283 Crematus, 301 Counter, 377 Submerged Knives,
   430 Maelstrom of Frost, 224 Meteor Storm, 134 Bushido, 364/365 Holy/Unholy
   Form, 137 Blade Barrier, 334 Blizzard, 6 Defensive Shout, 18 Berserk, 307 Last
-  Stand, 45 Agility. Whether they survive a game build is not known.
+  Stand, 45 Agility, 49 Beacon, 54 Master Mechanic. Whether they survive a game
+  build is not known.
 
 [toggle skills, Toggle skill table](../ForgePact/docs/toggle-skills-research.md#toggle-skill-table),
 [After session 6](../ForgePact/docs/toggle-skills-research.md#after-session-6),
@@ -627,6 +654,16 @@ Shout and Berserk add theirs outside it.
   Pickup Truck 576, Dissipating Tornado 432. Relic companions (`Honey_Bee_obj`,
   `Minisect_obj`, `Karp_Head_obj`, `Zeppelin_obj`) sit under the ability parent at
   a constant -1. **Measured.**
+- The Marksman's Beacon (`Marksman_Beacon_obj`, talent 49) is a timed effect:
+  its own `destroyTimer` started at **516** (8.6 s at 60 fps) on each of two
+  clean casts and fell about one per frame. `instance_number` stayed 1 in both
+  cleared windows and a recast replaced the live beacon (the fresh timer back
+  at 516), so it is single instance; ownership is unreadable (no `isMyClient`),
+  and its parent is `Player_Ability_Parent_obj`, not the sentry parent. Its
+  talent reads `abilityDuration=0`, `abilityCooldown=10` and tags `[15,18,10]`
+  — the tag the turrets, totems and hydra share. **Measured 2026-10-01**, on a
+  test copy of the class (ForgePact #122).
+  [ForgePact #122](../ForgePact/docs/toggle-skills-research.md#issue-122-2026-10-01-the-marksmans-beacon)
 - Mana Orb (talent 253) is a **timed effect, not a toggle**: its object is
   `White_Mage_Mana_Orb_obj`, and `skillstate`'s `effect=` reader
   (`instance_number` of that object, resolved by name through
@@ -744,6 +781,61 @@ Shout and Berserk add theirs outside it.
 
 [skill actions, Results](../ForgePact/docs/skill-actions-research.md#results),
 [skill actions, Decision](../ForgePact/docs/skill-actions-research.md#decision)
+
+### 7.5 Skill Haste and All Skills: the stats and where the game reads them
+
+Written for ForgePact#114 (hub #337); the mechanism, labelled claim by claim,
+is [`docs/models/skill-stat-spec.md`](models/skill-stat-spec.md).
+
+- **`ReturnSpecificStat(player, statId, ...)` is the stat dispatcher.** A switch
+  on the stat id sends it to one `Stat*` script; the function fills in its own
+  case table on first run. Ids: **2** `StatAllSkills`, **36** `StatMaxLife`,
+  **37** `StatMaxMana`, **103** `StatSpellHaste`, **106** `StatFasterCastRate`.
+  `StatSpellHaste` and `StatAllSkills` each have exactly one direct caller,
+  `ReturnSpecificStat`. **Static reading.**
+- **Both return a fresh array; element 0 is the total.** Each builds its result
+  with `@@NewGMLArray@@` on every call (**static reading**). On the way out,
+  `ReturnSpecificStat` does more arithmetic with elements 0 to 3 of an array
+  result (**static reading, not fully read**). Skill Haste's usable total stops
+  at 200 somewhere after `StatSpellHaste` returns (**measured**, below).
+- **Skill Haste runs cooldowns down faster.** `Controller_obj`'s Step event walks
+  the active cooldowns and, each step, lowers one's time left by
+  `(1 + rate) × deltaSpd`. For a skill cooldown `rate` = Skill Haste (stat 103) ×
+  0.005; entries of another kind take stat 105 × 0.01 instead, and cooldown id
+  75 takes 0. The talent tooltip, the only other constant-103 read found,
+  scales by the same 0.005. **Static reading.** `GetTalentCooldown`, which sets
+  a cooldown's base time, does not read Skill Haste.
+- **Measured** (ForgePact#114 Live 1, 2026-09-30, Suh, a Samurai with 40 Skill
+  Haste from gear, Blade Barrier's 8 s cooldown cast from code by `TalentUse`):
+  - The step read Skill Haste once per step (60 reads a second) while the
+    cooldown ran, and never while no cooldown ran.
+  - The cooldown ran for 392 and 397 steps with no bonus, 280 with +100, 265
+    with +120, and 238 with +160, +200 and +300. That is base / (1 + total/200)
+    with the total stopped at 200: totals of 240 and 340 took exactly as long as
+    200.
+  - [`hs-game-sdk/curated/skill_stat_measurements.json`](../hs-game-sdk/curated/skill_stat_measurements.json)
+    holds the counts, checked by `tests/test_skill_stat_model.py`.
+- **`ReturnTalentLevel` has no direct caller in this build.** Its body adds the
+  bonuses it reads through `ReturnSpecificStat`, All Skills among them, only when
+  its third argument is true and the allocated level is above 0, with no clamp
+  (**static reading**). Calling it by name with only a talent id raises the
+  runner error "I32 argument is undefined" (**measured**, `skillprobe state`,
+  2026-09-30; the game carried on). Which of the many scripts that pass stat id 2
+  to `ReturnSpecificStat` turn it into a skill's level is **not established**.
+- **All Skills joins the level a cast uses** (**measured**, ForgePact#114 Live 1,
+  2026-10-01, Suh). For Honor (talent 142, one point) adds buff type 42, whose
+  `buffValue` was [137.8, 72.5, 0] with the character's own All Skills total of
+  28, and [228, 120, 0] with 19 more added through `StatAllSkills`: the level
+  (29, then 48) times [4.75, 2.5]. `ReportClient` was not called, and the save
+  kept every field but `playtime`.
+- **`StatAllSkills` can call `ReportClient`.** It compares one of the values its
+  caller passes in against twice a global constant and reports the client when
+  it is larger, inside the script, on the game's own numbers. `ReportClient`
+  builds a state report (sha256, base64) and sends it through the online API
+  (`ApiRequestRegion`, `reportSendPendingMap`). `CheatDetection`, which calls
+  `ReportClient` from `Client_obj`'s Step, checks hashes (gold, experience, the
+  crafting trades, mercenary talents), game speed and items, and reads neither
+  stat. **Static reading.**
 
 ---
 
@@ -1126,12 +1218,13 @@ On the 2026-09-11 build the closures were `m_QuestUseKey` `anon@1400`,
 ### 10.6 The companion's own loot pickup (`Companion_obj`)
 
 Every entry here is a **Static reading** of the current build's compiled
-`Companion_obj`, `Loot_Ground_obj` and `Coin_obj` events (2026-09-27); none is
-measured. Object events have no script-table entry, so none of it can be
-hooked by name. ForgePact #94 (the pet stays on one ground item it cannot pick
-up, with lots of loot around) is, by the owner's report, this companion
+`Companion_obj`, `Loot_Ground_obj` and `Coin_obj` events (2026-09-27) unless
+marked measured. Object events have no script-table entry, so none of it can
+be hooked by name. ForgePact #94 (the pet stays on one ground item it cannot
+pick up, with lots of loot around) is, by the owner's report, this companion
 pickup; that the pinning rule below is its cause is a static reading, not yet
-measured (no live session has reproduced it). Its mod is `petunstick`.
+measured (Live 1 did not reproduce it; Live 2 measured the stale-target shape
+below instead). Its mod is `petunstick`.
 
 - **Variables** (Create): `lootList` (a ds_list), `lootTarget` (-4 = none, an
   instance id after; written as a real), `lootTimer` (0), `lootDistance`
@@ -1152,6 +1245,20 @@ measured (no live session has reproduced it). Its mod is `petunstick`.
 - **Retarget rule:** a new `lootTarget` (the list's first entry) is chosen
   **only** when the current one no longer exists. Nothing replaces a target
   that still exists.
+- **A reused instance id keeps a stale target "alive"** (**Measured**,
+  2026-10-02, ForgePact #138): `instance_exists(lootTarget)` is the only
+  validity check there is, so when the game frees a destroyed instance's id
+  and re-mints it for whatever is created next, `lootTarget` starts naming a
+  stranger that passes the check and is never replaced. Measured live: the
+  pet's target named `Abyss_Jungle_Dead_Aztec_Skeleton_01_obj` (object 15, a
+  child of `Visual_Parent_obj`; `itemType=undefined`, `visible=0`), and the
+  pet travelled to it and ground at it (52-88 px, `move=true`,
+  `deltaSpeed=21.9`, the travel speed) while the player walked thousands of
+  pixels away; both captures came within seconds of a zone change. The pet's
+  list only ever holds `Loot_Ground_obj` and `Coin_obj` descendants, so an id
+  naming neither is stale by construction and dropping it cannot lose an
+  item; this is what `petunstick`'s on-sight rule acts on
+  ([Live 2](../ForgePact/docs/pet-loot-stuck-research.md#live-2-results-2026-10-02)).
 - **Arrival rule and pickup radius:** within twice `deltaSpeed` of a ground
   item the pet runs `PickupLoot` (item as `self`) on every ground item within
   **144 px of the pet** that passes the filter; an item whose pickup succeeds
@@ -1173,6 +1280,7 @@ measured (no live session has reproduced it). Its mod is `petunstick`.
   is the local one and exists"; not established.
 
 [pet loot stuck, Static reading](../ForgePact/docs/pet-loot-stuck-research.md#static-reading),
+[Live 2 results](../ForgePact/docs/pet-loot-stuck-research.md#live-2-results-2026-10-02),
 [Not established](../ForgePact/docs/pet-loot-stuck-research.md#not-established)
 
 ---
@@ -1477,10 +1585,16 @@ keys 1500. **Measured 2026-08-27.**
 `DropRelic`'s drop is not a 1-in-`droprate.base` roll: all 156 relics carried
 25,000,000 and relics still dropped constantly, so dividing every relic's base by
 the same factor (the `droprate group relic` lever) changed nothing observable.
-**Measured 2026-08-28** (ForgePact `c0a6a6b`). Whether it reads the base at all,
-for example as a weight in the pick between relics, is **not established**: every
-relic had the same value, and a uniform divide leaves a weighted pick unchanged.
-Changing one relic's base would settle it.
+**Measured 2026-08-28** (ForgePact `c0a6a6b`). It does not read the base at all
+(**static reading**, 2026-09-30): `DropRelic` and both Satanic kill relic routines
+draw `irandom(155)` and draw again while `GetRelicQuest` answers true, which it does
+for the quest relics 141..155 only, so every other relic is equally likely
+whatever its base. `DropRelic` and the Feast routine may then copy one of the five
+equipped relics below level 10 in place of the pick. The whole mechanism, with each
+claim labelled, is hub `docs/models/relic-pick-spec.md`. **Measured** 2026-09-30
+(ForgePact #125 Live 1, 320 relics built through `DropRelic`): no quest relic ever
+came out. With six relics maxed, 8 of 150 relics were one of them without a filter
+and 0 of 150 with `GetRelicQuest` answering true for them.
 [blood pact §3](../ForgePact/docs/blood-pact-values-research.md#3-eşya-kategorisi-haritası-yeni)
 
 ### 13.3 Dungeon keys
@@ -1549,7 +1663,7 @@ Drops read `enemyRarity`, `x` and `y` off the dying enemy. **Measured.**
   - That path is **measured** for treasure, rune and shadow goblins: 15 packets AFK FARM recorded on 2026-09-24. Orb and ore goblins were not observed.
   - A goblin's gold shower (`DropGold`) and the shadow goblin's Dimensional Shards (`LootGroundCreate`, type 13, base 1) are made outside `DropItem`, so a `DropItem` replay does not bring them. **Static reading.**
 
-[AFK FARM design, 0.8](../HS-AFK-Expedition/docs/DESIGN.md#08-the-camp-traits-and-three-more-worker-types)
+AFK FARM design, 0.8 (a private repository)
 
 ### 13.7 Monster ranks: names, health, damage, XP and drop values
 
@@ -1631,7 +1745,7 @@ A monster that special content spawned carries a non-zero `specialType` in its s
   [dev2 bug batch, #77](../ForgePact/docs/dev2-bug-batch-research.md#77-dropmult-gold-100-froze-the-game)
 - **`LootGroundCreate(x, y, itemType, def, …)`** makes a floor item whose Create event builds it (`CreateItemNew`). `def` carries `b` (base), `j`, `c` (0 normal, 1 unique repository) and optional `o` (stack) and `a` (seed). Rarity is not an argument. **Measured** for types 14 and 15 through AFK FARM's workers. Type 12 was **measured** on 2026-09-25: a town delivery made Basic Keys (12:0) and Cellar Keys (12:10) with the right `b` and `o`. Type 13 was **measured** the same day: a town delivery made a Battle Fragment (13:0) with the right `b` and `o`, and the game gave it a new seed (`a`).
 
-[AFK FARM design, 0.9](../HS-AFK-Expedition/docs/DESIGN.md#09-the-town-defense-trade-merchants)
+AFK FARM design, 0.9 (a private repository)
 
 ---
 
@@ -1734,6 +1848,7 @@ All **measured** unless marked.
 | Most game scripts called cold (global `self`, no args) | access violation inside game code; process survives | §5.7 |
 | A GML builtin called off the game thread | crash | §5.6 |
 | Installing a `DropRelic` hook during character select | the runner stalls | §5.7 |
+| `GetRelicQuest` answering true for every relic 0..155 | a relic pick's draw-again loop never ends (**static reading**) | §13.2 |
 | `DropItemAngelic` when the zone has no candidates | infinite loop, game freezes | §13.4 ([angelic drop](../ForgePact/docs/angelic-drop-research.md#oyunun-kendi-mekanizması-statik-okuma-canlı-ölçülen-yalnızca-buff-yokken-zarın-hiç-atılmaması)) |
 | Writing `dropTable` on piles, destructibles, `Cursed_Orb_obj` | GML error (static reading) | §13.1 |
 | `DropDungeonKeys` with argument 5 undefined | GML error (static reading) | §13.3 |
@@ -2264,7 +2379,10 @@ for the indices; neither is a call target here. The container names above
 them from `data.win`, and no extractor currently produces them or ties them
 to `Controller_obj`, so they are recorded as hand-verified data in
 `hs-game-sdk/curated/stash_containers.json`, checked against this section and
-the SDK by `tests/test_curated_stash_containers.py`.
+the SDK by `tests/test_curated_stash_containers.py`. The same file's
+`bag_to_stash_move` records the move below (§ "Moving an item from the bag
+into the stash"): each routine by SDK name and index, its self and other, its
+arguments in words, and the map owner per tab kind.
 
 M: two more curated entries, added after Live 1j (RD `### Phase 1j
 results`): `save` names the close's own save route (`SaveLocalFile`,
@@ -2316,6 +2434,26 @@ measured (one sentence, in the drag path bullet).
   `tabNumber`. `UI_Stash_obj.invMaterialTab` and `.invSocketTab` hold the
   Material and Socket rows' instances. The page tabs are
   `UI_Button_Inventory_Tab_obj`, `tabNumber` 0 to 4 (Main, then four Extra).
+  Their grid, M at two GUI scales, 2560x1368 (window 1920x1080, Town_01_rm)
+  from two sessions, and 2560x1440 from Live 7 (below) - toolkit #147's
+  stash-bag-layout live 2, attempt 1, with the stash open, for the tabs, and
+  ForgePact #68's Live 1f and 1g for InventorySort: `uiNodeCallstack` `InventoryTab_1` to `InventoryTab_5` in
+  `tabNumber` order, all `visible=1` and listed with the stash open; each
+  bbox 182.4 wide (InventorySort's width), top 1136.2, bottom 1198.9, lefts
+  1573.9, 1756.3, 1938.7, 2121.1 and 2303.5, so the row is contiguous (the
+  pitch is the width). The row sits directly above InventorySort's
+  (InventorySort 2303.5,1198.9,2485.9,1261.6: its top is the row's bottom),
+  and InventorySort's left and right equal `InventoryTab_5`'s, so the slot
+  left of Sort is under `InventoryTab_4`, whose column is 2121.1 to 2303.5:
+  Sort's left minus one Sort width, up to Sort's left. Live 7 (ForgePact #131,
+  2026-10-02, GUI and window 2560x1440) read the same relation there: each tab
+  192 wide, top 1196, bottom 1262, lefts 1522, 1714, 1906, 2098 and 2290,
+  InventorySort 2290,1262,2482,1328 (left and right `InventoryTab_5`'s, top the
+  row's bottom), so `InventoryTab_4`'s column is 2098 to 2290; all five read
+  `visible=1` with the bag open on its own; with the stash open the same five
+  boxes were listed, `InventoryTab_4` and `InventoryTab_5` read `visible=1`,
+  and the first three's visibility was not quoted. Not measured: the row at
+  any other GUI scale.
 - **`activeNode`.** M: `UI_Stash_obj.activeNode` holds an instance - the stash
   grid right after the open (SB P0-4), the clicked sub-tab's row after a real
   click on a bag sub-tab (SB P2-4). After a by-name
@@ -2404,6 +2542,241 @@ measured (one sentence, in the drag path bullet).
 
 [stash and bag layout, Results](../ForgePact/docs/stash-bag-layout-research.md#results),
 [stash and bag layout, Decision](../ForgePact/docs/stash-bag-layout-research.md#decision)
+
+### Moving an item from the bag into the stash (ForgePact #68)
+
+Source: the stash move research (`ForgePact/docs/stash-move-research.md`, "SM"
+below): a static reading, then eight research-build sessions on 2026-09-28
+(Live 1 to Live 1g), slot 14 in `Town_01_rm`, the interaction-check control
+climbing in each; Live 1c and Live 1e had the owner's own Ctrl + left click as
+the input, the others none (Live 1f's character pick was by hand). Representative cases: one or two items per tab
+kind. **M** measured live; **R** a static reading, not measured.
+
+- **The game's own quick move is Ctrl + left click.** M: with the stash open
+  the bag window's hint strip reads `CTRL + LMB: Quick Move` (SM § Static
+  reading 2), and the owner's Ctrl + left click moved an item from the bag
+  into the tab on show in Live 1c and Live 1e. A plain click sent by
+  `hs_input` reached `ProcessInventoryGridInput` once and never started a
+  pick-up (Live 1b `click-control`), so no scripted gesture is measured.
+- **The routines a quick move runs, in order.** M (Live 1c, Live 1e, each
+  logged by a research-build detour on the hand move): `ValidateItem` (self
+  and other the bag's grid node, the item), `StashAddToStack` (the same self
+  and other, the shown tab's cell array, two numbers, the item, 1, a small
+  number), then - when that answers false - `GridAddItem` (the same self,
+  other and array, the item, 0, undefined), `s_InvNode` per covered cell,
+  `ValidateItem` with self the stash's grid node and other the bag's, and on
+  a stash-map destination `ChangeItemOwner` (self the stash grid, other the
+  bag grid, 0, 9, the key as text). The two numbers are 0 and 13 into the
+  personal page, 9 and 2 into a shared page, the Materials tab and the
+  Socketable tab. When `StashAddToStack` answers true (a merge) the next call
+  is `InvGridClearItemNode` on the bag cell. No `GetStashMaxTabs` and no other
+  tab was logged on any bag-to-stash move.
+- **The grid nodes.** M: the bag's grid node is the `UI_Inventory_Grid_obj`
+  whose `uiNodeCallstack` is `InventoryGrid`, the stash's the one whose
+  `uiNodeCallstack` is `StashGrid`; each rebinds to the view on show (the
+  bag's to its Materials or Socket view after `bagtab`, the stash's to the
+  tab after `stashtab`), keeping its instance id. Their `nodeGrid` is indexed
+  `[y][x]`. Only the shown tab's array is readable this way.
+- **By name, the same sequence moves the item.** M (Live 1d, into the
+  personal page and shared page 1; Live 1e, a new identity into the Materials
+  tab, with `Controller_obj.stashMaterialTab` as the array): the replayed
+  sequence, `s_InvNode` left out, placed the item at `GridAddItem`'s answer
+  (`tabNumber`, `x`, `y`, `tabType`, `success=true`), which held through a
+  close, a reopen and the saved files. A by-name `GridAddItem` leaves the item
+  in its bag cells too: `InvGridClearItemNode` (self and other the bag grid,
+  the anchor cell's node, undefined) empties them, and it must run while the
+  item is still on map 0, before the owner step.
+- **Which map an item is in.** M: a personal-page item stays on map 0, with no
+  owner step, and saves in the character's file under
+  `inventory.personal_stash` (Live 1c, Live 1d). A shared-page item needs the
+  owner step 0 to 9 after the placement; afterwards its key answers
+  `undefined` on map 0 **and** on map 9 by `GetItemFromFingerprint`, as every
+  shared-page key did, and it saves in `stash.hss` under `stash_tab_<n>` (Live
+  1d). Which map holds a shared-page entry is not established. A Materials
+  item answers on map 9 after the owner step and saves under `material_tab`;
+  a Socketable item saves under `socket_tab` (Live 1e). R: the owner table
+  has no personal-stash owner (0 the character ... 9 the stash, 10 and 11 the
+  pact and guild stashes); an item carries an `inPersonalStash` member.
+- **The owner step alone breaks the save invariant the other way.** M (Live
+  1c step 8): `ChangeItemOwner` 0 to 9 on an item still in a bag cell left its
+  key on no map while it sat in the bag; it was reversed before the close.
+  Run it only after a placement the re-read confirmed.
+- **`GridAddItem` places only into the array it is handed.** M: against the
+  full shared page 2 (306 of 306), the owner's Ctrl + left click logged
+  `StashAddToStack` false and `GridAddItem` `success=false` on that page's own
+  array and nothing after; the item stayed in the bag and no other tab
+  changed (Live 1c `hand-full`); the by-name call answered the same (Live 1d).
+  Its answer's `tabNumber` read 0 on shared page 1 as well, so it does not
+  name the tab.
+- **Merges.** M: `StashAddToStack` answers true only when a stack of the
+  item's identity is on the array and the stack then rose by the fifth
+  argument's count: one unit (Live 1c, by name and by hand) and a whole stack
+  of 15 (Live 1e, by name, `wholeStackMerge`); every hand merge logged 1. With
+  no stack of that identity it answers false (Live 1, Live 1c). R: it takes
+  only classes 12 to 15, merges through `InventoryStackUpdateAndRemove`, and
+  answers false when the stack's hash check fails. Scope: every merge above
+  was on the Materials tab (`Controller_obj.stashMaterialTab`, 9, 2) with the
+  bag's Materials view on show, plus one by-hand orb on the Socketable tab. A
+  merge on a stash page with that page's own two numbers (0 and 13 personal, 9
+  and 2 shared) and the Materials tab fed from a bag page are not observed.
+  Because it merges into any stack of the identity on the array that has
+  room, a caller moving several items must re-read the array's stacks before
+  each call: an earlier item of the same batch can have made or filled the
+  stack a later one meets (ForgePact #68's round-2 review found a duplicated
+  unit that way). **The cap** (M for 999, Live 3, 2026-09-30; R for 999999
+  and the walk order; ForgePact #131): the routine
+  takes a cap from its sixth argument - 999 when it is 0 or lacks flag 8,
+  999999 when it carries flag 8 - and walks the array in order, merging into
+  the first stack of the identity whose count plus the moved count stays at
+  or below the cap; a stack that would pass it is passed over, and when none
+  fits it answers false. So a merge takes the whole count or none, and never
+  tops a stack up with part of an item. Live 3 measured the 999 cap through
+  ForgePact's Move all on the Materials tab: beside a kind's one stack of
+  875, a unit of 125 was placed as a new stack in a free cell and the 875
+  left unchanged, and a unit of 129 then passed over the 875 and merged into
+  the stack of 125 (254); no stack read above 999
+  (`ForgePact/docs/stash-move-research.md` § Live 3 results). The measured
+  merges pass 0 on the
+  pages and the Materials tab (cap 999) and 8 on the Socketable tab (cap
+  999999). The owner (2026-09-30): the Materials tab holds several stacks of
+  one kind, 999 each, and the Socketable tab one stack per kind. Not read:
+  whether the count added is the fifth argument or the item's own `o`, and the
+  walk order beyond array order.
+- **The Socketable tab.** Its container: M (Live 1e, 1f, 1g) one
+  `UI_Inventory_Grid_obj` per item on the tab, each carrying `uiNodeCallstack`
+  `StashSocketGrid` and a one-cell `nodeGrid` holding that item, whose key
+  answers on map 9; the tab saves in `stash.hss` under `socket_tab`.
+  `Controller_obj.stashSocketItemSlot` is not the container: it read no
+  fingerprint while the tab held items (Live 1e). By hand, M (Live 1e): the
+  game refuses jewels (base ids 109 and 110) and Incarnation Gems (136) for
+  this tab after the first `ValidateItem` and before any placement routine,
+  with nothing in the logged answers showing it; runes and gems were placed
+  through the sequence above into a one-row array that was different for each
+  item, and an orb merged. **By name, the merge**, M (Live 1f, Live 1g):
+  `StashAddToStack` with self and other the bag's grid node (its Socket view
+  on show), the `nodeGrid` of the `StashSocketGrid` node holding the item's
+  identity, 9, 2, the item, its count (1) and 8, answered true, and that
+  node's item's `o` rose by exactly the count (an orb, base id 118, 81 to 82
+  in both sessions); `InvGridClearItemNode` (self and other the bag grid, the
+  bag cell's node, undefined) then emptied the bag cell, and the merged unit's
+  key reached no saved file after the stash's own close. A gem (base id 38)
+  merged the same way and gained `o=2`, so it is stackable: no
+  non-stackable answer was met on this tab, and Live 1e's missing `o` on it
+  was a count of 1. A whole stack merges too, M (Live 3, 2026-09-30,
+  ForgePact #131): a unit of 3 of the orb merged through ForgePact's Move
+  all, and the node's `o` rose by exactly 3 (92 to 95). Placing a kind the tab does not hold yet was not
+  replayed by name (no accepted kind absent from the tab could be obtained
+  without a person).
+- **The UI node API** (the in-game Move all button, ForgePact #68). M (Live
+  1f, Live 1g) unless marked R. `UiCreateNode(x, y, object, activation,
+  callstack name)` with self the window that will own the node (here
+  `UI_Stash_obj`, as self and other): it made a `UI_Button_Small_obj` at that
+  x and y, stored the name as the node's `uiNodeCallstack`, drew it with the
+  object's own sprite, and answered the node (`visible` 0 in that frame, 1 the
+  next); a `text` set on the node was drawn as its label. **The x and y are
+  the node's origin, not its top-left** (M, Live 1f and 1g, the same numbers
+  both times; ForgePact #131): for `UI_Button_Small_obj` (sprite
+  `Menu_Button_Chat_spr`) the origin lies at its bbox centre - made at x
+  2113.1, y 1198.9, its bbox read 2016.2, 1176.1, 2211.9, 1221.7 - while the
+  bag's Sort node's origin is its bbox top-left (x 2303.5, y 1198.9, bbox
+  2303.5, 1198.9, 2485.9, 1261.6), at a 2560x1440 GUI. The Sort node is a
+  `UI_Button_Small_obj` too, drawn with `Inventory_Tab_Button_Solid_spr`, so
+  the origin follows the sprite, not the object. Live 3 (2026-09-30) read
+  the same relation at another GUI scale: the Move all node made at x
+  2178.0, y 1295.0 read the bbox 2076.0, 1271.0, 2282.0, 1319.0, and Sort
+  sat at x 2290.0, y 1262.0 with the bbox 2290.0, 1262.0, 2482.0, 1328.0.
+  Its width, 195.7 in Live 1f and 1g, is
+  not a whole sprite size, so a GUI scale is in play: read a node's extents
+  about its origin from the node itself rather than from its sprite, and on a
+  later frame, once it is visible and its box reads the same twice, not in the
+  frame it was made (ForgePact's Move all button checks it that way).
+  **A copied sprite and scale persist, and the bbox follows them** (M,
+  Live 4, 2026-09-30, ForgePact #131): with `sprite_index`, `image_xscale` and
+  `image_yscale` read off the Sort node by name and written onto a fresh
+  `UiCreateNode` node, the node read Sort's sprite
+  (`Inventory_Tab_Button_Solid_spr`) through `menulayout` and by name two
+  ensure steps later and after a stash tab switch, its origin moved to its
+  bbox top-left with the sprite, and its bbox read Sort's size (made at x
+  2090, y 1262: bbox 2090.0, 1262.0, 2282.0, 1328.0, 192x66, beside Sort's
+  2290.0, 1262.0, 2482.0, 1328.0). No read in that session found the object's own
+  sprite put back on that member. **The drawn result was not Sort's
+  button**, seen on a screenshot only: the node's `text` was no longer drawn
+  inside its box (a clipped end of it showed at about the box's top-left
+  corner, the node's new x, y), and the box did not read as Sort's to the
+  owner. **Which members carry the label's place and look** (M, Live 5 and
+  Live 6, 2026-09-30, ForgePact #131): such a node, already wearing Sort's
+  sprite and scale, differed from InventorySort in exactly 13 writable
+  members beyond its identity, place, text and activation - `textFont`,
+  `dropShadow`, `createX`, `drawXOffset`, `drawYOffset`, `navBboxX`,
+  `navBboxY`, `navBboxWidth`, `navBboxHeight`, `naviDown`, `naviDownPrev`,
+  `naviRight`, `naviRightPrev` - and with those read off Sort by name and
+  written onto the node as read, its label was drawn centred in its box like
+  Sort's (Live 5 by a research copy; Live 6 on ForgePact's shipped path, on
+  the first node and on one made after a close and reopen). `textFont` reads as an asset reference
+  (`ref font __newfont2` on Sort), `dropShadow` and the four `navi*` members
+  as bools, the rest as numbers. `createX`, `navBboxX` and `navBboxY` hold an
+  absolute GUI position (on Sort, its own box's corner); written raw as Sort's
+  onto a node 200 units to its left in Live 5 and 196 in Live 6, the label was
+  still drawn inside the node's own box. **Copied label members persist:** they read back equal at
+  once (Live 5), equal to Sort's again in a member diff seconds later, and on
+  a reopened node's copy (Live 6). **Where the label sits:** measured, it is drawn
+  centred in the box on both axes (the node's label box 2140,1286,2242,1303
+  in its box 2094,1262,2286,1328 in Live 6; 2136,1286,2238,1303 in
+  2090,1262,2282,1328 in Live 5; Sort's own label left edge 2338). Inferred,
+  and not separated from plain centring: that left edge also sits within 2 of
+  the node's x plus `drawXOffset` (Sort 2290 + 48 = 2338; the node 2094 + 48 =
+  2142 against 2140 in Live 6, 2090 + 48 = 2138 against 2136 in Live 5), but a
+  label centred in the box fits the same numbers to within 1, so they do not
+  tell the two apart. Vertically the glyph top (1286) is 15 below the node's y
+  plus `drawYOffset` (1262 + 9 = 1271 on Sort); the label tool reads drawn
+  pixels, not the draw origin, so whether `drawYOffset` anchors the text, a
+  font's own top spacing included, is not separated. Not read: which of the 13
+  places the label on either axis (they were written together, in Live 5's
+  trial and in the shipped copy), what the `navi*` and `navBbox*` members do
+  beyond the label (gamepad navigation, for example), and whether the game
+  rewrites any of them in longer play. **The Mercenary button** (M, Live 5
+  and Live 6): with the bag open on its own (the `C` key) the game lists a
+  `UI_Button_Open_Mercenary_obj` (SDK object 5004, `uiNodeCallstack`
+  `InventoryMercenary`, `text` `Mercenary`, Sort's sprite) through
+  `menulayout`, its bbox 2094, 1262, 2286, 1328 beside InventorySort's 2290,
+  1262, 2482, 1328 at a 2560x1440 GUI: Sort's width and height, the same top,
+  its left edge 196/192 of Sort's width left of Sort's left edge (its right
+  edge 4 GUI units short of Sort's). With the stash open it is not listed
+  (Live 5 alone: Live 6 ran no Mercenary query with the stash open), while
+  InventorySort's box reads the same in both sessions; after the stash's close
+  neither is listed (Live 5 alone). One GUI scale only.
+  With the
+  fourth
+  argument undefined the node's `activationFunc` stays undefined (R: the
+  function binds a callable value as a method of the new node and leaves
+  anything else undefined, as `UiSetActivationFunc(node, f)` does). A node's
+  click is dispatched as the node's user event 15 (in the object events
+  `UI_Node_Parent_obj` defines), run from the owning window's Step, with self
+  the node, other the window, and one argument, the node's `activationArgs`,
+  handed to its `activationFunc`: M, a node bound to `UiSetFloatingToFalse`
+  was called exactly so when clicked, and that script then raised "bool
+  argument is unset" and ended the game (written for another object). R: when
+  `activationFunc` is undefined the event does nothing - no sound, no call, no
+  write; M (Live 1g): a click on such a node ended nothing, no dialog
+  appeared, and no routine armed in that session logged a call with the
+  node as self (UiSetFocus, the hover routine, aside); that nothing else
+  runs is the R above, not measured. `UiRemoveNode(node)` with self the owning window removed
+  it; the window's close destroyed a node still in its list, so a reopen finds
+  none; a bag or stash tab switch kept it. R: `UiMoveNode(node, x, y)` sets
+  both and runs the node's own position update; not called live. The bag's Sort button is the
+  `UI_Button_Small_obj` whose `uiNodeCallstack` is `InventorySort` (text
+  `Sort Tab`, `activationArgs` `[1]`, its activation `InventorySortTab`
+  bound with the Sort node itself as self); the stash side's is `StashSort`.
+  An end-of-frame `mouse_check_button_pressed(mb_left)` read sees a click
+  made in that frame, and `device_mouse_x_to_gui`/`device_mouse_y_to_gui` put
+  it inside the clicked node's `bbox` (Live 1f `sort-click-control`, Live 1g).
+  Not read: where the game creates the Sort button, and the part of the
+  window's Step that picks which node gets the click.
+- **`GetItemPreferredGrid`** logged only on the reverse move (stash to bag),
+  never on a move from the bag into the stash (M, Live 1e).
+
+[stash move, Decision](../ForgePact/docs/stash-move-research.md#decision),
+[stash move, Ship design](../ForgePact/docs/stash-move-research.md#ship-design)
 
 ## 18. Gems of Incarnation
 

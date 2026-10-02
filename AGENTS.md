@@ -22,7 +22,7 @@ each at its own pinned model tier and effort (`planner`, `implementer`,
 escalating the whole phase, a `live-operator` that runs a workorder's written
 live-game procedure so the driver only relays to the person, a `scribe` that
 pastes a round's precomputed Log/State text into a workorder's own files with
-`Read`/`Edit` only, and three skills:
+`Read`/`Grep`/`Edit` only, and three skills:
 `/catalog-rebuild`, `/workorder` (drives those phases
 and routes defects back to the phase that caused them), and
 `submodule-context` (loads the guide named above). MCP servers are in
@@ -170,13 +170,24 @@ So, in `/workorder` and anything run like it:
   pull requests.
 - **Batch the owner's decisions before the next plan, and fix a flaky test
   in the round that saw it**, rather than retrying it.
-- **After a small fix, re-run only the checks it can reach** (the owner,
-  2026-09-27: *"run relevant tests only if possible"*): a fix round after a
-  verify that passed everything else runs the criteria whose `(reads ...)`
-  the fix touches plus the failed ones (`tools/run_criteria.py
-  --changed-since`), and the full set runs at the final gate before push, or
-  whenever the delta is unknown, touches a shared contract, or the verifier
-  cannot tell.
+- **During development run only the relevant subset; the full suite runs
+  once, as the last step before the pull request** (the owner, 2026-09-27:
+  *"run relevant tests only if possible"*, widened 2026-10-02: *"full suite
+  runs shouldnt be run so frequently. it should be reserved to the last step
+  before the pr"*). A first verify and an items gate run every criterion but
+  the whole suites and the ones marked `(final)` (`tools/run_criteria.py
+  --dev`); a fix round after a verify that passed everything else runs the
+  criteria whose `(reads ...)` the fix touches plus the failed ones
+  (`--changed-since`), deferring the same. The full set runs at the final
+  gate before the PR, or whenever the delta is unknown, touches a shared
+  contract, or the verifier cannot tell. So every module a change touches
+  needs a targeted criterion beside its whole suite.
+- **After a write, read the diff, not the file** (the owner, 2026-10-02):
+  an agent checks its own edit with `git diff -- <path>`, a grep or a ranged
+  read, and an agent after it (verifier, reviewer, re-entered implementer,
+  replanning planner, scribe) reads the diff since its base or the one
+  section it needs, never the whole file again. `workorder_audit.py` R26
+  fails an implementer or planner that does.
 - **A question never idles the pipeline.** Before asking the owner, start
   everything the answer cannot change. Spin off an out-of-scope bug instead
   of asking about it. Apply the default to a reversible choice and say how
@@ -698,32 +709,52 @@ wrong column, is invisible to them. So, in the hub and in every submodule:
 1. **Find the issue first; create one if there is none.** Search the
    repository the change lands in (`gh issue list --search ...`). If nothing
    covers the work, open an issue there before the branch.
-2. **Titles start with a type prefix**: `[Bug]`, `[QoL]`, `[Mod]`,
+2. **Put the issue on the "Hero Siege Tools" project, in a column.** Every
+   repository in this toolkit feeds that one board, and an issue that is not
+   on it does not exist as far as the owner is concerned. Do it in the same
+   step that files the issue, not when work starts: `gh issue create
+   --project "Hero Siege Tools" ...`, then `py -3 tools/issue_board.py move
+   <owner/repo> <n> Todo`, which adds the issue if it is missing and sets its
+   Status and `Development` iteration. An issue you found in step 1 gets the
+   same check: if it is not on the project, or sits there with no Status,
+   run the same `move`. Being on the project is not enough on its own: an
+   issue the project's auto-add picked up has no Status, so it is on the
+   project but in no column of the board (ForgePact #74 went missing twice
+   that way).
+3. **Titles start with a type prefix**: `[Bug]`, `[QoL]`, `[Mod]`,
    `[Adjustment]`, `[Research]`, `[Tooling]` or `[Docs]` — e.g.
    `[QoL] Stash tabs renaming`. `py -3 tools/issue_board.py check-title
    "<title>"` checks one. When you touch an older issue without a prefix,
    add one.
-3. **Attach the branch to the issue.** Create it with
+4. **Attach the branch to the issue.** Create it with
    `gh issue develop <n> -R <owner/repo> --name <branch>` (then fetch and
    check it out), which lists it under the issue's Development section; for a
    branch that already exists, put `Closes #<n>` (or `owner/repo#<n>` across
    repositories) in the pull request body, which links it the same way. A
    feature spanning modules has one issue per module it touches, each linked
-   to its own branch, per the next section.
-4. **Move the issue on the board as the work moves.** `Todo` when filed,
-   `In Progress` when work starts, with the running `Development` iteration:
+   to its own branch and each on the project, per the next section.
+5. **Move the issue on the board as the work moves.** `In Progress` when work
+   starts, with the running `Development` iteration:
    `py -3 tools/issue_board.py move <owner/repo> <n> "In Progress"`. `Done`
    follows from the pull request closing it; `Impossible` and `Backlog` are
-   the owner's call, or yours with the reason in a comment. An issue left
-   with no Status is on the project but in no column of the board.
-5. **Keep it maintained.** Comment when something material happens — a
+   the owner's call, or yours with the reason in a comment.
+6. **Keep it maintained.** Comment when something material happens — a
    finding that changes the scope, a blocker, a question for the owner, a
    pull request opened — so the issue, not a session transcript, is where
    the state of the work can be read.
 
-`gh` needs the `project` scope for step 4 (`gh auth refresh -s project`).
-If an edit fails, say which fields are still unset rather than reporting the
-issue as done.
+`gh` needs the `project` scope for steps 2 and 5 (`gh auth refresh -s
+project`). Where there is no `gh` with that scope (a cloud session that
+reaches GitHub only through an MCP server, which can file an issue but not
+edit a user project), file the issue anyway and tell the owner, in your
+report and in a comment on the issue, that it still has to be added to the
+board. Never report an issue as filed and tracked while it is off the
+project, and if an edit fails, say which fields are still unset rather than
+reporting the issue as done.
+
+Every submodule's own `AGENTS.md` repeats this rule in short, for an agent
+working in a standalone clone; change those copies in the same feature when
+this one changes.
 
 ## One Branch and One Pull Request per Module, per Feature
 
@@ -781,8 +812,8 @@ repository:
    is red. Merging is still the owner's call, per pull request.
 
 The review workflow (`.github/workflows/ai-review.yml`) exists in this hub and
-in `ForgePact`, `HS-Offline-Tracker`, `hero-siege-item-editor` and
-`HS-AFK-Expedition`. The other submodules have neither the workflow nor the
+in `ForgePact`, `HS-Offline-Tracker` and `hero-siege-item-editor`. The other
+submodules have neither the workflow nor the
 label. Before opening a pull request in one of them, check
 (`gh api repos/<owner>/<repo>/contents/.github/workflows`), and if it is
 missing, **offer the owner two options** rather than skipping the review
@@ -821,8 +852,8 @@ Story and evidence: [docs/agents/yytoolkit-provenance.md](docs/agents/yytoolkit-
 
 When developing, modifying, testing, or reverse-engineering game logic, hooks, drops, and items across any submodules:
 - Use `hs-game-sdk` (`hs-game-sdk/`) as the central source of truth for GameMaker object indices, script names, room indices, sprite indices, sound indices, stat IDs, proc bundles, and runtime item/stat structs.
-- In **C++** plugins (`ForgePact/plugin`, `HS-Offline-Tracker/aurie-producer`, `hs-stat-forge`, `HS-AFK-Expedition/plugin`), `#include <hs_game_sdk/hs_game_sdk.hpp>` and use strongly-typed definitions from namespace `HeroSiege` (such as `HeroSiege::Objects::GameObject`, `HeroSiege::Scripts::gml_Script_*`, `HeroSiege::Stats::StatId`, and `HeroSiege::YYTK`).
-- In **Python** submodules (`ForgePact/src`, `hero-siege-item-editor`, `HSSaveEditor`, `HS-Offline-Launcher`, `HS-AFK-Expedition/tools`), import models and constants from `hs_game_sdk` (e.g. `from hs_game_sdk import GameObject, GameScript, StatId, PROC_FAMILIES, ItemDefinitionStruct, ItemStatStruct`).
+- In **C++** plugins (`ForgePact/plugin`, `HS-Offline-Tracker/aurie-producer`, `hs-stat-forge`), `#include <hs_game_sdk/hs_game_sdk.hpp>` and use strongly-typed definitions from namespace `HeroSiege` (such as `HeroSiege::Objects::GameObject`, `HeroSiege::Scripts::gml_Script_*`, `HeroSiege::Stats::StatId`, and `HeroSiege::YYTK`).
+- In **Python** submodules (`ForgePact/src`, `hero-siege-item-editor`, `HSSaveEditor`, `HS-Offline-Launcher`), import models and constants from `hs_game_sdk` (e.g. `from hs_game_sdk import GameObject, GameScript, StatId, PROC_FAMILIES, ItemDefinitionStruct, ItemStatStruct`).
 - In **TypeScript / Web** submodules (`HSCraftSim`, `HS-Offline-Tracker/src`), import from `@hero-siege/sdk`.
 - Avoid declaring raw string literals or magic numbers for game scripts, asset indices, object types, and stat keys when equivalent constants exist in `hs-game-sdk`.
 - If game updates shift asset or script indices, regenerate the SDK bindings using `tools/extract_and_generate_sdk.py`.

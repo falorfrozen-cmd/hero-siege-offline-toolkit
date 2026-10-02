@@ -1141,6 +1141,66 @@ class R15Tests(TempDirMixin, unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+# R26 reread-after-write
+# --------------------------------------------------------------------------
+
+class R26Tests(TempDirMixin, unittest.TestCase):
+    """The owner, 2026-10-02: after a write, read only the difference or the
+    relevant part, never the whole file again."""
+    SRC = "C:/repo/.claude/worktrees/wt/tools/run_criteria.py"
+
+    def _agent(self, records, agent_type="implementer"):
+        _, results = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).workflow_agent(
+            "wf_a", agent_type, f"{agent_type}:r0", records).evaluate()
+        return get_rule(results, "R26")
+
+    def _rereads(self, count, read_input=None, start=1):
+        records = tool_turn(0, 0, "Edit", {"file_path": self.SRC, "old_string": "a", "new_string": "b"},
+                            result="The file has been updated.")
+        for i in range(count):
+            records += tool_turn(10 + i * 10, start + i, "Read", read_input or {"file_path": self.SRC}, result="x" * 50)
+        return records
+
+    def test_fail_whole_rereads_past_the_allowance(self):
+        r = self._agent(self._rereads(wa.REREAD_AFTER_WRITE_ALLOWANCE + 1))
+        self.assertFalse(r.passed)
+        self.assertIn("run_criteria.py", r.evidence[0])
+        self.assertIn("git diff", r.evidence[0])
+        self.assertFalse(self._agent(self._rereads(3), agent_type="planner").passed)
+
+    def test_pass_within_the_allowance_ranged_reads_and_other_roles(self):
+        self.assertTrue(self._agent(self._rereads(wa.REREAD_AFTER_WRITE_ALLOWANCE)).passed)
+        ranged = {"file_path": self.SRC, "offset": 300, "limit": 40}
+        self.assertTrue(self._agent(self._rereads(6, ranged)).passed, "a ranged read is the relevant part")
+        self.assertTrue(self._agent(self._rereads(6), agent_type="verifier").passed, "control: not a writing role")
+
+    def test_shell_cat_counts_and_a_command_that_may_rewrite_the_file_clears_it(self):
+        records = self._rereads(0)
+        for i in range(3):
+            records += tool_turn(10 + i * 10, 1 + i, "Bash", {"command": "cd C:/repo && cat tools/run_criteria.py"}, result="x")
+        self.assertFalse(self._agent(records).passed)
+        # A generator run that names the file may have rewritten it: its
+        # output is new, so reading it afterwards is not re-reading an edit.
+        records = self._rereads(0) + tool_turn(5, 1, "Bash", {"command": "py -3 gen.py --out tools/run_criteria.py"}, result="ok")
+        for i in range(3):
+            records += tool_turn(10 + i * 10, 2 + i, "Read", {"file_path": self.SRC}, result="x")
+        self.assertTrue(self._agent(records).passed)
+        # Neither a grep, a diff nor a heredoc write is a whole read.
+        records = self._rereads(0)
+        for i, cmd in enumerate(["git diff -- tools/run_criteria.py", "grep -n select tools/run_criteria.py",
+                                 "cat > tools/run_criteria.py <<'EOF'\nx\nEOF", "cat tools/run_criteria.py | head -5"]):
+            records += tool_turn(10 + i * 10, 1 + i, "Bash", {"command": cmd}, result="x")
+        self.assertTrue(self._agent(records).passed)
+
+    def test_reading_a_file_before_writing_it_is_not_a_reread(self):
+        records = []
+        for i in range(4):
+            records += tool_turn(i * 10, i, "Read", {"file_path": self.SRC}, result="x")
+        records += tool_turn(100, 9, "Edit", {"file_path": self.SRC, "old_string": "a", "new_string": "b"}, result="ok")
+        self.assertTrue(self._agent(records).passed)
+
+
+# --------------------------------------------------------------------------
 # R16 scribe-scope
 # --------------------------------------------------------------------------
 
