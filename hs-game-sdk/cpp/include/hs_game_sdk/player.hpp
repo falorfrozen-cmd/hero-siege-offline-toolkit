@@ -284,8 +284,9 @@ inline bool IsInstanceHandle(const RValue& value) {
 // Both readers seen (the companion's Step and the ground item's own
 // Create-defined function) take the class through it; whether the ground
 // instance also carries a top-level copy is not established, so it is never
-// read. STATIC READING (2026-10-02), not yet confirmed live: ForgePact#124's
-// Live 1 settles it.
+// read. Static reading (2026-10-02), confirmed live by ForgePact#124's Live 1
+// (2026-10-02, `petrelic census` ok=42): the itemInstance -> itemType /
+// itemDefinitionStruct.b read held for every relic on screen.
 //
 // C++ only: a ground instance exists only in the running game's memory, and
 // the Python binding reads saves.
