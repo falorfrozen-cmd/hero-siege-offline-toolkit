@@ -276,21 +276,29 @@ inline bool IsInstanceHandle(const RValue& value) {
 // ---------------------------------------------------------------------------
 // A relic lying on the ground (ForgePact#124).
 //
-// A dropped item is a Loot_Ground_obj instance. Its own instance variables
-// carry the item class (kItemInstanceTypeField) and the definition
-// (kItemInstanceDefinitionField, `b` the id) - the same two names an item
-// instance carries anywhere else. STATIC READING of the ground item's Create
-// (2026-10-02), not yet confirmed live: ForgePact#124's Live 1 settles it.
+// A dropped item is a Loot_Ground_obj instance. The ground item's constructor
+// stores a fresh item instance in the ground instance's kGroundItemInstanceField
+// variable, and that item instance carries the item class
+// (kItemInstanceTypeField) and the definition (kItemInstanceDefinitionField,
+// `b` the id) - the same two names an item instance carries anywhere else.
+// Both readers seen (the companion's Step and the ground item's own
+// Create-defined function) take the class through it; whether the ground
+// instance also carries a top-level copy is not established, so it is never
+// read. STATIC READING (2026-10-02), not yet confirmed live: ForgePact#124's
+// Live 1 settles it.
 //
 // C++ only: a ground instance exists only in the running game's memory, and
 // the Python binding reads saves.
 // ---------------------------------------------------------------------------
 
+/// Variable of a Loot_Ground_obj instance holding its item instance.
+inline constexpr std::string_view kGroundItemInstanceField = "itemInstance";
+
 /// Where a ReadGroundRelic call stopped. Every stage but Ok is a refusal.
 enum class GroundRelicStage {
     NotRun,        ///< never read: the struct has not been through a call
     NoHandle,      ///< no interface, the value is not an instance handle, or reading it threw
-    NoClass,       ///< the instance has no numeric kItemInstanceTypeField
+    NoClass,       ///< no item instance, or one with no numeric kItemInstanceTypeField
     NotRelic,      ///< the class is read and is not kRelicItemClass
     NoDefinition,  ///< a relic class, but no definition struct
     NoId,          ///< the definition holds no id in 0 .. kRelicIdLimit - 1
@@ -323,15 +331,20 @@ struct GroundRelicRead {
 /**
  * Is this ground item a relic, and which one?
  *
- * Positive identification only: the instance's class must read
- * kRelicItemClass, and the id comes from its definition's kRelicIdFields. An
- * id-shaped or level-shaped field - `relicLevel` included - is never evidence
- * on its own, and neither is a definition without a class: a relic's
- * definition carries `c` 0 and no class (#93), so the instance is the only
- * place the class lives.
+ * Positive identification only: the class of the ground instance's item
+ * instance (kGroundItemInstanceField) must read kRelicItemClass, and the id
+ * comes from that item instance's definition's kRelicIdFields. An id-shaped or
+ * level-shaped field - `relicLevel` included - is never evidence on its own,
+ * and neither is a definition without a class: a relic's definition carries
+ * `c` 0 and no class (#93), so the item instance is the only place the class
+ * lives.
  *
- * Both instance kinds are accepted (IsInstanceHandle): the instance is read
- * through `variable_instance_*`, which takes a reference straight through.
+ * Both kinds are accepted at every level (IsInstanceHandle): the ground
+ * instance is read through `variable_instance_*`, which takes a reference
+ * straight through, and the item instance and its definition through
+ * `variable_struct_*` as a VALUE_OBJECT or `variable_instance_*` as a
+ * VALUE_REF, the same split as the relic-tab profile read below. The kind
+ * never decides whether the read runs.
  *
  * Returns true only on GroundRelicStage::Ok. `out` is reset first, so a
  * refusal never leaves an earlier read's id behind.
@@ -346,27 +359,43 @@ inline bool ReadGroundRelic(YYTKInterface* yytk, const RValue& instance, GroundR
         return value.m_Kind == ::YYTK::VALUE_REAL || value.m_Kind == ::YYTK::VALUE_INT32
             || value.m_Kind == ::YYTK::VALUE_INT64;
     };
+    // A field of a struct-like value: `variable_struct_*` for a VALUE_OBJECT,
+    // `variable_instance_*` for the VALUE_REF this runner can hand back
+    // instead. Anything else holds nothing.
+    const auto field = [yytk](const RValue& owner, std::string_view name, RValue& value) {
+        if (owner.m_Kind == ::YYTK::VALUE_OBJECT) {
+            if (!YYTK::StructHasVariable(yytk, owner, name)) return false;
+            value = YYTK::GetStructVariable(yytk, owner, name);
+            return true;
+        }
+        if (owner.m_Kind == ::YYTK::VALUE_REF) {
+            if (!YYTK::InstanceHasVariable(yytk, owner, name)) return false;
+            value = YYTK::GetInstanceVariable(yytk, owner, name);
+            return true;
+        }
+        return false;
+    };
     if (!yytk || !IsInstanceHandle(instance)) return stop(GroundRelicStage::NoHandle);
     try {
-        if (!YYTK::InstanceHasVariable(yytk, instance, kItemInstanceTypeField)) {
+        if (!YYTK::InstanceHasVariable(yytk, instance, kGroundItemInstanceField)) {
             return stop(GroundRelicStage::NoClass);
         }
-        const RValue itemClass = YYTK::GetInstanceVariable(yytk, instance, kItemInstanceTypeField);
+        const RValue item = YYTK::GetInstanceVariable(yytk, instance, kGroundItemInstanceField);
+        RValue itemClass;
+        if (!field(item, kItemInstanceTypeField, itemClass)) return stop(GroundRelicStage::NoClass);
         if (!isNumber(itemClass) || !std::isfinite(itemClass.ToDouble())) return stop(GroundRelicStage::NoClass);
         out.itemClass = static_cast<int>(itemClass.ToDouble());
         if (out.itemClass != kRelicItemClass) return stop(GroundRelicStage::NotRelic);
 
-        if (!YYTK::InstanceHasVariable(yytk, instance, kItemInstanceDefinitionField)) {
-            return stop(GroundRelicStage::NoDefinition);
-        }
-        const RValue definition = YYTK::GetInstanceVariable(yytk, instance, kItemInstanceDefinitionField);
-        if (definition.m_Kind != ::YYTK::VALUE_OBJECT || !definition.m_Object) {
+        RValue definition;
+        if (!field(item, kItemInstanceDefinitionField, definition) || !IsInstanceHandle(definition)
+            || (definition.m_Kind == ::YYTK::VALUE_OBJECT && !definition.m_Object)) {
             return stop(GroundRelicStage::NoDefinition);
         }
 
         for (const std::string_view idField : kRelicIdFields) {
-            if (!YYTK::StructHasVariable(yytk, definition, idField)) continue;
-            const RValue id = YYTK::GetStructVariable(yytk, definition, idField);
+            RValue id;
+            if (!field(definition, idField, id)) continue;
             if (!isNumber(id)) break;
             const double value = id.ToDouble();
             if (!std::isfinite(value) || std::floor(value) != value
