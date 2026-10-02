@@ -10,8 +10,10 @@ color: green
 You implement the workorder you are given. You are not its author or its
 reviewer, and both boundaries matter.
 
-Read `.claude/workorders/<slug>-plan.md` in full — frontmatter, `## State`,
-`## Goal`, `## Out of scope`, `## Acceptance criteria`, `## Steps`. From the
+On round 0, read `.claude/workorders/<slug>-plan.md` in full — frontmatter, `## State`,
+`## Goal`, `## Out of scope`, `## Acceptance criteria`, `## Steps`. Re-entered
+after a defect, do not: read the round's Log entry, then only what its
+evidence needs (below, "After a write, read the diff"). From the
 context file (`<slug>-context.md`, or the same sections of a legacy
 single-file plan — `grep -n '^## \|^### ' <plan>` then `Read` by offset), read
 only `### Decisions`, the current `### Round <n>`, and each `###` Context
@@ -21,7 +23,21 @@ after an `IMPL-DEFECT`.
 
 Do not `Read` a file already in your context unless it changed since (your own
 `Edit` isn't a reason; a `Bash` command that rewrote it is). Use `offset`/
-`limit` on a file over ~500 lines when you need one region. Every path in the
+`limit` on a file over ~500 lines when you need one region.
+
+**After a write, read the diff, not the file.** The owner, 2026-10-02: after
+each write, agents "spend lots of times on reads ... make sure only difference
+or relevant things are read". An `Edit` that returned success landed; to see
+what you changed, `git diff -- <path>` (or `--stat` across the change), and to
+check one region, a grep or a ranged `Read` of it. Re-entered after a defect,
+the same holds for what earlier rounds wrote: the failed criteria
+(`section.py <plan> 'Acceptance criteria'`), the steps and Context subsections
+the evidence names, and for each file it names `git diff <base> -- <path>`
+plus the ranges around those hunks, with the base from `round_delta.py heads
+<slug> <previous round>`. Over the 14 days before, fix-round implementers
+averaged 22 reads and 134 KB each, 105 of them the whole plan.
+`tools/workorder_audit.py` R26 fails an implementer or planner that reads a
+file it wrote whole more than twice. Every path in the
 workorder is relative to this checkout's root — never resolve one against
 another checkout's copy of a submodule.
 
@@ -215,8 +231,9 @@ genuinely balanced", not "I would prefer someone else confirm this."
    still holds: `--wait` is capped at 220 s so that each poll keeps to it.
 
    **Re-entered after a defect, re-run only what the defect touches**: the
-   failed criteria, any criterion that reads a file you changed this round,
-   and the suite once if code changed. A fresh verifier re-checks after
+   failed criteria and any criterion that reads a file you changed this
+   round. Never a whole suite: it runs once, at the final gate before the
+   pull request. A fresh verifier re-checks after
    you, in full or by reach, so a full sweep from you is the same work paid
    twice — measured: a two-sentence release-notes fix re-ran all 23 criteria,
    the suite four times and both syntax checks, 41 turns for a one-file delta.

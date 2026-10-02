@@ -131,6 +131,18 @@ class LiveChecksTests(TempDirMixin, unittest.TestCase):
         self.assertIsNone(live_checks.parse_line("- a | x | passed")[1])
         self.assertIsNone(live_checks.parse_line("- a | x | not-running")[1])
 
+    def test_crash_reads_as_fail_and_keeps_the_tail(self):
+        # forgepact-68-move-all Live 1f: the operator wrote `crash (fail) ...`
+        # after a click ended the game. The capture is evidence and is never
+        # edited, so the tool reads the word; the note keeps it visible.
+        self.assertEqual(live_checks.parse_line("- x | e | o | crash (fail) - the game ended"),
+                         ("x", "fail", "crash (fail) - the game ended"))
+        self.assertEqual(live_checks.parse_line("- x | e | o | **Crash** - gone")[1], "fail")
+        self.assertEqual(live_checks.parse_line("- x | e | o | fail (crash - ERROR in ...)")[1:],
+                         ("fail", "(crash - ERROR in ...)"))
+        self.assertIsNone(live_checks.parse_line("- x | e | o | crashed")[1])
+        self.assertIsNone(live_checks.parse_line("- x | e | o | no crash, pass")[1])
+
     def test_usage_errors_exit_2(self):
         self.assertEqual(run(live_checks.main, [str(self.tmp_path / "missing.md")])[0], 2)
         self.assertEqual(run(live_checks.main, [self.write("c-live-1.md", "## Step 1\n- a | pass\n")])[0], 2)
@@ -1060,7 +1072,29 @@ class ReachSelectionTests(unittest.TestCase):
         self.assertEqual(self.chosen(["ForgePact/panel/src/lib/enabled-mods-undo.js"]), {1, 2})
         self.assertEqual(self.chosen(["ForgePact/panel/src/app.css"]), {1, 5},
                          "the glob and the literal that both cover app.css")
-        self.assertEqual(self.chosen(["ForgePact/tests/test_x.py"]), {3}, "control: one reader, one criterion")
+        self.assertEqual(self.chosen(["docs/submodules/ForgePact/instructions.md"]), {4}, "control: one reader, one criterion")
+
+    def test_a_whole_suite_waits_for_the_final_gate(self):
+        # The owner, 2026-10-02: the full suite is for the last step before
+        # the PR; development runs the relevant subset. Criterion 3 is
+        # ForgePact's whole suite, so a change it reads defers it ...
+        _, _, scope = run_criteria.select(self.items, ["ForgePact/tests/test_x.py"])
+        self.assertEqual(scope[3], (False, run_criteria.FINAL_REASON))
+        # ... unless it failed last time: then the fix must show it green.
+        self.assertEqual(self.chosen(["ForgePact/tests/test_x.py"], failed=[3]), {3})
+        # A targeted test is not a whole suite (control), and `(final)`
+        # defers any criterion, whatever its command.
+        targeted = "(reads `ForgePact/tests/**`) `cd ForgePact; py -3 -m unittest tests.test_x` exits 0"
+        final = "(reads `docs/**`) (final) `grep -c x docs/a.md` prints a number"
+        _, _, scope = run_criteria.select([targeted, final], ["ForgePact/tests/test_x.py", "docs/a.md"])
+        self.assertTrue(scope[1][0])
+        self.assertEqual(scope[2], (False, run_criteria.FINAL_REASON))
+        self.assertFalse(run_criteria.final_only("`py -3 -m unittest discover -s tests` and `grep -c x a.md` both pass"),
+                         "a criterion that also runs a targeted check is not deferred")
+        self.assertTrue(run_criteria.final_only("`py -3 -m unittest discover -s tests` exits 0"))
+        # The full run is the final gate: an unknown delta still runs it all.
+        full, _, scope = run_criteria.select(self.items, None, unknown="x")
+        self.assertTrue(full and scope[3][0])
 
     def test_a_criterion_without_reads_runs_whatever_changed(self):
         # An old plan, with no map at all, still verifies fully.
@@ -1218,8 +1252,23 @@ class ReachRunTests(TempDirMixin, unittest.TestCase):
         self.assertIn("scope: full -- delta unknown: cannot read", out)
         self.assertEqual(ran, ["1", "2", "3", "4"])
 
+    def test_dev_runs_every_criterion_but_the_final_gate_ones(self):
+        # The owner, 2026-10-02: the full suite waits for the last step
+        # before the PR. A first verify has no delta to select by, so --dev
+        # runs everything else, including criteria the change never touched.
+        text = self.plan.read_text(encoding="utf-8").replace(
+            "(reads `tools/**`) `bash", "(reads `tools/**`) (final) `bash")
+        self.plan.write_text(text, encoding="utf-8")
+        rc, out, ran = self.runner("--dev")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(ran, ["1", "2", "3"], out)
+        self.assertIn("scope: development verify: every criterion but the final-gate ones", out)
+        self.assertIn(f"NOT SELECTED ({run_criteria.FINAL_REASON})", out)
+        self.assertEqual(self.runner()[2], ["1", "2", "3", "4"], "control: the full run is the final gate")
+
     def test_usage_errors_exit_2(self):
-        for argv in (["--failed", "1"], ["--changed-since", "base", "--failed", "9"],
+        for argv in (["--dev", "--changed-since", "base"], ["--dev", "--item", "a"], ["--dev", "--failed", "1"],
+                     ["--failed", "1"], ["--changed-since", "base", "--failed", "9"],
                      ["--changed-since", "base", "--failed", "one"], ["--changed-since", "Mod=base"],
                      ["--changed-since", "base", "--item", "a"], ["--changed-since", "base", "--changed-from", "-"],
                      ["--changed-since", "base", "--changed-since", "base"]):

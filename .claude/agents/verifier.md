@@ -161,7 +161,13 @@ is a failed criterion, quoted with its error, not a `NEEDS HUMAN` entry. On
 false verdict (forgepact-issue-14-phase1j-record, round 0);
 `tools/workorder_audit.py` R21 fails a verifier that runs `python`.
 
-**3. Run the full root suite** unless the workorder says otherwise — **once**.
+**3. Run the full root suite only on a full verify** — the final gate before
+the pull request, or a dispatch with no `--dev`, `--changed-since` or
+`--item` — and then **once**. A development verify (`--dev`, or a reach
+re-verify) skips this step unless a selected criterion runs the suite: the
+owner, 2026-10-02, "full suite runs ... should be reserved to the last step
+before the pr. during development only relevant subset should be run."
+
 When a criterion already ran it (the runner printed `py -3 -m unittest
 discover -s tests` from the checkout root), that run *is* the suite run: grep
 its `cmd-<n>.log` and do not run it again. Otherwise run it with the Bash
@@ -231,6 +237,18 @@ each criterion as `run` or `skip` with its reason.
 
 Do not narrow a verify on your own. Without those flags in your dispatch,
 you run every criterion.
+
+## When you run a development verify
+
+A workorder's first verify, and the items gate, run during development. Your
+dispatch then gives you `run_criteria.py <plan> --jobs auto --dev`: every
+criterion except a whole suite (`unittest discover`, `run_tests_parallel.py`,
+a bare `pytest`) and any marked `(final)`, which the runner prints as `NOT
+SELECTED (final gate only: ...)`. Run it exactly as step 2 says, in the
+background, and report each deferred criterion as `not-selected` with that
+reason, never `pass`. Skip step 3. The full set, suites included, runs once
+as the final gate before the pull request, from a dispatch with none of
+these flags.
 
 ## When you check one item
 

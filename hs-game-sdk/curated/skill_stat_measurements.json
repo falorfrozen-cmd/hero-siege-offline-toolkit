@@ -1,0 +1,124 @@
+{
+  "$schema_note": "Live counts that hs_game_sdk.skill_stat_model is checked against (tests/test_skill_stat_model.py, MeasuredTests); the mechanism is docs/models/skill-stat-spec.md. ForgePact#114 Live 1, 2026-09-30, research build of the #114 branch, character Suh (Samurai, level 100) in Town_02_rm. Blade Barrier (talent 137, abilityCooldown 8 s, level 1) was cast from code (`tgprobe cast 137`) and its cooldown measured as the number of StatSpellHaste reads the ForgePact hook counted while it ran (`statadd list` calls=), one read per step. The hook was installed as a pass-through first, so the bonus-0 runs count too. A1 (2026-10-01, the same character and build) cast For Honor (talent 142) instead and read the buff it adds, `buffValue` of buff type 42, through `skillprobe state bind=id:<buff instance>.buffValue`.",
+  "measurements": [
+    {
+      "id": "S1",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-09-30",
+      "source": [
+        {
+          "path": "docs/submodules/ForgePact/instructions.md",
+          "section": "Skill Haste and All Skills in `statadd`"
+        }
+      ],
+      "scripts": [
+        "gml_Script_StatSpellHaste",
+        "gml_Script_ReturnSpecificStat",
+        "gml_Script_TalentUse"
+      ],
+      "what": "Bonus 0: Blade Barrier's cooldown ran for 392 reads, and 397 in a second run. The character's own Skill Haste was 40 (the first-call line of the next run: `first boosted call 40 -> 140`). Reads came 30 per 0.5 s poll, one per step at 60 steps/s, and none while no cooldown ran.",
+      "values": {
+        "talent": 137,
+        "native_haste": 40,
+        "bonus": 0,
+        "reads": [
+          392,
+          397
+        ],
+        "reads_per_second": 60,
+        "idle_reads": 0
+      },
+      "model": "cooldown_steps(base, 40) with base about 473 steps (8 s at 60 steps/s, less what the cast itself takes): base / 1.2."
+    },
+    {
+      "id": "S2",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-09-30",
+      "source": [
+        {
+          "path": "docs/submodules/ForgePact/instructions.md",
+          "section": "Skill Haste and All Skills in `statadd`"
+        }
+      ],
+      "scripts": [
+        "gml_Script_StatSpellHaste",
+        "gml_Script_ReturnSpecificStat"
+      ],
+      "what": "`statadd skillhaste` +100, +120, +160, +200 and +300 over the native 40: the hook returned 140, 160, 200, 240 and 340 (first-call lines 40 -> 140 and 40 -> 340 logged), and the cooldown ran for 280, 265, 238, 238 and 238 reads.",
+      "values": {
+        "talent": 137,
+        "native_haste": 40,
+        "runs": [
+          {
+            "bonus": 100,
+            "total": 140,
+            "reads": 280
+          },
+          {
+            "bonus": 120,
+            "total": 160,
+            "reads": 265
+          },
+          {
+            "bonus": 160,
+            "total": 200,
+            "reads": 238
+          },
+          {
+            "bonus": 200,
+            "total": 240,
+            "reads": 238
+          },
+          {
+            "bonus": 300,
+            "total": 340,
+            "reads": 238
+          }
+        ]
+      },
+      "model": "base / (1 + min(total, 200) / 200): totals up to 200 shorten the cooldown as the static reading's 0.005 per point says; 240 and 340 take exactly as long as 200, so the game counts at most 200."
+    },
+    {
+      "id": "A1",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-01",
+      "source": [
+        {
+          "path": "docs/submodules/ForgePact/instructions.md",
+          "section": "Skill Haste and All Skills in `statadd`"
+        }
+      ],
+      "scripts": [
+        "gml_Script_StatAllSkills",
+        "gml_Script_ReturnSpecificStat",
+        "gml_Script_TalentUse"
+      ],
+      "what": "For Honor (talent 142, one point allocated) cast from code with `statadd allskills` at 0 and at +19. The hook's first-call line read the character's own All Skills total, 28, and returned 47. The buff For Honor adds (buff type 42, `buffValue`) was [137.8, 72.5, 0] at 0 and [228, 120, 0] at +19: 4.75 and 2.5 per level, at level 29 (1 point + 28) and 48 (+19). `ReportClient` was never called (0 calls, skillprobe's controls climbing). The save afterwards differed from the one before only in playtime and the class's time.",
+      "values": {
+        "talent": 142,
+        "points": 1,
+        "native_all_skills": 28,
+        "bonus": 19,
+        "buff_value_at_0": [
+          137.8,
+          72.5,
+          0
+        ],
+        "buff_value_at_bonus": [
+          228,
+          120,
+          0
+        ],
+        "report_client_calls": 0,
+        "save_fields_changed": [
+          "playtime",
+          "shop.ini class_time8"
+        ]
+      },
+      "model": "talent_level(1, 28) = 29 and talent_level(1, 28 + 19) = 48; For Honor's buff is level x [4.75, 2.5]."
+    }
+  ]
+}

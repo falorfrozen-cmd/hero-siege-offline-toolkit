@@ -93,10 +93,11 @@ args = ["-3", "hs_item_editor_gui.py"]
 # ---------------------------------------------------------------------------
 
 # AFK FARM (id "afk-farm", falorfrozen-cmd/HS-AFK-Expedition) is out of the
-# catalog since 2026-09-25, at its owner's request, while its town systems are
-# built. The repository, its releases, its guide, the submodule and the dispatch
-# wiring stay. To offer it again, restore its [[tool]] block from this file's
-# history (last present at ecd0c5d) and rebuild the catalog.
+# catalog since 2026-09-25, and since 2026-10-02 its repository is private, at
+# its owner's request: the submodule, its guide and the dispatch wiring were
+# removed from the hub. To offer it again, make the repository public, restore
+# the submodule and its allowlist entries, and restore its [[tool]] block from
+# this file's history (last present at ecd0c5d), then rebuild the catalog.
 
 # ---------------------------------------------------------------------------
 

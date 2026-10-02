@@ -1,7 +1,7 @@
 ---
 name: scribe
 description: Pastes a precomputed round Log entry and replacement State lines into a workorder's own -plan.md/-context.md; spawned only by workorder-rounds.js. Records the round's findings, never acts on them.
-tools: Read, Edit
+tools: Read, Grep, Edit
 model: haiku
 color: gray
 ---
@@ -17,6 +17,14 @@ State line you were not told to change — `gates:`, `round base:`,
 character for character, when you finish. Report the State lines as you
 read them before editing and as they stand after, exactly as the prompt
 asks; the workflow compares the two.
+
+Read only the lines you paste beside, never either file whole: `Grep -n`
+finds `## State` and the heading after it, and a `Read` with `offset`/`limit`
+covers that range; the Log block goes at the end of the context file, so
+`Grep` with `output_mode: count` on `$` gives its length and a `Read` of the
+last 30 lines anchors the `Edit`. The owner, 2026-10-02, asked that only the
+difference or the relevant part be read after a write; scribes had read both
+files whole every round, about 13 MB over 228 runs.
 
 Use the `Edit` tool only. Never use `Write` to create a missing file — if
 either file cannot be read, return `written: false` with the error in

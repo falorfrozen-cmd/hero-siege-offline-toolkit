@@ -1736,6 +1736,69 @@ def rule_r25_owner_scope(session: Session) -> RuleResult:
     return RuleResult("R25", "owner-scope", passed=not evidence, evidence=evidence)
 
 
+# R26 read the diff after a write. The owner, 2026-10-02: after each write
+# agents "spend lots of times on reads ... make sure only difference or
+# relevant things are read after every write instead". Over the 14 days
+# before, planners read back files they had just written 619 times and
+# implementers 225, most of them the whole file, to confirm an edit the
+# `Edit` result had already confirmed. An implementer or planner that reads
+# a file it wrote whole -- `Read` with no offset or limit, or a bare `cat`,
+# `type` or `Get-Content` of it -- more than the allowance fails. A shell
+# command that names the file in between may have rewritten it (a generator,
+# a formatter), so it clears the file: reading that output is not re-reading
+# one's own edit. `git diff -- <file>`, a grep or a ranged read is the route.
+REREAD_AFTER_WRITE_ALLOWANCE = 2
+REREAD_ROLES = {"implementer", "planner"}
+WHOLE_SHELL_READ_RE = re.compile(
+    r"^(?:cd\s+(?:\"[^\"]+\"|'[^']+'|\S+)\s*(?:;|&&)\s*)*(?:cat|type|Get-Content|gc)\s+(?!.*[|>])(?!.*-(?:TotalCount|Tail|Head|First)\b)(.+)$",
+    re.I | re.S)
+
+
+def _base(path: str) -> str:
+    return path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
+
+
+def whole_rereads(calls: list) -> list:
+    """[(call, path)] for each whole-file read of a path this agent wrote,
+    with no shell command naming it in between."""
+    written: dict = {}  # basename -> full path last written
+    found = []
+    for c in calls:
+        inp = c.tool_input or {}
+        if c.name in EDIT_TOOLS and not c.is_error and not c.guard_refused:
+            path = str(inp.get("file_path", ""))
+            if path:
+                written[_base(path)] = path
+        elif c.name == "Read":
+            path = str(inp.get("file_path", ""))
+            if _base(path) in written and inp.get("offset") is None and inp.get("limit") is None:
+                found.append((c, path))
+        elif c.name in SHELL_TOOLS:
+            cmd = str(inp.get("command", ""))
+            m = WHOLE_SHELL_READ_RE.match(cmd.strip())
+            names = {k for k in written if k and k in cmd.lower()}
+            if m and names:
+                found.append((c, written[sorted(names)[0]]))
+            else:
+                for k in names:
+                    del written[k]
+    return found
+
+
+def rule_r26_reread_after_write(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_subagents(session):
+        if agent.agent_type not in REREAD_ROLES:
+            continue
+        found = whole_rereads(agent.tool_calls)
+        if len(found) > REREAD_AFTER_WRITE_ALLOWANCE:
+            paths = sorted({_base(p) for _, p in found})
+            evidence.append(f"{agent.label or agent.agent_type}: {len(found)} whole-file reads of files it had just "
+                            f"written ({', '.join(paths[:5])}{', ...' if len(paths) > 5 else ''}); allowance "
+                            f"{REREAD_AFTER_WRITE_ALLOWANCE} -- read the diff (`git diff -- <file>`) or the range instead")
+    return RuleResult("R26", "reread-after-write", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -1762,6 +1825,7 @@ ALL_RULES = [
     rule_r23_lane_git_mutation,
     rule_r24_cheap_routes,
     rule_r25_owner_scope,
+    rule_r26_reread_after_write,
 ]
 
 
