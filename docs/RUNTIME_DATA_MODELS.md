@@ -1711,9 +1711,11 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   three builtin names come from the same name records (`FindWrites` and
   `FindPointers` on their pointer globals: 0 hits each). So
   `Controller_obj.lootListUnique` is an array of length 6 (measured, Live 1)
-  whose element 5 the Angelic roll uses as a `ds_list` (static reading; a ds
-  container reads as `ref ds_list` on this runner, §5.4, so the element is not
-  expected to arrive as a number); what elements 0-4 hold is not established.
+  whose element 5 the Angelic roll uses as a `ds_list` (static reading). The
+  kind element 5 arrives as is not established: a ds container can read as
+  `ref ds_list` on this runner (§5.4), but no session has read `[5]`'s kind,
+  and Live 2's dump prints it as `[5] kind=<kind>`. What elements 0-4 hold is
+  not established.
   The entries of element 5 are arrays of three numbers. **Static reading
   (2026-10-02, issue #74, replan 2)**; the name and the outer length of 6 are
   confirmed by Live 1 (below). **Not established**: what the other five
@@ -1802,10 +1804,21 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   nothing is removed, one anomaly line is logged and the roll is counted in
   `anomalies=`. ForgePact resolves the list by a name and an index
   (`kAngelicListVar`, empty until a live session's reach check has passed,
-  and `kAngelicListIndex` 5), checks that the element is a live `ds_list`
-  (`ds_exists`) of at least 10 entries, each an array of three numbers, and
-  prints it on the status lines as `list=<name>[<index>]:<size>` (for example
-  `lootListUnique[5]:58`), or `none` / `missing`.
+  and `kAngelicListIndex` 5), checks that the element is a live `ds_list` of
+  at least 10 entries, each an array of three numbers, and prints it on the
+  status lines as `list=<name>[<index>]:<size>` (for example
+  `lootListUnique[5]:58`), or `none` / `missing`. The live-list check decides
+  on the element as it was read, never on its kind: a numeric conversion
+  serves only to refuse a value that cannot be converted, is non-finite or is
+  negative, and then `ds_exists` is asked of the value itself with 2
+  (`ds_type_list`). A value that cannot be converted is refused before
+  `ds_exists` is asked; that is a failed conversion, not a kind rule. The
+  refusal reads `Controller_obj.<name>[<i>] is not a ds_list (kind=<kind>,
+  <step>)`, naming the kind it got (`real`, `int32`, `int64`, `bool`,
+  `string`, `struct`, `array`, `ptr`, `undefined`, `null`, `ref`, else
+  `kind<N>`) and the step that refused (`id unreadable`, `id non-finite`,
+  `id <value>`, `ds_exists threw` or `ds_exists false`); an element that
+  cannot be read at all is `[<i>] array_get threw`.
 
   A hit is **typed** before anything is attributed to it. A third inline
   detour, on `GetUniqueRepoStruct`, records the `(type, sub, b)` of the latest
