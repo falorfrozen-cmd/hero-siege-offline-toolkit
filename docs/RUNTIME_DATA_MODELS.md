@@ -1688,12 +1688,14 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   SDK names `Controller_obj` (`HeroSiege::Objects::GameObject::Controller_obj`):
   in GameMaker terms, a variable of the first active `Controller_obj`
   instance. **Static reading (2026-10-02, issue #74, list injection).** The
-  two earlier negatives asked the wrong scopes, so they say nothing about the
-  list itself: a `lootListUnique` instance variable on `Loot_Manager_obj`
-  (`variable_instance_exists` false, 2026-09-23) and, in #74's first Live 1,
-  a `lootListUnique` global (`variable_global_exists` false) beside the same
-  `Loot_Manager_obj` question. **Measured (Live 1, 2026-10-02, research dll
-  4534c0ff…)**, relabelled by the static reading above.
+  two earlier negatives were measured on other scopes: a `lootListUnique`
+  instance variable on `Loot_Manager_obj` (`variable_instance_exists` false,
+  2026-09-23) and, in #74's first live session (Session 2 of the research doc,
+  2026-10-02, research dll 4534c0ff…), a `lootListUnique` global
+  (`variable_global_exists` false) beside the same `Loot_Manager_obj`
+  question. Each measured only that the name it asked for is absent from the
+  scope it asked; neither asked `Controller_obj`, so neither is a measurement
+  of the list and both say nothing about it.
 - **The list's variable name is not established.** The variable slot the roll
   loads is filled at startup by a pattern the slot-name recovery does not
   match: no code stores to it or takes its address, and no initialised pointer
@@ -1751,24 +1753,48 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   Angelic unique of the same `type`, because the picker's filters and the
   rate need a real definition and the item's type comes from the entry
   (Headhunter's stand-in is Liquor Holster `{8, 0, 51}`; Tyrant's Crown's is a
-  helmet chosen when the pool is built, named in the switch-on log line). The
-  picker cannot tell the added entry from the vanilla one, so a hit whose
-  `CreateDefaultParams` arguments name a stand-in's `(sub, b)` is attributed
-  to the mod item with probability 1 / (n + 1), `n` being how often the
-  vanilla list already holds the stand-in's whole triple (type, sub, b).
-  `CreateDefaultParams` names only sub and b, not the type, so a stand-in is
-  refused when another validated unique of a different type shares its
-  `(sub, b)` (reported as not validated, `ambiguous: <name> shares its
-  sub/b`), so among the validated uniques a hit on that pair can only be the
-  stand-in. The plugin does not read the hit's type. On such a hit ForgePact
-  rewrites the returned `CreateDefaultParams` struct's
-  `a`, `b`, `c`, `j` to the item's own, and the game's `LootGroundCreate` ->
-  `CreateItemNew` builds and places it, where the forge selector above
-  recognises it. One hit is one item, in place of what the roll would have
-  dropped. If the list's length changed during the roll, nothing is removed
-  and one anomaly line is logged. **Design, #74 (2026-10-02);** whether the
-  game builds exactly one dressed item per such hit is what #74's Live 1
-  measures, and it has **not yet run**.
+  helmet chosen when the pool is built, named in the switch-on log line).
+  Right after the push ForgePact reads the variable again by name off the
+  `Controller_obj` instance (a fresh read, never the handle it pushed onto)
+  and checks that its length and tail hold what was pushed (the **held
+  read-back**). When they do not, because the runtime handed back a copy or
+  another array, it takes the entries off again, logs one line, counts the
+  roll in `anomalies=` and attributes nothing in it. The read-back catches a
+  copy; it cannot show that the roll reads that variable. The removal checks
+  the same tail: if the list changed during the roll, nothing is removed, one
+  anomaly line is logged and the roll is counted in `anomalies=`.
+
+  A hit is **typed** before anything is attributed to it. A third inline
+  detour, on `GetUniqueRepoStruct`, records the `(type, sub, b)` of the latest
+  definition read while the roll is in progress, cleared before each original
+  call. When the roll calls `CreateDefaultParams`, the hit takes that record
+  only if its sub and b equal the call's own first two arguments; otherwise
+  the hit is **untyped**: it stays the game's own, is never rewritten, and is
+  counted in `untyped=`. A typed hit is a candidate only when its whole triple
+  `(type, sub, b)` is the stand-in's, so another unique that shares the
+  stand-in's sub and b under a different type (Liquor Holster's `0/51` is also
+  a type 10 unique's) is never taken for it. The picker cannot tell the added
+  entry from the vanilla ones, so a candidate is the mod item's with
+  probability 1 / (n + 1), `n` being how often the vanilla list holds that
+  same whole triple. The player build always pushes one entry per item; the
+  research build's `angelicprobe inject copies <k>` pushes k, which makes the
+  share m·k / (n + m·k) for m items sharing a stand-in. On the mod item's hit
+  ForgePact rewrites the returned `CreateDefaultParams` struct's `a`, `b`,
+  `c`, `j` to the item's own and reads them back (refusing, and leaving the
+  game's stand-in, when a field is missing), and the game's
+  `LootGroundCreate` -> `CreateItemNew` builds and places it, where the forge
+  selector above recognises it. One hit is one item, in place of what the
+  roll would have dropped. The switch is honoured only while all three hooks
+  (`DropItemAngelicChance`, `CreateDefaultParams`, `GetUniqueRepoStruct`) are
+  inline detours. **Design, #74 (2026-10-02, replan 1)**, as the plugin
+  implements it. Three things are **not established** until #74's Live 1,
+  which has **not yet run**: whether the roll's picker draws the entries the
+  plugin pushes (**reach**; the held read-back shows only that the variable
+  holds them); whether the latest definition read before `CreateDefaultParams`
+  is the picked entry's (**typing**; that the roll reads inside itself through
+  `GetUniqueRepoStruct` is measured, Session 1, but the order pick -> read ->
+  filters -> die -> parameters is a static reading); and whether the game
+  builds exactly one dressed item per such hit.
 - **The die.** The rate comes from a zero-argument method on a member of the
   picked definition, scaled by one global value read when the roll starts;
   neither is identified (`droprate.base` is the plausible reading). The roll
