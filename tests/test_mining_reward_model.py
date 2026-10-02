@@ -35,6 +35,7 @@ FORGEPACT_PANEL = FORGEPACT / "src" / "forgepact.py"
 
 sys.path.insert(0, str(SDK_PY))
 from hs_game_sdk import mining_reward_model as model  # noqa: E402
+from hs_game_sdk.item_type import ItemType  # noqa: E402
 
 
 # ---- ForgePact's levers, as transforms (our code, not the game's) -----------
@@ -139,7 +140,7 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(rolled_dig(MIXED)["runs"], [stacks])
         self.assertEqual(model.total_ore(stacks), len(MIXED))
         self.assertEqual(model.stack_quantity({"b": 29}), 1)
-        self.assertEqual(model.ORE_ITEM_TYPE, 14)
+        self.assertEqual(model.ORE_ITEM_TYPE, ItemType.MATERIAL)
         self.assertEqual(sorted(model.ORE_BASES.values()), [27, 28, 29, 30, 31, 32])
         # MR1's measured side, through the existing multiplier: one stack of 60,
         # one native drop call.

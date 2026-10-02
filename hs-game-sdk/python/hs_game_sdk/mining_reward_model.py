@@ -36,6 +36,8 @@ from __future__ import annotations
 import math
 from typing import Iterable, List
 
+from .item_type import ItemType
+
 # The six ore kinds, in the order of their Material bases (static reading,
 # matching `docs/RUNTIME_DATA_MODELS.md` section 12). The game's own list
 # entries are not established; these names are the model's.
@@ -49,7 +51,7 @@ ORE_BASES = {
 }
 
 # The item type every ore stack is dropped with (Material).
-ORE_ITEM_TYPE = 14
+ORE_ITEM_TYPE = int(ItemType.MATERIAL)
 
 # HYPOTHESIS: the cap of a bonus roll's draw. It is the literal 99 at one
 # roll site; the other sites compute theirs, and those values were not read.
