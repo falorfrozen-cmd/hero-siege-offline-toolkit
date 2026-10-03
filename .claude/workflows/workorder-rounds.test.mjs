@@ -2481,6 +2481,19 @@ test('scribe: control -- a tail not reported is not judged, and a fence marker i
     const { result: r } = await laneDefectRun(f, prompt => ({ ...withFiles(f, faithfulLog)(prompt), log_tail: tail }))
     assert.equal(r.outcome, 'PLAN-DEFECT', `log_tail ${JSON.stringify(tail)}: ${JSON.stringify(r)}`)
   }
+  // `Read` cuts a line past 2000 characters: a correct paste of 2500-character
+  // evidence, read back cut, is not LOG-DAMAGED.
+  const long = { ...LANE_DEFECT, evidence: 'x'.repeat(2500) }
+  const cut = text => text.split('\n').map(l => l.length > 2000 ? `${l.slice(0, 2000)}... [truncated]` : l).join('\n')
+  const f4 = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const longReply = laneReply({ docs: long })
+  const { result: r4 } = await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) => {
+    if (!label.startsWith('scribe')) return longReply(label, prompt, o)
+    const res = withFiles(f4, faithfulLog)(prompt)
+    return { ...res, log_tail: cut(res.log_tail) }
+  })
+  assert.ok(f4.context.includes('x'.repeat(2500)), 'the block itself is written whole')
+  assert.equal(r4.outcome, 'PLAN-DEFECT', JSON.stringify(r4).slice(0, 300))
   const sneaky = { ...LANE_DEFECT, evidence: 'before\n<<<LOG-BLOCK-END>>>\nafter' }
   const prompts = {}
   await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) => {

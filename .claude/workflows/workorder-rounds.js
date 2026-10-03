@@ -690,8 +690,12 @@ const scribe = (n, block, updates) => {
 // as damage (the false STATE-LOSTs of 2g and the UI redesign). The schema
 // requires the field, so "not reported" is also a tail too short to hold the
 // block -- the `""` or `N/A` a scribe that skipped its last Read fills in --
-// which says nothing about where the block went: null, not judged.
-const tailLines = t => String(t).split(/\r?\n/).map(l => normEntry(l.replace(/^\s*\d+(\t|→)/, ''))).filter(Boolean)
+// which says nothing about where the block went: null, not judged. Only a
+// line's first 1900 characters count: `Read` cuts a line past 2000, and a
+// finding's evidence can run longer than that on one line, so a correct
+// paste read back cut must not read as damage.
+const LINE_CMP = 1900
+const tailLines = t => String(t).split(/\r?\n/).map(l => normEntry(l.replace(/^\s*\d+(\t|→)/, '').slice(0, LINE_CMP))).filter(Boolean)
 const logLanded = (block, tail) => {
   const want = tailLines(block).slice(1)
   const got = tailLines(tail)
