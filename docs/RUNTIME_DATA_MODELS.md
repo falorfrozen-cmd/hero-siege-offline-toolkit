@@ -368,6 +368,7 @@ this runner:
 | `object_index` on an instance | `VALUE_REF`, not a plain number |
 | `object_index` on a struct `self` | undefined |
 | the `room` builtin | a room `VALUE_REF`, not a number; `variable_global_exists("room")` is false, so `variable_global_get("room")` answers undefined and converting that to a number raises the runner error `REAL argument incorrect type undefined` (one per call, measured 2026-10-02, ForgePact#144). Read it with `GetBuiltin("room", ...)`, name it with `room_get_name`; `room_width`/`room_height` are built-ins too |
+| an array, string, struct, undefined or null converted to a number (`RValue::ToDouble`) | no number: the runner raises its own error and the call then fails, and a C++ `catch` that swallows the failure does not take back the runner's report. An array raises `REAL argument incorrect type array` (**measured**, #74 Live 3's capture, 2026-10-02); undefined raises `REAL argument incorrect type undefined` (**measured**, ForgePact#144, the `room` row above). For a string, a struct and null it is a **source reading**, not a measurement: the reading (which is also all that identifies the two) is that `ToDouble` is the runner's own `REAL_RValue`, which raises for every kind it cannot turn into a number; their error text has not been captured. That ForgePact's research scan over `Controller_obj`'s array variables raised one error per array or string element it converted (18 per scan) is an arithmetic fit on Live 2's and Live 3's counts, and the string elements' share of it rests on the fit alone. Live 4 cannot settle that share: ForgePact's gate (§13.4) refuses strings before converting them, so it can show only that the total stops rising, not that a string conversion raises. Live 4 (2026-10-02, **measured**) showed that it does stop: with the 15 arrays and 3 strings refused before any conversion, two scans left the total at 1 where each had added 18 before, so the scan's conversions are measured as the cause of the rise, and the strings' share of it is still the fit. Refuse a kind that can never be a number before converting it (ForgePact's `SigNeverAHandle`, ForgePact#74) |
 | a ds container | "ref ds_map" / "ref ds_list" |
 | an item | `VALUE_OBJECT` struct (§2) |
 | a bound `m_*` method value | `VALUE_OBJECT` with object kind 0, not a script ref (§10) |
@@ -1845,24 +1846,365 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
 - With it, `DropItemAngelicChance` runs once per roll, always inside `DropItem`,
   with `self` = the dying monster and four arguments (two position reals, the
   chance, undefined). It returned undefined on all 374 misses; a hit was not
-  observed. The chance read 1195 or 1526 even with 3000 supplied by the buff, so
-  its composition is not established. One roll reads about 8 unique definitions
-  through `GetUniqueRepoStruct`. **Measured 2026-09-23.**
+  observed in that session. The chance read 1195 or 1526 even with 3000 supplied
+  by the buff, so its composition is not established. One roll reads about 8
+  unique definitions through `GetUniqueRepoStruct`. **Measured 2026-09-23.**
+- Hits were observed in Live 1 (#74), with the roll's chance argument raised by
+  a research lever, not at the natural chance: 98 hits over 108 rolls, each
+  detected as a `CreateDefaultParams` call while the roll ran (inline detour,
+  `cdpCalls` above zero as its positive control), with the ground filling with
+  the game's own Angelic and Unholy items (seen in screenshots, not counted
+  against the hits). A hit at the natural chance has
+  still not been observed. ForgePact's validated pool read 47 candidates and 11
+  rejected once the two signature items were out of it. **Measured (Live 1,
+  2026-10-02, research dll 4534c0ff…).**
 - Unique definition records have the shape `{w, j, b, a, c}` (`c` = 1 marks the
   unique repository, `j` the weapon subtype); there is no Angelic flag, and base
   items with flag 40 set are skipped. **Headhunter and Tyrant's Crown have no
-  unique-repository entry, so the game's own roll never drops them.** **Static
-  reading.**
+  unique-repository entry, so the game's own roll never picks them.** **Static
+  reading.** How ForgePact #74 lets the roll pick them anyway is the bullet
+  "How #74 uses the list" below (a stand-in entry for the length of the roll)
+  and the guide's Known Limitations item 42.
+- **The return value.** `DropItemAngelicChance` sets its result to undefined on
+  entry and never assigns it again, so a hit returns undefined exactly like a
+  miss: the return cannot tell the two apart. This is why the 374 measured
+  misses were undefined. **Static reading (2026-10-02, issue #74).**
+- **The arguments.** Position x and y fall back to the caller's own x and y when
+  absent; the chance (argument 2) falls back to 0; argument 3 (undefined in
+  every measured call) is never read by the roll and is handed on, unchanged, to
+  the placement as its sixth argument. **Static reading (2026-10-02, issue
+  #74)**, consistent with the four arguments measured.
+- **The pick.** The roll takes a random entry from a list of unique
+  identifiers; each entry is an array of three numbers (type, sub, b) that it
+  looks up through `GetUniqueRepoStruct`. It throws the definition away and
+  picks again when the base-info flag 40 (hidden or development item) is set, or
+  when the definition's rarity field 27 is neither 7 (Angelic) nor 10 (Unholy),
+  and it keeps re-picking until one passes. These are the same two filters
+  ForgePact's `BuildAngelicPool` applies. Roughly one entry in eight passes,
+  which accounts for the ~8 definition reads per roll measured above. **Static
+  reading (2026-10-02, issue #74).**
+- **Where the list lives.** The roll reads the list as a variable of an
+  object-scoped reference whose constant encodes object index 984, which the
+  SDK names `Controller_obj` (`HeroSiege::Objects::GameObject::Controller_obj`):
+  in GameMaker terms, a variable of the first active `Controller_obj`
+  instance. **Static reading (2026-10-02, issue #74, list injection).** The
+  two earlier negatives were measured on other scopes: a `lootListUnique`
+  instance variable on `Loot_Manager_obj` (`variable_instance_exists` false,
+  2026-09-23) and, in #74's first live session (Session 2 of the research doc,
+  2026-10-02, research dll 4534c0ff…), a `lootListUnique` global
+  (`variable_global_exists` false) beside the same `Loot_Manager_obj`
+  question. Each measured only that the name it asked for is absent from the
+  scope it asked; neither asked `Controller_obj`, so neither is a measurement
+  of the list and both say nothing about it.
+- **The list's layout: `Controller_obj.lootListUnique[5]`, a `ds_list` of
+  `[type, sub, b]` entries.** The runtime keeps, beside each variable slot and
+  builtin-pointer global, a record of its name; read for the slot the roll
+  loads, it names `lootListUnique`. (The four slot-name scripts of the first
+  reading, `FindSlotNames`, `SlotRefs`, `FindPointers` and `FindRvaTable`,
+  found 0 hits because they looked for stores and tables, not for that
+  record.) The roll does not use `lootListUnique` itself as the list: its
+  read carries the constant array index 5, so it takes the **sixth element**.
+  On that element it calls `ds_list_size`, then `ds_list_find_value` at a
+  random index drawn up to that size, then `is_array` on the value; only when
+  `is_array` holds does it take the value's elements 0, 1 and 2 as the type,
+  sub and b it hands to `GetUniqueRepoStruct`, otherwise it draws again. The
+  three builtin names come from the same name records (`FindWrites` and
+  `FindPointers` on their pointer globals: 0 hits each). So
+  `Controller_obj.lootListUnique` is an array of length 6 (measured, Live 1)
+  whose element 5 the Angelic roll uses as a `ds_list` (static reading). Live
+  2 read element 5 as a `ref` value, like the ds containers of §5.4 (above).
+  The entries of element 5 are arrays of three numbers. **Static reading
+  (2026-10-02, issue #74, replan 2)**; the name and the outer length of 6 are
+  confirmed by Live 1, and the layout, the kind and the sub-list's size by
+  Live 2 (below). **Not established**: what the other five elements mean or
+  are keyed by (Live 2 found them to be `ds_list`s of triples too; the roll
+  reads only `[5]`; `lootListNormal`, outer length 5 on the same instance, is
+  not read by this roll), and whether the random index can equal the size,
+  an off-by-one the `is_array` re-draw would absorb. The curated record
+  `hs-game-sdk/curated/angelic_list_measurements.json` holds this as
+  `list_layout`, and its `list_variable` is `lootListUnique` since Live 2's
+  reach check passed on it.
+- **Measured (Live 1, list injection, 2026-10-02, research dll f7560e80…).**
+  The first `Controller_obj` instance (one instance, read as `VALUE_REF`)
+  answered `variable_instance_get_names` with 221 names in town and 222 after
+  a zone change, among them `lootListUnique` with `array_length` 6 and
+  `lootListNormal` with `array_length` 5, both before and after the zone
+  change. The research build's shape check of that session expected a flat
+  array of `[type, sub, b]` triples and refused both (`entry 0 is not three
+  numbers`), as it refused every other array, so it accepted no list
+  (`candidates=0`) and nothing was ever pushed. In the same session no
+  `lootListUnique` global (`variable_global_exists` false) and none on
+  `Loot_Manager_obj` (`variable_instance_exists` false) were found again:
+  measured on other scopes than `Controller_obj`, the variable's own.
+- **Measured (Live 2, list injection, 2026-10-02, research dll e30981d5…):
+  the layout.** ForgePact's list dump read
+  `Controller_obj.lootListUnique` as an array of 6 whose every element is a
+  `ref` value that `ds_exists` accepts as a `ds_list`, every entry of each an
+  array of three numbers: `[0]` 50 entries, `[1]` 61, `[2]` 79, `[3]` 152,
+  `[4]` 221 and `[5]` 380 (`[5] kind=ref ds_list=yes:380 triples=380/380`,
+  first entries `[0,0,1]`, `[0,0,15]`, `[0,0,29]`). Only `[5]` holds Liquor
+  Holster's `{8, 0, 51}` (once), and the scan's only candidate was
+  `lootListUnique[5]:380`. The six sizes were the same after a zone change
+  and at the end of the session, after 36400 entries had been pushed and cut.
+  `lootListNormal` dumped as five `ref` `ds_list`s of 70, 70, 73, 76 and 74
+  triples. So the roll's sub-list is a `ref ds_list` of 380 entries on this
+  build, stable within a session; who builds it is still not established.
+- **Other readers of the list.** The same slot is loaded by `DropUniqueItems`,
+  `DropItemHeroic`, `DropItemDebug`, `DropItem` itself, the traveling merchant
+  and black market grids (`PopulateTravelingMerchantGrid`,
+  `PopulateBlackMarketGrid`), `ReturnRandomSatanic`, `CreateShrineEffect`,
+  `DoCraftResult` and several unnamed object events. An entry left in the list
+  between rolls would be seen by all of them. Who builds the list, and whether
+  it is rebuilt per zone or per load, is **not established**. **Static reading
+  (2026-10-02, issue #74).**
+- **The unique repository.** `GetUniqueRepoStruct(type, sub, b)` indexes a
+  `global` three-level array `repo[type][sub][b]` (its slot name is also
+  unresolved; type 3 takes a separate branch) with GameMaker's own bounds
+  checks, so a list entry whose indices are out of range raises the runtime's
+  array error rather than missing quietly. `sub` is 0 for the unique
+  repository and `b` is the unique's own index: Liquor Holster is
+  `{8, 0, 51}`, Lucifer's Crown `{0, 0, 85}` (ForgePact's validated pool table
+  `kAngelicBases` holds exactly such triples). **Static reading (2026-10-02,
+  issue #74)**, consistent with the pool's 47 validated entries measured in
+  Live 1.
+- **What a hit's placement reads.** `CreateDefaultParams(sub, b, 1.0)` builds
+  its parameter struct from its three arguments, and reads no repository. The
+  struct it returns is exactly `{j, b, c}`: `j` the first argument (the sub),
+  `b` the second (the unique's index), `c` the third (1, the unique
+  repository); it has no field `a` (**measured**, Live 2, below). The built
+  item's `a` comes from `LootGroundCreate` itself: on both of its branches
+  that build an item locally it stores a value of its own into the record's
+  `a`, unconditionally and before the item instance exists, then hands the
+  same struct (a second reference, not a copy) to the new item as its
+  `itemDefinitionStruct`, sets the item's `itemType` from its own type
+  argument, and calls `CreateItemNew` directly. `CreateItemNew` reads the
+  item's `itemType` and the definition's `b`, `c` and `j` to look the item up
+  (`c` choosing the unique or the normal repository) and the definition's
+  `a` once, as the seed of the item's random rolls; it stores into none of
+  those fields. An `a` written onto the struct when `CreateDefaultParams`
+  returns is therefore overwritten, and one written at `CreateItemNew`'s
+  entry is the one the item is built with. `LootGroundCreate`,
+  `CreateLootInFreePos` and `LootGroundInit` read no repository. **Static
+  reading (2026-10-02, issue #74; the chain read a second time for where the
+  `a` is set)**; the record at `CreateItemNew`'s entry and what it keeps are
+  **measured** (Live 3, below). Note that `type` reaches the
+  placement from the list entry, not from the parameter struct, so rewriting
+  the struct cannot change an item's type.
+- **The forge selector.** The item the game builds carries the parameters as
+  its `itemDefinitionStruct` (`{b, a, j, c}` for a roll-built item; `{w, j,
+  b, a, c}` is the `sigdrop`/`InitItemFromJson` path's): `c` = 1 selects the unique
+  repository and `b` the unique; `c` = 0 selects the normal repository, `b`
+  the base item and `a` the seed or affix id. ForgePact's Custom Forge hook on
+  `CreateItemNew` recognises an item by comparing every selector field, `t`
+  against the item's `itemType` and `a`, `b`, `c`, `j` against its
+  `itemDefinitionStruct`; its built-in entries are Headhunter
+  `{t 8, a 777002, b 2, c 0, j 0}` and Tyrant's Crown
+  `{t 0, a 777001, b 7, c 0, j 0}`. **Source reading** (ForgePact's own code);
+  that an item built from those parameters is dressed as the signature item is
+  **measured** (`sigdrop`, 30 of 30 and 17 of 17 on 2026-09-18; and through
+  the game's own placement and `CreateItemNew`, Live 3, below). An item the
+  Angelic roll builds carries `{b, a, j, c}` and no `w` (**measured**, Live 3,
+  six vanilla hits); a `sigdrop` item, built through `InitItemFromJson`,
+  carries `w` and `o` as well.
+- **How #74 uses the list: a stand-in entry for the length of the roll.** While
+  Headhunter's or Tyrant's Crown's panel switch is on, ForgePact pushes one
+  entry per enabled item onto the list the roll draws from, the `ds_list` at
+  `Controller_obj.lootListUnique[5]` (the layout above; never the outer
+  array), with `ds_list_add` before the roll's first original call, and cuts
+  them off its tail with `ds_list_delete` after its last, under a scope guard,
+  so between rolls the list is exactly the game's own and none of the other
+  readers above ever sees the entries. Each entry is a **stand-in**: a real
+  Angelic unique of the same `type`, because the picker's filters and the
+  rate need a real definition and the item's type comes from the entry
+  (Headhunter's stand-in is Liquor Holster `{8, 0, 51}`; Tyrant's Crown's is a
+  helmet chosen when the pool is built, named in the switch-on log line).
+  Right after the push ForgePact reads the outer variable again by name off
+  the `Controller_obj` instance (a fresh `variable_instance_get`, never the
+  handle it pushed onto), takes the element at the same index, and counts the
+  push as visible only when that element is the same `ds_list` id and the
+  sub-list's size and tail hold what was pushed (the **held read-back**).
+  When they do not (another id, not a list, or a short tail), it takes the
+  entries off the id it pushed onto, logs one line, counts the roll in
+  `anomalies=` and attributes nothing in it. A `ds_list` id is a handle into
+  the runtime's own store, so the read-back cannot be fooled by a copy of the
+  sub-list; it still cannot show that the roll reads that element. The
+  removal checks the same tail: if the sub-list changed during the roll,
+  nothing is removed, one anomaly line is logged and the roll is counted in
+  `anomalies=`. ForgePact resolves the list by a name and an index
+  (`kAngelicListVar`, `lootListUnique` since Live 2's reach check passed on
+  it, and `kAngelicListIndex` 5), checks that the element is a live `ds_list` of
+  at least 10 entries, each an array of three numbers, and prints it on the
+  status lines as `list=<name>[<index>]:<size>` (for example
+  `lootListUnique[5]:380`), or `none` / `missing`. The live-list check decides
+  on the element as it was read, with no allow-list of handle kinds. It first
+  refuses, before any conversion, an element of a kind that can never be a
+  handle (array, string, struct, undefined or null) as `never a handle`,
+  because converting one is, by source reading, the runner's own REAL
+  conversion, which raises a runner error for an array and for undefined
+  (measured) and, by that source reading alone, for a string, a struct and
+  null, whose error text has not been captured (§5.4); a real, a ref and
+  every other kind go on. Then a numeric conversion serves only to refuse a
+  value that cannot be converted, is non-finite or is negative, and then
+  `ds_exists` is asked of the value itself with 2 (`ds_type_list`). A value
+  that cannot be converted is refused before `ds_exists` is asked; that is a
+  failed conversion, not a kind rule. The
+  refusal reads `Controller_obj.<name>[<i>] is not a ds_list (kind=<kind>,
+  <step>)`, naming the kind it got (`real`, `int32`, `int64`, `bool`,
+  `string`, `struct`, `array`, `ptr`, `undefined`, `null`, `ref`, else
+  `kind<N>`) and the step that refused (`never a handle`, `id unreadable`, `id non-finite`,
+  `id <value>`, `ds_exists threw` or `ds_exists false`); an element that
+  cannot be read at all is `[<i>] array_get threw`.
+
+  A hit is **typed** before anything is attributed to it. A third inline
+  detour, on `GetUniqueRepoStruct`, records the `(type, sub, b)` of the latest
+  definition read while the roll is in progress, cleared before each original
+  call. When the roll calls `CreateDefaultParams`, the hit takes that record
+  only if its sub and b equal the call's own first two arguments; otherwise
+  the hit is **untyped**: it stays the game's own, is never rewritten, and is
+  counted in `untyped=`. A typed hit is a candidate only when its whole triple
+  `(type, sub, b)` is the stand-in's, so another unique that shares the
+  stand-in's sub and b under a different type (Liquor Holster's `0/51` is also
+  a type 10 unique's) is never taken for it. The picker cannot tell the added
+  entry from the vanilla ones, so a candidate is the mod item's with
+  probability 1 / (n + 1), `n` being how often the vanilla sub-list holds
+  that same whole triple. The player build always pushes one entry per item; the
+  research build's `angelicprobe inject copies <k>` pushes k, which makes the
+  share m·k / (n + m·k) for m items sharing a stand-in. On the mod item's hit
+  ForgePact rewrites, at `CreateItemNew`'s entry, the item's
+  `itemDefinitionStruct` (a missing field is created) to the item's own `a`,
+  `b`, `c` 0, `j` 0 and reads them back (a value that does not read back is a
+  refusal: the record is put back, the game builds its stand-in, and the item
+  stays off for the session), and the game's `CreateItemNew` builds it from
+  that record, where the forge selector above recognises it (**measured**,
+  Live 3, below: 48 of 48 Headhunters (46 with Headhunter alone on, 2 with
+  both on) and 11 of 11 Tyrant's Crowns built by
+  the game from a record written there). One hit is one item, in place of what
+  the roll would have dropped. The switch is honoured only while all four
+  hooks (`DropItemAngelicChance`, `CreateDefaultParams`,
+  `GetUniqueRepoStruct` and `CreateItemNew`) are inline detours. **Design, #74 (2026-10-02, replan 1; the sub-list since
+  replan 2)**, as the plugin implements it. Of the three questions only a live
+  session answers, Live 1 answered **typing**, Live 2 **reach** (the roll's
+  picker draws the entries the plugin pushes; the held read-back alone shows
+  only that the sub-list holds them) and Live 3 the **build**: the game
+  builds exactly one dressed item per hit that falls to a mod item (below).
+  Live 2 could not ask that, because its rewrite, on the struct
+  `CreateDefaultParams` returns, refused on every hit: the struct has no
+  field `a` to rewrite. The rewrite has sat at `CreateItemNew`'s entry since.
+- **Measured (Live 1, list injection, 2026-10-02, research dll f7560e80…):
+  typing.** With the roll's chance raised by the research lever and both
+  switches off, 59 rolls gave 57 hits (`cdpCalls=70`, `detect=detoured`, the
+  detection's positive control). Every one was typed: `untyped=0`, and on
+  each the built item's `itemType` equalled the type of the latest
+  `GetUniqueRepoStruct` read inside the roll (`typeAgree=57`,
+  `typeDisagree=0`; 85 and then 87 of 87 later in the session). Every hit line
+  carried a `builtType` number and `lootDelta=1`: one `Loot_Ground_obj`
+  instance per hit. So the latest definition read before
+  `CreateDefaultParams` is the picked entry's, for the game's own entries; a
+  hit on a pushed entry has not been seen. With nothing pushed, one of the 57
+  hits carried a stand-in's sub and b (`standinPicks=1`), the baseline share
+  1/57 that reach is measured against.
+- **Measured (Live 2, list injection, 2026-10-02, research dll e30981d5…):
+  typing, reach and the parameter struct.** Typing held again: 46 of 46
+  vanilla hits typed (`untyped=0`, `typeAgree=46`, `typeDisagree=0`; 211
+  agreements and no disagreement by the end). With both switches off,
+  2 of 46 hits carried the stand-in's sub and b (`standinPicks=2`, p0 = 0.043). With Headhunter's
+  switch forced on and the research build pushing 200 copies of Liquor
+  Holster's entry onto `lootListUnique[5]` per roll (`injected=22800` over
+  114 rolls, the held read-back never failing, `heldMiss=0`), 65 of the next
+  80 hits fell on it (p1 = 0.81): **reach passes**, the roll draws what is
+  pushed onto that sub-list. On each of those 65 hits the returned
+  `CreateDefaultParams` struct read `{"b":51.0,"j":0.0,"c":1.0}`, no field
+  `a`; the rewrite refused (`no field a`), wrote nothing, and the game placed
+  its own Liquor Holster (`built=0`). That is a measurement of the struct and
+  of the plugin's rewrite, not of whether the game would build the item from
+  parameters that carry its `a`. The research build's replace mode (the
+  stand-in removed and the item spawned in its place) worked on 42 of 42
+  hits. The runner's YYError count rose from 1 to 37 in the first kill batch
+  (`report#2` x30) and then held; its cause is not established.
+- **Measured (Live 3, list injection, 2026-10-02, research dll e0749368…):
+  where the id reaches the built item, and the build.** With the rewrite
+  moved to `CreateItemNew`'s entry and both switches off, six vanilla hits
+  printed the record there and the built definition: the record's fields are
+  `b`, `a`, `j`, `c`, its `a` already a number (for example
+  `{"b":9.0,"a":270500966.0,"j":6.0,"c":1.0}`, built as `itemType=3` with the
+  same four values), so `LootGroundCreate`'s `a` is on the record by then and
+  the built definition keeps every value. Typing held (47 of 47, `untyped=0`,
+  `typeDisagree=0`; p0 = 2/47). With Headhunter forced and 200 copies pushed
+  per roll, 46 of the next 62 hits fell on Liquor Holster's entry (p1 = 0.742,
+  `heldMiss=0`), and on every one the record went from
+  `{"b":51.0,"a":648002927.0,"j":0.0,"c":1.0}` (its own `a` each time) to
+  `{"b":2.0,"a":777002.0,"j":0.0,"c":0.0}` and the game built
+  `itemType=8` with exactly those values: `built=` and `belt=` +46,
+  `refused=0`, `lootDelta=1` on every hit, the ground labelled
+  `Headhunter`, and the owner, hovering one, read a Headhunter. With both
+  forced, 11 of 15 hits built Tyrant's Crown (`picked 0/0/86`, stand-in Mask
+  of the Celestial) and 2 Headhunter, `built=` growth equal to `ourHits=`
+  growth. Switching both off left the next 22 hits vanilla and the list's six
+  sizes as before. So a `c` 0 record written at `CreateItemNew`'s entry is
+  built through the game's own placement and constructor as the signature
+  item, one per hit, in place of the stand-in. The YYError count rose from 1
+  to 19 between the read just before the layout dump and the end of the
+  first kill batch, all of it before anything was pushed (`report#2` x15, message
+  `REAL argument incorrect type array`), and then held; which step raises it
+  is not established. An arithmetic fit on Live 2's and Live 3's counts puts
+  it on the research scan's numeric conversion of 15 array and 3 string
+  variables (18 per scan, §5.4); ForgePact's list check now refuses those
+  kinds as `never a handle` before converting. Live 4 can show whether the
+  count stops rising, not the strings' share of it, since strings are no
+  longer converted. A hit at the natural chance was not observed (the
+  research lever held the chance at 1e9).
+- **Measured (Live 4, list injection, 2026-10-02, research dll 4b5994c3…,
+  ForgePact `ed59983`): the research scan's runner errors.** With the list
+  check refusing a kind that can never be a handle before converting it, in
+  town with no kills, a lone `angelicprobe inject auto` (`list
+  lootListUnique[5]:380`) and then `angelicprobe list` left the runner's
+  YYError total at 1 with no new report, each read taken at least 35 s after
+  the command. That one report was raised in the menus before any command
+  (`Unable to find any instance for object index ...`). The scan refused the
+  same 15 array and 3 string variables as `never a handle`, none as
+  `id unreadable`, and still accepted the real list, a ref
+  (`candidate lootListUnique array_length=6 at=5 ds_list_size=380`). On the
+  earlier builds each scan had added 18. So the scan's numeric conversions of
+  those elements are measured as the cause of Live 2's and Live 3's rise; how
+  the 18 split between arrays and strings stays the arithmetic fit (§5.4),
+  since Live 4 refused both kinds. A struct or a null element was not met.
+- **The die.** The rate comes from a zero-argument method on a member of the
+  picked definition, scaled by one global value read when the roll starts;
+  neither is identified (`droprate.base` is the plausible reading). The roll
+  draws a uniform integer up to that rate and hits when the draw is below the
+  chance. With the measured chances of 1195-1526 against rates in the millions,
+  that is about one hit in several thousand rolls, so a session should not
+  expect a natural hit. **Static reading (2026-10-02, issue #74).**
+- **A hit.** Only on a hit does the roll call `CreateDefaultParams` (sub, b and
+  a constant), and then, by a direct call, the routine ForgePact hooks as
+  `LootGroundCreate`, with the roll's position and the picked item's
+  parameters. `CreateDefaultParams` is called nowhere else inside
+  the roll, so **a `CreateDefaultParams` call while the roll is running marks a
+  hit**. **Static reading (2026-10-02, issue #74)**, consistent with the
+  measured count of zero `CreateDefaultParams` calls inside the roll over 374
+  misses. A table-only hook on `LootGroundCreate` cannot see that direct call
+  (§ 5.1); the `CreateDefaultParams` inline detour does, **measured** in
+  session 1, which is why ForgePact #74 detects hits there.
+- **The chance's composition** is computed by the caller, `DropItem`, and is
+  **not established** (out of scope for #74).
 - `droprate.base` of some uniques: Marcher's of Hatred 4,266,000; Annihilator
   4,158,450; Tayrel's Chestplate 25,000,000; Lucifer's Crown 111,111,111.
   **Measured.**
-- `Loot_Manager_obj` has no `lootListUnique` instance variable, although the
-  instance exists. **Measured.**
+- A `lootListUnique` instance variable on `Loot_Manager_obj` was **not
+  observed**: `variable_instance_exists` answered false on the instance found
+  by name, with no positive control on that instance recorded (2026-09-23).
+  The static reading of 2026-10-02 puts the list on `Controller_obj` (above),
+  so this was measured on another scope than the list's.
 - `DropItem` also runs for breakable props, and ordinary drops call
   `LootGroundCreate` (and `CreateDefaultParams`) directly from inside it.
   **Measured.**
 
 [angelic roll, Results](../ForgePact/docs/angelic-roll-hook-research.md#results),
+[Session 2 (#74) Results](../ForgePact/docs/angelic-roll-hook-research.md#results-1),
+[Session 3 (#74, list injection)](../ForgePact/docs/angelic-roll-hook-research.md#session-3-list-injection-issue-74),
+[Session 4 (#74, the list layout)](../ForgePact/docs/angelic-roll-hook-research.md#session-4-the-list-layout-issue-74),
+[Session 5 (#74, the id on the built item)](../ForgePact/docs/angelic-roll-hook-research.md#session-5-the-id-on-the-built-item-issue-74),
+[curated record](../hs-game-sdk/curated/angelic_list_measurements.json),
 [Decision](../ForgePact/docs/angelic-roll-hook-research.md#decision),
 [angelic drop, the game's own mechanism](../ForgePact/docs/angelic-drop-research.md#oyunun-kendi-mekanizması-statik-okuma-canlı-ölçülen-yalnızca-buff-yokken-zarın-hiç-atılmaması),
 [ForgePact guide, Known Limitations](submodules/ForgePact/instructions.md#known-limitations--gaps)
