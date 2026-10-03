@@ -193,7 +193,7 @@
         "Loot_Ground_obj": 2513,
         "objZoneGenV2": 3259
       },
-      "what": "With the chest as self, instance_exists with Enemy_Parent_obj as its argument was called 3402 times by the time the dungeon had been entered (step 5) and 41519 times by the end, about once a frame. The chest also asked instance_exists about Player_obj (1897), Loot_Ground_obj (12) and objZoneGenV2 (12); instance_number, instance_find and instance_place were never called with the chest as self.",
+      "what": "With the chest as self, instance_exists with Enemy_Parent_obj as its argument was called 3402 times by the time the dungeon had been entered (step 5) and 41519 times by the end, about once a frame. The chest also asked instance_exists about Player_obj (1897), Loot_Ground_obj (12) and objZoneGenV2 (12); instance_find and instance_place were not called with the chest as self (their detours saw the game's calls: gameCalls=631489 and 6422). Whether the chest calls instance_number is not observed, and the instrument could not see it: that detour attributed no call to any game self in the session (gameCalls=0), so its zero chest row is blind, not a measured negative.",
       "values": {
         "verdict": true,
         "builtin": "instance_exists",
@@ -201,7 +201,8 @@
         "calls_at_entry": 3402,
         "calls_at_end": 41519,
         "other_args": { "Player_obj": 1897, "Loot_Ground_obj": 12, "objZoneGenV2": 12 },
-        "chest_self_calls": { "instance_number": 0, "instance_find": 0, "instance_place": 0 }
+        "chest_self_calls": { "instance_find": 0, "instance_place": 0 },
+        "chest_self_calls_not_observed": { "instance_number": "blind: the detour attributed no call to any game self in Live 1 (gameCalls=0), so a chest call could not have shown" }
       },
       "hypothesis": "unlock_is_a_builtin_poll",
       "live_check": "builtin-poll",

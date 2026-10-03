@@ -1657,9 +1657,14 @@ polling `instance_exists(Enemy_Parent_obj)` (measured, below).
     `self`**, about once a frame: 3402 calls with 44 monsters alive, 41519 by
     the end of the run. Its other `instance_exists` arguments were `Player_obj`
     (1897), `Loot_Ground_obj` and `objZoneGenV2` (12 each) and a few
-    controllers; it made no `instance_number`, `instance_find` or
-    `instance_place` call. **Measured** (a `HookBuiltin` detour with a
-    per-`self` positive control in the same session).
+    controllers. **Measured** (a `HookBuiltin` detour with a per-`self`
+    positive control in the same session). It made no `instance_find` or
+    `instance_place` call; **measured**, since those detours saw the game's
+    own calls (`gameCalls` 631489 and 6422). Whether it calls
+    `instance_number` is **not observed, and the instrument could not see
+    it**: that detour attributed no call to any game `self` in the session
+    (`gameCalls=0`), and the positive control was ForgePact's own
+    `CallBuiltinEx` call, not the route compiled GML takes.
   - **At the last kill only `nearest` changed** on the chest, from `-4` to an
     instance reference, the tick after the alive count reached 0: read as the
     chest finding the nearest player once no monster exists. The open, on

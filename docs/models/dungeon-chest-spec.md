@@ -115,9 +115,12 @@ the tracked copy is `ForgePact/docs/dungeon-chest-research.md` § "Live procedur
   chest as `self`, `instance_exists` with `Enemy_Parent_obj` as its argument was
   called 3402 times by the time the dungeon had been entered and 41519 times by
   the end, about once a frame. The chest also asked about `Player_obj` (1897),
-  `Loot_Ground_obj` (12) and `objZoneGenV2` (12); `instance_number`,
-  `instance_find` and `instance_place` were never called with the chest as
-  `self`. `HYPOTHESES["unlock_is_a_builtin_poll"]` is `True`, and this poll is
+  `Loot_Ground_obj` (12) and `objZoneGenV2` (12); `instance_find` and
+  `instance_place` were not called with the chest as `self` (their detours saw
+  the game's calls). Whether the chest calls `instance_number` is **not
+  observed**: that detour attributed no call to any game `self` in the session
+  (`gameCalls=0`), so its zero chest row could not have shown one.
+  `HYPOTHESES["unlock_is_a_builtin_poll"]` is `True`, and this poll is
   what ForgePact answers to open the chest early.
 - **DC11, the dungeon's total was 600, all counted.** The run cleared at
   `kills=600 alive=0`. The kill hook counted one per kill with no kill whose

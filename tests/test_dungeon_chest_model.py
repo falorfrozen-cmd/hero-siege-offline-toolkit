@@ -197,6 +197,10 @@ class BaselineTests(unittest.TestCase):
         self.assertGreater(values["calls_at_entry"], 0)
         self.assertGreater(values["calls_at_end"], values["calls_at_entry"])
         self.assertEqual(set(values["chest_self_calls"].values()), {0})
+        # instance_number's detour saw no game self at all in Live 1
+        # (gameCalls=0): its zero chest row is blind, never a measured 0.
+        self.assertNotIn("instance_number", values["chest_self_calls"])
+        self.assertIn("instance_number", values["chest_self_calls_not_observed"])
         self.assertIs(model.HYPOTHESES["unlock_is_a_builtin_poll"], True)
         # instance_exists answers "some monster exists" exactly when alive > 0,
         # whatever the dungeon's total: the chest opens only on its "no".
