@@ -3754,3 +3754,41 @@ Read from the arguments `jumpprobe` logged in Live 1's own `out.txt`
   `noone` comes back as a ref to instance -4. **Measured** (J3).
 
 [Phase 2: the take-off check](../ForgePact/docs/jump-scenery-research.md#the-take-off-check)
+
+### 19.4 Through the mod (phase 2 live session)
+
+What ForgePact's Jump through scenery mod (`jumpscenery`, #16 phase 2)
+measured about the game on 2026-10-03, on the player build, slot 14
+("Sorak"), in `Town_01_rm`. Curated entries J11 to J15 in
+`hs-game-sdk/curated/jump_measurements.json`.
+
+- A jump on open ground moved this character about **175 px** (from (912.0,
+  822.0) to (921.9, 996.7)). The 117 px in 19.1 was the jump that crossed the
+  prop under phase 1's lever (curated J2), not an open-ground jump; the
+  character's Jump Power was again not read. **Measured.**
+- The take-off walk of 19.3 runs inside `skillsLeap`'s first call of the
+  jump: on each of three jumps, at least two of the walk's `collision_circle`
+  queries arrived after that frame's `skillsLeap` entry, and none before it.
+  Together with 19.3's ordering (the walk's rows logged before `skillsLeap`
+  returns), that places the walk between its entry and its return.
+  **Measured.**
+- A jump at the prop that blocks it does not move the player (0 px, twice),
+  and answering the player's five builtins "no collision" during that jump
+  lets it cross: 125 px, about 50 px short of the open-ground jump. Why the
+  crossing jump ends shorter is **not established**. **Measured.**
+- A jump aimed so that it would end inside a horse carriage did not move the
+  player even with the five builtins answered (1152 answers in that jump), as
+  in phase 1: something outside those builtins refuses it, and the player did
+  not end inside the prop. What refuses it is **not established**; the owner
+  reads it as the game validating the landing zone itself. **Measured** for
+  the position, not for a mechanism.
+- `room_width` × `room_height` of `Town_01_rm` is **2800 × 2400**. The room
+  rectangle is larger than the walkable map: `playerwarp` to (50, 1200) and
+  (2705, 1200) held on a re-read (no snap back) and left the player out of
+  bounds (the owner's report), within 100 px of a room edge; (95, 1200) held
+  too and put the player in the dark margin at the west of the view, not
+  judged standable. **Measured.** So a room
+  edge is not a map edge, and what the game does with a jump at the
+  walkable map's edge is **not observed**.
+
+[Mod live 1 results](../ForgePact/docs/jump-scenery-research.md#mod-live-1-results)
