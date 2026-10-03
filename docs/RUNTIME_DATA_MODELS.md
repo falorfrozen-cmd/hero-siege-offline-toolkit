@@ -3687,8 +3687,10 @@ the numbers are also in `hs-game-sdk/curated/jump_measurements.json`.
   jump, and `gml_Script_StatJumpPower` (3391) logged no call during one.
   **Measured.**
 - The jump lasts 104 frames. On open ground it moved this character about
-  117 px, about 1.1 px per frame; the character's Jump Power was not read, so
-  this is not the base jump. **Measured.**
+  175 px (19.4, curated J11); the jump that crossed a prop under phase 1's
+  `all hold` lever (curated J2) went 117 px, about 1.1 px per frame. The
+  character's Jump Power was not read, so neither is the base jump.
+  **Measured.**
 - No instance variable whose name contains `jump`, `air`, `grav`, `land`,
   `fall`, `height`, `zpos`, `hover` or `fly` changes during a jump: the only
   matches on `Player_obj` are `bufferJump` and `slopeHeight`, and both stayed
@@ -3743,15 +3745,17 @@ Read from the arguments `jumpprobe` logged in Live 1's own `out.txt`
 - The first circle centre sits about 5-6 px below the player's origin,
   whichever way the jump goes (two take-offs heading south, one north).
   **Measured.**
-- One blocked side point is enough: in J1 the right-hand point of the second
-  step returned an instance, and that jump moved 0 px. **Measured.**
+- One blocked side point is enough: in Live 1 run J1 (curated J10) the
+  right-hand point of the second step returned an instance, and that jump
+  moved 0 px. **Measured.**
 - Whether the walk runs inside `skillsLeap`'s first call or just before it, in
   the same frame, is **not established**: the builtin rows were logged on
   return, before `skillsLeap`'s own line.
 - The "no collision" answers the game accepts for these queries are real -4
   (`noone`) for `instance_position`, `collision_line` and `collision_circle`,
   and bool false for `position_meeting` and `place_meeting`; the game's own
-  `noone` comes back as a ref to instance -4. **Measured** (J3).
+  `noone` comes back as a ref to instance -4. **Measured** (Live 1 run J3,
+  curated J5).
 
 [Phase 2: the take-off check](../ForgePact/docs/jump-scenery-research.md#the-take-off-check)
 
@@ -3760,12 +3764,13 @@ Read from the arguments `jumpprobe` logged in Live 1's own `out.txt`
 What ForgePact's Jump through scenery mod (`jumpscenery`, #16 phase 2)
 measured about the game on 2026-10-03, on the player build, slot 14
 ("Sorak"), in `Town_01_rm`. Curated entries J11 to J15 in
-`hs-game-sdk/curated/jump_measurements.json`.
+`hs-game-sdk/curated/jump_measurements.json`. A bare Jn in section 19 is a
+curated id in that file; the research doc's Live 1 run labels, also J1 to J5,
+are not, and are written "Live 1 run Jn" here.
 
 - A jump on open ground moved this character about **175 px** (from (912.0,
-  822.0) to (921.9, 996.7)). The 117 px in 19.1 was the jump that crossed the
-  prop under phase 1's lever (curated J2), not an open-ground jump; the
-  character's Jump Power was again not read. **Measured.**
+  822.0) to (921.9, 996.7)); the character's Jump Power was again not read.
+  **Measured.**
 - The take-off walk of 19.3 runs inside `skillsLeap`'s first call of the
   jump: on each of three jumps, at least two of the walk's `collision_circle`
   queries arrived after that frame's `skillsLeap` entry, and none before it.
