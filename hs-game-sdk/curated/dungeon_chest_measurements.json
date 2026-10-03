@@ -1,0 +1,172 @@
+{
+  "$schema_note": "Hand-curated record of what is known about when a key dungeon's end chest (Dungeon_Chest_obj) opens, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/dungeon_chest_model.py never reads it; tests/test_dungeon_chest_model.py reads both and checks that the model reproduces each entry, and that each of the model's HYPOTHESES stays None until a `measured` entry names it in `hypothesis` and carries `values.verdict` (true or false). The mechanism, in our own words, is docs/models/dungeon-chest-spec.md. Every entry has `id` (DC1, DC2, ...), `kind` (`baseline` = vanilla, no lever; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`static_reading` = read from the compiled game and paraphrased, no script text; `measured`; `reported` = a player's report, not a measurement of ours; `pending` = a placeholder ForgePact#31's Live procedure 1 fills; `not_observed`), `date`, `source` (one string `<path> § <section>`: the path is relative to the hub root and `section` is text that appears in that file; a Live capture under .claude/workorders/ is local and is only checked where it exists), `scripts` (every gml_Script_* the entry involves, all bound in hs_game_sdk.scripts.GameScript; may be empty), `objects` (every object the entry involves, all in hs_game_sdk.objects.OBJECT_NAME_TO_INDEX, with the index the SDK gives), `what` (the observation), `values`, `model` (what the model must show), optionally `hypothesis` (the HYPOTHESES key the entry answers) and `live_check` (the Live procedure 1 check that measures it), and exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). DC1-DC5 are the static reading of 2026-10-03 (ForgePact#31's planning, a local Ghidra project of the current build; the decompiler output stayed on that machine). DC6 is Headhunter's measured kill path. DC7-DC10 are placeholders: ForgePact#31's Live procedure 1 replaces each with a measured entry (status `measured`, `values` filled, `source` the session's record) once the session has run.",
+  "measurements": [
+    {
+      "id": "DC1",
+      "kind": "baseline",
+      "status": "static_reading",
+      "date": "2026-10-03",
+      "source": "docs/models/dungeon-chest-spec.md § DC1, the chest's events",
+      "scripts": [],
+      "objects": { "Dungeon_Chest_obj": 1366 },
+      "what": "Dungeon_Chest_obj owns five events: Create, Step, Draw, Alarm 0 and Other 7 (animation end). Found through the exe's YYGMLFuncs rows, so object events are readable statically although symbols.csv lists only scripts.",
+      "values": { "events": ["Create", "Step", "Draw", "Alarm 0", "Other 7"] },
+      "model": "Not modelled: which events the chest owns is structure, not arithmetic. Recorded so a later build's reading can be compared with it.",
+      "not_reproduced": "An event list is not a number the model computes; the test checks only that the object and its index are the SDK's."
+    },
+    {
+      "id": "DC2",
+      "kind": "baseline",
+      "status": "static_reading",
+      "date": "2026-10-03",
+      "source": "docs/models/dungeon-chest-spec.md § DC2, the Step counts nothing",
+      "scripts": [
+        "gml_Script_GetKeyDungeonRoom",
+        "gml_Script_GetKeyDungeon",
+        "gml_Script_NetworkSendClientEffect",
+        "gml_Script_GPV",
+        "gml_Script_IsDefined",
+        "gml_Script_PlaySound3D"
+      ],
+      "objects": { "Dungeon_Chest_obj": 1366 },
+      "what": "The chest's Step calls, by name, GetKeyDungeonRoom, GetKeyDungeon, NetworkSendClientEffect, GPV, IsDefined and PlaySound3D. None of them counts or lists enemies.",
+      "values": { "counts_enemies_by_script": false },
+      "model": "The model takes the alive count as an input and does not say how the chest obtains it: chest_openable(alive) depends on nothing but alive.",
+      "reproduced_by": "tests.test_dungeon_chest_model.BaselineTests.test_dc2_the_rule_reads_only_the_alive_count"
+    },
+    {
+      "id": "DC3",
+      "kind": "baseline",
+      "status": "static_reading",
+      "date": "2026-10-03",
+      "source": "docs/models/dungeon-chest-spec.md § DC3, the open is the animation end",
+      "scripts": [
+        "gml_Script_CreateInFreePos",
+        "gml_Script_SPV",
+        "gml_Script_ReturnSpecificStat",
+        "gml_Script_quest_exists",
+        "gml_Script_QuestComplete",
+        "gml_Script_CommunityQuestAddProgress",
+        "gml_Script_GPV",
+        "gml_Script_CheckTown",
+        "gml_Script_UpdateDepth",
+        "gml_Script_ReportClient"
+      ],
+      "objects": { "Dungeon_Chest_obj": 1366 },
+      "what": "Other 7 (animation end) is the open: CreateInFreePos, an instance_create builtin call, SPV, ReturnSpecificStat, quest_exists, QuestComplete and CommunityQuestAddProgress. Alarm 0 calls ReturnSpecificStat and GPV; Create calls CheckTown, UpdateDepth and ReportClient.",
+      "values": {
+        "Other 7": ["CreateInFreePos", "instance_create", "SPV", "ReturnSpecificStat", "quest_exists", "QuestComplete", "CommunityQuestAddProgress"],
+        "Alarm 0": ["ReturnSpecificStat", "GPV"],
+        "Create": ["CheckTown", "UpdateDepth", "ReportClient"]
+      },
+      "model": "Not modelled: the payout is out of ForgePact#31's scope and runs untouched.",
+      "not_reproduced": "What the chest pays out is not what the model answers (when it may open); recorded so the mod's scope can be checked against it."
+    },
+    {
+      "id": "DC4",
+      "kind": "baseline",
+      "status": "static_reading",
+      "date": "2026-10-03",
+      "source": "docs/models/dungeon-chest-spec.md § DC4, the unlock condition is not visible statically",
+      "scripts": [],
+      "objects": { "Dungeon_Chest_obj": 1366 },
+      "what": "No body in this build calls a builtin directly (in 150 functions read only is_handle appeared as a direct call), and variables are read through slot ids, so an instance_number/instance_exists poll by the chest and the name of a variable it reads are both invisible statically: neither proven nor ruled out.",
+      "values": { "direct_builtin_calls_seen": ["is_handle"], "functions_read": 150 },
+      "model": "HYPOTHESES['unlock_is_a_builtin_poll'] and HYPOTHESES['unlock_is_a_variable'] are both None.",
+      "reproduced_by": "tests.test_dungeon_chest_model.BaselineTests.test_dc4_the_unlock_route_is_not_established"
+    },
+    {
+      "id": "DC5",
+      "kind": "baseline",
+      "status": "static_reading",
+      "date": "2026-10-03",
+      "source": "docs/models/dungeon-chest-spec.md § DC5, the neighbours",
+      "scripts": ["gml_Script_quest_exists", "gml_Script_GPV", "gml_Script_sc_rift", "gml_Script_StringStartsWith"],
+      "objects": {
+        "Dungeon_Boss_Blocker_obj": 1365,
+        "Spawn_Dungeon_obj": 4667,
+        "Dungeon_Spawner_1_obj": 1375,
+        "Dungeon_Spawner_2_obj": 1376,
+        "Dungeon_Spawner_3_obj": 1377,
+        "Dungeon_Spawner_4_obj": 1378
+      },
+      "what": "Dungeon_Boss_Blocker_obj has Create/Step/Draw and its Step calls quest_exists and GPV. Spawn_Dungeon_obj (Create/Step/Alarm 0/Draw; Alarm 0 calls sc_rift, StringStartsWith, GPV and creates an instance) is the world-side entrance spawner of the special-content family, not a monster spawner. Dungeon_Spawner_1..4_obj have only a small Create.",
+      "values": { "monster_spawner_found": false },
+      "model": "Not modelled: whether anything adds monsters inside a dungeon after entry is DC8's live question.",
+      "not_reproduced": "A static negative about spawners is not a measurement; HYPOTHESES['no_creators_in_dungeon'] stays None until DC8 is measured."
+    },
+    {
+      "id": "DC6",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-09-10",
+      "source": "docs/RUNTIME_DATA_MODELS.md § ### 13.5 The kill path",
+      "scripts": ["gml_Script_EnemyDestroyKillProc"],
+      "objects": { "Enemy_Parent_obj": 1429, "Enemy_Death_Effect_obj": 1420 },
+      "what": "EnemyDestroyKillProc runs with the dying enemy as self and again with the player as self; Enemy_Death_Effect_obj is made on 50 of 307 kill-proc calls, so it is not a kill counter. Enemy_Parent_obj is the monster family.",
+      "values": { "kill_proc_calls": 307, "death_effects": 50, "self_kinds_per_kill": ["enemy", "player"] },
+      "model": "Counting each enemy-self call once per instance id gives one kill per monster, and the model's population (kills + alive) stays constant as a monster moves from alive to killed.",
+      "reproduced_by": "tests.test_dungeon_chest_model.BaselineTests.test_dc6_a_kill_moves_one_monster_from_alive_to_killed"
+    },
+    {
+      "id": "DC7",
+      "kind": "baseline",
+      "status": "pending",
+      "date": "2026-10-03",
+      "source": "docs/models/dungeon-chest-spec.md § DC7, are all of a dungeon's monsters alive at entry?",
+      "scripts": [],
+      "objects": { "Dungeon_Chest_obj": 1366, "Enemy_Parent_obj": 1429 },
+      "what": "Placeholder: the number of Enemy_Parent_obj descendants alive when the chest is first seen in a key dungeon (Pumpkin Cellar), and whether it equals the dungeon's whole population.",
+      "values": null,
+      "hypothesis": "all_monsters_alive_at_entry",
+      "live_check": "alive-count",
+      "model": "HYPOTHESES['all_monsters_alive_at_entry'] is None until this entry is measured.",
+      "not_reproduced": "Pending ForgePact#31's Live procedure 1."
+    },
+    {
+      "id": "DC8",
+      "kind": "baseline",
+      "status": "pending",
+      "date": "2026-10-03",
+      "source": "docs/models/dungeon-chest-spec.md § DC8, are there creators inside a dungeon?",
+      "scripts": [],
+      "objects": { "Enemy_Creator_obj": 1415 },
+      "what": "Placeholder: the number of Enemy_Creator_obj instances inside a key dungeon (creators-in-dungeon). More than zero is a Known Limitation of the mod, not solved by it.",
+      "values": null,
+      "hypothesis": "no_creators_in_dungeon",
+      "live_check": "creators-in-dungeon",
+      "model": "HYPOTHESES['no_creators_in_dungeon'] is None until this entry is measured.",
+      "not_reproduced": "Pending ForgePact#31's Live procedure 1."
+    },
+    {
+      "id": "DC9",
+      "kind": "baseline",
+      "status": "pending",
+      "date": "2026-10-03",
+      "source": "docs/models/dungeon-chest-spec.md § DC9, which variable flips when the last monster dies?",
+      "scripts": [],
+      "objects": { "Dungeon_Chest_obj": 1366, "Dungeon_Boss_Blocker_obj": 1365 },
+      "what": "Placeholder: the chest or boss-blocker variable whose value changes at the last kill (unlock-signal), with its before and after values.",
+      "values": null,
+      "hypothesis": "unlock_is_a_variable",
+      "live_check": "unlock-signal",
+      "model": "HYPOTHESES['unlock_is_a_variable'] is None until this entry is measured.",
+      "not_reproduced": "Pending ForgePact#31's Live procedure 1."
+    },
+    {
+      "id": "DC10",
+      "kind": "baseline",
+      "status": "pending",
+      "date": "2026-10-03",
+      "source": "docs/models/dungeon-chest-spec.md § DC10, does the chest's Step poll a builtin about monsters, and which?",
+      "scripts": [],
+      "objects": { "Dungeon_Chest_obj": 1366 },
+      "what": "Placeholder: whether the chest's Step calls a builtin about monsters (instance_number, instance_exists or another) and which, through the research build's builtin detours (builtin-poll).",
+      "values": null,
+      "hypothesis": "unlock_is_a_builtin_poll",
+      "live_check": "builtin-poll",
+      "model": "HYPOTHESES['unlock_is_a_builtin_poll'] is None until this entry is measured.",
+      "not_reproduced": "Pending ForgePact#31's Live procedure 1."
+    }
+  ]
+}
