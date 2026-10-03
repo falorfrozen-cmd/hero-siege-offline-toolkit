@@ -674,7 +674,7 @@ const scribe = (n, block, updates) => {
     `In ${SCRIBE_PLAN}: Grep -n '^## ' to find '## State' and the heading after it, then Read ${SCRIBE_PLAN} and return every line under '## State' exactly as it was in 'state_before', reading only that range (offset at the State heading, limit up to the next heading); after your last Edit, Read the same range again and return every line under '## State' exactly as it now is in 'state_after'. ` +
     `In ${SCRIBE_CONTEXT}: '## Log' is the last section, so the block goes at the end of the file. Grep -n '^### Round ${n}\\b' to see whether its heading is already there, Grep pattern '$' with output_mode 'count' for the file's line count, and Read only its last 30 lines (offset = count - 30). ` +
     `Append with exactly one Edit: old_string is the file's last non-empty line, copied whole (if that line is not unique in the file, add the lines just above it until it is); new_string is that same old_string, unchanged, then one blank line, then the block. The old lines come first in new_string and the block after them: never put the block before them, never move or drop a line, and never anchor on any other line. Return that old_string in 'log_anchor'. ` +
-    `After the Edit, Read the last ${logTailLines(block)} lines of ${SCRIBE_CONTEXT} and return them exactly as they now are, without line numbers, in 'log_tail'. ` +
+    `After the Edit, Read the last ${logTailLines(block)} lines of ${SCRIBE_CONTEXT} and return them exactly as they now are, without line numbers, in 'log_tail'; if you could not Read them, return '' there, never a placeholder. ` +
     `Paste both blocks verbatim with the Edit tool. Do not reword, relabel, merge lists, or change any count in a heading. ` +
     `Edit nothing except these two files. If either file cannot be read, do not create it -- return written: false with the error in 'note' instead of improvising one. ` +
     `Never run git, never build or test, never edit source: you have no tools that could do any of that. ` +
@@ -687,12 +687,15 @@ const scribe = (n, block, updates) => {
 // Read printed taken off, blank lines ignored, and the round heading left out
 // (an existing heading may have been kept instead of the block's own). A
 // tail that was not reported is not judged: a missing report must never read
-// as damage (the false STATE-LOSTs of 2g and the UI redesign).
+// as damage (the false STATE-LOSTs of 2g and the UI redesign). The schema
+// requires the field, so "not reported" is also a tail too short to hold the
+// block -- the `""` or `N/A` a scribe that skipped its last Read fills in --
+// which says nothing about where the block went: null, not judged.
 const tailLines = t => String(t).split(/\r?\n/).map(l => normEntry(l.replace(/^\s*\d+(\t|→)/, ''))).filter(Boolean)
 const logLanded = (block, tail) => {
   const want = tailLines(block).slice(1)
   const got = tailLines(tail)
-  if (got.length < want.length) return false
+  if (got.length < want.length) return null
   const end = got.slice(got.length - want.length)
   return want.every((l, i) => l === end[i])
 }
@@ -730,7 +733,7 @@ const recordState = async (n, rawBlock, stateLines) => {
     lost = base.filter(e => !replaced.has(e.key) && !after.has(normEntry(e.text))).map(e => e.text)
   }
   knownState = reported && !lost.length ? stateEntries(wrote.state_after) : expected
-  const logDamaged = typeof wrote.log_tail === 'string' && !logLanded(block, wrote.log_tail)
+  const logDamaged = typeof wrote.log_tail === 'string' && logLanded(block, wrote.log_tail) === false
   return { wrote, lost, expected: stateText(expected), log: block, logDamaged }
 }
 const stateLost = (n, rec, then) => ({

@@ -41,7 +41,8 @@ block. The old lines come first and the block after them: the same
 line of the previous entry to the end of the file. Return the `old_string`
 as `log_anchor`, and the file's last lines after the `Edit`, as the prompt
 says, as `log_tail`; the workflow stops the launch if the block is not the
-last thing there.
+last thing there. If you could not `Read` the tail, return `""` as
+`log_tail`, never a placeholder such as `N/A`.
 
 Use the `Edit` tool only. Never use `Write` to create a missing file — if
 either file cannot be read, return `written: false` with the error in
