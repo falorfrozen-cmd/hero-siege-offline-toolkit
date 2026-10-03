@@ -219,7 +219,8 @@ dungeon's planned total, and `p` for the percentage.
   DC16): T is the monsters alive at first sight plus (creators still to spawn,
   those whose `enemyArray` is not an array, × a measured mean per creator),
   rounded up. A creator whose state cannot be read counts as spawned and is
-  counted on the status line (`unreadable=`).
+  counted on the status line (`unreadable=`); a census that failed as a whole
+  (no creator family, no creators, every creator unreadable) gives no T.
   T does not move with the alive count, so `Chest: 50 kills to go` means 50
   real kills. (Had a per-creator count been readable, T would have been the
   `variable` form, the sum of those counts; DC14 found none.)
