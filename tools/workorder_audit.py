@@ -1799,6 +1799,24 @@ def rule_r26_reread_after_write(session: Session) -> RuleResult:
     return RuleResult("R26", "reread-after-write", passed=not evidence, evidence=evidence)
 
 
+# R27 the amendment tier. An amendment applies one correction someone else
+# already stated, so it never needs the top tier: an amendment planner always
+# runs on opus, never fable. The audit of 2026-10-03 found one that ran on
+# fable, from a driver that spawned it through SKILL.md's owner-scope route
+# and carried the workorder's escalated `planner-tier=` over to it, while its
+# sibling amendment in the same session ran opus. The model read is the one
+# most of the transcript's turns ran on (`AgentTranscript.model`), not the
+# alias that was asked for.
+def rule_r27_amendment_tier(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_subagents(session):
+        model = agent.model or ""
+        if is_amendment(agent) and "fable" in model.lower():
+            evidence.append(f"{agent.label}: ran on {model}; an amendment planner always runs on opus, "
+                            f"never fable -- spawn it with model: opus whatever planner-tier the State records")
+    return RuleResult("R27", "amendment-tier", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -1826,6 +1844,7 @@ ALL_RULES = [
     rule_r24_cheap_routes,
     rule_r25_owner_scope,
     rule_r26_reread_after_write,
+    rule_r27_amendment_tier,
 ]
 
 

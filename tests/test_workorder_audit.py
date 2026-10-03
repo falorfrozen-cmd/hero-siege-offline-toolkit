@@ -2218,3 +2218,45 @@ class LaneTests(TempDirMixin, unittest.TestCase):
         b.workflow_agent("wf_a", "verifier", "verifier:r0", _span(0, 600, 300, cache_read=per_turn))
         _, results = b.evaluate()
         self.assertFalse(get_rule(results, "R13").passed)
+
+
+# --------------------------------------------------------------------------
+# R27 amendment-tier
+# --------------------------------------------------------------------------
+
+class R27Tests(TempDirMixin, unittest.TestCase):
+    """An amendment planner always runs on opus, never fable: the one fable
+    amendment on record came from a driver that carried the workorder's
+    escalated planner tier over to it."""
+
+    def _rule(self, label, model, sub, workflow=False):
+        b = SessionBuilder(self.tmp_path / sub).driver([turn(0, 9000)])
+        b.subagent("planner", "Plan x", _span(0, 100, 100, model="claude-fable-5-1"))
+        if workflow:
+            b.workflow_agent("wf_a", "planner", label, _span(400, 450, 300, model=model))
+        else:
+            b.subagent("planner", label, _span(400, 450, 300, model=model))
+        return get_rule(b.evaluate()[1], "R27")
+
+    def test_fail_an_amendment_planner_on_fable(self):
+        r = self._rule("amendment: x live2 owner scope", "claude-fable-5-1", "fable")
+        self.assertFalse(r.passed)
+        self.assertEqual(r.name, "amendment-tier")
+        self.assertIn("amendment: x live2 owner scope", r.evidence[0])
+        self.assertIn("claude-fable-5-1", r.evidence[0])
+        self.assertFalse(self._rule("amendment: slug x:r0", "claude-fable-5-1", "wf", workflow=True).passed,
+                         "an in-launch amendment is held to it too")
+
+    def test_pass_the_same_planner_on_opus(self):
+        r = self._rule("amendment: x live2 owner scope", "claude-opus-5-5", "opus")
+        self.assertTrue(r.passed, r.evidence)
+        self.assertEqual(r.evidence, [])
+
+    def test_pass_a_fable_planner_that_is_not_an_amendment(self):
+        # Control: the first plan above already ran on fable, and a replan
+        # may escalate to it; only the amendment route is pinned.
+        r = self._rule("Replan x after round 2", "claude-fable-5-1", "replan")
+        self.assertTrue(r.passed, r.evidence)
+
+    def test_r27_is_the_last_rule(self):
+        self.assertIs(wa.ALL_RULES[-1], wa.rule_r27_amendment_tier)

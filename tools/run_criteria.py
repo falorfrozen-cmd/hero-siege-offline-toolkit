@@ -132,8 +132,9 @@ too; S may not exceed 220, so each poll stays under `workorder_audit.py`
 R5's 240-second blocking-call limit. A `--timeout` over 1,800 s can make a
 live run look stale. The verifier's procedure: start the whole-tree run with
 `run_in_background: true` and `--out` in its own scratchpad, re-issue
-`--status <out> --wait 220` (Bash timeout 300000) while it exits 3, then read
-`<out>/report.txt`. Never read a status or out directory you did not start.
+`--status <out> --wait 220` (Bash timeout 300000) while it exits 3, then run
+`--digest <out>` (below) rather than reading `<out>/report.txt` whole. Never
+read a status or out directory you did not start.
 
 A run into an `--out` that already holds an earlier run's files first
 removes that `report.txt` and replaces `status.json` with an unfinished one,
@@ -142,6 +143,25 @@ earlier run as this one. A run that then exits before it runs anything (a
 usage error, a missing plan, no bash) leaves its status `refused` with the
 last line it printed to stderr, and `--status` exits 2 on it.
 
+`--digest DIR` (2026-10-03) is what the verifier reads once `--status`
+exits 0, instead of `report.txt` whole: the audit of that date measured
+reports of 100-217 KB read in full. It needs no plan, because the run keeps
+each criterion's whole text in `status.json` (`text`). It prints a header
+(the number of criteria, how many are shown in full, the report's size), the
+scope block exactly as the report has it when the run was scoped, and then,
+in plan order, each criterion in one of two forms. A skipped or unselected
+criterion prints its single report line; an **exit-only** criterion -- one
+whose prose, with its backticked spans and its `(reads ...)`, `(final)`,
+`(gate ...)`, `(class ...)`, `(after ...)` and `(all-parents)` declarations
+removed, says nothing but one `exits <n>` per command (or one for all),
+joined by `and` or commas -- whose every command exited as expected prints
+`criterion k: exit-only, expects exit N: cmd-1 exit 0 (12s); ...`. Every
+other criterion (a wrong exit, a timeout, no command, any expectation on
+output) prints its whole block, exactly as `report.txt` has it. The digest
+still judges nothing; it only shortens what the exit codes alone decide.
+It exits as `--status` does, and on an unfinished, stale or refused run
+prints what `--status` prints.
+
 Usage:
     py -3 tools/run_criteria.py <slug>-plan.md [--out DIR] [--start K]
                                 [--timeout SECONDS] [--shell PATH] [--list]
@@ -149,6 +169,7 @@ Usage:
                                 [--changed-since REF [--changed-since DIR=REF ...]
                                  | --changed-from FILE] [--failed K[,K...]] [--dev]
     py -3 tools/run_criteria.py --status DIR [--wait S]
+    py -3 tools/run_criteria.py --digest DIR
 
 `--start K` resumes at criterion K after a call that hit the Bash tool's
 ceiling; `--list` prints what would run and runs nothing (with `--jobs`, each
@@ -160,7 +181,7 @@ flat 900 s, and its ship plan had to pass `--timeout 1800` by hand. Without
 `--jobs` everything runs one command at a time
 in plan order, as it always has. Exit code: 0 when it ran (whatever the
 commands exited with), 2 on a usage error, no plan, no such item, or no bash;
-`--status` exits as above.
+`--status` and `--digest` exit as above.
 """
 
 from __future__ import annotations
@@ -737,7 +758,7 @@ class Status:
     another process never sees half a file. Worker threads call `running`
     once their lock is held, so every write takes `self.lock`."""
 
-    def __init__(self, out: Path, plan: Path, item, rows: list, jobs: list, start: int):
+    def __init__(self, out: Path, plan: Path, item, rows: list, jobs: list, start: int, texts: list | None = None):
         self.path = out / STATUS_FILE
         self.lock = threading.Lock()
         self.warned = False
@@ -749,6 +770,9 @@ class Status:
             skip = row["skip"]
             state = None if not skip else "not-selected" if skip.startswith("NOT SELECTED") else "skipped"
             self.criteria.append({"k": row["k"], "state": state, "note": skip, "jobs": list(row["jobs"])})
+        # Each criterion's whole text, so `--digest` can tell an exit-only
+        # criterion from one whose output the verifier must read, with no plan.
+        self.texts = {k: t for k, t in enumerate(texts or [], 1)}
         now = _utc_now()
         self.doc = {"plan": str(plan), "item": item, "started_utc": now, "updated_utc": now,
                     "finished": False, "error": None}
@@ -765,7 +789,8 @@ class Status:
     def _write(self) -> None:
         self.doc["updated_utc"] = _utc_now()
         doc = dict(self.doc, criteria=[{"k": c["k"], "state": self._criterion_state(c), "note": c["note"],
-                                        "commands": [dict(self.cmds[j]) for j in c["jobs"]]}
+                                        "commands": [dict(self.cmds[j]) for j in c["jobs"]],
+                                        **({"text": self.texts[c["k"]]} if c["k"] in self.texts else {})}
                                        for c in self.criteria])
         try:
             _replace_json(self.path, doc)
@@ -908,6 +933,142 @@ def show_status(out: Path, wait: float) -> int:
     return code
 
 
+# The declarations a criterion carries besides `(reads ...)`: none of them is
+# prose about what the command should do.
+DECLARATION_RES = (GATE_RE, CLASS_DECL_RE, AFTER_DECL_RE, FINAL_DECL_RE, re.compile(r"\(all-parents\)"))
+EXITS_RE = re.compile(r"exits\s+(\d+)")
+CRITERION_LINE_RE = re.compile(r"^criterion (\d+): ")
+
+
+def expected_exits(item: str) -> list | None:
+    """The exit codes an **exit-only** criterion expects, one per `exits <n>`
+    in its prose; None when its prose says anything else. Prose is what is
+    left once the declarations and every backticked span are removed, and an
+    exit-only one is nothing but `exits <n>` phrases joined by `and` or
+    commas -- "prints `ok`", "lists one commit" and the like need the
+    output, so they are never exit-only."""
+    prose = plan_lint.without_reads(item)
+    for rx in DECLARATION_RES:
+        prose = rx.sub(" ", prose)
+    prose = SPAN_RE.sub(" ", prose)
+    codes = []
+    for part in re.split(r",|\band\b", prose):
+        part = part.strip().rstrip(".").strip()
+        if not part:
+            continue
+        m = EXITS_RE.fullmatch(part)
+        if not m:
+            return None
+        codes.append(int(m.group(1)))
+    return codes or None
+
+
+def report_blocks(report: str) -> tuple:
+    """`(preamble lines, {k: block text})`: each criterion's block runs from
+    its `criterion <k>: ` line, which follows a blank line, to the line
+    before the next blank line. Nothing inside a block is blank: a command's
+    output is indented line by line (`_tail`)."""
+    lines = report.split("\n")
+    blocks: dict = {}
+    preamble: list = []
+    current = None
+    for i, line in enumerate(lines):
+        m = CRITERION_LINE_RE.match(line)
+        if m and (i == 0 or lines[i - 1] == ""):
+            current = int(m.group(1))
+            blocks[current] = [line]
+        elif current is None:
+            preamble.append(line)
+        elif line != "":
+            blocks[current].append(line)
+    return preamble, {k: "\n".join(v) for k, v in blocks.items()}
+
+
+def _scope_block(preamble: list) -> list:
+    """The `scope:` lines a scoped run printed, and their indented lists."""
+    start = next((i for i, l in enumerate(preamble) if l.startswith("scope:")), None)
+    if start is None:
+        return []
+    out = []
+    for line in preamble[start:]:
+        if not line.startswith(("scope:", "  ")):
+            break
+        out.append(line)
+    return out
+
+
+def _digest_line(c: dict) -> str | None:
+    """The one line an exit-only criterion whose every command exited as
+    expected prints; None when the criterion has to print whole."""
+    if c.get("state") != "done" or "text" not in c or not c.get("commands"):
+        return None
+    codes = expected_exits(c["text"])
+    cmds = c["commands"]
+    if codes is None or len(codes) not in (1, len(cmds)):
+        return None
+    expected = codes * len(cmds) if len(codes) == 1 else codes
+    if any(cmd.get("exit") != want for cmd, want in zip(cmds, expected)):
+        return None
+    wants = str(codes[0]) if len(set(expected)) == 1 else ", ".join(str(w) for w in expected)
+    ran = "; ".join(f"cmd-{cmd['n']} exit {cmd['exit']} ({cmd['seconds']:.0f}s)" for cmd in cmds)
+    return f"criterion {c['k']}: exit-only, expects exit {wants}: {ran}"
+
+
+def show_digest(out: Path) -> int:
+    """`--digest`: a finished run's report, with every criterion that its
+    exit codes alone decide (`_digest_line`) cut to one line and a skipped
+    or unselected one cut to its single report line. Every other criterion
+    prints exactly as `report.txt` has it. It judges nothing: a one-line
+    criterion is only one whose expectation was an exit code and was met.
+    An unfinished, stale or refused run prints what `--status` prints and
+    exits as it does."""
+    doc, why = read_status(out)
+    if doc is None:
+        print(f"status: none -- {why}")
+        return 2
+    if status_state(doc)[0] != "finished":
+        return show_status(out, 0)
+    report_path = out / REPORT_FILE
+    try:
+        report = report_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print(f"digest: none -- the run finished but {report_path} is unreadable: {exc}")
+        return 2
+    preamble, blocks = report_blocks(report)
+    body: list = []
+    whole = 0
+    for c in sorted(doc.get("criteria", []), key=lambda c: c["k"]):
+        k = c["k"]
+        block = blocks.get(k)
+        # A criterion with no command is `skipped` in the status too, but it
+        # is the verifier's to check by reading, so it prints whole.
+        no_command = (c.get("note") or "").startswith("no command")
+        if c.get("state") in ("skipped", "not-selected") and not no_command:
+            lines = block.split("\n") if block else []
+            note = lines[1].strip() if len(lines) == 2 else None
+            body.append(f"criterion {k}: {note}" if note else _status_line(c))
+            continue
+        line = _digest_line(c)
+        if line is not None:
+            body.append(line)
+        elif block is not None:
+            whole += 1
+            body.append("\n" + block + "\n")
+        else:
+            body.append(_status_line(c))  # a run stopped on an error never printed it
+    kb = report_path.stat().st_size / 1024
+    print(f"digest: {len(doc.get('criteria', []))} criteria, {whole} shown in full; report.txt {kb:.1f} KB "
+          f"({report_path}); a one-line criterion's whole output is in its cmd-<n>.log")
+    scope = _scope_block(preamble)
+    if scope:
+        print("\n".join(scope))
+    # A whole block stands apart, as in the report; one-line criteria do not.
+    print(re.sub(r"\n{3,}", "\n\n", "\n".join(body)).strip("\n"))
+    if doc.get("error"):
+        print(f"the runner stopped on an error: {doc['error']}")
+    return 0
+
+
 def run_parallel(rows: list, jobs: list, bash: str, root: Path, out: Path, explicit_timeout: int | None,
                  jobs_cap: int, browser_cap: int, status: Status | None = None) -> None:
     """Run `jobs` under `startable`'s rules on worker threads and print each
@@ -1005,13 +1166,14 @@ def _new_run_out(argv) -> Path | None:
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--out", default=None)
     pre.add_argument("--status", default=None)
+    pre.add_argument("--digest", default=None)
     pre.add_argument("--list", action="store_true")
     try:
         with contextlib.redirect_stderr(io.StringIO()):
             known, _ = pre.parse_known_args(sys.argv[1:] if argv is None else argv)
     except SystemExit:
         return None
-    if known.status is not None or known.list or not known.out:
+    if known.status is not None or known.digest is not None or known.list or not known.out:
         return None
     return Path(known.out)
 
@@ -1049,10 +1211,19 @@ def _main(argv, starting) -> int:
     parser.add_argument("--changed-from", default=None)
     parser.add_argument("--failed", default=None)
     parser.add_argument("--dev", action="store_true")
+    parser.add_argument("--digest", default=None)
     try:
         args = parser.parse_args(argv)
     except SystemExit:
         return 2
+    if args.digest is not None:
+        if args.plan is not None or args.status is not None or args.out is not None or args.wait is not None:
+            print("run_criteria: --digest DIR reads a finished run on its own; it takes no plan, --status, "
+                  "--wait or --out", file=sys.stderr)
+            return 2
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        return show_digest(Path(args.digest))
     if args.wait is not None and args.status is None:
         print("run_criteria: --wait goes with --status DIR", file=sys.stderr)
         return 2
@@ -1173,7 +1344,7 @@ def _main(argv, starting) -> int:
     rows, jobs = build_jobs(items, args.start, gates, scope)
     if starting is not None:
         starting.handed_over = True
-    status = Status(out, plan, args.item, rows, jobs, args.start)
+    status = Status(out, plan, args.item, rows, jobs, args.start, items)
     tee = _Tee(sys.stdout, out / REPORT_FILE)
     error = None
     try:

@@ -63,6 +63,17 @@ aggregate sums the minutes and divides the sums):
 - `routes`: amendment planners (and how many ran inside a workflow),
   replans, consultations.
 - `lanes`: `workorder_audit.lane_summary` per session.
+- `workorder_reads` (2026-10-03): per role (`agent_type`), its `agents` and,
+  for what they read of the workorder's own files, a `<kind>_calls` and a
+  `<kind>_kb` (result bytes / 1024) per kind. `plan` is a `Read` of a path
+  ending `-plan.md`, or a shell call whose command names one; a command that
+  runs `run_criteria.py`, `plan_lint.py`, `amend_check.py`, `live_checks.py`,
+  `item_commit.py` or `workorder_brief.py`, or `git add`/`git commit`, is not
+  a read of it. `context` is the same for `-context.md`. `brief` is a shell
+  call that runs `workorder_brief.py`. `report` is a `Read` of a path ending
+  `report.txt`, or a `cat`, `type` or `Get-Content` of one. The text format
+  prints the implementer's and the verifier's rows: the pre-sliced brief and
+  `run_criteria.py --digest` are meant to move them.
 
 Story and the definitions' reasons: docs/agents/workorder-calibration.md
 § "Measuring where the pipeline spends its time (2026-09-27)".
@@ -494,6 +505,61 @@ def routes(subs: list) -> dict:
     }
 
 
+PLAN_PATH_RE = re.compile(r"-plan\.md(?![\w.-])", re.I)
+CONTEXT_PATH_RE = re.compile(r"-context\.md(?![\w.-])", re.I)
+BRIEF_CMD_RE = re.compile(r"workorder_brief\.py\b")
+# A tool that takes the plan as its argument and prints something else, and a
+# git write that names it, are not reads of the plan.
+NOT_A_READ_RE = re.compile(r"\b(?:run_criteria|plan_lint|amend_check|live_checks|item_commit|workorder_brief)\.py\b"
+                           r"|\bgit\s+(?:-C\s+\S+\s+)?(?:add|commit)\b")
+REPORT_SHELL_RE = re.compile(r"(?:^|[\s;&|(])(?:cat|type|Get-Content|gc)\s+[^|;&]*report\.txt\b", re.I)
+READ_KINDS = ("plan", "context", "brief", "report")
+
+
+def _empty_reads() -> dict:
+    return {"agents": 0, **{f"{k}_{f}": 0.0 if f == "kb" else 0 for k in READ_KINDS for f in ("calls", "kb")}}
+
+
+def read_kinds(call) -> list:
+    """Which of the workorder's own files a tool call read: `plan`,
+    `context`, `brief` (a `workorder_brief.py` run) or `report` (a criteria
+    run's `report.txt`, read whole). A shell call naming both the plan and
+    the context counts under both."""
+    if call.name == "Read":
+        path = str((call.tool_input or {}).get("file_path") or "").replace("\\", "/").lower()
+        if path.endswith("-plan.md"):
+            return ["plan"]
+        if path.endswith("-context.md"):
+            return ["context"]
+        return ["report"] if path.endswith("report.txt") else []
+    if call.name not in wa.SHELL_TOOLS:
+        return []
+    cmd = str((call.tool_input or {}).get("command") or "")
+    if BRIEF_CMD_RE.search(cmd):
+        return ["brief"]
+    kinds = []
+    if not NOT_A_READ_RE.search(cmd):
+        kinds += ["plan"] if PLAN_PATH_RE.search(cmd) else []
+        kinds += ["context"] if CONTEXT_PATH_RE.search(cmd) else []
+    if REPORT_SHELL_RE.search(cmd):
+        kinds.append("report")
+    return kinds
+
+
+def workorder_reads(subs: list) -> dict:
+    """Per role (`agent_type`): its agents, and for each kind in
+    `READ_KINDS` the calls that read it and their result KB."""
+    out: dict = {}
+    for a in subs:
+        row = out.setdefault(a.agent_type, _empty_reads())
+        row["agents"] += 1
+        for c in a.tool_calls:
+            for kind in read_kinds(c):
+                row[f"{kind}_calls"] += 1
+                row[f"{kind}_kb"] += c.result_bytes / 1024.0
+    return dict(sorted(out.items()))
+
+
 def owner_block_summary(blocks: list) -> dict:
     return {
         "count": len(blocks),
@@ -529,6 +595,7 @@ def session_report(ld: Loaded) -> dict:
         "implementer_checks": implementer_checks(ld.subs),
         "routes": routes(ld.subs),
         "lanes": wa.lane_summary(ld.session),
+        "workorder_reads": workorder_reads(ld.subs),
     }
 
 
@@ -557,6 +624,12 @@ def aggregate(entries: list) -> dict:
 
     ran = total("implementer_checks", "ran_check")
     caught = total("implementer_checks", "caught")
+    reads: dict = {}
+    for e in entries:
+        for role, row in e["workorder_reads"].items():
+            summed = reads.setdefault(role, _empty_reads())
+            for k, v in row.items():
+                summed[k] += v
     return {
         "sessions": len(entries),
         "span_minutes": _minutes(span),
@@ -586,6 +659,7 @@ def aggregate(entries: list) -> dict:
                                "ran_check": ran, "caught": caught, "rate": (caught / ran) if ran else None},
         "routes": {k: total("routes", k) for k in ("amendments", "amendments_in_workflow", "replans", "consultations")},
         "lanes": {e["session"]: e["lanes"] for e in entries if e["lanes"]},
+        "workorder_reads": dict(sorted(reads.items())),
     }
 
 
@@ -683,6 +757,11 @@ def format_text(report: dict) -> str:
             f"  run_criteria: {r['run_criteria']}",
             f"  owner blocks: {r['owner_blocks']}",
             f"  implementer checks: {r['implementer_checks']}; routes: {r['routes']}",
+            "  workorder reads (calls/KB): " + ("; ".join(
+                f"{role} ({row['agents']} agents): "
+                + ", ".join(f"{k} {row[f'{k}_calls']}/{row[f'{k}_kb']}" for k in READ_KINDS)
+                for role in ("implementer", "verifier") for row in [r["workorder_reads"].get(role)] if row)
+                or "no implementer or verifier"),
         ]
         return out
     lines = [f"workorder speed report, until {report['until'] or 'the end'}"]
