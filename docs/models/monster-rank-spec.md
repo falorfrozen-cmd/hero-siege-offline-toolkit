@@ -20,10 +20,13 @@ Every claim carries one of four labels, and a source:
   it as an input transform.
 - **Not established**: carried by the model as an open hypothesis, or left out.
 
-The rank numbers are the game's `enemyRarity`: 1, 2, 3 and 4. ForgePact's labels for
-them are normal, champion, rare and ancient. The save's kill counters suggest the
-game's own names are one step off (Common, Champion, Ancient, Legion); that is
-inferred, not checked on screen (`docs/RUNTIME_DATA_MODELS.md` § 13.7).
+The rank numbers are the game's `enemyRarity`: 1, 2, 3 and 4. The game's own names
+for them are Common, Champion, Ancient and Legion. That mapping is inferred from the
+save's kill counters, and since ForgePact#159 it is also backed by a player's
+on-screen report (rank 3 shows as an Ancient, rank 4 as a Legion), not by a
+measurement of ours (`docs/RUNTIME_DATA_MODELS.md` § 13.7). ForgePact's Monster
+Rarity rows use those names since #159; its code, commands and Bosses select still
+call rank 3 rare and rank 4 ancient.
 
 ## Static reading
 
