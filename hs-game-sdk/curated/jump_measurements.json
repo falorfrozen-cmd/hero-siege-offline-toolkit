@@ -1,0 +1,296 @@
+{
+  "$schema_note": "Live measurements of the player's universal jump and what blocks it (ForgePact#16 phase 1, Live 1, 2026-10-03). Research build of ForgePact aaf1856 (SHA-256 6a0907ca21f1d2124dc8593e835efd3499aaa43fae7d19e97698fe9688e1e3e9), the `jumpprobe` instrument; save slot 14, character Sorak (level 100, Hell), in Town_01_rm. The jump key is Space and the jump goes towards the mouse cursor. `jumpprobe pass` is the research lever: while on, it answers the player's own collision builtins 'nothing there' without running them, for a query whose object argument is in the chosen family (`props`: Collision_Prop_obj and descendants; `all`: Collision_Parent_obj and descendants); `hold` keeps it on with no jump script. The argument and the controls are in ForgePact docs/jump-scenery-research.md, Live 1 results; the shared facts are docs/RUNTIME_DATA_MODELS.md section 19. Every status is `measured` or `not-observed`; there is no model yet (arc: not-established).",
+  "measurements": [
+    {
+      "id": "J1",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-03",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Live 1 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap",
+        "gml_Script_playerJumpGravity",
+        "gml_Script_CA_playerJump",
+        "gml_Script_PlayerForceJump",
+        "gml_Script_StatJumpPower",
+        "gml_Script_CA_enemyJump"
+      ],
+      "what": "One jump, lever off: skillsLeap and playerJumpGravity were called once per frame with the player as self for the jump's whole length, whether the player moved or not; skillsLeap took one argument close to 1. CA_playerJump, PlayerForceJump, StatJumpPower and CA_enemyJump logged no call during the jump.",
+      "values": {
+        "skillsLeap_calls": 104,
+        "playerJumpGravity_calls": 103,
+        "skillsLeap_argc": 1,
+        "skillsLeap_a0_range": [
+          0.995616,
+          1.001376
+        ],
+        "CA_playerJump_calls": 0,
+        "PlayerForceJump_calls": 0,
+        "StatJumpPower_calls": 0,
+        "CA_enemyJump_calls": 0
+      }
+    },
+    {
+      "id": "J2",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-03",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Live 1 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap",
+        "gml_Script_playerJumpGravity"
+      ],
+      "what": "The jump's length, from the trace of the one jump that moved (J3 under `all hold`): x/y changed on 104 consecutive frames, about 1.1 px per frame, and the player settled 117 px from the take-off point. The character's Jump Power was not read, so this is not the base jump.",
+      "values": {
+        "frames": 104,
+        "start": [
+          1074.2,
+          1383.7
+        ],
+        "end": [
+          1070.0,
+          1500.7
+        ],
+        "distance_px": 117.1,
+        "px_per_frame": 1.1,
+        "jump_power": null
+      }
+    },
+    {
+      "id": "J3",
+      "kind": "baseline",
+      "status": "not-observed",
+      "date": "2026-10-03",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Live 1 results"
+        }
+      ],
+      "scripts": [],
+      "what": "A Player_obj instance variable that marks the jump: the only variables whose names contain jump, air, grav, land, fall, height, zpos, hover or fly are bufferJump and slopeHeight, and both stayed 0 on every trace line, through the 104-frame moving run included.",
+      "values": {
+        "matching_variables": [
+          "bufferJump",
+          "slopeHeight"
+        ],
+        "values_during_jump": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "J4",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-03",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Live 1 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap",
+        "gml_Script_playerJumpGravity"
+      ],
+      "what": "Lever off, a jump at a scenery prop 22-40 px away with the cursor beyond it: the position was unchanged to the tenth of a pixel, while skillsLeap and playerJumpGravity ran for the jump's length. The builtin calls with the player as self that named a collision object during the jump passed Collision_Parent_obj itself (position_meeting, place_meeting, instance_position, collision_line) or Wall_Parent_obj (collision_circle); position_meeting also queried Enemy_Parent_obj. instance_position returned real instances (ids not kept as data).",
+      "values": {
+        "before": [
+          1074.2,
+          1383.7
+        ],
+        "after": [
+          1074.2,
+          1383.7
+        ],
+        "query_objects": {
+          "position_meeting": [
+            "Collision_Parent_obj",
+            "Enemy_Parent_obj"
+          ],
+          "place_meeting": [
+            "Collision_Parent_obj"
+          ],
+          "instance_position": [
+            "Collision_Parent_obj"
+          ],
+          "collision_line": [
+            "Collision_Parent_obj"
+          ],
+          "collision_circle": [
+            "Wall_Parent_obj"
+          ]
+        }
+      }
+    },
+    {
+      "id": "J5",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-03",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Live 1 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_CanMove",
+        "gml_Script_InstancePlaceTallest",
+        "gml_Script_TilePlaceMeeting"
+      ],
+      "what": "The same jump with the lever on. `props hold` and `props scripts hold`: every builtin row passed=0 (the queries counted as other-family, since none names Collision_Prop_obj or a descendant) and the player stayed put. `all hold`: five builtins were answered and the player crossed the prop, 117 px over 104 frames. place_free, tilemap_get_at_pixel and the three script rows answered nothing in any run.",
+      "values": {
+        "props_hold": {
+          "crossed": false,
+          "passed": 0,
+          "other_family": {
+            "position_meeting": 1413,
+            "place_meeting": 1790,
+            "collision_line": 154,
+            "instance_position": 10,
+            "collision_circle": 6
+          }
+        },
+        "props_scripts_hold": {
+          "crossed": false,
+          "passed": 0
+        },
+        "all_hold": {
+          "crossed": true,
+          "distance_px": 117.1,
+          "frames": 104,
+          "passed": {
+            "position_meeting": 556,
+            "place_meeting": 1756,
+            "instance_position": 46,
+            "collision_line": 179,
+            "collision_circle": 31,
+            "place_free": 0,
+            "tilemap_get_at_pixel": 0
+          }
+        },
+        "windows_opened": 0
+      }
+    },
+    {
+      "id": "J6",
+      "kind": "control",
+      "status": "measured",
+      "date": "2026-10-03",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Live 1 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_InstancePlaceTallest"
+      ],
+      "what": "The lever's positive control: `all hold`, then a walk (no jump) into the same prop. Three builtins were answered, so the lever reaches the player's movement queries, and the walk still did not move the player. InstancePlaceTallest (not answered) ran with the player as self, and place_meeting counted calls naming an object outside the collision family.",
+      "values": {
+        "passed": {
+          "position_meeting": 420,
+          "place_meeting": 1947,
+          "collision_line": 2021
+        },
+        "place_meeting_other_family": 6252,
+        "InstancePlaceTallest_passthrough": 1944,
+        "moved": false
+      }
+    },
+    {
+      "id": "J7",
+      "kind": "target",
+      "status": "not-observed",
+      "date": "2026-10-03",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Decision"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap",
+        "gml_Script_playerJumpGravity"
+      ],
+      "what": "A landing inside a prop: with `all hold` (passed= climbing), a jump aimed into a horse carriage ran its per-frame scripts but did not start. The player moved about 4 px once in the first run and not at all in the second, so no landing inside a prop happened. instance_place counted 1110 calls from other selves in the first run and none from the player.",
+      "values": {
+        "run_a": {
+          "before": [
+            1307.3,
+            1482.9
+          ],
+          "after": [
+            1310.2,
+            1480.1
+          ]
+        },
+        "run_b": {
+          "before": [
+            1310.2,
+            1480.1
+          ],
+          "after": [
+            1310.2,
+            1480.1
+          ]
+        },
+        "instance_place_other_self": 1110
+      }
+    },
+    {
+      "id": "J8",
+      "kind": "target",
+      "status": "not-observed",
+      "date": "2026-10-03",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Live 1 results"
+        }
+      ],
+      "scripts": [],
+      "what": "Leaving the room at a map edge: with `all hold`, two jumps aimed outward from 355 px inside the room's west side did not move the player. The edge was not identified as an Invisible_Wall_obj.",
+      "values": {
+        "position": [
+          355.3,
+          390.4
+        ],
+        "attempts": 2,
+        "moved": false
+      }
+    },
+    {
+      "id": "J9",
+      "kind": "baseline",
+      "status": "not-observed",
+      "date": "2026-10-03",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Live 1 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap",
+        "gml_Script_skillsBlink",
+        "gml_Script_skillsCharge"
+      ],
+      "what": "Whether a leap or dash skill shares the jump's path: the character had no leap, dash, charge or blink skill on the bar.",
+      "values": {}
+    }
+  ]
+}

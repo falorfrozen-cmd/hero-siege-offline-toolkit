@@ -3666,3 +3666,56 @@ workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
   reading.**
 
 ["Auto loot"](../ForgePact/docs/incarnation-gems-research.md#auto-loot---static-reading)
+
+## 19. Player jump and collision
+
+What ForgePact's jump-through-scenery research (#16, phase 1) measured on
+2026-10-03 with its `jumpprobe` instrument, on save slot 14 ("Sorak", level
+100) in `Town_01_rm`. The argument, the controls and the full check table are
+in ForgePact's [`docs/jump-scenery-research.md`](../ForgePact/docs/jump-scenery-research.md);
+the numbers are also in `hs-game-sdk/curated/jump_measurements.json`.
+
+### 19.1 The universal jump
+
+- The jump key (Space by default) jumps **towards the mouse cursor**. The
+  owner's account, 2026-10-03.
+- The local jump runs through `gml_Script_skillsLeap` (3664) and
+  `gml_Script_playerJumpGravity` (2764): each is called once per frame, with
+  the player as `self`, for the jump's whole length, whether the player moves
+  or not. `skillsLeap` takes one argument close to 1. `gml_Script_CA_playerJump`
+  (348) and `gml_Script_PlayerForceJump` (2770) are **not** called by the local
+  jump, and `gml_Script_StatJumpPower` (3391) logged no call during one.
+  **Measured.**
+- The jump lasts 104 frames. On open ground it moved this character about
+  117 px, about 1.1 px per frame; the character's Jump Power was not read, so
+  this is not the base jump. **Measured.**
+- No instance variable whose name contains `jump`, `air`, `grav`, `land`,
+  `fall`, `height`, `zpos`, `hover` or `fly` changes during a jump: the only
+  matches on `Player_obj` are `bufferJump` and `slopeHeight`, and both stayed
+  0. **Measured.** Where the jump's state lives is not established.
+
+[Live 1 results](../ForgePact/docs/jump-scenery-research.md#live-1-results)
+
+### 19.2 What blocks it
+
+- A jump at a scenery prop that blocks it does not move the player at all,
+  not even to the prop's edge 22 to 40 px away, while `skillsLeap` and
+  `playerJumpGravity` still run for the jump's 104 frames. **Measured.**
+- During the jump the player's own builtin collision queries name the
+  collision family by its parent: `position_meeting`, `place_meeting`,
+  `instance_position` and `collision_line` pass `Collision_Parent_obj` (957)
+  itself, and `collision_circle` passes `Wall_Parent_obj`. None passes
+  `Collision_Prop_obj` (959) or a descendant. **Measured.**
+- Answering those five builtins "nothing there" for the player (`noone` or
+  `false`), without running them, lets the same jump cross the prop: 117 px
+  over the jump's 104 frames. Answering only queries for `Collision_Prop_obj`
+  and its descendants changes nothing, and so does answering `CanMove`,
+  `InstancePlaceTallest` and `TilePlaceMeeting`. **Measured.**
+- A jump aimed at a landing point inside a prop (a horse carriage) does not
+  start even with those five builtins answered: the player stays within 4 px
+  of the take-off point. What refuses it was not identified. **Measured.**
+- Walking into a prop stays blocked with those five builtins answered.
+  **Measured.**
+
+[Live 1 results](../ForgePact/docs/jump-scenery-research.md#live-1-results);
+[Decision](../ForgePact/docs/jump-scenery-research.md#decision)
