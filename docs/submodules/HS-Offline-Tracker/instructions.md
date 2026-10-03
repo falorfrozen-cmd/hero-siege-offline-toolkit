@@ -311,7 +311,8 @@ All event streams delivered via named pipe (`\\.\pipe\HSOfflineTrackerBridge_<pi
 `.github/workflows/ai-review.yml` runs an AI code review of a pull request and
 posts findings as inline comments. It is the hub's workflow with only the
 repository name changed, and is **opt-in, never automatic**: add the
-`ai-review` label, or comment `@claude review` on the pull request. Text after
+`ai-review` label, or post a comment that starts with `@claude review` on the
+pull request (a trigger anywhere but the start is skipped silently). Text after
 the phrase is passed to the reviewer as scoping instructions
 (`@claude review only src-tauri`); the label always requests a full review and
 does not re-run by itself on later pushes. A comment trigger only works once the

@@ -267,8 +267,9 @@ is **`master`**, and the tag and build workflows refuse to run from anything
 else; `ai-review.yml` runs on a pull request's head, like every other copy of it.
 
 **AI review (`ai-review.yml`).** ForgePact's workflow with only the repository
-name changed. Opt-in: add the `ai-review` label or comment `@claude review`
-(text after the phrase scopes the review). Needs the `CLAUDE_CODE_OAUTH_TOKEN`
+name changed. Opt-in: add the `ai-review` label or post a comment that starts
+with `@claude review` (text after the phrase scopes the review; a trigger
+anywhere but the start is skipped silently). Needs the `CLAUDE_CODE_OAUTH_TOKEN`
 repository secret **and** the Claude GitHub App installed on this repository;
 the hub's `docs/hub/design.md` ("Asking for a review") explains the shape.
 

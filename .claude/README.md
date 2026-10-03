@@ -562,7 +562,14 @@ the `log` block and `state` it should have written and `then`. The scribe is
 handed absolute paths, joined under the driver's `checkoutRoot` (`git
 rev-parse --show-toplevel`): on 2026-09-24 a scribe given relative ones in a
 worktree resolved them against the main checkout, wrote nothing, and its "N/A"
-report came back as a false `STATE-LOST`.
+report came back as a false `STATE-LOST`. Both blocks sit between marker
+lines (`<<<LOG-BLOCK-BEGIN>>>` …, `<<<STATE-LINES-BEGIN>>>` …), the Log append
+is one `Edit` anchored on the file's last line with the block after it, and
+the scribe returns the file's last lines afterwards (`log_tail`): a block
+that is not the last thing there ends the launch as `LOG-DAMAGED`, carrying
+`log`, the `anchor` the scribe used, and `then`. On 2026-10-03 a scribe given
+unfenced blocks pasted its own State instruction into the Log and wrote the
+block before its anchor, moving the previous entry's last line to the end.
 
 It runs as the restricted `scribe` agent type (`.claude/agents/scribe.md`,
 `Read`/`Grep`/`Edit` only), not the unrestricted `workflow-subagent` every other
@@ -671,7 +678,7 @@ items gate) start `run_criteria.py` in the background and poll it with
 
 It returns to the driver on anything needing judgement — `PASS`,
 `PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`,
-`STATE-LOST`, `SCRIBE-FAILED` or `CAP` — so replans, consultations, human questions and the step-5 report stay with
+`STATE-LOST`, `SCRIBE-FAILED`, `LOG-DAMAGED` or `CAP` — so replans, consultations, human questions and the step-5 report stay with
 the driver either way (only a confirmed amendment runs inside), and one launch may cover several rounds (a
 `PLAN-DEFECT` hand-back means relaunching after the replan). A laned round
 that ends before its join also returns `lanes`, each lane's `name`,
