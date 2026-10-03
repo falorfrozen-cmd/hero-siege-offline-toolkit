@@ -1968,7 +1968,8 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   placement from the list entry, not from the parameter struct, so rewriting
   the struct cannot change an item's type.
 - **The forge selector.** The item the game builds carries the parameters as
-  its `itemDefinitionStruct` `{w, j, b, a, c}`: `c` = 1 selects the unique
+  its `itemDefinitionStruct` (`{b, a, j, c}` for a roll-built item; `{w, j,
+  b, a, c}` is the `sigdrop`/`InitItemFromJson` path's): `c` = 1 selects the unique
   repository and `b` the unique; `c` = 0 selects the normal repository, `b`
   the base item and `a` the seed or affix id. ForgePact's Custom Forge hook on
   `CreateItemNew` recognises an item by comparing every selector field, `t`
