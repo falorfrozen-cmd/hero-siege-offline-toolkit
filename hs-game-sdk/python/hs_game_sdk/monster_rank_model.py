@@ -5,8 +5,11 @@ static reading, measured, our code or not established, in
 `docs/models/monster-rank-spec.md`. `tests/test_monster_rank_model.py` holds
 the checks, against `hs-game-sdk/curated/monster_rank_measurements.json`.
 
-- A monster's rank is its `enemyRarity`, 1 to 4 (ForgePact calls them normal,
-  champion, rare and ancient). The game builds the monster for its rank in
+- A monster's rank is its `enemyRarity`, 1 to 4: Common, Champion, Ancient and
+  Legion, inferred from the save's kill counters and backed by a player's
+  on-screen report since ForgePact#159. ForgePact's Monster Rarity rows use
+  those names since #159; its code, commands and Bosses select still call
+  rank 3 rare and rank 4 ancient. The game builds the monster for its rank in
   `EnemyRaritySettings`, and an ordinary monster's kill pays out through
   `DropItem` with the rank as its first argument. In ForgePact#44's Live
   procedure 1b (2026-10-02) a boss's did too, measured: 1 at an unraised Karp
