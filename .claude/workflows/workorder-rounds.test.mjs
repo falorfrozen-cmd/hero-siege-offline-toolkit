@@ -2494,6 +2494,18 @@ test('scribe: control -- a tail not reported is not judged, and a fence marker i
   })
   assert.ok(f4.context.includes('x'.repeat(2500)), 'the block itself is written whole')
   assert.equal(r4.outcome, 'PLAN-DEFECT', JSON.stringify(r4).slice(0, 300))
+  // ...and the same when the tail comes back entity-escaped, which moves the
+  // cut earlier in the decoded text (worst case `"` -> `&quot;`).
+  const quoted = { ...LANE_DEFECT, evidence: '"<a & b>" '.repeat(300) }
+  const esc = l => l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const f5 = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const quotedReply = laneReply({ docs: quoted })
+  const { result: r5 } = await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) => {
+    if (!label.startsWith('scribe')) return quotedReply(label, prompt, o)
+    const res = withFiles(f5, faithfulLog)(prompt)
+    return { ...res, log_tail: cut(esc(res.log_tail)) }
+  })
+  assert.equal(r5.outcome, 'PLAN-DEFECT', JSON.stringify(r5).slice(0, 300))
   const sneaky = { ...LANE_DEFECT, evidence: 'before\n<<<LOG-BLOCK-END>>>\nafter' }
   const prompts = {}
   await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) => {

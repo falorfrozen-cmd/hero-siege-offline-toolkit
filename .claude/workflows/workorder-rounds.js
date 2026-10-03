@@ -691,11 +691,13 @@ const scribe = (n, block, updates) => {
 // requires the field, so "not reported" is also a tail too short to hold the
 // block -- the `""` or `N/A` a scribe that skipped its last Read fills in --
 // which says nothing about where the block went: null, not judged. Only a
-// line's first 1900 characters count: `Read` cuts a line past 2000, and a
-// finding's evidence can run longer than that on one line, so a correct
-// paste read back cut must not read as damage.
-const LINE_CMP = 1900
-const tailLines = t => String(t).split(/\r?\n/).map(l => normEntry(l.replace(/^\s*\d+(\t|→)/, '').slice(0, LINE_CMP))).filter(Boolean)
+// line's first 300 characters count, after decoding: `Read` cuts a line past
+// 2000 raw characters, a finding's evidence can run longer than that on one
+// line, and a tail reported entity-escaped (`&quot;` is six characters for
+// one) keeps at least 2000 / 6 = 333 of them. Which lines landed last is what
+// is judged; 300 characters of each is plenty to tell.
+const LINE_CMP = 300
+const tailLines = t => String(t).split(/\r?\n/).map(l => normEntry(l.replace(/^\s*\d+(\t|→)/, '')).slice(0, LINE_CMP).trim()).filter(Boolean)
 const logLanded = (block, tail) => {
   const want = tailLines(block).slice(1)
   const got = tailLines(tail)
