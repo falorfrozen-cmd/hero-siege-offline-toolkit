@@ -4487,7 +4487,10 @@ oracle. Record: `ForgePact/docs/jump-scenery-research.md` § Phase 2: the mod.
 - *Cost*: the family test is a table built once per object index; while off,
   each detour returns the original first. In the research build `jumpscenery
   1` refuses while `citrace` or `jumpprobe` holds one of the five builtins,
-  and `jumpprobe hook` refuses while `jumpscenery` holds them.
+  and both `citrace 1` and `jumpprobe hook` refuse while `jumpscenery` holds
+  them. `citrace 1`'s refusal does not latch, but `jumpscenery`'s hooks stay
+  in after `jumpscenery 0`, so tracing needs a relaunch with `jumpscenery`
+  left off.
 
 **Verified live 2026-10-03** (Mod live 1 of `forgepact-16-jump-scenery-mod`,
 player DLL `BloodPactPlugin_ship.dll` from `build.bat release` at ForgePact
