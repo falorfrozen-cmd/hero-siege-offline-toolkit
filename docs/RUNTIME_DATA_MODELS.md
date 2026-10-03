@@ -1734,11 +1734,13 @@ A monster that special content spawned carries a non-zero `specialType` in its s
   and `SPV(key, <room>)` sets it, sticking until the next roll. It is a roll: it
   moved 20 -> 4 on its own within one session, and `GetSatanicZoneOffline(<n>)`
   re-rolled it (4 -> 28). **Measured 2026-10-03.**
-- Forcing `LoadSatanicZone` to answer true on every call in town changed nothing
-  visible (player buffs, HUD and before/after screenshots identical), so the
-  zone's effects are event/entry-driven, not a per-frame application; the kill
-  path (`ProjectileKill00Universal` -> the two satanic relic routines) is the
-  strongest candidate consumer. **Measured 2026-10-03.**
+- Forcing `LoadSatanicZone` to answer true on every call in town (a room it
+  otherwise answers false for) changed nothing visible (player buffs, HUD and
+  before/after screenshots identical). **Measured 2026-10-03.** Not tried in
+  an eligible zone and no positive control, so whether the effects are
+  event/entry-driven rather than per-frame is **not established**; the kill
+  path (`ProjectileKill00Universal` -> the two satanic relic routines) is an
+  untested candidate consumer.
 - The buff and debuff arrays hold unique ids in 1–25 / 1–26 and re-roll on their
   own every few tens of seconds to minutes, not in step with room changes;
   overwriting them in place is picked up without a room change.
