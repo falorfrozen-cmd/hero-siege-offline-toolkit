@@ -805,8 +805,12 @@ repository:
    starts the AI review; a pull request without it gets no reviewer.
 2. **Wait for the review, then fix what it found** on the same branch, per the
    rule above. Reply to each comment with what changed, or why nothing did.
-   After fixing, comment `@claude review` to have the fixes reviewed; the label
-   does not re-run on later pushes.
+   After fixing, request a re-review with a comment whose body **starts
+   with** `@claude review`; the label does not re-run on later pushes. Post it
+   as its own comment, apart from the fix summary: `ai-review.yml` checks
+   `startsWith(comment.body, '@claude review')`, so a trigger anywhere but the
+   start is skipped without a word (hub #402, 2026-10-03). Then confirm the
+   run started (`gh run list --workflow ai-review.yml -L 1`).
 3. **Do not merge, and do not report the pull request ready to merge, while
    the review has not posted or a comment of it is unaddressed** — nor while CI
    is red. Merging is still the owner's call, per pull request.
