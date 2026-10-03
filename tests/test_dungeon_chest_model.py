@@ -1,17 +1,21 @@
 """Checks for `hs_game_sdk.dungeon_chest_model` (ForgePact#31).
 
 The model is written from `docs/models/dungeon-chest-spec.md` and covers the game
-only: a key dungeon's end chest (`Dungeon_Chest_obj`) opens once no monster is
-alive. ForgePact's Dungeon chest opens early control (`dungeonchest <pct>`) is our
-code, so it lives here as input transforms (`set_mode`, `threshold`, `reached`,
+only: a key dungeon's end chest (`Dungeon_Chest_obj`) polls
+`instance_exists(Enemy_Parent_obj)` and opens once no monster is alive, and the
+dungeon's monsters stream in from creators that all exist at entry, so its
+planned total is a sum taken at the chest's first sight. ForgePact's Dungeon
+chest opens early control (`dungeonchest <pct>`) is our code, so it lives here as
+input transforms (`set_mode`, `known_total`, `clamped`, `threshold`, `reached`,
 `countdown`, `shown`). `LeverParityTests` pins those to ForgePact's source when
 ForgePact carries the mod.
 
 Baseline: what the game does with no mod. Target: what the control must turn it
-into. That is the order `AGENTS.md` § "Mod Development Workflow" asks for. How the
-chest learns that no monster is alive (a builtin poll, a variable another event
-writes, or the player variable its Step reads through `GPV`) is not established; `HypothesisTests` keeps each open question `None`
-until a measured entry of the curated file answers it.
+into. That is the order `AGENTS.md` § "Mod Development Workflow" asks for. Live
+procedure 1 answered four of the model's open questions; where the planned total
+lives (a per-creator count read by name, or an estimate) is still open, and
+`HypothesisTests` keeps it `None` until a measured entry of the curated file
+answers it.
 
 Each entry of `hs-game-sdk/curated/dungeon_chest_measurements.json` names the test
 that reproduces it (`reproduced_by`) or says why none can (`not_reproduced`).
@@ -50,6 +54,8 @@ FORGEPACT_PCT_DEFAULT = 75
 FORGEPACT_COUNTDOWN_LIMIT = 50
 #: The off mode: the game's own rule.
 OFF = None
+#: The forms `HYPOTHESES['planned_total_source']` may take once Live 1b decides it.
+TOTAL_SOURCES = ("variable", "estimate")
 
 
 def set_mode(current, asked):
@@ -64,33 +70,55 @@ def set_mode(current, asked):
     return current
 
 
-def threshold(pct, kills, alive):
-    """`ceil(pct / 100 * (kills + alive))`, in whole numbers."""
-    return -(-pct * model.population(kills, alive) // 100)
-
-
-def reached(pct, kills, alive):
-    """Whether the chest may open: the game's rule while off, `kills >= threshold` while on."""
-    if pct is OFF:
-        return model.chest_openable(alive)
-    return kills >= threshold(pct, kills, alive)
-
-
-def countdown(pct, kills, alive):
-    """Kills left to the threshold, never below 0; `None` while off (no countdown)."""
-    if pct is OFF:
+def known_total(answer, creators):
+    """What the mod takes from its total source at first sight: `None` (unknown)
+    when there is no source, or when it answers 0 while creators are present."""
+    if answer is None or (answer == 0 and creators > 0):
         return None
-    return max(0, threshold(pct, kills, alive) - kills)
+    return answer
 
 
-def shown(pct, kills, alive, latched=False):
-    """Whether `Chest: <n> kills to go` is shown: on, not latched, 0 < n <= 50."""
-    n = countdown(pct, kills, alive)
+def clamped(total, kills, alive):
+    """The clamp: the total is never below the monsters already seen."""
+    if total is None:
+        return None
+    return max(total, kills + alive)
+
+
+def threshold(pct, total):
+    """`ceil(pct / 100 * total)`, in whole numbers; `None` while off or unknown."""
+    if pct is OFF or total is None:
+        return None
+    return -(-pct * total // 100)
+
+
+def reached(pct, kills, total, alive):
+    """Whether the chest may open: the game's rule always holds; while on with a
+    known total, also once `kills >= threshold` of the clamped total."""
+    if model.chest_openable(alive):
+        return True
+    t = threshold(pct, clamped(total, kills, alive))
+    return t is not None and kills >= t
+
+
+def countdown(pct, kills, total, alive):
+    """Kills left to the threshold, never below 0; `None` while off or unknown."""
+    t = threshold(pct, clamped(total, kills, alive))
+    return None if t is None else max(0, t - kills)
+
+
+def shown(pct, kills, total, alive, latched=False):
+    """Whether `Chest: <n> kills to go` is shown: on, known, not latched, 0 < n <= 50."""
+    n = countdown(pct, kills, total, alive)
     return n is not None and not latched and 0 < n <= FORGEPACT_COUNTDOWN_LIMIT
 
 
 def _entries():
     return json.loads(FIXTURE.read_text(encoding="utf-8"))["measurements"]
+
+
+def _entry(entry_id):
+    return next(e for e in _entries() if e["id"] == entry_id)
 
 
 class BaselineTests(unittest.TestCase):
@@ -103,8 +131,8 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(model.VANILLA_UNLOCK_ALIVE, 0)
 
     def test_dc2_the_rule_reads_only_the_alive_count(self):
-        # The model takes the alive count as given; it does not say how the chest
-        # obtains it (DC2: the Step calls no script that counts enemies).
+        # The model takes the alive count as given (DC2: the Step calls no script
+        # that counts enemies; DC10: the chest asks a builtin instead).
         self.assertEqual(list(inspect.signature(model.chest_openable).parameters), ["alive"])
         for total in (1, 7, 40, 300):
             for kills in range(0, total + 1):
@@ -112,126 +140,256 @@ class BaselineTests(unittest.TestCase):
                     alive = total - kills
                     self.assertEqual(model.chest_openable(alive), kills == total)
 
-    def test_dc4_the_unlock_route_is_not_established(self):
-        measured = {e.get("hypothesis") for e in _entries() if e["status"] == "measured"}
+    def test_dc4_the_static_reading_left_the_unlock_route_to_live(self):
+        # DC4 is a static reading and answers nothing; each unlock-route answer
+        # the model holds comes from a measured entry (DC9, DC10).
+        self.assertEqual(_entry("DC4")["status"], "static_reading")
+        self.assertNotIn("hypothesis", _entry("DC4"))
+        measured = {e.get("hypothesis"): e for e in _entries() if e["status"] == "measured"}
         for key in ("unlock_is_a_builtin_poll", "unlock_is_a_variable"):
             with self.subTest(key=key):
                 self.assertIn(key, model.HYPOTHESES)
-                if key not in measured:
-                    self.assertIsNone(model.HYPOTHESES[key])
+                self.assertIn(key, measured)
+                self.assertEqual(model.HYPOTHESES[key], measured[key]["values"]["verdict"])
 
-    def test_dc6_a_kill_moves_one_monster_from_alive_to_killed(self):
+    def test_dc6_a_kill_is_counted_once_toward_the_total(self):
         total = 40
         for kills in range(0, total + 1):
-            alive = total - kills
             with self.subTest(kills=kills):
-                self.assertEqual(model.population(kills, alive), total)
-                self.assertEqual(model.progress(kills, alive), Fraction(kills, total))
+                self.assertEqual(model.progress(kills, total), Fraction(kills, total))
+        self.assertEqual(model.progress(total, total), 1)
         self.assertEqual(model.kills_to_vanilla(0), 0)
+
+    def test_dc7_monsters_stream_in_so_kills_plus_alive_is_not_the_total(self):
+        values = _entry("DC7")["values"]
+        path = [tuple(p) for p in values["path"]]
+        total = values["kills_to_clear"]
+        self.assertEqual(path[0], (values["alive_entry"], 0))
+        self.assertEqual(path[-1], (0, total))
+        self.assertIn((values["alive_peak"], values["kills_at_peak"]), path)
+        seen = [kills + alive for alive, kills in path]
+        # Kills plus alive rose from 44 to 600: it is not the dungeon's total ...
+        self.assertGreater(len(set(seen)), 1)
+        self.assertEqual(seen[-1], total)
+        self.assertTrue(all(s <= total for s in seen))
+        # ... and a share over it is far too early: 50 % of the 44 at entry is 22
+        # kills, under 4 % of the 600 the dungeon held.
+        self.assertEqual(threshold(50, seen[0]), 22)
+        self.assertLess(model.progress(22, total), Fraction(1, 25))
+        self.assertIs(model.HYPOTHESES["all_monsters_alive_at_entry"], False)
+
+    def test_dc8_every_creator_is_there_at_entry_and_stays(self):
+        values = _entry("DC8")["values"]
+        creators, clear = values["creators_first_tick"], _entry("DC11")["values"]["kills_to_clear"]
+        self.assertEqual(values["creators_at_clear"], creators)
+        self.assertGreater(creators, 0)
+        self.assertIs(model.HYPOTHESES["no_creators_in_dungeon"], False)
+        # A whole count per creator can carry the measured total: 600 over 122
+        # creators is 112 creators of 5 and 10 of 4 (Σ planned, 0 alive).
+        fives = clear - 4 * creators
+        counts = [5] * fives + [4] * (creators - fives)
+        self.assertEqual(len(counts), creators)
+        self.assertEqual(model.planned_total(0, counts), clear)
+
+    def test_dc10_the_game_s_rule_is_the_chest_s_own_poll(self):
+        values = _entry("DC10")["values"]
+        self.assertEqual((values["builtin"], values["arg"]), ("instance_exists", "Enemy_Parent_obj"))
+        self.assertGreater(values["calls_at_entry"], 0)
+        self.assertGreater(values["calls_at_end"], values["calls_at_entry"])
+        self.assertEqual(set(values["chest_self_calls"].values()), {0})
+        self.assertIs(model.HYPOTHESES["unlock_is_a_builtin_poll"], True)
+        # instance_exists answers "some monster exists" exactly when alive > 0,
+        # whatever the dungeon's total: the chest opens only on its "no".
+        for total in (7, 40, 600):
+            for alive in (0, 1, total):
+                with self.subTest(total=total, alive=alive):
+                    self.assertEqual(model.chest_openable(alive), not alive > 0)
+
+    def test_dc11_the_estimate_route_reproduces_the_clear(self):
+        values = _entry("DC11")["values"]
+        clear, alive0, creators = values["kills_to_clear"], values["alive_entry"], values["creators"]
+        mean = Fraction(values["mean_per_pending_creator"])
+        self.assertEqual(mean, Fraction(clear - alive0, creators))
+        self.assertEqual(model.estimated_total(alive0, creators, mean), clear)
+        # Alive at first sight plus Σ planned over pending creators gives the same.
+        fives = clear - alive0 - 4 * creators
+        counts = [5] * fives + [4] * (creators - fives)
+        self.assertEqual(model.planned_total(alive0, counts), clear)
+        # The estimate rounds up: 3 creators at 1/2 each is 2 monsters, not 1.
+        self.assertEqual(model.estimated_total(0, 3, Fraction(1, 2)), 2)
+        self.assertEqual(model.estimated_total(10, 0, Fraction(9, 2)), 10)
 
     def test_kills_to_vanilla_is_every_living_monster(self):
         for alive in (0, 1, 7, 40):
             self.assertEqual(model.kills_to_vanilla(alive), alive)
 
-    def test_an_empty_dungeon_is_open_and_fully_cleared(self):
-        self.assertTrue(model.chest_openable(0))
-        self.assertEqual(model.population(0, 0), 0)
-        self.assertEqual(model.progress(0, 0), Fraction(1))
-
     def test_off_reproduces_the_game(self):
-        for total in (0, 1, 7, 40, 120):
-            for kills in range(0, total + 1):
-                alive = total - kills
-                with self.subTest(total=total, kills=kills):
-                    self.assertEqual(reached(OFF, kills, alive), model.chest_openable(alive))
-                    self.assertIsNone(countdown(OFF, kills, alive))
-                    self.assertFalse(shown(OFF, kills, alive))
+        for total in (0, 1, 7, 40, 120, None):
+            for kills in range(0, (total or 0) + 1):
+                for alive in {(total or 0) - kills, 0, 5}:
+                    with self.subTest(total=total, kills=kills, alive=alive):
+                        self.assertEqual(reached(OFF, kills, total, alive), model.chest_openable(alive))
+                        self.assertIsNone(countdown(OFF, kills, total, alive))
+                        self.assertFalse(shown(OFF, kills, total, alive))
+
+    def test_an_unknown_total_is_refused(self):
+        # No source, or a source that answers 0 while creators are present.
+        for answer, creators in ((None, 122), (None, 0), (0, 122), (0, 1)):
+            with self.subTest(answer=answer, creators=creators):
+                total = known_total(answer, creators)
+                self.assertIsNone(total)
+                for pct in (FORGEPACT_PCT_MIN, FORGEPACT_PCT_MAX):
+                    self.assertIsNone(threshold(pct, clamped(total, 300, 44)))
+                    self.assertIsNone(countdown(pct, 300, total, 44))
+                    self.assertFalse(shown(pct, 300, total, 44))
+                    # Refused means the game's rule: shut while a monster lives.
+                    self.assertFalse(reached(pct, 300, total, 44))
+                    self.assertTrue(reached(pct, 600, total, 0))
+        with self.assertRaises(ValueError):
+            model.progress(1, 0)
+        # Negative control: a real answer is kept.
+        self.assertEqual(known_total(600, 122), 600)
+        self.assertEqual(threshold(50, known_total(600, 122)), 300)
 
     def test_values_are_exact(self):
         self.assertIsInstance(model.progress(1, 2), Fraction)
-        self.assertIsInstance(model.population(1, 2), int)
+        self.assertIsInstance(model.planned_total(1, [2]), int)
+        self.assertIsInstance(model.estimated_total(1, 2, Fraction(1, 3)), int)
 
     def test_nonsense_is_refused(self):
         for bad in (-1, -40):
             with self.assertRaises(ValueError):
                 model.chest_openable(bad)
             with self.assertRaises(ValueError):
-                model.population(0, bad)
+                model.planned_total(bad, [])
+            with self.assertRaises(ValueError):
+                model.planned_total(0, [1, bad])
+            with self.assertRaises(ValueError):
+                model.estimated_total(0, bad, 1)
+            with self.assertRaises(ValueError):
+                model.estimated_total(0, 1, Fraction(bad))
         for bad in (True, 1.0, "3", None):
             with self.assertRaises(TypeError):
                 model.chest_openable(bad)
             with self.assertRaises(TypeError):
                 model.progress(bad, 1)
+            with self.assertRaises(TypeError):
+                model.planned_total(0, [bad])
+            with self.assertRaises(TypeError):
+                model.estimated_total(0, 1, bad)
 
 
 class TargetTests(unittest.TestCase):
     """What the control must turn the game into (spec § "Our code")."""
 
-    def test_target_pct_50_with_40_monsters_opens_at_the_20th_kill(self):
-        pct, total = 50, 40
-        self.assertEqual(threshold(pct, 0, total), 20)
-        self.assertEqual(countdown(pct, 0, total), 20)
-        self.assertTrue(shown(pct, 0, total))
-        self.assertFalse(reached(pct, 19, total - 19))
-        self.assertEqual(countdown(pct, 19, total - 19), 1)
-        self.assertTrue(reached(pct, 20, total - 20))
-        self.assertEqual(countdown(pct, 20, total - 20), 0)
-        self.assertFalse(shown(pct, 20, total - 20))
-        # The game alone would still want 20 more kills here.
-        self.assertFalse(model.chest_openable(total - 20))
-        self.assertEqual(model.kills_to_vanilla(total - 20), 20)
+    def test_target_pct_50_of_600_latches_at_the_300th_kill(self):
+        pct, total = 50, 600
+        self.assertEqual(threshold(pct, total), 300)
+        self.assertFalse(reached(pct, 299, total, 120))
+        self.assertTrue(reached(pct, 300, total, 120))
+        # The game alone would still want the 120 alive and whatever is unspawned.
+        self.assertFalse(model.chest_openable(120))
+        self.assertEqual(countdown(pct, 250, total, 150), 50)
+        self.assertTrue(shown(pct, 250, total, 150))
+        self.assertEqual(countdown(pct, 249, total, 150), 51)
+        self.assertFalse(shown(pct, 249, total, 150))
+
+    def test_target_the_countdown_only_counts_down_while_monsters_stream_in(self):
+        pct, total = 50, 600
+        # Live 1's own path: the clamp never moves T, so n is 300 - kills.
+        for alive, kills in (tuple(p) for p in _entry("DC7")["values"]["path"]):
+            with self.subTest(alive=alive, kills=kills):
+                self.assertEqual(clamped(total, kills, alive), total)
+                self.assertEqual(countdown(pct, kills, total, alive), max(0, 300 - kills))
+        # Any alive count the planned total allows: monotone down to 0 at kill 300.
+        last = None
+        for kills in range(0, 301):
+            alive = min((kills * 37) % 211, total - kills)
+            n = countdown(pct, kills, total, alive)
+            with self.subTest(kills=kills, alive=alive):
+                if last is not None:
+                    self.assertLessEqual(n, last)
+                last = n
+        self.assertEqual(last, 0)
 
     def test_target_pct_95_with_7_monsters_rounds_up_to_all_of_them(self):
         # 95 % of 7 is 6.65: rounding up asks for all 7, the same kill the game opens at.
-        self.assertEqual(threshold(95, 0, 7), 7)
-        self.assertFalse(reached(95, 6, 1))
-        self.assertTrue(reached(95, 7, 0))
+        self.assertEqual(threshold(95, 7), 7)
+        self.assertFalse(reached(95, 6, 7, 1))
+        self.assertTrue(reached(95, 7, 7, 0))
         self.assertEqual(model.kills_to_vanilla(7), 7)
 
-    def test_target_never_later_than_the_game_and_never_below_pct(self):
-        for pct in range(FORGEPACT_PCT_MIN, FORGEPACT_PCT_MAX + 1):
-            for total in range(0, 161):
-                t = threshold(pct, 0, total)
-                with self.subTest(pct=pct, total=total):
-                    # Never later than the game: the threshold is at most every monster.
-                    self.assertLessEqual(t, model.kills_to_vanilla(total))
-                    # The kill count is the population, so the threshold holds as kills rise.
-                    for kills in (t - 1, t):
-                        if 0 <= kills <= total:
-                            self.assertEqual(threshold(pct, kills, total - kills), t)
-                    # Never early: reached exactly when the dead share is at least pct %.
-                    for kills in range(0, total + 1):
-                        alive = total - kills
-                        self.assertEqual(reached(pct, kills, alive),
-                                         model.progress(kills, alive) >= Fraction(pct, 100))
-                    # Once the game's own rule holds, the mod's does too.
-                    self.assertTrue(reached(pct, total, 0))
+    def test_target_pct_50_of_a_planned_40_opens_at_the_20th_kill(self):
+        # The parent's scenario, now over a planned total with packs still to spawn.
+        pct, total = 50, 40
+        self.assertEqual(threshold(pct, total), 20)
+        self.assertEqual(countdown(pct, 0, total, 10), 20)
+        self.assertTrue(shown(pct, 0, total, 10))
+        self.assertFalse(reached(pct, 19, total, 5))
+        self.assertEqual(countdown(pct, 19, total, 5), 1)
+        self.assertTrue(reached(pct, 20, total, 5))
+        self.assertEqual(countdown(pct, 20, total, 5), 0)
+        self.assertFalse(shown(pct, 20, total, 5))
+        # The game alone would still want the 5 alive and the 15 unspawned.
+        self.assertFalse(model.chest_openable(5))
 
-    def test_target_the_zero_monster_dungeon_is_reached_at_once(self):
+    def test_target_the_clamp_keeps_the_total_at_or_above_what_was_seen(self):
+        # A planned 10, but 8 killed and 5 alive: 13 seen, so T is 13.
+        self.assertEqual(clamped(10, 8, 5), 13)
+        self.assertEqual(threshold(50, clamped(10, 8, 5)), 7)
+        # Negative control: unclamped, the share would be over 10, not 13.
+        self.assertEqual(threshold(50, 10), 5)
+        for pct in range(FORGEPACT_PCT_MIN, FORGEPACT_PCT_MAX + 1):
+            for total in range(0, 31):
+                for kills in range(0, 16):
+                    for alive in (0, 1, 5, 20):
+                        tc = clamped(total, kills, alive)
+                        t = threshold(pct, tc)
+                        with self.subTest(pct=pct, total=total, kills=kills, alive=alive):
+                            self.assertGreaterEqual(tc, kills + alive)
+                            # Never past every monster seen or planned: kills + alive ... T.
+                            self.assertLessEqual(t, tc)
+                            expected = alive == 0 or (tc > 0 and model.progress(kills, tc) >= Fraction(pct, 100))
+                            self.assertEqual(reached(pct, kills, total, alive), expected)
+
+    def test_target_never_before_pct_of_the_planned_total(self):
+        for pct in range(FORGEPACT_PCT_MIN, FORGEPACT_PCT_MAX + 1):
+            for total in range(1, 161):
+                t = threshold(pct, total)
+                with self.subTest(pct=pct, total=total):
+                    self.assertLessEqual(t, total)
+                    self.assertGreaterEqual(model.progress(t, total), Fraction(pct, 100))
+                    self.assertLess(model.progress(t - 1, total), Fraction(pct, 100))
+                    # With nothing left to spawn, the game's rule implies the mod's.
+                    self.assertTrue(reached(pct, total, total, 0))
+
+    def test_target_an_empty_dungeon_is_reached_at_once(self):
+        total = known_total(0, 0)
+        self.assertEqual(total, 0)
         for pct in (FORGEPACT_PCT_MIN, FORGEPACT_PCT_DEFAULT, FORGEPACT_PCT_MAX):
             with self.subTest(pct=pct):
-                self.assertEqual(threshold(pct, 0, 0), 0)
-                self.assertTrue(reached(pct, 0, 0))
-                self.assertEqual(countdown(pct, 0, 0), 0)
-                self.assertFalse(shown(pct, 0, 0))
+                self.assertEqual(threshold(pct, total), 0)
+                self.assertTrue(reached(pct, 0, total, 0))
+                self.assertEqual(countdown(pct, 0, total, 0), 0)
+                self.assertFalse(shown(pct, 0, total, 0))
 
     def test_target_the_countdown_shows_the_last_50_kills_only(self):
         pct, total = 95, 100  # threshold 95
-        self.assertEqual(threshold(pct, 0, total), 95)
-        self.assertEqual(countdown(pct, 0, total), 95)
-        self.assertFalse(shown(pct, 0, total))
-        self.assertEqual(countdown(pct, 44, total - 44), 51)
-        self.assertFalse(shown(pct, 44, total - 44))
-        self.assertEqual(countdown(pct, 45, total - 45), 50)
-        self.assertTrue(shown(pct, 45, total - 45))
-        self.assertEqual(countdown(pct, 94, total - 94), 1)
-        self.assertTrue(shown(pct, 94, total - 94))
-        self.assertEqual(countdown(pct, 95, total - 95), 0)
-        self.assertFalse(shown(pct, 95, total - 95))
+        self.assertEqual(threshold(pct, total), 95)
+        self.assertEqual(countdown(pct, 0, total, 30), 95)
+        self.assertFalse(shown(pct, 0, total, 30))
+        self.assertEqual(countdown(pct, 44, total, 30), 51)
+        self.assertFalse(shown(pct, 44, total, 30))
+        self.assertEqual(countdown(pct, 45, total, 30), 50)
+        self.assertTrue(shown(pct, 45, total, 30))
+        self.assertEqual(countdown(pct, 94, total, 6), 1)
+        self.assertTrue(shown(pct, 94, total, 6))
+        self.assertEqual(countdown(pct, 95, total, 5), 0)
+        self.assertFalse(shown(pct, 95, total, 5))
 
     def test_target_a_latched_threshold_hides_the_countdown(self):
-        self.assertTrue(shown(50, 10, 30))
-        self.assertFalse(shown(50, 10, 30, latched=True))
+        self.assertTrue(shown(50, 10, 40, 30))
+        self.assertFalse(shown(50, 10, 40, 30, latched=True))
 
     def test_target_the_mode_stores_50_to_95_and_refuses_the_rest(self):
         for asked in (50, 73, 95, "50", "73", "95"):
@@ -256,7 +414,10 @@ class HypothesisTests(unittest.TestCase):
             if entry["status"] == "measured" and entry.get("hypothesis"):
                 values = entry["values"] or {}
                 self.assertIn("verdict", values, entry["id"])
-                self.assertIsInstance(values["verdict"], bool, entry["id"])
+                if entry["hypothesis"] == "planned_total_source":
+                    self.assertIn(values["verdict"], TOTAL_SOURCES, entry["id"])
+                else:
+                    self.assertIsInstance(values["verdict"], bool, entry["id"])
                 answers[entry["hypothesis"]] = values["verdict"]
         for key, value in model.HYPOTHESES.items():
             with self.subTest(key=key):
@@ -267,24 +428,39 @@ class HypothesisTests(unittest.TestCase):
         self.assertTrue(named)
         for key in named:
             self.assertIn(key, model.HYPOTHESES)
+        self.assertEqual(sorted(named), sorted(set(named)))
 
-    def test_live_one_placeholders_are_present(self):
-        # M4: the four questions the Join's post-Live-1 step fills.
+    def test_live_one_answered_four_questions(self):
         checks = {e.get("live_check"): e for e in _entries()}
-        for check, key in (("alive-count", "all_monsters_alive_at_entry"),
-                           ("creators-in-dungeon", "no_creators_in_dungeon"),
-                           ("unlock-signal", "unlock_is_a_variable"),
-                           ("builtin-poll", "unlock_is_a_builtin_poll")):
+        for check, key, verdict in (("alive-count", "all_monsters_alive_at_entry", False),
+                                    ("creators-in-dungeon", "no_creators_in_dungeon", False),
+                                    ("unlock-signal", "unlock_is_a_variable", False),
+                                    ("builtin-poll", "unlock_is_a_builtin_poll", True)):
+            with self.subTest(check=check):
+                entry = checks[check]
+                self.assertEqual(entry["hypothesis"], key)
+                self.assertEqual(entry["status"], "measured")
+                self.assertTrue(entry["source"].endswith("-live-1.md"), entry["id"])
+                self.assertIs(entry["values"]["verdict"], verdict)
+                self.assertIs(model.HYPOTHESES[key], verdict)
+        # The kill-tally question went with the old denominator.
+        self.assertNotIn("kill_tally_matches_alive_drop", model.HYPOTHESES)
+
+    def test_live_1b_placeholders_are_present(self):
+        checks = {e.get("live_check"): e for e in _entries()}
+        for check in ("creator-sum", "creator-match", "creator-state", "kills-equal-births", "unlock-works"):
             with self.subTest(check=check):
                 self.assertIn(check, checks)
-                self.assertEqual(checks[check]["hypothesis"], key)
                 if checks[check]["status"] == "pending":
                     self.assertIsNone(checks[check]["values"])
+        self.assertEqual(checks["creator-sum"]["hypothesis"], "planned_total_source")
+        if checks["creator-sum"]["status"] == "pending":
+            self.assertIsNone(model.HYPOTHESES["planned_total_source"])
 
     def test_a_report_does_not_count_as_a_measurement(self):
         # Negative control: a `reported` or `pending` entry carrying a verdict answers nothing.
         fake = [{"status": "reported", "hypothesis": "boss_dungeon_same_rule", "values": {"verdict": True}},
-                {"status": "pending", "hypothesis": "no_creators_in_dungeon", "values": {"verdict": False}}]
+                {"status": "pending", "hypothesis": "planned_total_source", "values": {"verdict": "variable"}}]
         answered = {e["hypothesis"] for e in fake if e["status"] == "measured"}
         self.assertEqual(answered, set())
 
@@ -302,8 +478,8 @@ class DungeonChestFamilyTests(unittest.TestCase):
                 self.assertEqual(int(GameObject[name]), index)
 
     def test_alive_counts_monsters_not_creators_or_chests(self):
-        # `instance_number(Enemy_Parent_obj)` is the alive count: a creator or the
-        # chest itself is not in that family, so neither is counted as a monster.
+        # `instance_exists(Enemy_Parent_obj)` is what the chest asks (DC10): a
+        # creator or the chest itself is not in that family, so neither keeps it shut.
         from hs_game_sdk import objects
         GameObject = objects.GameObject
         for name in ("Enemy_Creator_obj", "Dungeon_Chest_obj", "Dungeon_Boss_Blocker_obj",
@@ -326,7 +502,7 @@ class FixtureShapeTests(unittest.TestCase):
     def test_every_entry_has_the_fields(self):
         ids = [e["id"] for e in self.entries]
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertTrue({"DC1", "DC2", "DC3", "DC4", "DC5", "DC6"} <= set(ids))
+        self.assertTrue({"DC%d" % n for n in range(1, 19)} <= set(ids))
         self.assertIn("dungeon-chest-spec.md", self.note)
         for entry in self.entries:
             for field in self.REQUIRED:
@@ -371,21 +547,44 @@ class FixtureShapeTests(unittest.TestCase):
                 self.assertEqual(OBJECT_NAME_TO_INDEX.get(name), index, f"{entry['id']}: {name}")
         self.assertIsNone(OBJECT_NAME_TO_INDEX.get("No_Such_Chest_obj"))
 
+    def _assert_sections(self, entry_id, path_text, sections):
+        # Each section text appears in the file, in the order given.
+        text = (ROOT / path_text).read_text(encoding="utf-8")
+        at = 0
+        for section in sections:
+            found = text.find(section, at)
+            self.assertGreaterEqual(found, 0, f"{entry_id}: {path_text}: {section}")
+            at = found + len(section)
+
     def test_source_paths_exist_where_they_can_be_checked(self):
         # Hub CI checks out without submodules, and a Live capture under
         # .claude/workorders/ is local, so each is only checked where it exists.
+        # A source is `<path> § <section>`, or a Live capture's bare path with
+        # `capture_section` (text in the capture) and `tracked_copy` (`<path> §
+        # <section> › <subsection>`, the committed write-up of the same session).
         forgepact_present = (FORGEPACT / "src").is_dir()
         checked = 0
         for entry in self.entries:
             path_text, sep, section = entry["source"].partition(" § ")
-            self.assertTrue(sep and path_text and section, entry["id"])
+            if sep:
+                self.assertTrue(path_text and section, entry["id"])
+                sections = [section]
+            else:
+                self.assertRegex(path_text, r"^\.claude/workorders/[\w.-]+-live-[\w]+\.md$", entry["id"])
+                self.assertTrue(entry.get("capture_section"), entry["id"])
+                copy_path, copy_sep, copy_sections = entry.get("tracked_copy", "").partition(" § ")
+                self.assertTrue(copy_sep and copy_path and copy_sections, entry["id"])
+                if not copy_path.startswith("ForgePact/") or forgepact_present:
+                    self._assert_sections(entry["id"], copy_path, copy_sections.split(" › "))
+                    checked += 1
+                sections = [entry["capture_section"]]
             if path_text.startswith("ForgePact/") and not forgepact_present:
                 continue
             path = ROOT / path_text
             if path_text.startswith(".claude/workorders/") and not path.is_file():
                 continue
             self.assertTrue(path.is_file(), f"{entry['id']}: {path_text}")
-            self.assertIn(section, path.read_text(encoding="utf-8"), f"{entry['id']}: {path_text}")
+            self._assert_sections(entry["id"], path_text, sections)
             checked += 1
         self.assertGreater(checked, 0)
 
@@ -438,9 +637,13 @@ class SpecTests(unittest.TestCase):
             self.assertRegex(spec, re.compile("^## " + heading + "$", re.M))
         for name in ("Dungeon_Chest_obj", "EnemyDestroyKillProc", "Enemy_Parent_obj",
                      "dungeon_chest_model", "dungeon_chest_measurements.json",
-                     "ceil(p × (k + a) / 100)", "max(0, t − k)", "0 < n ≤ 50", *model.HYPOTHESES):
+                     "planned total", "first sight", "max(T, k + a)",
+                     "ceil(p × T / 100)", "max(0, t − k)", "0 < n ≤ 50", *model.HYPOTHESES):
             with self.subTest(name=name):
                 self.assertIn(name, spec)
+        # The parent's denominator (kills over kills + alive) is gone.
+        self.assertNotIn("k / (k + a)", spec)
+        self.assertNotIn("ceil(p × (k + a) / 100)", spec)
 
     def test_the_model_stays_small_and_stdlib_only(self):
         source = MODEL_FILE.read_text(encoding="utf-8")
@@ -461,7 +664,7 @@ class SpecTests(unittest.TestCase):
 class LeverParityTests(unittest.TestCase):
     """The transforms above are ForgePact's Dungeon chest opens early; pin them to its source.
 
-    The header and this test were written at the same time (ForgePact#31's model and
+    The header and this test are written at the same time (ForgePact#31's model and
     plugin lanes), so the pins read what the plan fixes (the bounds, the countdown
     text, rounding up, the panel's keys and defaults) rather than the header's names.
     """
