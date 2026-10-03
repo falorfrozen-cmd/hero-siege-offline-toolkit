@@ -1912,7 +1912,7 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   `FindPointers` on their pointer globals: 0 hits each). So
   `Controller_obj.lootListUnique` is an array of length 6 (measured, Live 1)
   whose element 5 the Angelic roll uses as a `ds_list` (static reading). Live
-  2 read element 5 as a `ref` value, like the ds containers of §5.4 (below).
+  2 read element 5 as a `ref` value, like the ds containers of §5.4 (above).
   The entries of element 5 are arrays of three numbers. **Static reading
   (2026-10-02, issue #74, replan 2)**; the name and the outer length of 6 are
   confirmed by Live 1, and the layout, the kind and the sub-list's size by
