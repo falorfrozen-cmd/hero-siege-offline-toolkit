@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Hand-curated record of what is known about when a key dungeon's end chest (Dungeon_Chest_obj) opens and how many monsters a dungeon holds, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/dungeon_chest_model.py never reads it; tests/test_dungeon_chest_model.py reads both and checks that the model reproduces each entry, and that each of the model's HYPOTHESES stays None until a `measured` entry names it in `hypothesis` and carries `values.verdict` (true or false; for `planned_total_source`, 'variable' or 'estimate'). The mechanism, in our own words, is docs/models/dungeon-chest-spec.md. Every entry has `id` (DC1, DC2, ...), `kind` (`baseline` = vanilla, no lever; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`static_reading` = read from the compiled game and paraphrased, no script text; `measured`; `reported` = a player's report, not a measurement of ours; `pending` = a placeholder a later ForgePact#31 live session fills; `not_observed`), `date`, `source` (either one string `<path> § <section>`, the path relative to the hub root and `section` text that appears in that file; or a Live capture's bare path under .claude/workorders/, which is local and only checked where it exists, with `capture_section` = text in the capture and `tracked_copy` = `<path> § <section> › <subsection>`, the committed write-up of the same session, each part text that appears in that file in that order), `scripts` (every gml_Script_* the entry involves, all bound in hs_game_sdk.scripts.GameScript; may be empty), `objects` (every object the entry involves, all in hs_game_sdk.objects.OBJECT_NAME_TO_INDEX, with the index the SDK gives), `what` (the observation), `values`, `model` (what the model must show), optionally `hypothesis` (the HYPOTHESES key the entry answers) and `live_check` (the live procedure check that measures it), and exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). DC1-DC5 are the static reading of 2026-10-03 (ForgePact#31's planning, a local Ghidra project of the current build; the decompiler output stayed on that machine). DC6 is Headhunter's measured kill path. DC7-DC13 are ForgePact#31's Live procedure 1 (2026-10-03, one Pumpkin Cellar run). DC14-DC18 are placeholders ForgePact#31's Live procedure 1b replaces with measured entries once it has run.",
+  "$schema_note": "Hand-curated record of what is known about when a key dungeon's end chest (Dungeon_Chest_obj) opens and how many monsters a dungeon holds, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/dungeon_chest_model.py never reads it; tests/test_dungeon_chest_model.py reads both and checks that the model reproduces each entry, and that each of the model's HYPOTHESES stays None until a `measured` entry names it in `hypothesis` and carries `values.verdict` (true or false; for `planned_total_source`, 'variable' or 'estimate'). The mechanism, in our own words, is docs/models/dungeon-chest-spec.md. Every entry has `id` (DC1, DC2, ...), `kind` (`baseline` = vanilla, no lever; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`static_reading` = read from the compiled game and paraphrased, no script text; `measured`; `reported` = a player's report, not a measurement of ours; `pending` = a placeholder a later ForgePact#31 live session fills; `not_observed`), `date`, `source` (either one string `<path> § <section>`, the path relative to the hub root and `section` text that appears in that file; or a Live capture's bare path under .claude/workorders/, which is local and only checked where it exists, with `capture_section` = text in the capture and `tracked_copy` = `<path> § <section> › <subsection>`, the committed write-up of the same session, each part text that appears in that file in that order), `scripts` (every gml_Script_* the entry involves, all bound in hs_game_sdk.scripts.GameScript; may be empty), `objects` (every object the entry involves, all in hs_game_sdk.objects.OBJECT_NAME_TO_INDEX, with the index the SDK gives), `what` (the observation), `values`, `model` (what the model must show), optionally `hypothesis` (the HYPOTHESES key the entry answers) and `live_check` (the live procedure check that measures it), and exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). DC1-DC5 are the static reading of 2026-10-03 (ForgePact#31's planning, a local Ghidra project of the current build; the decompiler output stayed on that machine). DC6 is Headhunter's measured kill path. DC7-DC13 are ForgePact#31's Live procedure 1 (2026-10-03, one Pumpkin Cellar run). DC14-DC19 are ForgePact#31's Live procedure 1b (2026-10-03, two Pumpkin Cellar runs in one launch): DC14-DC18 its checks, DC19 the mean of ForgePact's total estimate, which that session selected (total-route: estimate).",
   "measurements": [
     {
       "id": "DC1",
@@ -277,73 +277,110 @@
     {
       "id": "DC14",
       "kind": "baseline",
-      "status": "pending",
+      "status": "measured",
       "date": "2026-10-03",
-      "source": "docs/models/dungeon-chest-spec.md § DC14, `creator-sum`",
+      "source": ".claude/workorders/forgepact-issue-31-dungeon-chest-b-live-1b.md",
+      "capture_section": "- creator-sum |",
+      "tracked_copy": "ForgePact/docs/dungeon-chest-research.md § ## Live procedure 1b › ### Results",
       "scripts": [],
       "objects": { "Enemy_Creator_obj": 1415 },
-      "what": "Placeholder: a creator variable, read by name at the chest's first sight, whose sum equals the kills to clear within 2 %, either summed over every creator or added over the creators still to spawn to the monsters alive at first sight. Its verdict sets HYPOTHESES['planned_total_source'] to 'variable', or to 'estimate' when only DC16 passes.",
-      "values": null,
+      "what": "Live 1b run A (Pumpkin Cellar) read every numeric variable of the 122 creators at the chest's first sight (alive0=5, 5 creators already spawned, 20 names on the sampled ones) and compared each name's sum with the 619 kills to clear, over every creator and as alive0 plus the sum over the creators still to spawn. None came near (creator-sum not observed): the nearest were img (sum 112.67, 91 over the pending ones), isWormhole (19806532) and spawnPack (19970468). The names that sound like a pack size read as one large real per creator, rising from one creator to the next (about 163047 upward), not as a count. With DC16 passing, the total is the estimate (DC19).",
+      "values": {
+        "verdict": "estimate",
+        "kills_to_clear": 619,
+        "alive_first_sight": 5,
+        "creators": 122,
+        "creator_check": "not-observed",
+        "nearest_candidates": { "img": { "sum0": "112.666667", "sum0_pending": 91 }, "isWormhole": { "sum0": 19806532 }, "spawnPack": { "sum0": 19970468 } }
+      },
       "hypothesis": "planned_total_source",
       "live_check": "creator-sum",
-      "model": "HYPOTHESES['planned_total_source'] is None until this entry is measured.",
-      "not_reproduced": "Pending ForgePact#31's Live procedure 1b."
+      "model": "HYPOTHESES['planned_total_source'] is 'estimate': no per-creator count is read, and estimated_total is the form the mod uses (DC19).",
+      "not_reproduced": "No variable matched, so there is no sum for the model to reproduce; DC19 reproduces the estimate that replaced it."
     },
     {
       "id": "DC15",
       "kind": "baseline",
-      "status": "pending",
+      "status": "not_observed",
       "date": "2026-10-03",
-      "source": "docs/models/dungeon-chest-spec.md § DC15, `creator-match`",
+      "source": ".claude/workorders/forgepact-issue-31-dungeon-chest-b-live-1b.md",
+      "capture_section": "- creator-match |",
+      "tracked_copy": "ForgePact/docs/dungeon-chest-research.md § ## Live procedure 1b › ### Results",
       "scripts": [],
       "objects": { "Enemy_Creator_obj": 1415 },
-      "what": "Placeholder: whether DC14's variable matches what each sampled creator then spawned (pass at 90 % of spawned creators).",
-      "values": null,
+      "what": "No creator variable matched what each creator then spawned: every candidate row read match=0/122 and matchPending=0/117 at the clear (creator-match not observed).",
+      "values": { "best_row": "img match=0/122 matchPending=0/117" },
       "live_check": "creator-match",
-      "model": "Not modelled until measured: planned_total takes per-creator counts as given.",
-      "not_reproduced": "Pending ForgePact#31's Live procedure 1b."
+      "model": "Not modelled: planned_total takes per-creator counts as given, and none exists to give it.",
+      "not_reproduced": "Not observed: no candidate matched any creator's births."
     },
     {
       "id": "DC16",
       "kind": "baseline",
-      "status": "pending",
+      "status": "measured",
       "date": "2026-10-03",
-      "source": "docs/models/dungeon-chest-spec.md § DC16, `creator-state`",
+      "source": ".claude/workorders/forgepact-issue-31-dungeon-chest-b-live-1b.md",
+      "capture_section": "- creator-state |",
+      "tracked_copy": "ForgePact/docs/dungeon-chest-research.md § ## Live procedure 1b › ### Results",
       "scripts": [],
       "objects": { "Enemy_Creator_obj": 1415 },
-      "what": "Placeholder: a creator variable that differs between a creator still to spawn and one that has spawned, so the creators pending at first sight can be counted (the estimate route).",
-      "values": null,
+      "what": "The 8 sampled creators (Enemy_Creator_obj) read alarm[0]=5, enemyCreatorTimer undefined and enemyArray undefined at first sight; about 10 s later, armed, alarm[0] was -1 and enemyCreatorTimer a real (214 to 221); at the clear, spawned, enemyArray was an array and enemyCreatorTimer was no longer listed. So a creator still to spawn is one whose enemyArray is not an array; enemyCreatorTimer alone cannot tell, being undefined both before a creator arms and after it spawns.",
+      "values": {
+        "first_sight": { "alarm[0]": 5, "enemyCreatorTimer": "undefined", "enemyArray": "undefined" },
+        "armed": { "alarm[0]": -1, "enemyCreatorTimer": "214..221", "enemyArray": "undefined" },
+        "spawned": { "alarm[0]": -1, "enemyCreatorTimer": "not listed", "enemyArray": "array" },
+        "sampled": 8
+      },
       "live_check": "creator-state",
-      "model": "Not modelled until measured: estimated_total takes the pending count as given.",
-      "not_reproduced": "Pending ForgePact#31's Live procedure 1b."
+      "model": "estimated_total takes the count of creators still to spawn as given; ForgePact counts them by enemyArray.",
+      "not_reproduced": "A variable's state is not arithmetic; ForgePact/tests/test_dungeon_chest_unlock_contract.py's test_total_source_reads_the_measured_route pins the read."
     },
     {
       "id": "DC17",
       "kind": "baseline",
-      "status": "pending",
+      "status": "measured",
       "date": "2026-10-03",
-      "source": "docs/models/dungeon-chest-spec.md § DC17, `kills-equal-births`",
+      "source": ".claude/workorders/forgepact-issue-31-dungeon-chest-b-live-1b.md",
+      "capture_section": "- kills-equal-births |",
+      "tracked_copy": "ForgePact/docs/dungeon-chest-research.md § ## Live procedure 1b › ### Results",
       "scripts": ["gml_Script_EnemyDestroyKillProc"],
       "objects": { "Enemy_Parent_obj": 1429, "Enemy_Creator_obj": 1415 },
-      "what": "Placeholder: whether the kills to clear equal the monsters alive at first sight plus every birth after it (within 2).",
-      "values": null,
+      "what": "Run A cleared at kills=619 alive=0 with 644 births by creators (births0=5 at the census, 639 after it): alive0 plus the births since is 644, 25 more than the kills, and births alone are 644 too (kills-equal-births failed by 25). Some monsters a creator makes are never killed by the player and never keep the chest shut, so a total for the chest is counted in kills.",
+      "values": { "kills_to_clear": 619, "alive_first_sight": 5, "births": 644, "births_at_census": 5, "births_since": 639, "never_killed": 25 },
       "live_check": "kills-equal-births",
-      "model": "Not modelled until measured.",
-      "not_reproduced": "Pending ForgePact#31's Live procedure 1b."
+      "model": "The mean per creator still to spawn (DC19) is taken over kills, never births.",
+      "reproduced_by": "tests.test_dungeon_chest_model.BaselineTests.test_dc17_a_total_for_the_chest_counts_kills_not_births"
     },
     {
       "id": "DC18",
       "kind": "target",
-      "status": "pending",
+      "status": "measured",
       "date": "2026-10-03",
-      "source": "docs/models/dungeon-chest-spec.md § DC18, `unlock-works`",
+      "source": ".claude/workorders/forgepact-issue-31-dungeon-chest-b-live-1b.md",
+      "capture_section": "- unlock-works |",
+      "tracked_copy": "ForgePact/docs/dungeon-chest-research.md § ## Live procedure 1b › ### Results",
       "scripts": [],
       "objects": { "Dungeon_Chest_obj": 1366, "Enemy_Parent_obj": 1429 },
-      "what": "Placeholder: with the threshold latched at 50 % of a known total, ForgePact answers the chest's own instance_exists(Enemy_Parent_obj) poll with false; whether the chest then opens while monsters are alive.",
-      "values": null,
+      "what": "Run B, dungeonchest 50 against an override total of 600: the threshold latched at 'unlocked early at 304/600 alive=214', ForgePact then answered the chest's own instance_exists(Enemy_Parent_obj) poll false 390 times (answered=390), and the chest's sprite went from closed to open at kills=325 alive=193. The chest opened with monsters alive (unlock-works pass); its drop was not checked by the operator.",
+      "values": { "latched_at": "304/600", "alive_at_latch": 214, "answered": 390, "opened_at_kills": 325, "alive_at_open": 193 },
       "live_check": "unlock-works",
       "model": "Not modelled: the model gives when the mod may open the chest, not whether answering the poll opens it.",
-      "not_reproduced": "Pending ForgePact#31's Live procedure 1b."
+      "not_reproduced": "Whether the game's chest opens is not arithmetic; ForgePact's harness pins the detour's decision (poll-answered-while-latched)."
+    },
+    {
+      "id": "DC19",
+      "kind": "our_code",
+      "status": "measured",
+      "date": "2026-10-03",
+      "source": ".claude/workorders/forgepact-issue-31-dungeon-chest-b-live-1b.md",
+      "capture_section": "K=619, alive0=5, birthsSince=639",
+      "tracked_copy": "ForgePact/docs/dungeon-chest-research.md § ## Live procedure 1b › ### Results",
+      "scripts": [],
+      "objects": { "Enemy_Creator_obj": 1415, "Enemy_Parent_obj": 1429 },
+      "what": "The estimate's mean, ForgePact's total source (total-route: estimate): T = alive at first sight + ceil(creators still to spawn x 614 / 117). From run A: 619 kills to clear, 5 alive at first sight, 122 creators of which 5 had spawned by then (spawned0=5), so 117 pending and (619 - 5) / 117, about 5.25 per pending creator, over kills (DC17). DungeonChestMod.hpp holds it as kEstimateKills = 614 and kEstimatePendingCreators = 117. If the 5 first-sight monsters were idle ones rather than packs, all 122 creators were pending and the same estimate gives 646 for that run; an over-count only raises the threshold. Live 1's (600 - 44) / 122, about 4.6, is a second point, not the constant.",
+      "values": { "kills_to_clear": 619, "alive_first_sight": 5, "creators": 122, "spawned_first_sight": 5, "pending": 117, "mean_per_pending_creator": "614/117", "total_if_all_pending": 646 },
+      "model": "estimated_total(5, 117, 614/117) is 619, and estimated_total(5, 122, 614/117) is 646.",
+      "reproduced_by": "tests.test_dungeon_chest_model.TargetTests.test_dc19_the_estimate_reproduces_run_a"
     }
   ]
 }

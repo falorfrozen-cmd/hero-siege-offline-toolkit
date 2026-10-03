@@ -223,6 +223,20 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(model.estimated_total(0, 3, Fraction(1, 2)), 2)
         self.assertEqual(model.estimated_total(10, 0, Fraction(9, 2)), 10)
 
+    def test_dc17_a_total_for_the_chest_counts_kills_not_births(self):
+        values = _entry("DC17")["values"]
+        kills, alive0 = values["kills_to_clear"], values["alive_first_sight"]
+        self.assertEqual(values["births_since"], values["births"] - values["births_at_census"])
+        # alive0 plus every birth after the census overshoots the kills by the
+        # monsters never killed, and those never kept the chest shut.
+        self.assertEqual(alive0 + values["births_since"] - kills, values["never_killed"])
+        self.assertEqual(values["births"] - kills, values["never_killed"])
+        self.assertGreater(values["never_killed"], 2)   # outside the check's +-2
+        self.assertTrue(model.chest_openable(0))
+        # The mean (DC19) is over kills.
+        dc19 = _entry("DC19")["values"]
+        self.assertEqual(Fraction(dc19["mean_per_pending_creator"]), Fraction(kills - alive0, dc19["pending"]))
+
     def test_kills_to_vanilla_is_every_living_monster(self):
         for alive in (0, 1, 7, 40):
             self.assertEqual(model.kills_to_vanilla(alive), alive)
@@ -285,6 +299,25 @@ class BaselineTests(unittest.TestCase):
 
 class TargetTests(unittest.TestCase):
     """What the control must turn the game into (spec § "Our code")."""
+
+    def test_dc19_the_estimate_reproduces_run_a(self):
+        # ForgePact's total (total-route: estimate): alive at first sight plus
+        # the creators still to spawn times Live 1b run A's mean, over kills.
+        values = _entry("DC19")["values"]
+        kills, alive0 = values["kills_to_clear"], values["alive_first_sight"]
+        creators, spawned0 = values["creators"], values["spawned_first_sight"]
+        pending = creators - spawned0
+        self.assertEqual(pending, values["pending"])
+        mean = Fraction(values["mean_per_pending_creator"])
+        self.assertEqual(mean, Fraction(kills - alive0, pending))
+        self.assertEqual(model.estimated_total(alive0, pending, mean), kills)
+        # Had all 122 been still to spawn, the same mean over-counts, rounded up.
+        self.assertEqual(model.estimated_total(alive0, creators, mean), values["total_if_all_pending"])
+        # At 50 % the chest opens at the 310th kill of 619; over-counting only
+        # moves the threshold later, and the game's rule still opens it at 0 alive.
+        self.assertEqual(threshold(50, kills), 310)
+        self.assertGreater(threshold(50, values["total_if_all_pending"]), threshold(50, kills))
+        self.assertTrue(reached(95, 0, values["total_if_all_pending"], 0))
 
     def test_target_pct_50_of_600_latches_at_the_300th_kill(self):
         pct, total = 50, 600
@@ -705,6 +738,21 @@ class LeverParityTests(unittest.TestCase):
         self.assertIn("dungeon_chest_pct", set(values))
         self.assertIs(ast.literal_eval(values["mod_dungeon_chest"]), False)
         self.assertEqual(ast.literal_eval(values["dungeon_chest_pct"]), FORGEPACT_PCT_DEFAULT)
+        # Where the countdown shows (the owner's choice, 2026-10-04): above the
+        # head by default, the header's own default form.
+        self.assertEqual(ast.literal_eval(values["dungeon_chest_countdown"]), "head")
+
+    def test_the_estimate_mean_is_the_header_s(self):
+        # ForgePact's total source (total-route: estimate) is DC19's mean, as
+        # two named constants, and rounds up as estimated_total does.
+        mean = Fraction(_entry("DC19")["values"]["mean_per_pending_creator"])
+        code = re.sub(r"//[^\n]*", "", self.header)
+        kills = re.search(r"kEstimateKills\s*=\s*(\d+)\s*;", code)
+        pending = re.search(r"kEstimatePendingCreators\s*=\s*(\d+)\s*;", code)
+        self.assertIsNotNone(kills)
+        self.assertIsNotNone(pending)
+        self.assertEqual((int(kills.group(1)), int(pending.group(1))), (mean.numerator, mean.denominator))
+        self.assertRegex(code, r"kEstimatePendingCreators\s*-\s*1\s*\)\s*/\s*kEstimatePendingCreators")
 
 
 if __name__ == "__main__":

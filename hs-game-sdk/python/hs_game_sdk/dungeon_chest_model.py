@@ -11,7 +11,8 @@ the checks, against `hs-game-sdk/curated/dungeon_chest_measurements.json`.
 - The dungeon's planned total: every monster it will hold, spawned yet or not.
   Monsters stream in from creator-family spawners that all exist at entry, so
   the total is a sum over those creators taken at the chest's first sight.
-  Which per-creator number that sum reads is not established (`HYPOTHESES`).
+  Live 1b found no per-creator count to read, so the total is estimated from
+  the creators still to spawn (`HYPOTHESES['planned_total_source']`).
 
 This module models the game only. ForgePact's percentage (ForgePact#31's
 `dungeonchest <pct>`), its clamp, threshold and countdown are that mod's own
@@ -47,9 +48,10 @@ HYPOTHESES: Dict[str, Union[bool, str, None]] = {
     # instance_exists(Enemy_Parent_obj) (DC10).
     "unlock_is_a_builtin_poll": True,
     # Where the planned total comes from (`creator-sum`, `creator-state`):
-    # 'variable' (a per-creator count read by name) or 'estimate' (pending
-    # creators x a measured mean), set by ForgePact#31's Live 1b (DC14).
-    "planned_total_source": None,
+    # 'estimate' (pending creators x a measured mean), Live 1b: no creator
+    # variable sums to the total (DC14), `enemyArray` tells a creator still to
+    # spawn (DC16).
+    "planned_total_source": "estimate",
     # A boss dungeon follows the same rule (`boss-dungeon`, DC12).
     "boss_dungeon_same_rule": None,
 }

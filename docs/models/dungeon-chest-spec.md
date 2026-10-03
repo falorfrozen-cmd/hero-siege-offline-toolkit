@@ -136,34 +136,66 @@ the tracked copy is `ForgePact/docs/dungeon-chest-research.md` § "Live procedur
   the player cannot type in chat. This is the countdown's chat form, not the
   chest, so the model does not carry it.
 
+The entries below are ForgePact#31's Live procedure 1b (2026-10-03, research DLL
+`316a68ed…`, save slot 14, two Pumpkin Cellar runs in one launch: run A a census
+with the mod off, run B the mod at 50 % of an override total of 600). The
+capture is the local `.claude/workorders/forgepact-issue-31-dungeon-chest-b-live-1b.md`;
+the tracked copy is `ForgePact/docs/dungeon-chest-research.md` § "Live procedure
+1b" › "Results".
+
+- **DC14, no creator variable sums to the total (`creator-sum`).** At the
+  chest's first sight run A read `alive0=5`, 122 creators, 5 of which had
+  already spawned, and 20 variable names on the sampled creators. No numeric
+  name present on the creators summed near the 619 kills to clear, over every
+  creator or as `alive0` plus the creators still to spawn: the nearest were `img`
+  (112.67, or 91 over the pending ones), `isWormhole` and `spawnPack` (about 20
+  million each). The names that sound like a pack size read as one large real
+  per creator, rising from creator to creator (about 163047 upward), not as a
+  count. So the total is not readable as a sum, and
+  `HYPOTHESES["planned_total_source"]` is `'estimate'` (with DC16).
+- **DC15, no creator variable matches its births (`creator-match`).** Every
+  candidate row read `match=0/122` and `matchPending=0/117` at the clear.
+- **DC16, whether a creator has spawned is readable (`creator-state`).** All 8
+  sampled creators read `alarm[0]=5`, `enemyCreatorTimer` undefined and
+  `enemyArray` undefined at first sight. About 10 s later, after they had armed,
+  `alarm[0]` was -1 and `enemyCreatorTimer` a real (214 to 221); at the clear,
+  after they had spawned, `enemyArray` was an array. So "still to spawn" is
+  `enemyArray` not being an array. `enemyCreatorTimer` alone cannot say it:
+  it is undefined both before a creator arms and after it spawns.
+- **DC17, kills and births differ by 25 (`kills-equal-births`).** Run A cleared
+  at `kills=619 alive=0` with 644 births by creators (`births0=5`, so 639 after
+  the census): `alive0` plus the births since is 644, 25 more than the kills.
+  Some monsters a creator makes are never killed by the player and never block
+  the chest, so a total for the chest is counted in kills, not births.
+- **DC18, answering the poll opens the chest (`unlock-works`).** In run B the
+  threshold latched at `unlocked early at 304/600 alive=214`; the detour then
+  answered the chest's poll `false` 390 times (`answered=390`), and the chest's
+  sprite went from closed to open at `kills=325 alive=193`: it opened with 193
+  monsters alive. Whether it dropped loot was not checked by the operator (the
+  owner opened it). The countdown showed above the head (`Chest: 9 kills to go`)
+  and as chat lines; the owner saw the head label flicker ("the text above
+  character felt jerky and was blinking very fast as it was updating every
+  frame"), which is ForgePact's draw, not the game.
+
 ## Not established
 
 Each of these is an open question, carried in the model's `HYPOTHESES` where it
-decides a number. ForgePact#31's Live procedure 1b measures DC14-DC18; until then
-each is a `pending` placeholder in the curated file.
+decides a number.
 
 - **DC12, does a boss dungeon follow the same rule?** (`boss-dungeon`, the
-  outlier). Not observed: Live 1 saw `blockers=0` on every line, and only Cellar
-  Keys were at hand. `HYPOTHESES["boss_dungeon_same_rule"]` stays `None`.
-- **Where the planned total lives.** How many monsters a creator will make is
-  either one number each creator holds from its creation, readable by name at
-  runtime, or a roll made at the pack's birth. `HYPOTHESES["planned_total_source"]`
-  is `None` until Live 1b decides it, then `'variable'` or `'estimate'`:
-  - **DC14, `creator-sum`.** A creator variable whose sum over the creators
-    equals the kills to clear (within 2 %), read either as the sum over every
-    creator, or as the monsters alive at first sight plus the sum over the
-    creators still to spawn.
-  - **DC15, `creator-match`.** Whether that variable matches what each sampled
-    creator then spawned.
-  - **DC16, `creator-state`.** A variable that separates a creator still to
-    spawn from one that has spawned. With it and no per-creator count, the
-    total is still derivable at first sight as an estimate (below).
-  - **DC17, `kills-equal-births`.** Whether the kills to clear equal the monsters
-    alive at first sight plus every birth after it.
-- **DC18, `unlock-works`.** Whether answering the chest's own poll (DC10) with
-  "no enemy exists" while monsters are alive is enough for it to open. Live 1
-  saw no other state change at the last kill, which indicates it, but the
-  chest's Step also reads a player variable, so it is not proven.
+  outlier). Not observed: Live 1 and Live 1b saw `blockers=0` on every line,
+  and only Cellar Keys were at hand. `HYPOTHESES["boss_dungeon_same_rule"]`
+  stays `None`.
+- **Whether the measured mean holds for other dungeons.** The mean per creator
+  still to spawn (DC19 below) is one Pumpkin Cellar run; other key dungeons
+  were not observed live.
+- **What the 5 monsters alive at run A's first sight were.** The 5 creators with
+  a birth before the census and the 5 alive match; whether those were their
+  packs or idle monsters that come with a spawner is not established. If they
+  were idle ones, all 122 creators were still to spawn.
+- **Whether `enemyArray` marks every creator type.** Only the 8 sampled
+  `Enemy_Creator_obj` instances were read before and after; the other creator
+  objects were counted, not sampled.
 
 ## Our code
 
@@ -183,14 +215,23 @@ dungeon's planned total, and `p` for the percentage.
 - **The planned total `T`** is every monster the dungeon will hold, spawned yet
   or not, **fixed once at the chest's first sight** from the creator family
   (the seven creator objects ForgePact's density code already knows, density
-  copies included). Live 1b decides which of three forms it takes:
-  - `variable`, the sum over every creator of its planned count, read by name;
-  - `variable`, the monsters alive at first sight plus the sum of the planned
-    counts over the creators still to spawn;
-  - `estimate`, the monsters alive at first sight plus (creators still to spawn
-    × a measured mean per creator), rounded up.
+  copies included). Live 1b decided its form (`total-route: estimate`, DC14 and
+  DC16): T is the monsters alive at first sight plus (creators still to spawn,
+  those whose `enemyArray` is not an array, × a measured mean per creator),
+  rounded up. A creator whose state cannot be read counts as spawned and is
+  counted on the status line (`unreadable=`).
   T does not move with the alive count, so `Chest: 50 kills to go` means 50
-  real kills.
+  real kills. (Had a per-creator count been readable, T would have been the
+  `variable` form, the sum of those counts; DC14 found none.)
+- **DC19, the mean** is 614 ÷ 117 ≈ 5.25 monsters per creator still to spawn,
+  from run A of Live 1b: (619 kills to clear − 5 alive at first sight) ÷ (122
+  creators − 5 that had spawned by then). It is taken over kills, never births
+  (DC17). The header holds it as two named constants, `kEstimateKills = 614`
+  and `kEstimatePendingCreators = 117`, so T for run A's first sight is exactly
+  619. If the 5 first-sight monsters were idle ones (all 122 still to spawn), the
+  same formula gives 646 for that run; an over-count only raises the threshold,
+  and the game's rule still opens the chest at `a = 0`. Live 1's (600 − 44) ÷ 122
+  ≈ 4.6 is a second point, from a census taken later; it is not the constant.
 - **T unknown.** With no total source, or a source that answers 0 while
   creators are present, the share is refused: no threshold, nothing shown, the
   status reports `total=unavailable`, and the chest follows the game's rule.
@@ -212,7 +253,9 @@ dungeon's planned total, and `p` for the percentage.
 - **Countdown** `n = max(0, t − k)`. It is shown only when `0 < n ≤ 50` and the
   threshold has not latched, as `Chest: <n> kills to go`. With T fixed, it only
   counts down. Its forms (a line above the player's head, chat lines, both or
-  none) are the header's; which one ships is decided after Live procedure 2.
+  none) are the header's; the panel offers head, chat and both, head by
+  default (the owner, 2026-10-04: `countdown-form: choice`). The head label's
+  text changes only when `n` does.
 - **Off** is the game's own rule: never early, no countdown, nothing written.
 
 The test file expresses this as input transforms (`set_mode`, `known_total`,
@@ -236,7 +279,8 @@ A pure function of whole numbers and exact fractions
   the `estimate` form, rounded up to a whole monster.
 - `progress(kills, total)`: `kills / total` as a `Fraction`; a total of 0 is
   refused, since it means the total is unknown.
-- `HYPOTHESES`: the questions above, with Live 1's four answers filled in.
+- `HYPOTHESES`: the questions above, with Live 1's four answers and Live 1b's
+  `planned_total_source` (`'estimate'`) filled in.
 
 Every function refuses a negative or non-integer count. Nothing draws a random
 number.
@@ -245,7 +289,9 @@ number.
 
 - **Whether the kill hook attaches** and sees every kill in a dungeon, and
   whether answering the chest's poll opens it (DC18). Only a live `dungeonchest
-  status` line and Live procedure 1b show that.
-- **Whether the planned total is readable**: the model sums counts it is given;
-  whether a creator holds one is DC14-DC16.
+  status` line and a live session show that.
+- **Whether the estimate fits a dungeon**: the model multiplies the counts it is
+  given; whether `enemyArray` marks a creator still to spawn, and whether the
+  mean holds outside Pumpkin Cellar, is what Live procedure 2's `on-total` and
+  later sessions measure.
 - **How early feels in play**, and whether the countdown is readable.

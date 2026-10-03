@@ -1532,9 +1532,23 @@ All **measured** (2026-09-10/11).
   held 122 creators from the first tick to the last, while 600 kills were made
   to clear it; 5 enemies were alive on the first tick, 44 a second later (the
   packs near the entrance), and the alive count rose and fell as the player
-  moved (peak 210). So a dungeon's creators can be counted at load; how many
-  monsters each will spawn is **not established**. **Measured 2026-10-03**
+  moved (peak 210). So a dungeon's creators can be counted at load. **Measured 2026-10-03**
   ([dungeon chest, Live procedure 1](../ForgePact/docs/dungeon-chest-research.md#results)).
+- **No creator variable read by name was observed to hold its pack size, but
+  whether a creator has spawned is readable.** In a second Pumpkin Cellar run
+  every numeric variable on the 122 creators at the chest's first sight was
+  summed against the 619 kills to clear and compared with each creator's
+  births: none matched (the variables whose names suggest a pack size read as
+  one large real per creator, rising from one creator to the next, not as
+  counts). On 8 sampled `Enemy_Creator_obj`: at room entry `alarm[0]` was 5
+  and both `enemyCreatorTimer` and `enemyArray` undefined; once armed,
+  `alarm[0]` was -1 and `enemyCreatorTimer` a real; once spawned, `enemyArray`
+  was an array and `enemyCreatorTimer` no longer listed. So "still to spawn"
+  is `enemyArray` not being an array; `enemyCreatorTimer` alone cannot tell it,
+  being undefined both before a creator arms and after it spawns. 5 of the 122
+  had spawned by first sight, and the rest made about 5.25 kills each (614 for
+  117). **Measured 2026-10-03**; the other creator objects' `enemyArray` was
+  not sampled ([dungeon chest, Live procedure 1b](../ForgePact/docs/dungeon-chest-research.md#live-procedure-1b)).
 - `EnemyCreatorPending` only reports whether a creator still has an alarm running.
   Creators make density copies through four-argument `instance_create_*` calls.
   **Static reading.**
@@ -1680,9 +1694,21 @@ polling `instance_exists(Enemy_Parent_obj)` (measured, below).
   - **Blockers: 0** (`Dungeon_Boss_Blocker_obj`) in Pumpkin Cellar. Whether a
     dungeon with a blocker behaves the same is **not established** (not
     covered live).
-  - Whether answering that one poll `false` while monsters are alive is enough
-    for the chest to open is **not established** (the research doc's Live
-    procedure 1b, `unlock-works`).
+- **Measured in Live 1b** (2026-10-03, two Pumpkin Cellar runs in one launch;
+  source: the research doc's
+  [Live procedure 1b results](../ForgePact/docs/dungeon-chest-research.md#live-procedure-1b)):
+  - **Answering that one poll `false` opens the chest with monsters alive.**
+    With the poll answered for the chest's own `self` only (390 calls answered
+    after the latch at 304 kills), the chest's sprite went from closed to open
+    at 325 kills with 193 monsters alive. **Measured**; whether it then drops
+    loot as at a full clear was not checked.
+  - **Kills to clear and births differ.** The second run cleared at 619 kills
+    with 644 enemies created by creators (5 alive at the chest's first sight,
+    639 born after it): 25 monsters a creator makes are never killed by the
+    player and never keep the chest shut. A total for the chest is counted in
+    kills. **Measured.**
+  - **Blockers: 0** again; a dungeon with a blocker is still **not covered
+    live**.
 
 [dungeon chest, Static reading](../ForgePact/docs/dungeon-chest-research.md#static-reading),
 [Route](../ForgePact/docs/dungeon-chest-research.md#route),
