@@ -2107,7 +2107,7 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   typing, reach and the parameter struct.** Typing held again: 46 of 46
   vanilla hits typed (`untyped=0`, `typeAgree=46`, `typeDisagree=0`; 211
   agreements and no disagreement by the end). With both switches off,
-  2 of 46 hits carried the stand-in's triple (p0 = 0.043). With Headhunter's
+  2 of 46 hits carried the stand-in's sub and b (`standinPicks=2`, p0 = 0.043). With Headhunter's
   switch forced on and the research build pushing 200 copies of Liquor
   Holster's entry onto `lootListUnique[5]` per roll (`injected=22800` over
   114 rolls, the held read-back never failing, `heldMiss=0`), 65 of the next
