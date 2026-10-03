@@ -1,0 +1,4 @@
+{
+  "$schema_note": "Live values that hs_game_sdk.skill_sliders_model is checked against (tests/test_skill_sliders_model.py, MeasuredTests); the mechanism is docs/models/skill-sliders-spec.md and the research is ForgePact/docs/skill-sliders-research.md. Rows come from ForgePact#160's Live procedure 1 (research build, `projprobe`), which has not run yet, so the list is empty. Each row: `id`, `kind` (baseline or target), `status` (only `measured` rows are checked), `date`, `source[]` ({`path`, `section`}), `scripts[]` (hs-game-sdk GameScript names), `what`, `values`, and `model`: {`function`, `args`, `observed`}, the skill_sliders_model function the row checks, its keyword arguments, and the value the game showed.",
+  "measurements": []
+}
