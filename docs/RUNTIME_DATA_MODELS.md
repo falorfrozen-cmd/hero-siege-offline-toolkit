@@ -2012,7 +2012,7 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   it, and `kAngelicListIndex` 5), checks that the element is a live `ds_list` of
   at least 10 entries, each an array of three numbers, and prints it on the
   status lines as `list=<name>[<index>]:<size>` (for example
-  `lootListUnique[5]:58`), or `none` / `missing`. The live-list check decides
+  `lootListUnique[5]:380`), or `none` / `missing`. The live-list check decides
   on the element as it was read, with no allow-list of handle kinds. It first
   refuses, before any conversion, an element of a kind that can never be a
   handle (array, string, struct, undefined or null) as `never a handle`,
