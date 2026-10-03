@@ -1231,7 +1231,8 @@ The Item Editor's capture switch, ForgePact's journal of finished items and draw
 
 `.github/workflows/ai-review.yml` runs an AI code review of a pull request and
 posts findings as inline comments. It is **opt-in, never automatic**: add the
-`ai-review` label, or comment `@claude review` on the pull request. The label
+`ai-review` label, or post a comment that starts with `@claude review` (a
+trigger anywhere but the start is skipped silently) on the pull request. The label
 does not re-run by itself on later pushes; request again for a fresh review.
 A comment trigger only works once the workflow is on `main`, because GitHub runs
 `issue_comment` workflows from the default branch.
