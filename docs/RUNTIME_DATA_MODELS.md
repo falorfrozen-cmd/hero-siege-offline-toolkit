@@ -3782,8 +3782,10 @@ measured about the game on 2026-10-03, on the player build, slot 14
   not answer refuses it (a script row, an unhooked builtin, or one of the five
   called with another self or a non-family object; not established), and the
   player did not end inside the prop. The mod's landing and room checks ran on
-  that jump and let it through; the landing point they checked was not
-  recorded, so whether it lay inside the carriage is **not established**. What
+  that jump and let it through (`granted` +1, `refused-landing` 0), so the
+  mod's landing check has not been observed to detect the carriage; the
+  landing point they checked was not recorded, so whether it lay inside the
+  carriage is **not established**. What
   refuses the jump is **not established**; the owner reads it as the game
   validating the landing zone itself. **Measured** for the position, not for a
   mechanism.
