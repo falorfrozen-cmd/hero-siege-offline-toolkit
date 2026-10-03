@@ -337,7 +337,7 @@ def _row_follows(entry, field, entries=None):
     assert abs(exact - Fraction(values["ratio"])) < Fraction(1, 1000), (entry["id"], float(exact))
     table = getattr(model.row(values["rank"]), field)
     off = abs(exact / table - 1)
-    if abs(off - TOLERANCES[field]) < _control_spread(entry, field, entries):
+    if TOLERANCES[field] < off < TOLERANCES[field] + _control_spread(entry, field, entries):
         return None
     return off <= TOLERANCES[field]
 
@@ -463,6 +463,39 @@ class HypothesisTests(unittest.TestCase):
         self.assertGreater(Fraction(491, 217) / model.row(4).damage - 1
                            - TOLERANCES["damage"], spread)
         self.assertIs(_row_follows(far, "damage", entries), False)
+
+    def test_the_open_band_sits_only_past_the_tolerance_edge(self):
+        # The rule is two-way: within the tolerance a row follows the table,
+        # outside it does not, and only a miss past the edge by less than the
+        # control's spread stays open. A row inside the tolerance is decided
+        # however wide its control's spread is: MK15's 8.4% must not open a
+        # damage row 2% off the 10% tolerance (|2% - 10%| = 8% < 8.4%).
+        entries = _entries()
+        spread = _control_spread(entries["MK21"], "damage", entries)
+        self.assertEqual(round(float(spread), 3), 0.084)
+        table = model.row(4).damage  # x1.90
+
+        def damage_row(share_off, controlled=True):
+            ratio = table * (1 + share_off)
+            values = {"rank": 4, "rank_1_value": 1000, "value": int(ratio * 1000),
+                      "ratio": str(float(ratio))}
+            if controlled:
+                values["controlled_by"] = "MK15"
+            return {"id": "X", "status": "measured", "values": values,
+                    "what": "Karp_King_obj damage at rank 4"}
+
+        inside = damage_row(Fraction(2, 100))
+        self.assertLess(TOLERANCES["damage"] - Fraction(2, 100), spread)
+        self.assertIs(_row_follows(inside, "damage", entries), True)
+        # Open: 12% is 2% past the 10% edge, inside MK15's 8.4% spread.
+        band = damage_row(Fraction(12, 100))
+        self.assertIsNone(_row_follows(band, "damage", entries))
+        # Decided: far past the edge plus the spread.
+        far = damage_row(Fraction(50, 100))
+        self.assertIs(_row_follows(far, "damage", entries), False)
+        # Negative control: the same 12% with no control has no band to sit in.
+        self.assertIs(_row_follows(damage_row(Fraction(12, 100), controlled=False),
+                                   "damage", entries), False)
 
     def test_the_key_is_a_boss_object_not_a_word(self):
         # Controls on the selection itself. Positive: a synthetic boss row at the
