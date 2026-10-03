@@ -2151,6 +2151,29 @@ class LaneTests(TempDirMixin, unittest.TestCase):
                             label="implementer:code:r0")
         self.assertTrue(r.passed, r.evidence)
 
+    def test_git_config_reads_are_not_writes(self):
+        # wf_8fd71d61-4ca: two lanes failed R23 for `git config core.autocrlf`,
+        # which only reads.
+        for cmd in ("git config core.autocrlf; cat .gitattributes 2>/dev/null | head",
+                    "git config --get core.autocrlf && git ls-files --eol x",
+                    "git -C repo config --show-origin --get-all core.autocrlf",
+                    "git config --file .gitmodules --get-regexp path",
+                    "git config -l | grep crlf", "git config --list --global",
+                    "git config get core.autocrlf", "git config --get remote.origin.url '^https'"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(wa._git_mutations(cmd), [])
+        # control: writes still count, including after a read on the same line
+        for cmd in ("git config core.autocrlf false", "git config --global user.name x",
+                    "git config --unset core.autocrlf", "git config --add a.b c",
+                    "git config set core.autocrlf true", "git config --file .gitmodules a.b c",
+                    "git config core.autocrlf; git config core.autocrlf input"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(wa._git_mutations(cmd), ["config"])
+        r = _one_agent_rule(self.tmp_path / "cfg", "R23", "implementer",
+                            ("Bash", {"command": "git config core.autocrlf; git ls-files --eol tools/x.py"}),
+                            label="implementer:code:r0")
+        self.assertTrue(r.passed, r.evidence)
+
     def test_lane_column_from_label(self):
         self.assertEqual(wa.lane_of("implementer:code:r0"), "code")
         self.assertEqual(wa.lane_of("implementer:plan-tools:r2"), "plan-tools")
