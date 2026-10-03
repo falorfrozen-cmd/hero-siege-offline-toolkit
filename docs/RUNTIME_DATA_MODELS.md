@@ -1546,7 +1546,7 @@ All **measured** (2026-09-10/11).
   a minimap flag. **Measured.**
 - **Rarity setup.** `EnemyRaritySettings(typeId)` runs from `Enemy_Parent_obj`'s
   Alarm 4 with the monster as `self`, after the spawner has set `enemyRarity`
-  (1 normal, 2 champion, 3 rare, 4 ancient) and filled `enemyAffix`/`affixList`,
+  (1 common, 2 champion, 3 ancient, 4 legion; names per § 13.7) and filled `enemyAffix`/`affixList`,
   and before the stats, affix effects and health bar are built; a rarity or
   affix written at its entry is built by the game as if it had rolled that way.
   **Measured** 2026-09-05 on ordinary monsters (entry and exit state identical;
@@ -2237,7 +2237,7 @@ From AFK FARM's 6,471 recorded packets and 214 capture sessions, 2026-09-17 to 0
 - **Rank values.** An ordinary monster's `enemyRarity` is 1-4, and `DropItem`'s first argument is the same number. In every packet `killStatistic` equals the rank. **Measured.**
   - Loot goblins drop at 5, while their own `enemyRarity` stays 1, 3 or 4.
   - Every special-content monster seen dropped at 4.
-- **Names (inferred).** The save's kill counters are Total, Common, Champion, Ancient, Legion and Fallen. On the save with the most kills, Common, Champion, Ancient and Legion add up exactly to the total, and their proportions fit only rank 1 Common, 2 Champion, 3 Ancient, 4 Legion. **Inferred; not yet checked on screen.** ForgePact's labels (normal, champion, rare, ancient) are one step off from this.
+- **Names (inferred).** The save's kill counters are Total, Common, Champion, Ancient, Legion and Fallen. On the save with the most kills, Common, Champion, Ancient and Legion add up exactly to the total, and their proportions fit only rank 1 Common, 2 Champion, 3 Ancient, 4 Legion. **Inferred from the kill counters**, and since ForgePact#159 also backed by a player's on-screen report (a monster raised to rank 3 shows as an Ancient, with a yellow name, and one raised to rank 4 as a Legion). That report is the player's, not a measurement of ours. ForgePact's World › Monster Rarity rows use these names since #159 (Ancient writes rank 3, Legion rank 4); its code, its commands (`rarity`, `bossrarity`), its config keys (`rarity_rare`, `rarity_ancient`) and its Bosses select still say rare for rank 3 and ancient for rank 4 (ForgePact#161 tracks the player-visible ones).
 - **Rank multipliers**, next to rank 1. Medians over 41-48 pairs of the same monster object in the same room. **Measured.**
 
   | Rank | Health | Damage | XP |
