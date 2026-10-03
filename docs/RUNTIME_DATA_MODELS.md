@@ -1543,6 +1543,29 @@ All **measured** (2026-09-10/11).
   `visible` reads 0 far away and is rewritten by the game within a second;
   `inviewCheck` is not the culling flag; `Enemy_Parent_obj` has 312 variables, none
   a minimap flag. **Measured.**
+- **Rarity setup.** `EnemyRaritySettings(typeId)` runs from `Enemy_Parent_obj`'s
+  Alarm 4 with the monster as `self`, after the spawner has set `enemyRarity`
+  (1 normal, 2 champion, 3 rare, 4 ancient) and filled `enemyAffix`/`affixList`,
+  and before the stats, affix effects and health bar are built; a rarity or
+  affix written at its entry is built by the game as if it had rolled that way.
+  **Measured** 2026-09-05 on ordinary monsters (entry and exit state identical;
+  ForgePact README § "Tyrant's Crown"). Bosses, the `Enemy_Child_Boss_obj`
+  family, descend from `Enemy_Parent_obj` and so take the same alarm; that the
+  rarity sliders raised an Anubis boss's health about ninefold (a player report
+  against ForgePact 1.4.1) shows they reach this hook, and ForgePact traced it
+  itself on 2026-10-02: `Karp_King_obj`, `Damien_obj`, `Uber_Damien_obj` and
+  `Uber_Anubis_obj` each entered and left it (**Measured**; § 13.7, "Bosses at
+  a forced rank"). The game's body of the script was not read: its call sites
+  sit in a region the decompiler refuses, so whether a boss takes a branch of
+  its own there is **not established**.
+  [boss rarity, Static reading](../ForgePact/docs/boss-rarity-research.md#static-reading)
+- ForgePact's rarity mods all write at that entry, through one shared hook.
+  The Monster Rarity sliders and Tyrant's Crown raise ordinary monsters, and
+  the sliders skip any instance whose object descends from
+  `Enemy_Child_Boss_obj` (ancestry, `IsDescendantOf`, not a health threshold);
+  the Bosses control (`bossrarity`, issue #44) raises only those, at rarity 1,
+  to 3 or 4. Instances a monster creates are left alone by all three, because
+  a re-raised split child splits again. **Our code**, not a game fact.
 
 [population performance §2.2](../ForgePact/docs/population-performance-analysis.md#22-who-gets-a-step),
 [§2.3](../ForgePact/docs/population-performance-analysis.md#23-what-runs-for-every-living-monster-every-frame),
@@ -1901,6 +1924,26 @@ From AFK FARM's 6,471 recorded packets and 214 capture sessions, 2026-09-17 to 0
   - protected health, damage and XP.
 
   So AFK FARM's town builds a bestiary of real monsters from them.
+- **A monster's damage and XP live behind protected-store keys. Measured 2026-10-02** (ForgePact#44's Live procedure 1b, an identity control on the research probe's read path): `damage`, `killExperience` and `experience` do not hold the values themselves. Like `enemy_hp`, each holds a protected-store key: 176880, 176863 and 176879 on the ordinary monsters and the rank-1 Karp King read, 176876, 176859 and 176875 on the rank-4 Karp King. The record a key names, read with `PC_GetVariableGMLWrapper(key)` (which agreed with `GPV` on `gDataProtected[177]` in the same session), holds the monster's damage and XP. An ordinary `Skeleton_Mage_Fire_obj` raised by ForgePact's Monster Rarity sliders to rank 3 and 4 read, through those keys, damage 257 / 360 / 515 (×1.40, ×2.00 against the table's ×1.53, ×1.90, within 10%) and XP on kill 221 / 943 / 1387 (×4.27, ×6.28 against the exact ×4.25, ×6.25, within 2%; the record behind `experience`, 96 / 410 / 603, moved the same way). So the records behind `damage` and `killExperience` hold a monster's damage and its XP on kill. Reading either variable directly (`variable_instance_get(inst, "damage")`) returns the key, a plausible-looking number that has nothing to do with damage. The same spawns' health was not a control: ×5.69 at rank 3 and ×5.31 at rank 4, one spawn each. MK15-MK17 in `hs-game-sdk/curated/monster_rank_measurements.json`.
+- **Bosses at a forced rank.** A boss is an instance whose object descends from `Enemy_Child_Boss_obj`. None is in AFK FARM's packets; these rows are ForgePact's Bosses control (issue #44) writing the rank at the entry of `EnemyRaritySettings`, from Live procedure 1 and Live procedure 1b, 2026-10-02 (Nightmare, Outskirts of Inoya, zone level 170; one spawn and one kill per row; [boss rarity, Live procedure 1](../ForgePact/docs/boss-rarity-research.md#live-procedure-1) and [Live procedure 1b](../ForgePact/docs/boss-rarity-research.md#live-procedure-1b)). Health was read through the protected-store getter the probe's own control proved. In Live 1 damage and XP were read only through unproven keys, so they are **not observed** there; Live 1b counted the same key reads of `damage` and `killExperience` (the record each variable's key names, not the variable) because its identity control (above) proved them.
+
+  | Boss | Session | Rank written | Health | Health ratio to its rank-1 self | Damage, XP | `DropItem` rank argument | Drops per kill (`itemdrops.jsonl` lines) |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | `Karp_King_obj` | Live 1 | none (rank 1) | 44,625,000 (two spawns) | 1 | not observed | no line at its traced death | 0 traced; 20 on an untraced kill |
+  | `Karp_King_obj` | Live 1 | 4 | 252,242,812 | **×5.65** (5.6525) | not observed | no line at its traced death | 0 (traced) |
+  | `Karp_King_obj` | Live 1 | 3 | not read | — | not observed | 3 (one line, no rank-1 anchor) | 20 (traced) |
+  | `Damien_obj` | Live 1 | 4 | 159,906,250 | no rank-1 base | not observed | not traced | not counted |
+  | `Uber_Damien_obj` | Live 1 | 4 | 1,306,210,937 | no rank-1 base | not observed | not traced | not counted |
+  | `Uber_Anubis_obj` | Live 1 | 4 | 4,451,343,750 | no rank-1 base | not observed | not traced | not counted |
+  | `Karp_King_obj` | Live 1b | none (rank 1) | 44,625,000 (three spawns) | 1 | read through the keys in `damage` and `killExperience`: 217, 4,950 | 1 | 10 (traced) |
+  | `Karp_King_obj` | Live 1b | 4 | 210,992,578 | **×4.73** (4.7281) | read through the keys in `damage` and `killExperience`: 455 (**×2.10**, 2.0968); 30,940 (**×6.25**, 6.2505) | **4** | 12 (traced) |
+
+  - **Health. Measured 2026-10-02:** one Karp King, raised to rank 4 by ForgePact with its 3-affix top-up, had ×5.65 its rank-1 health in Live 1 (affixes 16 Multishot, 17 Treasure Gobbler, 25 Pyromaniac) and ×4.73 in Live 1b (12 Fire Enchanted, 20 Punisher, 31 Antimagus), both above the ordinary monsters' rank-4 median of ×4.23. **Not established:** whether a boss scales on health differently from an ordinary monster. Each sample's topped-up affixes were built into the same health, the two sessions disagree, and neither had a health control (Live 1b's ordinary monster read ×5.31 at rank 4), so these are the feature's effect rather than the game's rank scaling for a boss alone. `hs_game_sdk.monster_rank_model` keeps this as the open hypothesis `boss_hp_follows_rank_table`; MK6, MK7, MK9, MK19 and MK20 in `hs-game-sdk/curated/monster_rank_measurements.json`.
+  - **Damage and XP. Measured 2026-10-02** (Live procedure 1b, one Karp King raised to rank 4, the same spawn; each value is the record the variable's protected-store key names, not the variable): damage ×2.10 (217 -> 455, through `damage`'s key) and XP on kill ×6.25 (4,950 -> 30,940, through `killExperience`'s key; `experience`'s record 2,152 -> 13,452, ×6.25). XP took the table's exact rank-4 row; damage rose ×2.10 against the table's ×1.90; whether a boss's damage follows the row is not established: 0.4% outside the 10% the identity control was held to, while the control itself read 8.4% below the table at rank 3 and 5.5% above it at rank 4 (×2.00), and on one boss, one spawn, whose affixes differed from the control's. The same unmatched affixes leave XP open too: `monster_rank_model`: `boss_xp_follows_rank_table` `None` (measured ×6.2505 against ×6.25 on one boss, not established), `boss_damage_follows_rank_table` `None` (open) (MK21, MK22).
+  - **The rank written holds through the setup. Measured 2026-10-02** (a readback of the hook's own write): each of the five raised bosses entered `EnemyRaritySettings` at `enemyRarity` 1 and still carried 3 or 4 at its exit. The Monster Rarity sliders at 100% ancient left a Karp King at 1.
+  - **Drop rank. Measured 2026-10-02** (Live procedure 1b): the unraised Karp King died with `DropItem`'s first argument 1 and the one raised to rank 4 with 4, while the same session's ordinary control (a `Skeleton_Mage_Fire_obj` the sliders raised to 4) died with 4, as in Live 1 (MK14, MK18). On this one boss the drop rank was the rank written, but the spawn carried the same affix top-up the identity control did not share, so whether a raised boss's drop rank is the rank written is not established: `boss_drop_rank_reaches_dropitem` `None` (MK23). No `DropItemBoss` call was seen at either death. In Live 1 the rank-1 and rank-4 Karp Kings' traced deaths had printed no `DropItem` line and dropped nothing, so that session had no anchor.
+  - **Drops per kill: not observed as an effect.** Live 1b's traced rank-1 kill added 10 lines, the rank-4 one 12; one kill each, with other monsters dying nearby, so not a count of extra drops (MK24). A boss's death sometimes entered none of the instrumented drop routines (no `DropItem`/`DropItemBoss` call, no gold, no gem or rune counter, no `itemdrops.jsonl` line; `DropBossParts` was not instrumented, so whether such a death ran any drop routine at all is not established): Live 1 saw it on two traced kills, Live 1b on an untraced one 1,200 px from the hero, and Live 1b also on an ordinary rank-3 monster killed the same way. What decides it is not established. The `DropBossGems` and `DropBossRunes` counters stayed 0 at every Live 1b kill, raised or not.
+  - **The look. Not observed:** in Live 1b the raised Karp King's HUD name bar kept the ordinary style (after a control showed that writing `enemyRarity` after the setup did not restyle it within 2 s: one Karp King, one shot), and its body showed no change but a fire burst whose source could not be separated from its Fire Enchanted affix.
 
 ### 13.8 Monsters of special content (`specialType`)
 
