@@ -357,6 +357,77 @@ class PlanTests(SpeedCase):
                          {"items": 3, "owner_items": 2, "with_default": 1, "with_reversible": 1})
 
 
+PLAN_PATH = "C:/repo/.claude/workorders/zz-plan.md"
+CONTEXT_PATH = "C:/repo/.claude/workorders/zz-context.md"
+REPORT_PATH = "C:/scratch/criteria/report.txt"
+
+
+class WorkorderReadsTests(SpeedCase):
+    """What the agents read of the workorder's own files, per role, so the
+    brief's and the digest's effect can be measured against a baseline."""
+
+    def implementer(self, first_idx=0):
+        i = first_idx
+        return (twa.tool_turn(10, i + 1, "Read", {"file_path": PLAN_PATH}, result="p" * 2048)
+                + shell(20, i + 2, f'cd C:/repo && cat "{PLAN_PATH}"', result="p" * 1024)
+                + shell(30, i + 3, f"py -3 tools/workorder_brief.py {PLAN_PATH} --round 1", result="b" * 512)
+                + shell(40, i + 4, f"py -3 .claude/skills/workorder/section.py {CONTEXT_PATH} 'Hazards'",
+                        result="c" * 1024)
+                # Controls: a tool that takes the plan as its argument is not a read of it.
+                + shell(50, i + 5, f"py -3 tools/run_criteria.py {PLAN_PATH} --item a --jobs auto", result="r" * 4096)
+                + shell(60, i + 6, f"git add -- {PLAN_PATH} && git commit -m x", result="ok")
+                + shell(70, i + 7, f"py -3 tools/plan_lint.py {PLAN_PATH}", result="ok")
+                + twa.tool_turn(80, i + 8, "Read", {"file_path": "C:/repo/tools/plan_lint.py"}, result="x" * 4096))
+
+    def verifier(self, first_idx=0):
+        i = first_idx
+        return (twa.tool_turn(10, i + 1, "Read", {"file_path": REPORT_PATH}, result="r" * 3072)
+                + shell(20, i + 2, f'cat "{REPORT_PATH}"', result="r" * 1024)
+                + shell(30, i + 3, f"type {REPORT_PATH}", result="r" * 1024, name="PowerShell")
+                # Controls: the digest and a grep of the report are not whole reads of it.
+                + shell(40, i + 4, 'py -3 tools/run_criteria.py --digest "C:/scratch/criteria"', result="d" * 512)
+                + shell(50, i + 5, f"grep -n FAIL {REPORT_PATH}", result="x"))
+
+    def test_an_implementers_reads_by_route_and_the_controls(self):
+        b = self.builder().driver([twa.turn(0, 0), twa.turn(900, 1)])
+        b.subagent("implementer", "implementer:r1", self.implementer(10))
+        b.subagent("verifier", "verifier:r1", self.verifier(30))
+        reads = self.report(b)["sessions"][0]["workorder_reads"]
+        self.assertEqual(reads["implementer"], {
+            "agents": 1, "plan_calls": 2, "plan_kb": 3.0, "context_calls": 1, "context_kb": 1.0,
+            "brief_calls": 1, "brief_kb": 0.5, "report_calls": 0, "report_kb": 0.0})
+        self.assertEqual(reads["verifier"], {
+            "agents": 1, "plan_calls": 0, "plan_kb": 0.0, "context_calls": 0, "context_kb": 0.0,
+            "brief_calls": 0, "brief_kb": 0.0, "report_calls": 3, "report_kb": 5.0})
+
+    def test_the_aggregate_sums_each_role_over_sessions(self):
+        one = self.builder("ssn11111-0000-0000-0000-000000000000").driver([twa.turn(0, 0), twa.turn(900, 1)])
+        one.subagent("implementer", "implementer:r0", self.implementer(10))
+        two = self.builder("ssn22222-0000-0000-0000-000000000000").driver([twa.turn(0, 0), twa.turn(900, 1)])
+        two.subagent("implementer", "implementer:r0", self.implementer(10))
+        two.workflow_agent("wf_a", "implementer", "item-implementer:a:a1:r0", self.implementer(30))
+        two.subagent("verifier", "verifier:r0", self.verifier(50))
+        report = ws.build([self.transcript(one), self.transcript(two)], [], None, None)
+        agg = report["aggregate"]["workorder_reads"]
+        self.assertEqual((agg["implementer"]["agents"], agg["implementer"]["plan_calls"],
+                          agg["implementer"]["plan_kb"], agg["implementer"]["brief_calls"]), (3, 6, 9.0, 3))
+        self.assertEqual(agg["verifier"]["report_calls"], 3)
+        self.assertEqual(report["sessions"][0]["workorder_reads"]["implementer"]["plan_calls"], 2,
+                         "control: one session alone is not the sum")
+
+    def test_the_text_format_prints_the_implementer_and_verifier_rows(self):
+        b = self.builder().driver([twa.turn(0, 0), twa.turn(900, 1)])
+        b.subagent("implementer", "implementer:r1", self.implementer(10))
+        b.subagent("verifier", "verifier:r1", self.verifier(30))
+        b.subagent("planner", "Plan zz", span(5, 8, 60))
+        text = ws.format_text(self.report(b))
+        rows = [l for l in text.splitlines() if l.startswith("  workorder reads")]
+        self.assertEqual(len(rows), 2, text)  # the session and the aggregate
+        self.assertIn("implementer (1 agents): plan 2/3.0, context 1/1.0, brief 1/0.5, report 0/0.0", rows[0])
+        self.assertIn("verifier (1 agents): plan 0/0.0, context 0/0.0, brief 0/0.0, report 3/5.0", rows[0])
+        self.assertNotIn("planner", rows[0], "only the implementer's and the verifier's rows")
+
+
 class CliTests(SpeedCase):
     def test_json_output_keys(self):
         b = self.builder().driver([twa.turn(0, 0), twa.turn(100, 1)])
@@ -367,7 +438,7 @@ class CliTests(SpeedCase):
         self.assertEqual(set(report), {"generated_utc", "until", "sessions", "aggregate"})
         keys = {"span_minutes", "busy_minutes", "serial_minutes", "concurrency", "single_agent_share",
                 "parallel_share", "phases", "launches", "items", "verifies", "run_criteria",
-                "owner_blocks", "implementer_checks", "routes", "lanes"}
+                "owner_blocks", "implementer_checks", "routes", "lanes", "workorder_reads"}
         self.assertLessEqual(keys, set(report["aggregate"]))
         self.assertLessEqual(keys | {"path", "first_event", "last_event"}, set(report["sessions"][0]))
 

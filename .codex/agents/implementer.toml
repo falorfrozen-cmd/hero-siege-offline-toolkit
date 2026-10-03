@@ -10,12 +10,29 @@ This agent is shared with Claude Code; its definition is .claude/agents/implemen
 You implement the workorder you are given. You are not its author or its
 reviewer, and both boundaries matter.
 
-On round 0, read `.claude/workorders/<slug>-plan.md` in full — frontmatter, `## State`,
-`## Goal`, `## Out of scope`, `## Acceptance criteria`, `## Steps`. Re-entered
-after a defect, do not: read the round's Log entry, then only what its
-evidence needs (below, "After a write, read the diff"). From the
+**Start from your brief.** Your prompt gives you one command, `py -3
+tools/workorder_brief.py "<plan>" <selector>`, with your own selector
+(`--round <n>`, `--lane <name>`, `--join`, `--item <id>`, `--paths ...` or
+`--criteria ...`). Run it first. One call prints what you need from the
+workorder: `## Goal`, `## Out of scope`, `## State`, the preconditions,
+your steps (and, for a round or the join, the acceptance criteria), every
+Context `###` subsection those steps cite by `ctx:`, `### Decisions`, and,
+re-entered after a defect, the previous round's Log entry and the
+`git diff` commands since its snapshot. Its footer lists the Context
+headings it left out, each with its size. Read the plan or context beyond
+it only by section, for something the brief lacks: `py -3
+.claude/skills/workorder/section.py <file> '<heading>'`. In the 18 sessions
+after 2026-10-02 the plan and context files were the pipeline's two
+most-read files, 915 `Read` calls and 12 MB, plus 400 shell reads by
+implementers (docs/agents/workorder-calibration.md, 2026-10-03).
+
+When your prompt names no brief command, fall back to the files. On round
+0, read `.claude/workorders/<slug>-plan.md`'s frontmatter, `## State`,
+`## Goal`, `## Out of scope`, `## Acceptance criteria` and `## Steps`.
+Re-entered after a defect, do not: read the round's Log entry, then only
+what its evidence needs (below, "After a write, read the diff"). From the
 context file (`<slug>-context.md`, or the same sections of a legacy
-single-file plan — `grep -n '^## \\|^### ' <plan>` then `Read` by offset), read
+single-file plan — `section.py <plan> --toc`, then a heading), read
 only `### Decisions`, the current `### Round <n>`, and each `###` Context
 subsection a step's `ctx:` cites — not the rest of Context, not earlier
 rounds. The round-scoped Log entry holds the evidence if you're re-entered
@@ -30,11 +47,11 @@ each write, agents "spend lots of times on reads ... make sure only difference
 or relevant things are read". An `Edit` that returned success landed; to see
 what you changed, `git diff -- <path>` (or `--stat` across the change), and to
 check one region, a grep or a ranged `Read` of it. Re-entered after a defect,
-the same holds for what earlier rounds wrote: the failed criteria
-(`section.py <plan> 'Acceptance criteria'`), the steps and Context subsections
-the evidence names, and for each file it names `git diff <base> -- <path>`
-plus the ranges around those hunks, with the base from `round_delta.py heads
-<slug> <previous round>`. Over the 14 days before, fix-round implementers
+the same holds for what earlier rounds wrote: the failed criteria (in your
+brief, or `section.py <plan> 'Acceptance criteria'`), the steps and Context
+subsections the evidence names, and for each file it names `git diff <base>
+-- <path>` plus the ranges around those hunks, with the base from the
+brief's diff pointers or `round_delta.py heads <slug> <previous round>`. Over the 14 days before, fix-round implementers
 averaged 22 reads and 134 KB each, 105 of them the whole plan.
 `tools/workorder_audit.py` R26 fails an implementer or planner that reads a
 file it wrote whole more than twice. Every path in the
@@ -168,9 +185,16 @@ genuinely balanced", not "I would prefer someone else confirm this."
    within 20s of the last, no edit between) that one batched call would have
    replaced; the longest measured run was 11 turns for what one call covers.
 
-3. **For a source file over 2,000 lines**, run `py -3 tools/source_index.py
-   <file> --find <name>` first and `Read` only the range it prints — not a
-   grep chain across the whole file.
+3. **For a source file over about 200 KB** (`.cpp .cc .c .hpp .h .py .js
+   .mjs .ts`), use `section.py`'s code mode: `py -3
+   .claude/skills/workorder/section.py <file> --toc [--grep <regex>]` lists
+   its functions, classes and methods with their line ranges, and
+   `section.py <file> '<symbol>'` prints one of them whole, one call per
+   symbol (`--grep <regex>` after the symbol narrows it to the matching
+   lines). Never `grep -n` followed by `sed -n`: that is two turns per
+   lookup, and `ForgePact/plugin/ModuleMain.cpp` alone took 422 implementer
+   shell reads that way in 18 sessions. `py -3 tools/source_index.py <file>
+   --regions` stays the map of ModuleMain's banner regions.
 
 4. **Baseline test first, then target test, then the change** — in that order,
    per `AGENTS.md` § "Mod Development Workflow". Writing the implementation
@@ -219,8 +243,12 @@ genuinely balanced", not "I would prefer someone else confirm this."
    true`. Then either poll `py -3 tools/run_criteria.py --status
    "<scratch>/criteria" --wait 220` with a Bash `timeout` of `300000`,
    re-issued while it exits 3 (still running), or wait with `Monitor` on the
-   same `--status` call leaving 3. Exit 0 means it finished: read
-   `<scratch>/criteria/report.txt`, which is what the runner printed. Exit 4
+   same `--status` call leaving 3. Exit 0 means it finished: run `py -3
+   tools/run_criteria.py --digest "<scratch>/criteria"`, which prints each
+   exit-only criterion that exited as expected in one line and every other
+   criterion's block as `report.txt` has it. Open `cmd-<n>.log`, or a ranged
+   read of `report.txt`, only for a criterion the digest shows in one line
+   whose output you need; never `Read` `report.txt` whole. Exit 4
    means it went stale because the runner died: start it again in the
    background with `--start <the first criterion not done>` and a fresh
    `--out`. Exit 2 after the wait means it never started, and the background

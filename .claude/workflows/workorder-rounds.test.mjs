@@ -485,13 +485,15 @@ test('a fresh launch past round 0 tells the implementer it is re-entered; round 
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
   await run({ ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' } }, reply)
-  assert.match(prompts['implementer:r1'], /re-entered after a defect: read '## Log' > '### Round 0'/)
+  // 2k: the brief (`--round 1`) prints the round's Log entries, so the prompt
+  // points at them there instead of sending the implementer to read the Log.
+  assert.match(prompts['implementer:r1'], /re-entered after a defect: your brief prints '## Log' > '### Round 0'/)
   // A relaunch after a PLAN-DEFECT raised in round 1 itself keeps `round: 1`,
   // and the newer evidence is under that round's own heading.
   assert.match(prompts['implementer:r1'], /and '### Round 1' if it is already there/)
-  assert.match(prompts['implementer:r1'], /newer evidence\), for the evidence before anything else\. Then read only what that evidence needs/)
+  assert.match(prompts['implementer:r1'], /newer evidence\); read that evidence before anything else\. Then read only what that evidence needs beyond the brief/)
   // The owner, 2026-10-02: after a write, read the diff, not the file.
-  assert.match(prompts['implementer:r1'], /not the whole plan, and not a file earlier rounds changed: read its diff \(`git diff <base> -- <path>`/)
+  assert.match(prompts['implementer:r1'], /not the whole plan, and not a file earlier rounds changed: read its diff \(the brief's `git diff` lines, or `git diff <base> -- <path>`/)
   assert.ok(prompts['implementer:r1'].includes('round_delta.py heads zz 0'), prompts['implementer:r1'])
   await run(BASE, reply)
   assert.doesNotMatch(prompts['implementer:r0'], /re-entered after a defect|read its diff/)
@@ -1953,7 +1955,7 @@ test('background: the rounds verifier, a reach re-verify and the items gate poll
     assert.match(p, /run_in_background: true/)
     assert.match(p, /py -3 tools\/run_criteria\.py --status "<your scratchpad>\/criteria" --wait 220/)
     assert.match(p, /Bash timeout of 300000, re-issued while it exits 3/)
-    assert.match(p, /criteria\/report\.txt/)
+    assert.match(p, /run_criteria\.py --digest "<your scratchpad>\/criteria"/)
   }
   const rounds = {}
   await run(BASE, (label, prompt) => { rounds[label] = prompt; return standard()(label) })
@@ -2022,7 +2024,7 @@ test('amend: items mode -- a stated CORRECTION is saved, amended, checked, the t
   assert.match(prompts['amend-save:a:r0'], /Run exactly: py -3 tools\/amend_check\.py save "p\.md" "c\.md"/)
   assert.match(prompts['amend-check:a:r0'], /Run exactly: py -3 tools\/amend_check\.py check "p\.md" "c\.md"/)
   assert.equal(opts['amendment: zz a:r0'].agentType, 'planner')
-  assert.equal(opts['amendment: zz a:r0'].model, undefined, 'the amendment planner runs at its own default tier')
+  assert.equal(opts['amendment: zz a:r0'].model, 'opus', 'the amendment planner always runs on opus, never fable')
   assert.deepEqual(opts['amendment: zz a:r0'].schema.properties.verdict.enum, ['PLAN-READY', 'NOT AN AMENDMENT'])
   // The correction verbatim, and only its own field; the whole evidence block follows it.
   assert.equal(between(prompts['amendment: zz a:r0'], 'Apply this correction and nothing else:\n\n', '\n\nThe PLAN-DEFECT evidence'), FIX_TEXT)
@@ -2221,4 +2223,136 @@ test('amend: rounds mode -- a lane\'s PLAN-DEFECT is unchanged; the join\'s is a
   assert.equal(joined.result.outcome, 'PASS')
   assert.deepEqual(joined.calls.filter(c => c.startsWith('implementer')), ['implementer:code:r0', 'implementer:docs:r0', 'implementer:join:r0', 'implementer:r0'])
   assert.match(prompts['implementer:r0'], /you own every lane's file set and the join's steps/)
+})
+
+// --- 2k: every implementer starts from its brief -----------------------------
+//
+// Measured 2026-10-03 (workorder-calibration.md, "Plan slices, the amendment
+// tier and symbol lookup"): implementers spent 5-20 Read/sed calls slicing the
+// plan and the context file for themselves. The script cannot read a file, so
+// each prompt names the one command that prints that implementer's slice
+// (`tools/workorder_brief.py`) with its own selector, and keeps the plan and
+// context paths as the fallback.
+const BRIEF = 'py -3 tools/workorder_brief.py "p.md" --context "c.md"'
+const briefOf = p => { const m = /`py -3 tools\/workorder_brief\.py [^`]*`/.exec(p || ''); return m ? m[0].slice(1, -1) : null }
+const hasPlanPaths = p => /Workorder: p\.md \(context file: c\.md\)\./.test(p)
+
+test('brief: rounds mode names --round, --since-round past round 0, and --amended only on the amended re-run', async () => {
+  const prompts = {}
+  await run(BASE, recording(prompts, standard()))
+  assert.equal(briefOf(prompts['implementer:r0']), `${BRIEF} --round 0`)
+  assert.ok(hasPlanPaths(prompts['implementer:r0']), 'the plan and context paths stay as the fallback')
+  // The brief is the first thing the implementer runs: only the workorder line comes before it.
+  assert.match(prompts['implementer:r0'], /^Workorder: p\.md \(context file: c\.md\)\. This is round 0\. Run `py -3 tools\/workorder_brief\.py/)
+  await run({ ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' } }, recording(prompts, standard()))
+  assert.equal(briefOf(prompts['implementer:r1']), `${BRIEF} --round 1 --since-round 0`)
+  assert.ok(hasPlanPaths(prompts['implementer:r1']))
+  // The brief carries the round's Log entries and the criteria now; the prompt stops sending the implementer for them.
+  assert.ok(!prompts['implementer:r1'].includes(`section.py "p.md" 'Acceptance criteria'`), prompts['implementer:r1'])
+  assert.doesNotMatch(prompts['implementer:r1'], /re-entered after a defect: read '## Log'/)
+  // Amended re-run: the first attempt has no --amended, the re-run does.
+  const seen = []
+  let impls = 0
+  await run(BASE, (label, prompt) => {
+    if (label === 'implementer:r0') seen.push(prompt)
+    return standard({ implementer: () => (impls++ === 0 ? CORRECTED() : DONE), ...AMEND_OK })(label)
+  })
+  assert.equal(seen.length, 2)
+  assert.equal(briefOf(seen[0]), `${BRIEF} --round 0`)
+  assert.equal(briefOf(seen[1]), `${BRIEF} --round 0 --amended`)
+})
+
+test('brief: a single-file plan gets no --context, and the brief keeps the plan path double-quoted', async () => {
+  const prompts = {}
+  await run({ ...BASE, contextPath: 'p.md' }, recording(prompts, standard()))
+  assert.equal(briefOf(prompts['implementer:r0']), 'py -3 tools/workorder_brief.py "p.md" --round 0')
+  assert.match(prompts['implementer:r0'], /^Workorder: p\.md\. This is round 0\./)
+})
+
+test('brief: each lane gets --lane with its own name, the join gets --join', async () => {
+  const prompts = {}
+  await run(LANED, (label, prompt, o) => { prompts[label] = prompt; return laneReply()(label, prompt, o) })
+  assert.equal(briefOf(prompts['implementer:code:r0']), `${BRIEF} --lane code`)
+  assert.equal(briefOf(prompts['implementer:docs:r0']), `${BRIEF} --lane docs`)
+  assert.ok(!prompts['implementer:code:r0'].includes('--lane docs'), 'control: a lane is not handed another lane\'s brief')
+  assert.equal(briefOf(prompts['implementer:join:r0']), `${BRIEF} --join`)
+  for (const l of ['implementer:code:r0', 'implementer:docs:r0', 'implementer:join:r0']) assert.ok(hasPlanPaths(prompts[l]), l)
+  // A lane's brief carries no Log, so a laned relaunch past round 0 still sends it to the Log; the join's carries the criteria.
+  await run({ ...LANED, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' } }, (label, prompt, o) => { prompts[label] = prompt; return laneReply()(label, prompt, o) })
+  assert.match(prompts['implementer:code:r1'], /re-entered after a defect: read '## Log' > '### Round 0'/)
+  assert.ok(prompts['implementer:code:r1'].includes(`section.py "p.md" 'Acceptance criteria'`))
+  assert.match(prompts['implementer:join:r1'], /re-entered after a defect: read '## Log' > '### Round 0'/)
+  assert.ok(!prompts['implementer:join:r1'].includes(`section.py "p.md" 'Acceptance criteria'`), 'the join\'s brief prints every criterion')
+})
+
+test('brief: a patch round gets --paths from the findings\' where; with no path there is no brief line', async () => {
+  const prompts = {}
+  await run(PATCH_BASE, recording(prompts, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce(FIXED) })))
+  assert.equal(briefOf(prompts['patch-implementer:r1']), `${BRIEF} --paths "docs/x.md"`)
+  assert.ok(hasPlanPaths(prompts['patch-implementer:r1']))
+  const three = [FIXED, { ...FIXED, where: 'tools/a.py:9' }, { ...FIXED, where: 'docs/x.md:7' }]
+  let seen = 0
+  await run(PATCH_BASE, recording(prompts, standard({ delta: SMALL(), 'docs-sync-reviewer': () => (seen++ === 0 ? { ...CLEAN, blocking: three } : CLEAN) })))
+  assert.equal(briefOf(prompts['patch-implementer:r1']), `${BRIEF} --paths "docs/x.md,tools/a.py"`, 'each path once, in finding order')
+  // Control: a where that names no file (no `/` and no `.`) gives no brief line at all.
+  await run(PATCH_BASE, recording(prompts, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce({ ...FIXED, where: 'general' }) })))
+  assert.ok(prompts['patch-implementer:r1'], 'control: the patch round ran')
+  assert.equal(briefOf(prompts['patch-implementer:r1']), null)
+  assert.ok(hasPlanPaths(prompts['patch-implementer:r1']))
+})
+
+test('brief: an item gets --item, --base from the launch heads after its first attempt, and --amended on the amended retry', async () => {
+  let checks = 0
+  const failing = () => (checks++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'npm test', status: 'fail', evidence: 'expected 2 got 3' }], pending_human: [] } : PASS)
+  const { prompts } = await runTimed(ITEMS_BASE, itemsReply({ 'item-verifier:a:': failing }))
+  assert.equal(briefOf(prompts['item-implementer:a:a1:r0']), `${BRIEF} --item a`)
+  assert.equal(briefOf(prompts['item-implementer:b:a1:r0']), `${BRIEF} --item b`)
+  assert.equal(briefOf(prompts['item-implementer:a:a2:r0']), `${BRIEF} --item a --base .=base000`)
+  assert.ok(hasPlanPaths(prompts['item-implementer:a:a1:r0']))
+  // Control: the item-check verifier runs no brief.
+  assert.equal(briefOf(prompts['item-verifier:a:a1:r0']), null)
+  const am = await runAmend(ITEMS_BASE, itemsReply({ 'item-implementer:a:a1:': CORRECTED(), ...AMEND_OK, 'amend-items:': tableOf(ITEMS_BASE.items) }))
+  assert.equal(briefOf(am.prompts['item-implementer:a:a2:r0']), `${BRIEF} --item a --amended --base .=base000`)
+})
+
+test('brief: a review fixer gets --paths, a gate-fix gets --criteria from its numbered failures, and an unnumbered one none', async () => {
+  let passes = 0
+  const docs = () => (passes++ === 0
+    ? { ...CLEAN, blocking: [{ where: 'panel/a.css:12', problem: 'wrong token', evidence: 'x', fix: 'use --accent' }], reviewed_heads: [{ repo: '.', sha: 'h1' }] }
+    : { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'h2' }] })
+  const fixed = await runTimed(ITEMS_BASE, itemsReply({ 'docs-sync-reviewer': docs }))
+  assert.equal(briefOf(fixed.prompts['fix-implementer:fix-1:r0']), `${BRIEF} --paths "panel/a.css"`)
+  assert.ok(hasPlanPaths(fixed.prompts['fix-implementer:fix-1:r0']))
+  let gates = 0
+  const numbered = () => (gates++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [CRIT(2, 'fail'), CRIT(3, 'pass'), CRIT(5, 'fail')], pending_human: [] } : PASS)
+  const g = await runTimed(ITEMS_BASE, itemsReply({ 'verifier:': numbered }))
+  assert.equal(briefOf(g.prompts['fix-implementer:gate-fix-1:r0']), `${BRIEF} --criteria 2,5`)
+  // Control: a failure with no number (here a structural finding) gives a gate-fix no brief line.
+  gates = 0
+  const unnumbered = () => (gates++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [], other_defects: ['a stray file'], pending_human: [] } : PASS)
+  const u = await runTimed(ITEMS_BASE, itemsReply({ 'verifier:': unnumbered }))
+  assert.ok(u.prompts['fix-implementer:gate-fix-1:r0'], 'control: the gate-fix ran')
+  assert.equal(briefOf(u.prompts['fix-implementer:gate-fix-1:r0']), null)
+  assert.ok(hasPlanPaths(u.prompts['fix-implementer:gate-fix-1:r0']))
+})
+
+test('digest: every whole-tree verifier judges from run_criteria.py --digest and never reads report.txt whole; item checks do not', async () => {
+  const digest = p => {
+    assert.ok(p.includes('py -3 tools/run_criteria.py --digest "<your scratchpad>/criteria"'), p)
+    assert.match(p, /never read `?report\.txt`? whole/i)
+    assert.match(p, /cmd-<n>\.log/)
+  }
+  const rounds = {}
+  await run(BASE, recording(rounds, standard()))
+  digest(rounds['verifier:r0'])
+  await run({ ...BASE, fullVerify: true }, recording(rounds, standard()))
+  digest(rounds['verifier:r0'])
+  const scopedPass = { verdict: 'PASS', criteria: [CRIT(1, 'pass'), CRIT(2, 'pass'), CRIT(3, 'pass')], pending_human: [] }
+  const reach = await reachRun([FAILED_2, scopedPass])
+  digest(reach.prompts['verifier:r1'])
+  const items = await runTimed(ITEMS_BASE, itemsReply())
+  digest(items.prompts['verifier:r0'])
+  // Control: the item check reads its own foreground output, and its --out naming is unchanged.
+  assert.ok(!items.prompts['item-verifier:a:a1:r0'].includes('--digest'))
+  assert.ok(items.prompts['item-verifier:a:a1:r0'].includes('--out "<your scratchpad>/item-a-a1"'))
 })

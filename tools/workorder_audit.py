@@ -210,10 +210,64 @@ GIT_SUBCOMMAND_RE = re.compile(
     re.IGNORECASE)
 
 
+# `git config` reads or writes depending on its arguments. These read whatever
+# else is on the line; a write option, or a key followed by a value, writes.
+GIT_CONFIG_READ_OPTIONS = frozenset({
+    "--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color",
+    "--get-colorbool", "--list", "-l",
+})
+GIT_CONFIG_WRITE_OPTIONS = frozenset({
+    "--add", "--unset", "--unset-all", "--replace-all", "--rename-section",
+    "--remove-section", "--edit", "-e",
+})
+# Options that take a value as the next word, so it is not a key or value.
+GIT_CONFIG_VALUED_OPTIONS = frozenset({"--file", "-f", "--blob", "--type", "--default", "--comment"})
+# git >= 2.46 spells the action as a word: `git config get <key>`.
+GIT_CONFIG_READ_ACTIONS = frozenset({"get", "list"})
+GIT_CONFIG_WRITE_ACTIONS = frozenset({"set", "unset", "rename-section", "remove-section", "edit"})
+_SHELL_SEPARATOR_RE = re.compile(r"&&|\|\||[;|&\n]")
+
+
+def _git_config_reads_only(args: str) -> bool:
+    """Whether `git config <args>` (args cut at the next shell separator) only reads."""
+    words = args.split()
+    if words and words[0] in GIT_CONFIG_READ_ACTIONS:
+        return True
+    if words and words[0] in GIT_CONFIG_WRITE_ACTIONS:
+        return False
+    positional, reads, skip = [], False, False
+    for word in words:
+        if skip:
+            skip = False
+            continue
+        option = word.split("=", 1)[0]
+        if option in GIT_CONFIG_WRITE_OPTIONS:
+            return False
+        if option in GIT_CONFIG_READ_OPTIONS:
+            reads = True
+        elif word.startswith("-"):
+            skip = option in GIT_CONFIG_VALUED_OPTIONS and "=" not in word
+        else:
+            positional.append(word)
+    # `--get <key> [<value-pattern>]` takes two words and still reads; a bare
+    # `<key>` reads, and `<key> <value>` writes.
+    return reads or len(positional) <= 1
+
+
 def _git_mutations(cmd: str) -> List[str]:
-    """Every git subcommand in `cmd` that is not a known read-only one."""
-    return [m.group(2).lower() for m in GIT_SUBCOMMAND_RE.finditer(cmd)
-            if m.group(2).lower() not in GIT_READ_ONLY_SUBCOMMANDS]
+    """Every git subcommand in `cmd` that is not a known read-only one.
+
+    `git config` counts only when its arguments write (`git config core.autocrlf`
+    reads; `git config core.autocrlf false` writes)."""
+    found = []
+    for m in GIT_SUBCOMMAND_RE.finditer(cmd):
+        sub = m.group(2).lower()
+        if sub in GIT_READ_ONLY_SUBCOMMANDS:
+            continue
+        if sub == "config" and _git_config_reads_only(_SHELL_SEPARATOR_RE.split(cmd[m.end():], 1)[0]):
+            continue
+        found.append(sub)
+    return found
 
 SHELL_WRITE_VERB_RE = re.compile(
     r"\b(tee|cp|mv|rm)\b|\bsed\s+-i\w*\b|"
@@ -1799,6 +1853,24 @@ def rule_r26_reread_after_write(session: Session) -> RuleResult:
     return RuleResult("R26", "reread-after-write", passed=not evidence, evidence=evidence)
 
 
+# R27 the amendment tier. An amendment applies one correction someone else
+# already stated, so it never needs the top tier: an amendment planner always
+# runs on opus, never fable. The audit of 2026-10-03 found one that ran on
+# fable, from a driver that spawned it through SKILL.md's owner-scope route
+# and carried the workorder's escalated `planner-tier=` over to it, while its
+# sibling amendment in the same session ran opus. The model read is the one
+# most of the transcript's turns ran on (`AgentTranscript.model`), not the
+# alias that was asked for.
+def rule_r27_amendment_tier(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_subagents(session):
+        model = agent.model or ""
+        if is_amendment(agent) and "fable" in model.lower():
+            evidence.append(f"{agent.label}: ran on {model}; an amendment planner always runs on opus, "
+                            f"never fable -- spawn it with model: opus whatever planner-tier the State records")
+    return RuleResult("R27", "amendment-tier", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -1826,6 +1898,7 @@ ALL_RULES = [
     rule_r24_cheap_routes,
     rule_r25_owner_scope,
     rule_r26_reread_after_write,
+    rule_r27_amendment_tier,
 ]
 
 

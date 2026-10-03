@@ -1112,3 +1112,129 @@ one cost the driver a hand edit of State (`build-dev=held`) and a relaunch.
   the next plans of items.
 - Whether holding a build behind an overlapping running item costs more
   wall time than it saves in builds that would have gone stale.
+
+# Plan slices, the amendment tier and symbol lookup (2026-10-03)
+
+## The question
+
+"After a write, read the diff" (2026-10-02, above) cut what agents re-read
+after their own edits. What did they still read, and which of it could one
+command replace? The audit behind this section asked where the input tokens
+went in the sessions after that change, by agent and by file.
+
+## What was measured
+
+Every subagent transcript under the project's transcript directories (each
+`.meta.json` with its `.jsonl`), split at 2026-10-02T08:28Z, the commit that
+landed "after a write, read the diff". **Caveat: the before and after
+workloads differ, so every before/after figure below is a direction, not a
+controlled A/B.**
+
+Per run, before -> after (cache-read Mtok per run; KB read through `Read`
+per run):
+
+| role | Mtok/run | KB/run | other |
+|---|---|---|---|
+| implementer (opus) | 8.70 -> 2.52 | 110 -> 37 | output 3.8k -> 1.3k tokens; 339 -> 287 runs |
+| planner | 5.38 -> 4.16 | 45 -> 14 | |
+| live-operator | 19.9 -> 4.0 | | |
+| verifier (haiku) | 1.17 -> 0.32 | whole-file 17 -> 30 | the rise is `criteria/report.txt`, 100-217 KB each, read whole |
+| scribe | | whole-read 58 -> 4.6 | |
+| reviewers | about halved | | except instrument-blindness-reviewer 0.65 -> 0.81 |
+
+Input tokens after the cut, about 1.53B in all, by agent:
+
+- implementer (opus): 745M over 283 runs.
+- planner: 272M. Opus ran 49 of those runs for 154M; fable ran 14 for 119M,
+  8.49M a run. The fable runs were first plans, second-or-later replans and
+  one amendment, `amendment: forgepact-74 live2 owner scope inject round`.
+  The driver spawned it by SKILL.md's owner-scope plan-change route and
+  passed the workorder's escalated planner tier along; its sibling
+  amendment in the same session ran opus. None of the 17 amendments run
+  inside a workflow launch ran fable, but nothing there named a model
+  either.
+- instrument-blindness-reviewer: 125M. live-operator: 79M. The other
+  reviewers: about 200M, on sonnet. verifier: 51M. scribe: 26M.
+
+The most-read files after the cut:
+
+- The workorder plan: 448 `Read` calls, 7.9 MB, plus 400 implementer shell
+  reads of workorder files, 1.7 MB.
+- The context file: 467 reads, 4.2 MB.
+- `ForgePact/plugin/ModuleMain.cpp` (2.26 MB): 154 `Read`s (947 KB), 422
+  implementer shell reads (1.19 MB) and 168 planner shell reads (680 KB),
+  mostly `grep -n` followed by `sed -n`, two turns per lookup.
+  `tools/source_index.py --functions` finds 1,204 functions in it, against
+  roughly 1,225 file-scope bodies, and finds none in
+  `hs-game-sdk/cpp/include/hs_game_sdk/player.hpp`, whose functions all sit
+  inside `namespace HeroSiege::Player`.
+- `docs/submodules/ForgePact/instructions.md` (1.0 MB): about 500 calls,
+  about 2.1 MB, although it could already be read by section.
+
+`tools/workorder_speed.py` over the 18 sessions after the cut: concurrency
+0.87, a 15% parallel share and a 47% single-agent share. Agent-minutes by
+phase: implement 1883 (331 agents), amend 1523 (54 agents, 1008 of them sole
+minutes, more than plan's 430), review 1001 (649 agents), verify 699, live
+306, record 247, replan 217 (12). `run_criteria` was called 747 times and
+the Bash limit killed 2. Items `queued_behind_cap` was 0. The implementers'
+check catch rate was 0.34, against 0.38-0.58 before the cut.
+
+## What changed
+
+- **A brief per implementer.** `tools/workorder_brief.py <plan> <selector>`
+  prints one implementer's slice of a workorder in one call: Goal, Out of
+  scope, State, the preconditions, its own steps (and criteria, for a round
+  or the join), each Context subsection those cite by `ctx:`, the
+  Decisions, the previous round's Log entry past round 0, the `git diff`
+  commands since a base, and a footer naming what it left out. Every
+  implementer prompt in `workorder-rounds.js` and SKILL.md's own Step 2
+  spawn name that command first, with the plan and context paths kept as
+  the fallback. It is a command rather than a pasted slice because the
+  workflow script cannot read a file, and the driver's context would carry
+  every slice in driver mode. `planner.md` now asks for exact `ctx:`
+  headings, since the brief prints only what a step cites.
+- **The amendment tier.** An amendment planner always runs on opus: SKILL.md
+  says so in each route a driver spawns one from, `workorder-rounds.js`
+  passes `model: 'opus'` to its own, and `tools/workorder_audit.py` R27
+  (`amendment-tier`) fails an `amendment:` planner whose transcript ran
+  fable. The first-plan and replan tiers did not change.
+- **Symbol lookup.** `section.py` reads a `.cpp .cc .c .hpp .h .py .js .mjs
+  .ts` file by symbol: `--toc [--grep]` lists its functions, classes and
+  methods with line ranges (capped at 20 KB, past which it says to narrow
+  with `--grep`), and `'<symbol>'` prints one whole. C/C++ is indexed into
+  `namespace` blocks, Python through `ast`, JS/TS through a lexer that
+  knows template literals and regex literals. `implementer.md` and
+  `planner.md` send any source file over about 200 KB there, in place of
+  `grep -n` then `sed -n`.
+- **A criteria digest.** `run_criteria.py --digest <out>` prints a finished
+  run with every exit-only criterion that exited as expected on one line
+  and every other criterion's block exactly as `report.txt` has it. The
+  verifier judges from it and never reads `report.txt` whole; it still
+  decides every criterion itself.
+- **The measure.** `workorder_speed.py` reports `workorder_reads` per role:
+  plan, context, brief and `report.txt` reads, as calls and KB. The tools
+  that take a plan path as an argument (`run_criteria.py`, `plan_lint.py`
+  and the like) are not counted as reads of it.
+
+## Not yet measured
+
+- The implementers' check catch rate fell to 0.34, from 0.38-0.58 before
+  the cut. Nothing here changes how implementers run their checks; whether
+  the brief moves the rate either way is for the next measurement.
+- Whether the brief cuts plan and context reads. Read `workorder_reads`
+  for the implementer row on the next batch of sessions, against the 915
+  plan and context `Read` calls and 400 shell reads above.
+- What the symbol mode saves. The planning session estimated about 600
+  turns, or 40-60M cache-read tokens (3-5% of input). That is an estimate,
+  not a measurement, and it was not run against the real ModuleMain.cpp in
+  the worktree that built it, where the submodule was not initialized.
+- Whether the digest brings the verifier's whole-file KB back below the
+  17 KB a run it read before the cut; `report_kb` in `workorder_reads` is
+  the figure.
+- The amend phase: 1523 agent-minutes over 54 amendments, 1008 of them with
+  no other agent running. Amendments still hold every item and fix while
+  they run; this change makes each one cheaper, not concurrent.
+- Why instrument-blindness-reviewer's per-run tokens rose (0.65 -> 0.81
+  Mtok) while every other reviewer's about halved.
+- Concurrency stayed at 0.87 with a 47% single-agent share. Nothing here
+  targets it.
