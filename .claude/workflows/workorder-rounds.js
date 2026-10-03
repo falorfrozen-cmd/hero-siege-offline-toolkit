@@ -733,7 +733,7 @@ const SECTION_CMD = file => `\`py -3 .claude/skills/workorder/section.py "${file
 const verifierCriteriaNote = (extra = '') => ` Take the criteria and the gate tokens with exactly \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\` and \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'State'\`; do not Read the plan whole.` +
   ` A gate is set only when the \`gates:\` line itself carries its token. \`gates pending:\` and \`route tokens:\` set nothing, and a \`gates:\` value with \`|\` alternatives is a template that sets nothing. Put the token a gated criterion names in its 'gate'. A criterion whose gate is not set is 'unattempted' (gate <token> not set), never 'fail'. Put each STRUCTURAL FINDING and each NOT DONE/DEVIATIONS finding in 'other_defects'.` +
   ` Put each criterion's number in plan order, as the runner prints it, in 'k'.` +
-  ` First run every command-shaped criterion in one background run: start \`py -3 tools/run_criteria.py "${A.planPath}" --jobs auto${extra} --out "<your scratchpad>/criteria"\` with \`run_in_background: true\`, so no Bash limit can kill it. Then poll it with \`py -3 tools/run_criteria.py --status "<your scratchpad>/criteria" --wait 220\` at a Bash timeout of 300000, re-issued while it exits 3 (still running); exit 0 means it finished, and then you read \`<your scratchpad>/criteria/report.txt\`. Exit 4 (stale: it stopped updating) or 2 (no status file) means the run died: say so with the status output, and run the criteria it had not finished yourself. Never read a status or out directory you did not start.` +
+  ` First run every command-shaped criterion in one background run: start \`py -3 tools/run_criteria.py "${A.planPath}" --jobs auto${extra} --out "<your scratchpad>/criteria"\` with \`run_in_background: true\`, so no Bash limit can kill it. Then poll it with \`py -3 tools/run_criteria.py --status "<your scratchpad>/criteria" --wait 220\` at a Bash timeout of 300000, re-issued while it exits 3 (still running); exit 0 means it finished. Then run \`py -3 tools/run_criteria.py --digest "<your scratchpad>/criteria"\` and judge from what it prints: every criterion whose command missed its expected exit, has no command or expects printed output comes out whole, as report.txt has it, and an exit-only criterion whose commands exited as expected comes out as one line. Open that criterion's \`cmd-<n>.log\` only when the digest shows it in one line but its expectation needs output. Never read report.txt whole. Exit 4 (stale: it stopped updating) or 2 (no status file) means the run died: say so with the status output, and run the criteria it had not finished yourself. Never read a status or out directory you did not start.` +
   ` The runner runs each distinct command once, exactly as written, independent ones at the same time (builds first), skips criteria whose gate is not set, and prints each exit code and output tail in plan order (full output in cmd-<n>.log); it judges nothing, so decide each criterion from what it printed, check the ones it prints as 'no command' by reading, run by hand only a command that could not start in bash, and if its output stops early re-run it with --start <next criterion>. A root suite the runner already ran is the suite run: grep its log, never run it again.` +
   ` Run each criterion's command exactly as written: never swap \`py -3\` for \`python\`; a command that cannot start is a failed criterion with its error. Run each test suite once, with the Bash timeout at 240000 and its output sent to a scratch file you grep; never run a suite again to read another slice.`
 const VERIFIER_CRITERIA_NOTE = verifierCriteriaNote()
@@ -778,24 +778,65 @@ const VERIFIER_CONTEXT_NOTE = A.contextPath !== A.planPath
 const START = A.round || 0
 const VERDICT_ASK = `Return your usual verdict; put the PLAN-DEFECT evidence block or the ADVICE-NEEDED request, verbatim, in 'evidence'/'question'.`
 const workorderLine = n => `Workorder: ${A.planPath}${A.contextPath !== A.planPath ? ` (context file: ${A.contextPath})` : ''}. This is round ${n}. `
+// --- 2k: every implementer starts from its brief -----------------------------
+//
+// Measured 2026-10-03 (workorder-calibration.md, "Plan slices, the amendment
+// tier and symbol lookup"): implementers sliced the plan and the context file
+// for themselves, 5-20 Read/sed calls each, and fix-round implementers read
+// the whole plan 105 times in 14 days. This script cannot read a file or run
+// a shell -- every command goes through an agent -- so pasting a slice here
+// would cost an agent per implementer. Each prompt instead names the one
+// command that prints that implementer's slice, with its own selector
+// (`tools/workorder_brief.py`: the selection, the preconditions, the Context
+// subsections it cites and '### Decisions'), as the first thing to run. The
+// plan and context paths (workorderLine) stay as the fallback. An empty
+// selector -- a fixer or a patch with no file to name -- gets no brief line.
+const BRIEF_CMD = `py -3 tools/workorder_brief.py "${A.planPath}"${A.contextPath !== A.planPath ? ` --context "${A.contextPath}"` : ''}`
+const briefLine = sel => sel
+  ? `Run \`${BRIEF_CMD} ${sel}\` first: one call prints your part of the plan, the Context subsections it cites and '### Decisions'. ` +
+    `Read the plan or the context file beyond it only by section (\`py -3 .claude/skills/workorder/section.py <file> '<heading>'\`), for something it lacks; the paths above are the fallback. `
+  : ''
+// Double-quoted, comma-joined, each path once, as `--paths` takes them.
+const pathsSel = paths => {
+  const uniq = [...new Set(paths)]
+  return uniq.length ? `--paths "${uniq.join(',')}"` : ''
+}
+// After an in-launch amendment (3d) the brief adds the newest '### Amendment'
+// entry, which AMENDED_NOTE sends the implementer to.
+const amendedSel = (sel, amended) => sel && amended ? `${sel} --amended` : sel
+// A finding's `where` is `path:line` or prose: the text before the first `:`
+// is a path only when it carries a `/` or a `.`.
+const findingPaths = findings => findings.map(f => String(f.where || '').split(':')[0].trim()).filter(p => /[/.]/.test(p))
 // Any round past 0 follows a defect round -- '## State' only bumps `round:`
 // after one -- including the first round of a fresh launch, which has no
-// memory of it (the gap priorFindings closes for reviewers).
-const reentry = n => n > 0 ? `You are re-entered after a defect: read '## Log' > '### Round ${n - 1}'` +
-  `, and '### Round ${n}' if it is already there (this round was relaunched after a replan or a consultation, and that entry is the newer evidence),` +
-  ` for the evidence before anything else. ` +
+// memory of it (the gap priorFindings closes for reviewers). `brief` says
+// what the implementer's brief already prints: the rounds-mode brief
+// (`--round n`) carries the round's Log entries and every criterion, the
+// join's (`--join`) every criterion, a lane's neither.
+const reentry = (n, brief = {}) => {
+  if (!(n > 0)) return ''
+  const rounds = `'## Log' > '### Round ${n - 1}', and '### Round ${n}' if it is already there (this round was relaunched after a replan or a consultation, and that entry is the newer evidence)`
+  const criteria = brief.criteria ? 'the failed criteria (your brief prints every criterion)' : `the failed criteria (\`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\`)`
   // The owner, 2026-10-02: after a write, read only the difference or the
   // relevant part. Fix-round implementers averaged 22 reads and 134 KB each
   // over the 14 days before, 105 of them the whole plan.
-  `Then read only what that evidence needs: the failed criteria (\`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\`) and the steps, Context subsections and files it names -- not the whole plan, and not a file earlier rounds changed: read its diff (\`git diff <base> -- <path>\`, the base from \`${DELTA} heads ${SLUG} ${n - 1}${DELTA_ROOT_ARG}\`) and the ranges around those hunks. ` : ''
+  const diff = `read its diff (${brief.log ? "the brief's `git diff` lines, or " : ''}\`git diff <base> -- <path>\`${brief.log ? ' with' : ','} the base from \`${DELTA} heads ${SLUG} ${n - 1}${DELTA_ROOT_ARG}\`) and the ranges around those hunks. `
+  return brief.log
+    ? `You are re-entered after a defect: your brief prints ${rounds}; read that evidence before anything else. ` +
+      `Then read only what that evidence needs beyond the brief: the Context subsections and files it names that the brief does not print -- not the whole plan, and not a file earlier rounds changed: ${diff}`
+    : `You are re-entered after a defect: read ${rounds}, for the evidence before anything else. ` +
+      `Then read only what that evidence needs: ${criteria} and the steps, Context subsections and files it names -- not the whole plan, and not a file earlier rounds changed: ${diff}`
+}
 const LANE_NAMES = LANES.map(l => l.name).join(', ')
 const LANED_LATER_NOTE = `This plan declares lanes (${LANE_NAMES}), but this round runs one implementer, not lanes: you own every lane's file set and the join's steps, and the lane-only rules (no git writes, the stop marker) do not apply to you. `
 // `amended`: the re-run after an in-launch amendment (3d). It is one
 // implementer even on a laned first round, owning every lane and the join.
-const implPrompt = (n, amended = false) => workorderLine(n) + reentry(n) + (LANES.length && (n > START || amended) ? LANED_LATER_NOTE : '') +
+const implPrompt = (n, amended = false) => workorderLine(n) +
+  briefLine(amendedSel(`--round ${n}${n > 0 ? ` --since-round ${n - 1}` : ''}`, amended)) +
+  reentry(n, { log: true, criteria: true }) + (LANES.length && (n > START || amended) ? LANED_LATER_NOTE : '') +
   (amended ? AMENDED_NOTE : '') + VERDICT_ASK
 const implOpts = (label, schema) => ({ label, phase: 'Implement', agentType: 'implementer', model: A.implementerModel || 'opus', schema })
-const lanePrompt = (n, lane) => workorderLine(n) + reentry(n) +
+const lanePrompt = (n, lane) => workorderLine(n) + briefLine(`--lane ${lane.name}`) + reentry(n) +
   `You are lane '${lane.name}', one of ${LANES.length} lanes (${LANE_NAMES}) running at the same time in separate implementers: follow your "When you are one lane, or the join" section. ` +
   `Carry out only the steps under '### Lane: ${lane.name}' in '## Steps', after the preconditions written above the first '### Lane:'; the '### Join' steps and every other lane's steps are not yours. ` +
   `Your file set is ${lane.files.map(f => `\`${f}\``).join(', ')}: edit nothing outside it -- an edit you need outside it is a PLAN-DEFECT. ` +
@@ -811,7 +852,7 @@ const laneCommit = files => Object.entries(splitPathsByRepo(files)).filter(([, p
   const git = k === '.' ? (REPO_ROOT ? `git -C "${REPO_ROOT}"` : 'git') : `git -C ${repoTarget(k)}`
   return `\`${git} add -- ${ps.map(p => `"${p}"`).join(' ')}\` then \`${git} commit\``
 }).join(' and ')
-const joinPrompt = (n, lanes) => workorderLine(n) + reentry(n) +
+const joinPrompt = (n, lanes) => workorderLine(n) + briefLine('--join') + reentry(n, { criteria: true }) +
   `You are the join: the ${LANES.length} lanes (${LANE_NAMES}) each returned IMPL-DONE, and none of their work is committed; follow your "When you are one lane, or the join" section. ` +
   `First commit each lane's file set as its own commit, in this order, with a message naming the lane: ` +
   LANES.map(l => `lane ${l.name}: ${laneCommit(l.files)}`).join('; ') + '; ' +
@@ -855,7 +896,8 @@ const PATCH_EXCLUDED = p => /^ForgePact\/plugin\//.test(p) || /^hs-game-sdk\/.*(
 const patchable = (verdict, failed, otherDefects, blocking) => blocking.length > 0 &&
   (verdict === 'PASS' || verdict === 'PASS-PENDING-HUMAN') && !failed.length && !otherDefects.length &&
   blocking.every(f => typeof f.fix === 'string' && f.fix.trim() && !PATCH_NEVER.has(f.reviewer))
-const patchPrompt = (n, findings, amended = false) => workorderLine(n) + (amended ? AMENDED_NOTE : '') +
+const patchPrompt = (n, findings, amended = false) => workorderLine(n) +
+  briefLine(amendedSel(pathsSel(findingPaths(findings)), amended)) + (amended ? AMENDED_NOTE : '') +
   `This is a patch round: the previous round's only defects were BLOCKING reviewer findings, each with the exact fix its reviewer stated. Apply exactly these fixes, then commit:\n` +
   findings.map(f => `- [${f.reviewer}] ${f.where}: ${f.problem}\n  fix: ${f.fix}`).join('\n') + '\n' +
   `Read the plan and context only where a fix needs them, start no other step, and run no full build or suite: the verifier runs the criteria. ` +
@@ -884,7 +926,7 @@ const patchMiss = delta => {
 // lane's, never a reviewer's) PLAN-DEFECT whose evidence carries a
 // `CORRECTION:` other than `none` is amended here, the way SKILL.md Step 2's
 // "Amend, or replan" does it: `amend_check.py save` (a haiku agent,
-// `amend-save:<id>:r<n>`), a fresh planner at its own default tier
+// `amend-save:<id>:r<n>`), a fresh planner on opus, never fable
 // (`amendment: <slug> <id>:r<n>`, the correction verbatim), then
 // `amend_check.py check` (`amend-check:<id>:r<n>`). Only exit 0 with the
 // verdict line `AMENDMENT` re-runs the work, and the check always runs once a
@@ -967,7 +1009,13 @@ async function amendOnce(spawnFn, tag, who, correction, evidence) {
     `Record what you changed, and the evidence it answers, under a new '### Amendment <k>' heading in the context file's '## Log', run \`py -3 tools/plan_lint.py "${A.planPath}"\`, and return verdict PLAN-READY. ` +
     `If the correction cannot be made without touching '## Goal', '## Out of scope' or '## Needs human judgement', adding or removing a section, or changing more than 20 lines -- or the stated fix is wrong -- make no edit and return verdict NOT AN AMENDMENT with why in 'reason'. ` +
     `Other implementers may be working in this checkout: edit only the plan and the context file. amend_check.py check runs after you, from the files.`,
-    { label: `amendment: ${SLUG} ${tag}`, phase: 'Amend', agentType: 'planner', schema: AMEND_PLANNER_SCHEMA })
+    // Always opus, never fable, named here rather than left to the planner's
+    // frontmatter default. The one amendment measured on fable (2026-10-03
+    // audit) was a driver spawn that carried the workorder's escalated
+    // planner tier over to a job that applies one stated correction; none of
+    // this script's amendments ran fable, but only because nothing here named
+    // a model. `workorder_audit.py` R27 fails an amendment planner on fable.
+    { label: `amendment: ${SLUG} ${tag}`, phase: 'Amend', agentType: 'planner', model: 'opus', schema: AMEND_PLANNER_SCHEMA })
   const check = await spawnFn(
     `Run exactly: ${amendCmd('check')}  — report its exit code, its whole output in 'raw_output', and its last line (\`AMENDMENT\`, \`SCOPE: ...\` or \`REPLAN: ...\`) verbatim in 'verdict_line'. Run nothing else, and edit nothing.`,
     { label: `amend-check:${tag}`, phase: 'Amend', model: 'haiku', effort: 'low', schema: AMEND_CMD_SCHEMA })
@@ -1163,7 +1211,20 @@ async function runItems(n) {
   const itemTitle = it => it.title ? ` (${it.title})` : ''
   const fileWords = it => it.files === '*' ? 'every file: you run alone, with no other implementer in the checkout' : it.files.map(f => `\`${f}\``).join(', ')
   const inFlight = () => all.filter(it => ['pending', 'running'].includes(st[it.id].status) && it.kind === 'item')
+  // 2k: an attempt after the first reads what earlier attempts committed
+  // against the launch's own base heads (`--base`, `.` for the hub).
+  const baseSel = s => s.attempts > 1 && baseHeads ? Object.entries(baseHeads).map(([k, sha]) => ` --base ${k}=${sha}`).join('') : ''
+  // A gate-fix names the criteria that failed, by the number the runner gave
+  // them; one with no numbered failure (a structural finding) has no brief.
+  const fixSel = it => {
+    if (it.kind === 'gate-fix') {
+      const ks = [...new Set((it.failed || []).map(c => c.k).filter(Number.isInteger))]
+      return ks.length ? `--criteria ${ks.join(',')}` : ''
+    }
+    return it.files === '*' ? '' : pathsSel(it.files)
+  }
   const itemPrompt = (it, s) => workorderLine(n) +
+    briefLine(`${amendedSel(`--item ${it.id}`, s.retry === 'amended')}${baseSel(s)}`) +
     `You are item '${it.id}'${itemTitle(it)}, one of ${all.filter(x => x.kind === 'item').length} items; other items' implementers work in this checkout at the same time: follow your "When you are one item" section. ` +
     `Carry out only the steps under '### Item: ${it.id}' in '## Steps', after the preconditions written above the first '### Item:'. ` +
     `Your file set is ${fileWords(it)}: edit nothing outside it -- an edit you need outside it is a PLAN-DEFECT. ` +
@@ -1175,7 +1236,7 @@ async function runItems(n) {
     (s.retry === 'amended' ? `This is attempt ${s.attempts}. ${AMENDED_NOTE}` : '') +
     (s.retry === 'rebuild' ? `This item was done, then ${s.staleBy} committed ${s.stalePaths}, which its build checks read, so what it built names the old tree. Carry out its steps again against the tree as it is now, commit only if a file in your set changed, and run its checks. ` : '') +
     VERDICT_ASK
-  const fixPrompt = (it, s) => workorderLine(n) +
+  const fixPrompt = (it, s) => workorderLine(n) + briefLine(amendedSel(fixSel(it), !!(s && s.retry === 'amended'))) +
     (it.kind === 'gate-fix'
       ? `You are fixer '${it.id}': every item is done, and the workorder's whole-tree acceptance criteria then failed:\n${it.failed.map(c => `- ${c.criterion}: ${c.evidence}`).join('\n')}\nFix those failures and nothing else. `
       : `You are fixer '${it.id}': a reviewer read committed work and raised these BLOCKING findings. Resolve exactly these, nothing else:\n` +
