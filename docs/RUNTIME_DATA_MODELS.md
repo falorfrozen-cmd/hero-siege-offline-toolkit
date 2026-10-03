@@ -3727,3 +3727,30 @@ the numbers are also in `hs-game-sdk/curated/jump_measurements.json`.
 
 [Live 1 results](../ForgePact/docs/jump-scenery-research.md#live-1-results);
 [Decision](../ForgePact/docs/jump-scenery-research.md#decision)
+
+### 19.3 The take-off check
+
+Read from the arguments `jumpprobe` logged in Live 1's own `out.txt`
+(2026-10-03), which the session capture had shortened.
+
+- In the frame a jump takes off, before that frame's `skillsLeap` call
+  returns, the game walks along the jump's direction with queries whose
+  `self` is the player. The steps are about **4.0 px** apart. At each step it
+  asks `collision_circle(cx, cy, 15, Wall_Parent_obj, true, true)` (radius
+  **15**) and `instance_position` against `Collision_Parent_obj` (957) at two
+  side points, about **14 px** to either side of the step, perpendicular to
+  the direction. **Measured.**
+- The first circle centre sits about 5-6 px below the player's origin,
+  whichever way the jump goes (two take-offs heading south, one north).
+  **Measured.**
+- One blocked side point is enough: in J1 the right-hand point of the second
+  step returned an instance, and that jump moved 0 px. **Measured.**
+- Whether the walk runs inside `skillsLeap`'s first call or just before it, in
+  the same frame, is **not established**: the builtin rows were logged on
+  return, before `skillsLeap`'s own line.
+- The "no collision" answers the game accepts for these queries are real -4
+  (`noone`) for `instance_position`, `collision_line` and `collision_circle`,
+  and bool false for `position_meeting` and `place_meeting`; the game's own
+  `noone` comes back as a ref to instance -4. **Measured** (J3).
+
+[Phase 2: the take-off check](../ForgePact/docs/jump-scenery-research.md#the-take-off-check)

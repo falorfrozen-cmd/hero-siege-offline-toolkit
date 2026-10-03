@@ -291,6 +291,50 @@
       ],
       "what": "Whether a leap or dash skill shares the jump's path: the character had no leap, dash, charge or blink skill on the bar.",
       "values": {}
+    },
+    {
+      "id": "J10",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-03",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "The take-off check"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap"
+      ],
+      "what": "The take-off check, read from the arguments jumpprobe logged in Live 1's own out.txt: in the take-off frame, before skillsLeap's call for that frame returned, the game walked along the jump's direction with player-self queries, a step about every 4 px; at each step collision_circle(cx, cy, 15, Wall_Parent_obj, true, true), and instance_position against Collision_Parent_obj at two side points about 14 px to either side of the step. The first circle centre sat about 5-6 px below the player's origin. Seen on three take-offs (J1 and J4 run B heading south, J5 heading north). In J1 the right-hand point of step 2 returned an instance and the jump moved 0 px. Whether the walk runs inside skillsLeap's first call or just before it is not established.",
+      "values": {
+        "builtins": [
+          "collision_circle",
+          "instance_position"
+        ],
+        "step_px": 4.0,
+        "circle_radius_px": 15,
+        "circle_object": "Wall_Parent_obj",
+        "side_object": "Collision_Parent_obj",
+        "side_offset_px": 14.0,
+        "first_centre_below_origin_px": [
+          5,
+          6
+        ],
+        "takeoffs_seen": 3,
+        "J1_frame": 47239,
+        "J1_first_centres": [
+          [
+            1074.0,
+            1389.0
+          ],
+          [
+            1074.17,
+            1393.0
+          ]
+        ],
+        "J1_moved_px": 0
+      }
     }
   ]
 }
