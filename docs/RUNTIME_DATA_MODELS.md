@@ -3777,11 +3777,16 @@ measured about the game on 2026-10-03, on the player build, slot 14
   lets it cross: 125 px, about 50 px short of the open-ground jump. Why the
   crossing jump ends shorter is **not established**. **Measured.**
 - A jump aimed so that it would end inside a horse carriage did not move the
-  player even with the five builtins answered (1152 answers in that jump), as
-  in phase 1: something outside those builtins refuses it, and the player did
-  not end inside the prop. What refuses it is **not established**; the owner
-  reads it as the game validating the landing zone itself. **Measured** for
-  the position, not for a mechanism.
+  player even with the five builtins' blocked player-self family queries
+  answered (1152 answers in that jump), as in phase 1: something the mod does
+  not answer refuses it (a script row, an unhooked builtin, or one of the five
+  called with another self or a non-family object; not established), and the
+  player did not end inside the prop. The mod's landing and room checks ran on
+  that jump and let it through; the landing point they checked was not
+  recorded, so whether it lay inside the carriage is **not established**. What
+  refuses the jump is **not established**; the owner reads it as the game
+  validating the landing zone itself. **Measured** for the position, not for a
+  mechanism.
 - `room_width` × `room_height` of `Town_01_rm` is **2800 × 2400**. The room
   rectangle is larger than the walkable map: `playerwarp` to (50, 1200) and
   (2705, 1200) held on a re-read (no snap back) and left the player out of
