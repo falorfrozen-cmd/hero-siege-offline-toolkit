@@ -19,7 +19,7 @@
       "kind": "baseline",
       "status": "static_reading",
       "date": "2026-10-03",
-      "source": "docs/models/dungeon-chest-spec.md § DC2, the Step counts nothing",
+      "source": "docs/models/dungeon-chest-spec.md § DC2, the Step calls no named script that counts",
       "scripts": [
         "gml_Script_GetKeyDungeonRoom",
         "gml_Script_GetKeyDungeon",

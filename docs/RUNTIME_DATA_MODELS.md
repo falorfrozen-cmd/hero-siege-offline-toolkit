@@ -1605,7 +1605,10 @@ only once the dungeon's monsters are dead; what decides that is not yet known.
   polls `instance_number`/`instance_exists` about monsters is **not
   established**. Instance variables are read and written through slot numbers,
   so which chest variable, if any, flips at the last kill is **not established**
-  either. The unlock condition is one of those two. **Static reading.**
+  either. What decides the unlock is **not established**. Candidates include a
+  builtin poll by the chest, a chest or blocker variable (built-in or not) that
+  another event writes, and the player variable the Step reads through `GPV`.
+  **Static reading.**
 - **Neighbours.** `Dungeon_Boss_Blocker_obj` (1365) has Create, Step and Draw; its
   Step calls `quest_exists` and `GPV`. `Spawn_Dungeon_obj` (4667) has Create,
   Step, Alarm 0 and Draw; its Alarm 0 calls `sc_rift`, `StringStartsWith`, `GPV`

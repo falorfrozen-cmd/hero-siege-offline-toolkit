@@ -9,8 +9,8 @@ ForgePact carries the mod.
 
 Baseline: what the game does with no mod. Target: what the control must turn it
 into. That is the order `AGENTS.md` § "Mod Development Workflow" asks for. How the
-chest learns that no monster is alive (a builtin poll or a variable another event
-writes) is not established; `HypothesisTests` keeps each open question `None`
+chest learns that no monster is alive (a builtin poll, a variable another event
+writes, or the player variable its Step reads through `GPV`) is not established; `HypothesisTests` keeps each open question `None`
 until a measured entry of the curated file answers it.
 
 Each entry of `hs-game-sdk/curated/dungeon_chest_measurements.json` names the test

@@ -33,10 +33,11 @@ names of what each event calls are recorded here.
 
 - **DC1, the chest's events.** `Dungeon_Chest_obj` (SDK object index 1366) owns
   five events: Create, Step, Draw, Alarm 0 and Other 7 (animation end).
-- **DC2, the Step counts nothing.** The chest's Step calls, by name,
-  `GetKeyDungeonRoom`, `GetKeyDungeon`, `NetworkSendClientEffect`, `GPV` (read a
-  player variable), `IsDefined` and `PlaySound3D`. None of them counts or lists
-  enemies.
+- **DC2, the Step calls no named script that counts.** The chest's Step calls,
+  by name, `GetKeyDungeonRoom`, `GetKeyDungeon`, `NetworkSendClientEffect`, `GPV`
+  (read a player variable), `IsDefined` and `PlaySound3D`. None of those named
+  scripts counts or lists enemies; a builtin the Step reaches through the
+  function table is not visible to the reading (DC4).
 - **DC3, the open is the animation end.** Other 7 is where the chest pays out:
   it calls `CreateInFreePos`, creates an instance through the `instance_create`
   builtin, and calls `SPV`, `ReturnSpecificStat`, `quest_exists`, `QuestComplete`
@@ -49,9 +50,11 @@ names of what each event calls are recorded here.
   direct call); builtins go through the runtime's function table. So a poll such
   as `instance_number` or `instance_exists` made by the chest is neither proven
   nor ruled out by the reading. Variable names are not visible either: they are
-  read through slot ids, and no store to the slot globals was found. The chest's
-  unlock is therefore either a builtin poll hidden from the reading, or a
-  variable that another event writes. Only a live census can tell which.
+  read through slot ids, and no store to the slot globals was found. What
+  decides the chest's unlock is therefore not established. Candidates include a
+  builtin poll hidden from the reading, a chest or blocker variable (built-in or
+  not) that another event writes, and the player variable the Step reads
+  through `GPV`. Only a live census can tell which.
 - **DC5, the neighbours.** `Dungeon_Boss_Blocker_obj` (1365) has Create, Step and
   Draw; its Step calls `quest_exists` and `GPV`. `Spawn_Dungeon_obj` (4667) has
   Create, Step, Alarm 0 and Draw, and its Alarm 0 calls `sc_rift`,
