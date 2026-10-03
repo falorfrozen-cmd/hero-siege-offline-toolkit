@@ -35,7 +35,7 @@ hs-game-sdk/
 │   ├── drop_roll_measurements.json # M1-M10: recorded drop-roll numbers drop_roll_model.py is tested against (data only)
 │   ├── mining_reward_measurements.json # MR1-MR9: recorded mining-dig numbers mining_reward_model.py is tested against (data only)
 │   ├── monster_rank_measurements.json # MK1-MK24: what a monster's rank does (§13.7), the boss report, and ForgePact #44's Live 1 and 1b on bosses, for monster_rank_model.py (data only)
-│   ├── dungeon_chest_measurements.json # DC1-DC10: the dungeon chest's static reading, the kill path (§13.5) and ForgePact #31's Live 1 placeholders, for dungeon_chest_model.py (data only)
+│   ├── dungeon_chest_measurements.json # DC1-DC18: the dungeon chest's static reading, the kill path (§13.5), ForgePact #31's Live 1 measurements and its Live 1b placeholders, for dungeon_chest_model.py (data only)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
@@ -142,11 +142,14 @@ hypothesis and the fixture disagree. ForgePact's Bosses control stays in the tes
 `dungeon_chest_model.py` (2026-10-03, ForgePact issue #31) is built the same way: spec
 `docs/models/dungeon-chest-spec.md`, fixture `curated/dungeon_chest_measurements.json` (DC1-DC5
 the static reading of `Dungeon_Chest_obj` and its neighbours, DC6 the measured kill path of
-`docs/RUNTIME_DATA_MODELS.md` § 13.5, DC7-DC10 placeholders ForgePact #31's Live procedure 1 fills),
-checks `tests/test_dungeon_chest_model.py`. It models the game's rule (the chest opens once no
-monster is alive) and the quantities of ForgePact's tally (kills since the chest was first seen plus
-those alive). How the chest learns that no monster is alive is carried in
-`dungeon_chest_model.HYPOTHESES`, each `None` until a measured entry decides it. ForgePact's Dungeon
+`docs/RUNTIME_DATA_MODELS.md` § 13.5, DC7-DC11 and DC13 measured in ForgePact #31's Live procedure 1,
+DC12 not observed, DC14-DC18 placeholders its Live procedure 1b fills), checks
+`tests/test_dungeon_chest_model.py`. It models the game's rule (the chest opens once no monster is
+alive) and ForgePact's progress: kills counted in the dungeon over its planned total, fixed at the
+chest's first sight (`planned_total`, `estimated_total`, `progress`). What Live 1 settled (the chest
+polls `instance_exists` itself; monsters stream from spawners present at load) and what is still
+open (where the planned total comes from) are carried in `dungeon_chest_model.HYPOTHESES`, each
+`None` until a measured entry decides it. ForgePact's Dungeon
 chest opens early stays in the test as input transforms, pinned to `DungeonChestMod.hpp` and
 `src/forgepact.py` by `LeverParityTests`.
 
