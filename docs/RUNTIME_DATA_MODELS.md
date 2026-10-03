@@ -1581,6 +1581,58 @@ All **measured** (2026-09-10/11).
 and online-client movement use other code. **Static reading.**
 [ForgePact README, Enemy Movement Speed](../ForgePact/README.md#enemy-movement-speed)
 
+### 11.5 Dungeon chest and its unlock
+
+The end chest of a key dungeon is `Dungeon_Chest_obj` (1366). The game opens it
+only once the dungeon's monsters are dead; what decides that is not yet known.
+
+- **Events.** `Dungeon_Chest_obj` has five: Create, Step, Draw, Alarm 0 and Other 7
+  (animation end). They were read through the per-object event rows the runtime
+  keeps (name, function, variable table: the table the frame profiler walks), so
+  object events are readable statically although `symbols.csv` lists only
+  scripts. **Static reading.**
+- **Step** calls, by name, `GetKeyDungeonRoom`, `GetKeyDungeon`,
+  `NetworkSendClientEffect`, `GPV`, `IsDefined` and `PlaySound3D`. It calls no
+  script that counts or lists enemies. **Static reading.**
+- **Animation end is the open**: `CreateInFreePos`, an `instance_create` by name,
+  `SPV`, `ReturnSpecificStat`, `quest_exists`, `QuestComplete` and
+  `CommunityQuestAddProgress`, so loot and quest completion both happen there.
+  **Alarm 0** calls `ReturnSpecificStat` and `GPV`; **Create** calls `CheckTown`,
+  `UpdateDepth` and `ReportClient`. **Static reading.**
+- **What a static reading cannot show in this build.** Script bodies reach
+  builtins through the runtime's function table, not by direct call (in 150
+  bodies read, `is_handle` was the only direct one), so whether the chest's Step
+  polls `instance_number`/`instance_exists` about monsters is **not
+  established**. Instance variables are read and written through slot numbers,
+  so which chest variable, if any, flips at the last kill is **not established**
+  either. The unlock condition is one of those two. **Static reading.**
+- **Neighbours.** `Dungeon_Boss_Blocker_obj` (1365) has Create, Step and Draw; its
+  Step calls `quest_exists` and `GPV`. `Spawn_Dungeon_obj` (4667) has Create,
+  Step, Alarm 0 and Draw; its Alarm 0 calls `sc_rift`, `StringStartsWith`, `GPV`
+  and `instance_create`: it is the world-side entrance of the special-content
+  family, not a monster spawner. `Dungeon_Spawner_1_obj`..`_4_obj` have only a
+  small Create. **Static reading.**
+- **Counting kills.** The kill path is § 13.5: `EnemyDestroyKillProc` runs with
+  the dying enemy as `self` (and again with the player as `self`), monsters are
+  the `Enemy_Parent_obj` (1429) family, and `Enemy_Death_Effect_obj` is not made
+  on every kill, so it cannot count kills. **Measured.**
+- **Measured in Live 1** (Pumpkin Cellar, `Pumpkin_Cellar_01_rm` 216), not yet
+  run:
+  - the chest's own builtin poll, if any (`builtin-poll`): not yet measured;
+  - the variable that flips at the last kill, on the chest, the blocker or
+    another object (`unlock-signal`): not yet measured;
+  - monsters alive at entry, and whether creators exist inside a dungeon
+    (`alive-count`, `creators-in-dungeon`; § 11.2's lazy spawning in the open
+    world): not yet measured;
+  - whether the kill tally matches the fall in alive count
+    (`kill-hook-fires`): not yet measured;
+  - whether the dungeon holds a `Dungeon_Boss_Blocker_obj` and behaves the same
+    (`boss-dungeon`): not yet measured.
+
+[dungeon chest, Static reading](../ForgePact/docs/dungeon-chest-research.md#static-reading),
+[Route](../ForgePact/docs/dungeon-chest-research.md#route),
+[spec](models/dungeon-chest-spec.md)
+
 ---
 
 ## 12. Mining
