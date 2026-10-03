@@ -263,7 +263,7 @@
         }
       ],
       "scripts": [],
-      "what": "Leaving the room at a map edge: with `all hold`, two jumps aimed outward from 355 px inside the room's west side did not move the player. The edge was not identified as an Invisible_Wall_obj.",
+      "what": "A second jump aimed into scenery: with `all hold`, two jumps aimed north into a building and prop area did not move the player. The nearest room edge was 355 to 390 px away, out of reach of the 117 px jump, so no edge was tested and map-edge behaviour was not observed.",
       "values": {
         "position": [
           355.3,

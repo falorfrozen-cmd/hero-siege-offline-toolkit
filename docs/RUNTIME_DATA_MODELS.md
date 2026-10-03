@@ -3708,9 +3708,17 @@ the numbers are also in `hs-game-sdk/curated/jump_measurements.json`.
   `Collision_Prop_obj` (959) or a descendant. **Measured.**
 - Answering those five builtins "nothing there" for the player (`noone` or
   `false`), without running them, lets the same jump cross the prop: 117 px
-  over the jump's 104 frames. Answering only queries for `Collision_Prop_obj`
-  and its descendants changes nothing, and so does answering `CanMove`,
-  `InstancePlaceTallest` and `TilePlaceMeeting`. **Measured.**
+  over the jump's 104 frames. **Measured.** The `props` and `scripts` levers
+  answered nothing, so they say nothing either way: no player query during
+  the jump named `Collision_Prop_obj` or a descendant, so the `props` lever
+  stayed at `passed=0` and every query counted `other-family=`; and the player
+  made no call to `CanMove`, `InstancePlaceTallest` or `TilePlaceMeeting`
+  during a jump (those rows are native detours, and `InstancePlaceTallest`'s
+  1944 player-self calls during a walk are the positive control that they
+  would have counted one). Whether `InstancePlaceTallest` holds a walk or
+  refuses a landing inside a prop is **not established**
+  ([Results](../ForgePact/docs/jump-scenery-research.md#results)). **Measured**
+  for the counts, not for any effect.
 - A jump aimed at a landing point inside a prop (a horse carriage) does not
   start even with those five builtins answered: the player stays within 4 px
   of the take-off point. What refuses it was not identified. **Measured.**
