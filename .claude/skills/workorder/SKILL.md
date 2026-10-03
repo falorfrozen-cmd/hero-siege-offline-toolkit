@@ -277,8 +277,8 @@ diffs against it, and every later round repeats this before re-entering.
 **A laned plan** (Step 1's `--lanes-json` printed lanes) runs its lanes only
 on the first implementation of the plan's steps: round 0, or the relaunch
 after a replan. Pass `lanes` and `join` to the workflow then, and never when
-relaunching after an `IMPL-DEFECT` (a `continue` from `STATE-LOST` or
-`SCRIBE-FAILED`, or a fresh `resume` past round 0): a defect round is a fix
+relaunching after an `IMPL-DEFECT` (a `continue` from `STATE-LOST`,
+`SCRIBE-FAILED` or `LOG-DAMAGED`, or a fresh `resume` past round 0): a defect round is a fix
 on a small delta, and no failed criterion or reviewer finding says which
 lane it belongs to, so it runs one implementer that owns every file set.
 Each lane implementer works only inside its `files:`, runs no git command
@@ -1328,7 +1328,7 @@ before a launch ends is not carried over; the relaunch runs an ordinary round.
 A plan of items returns `PASS`, `PASS-PENDING-HUMAN`, `PARKED`, `PLAN-DEFECT`
 (a reviewer's plan defect, the gate's unrunnable criterion, or a refill that
 `plan_lint` refused), `CEILING`, `CAP` (the gate failed three times),
-`AGENT-FAILED`, `STATE-LOST` or `SCRIBE-FAILED`, always with `items:` beside
+`AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED` or `LOG-DAMAGED`, always with `items:` beside
 it (each item's `id`, `status`, `reason`, `attempts`, `commits`, `evidence`
 and `progress`, and `replan` when an amendment was tried and did not hold)
 and `gate:` (each gate run). It also carries `defaulted` (each owner item
@@ -1342,7 +1342,7 @@ or `PASS-PENDING-HUMAN`), `unblocked` (Step 2, "Items"). Its Log entry is
 
 A plan without items loops implement → verify+reviewers → route as code (same 3-round cap,
 scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,
-`PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED` or `CAP`. One
+`PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED`, `LOG-DAMAGED` or `CAP`. One
 launch may cover several rounds; `PLAN-DEFECT` means relaunching after the
 replan. `STATE-LOST` means the scribe's own before/after report shows a
 State line gone that the round did not replace; the launch stops there, before
@@ -1363,6 +1363,17 @@ then act on its `then` the same way. Before this outcome existed, the
 `hs-drive-game-lease` scribe's "N/A - files do not exist" report was read as a
 State with every driver-owned line gone and returned `STATE-LOST` for a round
 that had lost nothing.
+`LOG-DAMAGED` means the scribe's report of the context file's last lines
+(`log_tail`) does not end with the round's Log block: it pasted something
+after the block, or wrote the block before its anchor line (`anchor`) and so
+moved that line to the end. Make the end of `## Log` read the entry that
+ended with `anchor`, whole, then the result's `log` and nothing after it,
+then act on its `then`. A `STATE-LOST` whose Log was damaged too carries
+`log_damaged: true` and the same `log`; repair both. On 2026-10-03
+(`forgepact-16-jump-scenery-research`, a laned `PLAN-DEFECT`) a scribe pasted
+its own State instruction into the Log and cut the `### Plan` entry's last
+line off to after the round entry, and nothing noticed until the driver read
+the file.
 A rounds-mode result whose implementer's `CORRECTION:` was tried carries
 `amendment` (`amended`, `why`, `verdict`), and a `PASS-PENDING-HUMAN` carries
 `unblocked`, empty when nothing else is left.

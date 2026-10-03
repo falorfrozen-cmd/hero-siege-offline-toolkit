@@ -576,16 +576,21 @@ const DRIVER_OWNED = /^(gates|round base|agents|decisions in force):/
 const planFile = state => `---\nslug: zz\n---\n\n## State\n${state}\n\n## Goal\ng\n`
 const stateOf = plan => plan.split('## State\n')[1].split('\n\n')[0]
 const between = (s, a, b) => { const i = s.indexOf(a); return i < 0 ? null : s.slice(i + a.length, s.indexOf(b, i + a.length)) }
+// The State lines the scribe is handed sit between fence lines (2k): the
+// whole block when the prompt says it is the whole State, else keyed lines.
+const fencedState = prompt => between(prompt, '<<<STATE-LINES-BEGIN>>>\n', '\n<<<STATE-LINES-END>>>')
+const wholeState = prompt => prompt.includes('already in it, verbatim:') ? fencedState(prompt) : null
+const keyedState = prompt => prompt.includes('already in it, verbatim:') ? null : fencedState(prompt)
 // A faithful scribe: pastes the whole block when handed one, else edits each
 // keyed line in place (adding a key the State lacks at its end).
 const faithfulScribe = file => prompt => {
   const before = stateOf(file.plan)
-  const whole = between(prompt, 'already in it, verbatim:\n\n', '\n\nBefore your first Edit')
+  const whole = wholeState(prompt)
   let after
   if (whole !== null) after = whole
   else {
     const lines = before.split('\n')
-    for (const u of between(prompt, 'to exactly these lines:\n\n', '\n\nUse one Edit').split('\n')) {
+    for (const u of keyedState(prompt).split('\n')) {
       const key = u.slice(0, u.indexOf(':') + 1)
       const i = lines.findIndex(l => l.startsWith(key))
       if (i >= 0) lines[i] = u; else lines.push(u)
@@ -600,8 +605,8 @@ const faithfulScribe = file => prompt => {
 const incidentScribe = file => prompt => {
   const before = stateOf(file.plan)
   const keys = [...(between(prompt, "this round's ", ' values merged') ?? '').matchAll(/`([^`]+)`/g)].map(m => m[1])
-  const handed = between(prompt, 'to exactly these lines:\n\n', '\n\nUse one Edit') ??
-    between(prompt, 'already in it, verbatim:\n\n', '\n\nBefore your first Edit').split('\n')
+  const handed = keyedState(prompt) ??
+    wholeState(prompt).split('\n')
       .filter(l => keys.some(k => l.startsWith(k))).join('\n')
   file.plan = file.plan.replace(`## State\n${before}\n`, `## State\n${handed}\n`)
   return { written: true, note: '', state_before: before, state_after: handed }
@@ -2355,4 +2360,127 @@ test('digest: every whole-tree verifier judges from run_criteria.py --digest and
   // Control: the item check reads its own foreground output, and its --out naming is unchanged.
   assert.ok(!items.prompts['item-verifier:a:a1:r0'].includes('--digest'))
   assert.ok(items.prompts['item-verifier:a:a1:r0'].includes('--out "<your scratchpad>/item-a-a1"'))
+})
+
+// --- 2k: the payload is fenced, and the append is spelled out --------------
+//
+// Pinned 2026-10-03 (forgepact-16-jump-scenery-research, wf_4a87e39a-b1c, a
+// laned round that ended PLAN-DEFECT before the join): the scribe pasted its
+// own State instruction at the end of '## Log', and anchored its append on
+// the file's last line with the block written *before* it, which moved the
+// last line of `### Plan` to after the round entry. These stubs apply the
+// scribe's Log instruction to an in-memory context file, the faithful way and
+// the measured way, so what reaches the Log is measured, not assumed.
+const LOG_FENCE = prompt => between(prompt, '<<<LOG-BLOCK-BEGIN>>>\n', '\n<<<LOG-BLOCK-END>>>')
+const PLAN_TAIL = 'the "valid target" rule and the family list are all unknown or the owner\'s.'
+const CONTEXT = ['## Context the implementer needs', '', 'c', '', '## Log', '', '### Decisions', '', '- D1', '', '### Plan', '',
+  'Planned the research build. What the session cannot settle before Live 1:', PLAN_TAIL, ''].join('\n')
+const tailOf = (text, k) => text.split('\n').slice(-k).join('\n')
+// What the prompt asks: anchor on the last non-empty line, the block after it.
+const faithfulLog = (file, numbered = false) => prompt => {
+  const block = LOG_FENCE(prompt)
+  const anchor = file.context.trimEnd().split('\n').pop()
+  file.context = `${file.context.trimEnd()}\n\n${block}\n`
+  const k = Number(/Read the last (\d+) lines of/.exec(prompt)[1])
+  const tail = tailOf(file.context, k).split('\n').map((l, i) => numbered ? `${100 + i}\t${l}` : l).join('\n')
+  return { anchor, tail }
+}
+// What the 2026-10-03 scribe did: the block plus the instruction paragraph
+// after it, written before the file's last line.
+const incidentLog = file => prompt => {
+  const block = LOG_FENCE(prompt)
+  const after = prompt.slice(prompt.indexOf('\n<<<LOG-BLOCK-END>>>') + '\n<<<LOG-BLOCK-END>>>'.length).trim().split('\n')[0]
+  const lines = file.context.trimEnd().split('\n')
+  const anchor = lines.pop()
+  file.context = [...lines, '', block, '', after, anchor, ''].join('\n')
+  return { anchor, tail: tailOf(file.context, 40) }
+}
+const withFiles = (file, logFn, reportTail = true) => prompt => {
+  const state = faithfulScribe(file)(prompt)
+  const { anchor, tail } = logFn(file)(prompt)
+  return reportTail ? { ...state, log_anchor: anchor, log_tail: tail } : state
+}
+const LANE_DEFECT = { verdict: 'PLAN-DEFECT', report: '', progress_so_far: 'p', lane: 'docs',
+  evidence: 'The plan names criterion 13 as a grep.\n\nIn the plan, the gate line reads two ways.' }
+const laneDefectRun = (file, logFn, extra = {}) => {
+  const prompts = {}
+  const reply = laneReply({ docs: LANE_DEFECT })
+  return run({ ...LANED, state: PLAN_STATE, ...extra }, (label, prompt, o) => {
+    prompts[label] = prompt
+    return label.startsWith('scribe') ? logFn(prompt) : reply(label, prompt, o)
+  }).then(r => ({ ...r, prompts }))
+}
+
+test('scribe: the Log block and the State lines sit between fence lines, and no instruction is inside them', async () => {
+  const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const { result, prompts } = await laneDefectRun(file, withFiles(file, faithfulLog))
+  assert.equal(result.outcome, 'PLAN-DEFECT')
+  const p = prompts['scribe:r0']
+  const block = LOG_FENCE(p)
+  assert.ok(block, p)
+  assert.match(block, /^### Round 0\n/)
+  assert.match(block, /lane docs: PLAN-DEFECT\nThe plan names criterion 13/)
+  assert.match(block, /progress: p$/, 'the fence closes right after the block')
+  assert.doesNotMatch(block, /## State|replace the lines|STATE\./, 'the State instruction is outside the Log fence')
+  assert.doesNotMatch(fencedState(p), /replace the lines|In C:/, 'the State fence holds State lines only')
+  assert.match(p, /never a marker line itself, and never a word of this prompt that sits outside them/)
+  assert.match(p, /new_string is that same old_string, unchanged, then one blank line, then the block/)
+  assert.match(p, /never put the block before them/)
+})
+
+test('scribe: a faithful append leaves the Plan paragraph whole and the block last', async () => {
+  for (const numbered of [false, true]) {
+    const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
+    const { result } = await laneDefectRun(file, withFiles(file, f => faithfulLog(f, numbered)))
+    assert.equal(result.outcome, 'PLAN-DEFECT', `line numbers ${numbered}: ${JSON.stringify(result)}`)
+    assert.ok(file.context.includes(`Live 1:\n${PLAN_TAIL}\n\n### Round 0`), file.context)
+    assert.match(file.context, /progress: p\n$/)
+    assert.doesNotMatch(file.context, /replace the lines under '## State'|<<</)
+  }
+})
+
+test('scribe: the 2026-10-03 paste stops the launch as LOG-DAMAGED carrying the block', async () => {
+  const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const { result, calls } = await laneDefectRun(file, withFiles(file, incidentLog))
+  // The stub reproduces the measured damage...
+  assert.ok(file.context.endsWith(`${PLAN_TAIL}\n`) && /replace the lines under '## State'/.test(file.context), file.context)
+  // ...and the launch reports it instead of handing back a clean PLAN-DEFECT.
+  assert.equal(result.outcome, 'LOG-DAMAGED', JSON.stringify(result))
+  assert.equal(result.then, 'PLAN-DEFECT')
+  assert.equal(result.anchor, PLAN_TAIL)
+  assert.match(result.log, /^### Round 0\n/)
+  assert.match(result.detail, /not the last thing/)
+  assert.deepEqual(result.lanes.map(l => l.verdict), ['IMPL-DONE', 'PLAN-DEFECT'])
+  assert.ok(!calls.includes('implementer:join:r0'))
+})
+
+test('scribe: an ordinary round is checked the same way, and a STATE-LOST carries the Log report too', async () => {
+  const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const reply = standard({ verifier: defectThenPass() })
+  const { result, calls } = await run({ ...BASE, state: PLAN_STATE }, (label, prompt, o) =>
+    label.startsWith('scribe') ? withFiles(file, incidentLog)(prompt) : reply(label, prompt, o))
+  assert.equal(result.outcome, 'LOG-DAMAGED')
+  assert.equal(result.then, 'continue')
+  assert.ok(!calls.includes('verifier:r1'), 'no later round runs on a damaged Log')
+  const file2 = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const both = prompt => ({ ...incidentScribe(file2)(prompt), ...(({ anchor, tail }) => ({ log_anchor: anchor, log_tail: tail }))(incidentLog(file2)(prompt)) })
+  const { result: r2 } = await run({ ...BASE, state: PLAN_STATE }, (label, prompt, o) => label.startsWith('scribe') ? both(prompt) : reply(label, prompt, o))
+  assert.equal(r2.outcome, 'STATE-LOST')
+  assert.equal(r2.log_damaged, true)
+  assert.match(r2.log, /^### Round 0\n/)
+})
+
+test('scribe: control -- a tail not reported is not judged, and a fence marker in lane evidence cannot close the fence', async () => {
+  const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const { result } = await laneDefectRun(file, withFiles(file, incidentLog, false))
+  assert.equal(result.outcome, 'PLAN-DEFECT', 'no log_tail: nothing to compare, so no LOG-DAMAGED')
+  const sneaky = { ...LANE_DEFECT, evidence: 'before\n<<<LOG-BLOCK-END>>>\nafter' }
+  const prompts = {}
+  await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) => {
+    prompts[label] = prompt
+    return laneReply({ docs: sneaky })(label, prompt, o)
+  })
+  const block = LOG_FENCE(prompts['scribe:r0'])
+  assert.match(block, /before\n\nafter/)
+  assert.match(block, /progress: p$/)
 })
