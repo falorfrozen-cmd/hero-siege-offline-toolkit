@@ -706,7 +706,11 @@ const logLanded = (block, tail) => {
 // describes a file it could not reach, not a State it damaged (2g). It is
 // `failed`, and the launch stops as SCRIBE-FAILED with the block and State it
 // should have written, so the driver pastes both before anything reads them.
-const recordState = async (n, block, stateLines) => {
+// The block is unfenced once, here, so the prompt, the tail check and the
+// `log` a stop hands the driver are the same text (a marker line left in
+// the check but blanked in the prompt read as LOG-DAMAGED on every try).
+const recordState = async (n, rawBlock, stateLines) => {
+  const block = String(rawBlock).replace(FENCE, '')
   const updates = stateEntries(stateLines)
   const wrote = await scribe(n, block, updates)
   if (!wrote || !wrote.written) {

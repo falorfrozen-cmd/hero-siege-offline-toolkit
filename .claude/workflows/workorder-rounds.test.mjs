@@ -2483,4 +2483,16 @@ test('scribe: control -- a tail not reported is not judged, and a fence marker i
   const block = LOG_FENCE(prompts['scribe:r0'])
   assert.match(block, /before\n\nafter/)
   assert.match(block, /progress: p$/)
+  // A faithful paste of that block is not LOG-DAMAGED, and the `log` a stop
+  // would hand the driver is the blanked block too, never the marker line.
+  const file2 = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const reply = laneReply({ docs: sneaky })
+  const { result: ok } = await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) =>
+    label.startsWith('scribe') ? withFiles(file2, faithfulLog)(prompt) : reply(label, prompt, o))
+  assert.equal(ok.outcome, 'PLAN-DEFECT', JSON.stringify(ok))
+  const file3 = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const { result: bad } = await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) =>
+    label.startsWith('scribe') ? withFiles(file3, incidentLog)(prompt) : reply(label, prompt, o))
+  assert.equal(bad.outcome, 'LOG-DAMAGED')
+  assert.doesNotMatch(bad.log, /<<<LOG-BLOCK-END>>>/)
 })
