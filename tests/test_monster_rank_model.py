@@ -297,19 +297,42 @@ def _names_a_boss(entry, family):
     return any(name in family for name in re.findall(r"\b[A-Za-z0-9_]+_obj\b", entry["what"]))
 
 
-def _keyed_rows(entries, hypothesis, family):
+def _top_up_matched(entry, controls):
+    """Whether a boss row's affix top-up (`affixes_written`) is the one the
+    identity control it names (`controlled_by`, looked up in `controls` by id)
+    was raised with at the boss's rank. A row with no top-up has nothing to
+    match. A control that is missing, or records no top-up at that rank, matches
+    nothing: an unknown top-up is never taken for the same one."""
+    values = entry["values"]
+    written = values.get("affixes_written")
+    if not written:
+        return True
+    control = controls.get(values.get("controlled_by"))
+    if control is None:
+        return False
+    top_up = control["values"].get("affixes_written")
+    if isinstance(top_up, dict):
+        top_up = top_up.get(str(values.get("rank", values.get("rank_written"))))
+    return top_up is not None and sorted(top_up) == sorted(written)
+
+
+def _keyed_rows(entries, hypothesis, family, controls=None):
     """The measured rows that answer `hypothesis`: `what` names its dimension and
     an object of the boss family, `values` carries what decides it, and the row
     carries no `confounds`: nothing but the rank changed on that boss, or the
-    Bosses control's affix top-up (`affixes_written`) was matched by an identity
-    control the row names (`controlled_by`)."""
+    Bosses control's affix top-up (`affixes_written`) is the one the identity
+    control the row names (`controlled_by`) was raised with, compared here, so
+    an unmatched top-up keeps a row out even without a written confound.
+    `controls`, by id, is where that control is found (default: the fixture)."""
     word, field = DIMENSIONS[hypothesis]
     decides = "ratio" if field else "dropitem_first_argument"
+    if controls is None:
+        controls = _entries()
     return [e for e in entries
             if e["status"] == "measured" and word.search(e["what"])
             and _names_a_boss(e, family) and decides in e["values"]
             and not e.get("confounds")
-            and (not e["values"].get("affixes_written") or e["values"].get("controlled_by"))]
+            and _top_up_matched(e, controls)]
 
 
 def _control_spread(entry, field, entries):
@@ -393,49 +416,62 @@ class HypothesisTests(unittest.TestCase):
                 self.assertEqual(_keyed_rows(live_one, hypothesis, family), [])
 
     def test_live_1b_answers_damage_xp_and_drop_rank(self):
-        # Live 1b's rows (MK15-MK24): XP and the drop rank are each decided by
-        # exactly one boss row, which names the identity control that matched
-        # the Bosses control's affix top-up on an ordinary monster. Health
-        # (MK20) has no control, and damage (MK21) is x2.0968 against x1.90,
-        # 0.4% outside the 10% while its control itself read 8.4% below the
-        # table at rank 3 and 5.5% above it at rank 4, with unmatched affixes
-        # and one spawn: both carry `confounds` and stay open.
+        # Live 1b's rows (MK15-MK24) decide no boss hypothesis. Health (MK20)
+        # has no control. Damage (MK21), XP (MK22) and the drop rank (MK23) come
+        # from one Karp King spawn whose top-up (12, 20, 31) was not the
+        # identity control's rank-4 one (5, 12, 18), so the control does not
+        # stand in for it; damage is also x2.0968 against x1.90, 0.4% outside
+        # the 10% while its control itself read 8.4% below the table at rank 3
+        # and 5.5% above it at rank 4. All four carry `confounds` and stay open,
+        # whatever their measured ratio (XP x6.2505 against x6.25; DropItem's
+        # first argument 1 -> 4).
         entries = _entries()
         family = model.boss_family()
         live_1b = [entries["MK%d" % n] for n in range(15, 25)]
-        expected = {
-            "boss_hp_follows_rank_table": ([], None),
-            "boss_damage_follows_rank_table": ([], None),
-            "boss_xp_follows_rank_table": (["MK22"], True),  # x6.2505 against x6.25
-            "boss_drop_rank_reaches_dropitem": (["MK23"], True),  # 1 -> 4
-        }
-        for hypothesis, (ids, answer) in expected.items():
-            _, field = DIMENSIONS[hypothesis]
-            rows = _keyed_rows(live_1b, hypothesis, family)
+        for hypothesis in DIMENSIONS:
             with self.subTest(hypothesis=hypothesis):
-                self.assertEqual([e["id"] for e in rows], ids)
-                self.assertIs(model.HYPOTHESES[hypothesis], answer)
-                self.assertIs(_answer(rows, field, entries), answer)
-                for entry in rows:
-                    self.assertIs(_row_follows(entry, field, entries), answer)
-                    # The control the row names: an ordinary monster, measured
-                    # `pass`, on the same variable (or the drop rank trace).
-                    control = entries[entry["values"]["controlled_by"]]
-                    self.assertEqual(control["status"], "measured")
-                    self.assertEqual(control["values"]["verdict"], "pass")
-                    self.assertNotIn(control["values"]["object"], family)
-                    self.assertEqual(control["values"].get("variable"),
-                                     entry["values"].get("variable"))
-                    self.assertEqual(entry["values"]["verdict"], "pass")
-                    self.assertTrue(entry["what"].startswith("Live 1b:"))
+                self.assertEqual(_keyed_rows(live_1b, hypothesis, family), [])
+                self.assertIsNone(model.HYPOTHESES[hypothesis])
+        boss_rows = {"MK21": "boss_damage_follows_rank_table",
+                     "MK22": "boss_xp_follows_rank_table",
+                     "MK23": "boss_drop_rank_reaches_dropitem"}
+        for mk, hypothesis in boss_rows.items():
+            entry = entries[mk]
+            _, field = DIMENSIONS[hypothesis]
+            with self.subTest(entry=mk):
+                self.assertTrue(entry["confounds"])
+                self.assertTrue(any("not matched" in c for c in entry["confounds"]))
+                self.assertEqual(entry["values"]["verdict"], "pass")
+                self.assertTrue(entry["what"].startswith("Live 1b:"))
+                # The control the row names: an ordinary monster, measured
+                # `pass`, on the same variable (or the drop rank trace), whose
+                # rank-4 top-up was not the boss's.
+                control = entries[entry["values"]["controlled_by"]]
+                self.assertEqual(control["status"], "measured")
+                self.assertEqual(control["values"]["verdict"], "pass")
+                self.assertNotIn(control["values"]["object"], family)
+                self.assertEqual(control["values"].get("variable"),
+                                 entry["values"].get("variable"))
+                self.assertEqual(sorted(control["values"]["affixes_written"]["4"]), [5, 12, 18])
+                self.assertFalse(_top_up_matched(entry, entries))
+                # Negative control: without its written confounds the row is
+                # still kept out, by the unmatched top-up alone.
+                unconfounded = {k: v for k, v in entry.items() if k != "confounds"}
+                self.assertEqual(_keyed_rows([unconfounded], hypothesis, family), [])
+                # Positive control: with the control's top-up made the boss's,
+                # the same row is keyed, so it is the top-up that keeps it out.
+                matched = dict(control, values=dict(control["values"], affixes_written={
+                    "4": list(entry["values"]["affixes_written"])}))
+                controls = dict(entries, **{control["id"]: matched})
+                self.assertEqual(_keyed_rows([unconfounded], hypothesis, family, controls),
+                                 [unconfounded])
+        # What MK22 and MK23 would give if their top-up had been matched: the
+        # measured ratio and drop rank, recorded, not a verdict.
+        self.assertIs(_row_follows(entries["MK22"], "xp", entries), True)
+        self.assertIs(_row_follows(entries["MK23"], None, entries), True)
         self.assertTrue(entries["MK20"]["confounds"])
         mk21 = entries["MK21"]
-        self.assertTrue(mk21["confounds"])
-        # Positive control: without its confounds MK21 would be keyed, so it is
-        # the confounds, not a mismatched word or object, that keep it out.
         unconfounded = {k: v for k, v in mk21.items() if k != "confounds"}
-        self.assertEqual(_keyed_rows([unconfounded], "boss_damage_follows_rank_table", family),
-                         [unconfounded])
         # Negative control: that row without the control it names is a
         # topped-up boss with nothing to match the top-up, and decides nothing.
         uncontrolled = dict(unconfounded, values={k: v for k, v in mk21["values"].items()
@@ -533,6 +569,41 @@ class HypothesisTests(unittest.TestCase):
         for hypothesis in DIMENSIONS:
             with self.subTest(hypothesis=hypothesis):
                 self.assertEqual(_keyed_rows(negatives, hypothesis, family), [])
+
+    def test_a_top_up_counts_only_when_its_control_had_the_same_one(self):
+        # A boss row with a top-up names a control, and the two top-ups are
+        # compared, not assumed: naming a control raised with other affixes is
+        # a confound by itself, with no `confounds` entry written.
+        family = model.boss_family()
+
+        def control(top_up):
+            return {"id": "C", "status": "measured",
+                    "what": "Skeleton_Mage_Fire_obj XP control",
+                    "values": {"object": "Skeleton_Mage_Fire_obj", "verdict": "pass",
+                               "affixes_written": top_up}}
+
+        boss = {"id": "X", "status": "measured", "what": "Karp_King_obj XP at rank 4",
+                "values": {"rank": 4, "rank_1_value": 100, "value": 625, "ratio": "6.25",
+                           "affixes_written": [12, 20, 31], "controlled_by": "C"}}
+        hypothesis = "boss_xp_follows_rank_table"
+        # Positive control: the same top-up at the boss's rank, in either order
+        # and in either recorded shape (by rank, or one list), keeps the row.
+        for top_up in ({"3": [30, 6], "4": [31, 12, 20]}, [12, 20, 31]):
+            with self.subTest(top_up=top_up):
+                self.assertEqual(_keyed_rows([boss], hypothesis, family,
+                                             {"C": control(top_up)}), [boss])
+        # Negatives: another top-up at that rank, the boss's top-up only at
+        # another rank, a control that records none, and a control not found.
+        for controls in ({"C": control({"3": [30, 6], "4": [5, 12, 18]})},
+                         {"C": control({"3": [12, 20, 31]})},
+                         {"C": control(None)},
+                         {}):
+            with self.subTest(controls=controls):
+                self.assertEqual(_keyed_rows([boss], hypothesis, family, controls), [])
+        # A boss row with no top-up has nothing to match, and is kept.
+        bare = dict(boss, values={k: v for k, v in boss["values"].items()
+                                  if k != "affixes_written"})
+        self.assertEqual(_keyed_rows([bare], hypothesis, family, {}), [bare])
 
     def test_a_report_does_not_count_as_a_measurement(self):
         # Negative control: the fixture does carry a row about a boss (MK5),

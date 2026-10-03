@@ -129,8 +129,11 @@ protected drop values. Whether a boss follows the same rows is carried one dimen
 with nothing else changed or the change matched by an identity control, decides it:
 `boss_hp_follows_rank_table` `None` (the boss's health carried a ForgePact affix top-up and had no
 control), `boss_damage_follows_rank_table` `None` (one confounded spawn, 0.4% outside the
-control's tolerance), `boss_xp_follows_rank_table` `True` (rank 4, one Karp King, one spawn; rank 3
-not measured on a boss) and `boss_drop_rank_reaches_dropitem` `True`. The test fails when a
+control's tolerance), `boss_xp_follows_rank_table` `None` (measured ×6.2505 against ×6.25 on one
+Karp King, one spawn, whose affix top-up the control did not share; rank 3 not measured on a boss)
+and `boss_drop_rank_reaches_dropitem` `None` (`DropItem`'s first argument 1 -> 4, measured on the
+same spawn, the same unmatched top-up). The test compares a boss row's top-up with its control's
+at the boss's rank, so an unmatched one keeps the row out by itself. The test fails when a
 hypothesis and the fixture disagree. ForgePact's Bosses control stays in the test as `force_boss_rank`, pinned to
 `BossRarityMod.hpp` and `src/forgepact.py` by `LeverParityTests`.
 
