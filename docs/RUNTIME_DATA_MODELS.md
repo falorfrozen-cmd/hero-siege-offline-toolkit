@@ -1546,7 +1546,7 @@ All **measured** (2026-09-10/11).
   a minimap flag. **Measured.**
 - **Rarity setup.** `EnemyRaritySettings(typeId)` runs from `Enemy_Parent_obj`'s
   Alarm 4 with the monster as `self`, after the spawner has set `enemyRarity`
-  (1 normal, 2 champion, 3 rare, 4 ancient) and filled `enemyAffix`/`affixList`,
+  (1 common, 2 champion, 3 ancient, 4 legion; names per § 13.7) and filled `enemyAffix`/`affixList`,
   and before the stats, affix effects and health bar are built; a rarity or
   affix written at its entry is built by the game as if it had rolled that way.
   **Measured** 2026-09-05 on ordinary monsters (entry and exit state identical;
