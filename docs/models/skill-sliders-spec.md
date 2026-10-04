@@ -6,8 +6,10 @@ tested by [`tests/test_skill_sliders_model.py`](../../tests/test_skill_sliders_m
 It was written for ForgePact#160 (hub #408), the research phase of three player
 sliders: how many projectiles a skill fires, how fast they fly, and how large an
 area skill is. It answers, for each, what the game does with the stat before a
-hook changes anything, so the next workorder's sliders start from numbers rather
-than a guess. The research behind it, with the candidate table and the live
+hook changes anything, so the sliders start from numbers rather than a guess.
+They shipped in ForgePact 2.3.0 as `skillslider` (the implementation workorder of
+ForgePact#160), and the test pins them as its `slider_*` transforms (§ "Our
+code"). The research behind it, with the candidate table and the live
 procedure, is ForgePact's
 [`docs/skill-sliders-research.md`](../../ForgePact/docs/skill-sliders-research.md);
 this spec was written from that document's `## Static reading` only.
@@ -112,11 +114,54 @@ and `MeasuredTests` checks each against the model.
   `roomSpd` was not separated. On every read the `speed` built-in equalled
   `deltaSpeed` times the object's `deltaTimer`.
 
+**The shipped sliders, measured** (two more sessions on 2026-10-04, the same
+character, ForgePact's development build sha256 `2f8590b1…a199` with
+`skillslider` and no `projprobe`; the research doc's `## Implementation live 1`).
+The rows from `slider-amount-shadowbolt-off` on check them:
+
+- **Projectile amount**: at 0, one bolt per cast (three casts); `projamount 2`
+  turned a helper return of 1 into 3 and left 3 bolts; `projamount 5`, the
+  ceiling, 1 into 6 and 6 bolts. The amount rows apply `slider_amount` to
+  `spell_projectile_total`.
+- **Projectile speed**: `projspeed 50` and `100` raised stat 75 from 0 to 50 and
+  100 and took a bolt's `deltaSpeed` from 2.916667 to 4.375 and 5.833333. The
+  model function returns `deltaSpeed`, not stat 75, so these rows pass the
+  slider's stat as `percent_element` (×0.01) instead of as a lever.
+- **AoE size**: `aoesize 50` and `100` raised stat 554 from 0 to 50 and 100 and
+  grew Soul Spurn from 7.5 to 8.0 and 8.5; the Healing Zone, at 50, settled at
+  1.5 after growing in. Element 1086 was not read in these sessions, so the
+  rows pass the measured 0.01 per point as `element_1086`.
+- **Off**: at 0 again, a bolt read 2.916667 and Soul Spurn 7.5. A single Shadow
+  Bolt cast with no lever ever set left 1, 1, 1, 1, 2, 3, 2, 1 bolts over eight
+  casts: the bolt count varies by itself, so a count above 1 at 0 is not a
+  slider effect (the model gives one cast's helper total, not this).
+
 ## Our code
 
-No lever ships in this phase. The research build's `projprobe` carries three
-research-only levers, and the test expresses each as an input transform that the
-next workorder's sliders will pin: `projprobe amount <k>` adds `k` to the return of
+**The shipped sliders** (ForgePact 2.3.0, `skillslider`,
+`plugin/include/ForgePact/SkillSlidersMod.hpp`, off by default) are the test's
+three `slider_*` transforms, each pinned to that header's ceilings and its
+add-after-the-original shape by `LeverParityTests`:
+
+- `slider_amount(helper_return, k, in_scope)`: `skillslider projamount <k>` adds
+  `k` (whole, 0..5) to what `ReturnExtraSpellProjectiles` or
+  `ReturnExtraProjectilesRanged` returned, after the game's own calculation.
+- `slider_aoe(stat554_total, b, in_scope)`: `skillslider aoesize <b>` (0..100)
+  adds `b` to element 0 of a copy of `StatAOESkillSize`'s result, so to stat 554.
+- `slider_speed(stat75, n, in_scope)`: `skillslider projspeed <n>` (0..100) adds
+  `n` to what `ReturnSpecificStat` returns for stat 75 while the player's own
+  `LoadAllModifiers` is the innermost on the stack, so a projectile's
+  `deltaSpeed` is scaled by `1 + n/100`. It is the stat form of the probe's speed
+  lever below; the instance form did not ship.
+
+`in_scope` is the plugin's check, made on each hooked call from the `self` it
+receives: `Player_obj` or the double-cast proc `Universal_Double_Cast_obj`. Out
+of scope (the mercenary, enemies), each transform returns the game's value. A
+slider at 0 is the baseline.
+
+**The research instrument.** The research build's `projprobe` carries three
+research-only levers, and the test expresses each as an input transform beside
+the sliders': `projprobe amount <k>` adds `k` to the return of
 both extra-projectile helpers; `projprobe aoe <bonus>` adds `bonus` to element 0 of
 `StatAOESkillSize`'s result (so to stat 554); and `projprobe speed <mult>` multiplies
 the projectile's own `deltaSpeed` (and its `speed`) after `LoadProjectileSettings`

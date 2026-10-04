@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Live values that hs_game_sdk.skill_sliders_model is checked against (tests/test_skill_sliders_model.py, MeasuredTests); the mechanism is docs/models/skill-sliders-spec.md and the research is ForgePact/docs/skill-sliders-research.md (## Live 1). Rows come from ForgePact#160's three live sessions of 2026-10-04 (research build, `projprobe`, Sorak, slot 14, a White Mage); `capture` names the session's local operator capture (a gitignored hub workorder file) and `dll_sha256` the research DLL. Each row: `id`, `kind` (baseline or target), `status` (only `measured` rows are checked; `inconclusive` rows record values whose check the procedure left not-run), `date`, `source[]` ({`path`, `section`}), `scripts[]` (hs-game-sdk GameScript names), `what`, `values`, and optionally `model`: {`function`, `args`, `observed`, `lever`, `tolerance`}, the skill_sliders_model function the row checks, its keyword arguments (a number, or a string such as \"35/12\" passed to Fraction as is), the value the game showed, the research lever applied to the function's result as an input transform (`{transform, value}`, a projprobe_* function of the test), and the absolute tolerance for a value the capture printed rounded to six decimals.",
+  "$schema_note": "Live values that hs_game_sdk.skill_sliders_model is checked against (tests/test_skill_sliders_model.py, MeasuredTests); the mechanism is docs/models/skill-sliders-spec.md and the research is ForgePact/docs/skill-sliders-research.md (## Live 1). Rows come from ForgePact#160's three live sessions of 2026-10-04 (research build, `projprobe`, Sorak, slot 14, a White Mage); `capture` names the session's local operator capture (a gitignored hub workorder file) and `dll_sha256` the research DLL. The rows from `slider-amount-shadowbolt-off` on come from the implementation workorder's two live sessions of the same day (the shipped `skillslider` on the development build of ForgePact's 160-mod-skill-sliders branch, no `projprobe`), `dll_sha256` that DLL; a lever there may be a `slider_*` function of the test, and an `inconclusive` row may also be a read taken outside any check. Each row: `id`, `kind` (baseline or target), `status` (only `measured` rows are checked; `inconclusive` rows record values whose check the procedure left not-run), `date`, `source[]` ({`path`, `section`}), `scripts[]` (hs-game-sdk GameScript names), `what`, `values`, and optionally `model`: {`function`, `args`, `observed`, `lever`, `tolerance`}, the skill_sliders_model function the row checks, its keyword arguments (a number, or a string such as \"35/12\" passed to Fraction as is), the value the game showed, the research lever applied to the function's result as an input transform (`{transform, value}`, a projprobe_* function of the test), and the absolute tolerance for a value the capture printed rounded to six decimals.",
   "measurements": [
     {
       "id": "amount-shadowbolt-baseline",
@@ -190,6 +190,209 @@
       "what": "Live 2 speed-skill-boost: `projprobe speed stat 74 add 50` (first boosted `0 -> 50`, a double cast: statApplied=3); the new bolt read deltaSpeed 23.750000, +20.833333: the same 5/12 per point as the 0.5 row, so the flat part is linear in the stat.",
       "values": {"lever": "projprobe speed stat 74 add 50", "stat74": 50, "deltaSpeed": 23.75, "speed": 21.375, "deltaTimer": 0.9},
       "model": {"function": "projectile_delta_speed", "args": {"delta_speed": "35/12", "flat_element": 50, "room_spd": "5/12", "order": "multiply_first"}, "observed": 23.75}
+    },
+    {
+      "id": "slider-amount-shadowbolt-off",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-1.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnExtraSpellProjectiles", "gml_Script_TalentsWhiteMage"],
+      "what": "Implementation Live 1 off-amount, the shipped `skillslider` with no lever armed yet (all three `+0 hook=none`): three single Shadow Bolt casts counted 1, 1, 1 (`skillstate` effect= of slot 0,3, the number of White_Mage_Shadow_Bolt_obj instances). The slider at 0 is the baseline.",
+      "values": {"lever": "skillslider projamount 0 (never armed)", "counts": [1, 1, 1]},
+      "model": {"function": "spell_projectile_total", "args": {"base": 1}, "lever": {"transform": "slider_amount", "value": 0}, "observed": 1}
+    },
+    {
+      "id": "slider-amount-shadowbolt-on",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-1.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnExtraSpellProjectiles", "gml_Script_TalentsWhiteMage"],
+      "what": "Implementation Live 1 on-amount: `skillslider projamount 2`; the lever's line read `first=1->3 own=1 skip=0` and a single cast counted 3. Implementation Live 2 repeated it three times with projamount alone (each counted 3, `first=1->3`, own= 1, 2, 3).",
+      "values": {"lever": "skillslider projamount 2", "first_boosted": "1 -> 3", "count_single": 3, "own": 1, "skip": 0, "live2_counts_single": [3, 3, 3]},
+      "model": {"function": "spell_projectile_total", "args": {"base": 1}, "lever": {"transform": "slider_amount", "value": 2}, "observed": 3}
+    },
+    {
+      "id": "slider-amount-shadowbolt-max",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-1.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnExtraSpellProjectiles", "gml_Script_TalentsWhiteMage"],
+      "what": "Implementation Live 1 at-max: `skillslider projamount 5`, the ceiling; the lever's line read `first=1->6` and a single cast counted 6.",
+      "values": {"lever": "skillslider projamount 5", "first_boosted": "1 -> 6", "count_single": 6},
+      "model": {"function": "spell_projectile_total", "args": {"base": 1}, "lever": {"transform": "slider_amount", "value": 5}, "observed": 6}
+    },
+    {
+      "id": "slider-speed-shadowbolt-off",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-1.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnSpecificStat", "gml_Script_LoadAllModifiers"],
+      "what": "Implementation Live 1 off-speed: two new White_Mage_Shadow_Bolt_obj read deltaSpeed 2.916667 (v0) before any lever was armed; after all three levers were set back to 0 (off-restored) one bolt read 2.916667 again.",
+      "values": {"lever": "skillslider projspeed 0", "deltaSpeed": [2.916667, 2.916667], "deltaSpeed_after_zeroing": 2.916667},
+      "model": {"function": "projectile_delta_speed", "args": {"delta_speed": "35/12", "order": "multiply_first"}, "observed": 2.916667, "tolerance": 1e-06}
+    },
+    {
+      "id": "slider-speed-shadowbolt-on",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-1.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnSpecificStat", "gml_Script_LoadAllModifiers"],
+      "what": "Implementation Live 1 on-speed: `skillslider projspeed 50`; the lever's line read `first=0->50 skip=0` (stat 75 as ReturnSpecificStat returned it inside the player's LoadAllModifiers, 0 on Sorak, raised to 50) and two new bolts read deltaSpeed 4.375000, x1.5. No lever in the model call: MeasuredTests applies a lever to the function's result, which here is deltaSpeed, not stat 75, so the slider's output is folded into percent_element (slider_speed(0, 50) at the measured 0.01 per point, the research rows above), as the projprobe rows do.",
+      "values": {"lever": "skillslider projspeed 50", "first_boosted": "0 -> 50", "deltaSpeed": [4.375, 4.375]},
+      "model": {"function": "projectile_delta_speed", "args": {"delta_speed": "35/12", "percent_element": "1/2", "order": "multiply_first"}, "observed": 4.375}
+    },
+    {
+      "id": "slider-speed-shadowbolt-max",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-1.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnSpecificStat", "gml_Script_LoadAllModifiers"],
+      "what": "Implementation Live 1 at-max: `skillslider projspeed 100`, the ceiling; the lever's line read `first=0->100` and a new bolt read deltaSpeed 5.833333, x2. percent_element is slider_speed(0, 100) at 0.01 per point, folded in as in the row above.",
+      "values": {"lever": "skillslider projspeed 100", "first_boosted": "0 -> 100", "deltaSpeed": 5.833333},
+      "model": {"function": "projectile_delta_speed", "args": {"delta_speed": "35/12", "percent_element": 1, "order": "multiply_first"}, "observed": 5.833333, "tolerance": 1e-06}
+    },
+    {
+      "id": "slider-aoe-soulspurn-off",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-1.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_StatAOESkillSize", "gml_Script_LoadAllModifiers", "gml_Script_SetAllModifiersNew"],
+      "what": "Implementation Live 1 off-aoe: two new White_Mage_Soul_Spurn_AOE_obj read image_xscale 7.5 (s0, town) before any lever was armed; after all three levers were set back to 0 (off-restored) one read 7.5 again.",
+      "values": {"lever": "skillslider aoesize 0", "image_xscale": [7.5, 7.5], "image_xscale_after_zeroing": 7.5},
+      "model": {"function": "projectile_scale", "args": {"base_scale": 7.5, "element_1086": 0}, "observed": 7.5}
+    },
+    {
+      "id": "slider-aoe-soulspurn-on",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-1.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_StatAOESkillSize", "gml_Script_LoadAllModifiers", "gml_Script_SetAllModifiersNew"],
+      "what": "Implementation Live 1 on-aoe: `skillslider aoesize 50`; the lever's line read `first=0->50 skip=0` (element 0 of StatAOESkillSize's result, stat 554) and two new Soul Spurn objects read image_xscale 8.0. No lever in the model call: the function's result is the scale, not stat 554, so element_1086 is slider_aoe(0, 50) at the measured 0.01 per point (aoe-stat554-to-element-1086 above; element 1086 itself was not read in this session).",
+      "values": {"lever": "skillslider aoesize 50", "first_boosted": "0 -> 50", "image_xscale": [8.0, 8.0]},
+      "model": {"function": "projectile_scale", "args": {"base_scale": 7.5, "element_1086": "1/2"}, "observed": 8.0}
+    },
+    {
+      "id": "slider-aoe-soulspurn-max",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-1.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_StatAOESkillSize", "gml_Script_LoadAllModifiers", "gml_Script_SetAllModifiersNew"],
+      "what": "Implementation Live 1 at-max: `skillslider aoesize 100`, the ceiling; the lever's line read `first=0->100` and a new Soul Spurn object read image_xscale 8.5. element_1086 is slider_aoe(0, 100) at 0.01 per point, folded in as in the row above.",
+      "values": {"lever": "skillslider aoesize 100", "first_boosted": "0 -> 100", "image_xscale": 8.5},
+      "model": {"function": "projectile_scale", "args": {"base_scale": 7.5, "element_1086": 1}, "observed": 8.5}
+    },
+    {
+      "id": "slider-aoe-healing-zone-outlier",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-1.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_StatAOESkillSize", "gml_Script_LoadAllModifiers"],
+      "what": "Implementation Live 1 hz-outlier: with `skillslider aoesize 50` two Healing Zone casts settled at image_xscale 1.5 (maxScale 3), as in the research sessions; a read about 1 s after the press caught the zone growing in at 0.333333, and the same instance read 1.5 a second later. aoesize own= rose 5 -> 6 -> 7, so the cast does reach StatAOESkillSize. Not checked at the ceiling. No model call: the model covers what element 1086 does, not which objects receive it.",
+      "values": {"lever": "skillslider aoesize 50", "image_xscale_settled": [1.5, 1.5], "image_xscale_growing": 0.333333, "maxScale": 3, "aoesize_own": [5, 6, 7]}
+    },
+    {
+      "id": "slider-scope-other",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-1.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_LoadAllModifiers", "gml_Script_ReturnSpecificStat", "gml_Script_ReturnExtraSpellProjectiles", "gml_Script_StatAOESkillSize"],
+      "what": "Implementation Live 1 scope-other: levers at 2/50/50 in Outskirts of Inoya (Act_01_01), no input for about 60 s beside enemies and the mercenary. The speed lever counted 7 other LoadAllModifiers calls, the last from Mercenary_obj, and left them unchanged; the amount and AoE levers counted no other caller. No other caller named Player_obj or Universal_Double_Cast_obj; no enemy object was named (the enemies died within the first seconds). The speed lever's own= also rose 13 -> 17 -> 18 with no cast: Player_obj calls LoadAllModifiers outside a cast (around the zone change and while idle; what triggers it was not read).",
+      "values": {"levers": "projamount 2, aoesize 50, projspeed 50", "other": {"projamount": 0, "aoesize": 0, "projspeed": 7}, "last_other": {"projspeed": "Mercenary_obj"}, "projspeed_own_without_cast": [13, 17, 18]}
+    },
+    {
+      "id": "shadowbolt-count-vanilla-variance",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-2.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnExtraSpellProjectiles", "gml_Script_TalentsWhiteMage"],
+      "what": "Implementation Live 2 vanilla-baseline: eight single Shadow Bolt casts with no lever ever armed in that launch counted 1, 1, 1, 1, 2, 3, 2, 1 (the largest of `hs_skill_cast`'s effect_after and five `skillstate` reads each). The count is the number of White_Mage_Shadow_Bolt_obj instances, so whatever else makes a bolt counts too; what made the extra ones (a double cast, an item proc) was not read. After a lever went back to 0, the first casts of four transitions counted 1, 1, 2, 1 and the twelve later ones 1 or 2, every slider counter unchanged across them. No model call: the model gives one cast's helper total, not this variance.",
+      "values": {"lever": "none (never armed)", "counts_vanilla": [1, 1, 1, 1, 2, 3, 2, 1], "counts_first_after_zero": [1, 1, 2, 1], "counts_later_after_zero": [1, 2, 1, 1, 1, 2, 2, 1, 2, 2, 1, 1]}
+    },
+    {
+      "id": "slider-aoe-shadowbolt-scale",
+      "kind": "target",
+      "status": "inconclusive",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-impl-live-1.md",
+      "dll_sha256": "2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"}
+      ],
+      "scripts": ["gml_Script_StatAOESkillSize", "gml_Script_LoadAllModifiers", "gml_Script_SetAllModifiersNew"],
+      "what": "Implementation Live 1, a read outside any check: right after the at-max Q cast (aoesize 100) one White_Mage_Shadow_Bolt_obj read image_xscale 1.75, and right after the first cast at +0 (off-restored) one read 0.75. One read each, so the Shadow Bolt object taking element 1086 like Soul Spurn (0.75 + 1.0) is a supporting read, not a measurement.",
+      "values": {"image_xscale_aoesize_100": 1.75, "image_xscale_aoesize_0": 0.75}
     }
   ]
 }
