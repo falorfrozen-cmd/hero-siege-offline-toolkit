@@ -272,7 +272,9 @@ this machine has a named Ghidra project, and say what you found.
   headless through `support\analyzeHeadless.bat`) and the project
   (conventionally `%USERPROFILE%\ghidra_projects\HeroSiege`, program
   `Hero_Siege.exe`). Use them, and keep what they show local, as the Legal
-  section above requires.
+  section above requires. The reading scripts (`DecompileTo.java`,
+  `FindCallers.java` and the rest) are in `ForgePact/tools/ghidra/`; run them
+  as [ForgePact/tools/ghidra/README.md](ForgePact/tools/ghidra/README.md) says.
 - **If it is not present, offer the owner two options** and let them choose:
   1. **Set up Ghidra first (recommended).** Install a JDK 21 and Ghidra; run
      `citrace symdump` in the research build to write `bp_ipc\symbols.csv`;

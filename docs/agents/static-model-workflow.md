@@ -95,11 +95,14 @@ count again.
   **Run `symdump` in a game with no ForgePact hooks installed** until this is
   checked. A note in `ImportSymbols.java` would belong to a separate ForgePact
   change.
-- **The Ghidra reading scripts are still not in any repository; the index and
-  the slot-name helpers now are.** Apart from `ImportSymbols.java`, the Ghidra
-  scripts used for reading (`DecompileTo.java`, `FindCallers.java` and others)
-  exist only in `%USERPROFILE%\ghidra_scripts` on one machine, and a second
-  reader would have to rewrite them. The decompile index (which scripts have
+- **The Ghidra reading scripts, the index and the slot-name helpers are all
+  committed now.** The Ghidra scripts used for reading (`DecompileTo.java`,
+  `FindCallers.java`, `FindSlotNames.java` and eleven more) used to exist on one
+  machine only, so a second reader would have had to rewrite them. Since
+  2026-10-04 they are in `ForgePact/tools/ghidra/`, beside `ImportSymbols.java`
+  (ForgePact issue 169), and
+  [ForgePact/tools/ghidra/README.md](../../ForgePact/tools/ghidra/README.md)
+  says how to run each one headless. The decompile index (which scripts have
   already been decompiled for which build, and where the files are) and the
   helpers that name variable slots in an unnamed body are in
   `tools/decomp_index.py`, described in

@@ -96,7 +96,8 @@ Every example runs from this checkout's root.
 
 ## How a file is named
 
-The local `DecompileTo*.java` reading scripts start each `.c` file with our own
+The `DecompileTo*.java` reading scripts in `ForgePact/tools/ghidra/` (see
+[its README](../../ForgePact/tools/ghidra/README.md)) start each `.c` file with our own
 header line, `// <label> @ <hex address> size=<n>`, where the label is the
 function's name with every character outside `[A-Za-z0-9_.-]` mapped to `_`. The
 label is the record's name. A label with spaces (the "function containing ..."
@@ -107,15 +108,20 @@ Only `.c` files are indexed, and only their first line is read.
 
 ## Recording after a headless run
 
-Add one line after the `analyzeHeadless` call in the run wrapper (`.cmd`) that
-wrote the output, so the index is updated as soon as a decompile exists:
+The four decompiling scripts in `ForgePact/tools/ghidra/` (`DecompileTo`,
+`DecompileToLong`, `DecompileToHuge`, `DecompileAround`) end each run by printing
+the `scan` line for the directory they wrote, to run from this checkout's root.
+They only print it: no Ghidra script calls the index or reads a hub path. To make
+the record automatic, add the same line after the `analyzeHeadless` call in the
+run wrapper (`.cmd`) that wrote the output:
 
 ```bat
 py -3 "<this checkout>\tools\decomp_index.py" scan "%OUTDIR%"
 ```
 
-The wrappers and the Ghidra scripts live outside every repository, so this is a
-line each researcher adds to their own wrappers; nothing here installs it.
+The run wrappers are each researcher's own, since they carry that machine's
+Ghidra, JDK and project paths, so this is a line each researcher adds to their
+own wrappers; nothing here installs it.
 
 ## The backfill, and its caveat
 
