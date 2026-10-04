@@ -1015,11 +1015,29 @@ damaged save.
   `hud.playerSlot.bind_skill` read `undefined`, and `playerSlot` itself is a
   ds_map (`ref ds_map`). A newly learned skill appears in `row1` by itself.
 - `Hud_In_Combat_spr` is the HUD's in-combat icon. Read from the string table.
+- **The current font right after `DrawHudBuffs` returns is not the same from
+  frame to frame.** In ForgePact #31's Live procedure 3 (2026-10-04, player
+  standing still in Pumpkin Cellar), a label drawn from the `DrawHudBuffs`
+  hook read the font left current with `draw_get_font` on every draw: it
+  answered font index 7 at both status reads, and across about 45 s it found
+  a different font from the previous draw 54 times, while the GUI layer's
+  size did not change once. So a draw made from that point inherits
+  whichever font was left current, and one that does not set its own font
+  every frame changes size on some frames (Live procedure 2 caught a label
+  at about 72 % size on 2 single frames in 272). **Measured.** Which code
+  leaves the other font current is **not established**: by a reading of
+  ForgePact's own code (not a measurement), its draws that run earlier in
+  the frame are meant to restore the font they set, but Headhunter's head
+  labels restore it inside the same `try` that sets it, and the other
+  ForgePact draws (pack markers, the tip draw guard) were not isolated
+  live, so the switch is not shown to be the game's. `draw_get_font` can
+  also answer unset, so a reading counts only beside a font index.
 
 [toggle skills, Session 1](../ForgePact/docs/toggle-skills-research.md#session-1-1),
 [Session 3](../ForgePact/docs/toggle-skills-research.md#session-3-1),
 [Sprite look probe](../ForgePact/docs/toggle-skills-research.md#sprite-look-probe),
-[skill actions, Results](../ForgePact/docs/skill-actions-research.md#results)
+[skill actions, Results](../ForgePact/docs/skill-actions-research.md#results),
+[dungeon chest, Live procedure 3](../ForgePact/docs/dungeon-chest-research.md#live-procedure-3)
 
 ### 8.4 Pause menu and the Restart gate
 
@@ -1053,6 +1071,28 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
 `UiActivate*` menu openers.
 [menu pause §2](../ForgePact/docs/menu-pause-plan.md#2-the-constraints-that-shape-everything),
 [§3.1](../ForgePact/docs/menu-pause-plan.md#31-the-actors-are-reachable-through-a-handful-of-parents)
+
+### 8.6 In-game chat
+
+- **A mod can add a chat line with `ChatAddServerMessage`**, called by name
+  (`asset_get_index` of the short name, then `script_execute` through
+  `CallBuiltinEx`) with the local `Player_obj` instance as `self` and one string
+  argument. It returns `undefined` and shows the text bottom left as a red line
+  prefixed `SERVER: ` (`SERVER: ForgePact chat test 1`). **Measured 2026-10-03**,
+  one call, screenshot.
+- **Inside it, the game calls `ChatAddMessage` with 15 arguments**: the sender
+  string `"SERVER"`, the text, two reals, two int64s, two reals, a `[hh:mm]`
+  time string and six `undefined`; then `IngameChatFeedAddLatest` with the
+  player as `self` and two arguments (a reference and a bool). **Measured**
+  (count-only hooks on both, same session). Whether `ChatAddMessage` called
+  directly with another sender shows a line without the `SERVER:` prefix is
+  **not established**.
+- **Offline, the player cannot type in chat**: the chat window opens and closes,
+  but no line can be sent, so the call the game makes for a typed line was not
+  observed. One `Ingame_Chat_obj` exists in a loaded game; `UI_Ingame_Chat_obj`
+  and `Chat_obj` were 0. **Measured.**
+
+[dungeon chest, Chat route](../ForgePact/docs/dungeon-chest-research.md#chat-route)
 
 ---
 
@@ -1573,6 +1613,28 @@ All **measured** (2026-09-10/11).
 - A zone's minimap can exist before its creators; town has 0 creators and 8
   enemies. A spawned pack stays spawned, including across leaving and re-entering
   the zone. **Measured.**
+- **A key dungeon spawns the same way, and all its creators exist at room
+  entry and persist after spawning.** Pumpkin Cellar (`Pumpkin_Cellar_01_rm`)
+  held 122 creators from the first tick to the last, while 600 kills were made
+  to clear it; 5 enemies were alive on the first tick, 44 a second later (the
+  packs near the entrance), and the alive count rose and fell as the player
+  moved (peak 210). So a dungeon's creators can be counted at load. **Measured 2026-10-03**
+  ([dungeon chest, Live procedure 1](../ForgePact/docs/dungeon-chest-research.md#results)).
+- **No creator variable read by name was observed to hold its pack size, but
+  whether a creator has spawned is readable.** In a second Pumpkin Cellar run
+  every numeric variable on the 122 creators at the chest's first sight was
+  summed against the 619 kills to clear and compared with each creator's
+  births: none matched (the variables whose names suggest a pack size read as
+  one large real per creator, rising from one creator to the next, not as
+  counts). On 8 sampled `Enemy_Creator_obj`: at room entry `alarm[0]` was 5
+  and both `enemyCreatorTimer` and `enemyArray` undefined; once armed,
+  `alarm[0]` was -1 and `enemyCreatorTimer` a real; once spawned, `enemyArray`
+  was an array and `enemyCreatorTimer` no longer listed. So "still to spawn"
+  is `enemyArray` not being an array; `enemyCreatorTimer` alone cannot tell it,
+  being undefined both before a creator arms and after it spawns. 5 of the 122
+  had spawned by first sight, and the rest made about 5.25 kills each (614 for
+  117). **Measured 2026-10-03**; the other creator objects' `enemyArray` was
+  not sampled ([dungeon chest, Live procedure 1b](../ForgePact/docs/dungeon-chest-research.md#live-procedure-1b)).
 - `EnemyCreatorPending` only reports whether a creator still has an alarm running.
   Creators make density copies through four-argument `instance_create_*` calls.
   **Static reading.**
@@ -1648,6 +1710,115 @@ All **measured** (2026-09-10/11).
 `movementSpdMultiplier` becomes `moveSpeedCur` and reaches `path_start`; goblins
 and online-client movement use other code. **Static reading.**
 [ForgePact README, Enemy Movement Speed](../ForgePact/README.md#enemy-movement-speed)
+
+### 11.5 Dungeon chest and its unlock
+
+The end chest of a key dungeon is `Dungeon_Chest_obj` (1366). The game opens it
+only once the dungeon's monsters are dead; the chest decides that itself, by
+polling `instance_exists(Enemy_Parent_obj)` (measured, below).
+
+- **Events.** `Dungeon_Chest_obj` has five: Create, Step, Draw, Alarm 0 and Other 7
+  (animation end). They were read through the per-object event rows the runtime
+  keeps (name, function, variable table: the table the frame profiler walks), so
+  object events are readable statically although `symbols.csv` lists only
+  scripts. **Static reading.**
+- **Step** calls, by name, `GetKeyDungeonRoom`, `GetKeyDungeon`,
+  `NetworkSendClientEffect`, `GPV`, `IsDefined` and `PlaySound3D`. It calls no
+  script that counts or lists enemies. **Static reading.**
+- **Animation end is the open**: `CreateInFreePos`, an `instance_create` by name,
+  `SPV`, `ReturnSpecificStat`, `quest_exists`, `QuestComplete` and
+  `CommunityQuestAddProgress`, so loot and quest completion both happen there.
+  **Alarm 0** calls `ReturnSpecificStat` and `GPV`; **Create** calls `CheckTown`,
+  `UpdateDepth` and `ReportClient`. **Static reading.**
+- **What a static reading cannot show in this build.** Script bodies reach
+  builtins through the runtime's function table, not by direct call (in 150
+  bodies read, `is_handle` was the only direct one), so whether the chest's Step
+  polls `instance_number`/`instance_exists` about monsters is **not
+  established**. Instance variables are read and written through slot numbers,
+  so which chest variable, if any, flips at the last kill is **not established**
+  either. From the reading alone, what decides the unlock is **not
+  established**; the live measurement below found the builtin poll.
+  **Static reading.**
+- **Neighbours.** `Dungeon_Boss_Blocker_obj` (1365) has Create, Step and Draw; its
+  Step calls `quest_exists` and `GPV`. `Spawn_Dungeon_obj` (4667) has Create,
+  Step, Alarm 0 and Draw; its Alarm 0 calls `sc_rift`, `StringStartsWith`, `GPV`
+  and `instance_create`: it is the world-side entrance of the special-content
+  family, not a monster spawner. `Dungeon_Spawner_1_obj`..`_4_obj` have only a
+  small Create. **Static reading.**
+- **Counting kills.** The kill path is § 13.5: `EnemyDestroyKillProc` runs with
+  the dying enemy as `self` (and again with the player as `self`), monsters are
+  the `Enemy_Parent_obj` (1429) family, and `Enemy_Death_Effect_obj` is not made
+  on every kill, so it cannot count kills. **Measured.**
+- **Measured in Live 1** (2026-10-03, Pumpkin Cellar, `Pumpkin_Cellar_01_rm`,
+  which the runtime printed as a room reference by name rather than the SDK
+  index 216; source: the research doc's
+  [Live procedure 1 results](../ForgePact/docs/dungeon-chest-research.md#results)):
+  - **The chest polls `instance_exists(Enemy_Parent_obj)` with itself as
+    `self`**, about once a frame: 3402 calls with 44 monsters alive, 41519 by
+    the end of the run. Its other `instance_exists` arguments were `Player_obj`
+    (1897), `Loot_Ground_obj` and `objZoneGenV2` (12 each) and a few
+    controllers. **Measured** (a `HookBuiltin` detour with a per-`self`
+    positive control in the same session). It made no `instance_find` or
+    `instance_place` call; **measured**, since those detours saw the game's
+    own calls (`gameCalls` 631489 and 6422). Whether it calls
+    `instance_number` is **not observed, and the instrument could not see
+    it**: that detour attributed no call to any game `self` in the session
+    (`gameCalls=0`), and the positive control was ForgePact's own
+    `CallBuiltinEx` call, not the route compiled GML takes.
+  - **At the last kill only `nearest` changed** on the chest, from `-4` to an
+    instance reference, the tick after the alive count reached 0: read as the
+    chest finding the nearest player once no monster exists. The open, on
+    approach, changed only `sprite_index` (`Dungeon_Chest_Closed_spr` →
+    `Dungeon_Chest_Open_spr`), `image_index` and `image_speed`. No store key
+    read through `GPV` moved and no `SPV` ran. **Measured**; that no other
+    unlock state exists is **not established** (only the user variables, seven
+    built-ins, alarm 0 and the store keys were watched).
+  - **The monsters stream in**: 5 alive on the first tick, 44 a second later,
+    a peak of 210 at 260 kills, 0 at **600** kills; **122** creators on every
+    tick (§ 11.2). The kill path (§ 13.5) counted one per kill with no
+    non-enemy `self`. **Measured.**
+  - **Blockers: 0** (`Dungeon_Boss_Blocker_obj`) in Pumpkin Cellar. Whether a
+    dungeon with a blocker behaves the same is **not established** (not
+    covered live).
+- **Measured in Live 1b** (2026-10-03, two Pumpkin Cellar runs in one launch;
+  source: the research doc's
+  [Live procedure 1b results](../ForgePact/docs/dungeon-chest-research.md#live-procedure-1b)):
+  - **Answering that one poll `false` opens the chest with monsters alive.**
+    With the poll answered for the chest's own `self` only (390 calls answered
+    after the latch at 304 kills), the chest's sprite went from closed to open
+    at 325 kills with 193 monsters alive. **Measured**; whether it then drops
+    loot as at a full clear was not checked.
+  - **Kills to clear and births differ.** The second run cleared at 619 kills
+    with 644 enemies created by creators (5 alive at the chest's first sight,
+    639 born after it): 25 monsters a creator makes are never killed by the
+    player and never keep the chest shut. A total for the chest is counted in
+    kills. **Measured.**
+  - **Blockers: 0** again; a dungeon with a blocker is still **not covered
+    live**.
+- **Measured in Live 2 and Live 3** (2026-10-04, ForgePact's player build,
+  Pumpkin Cellar, one run each at a 50 % share; source: the research doc's
+  [Live procedure 2](../ForgePact/docs/dungeon-chest-research.md#live-procedure-2)
+  and [Live procedure 3](../ForgePact/docs/dungeon-chest-research.md#live-procedure-3)):
+  - **The 122 creators were all still to spawn at the chest's first sight** in
+    both runs, all readable, and ForgePact's estimate of the dungeon's total
+    came out at **642** and **646**, the difference being the monsters alive
+    at that moment (1 and 5 by the estimate's arithmetic). **Measured.**
+  - **Answering the chest's poll at a share of the total opens it with many
+    monsters alive**: 170 alive at the latch (333 kills of 642) and 163 after
+    the open in Live 2; 128 alive at the latch (323 of 646, exactly the
+    threshold) and 103 after the open in Live 3. The poll was answered
+    thousands of times after the latch (9421 in Live 2 before the open).
+    **Measured.**
+  - **The kill path counts in the player build** once `Enemy_Parent_obj`'s
+    index is resolved by name (§ 13.5): the first read after a few dozen kills
+    showed 38, with no kill refused as a non-enemy. **Measured.**
+  - **With no lever** the chest stayed shut with monsters alive and opened
+    after the clear (Live 2, the owner's report). **Measured.**
+  - **Blockers: 0**; a dungeon with a blocker is still **not covered live**.
+
+[dungeon chest, Static reading](../ForgePact/docs/dungeon-chest-research.md#static-reading),
+[Route](../ForgePact/docs/dungeon-chest-research.md#route),
+[spec](models/dungeon-chest-spec.md)
 
 ---
 
