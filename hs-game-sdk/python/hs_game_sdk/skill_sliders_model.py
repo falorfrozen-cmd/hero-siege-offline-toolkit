@@ -144,11 +144,15 @@ def projectile_delta_speed(delta_speed: Number, percent_element: Number = 0,
     flat element as an addition of `flat_element * room_spd`, `room_spd` being
     the game's global speed factor. ForgePact#160's live sessions raised one
     stat at a time, so which of the two applies first was not measured and
-    `order` (one of `SPEED_ORDERS`) has no default. What either does below 0 is
-    not established; the model only claims non-negative elements.
+    `order` (one of `SPEED_ORDERS`) has no default. Both elements apply only
+    while `delta_speed` is above 0 (static reading), so a `delta_speed` of 0 or
+    less comes back unchanged. What either element does below 0 is not
+    established; the model only claims non-negative elements.
     """
     if order not in SPEED_ORDERS:
         raise ValueError("order must be one of %r, not %r" % (SPEED_ORDERS, order))
+    if Fraction(delta_speed) <= 0:
+        return Fraction(delta_speed)
     multiplier = 1 + Fraction(percent_element)
     addition = Fraction(flat_element) * Fraction(room_spd)
     if order == "add_first":

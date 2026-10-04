@@ -181,7 +181,8 @@ A pure function of numbers, with exact fractions
   the `deltaSpeed` `LoadProjectileSettings` leaves, the percent as a multiplier of
   `1 + percent_element` and the flat part as `flat_element × room_spd`, combined in
   the `order` given (`"multiply_first"` or `"add_first"`), since the order was not
-  measured.
+  measured. A `delta_speed` of 0 or less comes back unchanged, since both elements
+  apply only while it is above 0.
 
 ## What the model cannot catch
 

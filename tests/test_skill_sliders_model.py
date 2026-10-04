@@ -134,6 +134,18 @@ class BaselineTests(unittest.TestCase):
                 self.assertEqual(model.projectile_delta_speed(8, percent_element=Fraction(1, 2), order=order), 12)
                 self.assertEqual(model.projectile_delta_speed(8, flat_element=2, room_spd=Fraction(1, 2), order=order), 9)
 
+    def test_speed_elements_apply_only_while_delta_speed_is_above_zero(self):
+        # Static reading (spec, RUNTIME_DATA_MODELS 7.6): both elements act only
+        # while deltaSpeed is above 0, so a still object keeps 0. The positive
+        # control beside it is the same call on a moving object.
+        both = dict(percent_element=Fraction(1, 2), flat_element=2, room_spd=Fraction(5, 12))
+        for order in model.SPEED_ORDERS:
+            with self.subTest(order=order):
+                self.assertEqual(model.projectile_delta_speed(0, order=order, **both), 0)
+                self.assertEqual(model.projectile_delta_speed(0, flat_element=2, room_spd=1, order=order), 0)
+                self.assertGreater(model.projectile_delta_speed(Fraction(35, 12), order=order, **both),
+                                   Fraction(35, 12))
+
     def test_the_order_matters_only_when_both_apply_and_is_a_parameter(self):
         # The order was not measured (the sessions raised one stat at a time), so it has no default.
         both = dict(percent_element=Fraction(1, 2), flat_element=2)
