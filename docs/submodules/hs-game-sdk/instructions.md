@@ -106,6 +106,13 @@ checks every script and object they name is bound.
 ForgePact #68's `bag_to_stash_move`: the routines, selfs and argument order of a move from the
 bag into the stash, and the map owner per tab kind; see `docs/RUNTIME_DATA_MODELS.md` § 17) is data-only too, with no generator and no consumer yet, checked
 against the SDK and that doc section by `tests/test_curated_stash_containers.py`.
+`gamba_measurements.json` (2026-10-04, ForgePact issue #134's gamba machine research, phase 1:
+G1-G3 the static reading of `Slot_Machine_01_obj`, its parents and its creation call, G4-G9 measured
+with the research build's `gambaprobe` in two live sessions, G10 the spin checks no session could
+reach) is data only, in the shape of `jump_measurements.json` (`measurements[]` with `id`, `kind`,
+`status`, `date`, `source`, `what`, `values`), with no generator, no model and no consumer yet; its
+prose is `docs/RUNTIME_DATA_MODELS.md` § 20 and its argument ForgePact's
+`docs/gamba-machine-research.md`.
 
 **Models (`drop_roll_model.py`, 2026-09-24, issue #162):** a model is a hand-written, stdlib-only,
 deterministic function of the game's mechanism, built from a written spec

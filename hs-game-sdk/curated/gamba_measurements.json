@@ -1,0 +1,178 @@
+{
+  "$schema_note": "The gamba machine (Slot_Machine_01_obj) and Goburin's Head (ForgePact#134 phase 1, 2026-10-04). Static readings of the object's events (a local reading of the game's compiled-code table and event bodies, kept on the reader's machine; nothing quoted) and two live sessions with the research build's `gambaprobe` instrument on save slot 14, character Sorak: Live 1 (ForgePact research build, INSTRUMENT-BLIND) and Live 2 (research build SHA-256 eb1fcf0997b535241ea536974f48a79658886b004266e14ff56b4d10dc87f2c0, Town of Inoya, then the first combat zone outside it). The argument, the controls and the check tables are in ForgePact docs/gamba-machine-research.md, Live 1 results and Live 2 results; the shared facts are docs/RUNTIME_DATA_MODELS.md section 20. Data only: no generator reads this file and there is no model. Every status is `measured`, `not-observed` or `static-reading`. No machine survived its first step in either session, so no spin, explosion or prize was measured.",
+  "measurements": [
+    {
+      "id": "G1",
+      "kind": "baseline",
+      "status": "static-reading",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Static reading"}],
+      "objects": ["Slot_Machine_01_obj", "Collision_Prop_obj", "Collision_Parent_obj", "Avoidable_Parent_obj"],
+      "scripts": ["gml_Script_anon_1474_gml_Object_Slot_Machine_01_obj_Create_0"],
+      "what": "The gamba machine is an object whose logic is in its events, not a named script. Its parent chain is Collision_Prop_obj -> Collision_Parent_obj -> Avoidable_Parent_obj; Collision_Prop_obj owns a Create_0 and an Alarm_11, the two above it a Create_0 only.",
+      "values": {
+        "object_index": 4644,
+        "parents": [959, 957, 433],
+        "events": ["Create_0", "Alarm_0", "Alarm_9", "Step_0", "Draw_0", "Draw_64", "CleanUp_0"],
+        "create_closures": 1
+      }
+    },
+    {
+      "id": "G2",
+      "kind": "baseline",
+      "status": "static-reading",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "The game's own creation call"}],
+      "objects": ["Slot_Machine_01_obj", "Zone_State_Buffer_obj"],
+      "scripts": ["gml_Script_ClientCreateEffect", "gml_Script_instance_create"],
+      "what": "The game creates a machine from ClientCreateEffect, in the one case of its switch that carries object index 4644: one call of the game's own instance_create script with x, y and the object. instance_create takes a layer from a global array and calls the instance_create_layer builtin on it. Zone_State_Buffer_obj's Create closures also name the object (not read).",
+      "values": {
+        "creation_script_argc": 3,
+        "creation_builtin": "instance_create_layer"
+      }
+    },
+    {
+      "id": "G3",
+      "kind": "baseline",
+      "status": "static-reading",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "What `Create_0` runs, and the parent chain"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_UpdateDepth", "gml_Script_InitPV", "gml_Script_SPV", "gml_Script_GPV", "gml_Script_FPV", "gml_Script_DebugLogAddExt"],
+      "what": "Create_0 has one exit: it updates the depth, arms alarm 9 for the next step, runs the inherited Collision_Prop_obj Create (depth again, alarm 11 two steps out), then sets up the machine's state with about 80 calls by name to InitPV, SPV and GPV. CleanUp_0 frees it through FPV. Alarm_9 logs the spawn through DebugLogAddExt first, on every path.",
+      "values": {
+        "create_by_name_store_calls_approx": 80,
+        "alarm9_steps": 1,
+        "alarm11_steps": 2
+      }
+    },
+    {
+      "id": "G4",
+      "kind": "control",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": [],
+      "what": "The instrument's positive controls in Live 2: every row installed (none missing, none table-only), and one irandom(100) sent through CallBuiltin moved the irandom builtin row by exactly one call, so the builtin rows see a call. The hook took about 9 seconds, with the game frozen for them.",
+      "values": {
+        "rows": 41,
+        "missing": 0,
+        "table_only": 0,
+        "detoured": 32,
+        "detoured_under": 1,
+        "shared": 8,
+        "selftest_irandom_calls": [0, 1],
+        "compiled_code_rows_for_caller_walk": 20893,
+        "hook_freeze_seconds_approx": 9
+      }
+    },
+    {
+      "id": "G5",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_InitPV", "gml_Script_SPV", "gml_Script_GPV", "gml_Script_FPV"],
+      "what": "By name: both the short name and the gml_Script_ name of every hooked script resolve through GetNamedRoutineIndex to the script itself (byname=same), so there is no separate functions-array routine to detour. Yet across four Create_0 runs with a machine as self, the InitPV, SPV, GPV and FPV rows counted no call with the machine as self: the by-name store calls are not observed by the detour on the scripts' own functions (Live 1 counted the same zeros).",
+      "values": {
+        "byname_same": 24,
+        "byname_detoured": 0,
+        "byname_shared": 0,
+        "byname_missing": 0,
+        "create_runs": 4,
+        "InitPV_machine_self": 0,
+        "SPV_machine_self": 0,
+        "GPV_machine_self": 0,
+        "FPV_machine_self": 0
+      }
+    },
+    {
+      "id": "G6",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 1 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": [],
+      "what": "Live 1: three machines created by instance_create_depth at depth 0 at the player (two in town, one in a Hell zone) each ran Create_0 inside the call, then CleanUp_0 and Alarm_9 in the next step, and never Step_0; status read machines=0 each time.",
+      "values": {
+        "spawns": 3,
+        "route": "depth",
+        "step_0_calls": 0,
+        "machines_after": 0
+      }
+    },
+    {
+      "id": "G7",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_instance_create"],
+      "what": "Live 2: four spawn routes, one machine each, in the Town of Inoya. depth = instance_create_depth at depth 0 (the control); game = the game's own instance_create script by name with the player as self; layer = instance_create_layer on the player's layer value; self = instance_create_depth with the player as self and other. Every machine ran Create_0 and was removed by its own Alarm_9 in its first step, never reaching Step_0. The layer and depth read at Create_0 differed by route; the outcome did not.",
+      "values": {
+        "routes": {
+          "depth": {"create_layer": -1, "create_depth": 0, "alarm9_layer": 20359, "alarm9_depth": -419, "survived": false},
+          "game": {"create_layer": 19940, "create_depth": 0, "survived": false},
+          "layer": {"create_layer": 20351, "create_depth": -411, "survived": false},
+          "self": {"create_layer": -1, "create_depth": 0, "survived": false}
+        },
+        "status_after_four": {"create": 4, "alarm9": 4, "cleanup": 4, "step": 0, "machines": 0}
+      }
+    },
+    {
+      "id": "G8",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": [],
+      "what": "Who removes a spawned machine: its own Alarm_9. On all four spawns the stack walk taken at CleanUp_0 shows, below the plugin's detour and eight runner frames, a frame in gml_Object_Slot_Machine_01_obj_Alarm_9, so CleanUp_0 runs nested inside Alarm_9, through the runner. Alarm_9's own walk shows only runner frames (the alarm dispatch). No script or builtin row the instrument held counted a call with the machine as self during the removal (the probe's machine-self total was the three event rows, once each per spawn), so which runner routine removes it is not established. Live 1's order (CleanUp_0's line before Alarm_9's) is the order the event lines print, after each original returns.",
+      "values": {
+        "cleanup_caller_lines": 4,
+        "runner_frames_between": 8,
+        "alarm9_at_alarm9": 0,
+        "alarm11_at_alarm9": 2,
+        "machine_self_after_one_spawn": 3,
+        "machine_self_after_four_spawns": 12
+      }
+    },
+    {
+      "id": "G9",
+      "kind": "control",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
+      "objects": [],
+      "scripts": ["gml_Script_cpr_irandom", "gml_Script_cpr_rand32"],
+      "what": "About 15 seconds of combat in the first zone outside the Town of Inoya, no mod on: the game's rolls passed the cpr_irandom and cpr_rand32 script rows, while the irandom, irandom_range, random, random_range and choose builtin rows did not move (irandom kept its one self-test call). Whether the machine's prize roll passes either is not established.",
+      "values": {
+        "cpr_irandom_calls": [0, 1308],
+        "cpr_rand32_calls": [0, 1386],
+        "irandom_calls": [1, 1],
+        "irandom_range_calls": [0, 0],
+        "random_calls": [0, 0],
+        "random_range_calls": [0, 0],
+        "choose_calls": [0, 0]
+      }
+    },
+    {
+      "id": "G10",
+      "kind": "target",
+      "status": "not-observed",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": [],
+      "what": "A spin, its gold debit, the explosion, the prize roll and its ground placement, a forced Goburin's Head and a second machine's starting state. No machine lived to spin, so none was observed, and the loader-route fallback drop was not run. The research doc's Decision reads every spin key not-observed, fallback-drop not-run and pity-design blocked.",
+      "values": {
+        "checks": ["spin-trace", "gold-debit", "explosion-trace", "prize-trace", "roll-identity", "forced-head", "second-machine", "fallback-drop"],
+        "gold_spent": 0
+      }
+    }
+  ]
+}

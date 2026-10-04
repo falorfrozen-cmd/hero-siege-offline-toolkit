@@ -2609,7 +2609,7 @@ A monster that special content spawned carries a non-zero `specialType` in its s
   - the Traveling Merchant fills it from the unique list;
   - Veras's Black Market fills it from uniques and exclusives.
 
-  No stock routine offers keys, fragments, materials, socketables or relics, and no gamble routine was found in Season 10.
+  No stock routine offers keys, fragments, materials, socketables or relics. The gamble is not a vendor routine or a named script: it is the gamba machine object, `Slot_Machine_01_obj`, whose logic lives in its own events (§ 20).
 - **Selling to a vendor pays** the item's info value 9 × the stack, rounded up. Materials are worth a token 10, runes and gems 125-381, most keys 15-5,000. **Static reading.**
 - **Gold** is account-wide, with separate pools for softcore, hardcore and Blood Pact (`hs2saves\shop.ini`, `[gold]`). The offline cap is 500,000,000.
   - `PickUpGoldCheck(GetCounterHash(), amount, …)` is the only call that changes the balance, both credits and debits. `GoldLogAdd` only writes the UI log.
@@ -4132,3 +4132,128 @@ are not, and are written "Live 1 run Jn" here.
   walkable map's edge is **not observed**.
 
 [Mod live 1 results](../ForgePact/docs/jump-scenery-research.md#mod-live-1-results)
+
+---
+
+## 20. Gamba machines
+
+What ForgePact's Goburin's Head pity research (#134, phase 1) established about
+the gamba machine on 2026-10-04: a static reading of the object's events, and
+two live sessions with its `gambaprobe` instrument (research build), on save
+slot 14 ("Sorak"), mostly in the Town of Inoya. The argument, the controls and
+the check tables are in ForgePact's
+[`docs/gamba-machine-research.md`](../ForgePact/docs/gamba-machine-research.md);
+the measurements are also in `hs-game-sdk/curated/gamba_measurements.json`.
+**No spin has been measured yet**: every machine the instrument created removed
+itself in its first step (§ 20.3).
+
+### 20.1 The object
+
+- `Slot_Machine_01_obj` (4644) is the gamba machine. Its parents are
+  `Collision_Prop_obj` (959) -> `Collision_Parent_obj` (957) ->
+  `Avoidable_Parent_obj` (433) (`hs-game-sdk` `kObjectParents`). **Static
+  search.**
+- Its events are `Create_0`, `Alarm_0`, `Alarm_9`, `Step_0`, `Draw_0`,
+  `Draw_64` and `CleanUp_0`, plus one Create closure,
+  `gml_Script_anon_1474_gml_Object_Slot_Machine_01_obj_Create_0` (5343; the
+  name moves with every patch, §5.3). `Collision_Prop_obj` owns a `Create_0`
+  and an `Alarm_11`; the two parents above it own a `Create_0` only. **Static
+  reading.**
+- The event names do not resolve through `GetNamedRoutinePointer` (no
+  `gml_Object_*` name does: 22 of 22 raw event names returned not found,
+  `pet-quest-collector-research.md`, 2026-09-10); they are reached by name in the
+  compiled-code table, and detours placed there counted `Create_0`, `Alarm_9`
+  and `CleanUp_0` on every spawned machine. **Measured.**
+- The machine's logic is in these events, not in a named script: no script is
+  named for gamba, gamble, slot, jackpot or casino. **Static search.**
+- Goburin's Head, the unique charm at repository type 10 / sub 0 / base 98
+  (key `charms_goburins_head`), is the prize ForgePact #134 is about; the
+  executable stores "Gamba Machine" beside the charm keys as the item
+  database's drop-source label. **Static search.** Its rarity code (7, 10 or
+  neither) is **not established**.
+
+### 20.2 Creation and state
+
+- The game creates a machine from `gml_Script_ClientCreateEffect` (568), in
+  the one case of its switch that carries the object index 4644: a single call
+  of the game's own `gml_Script_instance_create` (4556) with x, y and the
+  object. `instance_create` takes a layer from a global array and calls the
+  `instance_create_layer` builtin on it. **Static reading.**
+  `Zone_State_Buffer_obj` (6015)'s Create closures also name the object,
+  presumably how machines persist between visits to a zone; those bodies were
+  **not read**.
+- `Create_0` has one exit and no early return. In order it updates the depth
+  (`gml_Script_UpdateDepth`, 4576), arms its alarm 9 for the next step, runs
+  the inherited `Collision_Prop_obj` Create (the depth again, alarm 11 two
+  steps out), and then sets up the machine's state with about 80 calls by name
+  to `gml_Script_InitPV` (119), `gml_Script_SPV` (121) and `gml_Script_GPV`
+  (120). `CleanUp_0` frees it through `gml_Script_FPV` (122). **Static
+  reading.** So the spin count, the gold spent and the threshold are values in
+  the protected `GPV`/`SPV` store the dungeon chest and the satanic zone also
+  use (§ 11, § 14), not instance variables, and
+  `variable_instance_get_names` will not list them. Which keys hold them is
+  **not established**.
+- Those by-name calls are **not observed by** a `HookOneScript` detour on the
+  scripts' own functions. Both the short name and the `gml_Script_` name of
+  `InitPV`, `SPV`, `GPV` and `FPV` resolve through `GetNamedRoutineIndex` to
+  the script itself (an index of 100000 or more; no separate functions-array
+  routine), yet over four `Create_0` runs with a machine as `self` the four
+  rows counted no call with the machine as `self`. **Measured** (2026-10-04).
+  Read a zero on those rows as "not observed by the detour", never as "not
+  called"; the dungeon chest's `store GPV calls=2` over a whole dungeon
+  (`dungeon-chest-research.md`) has the same shape. How the call reaches the
+  store without passing the detour is **not established**.
+- `Draw_64` draws each machine's gold spent, so a per-machine gold-spent value
+  exists, and the prompt offers a spin for 10,000 gold. **Static reading.**
+
+[Live 2 results](../ForgePact/docs/gamba-machine-research.md#live-2-results)
+
+### 20.3 A spawned machine removes itself in its first step
+
+- A machine created from outside the game's own effect route runs `Create_0`
+  inside the creating call and, in its first step, runs `Alarm_9`, which
+  removes it: `CleanUp_0` runs nested inside `Alarm_9` (the stack walk taken
+  at `CleanUp_0` shows, under the runner's frames, a frame in
+  `gml_Object_Slot_Machine_01_obj_Alarm_9`). `Step_0` never runs, and nothing
+  is left on screen. Seven machines, all the same: three by
+  `instance_create_depth` at depth 0 (two in town, one in a Hell zone), then
+  one each by the game's own `instance_create` script called by name with the
+  player as `self`, by `instance_create_layer` on the player's `layer` value,
+  and by `instance_create_depth` with the player as `self` and `other`. The
+  route, the layer and the caller's identity varied; the outcome did not.
+  **Measured** (2026-10-04).
+- No script or builtin row the instrument held (`instance_destroy`,
+  `instance_change`, `layer_destroy_instances` and
+  `instance_deactivate_object` among them) counted a call with the machine as
+  `self` during that removal. Which runner routine `Alarm_9` removes the
+  machine through is **not established**. **Measured.**
+- `Alarm_9` logs "Slot Machine Spawned" through `DebugLogAddExt` first, on
+  every path, and reports the spawn to clients; "out of thin air" is on a
+  later branch. **Static reading.**
+- What `Alarm_9` checks before it removes a machine is **not established**;
+  it is ForgePact #134's next question (phase 1c).
+
+### 20.4 Spin, explosion and prize
+
+- **Not established**: no machine lived to spin, so the gold debit, the
+  explosion rule, the prize roll and the ground placement were not measured.
+- `Step_0` is the only event that calls `GetUniqueRepoStruct` (3 sites) and
+  `CreateDefaultParams` (7) directly, the pair the Angelic roll uses (§ 13.4).
+  No event calls `LootGroundCreate`, `LootGroundCreateFromItem`,
+  `CreateLootInFreePos`, `DropItem`, `DropUniqueItems`, `cpr_irandom` or
+  `cpr_rand32` directly, and none names them for lookup. Neither 10,000 nor
+  750 appears as a literal in the `Create_0`, `Alarm_0` or closure bodies, so
+  the price and the odds live in constant tables or the protected store.
+  **Static reading.**
+- `PickUpGoldCheck` is the only call that changes the gold balance (§ 13.10),
+  and no machine event calls it directly; how a spin debits gold is **not
+  established**.
+- In about 15 seconds of combat with no mod on, `gml_Script_cpr_irandom` (707)
+  was called 1,308 times and `gml_Script_cpr_rand32` (709) 1,386 times, while
+  the `irandom`, `irandom_range`, `random`, `random_range` and `choose`
+  builtins were not called at all (an `irandom` sent through `CallBuiltin` in
+  the same session did register, so those rows could see a call). Combat's
+  rolls go through the `cpr_*` scripts. **Measured** (2026-10-04). Whether the
+  machine's prize roll does is **not established**.
+
+[Live 2 results](../ForgePact/docs/gamba-machine-research.md#live-2-results)
