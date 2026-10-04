@@ -66,6 +66,23 @@ you find yourself wanting to, that is a signal the plan is not finished.
    `crafting-materials-research.md` reached 426 KB during forgepact-issue-14,
    and research docs were about $19 of that feature's re-read cost.
 
+4. **Look up what a live procedure relies on, and decompile only what is
+   missing.** Before decompiling a script, run
+   `py -3 tools/decomp_index.py has <name>` (`--contains` for a partial name)
+   and reuse what it lists for this build; after decompiling, run
+   `py -3 tools/decomp_index.py scan <output dir>` so the next reader finds it
+   (`AGENTS.md` § "Check for a Named Ghidra Project Before Researching a Game
+   Mechanism"). Before writing a live procedure, search `docs/RUNTIME_DATA_MODELS.md`,
+   `hs-game-sdk/curated/` and the `ForgePact/docs/*-research.md` docs
+   (`section.py <doc> --grep <name>`) for every script and object the
+   procedure relies on, and cite what you found in its **relies on** field
+   below. A reading that establishes a game fact is folded into
+   `docs/RUNTIME_DATA_MODELS.md` in the same feature, labelled as a static
+   reading (`AGENTS.md` § "Fold What a Mod Learned About the Game Into the
+   Shared References"). In ForgePact #160 (2026-10-04) the readings were not
+   in the shared references yet, and Live 1 was planned around a script that
+   White Mage casts never reach.
+
 ## What a usable acceptance criterion looks like
 
 This decides whether the pipeline works: the verifier runs cheap and executes
@@ -117,7 +134,12 @@ When a criterion needs the running game, write the session as a
   action a person takes, with the **expected** result beside it;
 - **cases**: one or two ordinary cases plus the outliers that take a different
   code path — not every skill or item (`AGENTS.md` § "Mod Development
-  Workflow").
+  Workflow");
+- **relies on**: each script or object the checks depend on, with where it is
+  documented (a `docs/RUNTIME_DATA_MODELS.md` section, a curated file, a
+  research doc heading), or "not found in the shared references or research
+  docs". A session built on an unchecked script can measure a path the game
+  never takes: ForgePact #160's Live 1 (2026-10-04) did.
 
 The session criterion reads the capture with the tool, never a hand-written
 grep: `py -3 tools/live_checks.py .claude/workorders/<slug>-live-<n>.md
