@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Hand-curated record of how Hero Siege announces a rare ground drop in chat, for ForgePact#17 (Loot announcements). NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. Every `status` is `static_reading` (read from the compiled game locally and paraphrased in our own words; no script text is kept anywhere) until a ForgePact#17 live session records a `measured` value. `scripts` is the announcement chain by SDK name, in call order; `rarity_key` is the itemInfoStruct key holding the rarity (docs/RUNTIME_DATA_MODELS.md section 16.4, measured); `rarity_codes_announced_online` lists the rarity codes the game's own online path announces and what decides each; `route` is the call ForgePact's `lootann` ships to show the line offline, `null` until Live procedure 1 picks one (one of `method`, `netsend`, `chatadd`, `server`). The argument is ForgePact docs/loot-announcement-research.md; the shared facts are docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.10.",
+  "$schema_note": "Hand-curated record of how Hero Siege announces a rare ground drop in chat, for ForgePact#17 (Loot announcements). NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. Every `status` is `static_reading` (read from the compiled game locally and paraphrased in our own words; no script text is kept anywhere) until a ForgePact#17 live session records a `measured` value. `scripts` is the announcement chain by SDK name, in call order; `rarity_key` is the itemInfoStruct key holding the rarity (docs/RUNTIME_DATA_MODELS.md section 16.4, measured); `rarity_codes_announced_online` lists the rarity codes the game's own online path announces and what decides each; `route` is the call ForgePact's `lootann` ships to show the line offline: `server` (chosen 2026-10-04 after Live procedures 1 and 3; the game's own path, `method`, could not be invoked offline). The argument is ForgePact docs/loot-announcement-research.md; the shared facts are docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.10.",
   "source": [
     {
       "path": "ForgePact/docs/loot-announcement-research.md",
@@ -63,5 +63,12 @@
       "status": "static_reading"
     }
   ],
-  "route": null
+  "route": {
+    "name": "server",
+    "status": "measured",
+    "chosen": "2026-10-04",
+    "session": "ForgePact#17 Live procedure 3",
+    "sink": "ChatAddServerMessage by name with '<character> found <item name>' (itemInfoStruct[\"28\"], the player's name), the red SERVER: line",
+    "why": "the game's own path (method, the anon@1138 closure) could not be invoked offline; the probe named no anon@ method on the ground item"
+  }
 }

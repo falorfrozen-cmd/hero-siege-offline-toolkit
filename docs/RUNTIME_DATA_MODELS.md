@@ -1160,14 +1160,37 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   material (`b` 14) and socketable (`b` 15) ids; Heroic (9) is decided by the
   closure's own branch, not there. Static reading: before each send the
   closure also loops over `Chat_obj` (`ChatSendServerMessage`) and over
-  `Menu_Controller_obj` (`ReportClient`); `Chat_obj` was counted at 0 offline
-  (measured above), so those loops run nothing offline. Static reading: the
+  `Menu_Controller_obj` (`ReportClient`). Offline, `Chat_obj` was counted at 0
+  (measured above), so the `ChatSendServerMessage` loop would find nothing,
+  but ForgePact#17's census counted one `Menu_Controller_obj` (measured
+  2026-10-04), so the `ReportClient` loop would. Static reading: the
   receiving side is `CA_chatIngame` → `ChatAddIngameMessageFiltered` →
-  `ChatAddMessage`. Whether any of this runs offline, and which call shows the
-  line from ForgePact, is ForgePact#17's Live procedure 1.
+  `ChatAddMessage`.
+- **Offline, the game's own announcement was not observed to run.**
+  **Measured** 2026-10-04 (ForgePact#17 Live procedure 1, count-only hooks on
+  the closure and the chain): a placed Heroic item and about 450 natural
+  drops left the closure, `GetRareDropAnnouncement`,
+  `NetworkSendChatMessageIngame`, `PacketSend`, `ChatSendServerMessage`,
+  `ReportClient`, `ChatAddIngameMessageFiltered` and `CA_chatIngame` at 0,
+  and no line appeared. "Not observed offline", not "cannot run offline".
+  Called by name from a mod, `NetworkSendChatMessageIngame` (the ground item
+  as `self`, first argument `undefined` or the player reference, the item
+  struct as the item) and `GetItemDropMessage(item)` (the local `Player_obj`
+  as `self`) refused, and no `PacketSend` counted. Whether the closure is
+  bound on an offline ground item is not established (§16.10).
+- **A drop announcement a mod can show offline: `ChatAddServerMessage` with its
+  own text.** **Measured** 2026-10-04 (ForgePact#17 Live procedures 1 and
+  3): `<character> found <item name>` (the name from the item's
+  `itemInfoStruct["28"]`, the character's from the player's `name`) shows as
+  a red `SERVER: Sorak found Headhunter` line, one per call. ForgePact's Loot
+  announcements switch (`lootann`) ships this route for Heroic, Angelic and
+  Unholy items; in Live procedure 3 it announced placed items, held a
+  Satanic one, held a bag drop, and announced one natural drop with Magic
+  Find raised.
 
 [dungeon chest, Chat route](../ForgePact/docs/dungeon-chest-research.md#chat-route),
-[loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading)
+[loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading),
+[loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
 
 ---
 
@@ -3038,11 +3061,21 @@ the controls and the table are in the Item Editor's
   method value; who invokes it, and whether anything does offline, is not
   established. Its name moves with every game patch (the `anon@N` position),
   so ForgePact spells it through the SDK constant.
+- **Measured** (2026-10-04, ForgePact#17's Live procedure 3, `lootannprobe
+  methods`): the ground item's method-variable read names no `anon@` method.
+  Taking `method_get_index`'s value as a number returned -1 for the three
+  `anon@` names the closure could be (`m_AngelicMessage`, `m_LootFilter`,
+  `m_LootGroundDeActiveStep`), so the closure could not be invoked as a method
+  on the item, while a named method (`s_lootDrawData`) did resolve. Whether -1
+  is `method_get_index`'s own answer for these methods or the probe's reading
+  of a reference is not established (the probe does not print the index's
+  kind).
 - The chain, the rarity key and the codes announced online are also in
   [`hs-game-sdk/curated/loot_announcement_measurements.json`](../hs-game-sdk/curated/loot_announcement_measurements.json),
   each labelled a static reading until a live session measures it.
 
-[loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading)
+[loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading),
+[loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
 
 ### 16.11 An item's time stamp, and what puts an item on the ground
 
@@ -3086,17 +3119,21 @@ the controls and the table are in the Item Editor's
   not established; that it is `LootGroundDrop` is not observed. The item
   that reached the ground still read the rarity the placement set, so it was
   not the temporary rebuild above (§18.5 corrects its older reading).
-- **Not established (a design inference, not measured):** "the game built
-  this item's struct through `CreateItemNew` this frame or the last" may
-  separate a new drop from an existing struct put back on the ground without
-  knowing the bag drop's script. It needs the `CreateItemNew` hook to be an
-  inline detour (`LootGroundCreate` calls it directly). The rebuild of the
-  same item measured above, around the pickup or the drop, could defeat it if
-  that rebuild is given the existing struct or the ground receives a copy.
-  ForgePact's Loot announcements use it (the creation guard); its Live
-  procedure 3 measures whether a bag drop is held (`bag-drop-silent`).
+- **Measured** (2026-10-04, ForgePact#17's Live procedure 3, `bag-drop-silent`
+  and `natural-fresh`): "the game built this item's struct through
+  `CreateItemNew` this frame or the last" holds a bag drop and passes the
+  game's own drops. The owner picked up a placed Heroic item and dropped it
+  from the bag: `held-bag-drop` rose by one and no line appeared, while 215
+  natural drops in the same session passed the guard (`natural-fresh`). It
+  needs the `CreateItemNew` hook to be an inline detour (`LootGroundCreate`
+  calls it directly). One bag drop of one item was measured; the rebuild of
+  the same item measured above, around the pickup or the drop, could still
+  defeat it if that rebuild is given the existing struct or the ground
+  receives a copy, and the struct that reaches the ground is not established.
+  ForgePact's Loot announcements use it (the creation guard).
 
-[loot announcements, Live procedure 2](../ForgePact/docs/loot-announcement-research.md#live-procedure-2)
+[loot announcements, Live procedure 2](../ForgePact/docs/loot-announcement-research.md#live-procedure-2),
+[loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
 
 ---
 
