@@ -486,6 +486,27 @@ main menu on 2026-09-26 (`pe-6aaa6779-0cad4fc8`). All **measured**.
 
 [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#measurements)
 
+### 5.10 A variable-slot global names itself
+
+**Static reading**, 2026-10-04 (ForgePact #160), in our own words.
+
+- The runtime keeps each variable-slot global in a 16-byte table entry inside
+  the executable. The first 8 bytes are a pointer to the variable's name, a
+  NUL-terminated ASCII string; the next 8 bytes are the slot itself. So the
+  little-endian pointer 8 bytes before a slot names that slot.
+- These names are found in the executable's own data this way, not in
+  `data.win`'s string pool, which holds no instance-variable names on this
+  build (§5.1).
+- #160 named `projEffect`, `maxScale`, `image_xscale`, `image_yscale` and
+  `loadSettings` this way, in decompiled bodies that left those slots
+  unnamed.
+- Slot locations move with every game build, so name them per build, with
+  the `slot-name`, `find-name` and `annotate` subcommands of
+  `tools/decomp_index.py`, and keep no slot location in a tracked file.
+
+[Decompile index and slot-name helpers](tools/decomp-index.md),
+[skill sliders research](../ForgePact/docs/skill-sliders-research.md)
+
 ---
 
 ## 6. Player and Global State
@@ -905,6 +926,40 @@ Measured on 2026-10-04 on Sorak, a White Mage, in town and in Outskirts of Inoya
   `StatAOESkillSize` and `LoadAllModifiers` itself; and many casts carry a second
   `ReturnExtraSpellProjectiles` call with a base of 6. A hook on these scripts
   sees all of them.
+- **Added after the sliders shipped** (ForgePact 2.3.0's `skillslider`, two
+  live sessions on 2026-10-04 on the same character, research doc
+  `## Implementation live 1`; all **measured** unless labelled):
+  - **The top of each range.** Adding 5 to `ReturnExtraSpellProjectiles`'
+    return left 6 bolts from one Shadow Bolt cast; adding 100 to stat 75 under
+    the player's `LoadAllModifiers` doubled a bolt's `deltaSpeed` (2.916667 to
+    5.833333); adding 100 to stat 554 took Soul Spurn from 7.5 to 8.5. Each is
+    the same per-point rule as at +2 and +50, so it holds linearly to there.
+  - **A Shadow Bolt object may take element 1086 too.** One bolt read
+    `image_xscale` 1.75 with stat 554 raised by 100 and one read 0.75 with
+    nothing added: a supporting read (one each, outside any check), not a
+    measurement.
+  - **The Healing Zone grows in, then holds 1.5.** With stat 554 raised by 50,
+    a read about a second after the cast gave `image_xscale` 0.333333 and the
+    same instance read 1.5 a second later; both casts settled at 1.5. Its cast
+    does call `StatAOESkillSize` with `self=Player_obj`. Not read with stat 554
+    raised by 100.
+  - **The Shadow Bolt count varies with nothing changed.** `instance_number` of
+    `White_Mage_Shadow_Bolt_obj` after a single cast, with no ForgePact lever
+    ever set in that launch, read 1, 1, 1, 1, 2, 3, 2, 1 over eight casts. So a
+    single cast sometimes leaves 2 or 3 bolts; what makes the extra ones (a
+    double cast, an item proc) was not read. A count alone cannot tell a
+    lever's effect from this.
+  - **`Player_obj` calls `LoadAllModifiers` with no cast.** Across a waypoint
+    trip to `Act_01_01` and 60 s idle there, the player's own
+    `LoadAllModifiers` ran five more times with no skill cast. What triggers it
+    was not read.
+  - **Other callers seen in a fight.** In 60 s in `Act_01_01` beside enemies
+    and the mercenary, `LoadAllModifiers` was called 7 times by something
+    other than `Player_obj` or `Universal_Double_Cast_obj`, the last of them
+    `Mercenary_obj`; the hooks on `ReturnExtraSpellProjectiles`,
+    `ReturnExtraProjectilesRanged` and `StatAOESkillSize` counted no call from
+    any other object in that window. The enemies died within seconds, so an enemy's
+    call to these scripts was not observed.
 
 ---
 
