@@ -3748,9 +3748,10 @@ Read from the arguments `jumpprobe` logged in Live 1's own `out.txt`
 - One blocked side point is enough: in Live 1 run J1 (curated J10) the
   right-hand point of the second step returned an instance, and that jump
   moved 0 px. **Measured.**
-- Whether the walk runs inside `skillsLeap`'s first call or just before it, in
-  the same frame, is **not established**: the builtin rows were logged on
-  return, before `skillsLeap`'s own line.
+- Phase 1 could not tell whether the walk runs inside `skillsLeap`'s first
+  call or just before it, in the same frame (the builtin rows were logged on
+  return, before `skillsLeap`'s own line); the mod session settled it: inside
+  the first call (19.4 / curated J12).
 - The "no collision" answers the game accepts for these queries are real -4
   (`noone`) for `instance_position`, `collision_line` and `collision_circle`,
   and bool false for `position_meeting` and `place_meeting`; the game's own
