@@ -2770,7 +2770,7 @@ All **measured** unless marked.
 | Writing `dropTable` on piles, destructibles, `Cursed_Orb_obj` | GML error (static reading) | §13.1 |
 | `DropDungeonKeys` with argument 5 undefined | GML error (static reading) | §13.3 |
 | Overriding `eSt` at Room Start, or zeroing `ReturnSpecificStat`'s return | crash | §14.2 ([S10](../ForgePact/docs/S10-special-content-notes.md#simdiye-kadar-denenen-ve-coken-yollarin-tam-listesi)) |
-| Calling `sCP` directly | crashed in S10 (2026-08-25) with the then-assumed `(object ref, x, y)` order and a suspect call format; phase 1c calls it by name as `spawn scp` with `(x, y, object)` (§ 14.3) — Live 3 measures whether that survives | [S10](../ForgePact/docs/S10-special-content-notes.md#scpyi-dogrudan-cagirmak-cokertiyor) |
+| Calling `sCP` directly | crashed in S10 (2026-08-25) with the then-assumed `(object ref, x, y)` order and a suspect call format; called by name as `spawn scp` with `(x, y, object)` (§ 14.3) it does not crash (Live 3 created object 4644), but the machine it makes still dies of its own `Alarm_9` (§ 20.3), not a crash | [S10](../ForgePact/docs/S10-special-content-notes.md#scpyi-dogrudan-cagirmak-cokertiyor) |
 | Duplicating `Spawn_*` instances | crash (their zone-state keys collide) | [S10](../ForgePact/docs/S10-special-content-notes.md#simdiye-kadar-denenen-ve-coken-yollarin-tam-listesi) |
 | Duplicating reward-portal objects | infinite loading | [S10](../ForgePact/docs/S10-special-content-notes.md#portal-cogaltmasi--sonsuz-loading--2026-08-25-2155-geri-alindi) |
 | Hooking the game's internal integer-die helper | crash | [S10](../ForgePact/docs/S10-special-content-notes.md#simdiye-kadar-denenen-ve-coken-yollarin-tam-listesi) |
