@@ -838,6 +838,74 @@ is [`docs/models/skill-stat-spec.md`](models/skill-stat-spec.md).
   crafting trades, mercenary talents), game speed and items, and reads neither
   stat. **Static reading.**
 
+### 7.6 Projectile count, projectile speed and AoE size: the stats and where the game reads them
+
+Written for ForgePact#160 (hub #408). The research, with every live check, is
+[`ForgePact/docs/skill-sliders-research.md`](../ForgePact/docs/skill-sliders-research.md);
+the mechanism, labelled claim by claim, is
+[`docs/models/skill-sliders-spec.md`](models/skill-sliders-spec.md), and the
+measurements are
+[`hs-game-sdk/curated/skill_sliders_measurements.json`](../hs-game-sdk/curated/skill_sliders_measurements.json).
+Measured on 2026-10-04 on Sorak, a White Mage, in town and in Outskirts of Inoya
+(`Act_01_01`).
+
+- **The stat ids.** `ReturnSpecificStat` sends id **554** to `StatAOESkillSize`
+  (a four-element array, element 0 the total, no cap found), **191** to
+  `StatExplosionAOE` and **196** to `StatAttackRangeMelee`, each its only direct
+  caller found. The projectile-amount ids (**394**, **311**, **239**, **240**,
+  **451**, **452**) and the projectile-speed ids (**74**, **75**) have no `Stat*`
+  script; 74 and 75 have no case at all. **Static reading.** Under
+  `LoadAllModifiers` the game reads 74 and 75 (0 on a character without that
+  gear), and 560/559 are read inside `StatAOESkillSize`, 394/311 inside
+  `ReturnExtraSpellProjectiles` (**measured**, `projprobe ids`).
+- **Projectile count.** `ReturnExtraSpellProjectiles(player, x, base)` returns the
+  adjusted total (`base` raised by stat 394 as a percent and floored, plus stat
+  311); `ReturnExtraProjectilesRanged(player, x)` returns an extra count only
+  (stat 239 plus chance-based bonuses from 451/452 and 240), which its caller adds
+  to its base. They have 44 and 19 direct call sites in the `Talents<Class>`
+  scripts. **Static reading.** On Shadow Bolt the total is the number of
+  `White_Mage_Shadow_Bolt_obj` created: base 1 gave one bolt, and 2 added to the
+  return gave three (**measured**). `ReturnExtraProjectilesRanged` was not observed
+  live.
+- **The modifier array.** `LoadAllModifiers` fills a 1,100-element modifier array
+  (`projEffect` on the object that receives it). Elements **1084** (stat 74),
+  **1085** (stat 75) and **1086** (AoE size) carry the three values. A White Mage
+  talent calls `LoadAllModifiers` once, then `SetAllModifiersNew` on each object it
+  creates, which copies the list into that object's `projEffect`; the Healing Zone's
+  branch makes no such call. **Static reading**; with stat 554 at 50,
+  `projEffect[1086]` read 0.5 on the Soul Spurn object (**measured**) and on a
+  Mana Orb object (a supporting read; its check was left not-run), and 0 on the
+  Healing Zone (**measured**).
+- **Who applies the elements.** `LoadProjectileSettings` does, for
+  `Projectile_Player_obj` (the class basic attack's object; its one direct caller
+  is that object's event, gated on an instance flag). White Mage skill objects are
+  parented under `Player_Damage_Parent_obj` or `Player_Ability_Parent_obj`, and an
+  event of each parent applies the same arithmetic to its own instance. **Static
+  reading.** No White Mage skill cast was observed calling
+  `LoadProjectileSettings` (seven skills; the same instrument counted it from the
+  mercenary in the same session).
+- **Projectile speed.** Element 1085 scales `deltaSpeed` as a percent and element
+  1084 adds a flat amount times `roomSpd`, both only while `deltaSpeed` is above 0
+  (**static reading**). On Shadow Bolt (`deltaSpeed` 2.916667) stat 75 at 0.5 and
+  50 gave ×1.005 and ×1.5 (so `1 + stat75 / 100`), and stat 74 at 0.5 and 50 added 5/12 of a unit per
+  point (+0.208333, +20.833333). The `speed` built-in read `deltaSpeed` × the
+  object's `deltaTimer` on all six reads, so `deltaSpeed` is what moves it
+  (**measured**). The order the two combine in, and which one the item tooltip's
+  "Projectile Speed" is, were not observed.
+- **AoE size.** Element 1086, when above 0, is added to `maxScale` when that is
+  non-zero and otherwise to both `image_xscale` and `image_yscale` (**static
+  reading**). Soul Spurn's object (`maxScale` 0) went from 7.5 to 8.0 on both
+  scales with stat 554 at 50, and stat 554 reached the array at 0.01 per point
+  (**measured**). The Healing Zone draws itself at a fixed 1.5 whatever its
+  `maxScale` (3) and does not grow (**static reading and measured**).
+- **Other callers of the same scripts** (**measured**): `Mercenary_obj` calls
+  `LoadAllModifiers` about every 97 frames while it fights, beside
+  `LoadProjectileSettings` calls with `self=Projectile_Player_obj`; the double-cast
+  proc `Universal_Double_Cast_obj` calls `ReturnExtraSpellProjectiles`,
+  `StatAOESkillSize` and `LoadAllModifiers` itself; and many casts carry a second
+  `ReturnExtraSpellProjectiles` call with a base of 6. A hook on these scripts
+  sees all of them.
+
 ---
 
 ## 8. HUD, Menus and UI Nodes
