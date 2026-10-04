@@ -1021,14 +1021,17 @@ damaged save.
   hook read the font left current with `draw_get_font` on every draw: it
   answered font index 7 at both status reads, and across about 45 s it found
   a different font from the previous draw 54 times, while the GUI layer's
-  size did not change once. ForgePact's own draws that run earlier in the
-  same hook restore the font they set. So a draw made from that point
-  inherits whichever font the game left current, and one that does not set
-  its own font every frame changes size on some frames (Live procedure 2
-  caught a label at about 72 % size on 2 single frames in 272). **Measured.**
-  Which of the game's draws leaves the other font current is **not
-  established**. `draw_get_font` can also answer unset, so a reading counts
-  only beside a font index.
+  size did not change once. So a draw made from that point inherits
+  whichever font was left current, and one that does not set its own font
+  every frame changes size on some frames (Live procedure 2 caught a label
+  at about 72 % size on 2 single frames in 272). **Measured.** Which code
+  leaves the other font current is **not established**: by a reading of
+  ForgePact's own code (not a measurement), its draws that run earlier in
+  the frame are meant to restore the font they set, but Headhunter's head
+  labels restore it inside the same `try` that sets it, and the other
+  ForgePact draws (pack markers, the tip draw guard) were not isolated
+  live, so the switch is not shown to be the game's. `draw_get_font` can
+  also answer unset, so a reading counts only beside a font index.
 
 [toggle skills, Session 1](../ForgePact/docs/toggle-skills-research.md#session-1-1),
 [Session 3](../ForgePact/docs/toggle-skills-research.md#session-3-1),
