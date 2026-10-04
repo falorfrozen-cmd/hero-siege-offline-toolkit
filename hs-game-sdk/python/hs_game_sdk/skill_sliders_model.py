@@ -138,7 +138,7 @@ def stored_speed_elements(stat74: Number, stat75: Number, flat_scale: Number,
 
 def projectile_delta_speed(delta_speed: Number, percent_element: Number = 0,
                            flat_element: Number = 0, room_spd: Number = 1, *, order: str) -> Fraction:
-    """The `deltaSpeed` `LoadProjectileSettings` leaves on a projectile.
+    """The `deltaSpeed` `LoadProjectileSettings` leaves on a projectile, or a skill object's parent event leaves on that object.
 
     The percent element acts as a multiplier of `1 + percent_element` and the
     flat element as an addition of `flat_element * room_spd`, `room_spd` being

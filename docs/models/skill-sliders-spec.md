@@ -79,8 +79,8 @@ Every claim carries one of four labels, and a source:
     instance: element 1085 scales `deltaSpeed` and element 1084 adds to it, both
     only while `deltaSpeed` is above 0; element 1086, when above 0, is added to
     `maxScale` if that is non-zero, and otherwise to both `image_xscale` and
-    `image_yscale`. So `projectile_scale` below describes these objects too, when
-    their `maxScale` is 0.
+    `image_yscale`. So both `projectile_delta_speed` and `projectile_scale` below
+    describe these objects too (`projectile_scale` when their `maxScale` is 0).
   - The modifier list reaches such an object through `SetAllModifiersNew`, which
     the talent script calls after creating it. The Healing Zone's branch makes no
     such call, and the zone clamps its own drawn scale to 1.5, so AoE size does
@@ -178,7 +178,7 @@ A pure function of numbers, with exact fractions
 - `stored_speed_elements(stat74, stat75, flat_scale, percent_scale)`: elements 1084
   and 1085, each stat times a scale that is not established.
 - `projectile_delta_speed(delta_speed, percent_element=0, flat_element=0, room_spd=1, *, order)`:
-  the `deltaSpeed` `LoadProjectileSettings` leaves, the percent as a multiplier of
+  the `deltaSpeed` `LoadProjectileSettings` leaves, or a skill object's parent event, the percent as a multiplier of
   `1 + percent_element` and the flat part as `flat_element × room_spd`, combined in
   the `order` given (`"multiply_first"` or `"add_first"`), since the order was not
   measured. A `delta_speed` of 0 or less comes back unchanged, since both elements
