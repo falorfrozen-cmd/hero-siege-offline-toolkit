@@ -107,7 +107,8 @@ and `MeasuredTests` checks each against the model.
   rows read as 35/12): stats 74 and 75 read 0 on this character. Stat 75 raised
   to 0.5 and to 50 gave ×1.005 and ×1.5, so element 1085 is the stat times 0.01.
   Stat 74 raised to 0.5 and to 50 added 0.208333 and 20.833333, so each point adds
-  5/12 of `deltaSpeed`, linearly; how that splits between a stored scale and
+  5/12 (0.416667) to `deltaSpeed`, an absolute amount and not a fraction of it,
+  linearly; how that splits between a stored scale and
   `roomSpd` was not separated. On every read the `speed` built-in equalled
   `deltaSpeed` times the object's `deltaTimer`.
 
