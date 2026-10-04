@@ -1953,19 +1953,42 @@ AFK FARM design, 0.9 (a private repository)
 
 ### 14.1 Satanic Zone modifiers
 
-- The game does not call `LoadSatanicZone` in normal play (0 calls across zone
-  load, walking and waypoints); called with no arguments it returns false.
-- `Controller_obj.satanicZone` is a room-reference number. The buff and debuff
-  arrays hold unique ids in 1–25 / 1–26 and re-roll on their own every few tens of
-  seconds to minutes, not in step with room changes; overwriting them in place is
-  picked up without a room change.
+- **`LoadSatanicZone` is called by the game about 150-160 times a second**, with
+  one argument, the resolved zone's room index. The 2026-09-10 "0 calls" was an
+  instrument artefact: that probe ran before `HookOneScript` installed its
+  inline detour (2026-09-12), so it only saw table-routed calls. It answers
+  "is the player in that act-zone room?": true for `Act_01_01`'s room while the
+  player stands in it, false for another room, and false for an ineligible room
+  even with the player in it (the town). **Measured 2026-10-03 and 2026-10-04.**
+- **The zone is a writable protected value.** `Controller_obj.satanicZone` is a
+  *key* (`162966.0`); `GPV(key)` is a room **asset index** (20 = `Act_02_04`,
+  44 = `Act_04_03`, 235 = `Town_01_rm`; act zones run ~1-117, towns 235-243),
+  and `SPV(key, <room>)` sets it, sticking until the next roll. It is a roll: it
+  moved 20 -> 4 on its own within one session, and `GetSatanicZoneOffline(<n>)`
+  re-rolled it (4 -> 28). **Measured 2026-10-03.**
+- **The in-zone effect follows that state.** Entering `Act_01_01` with the store
+  already naming its room added five `Draw_Player_Buff_obj` buffs to the player
+  (the same slots read empty with the store elsewhere) and the player saw the
+  zone's buffs and debuffs on the buff bar; releasing the store mid-zone did not
+  remove objects already applied. **Measured 2026-10-04.** A relic drop in a
+  satanic zone is still unwatched.
+- **The world map's red marker is a separate layer.** `UI_Map_Zone_Button_obj`
+  carries a per-node `isSatanic` flag with its own image/timer/scale fields, set
+  when the game itself resolves a zone; the store, the game's own re-rolls and
+  invoking every node's own `m_RefreshNode` left it unchanged. **Measured
+  2026-10-04.**
+- The buff and debuff arrays hold unique ids in 1–25 / 1–26 and re-roll on their
+  own every few tens of seconds to minutes, not in step with room changes;
+  overwriting them in place is picked up without a room change.
 - With no arguments `GetSatanicZoneOffline` returns undefined,
   `ReturnSatanicZoneBuffs`/`Debuffs` return real 0 and `LoadRandomSatanicStat`
   throws.
 
-**Measured 2026-09-10.** The buff and debuff names are in
+**Measured 2026-09-10, 2026-10-03 and 2026-10-04.** The buff and debuff names are in
 [`hs-game-sdk/curated/satanic_zone.json`](../hs-game-sdk/curated/satanic_zone.json).
 [satanic zone, Findings](../ForgePact/docs/satanic-zone-mods-research.md#findings-2026-09-10-live-session),
+[Live 3](../ForgePact/docs/satanic-zone-mods-research.md#live-3-2026-10-03-issue-155-the-re-probe-and-the-zone-value-is-writable),
+[Live 4](../ForgePact/docs/satanic-zone-mods-research.md#live-4-2026-10-04-what-loadsataniczone-really-answers-and-the-map-marker),
 [The mechanism that shipped](../ForgePact/docs/satanic-zone-mods-research.md#the-mechanism-that-shipped-poll-and-correct-not-a-routine-hook)
 
 ### 14.2 `global.eSt`: the special-content parameters
