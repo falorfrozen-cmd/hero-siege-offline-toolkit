@@ -104,7 +104,9 @@ def git_tree_of(path: Path) -> Path | None:
     A worktree's `.git` is a file, so any entry counts. No git process is run,
     which also catches a checkout other than this one.
     """
-    p = Path(path).resolve()
+    # abspath first: before 3.10, Windows resolve() leaves a missing relative
+    # path relative, and its parents would then never reach the checkout.
+    p = Path(os.path.abspath(path)).resolve()
     for d in (p, *p.parents):
         if (d / ".git").exists():
             return d

@@ -246,6 +246,18 @@ class IndexTests(_TempCase):
         self.assertEqual(run("scan", self.store, "--build", BUILD_A)[0], 0)
         self.assertTrue(self.index.is_file())
 
+    def test_refusal_sees_the_checkout_from_a_relative_path(self):
+        repo = self.tmp / "repo-rel"
+        (repo / ".git").mkdir(parents=True)
+        (repo / "tools").mkdir()
+        cwd = os.getcwd()
+        os.chdir(repo / "tools")
+        try:
+            found = decomp_index.git_tree_of(Path("not-yet-written.c"))
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(found, repo.resolve())
+
     def test_scan_is_idempotent(self):
         path = self.write_c("LoadThing.c", "LoadThing", 0x401000)
         self.write_c("Other.c", "Other", 0x402000)
