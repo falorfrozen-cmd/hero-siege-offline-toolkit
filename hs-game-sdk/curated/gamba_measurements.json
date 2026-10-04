@@ -75,7 +75,7 @@
       "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
       "objects": ["Slot_Machine_01_obj"],
       "scripts": ["gml_Script_InitPV", "gml_Script_SPV", "gml_Script_GPV", "gml_Script_FPV"],
-      "what": "By name: both the short name and the gml_Script_ name of every hooked script resolve through GetNamedRoutineIndex to the script itself (byname=same), so there is no separate functions-array routine to detour. Yet across four Create_0 runs with a machine as self, the InitPV, SPV, GPV and FPV rows counted no call with the machine as self: the by-name store calls are not observed by the detour on the scripts' own functions (Live 1 counted the same zeros).",
+      "what": "By name: both the short name and the gml_Script_ name of every hooked script resolve through GetNamedRoutineIndex to the script itself (byname=same only shows which entry the one index per name prefers; the array was never walked — `gambaprobe fnwalk` walks it). Yet across four Create_0 runs with a machine as self, the InitPV, SPV, GPV and FPV rows counted no call with the machine as self: the by-name store calls are not observed by the detour on the scripts' own functions (Live 1 counted the same zeros).",
       "values": {
         "byname_same": 24,
         "byname_detoured": 0,
@@ -213,7 +213,7 @@
       "date": "2026-10-04",
       "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Instrument"}],
       "objects": ["Slot_Machine_01_obj"],
-      "scripts": ["GetVariable", "SetVariable", "SetVariableToUndefined"],
+      "scripts": [],
       "what": "Alarm_9 and sCP do not use the store scripts (InitPV/SPV/GPV/FPV) at all: they read and write the machine's state through the extension functions GetVariable, SetVariable and SetVariableToUndefined, called by name with the builtin convention (a compiled SetVariable call branches on is_undefined(value) to SetVariableToUndefined(key)). These three are the state route the spin trace's three new builtin rows hook; whether they resolve by name from the plugin is open until Live 3 (pet-relic-collector-research.md called GetVariable by name and got undefined, which that doc left open).",
       "values": {
         "state_route": "extension-functions",

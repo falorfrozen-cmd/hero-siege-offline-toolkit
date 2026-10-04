@@ -49,8 +49,10 @@ reading puts about 80 calls by name to `InitPV`, `SPV` and `GPV` in the
 machine's `Create_0`, and `CleanUp_0` calls `FPV` by name. The `gambaprobe`
 instrument resolved both the short and the `gml_Script_` name of each script
 through `GetNamedRoutineIndex`, and all 24 of its script rows read
-`byname=same`: both names name the script itself, and there is no separate
-routine to detour. Yet four `Create_0` runs left those four rows at zero
+`byname=same`: both names name the script itself (a word that only shows
+which entry `GetNamedRoutineIndex` prefers; a same-named functions-array
+routine is not ruled out, and `gambaprobe fnwalk` now walks the array for
+one). Yet four `Create_0` runs left those four rows at zero
 calls with the machine as `self`, while the event detours counted every
 `Create_0`, and the builtin rows' own positive control (`selftest`: one
 `irandom` sent through `CallBuiltin`, the row moved by exactly one) passed in

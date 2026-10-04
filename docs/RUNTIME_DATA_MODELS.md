@@ -2768,7 +2768,7 @@ All **measured** unless marked.
 | Writing `dropTable` on piles, destructibles, `Cursed_Orb_obj` | GML error (static reading) | §13.1 |
 | `DropDungeonKeys` with argument 5 undefined | GML error (static reading) | §13.3 |
 | Overriding `eSt` at Room Start, or zeroing `ReturnSpecificStat`'s return | crash | §14.2 ([S10](../ForgePact/docs/S10-special-content-notes.md#simdiye-kadar-denenen-ve-coken-yollarin-tam-listesi)) |
-| Calling `sCP` directly | crash | [S10](../ForgePact/docs/S10-special-content-notes.md#scpyi-dogrudan-cagirmak-cokertiyor) |
+| Calling `sCP` directly | crashed in S10 (2026-08-25) with the then-assumed `(object ref, x, y)` order and a suspect call format; phase 1c calls it by name as `spawn scp` with `(x, y, object)` (§ 14.3) — Live 3 measures whether that survives | [S10](../ForgePact/docs/S10-special-content-notes.md#scpyi-dogrudan-cagirmak-cokertiyor) |
 | Duplicating `Spawn_*` instances | crash (their zone-state keys collide) | [S10](../ForgePact/docs/S10-special-content-notes.md#simdiye-kadar-denenen-ve-coken-yollarin-tam-listesi) |
 | Duplicating reward-portal objects | infinite loading | [S10](../ForgePact/docs/S10-special-content-notes.md#portal-cogaltmasi--sonsuz-loading--2026-08-25-2155-geri-alindi) |
 | Hooking the game's internal integer-die helper | crash | [S10](../ForgePact/docs/S10-special-content-notes.md#simdiye-kadar-denenen-ve-coken-yollarin-tam-listesi) |
@@ -4199,8 +4199,10 @@ itself in its first step (§ 20.3).
 - Those by-name calls are **not observed by** a `HookOneScript` detour on the
   scripts' own functions. Both the short name and the `gml_Script_` name of
   `InitPV`, `SPV`, `GPV` and `FPV` resolve through `GetNamedRoutineIndex` to
-  the script itself (an index of 100000 or more; no separate functions-array
-  routine), yet over four `Create_0` runs with a machine as `self` the four
+  the script itself (an index of 100000 or more, so `GetNamedRoutineIndex`
+  prefers the script; this does not rule out a same-named functions-array
+  entry, which `fnwalk` walks - § 20.5,
+  `ForgePact/docs/gamba-machine-research.md` § Instrument), yet over four `Create_0` runs with a machine as `self` the four
   rows counted no call with the machine as `self`. **Measured** (2026-10-04).
   Read a zero on those rows as "not observed by the detour", never as "not
   called"; the dungeon chest's `store GPV calls=2` over a whole dungeon
@@ -4279,10 +4281,11 @@ itself in its first step (§ 20.3).
 
 ### 20.5 The spawned flag and the game's spawner
 
-- `pSpwd` is a protected value, not an ordinary instance variable: `Create_0`
-  initialises it to false, and `Alarm_9` destroys a machine whose `pSpwd` is
-  still false in its first step (§ 20.3). `sCP` is the game's own spawner
-  that sets it true. **Static reading** (2026-10-04).
+- The spawned flag is a protected value, keyed by the ordinary instance
+  variable `pSpwd`'s value; `Create_0` initialises the flag to false through
+  `InitPV`, and `Alarm_9` destroys a machine whose flag is still false in its
+  first step (§ 20.3). `sCP` is the game's own spawner that sets it true.
+  **Static reading** (2026-10-04).
 - `sCP(x, y, object)` (474) calls the `instance_create_layer` builtin with
   `(x, y, global.gameLayer[room][0], object)` - the layer the game's own
   `instance_create` script also picks - then reads the new instance's `pSpwd`
