@@ -2728,8 +2728,10 @@ directions are a **static reading**. Also in
 - `sCP(x, y, object)` creates the object on `gameLayer` and records it in
   `pSpwd`; Battlefield, Rift and Shadow Realm go through it. **Static
   reading** (2026-10-04). The S10 notes' `(object ref, x, y)` order was a
-  reading not confirmed; this one follows the builtin's argument list,
-  UNVERIFIED until Live 3.
+  reading not confirmed; this one follows the builtin's argument list, and
+  Live 3's `spawn scp` answered `object=4644` with the default `(x, y,
+  object)` order, so `(x, y, object)` is the right order. **Measured (Live
+  3)** for the order.
 - The reward portals (`Portal_Battlefield_obj`, `Rift_Portal_obj`,
   `Portal_Shadow_Realm_obj`) do their work in `Alarm_0` and stay dormant unless
   their spawner sets it; a `Portal_Battlefield_obj` carries 59 variables
@@ -4147,8 +4149,8 @@ slot 14 ("Sorak"), mostly in the Town of Inoya. The argument, the controls and
 the check tables are in ForgePact's
 [`docs/gamba-machine-research.md`](../ForgePact/docs/gamba-machine-research.md);
 the measurements are also in `hs-game-sdk/curated/gamba_measurements.json`.
-**No spin has been measured yet**: every machine the instrument created removed
-itself in its first step (§ 20.3).
+**No instrument-created machine has survived its first step** (§ 20.3); a spin
+was first measured in Live 3, on a machine the game placed itself (§ 20.4).
 
 ### 20.1 The object
 
@@ -4253,11 +4255,33 @@ itself in its first step (§ 20.3).
 - `Create_0` initialises `pSpwd` to false, so every machine ForgePact
   created so far died for one reason: nobody set `pSpwd` to true between
   `Create_0` and the first step. **Static reading** (2026-10-04).
+- The `spawn scp` route (§ 20.5) meets the guard on paper and still dies:
+  Live 3's `gambaprobe spawn scp` created a machine (`object=4644`, the game's
+  own `sCP` frame in its caller walk) that its own `Alarm_9` removed at its
+  first step (`create=1 alarm9=1 step=1 cleanup=1`, `machines=0`), so `sCP`'s
+  `SetVariable(key, true)` stamp did not take effect. The `spawn stamp` route
+  was refused outright (`dispatch failed: GetVariable`), because the extension
+  functions do not resolve by name (§ 20.5). A machine the game placed itself
+  survived and spun (§ 20.4). **Measured (Live 3)**.
 
 ### 20.4 Spin, explosion and prize
 
-- **Not established**: no machine lived to spin, so the gold debit, the
-  explosion rule, the prize roll and the ground placement were not measured.
+- The spin, first measured on a machine the game placed itself (§ 20.3): each
+  spin debits 10,000 gold through `PickUpGoldCheck` with the machine as `self`
+  (`a1=-10000`, one call per spin), and `GetGoldAmount` with the machine as
+  `self` reads the balance after each. Sixteen `PickUpGoldCheck` calls fired
+  over the window, with no `instance_destroy` carrying a machine argument.
+  **Measured (Live 3).**
+- The payout is a random roll, and the machine is not destroyed by it: the
+  prize roll is the script `GetUniqueRepoStruct` with the machine as `self`
+  (`argc=3`, arguments `1, 0, 72`), whose randomness goes through the
+  `cpr_irandom` and `cpr_rand32` script rows (`scope=machine-event`), not a
+  builtin RNG (the `irandom` lever armed for the roll stayed `INERT`). The
+  prize is built by `CreateDefaultParams` (`(0,72,true)` then `(0,11,
+  undefined)`) and placed by `LootGroundCreate` -> `CreateLootInFreePos` ->
+  `instance_create_layer` (`Loot_Ground_obj`, plus `Coin_obj`,
+  `Loot_Pillar_obj`, `Impact_Sound_obj`, `Visual_Effect_Simple_obj`);
+  `machines=2` (the same two ids) before and after. **Measured (Live 3).**
 - `Step_0` is the only event that calls `GetUniqueRepoStruct` (3 sites) and
   `CreateDefaultParams` (7) directly, the pair the Angelic roll uses (§ 13.4).
   No event calls `LootGroundCreate`, `LootGroundCreateFromItem`,
@@ -4266,18 +4290,20 @@ itself in its first step (§ 20.3).
   750 appears as a literal in the `Create_0`, `Alarm_0` or closure bodies, so
   the price and the odds live in constant tables or the protected store.
   **Static reading.**
-- `PickUpGoldCheck` is the only call that changes the gold balance (§ 13.10),
-  and no machine event calls it directly; how a spin debits gold is **not
-  established**.
+- `PickUpGoldCheck` is the only call that changes the gold balance (§ 13.10);
+  the spin's gold debit is measured through it with the machine as `self`
+  (above). **Measured (Live 3).**
 - In about 15 seconds of combat with no mod on, `gml_Script_cpr_irandom` (707)
   was called 1,308 times and `gml_Script_cpr_rand32` (709) 1,386 times, while
   the `irandom`, `irandom_range`, `random`, `random_range` and `choose`
   builtins were not called at all (an `irandom` sent through `CallBuiltin` in
   the same session did register, so those rows could see a call). Combat's
-  rolls go through the `cpr_*` scripts. **Measured** (2026-10-04). Whether the
-  machine's prize roll does is **not established**.
+  rolls go through the `cpr_*` scripts. **Measured** (2026-10-04). The
+  machine's prize roll passes the same `cpr_*` scripts, not a builtin RNG row
+  (above). **Measured (Live 3).**
 
 [Live 2 results](../ForgePact/docs/gamba-machine-research.md#live-2-results)
+[Live 3 results](../ForgePact/docs/gamba-machine-research.md#live-3-results)
 
 ### 20.5 The spawned flag and the game's spawner
 
@@ -4293,8 +4319,8 @@ itself in its first step (§ 20.3).
   and returns the instance. No early return, no other check. **Static
   reading** (2026-10-04). The argument order `(x, y, object)` contradicts
   `S10-special-content-notes.md` ("object ref, x, y") and § 14.3's bullet
-  copied from it; this reading follows the builtin's argument list, UNVERIFIED
-  until Live 3.
+  copied from it; Live 3's `spawn scp` answered `object=4644` with the default
+  `(x, y, object)` order, confirming it. **Measured (Live 3)** for the order.
 - The same `pSpwd` guard is shared game-wide: 60 compiled functions read that
   variable slot - chests, portals, shrines, globes, pickups, the zone state
   buffer's Create closure, `ZoneGenPopulatePresetObjects`, `CreateItemDrop`,
@@ -4308,3 +4334,13 @@ itself in its first step (§ 20.3).
   `SetVariable` and `SetVariableToUndefined`, called by name with the builtin
   convention (a compiled `SetVariable` call branches on `is_undefined(value)`
   to `SetVariableToUndefined(key)`). **Static reading** (2026-10-04).
+- The three extension functions do **not** resolve by name from the plugin:
+  `GetVariable`, `SetVariable` and `SetVariableToUndefined` all read
+  `(not found by name, st=4) missing` at `hook`, so the state route is blind
+  (`state-route: blind`) and the `spawn stamp` route is refused (`dispatch
+  failed: GetVariable`). **Measured (Live 3).**
+- `fnwalk` could not locate the functions array by validation: `gambaprobe
+  fnwalk: table not found (no aligned qword equal to camera_create's routine
+  with eight valid entries)`, so the by-name route stays blind
+  (`byname-route: blind`) and whether the array holds same-named entries for
+  the store scripts is still open. **Measured (Live 3).**
