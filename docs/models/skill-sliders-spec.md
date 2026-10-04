@@ -114,6 +114,28 @@ and `MeasuredTests` checks each against the model.
   `roomSpd` was not separated. On every read the `speed` built-in equalled
   `deltaSpeed` times the object's `deltaTimer`.
 
+**The shipped sliders, measured** (two more sessions on 2026-10-04, the same
+character, ForgePact's development build sha256 `2f8590b1…a199` with
+`skillslider` and no `projprobe`; the research doc's `## Implementation live 1`).
+The rows from `slider-amount-shadowbolt-off` on check them:
+
+- **Projectile amount**: at 0, one bolt per cast (three casts); `projamount 2`
+  turned a helper return of 1 into 3 and left 3 bolts; `projamount 5`, the
+  ceiling, 1 into 6 and 6 bolts. The amount rows apply `slider_amount` to
+  `spell_projectile_total`.
+- **Projectile speed**: `projspeed 50` and `100` raised stat 75 from 0 to 50 and
+  100 and took a bolt's `deltaSpeed` from 2.916667 to 4.375 and 5.833333. The
+  model function returns `deltaSpeed`, not stat 75, so these rows pass the
+  slider's stat as `percent_element` (×0.01) instead of as a lever.
+- **AoE size**: `aoesize 50` and `100` raised stat 554 from 0 to 50 and 100 and
+  grew Soul Spurn from 7.5 to 8.0 and 8.5; the Healing Zone, at 50, settled at
+  1.5 after growing in. Element 1086 was not read in these sessions, so the
+  rows pass the measured 0.01 per point as `element_1086`.
+- **Off**: at 0 again, a bolt read 2.916667 and Soul Spurn 7.5. A single Shadow
+  Bolt cast with no lever ever set left 1, 1, 1, 1, 2, 3, 2, 1 bolts over eight
+  casts: the bolt count varies by itself, so a count above 1 at 0 is not a
+  slider effect (the model gives one cast's helper total, not this).
+
 ## Our code
 
 **The shipped sliders** (ForgePact 2.3.0, `skillslider`,
