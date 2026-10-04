@@ -368,6 +368,11 @@ class PE:
         fo = self.to_offset(va)
         if fo is None:
             return None
+        # Only a string start names anything: a pointer into the middle of a
+        # longer string would otherwise be named after its tail. find_slots
+        # applies the same rule, so slot-name and find-name agree.
+        if fo > 0 and self.data[fo - 1] != 0:
+            return None
         m = IDENTIFIER.match(self.data, fo)
         return m.group(0)[:-1].decode("ascii") if m else None
 

@@ -93,6 +93,7 @@ def build_pe(path):
     return {
         "projEffect": va(0x108),
         "maxScale": va(0x118),
+        "decoy": va(0x128),
         "outside": va(0x138),
         "not_identifier": va(0x148),
         "nowhere": 0x123456,
@@ -311,7 +312,9 @@ class SlotNameTests(_TempCase):
             self.assertIn("projEffect", run("slot-name", hex(self.slots["projEffect"]))[1])
 
     def test_slot_name_unresolved_is_not_guessed(self):
-        for role in ("outside", "not_identifier", "nowhere"):
+        # "decoy" points inside "notprojEffect": its tail is an identifier,
+        # but not a string start, so it is not a name (find-name's rule too).
+        for role in ("decoy", "outside", "not_identifier", "nowhere"):
             code, out, _ = run("slot-name", "--exe", self.exe, hex(self.slots[role]))
             self.assertEqual(code, 1, role)
             self.assertEqual(out.strip(), "%s ?" % hex(self.slots[role]), role)
@@ -338,8 +341,9 @@ class SlotNameTests(_TempCase):
         deref = "_" + data + "%08x" % self.slots["maxScale"]
         wide = "uRam" + "%016x" % self.slots["projEffect"]
         unresolved = data + "%08x" % self.slots["outside"]
-        text = ("a = %s;\nb = *%s;\nc = %s;\nd = %s;\ne = local_10;\n"
-                % (resolvable, deref, wide, unresolved))
+        decoy = data + "%08x" % self.slots["decoy"]
+        text = ("a = %s;\nb = *%s;\nc = %s;\nd = %s;\ne = local_10;\nf = %s;\n"
+                % (resolvable, deref, wide, unresolved, decoy))
         src = self.tmp / "in.c"
         dst = self.tmp / "out" / "annotated.c"
         src.write_text(text, encoding="latin-1")
@@ -347,7 +351,7 @@ class SlotNameTests(_TempCase):
         self.assertEqual(code, 0, out + err)
         got = dst.read_text(encoding="latin-1")
         self.assertEqual(got, "a = V_projEffect;\nb = *V_maxScale;\nc = V_projEffect;\n"
-                              "d = %s;\ne = local_10;\n" % unresolved)
+                              "d = %s;\ne = local_10;\nf = %s;\n" % (unresolved, decoy))
 
     def test_annotate_refuses_output_inside_a_git_tree(self):
         src = self.tmp / "in.c"

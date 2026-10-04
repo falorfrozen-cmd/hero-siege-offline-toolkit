@@ -140,11 +140,14 @@ left unnamed (ForgePact `docs/skill-sliders-research.md`).
 
 The tool reads the executable as a PE32+ file itself (image base, section table,
 address-to-file-offset mapping) and accepts nothing else. `slot-name` answers
-only when the pointer at A-8 lies inside a section and points at an identifier
+only when the pointer at A-8 lies inside a section and points at the start of a
+string (the byte before is NUL) that is an identifier
 (`[A-Za-z_][A-Za-z0-9_]{0,62}`, NUL-terminated); otherwise it prints `?`, never
-a guess. `find-name` looks for `NAME` followed by a NUL at the start of a string
-(the byte before is NUL), then for every 8-byte pointer to it, and prints each
-pointer's location plus 8. No address of any build is written into the tool:
+a guess. A pointer into the middle of a longer string is a `?`, not the
+string's tail. `find-name` looks for `NAME` followed by a NUL at the start of a
+string by the same rule, then for every 8-byte pointer to it, and prints each
+pointer's location plus 8, so the two subcommands agree. `annotate` uses
+`slot-name`'s check and keeps every token it cannot name. No address of any build is written into the tool:
 addresses are measured on the executable in hand each time.
 
 The technique was first written as throwaway scripts in the #160 research
@@ -169,7 +172,8 @@ or executable. It pins the empty store (`has` exits 1), lookups by name, prefix,
 address, substring and build, variant naming, idempotent scans, that the index
 holds no body text (a sentinel string in the fixture body), the git-tree refusals
 for the index and for `annotate`, and, for the slot technique, a resolvable slot,
-unresolvable ones, and a string that only ends with the name.
+unresolvable ones, and a pointer into a string that only ends with the name,
+which `find-name` does not list and `slot-name` and `annotate` do not name.
 
 ```powershell
 py -3 -m unittest tests.test_decomp_index -v
