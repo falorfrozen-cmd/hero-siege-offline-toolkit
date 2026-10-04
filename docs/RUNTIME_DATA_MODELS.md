@@ -1015,11 +1015,26 @@ damaged save.
   `hud.playerSlot.bind_skill` read `undefined`, and `playerSlot` itself is a
   ds_map (`ref ds_map`). A newly learned skill appears in `row1` by itself.
 - `Hud_In_Combat_spr` is the HUD's in-combat icon. Read from the string table.
+- **The current font right after `DrawHudBuffs` returns is not the same from
+  frame to frame.** In ForgePact #31's Live procedure 3 (2026-10-04, player
+  standing still in Pumpkin Cellar), a label drawn from the `DrawHudBuffs`
+  hook read the font left current with `draw_get_font` on every draw: it
+  answered font index 7 at both status reads, and across about 45 s it found
+  a different font from the previous draw 54 times, while the GUI layer's
+  size did not change once. ForgePact's own draws that run earlier in the
+  same hook restore the font they set. So a draw made from that point
+  inherits whichever font the game left current, and one that does not set
+  its own font every frame changes size on some frames (Live procedure 2
+  caught a label at about 72 % size on 2 single frames in 272). **Measured.**
+  Which of the game's draws leaves the other font current is **not
+  established**. `draw_get_font` can also answer unset, so a reading counts
+  only beside a font index.
 
 [toggle skills, Session 1](../ForgePact/docs/toggle-skills-research.md#session-1-1),
 [Session 3](../ForgePact/docs/toggle-skills-research.md#session-3-1),
 [Sprite look probe](../ForgePact/docs/toggle-skills-research.md#sprite-look-probe),
-[skill actions, Results](../ForgePact/docs/skill-actions-research.md#results)
+[skill actions, Results](../ForgePact/docs/skill-actions-research.md#results),
+[dungeon chest, Live procedure 3](../ForgePact/docs/dungeon-chest-research.md#live-procedure-3)
 
 ### 8.4 Pause menu and the Restart gate
 
@@ -1777,6 +1792,26 @@ polling `instance_exists(Enemy_Parent_obj)` (measured, below).
     kills. **Measured.**
   - **Blockers: 0** again; a dungeon with a blocker is still **not covered
     live**.
+- **Measured in Live 2 and Live 3** (2026-10-04, ForgePact's player build,
+  Pumpkin Cellar, one run each at a 50 % share; source: the research doc's
+  [Live procedure 2](../ForgePact/docs/dungeon-chest-research.md#live-procedure-2)
+  and [Live procedure 3](../ForgePact/docs/dungeon-chest-research.md#live-procedure-3)):
+  - **The 122 creators were all still to spawn at the chest's first sight** in
+    both runs, all readable, and ForgePact's estimate of the dungeon's total
+    came out at **642** and **646**, the difference being the monsters alive
+    at that moment (1 and 5 by the estimate's arithmetic). **Measured.**
+  - **Answering the chest's poll at a share of the total opens it with many
+    monsters alive**: 170 alive at the latch (333 kills of 642) and 163 after
+    the open in Live 2; 128 alive at the latch (323 of 646, exactly the
+    threshold) and 103 after the open in Live 3. The poll was answered
+    thousands of times after the latch (9421 in Live 2 before the open).
+    **Measured.**
+  - **The kill path counts in the player build** once `Enemy_Parent_obj`'s
+    index is resolved by name (§ 13.5): the first read after a few dozen kills
+    showed 38, with no kill refused as a non-enemy. **Measured.**
+  - **With no lever** the chest stayed shut with monsters alive and opened
+    after the clear (Live 2, the owner's report). **Measured.**
+  - **Blockers: 0**; a dungeon with a blocker is still **not covered live**.
 
 [dungeon chest, Static reading](../ForgePact/docs/dungeon-chest-research.md#static-reading),
 [Route](../ForgePact/docs/dungeon-chest-research.md#route),

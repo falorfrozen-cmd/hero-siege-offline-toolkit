@@ -35,7 +35,7 @@ hs-game-sdk/
 │   ├── drop_roll_measurements.json # M1-M10: recorded drop-roll numbers drop_roll_model.py is tested against (data only)
 │   ├── mining_reward_measurements.json # MR1-MR9: recorded mining-dig numbers mining_reward_model.py is tested against (data only)
 │   ├── monster_rank_measurements.json # MK1-MK24: what a monster's rank does (§13.7), the boss report, and ForgePact #44's Live 1 and 1b on bosses, for monster_rank_model.py (data only)
-│   ├── dungeon_chest_measurements.json # DC1-DC18: the dungeon chest's static reading, the kill path (§13.5), ForgePact #31's Live 1 measurements and its Live 1b placeholders, for dungeon_chest_model.py (data only)
+│   ├── dungeon_chest_measurements.json # DC1-DC23: the dungeon chest's static reading, the kill path (§13.5), and ForgePact #31's Live 1, Live 1b, Live 2 and Live 3 measurements (the estimate's mean, the player build's census, latch and head label), for dungeon_chest_model.py (data only)
 │   ├── skill_sliders_measurements.json # ForgePact #160's live values for skill_sliders_model.py (data only)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
@@ -145,7 +145,8 @@ hypothesis and the fixture disagree. ForgePact's Bosses control stays in the tes
 `docs/models/dungeon-chest-spec.md`, fixture `curated/dungeon_chest_measurements.json` (DC1-DC5
 the static reading of `Dungeon_Chest_obj` and its neighbours, DC6 the measured kill path of
 `docs/RUNTIME_DATA_MODELS.md` § 13.5, DC7-DC11 and DC13 measured in ForgePact #31's Live procedure 1,
-DC12 not observed, DC14-DC18 placeholders its Live procedure 1b fills), checks
+DC12 not observed, DC14-DC19 its Live procedure 1b, DC20-DC21 its Live procedure 2 and DC22-DC23 its
+Live procedure 3 on the player build, 2026-10-04), checks
 `tests/test_dungeon_chest_model.py`. It models the game's rule (the chest opens once no monster is
 alive) and ForgePact's progress: kills counted in the dungeon over its planned total, fixed at the
 chest's first sight (`planned_total`, `estimated_total`, `progress`). What Live 1 settled (the chest
