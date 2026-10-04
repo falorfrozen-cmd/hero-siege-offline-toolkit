@@ -135,7 +135,7 @@ class BaselineTests(unittest.TestCase):
                 self.assertEqual(model.projectile_delta_speed(8, flat_element=2, room_spd=Fraction(1, 2), order=order), 9)
 
     def test_the_order_matters_only_when_both_apply_and_is_a_parameter(self):
-        # Which comes first is for Live 1 to measure, so it has no default.
+        # The order was not measured (the sessions raised one stat at a time), so it has no default.
         both = dict(percent_element=Fraction(1, 2), flat_element=2)
         self.assertEqual(model.projectile_delta_speed(8, order="multiply_first", **both), 14)
         self.assertEqual(model.projectile_delta_speed(8, order="add_first", **both), 15)

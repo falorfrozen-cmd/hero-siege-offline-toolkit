@@ -872,16 +872,18 @@ Measured on 2026-10-04 on Sorak, a White Mage, in town and in Outskirts of Inoya
   **1085** (stat 75) and **1086** (AoE size) carry the three values. A White Mage
   talent calls `LoadAllModifiers` once, then `SetAllModifiersNew` on each object it
   creates, which copies the list into that object's `projEffect`; the Healing Zone's
-  branch makes no such call. **Static reading**; `projEffect[1086]` read 0.5 on the
-  Soul Spurn and Mana Orb objects with stat 554 at 50, and 0 on the Healing Zone
-  (**measured**).
+  branch makes no such call. **Static reading**; with stat 554 at 50,
+  `projEffect[1086]` read 0.5 on the Soul Spurn object (**measured**) and on a
+  Mana Orb object (a supporting read; its check was left not-run), and 0 on the
+  Healing Zone (**measured**).
 - **Who applies the elements.** `LoadProjectileSettings` does, for
   `Projectile_Player_obj` (the class basic attack's object; its one direct caller
   is that object's event, gated on an instance flag). White Mage skill objects are
   parented under `Player_Damage_Parent_obj` or `Player_Ability_Parent_obj`, and an
   event of each parent applies the same arithmetic to its own instance. **Static
-  reading.** No White Mage skill cast called `LoadProjectileSettings`
-  (**measured**, seven skills).
+  reading.** No White Mage skill cast was observed calling
+  `LoadProjectileSettings` (seven skills; the same instrument counted it from the
+  mercenary in the same session).
 - **Projectile speed.** Element 1085 scales `deltaSpeed` as a percent and element
   1084 adds a flat amount times `roomSpd`, both only while `deltaSpeed` is above 0
   (**static reading**). On Shadow Bolt (`deltaSpeed` 2.916667) stat 75 at 0.5 and
