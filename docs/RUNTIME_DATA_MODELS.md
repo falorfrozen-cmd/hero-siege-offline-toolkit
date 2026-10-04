@@ -1112,8 +1112,28 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   but no line can be sent, so the call the game makes for a typed line was not
   observed. One `Ingame_Chat_obj` exists in a loaded game; `UI_Ingame_Chat_obj`
   and `Chat_obj` were 0. **Measured.**
+- **The online drop-announcement chain.** Static reading (2026-10-04, local
+  decompile, our own words): a ground item's own announcement closure (§16.10)
+  reads the item's rarity and, on a branch per rarity, calls
+  `NetworkSendChatMessageIngame` with five arguments: a runtime-filled global
+  value (not established what it holds), the real 18687, the item, a colour
+  and the int64 3. Static reading: with that last argument 3, the text is
+  `GetItemDropMessage(item)`, a localized line naming the item (through
+  `GetLootName` and `GetLocalized`); the sender adds it locally through
+  `ChatAddMessage` (15 arguments) and, inside a block whose condition was not
+  read, sends it with `PacketSend`. Static reading: `GetRareDropAnnouncement(a,
+  b, c)` answers true for `a` 7 (Angelic) or 10 (Unholy), and for a few
+  material (`b` 14) and socketable (`b` 15) ids; Heroic (9) is decided by the
+  closure's own branch, not there. Static reading: before each send the
+  closure also loops over `Chat_obj` (`ChatSendServerMessage`) and over
+  `Menu_Controller_obj` (`ReportClient`); `Chat_obj` was counted at 0 offline
+  (measured above), so those loops run nothing offline. Static reading: the
+  receiving side is `CA_chatIngame` → `ChatAddIngameMessageFiltered` →
+  `ChatAddMessage`. Whether any of this runs offline, and which call shows the
+  line from ForgePact, is ForgePact#17's Live procedure 1.
 
-[dungeon chest, Chat route](../ForgePact/docs/dungeon-chest-research.md#chat-route)
+[dungeon chest, Chat route](../ForgePact/docs/dungeon-chest-research.md#chat-route),
+[loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading)
 
 ---
 
@@ -2966,6 +2986,29 @@ the controls and the table are in the Item Editor's
   **Measured.**
 
 [Item Editor, game truth step 4](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-4--seeds-the-game-built-item-editor-2163)
+
+### 16.10 The rare-drop announcement closure on a ground item
+
+- Static reading (2026-10-04, our own words): `Loot_Ground_obj`'s Create event
+  binds three methods on each ground item; the one SDK-named
+  `gml_Script_anon@1138@gml_Object_Loot_Ground_obj_Create_0` takes no
+  arguments and is the drop announcement (§8.6). The other two are the
+  loot-filter closure (`anon@6032`) and the step dispatcher (`anon@11081`).
+- Static reading: it reads `self`'s item (`itemInstance`), then a struct
+  inside it and one key of that struct, and compares the value with 7, 10, 9
+  and 6 on separate branches, which are the rarity codes of §16.4; the key
+  strings were not read, so that the key is `"27"` is an inference from the
+  codes, not a reading.
+- Static reading: a search for direct callers found none for it (while finding
+  seven for the other targets of the same search), so it is reached as a
+  method value; who invokes it, and whether anything does offline, is not
+  established. Its name moves with every game patch (the `anon@N` position),
+  so ForgePact spells it through the SDK constant.
+- The chain, the rarity key and the codes announced online are also in
+  [`hs-game-sdk/curated/loot_announcement_measurements.json`](../hs-game-sdk/curated/loot_announcement_measurements.json),
+  each labelled a static reading until a live session measures it.
+
+[loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading)
 
 ---
 

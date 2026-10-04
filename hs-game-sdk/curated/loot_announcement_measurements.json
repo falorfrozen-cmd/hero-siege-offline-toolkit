@@ -1,0 +1,67 @@
+{
+  "$schema_note": "Hand-curated record of how Hero Siege announces a rare ground drop in chat, for ForgePact#17 (Loot announcements). NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. Every `status` is `static_reading` (read from the compiled game locally and paraphrased in our own words; no script text is kept anywhere) until a ForgePact#17 live session records a `measured` value. `scripts` is the announcement chain by SDK name, in call order; `rarity_key` is the itemInfoStruct key holding the rarity (docs/RUNTIME_DATA_MODELS.md section 16.4, measured); `rarity_codes_announced_online` lists the rarity codes the game's own online path announces and what decides each; `route` is the call ForgePact's `lootann` ships to show the line offline, `null` until Live procedure 1 picks one (one of `method`, `netsend`, `chatadd`, `server`). The argument is ForgePact docs/loot-announcement-research.md; the shared facts are docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.10.",
+  "source": [
+    {
+      "path": "ForgePact/docs/loot-announcement-research.md",
+      "section": "Static reading"
+    },
+    {
+      "path": "docs/RUNTIME_DATA_MODELS.md",
+      "section": "8.6 In-game chat"
+    }
+  ],
+  "scripts": [
+    {
+      "name": "gml_Script_anon@1138@gml_Object_Loot_Ground_obj_Create_0",
+      "role": "the announcement closure bound on each Loot_Ground_obj; no arguments; reads the item's rarity and branches per rarity",
+      "status": "static_reading"
+    },
+    {
+      "name": "gml_Script_GetRareDropAnnouncement",
+      "role": "is this drop announced: true for rarity 7 or 10, and for a few material and socketable ids",
+      "status": "static_reading"
+    },
+    {
+      "name": "gml_Script_NetworkSendChatMessageIngame",
+      "role": "called by the closure with (a runtime global, 18687, item, colour, int64 3); builds the line, adds it locally, sends it inside a block whose condition was not read",
+      "status": "static_reading"
+    },
+    {
+      "name": "gml_Script_GetItemDropMessage",
+      "role": "the localized line naming the item, when the sender's last argument is 3",
+      "status": "static_reading"
+    },
+    {
+      "name": "gml_Script_ChatAddMessage",
+      "role": "adds the built line to the chat feed (15 arguments)",
+      "status": "static_reading"
+    },
+    {
+      "name": "gml_Script_PacketSend",
+      "role": "the network send inside the sender's conditional block",
+      "status": "static_reading"
+    }
+  ],
+  "rarity_key": "27",
+  "rarity_codes_announced_online": [
+    {
+      "code": 7,
+      "rarity": "Angelic",
+      "decided_by": "gml_Script_GetRareDropAnnouncement",
+      "status": "static_reading"
+    },
+    {
+      "code": 10,
+      "rarity": "Unholy",
+      "decided_by": "gml_Script_GetRareDropAnnouncement",
+      "status": "static_reading"
+    },
+    {
+      "code": 9,
+      "rarity": "Heroic",
+      "decided_by": "the closure's own branch for 9 (gml_Script_anon@1138@gml_Object_Loot_Ground_obj_Create_0)",
+      "status": "static_reading"
+    }
+  ],
+  "route": null
+}
