@@ -197,7 +197,7 @@
       "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Who sets the spawned flag"}],
       "objects": ["Slot_Machine_01_obj"],
       "scripts": ["gml_Script_sCP"],
-      "what": "sCP(x, y, object) is the game's own stamping spawner: it calls the instance_create_layer builtin with (x, y, global.gameLayer[room][0], object), then reads the new instance's pSpwd key and calls SetVariable(key, true) by name with the caller as self, and returns the instance. No early return, no other check. The argument order (x, y, object) contradicts the S10 notes' (object ref, x, y); this reading follows the builtin's argument list, UNVERIFIED until Live 3.",
+      "what": "sCP(x, y, object) is the game's own stamping spawner: it calls the instance_create_layer builtin with (x, y, global.gameLayer[room][0], object), then reads the new instance's pSpwd key and calls SetVariable(key, true) by name with the caller as self, and returns the instance. No early return, no other check. The argument order (x, y, object) contradicts the S10 notes' (object ref, x, y); this reading follows the builtin's argument list, confirmed by Live 3 (`spawn scp` answered `object=4644`).",
       "values": {
         "script_index": 474,
         "argc": 3,
