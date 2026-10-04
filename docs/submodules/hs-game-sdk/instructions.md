@@ -35,6 +35,7 @@ hs-game-sdk/
 │   ├── drop_roll_measurements.json # M1-M10: recorded drop-roll numbers drop_roll_model.py is tested against (data only)
 │   ├── mining_reward_measurements.json # MR1-MR9: recorded mining-dig numbers mining_reward_model.py is tested against (data only)
 │   ├── monster_rank_measurements.json # MK1-MK24: what a monster's rank does (§13.7), the boss report, and ForgePact #44's Live 1 and 1b on bosses, for monster_rank_model.py (data only)
+│   ├── dungeon_chest_measurements.json # DC1-DC23: the dungeon chest's static reading, the kill path (§13.5), and ForgePact #31's Live 1, Live 1b, Live 2 and Live 3 measurements (the estimate's mean, the player build's census, latch and head label), for dungeon_chest_model.py (data only)
 │   ├── skill_sliders_measurements.json # ForgePact #160's live values for skill_sliders_model.py (data only)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
@@ -54,6 +55,7 @@ hs-game-sdk/
 │   │   ├── drop_roll_model.py  # Two-stage drop roll model, stdlib only, not exported from __init__ (hand-written)
 │   │   ├── mining_reward_model.py # What one mining dig pays (ore stacks, bonus rolls), stdlib only, not exported (hand-written)
 │   │   ├── monster_rank_model.py # What a monster's rank does to health, damage, XP and drop values, stdlib only, not exported (hand-written)
+│   │   ├── dungeon_chest_model.py # When a key dungeon's end chest opens (no monster alive) and the kill tally's quantities, stdlib only, not exported (hand-written)
 │   │   ├── skill_sliders_model.py # Projectile count, AoE scale and projectile deltaSpeed from their stats, stdlib only, not exported (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
@@ -138,6 +140,21 @@ same spawn, the same unmatched top-up). The test compares a boss row's top-up wi
 at the boss's rank, so an unmatched one keeps the row out by itself. The test fails when a
 hypothesis and the fixture disagree. ForgePact's Bosses control stays in the test as `force_boss_rank`, pinned to
 `BossRarityMod.hpp` and `src/forgepact.py` by `LeverParityTests`.
+
+`dungeon_chest_model.py` (2026-10-03, ForgePact issue #31) is built the same way: spec
+`docs/models/dungeon-chest-spec.md`, fixture `curated/dungeon_chest_measurements.json` (DC1-DC5
+the static reading of `Dungeon_Chest_obj` and its neighbours, DC6 the measured kill path of
+`docs/RUNTIME_DATA_MODELS.md` § 13.5, DC7-DC11 and DC13 measured in ForgePact #31's Live procedure 1,
+DC12 not observed, DC14-DC19 its Live procedure 1b, DC20-DC21 its Live procedure 2 and DC22-DC23 its
+Live procedure 3 on the player build, 2026-10-04), checks
+`tests/test_dungeon_chest_model.py`. It models the game's rule (the chest opens once no monster is
+alive) and ForgePact's progress: kills counted in the dungeon over its planned total, fixed at the
+chest's first sight (`planned_total`, `estimated_total`, `progress`). What Live 1 settled (the chest
+polls `instance_exists` itself; monsters stream from spawners present at load) and what is still
+open (where the planned total comes from) are carried in `dungeon_chest_model.HYPOTHESES`, each
+`None` until a measured entry decides it. ForgePact's Dungeon
+chest opens early stays in the test as input transforms, pinned to `DungeonChestMod.hpp` and
+`src/forgepact.py` by `LeverParityTests`.
 
 `skill_sliders_model.py` (2026-10-04, ForgePact issue #160, hub #408) is built the same way: spec
 `docs/models/skill-sliders-spec.md` (written from the static reading in ForgePact's
@@ -486,6 +503,7 @@ contributor can be assumed to have:
 | `test_drop_roll_model.py` | nothing (the model, its fixture and the pilot docs); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/ModuleMain.cpp` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_mining_reward_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `RollsLeverParityTests` | always runs; only `RollsLeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/MiningOreMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_monster_rank_model.py` | nothing (the model, its fixture, its spec and the tracked object bindings); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/BossRarityMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
+| `test_dungeon_chest_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/DungeonChestMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths and local `.claude/workorders/` captures |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_sdk_lazy_import.py` | nothing (starts fresh interpreters of the Python running the suite) | always runs |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
@@ -789,8 +807,8 @@ re-run it; regeneration is idempotent, so a second run must produce no diff.
 `tools/generate_satanic_zone_sdk.py` and are regenerated from `curated/satanic_zone.json`.
 
 "Every file" is broader than the code, though: `player.py`/`.hpp`/`.ts`, `hooks.hpp`,
-`mod_registry.py`, `item_type.py`/`.hpp`/`.ts`, `drop_roll_model.py`, `mining_reward_model.py` and
-`monster_rank_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
+`mod_registry.py`, `item_type.py`/`.hpp`/`.ts`, `drop_roll_model.py`, `mining_reward_model.py`,
+`monster_rank_model.py` and `dungeon_chest_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
 models are not wired
 into any aggregate on purpose (import it by its module name), and it has no C++ or TypeScript
 counterpart. They still have to be wired into the aggregates
