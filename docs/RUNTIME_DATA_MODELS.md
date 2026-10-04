@@ -2338,19 +2338,52 @@ AFK FARM design, 0.9 (a private repository)
 
 ### 14.1 Satanic Zone modifiers
 
-- The game does not call `LoadSatanicZone` in normal play (0 calls across zone
-  load, walking and waypoints); called with no arguments it returns false.
-- `Controller_obj.satanicZone` is a room-reference number. The buff and debuff
-  arrays hold unique ids in 1–25 / 1–26 and re-roll on their own every few tens of
-  seconds to minutes, not in step with room changes; overwriting them in place is
-  picked up without a room change.
+- **`LoadSatanicZone` is called by the game about 150-160 times a second**, with
+  one argument, the resolved zone's room index. The 2026-09-10 "0 calls" was an
+  instrument artefact: that probe ran before `HookOneScript` installed its
+  inline detour (2026-09-12), so it only saw table-routed calls. It answers
+  "is the player in that act-zone room?": true for `Act_01_01`'s room while the
+  player stands in it, false for the resolved room while the player is
+  elsewhere, and false for an ineligible room even with the player in it (the
+  town), so it is not a plain "player room == store" test. **Measured
+  2026-10-03 and 2026-10-04.**
+- **The zone is a writable protected value.** `Controller_obj.satanicZone` is a
+  *key* (`162966.0`); `GPV(key)` is a room **asset index** (20 = `Act_02_04`,
+  44 = `Act_04_03`, 235 = `Town_01_rm`; act zones run ~1-117, towns 235-243),
+  and `SPV(key, <room>)` sets it, sticking until the next roll. It is a roll: it
+  moved 20 -> 4 on its own within one session, and `GetSatanicZoneOffline(<n>)`
+  re-rolled it (4 -> 28). **Measured 2026-10-03.**
+- **The in-zone effect follows that state.** Entering `Act_01_01` with the store
+  already naming its room added five `Draw_Player_Buff_obj` buffs to the player
+  (the same slots read empty with the store elsewhere) and the player saw the
+  zone's buffs and debuffs on the buff bar; releasing the store mid-zone did not
+  remove objects already applied. **Measured 2026-10-04.** A relic drop in a
+  satanic zone is still unwatched.
+- **The world map's red marker is a separate layer.** `UI_Map_Zone_Button_obj`
+  carries a per-node `isSatanic` flag with its own image/timer/scale fields, set
+  when the game itself resolves a zone; the store, the game's own re-rolls and
+  invoking every node's own `m_RefreshNode` left it unchanged. **Measured
+  2026-10-04.**
+- Forcing `LoadSatanicZone` to answer true on every call in town (a room it
+  otherwise answers false for) changed nothing visible (player buffs, HUD and
+  before/after screenshots identical). **Measured 2026-10-03.** The force's own
+  effect in an eligible zone is still unwatched (the confirmed buffs above came
+  from the store write, not the force); whether the effects are event/entry-
+  driven rather than per-frame is **not established**, and the kill path
+  (`ProjectileKill00Universal` -> the two satanic relic routines) is an
+  untested candidate consumer.
+- The buff and debuff arrays hold unique ids in 1–25 / 1–26 and re-roll on their
+  own every few tens of seconds to minutes, not in step with room changes;
+  overwriting them in place is picked up without a room change.
 - With no arguments `GetSatanicZoneOffline` returns undefined,
   `ReturnSatanicZoneBuffs`/`Debuffs` return real 0 and `LoadRandomSatanicStat`
   throws.
 
-**Measured 2026-09-10.** The buff and debuff names are in
+**Measured 2026-09-10, 2026-10-03 and 2026-10-04.** The buff and debuff names are in
 [`hs-game-sdk/curated/satanic_zone.json`](../hs-game-sdk/curated/satanic_zone.json).
 [satanic zone, Findings](../ForgePact/docs/satanic-zone-mods-research.md#findings-2026-09-10-live-session),
+[Live 3](../ForgePact/docs/satanic-zone-mods-research.md#live-3-2026-10-03-issue-155-the-re-probe-and-the-zone-value-is-writable),
+[Live 4](../ForgePact/docs/satanic-zone-mods-research.md#live-4-2026-10-04-what-loadsataniczone-really-answers-and-the-map-marker),
 [The mechanism that shipped](../ForgePact/docs/satanic-zone-mods-research.md#the-mechanism-that-shipped-poll-and-correct-not-a-routine-hook)
 
 ### 14.2 `global.eSt`: the special-content parameters
@@ -3666,3 +3699,142 @@ workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
   reading.**
 
 ["Auto loot"](../ForgePact/docs/incarnation-gems-research.md#auto-loot---static-reading)
+
+## 19. Player jump and collision
+
+What ForgePact's jump-through-scenery research (#16, phase 1) measured on
+2026-10-03 with its `jumpprobe` instrument, on save slot 14 ("Sorak", level
+100) in `Town_01_rm`. The argument, the controls and the full check table are
+in ForgePact's [`docs/jump-scenery-research.md`](../ForgePact/docs/jump-scenery-research.md);
+the numbers are also in `hs-game-sdk/curated/jump_measurements.json`.
+
+### 19.1 The universal jump
+
+- The jump key (Space by default) jumps **towards the mouse cursor**. The
+  owner's account, 2026-10-03.
+- The local jump runs through `gml_Script_skillsLeap` (3664) and
+  `gml_Script_playerJumpGravity` (2764): each is called once per frame, with
+  the player as `self`, for the jump's whole length, whether the player moves
+  or not. `skillsLeap` takes one argument close to 1. `gml_Script_CA_playerJump`
+  (348) and `gml_Script_PlayerForceJump` (2770) are **not** called by the local
+  jump, and `gml_Script_StatJumpPower` (3391) logged no call during one.
+  **Measured.**
+- The jump lasts 104 frames. On open ground it moved this character about
+  175 px (19.4, curated J11); the jump that crossed a prop under phase 1's
+  `all hold` lever (curated J2) went 117 px, about 1.1 px per frame. The
+  character's Jump Power was not read, so neither is the base jump.
+  **Measured.**
+- No instance variable whose name contains `jump`, `air`, `grav`, `land`,
+  `fall`, `height`, `zpos`, `hover` or `fly` changes during a jump: the only
+  matches on `Player_obj` are `bufferJump` and `slopeHeight`, and both stayed
+  0. **Measured.** Where the jump's state lives is not established.
+
+[Live 1 results](../ForgePact/docs/jump-scenery-research.md#live-1-results)
+
+### 19.2 What blocks it
+
+- A jump at a scenery prop that blocks it does not move the player at all,
+  not even to the prop's edge 22 to 40 px away, while `skillsLeap` and
+  `playerJumpGravity` still run for the jump's 104 frames. **Measured.**
+- During the jump the player's own builtin collision queries name the
+  collision family by its parent: `position_meeting`, `place_meeting`,
+  `instance_position` and `collision_line` pass `Collision_Parent_obj` (957)
+  itself, and `collision_circle` passes `Wall_Parent_obj`. None passes
+  `Collision_Prop_obj` (959) or a descendant. **Measured.**
+- Answering those five builtins "nothing there" for the player (`noone` or
+  `false`), without running them, lets the same jump cross the prop: 117 px
+  over the jump's 104 frames. **Measured.** The `props` and `scripts` levers
+  answered nothing, so they say nothing either way: no player query during
+  the jump named `Collision_Prop_obj` or a descendant, so the `props` lever
+  stayed at `passed=0` and every query counted `other-family=`; and the player
+  made no call to `CanMove`, `InstancePlaceTallest` or `TilePlaceMeeting`
+  during a jump (those rows are native detours, and `InstancePlaceTallest`'s
+  1944 player-self calls during a walk are the positive control that they
+  would have counted one). Whether `InstancePlaceTallest` holds a walk or
+  refuses a landing inside a prop is **not established**
+  ([Results](../ForgePact/docs/jump-scenery-research.md#results)). **Measured**
+  for the counts, not for any effect.
+- A jump aimed at a landing point inside a prop (a horse carriage) does not
+  start even with those five builtins answered: the player stays within 4 px
+  of the take-off point. What refuses it was not identified. **Measured.**
+- Walking into a prop stays blocked with those five builtins answered.
+  **Measured.**
+
+[Live 1 results](../ForgePact/docs/jump-scenery-research.md#live-1-results);
+[Decision](../ForgePact/docs/jump-scenery-research.md#decision)
+
+### 19.3 The take-off check
+
+Read from the arguments `jumpprobe` logged in Live 1's own `out.txt`
+(2026-10-03), which the session capture had shortened.
+
+- In the frame a jump takes off, before that frame's `skillsLeap` call
+  returns, the game walks along the jump's direction with queries whose
+  `self` is the player. The steps are about **4.0 px** apart. At each step it
+  asks `collision_circle(cx, cy, 15, Wall_Parent_obj, true, true)` (radius
+  **15**) and `instance_position` against `Collision_Parent_obj` (957) at two
+  side points, about **14 px** to either side of the step, perpendicular to
+  the direction. **Measured.**
+- The first circle centre sits about 5-6 px below the player's origin,
+  whichever way the jump goes (two take-offs heading south, one north).
+  **Measured.**
+- One blocked side point is enough: in Live 1 run J1 (curated J10) the
+  right-hand point of the second step returned an instance, and that jump
+  moved 0 px. **Measured.**
+- Phase 1 could not tell whether the walk runs inside `skillsLeap`'s first
+  call or just before it, in the same frame (the builtin rows were logged on
+  return, before `skillsLeap`'s own line); the mod session settled it: inside
+  the first call (19.4 / curated J12).
+- The "no collision" answers the game accepts for these queries are real -4
+  (`noone`) for `instance_position`, `collision_line` and `collision_circle`,
+  and bool false for `position_meeting` and `place_meeting`; the game's own
+  `noone` comes back as a ref to instance -4. **Measured** (Live 1 run J3,
+  curated J5).
+
+[Phase 2: the take-off check](../ForgePact/docs/jump-scenery-research.md#the-take-off-check)
+
+### 19.4 Through the mod (phase 2 live session)
+
+What ForgePact's Jump through scenery mod (`jumpscenery`, #16 phase 2)
+measured about the game on 2026-10-03, on the player build, slot 14
+("Sorak"), in `Town_01_rm`. Curated entries J11 to J15 in
+`hs-game-sdk/curated/jump_measurements.json`. A bare Jn in section 19 is a
+curated id in that file; the research doc's Live 1 run labels, also J1 to J5,
+are not, and are written "Live 1 run Jn" here.
+
+- A jump on open ground moved this character about **175 px** (from (912.0,
+  822.0) to (921.9, 996.7)); the character's Jump Power was again not read.
+  **Measured.**
+- The take-off walk of 19.3 runs inside `skillsLeap`'s first call of the
+  jump: on each of three jumps, at least two of the walk's `collision_circle`
+  queries arrived after that frame's `skillsLeap` entry, and none before it.
+  Together with 19.3's ordering (the walk's rows logged before `skillsLeap`
+  returns), that places the walk between its entry and its return.
+  **Measured.**
+- A jump at the prop that blocks it does not move the player (0 px, twice),
+  and answering the player's five builtins "no collision" during that jump
+  lets it cross: 125 px, about 50 px short of the open-ground jump. Why the
+  crossing jump ends shorter is **not established**. **Measured.**
+- A jump aimed so that it would end inside a horse carriage did not move the
+  player even with the five builtins' blocked player-self family queries
+  answered (1152 answers in that jump), as in phase 1: something the mod does
+  not answer refuses it (a script row, an unhooked builtin, or one of the five
+  called with another self or a non-family object; not established), and the
+  player did not end inside the prop. The mod's landing and room checks ran on
+  that jump and let it through (`granted` +1, `refused-landing` 0), so the
+  mod's landing check has not been observed to detect the carriage; the
+  landing point they checked was not recorded, so whether it lay inside the
+  carriage is **not established**. What
+  refuses the jump is **not established**; the owner reads it as the game
+  validating the landing zone itself. **Measured** for the position, not for a
+  mechanism.
+- `room_width` × `room_height` of `Town_01_rm` is **2800 × 2400**. The room
+  rectangle is larger than the walkable map: `playerwarp` to (50, 1200) and
+  (2705, 1200) held on a re-read (no snap back) and left the player out of
+  bounds (the owner's report), within 100 px of a room edge; (95, 1200) held
+  too and put the player in the dark margin at the west of the view, not
+  judged standable. **Measured.** So a room
+  edge is not a map edge, and what the game does with a jump at the
+  walkable map's edge is **not observed**.
+
+[Mod live 1 results](../ForgePact/docs/jump-scenery-research.md#mod-live-1-results)
