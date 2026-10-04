@@ -3061,15 +3061,15 @@ the controls and the table are in the Item Editor's
   method value; who invokes it, and whether anything does offline, is not
   established. Its name moves with every game patch (the `anon@N` position),
   so ForgePact spells it through the SDK constant.
-- **Measured** (2026-10-04, ForgePact#17's Live procedure 3, `lootannprobe
-  methods`): the ground item's method-variable read names no `anon@` method.
-  Taking `method_get_index`'s value as a number returned -1 for the three
-  `anon@` names the closure could be (`m_AngelicMessage`, `m_LootFilter`,
-  `m_LootGroundDeActiveStep`), so the closure could not be invoked as a method
-  on the item, while a named method (`s_lootDrawData`) did resolve. Whether -1
-  is `method_get_index`'s own answer for these methods or the probe's reading
-  of a reference is not established (the probe does not print the index's
-  kind).
+- **Not observed (instrument-blind)**, 2026-10-04 (ForgePact#17's Live
+  procedure 3, `lootannprobe methods`): the probe listed the ground item's
+  method variables but its anon control did not resolve (`anon rows resolved:
+  0 of 2`, every anon row `?#-1`), so the listing names no `anon@` method and
+  whether the closure is bound and invokable on the ground item is not
+  established. The `-1` is the probe's own reading of the index (whether
+  `ToDouble()` on a reference yields the script number is open), not a settled
+  `method_get_index` answer; `s_lootDrawData` resolving does not validate the
+  anon rows (it resolved under the earlier broken probe too).
 - The chain, the rarity key and the codes announced online are also in
   [`hs-game-sdk/curated/loot_announcement_measurements.json`](../hs-game-sdk/curated/loot_announcement_measurements.json),
   each labelled a static reading until a live session measures it.
@@ -3127,7 +3127,7 @@ the controls and the table are in the Item Editor's
   natural drops in the same session passed the guard (`natural-fresh`). It
   needs the `CreateItemNew` hook to be an inline detour (`LootGroundCreate`
   calls it directly). One bag drop of one item was measured; the rebuild of
-  the same item measured above, around the pickup or the drop, could still
+  the same item measured above, at the drop, could still
   defeat it if that rebuild is given the existing struct or the ground
   receives a copy, and the struct that reaches the ground is not established.
   ForgePact's Loot announcements use it (the creation guard).
