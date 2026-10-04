@@ -486,6 +486,27 @@ main menu on 2026-09-26 (`pe-6aaa6779-0cad4fc8`). All **measured**.
 
 [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#measurements)
 
+### 5.10 A variable-slot global names itself
+
+**Static reading**, 2026-10-04 (ForgePact #160), in our own words.
+
+- The runtime keeps each variable-slot global in a 16-byte table entry inside
+  the executable. The first 8 bytes are a pointer to the variable's name, a
+  NUL-terminated ASCII string; the next 8 bytes are the slot itself. So the
+  little-endian pointer 8 bytes before a slot names that slot.
+- These names are found in the executable's own data this way, not in
+  `data.win`'s string pool, which holds no instance-variable names on this
+  build (§5.1).
+- #160 named `projEffect`, `maxScale`, `image_xscale`, `image_yscale` and
+  `loadSettings` this way, in decompiled bodies that left those slots
+  unnamed.
+- Slot locations move with every game build, so name them per build, with
+  the `slot-name`, `find-name` and `annotate` subcommands of
+  `tools/decomp_index.py`, and keep no slot location in a tracked file.
+
+[Decompile index and slot-name helpers](tools/decomp-index.md),
+[skill sliders research](../ForgePact/docs/skill-sliders-research.md)
+
 ---
 
 ## 6. Player and Global State

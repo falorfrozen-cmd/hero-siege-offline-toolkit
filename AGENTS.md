@@ -293,6 +293,22 @@ table hooks were in place, so until someone checks it, run `citrace symdump`
 with no ForgePact hooks installed as a precaution, not a known fix (see
 [static-model-workflow.md](docs/agents/static-model-workflow.md#tooling-findings)).
 
+**Ask the decompile index before you decompile.** A script someone already
+decompiled for this build is a file on this machine, not a new headless run, but
+only if it can be found: on 2026-10-04 ForgePact #160 decompiled scripts again
+because the earlier output had no index.
+
+- Before decompiling, run `py -3 tools/decomp_index.py has <name>` (add
+  `--contains` for a partial name) and reuse what it lists for the current
+  build. A match labelled as another build is stale, not missing.
+- After a headless run, `scan` its output directory so the next reader finds it.
+- The index file and every decompile stay outside any repository; the tool
+  refuses to write either inside a git checkout.
+- In a body the decompiler left unnamed, name a variable slot with the tool's
+  `slot-name`, `find-name` and `annotate` subcommands rather than by guessing.
+
+Detail, defaults and the slot-name mechanism: [docs/tools/decomp-index.md](docs/tools/decomp-index.md).
+
 ## Mod Development Workflow: Test Before / After, Then Build to It
 
 When developing a mod, hook, or any gameplay-affecting change (drop rates, stats,
@@ -674,7 +690,8 @@ mod's developers read it. Facts about the game itself belong to every module:
 where a structure lives, what a container holds, what a script reads and
 writes, what an argument means, which call crashes the game. So when a
 research phase is recorded, the facts it established about the game go into
-the shared references as part of the same feature, not "later". The shared
+the shared references as part of the same feature, not "later" (a static
+reading goes in even sooner, as the paragraph after the list says). The shared
 references live in this hub, so they ride the feature's hub pull request: the
 one that accompanies the submodule's PR, per § "One Branch and One Pull
 Request per Module, per Feature" below. A later commit on that same hub
@@ -699,6 +716,16 @@ reading as a reading, in your own words, per the Legal section above. Leave
 the argument, the negative results and the session history in the research
 doc, and link to it. A fact that exists only in one mod's research doc gets
 rediscovered by the next mod, at the price of another live session.
+
+**Fold a static reading when it is made**, not after the live session. A local
+reading that establishes a game fact goes into `docs/RUNTIME_DATA_MODELS.md` in
+the same feature and at the time it is made, labelled as a static reading and
+in your own words; when a later session measures it, change the label to
+measured. Plans are written from the shared
+references, so a reading that is not there yet cannot shape the next live
+procedure: in ForgePact #160 (2026-10-04) the readings reached this file only
+after a live session, and Live 1 was planned around a script that White Mage
+casts never reach.
 
 ## Every Piece of Work Belongs to an Issue on the Board
 
