@@ -218,9 +218,10 @@ dungeon's planned total, and `p` for the percentage.
   copies included). Live 1b decided its form (`total-route: estimate`, DC14 and
   DC16): T is the monsters alive at first sight plus (creators still to spawn,
   those whose `enemyArray` is not an array, × a measured mean per creator),
-  rounded up. A creator whose state cannot be read counts as spawned and is
-  counted on the status line (`unreadable=`); a census that failed as a whole
-  (no creator family, no creators, every creator unreadable) gives no T.
+  rounded up. A creator whose state cannot be read is counted on the status
+  line (`unreadable=`), and a failed census (no creator family, no creators,
+  or any creator unreadable; owner, 2026-10-04) gives no T: counted as
+  spawned, an unread creator would shrink T below the share the player set.
   T does not move with the alive count, so `Chest: 50 kills to go` means 50
   real kills. (Had a per-creator count been readable, T would have been the
   `variable` form, the sum of those counts; DC14 found none.)
@@ -233,8 +234,9 @@ dungeon's planned total, and `p` for the percentage.
   same formula gives 646 for that run; an over-count only raises the threshold,
   and the game's rule still opens the chest at `a = 0`. Live 1's (600 − 44) ÷ 122
   ≈ 4.6 is a second point, from a census taken later; it is not the constant.
-- **T unknown.** With no total source, or a source that answers 0 while
-  creators are present, the share is refused: no threshold, nothing shown, the
+- **T unknown.** With no total source, or a source that answers 0 (the
+  build's does for a failed census: no creator family, no creators, or any
+  creator unreadable), the share is refused: no threshold, nothing shown, the
   status reports `total=unavailable`, and the chest follows the game's rule.
 - **The clamp.** Each evaluation uses `max(T, k + a)` as T, so the total is
   never below the monsters already seen (kills counted plus alive now). The
