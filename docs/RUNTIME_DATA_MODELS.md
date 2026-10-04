@@ -2725,8 +2725,11 @@ directions are a **static reading**. Also in
 - Only `Spawn_Abyss_obj` sets `discoverable` true; measured on it: `discoverRange`
   1000, `discoverTimer` 30 (frozen out of range), `collisionRadius` 200,
   `activateTimer` -1 until discovered.
-- `sCP(object ref, x, y)` creates the object on `gameLayer` and records it in
-  `pSpwd`; Battlefield, Rift and Shadow Realm go through it. **Static reading.**
+- `sCP(x, y, object)` creates the object on `gameLayer` and records it in
+  `pSpwd`; Battlefield, Rift and Shadow Realm go through it. **Static
+  reading** (2026-10-04). The S10 notes' `(object ref, x, y)` order was a
+  reading not confirmed; this one follows the builtin's argument list,
+  UNVERIFIED until Live 3.
 - The reward portals (`Portal_Battlefield_obj`, `Rift_Portal_obj`,
   `Portal_Shadow_Realm_obj`) do their work in `Alarm_0` and stay dormant unless
   their spawner sets it; a `Portal_Battlefield_obj` carries 59 variables
@@ -4230,8 +4233,24 @@ itself in its first step (§ 20.3).
 - `Alarm_9` logs "Slot Machine Spawned" through `DebugLogAddExt` first, on
   every path, and reports the spawn to clients; "out of thin air" is on a
   later branch. **Static reading.**
-- What `Alarm_9` checks before it removes a machine is **not established**;
-  it is ForgePact #134's next question (phase 1c).
+- `Alarm_9` reads the machine's protected value `activated` through
+  `GetVariable` first; when it is false it sets `activated` and `isActive`
+  true and `rollTimes01`..`rollTimes04` each to 8 plus a runtime routine
+  called directly with the argument 8 (the shape of the runner's `irandom`
+  core - a sign-adjusted argument, an integer result - **not verified**; if
+  so, that one call bypasses the `irandom` builtin's table entry), all
+  through `SetVariable` by name. **Static reading** (2026-10-04).
+- `Alarm_9` then reads the protected value `pSpwd` (instance variable
+  `pSpwd` is the key) through `GetVariable`; when it is false it reports
+  "Slot Machine Spawned out of thin air" and destroys the machine through
+  the runner's instance-destroy routine, called directly - not the
+  `instance_destroy` builtin's table entry (Live 2's `instance_destroy` row
+  counted no machine call, and the `CleanUp_0-caller` walk's runner frames
+  lie inside that routine and its callee). Nothing else in `Alarm_9`
+  destroys or deactivates. **Static reading** (2026-10-04).
+- `Create_0` initialises `pSpwd` to false, so every machine ForgePact
+  created so far died for one reason: nobody set `pSpwd` to true between
+  `Create_0` and the first step. **Static reading** (2026-10-04).
 
 ### 20.4 Spin, explosion and prize
 
@@ -4257,3 +4276,32 @@ itself in its first step (§ 20.3).
   machine's prize roll does is **not established**.
 
 [Live 2 results](../ForgePact/docs/gamba-machine-research.md#live-2-results)
+
+### 20.5 The spawned flag and the game's spawner
+
+- `pSpwd` is a protected value, not an ordinary instance variable: `Create_0`
+  initialises it to false, and `Alarm_9` destroys a machine whose `pSpwd` is
+  still false in its first step (§ 20.3). `sCP` is the game's own spawner
+  that sets it true. **Static reading** (2026-10-04).
+- `sCP(x, y, object)` (474) calls the `instance_create_layer` builtin with
+  `(x, y, global.gameLayer[room][0], object)` - the layer the game's own
+  `instance_create` script also picks - then reads the new instance's `pSpwd`
+  key and calls `SetVariable(key, true)` by name with the caller as `self`,
+  and returns the instance. No early return, no other check. **Static
+  reading** (2026-10-04). The argument order `(x, y, object)` contradicts
+  `S10-special-content-notes.md` ("object ref, x, y") and § 14.3's bullet
+  copied from it; this reading follows the builtin's argument list, UNVERIFIED
+  until Live 3.
+- The same `pSpwd` guard is shared game-wide: 60 compiled functions read that
+  variable slot - chests, portals, shrines, globes, pickups, the zone state
+  buffer's Create closure, `ZoneGenPopulatePresetObjects`, `CreateItemDrop`,
+  `DropGold`, `LoadBossDeath`, and `ClientCreateEffect` once inside its
+  machine case. So § 20.2's "a single call of the game's own
+  `instance_create`" was incomplete: the effect case also stamps `pSpwd`,
+  which is why the `game` spawn route (the call without the stamp) died.
+  **Static reading** (2026-10-04).
+- `Alarm_9` and `sCP` do not use the store scripts at all: they reach the
+  machine's state through the extension functions `GetVariable`,
+  `SetVariable` and `SetVariableToUndefined`, called by name with the builtin
+  convention (a compiled `SetVariable` call branches on `is_undefined(value)`
+  to `SetVariableToUndefined(key)`). **Static reading** (2026-10-04).
