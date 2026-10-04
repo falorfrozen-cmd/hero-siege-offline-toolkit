@@ -3044,6 +3044,56 @@ the controls and the table are in the Item Editor's
 
 [loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading)
 
+### 16.11 An item's time stamp, and what puts an item on the ground
+
+- **Measured** (2026-10-04, the research build's `CreateItemNew` log in
+  `bp_ipc\itemdrops.jsonl`, ForgePact #17's Live procedure 2): an item the
+  game makes this session for a natural drop carries a number in
+  `itemTimeStamp`, rising from drop to drop and ending in a running counter
+  (213292866000, 213292867001, 213292868002, ...). An item built from a save
+  carries its save key's stamp as a 12-digit string. ForgePact's own
+  placements (`sigdrop`, `angelicdrop`, `lootannprobe place`) carry the
+  Unix-millisecond string of the key they hand `InitItemFromJson`. A
+  temporary rebuild of an item the game made around a pickup or a bag drop
+  carried `itemTimeStamp` 0. Not established (an inference from matching
+  the values to the sessions' clocks): the number is seconds since
+  2020-01-01 local time, times 1000, plus the counter.
+- **Static reading** (2026-10-04, local Ghidra project, our own words):
+  `LootGroundCreate` constructs the item and writes its `itemTimeStamp` from
+  `LootTimestamp()`; the natural-drop `CreateItemNew` records already carry
+  that stamp, so its `CreateItemNew(instance, undefined)` (§18.4) runs after
+  the stamp is written. `LootGroundCreateFromItem` sets the new ground
+  instance's `itemInstance` to the item it is given, a reference rather than
+  a copy.
+- **Static reading:** `LootGroundInit` reads `itemInstance.itemTimeStamp`
+  and, behind a test against 0 whose exact form was not read, writes a fresh
+  `LootTimestamp()` into it. So a stamp alone cannot tell a new item from an
+  old one. `LootTimestamp` is also called from the merchant grids, crafting,
+  prospecting and the runeword preview: the game mints a stamp wherever it
+  makes an item.
+- **Static reading:** `LootGroundDrop`'s direct callers are `LootExplosion`,
+  `CreateItemDropInstance` and one unnamed function, with no inventory or UI
+  function among them. `LootGroundInit`'s direct callers are
+  `LootGroundDrop`, `LootGroundCreate`, `LootGroundCreateFromItem`,
+  `LootExplosion`, `CA_playerItemDrop`, `CreateItemDropInstance` and sites in
+  unnamed functions (one region also calls `RemoveItemFromMap`). (A byte
+  scan for call sites; the "nearest symbol" of a site may be a preceding
+  function.)
+- **Measured** (2026-10-04, the same session): a player's bag drop of an item
+  ForgePact had placed reached `LootGroundInit` (the shared detour counted
+  it), while a both-route detour on `LootGroundDrop` counted 0; that detour
+  has never counted a call live. Which script the bag drop runs through is
+  not established; that it is `LootGroundDrop` is not observed. The item
+  that reached the ground still read the rarity the placement set, so it was
+  not the temporary rebuild above (§18.5 corrects its older reading).
+- What this means for a mod: "the game built this item's struct through
+  `CreateItemNew` just now" separates a new drop from an existing struct put
+  back on the ground without knowing the bag drop's script, provided the
+  `CreateItemNew` hook is an inline detour (`LootGroundCreate` calls it
+  directly). ForgePact's Loot announcements use that (the creation guard).
+
+[loot announcements, Live procedure 2](../ForgePact/docs/loot-announcement-research.md#live-procedure-2)
+
 ---
 
 ## 17. Stash Special Tabs & the Crafting Route
@@ -3883,9 +3933,13 @@ workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
   `LootGroundCreateFromItem(x, y, item)` calls `CreateLootInFreePos`, then
   `LootGroundInit(instance, item)`, which reads the bound `m_LootFilter` off the
   instance and calls it behind a guard that was not read (`skipLootFilter` is
-  the candidate). A player's bag drop, `LootGroundDrop`, calls `LootGroundInit`
-  too. So when `LootGroundCreateFromItem` returns, `lootFilterVisible` already
-  holds the game's verdict. **Static reading** (part 2).
+  the candidate). `LootGroundDrop` calls `LootGroundInit` too; that it is the
+  player's bag drop was read from its name and its `RemoveItemFromMap` call
+  only, and on 2026-10-04 a bag drop reached `LootGroundInit` while
+  `LootGroundDrop`'s both-route detour counted 0 (§16.11: not observed, not
+  "does not happen"). So when `LootGroundCreateFromItem` returns,
+  `lootFilterVisible` already holds the game's verdict. **Static reading**
+  (part 2); the bag drop reaching `LootGroundInit` is **measured** (§16.11).
 - All three ground-drop entry points call `LootGroundInit`:
   `LootGroundCreateFromItem` once, after making the instance; `LootGroundDrop`
   at two sites; and `LootGroundCreate`, whose listing of callees names it once.
