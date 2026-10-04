@@ -2343,8 +2343,10 @@ AFK FARM design, 0.9 (a private repository)
   instrument artefact: that probe ran before `HookOneScript` installed its
   inline detour (2026-09-12), so it only saw table-routed calls. It answers
   "is the player in that act-zone room?": true for `Act_01_01`'s room while the
-  player stands in it, false for another room, and false for an ineligible room
-  even with the player in it (the town). **Measured 2026-10-03 and 2026-10-04.**
+  player stands in it, false for the resolved room while the player is
+  elsewhere, and false for an ineligible room even with the player in it (the
+  town), so it is not a plain "player room == store" test. **Measured
+  2026-10-03 and 2026-10-04.**
 - **The zone is a writable protected value.** `Controller_obj.satanicZone` is a
   *key* (`162966.0`); `GPV(key)` is a room **asset index** (20 = `Act_02_04`,
   44 = `Act_04_03`, 235 = `Town_01_rm`; act zones run ~1-117, towns 235-243),
@@ -2362,6 +2364,14 @@ AFK FARM design, 0.9 (a private repository)
   when the game itself resolves a zone; the store, the game's own re-rolls and
   invoking every node's own `m_RefreshNode` left it unchanged. **Measured
   2026-10-04.**
+- Forcing `LoadSatanicZone` to answer true on every call in town (a room it
+  otherwise answers false for) changed nothing visible (player buffs, HUD and
+  before/after screenshots identical). **Measured 2026-10-03.** The force's own
+  effect in an eligible zone is still unwatched (the confirmed buffs above came
+  from the store write, not the force); whether the effects are event/entry-
+  driven rather than per-frame is **not established**, and the kill path
+  (`ProjectileKill00Universal` -> the two satanic relic routines) is an
+  untested candidate consumer.
 - The buff and debuff arrays hold unique ids in 1–25 / 1–26 and re-roll on their
   own every few tens of seconds to minutes, not in step with room changes;
   overwriting them in place is picked up without a room change.
