@@ -18,13 +18,30 @@ character for character, when you finish. Report the State lines as you
 read them before editing and as they stand after, exactly as the prompt
 asks; the workflow compares the two.
 
+Each block sits between two marker lines (`<<<LOG-BLOCK-BEGIN>>>` …
+`<<<LOG-BLOCK-END>>>`, `<<<STATE-LINES-BEGIN>>>` … `<<<STATE-LINES-END>>>`).
+Paste exactly the lines between them: never a marker line, and never a word
+of the prompt outside them. On 2026-10-03 a scribe handed unfenced blocks
+pasted its own State instruction into the Log.
+
 Read only the lines you paste beside, never either file whole: `Grep -n`
 finds `## State` and the heading after it, and a `Read` with `offset`/`limit`
 covers that range; the Log block goes at the end of the context file, so
 `Grep` with `output_mode: count` on `$` gives its length and a `Read` of the
-last 30 lines anchors the `Edit`. The owner, 2026-10-02, asked that only the
+last 30 lines shows its end. The owner, 2026-10-02, asked that only the
 difference or the relevant part be read after a write; scribes had read both
 files whole every round, about 13 MB over 228 runs.
+
+Append the Log block with one `Edit` whose `old_string` is the file's last
+non-empty line (plus the lines above it, if that line is not unique) and
+whose `new_string` is that same text, unchanged, then a blank line, then the
+block. The old lines come first and the block after them: the same
+2026-10-03 scribe wrote the block *before* its anchor and so moved the last
+line of the previous entry to the end of the file. Return the `old_string`
+as `log_anchor`, and the file's last lines after the `Edit`, as the prompt
+says, as `log_tail`; the workflow stops the launch if the block is not the
+last thing there. If you could not `Read` the tail, return `""` as
+`log_tail`, never a placeholder such as `N/A`.
 
 Use the `Edit` tool only. Never use `Write` to create a missing file — if
 either file cannot be read, return `written: false` with the error in

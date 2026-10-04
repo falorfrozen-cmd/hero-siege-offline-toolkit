@@ -91,9 +91,19 @@ it exits 3 (still running): each poll returns within 220 s, under the
 four-minute limit `workorder_audit.py` R5 holds every blocking call to. Then
 act on its exit code:
 
-- **0, finished.** Read `<scratch>/criteria/report.txt`. It is everything
-  the runner printed, byte for byte, the same output a foreground run
-  gives, and you judge it as below.
+- **0, finished.** Run `py -3 tools/run_criteria.py --digest
+  "<scratch>/criteria"` and judge from that, as below. The digest prints a
+  header (how many criteria, how many shown in full, `report.txt`'s size),
+  the scope block when the run was scoped, and then per criterion, in plan
+  order: a SKIPPED or NOT SELECTED criterion as its one report line, an
+  exit-only criterion whose every command exited as expected as one line
+  (`criterion k: exit-only, expects exit N: cmd-1 exit 0 (12s)`), and every
+  other criterion's block exactly as `report.txt` has it. It judges nothing:
+  you still decide. Open `<scratch>/criteria/cmd-<n>.log`, or a ranged read
+  of `report.txt`, only for a criterion the digest prints in one line whose
+  expectation needs output. Never `Read` `report.txt` whole: it is 100-217 KB
+  a run, and reading it whole was the one cost of the verifier's that rose
+  after 2026-10-02 (docs/agents/workorder-calibration.md, 2026-10-03).
 - **4, stale** (not finished and not updated for over 1,900 s, so the runner
   died). Start it again in the background from the first criterion the
   status lines do not show as `done`, with `--start <that k>` and a fresh
@@ -217,10 +227,10 @@ reaches"). Your dispatch then gives you the runner command with
 `--changed-since <base>` (one per repo) and `--failed <k,...>`. Run exactly
 that command, in place of the plain one in step 2, and run it the same way:
 in the background with `--out`, waited on with the capped `run_criteria.py
---status <out> --wait 220` poll, read from `<out>/report.txt`, and restarted
-with `--start` if it goes stale. The runner prints the scope before it runs
-anything, so the scope is the head of `report.txt`: the changed paths, then
-each criterion as `run` or `skip` with its reason.
+--status <out> --wait 220` poll, judged from `run_criteria.py --digest
+<out>`, and restarted with `--start` if it goes stale. The runner prints the
+scope before it runs anything, and the digest repeats that block exactly:
+the changed paths, then each criterion as `run` or `skip` with its reason.
 
 - Report every criterion it selected exactly as in step 2.
 - Report every criterion it prints as `NOT SELECTED (<why>)` with the

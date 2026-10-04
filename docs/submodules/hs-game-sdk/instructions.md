@@ -34,6 +34,7 @@ hs-game-sdk/
 │   ├── drop_types.json         # LoadDrops drop types + GetNormalRepoStruct repository categories (data only)
 │   ├── drop_roll_measurements.json # M1-M10: recorded drop-roll numbers drop_roll_model.py is tested against (data only)
 │   ├── mining_reward_measurements.json # MR1-MR9: recorded mining-dig numbers mining_reward_model.py is tested against (data only)
+│   ├── monster_rank_measurements.json # MK1-MK24: what a monster's rank does (§13.7), the boss report, and ForgePact #44's Live 1 and 1b on bosses, for monster_rank_model.py (data only)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
@@ -51,6 +52,7 @@ hs-game-sdk/
 │   │   ├── item_type.py        # ItemType IntEnum: the item instance's itemType class (hand-written)
 │   │   ├── drop_roll_model.py  # Two-stage drop roll model, stdlib only, not exported from __init__ (hand-written)
 │   │   ├── mining_reward_model.py # What one mining dig pays (ore stacks, bonus rolls), stdlib only, not exported (hand-written)
+│   │   ├── monster_rank_model.py # What a monster's rank does to health, damage, XP and drop values, stdlib only, not exported (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
 │   ├── pyproject.toml
@@ -116,6 +118,24 @@ way: spec `docs/models/mining-reward-spec.md`, fixture `curated/mining_reward_me
 node's list and the chance of a stat-gated bonus find; ForgePact's Mining Ore Multiplier, the Miner's
 Helmet and Mining Ore Extra Rolls stay in the test as transforms, pinned to `MiningOreMod.hpp` and
 `src/forgepact.py` by `RollsLeverParityTests`.
+
+`monster_rank_model.py` (2026-10-02, ForgePact issue #44, hub #379) is built the same way: spec
+`docs/models/monster-rank-spec.md`, fixture `curated/monster_rank_measurements.json` (MK1-MK24:
+MK1-MK4 AFK FARM's § 13.7 rank table, MK5 the reported Anubis HP jump, `reported`, not measured,
+and MK6-MK24 ForgePact #44's Live procedures 1 and 1b on bosses), checks
+`tests/test_monster_rank_model.py`. It gives a rank's health, damage and XP multipliers and its
+protected drop values. Whether a boss follows the same rows is carried one dimension at a time in
+`monster_rank_model.HYPOTHESES`, each `None` (not established) until a measured row about a boss,
+with nothing else changed or the change matched by an identity control, decides it:
+`boss_hp_follows_rank_table` `None` (the boss's health carried a ForgePact affix top-up and had no
+control), `boss_damage_follows_rank_table` `None` (one confounded spawn, 0.4% outside the
+control's tolerance), `boss_xp_follows_rank_table` `None` (measured ×6.2505 against ×6.25 on one
+Karp King, one spawn, whose affix top-up the control did not share; rank 3 not measured on a boss)
+and `boss_drop_rank_reaches_dropitem` `None` (`DropItem`'s first argument 1 -> 4, measured on the
+same spawn, the same unmatched top-up). The test compares a boss row's top-up with its control's
+at the boss's rank, so an unmatched one keeps the row out by itself. The test fails when a
+hypothesis and the fixture disagree. ForgePact's Bosses control stays in the test as `force_boss_rank`, pinned to
+`BossRarityMod.hpp` and `src/forgepact.py` by `LeverParityTests`.
 
 ---
 
@@ -449,6 +469,7 @@ contributor can be assumed to have:
 | `test_extractor_layout.py` | nothing (builds a synthetic `data.win`) | always runs |
 | `test_drop_roll_model.py` | nothing (the model, its fixture and the pilot docs); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/ModuleMain.cpp` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_mining_reward_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `RollsLeverParityTests` | always runs; only `RollsLeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/MiningOreMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
+| `test_monster_rank_model.py` | nothing (the model, its fixture, its spec and the tracked object bindings); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/BossRarityMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_sdk_lazy_import.py` | nothing (starts fresh interpreters of the Python running the suite) | always runs |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
@@ -752,8 +773,8 @@ re-run it; regeneration is idempotent, so a second run must produce no diff.
 `tools/generate_satanic_zone_sdk.py` and are regenerated from `curated/satanic_zone.json`.
 
 "Every file" is broader than the code, though: `player.py`/`.hpp`/`.ts`, `hooks.hpp`,
-`mod_registry.py`, `item_type.py`/`.hpp`/`.ts`, `drop_roll_model.py` and `mining_reward_model.py`
-are hand-written, and the generator neither writes nor deletes them. Edit those in place. The two
+`mod_registry.py`, `item_type.py`/`.hpp`/`.ts`, `drop_roll_model.py`, `mining_reward_model.py` and
+`monster_rank_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
 models are not wired
 into any aggregate on purpose (import it by its module name), and it has no C++ or TypeScript
 counterpart. They still have to be wired into the aggregates

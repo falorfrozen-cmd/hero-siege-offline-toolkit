@@ -2151,6 +2151,29 @@ class LaneTests(TempDirMixin, unittest.TestCase):
                             label="implementer:code:r0")
         self.assertTrue(r.passed, r.evidence)
 
+    def test_git_config_reads_are_not_writes(self):
+        # wf_8fd71d61-4ca: two lanes failed R23 for `git config core.autocrlf`,
+        # which only reads.
+        for cmd in ("git config core.autocrlf; cat .gitattributes 2>/dev/null | head",
+                    "git config --get core.autocrlf && git ls-files --eol x",
+                    "git -C repo config --show-origin --get-all core.autocrlf",
+                    "git config --file .gitmodules --get-regexp path",
+                    "git config -l | grep crlf", "git config --list --global",
+                    "git config get core.autocrlf", "git config --get remote.origin.url '^https'"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(wa._git_mutations(cmd), [])
+        # control: writes still count, including after a read on the same line
+        for cmd in ("git config core.autocrlf false", "git config --global user.name x",
+                    "git config --unset core.autocrlf", "git config --add a.b c",
+                    "git config set core.autocrlf true", "git config --file .gitmodules a.b c",
+                    "git config core.autocrlf; git config core.autocrlf input"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(wa._git_mutations(cmd), ["config"])
+        r = _one_agent_rule(self.tmp_path / "cfg", "R23", "implementer",
+                            ("Bash", {"command": "git config core.autocrlf; git ls-files --eol tools/x.py"}),
+                            label="implementer:code:r0")
+        self.assertTrue(r.passed, r.evidence)
+
     def test_lane_column_from_label(self):
         self.assertEqual(wa.lane_of("implementer:code:r0"), "code")
         self.assertEqual(wa.lane_of("implementer:plan-tools:r2"), "plan-tools")
@@ -2218,3 +2241,45 @@ class LaneTests(TempDirMixin, unittest.TestCase):
         b.workflow_agent("wf_a", "verifier", "verifier:r0", _span(0, 600, 300, cache_read=per_turn))
         _, results = b.evaluate()
         self.assertFalse(get_rule(results, "R13").passed)
+
+
+# --------------------------------------------------------------------------
+# R27 amendment-tier
+# --------------------------------------------------------------------------
+
+class R27Tests(TempDirMixin, unittest.TestCase):
+    """An amendment planner always runs on opus, never fable: the one fable
+    amendment on record came from a driver that carried the workorder's
+    escalated planner tier over to it."""
+
+    def _rule(self, label, model, sub, workflow=False):
+        b = SessionBuilder(self.tmp_path / sub).driver([turn(0, 9000)])
+        b.subagent("planner", "Plan x", _span(0, 100, 100, model="claude-fable-5-1"))
+        if workflow:
+            b.workflow_agent("wf_a", "planner", label, _span(400, 450, 300, model=model))
+        else:
+            b.subagent("planner", label, _span(400, 450, 300, model=model))
+        return get_rule(b.evaluate()[1], "R27")
+
+    def test_fail_an_amendment_planner_on_fable(self):
+        r = self._rule("amendment: x live2 owner scope", "claude-fable-5-1", "fable")
+        self.assertFalse(r.passed)
+        self.assertEqual(r.name, "amendment-tier")
+        self.assertIn("amendment: x live2 owner scope", r.evidence[0])
+        self.assertIn("claude-fable-5-1", r.evidence[0])
+        self.assertFalse(self._rule("amendment: slug x:r0", "claude-fable-5-1", "wf", workflow=True).passed,
+                         "an in-launch amendment is held to it too")
+
+    def test_pass_the_same_planner_on_opus(self):
+        r = self._rule("amendment: x live2 owner scope", "claude-opus-5-5", "opus")
+        self.assertTrue(r.passed, r.evidence)
+        self.assertEqual(r.evidence, [])
+
+    def test_pass_a_fable_planner_that_is_not_an_amendment(self):
+        # Control: the first plan above already ran on fable, and a replan
+        # may escalate to it; only the amendment route is pinned.
+        r = self._rule("Replan x after round 2", "claude-fable-5-1", "replan")
+        self.assertTrue(r.passed, r.evidence)
+
+    def test_r27_is_the_last_rule(self):
+        self.assertIs(wa.ALL_RULES[-1], wa.rule_r27_amendment_tier)

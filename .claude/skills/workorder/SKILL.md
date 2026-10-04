@@ -277,8 +277,8 @@ diffs against it, and every later round repeats this before re-entering.
 **A laned plan** (Step 1's `--lanes-json` printed lanes) runs its lanes only
 on the first implementation of the plan's steps: round 0, or the relaunch
 after a replan. Pass `lanes` and `join` to the workflow then, and never when
-relaunching after an `IMPL-DEFECT` (a `continue` from `STATE-LOST` or
-`SCRIBE-FAILED`, or a fresh `resume` past round 0): a defect round is a fix
+relaunching after an `IMPL-DEFECT` (a `continue` from `STATE-LOST`,
+`SCRIBE-FAILED` or `LOG-DAMAGED`, or a fresh `resume` past round 0): a defect round is a fix
 on a small delta, and no failed criterion or reviewer finding says which
 lane it belongs to, so it runs one implementer that owns every file set.
 Each lane implementer works only inside its `files:`, runs no git command
@@ -396,7 +396,17 @@ what is running and returns `CEILING`; relaunch, or stop and report. Pushing,
 installing and anything destructive stay gated on the owner's word exactly as
 before: nothing in items mode pushes.
 
-Spawn `implementer` with the plan and context paths. Three outcomes:
+Spawn `implementer` with the plan and context paths and its brief command:
+`py -3 tools/workorder_brief.py "<plan>" --round <n>`, plus `--since-round
+<n-1>` past round 0 (and `--amended` on the re-run after an amendment). The
+implementer runs it first: one call prints the Goal, Out of scope, State,
+the steps and criteria, every Context subsection a step cites by `ctx:`, the
+Decisions, the previous round's Log entry and the `git diff` pointers since
+that round's snapshot. The full files stay named as the fallback, read by
+section for what the brief lacks. Over the 18 sessions after 2026-10-02 the
+plan and context files were the two most-read files of the pipeline: 915
+`Read` calls and 12 MB, plus 400 shell reads by implementers
+(docs/agents/workorder-calibration.md, 2026-10-03). Three outcomes:
 
 - **`IMPL-DONE`** → go to step 3.
 - **`ADVICE-NEEDED`** → see "Consultation" below — not a failure, doesn't count
@@ -415,9 +425,14 @@ Spawn `implementer` with the plan and context paths. Three outcomes:
   `## Context`. Then it is an **amendment**:
 
   1. `py -3 tools/amend_check.py save <plan> <context>`;
-  2. spawn `planner` fresh at its default tier, with the description
+  2. spawn `planner` fresh with `model: opus`, with the description
      `amendment: <slug> <what>` and the correction verbatim (planner.md "When
-     you are spawned as an amendment");
+     you are spawned as an amendment").
+     An amendment planner always runs on opus, never fable.
+     That holds whatever `planner-tier=` the State records and whatever tier
+     the last replan ran at: an amendment applies one stated correction, and
+     the escalation ladder below is for replans. `tools/workorder_audit.py`
+     R27 fails an `amendment:` planner whose transcript ran fable;
   3. `py -3 tools/amend_check.py check <plan> <context>` once it returns.
 
   Exit 0 (`AMENDMENT`) means Goal, Out of scope and Needs human judgement are
@@ -596,9 +611,17 @@ re-verify, the items gate). The verifier starts `run_criteria.py <plan>
 --jobs auto --out <its scratchpad>/criteria` with `run_in_background: true`,
 so no Bash limit can kill it, then re-issues `py -3 tools/run_criteria.py
 --status <out> --wait 220` at a Bash timeout of 300000 while it exits 3, and
-reads `<out>/report.txt` once it exits 0. The runner keeps
+once it exits 0 judges from `py -3 tools/run_criteria.py --digest <out>`,
+not from `report.txt` whole. The runner keeps
 `<out>/status.json` current (each criterion's state and each command's exit
-code and seconds) and writes everything it prints to `report.txt`. Exit 4
+code and seconds) and writes everything it prints to `report.txt`. The
+digest prints an exit-only criterion whose commands all exited as expected
+as one line, and every other criterion's block exactly as `report.txt` has
+it; it judges nothing. The verifier opens `cmd-<n>.log`, or a ranged read of
+`report.txt`, only for a one-line criterion whose expectation needs output.
+After 2026-10-02 verifiers read `report.txt` whole, 100-217 KB a run, and it
+was the one figure of theirs that rose (docs/agents/workorder-calibration.md,
+2026-10-03). Exit 4
 means the run went stale (not finished, and not updated for 1,900 s): the
 verifier re-runs the criteria not yet done in the background, with
 `--start`. Exit 2 means there is no status file. `--wait` can never exceed
@@ -703,7 +726,11 @@ The line, when a reviewer's label looks wrong to you:
   - **A plan change:** run `tools/amend_check.py save`, *then* record the
     owner's answer under `### Decisions` as `owner, <YYYY-MM-DD>: "<their
     words>"`, then spawn the planner (labelled `amendment: <slug> owner
-    scope ...`), then `check`. When the change would otherwise be a replan
+    scope ...`, with `model: opus`), then `check`.
+    An amendment planner always runs on opus, never fable.
+    Never pass the workorder's escalated `planner-tier=` here: the one fable
+    amendment measured (forgepact-74, 2026-10-02) came by this route, and R27
+    now fails it. When the change would otherwise be a replan
     (the Goal or scope moved, a section came or went, more than 20 lines
     changed) and the context gained an owner line since `save`, `check`
     prints `SCOPE: <k> new owner decision(s)` and exits 0. A change small
@@ -1301,7 +1328,7 @@ before a launch ends is not carried over; the relaunch runs an ordinary round.
 A plan of items returns `PASS`, `PASS-PENDING-HUMAN`, `PARKED`, `PLAN-DEFECT`
 (a reviewer's plan defect, the gate's unrunnable criterion, or a refill that
 `plan_lint` refused), `CEILING`, `CAP` (the gate failed three times),
-`AGENT-FAILED`, `STATE-LOST` or `SCRIBE-FAILED`, always with `items:` beside
+`AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED` or `LOG-DAMAGED`, always with `items:` beside
 it (each item's `id`, `status`, `reason`, `attempts`, `commits`, `evidence`
 and `progress`, and `replan` when an amendment was tried and did not hold)
 and `gate:` (each gate run). It also carries `defaulted` (each owner item
@@ -1315,7 +1342,7 @@ or `PASS-PENDING-HUMAN`), `unblocked` (Step 2, "Items"). Its Log entry is
 
 A plan without items loops implement → verify+reviewers → route as code (same 3-round cap,
 scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,
-`PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED` or `CAP`. One
+`PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED`, `LOG-DAMAGED` or `CAP`. One
 launch may cover several rounds; `PLAN-DEFECT` means relaunching after the
 replan. `STATE-LOST` means the scribe's own before/after report shows a
 State line gone that the round did not replace; the launch stops there, before
@@ -1336,6 +1363,17 @@ then act on its `then` the same way. Before this outcome existed, the
 `hs-drive-game-lease` scribe's "N/A - files do not exist" report was read as a
 State with every driver-owned line gone and returned `STATE-LOST` for a round
 that had lost nothing.
+`LOG-DAMAGED` means the scribe's report of the context file's last lines
+(`log_tail`) does not end with the round's Log block: it pasted something
+after the block, or wrote the block before its anchor line (`anchor`) and so
+moved that line to the end. Make the end of `## Log` read the entry that
+ended with `anchor`, whole, then the result's `log` and nothing after it,
+then act on its `then`. A `STATE-LOST` whose Log was damaged too carries
+`log_damaged: true` and the same `log`; repair both. On 2026-10-03
+(`forgepact-16-jump-scenery-research`, a laned `PLAN-DEFECT`) a scribe pasted
+its own State instruction into the Log and cut the `### Plan` entry's last
+line off to after the round entry, and nothing noticed until the driver read
+the file.
 A rounds-mode result whose implementer's `CORRECTION:` was tried carries
 `amendment` (`amended`, `why`, `verdict`), and a `PASS-PENDING-HUMAN` carries
 `unblocked`, empty when nothing else is left.
@@ -1403,6 +1441,16 @@ have cost about half as much. Hence:
   rows, and the four Opus 5.5 runs averaged $4.82. Same money, no tail.
 - **planner, consultant, instrument-blindness-reviewer stay `opus`**, now
   cheaper. `fable` keeps the two rows above plus the second replan.
+- **amendment planner → always `opus`, passed explicitly.**
+  An amendment planner always runs on opus, never fable.
+  It applies one correction someone already stated, so the replan ladder
+  does not reach it: spawn it with `model: opus` whatever `planner-tier=`
+  the State records. In the 18 sessions after 2026-10-02 one amendment ran
+  fable because the driver carried an escalated tier over; fable planners
+  averaged 8.49M input tokens a run there. `workorder_audit.py` R27
+  (`amendment-tier`) fails an `amendment:` planner whose transcript ran
+  fable, and `workorder-rounds.js` spawns its own amendments with `model:
+  'opus'`.
 - **reviewers stay `sonnet`, verifier and scribe `haiku`.** On the same
   tokens Opus 5.5 would cost the reviewers 1.2× and the verifier 2.9×, with no
   finding of theirs measured as missed.

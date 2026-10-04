@@ -485,13 +485,15 @@ test('a fresh launch past round 0 tells the implementer it is re-entered; round 
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
   await run({ ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' } }, reply)
-  assert.match(prompts['implementer:r1'], /re-entered after a defect: read '## Log' > '### Round 0'/)
+  // 2k: the brief (`--round 1`) prints the round's Log entries, so the prompt
+  // points at them there instead of sending the implementer to read the Log.
+  assert.match(prompts['implementer:r1'], /re-entered after a defect: your brief prints '## Log' > '### Round 0'/)
   // A relaunch after a PLAN-DEFECT raised in round 1 itself keeps `round: 1`,
   // and the newer evidence is under that round's own heading.
   assert.match(prompts['implementer:r1'], /and '### Round 1' if it is already there/)
-  assert.match(prompts['implementer:r1'], /newer evidence\), for the evidence before anything else\. Then read only what that evidence needs/)
+  assert.match(prompts['implementer:r1'], /newer evidence\); read that evidence before anything else\. Then read only what that evidence needs beyond the brief/)
   // The owner, 2026-10-02: after a write, read the diff, not the file.
-  assert.match(prompts['implementer:r1'], /not the whole plan, and not a file earlier rounds changed: read its diff \(`git diff <base> -- <path>`/)
+  assert.match(prompts['implementer:r1'], /not the whole plan, and not a file earlier rounds changed: read its diff \(the brief's `git diff` lines, or `git diff <base> -- <path>`/)
   assert.ok(prompts['implementer:r1'].includes('round_delta.py heads zz 0'), prompts['implementer:r1'])
   await run(BASE, reply)
   assert.doesNotMatch(prompts['implementer:r0'], /re-entered after a defect|read its diff/)
@@ -574,16 +576,21 @@ const DRIVER_OWNED = /^(gates|round base|agents|decisions in force):/
 const planFile = state => `---\nslug: zz\n---\n\n## State\n${state}\n\n## Goal\ng\n`
 const stateOf = plan => plan.split('## State\n')[1].split('\n\n')[0]
 const between = (s, a, b) => { const i = s.indexOf(a); return i < 0 ? null : s.slice(i + a.length, s.indexOf(b, i + a.length)) }
+// The State lines the scribe is handed sit between fence lines (2k): the
+// whole block when the prompt says it is the whole State, else keyed lines.
+const fencedState = prompt => between(prompt, '<<<STATE-LINES-BEGIN>>>\n', '\n<<<STATE-LINES-END>>>')
+const wholeState = prompt => prompt.includes('already in it, verbatim:') ? fencedState(prompt) : null
+const keyedState = prompt => prompt.includes('already in it, verbatim:') ? null : fencedState(prompt)
 // A faithful scribe: pastes the whole block when handed one, else edits each
 // keyed line in place (adding a key the State lacks at its end).
 const faithfulScribe = file => prompt => {
   const before = stateOf(file.plan)
-  const whole = between(prompt, 'already in it, verbatim:\n\n', '\n\nBefore your first Edit')
+  const whole = wholeState(prompt)
   let after
   if (whole !== null) after = whole
   else {
     const lines = before.split('\n')
-    for (const u of between(prompt, 'to exactly these lines:\n\n', '\n\nUse one Edit').split('\n')) {
+    for (const u of keyedState(prompt).split('\n')) {
       const key = u.slice(0, u.indexOf(':') + 1)
       const i = lines.findIndex(l => l.startsWith(key))
       if (i >= 0) lines[i] = u; else lines.push(u)
@@ -598,8 +605,8 @@ const faithfulScribe = file => prompt => {
 const incidentScribe = file => prompt => {
   const before = stateOf(file.plan)
   const keys = [...(between(prompt, "this round's ", ' values merged') ?? '').matchAll(/`([^`]+)`/g)].map(m => m[1])
-  const handed = between(prompt, 'to exactly these lines:\n\n', '\n\nUse one Edit') ??
-    between(prompt, 'already in it, verbatim:\n\n', '\n\nBefore your first Edit').split('\n')
+  const handed = keyedState(prompt) ??
+    wholeState(prompt).split('\n')
       .filter(l => keys.some(k => l.startsWith(k))).join('\n')
   file.plan = file.plan.replace(`## State\n${before}\n`, `## State\n${handed}\n`)
   return { written: true, note: '', state_before: before, state_after: handed }
@@ -1953,7 +1960,7 @@ test('background: the rounds verifier, a reach re-verify and the items gate poll
     assert.match(p, /run_in_background: true/)
     assert.match(p, /py -3 tools\/run_criteria\.py --status "<your scratchpad>\/criteria" --wait 220/)
     assert.match(p, /Bash timeout of 300000, re-issued while it exits 3/)
-    assert.match(p, /criteria\/report\.txt/)
+    assert.match(p, /run_criteria\.py --digest "<your scratchpad>\/criteria"/)
   }
   const rounds = {}
   await run(BASE, (label, prompt) => { rounds[label] = prompt; return standard()(label) })
@@ -2022,7 +2029,7 @@ test('amend: items mode -- a stated CORRECTION is saved, amended, checked, the t
   assert.match(prompts['amend-save:a:r0'], /Run exactly: py -3 tools\/amend_check\.py save "p\.md" "c\.md"/)
   assert.match(prompts['amend-check:a:r0'], /Run exactly: py -3 tools\/amend_check\.py check "p\.md" "c\.md"/)
   assert.equal(opts['amendment: zz a:r0'].agentType, 'planner')
-  assert.equal(opts['amendment: zz a:r0'].model, undefined, 'the amendment planner runs at its own default tier')
+  assert.equal(opts['amendment: zz a:r0'].model, 'opus', 'the amendment planner always runs on opus, never fable')
   assert.deepEqual(opts['amendment: zz a:r0'].schema.properties.verdict.enum, ['PLAN-READY', 'NOT AN AMENDMENT'])
   // The correction verbatim, and only its own field; the whole evidence block follows it.
   assert.equal(between(prompts['amendment: zz a:r0'], 'Apply this correction and nothing else:\n\n', '\n\nThe PLAN-DEFECT evidence'), FIX_TEXT)
@@ -2221,4 +2228,303 @@ test('amend: rounds mode -- a lane\'s PLAN-DEFECT is unchanged; the join\'s is a
   assert.equal(joined.result.outcome, 'PASS')
   assert.deepEqual(joined.calls.filter(c => c.startsWith('implementer')), ['implementer:code:r0', 'implementer:docs:r0', 'implementer:join:r0', 'implementer:r0'])
   assert.match(prompts['implementer:r0'], /you own every lane's file set and the join's steps/)
+})
+
+// --- 2k: every implementer starts from its brief -----------------------------
+//
+// Measured 2026-10-03 (workorder-calibration.md, "Plan slices, the amendment
+// tier and symbol lookup"): implementers spent 5-20 Read/sed calls slicing the
+// plan and the context file for themselves. The script cannot read a file, so
+// each prompt names the one command that prints that implementer's slice
+// (`tools/workorder_brief.py`) with its own selector, and keeps the plan and
+// context paths as the fallback.
+const BRIEF = 'py -3 tools/workorder_brief.py "p.md" --context "c.md"'
+const briefOf = p => { const m = /`py -3 tools\/workorder_brief\.py [^`]*`/.exec(p || ''); return m ? m[0].slice(1, -1) : null }
+const hasPlanPaths = p => /Workorder: p\.md \(context file: c\.md\)\./.test(p)
+
+test('brief: rounds mode names --round, --since-round past round 0, and --amended only on the amended re-run', async () => {
+  const prompts = {}
+  await run(BASE, recording(prompts, standard()))
+  assert.equal(briefOf(prompts['implementer:r0']), `${BRIEF} --round 0`)
+  assert.ok(hasPlanPaths(prompts['implementer:r0']), 'the plan and context paths stay as the fallback')
+  // The brief is the first thing the implementer runs: only the workorder line comes before it.
+  assert.match(prompts['implementer:r0'], /^Workorder: p\.md \(context file: c\.md\)\. This is round 0\. Run `py -3 tools\/workorder_brief\.py/)
+  await run({ ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' } }, recording(prompts, standard()))
+  assert.equal(briefOf(prompts['implementer:r1']), `${BRIEF} --round 1 --since-round 0`)
+  assert.ok(hasPlanPaths(prompts['implementer:r1']))
+  // The brief carries the round's Log entries and the criteria now; the prompt stops sending the implementer for them.
+  assert.ok(!prompts['implementer:r1'].includes(`section.py "p.md" 'Acceptance criteria'`), prompts['implementer:r1'])
+  assert.doesNotMatch(prompts['implementer:r1'], /re-entered after a defect: read '## Log'/)
+  // Amended re-run: the first attempt has no --amended, the re-run does.
+  const seen = []
+  let impls = 0
+  await run(BASE, (label, prompt) => {
+    if (label === 'implementer:r0') seen.push(prompt)
+    return standard({ implementer: () => (impls++ === 0 ? CORRECTED() : DONE), ...AMEND_OK })(label)
+  })
+  assert.equal(seen.length, 2)
+  assert.equal(briefOf(seen[0]), `${BRIEF} --round 0`)
+  assert.equal(briefOf(seen[1]), `${BRIEF} --round 0 --amended`)
+})
+
+test('brief: a single-file plan gets no --context, and the brief keeps the plan path double-quoted', async () => {
+  const prompts = {}
+  await run({ ...BASE, contextPath: 'p.md' }, recording(prompts, standard()))
+  assert.equal(briefOf(prompts['implementer:r0']), 'py -3 tools/workorder_brief.py "p.md" --round 0')
+  assert.match(prompts['implementer:r0'], /^Workorder: p\.md\. This is round 0\./)
+})
+
+test('brief: each lane gets --lane with its own name, the join gets --join', async () => {
+  const prompts = {}
+  await run(LANED, (label, prompt, o) => { prompts[label] = prompt; return laneReply()(label, prompt, o) })
+  assert.equal(briefOf(prompts['implementer:code:r0']), `${BRIEF} --lane code`)
+  assert.equal(briefOf(prompts['implementer:docs:r0']), `${BRIEF} --lane docs`)
+  assert.ok(!prompts['implementer:code:r0'].includes('--lane docs'), 'control: a lane is not handed another lane\'s brief')
+  assert.equal(briefOf(prompts['implementer:join:r0']), `${BRIEF} --join`)
+  for (const l of ['implementer:code:r0', 'implementer:docs:r0', 'implementer:join:r0']) assert.ok(hasPlanPaths(prompts[l]), l)
+  // A lane's brief carries no Log, so a laned relaunch past round 0 still sends it to the Log; the join's carries the criteria.
+  await run({ ...LANED, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' } }, (label, prompt, o) => { prompts[label] = prompt; return laneReply()(label, prompt, o) })
+  assert.match(prompts['implementer:code:r1'], /re-entered after a defect: read '## Log' > '### Round 0'/)
+  assert.ok(prompts['implementer:code:r1'].includes(`section.py "p.md" 'Acceptance criteria'`))
+  assert.match(prompts['implementer:join:r1'], /re-entered after a defect: read '## Log' > '### Round 0'/)
+  assert.ok(!prompts['implementer:join:r1'].includes(`section.py "p.md" 'Acceptance criteria'`), 'the join\'s brief prints every criterion')
+})
+
+test('brief: a patch round gets --paths from the findings\' where; with no path there is no brief line', async () => {
+  const prompts = {}
+  await run(PATCH_BASE, recording(prompts, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce(FIXED) })))
+  assert.equal(briefOf(prompts['patch-implementer:r1']), `${BRIEF} --paths "docs/x.md"`)
+  assert.ok(hasPlanPaths(prompts['patch-implementer:r1']))
+  const three = [FIXED, { ...FIXED, where: 'tools/a.py:9' }, { ...FIXED, where: 'docs/x.md:7' }]
+  let seen = 0
+  await run(PATCH_BASE, recording(prompts, standard({ delta: SMALL(), 'docs-sync-reviewer': () => (seen++ === 0 ? { ...CLEAN, blocking: three } : CLEAN) })))
+  assert.equal(briefOf(prompts['patch-implementer:r1']), `${BRIEF} --paths "docs/x.md,tools/a.py"`, 'each path once, in finding order')
+  // Control: a where that names no file (no `/` and no `.`) gives no brief line at all.
+  await run(PATCH_BASE, recording(prompts, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce({ ...FIXED, where: 'general' }) })))
+  assert.ok(prompts['patch-implementer:r1'], 'control: the patch round ran')
+  assert.equal(briefOf(prompts['patch-implementer:r1']), null)
+  assert.ok(hasPlanPaths(prompts['patch-implementer:r1']))
+})
+
+test('brief: an item gets --item, --base from the launch heads after its first attempt, and --amended on the amended retry', async () => {
+  let checks = 0
+  const failing = () => (checks++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'npm test', status: 'fail', evidence: 'expected 2 got 3' }], pending_human: [] } : PASS)
+  const { prompts } = await runTimed(ITEMS_BASE, itemsReply({ 'item-verifier:a:': failing }))
+  assert.equal(briefOf(prompts['item-implementer:a:a1:r0']), `${BRIEF} --item a`)
+  assert.equal(briefOf(prompts['item-implementer:b:a1:r0']), `${BRIEF} --item b`)
+  assert.equal(briefOf(prompts['item-implementer:a:a2:r0']), `${BRIEF} --item a --base .=base000`)
+  assert.ok(hasPlanPaths(prompts['item-implementer:a:a1:r0']))
+  // Control: the item-check verifier runs no brief.
+  assert.equal(briefOf(prompts['item-verifier:a:a1:r0']), null)
+  const am = await runAmend(ITEMS_BASE, itemsReply({ 'item-implementer:a:a1:': CORRECTED(), ...AMEND_OK, 'amend-items:': tableOf(ITEMS_BASE.items) }))
+  assert.equal(briefOf(am.prompts['item-implementer:a:a2:r0']), `${BRIEF} --item a --amended --base .=base000`)
+})
+
+test('brief: a review fixer gets --paths, a gate-fix gets --criteria from its numbered failures, and an unnumbered one none', async () => {
+  let passes = 0
+  const docs = () => (passes++ === 0
+    ? { ...CLEAN, blocking: [{ where: 'panel/a.css:12', problem: 'wrong token', evidence: 'x', fix: 'use --accent' }], reviewed_heads: [{ repo: '.', sha: 'h1' }] }
+    : { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'h2' }] })
+  const fixed = await runTimed(ITEMS_BASE, itemsReply({ 'docs-sync-reviewer': docs }))
+  assert.equal(briefOf(fixed.prompts['fix-implementer:fix-1:r0']), `${BRIEF} --paths "panel/a.css"`)
+  assert.ok(hasPlanPaths(fixed.prompts['fix-implementer:fix-1:r0']))
+  let gates = 0
+  const numbered = () => (gates++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [CRIT(2, 'fail'), CRIT(3, 'pass'), CRIT(5, 'fail')], pending_human: [] } : PASS)
+  const g = await runTimed(ITEMS_BASE, itemsReply({ 'verifier:': numbered }))
+  assert.equal(briefOf(g.prompts['fix-implementer:gate-fix-1:r0']), `${BRIEF} --criteria 2,5`)
+  // Control: a failure with no number (here a structural finding) gives a gate-fix no brief line.
+  gates = 0
+  const unnumbered = () => (gates++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [], other_defects: ['a stray file'], pending_human: [] } : PASS)
+  const u = await runTimed(ITEMS_BASE, itemsReply({ 'verifier:': unnumbered }))
+  assert.ok(u.prompts['fix-implementer:gate-fix-1:r0'], 'control: the gate-fix ran')
+  assert.equal(briefOf(u.prompts['fix-implementer:gate-fix-1:r0']), null)
+  assert.ok(hasPlanPaths(u.prompts['fix-implementer:gate-fix-1:r0']))
+})
+
+test('digest: every whole-tree verifier judges from run_criteria.py --digest and never reads report.txt whole; item checks do not', async () => {
+  const digest = p => {
+    assert.ok(p.includes('py -3 tools/run_criteria.py --digest "<your scratchpad>/criteria"'), p)
+    assert.match(p, /never read `?report\.txt`? whole/i)
+    assert.match(p, /cmd-<n>\.log/)
+  }
+  const rounds = {}
+  await run(BASE, recording(rounds, standard()))
+  digest(rounds['verifier:r0'])
+  await run({ ...BASE, fullVerify: true }, recording(rounds, standard()))
+  digest(rounds['verifier:r0'])
+  const scopedPass = { verdict: 'PASS', criteria: [CRIT(1, 'pass'), CRIT(2, 'pass'), CRIT(3, 'pass')], pending_human: [] }
+  const reach = await reachRun([FAILED_2, scopedPass])
+  digest(reach.prompts['verifier:r1'])
+  const items = await runTimed(ITEMS_BASE, itemsReply())
+  digest(items.prompts['verifier:r0'])
+  // Control: the item check reads its own foreground output, and its --out naming is unchanged.
+  assert.ok(!items.prompts['item-verifier:a:a1:r0'].includes('--digest'))
+  assert.ok(items.prompts['item-verifier:a:a1:r0'].includes('--out "<your scratchpad>/item-a-a1"'))
+})
+
+// --- 2k: the payload is fenced, and the append is spelled out --------------
+//
+// Pinned 2026-10-03 (forgepact-16-jump-scenery-research, wf_4a87e39a-b1c, a
+// laned round that ended PLAN-DEFECT before the join): the scribe pasted its
+// own State instruction at the end of '## Log', and anchored its append on
+// the file's last line with the block written *before* it, which moved the
+// last line of `### Plan` to after the round entry. These stubs apply the
+// scribe's Log instruction to an in-memory context file, the faithful way and
+// the measured way, so what reaches the Log is measured, not assumed.
+const LOG_FENCE = prompt => between(prompt, '<<<LOG-BLOCK-BEGIN>>>\n', '\n<<<LOG-BLOCK-END>>>')
+const PLAN_TAIL = 'the "valid target" rule and the family list are all unknown or the owner\'s.'
+const CONTEXT = ['## Context the implementer needs', '', 'c', '', '## Log', '', '### Decisions', '', '- D1', '', '### Plan', '',
+  'Planned the research build. What the session cannot settle before Live 1:', PLAN_TAIL, ''].join('\n')
+const tailOf = (text, k) => text.split('\n').slice(-k).join('\n')
+// What the prompt asks: anchor on the last non-empty line, the block after it.
+const faithfulLog = (file, numbered = false) => prompt => {
+  const block = LOG_FENCE(prompt)
+  const anchor = file.context.trimEnd().split('\n').pop()
+  file.context = `${file.context.trimEnd()}\n\n${block}\n`
+  const k = Number(/Read the last (\d+) lines of/.exec(prompt)[1])
+  const tail = tailOf(file.context, k).split('\n').map((l, i) => numbered ? `${100 + i}\t${l}` : l).join('\n')
+  return { anchor, tail }
+}
+// What the 2026-10-03 scribe did: the block plus the instruction paragraph
+// after it, written before the file's last line.
+const incidentLog = file => prompt => {
+  const block = LOG_FENCE(prompt)
+  const after = prompt.slice(prompt.indexOf('\n<<<LOG-BLOCK-END>>>') + '\n<<<LOG-BLOCK-END>>>'.length).trim().split('\n')[0]
+  const lines = file.context.trimEnd().split('\n')
+  const anchor = lines.pop()
+  file.context = [...lines, '', block, '', after, anchor, ''].join('\n')
+  return { anchor, tail: tailOf(file.context, 40) }
+}
+const withFiles = (file, logFn, reportTail = true) => prompt => {
+  const state = faithfulScribe(file)(prompt)
+  const { anchor, tail } = logFn(file)(prompt)
+  return reportTail ? { ...state, log_anchor: anchor, log_tail: tail } : state
+}
+const LANE_DEFECT = { verdict: 'PLAN-DEFECT', report: '', progress_so_far: 'p', lane: 'docs',
+  evidence: 'The plan names criterion 13 as a grep.\n\nIn the plan, the gate line reads two ways.' }
+const laneDefectRun = (file, logFn, extra = {}) => {
+  const prompts = {}
+  const reply = laneReply({ docs: LANE_DEFECT })
+  return run({ ...LANED, state: PLAN_STATE, ...extra }, (label, prompt, o) => {
+    prompts[label] = prompt
+    return label.startsWith('scribe') ? logFn(prompt) : reply(label, prompt, o)
+  }).then(r => ({ ...r, prompts }))
+}
+
+test('scribe: the Log block and the State lines sit between fence lines, and no instruction is inside them', async () => {
+  const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const { result, prompts } = await laneDefectRun(file, withFiles(file, faithfulLog))
+  assert.equal(result.outcome, 'PLAN-DEFECT')
+  const p = prompts['scribe:r0']
+  const block = LOG_FENCE(p)
+  assert.ok(block, p)
+  assert.match(block, /^### Round 0\n/)
+  assert.match(block, /lane docs: PLAN-DEFECT\nThe plan names criterion 13/)
+  assert.match(block, /progress: p$/, 'the fence closes right after the block')
+  assert.doesNotMatch(block, /## State|replace the lines|STATE\./, 'the State instruction is outside the Log fence')
+  assert.doesNotMatch(fencedState(p), /replace the lines|In C:/, 'the State fence holds State lines only')
+  assert.match(p, /never a marker line itself, and never a word of this prompt that sits outside them/)
+  assert.match(p, /new_string is that same old_string, unchanged, then one blank line, then the block/)
+  assert.match(p, /never put the block before them/)
+})
+
+test('scribe: a faithful append leaves the Plan paragraph whole and the block last', async () => {
+  for (const numbered of [false, true]) {
+    const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
+    const { result } = await laneDefectRun(file, withFiles(file, f => faithfulLog(f, numbered)))
+    assert.equal(result.outcome, 'PLAN-DEFECT', `line numbers ${numbered}: ${JSON.stringify(result)}`)
+    assert.ok(file.context.includes(`Live 1:\n${PLAN_TAIL}\n\n### Round 0`), file.context)
+    assert.match(file.context, /progress: p\n$/)
+    assert.doesNotMatch(file.context, /replace the lines under '## State'|<<</)
+  }
+})
+
+test('scribe: the 2026-10-03 paste stops the launch as LOG-DAMAGED carrying the block', async () => {
+  const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const { result, calls } = await laneDefectRun(file, withFiles(file, incidentLog))
+  // The stub reproduces the measured damage...
+  assert.ok(file.context.endsWith(`${PLAN_TAIL}\n`) && /replace the lines under '## State'/.test(file.context), file.context)
+  // ...and the launch reports it instead of handing back a clean PLAN-DEFECT.
+  assert.equal(result.outcome, 'LOG-DAMAGED', JSON.stringify(result))
+  assert.equal(result.then, 'PLAN-DEFECT')
+  assert.equal(result.anchor, PLAN_TAIL)
+  assert.match(result.log, /^### Round 0\n/)
+  assert.match(result.detail, /not the last thing/)
+  assert.deepEqual(result.lanes.map(l => l.verdict), ['IMPL-DONE', 'PLAN-DEFECT'])
+  assert.ok(!calls.includes('implementer:join:r0'))
+})
+
+test('scribe: an ordinary round is checked the same way, and a STATE-LOST carries the Log report too', async () => {
+  const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const reply = standard({ verifier: defectThenPass() })
+  const { result, calls } = await run({ ...BASE, state: PLAN_STATE }, (label, prompt, o) =>
+    label.startsWith('scribe') ? withFiles(file, incidentLog)(prompt) : reply(label, prompt, o))
+  assert.equal(result.outcome, 'LOG-DAMAGED')
+  assert.equal(result.then, 'continue')
+  assert.ok(!calls.includes('verifier:r1'), 'no later round runs on a damaged Log')
+  const file2 = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const both = prompt => ({ ...incidentScribe(file2)(prompt), ...(({ anchor, tail }) => ({ log_anchor: anchor, log_tail: tail }))(incidentLog(file2)(prompt)) })
+  const { result: r2 } = await run({ ...BASE, state: PLAN_STATE }, (label, prompt, o) => label.startsWith('scribe') ? both(prompt) : reply(label, prompt, o))
+  assert.equal(r2.outcome, 'STATE-LOST')
+  assert.equal(r2.log_damaged, true)
+  assert.match(r2.log, /^### Round 0\n/)
+})
+
+test('scribe: control -- a tail not reported is not judged, and a fence marker in lane evidence cannot close the fence', async () => {
+  const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const { result } = await laneDefectRun(file, withFiles(file, incidentLog, false))
+  assert.equal(result.outcome, 'PLAN-DEFECT', 'no log_tail: nothing to compare, so no LOG-DAMAGED')
+  // The schema requires log_tail, so a scribe that skipped its last Read fills
+  // it with '' or a placeholder: too short to hold the block, so not judged.
+  for (const tail of ['', 'N/A', 'N/A - could not read the file']) {
+    const f = { plan: planFile(PLAN_STATE), context: CONTEXT }
+    const { result: r } = await laneDefectRun(f, prompt => ({ ...withFiles(f, faithfulLog)(prompt), log_tail: tail }))
+    assert.equal(r.outcome, 'PLAN-DEFECT', `log_tail ${JSON.stringify(tail)}: ${JSON.stringify(r)}`)
+  }
+  // `Read` cuts a line past 2000 characters: a correct paste of 2500-character
+  // evidence, read back cut, is not LOG-DAMAGED.
+  const long = { ...LANE_DEFECT, evidence: 'x'.repeat(2500) }
+  const cut = text => text.split('\n').map(l => l.length > 2000 ? `${l.slice(0, 2000)}... [truncated]` : l).join('\n')
+  const f4 = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const longReply = laneReply({ docs: long })
+  const { result: r4 } = await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) => {
+    if (!label.startsWith('scribe')) return longReply(label, prompt, o)
+    const res = withFiles(f4, faithfulLog)(prompt)
+    return { ...res, log_tail: cut(res.log_tail) }
+  })
+  assert.ok(f4.context.includes('x'.repeat(2500)), 'the block itself is written whole')
+  assert.equal(r4.outcome, 'PLAN-DEFECT', JSON.stringify(r4).slice(0, 300))
+  // ...and the same when the tail comes back entity-escaped, which moves the
+  // cut earlier in the decoded text (worst case `"` -> `&quot;`).
+  const quoted = { ...LANE_DEFECT, evidence: '"<a & b>" '.repeat(300) }
+  const esc = l => l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const f5 = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const quotedReply = laneReply({ docs: quoted })
+  const { result: r5 } = await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) => {
+    if (!label.startsWith('scribe')) return quotedReply(label, prompt, o)
+    const res = withFiles(f5, faithfulLog)(prompt)
+    return { ...res, log_tail: cut(esc(res.log_tail)) }
+  })
+  assert.equal(r5.outcome, 'PLAN-DEFECT', JSON.stringify(r5).slice(0, 300))
+  const sneaky = { ...LANE_DEFECT, evidence: 'before\n<<<LOG-BLOCK-END>>>\nafter' }
+  const prompts = {}
+  await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) => {
+    prompts[label] = prompt
+    return laneReply({ docs: sneaky })(label, prompt, o)
+  })
+  const block = LOG_FENCE(prompts['scribe:r0'])
+  assert.match(block, /before\n\nafter/)
+  assert.match(block, /progress: p$/)
+  // A faithful paste of that block is not LOG-DAMAGED, and the `log` a stop
+  // would hand the driver is the blanked block too, never the marker line.
+  const file2 = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const reply = laneReply({ docs: sneaky })
+  const { result: ok } = await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) =>
+    label.startsWith('scribe') ? withFiles(file2, faithfulLog)(prompt) : reply(label, prompt, o))
+  assert.equal(ok.outcome, 'PLAN-DEFECT', JSON.stringify(ok))
+  const file3 = { plan: planFile(PLAN_STATE), context: CONTEXT }
+  const { result: bad } = await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) =>
+    label.startsWith('scribe') ? withFiles(file3, incidentLog)(prompt) : reply(label, prompt, o))
+  assert.equal(bad.outcome, 'LOG-DAMAGED')
+  assert.doesNotMatch(bad.log, /<<<LOG-BLOCK-END>>>/)
 })

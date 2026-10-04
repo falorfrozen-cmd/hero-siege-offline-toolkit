@@ -368,6 +368,7 @@ this runner:
 | `object_index` on an instance | `VALUE_REF`, not a plain number |
 | `object_index` on a struct `self` | undefined |
 | the `room` builtin | a room `VALUE_REF`, not a number; `variable_global_exists("room")` is false, so `variable_global_get("room")` answers undefined and converting that to a number raises the runner error `REAL argument incorrect type undefined` (one per call, measured 2026-10-02, ForgePact#144). Read it with `GetBuiltin("room", ...)`, name it with `room_get_name`; `room_width`/`room_height` are built-ins too |
+| an array, string, struct, undefined or null converted to a number (`RValue::ToDouble`) | no number: the runner raises its own error and the call then fails, and a C++ `catch` that swallows the failure does not take back the runner's report. An array raises `REAL argument incorrect type array` (**measured**, #74 Live 3's capture, 2026-10-02); undefined raises `REAL argument incorrect type undefined` (**measured**, ForgePact#144, the `room` row above). For a string, a struct and null it is a **source reading**, not a measurement: the reading (which is also all that identifies the two) is that `ToDouble` is the runner's own `REAL_RValue`, which raises for every kind it cannot turn into a number; their error text has not been captured. That ForgePact's research scan over `Controller_obj`'s array variables raised one error per array or string element it converted (18 per scan) is an arithmetic fit on Live 2's and Live 3's counts, and the string elements' share of it rests on the fit alone. Live 4 cannot settle that share: ForgePact's gate (§13.4) refuses strings before converting them, so it can show only that the total stops rising, not that a string conversion raises. Live 4 (2026-10-02, **measured**) showed that it does stop: with the 15 arrays and 3 strings refused before any conversion, two scans left the total at 1 where each had added 18 before, so the scan's conversions are measured as the cause of the rise, and the strings' share of it is still the fit. Refuse a kind that can never be a number before converting it (ForgePact's `SigNeverAHandle`, ForgePact#74) |
 | a ds container | "ref ds_map" / "ref ds_list" |
 | an item | `VALUE_OBJECT` struct (§2) |
 | a bound `m_*` method value | `VALUE_OBJECT` with object kind 0, not a script ref (§10) |
@@ -1543,6 +1544,29 @@ All **measured** (2026-09-10/11).
   `visible` reads 0 far away and is rewritten by the game within a second;
   `inviewCheck` is not the culling flag; `Enemy_Parent_obj` has 312 variables, none
   a minimap flag. **Measured.**
+- **Rarity setup.** `EnemyRaritySettings(typeId)` runs from `Enemy_Parent_obj`'s
+  Alarm 4 with the monster as `self`, after the spawner has set `enemyRarity`
+  (1 common, 2 champion, 3 ancient, 4 legion; names per § 13.7) and filled `enemyAffix`/`affixList`,
+  and before the stats, affix effects and health bar are built; a rarity or
+  affix written at its entry is built by the game as if it had rolled that way.
+  **Measured** 2026-09-05 on ordinary monsters (entry and exit state identical;
+  ForgePact README § "Tyrant's Crown"). Bosses, the `Enemy_Child_Boss_obj`
+  family, descend from `Enemy_Parent_obj` and so take the same alarm; that the
+  rarity sliders raised an Anubis boss's health about ninefold (a player report
+  against ForgePact 1.4.1) shows they reach this hook, and ForgePact traced it
+  itself on 2026-10-02: `Karp_King_obj`, `Damien_obj`, `Uber_Damien_obj` and
+  `Uber_Anubis_obj` each entered and left it (**Measured**; § 13.7, "Bosses at
+  a forced rank"). The game's body of the script was not read: its call sites
+  sit in a region the decompiler refuses, so whether a boss takes a branch of
+  its own there is **not established**.
+  [boss rarity, Static reading](../ForgePact/docs/boss-rarity-research.md#static-reading)
+- ForgePact's rarity mods all write at that entry, through one shared hook.
+  The Monster Rarity sliders and Tyrant's Crown raise ordinary monsters, and
+  the sliders skip any instance whose object descends from
+  `Enemy_Child_Boss_obj` (ancestry, `IsDescendantOf`, not a health threshold);
+  the Bosses control (`bossrarity`, issue #44) raises only those, at rarity 1,
+  to 3 or 4. Instances a monster creates are left alone by all three, because
+  a re-raised split child splits again. **Our code**, not a game fact.
 
 [population performance §2.2](../ForgePact/docs/population-performance-analysis.md#22-who-gets-a-step),
 [§2.3](../ForgePact/docs/population-performance-analysis.md#23-what-runs-for-every-living-monster-every-frame),
@@ -1822,24 +1846,365 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
 - With it, `DropItemAngelicChance` runs once per roll, always inside `DropItem`,
   with `self` = the dying monster and four arguments (two position reals, the
   chance, undefined). It returned undefined on all 374 misses; a hit was not
-  observed. The chance read 1195 or 1526 even with 3000 supplied by the buff, so
-  its composition is not established. One roll reads about 8 unique definitions
-  through `GetUniqueRepoStruct`. **Measured 2026-09-23.**
+  observed in that session. The chance read 1195 or 1526 even with 3000 supplied
+  by the buff, so its composition is not established. One roll reads about 8
+  unique definitions through `GetUniqueRepoStruct`. **Measured 2026-09-23.**
+- Hits were observed in Live 1 (#74), with the roll's chance argument raised by
+  a research lever, not at the natural chance: 98 hits over 108 rolls, each
+  detected as a `CreateDefaultParams` call while the roll ran (inline detour,
+  `cdpCalls` above zero as its positive control), with the ground filling with
+  the game's own Angelic and Unholy items (seen in screenshots, not counted
+  against the hits). A hit at the natural chance has
+  still not been observed. ForgePact's validated pool read 47 candidates and 11
+  rejected once the two signature items were out of it. **Measured (Live 1,
+  2026-10-02, research dll 4534c0ff…).**
 - Unique definition records have the shape `{w, j, b, a, c}` (`c` = 1 marks the
   unique repository, `j` the weapon subtype); there is no Angelic flag, and base
   items with flag 40 set are skipped. **Headhunter and Tyrant's Crown have no
-  unique-repository entry, so the game's own roll never drops them.** **Static
-  reading.**
+  unique-repository entry, so the game's own roll never picks them.** **Static
+  reading.** How ForgePact #74 lets the roll pick them anyway is the bullet
+  "How #74 uses the list" below (a stand-in entry for the length of the roll)
+  and the guide's Known Limitations item 42.
+- **The return value.** `DropItemAngelicChance` sets its result to undefined on
+  entry and never assigns it again, so a hit returns undefined exactly like a
+  miss: the return cannot tell the two apart. This is why the 374 measured
+  misses were undefined. **Static reading (2026-10-02, issue #74).**
+- **The arguments.** Position x and y fall back to the caller's own x and y when
+  absent; the chance (argument 2) falls back to 0; argument 3 (undefined in
+  every measured call) is never read by the roll and is handed on, unchanged, to
+  the placement as its sixth argument. **Static reading (2026-10-02, issue
+  #74)**, consistent with the four arguments measured.
+- **The pick.** The roll takes a random entry from a list of unique
+  identifiers; each entry is an array of three numbers (type, sub, b) that it
+  looks up through `GetUniqueRepoStruct`. It throws the definition away and
+  picks again when the base-info flag 40 (hidden or development item) is set, or
+  when the definition's rarity field 27 is neither 7 (Angelic) nor 10 (Unholy),
+  and it keeps re-picking until one passes. These are the same two filters
+  ForgePact's `BuildAngelicPool` applies. Roughly one entry in eight passes,
+  which accounts for the ~8 definition reads per roll measured above. **Static
+  reading (2026-10-02, issue #74).**
+- **Where the list lives.** The roll reads the list as a variable of an
+  object-scoped reference whose constant encodes object index 984, which the
+  SDK names `Controller_obj` (`HeroSiege::Objects::GameObject::Controller_obj`):
+  in GameMaker terms, a variable of the first active `Controller_obj`
+  instance. **Static reading (2026-10-02, issue #74, list injection).** The
+  two earlier negatives were measured on other scopes: a `lootListUnique`
+  instance variable on `Loot_Manager_obj` (`variable_instance_exists` false,
+  2026-09-23) and, in #74's first live session (Session 2 of the research doc,
+  2026-10-02, research dll 4534c0ff…), a `lootListUnique` global
+  (`variable_global_exists` false) beside the same `Loot_Manager_obj`
+  question. Each measured only that the name it asked for is absent from the
+  scope it asked; neither asked `Controller_obj`, so neither is a measurement
+  of the list and both say nothing about it.
+- **The list's layout: `Controller_obj.lootListUnique[5]`, a `ds_list` of
+  `[type, sub, b]` entries.** The runtime keeps, beside each variable slot and
+  builtin-pointer global, a record of its name; read for the slot the roll
+  loads, it names `lootListUnique`. (The four slot-name scripts of the first
+  reading, `FindSlotNames`, `SlotRefs`, `FindPointers` and `FindRvaTable`,
+  found 0 hits because they looked for stores and tables, not for that
+  record.) The roll does not use `lootListUnique` itself as the list: its
+  read carries the constant array index 5, so it takes the **sixth element**.
+  On that element it calls `ds_list_size`, then `ds_list_find_value` at a
+  random index drawn up to that size, then `is_array` on the value; only when
+  `is_array` holds does it take the value's elements 0, 1 and 2 as the type,
+  sub and b it hands to `GetUniqueRepoStruct`, otherwise it draws again. The
+  three builtin names come from the same name records (`FindWrites` and
+  `FindPointers` on their pointer globals: 0 hits each). So
+  `Controller_obj.lootListUnique` is an array of length 6 (measured, Live 1)
+  whose element 5 the Angelic roll uses as a `ds_list` (static reading). Live
+  2 read element 5 as a `ref` value, like the ds containers of §5.4 (above).
+  The entries of element 5 are arrays of three numbers. **Static reading
+  (2026-10-02, issue #74, replan 2)**; the name and the outer length of 6 are
+  confirmed by Live 1, and the layout, the kind and the sub-list's size by
+  Live 2 (below). **Not established**: what the other five elements mean or
+  are keyed by (Live 2 found them to be `ds_list`s of triples too; the roll
+  reads only `[5]`; `lootListNormal`, outer length 5 on the same instance, is
+  not read by this roll), and whether the random index can equal the size,
+  an off-by-one the `is_array` re-draw would absorb. The curated record
+  `hs-game-sdk/curated/angelic_list_measurements.json` holds this as
+  `list_layout`, and its `list_variable` is `lootListUnique` since Live 2's
+  reach check passed on it.
+- **Measured (Live 1, list injection, 2026-10-02, research dll f7560e80…).**
+  The first `Controller_obj` instance (one instance, read as `VALUE_REF`)
+  answered `variable_instance_get_names` with 221 names in town and 222 after
+  a zone change, among them `lootListUnique` with `array_length` 6 and
+  `lootListNormal` with `array_length` 5, both before and after the zone
+  change. The research build's shape check of that session expected a flat
+  array of `[type, sub, b]` triples and refused both (`entry 0 is not three
+  numbers`), as it refused every other array, so it accepted no list
+  (`candidates=0`) and nothing was ever pushed. In the same session no
+  `lootListUnique` global (`variable_global_exists` false) and none on
+  `Loot_Manager_obj` (`variable_instance_exists` false) were found again:
+  measured on other scopes than `Controller_obj`, the variable's own.
+- **Measured (Live 2, list injection, 2026-10-02, research dll e30981d5…):
+  the layout.** ForgePact's list dump read
+  `Controller_obj.lootListUnique` as an array of 6 whose every element is a
+  `ref` value that `ds_exists` accepts as a `ds_list`, every entry of each an
+  array of three numbers: `[0]` 50 entries, `[1]` 61, `[2]` 79, `[3]` 152,
+  `[4]` 221 and `[5]` 380 (`[5] kind=ref ds_list=yes:380 triples=380/380`,
+  first entries `[0,0,1]`, `[0,0,15]`, `[0,0,29]`). Only `[5]` holds Liquor
+  Holster's `{8, 0, 51}` (once), and the scan's only candidate was
+  `lootListUnique[5]:380`. The six sizes were the same after a zone change
+  and at the end of the session, after 36400 entries had been pushed and cut.
+  `lootListNormal` dumped as five `ref` `ds_list`s of 70, 70, 73, 76 and 74
+  triples. So the roll's sub-list is a `ref ds_list` of 380 entries on this
+  build, stable within a session; who builds it is still not established.
+- **Other readers of the list.** The same slot is loaded by `DropUniqueItems`,
+  `DropItemHeroic`, `DropItemDebug`, `DropItem` itself, the traveling merchant
+  and black market grids (`PopulateTravelingMerchantGrid`,
+  `PopulateBlackMarketGrid`), `ReturnRandomSatanic`, `CreateShrineEffect`,
+  `DoCraftResult` and several unnamed object events. An entry left in the list
+  between rolls would be seen by all of them. Who builds the list, and whether
+  it is rebuilt per zone or per load, is **not established**. **Static reading
+  (2026-10-02, issue #74).**
+- **The unique repository.** `GetUniqueRepoStruct(type, sub, b)` indexes a
+  `global` three-level array `repo[type][sub][b]` (its slot name is also
+  unresolved; type 3 takes a separate branch) with GameMaker's own bounds
+  checks, so a list entry whose indices are out of range raises the runtime's
+  array error rather than missing quietly. `sub` is 0 for the unique
+  repository and `b` is the unique's own index: Liquor Holster is
+  `{8, 0, 51}`, Lucifer's Crown `{0, 0, 85}` (ForgePact's validated pool table
+  `kAngelicBases` holds exactly such triples). **Static reading (2026-10-02,
+  issue #74)**, consistent with the pool's 47 validated entries measured in
+  Live 1.
+- **What a hit's placement reads.** `CreateDefaultParams(sub, b, 1.0)` builds
+  its parameter struct from its three arguments, and reads no repository. The
+  struct it returns is exactly `{j, b, c}`: `j` the first argument (the sub),
+  `b` the second (the unique's index), `c` the third (1, the unique
+  repository); it has no field `a` (**measured**, Live 2, below). The built
+  item's `a` comes from `LootGroundCreate` itself: on both of its branches
+  that build an item locally it stores a value of its own into the record's
+  `a`, unconditionally and before the item instance exists, then hands the
+  same struct (a second reference, not a copy) to the new item as its
+  `itemDefinitionStruct`, sets the item's `itemType` from its own type
+  argument, and calls `CreateItemNew` directly. `CreateItemNew` reads the
+  item's `itemType` and the definition's `b`, `c` and `j` to look the item up
+  (`c` choosing the unique or the normal repository) and the definition's
+  `a` once, as the seed of the item's random rolls; it stores into none of
+  those fields. An `a` written onto the struct when `CreateDefaultParams`
+  returns is therefore overwritten, and one written at `CreateItemNew`'s
+  entry is the one the item is built with. `LootGroundCreate`,
+  `CreateLootInFreePos` and `LootGroundInit` read no repository. **Static
+  reading (2026-10-02, issue #74; the chain read a second time for where the
+  `a` is set)**; the record at `CreateItemNew`'s entry and what it keeps are
+  **measured** (Live 3, below). Note that `type` reaches the
+  placement from the list entry, not from the parameter struct, so rewriting
+  the struct cannot change an item's type.
+- **The forge selector.** The item the game builds carries the parameters as
+  its `itemDefinitionStruct` (`{b, a, j, c}` for a roll-built item; `{w, j,
+  b, a, c}` is the `sigdrop`/`InitItemFromJson` path's): `c` = 1 selects the unique
+  repository and `b` the unique; `c` = 0 selects the normal repository, `b`
+  the base item and `a` the seed or affix id. ForgePact's Custom Forge hook on
+  `CreateItemNew` recognises an item by comparing every selector field, `t`
+  against the item's `itemType` and `a`, `b`, `c`, `j` against its
+  `itemDefinitionStruct`; its built-in entries are Headhunter
+  `{t 8, a 777002, b 2, c 0, j 0}` and Tyrant's Crown
+  `{t 0, a 777001, b 7, c 0, j 0}`. **Source reading** (ForgePact's own code);
+  that an item built from those parameters is dressed as the signature item is
+  **measured** (`sigdrop`, 30 of 30 and 17 of 17 on 2026-09-18; and through
+  the game's own placement and `CreateItemNew`, Live 3, below). An item the
+  Angelic roll builds carries `{b, a, j, c}` and no `w` (**measured**, Live 3,
+  six vanilla hits); a `sigdrop` item, built through `InitItemFromJson`,
+  carries `w` and `o` as well.
+- **How #74 uses the list: a stand-in entry for the length of the roll.** While
+  Headhunter's or Tyrant's Crown's panel switch is on, ForgePact pushes one
+  entry per enabled item onto the list the roll draws from, the `ds_list` at
+  `Controller_obj.lootListUnique[5]` (the layout above; never the outer
+  array), with `ds_list_add` before the roll's first original call, and cuts
+  them off its tail with `ds_list_delete` after its last, under a scope guard,
+  so between rolls the list is exactly the game's own and none of the other
+  readers above ever sees the entries. Each entry is a **stand-in**: a real
+  Angelic unique of the same `type`, because the picker's filters and the
+  rate need a real definition and the item's type comes from the entry
+  (Headhunter's stand-in is Liquor Holster `{8, 0, 51}`; Tyrant's Crown's is a
+  helmet chosen when the pool is built, named in the switch-on log line).
+  Right after the push ForgePact reads the outer variable again by name off
+  the `Controller_obj` instance (a fresh `variable_instance_get`, never the
+  handle it pushed onto), takes the element at the same index, and counts the
+  push as visible only when that element is the same `ds_list` id and the
+  sub-list's size and tail hold what was pushed (the **held read-back**).
+  When they do not (another id, not a list, or a short tail), it takes the
+  entries off the id it pushed onto, logs one line, counts the roll in
+  `anomalies=` and attributes nothing in it. A `ds_list` id is a handle into
+  the runtime's own store, so the read-back cannot be fooled by a copy of the
+  sub-list; it still cannot show that the roll reads that element. The
+  removal checks the same tail: if the sub-list changed during the roll,
+  nothing is removed, one anomaly line is logged and the roll is counted in
+  `anomalies=`. ForgePact resolves the list by a name and an index
+  (`kAngelicListVar`, `lootListUnique` since Live 2's reach check passed on
+  it, and `kAngelicListIndex` 5), checks that the element is a live `ds_list` of
+  at least 10 entries, each an array of three numbers, and prints it on the
+  status lines as `list=<name>[<index>]:<size>` (for example
+  `lootListUnique[5]:380`), or `none` / `missing`. The live-list check decides
+  on the element as it was read, with no allow-list of handle kinds. It first
+  refuses, before any conversion, an element of a kind that can never be a
+  handle (array, string, struct, undefined or null) as `never a handle`,
+  because converting one is, by source reading, the runner's own REAL
+  conversion, which raises a runner error for an array and for undefined
+  (measured) and, by that source reading alone, for a string, a struct and
+  null, whose error text has not been captured (§5.4); a real, a ref and
+  every other kind go on. Then a numeric conversion serves only to refuse a
+  value that cannot be converted, is non-finite or is negative, and then
+  `ds_exists` is asked of the value itself with 2 (`ds_type_list`). A value
+  that cannot be converted is refused before `ds_exists` is asked; that is a
+  failed conversion, not a kind rule. The
+  refusal reads `Controller_obj.<name>[<i>] is not a ds_list (kind=<kind>,
+  <step>)`, naming the kind it got (`real`, `int32`, `int64`, `bool`,
+  `string`, `struct`, `array`, `ptr`, `undefined`, `null`, `ref`, else
+  `kind<N>`) and the step that refused (`never a handle`, `id unreadable`, `id non-finite`,
+  `id <value>`, `ds_exists threw` or `ds_exists false`); an element that
+  cannot be read at all is `[<i>] array_get threw`.
+
+  A hit is **typed** before anything is attributed to it. A third inline
+  detour, on `GetUniqueRepoStruct`, records the `(type, sub, b)` of the latest
+  definition read while the roll is in progress, cleared before each original
+  call. When the roll calls `CreateDefaultParams`, the hit takes that record
+  only if its sub and b equal the call's own first two arguments; otherwise
+  the hit is **untyped**: it stays the game's own, is never rewritten, and is
+  counted in `untyped=`. A typed hit is a candidate only when its whole triple
+  `(type, sub, b)` is the stand-in's, so another unique that shares the
+  stand-in's sub and b under a different type (Liquor Holster's `0/51` is also
+  a type 10 unique's) is never taken for it. The picker cannot tell the added
+  entry from the vanilla ones, so a candidate is the mod item's with
+  probability 1 / (n + 1), `n` being how often the vanilla sub-list holds
+  that same whole triple. The player build always pushes one entry per item; the
+  research build's `angelicprobe inject copies <k>` pushes k, which makes the
+  share m·k / (n + m·k) for m items sharing a stand-in. On the mod item's hit
+  ForgePact rewrites, at `CreateItemNew`'s entry, the item's
+  `itemDefinitionStruct` (a missing field is created) to the item's own `a`,
+  `b`, `c` 0, `j` 0 and reads them back (a value that does not read back is a
+  refusal: the record is put back, the game builds its stand-in, and the item
+  stays off for the session), and the game's `CreateItemNew` builds it from
+  that record, where the forge selector above recognises it (**measured**,
+  Live 3, below: 48 of 48 Headhunters (46 with Headhunter alone on, 2 with
+  both on) and 11 of 11 Tyrant's Crowns built by
+  the game from a record written there). One hit is one item, in place of what
+  the roll would have dropped. The switch is honoured only while all four
+  hooks (`DropItemAngelicChance`, `CreateDefaultParams`,
+  `GetUniqueRepoStruct` and `CreateItemNew`) are inline detours. **Design, #74 (2026-10-02, replan 1; the sub-list since
+  replan 2)**, as the plugin implements it. Of the three questions only a live
+  session answers, Live 1 answered **typing**, Live 2 **reach** (the roll's
+  picker draws the entries the plugin pushes; the held read-back alone shows
+  only that the sub-list holds them) and Live 3 the **build**: the game
+  builds exactly one dressed item per hit that falls to a mod item (below).
+  Live 2 could not ask that, because its rewrite, on the struct
+  `CreateDefaultParams` returns, refused on every hit: the struct has no
+  field `a` to rewrite. The rewrite has sat at `CreateItemNew`'s entry since.
+- **Measured (Live 1, list injection, 2026-10-02, research dll f7560e80…):
+  typing.** With the roll's chance raised by the research lever and both
+  switches off, 59 rolls gave 57 hits (`cdpCalls=70`, `detect=detoured`, the
+  detection's positive control). Every one was typed: `untyped=0`, and on
+  each the built item's `itemType` equalled the type of the latest
+  `GetUniqueRepoStruct` read inside the roll (`typeAgree=57`,
+  `typeDisagree=0`; 85 and then 87 of 87 later in the session). Every hit line
+  carried a `builtType` number and `lootDelta=1`: one `Loot_Ground_obj`
+  instance per hit. So the latest definition read before
+  `CreateDefaultParams` is the picked entry's, for the game's own entries; a
+  hit on a pushed entry has not been seen. With nothing pushed, one of the 57
+  hits carried a stand-in's sub and b (`standinPicks=1`), the baseline share
+  1/57 that reach is measured against.
+- **Measured (Live 2, list injection, 2026-10-02, research dll e30981d5…):
+  typing, reach and the parameter struct.** Typing held again: 46 of 46
+  vanilla hits typed (`untyped=0`, `typeAgree=46`, `typeDisagree=0`; 211
+  agreements and no disagreement by the end). With both switches off,
+  2 of 46 hits carried the stand-in's sub and b (`standinPicks=2`, p0 = 0.043). With Headhunter's
+  switch forced on and the research build pushing 200 copies of Liquor
+  Holster's entry onto `lootListUnique[5]` per roll (`injected=22800` over
+  114 rolls, the held read-back never failing, `heldMiss=0`), 65 of the next
+  80 hits fell on it (p1 = 0.81): **reach passes**, the roll draws what is
+  pushed onto that sub-list. On each of those 65 hits the returned
+  `CreateDefaultParams` struct read `{"b":51.0,"j":0.0,"c":1.0}`, no field
+  `a`; the rewrite refused (`no field a`), wrote nothing, and the game placed
+  its own Liquor Holster (`built=0`). That is a measurement of the struct and
+  of the plugin's rewrite, not of whether the game would build the item from
+  parameters that carry its `a`. The research build's replace mode (the
+  stand-in removed and the item spawned in its place) worked on 42 of 42
+  hits. The runner's YYError count rose from 1 to 37 in the first kill batch
+  (`report#2` x30) and then held; its cause is not established.
+- **Measured (Live 3, list injection, 2026-10-02, research dll e0749368…):
+  where the id reaches the built item, and the build.** With the rewrite
+  moved to `CreateItemNew`'s entry and both switches off, six vanilla hits
+  printed the record there and the built definition: the record's fields are
+  `b`, `a`, `j`, `c`, its `a` already a number (for example
+  `{"b":9.0,"a":270500966.0,"j":6.0,"c":1.0}`, built as `itemType=3` with the
+  same four values), so `LootGroundCreate`'s `a` is on the record by then and
+  the built definition keeps every value. Typing held (47 of 47, `untyped=0`,
+  `typeDisagree=0`; p0 = 2/47). With Headhunter forced and 200 copies pushed
+  per roll, 46 of the next 62 hits fell on Liquor Holster's entry (p1 = 0.742,
+  `heldMiss=0`), and on every one the record went from
+  `{"b":51.0,"a":648002927.0,"j":0.0,"c":1.0}` (its own `a` each time) to
+  `{"b":2.0,"a":777002.0,"j":0.0,"c":0.0}` and the game built
+  `itemType=8` with exactly those values: `built=` and `belt=` +46,
+  `refused=0`, `lootDelta=1` on every hit, the ground labelled
+  `Headhunter`, and the owner, hovering one, read a Headhunter. With both
+  forced, 11 of 15 hits built Tyrant's Crown (`picked 0/0/86`, stand-in Mask
+  of the Celestial) and 2 Headhunter, `built=` growth equal to `ourHits=`
+  growth. Switching both off left the next 22 hits vanilla and the list's six
+  sizes as before. So a `c` 0 record written at `CreateItemNew`'s entry is
+  built through the game's own placement and constructor as the signature
+  item, one per hit, in place of the stand-in. The YYError count rose from 1
+  to 19 between the read just before the layout dump and the end of the
+  first kill batch, all of it before anything was pushed (`report#2` x15, message
+  `REAL argument incorrect type array`), and then held; which step raises it
+  is not established. An arithmetic fit on Live 2's and Live 3's counts puts
+  it on the research scan's numeric conversion of 15 array and 3 string
+  variables (18 per scan, §5.4); ForgePact's list check now refuses those
+  kinds as `never a handle` before converting. Live 4 can show whether the
+  count stops rising, not the strings' share of it, since strings are no
+  longer converted. A hit at the natural chance was not observed (the
+  research lever held the chance at 1e9).
+- **Measured (Live 4, list injection, 2026-10-02, research dll 4b5994c3…,
+  ForgePact `ed59983`): the research scan's runner errors.** With the list
+  check refusing a kind that can never be a handle before converting it, in
+  town with no kills, a lone `angelicprobe inject auto` (`list
+  lootListUnique[5]:380`) and then `angelicprobe list` left the runner's
+  YYError total at 1 with no new report, each read taken at least 35 s after
+  the command. That one report was raised in the menus before any command
+  (`Unable to find any instance for object index ...`). The scan refused the
+  same 15 array and 3 string variables as `never a handle`, none as
+  `id unreadable`, and still accepted the real list, a ref
+  (`candidate lootListUnique array_length=6 at=5 ds_list_size=380`). On the
+  earlier builds each scan had added 18. So the scan's numeric conversions of
+  those elements are measured as the cause of Live 2's and Live 3's rise; how
+  the 18 split between arrays and strings stays the arithmetic fit (§5.4),
+  since Live 4 refused both kinds. A struct or a null element was not met.
+- **The die.** The rate comes from a zero-argument method on a member of the
+  picked definition, scaled by one global value read when the roll starts;
+  neither is identified (`droprate.base` is the plausible reading). The roll
+  draws a uniform integer up to that rate and hits when the draw is below the
+  chance. With the measured chances of 1195-1526 against rates in the millions,
+  that is about one hit in several thousand rolls, so a session should not
+  expect a natural hit. **Static reading (2026-10-02, issue #74).**
+- **A hit.** Only on a hit does the roll call `CreateDefaultParams` (sub, b and
+  a constant), and then, by a direct call, the routine ForgePact hooks as
+  `LootGroundCreate`, with the roll's position and the picked item's
+  parameters. `CreateDefaultParams` is called nowhere else inside
+  the roll, so **a `CreateDefaultParams` call while the roll is running marks a
+  hit**. **Static reading (2026-10-02, issue #74)**, consistent with the
+  measured count of zero `CreateDefaultParams` calls inside the roll over 374
+  misses. A table-only hook on `LootGroundCreate` cannot see that direct call
+  (§ 5.1); the `CreateDefaultParams` inline detour does, **measured** in
+  session 1, which is why ForgePact #74 detects hits there.
+- **The chance's composition** is computed by the caller, `DropItem`, and is
+  **not established** (out of scope for #74).
 - `droprate.base` of some uniques: Marcher's of Hatred 4,266,000; Annihilator
   4,158,450; Tayrel's Chestplate 25,000,000; Lucifer's Crown 111,111,111.
   **Measured.**
-- `Loot_Manager_obj` has no `lootListUnique` instance variable, although the
-  instance exists. **Measured.**
+- A `lootListUnique` instance variable on `Loot_Manager_obj` was **not
+  observed**: `variable_instance_exists` answered false on the instance found
+  by name, with no positive control on that instance recorded (2026-09-23).
+  The static reading of 2026-10-02 puts the list on `Controller_obj` (above),
+  so this was measured on another scope than the list's.
 - `DropItem` also runs for breakable props, and ordinary drops call
   `LootGroundCreate` (and `CreateDefaultParams`) directly from inside it.
   **Measured.**
 
 [angelic roll, Results](../ForgePact/docs/angelic-roll-hook-research.md#results),
+[Session 2 (#74) Results](../ForgePact/docs/angelic-roll-hook-research.md#results-1),
+[Session 3 (#74, list injection)](../ForgePact/docs/angelic-roll-hook-research.md#session-3-list-injection-issue-74),
+[Session 4 (#74, the list layout)](../ForgePact/docs/angelic-roll-hook-research.md#session-4-the-list-layout-issue-74),
+[Session 5 (#74, the id on the built item)](../ForgePact/docs/angelic-roll-hook-research.md#session-5-the-id-on-the-built-item-issue-74),
+[curated record](../hs-game-sdk/curated/angelic_list_measurements.json),
 [Decision](../ForgePact/docs/angelic-roll-hook-research.md#decision),
 [angelic drop, the game's own mechanism](../ForgePact/docs/angelic-drop-research.md#oyunun-kendi-mekanizması-statik-okuma-canlı-ölçülen-yalnızca-buff-yokken-zarın-hiç-atılmaması),
 [ForgePact guide, Known Limitations](submodules/ForgePact/instructions.md#known-limitations--gaps)
@@ -1872,7 +2237,7 @@ From AFK FARM's 6,471 recorded packets and 214 capture sessions, 2026-09-17 to 0
 - **Rank values.** An ordinary monster's `enemyRarity` is 1-4, and `DropItem`'s first argument is the same number. In every packet `killStatistic` equals the rank. **Measured.**
   - Loot goblins drop at 5, while their own `enemyRarity` stays 1, 3 or 4.
   - Every special-content monster seen dropped at 4.
-- **Names (inferred).** The save's kill counters are Total, Common, Champion, Ancient, Legion and Fallen. On the save with the most kills, Common, Champion, Ancient and Legion add up exactly to the total, and their proportions fit only rank 1 Common, 2 Champion, 3 Ancient, 4 Legion. **Inferred; not yet checked on screen.** ForgePact's labels (normal, champion, rare, ancient) are one step off from this.
+- **Names (inferred).** The save's kill counters are Total, Common, Champion, Ancient, Legion and Fallen. On the save with the most kills, Common, Champion, Ancient and Legion add up exactly to the total, and their proportions fit only rank 1 Common, 2 Champion, 3 Ancient, 4 Legion. **Inferred from the kill counters**, and since ForgePact#159 also backed by a player's on-screen report (a monster raised to rank 3 shows as an Ancient, with a yellow name, and one raised to rank 4 as a Legion). That report is the player's, not a measurement of ours. ForgePact's World › Monster Rarity rows use these names since #159 (Ancient writes rank 3, Legion rank 4); its code, its commands (`rarity`, `bossrarity`), its config keys (`rarity_rare`, `rarity_ancient`) and its Bosses select still say rare for rank 3 and ancient for rank 4 (ForgePact#161 tracks the player-visible ones).
 - **Rank multipliers**, next to rank 1. Medians over 41-48 pairs of the same monster object in the same room. **Measured.**
 
   | Rank | Health | Damage | XP |
@@ -1901,6 +2266,26 @@ From AFK FARM's 6,471 recorded packets and 214 capture sessions, 2026-09-17 to 0
   - protected health, damage and XP.
 
   So AFK FARM's town builds a bestiary of real monsters from them.
+- **A monster's damage and XP live behind protected-store keys. Measured 2026-10-02** (ForgePact#44's Live procedure 1b, an identity control on the research probe's read path): `damage`, `killExperience` and `experience` do not hold the values themselves. Like `enemy_hp`, each holds a protected-store key: 176880, 176863 and 176879 on the ordinary monsters and the rank-1 Karp King read, 176876, 176859 and 176875 on the rank-4 Karp King. The record a key names, read with `PC_GetVariableGMLWrapper(key)` (which agreed with `GPV` on `gDataProtected[177]` in the same session), holds the monster's damage and XP. An ordinary `Skeleton_Mage_Fire_obj` raised by ForgePact's Monster Rarity sliders to rank 3 and 4 read, through those keys, damage 257 / 360 / 515 (×1.40, ×2.00 against the table's ×1.53, ×1.90, within 10%) and XP on kill 221 / 943 / 1387 (×4.27, ×6.28 against the exact ×4.25, ×6.25, within 2%; the record behind `experience`, 96 / 410 / 603, moved the same way). So the records behind `damage` and `killExperience` hold a monster's damage and its XP on kill. Reading either variable directly (`variable_instance_get(inst, "damage")`) returns the key, a plausible-looking number that has nothing to do with damage. The same spawns' health was not a control: ×5.69 at rank 3 and ×5.31 at rank 4, one spawn each. MK15-MK17 in `hs-game-sdk/curated/monster_rank_measurements.json`.
+- **Bosses at a forced rank.** A boss is an instance whose object descends from `Enemy_Child_Boss_obj`. None is in AFK FARM's packets; these rows are ForgePact's Bosses control (issue #44) writing the rank at the entry of `EnemyRaritySettings`, from Live procedure 1 and Live procedure 1b, 2026-10-02 (Nightmare, Outskirts of Inoya, zone level 170; one spawn and one kill per row; [boss rarity, Live procedure 1](../ForgePact/docs/boss-rarity-research.md#live-procedure-1) and [Live procedure 1b](../ForgePact/docs/boss-rarity-research.md#live-procedure-1b)). Health was read through the protected-store getter the probe's own control proved. In Live 1 damage and XP were read only through unproven keys, so they are **not observed** there; Live 1b counted the same key reads of `damage` and `killExperience` (the record each variable's key names, not the variable) because its identity control (above) proved them.
+
+  | Boss | Session | Rank written | Health | Health ratio to its rank-1 self | Damage, XP | `DropItem` rank argument | Drops per kill (`itemdrops.jsonl` lines) |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | `Karp_King_obj` | Live 1 | none (rank 1) | 44,625,000 (two spawns) | 1 | not observed | no line at its traced death | 0 traced; 20 on an untraced kill |
+  | `Karp_King_obj` | Live 1 | 4 | 252,242,812 | **×5.65** (5.6525) | not observed | no line at its traced death | 0 (traced) |
+  | `Karp_King_obj` | Live 1 | 3 | not read | — | not observed | 3 (one line, no rank-1 anchor) | 20 (traced) |
+  | `Damien_obj` | Live 1 | 4 | 159,906,250 | no rank-1 base | not observed | not traced | not counted |
+  | `Uber_Damien_obj` | Live 1 | 4 | 1,306,210,937 | no rank-1 base | not observed | not traced | not counted |
+  | `Uber_Anubis_obj` | Live 1 | 4 | 4,451,343,750 | no rank-1 base | not observed | not traced | not counted |
+  | `Karp_King_obj` | Live 1b | none (rank 1) | 44,625,000 (three spawns) | 1 | read through the keys in `damage` and `killExperience`: 217, 4,950 | 1 | 10 (traced) |
+  | `Karp_King_obj` | Live 1b | 4 | 210,992,578 | **×4.73** (4.7281) | read through the keys in `damage` and `killExperience`: 455 (**×2.10**, 2.0968); 30,940 (**×6.25**, 6.2505) | **4** | 12 (traced) |
+
+  - **Health. Measured 2026-10-02:** one Karp King, raised to rank 4 by ForgePact with its 3-affix top-up, had ×5.65 its rank-1 health in Live 1 (affixes 16 Multishot, 17 Treasure Gobbler, 25 Pyromaniac) and ×4.73 in Live 1b (12 Fire Enchanted, 20 Punisher, 31 Antimagus), both above the ordinary monsters' rank-4 median of ×4.23. **Not established:** whether a boss scales on health differently from an ordinary monster. Each sample's topped-up affixes were built into the same health, the two sessions disagree, and neither had a health control (Live 1b's ordinary monster read ×5.31 at rank 4), so these are the feature's effect rather than the game's rank scaling for a boss alone. `hs_game_sdk.monster_rank_model` keeps this as the open hypothesis `boss_hp_follows_rank_table`; MK6, MK7, MK9, MK19 and MK20 in `hs-game-sdk/curated/monster_rank_measurements.json`.
+  - **Damage and XP. Measured 2026-10-02** (Live procedure 1b, one Karp King raised to rank 4, the same spawn; each value is the record the variable's protected-store key names, not the variable): damage ×2.10 (217 -> 455, through `damage`'s key) and XP on kill ×6.25 (4,950 -> 30,940, through `killExperience`'s key; `experience`'s record 2,152 -> 13,452, ×6.25). XP took the table's exact rank-4 row; damage rose ×2.10 against the table's ×1.90; whether a boss's damage follows the row is not established: 0.4% outside the 10% the identity control was held to, while the control itself read 8.4% below the table at rank 3 and 5.5% above it at rank 4 (×2.00), and on one boss, one spawn, whose affixes differed from the control's. The same unmatched affixes leave XP open too: `monster_rank_model`: `boss_xp_follows_rank_table` `None` (measured ×6.2505 against ×6.25 on one boss, not established), `boss_damage_follows_rank_table` `None` (open) (MK21, MK22).
+  - **The rank written holds through the setup. Measured 2026-10-02** (a readback of the hook's own write): each of the five raised bosses entered `EnemyRaritySettings` at `enemyRarity` 1 and still carried 3 or 4 at its exit. The Monster Rarity sliders at 100% ancient left a Karp King at 1.
+  - **Drop rank. Measured 2026-10-02** (Live procedure 1b): the unraised Karp King died with `DropItem`'s first argument 1 and the one raised to rank 4 with 4, while the same session's ordinary control (a `Skeleton_Mage_Fire_obj` the sliders raised to 4) died with 4, as in Live 1 (MK14, MK18). On this one boss the drop rank was the rank written, but the spawn carried the same affix top-up the identity control did not share, so whether a raised boss's drop rank is the rank written is not established: `boss_drop_rank_reaches_dropitem` `None` (MK23). No `DropItemBoss` call was seen at either death. In Live 1 the rank-1 and rank-4 Karp Kings' traced deaths had printed no `DropItem` line and dropped nothing, so that session had no anchor.
+  - **Drops per kill: not observed as an effect.** Live 1b's traced rank-1 kill added 10 lines, the rank-4 one 12; one kill each, with other monsters dying nearby, so not a count of extra drops (MK24). A boss's death sometimes entered none of the instrumented drop routines (no `DropItem`/`DropItemBoss` call, no gold, no gem or rune counter, no `itemdrops.jsonl` line; `DropBossParts` was not instrumented, so whether such a death ran any drop routine at all is not established): Live 1 saw it on two traced kills, Live 1b on an untraced one 1,200 px from the hero, and Live 1b also on an ordinary rank-3 monster killed the same way. What decides it is not established. The `DropBossGems` and `DropBossRunes` counters stayed 0 at every Live 1b kill, raised or not.
+  - **The look. Not observed:** in Live 1b the raised Karp King's HUD name bar kept the ordinary style (after a control showed that writing `enemyRarity` after the setup did not restyle it within 2 s: one Karp King, one shot), and its body showed no change but a fire burst whose source could not be separated from its Fire Enchanted affix.
 
 ### 13.8 Monsters of special content (`specialType`)
 
@@ -3304,3 +3689,142 @@ workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
   reading.**
 
 ["Auto loot"](../ForgePact/docs/incarnation-gems-research.md#auto-loot---static-reading)
+
+## 19. Player jump and collision
+
+What ForgePact's jump-through-scenery research (#16, phase 1) measured on
+2026-10-03 with its `jumpprobe` instrument, on save slot 14 ("Sorak", level
+100) in `Town_01_rm`. The argument, the controls and the full check table are
+in ForgePact's [`docs/jump-scenery-research.md`](../ForgePact/docs/jump-scenery-research.md);
+the numbers are also in `hs-game-sdk/curated/jump_measurements.json`.
+
+### 19.1 The universal jump
+
+- The jump key (Space by default) jumps **towards the mouse cursor**. The
+  owner's account, 2026-10-03.
+- The local jump runs through `gml_Script_skillsLeap` (3664) and
+  `gml_Script_playerJumpGravity` (2764): each is called once per frame, with
+  the player as `self`, for the jump's whole length, whether the player moves
+  or not. `skillsLeap` takes one argument close to 1. `gml_Script_CA_playerJump`
+  (348) and `gml_Script_PlayerForceJump` (2770) are **not** called by the local
+  jump, and `gml_Script_StatJumpPower` (3391) logged no call during one.
+  **Measured.**
+- The jump lasts 104 frames. On open ground it moved this character about
+  175 px (19.4, curated J11); the jump that crossed a prop under phase 1's
+  `all hold` lever (curated J2) went 117 px, about 1.1 px per frame. The
+  character's Jump Power was not read, so neither is the base jump.
+  **Measured.**
+- No instance variable whose name contains `jump`, `air`, `grav`, `land`,
+  `fall`, `height`, `zpos`, `hover` or `fly` changes during a jump: the only
+  matches on `Player_obj` are `bufferJump` and `slopeHeight`, and both stayed
+  0. **Measured.** Where the jump's state lives is not established.
+
+[Live 1 results](../ForgePact/docs/jump-scenery-research.md#live-1-results)
+
+### 19.2 What blocks it
+
+- A jump at a scenery prop that blocks it does not move the player at all,
+  not even to the prop's edge 22 to 40 px away, while `skillsLeap` and
+  `playerJumpGravity` still run for the jump's 104 frames. **Measured.**
+- During the jump the player's own builtin collision queries name the
+  collision family by its parent: `position_meeting`, `place_meeting`,
+  `instance_position` and `collision_line` pass `Collision_Parent_obj` (957)
+  itself, and `collision_circle` passes `Wall_Parent_obj`. None passes
+  `Collision_Prop_obj` (959) or a descendant. **Measured.**
+- Answering those five builtins "nothing there" for the player (`noone` or
+  `false`), without running them, lets the same jump cross the prop: 117 px
+  over the jump's 104 frames. **Measured.** The `props` and `scripts` levers
+  answered nothing, so they say nothing either way: no player query during
+  the jump named `Collision_Prop_obj` or a descendant, so the `props` lever
+  stayed at `passed=0` and every query counted `other-family=`; and the player
+  made no call to `CanMove`, `InstancePlaceTallest` or `TilePlaceMeeting`
+  during a jump (those rows are native detours, and `InstancePlaceTallest`'s
+  1944 player-self calls during a walk are the positive control that they
+  would have counted one). Whether `InstancePlaceTallest` holds a walk or
+  refuses a landing inside a prop is **not established**
+  ([Results](../ForgePact/docs/jump-scenery-research.md#results)). **Measured**
+  for the counts, not for any effect.
+- A jump aimed at a landing point inside a prop (a horse carriage) does not
+  start even with those five builtins answered: the player stays within 4 px
+  of the take-off point. What refuses it was not identified. **Measured.**
+- Walking into a prop stays blocked with those five builtins answered.
+  **Measured.**
+
+[Live 1 results](../ForgePact/docs/jump-scenery-research.md#live-1-results);
+[Decision](../ForgePact/docs/jump-scenery-research.md#decision)
+
+### 19.3 The take-off check
+
+Read from the arguments `jumpprobe` logged in Live 1's own `out.txt`
+(2026-10-03), which the session capture had shortened.
+
+- In the frame a jump takes off, before that frame's `skillsLeap` call
+  returns, the game walks along the jump's direction with queries whose
+  `self` is the player. The steps are about **4.0 px** apart. At each step it
+  asks `collision_circle(cx, cy, 15, Wall_Parent_obj, true, true)` (radius
+  **15**) and `instance_position` against `Collision_Parent_obj` (957) at two
+  side points, about **14 px** to either side of the step, perpendicular to
+  the direction. **Measured.**
+- The first circle centre sits about 5-6 px below the player's origin,
+  whichever way the jump goes (two take-offs heading south, one north).
+  **Measured.**
+- One blocked side point is enough: in Live 1 run J1 (curated J10) the
+  right-hand point of the second step returned an instance, and that jump
+  moved 0 px. **Measured.**
+- Phase 1 could not tell whether the walk runs inside `skillsLeap`'s first
+  call or just before it, in the same frame (the builtin rows were logged on
+  return, before `skillsLeap`'s own line); the mod session settled it: inside
+  the first call (19.4 / curated J12).
+- The "no collision" answers the game accepts for these queries are real -4
+  (`noone`) for `instance_position`, `collision_line` and `collision_circle`,
+  and bool false for `position_meeting` and `place_meeting`; the game's own
+  `noone` comes back as a ref to instance -4. **Measured** (Live 1 run J3,
+  curated J5).
+
+[Phase 2: the take-off check](../ForgePact/docs/jump-scenery-research.md#the-take-off-check)
+
+### 19.4 Through the mod (phase 2 live session)
+
+What ForgePact's Jump through scenery mod (`jumpscenery`, #16 phase 2)
+measured about the game on 2026-10-03, on the player build, slot 14
+("Sorak"), in `Town_01_rm`. Curated entries J11 to J15 in
+`hs-game-sdk/curated/jump_measurements.json`. A bare Jn in section 19 is a
+curated id in that file; the research doc's Live 1 run labels, also J1 to J5,
+are not, and are written "Live 1 run Jn" here.
+
+- A jump on open ground moved this character about **175 px** (from (912.0,
+  822.0) to (921.9, 996.7)); the character's Jump Power was again not read.
+  **Measured.**
+- The take-off walk of 19.3 runs inside `skillsLeap`'s first call of the
+  jump: on each of three jumps, at least two of the walk's `collision_circle`
+  queries arrived after that frame's `skillsLeap` entry, and none before it.
+  Together with 19.3's ordering (the walk's rows logged before `skillsLeap`
+  returns), that places the walk between its entry and its return.
+  **Measured.**
+- A jump at the prop that blocks it does not move the player (0 px, twice),
+  and answering the player's five builtins "no collision" during that jump
+  lets it cross: 125 px, about 50 px short of the open-ground jump. Why the
+  crossing jump ends shorter is **not established**. **Measured.**
+- A jump aimed so that it would end inside a horse carriage did not move the
+  player even with the five builtins' blocked player-self family queries
+  answered (1152 answers in that jump), as in phase 1: something the mod does
+  not answer refuses it (a script row, an unhooked builtin, or one of the five
+  called with another self or a non-family object; not established), and the
+  player did not end inside the prop. The mod's landing and room checks ran on
+  that jump and let it through (`granted` +1, `refused-landing` 0), so the
+  mod's landing check has not been observed to detect the carriage; the
+  landing point they checked was not recorded, so whether it lay inside the
+  carriage is **not established**. What
+  refuses the jump is **not established**; the owner reads it as the game
+  validating the landing zone itself. **Measured** for the position, not for a
+  mechanism.
+- `room_width` × `room_height` of `Town_01_rm` is **2800 × 2400**. The room
+  rectangle is larger than the walkable map: `playerwarp` to (50, 1200) and
+  (2705, 1200) held on a re-read (no snap back) and left the player out of
+  bounds (the owner's report), within 100 px of a room edge; (95, 1200) held
+  too and put the player in the dark margin at the west of the view, not
+  judged standable. **Measured.** So a room
+  edge is not a map edge, and what the game does with a jump at the
+  walkable map's edge is **not observed**.
+
+[Mod live 1 results](../ForgePact/docs/jump-scenery-research.md#mod-live-1-results)

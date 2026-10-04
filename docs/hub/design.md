@@ -678,7 +678,9 @@ change has nothing to review. Reviewing on open would spend a review on every
 one of them, so the request is the trigger instead:
 
 - add the **`ai-review`** label in the pull request sidebar, or
-- comment **`@claude review`** on the pull request.
+- comment **`@claude review`** on the pull request. The comment must **start
+  with** the phrase: the workflow checks `startsWith`, so a summary with the
+  trigger on a later line is skipped silently.
 
 Anything written after `@claude review` in the comment is passed to the reviewer
 as the requester's instructions, and takes precedence over the default scope —

@@ -441,6 +441,30 @@ of a context file, since `Read` is not the only way in). The workflow now
 passes the path and the command — the plan's own path for a legacy single-file
 plan.
 
+**`tools/workorder_brief.py <plan> <selector>` prints one implementer's slice
+of a workorder in one call**, built on `section.py`'s heading matching,
+`plan_lint.py`'s lane and item parsers and `run_criteria.py`'s criterion
+numbering. The selector is `--round N`, `--lane NAME`, `--join`, `--item ID`,
+`--paths P[,P...]` or `--criteria K[,K...]` (the last also adds criteria next
+to another selector), and `--context`, `--base REF`/`DIR=REF`,
+`--since-round K` and `--amended` add to it. Every brief prints a header with
+its size against the plan's and context's, `## Goal`, `## Out of scope`,
+`## State`, the preconditions above the first lane, item or join, the
+selection, each Context subsection the printed steps and criteria cite by
+`ctx:` (an unresolved citation prints `ctx not found: "<cite>"`),
+`### Decisions`, the `git diff` commands for the selection's files when a
+base is given (it prints them and never runs git), and a footer listing the
+Context headings it left out with the full files named as the fallback.
+Nothing else from `## Log` is printed, except the previous round's entry for
+`--round N` past 0 and the newest amendment with `--amended`. Exit 0
+printed, 2 a usage error or unreadable plan, 3 a lane, item or criterion
+that does not exist, 5 an unclosed fence. Every implementer prompt
+`workorder-rounds.js` writes names its brief command first, with the plan
+and context paths kept as the fallback, and SKILL.md's Step 2 spawn does the
+same. `workorder-rounds.js` runs in the Workflow tool, which cannot read a
+file, so the prompt names a command rather than carrying the slice. Tests:
+`tests/test_workorder_brief.py`.
+
 **It also provisions each module's local-only build prerequisites**, on both
 the fresh-init path and an already-initialized one.
 `.claude/skills/workorder/local_prereqs.json` lists, per module, paths a
@@ -538,7 +562,14 @@ the `log` block and `state` it should have written and `then`. The scribe is
 handed absolute paths, joined under the driver's `checkoutRoot` (`git
 rev-parse --show-toplevel`): on 2026-09-24 a scribe given relative ones in a
 worktree resolved them against the main checkout, wrote nothing, and its "N/A"
-report came back as a false `STATE-LOST`.
+report came back as a false `STATE-LOST`. Both blocks sit between marker
+lines (`<<<LOG-BLOCK-BEGIN>>>` …, `<<<STATE-LINES-BEGIN>>>` …), the Log append
+is one `Edit` anchored on the file's last line with the block after it, and
+the scribe returns the file's last lines afterwards (`log_tail`): a block
+that is not the last thing there ends the launch as `LOG-DAMAGED`, carrying
+`log`, the `anchor` the scribe used, and `then`. On 2026-10-03 a scribe given
+unfenced blocks pasted its own State instruction into the Log and wrote the
+block before its anchor, moving the previous entry's last line to the end.
 
 It runs as the restricted `scribe` agent type (`.claude/agents/scribe.md`,
 `Read`/`Grep`/`Edit` only), not the unrestricted `workflow-subagent` every other
@@ -647,7 +678,7 @@ items gate) start `run_criteria.py` in the background and poll it with
 
 It returns to the driver on anything needing judgement — `PASS`,
 `PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`,
-`STATE-LOST`, `SCRIBE-FAILED` or `CAP` — so replans, consultations, human questions and the step-5 report stay with
+`STATE-LOST`, `SCRIBE-FAILED`, `LOG-DAMAGED` or `CAP` — so replans, consultations, human questions and the step-5 report stay with
 the driver either way (only a confirmed amendment runs inside), and one launch may cover several rounds (a
 `PLAN-DEFECT` hand-back means relaunching after the replan). A laned round
 that ends before its join also returns `lanes`, each lane's `name`,
@@ -749,10 +780,11 @@ one object.
 | R20 live-capture-author | any agent but `live-operator` (the driver included) whose `Edit`/`Write` landed on a `.claude/workorders/<slug>-live-<n>.md` capture. A capture a criterion cannot read is reported, never repaired |
 | R21 verifier-interpreter | a verifier shell command that runs `python` or `python3` in command position (a `grep python` does not count) — this repository's commands are `py -3`, and the verifier runs a criterion exactly as written |
 | R22 verifier-suite-once | a verifier that runs the same `unittest discover` suite (same `cd` directory, same arguments) more than once, counting ForgePact's `tools/run_tests_parallel.py` as the same suite as its serial `discover -s tests` — after a timeout, or to read another slice of the output |
-| R23 lane-git-mutation | a lane implementer (`implementer:<lane>:r<n>`, any lane but `join`) that ran a git command outside the read-only allow-list R16 uses. Lanes share one checkout and `.git/index.lock` fails instead of waiting, so only the join commits; the join and a laneless implementer are exempt |
+| R23 lane-git-mutation | a lane implementer (`implementer:<lane>:r<n>`, any lane but `join`) that ran a git command outside the read-only allow-list R16 uses (a `git config` that only reads, such as `git config core.autocrlf` or `--get`, is on it). Lanes share one checkout and `.git/index.lock` fails instead of waiting, so only the join commits; the join and a laneless implementer are exempt |
 | R24 cheap-routes | an `amendment:` planner with no `tools/amend_check.py save` before it or no `check` after it, made by the driver or, for a planner a workflow launch spawned (`amendment: <slug> <id>:r<n>`), by another agent of that same launch (`amend-save:`/`amend-check:`), never the planner itself; a second amendment with no implementer between it and the first (inside a launch, of the same item); or two `patch-implementer` rounds back to back in one workflow launch. Both routes skip work, so each runs only where something other than the agent taking it has checked that it applies. R11 accepts the same in-launch `check` |
 | R25 owner-scope | a `tools/amend_check.py check` that printed `SCOPE:` (a plan change following a new owner decision, exempt from the replan cap and the tier ladder) with no message typed by the user since the previous `check`, or since the first planner started. The driver writes the decision line, so the audit checks the owner actually said something |
 | R26 reread-after-write | an implementer or planner that reads a file it had already written (`Edit`/`Write`) whole more than twice — a `Read` with no `offset` or `limit`, or a bare `cat`/`type`/`Get-Content` of it — with no shell command naming the file in between (which may have rewritten it). After a write, read `git diff -- <file>`, a grep or the range instead (the owner, 2026-10-02) |
+| R27 amendment-tier | an `amendment:` planner whose transcript's model (the majority model of its assistant records) is a `fable` model. An amendment applies one stated correction and always runs on opus, whatever tier the workorder's replans escalated to; the one fable amendment measured (forgepact-74, 2026-10-02) came from a driver carrying `planner-tier=fable` over. The evidence names the label and the model |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
@@ -795,8 +827,19 @@ each launch's item windows (`max_concurrent`, `minutes_at_cap`,
 `queued_behind_cap`, `finding_to_fix_minutes`), verifies by kind, the
 `run_criteria` calls the Bash limit killed, owner waits, the implementers'
 check catch rate, routes (amendments, in-launch amendments, replans,
-consultations) and the audit's lane summary. The module docstring defines
-each one. Exit 0 when the report was produced, 2 on a usage error.
+consultations), the audit's lane summary, and `workorder_reads`. That last
+one is keyed by role and counts how each role read the workorder's own
+files: `agents`, `plan_calls`/`plan_kb` (a `Read` of a `-plan.md`, or a
+shell command naming one, except a command that runs `run_criteria.py`,
+`plan_lint.py`, `amend_check.py`, `live_checks.py`, `item_commit.py` or
+`workorder_brief.py`, or `git add`/`git commit`), `context_calls`/
+`context_kb` (the same for `-context.md`), `brief_calls`/`brief_kb` (shell
+calls of `workorder_brief.py`) and `report_calls`/`report_kb` (a `Read`,
+`cat`, `type` or `Get-Content` of a `report.txt`); the text format prints
+the implementer's and the verifier's rows. It is what shows whether the
+brief and the digest moved reading off the whole files
+(`docs/agents/workorder-calibration.md`, 2026-10-03). The module docstring
+defines each figure. Exit 0 when the report was produced, 2 on a usage error.
 `docs/agents/workorder-calibration.md` § "Measuring where the pipeline spends
 its time" holds the 2026-09-27 baseline and the exact commands to re-run it.
 Tests: `tests/test_workorder_speed.py`, synthetic sessions only, each measure
@@ -877,8 +920,22 @@ file or for a run that refused before running anything. A new run clears an
 earlier run's `status.json` and `report.txt` from its `--out` before it can
 refuse, so a poll never reads the earlier one as this one; `--wait` polls for at most S ≤ 220 seconds, so a poll stays under audit
 R5. That is how the whole-tree verifiers run in the background: start the
-run with `run_in_background` and `--out`, poll `--status`, read
-`report.txt`.
+run with `run_in_background` and `--out`, poll `--status`, then judge from
+`run_criteria.py --digest <out>`.
+`run_criteria.py --digest <out>` needs no plan: the run records in its out
+directory what the digest needs, each criterion's full text included. It
+exits as `--status` would for the same run (0 finished, 3 running with the
+status lines printed, 4 stale, 2 for no status file, a refused run or a usage
+error). On a finished run it prints a header (criteria, how many shown in
+full, `report.txt`'s KB), the scope block when the run was scoped, and per
+criterion either one line or the whole block exactly as `report.txt` has
+it. One line is for a SKIPPED or NOT SELECTED criterion, and for an
+exit-only criterion (its prose says nothing but `exits <n>` once the
+backticked spans and the `(reads ...)`, `(final)`, `(gate ...)`, `(class
+...)`, `(after ...)` and `(all-parents)` declarations are removed) whose
+every command exited as expected. It judges nothing, and `report.txt` keeps
+its bytes. Verifiers read `report.txt` whole after 2026-10-02, 100-217 KB a
+run, which is why it exists.
 Owner questions carry a default: an item's `owner:` line needs `default:`
 and `reversible: yes|no` beside it, and so does each entry of `## Needs
 human judgement`, read in the plan and in its sibling `<slug>-context.md`.
@@ -932,11 +989,40 @@ returns the region and function containing a line. It only ever prints
 identifiers and banner titles from the file it is given, never the file's own
 text.
 
-`implementer.md` is the rule that sends the implementer here: for a source
-file over 2,000 lines, run `source_index.py --find <name>` first and `Read`
-only the range it prints, instead of an exploratory grep chain. Measured
-against the file it was built for (`ForgePact/plugin/ModuleMain.cpp`, 997KB /
-18,144 lines): `--regions` prints 94 regions in about 6KB.
+Measured against the file it was built for (`ForgePact/plugin/ModuleMain.cpp`,
+997KB / 18,144 lines then): `--regions` prints 94 regions in about 6KB.
+
+**`section.py`'s code mode is built on it.** `section.py <file> --toc
+[--grep REGEX]` and `section.py <file> '<symbol>' [--grep REGEX]` take a
+`.cpp .cc .c .hpp .h .py .js .mjs .ts` file; every other file keeps the
+markdown behaviour. `source_index.py` gained a symbol index behind it (its
+existing modes print what they always did): C/C++ functions at file scope
+and inside `namespace` blocks at any depth, out-of-line `Class::Method`
+definitions, and `struct`/`class`/`enum` definitions with their inline
+methods, read with the same comment stripping and guard spans; Python's
+top-level `def`/`async def`/`class` and their methods through `ast`; and
+JS/TS functions, classes, `export` forms, `const|let|var NAME =`
+definitions and class methods, through a lexer that knows strings, template
+literals with nested `${}`, comments and regex literals. `--toc` prints
+`<start>-<end>  <KB>KB  <kind> <name>` per symbol in file order; past 20 KB
+it prints the symbol count, the banner regions and a line saying to narrow
+it with `--grep`. A symbol prints `-- <path> lines <start>-<end> (<kind>
+<qualified name>)` and then its lines exactly as in the file, decorators
+included. It matches the exact name, then the qualified name, then the name
+case-insensitively; exit 3 lists up to 20 near names, 4 lists every match of
+an ambiguous one, and with `--grep` it prints the body's matching lines with
+two lines of context and exits 7 when none match. A 2.5 MB generated C++
+file is indexed and looked up in under 10 seconds.
+
+`implementer.md` and `planner.md` send their agents here: for a source file
+over about 200 KB, `section.py <file> --toc --grep <regex>`, then
+`section.py <file> '<symbol>'`, one call per symbol, never `grep -n`
+followed by `sed -n`. In the 18 sessions after 2026-10-02 ModuleMain.cpp
+took 422 implementer and 168 planner shell reads that way, two turns per
+lookup (`docs/agents/workorder-calibration.md`, 2026-10-03).
+`source_index.py --regions` stays the banner map. Tests:
+`tests/test_section_code_mode.py`, one fixture per language with its
+outliers, the size test and the toc cap.
 
 Tests (`tests/test_source_index.py`) cover a synthetic fixture (banners,
 nested guard spans, a function inside and outside a guard, `--find`, `--at`)
@@ -1125,7 +1211,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Nineteen suites cover this page's tooling. Eighteen are Python and run
+Twenty-five suites cover this page's tooling. Twenty-four are Python and run
 automatically under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
@@ -1139,9 +1225,11 @@ py -3 -m unittest tests.test_claude_workorder_section -v  # section.py, plus the
 py -3 -m unittest tests.test_workorder_audit -v   # workorder_audit.py's rules, each with a failing fixture and a passing control
 py -3 -m unittest tests.test_workorder_plan_tools -v  # live_checks.py, plan_lint.py, amend_check.py and run_criteria.py, on the capture, criterion and plan-diff shapes that cost rounds
 py -3 -m unittest tests.test_workorder_plan_lint_owner -v  # plan_lint.py's owner-question rules, each with a failing fixture and a passing control
-py -3 -m unittest tests.test_workorder_run_criteria_status -v  # run_criteria.py's status.json, report.txt and --status exit codes
+py -3 -m unittest tests.test_workorder_run_criteria_status -v  # run_criteria.py's status.json, report.txt, --status exit codes and --digest
 py -3 -m unittest tests.test_workorder_speed -v   # workorder_speed.py's measures on synthetic sessions, each with a control
 py -3 -m unittest tests.test_source_index -v      # source_index.py against a synthetic fixture, plus a real-ModuleMain.cpp smoke test
+py -3 -m unittest tests.test_section_code_mode -v  # section.py's code mode: one fixture per language with its outliers, the 2.5 MB size test, the toc cap
+py -3 -m unittest tests.test_workorder_brief -v   # workorder_brief.py's selectors, each with a control that it prints nothing it was not asked for
 py -3 -m unittest tests.test_hs_drive_mcp_server -v            # the hs-drive tool surface, over a real stdio session
 py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v     # ENGINE_SYMBOLS still resolve, and importing the engine starts nothing
 py -3 -m unittest tests.test_hs_drive_mcp_saves -v             # the fail-closed save backup/restore contract

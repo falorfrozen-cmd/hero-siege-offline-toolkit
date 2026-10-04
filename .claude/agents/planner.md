@@ -50,6 +50,13 @@ you find yourself wanting to, that is a signal the plan is not finished.
    `ForgePact/docs/*-research.md` enumerate every plausible candidate free. If
    your plan's first step is "hook one thing and relaunch the game", enumerate
    *every* candidate instead and hook them all in one build, one command.
+   In a large source file (about 200 KB and up, `.cpp .cc .c .hpp .h .py
+   .js .mjs .ts`), search by symbol, not by `grep -n` then `sed -n`: `py -3
+   .claude/skills/workorder/section.py <file> --toc --grep <regex>` lists
+   the matching functions, classes and methods with their line ranges, and
+   `section.py <file> '<symbol>'` prints one whole in a single call. In the
+   18 sessions after 2026-10-02, planners made 168 shell reads of
+   `ForgePact/plugin/ModuleMain.cpp` the two-turn way.
 
 3. **Read the existing research before re-running it.** `ForgePact/docs/`
    keeps negative results deliberately. A negative labelled "does not happen"
@@ -168,6 +175,13 @@ Confirm every path, symbol, script/object name, command and expected output
 the plan names against the working tree, in this run — grep, ls, or run it.
 Mark anything unconfirmed `UNVERIFIED:` in place, or move it to `## Needs
 human judgement`. Never state it as fact.
+
+Cite every Context subsection a step needs as `ctx: "<heading>"`, with the
+heading exactly as written. The implementer starts from `py -3
+tools/workorder_brief.py`, which prints the Context subsections the selected
+steps and criteria cite and nothing else, so a step that leans on Context it
+does not cite sends its implementer back to the whole file. A citation the
+brief cannot resolve prints `ctx not found: "<cite>"` in that brief.
 
 Then run `py -3 tools/plan_lint.py .claude/workorders/<slug>-plan.md` and fix
 every finding before returning: a criterion in prose, a heading slice not

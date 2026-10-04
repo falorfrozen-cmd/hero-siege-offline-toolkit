@@ -6,7 +6,8 @@ that each return inside the 240-second blocking-call limit and reads
 `report.txt`. These pin what that procedure relies on: the status file says
 what ran and how it exited, the report is exactly what stdout was, and the
 poll's exit code tells finished (0), running (3), stale (4) and nothing to
-read (2) apart -- each with a control.
+read (2) apart -- each with a control. `--digest` (2026-10-03) is the
+shortened report the verifier reads instead of `report.txt` whole.
 """
 
 import contextlib
@@ -294,6 +295,158 @@ class StatusPollTests(StatusTestBase):
         self.assertIn("criterion 1: done -- cmd-1 exit 0", text)
         stdout = proc.communicate(timeout=60)[0].decode("utf-8").replace("\r\n", "\n")
         self.assertEqual((out / "report.txt").read_text(encoding="utf-8"), stdout)
+
+
+DIGEST_PLAN = """# x
+
+## State
+round: 0
+gates: none
+
+## Acceptance criteria
+
+- [ ] `bash -c "echo one"` exits 0
+- [ ] `bash -c "echo two; exit 3"` exits 0
+- [ ] `bash -c "echo ok"` prints `ok`
+- [ ] `docs/x.md` records the decision in its own words
+- [ ] (gate `live1: complete`) `bash -c "echo live"` exits 0
+- [ ] `bash -c "echo two; exit 3"` exits 3 and `bash -c "echo six"` exits 0
+- [ ] (reads `docs/**`) (final) `bash -c "echo seven"` exits 0
+- [ ] `bash -c "echo eight"` and `bash -c "echo nine"` exits 0
+"""
+
+
+class DigestTests(StatusTestBase):
+    """`--digest DIR`: what a verifier reads instead of `report.txt` whole.
+    Only a criterion whose prose says nothing but `exits <n>`, and whose
+    every command exited so, shrinks to one line; everything else prints
+    exactly as the report has it, so the verifier still judges it."""
+
+    def setUp(self):
+        super().setUp()
+        self.plan.write_text(DIGEST_PLAN, encoding="utf-8")
+
+    def finished(self, *extra):
+        self.need_bash()
+        out = self.tmp / ("digest" + "".join(extra).replace("-", "").replace("/", ""))
+        rc, stdout = run([str(self.plan), "--out", str(out), *extra])
+        self.assertEqual(rc, 0, stdout)
+        return out, (out / "report.txt").read_text(encoding="utf-8")
+
+    @staticmethod
+    def block(report, k):
+        """Criterion k's block in the report: its header line through the
+        line before the blank line that opens the next one."""
+        lines = report.split("\n")
+        start = lines.index(next(l for l in lines if l.startswith(f"criterion {k}: ")))
+        end = start + 1
+        while end < len(lines) and lines[end] != "":
+            end += 1
+        return "\n".join(lines[start:end])
+
+    def digest_lines(self, text, k):
+        return [l for l in text.splitlines() if l.startswith(f"criterion {k}: ")]
+
+    def test_an_exit_only_criterion_as_expected_is_one_line(self):
+        for extra in ((), ("--jobs", "3")):
+            out, report = self.finished(*extra)
+            rc, text = run(["--digest", str(out)])
+            self.assertEqual(rc, 0, text)
+            self.assertEqual(self.digest_lines(text, 1),
+                             [self.digest_lines(text, 1)[0]], "criterion 1 is one line")
+            self.assertRegex(text, r"(?m)^criterion 1: exit-only, expects exit 0: cmd-1 exit 0 \(\d+s\)$")
+            self.assertNotIn("    one", text, "the as-expected criterion's output is not shown")
+            self.assertIn("    one", report, "control: the report does show it")
+            # Per-command expectations, joined by `and`; the shared command is
+            # judged against this criterion's own expectation.
+            self.assertRegex(text, r"(?m)^criterion 6: exit-only, expects exit 3, 0: cmd-2 exit 3 \(\d+s\); "
+                                   r"cmd-\d+ exit 0 \(\d+s\)$")
+            # Declarations are not prose.
+            self.assertRegex(text, r"(?m)^criterion 7: exit-only, expects exit 0: cmd-\d+ exit 0 \(\d+s\)$")
+            # One `exits <n>` applies to every command.
+            self.assertRegex(text, r"(?m)^criterion 8: exit-only, expects exit 0: cmd-\d+ exit 0 \(\d+s\); "
+                                   r"cmd-\d+ exit 0 \(\d+s\)$")
+
+    def test_a_wrong_exit_prints_the_block_exactly_as_the_report_has_it(self):
+        out, report = self.finished()
+        rc, text = run(["--digest", str(out)])
+        self.assertEqual(rc, 0, text)
+        block = self.block(report, 2)
+        self.assertIn("-> exit 3", block, "control: the block is the failed command's")
+        self.assertIn(block, text)
+        self.assertNotIn("criterion 2: exit-only", text)
+
+    def test_a_criterion_that_expects_output_prints_whole(self):
+        out, report = self.finished()
+        text = run(["--digest", str(out)])[1]
+        self.assertIn(self.block(report, 3), text)
+        self.assertIn("    ok", text, "the verifier needs the output to judge `prints ok`")
+
+    def test_a_criterion_with_no_command_prints_whole(self):
+        out, report = self.finished()
+        text = run(["--digest", str(out)])[1]
+        self.assertIn(self.block(report, 4), text)
+        self.assertIn("no command -- check by reading", text)
+
+    def test_a_skipped_criterion_is_its_single_report_line(self):
+        out, report = self.finished()
+        text = run(["--digest", str(out)])[1]
+        lines = self.digest_lines(text, 5)
+        self.assertEqual(len(lines), 1, text)
+        self.assertIn("SKIPPED (gate live1: complete not set)", lines[0])
+        self.assertNotIn("echo live", text, "the skipped criterion's prose is not repeated")
+        self.assertIn("echo live", report, "control: the report does name it")
+
+    def test_the_header_counts_and_the_scope_block(self):
+        self.need_bash()
+        changed = self.tmp / "changed.txt"
+        changed.write_text("tools/elsewhere.py\n", encoding="utf-8")
+        out = self.tmp / "scoped"
+        self.assertEqual(run([str(self.plan), "--out", str(out), "--changed-from", str(changed)])[0], 0)
+        report = (out / "report.txt").read_text(encoding="utf-8")
+        rc, text = run(["--digest", str(out)])
+        self.assertEqual(rc, 0, text)
+        first = text.splitlines()[0]
+        self.assertRegex(first, r"^digest: 8 criteria, 3 shown in full; report\.txt \d+(\.\d+)? KB")
+        scope = [l for l in report.split("\n\ncriterion ")[0].splitlines() if l.startswith(("scope:", "  "))]
+        self.assertTrue(scope and scope[0].startswith("scope:"), report)
+        self.assertIn("\n".join(scope), text)
+        self.assertIn("NOT SELECTED (nothing it reads changed", self.digest_lines(text, 7)[0])
+        self.assertEqual(len(self.digest_lines(text, 7)), 1)
+        # Control: an unscoped run has no scope block to print.
+        plain, _ = self.finished()
+        self.assertNotIn("scope:", run(["--digest", str(plain)])[1])
+
+    def test_a_run_that_recorded_no_criterion_text_prints_every_block(self):
+        out, report = self.finished()
+        doc = self.status_of(out)
+        for c in doc["criteria"]:
+            c.pop("text", None)
+        (out / "status.json").write_text(json.dumps(doc), encoding="utf-8")
+        text = run(["--digest", str(out)])[1]
+        self.assertNotIn("exit-only", text, "without the text nothing is provably exit-only")
+        self.assertIn(self.block(report, 1), text)
+
+    def test_an_unfinished_run_exits_3_and_prints_the_status_lines(self):
+        rc, text = run(["--digest", str(self.hand_written("live", False, 10))])
+        self.assertEqual(rc, 3)
+        self.assertIn("status: running", text)
+        self.assertIn("criterion 1: running -- cmd-1 running since", text)
+        self.assertEqual(run(["--digest", str(self.hand_written("stale", False, 2000))])[0], 4)
+
+    def test_a_missing_dir_a_refused_run_and_misuse_exit_2(self):
+        rc, text = run(["--digest", str(self.tmp / "no-such-run-dir")])
+        self.assertEqual(rc, 2)
+        self.assertIn("no status.json", text)
+        refused = self.tmp / "refused"
+        self.assertEqual(run([str(self.tmp / "no-such-plan.md"), "--out", str(refused)])[0], 2)
+        self.assertEqual(run(["--digest", str(refused)])[0], 2)
+        done = str(self.hand_written("done", True, 5))
+        self.assertEqual(run([str(self.plan), "--digest", done])[0], 2, "--digest takes no plan")
+        self.assertEqual(run(["--status", done, "--digest", done])[0], 2)
+        # Control: --digest given with --out must not wipe the run it reads.
+        self.assertEqual(run(["--digest", done, "--out", done])[0], 2)
+        self.assertTrue(self.status_of(Path(done))["finished"])
 
 
 if __name__ == "__main__":
