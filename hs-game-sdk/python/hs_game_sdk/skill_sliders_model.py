@@ -13,12 +13,13 @@ the checks.
   1086 of the modifier array, and `LoadProjectileSettings` adds that element to
   the projectile's scale.
 - Projectile speed: stats 74 (flat) and 75 (percent) are stored in elements
-  1084 and 1085, and `LoadProjectileSettings` multiplies the projectile's
-  `deltaSpeed` by `1 + element 1085` and adds `element 1084 * roomSpd`.
+  1084 and 1085; on the projectile's `deltaSpeed`, 75 acts as a percent
+  multiplier and 74 as a flat addition scaled by `roomSpd`.
 
 What the static reading leaves open (the scale `LoadAllModifiers` applies to
-stats 74 and 75, the factor callers pass for AoE, the outcome of the random
-rolls) is an explicit parameter here, never a guessed constant.
+stats 74 and 75, the order they combine in, the factor callers pass for AoE,
+whether a chance-based bonus came up) is an explicit parameter here, never a
+guessed constant.
 
 This module models the game only. ForgePact's research levers (`projprobe`,
 ForgePact#160) are that mod's own code and live in the test as input
@@ -65,6 +66,9 @@ AOE_SCALE_ELEMENT = 1086
 #: One point of a percent stat, as both helpers and `LoadAOEModifiers` use it:
 #: 0.01 (static reading; a named global whose value was inferred from its use).
 PER_POINT = Fraction(1, 100)
+#: The two orders in which the speed stats could combine on `deltaSpeed`; which
+#: one the game uses is not established until measured.
+SPEED_ORDERS = ("multiply_first", "add_first")
 
 Number = Union[Fraction, int]
 
@@ -86,17 +90,15 @@ def ranged_extra_projectiles(flat: Number, bonus: Number = 0, bonus_rolled: bool
                              one_more_rolled: bool = False) -> Fraction:
     """What `ReturnExtraProjectilesRanged(player, x)` returns: the extra count only.
 
-    `flat` is stat 239. `bonus` (stat 452) counts only when its roll succeeded,
-    which needs the looked-up value 13 and a roll below stat 451. One more counts
-    when stat 240's roll succeeded. Both outcomes are inputs, because the rolls'
-    range is not established.
+    A sum of three parts: the flat stat 239, the chance-based bonus worth stat
+    452 (its chance from stat 451, for some skills only) and the chance-based
+    single extra (its chance from stat 240). Whether each chance came up is an
+    input, because the chances' scale and which skills qualify are not
+    established.
     """
-    extra = Fraction(flat)
-    if bonus_rolled:
-        extra += Fraction(bonus)
-    if one_more_rolled:
-        extra += 1
-    return extra
+    return (Fraction(flat)
+            + (Fraction(bonus) if bonus_rolled else 0)
+            + (1 if one_more_rolled else 0))
 
 
 def ranged_projectile_total(base: Number, extra: Number) -> Fraction:
@@ -135,20 +137,20 @@ def stored_speed_elements(stat74: Number, stat75: Number, flat_scale: Number,
 
 
 def projectile_delta_speed(delta_speed: Number, percent_element: Number = 0,
-                           flat_element: Number = 0, room_spd: Number = 1) -> Fraction:
+                           flat_element: Number = 0, room_spd: Number = 1, *, order: str) -> Fraction:
     """The `deltaSpeed` `LoadProjectileSettings` leaves on a projectile.
 
-    Only a `deltaSpeed` above 0 is changed: multiplied by `1 + percent_element`
-    when that is above 0, then raised by `flat_element * room_spd` when the
-    flat element is above 0. `room_spd` is the game's global speed factor.
+    The percent element acts as a multiplier of `1 + percent_element` and the
+    flat element as an addition of `flat_element * room_spd`, `room_spd` being
+    the game's global speed factor. Which of the two applies first is for
+    ForgePact#160's Live 1 to measure, so `order` (one of `SPEED_ORDERS`) has no
+    default. What either does at 0 or below is not established; the model only
+    claims non-negative elements.
     """
-    speed = Fraction(delta_speed)
-    if speed <= 0:
-        return speed
-    percent = Fraction(percent_element)
-    if percent > 0:
-        speed *= 1 + percent
-    flat = Fraction(flat_element)
-    if flat > 0:
-        speed += flat * Fraction(room_spd)
-    return speed
+    if order not in SPEED_ORDERS:
+        raise ValueError("order must be one of %r, not %r" % (SPEED_ORDERS, order))
+    multiplier = 1 + Fraction(percent_element)
+    addition = Fraction(flat_element) * Fraction(room_spd)
+    if order == "add_first":
+        return (Fraction(delta_speed) + addition) * multiplier
+    return Fraction(delta_speed) * multiplier + addition

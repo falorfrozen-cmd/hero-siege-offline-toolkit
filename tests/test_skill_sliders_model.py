@@ -57,6 +57,18 @@ def projprobe_speed(value, mult):
     return Fraction(value) * mult
 
 
+#: `projprobe speed stat <id> add <bonus>` stops at 100.
+PROJPROBE_SPEED_ADD_MAX = 100
+
+
+def projprobe_speed_add(value, bonus):
+    """`projprobe speed stat <id> add <bonus>`: bonus, clamped to 0..100, is
+    added to what the dispatcher returns for the stat inside the speed scope,
+    so a stat a character does not carry (0) can still be raised."""
+    bonus = max(Fraction(0), min(Fraction(PROJPROBE_SPEED_ADD_MAX), Fraction(bonus)))
+    return Fraction(value) + bonus
+
+
 class BaselineTests(unittest.TestCase):
     """The game with no mod: the spec's static reading, as numbers."""
 
@@ -111,17 +123,35 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(model.projectile_scale(Fraction(3, 2), model.aoe_scale_bonus(25)), Fraction(7, 4))
 
     def test_no_speed_stats_leaves_delta_speed(self):
-        self.assertEqual(model.projectile_delta_speed(8), 8)
-        self.assertEqual(model.projectile_delta_speed(8, room_spd=2), 8)
+        for order in model.SPEED_ORDERS:
+            with self.subTest(order=order):
+                self.assertEqual(model.projectile_delta_speed(8, order=order), 8)
+                self.assertEqual(model.projectile_delta_speed(8, room_spd=2, order=order), 8)
 
-    def test_percent_multiplies_then_flat_adds_times_room_speed(self):
-        self.assertEqual(model.projectile_delta_speed(8, percent_element=Fraction(1, 2)), 12)
-        self.assertEqual(model.projectile_delta_speed(8, flat_element=2, room_spd=Fraction(1, 2)), 9)
-        self.assertEqual(model.projectile_delta_speed(8, percent_element=Fraction(1, 2), flat_element=2), 14)
+    def test_percent_multiplies_and_flat_adds_times_room_speed(self):
+        for order in model.SPEED_ORDERS:
+            with self.subTest(order=order):
+                self.assertEqual(model.projectile_delta_speed(8, percent_element=Fraction(1, 2), order=order), 12)
+                self.assertEqual(model.projectile_delta_speed(8, flat_element=2, room_spd=Fraction(1, 2), order=order), 9)
 
-    def test_a_projectile_with_no_delta_speed_is_not_changed(self):
-        self.assertEqual(model.projectile_delta_speed(0, percent_element=1, flat_element=5), 0)
-        self.assertEqual(model.projectile_delta_speed(-2, percent_element=1, flat_element=5), -2)
+    def test_the_order_matters_only_when_both_apply_and_is_a_parameter(self):
+        # Which comes first is for Live 1 to measure, so it has no default.
+        both = dict(percent_element=Fraction(1, 2), flat_element=2)
+        self.assertEqual(model.projectile_delta_speed(8, order="multiply_first", **both), 14)
+        self.assertEqual(model.projectile_delta_speed(8, order="add_first", **both), 15)
+        with self.assertRaises(TypeError):
+            model.projectile_delta_speed(8, **both)
+        with self.assertRaises(ValueError):
+            model.projectile_delta_speed(8, order="sideways", **both)
+
+    def test_the_ranged_extra_is_a_sum_of_its_parts(self):
+        # Each part counts on its own; none depends on another.
+        for bonus_rolled in (False, True):
+            for one_more_rolled in (False, True):
+                with self.subTest(bonus_rolled=bonus_rolled, one_more_rolled=one_more_rolled):
+                    self.assertEqual(model.ranged_extra_projectiles(2, bonus=3, bonus_rolled=bonus_rolled,
+                                                                    one_more_rolled=one_more_rolled),
+                                     2 + (3 if bonus_rolled else 0) + (1 if one_more_rolled else 0))
 
     def test_the_stored_speed_scale_is_a_parameter(self):
         self.assertEqual(model.stored_speed_elements(3, 50, 1, Fraction(1, 100)), (3, Fraction(1, 2)))
@@ -163,25 +193,40 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(projprobe_aoe(10, -5), 10)
 
     def test_speed_instance_form_scales_the_settled_delta_speed(self):
-        settled = model.projectile_delta_speed(8, percent_element=Fraction(1, 2))
-        self.assertEqual(projprobe_speed(settled, 2), 24)
+        for order in model.SPEED_ORDERS:
+            with self.subTest(order=order):
+                settled = model.projectile_delta_speed(8, percent_element=Fraction(1, 2), order=order)
+                self.assertEqual(projprobe_speed(settled, 2), 24)
 
     def test_speed_stat_form_scales_the_stat_before_it_is_stored(self):
         # The stat form doubles stat 75 while LoadAllModifiers reads it, so it
         # doubles the percent element, not the whole speed.
-        _, percent = model.stored_speed_elements(0, projprobe_speed(50, 2), 1, Fraction(1, 100))
-        self.assertEqual(model.projectile_delta_speed(8, percent_element=percent), 16)
-        _, native = model.stored_speed_elements(0, 50, 1, Fraction(1, 100))
-        self.assertEqual(model.projectile_delta_speed(8, percent_element=native), 12)
+        for order in model.SPEED_ORDERS:
+            with self.subTest(order=order):
+                _, percent = model.stored_speed_elements(0, projprobe_speed(50, 2), 1, Fraction(1, 100))
+                self.assertEqual(model.projectile_delta_speed(8, percent_element=percent, order=order), 16)
+                _, native = model.stored_speed_elements(0, 50, 1, Fraction(1, 100))
+                self.assertEqual(model.projectile_delta_speed(8, percent_element=native, order=order), 12)
+
+    def test_speed_stat_form_multiplier_cannot_raise_a_zero_stat_but_add_can(self):
+        # A character with no projectile-speed gear reads 0 for stat 75. The
+        # multiplier leaves it 0 (negative control); the additive form moves it.
+        _, multiplied = model.stored_speed_elements(0, projprobe_speed(0, 2), 1, Fraction(1, 100))
+        self.assertEqual(model.projectile_delta_speed(8, percent_element=multiplied, order="multiply_first"), 8)
+        _, added = model.stored_speed_elements(0, projprobe_speed_add(0, 50), 1, Fraction(1, 100))
+        self.assertEqual(model.projectile_delta_speed(8, percent_element=added, order="multiply_first"), 12)
 
     def test_speed_is_never_slowed_and_capped(self):
         self.assertEqual(projprobe_speed(8, Fraction(1, 2)), 8)
         self.assertEqual(projprobe_speed(8, 10), 8 * PROJPROBE_SPEED_MAX)
+        self.assertEqual(projprobe_speed_add(0, -5), 0)
+        self.assertEqual(projprobe_speed_add(0, 1000), PROJPROBE_SPEED_ADD_MAX)
 
     def test_every_lever_at_its_off_value_is_the_baseline(self):
         self.assertEqual(projprobe_amount(5, 0), 5)
         self.assertEqual(projprobe_aoe(40, 0), 40)
         self.assertEqual(projprobe_speed(8, 1), 8)
+        self.assertEqual(projprobe_speed_add(8, 0), 8)
 
 
 class MeasuredTests(unittest.TestCase):
@@ -296,12 +341,15 @@ class LeverParityTests(unittest.TestCase):
                                       rf"bonus, 0\.0, {PROJPROBE_AOE_MAX}\.0\);")
         self.assertRegex(self.source, rf"ProjProbeClampSpeed\(double mult\)\s*\{{\s*return std::clamp\("
                                       rf"mult, 1\.0, {PROJPROBE_SPEED_MAX}\.0\);")
+        self.assertRegex(self.source, rf"ProjProbeClampSpeedAdd\(double bonus\)\s*\{{\s*return std::clamp\("
+                                      rf"bonus, 0\.0, {PROJPROBE_SPEED_ADD_MAX}\.0\);")
 
     def test_a_lever_adds_or_multiplies_after_the_game(self):
         self.assertIn("boosted = native * mul + add;", self.source)
         self.assertIn("ProjProbeAdd(t, r, (double)g_PpAmount)", self.source)
         self.assertIn("ProjProbeAdd(t, r, g_PpAoe)", self.source)
         self.assertIn("ProjProbeAdjust(r, 0.0, g_PpSpeedMult, native, boosted)", self.source)
+        self.assertIn("ProjProbeAdjust(r, g_PpSpeedAdd, 1.0, native, boosted)", self.source)
         self.assertIn('ProjProbeScaleVar(inst, "deltaSpeed", mult, note, delta)', self.source)
 
 

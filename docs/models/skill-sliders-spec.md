@@ -49,15 +49,15 @@ Every claim carries one of four labels, and a source:
     reaches a projectile as an **additive** change of its scale: 100 points of stat
     554, with a factor of 1, add 1.0.
 - **Projectile amount.**
-  - `ReturnExtraSpellProjectiles(player, x, base)` returns the **adjusted total**. It
-    reads stat **394**; when that is above 0, `base` becomes
-    `floor(base × (1 + stat394 × 0.01))`. It then adds stat **311** and returns the
-    sum. The 0.01 is a named global whose value was inferred from its use.
-  - `ReturnExtraProjectilesRanged(player, x)` returns the **extra count only**. It
-    starts from stat **239**. When a lookup keyed by its second argument gives 13, it
-    reads stat **451** and, when a random roll falls below it, adds stat **452**.
-    Then, when stat **240** is above 0 and a random roll falls below it, it adds one.
-    The caller adds the result to its own base.
+  - `ReturnExtraSpellProjectiles(player, x, base)` returns the **adjusted total**.
+    Stat **394** raises `base` by a percent, with the result floored, and stat
+    **311** is added on top. The percent's 0.01 is a named global whose value was
+    inferred from its use.
+  - `ReturnExtraProjectilesRanged(player, x)` returns the **extra count only**: a
+    flat stat (**239**) plus up to two chance-based bonuses, one worth stat **452**
+    with its chance from stat **451** (for some skills only), and one worth a single
+    projectile with its chance from stat **240**. The caller adds the result to its
+    own base.
   - Both are called from the `Talents<Class>` scripts (44 and 19 direct sites
     found), so one native detour on each reaches every skill that asks it.
 - **Projectile speed.**
@@ -65,10 +65,10 @@ Every claim carries one of four labels, and a source:
     dispatcher returns stat **75**, and element **1084** right after stat **74**.
     Whether it stores the stat as read or scaled was not read.
   - `LoadProjectileSettings` changes the projectile's `deltaSpeed`, not the `speed`
-    built-in: only when `deltaSpeed` is above 0, it multiplies it by
-    `1 + projEffect[1085]` when that element is above 0, and then adds
-    `projEffect[1084] × roomSpd` when that element is above 0. `roomSpd` is a global
-    speed factor. So stat 75 is the multiplicative form and stat 74 the flat form.
+    built-in. Stat 75 (element 1085) acts on it as a percent multiplier and stat 74
+    (element 1084) as a flat addition scaled by `roomSpd`, a global speed factor.
+    So stat 75 is the multiplicative form and stat 74 the flat form. The order in
+    which the two combine is not a reading here; it is for Live 1 to measure.
   - `TalentUseSetSpeed` is cast speed (stats 68, 69 and 106), not projectile speed.
 
 ## Measured
@@ -85,7 +85,10 @@ both extra-projectile helpers; `projprobe aoe <bonus>` adds `bonus` to element 0
 the projectile's own `deltaSpeed` (and its `speed`) after `LoadProjectileSettings`
 returns, while `projprobe speed stat <id> <mult>` multiplies what the dispatcher
 returns for stat `<id>` while `LoadAllModifiers` or `LoadProjectileSettings` is on
-the stack.
+the stack, and `projprobe speed stat <id> add <bonus>` (0..100) adds to it instead.
+The additive form exists because a character with no projectile-speed gear reads 0
+for stats 74 and 75, and a multiplier cannot move a 0; `projprobe` counts such a
+call as a no-op, not as applied.
 
 ## Not established
 
@@ -101,8 +104,10 @@ the stack.
   take their size from element 1086 the way projectiles do.
 - **How a class script uses the projectile count** (loop count, spread width or
   cap), so whether one more in the helper's return is one more projectile.
-- **The range of the random rolls** in `ReturnExtraProjectilesRanged`, and what the
-  value 13 identifies. The model takes each roll's outcome as a boolean.
+- **The scale of the chances** in `ReturnExtraProjectilesRanged`, and which skills
+  qualify for the 451/452 bonus. The model takes each bonus's outcome as a boolean.
+- **The order in which stats 74 and 75 combine on `deltaSpeed`**, and what either
+  does at 0 or below. The model takes the order as a parameter with no default.
 - **Whether a lever stays with the player's own skills**: `LoadAllModifiers` is also
   called from non-player objects' Create closures.
 
@@ -115,9 +120,9 @@ A pure function of numbers, with exact fractions
   `ReturnExtraSpellProjectiles` returns. `base`, floored after the stat-394 percent
   when that is above 0, plus stat 311.
 - `ranged_extra_projectiles(flat, bonus=0, bonus_rolled=False, one_more_rolled=False)`:
-  what `ReturnExtraProjectilesRanged` returns. Stat 239, plus stat 452 when its roll
-  succeeded, plus one when stat 240's roll succeeded. The rolls are inputs; nothing
-  here draws a random number.
+  what `ReturnExtraProjectilesRanged` returns, as one sum: stat 239, stat 452 if its
+  chance came up, and one if stat 240's chance came up. The outcomes are inputs;
+  nothing here draws a random number.
 - `ranged_projectile_total(base, extra)`: the caller's base plus that extra.
 - `aoe_scale_bonus(stat554, factor=1, also=())`: what one `LoadAOEModifiers` pass
   adds to element 1086 (each stat × 0.01 × `factor`).
@@ -125,8 +130,10 @@ A pure function of numbers, with exact fractions
   leaves, the element added only when it is above 0.
 - `stored_speed_elements(stat74, stat75, flat_scale, percent_scale)`: elements 1084
   and 1085, each stat times a scale that is not established.
-- `projectile_delta_speed(delta_speed, percent_element=0, flat_element=0, room_spd=1)`:
-  the `deltaSpeed` `LoadProjectileSettings` leaves.
+- `projectile_delta_speed(delta_speed, percent_element=0, flat_element=0, room_spd=1, *, order)`:
+  the `deltaSpeed` `LoadProjectileSettings` leaves, the percent as a multiplier of
+  `1 + percent_element` and the flat part as `flat_element × room_spd`, combined in
+  the `order` given (`"multiply_first"` or `"add_first"`) until Live 1 measures it.
 
 ## What the model cannot catch
 
