@@ -3086,11 +3086,15 @@ the controls and the table are in the Item Editor's
   not established; that it is `LootGroundDrop` is not observed. The item
   that reached the ground still read the rarity the placement set, so it was
   not the temporary rebuild above (§18.5 corrects its older reading).
-- What this means for a mod: "the game built this item's struct through
-  `CreateItemNew` just now" separates a new drop from an existing struct put
-  back on the ground without knowing the bag drop's script, provided the
-  `CreateItemNew` hook is an inline detour (`LootGroundCreate` calls it
-  directly). ForgePact's Loot announcements use that (the creation guard).
+- **Not established (a design inference, not measured):** "the game built
+  this item's struct through `CreateItemNew` this frame or the last" may
+  separate a new drop from an existing struct put back on the ground without
+  knowing the bag drop's script. It needs the `CreateItemNew` hook to be an
+  inline detour (`LootGroundCreate` calls it directly). The rebuild of the
+  same item measured above, around the pickup or the drop, could defeat it if
+  that rebuild is given the existing struct or the ground receives a copy.
+  ForgePact's Loot announcements use it (the creation guard); its Live
+  procedure 3 measures whether a bag drop is held (`bag-drop-silent`).
 
 [loot announcements, Live procedure 2](../ForgePact/docs/loot-announcement-research.md#live-procedure-2)
 
