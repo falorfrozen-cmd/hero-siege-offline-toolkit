@@ -229,8 +229,13 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(projprobe_speed_add(8, 0), 8)
 
 
+#: The research levers a measured row may apply to the model's result.
+LEVERS = {"projprobe_amount": projprobe_amount, "projprobe_aoe": projprobe_aoe,
+          "projprobe_speed": projprobe_speed, "projprobe_speed_add": projprobe_speed_add}
+
+
 class MeasuredTests(unittest.TestCase):
-    """The model against ForgePact#160 Live 1; rows not `measured` are skipped."""
+    """The model against ForgePact#160's live sessions; rows not `measured` are skipped."""
 
     @classmethod
     def setUpClass(cls):
@@ -270,10 +275,32 @@ class MeasuredTests(unittest.TestCase):
                 function = getattr(model, call["function"])
                 args = {key: Fraction(str(value)) if isinstance(value, (int, float)) else value
                         for key, value in call["args"].items()}
-                self.assertEqual(function(**args), Fraction(str(call["observed"])), row["what"])
+                result = function(**args)
+                lever = call.get("lever")
+                if lever:
+                    # Our code, not the game's: the lever acts on the game's result.
+                    result = LEVERS[lever["transform"]](result, Fraction(str(lever["value"])))
+                miss = abs(result - Fraction(str(call["observed"])))
+                self.assertLessEqual(miss, Fraction(str(call.get("tolerance", 0))), row["what"])
                 checked += 1
         if not checked:
-            self.skipTest("no measured row yet (ForgePact#160 Live 1 has not run)")
+            self.skipTest("no measured row with a model call")
+
+    def test_the_tolerance_is_a_printing_allowance_not_a_fit(self):
+        # Negative control: a tolerance only covers the capture's six printed
+        # decimals, so a row whose model is off by a real amount still fails.
+        for row in self._measured():
+            call = row.get("model") or {}
+            with self.subTest(row=row["id"]):
+                self.assertLessEqual(Fraction(str(call.get("tolerance", 0))), Fraction(1, 10 ** 6))
+        self.assertGreater(abs(model.projectile_delta_speed(Fraction(35, 12), percent_element=Fraction(1, 100),
+                                                            order="multiply_first") - Fraction("2.93125")),
+                           Fraction(1, 10 ** 6))
+
+    def test_the_measured_rows_cover_each_lever(self):
+        functions = {row["model"]["function"] for row in self._measured() if row.get("model")}
+        for name in ("spell_projectile_total", "aoe_scale_bonus", "projectile_scale", "projectile_delta_speed"):
+            self.assertIn(name, functions)
 
 
 class NoDecompilerOutputTests(unittest.TestCase):

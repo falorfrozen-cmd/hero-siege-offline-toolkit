@@ -67,7 +67,7 @@ AOE_SCALE_ELEMENT = 1086
 #: 0.01 (static reading; a named global whose value was inferred from its use).
 PER_POINT = Fraction(1, 100)
 #: The two orders in which the speed stats could combine on `deltaSpeed`; which
-#: one the game uses is not established until measured.
+#: one the game uses is not established (not measured).
 SPEED_ORDERS = ("multiply_first", "add_first")
 
 Number = Union[Fraction, int]
@@ -142,10 +142,10 @@ def projectile_delta_speed(delta_speed: Number, percent_element: Number = 0,
 
     The percent element acts as a multiplier of `1 + percent_element` and the
     flat element as an addition of `flat_element * room_spd`, `room_spd` being
-    the game's global speed factor. Which of the two applies first is for
-    ForgePact#160's Live 1 to measure, so `order` (one of `SPEED_ORDERS`) has no
-    default. What either does at 0 or below is not established; the model only
-    claims non-negative elements.
+    the game's global speed factor. ForgePact#160's live sessions raised one
+    stat at a time, so which of the two applies first was not measured and
+    `order` (one of `SPEED_ORDERS`) has no default. What either does below 0 is
+    not established; the model only claims non-negative elements.
     """
     if order not in SPEED_ORDERS:
         raise ValueError("order must be one of %r, not %r" % (SPEED_ORDERS, order))

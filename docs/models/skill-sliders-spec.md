@@ -68,12 +68,48 @@ Every claim carries one of four labels, and a source:
     built-in. Stat 75 (element 1085) acts on it as a percent multiplier and stat 74
     (element 1084) as a flat addition scaled by `roomSpd`, a global speed factor.
     So stat 75 is the multiplicative form and stat 74 the flat form. The order in
-    which the two combine is not a reading here; it is for Live 1 to measure.
+    which the two combine is not a reading here.
   - `TalentUseSetSpeed` is cast speed (stats 68, 69 and 106), not projectile speed.
+- **Skill objects that are not projectiles** (read after the first live session).
+  - A White Mage talent creates its own objects, parented under
+    `Player_Damage_Parent_obj` or `Player_Ability_Parent_obj`, and does not reach
+    `LoadProjectileSettings`, which belongs to `Projectile_Player_obj` (the class
+    basic attack's object).
+  - An event of each of those two parents applies the same arithmetic to its own
+    instance: element 1085 scales `deltaSpeed` and element 1084 adds to it, both
+    only while `deltaSpeed` is above 0; element 1086, when above 0, is added to
+    `maxScale` if that is non-zero, and otherwise to both `image_xscale` and
+    `image_yscale`. So `projectile_scale` below describes these objects too, when
+    their `maxScale` is 0.
+  - The modifier list reaches such an object through `SetAllModifiersNew`, which
+    the talent script calls after creating it. The Healing Zone's branch makes no
+    such call, and the zone clamps its own drawn scale to 1.5, so AoE size does
+    not reach it.
 
 ## Measured
 
-None yet: ForgePact#160's Live 1 has not run.
+ForgePact#160's three live sessions (2026-10-04, Sorak, a White Mage, research
+build sha256 `e9064f6a…5603c3`); the research doc's `## Live 1` has every check.
+The rows are in
+[`hs-game-sdk/curated/skill_sliders_measurements.json`](../../hs-game-sdk/curated/skill_sliders_measurements.json),
+and `MeasuredTests` checks each against the model.
+
+- **Projectile amount** (Shadow Bolt): `ReturnExtraSpellProjectiles` called with a
+  base of 1 returned 1 and one bolt appeared, three times; with 2 added to its
+  return, 3 bolts appeared, twice. The helper's total is the bolt count.
+- **AoE size** (Soul Spurn): stat 554 read 0 and the object's `projEffect[1086]` 0,
+  with both image scales 7.5; with 50 added to stat 554, element 1086 read 0.5 and
+  both scales 8.0. So the net factor on this path is 1 on 0.01 per point, and the
+  element is added to the scale. Mana Orb showed the same (1.15 to 1.65), though
+  its check was left inconclusive. The Healing Zone, with stat 554 at 50, read
+  element 1086 0 and scale 1.5.
+- **Projectile speed** (Shadow Bolt, `deltaSpeed` 2.916667 at baseline, which the
+  rows read as 35/12): stats 74 and 75 read 0 on this character. Stat 75 raised
+  to 0.5 and to 50 gave ×1.005 and ×1.5, so element 1085 is the stat times 0.01.
+  Stat 74 raised to 0.5 and to 50 added 0.208333 and 20.833333, so each point adds
+  5/12 of `deltaSpeed`, linearly; how that splits between a stored scale and
+  `roomSpd` was not separated. On every read the `speed` built-in equalled
+  `deltaSpeed` times the object's `deltaTimer`.
 
 ## Our code
 
@@ -87,29 +123,38 @@ returns, while `projprobe speed stat <id> <mult>` multiplies what the dispatcher
 returns for stat `<id>` while `LoadAllModifiers` or `LoadProjectileSettings` is on
 the stack, and `projprobe speed stat <id> add <bonus>` (0..100) adds to it instead.
 The additive form exists because a character with no projectile-speed gear reads 0
-for stats 74 and 75, and a multiplier cannot move a 0; `projprobe` counts such a
-call as a no-op, not as applied.
+for stats 74 and 75 (measured on Sorak), and a multiplier cannot move a 0;
+`projprobe` counts such a call as a no-op, not as applied. The live sessions used
+the additive form.
 
 ## Not established
 
-- **What the dispatcher returns for stats 74 and 75**, which have no case, and
-  which branch rounds a result down on the way out.
-- **Whether 74 and 75 are the tooltip's "Projectile Speed"**, and how
-  `LoadAllModifiers` scales them into elements 1084 and 1085. The model takes the
-  two scale factors as parameters with no default.
-- **That `deltaSpeed`, not `speed`, moves a player projectile each step.**
-- **The factor callers pass as `LoadAOEModifiers`' sixth argument**, and whether
-  stats 552 and 553 apply to a given skill. The model takes both as parameters.
-- **What stats 559 and 560 are**, and whether the game's `*_AOE_obj` area objects
-  take their size from element 1086 the way projectiles do.
-- **How a class script uses the projectile count** (loop count, spread width or
-  cap), so whether one more in the helper's return is one more projectile.
+- **What the dispatcher returns for stats 74 and 75** when a character carries
+  them (they have no case; 0 was read with none), and which branch rounds a
+  result down on the way out.
+- **Which of 74 and 75 is the tooltip's "Projectile Speed"** line. The model takes
+  the two storage scales as parameters with no default; the rows pass 1 for stat
+  74 with the measured 5/12 as `room_spd`, and 0.01 for stat 75.
+- **How stat 74's 5/12 per point splits** between the scale `LoadAllModifiers`
+  stores it with and `roomSpd`, and whether it holds in other rooms.
+- **The factor callers pass as `LoadAOEModifiers`' sixth argument**, whether stats
+  552 and 553 apply to a given skill, and how `LoadAllModifiers` scales stat 554 in
+  general (the net 0.01 per point is measured on two White Mage skills). The model
+  takes the factor as a parameter.
+- **What stats 559 and 560 are**, which skills `LoadAllModifiers` reads stat 554
+  for, and what element 1086 does on an object whose `maxScale` is non-zero.
+- **How a class other than the White Mage uses the projectile count** (loop count,
+  spread width or cap). `ReturnExtraProjectilesRanged` was not observed live.
 - **The scale of the chances** in `ReturnExtraProjectilesRanged`, and which skills
   qualify for the 451/452 bonus. The model takes each bonus's outcome as a boolean.
-- **The order in which stats 74 and 75 combine on `deltaSpeed`**, and what either
-  does at 0 or below. The model takes the order as a parameter with no default.
-- **Whether a lever stays with the player's own skills**: `LoadAllModifiers` is also
-  called from non-player objects' Create closures.
+- **The order in which stats 74 and 75 combine on `deltaSpeed`** (they were not
+  raised together), and what either does below 0. The model takes the order as a
+  parameter with no default.
+- **The instance form on a `Projectile_Player_obj`**: no basic attack was seen.
+- **How a lever keeps to the player's own casts**: the mercenary, a base-6 helper
+  call that rides along with casts, and the double-cast proc reach these routes
+  (measured); summons and NPCs whose Create closures call `LoadAllModifiers` were
+  not observed.
 
 ## The model
 
@@ -127,13 +172,15 @@ A pure function of numbers, with exact fractions
 - `aoe_scale_bonus(stat554, factor=1, also=())`: what one `LoadAOEModifiers` pass
   adds to element 1086 (each stat × 0.01 × `factor`).
 - `projectile_scale(base_scale, element_1086)`: the scale `LoadProjectileSettings`
-  leaves, the element added only when it is above 0.
+  leaves, or a skill object's parent event when its `maxScale` is 0, the element
+  added only when it is above 0.
 - `stored_speed_elements(stat74, stat75, flat_scale, percent_scale)`: elements 1084
   and 1085, each stat times a scale that is not established.
 - `projectile_delta_speed(delta_speed, percent_element=0, flat_element=0, room_spd=1, *, order)`:
   the `deltaSpeed` `LoadProjectileSettings` leaves, the percent as a multiplier of
   `1 + percent_element` and the flat part as `flat_element × room_spd`, combined in
-  the `order` given (`"multiply_first"` or `"add_first"`) until Live 1 measures it.
+  the `order` given (`"multiply_first"` or `"add_first"`), since the order was not
+  measured.
 
 ## What the model cannot catch
 
