@@ -121,6 +121,11 @@ def _entry(entry_id):
     return next(e for e in _entries() if e["id"] == entry_id)
 
 
+def _answering(entries):
+    """The entries allowed to answer a hypothesis: measured, and naming one."""
+    return [e for e in entries if e["status"] == "measured" and e.get("hypothesis")]
+
+
 class BaselineTests(unittest.TestCase):
     """The game with no mod: the chest opens only once no monster is alive."""
 
@@ -447,15 +452,14 @@ class HypothesisTests(unittest.TestCase):
 
     def test_every_hypothesis_is_none_until_measured(self):
         answers = {}
-        for entry in _entries():
-            if entry["status"] == "measured" and entry.get("hypothesis"):
-                values = entry["values"] or {}
-                self.assertIn("verdict", values, entry["id"])
-                if entry["hypothesis"] == "planned_total_source":
-                    self.assertIn(values["verdict"], TOTAL_SOURCES, entry["id"])
-                else:
-                    self.assertIsInstance(values["verdict"], bool, entry["id"])
-                answers[entry["hypothesis"]] = values["verdict"]
+        for entry in _answering(_entries()):
+            values = entry["values"] or {}
+            self.assertIn("verdict", values, entry["id"])
+            if entry["hypothesis"] == "planned_total_source":
+                self.assertIn(values["verdict"], TOTAL_SOURCES, entry["id"])
+            else:
+                self.assertIsInstance(values["verdict"], bool, entry["id"])
+            answers[entry["hypothesis"]] = values["verdict"]
         for key, value in model.HYPOTHESES.items():
             with self.subTest(key=key):
                 self.assertEqual(value, answers.get(key))
@@ -495,11 +499,15 @@ class HypothesisTests(unittest.TestCase):
             self.assertIsNone(model.HYPOTHESES["planned_total_source"])
 
     def test_a_report_does_not_count_as_a_measurement(self):
-        # Negative control: a `reported` or `pending` entry carrying a verdict answers nothing.
+        # Negative control through the same gate the hypothesis test uses: a
+        # `reported` or `pending` entry carrying a verdict answers nothing.
         fake = [{"status": "reported", "hypothesis": "boss_dungeon_same_rule", "values": {"verdict": True}},
                 {"status": "pending", "hypothesis": "planned_total_source", "values": {"verdict": "variable"}}]
-        answered = {e["hypothesis"] for e in fake if e["status"] == "measured"}
-        self.assertEqual(answered, set())
+        self.assertEqual(_answering(fake), [])
+        # Positive control: the same gate does answer a measured entry, so the
+        # empty result above is the gate refusing, not the gate seeing nothing.
+        measured = {"status": "measured", "hypothesis": "boss_dungeon_same_rule", "values": {"verdict": True}}
+        self.assertEqual(_answering(fake + [measured]), [measured])
 
 
 class DungeonChestFamilyTests(unittest.TestCase):
