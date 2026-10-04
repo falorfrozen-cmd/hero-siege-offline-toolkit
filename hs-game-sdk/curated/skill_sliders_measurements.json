@@ -1,0 +1,195 @@
+{
+  "$schema_note": "Live values that hs_game_sdk.skill_sliders_model is checked against (tests/test_skill_sliders_model.py, MeasuredTests); the mechanism is docs/models/skill-sliders-spec.md and the research is ForgePact/docs/skill-sliders-research.md (## Live 1). Rows come from ForgePact#160's three live sessions of 2026-10-04 (research build, `projprobe`, Sorak, slot 14, a White Mage); `capture` names the session's local operator capture (a gitignored hub workorder file) and `dll_sha256` the research DLL. Each row: `id`, `kind` (baseline or target), `status` (only `measured` rows are checked; `inconclusive` rows record values whose check the procedure left not-run), `date`, `source[]` ({`path`, `section`}), `scripts[]` (hs-game-sdk GameScript names), `what`, `values`, and optionally `model`: {`function`, `args`, `observed`, `lever`, `tolerance`}, the skill_sliders_model function the row checks, its keyword arguments (a number, or a string such as \"35/12\" passed to Fraction as is), the value the game showed, the research lever applied to the function's result as an input transform (`{transform, value}`, a projprobe_* function of the test), and the absolute tolerance for a value the capture printed rounded to six decimals.",
+  "measurements": [
+    {
+      "id": "amount-shadowbolt-baseline",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-live-2.md",
+      "dll_sha256": "e9064f6ab2c0b733b22b9ba824cf69471f35a1e622f3f27bdc0a17b0af5603c3",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnExtraSpellProjectiles", "gml_Script_TalentsWhiteMage"],
+      "what": "Live 2 amount-count-baseline: three single Shadow Bolt casts, each with ReturnExtraSpellProjectiles called with a base of 1 and returning 1, each left one White_Mage_Shadow_Bolt_obj (skillstate's instance count read 1, and 0 before each cast).",
+      "values": {"helper_base": 1, "helper_return": 1, "bolts": [1, 1, 1]},
+      "model": {"function": "spell_projectile_total", "args": {"base": 1}, "observed": 1}
+    },
+    {
+      "id": "amount-shadowbolt-boost",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-live-2.md",
+      "dll_sha256": "e9064f6ab2c0b733b22b9ba824cf69471f35a1e622f3f27bdc0a17b0af5603c3",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnExtraSpellProjectiles", "gml_Script_TalentsWhiteMage"],
+      "what": "Live 2 amount-count-boost: with `projprobe amount 2` the first boosted line read `1 -> 3` and two single Shadow Bolt casts left 3 bolts each. A double cast left 7 (the player's call, base 2 that time, returned 4; the double-cast proc's, base 1, returned 3); it has no same-class baseline and is not checked here.",
+      "values": {"lever": "projprobe amount 2", "first_boosted": "1 -> 3", "bolts_single": [3, 3], "bolts_double_cast": 7, "double_cast_calls": {"player": "2 -> 4", "Universal_Double_Cast_obj": "1 -> 3"}},
+      "model": {"function": "spell_projectile_total", "args": {"base": 1}, "lever": {"transform": "projprobe_amount", "value": 2}, "observed": 3}
+    },
+    {
+      "id": "aoe-stat554-to-element-1086",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-live-3.md",
+      "dll_sha256": "e9064f6ab2c0b733b22b9ba824cf69471f35a1e622f3f27bdc0a17b0af5603c3",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_StatAOESkillSize", "gml_Script_LoadAllModifiers", "gml_Script_SetAllModifiersNew"],
+      "what": "Live 3 spurn-boost and aoe-ids: with `projprobe aoe 50`, stat 554 read 50 under LoadAllModifiers (0 at baseline) and the new White_Mage_Soul_Spurn_AOE_obj's projEffect[1086] read 0.5 (0 at baseline); the boosted Mana Orb read 0.5 too. So on this path the net factor is 1 on 0.01 per point. How LoadAllModifiers scales 554 was not read.",
+      "values": {"lever": "projprobe aoe 50", "stat554": {"baseline": 0, "boosted": 50}, "element_1086": {"baseline": 0, "boosted": 0.5}},
+      "model": {"function": "aoe_scale_bonus", "args": {"stat554": 50, "factor": 1}, "observed": 0.5}
+    },
+    {
+      "id": "aoe-soulspurn-scale-baseline",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-live-3.md",
+      "dll_sha256": "e9064f6ab2c0b733b22b9ba824cf69471f35a1e622f3f27bdc0a17b0af5603c3",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_StatAOESkillSize", "gml_Script_LoadAllModifiers"],
+      "what": "Live 3 spurn-baseline: two single Soul Spurn casts, each a new White_Mage_Soul_Spurn_AOE_obj with image_xscale = image_yscale = 7.5, maxScale 0 and projEffect[1086] 0.",
+      "values": {"image_xscale": [7.5, 7.5], "image_yscale": [7.5, 7.5], "maxScale": 0, "element_1086": 0, "viewSize": 512},
+      "model": {"function": "projectile_scale", "args": {"base_scale": 7.5, "element_1086": 0}, "observed": 7.5}
+    },
+    {
+      "id": "aoe-soulspurn-scale-boost",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-live-3.md",
+      "dll_sha256": "e9064f6ab2c0b733b22b9ba824cf69471f35a1e622f3f27bdc0a17b0af5603c3",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_StatAOESkillSize", "gml_Script_LoadAllModifiers", "gml_Script_SetAllModifiersNew"],
+      "what": "Live 3 spurn-boost: with `projprobe aoe 50` (first boosted line `0 -> 50` after the cast) a new single-cast Soul Spurn object read projEffect[1086] 0.5 and image_xscale = image_yscale = 8.0, against 7.5 at baseline; maxScale stayed 0 and viewSize read 544. The skill object's parent event adds element 1086 to both image scales when maxScale is 0, the arithmetic projectile_scale models.",
+      "values": {"lever": "projprobe aoe 50", "image_xscale": 8.0, "image_yscale": 8.0, "maxScale": 0, "element_1086": 0.5, "viewSize": 544},
+      "model": {"function": "projectile_scale", "args": {"base_scale": 7.5, "element_1086": 0.5}, "observed": 8.0}
+    },
+    {
+      "id": "aoe-manaorb-scale-boost",
+      "kind": "target",
+      "status": "inconclusive",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-live-3.md",
+      "dll_sha256": "e9064f6ab2c0b733b22b9ba824cf69471f35a1e622f3f27bdc0a17b0af5603c3",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"}
+      ],
+      "scripts": ["gml_Script_StatAOESkillSize", "gml_Script_LoadAllModifiers", "gml_Script_SetAllModifiersNew"],
+      "what": "Live 3 orb-boost, left not-run by the procedure: the boosted Mana Orb was a single cast and both written baselines were double casts (1.15 on both scales). The boosted object read 1.65 on both scales and projEffect[1086] 0.5, and a supplementary single-cast baseline outside the procedure read 1.15.",
+      "values": {"lever": "projprobe aoe 50", "baseline_double_cast": 1.15, "baseline_single_supplementary": 1.15, "boosted_single": 1.65, "element_1086": 0.5, "maxScale": 0},
+      "model": {"function": "projectile_scale", "args": {"base_scale": 1.15, "element_1086": 0.5}, "observed": 1.65}
+    },
+    {
+      "id": "aoe-healing-zone-outlier",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-live-3.md",
+      "dll_sha256": "e9064f6ab2c0b733b22b9ba824cf69471f35a1e622f3f27bdc0a17b0af5603c3",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_StatAOESkillSize", "gml_Script_LoadAllModifiers"],
+      "what": "Live 3 hz-modifiers (and Live 2 aoe-obj-boost): with `projprobe aoe 50` stat 554 read 50, but the new White_Mage_Healing_Zone_obj's projEffect[1086] read 0, maxScale 3 and image_xscale 1.5, as at baseline. The modifier list does not reach the zone, whose own step clamps its scale to 1.5. No model call: the model covers what element 1086 does, not which objects receive it.",
+      "values": {"lever": "projprobe aoe 50", "stat554": 50, "element_1086": 0, "maxScale": 3, "image_xscale": 1.5, "image_yscale_live2": 1.5}
+    },
+    {
+      "id": "speed-shadowbolt-baseline",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-live-2.md",
+      "dll_sha256": "e9064f6ab2c0b733b22b9ba824cf69471f35a1e622f3f27bdc0a17b0af5603c3",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_LoadAllModifiers", "gml_Script_SetAllModifiersNew"],
+      "what": "Live 2 speed-skill-baseline: two new White_Mage_Shadow_Bolt_obj read deltaSpeed 2.916667 (printed to six decimals; the boosted rows below match exactly with 35/12). Stats 74 and 75 read 0 under LoadAllModifiers on this character (Live 1 speed-ids). The speed built-in read 2.625 and 2.919840, deltaSpeed times the object's deltaTimer (0.9 and 1.001088).",
+      "values": {"deltaSpeed": [2.916667, 2.916667], "speed": [2.625, 2.91984], "deltaTimer": [0.9, 1.001088], "stat74": 0, "stat75": 0},
+      "model": {"function": "projectile_delta_speed", "args": {"delta_speed": "35/12", "order": "multiply_first"}, "observed": 2.916667, "tolerance": 0.000001}
+    },
+    {
+      "id": "speed-stat75-add-0.5",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-live-2.md",
+      "dll_sha256": "e9064f6ab2c0b733b22b9ba824cf69471f35a1e622f3f27bdc0a17b0af5603c3",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnSpecificStat", "gml_Script_LoadAllModifiers"],
+      "what": "Live 2 speed-skill-boost: `projprobe speed stat 75 add 0.5` raised stat 75 from 0 to 0.5 inside LoadAllModifiers (first boosted `0 -> 0.5`, statApplied=1); the new bolt read deltaSpeed 2.931250, x1.005. The percent element is the stat times 0.01 (stored_speed_elements' percent_scale 1/100); stat 74 was 0, so the order does not matter here.",
+      "values": {"lever": "projprobe speed stat 75 add 0.5", "stat75": 0.5, "deltaSpeed": 2.93125, "speed": 2.943725, "deltaTimer": 1.004256},
+      "model": {"function": "projectile_delta_speed", "args": {"delta_speed": "35/12", "percent_element": "1/200", "order": "multiply_first"}, "observed": 2.93125}
+    },
+    {
+      "id": "speed-stat75-add-50",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-live-2.md",
+      "dll_sha256": "e9064f6ab2c0b733b22b9ba824cf69471f35a1e622f3f27bdc0a17b0af5603c3",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnSpecificStat", "gml_Script_LoadAllModifiers"],
+      "what": "Live 2 speed-skill-boost: `projprobe speed stat 75 add 50` (first boosted `0 -> 50`); the new bolt read deltaSpeed 4.375000, x1.5.",
+      "values": {"lever": "projprobe speed stat 75 add 50", "stat75": 50, "deltaSpeed": 4.375, "speed": 4.35897, "deltaTimer": 0.996336},
+      "model": {"function": "projectile_delta_speed", "args": {"delta_speed": "35/12", "percent_element": "1/2", "order": "multiply_first"}, "observed": 4.375}
+    },
+    {
+      "id": "speed-stat74-add-0.5",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-live-2.md",
+      "dll_sha256": "e9064f6ab2c0b733b22b9ba824cf69471f35a1e622f3f27bdc0a17b0af5603c3",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnSpecificStat", "gml_Script_LoadAllModifiers"],
+      "what": "Live 2 speed-skill-boost: `projprobe speed stat 74 add 0.5` (first boosted `0 -> 0.5`); the new bolt read deltaSpeed 3.125000, +0.208333. The 5/12 per point passed as room_spd is the measured product of how LoadAllModifiers stores stat 74 and roomSpd; this row and the next do not separate them (flat_element is the stat as read). Stat 75 was 0, so the order does not matter here.",
+      "values": {"lever": "projprobe speed stat 74 add 0.5", "stat74": 0.5, "deltaSpeed": 3.125, "speed": 3.1239, "deltaTimer": 0.999648},
+      "model": {"function": "projectile_delta_speed", "args": {"delta_speed": "35/12", "flat_element": "1/2", "room_spd": "5/12", "order": "multiply_first"}, "observed": 3.125}
+    },
+    {
+      "id": "speed-stat74-add-50",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "capture": "forgepact-issue-160-skill-sliders-live-2.md",
+      "dll_sha256": "e9064f6ab2c0b733b22b9ba824cf69471f35a1e622f3f27bdc0a17b0af5603c3",
+      "source": [
+        {"path": "docs/models/skill-sliders-spec.md", "section": "## Measured"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 7.6 Projectile count, projectile speed and AoE size"}
+      ],
+      "scripts": ["gml_Script_ReturnSpecificStat", "gml_Script_LoadAllModifiers"],
+      "what": "Live 2 speed-skill-boost: `projprobe speed stat 74 add 50` (first boosted `0 -> 50`, a double cast: statApplied=3); the new bolt read deltaSpeed 23.750000, +20.833333: the same 5/12 per point as the 0.5 row, so the flat part is linear in the stat.",
+      "values": {"lever": "projprobe speed stat 74 add 50", "stat74": 50, "deltaSpeed": 23.75, "speed": 21.375, "deltaTimer": 0.9},
+      "model": {"function": "projectile_delta_speed", "args": {"delta_speed": "35/12", "flat_element": 50, "room_spd": "5/12", "order": "multiply_first"}, "observed": 23.75}
+    }
+  ]
+}

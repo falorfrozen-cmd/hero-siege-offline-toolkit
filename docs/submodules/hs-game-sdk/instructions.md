@@ -35,6 +35,7 @@ hs-game-sdk/
 │   ├── drop_roll_measurements.json # M1-M10: recorded drop-roll numbers drop_roll_model.py is tested against (data only)
 │   ├── mining_reward_measurements.json # MR1-MR9: recorded mining-dig numbers mining_reward_model.py is tested against (data only)
 │   ├── monster_rank_measurements.json # MK1-MK24: what a monster's rank does (§13.7), the boss report, and ForgePact #44's Live 1 and 1b on bosses, for monster_rank_model.py (data only)
+│   ├── skill_sliders_measurements.json # ForgePact #160's live values for skill_sliders_model.py (data only)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
@@ -53,6 +54,7 @@ hs-game-sdk/
 │   │   ├── drop_roll_model.py  # Two-stage drop roll model, stdlib only, not exported from __init__ (hand-written)
 │   │   ├── mining_reward_model.py # What one mining dig pays (ore stacks, bonus rolls), stdlib only, not exported (hand-written)
 │   │   ├── monster_rank_model.py # What a monster's rank does to health, damage, XP and drop values, stdlib only, not exported (hand-written)
+│   │   ├── skill_sliders_model.py # Projectile count, AoE scale and projectile deltaSpeed from their stats, stdlib only, not exported (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
 │   ├── pyproject.toml
@@ -136,6 +138,20 @@ same spawn, the same unmatched top-up). The test compares a boss row's top-up wi
 at the boss's rank, so an unmatched one keeps the row out by itself. The test fails when a
 hypothesis and the fixture disagree. ForgePact's Bosses control stays in the test as `force_boss_rank`, pinned to
 `BossRarityMod.hpp` and `src/forgepact.py` by `LeverParityTests`.
+
+`skill_sliders_model.py` (2026-10-04, ForgePact issue #160, hub #408) is built the same way: spec
+`docs/models/skill-sliders-spec.md` (written from the static reading in ForgePact's
+`docs/skill-sliders-research.md`), fixture `curated/skill_sliders_measurements.json` (#160's three
+live sessions of 2026-10-04; `MeasuredTests` checks each `measured` row's `model` call, applying
+the row's research `lever` to the result and allowing only its printed-precision `tolerance`, and
+skips a row whose `status` is not `measured`), checks `tests/test_skill_sliders_model.py`. It gives
+what the game's two extra-projectile helpers return, the AoE size a projectile's or skill object's
+scale gains, and the `deltaSpeed` the projectile-speed stats leave. What is still open (how
+`LoadAllModifiers` stores stats 74 and 75, the order they combine in on `deltaSpeed`, which the
+required keyword-only `order` stands for, the AoE factor callers pass, the outcome of the chance
+rolls) is a parameter, never a guessed constant. ForgePact's research levers (`projprobe amount`,
+`aoe`, `speed`) stay in the test as transforms, pinned to `plugin/ModuleMain.cpp` by
+`LeverParityTests`.
 
 ---
 
