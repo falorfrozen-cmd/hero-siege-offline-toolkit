@@ -113,7 +113,13 @@ this cache-read-dominated work and the Sonnet tail was what hit the round caps
 (`skills/workorder/SKILL.md` § "Model tiers" has the prices and the
 measurement). Verification against mechanical criteria is genuinely cheap, so
 it gets the cheapest. Every agent that can take one also pins `effort:`, for
-the same reason it pins `model:` — left out, it silently follows the session. The verifier
+the same reason it pins `model:` — left out, it silently follows the session.
+Where `/workorder` runs one agent at more than one effort, the agent lists
+the extra levels in `effort-variants:` and `tools/sync_agent_tooling.py`
+generates `<agent>-<level>.md` for each (`planner-xhigh`, `implementer-medium`
+and so on): the `Agent` tool takes a model per call but no effort, so the
+agent's name is how a spawn picks one. Never edit a variant; edit its
+source and re-run the sync. The verifier
 never sees the implementer's reasoning, because sharing that context would mean
 sharing its blind spots.
 
@@ -134,8 +140,8 @@ reliable signal available. The driver states which row it matched, so the user
 can correct it for free.
 
 **Consultation, mid-phase.** A phase can return `ADVICE-NEEDED` with one narrow
-question; the driver spawns `consultant` (opus, read-only, `fable` for the
-hardest rows), then re-enters the phase with the answer appended to the
+question; the driver spawns `consultant` (opus, read-only, `consultant-max`
+for the hardest rows), then re-enters the phase with the answer appended to the
 workorder's `## Log`. Same-phase, same-tier re-entry is a `SendMessage` to
 that phase's own agent id (recorded in `## State` › `agents:` when it was
 spawned) — the send is what actually keeps its context and progress, not a
@@ -153,12 +159,15 @@ job one question at a time. A question without it is sent back. Cap is two per
 round; a third means triage was wrong and the *phase* escalates instead, which
 makes the frequency itself the signal rather than an open tab.
 
-**Escalation, on repeated failure.** The planner moves to `fable` on a second
-`PLAN-DEFECT` and stops on a third. This is the backstop for what the first two
-missed, not the router. It works because planning is the cheapest phase by token
-volume — a plan is a few thousand output tokens against an implementation's
-hundred thousand — so one Fable replan costs less than the implement round it
-saves.
+**Escalation, on repeated failure.** The planner moves to `planner-max`
+(opus at `max` effort) on a second `PLAN-DEFECT` and stops on a third. This is
+the backstop for what the first two missed, not the router. It works because
+planning is the cheapest phase by token volume — a plan is a few thousand
+output tokens against an implementation's hundred thousand — so one
+maximum-effort replan costs less than the implement round it saves. Until
+2026-10-05 the escalation, the hard triage rows and the hard-row consultant
+went to `fable`; the owner's license dropped it that day, and each became an
+`opus` effort variant one or two levels up.
 
 The reviewers never escalate and never consult: they run at high volume on every
 change, where 2× is real money for no measured gain. Neither does the verifier,
@@ -784,7 +793,7 @@ one object.
 | R24 cheap-routes | an `amendment:` planner with no `tools/amend_check.py save` before it or no `check` after it, made by the driver or, for a planner a workflow launch spawned (`amendment: <slug> <id>:r<n>`), by another agent of that same launch (`amend-save:`/`amend-check:`), never the planner itself; a second amendment with no implementer between it and the first (inside a launch, of the same item); or two `patch-implementer` rounds back to back in one workflow launch. Both routes skip work, so each runs only where something other than the agent taking it has checked that it applies. R11 accepts the same in-launch `check` |
 | R25 owner-scope | a `tools/amend_check.py check` that printed `SCOPE:` (a plan change following a new owner decision, exempt from the replan cap and the tier ladder) with no message typed by the user since the previous `check`, or since the first planner started. The driver writes the decision line, so the audit checks the owner actually said something |
 | R26 reread-after-write | an implementer or planner that reads a file it had already written (`Edit`/`Write`) whole more than twice — a `Read` with no `offset` or `limit`, or a bare `cat`/`type`/`Get-Content` of it — with no shell command naming the file in between (which may have rewritten it). After a write, read `git diff -- <file>`, a grep or the range instead (the owner, 2026-10-02) |
-| R27 amendment-tier | an `amendment:` planner whose transcript's model (the majority model of its assistant records) is a `fable` model. An amendment applies one stated correction and always runs on opus, whatever tier the workorder's replans escalated to; the one fable amendment measured (forgepact-74, 2026-10-02) came from a driver carrying `planner-tier=fable` over. The evidence names the label and the model |
+| R27 amendment-tier | an `amendment:` planner whose transcript's model (the majority model of its assistant records) is a `fable` model, or that ran as an escalated effort variant (`planner-xhigh`, `planner-max`; amendments spawn as `planner-medium`). An amendment applies one stated correction and always runs on opus, whatever tier the workorder's replans escalated to; the one fable amendment measured (forgepact-74, 2026-10-02) came from a driver carrying `planner-tier=fable` over. The evidence names the label and the model |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
@@ -1180,7 +1189,9 @@ Start Codex at the repository root: the hook command is a relative path.
 The generated agents keep each Claude agent's instructions verbatim, with a
 preamble translating tool names. A Claude agent without write tools becomes
 `sandbox_mode = "read-only"`. Its `effort:` becomes `model_reasoning_effort`
-(`max` becomes `xhigh`), and a Haiku-tier agent asks for `low`. The Claude
+(`max` becomes `xhigh`), and a Haiku-tier agent asks for `low`. Effort
+variants get a Codex twin like any other agent, so `planner-max` and
+`planner-xhigh` are the same there. The Claude
 model tier is not translated: Codex has no fixed model per tier, so the agent
 inherits the session's model, and the tier is recorded in a comment.
 
