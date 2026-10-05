@@ -1,5 +1,5 @@
 {
-  "$schema_note": "The gamba machine (Slot_Machine_01_obj) and Goburin's Head (ForgePact#134 phase 1, 2026-10-04). Static readings of the object's events (a local reading of the game's compiled-code table and event bodies, kept on the reader's machine; nothing quoted) and three live sessions with the research build's `gambaprobe` instrument on save slot 14, character Sorak: Live 1 (ForgePact research build, INSTRUMENT-BLIND), Live 2 (research build SHA-256 eb1fcf0997b535241ea536974f48a79658886b004266e14ff56b4d10dc87f2c0, Town of Inoya, then the first combat zone outside it) and Live 3 (research build SHA-256 1ee2b7542445ff08477c189eefb802dda6dcd75b81509f09d553211df66f5379, Town of Inoya and the Fields of Battle). The argument, the controls and the check tables are in ForgePact docs/gamba-machine-research.md, Live 1 results, Live 2 results and Live 3 results; the shared facts are docs/RUNTIME_DATA_MODELS.md section 20. Data only: no generator reads this file and there is no model. Every status is `measured`, `not-observed` or `static-reading`. No instrument-created machine survived its first step in any session; Live 3 measured a spin and a payout on a machine the game placed itself.",
+  "$schema_note": "The gamba machine (Slot_Machine_01_obj) and Goburin's Head (ForgePact#134 phase 1, 2026-10-04). Static readings of the object's events (a local reading of the game's compiled-code table and event bodies, kept on the reader's machine; nothing quoted) and four live sessions with the research build's `gambaprobe` instrument on save slot 14, character Sorak: Live 1 (ForgePact research build, INSTRUMENT-BLIND), Live 2 (research build SHA-256 eb1fcf0997b535241ea536974f48a79658886b004266e14ff56b4d10dc87f2c0, Town of Inoya, then the first combat zone outside it), Live 3 (research build SHA-256 1ee2b7542445ff08477c189eefb802dda6dcd75b81509f09d553211df66f5379, Town of Inoya and the Fields of Battle) and Live 4 (phase 4's explosion watch, research build SHA-256 cfaeadc4e7799199a7cab31278f766269cc222971ee13a42349ba9a0eccaaa50, 2026-10-05/06, two natural machines run to their explosion). The argument, the controls and the check tables are in ForgePact docs/gamba-machine-research.md, Live 1 results, Live 2 results, Live 3 results and Live 4 results; the shared facts are docs/RUNTIME_DATA_MODELS.md section 20. Data only: no generator reads this file and there is no model. Every status is `measured`, `not-observed` or `static-reading`. No instrument-created machine survived its first step in any session; Live 3 measured a spin and a payout on a machine the game placed itself, and Live 4 two machines' explosions.",
   "measurements": [
     {
       "id": "G1",
@@ -294,6 +294,49 @@
         "fallback_drop": "not-run",
         "second_machine": "not-observed",
         "state_trace": "not-observed"
+      }
+    },
+    {
+      "id": "G18",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-06",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 4 results"}],
+      "objects": ["Slot_Machine_01_obj", "Visual_Effect_Simple_obj", "Coin_obj", "Loot_Ground_obj"],
+      "scripts": ["gml_Script_PickUpGoldCheck", "gml_Script_CreateDefaultParams", "gml_Script_CreateItemNew", "gml_Script_GetUniqueRepoStruct", "gml_Script_LootGroundCreate", "gml_Script_CreateLootInFreePos", "gml_Script_DropItem", "gml_Script_DropUniqueItems"],
+      "what": "The explosion, on two natural machines, each inside an open explosion-watch window that closed build-dropped=0: the machine's sprite changed from Slot_Machine_01_spr to Slot_Machine_01_Destroyed_spr and the instance stayed (no gone line). A machine-self instance_create_layer of Visual_Effect_Simple_obj came 2 frames before the change, about 190-200 frames after the last machine-self PickUpGoldCheck debit. No build row ran for any self and no Loot_Ground_obj was created in either window, while the machine's own Coin_obj creates in the same windows were logged (the instance channel's positive control): the explosion builds no item (explosion-route none). The two machines exploded after 12 or 13 and after 8 or 9 spins (machine-self debits / the person's count), so what decides the explosion is not established.",
+      "values": {
+        "machines": 2,
+        "sprite_before": "Slot_Machine_01_spr",
+        "sprite_after": "Slot_Machine_01_Destroyed_spr",
+        "instance_removed": false,
+        "vfx_frames_before_change": [2, 2],
+        "frames_after_last_debit": [189, 198],
+        "debits_before_change": [12, 9],
+        "person_spin_count": ["13", "8/9"],
+        "explosion_window_closed": [
+          {"build_lines": 0, "build_dropped": 0, "instance_lines": 135, "instance_dropped": 120, "capped": 1},
+          {"build_lines": 0, "build_dropped": 0, "instance_lines": 66, "instance_dropped": 36, "capped": 1}
+        ],
+        "machine_coin_obj_creates_in_window": [4, 1],
+        "explosion_route": "none",
+        "explosion_rule": "not-observed"
+      }
+    },
+    {
+      "id": "G19",
+      "kind": "target",
+      "status": "not-observed",
+      "date": "2026-10-06",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 4 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_GetUniqueRepoStruct"],
+      "what": "Goburin's Head from the game itself: neither of Live 4's two explosions dropped it, and no window showed a built line with itemType=10 j=0 b=98 or a GetUniqueRepoStruct call with 10, 0, 98. The route a natural head takes, and whether an explosion that drops one builds it through the build rows, are not observed. That the head drops only on an explosion is the owner's report (2026-10-05), not a measurement. Live 4's window-control check failed its literal rule (two combat windows closed build-dropped 110 and 159 after a chest's burst of about 20 items in one frame) while its control was observed (other-self build lines and numeric built lines); the workorder's driver accepted that on 2026-10-06 on condition that each explosion window closed build-dropped=0, which both did.",
+      "values": {
+        "head_route": "not-observed",
+        "samples": 2,
+        "window_control": "FAIL-literal / control-observed",
+        "combat_window_build_dropped": [110, 159]
       }
     }
   ]

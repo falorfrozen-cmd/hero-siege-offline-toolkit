@@ -4477,21 +4477,31 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   `rollTimes01`..`rollTimes04` counters stay only as § 20.3's static reading.
   `CreateDefaultParams` itself reads nothing from `self`: it returns
   `{j, b, c}` from its three arguments alone (§ 13.4). **Static reading.**
-- The explosion, by the owner's report (2026-10-05), **not measured**: it is
-  not a payout; it comes after roughly 10-14 spins, it is the machine's last
-  act, and the machine cannot be used afterwards; in the unmodded game it is
-  the only time Goburin's Head drops. Nothing has observed it yet. After Live
-  3's last spin the last machine-self call was an `instance_create_layer` of
-  `Visual_Effect_Simple_obj` and the instance still existed (`machines=2`,
-  the same ids); whether that machine exploded there is not established, and
-  that probe did not log calls whose `self` was another object. So the
-  explosion's route, its `self` and whether it builds an item are not
-  established; the research build's explosion watch (`gambaprobe window`,
-  Live procedure 4) measures them. A force that acts on a payout build acts
-  on the wrong event.
-- The executable has the sprite `Slot_Machine_01_Destroyed_spr` (Python SDK
-  sprite 26574). **Static search**: it is the likely look of a used-up
-  machine; **not established** that the explosion sets it.
+- The explosion is the machine's sprite changing from `Slot_Machine_01_spr`
+  to `Slot_Machine_01_Destroyed_spr` (Python SDK sprite 26574); the instance
+  stays (no `gone` line followed). With the machine as `self`, an
+  `instance_create_layer` of `Visual_Effect_Simple_obj` comes 2 frames
+  before the change, which itself comes about 190-200 frames after the
+  machine's last `PickUpGoldCheck` debit. It is not a payout: inside an open
+  window whose closed line read `build-dropped=0`, no build row
+  (`CreateDefaultParams`, `CreateItemNew`, `GetUniqueRepoStruct`,
+  `LootGroundCreate`, `CreateLootInFreePos`, `DropItem`, `DropUniqueItems`)
+  ran for any `self`, and no `Loot_Ground_obj` was created, while the
+  machine's `Coin_obj` creates in the same window showed that the window saw
+  its creates. The two machines exploded after 12 or 13 and 8 or 9 spins
+  (the probe's debits and the person's count), so they did not share one
+  spin count; what decides the explosion is not established. **Measured
+  (Live 4, two natural machines, 2026-10-05/06; `explosion-route: none`).**
+  So after Live 3's last spin, where the last machine-self call was the same
+  `Visual_Effect_Simple_obj` create and the instance still existed
+  (`machines=2`), that machine may have exploded; its probe did not read the
+  sprite. A force that acts on a payout build acts on the wrong event.
+- By the owner's report (2026-10-05), **not observed**: the explosion is
+  the machine's last act, the machine cannot be used afterwards (not tried
+  in Live 4), it comes after roughly 10-14 spins, and in the unmodded game it
+  is the only time Goburin's Head drops. Neither Live 4 explosion dropped
+  the head, so the route a natural head takes, and whether an explosion
+  that drops one builds it through the build rows, are not observed.
 - `Step_0` does not decompile on this build (the decompiler process died on
   it). A call-by-call listing of it, with callees named from the symbol dump,
   shows only these named script calls: 7 `CreateDefaultParams`, 3
