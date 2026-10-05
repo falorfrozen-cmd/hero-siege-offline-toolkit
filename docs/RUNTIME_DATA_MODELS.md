@@ -3139,9 +3139,11 @@ the controls and the table are in the Item Editor's
   which puts a co-op peer's dropped item on this client's ground, builds that
   item anew here rather than receiving an existing struct. Not established:
   whether that build goes through `CreateItemNew`. Not measured: no co-op
-  session has been run. ForgePact's Loot announcements treat a peer's drop as
-  new on that reading (the module guide's Known Limitations).
-- **Measured** (2026-10-04, the same session): a player's bag drop of an item
+  session has been run. ForgePact's Loot announcements would announce a peer's
+  drop only if that build goes through `CreateItemNew`, and otherwise hold it
+  as a bag drop (the module guide's Known Limitations).
+- **Measured** (2026-10-04, ForgePact#17's Live procedure 2): a player's bag
+  drop of an item
   ForgePact had placed reached `LootGroundInit` (the shared detour counted
   it), while a both-route detour on `LootGroundDrop` counted 0; that detour
   has never counted a call live. Which script the bag drop runs through is
