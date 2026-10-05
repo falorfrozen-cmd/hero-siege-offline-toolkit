@@ -4145,8 +4145,8 @@ are not, and are written "Live 1 run Jn" here.
 What ForgePact's Goburin's Head pity research (#134, phase 1) established about
 the gamba machine on 2026-10-04: a static reading of the object's events, and
 three live sessions with its `gambaprobe` instrument (research build), on save
-slot 14 ("Sorak"), mostly in the Town of Inoya. The argument, the controls and
-the check tables are in ForgePact's
+slot 14 ("Sorak"), mostly in the Town of Inoya, with Live 3 also in the Fields
+of Battle. The argument, the controls and the check tables are in ForgePact's
 [`docs/gamba-machine-research.md`](../ForgePact/docs/gamba-machine-research.md);
 the measurements are also in `hs-game-sdk/curated/gamba_measurements.json`.
 **No instrument-created machine has survived its first step** (§ 20.3); a spin
@@ -4256,7 +4256,8 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   created so far died for one reason: `pSpwd` was still false at the first step.
   On the routes above it was never set true; on the `spawn scp` route
   `sCP` called `SetVariable(key, true)` but the stamp did not take effect
-  (below). **Static reading** (2026-10-04).
+  (below). **Static reading** (2026-10-04), the `spawn scp` stamp outcome
+  measured in Live 3 (next).
 - The `spawn scp` route (§ 20.5) meets the guard on paper and still dies:
   Live 3's `gambaprobe spawn scp` created a machine (`object=4644`, the game's
   own `sCP` frame in its caller walk) that its own `Alarm_9` removed at its
@@ -4300,9 +4301,11 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
 - In about 15 seconds of combat with no mod on, `gml_Script_cpr_irandom` (707)
   was called 1,308 times and `gml_Script_cpr_rand32` (709) 1,386 times, while
   the `irandom`, `irandom_range`, `random`, `random_range` and `choose`
-  builtins were not called at all (an `irandom` sent through `CallBuiltin` in
-  the same session did register, so those rows could see a call). Combat's
-  rolls go through the `cpr_*` scripts. **Measured** (2026-10-04). The
+  builtin rows did not move (an `irandom` sent through `CallBuiltin` in the
+  same session did register, so the rows see a `CallBuiltin`-routed call; they
+  are unproven against a compiled call, so this is not-observed, not proof
+  combat calls no builtin RNG). Combat's rolls go through the `cpr_*` scripts.
+  **Measured** (2026-10-04). The
   machine's prize roll passes the same `cpr_*` scripts (above); a builtin RNG
   row did not move, which is not-observed. **Measured (Live 3).**
 
