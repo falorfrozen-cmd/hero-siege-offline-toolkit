@@ -208,6 +208,14 @@ jobs:
           # latest.json is what the updater endpoint in tauri.conf.json points
           # at. Without it the hub can be installed but never updates itself.
           includeUpdaterJson: true
+          # Two installers are built (`bundle.targets` in tauri.conf.json), so
+          # latest.json carries `windows-x86_64-nsis`, `windows-x86_64-msi` and
+          # a plain `windows-x86_64`. An installed hub asks for the entry of the
+          # format it was installed from and falls back to the plain one. Every
+          # hub released up to hub-v1.0.6 is a per-user NSIS install, and one
+          # handed the MSI would be reinstalled per-machine on top of itself,
+          # so the fallback stays NSIS. tauri-action's default is the MSI.
+          updaterJsonPreferNsis: true
 
       # `releaseDraft: true` is deliberate -- nothing ships without someone
       # looking at it first -- but it has a consequence that is easy to forget

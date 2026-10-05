@@ -287,6 +287,43 @@ that uses it. `latest.json` is published by `tauri-action` with
 `includeUpdaterJson: true` and signed with `TAURI_SIGNING_PRIVATE_KEY`; the
 matching public key is in `tauri.conf.json`.
 
+#### Two installers
+
+`bundle.targets` builds both an NSIS installer (`-setup.exe`, per-user, no
+Administrator) and an MSI (WiX, per-machine). The MSI was added because
+antivirus heuristics flag `nsis_tauri_utils.dll`, a helper inside the NSIS
+installer, as a potentially unwanted program (issue #427). NSIS was kept
+because every hub up to hub-v1.0.6 was installed from it.
+
+- **Each hub updates through its own format.** The updater plugin knows which
+  bundle the running hub came from and asks `latest.json` for
+  `windows-x86_64-nsis` or `windows-x86_64-msi`, then for plain
+  `windows-x86_64`. `tauri-action` writes all three when both installers
+  exist. `hub-release.yml` sets `updaterJsonPreferNsis: true` so the plain
+  entry is the NSIS one.
+- **Dropping NSIS would move every existing install across formats.** With
+  the MSI as the only target, an NSIS hub falls back to the plain entry and
+  runs the MSI. Tauri's WiX template reads the NSIS install directory from the
+  registry and installs there, which for this hub is the data root
+  (`%LOCALAPPDATA%\Hero Siege Toolkit`), and the NSIS uninstall entry stays
+  beside the new one. This is a reading of the plugin and the template, not a
+  measured update; nobody has run one. `tests/test_hub_installer_targets.py`
+  fails if `nsis` leaves the targets or the fallback stops being NSIS.
+- **An MSI hub needs Administrator for every self-update, and a declined
+  prompt is silent.** The plugin starts `msiexec` and exits the hub at once,
+  before Windows asks. If the prompt is declined, or the account cannot
+  elevate, the hub is closed and the old version is still installed. No error
+  can reach the interface, because the process that would show it has gone.
+  `install_hub_update` writes `downloaded hub update <version>; starting its
+  installer, which closes the hub` to `hub.log` before the hand-off, so the
+  log at least shows that an update was started. The README tells players
+  this, and that the NSIS installer avoids it.
+- **Not yet verified live:** that WiX builds this bundle on `windows-latest`
+  (a manual dry run of `hub-release.yml` shows it, and the real `latest.json`
+  keys), that an MSI-installed hub restarts non-elevated after an update (the
+  template's launch action impersonates the user, which is a reading), and
+  that the MSI clears the antivirus flag.
+
 A manual dry run of `hub-release.yml` builds the bundle and uploads it as a
 workflow artifact, with no release inputs at all. It once passed `--no-bundle`
 while still supplying `tagName`, which cannot work: `tauri-action` fails with
