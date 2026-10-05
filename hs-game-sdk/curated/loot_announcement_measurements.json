@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Hand-curated record of how Hero Siege announces a rare ground drop in chat, for ForgePact#17 (Loot announcements). NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. Every `status` is `static_reading` (read from the compiled game locally and paraphrased in our own words; no script text is kept anywhere) except `route.status`, which ForgePact#17's Live procedure 3 recorded as `measured`. `scripts` is the announcement chain by SDK name, in call order; `rarity_key` is the itemInfoStruct key holding the rarity (docs/RUNTIME_DATA_MODELS.md section 16.4, measured); `rarity_codes_announced_online` lists the rarity codes the game's own online path announces and what decides each; `route` is the call ForgePact's `lootann` ships to show the line offline: `server` (chosen 2026-10-04 after Live procedures 1 and 3; the game's own path, `method`, could not be tested offline (the probe's anon control did not resolve)). The argument is ForgePact docs/loot-announcement-research.md; the shared facts are docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.10.",
+  "$schema_note": "Hand-curated record of how Hero Siege announces a rare ground drop in chat, for ForgePact#17 (Loot announcements). NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. Every entry carries its own `status`: `static_reading` (read from the compiled game locally and paraphrased in our own words; no script text is kept anywhere), `inference`, `not_established`, or `measured` (only `route.status`, from ForgePact#17's Live procedure 3). `scripts` is the announcement chain by SDK name, in call order. `rarity_key` is the itemInfoStruct key the closure is taken to read: that key \"27\" holds the rarity is measured (docs/RUNTIME_DATA_MODELS.md section 16.4), but that the closure reads it is an inference from the codes it compares, because the key strings were not read. `rarity_codes_in_closure` lists every rarity code the closure compares on a branch of its own, and for each whether the online path announces it; the list is what was read, and `announced_online` is `not_established` where the reading does not say. `route` is the call ForgePact's `lootann` ships to show the line offline: `server` (chosen 2026-10-04 after Live procedures 1 and 3; the game's own path, `method`, could not be tested offline (the probe's anon control did not resolve)). The argument is ForgePact docs/loot-announcement-research.md; the shared facts are docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.10.",
   "source": [
     {
       "path": "ForgePact/docs/loot-announcement-research.md",
@@ -46,25 +46,44 @@
       "status": "static_reading"
     }
   ],
-  "rarity_key": "27",
-  "rarity_codes_announced_online": [
+  "rarity_key": {
+    "key": "27",
+    "status": "inference",
+    "note": "itemInfoStruct[\"27\"] holding the rarity is measured (section 16.4); that the closure reads that key is inferred from the codes it compares (7, 10, 9, 6), the key strings were not read"
+  },
+  "rarity_codes_in_closure": [
     {
       "code": 7,
       "rarity": "Angelic",
-      "decided_by": "gml_Script_GetRareDropAnnouncement",
+      "branch": "the closure's own branch for 7",
+      "announced_online": "yes",
+      "decided_by": "gml_Script_GetRareDropAnnouncement answers true for 7",
       "status": "static_reading"
     },
     {
       "code": 10,
       "rarity": "Unholy",
-      "decided_by": "gml_Script_GetRareDropAnnouncement",
+      "branch": "the closure's own branch for 10",
+      "announced_online": "yes",
+      "decided_by": "gml_Script_GetRareDropAnnouncement answers true for 10",
       "status": "static_reading"
     },
     {
       "code": 9,
       "rarity": "Heroic",
-      "decided_by": "the closure's own branch for 9 (gml_Script_anon@1138@gml_Object_Loot_Ground_obj_Create_0)",
+      "branch": "the closure's own branch for 9",
+      "announced_online": "yes",
+      "decided_by": "the closure itself (gml_Script_anon@1138@gml_Object_Loot_Ground_obj_Create_0); gml_Script_GetRareDropAnnouncement does not decide 9",
       "status": "static_reading"
+    },
+    {
+      "code": 6,
+      "rarity": "Satanic",
+      "branch": "the closure's own branch for 6",
+      "announced_online": "not_established",
+      "decided_by": "not established: gml_Script_GetRareDropAnnouncement was not read answering true for 6, and what the closure does after a false answer depends on a value whose meaning is not established",
+      "status": "static_reading",
+      "note": "the branch is a static reading; whether a Satanic drop is announced online is not established. ForgePact does not announce it (the owner's scope: Heroic, Angelic, Unholy)"
     }
   ],
   "route": {

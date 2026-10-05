@@ -3070,9 +3070,20 @@ the controls and the table are in the Item Editor's
   `ToDouble()` on a reference yields the script number is open), not a settled
   `method_get_index` answer; `s_lootDrawData` resolving does not validate the
   anon rows (it resolved under the earlier broken probe too).
-- The chain, the rarity key and the codes announced online are also in
+- **Measured** (2026-10-04, Live procedures 1 and 3 of the same feature,
+  `lootannprobe methods` on a placed ground item offline): a `Loot_Ground_obj`
+  instance carries four method-valued variables (each passed `is_method`):
+  `m_AngelicMessage`, `m_LootFilter`, `m_LootGroundDeActiveStep` and
+  `s_lootDrawData`. `s_lootDrawData` resolved to a named method of
+  `Pickup_Parent_obj`'s Create event; the other three could not be named in
+  either session. Not established: which function each of those three holds,
+  and so whether `m_AngelicMessage`, the one named for an announcement, is the
+  variable that holds `anon@1138`. It is the name a next attempt at the game's
+  own path would start from.
+- The chain, the rarity key and the codes the closure branches on are also in
   [`hs-game-sdk/curated/loot_announcement_measurements.json`](../hs-game-sdk/curated/loot_announcement_measurements.json),
-  each labelled a static reading until a live session measures it.
+  each entry with its own `status`: a static reading, an inference, or not
+  established, until a live session measures it.
 
 [loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading),
 [loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
@@ -3080,17 +3091,28 @@ the controls and the table are in the Item Editor's
 ### 16.11 An item's time stamp, and what puts an item on the ground
 
 - **Measured** (2026-10-04, the research build's `CreateItemNew` log in
-  `bp_ipc\itemdrops.jsonl`, ForgePact #17's Live procedure 2): an item the
-  game makes this session for a natural drop carries a number in
+  `bp_ipc\itemdrops.jsonl`, read while ForgePact #17's Live procedure 2 was
+  analysed): an item the game makes for a natural drop carries a number in
   `itemTimeStamp`, rising from drop to drop and ending in a running counter
   (213292866000, 213292867001, 213292868002, ...). An item built from a save
   carries its save key's stamp as a 12-digit string. ForgePact's own
   placements (`sigdrop`, `angelicdrop`, `lootannprobe place`) carry the
   Unix-millisecond string of the key they hand `InitItemFromJson`. A
-  temporary rebuild of an item the game made around a pickup or a bag drop
-  carried `itemTimeStamp` 0. Not established (an inference from matching
-  the values to the sessions' clocks): the number is seconds since
-  2020-01-01 local time, times 1000, plus the counter.
+  temporary rebuild of a placed item, logged between that item's pickup and
+  its bag drop (the log has no time to say which), carried `itemTimeStamp` 0;
+  the last bullet of this section narrows it to the drop.
+- **Measured** (2026-10-05, one log on one machine in one time zone): the
+  number, without its last three digits, runs one hour behind the summer
+  wall clock when counted as seconds from 2020-01-01 00:00. The log's newest
+  stamp, 213313178109, is 2026-10-04 21:39:38 counted that way, and the file
+  was last written at 22:39:39 local time (UTC+2). So on this machine it is
+  seconds since 2020-01-01 00:00 at UTC+1, times 1000, plus the counter. Not
+  established: whether the game takes local standard time or UTC plus a fixed
+  hour (one time zone cannot tell them apart), and what the counter counts.
+  Under that reading the three example values above fall at 15:01 UTC, the end
+  of Live procedure 1's kills, not in Live procedure 2, which stayed in town
+  and read no natural drop: the log read for Live procedure 2 still held the
+  earlier launch's records.
 - **Static reading** (2026-10-04, local Ghidra project, our own words):
   `LootGroundCreate` constructs the item and writes its `itemTimeStamp` from
   `LootTimestamp()`; the natural-drop `CreateItemNew` records already carry
@@ -3112,6 +3134,13 @@ the controls and the table are in the Item Editor's
   unnamed functions (one region also calls `RemoveItemFromMap`). (A byte
   scan for call sites; the "nearest symbol" of a site may be a preceding
   function.)
+- **Static reading** (2026-10-04, our own words; recorded when ForgePact's
+  creation guard was designed and not re-read since): `CA_playerItemDrop`,
+  which puts a co-op peer's dropped item on this client's ground, builds that
+  item anew here rather than receiving an existing struct. Not established:
+  whether that build goes through `CreateItemNew`. Not measured: no co-op
+  session has been run. ForgePact's Loot announcements treat a peer's drop as
+  new on that reading (the module guide's Known Limitations).
 - **Measured** (2026-10-04, the same session): a player's bag drop of an item
   ForgePact had placed reached `LootGroundInit` (the shared detour counted
   it), while a both-route detour on `LootGroundDrop` counted 0; that detour
@@ -3126,10 +3155,17 @@ the controls and the table are in the Item Editor's
   from the bag: `held-bag-drop` rose by one and no line appeared, while 215
   natural drops in the same session passed the guard (`natural-fresh`). It
   needs the `CreateItemNew` hook to be an inline detour (`LootGroundCreate`
-  calls it directly). One bag drop of one item was measured; the rebuild of
-  the same item measured above, at the drop, could still
-  defeat it if that rebuild is given the existing struct or the ground
-  receives a copy, and the struct that reaches the ground is not established.
+  calls it directly). The same step measured where the game rebuilds: the
+  count of keys noted from `CreateItemNew` (`created`) did not move at the
+  pickup and rose by 2 at the bag drop, and the item on the ground was still
+  held as not recently created. So a pickup builds nothing through
+  `CreateItemNew`, a bag drop builds through it (two keys noted, which is one
+  call's argument 0 and return or two calls; not told apart), and neither key
+  was the struct that reached the ground. That the stamp-0 rebuild in the
+  first bullet is that build is inference: this session did not read the log.
+  One bag drop of one item was measured; a rebuild at the drop could still
+  defeat the guard if it were given the existing struct or the ground
+  received a copy, and which struct reaches the ground is not established.
   ForgePact's Loot announcements use it (the creation guard).
 
 [loot announcements, Live procedure 2](../ForgePact/docs/loot-announcement-research.md#live-procedure-2),
