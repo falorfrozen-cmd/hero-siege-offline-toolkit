@@ -4215,7 +4215,7 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
 
 [Live 2 results](../ForgePact/docs/gamba-machine-research.md#live-2-results)
 
-### 20.3 A spawned machine removes itself in its first step
+### 20.3 A spawned machine removes itself
 
 - A machine created from outside the game's own effect route runs `Create_0`
   inside the creating call and, in its first step, runs `Alarm_9`, which
@@ -4227,7 +4227,7 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   one each by the game's own `instance_create` script called by name with the
   player as `self`, by `instance_create_layer` on the player's `layer` value,
   and by `instance_create_depth` with the player as `self` and `other`. The
-  route, the layer and the caller's identity varied; the outcome did not.
+  route, the layer and the caller's identity varied; the outcome did not. The one exception is the `spawn scp` machine of Live 3 (below): it ran one `Step_0` (`step=1`) before its `Alarm_9` removed it.
   **Measured** (2026-10-04).
 - No script or builtin row the instrument held (`instance_destroy`,
   `instance_change`, `layer_destroy_instances` and
@@ -4305,7 +4305,7 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   same session did register, so the rows see a `CallBuiltin`-routed call; they
   are unproven against a compiled call, so this is not-observed, not proof
   combat calls no builtin RNG). Combat's rolls go through the `cpr_*` scripts.
-  **Measured** (2026-10-04). The
+  **Measured (Live 2)**. The
   machine's prize roll passes the same `cpr_*` scripts (above); a builtin RNG
   row did not move, which is not-observed. **Measured (Live 3).**
 

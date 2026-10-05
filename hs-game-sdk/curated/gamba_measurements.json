@@ -182,7 +182,7 @@
       "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "What `Alarm_9` checks before it removes the machine"}],
       "objects": ["Slot_Machine_01_obj"],
       "scripts": [],
-      "what": "Why every spawned machine died in its first step. Alarm_9 first reads the machine's protected value activated through GetVariable and, when false, sets activated and isActive true and rollTimes01..rollTimes04 each to 8 plus a runtime routine called directly with the argument 8 (the shape of the runner's irandom core, not verified; if so, that one call bypasses the irandom builtin's table entry), all through SetVariable by name. It then reads the protected value pSpwd (instance variable pSpwd is the key) through GetVariable and, when false, reports the spawn as out of thin air and destroys the machine through the runner's instance-destroy routine, called directly - not the instance_destroy builtin's table entry. Create_0 initialises pSpwd to false, and nobody set it true, so every machine died.",
+      "what": "Why every spawned machine died in its first step. Alarm_9 first reads the machine's protected value activated through GetVariable and, when false, sets activated and isActive true and rollTimes01..rollTimes04 each to 8 plus a runtime routine called directly with the argument 8 (the shape of the runner's irandom core, not verified; if so, that one call bypasses the irandom builtin's table entry), all through SetVariable by name. It then reads the protected value pSpwd (instance variable pSpwd is the key) through GetVariable and, when false, reports the spawn as out of thin air and destroys the machine through the runner's instance-destroy routine, called directly - not the instance_destroy builtin's table entry. Create_0 initialises pSpwd to false, and it was still false at the first step, so every machine died. On the routes above it was never set true; on the spawn scp route sCP called SetVariable(key, true) but the stamp did not take effect.",
       "values": {
         "guard_key": "pSpwd",
         "guard_false_destroys": true,
@@ -277,7 +277,7 @@
         "create_default_params": [{"b": 72, "j": 0, "c": 1}, {"b": 11, "j": 0, "c": 0}],
         "prize_route": ["LootGroundCreate", "CreateLootInFreePos", "instance_create_layer"],
         "machine_destroyed_by_payout": false,
-        "builtin_rng_observed": false
+        "prize_roll_builtin_rng_observed": false
       }
     },
     {
