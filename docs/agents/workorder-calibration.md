@@ -1238,3 +1238,56 @@ check catch rate was 0.34, against 0.38-0.58 before the cut.
   Mtok) while every other reviewer's about halved.
 - Concurrency stayed at 0.87 with a 47% single-agent share. Nothing here
   targets it.
+
+# Effort instead of Fable (2026-10-05)
+
+## The question
+
+The owner's license stopped carrying Fable 5.1, so every `fable` spawn the
+pipeline made would fail: the two hard triage rows' first plan, the second
+replan, and the consultant on a hard row. The owner also asked for effort,
+not only model, to set each session's and each step's cost.
+
+## What was found
+
+- The `Agent` tool takes a `model` per call and no effort, which is why
+  every agent pins `effort:` in its frontmatter.
+- A Workflow `agent()` call does accept an `effort` option
+  (`low`..`max`). Claude Code's documentation does not say whether it
+  beats an `agentType`'s pinned `effort:`.
+- Subagent transcripts record no effort level, so before this change the
+  audit could not tell a `high` run from an `xhigh` one.
+- Agent frontmatter accepts `xhigh` and `max`.
+
+## What changed
+
+- **Effort variants.** An agent's `effort-variants:` line makes
+  `tools/sync_agent_tooling.py` write `<agent>-<level>.md`, the same body
+  under its own name and effort. The name is the one spelling that runs at
+  that effort on both routes (driver and workflow) and shows in a
+  transcript. Generated: `planner-medium`, `planner-xhigh`, `planner-max`,
+  `implementer-medium` and `consultant-max`.
+- **Tiers.** Hard triage rows: `planner-xhigh`, not `fable`. Second replan:
+  `planner-max`. A hard-row question goes to `consultant-max`. Amendments run
+  as `planner-medium` and patch rounds as `implementer-medium`, because both
+  apply a correction someone already wrote down. The docs/tests/config row
+  runs `planner-medium` and `implementer-medium` on `sonnet`.
+- **Workflow.** `workorder-rounds.js` takes `implementerEffort`
+  (`high`|`medium`) and refuses `implementerModel: 'fable'` before a spawn.
+- **Audit.** `split_effort_variant` counts a variant as its base role and
+  keeps its level. `--calibrate` groups by role, model and effort. R27 also
+  fails an amendment planner run as `planner-xhigh` or `planner-max`.
+  `MODEL_PRICES` keeps Fable's row for older transcripts.
+
+## Not yet measured
+
+- Every new level. None of medium-for-amendments, medium-for-patches,
+  xhigh-for-hard-rows or max-for-the-second-replan has a run behind it.
+  The next `--calibrate` over sessions after 2026-10-05 reports each one
+  apart.
+- Whether `opus` at `max` recovers the plans a Fable replan used to. The
+  stop after a third `PLAN-DEFECT` is unchanged, so a weaker escalation
+  shows up as more stops, not as more rounds.
+- Reviewer effort. Reviewers stay at their pinned `high`. A
+  `docs-sync-reviewer-medium` is one `effort-variants:` line away once a
+  calibration shows the reviewers' tail can afford it.

@@ -481,6 +481,10 @@ class AgentTranscript:
     session_id: str
     path: Path
     round: Optional[int] = None
+    # The effort level of a generated effort variant (`planner-xhigh` runs as
+    # agent_type "planner", effort "xhigh"); None for an agent spawned under
+    # its own name, which runs at the `effort:` its definition pins.
+    effort: Optional[str] = None
     workflow_id: Optional[str] = None
     is_driver: bool = False
 
@@ -584,15 +588,32 @@ SHELL_TIMEOUT_RE = re.compile(r"did not complete within its \d+\s*s timeout|Comm
 CHECK_FAILURE_RE = re.compile(r"\bFAIL:|\bERROR:|\bFAILED\b|\bEXIT=(?!0\b)-?\d+|-> exit (?!0\b)-?\d+")
 
 
+# `tools/sync_agent_tooling.py` writes `<agent>-<effort>.md` for each level an
+# agent's `effort-variants:` lists, so /workorder can pick an effort per spawn
+# (the Agent tool takes no effort, and a transcript records none). Each rule
+# here asks about the role, so the variant counts as its base agent and keeps
+# its level beside it.
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+EFFORT_VARIANT_RE = re.compile(r"^(?P<base>[\w:-]+?)-(?P<effort>" + "|".join(EFFORT_LEVELS) + r")$")
+
+
+def split_effort_variant(agent_type: str) -> tuple:
+    """(base agent type, effort) for a generated variant name, else
+    (agent_type, None)."""
+    m = EFFORT_VARIANT_RE.match(agent_type or "")
+    return (m.group("base"), m.group("effort")) if m else (agent_type, None)
+
+
 def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
                       round_: Optional[int] = None, workflow_id: Optional[str] = None,
                       is_driver: bool = False, until: Optional[datetime] = None) -> AgentTranscript:
     """Parse one transcript. `until`, when given, skips every timestamped
     record after it, so a snapshot of a session that is still running can
     be reproduced later; records without a timestamp are kept either way."""
+    agent_type, effort = split_effort_variant(agent_type)
     agent = AgentTranscript(
         agent_type=agent_type, label=label, session_id=session_id, path=path,
-        round=round_, workflow_id=workflow_id, is_driver=is_driver,
+        round=round_, workflow_id=workflow_id, is_driver=is_driver, effort=effort,
     )
     pending: dict = {}  # tool_use_id -> ToolCall
     user_candidates: list = []  # (ts, text, origin kind), resolved once the whole transcript is read
@@ -1855,19 +1876,29 @@ def rule_r26_reread_after_write(session: Session) -> RuleResult:
 
 # R27 the amendment tier. An amendment applies one correction someone else
 # already stated, so it never needs the top tier: an amendment planner always
-# runs on opus, never fable. The audit of 2026-10-03 found one that ran on
+# runs on opus, never fable, and since 2026-10-05 (fable left the owner's
+# license; the ladder now escalates effort) never at `xhigh` or `max` either
+# -- SKILL.md spawns it as `planner-medium`. The audit of 2026-10-03 found one that ran on
 # fable, from a driver that spawned it through SKILL.md's owner-scope route
 # and carried the workorder's escalated `planner-tier=` over to it, while its
 # sibling amendment in the same session ran opus. The model read is the one
 # most of the transcript's turns ran on (`AgentTranscript.model`), not the
 # alias that was asked for.
+AMENDMENT_TOO_HIGH = {"xhigh", "max"}
+
+
 def rule_r27_amendment_tier(session: Session) -> RuleResult:
     evidence = []
     for agent in all_subagents(session):
         model = agent.model or ""
-        if is_amendment(agent) and "fable" in model.lower():
+        if not is_amendment(agent):
+            continue
+        if "fable" in model.lower():
             evidence.append(f"{agent.label}: ran on {model}; an amendment planner always runs on opus, "
                             f"never fable -- spawn it with model: opus whatever planner-tier the State records")
+        elif agent.effort in AMENDMENT_TOO_HIGH:
+            evidence.append(f"{agent.label}: ran as planner-{agent.effort}; an amendment planner is never "
+                            f"escalated -- spawn planner-medium whatever planner-tier the State records")
     return RuleResult("R27", "amendment-tier", passed=not evidence, evidence=evidence)
 
 
@@ -1918,6 +1949,7 @@ def _agent_row(agent: AgentTranscript) -> dict:
         "round": agent.round if agent.round is not None else "-",
         "lane": lane_of(agent.label) or "-",
         "model": (agent.model or "-").replace("claude-", ""),
+        "effort": agent.effort or "-",
         "turns": agent.turn_count,
         "tokens": agent.total_tokens,
         "output_tokens": agent.total_output_tokens,
@@ -2101,7 +2133,8 @@ def _spread(values: list) -> dict:
 
 def calibrate(sessions: list) -> dict:
     """The distributions the budgets above are set from, over many sessions:
-    per role (and per reviewer type, and per role and model) turns, tokens,
+    per role (and per reviewer type, and per role, model and effort -- an
+    effort variant's level, "pinned" for its definition's own) turns, tokens,
     context per turn and list-price cost; per-round subagent tokens, round 0
     apart from later rounds; driver turns per round; and how many sessions
     each rule fails as the constants stand. Each budget's comment names the
@@ -2114,9 +2147,9 @@ def calibrate(sessions: list) -> dict:
     for session in sessions:
         for agent in all_subagents(session):
             by_role[agent.agent_type].append(agent)
-            by_role_model[(agent.agent_type, agent.model or "?")].append(agent)
+            by_role_model[(agent.agent_type, agent.model or "?", agent.effort or "pinned")].append(agent)
         by_role["driver"].append(session.driver)
-        by_role_model[("driver", session.driver.model or "?")].append(session.driver)
+        by_role_model[("driver", session.driver.model or "?", "session")].append(session.driver)
         for (_wf, round_), total in round_totals(session).items():
             (rounds0 if round_ == 0 else rounds_later).append(total)
         driver_rounds.extend(driver_turns_per_round(session).values())
@@ -2136,7 +2169,7 @@ def calibrate(sessions: list) -> dict:
         "sessions": len(sessions),
         "cost_usd": round(sum(costs), 2),
         "roles": {k: role_row(v) for k, v in sorted(by_role.items())},
-        "roles_by_model": {f"{k[0]} / {k[1]}": role_row(v) for k, v in sorted(by_role_model.items())},
+        "roles_by_model": {f"{k[0]} / {k[1]} / {k[2]}": role_row(v) for k, v in sorted(by_role_model.items())},
         "round0_tokens": _spread(rounds0),
         "later_round_tokens": _spread(rounds_later),
         "driver_turns_per_round": _spread(driver_rounds),
@@ -2149,7 +2182,7 @@ def format_calibration(cal: dict) -> str:
         return (f"n={s['n']:<3} p50={s['p50'] / scale:,.1f}{unit} p75={s['p75'] / scale:,.1f}{unit} "
                 f"p90={s['p90'] / scale:,.1f}{unit} max={s['max'] / scale:,.1f}{unit}")
     out = [f"{cal['sessions']} sessions, list-price cost ${cal['cost_usd']:,.2f}", ""]
-    for title, rows in (("per role", cal["roles"]), ("per role and model", cal["roles_by_model"])):
+    for title, rows in (("per role", cal["roles"]), ("per role, model and effort", cal["roles_by_model"])):
         out.append(f"{title}:")
         for name, r in rows.items():
             out.append(f"  {name}  (${r['cost_usd']:,.2f})")

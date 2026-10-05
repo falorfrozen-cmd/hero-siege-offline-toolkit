@@ -379,7 +379,7 @@ planning: complete        (`streaming` while items are still being released)
 gates: none
 gates pending: `build: complete`; `live1: complete`
 round base: <none yet>
-agents: planner-tier=opus
+agents: planner-tier=planner        (the agent type you were spawned as: planner, planner-xhigh, planner-max)
 reviewers: <none yet>
 open defects: none
 decisions in force: none

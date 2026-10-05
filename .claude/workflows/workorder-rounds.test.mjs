@@ -1100,6 +1100,36 @@ test('lanes: args that could not have come from plan_lint --lanes-json are refus
   }
 })
 
+// --- effort by agent type ----------------------------------------------------
+// The implementer's effort is chosen by agent type (`implementer-medium`), the
+// one spelling that both runs at that effort and shows in the audit.
+test('effort: implementerEffort picks the implementer variant, and bad tiers are refused before a spawn', async () => {
+  const seen = {}
+  const rec = (label, prompt, opts) => { seen[label] = opts; return standard()(label) }
+  await run({ ...BASE, implementerEffort: 'medium' }, rec)
+  assert.equal(seen['implementer:r0'].agentType, 'implementer-medium')
+  await run(BASE, rec)
+  assert.equal(seen['implementer:r0'].agentType, 'implementer', 'control: no implementerEffort keeps the pinned agent')
+  // A patch round applies fixes already written down, so it runs at medium
+  // whatever the triaged effort; the round before it keeps the triaged agent.
+  const FIX = { where: 'docs/x.md:3', problem: 'p', evidence: 'e', fix: 'change a to b' }
+  let blocked = 0
+  const patchReply = (label, prompt, opts) => {
+    seen[label] = opts
+    if (label.startsWith('docs-sync-reviewer')) return blocked++ === 0 ? { ...CLEAN, blocking: [FIX] } : CLEAN
+    if (label.startsWith('delta')) return DELTA(['docs/x.md'], { size_exit_code: 0, lines_changed: 2, new_files: 0 })
+    return standard()(label)
+  }
+  await run({ ...BASE, reviewers: { 'docs-sync-reviewer': 'never', 'decompile-output-guard': 'never' } }, patchReply)
+  assert.equal(seen['patch-implementer:r1'].agentType, 'implementer-medium')
+  assert.equal(seen['implementer:r0'].agentType, 'implementer')
+  for (const bad of [{ implementerEffort: 'max' }, { implementerModel: 'fable' }]) {
+    const { result, calls } = await run({ ...BASE, ...bad }, standard())
+    assert.equal(result.outcome, 'BAD-ARGS', JSON.stringify(bad))
+    assert.deepEqual(calls, [], 'nothing spawned')
+  }
+})
+
 // --- 2i: the patch route ------------------------------------------------------
 // A round whose only defects are BLOCKING findings that each carry the
 // reviewer's exact fix is followed by a patch round: fix-only implementer,
@@ -2028,7 +2058,7 @@ test('amend: items mode -- a stated CORRECTION is saved, amended, checked, the t
   assert.ok(!calls.some(c => c.startsWith('amend-restore:')), 'a confirmed amendment was restored')
   assert.match(prompts['amend-save:a:r0'], /Run exactly: py -3 tools\/amend_check\.py save "p\.md" "c\.md"/)
   assert.match(prompts['amend-check:a:r0'], /Run exactly: py -3 tools\/amend_check\.py check "p\.md" "c\.md"/)
-  assert.equal(opts['amendment: zz a:r0'].agentType, 'planner')
+  assert.equal(opts['amendment: zz a:r0'].agentType, 'planner-medium', 'the amendment planner is never escalated')
   assert.equal(opts['amendment: zz a:r0'].model, 'opus', 'the amendment planner always runs on opus, never fable')
   assert.deepEqual(opts['amendment: zz a:r0'].schema.properties.verdict.enum, ['PLAN-READY', 'NOT AN AMENDMENT'])
   // The correction verbatim, and only its own field; the whole evidence block follows it.
@@ -2215,6 +2245,22 @@ test('amend: rounds mode -- an amendment re-runs the same round, uncounted; a se
   // The driver's replan starts from the plan as it was, not the rejected edit;
   // the confirmed amendment above was not restored (amendCalls lists restores).
   assert.deepEqual(amendCalls(replan.calls), ['amend-save:implementer:r0', 'amendment: zz implementer:r0', 'amend-check:implementer:r0', 'amend-restore:implementer:r0'])
+})
+
+test('amend: rounds mode -- a patch re-run after its amendment is still implementer-medium', async () => {
+  // PR #431 review: the first patch spawn named `implementer-medium` and the
+  // re-run after a confirmed amendment fell back to the triaged implementer.
+  const types = []
+  let patches = 0, blocked = 0
+  const FIX = { where: 'docs/x.md:3', problem: 'p', evidence: 'e', fix: 'change a to b' }
+  const { result } = await run({ ...BASE, reviewers: { 'docs-sync-reviewer': 'never', 'decompile-output-guard': 'never' } }, (label, prompt, opts) => {
+    if (label.startsWith('patch-implementer')) { types.push(opts.agentType); return patches++ === 0 ? CORRECTED() : DONE }
+    if (label.startsWith('docs-sync-reviewer')) return blocked++ === 0 ? { ...CLEAN, blocking: [FIX] } : CLEAN
+    if (label.startsWith('delta')) return DELTA(['docs/x.md'], { size_exit_code: 0, lines_changed: 2, new_files: 0 })
+    return standard(AMEND_OK)(label)
+  })
+  assert.equal(result.outcome, 'PASS')
+  assert.deepEqual(types, ['implementer-medium', 'implementer-medium'])
 })
 
 test('amend: rounds mode -- a lane\'s PLAN-DEFECT is unchanged; the join\'s is amended and re-run as one implementer', async () => {

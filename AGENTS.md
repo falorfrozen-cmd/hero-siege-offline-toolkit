@@ -76,7 +76,9 @@ one source and a derived copy for the other agent:
 
 Edit the source, then run `py -3 tools/sync_agent_tooling.py`;
 `tests/test_agent_tooling_sync.py` fails on a copy edited by hand or left
-stale. Never add a skill, agent or server for one agent only without saying
+stale. The effort variants in `.claude/agents/` (`planner-xhigh.md` and the
+rest, how `/workorder` picks an effort per spawn) are derived the same way,
+from their source agent's `effort-variants:` line. Never add a skill, agent or server for one agent only without saying
 why in `.claude/README.md` § "Codex"; `/workorder` is the one current
 exception, because it drives Claude Code's own subagent and workflow tools.
 

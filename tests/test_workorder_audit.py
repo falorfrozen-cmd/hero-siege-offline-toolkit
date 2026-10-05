@@ -1804,6 +1804,25 @@ class CalibrationTests(TempDirMixin, unittest.TestCase):
         rc = wa.main(["--calibrate", str(listing), "--projects-dir", str(a.projects_dir), "--project", "proj"])
         self.assertEqual(rc, 0)
 
+    def test_an_effort_variant_counts_as_its_role_and_keeps_its_level(self):
+        self.assertEqual(wa.split_effort_variant("planner-xhigh"), ("planner", "xhigh"))
+        self.assertEqual(wa.split_effort_variant("implementer-medium"), ("implementer", "medium"))
+        # Negative controls: a hyphenated name is not a variant unless it ends
+        # in a level.
+        self.assertEqual(wa.split_effort_variant("docs-sync-reviewer"), ("docs-sync-reviewer", None))
+        self.assertEqual(wa.split_effort_variant("planner"), ("planner", None))
+        s = SessionBuilder(self.tmp_path, session_id="cccc0000-0000")
+        s.driver([turn(0, 0)]).subagent("implementer-medium", "patch r1", make_turns(3, start_idx=100))
+        s.subagent("implementer", "Implement x", make_turns(2, start_idx=200))
+        s.build()
+        session = wa.discover_session(s.projects_dir, "proj", "cccc0000-0000",
+                                      s.projects_dir / "proj" / "cccc0000-0000.jsonl")
+        cal = wa.calibrate([session])
+        self.assertEqual(cal["roles"]["implementer"]["turns"]["n"], 2)
+        keys = [k for k in cal["roles_by_model"] if k.startswith("implementer /")]
+        self.assertTrue(any(k.endswith("/ medium") for k in keys), keys)
+        self.assertTrue(any(k.endswith("/ pinned") for k in keys), keys)
+
 
 # --------------------------------------------------------------------------
 # R17 live-operator-scope
@@ -2252,14 +2271,33 @@ class R27Tests(TempDirMixin, unittest.TestCase):
     amendment on record came from a driver that carried the workorder's
     escalated planner tier over to it."""
 
-    def _rule(self, label, model, sub, workflow=False):
+    def _rule(self, label, model, sub, workflow=False, agent_type="planner"):
         b = SessionBuilder(self.tmp_path / sub).driver([turn(0, 9000)])
         b.subagent("planner", "Plan x", _span(0, 100, 100, model="claude-fable-5-1"))
         if workflow:
-            b.workflow_agent("wf_a", "planner", label, _span(400, 450, 300, model=model))
+            b.workflow_agent("wf_a", agent_type, label, _span(400, 450, 300, model=model))
         else:
-            b.subagent("planner", label, _span(400, 450, 300, model=model))
+            b.subagent(agent_type, label, _span(400, 450, 300, model=model))
         return get_rule(b.evaluate()[1], "R27")
+
+    def test_fail_an_amendment_planner_at_escalated_effort(self):
+        # Since 2026-10-05 the ladder escalates effort, not model: an
+        # amendment run as `planner-xhigh`/`planner-max` is the same mistake.
+        for level in ("xhigh", "max"):
+            r = self._rule("amendment: x c3", "claude-opus-5-5", f"eff-{level}", agent_type=f"planner-{level}")
+            self.assertFalse(r.passed, level)
+            self.assertIn(f"planner-{level}", r.evidence[0])
+        self.assertFalse(self._rule("amendment: slug x:r0", "claude-opus-5-5", "eff-wf", workflow=True,
+                                    agent_type="planner-max").passed)
+
+    def test_pass_an_amendment_planner_at_medium_or_pinned_effort(self):
+        for sub, agent_type in (("eff-med", "planner-medium"), ("eff-pin", "planner")):
+            r = self._rule("amendment: x c3", "claude-opus-5-5", sub, agent_type=agent_type)
+            self.assertTrue(r.passed, r.evidence)
+
+    def test_pass_an_escalated_planner_that_is_not_an_amendment(self):
+        r = self._rule("Replan x after round 2", "claude-opus-5-5", "eff-replan", agent_type="planner-max")
+        self.assertTrue(r.passed, r.evidence)
 
     def test_fail_an_amendment_planner_on_fable(self):
         r = self._rule("amendment: x live2 owner scope", "claude-fable-5-1", "fable")
