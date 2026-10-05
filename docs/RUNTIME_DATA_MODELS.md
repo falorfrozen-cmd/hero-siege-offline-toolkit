@@ -1146,8 +1146,51 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   but no line can be sent, so the call the game makes for a typed line was not
   observed. One `Ingame_Chat_obj` exists in a loaded game; `UI_Ingame_Chat_obj`
   and `Chat_obj` were 0. **Measured.**
+- **The online drop-announcement chain.** Static reading (2026-10-04, local
+  decompile, our own words): a ground item's own announcement closure (§16.10)
+  reads the item's rarity and, on a branch per rarity, calls
+  `NetworkSendChatMessageIngame` with five arguments: a runtime-filled global
+  value (not established what it holds), the real 18687, the item, a colour
+  and the int64 3. Static reading: with that last argument 3, the text is
+  `GetItemDropMessage(item)`, a localized line naming the item (through
+  `GetLootName` and `GetLocalized`); the sender adds it locally through
+  `ChatAddMessage` (15 arguments) and, inside a block whose condition was not
+  read, sends it with `PacketSend`. Static reading: `GetRareDropAnnouncement(a,
+  b, c)` answers true for `a` 7 (Angelic) or 10 (Unholy), and for a few
+  material (`b` 14) and socketable (`b` 15) ids; Heroic (9) is decided by the
+  closure's own branch, not there. Static reading: before each send the
+  closure also loops over `Chat_obj` (`ChatSendServerMessage`) and over
+  `Menu_Controller_obj` (`ReportClient`). Offline, `Chat_obj` was counted at 0
+  (measured above), so the `ChatSendServerMessage` loop would find nothing,
+  but ForgePact#17's census counted one `Menu_Controller_obj` (measured
+  2026-10-04), so the `ReportClient` loop would. Static reading: the
+  receiving side is `CA_chatIngame` → `ChatAddIngameMessageFiltered` →
+  `ChatAddMessage`.
+- **Offline, the game's own announcement was not observed to run.**
+  **Measured** 2026-10-04 (ForgePact#17 Live procedure 1, count-only hooks on
+  the closure and the chain): a placed Heroic item and about 450 natural
+  drops left the closure, `GetRareDropAnnouncement`,
+  `NetworkSendChatMessageIngame`, `PacketSend`, `ChatSendServerMessage`,
+  `ReportClient`, `ChatAddIngameMessageFiltered` and `CA_chatIngame` at 0,
+  and no line appeared. "Not observed offline", not "cannot run offline".
+  Called by name from a mod, `NetworkSendChatMessageIngame` (the ground item
+  as `self`, first argument `undefined` or the player reference, the item
+  struct as the item) and `GetItemDropMessage(item)` (the local `Player_obj`
+  as `self`) refused, and no `PacketSend` counted. Whether the closure is
+  bound on an offline ground item is not established (§16.10).
+- **A drop announcement a mod can show offline: `ChatAddServerMessage` with its
+  own text.** **Measured** 2026-10-04 (ForgePact#17 Live procedures 1 and
+  3): `<character> found <item name>` (the name from the item's
+  `itemInfoStruct["28"]`, the character's from the player's `name`) shows as
+  a red `SERVER: Sorak found Headhunter` line, one per call. ForgePact's Loot
+  announcements switch (`lootann`) ships this route for Heroic, Angelic and
+  Unholy items; in Live procedure 3 it announced placed items, held a
+  Satanic one, held a bag drop, and announced one natural drop with Magic
+  Find raised.
 
-[dungeon chest, Chat route](../ForgePact/docs/dungeon-chest-research.md#chat-route)
+[dungeon chest, Chat route](../ForgePact/docs/dungeon-chest-research.md#chat-route),
+[loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading),
+[loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
 
 ---
 
@@ -3001,6 +3044,135 @@ the controls and the table are in the Item Editor's
 
 [Item Editor, game truth step 4](../hero-siege-item-editor/GAME_TRUTH_DESIGN.md#step-4--seeds-the-game-built-item-editor-2163)
 
+### 16.10 The rare-drop announcement closure on a ground item
+
+- Static reading (2026-10-04, our own words): `Loot_Ground_obj`'s Create event
+  binds three methods on each ground item; the one SDK-named
+  `gml_Script_anon@1138@gml_Object_Loot_Ground_obj_Create_0` takes no
+  arguments and is the drop announcement (§8.6). The other two are the
+  loot-filter closure (`anon@6032`) and the step dispatcher (`anon@11081`).
+- Static reading: it reads `self`'s item (`itemInstance`), then a struct
+  inside it and one key of that struct, and compares the value with 7, 10, 9
+  and 6 on separate branches, which are the rarity codes of §16.4; the key
+  strings were not read, so that the key is `"27"` is an inference from the
+  codes, not a reading.
+- Static reading: a search for direct callers found none for it (while finding
+  seven for the other targets of the same search), so it is reached as a
+  method value; who invokes it, and whether anything does offline, is not
+  established. Its name moves with every game patch (the `anon@N` position),
+  so ForgePact spells it through the SDK constant.
+- **Not observed (instrument-blind)**, 2026-10-04 (ForgePact#17's Live
+  procedure 3, `lootannprobe methods`): the probe listed the ground item's
+  method variables but its anon control did not resolve (`anon rows resolved:
+  0 of 2`, every anon row `?#-1`), so the listing names no `anon@` method and
+  whether the closure is bound and invokable on the ground item is not
+  established. The `-1` is the probe's own reading of the index (whether
+  `ToDouble()` on a reference yields the script number is open), not a settled
+  `method_get_index` answer; `s_lootDrawData` resolving does not validate the
+  anon rows (it resolved under the earlier broken probe too).
+- **Measured** (2026-10-04, Live procedures 1 and 3 of the same feature,
+  `lootannprobe methods` on a placed ground item offline): a `Loot_Ground_obj`
+  instance carries four method-valued variables (each passed `is_method`):
+  `m_AngelicMessage`, `m_LootFilter`, `m_LootGroundDeActiveStep` and
+  `s_lootDrawData`. `s_lootDrawData` resolved to a named method of
+  `Pickup_Parent_obj`'s Create event; the other three could not be named in
+  either session. Not established: which function each of those three holds,
+  and so whether `m_AngelicMessage`, the one named for an announcement, is the
+  variable that holds `anon@1138`. It is the name a next attempt at the game's
+  own path would start from.
+- The chain, the rarity key and the codes the closure branches on are also in
+  [`hs-game-sdk/curated/loot_announcement_measurements.json`](../hs-game-sdk/curated/loot_announcement_measurements.json),
+  each entry with its own `status`: a static reading, an inference, or not
+  established, until a live session measures it.
+
+[loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading),
+[loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
+
+### 16.11 An item's time stamp, and what puts an item on the ground
+
+- **Measured** (2026-10-04, the research build's `CreateItemNew` log in
+  `bp_ipc\itemdrops.jsonl`, read while ForgePact #17's Live procedure 2 was
+  analysed): an item the game makes for a natural drop carries a number in
+  `itemTimeStamp`, rising from drop to drop and ending in a running counter
+  (213292866000, 213292867001, 213292868002, ...). An item built from a save
+  carries its save key's stamp as a 12-digit string. ForgePact's own
+  placements (`sigdrop`, `angelicdrop`, `lootannprobe place`) carry the
+  Unix-millisecond string of the key they hand `InitItemFromJson`. A
+  temporary rebuild of a placed item, logged between that item's pickup and
+  its bag drop (the log has no time to say which), carried `itemTimeStamp` 0;
+  the last bullet of this section narrows it to the drop.
+- **Measured** (2026-10-05, one log on one machine in one time zone): the
+  number, without its last three digits, runs one hour behind the summer
+  wall clock when counted as seconds from 2020-01-01 00:00. The log's newest
+  stamp, 213313178109, is 2026-10-04 21:39:38 counted that way, and the file
+  was last written at 22:39:39 local time (UTC+2). So on this machine it is
+  seconds since 2020-01-01 00:00 at UTC+1, times 1000, plus the counter. Not
+  established: whether the game takes local standard time or UTC plus a fixed
+  hour (one time zone cannot tell them apart), and what the counter counts.
+  Under that reading the three example values above fall at 15:01 UTC, the end
+  of Live procedure 1's kills, not in Live procedure 2, which stayed in town
+  and read no natural drop: the log read for Live procedure 2 still held the
+  earlier launch's records.
+- **Static reading** (2026-10-04, local Ghidra project, our own words):
+  `LootGroundCreate` constructs the item and writes its `itemTimeStamp` from
+  `LootTimestamp()`; the natural-drop `CreateItemNew` records already carry
+  that stamp, so its `CreateItemNew(instance, undefined)` (§18.4) runs after
+  the stamp is written. `LootGroundCreateFromItem` sets the new ground
+  instance's `itemInstance` to the item it is given, a reference rather than
+  a copy.
+- **Static reading:** `LootGroundInit` reads `itemInstance.itemTimeStamp`
+  and, behind a test against 0 whose exact form was not read, writes a fresh
+  `LootTimestamp()` into it. So a stamp alone cannot tell a new item from an
+  old one. `LootTimestamp` is also called from the merchant grids, crafting,
+  prospecting and the runeword preview: the game mints a stamp wherever it
+  makes an item.
+- **Static reading:** `LootGroundDrop`'s direct callers are `LootExplosion`,
+  `CreateItemDropInstance` and one unnamed function, with no inventory or UI
+  function among them. `LootGroundInit`'s direct callers are
+  `LootGroundDrop`, `LootGroundCreate`, `LootGroundCreateFromItem`,
+  `LootExplosion`, `CA_playerItemDrop`, `CreateItemDropInstance` and sites in
+  unnamed functions (one region also calls `RemoveItemFromMap`). (A byte
+  scan for call sites; the "nearest symbol" of a site may be a preceding
+  function.)
+- **Static reading** (2026-10-04, our own words; recorded when ForgePact's
+  creation guard was designed and not re-read since): `CA_playerItemDrop`,
+  which puts a co-op peer's dropped item on this client's ground, builds that
+  item anew here rather than receiving an existing struct. Not established:
+  whether that build goes through `CreateItemNew`. Not measured: no co-op
+  session has been run. ForgePact's Loot announcements would announce a peer's
+  drop only if that build goes through `CreateItemNew`, and otherwise hold it
+  as a bag drop (the module guide's Known Limitations).
+- **Measured** (2026-10-04, ForgePact#17's Live procedure 2): a player's bag
+  drop of an item
+  ForgePact had placed reached `LootGroundInit` (the shared detour counted
+  it), while a both-route detour on `LootGroundDrop` counted 0; that detour
+  has never counted a call live. Which script the bag drop runs through is
+  not established; that it is `LootGroundDrop` is not observed. The item
+  that reached the ground still read the rarity the placement set, so it was
+  not the temporary rebuild above (§18.5 corrects its older reading).
+- **Measured** (2026-10-04, ForgePact#17's Live procedure 3, `bag-drop-silent`
+  and `natural-fresh`): "the game built this item's struct through
+  `CreateItemNew` this frame or the last" holds a bag drop and passes the
+  game's own drops. The owner picked up a placed Heroic item and dropped it
+  from the bag: `held-bag-drop` rose by one and no line appeared, while 215
+  natural drops in the same session passed the guard (`natural-fresh`). It
+  needs the `CreateItemNew` hook to be an inline detour (`LootGroundCreate`
+  calls it directly). The same step measured where the game rebuilds: the
+  count of keys noted from `CreateItemNew` (`created`) did not move at the
+  pickup and rose by 2 at the bag drop, and the item on the ground was still
+  held as not recently created. So a pickup builds nothing through
+  `CreateItemNew`, a bag drop builds through it (two keys noted, which is one
+  call's argument 0 and return or two calls; not told apart), and neither key
+  was the struct that reached the ground. That the stamp-0 rebuild in the
+  first bullet is that build is inference: this session did not read the log.
+  One bag drop of one item was measured; a rebuild at the drop could still
+  defeat the guard if it were given the existing struct or the ground
+  received a copy, and which struct reaches the ground is not established.
+  ForgePact's Loot announcements use it (the creation guard).
+
+[loot announcements, Live procedure 2](../ForgePact/docs/loot-announcement-research.md#live-procedure-2),
+[loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
+
 ---
 
 ## 17. Stash Special Tabs & the Crafting Route
@@ -3840,9 +4012,13 @@ workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
   `LootGroundCreateFromItem(x, y, item)` calls `CreateLootInFreePos`, then
   `LootGroundInit(instance, item)`, which reads the bound `m_LootFilter` off the
   instance and calls it behind a guard that was not read (`skipLootFilter` is
-  the candidate). A player's bag drop, `LootGroundDrop`, calls `LootGroundInit`
-  too. So when `LootGroundCreateFromItem` returns, `lootFilterVisible` already
-  holds the game's verdict. **Static reading** (part 2).
+  the candidate). `LootGroundDrop` calls `LootGroundInit` too; that it is the
+  player's bag drop was read from its name and its `RemoveItemFromMap` call
+  only, and on 2026-10-04 a bag drop reached `LootGroundInit` while
+  `LootGroundDrop`'s both-route detour counted 0 (§16.11: not observed, not
+  "does not happen"). So when `LootGroundCreateFromItem` returns,
+  `lootFilterVisible` already holds the game's verdict. **Static reading**
+  (part 2); the bag drop reaching `LootGroundInit` is **measured** (§16.11).
 - All three ground-drop entry points call `LootGroundInit`:
   `LootGroundCreateFromItem` once, after making the instance; `LootGroundDrop`
   at two sites; and `LootGroundCreate`, whose listing of callees names it once.
