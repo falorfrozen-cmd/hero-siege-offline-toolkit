@@ -194,6 +194,28 @@ own updates and the documentation links point. `hub-release.yml` sets it from
 points back at itself. To build for a fork:
 `HUB_REPO=owner/hero-siege-offline-toolkit npm run release`.
 
+### Code signing
+
+The installer and the `.exe` it wraps are Authenticode-signed with Azure
+Artifact Signing when `hub-release.yml` finds the repo variable
+`AZURE_SIGNING_ACCOUNT`. Without it the build is unsigned and SmartScreen
+warns — how a fork builds until it sets up its own Trusted Signing account.
+
+To turn it on, set, in the repository that publishes the hub:
+
+- **Repo variables:** `AZURE_SIGNING_ENDPOINT` (e.g.
+  `https://wus2.codesigning.azure.net`), `AZURE_SIGNING_ACCOUNT`, and
+  `AZURE_SIGNING_PROFILE` (the certificate profile name).
+- **Secrets** (the OIDC service principal's identity): `AZURE_CLIENT_ID`,
+  `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`. The app registration needs the
+  *Trusted Signing Certificate Profile Signer* role on the profile, and a
+  federated credential scoped to this repository's `hub-release.yml`, so
+  `azure/login` mints a short-lived token with no long-lived secret.
+
+The workflow installs the `sign` .NET tool, logs in, and writes the
+`bundle.windows.signCommand` Tauri runs on each produced binary (`%1` becomes
+the file).
+
 ---
 
 ## Gotchas

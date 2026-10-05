@@ -69,6 +69,9 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+      # OIDC: lets azure/login mint a short-lived token for Azure Artifact
+      # Signing instead of a long-lived client secret.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -109,6 +112,53 @@ jobs:
             conf.plugins.updater.endpoints = [endpoint];
             fs.writeFileSync(path, JSON.stringify(conf, null, 2));
             console.log("updater endpoint ->", endpoint);
+          '
+
+      # Authenticode signing through Azure Artifact Signing. Everything here is
+      # gated on the repo variable AZURE_SIGNING_ACCOUNT: a fork that has not
+      # set up a Trusted Signing account builds unsigned and ships the
+      # SmartScreen warning, exactly as before. The non-secret endpoint/account/
+      # profile live in repo variables; the OIDC identity lives in secrets.
+      - name: Install the Azure Artifact Signing CLI
+        if: ${{ vars.AZURE_SIGNING_ACCOUNT != '' }}
+        shell: pwsh
+        run: |
+          dotnet tool install --global --prerelease sign
+          Add-Content $env:GITHUB_PATH (Join-Path $env:USERPROFILE '.dotnet\tools')
+
+      - name: Log in for code signing (OIDC)
+        if: ${{ vars.AZURE_SIGNING_ACCOUNT != '' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # tauri.conf.json cannot read an environment variable, so the signCommand
+      # is written in here the same way the updater endpoint is, rather than
+      # committed. `%1` is the placeholder Tauri replaces with each produced
+      # binary (the .exe, then the installer).
+      - name: Point the bundle's signCommand at the signing account
+        if: ${{ vars.AZURE_SIGNING_ACCOUNT != '' }}
+        shell: bash
+        env:
+          ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const path = "hub/src-tauri/tauri.conf.json";
+            const conf = JSON.parse(fs.readFileSync(path, "utf8"));
+            const cmd = "sign code artifact-signing" +
+              " --timestamp-url http://timestamp.acs.microsoft.com" +
+              " --artifact-signing-endpoint " + process.env.ENDPOINT +
+              " --artifact-signing-account " + process.env.ACCOUNT +
+              " --artifact-signing-certificate-profile " + process.env.PROFILE +
+              " %1";
+            conf.bundle.windows = { ...(conf.bundle.windows || {}), signCommand: cmd };
+            fs.writeFileSync(path, JSON.stringify(conf, null, 2));
+            console.log("signCommand ->", cmd);
           '
 
       - name: Install frontend dependencies
@@ -195,11 +245,11 @@ jobs:
           releaseBody: |
             The hub that installs, launches and updates the ten tools.
 
-            Windows SmartScreen will warn about this download: there is no
-            code-signing certificate for this project, and there is none for any
-            of the ten tools either. What the hub offers instead is a SHA-256 for
-            every artifact it installs, pinned in a catalog signed with a key
-            built into the application.
+            The installer and the binaries it ships are Authenticode-signed with
+            Azure Artifact Signing when the repository has a signing account
+            configured. Every artifact the hub installs is still checked against
+            a SHA-256 pinned in a catalog signed with a key built into the
+            application.
 
             Installing the hub changes nothing about tools you already have, and
             uninstalling it never touches a tool's settings, saves or backups.

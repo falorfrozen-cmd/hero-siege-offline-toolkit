@@ -2416,6 +2416,15 @@ not, the job fails rather than silently compiling something other than what
 the tag says it ships. Discovery may differ between the two files; what gets
 compiled may not.
 
+**Code signing.** After `build_release.py` lays out `dist/ForgePact/`, the
+workflow Authenticode-signs `ForgePact.exe` and every `.dll`/`.exe` under
+`modfiles/` with Azure Artifact Signing — gated on the repo variable
+`AZURE_SIGNING_ACCOUNT` — before `release_ci.py package` zips them, so the
+`SHA256SUMS.txt` and `BUILD-INFO.json` inside the zip record the hashes of the
+signed bytes a player receives. The `modfiles_shipped/` source DLLs are never
+signed, so the SHA-256 pins in the table below still name the unsigned source
+files, not what ships.
+
 **The pin table**, from `tools/toolchain-pins.json`:
 
 | File | Source | Commit / release | SHA-256 (prefix) | Provenance |
