@@ -4479,18 +4479,24 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   `{j, b, c}` from its three arguments alone (§ 13.4). **Static reading.**
 - The explosion is the machine's sprite changing from `Slot_Machine_01_spr`
   to `Slot_Machine_01_Destroyed_spr` (Python SDK sprite 26574); the instance
-  stays (no `gone` line followed). With the machine as `self`, an
+  stays: the change line is read off the live instance, and a screenshot
+  after the explosion shows the wreck in place. (No `gone` line followed,
+  but that line has no positive control: none was recorded even when the
+  person left the first machine's zone.) With the machine as `self`, an
   `instance_create_layer` of `Visual_Effect_Simple_obj` comes 2 frames
   before the change, which itself comes about 190-200 frames after the
   machine's last `PickUpGoldCheck` debit. It is not a payout: inside an open
-  window whose closed line read `build-dropped=0`, no build row
-  (`CreateDefaultParams`, `CreateItemNew`, `GetUniqueRepoStruct`,
-  `LootGroundCreate`, `CreateLootInFreePos`, `DropItem`, `DropUniqueItems`)
-  ran for any `self`, and no `Loot_Ground_obj` was created, while the
+  window whose closed line read `build-dropped=0`, none of the eight build
+  rows (`CreateDefaultParams`, `CreateItemNew`, `GetUniqueRepoStruct`,
+  `LootGroundCreate`, `LootGroundCreateFromItem`, `CreateLootInFreePos`,
+  `DropItem`, `DropUniqueItems`) ran for any `self`, and no `Loot_Ground_obj` was created, while the
   machine's `Coin_obj` creates in the same window showed that the window saw
-  its creates. The two machines exploded after 12 or 13 and 8 or 9 spins
-  (the probe's debits and the person's count), so they did not share one
-  spin count; what decides the explosion is not established. **Measured
+  its creates; neither explosion (no head dropped in either) built an item.
+  The two machines exploded after 12 debits (13 other machine-self calls,
+  the person counted 13) and 9 debits (the person counted 8/9), so they did
+  not share one spin count. Whether the exploding spin is debited is not
+  established (machine 1's 13 against 12 suggests it is not, which would
+  make machine 2's count 9-10), and neither is what decides the explosion. **Measured
   (Live 4, two natural machines, 2026-10-05/06; `explosion-route: none`).**
   So after Live 3's last spin, where the last machine-self call was the same
   `Visual_Effect_Simple_obj` create and the instance still existed
