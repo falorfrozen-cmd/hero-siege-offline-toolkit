@@ -434,6 +434,8 @@ if (A.implementerEffort !== undefined && !IMPLEMENTER_BY_EFFORT[A.implementerEff
   return { outcome: 'BAD-ARGS', detail: `implementerEffort must be one of ${Object.keys(IMPLEMENTER_BY_EFFORT).join(', ')} (default high), not ${JSON.stringify(A.implementerEffort)}` }
 }
 const IMPLEMENTER = IMPLEMENTER_BY_EFFORT[A.implementerEffort || 'high']
+// Every patch spawn, the first and the re-run after an amendment alike (2i).
+const PATCH_IMPLEMENTER = 'implementer-medium'
 if (!CHECKOUT_ROOT && !(isAbsolutePath(A.planPath) && isAbsolutePath(A.contextPath))) {
   return { outcome: 'BAD-ARGS', detail: 'need checkoutRoot (`git rev-parse --show-toplevel` in this session) or absolute planPath and contextPath: the scribe resolves a relative path against the wrong checkout' }
 }
@@ -1810,7 +1812,7 @@ for (let n = START; n - patchCount - scopeCount < ROUND_CAP || patchNext; n++) {
     // Medium effort: the fixes are written out already, so the work is
     // applying them, and `round_delta.py size` measures afterwards whether it
     // stayed that small.
-    impl = await agent(patchPrompt(n, patchFindings), implOpts(`patch-implementer:r${n}`, IMPL_SCHEMA, 'implementer-medium'))
+    impl = await agent(patchPrompt(n, patchFindings), implOpts(`patch-implementer:r${n}`, IMPL_SCHEMA, PATCH_IMPLEMENTER))
     if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'patch implementer returned nothing', rounds }
   } else {
     impl = await agent(implPrompt(n), implOpts(`implementer:r${n}`, IMPL_SCHEMA))
@@ -1829,7 +1831,7 @@ for (let n = START; n - patchCount - scopeCount < ROUND_CAP || patchNext; n++) {
       amendment = { amended: am.confirmed, why: am.why, verdict: am.verdict }
       if (am.confirmed) {
         impl = isPatch
-          ? await agent(patchPrompt(n, patchFindings, true), implOpts(`patch-implementer:r${n}`, IMPL_SCHEMA))
+          ? await agent(patchPrompt(n, patchFindings, true), implOpts(`patch-implementer:r${n}`, IMPL_SCHEMA, PATCH_IMPLEMENTER))
           : await agent(implPrompt(n, true), implOpts(`implementer:r${n}`, IMPL_SCHEMA))
         if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'the implementer re-run after an amendment returned nothing', amendment, rounds }
         if (impl.verdict === 'PLAN-DEFECT') amendment.why = 'PLAN-DEFECT again after its amendment in this launch, with no IMPL-DONE between'

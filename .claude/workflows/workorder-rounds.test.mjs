@@ -2247,6 +2247,22 @@ test('amend: rounds mode -- an amendment re-runs the same round, uncounted; a se
   assert.deepEqual(amendCalls(replan.calls), ['amend-save:implementer:r0', 'amendment: zz implementer:r0', 'amend-check:implementer:r0', 'amend-restore:implementer:r0'])
 })
 
+test('amend: rounds mode -- a patch re-run after its amendment is still implementer-medium', async () => {
+  // PR #431 review: the first patch spawn named `implementer-medium` and the
+  // re-run after a confirmed amendment fell back to the triaged implementer.
+  const types = []
+  let patches = 0, blocked = 0
+  const FIX = { where: 'docs/x.md:3', problem: 'p', evidence: 'e', fix: 'change a to b' }
+  const { result } = await run({ ...BASE, reviewers: { 'docs-sync-reviewer': 'never', 'decompile-output-guard': 'never' } }, (label, prompt, opts) => {
+    if (label.startsWith('patch-implementer')) { types.push(opts.agentType); return patches++ === 0 ? CORRECTED() : DONE }
+    if (label.startsWith('docs-sync-reviewer')) return blocked++ === 0 ? { ...CLEAN, blocking: [FIX] } : CLEAN
+    if (label.startsWith('delta')) return DELTA(['docs/x.md'], { size_exit_code: 0, lines_changed: 2, new_files: 0 })
+    return standard(AMEND_OK)(label)
+  })
+  assert.equal(result.outcome, 'PASS')
+  assert.deepEqual(types, ['implementer-medium', 'implementer-medium'])
+})
+
 test('amend: rounds mode -- a lane\'s PLAN-DEFECT is unchanged; the join\'s is amended and re-run as one implementer', async () => {
   const lane = { ...CORRECTED(), lane: 'code' }
   const r = await run(LANED, laneReply({ code: lane }, AMEND_OK))
