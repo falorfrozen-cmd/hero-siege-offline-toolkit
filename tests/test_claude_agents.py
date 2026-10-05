@@ -33,8 +33,10 @@ AGENTS = REPO / ".claude" / "agents"
 SKILLS = REPO / ".claude" / "skills"
 
 # Tier aliases, not pinned version IDs -- the tier is the design decision and
-# the version is not. See `.claude/README.md`, "Agents".
-VALID_MODELS = {"opus", "sonnet", "haiku", "fable", "inherit"}
+# the version is not. See `.claude/README.md`, "Agents". `fable` left the list
+# on 2026-10-05: the owner's license no longer carries it, so a pin to it
+# would fail to spawn; /workorder escalates effort on `opus` instead.
+VALID_MODELS = {"opus", "sonnet", "haiku", "inherit"}
 VALID_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 
 FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.S)

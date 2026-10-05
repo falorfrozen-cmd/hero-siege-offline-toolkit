@@ -91,11 +91,22 @@ about whether it can. These are checkable:
 
 | The change… | Start at |
 |---|---|
-| **introduces or changes concurrency** — threads, async boundaries, a new `#[tauri::command]` that touches disk or network, anything that can deadlock or race | planner `fable`, implementer `opus` |
-| must **establish an unknown game mechanism**, not verify a suspected one — the "which of N candidates does X" shape | planner `fable`, implementer `opus` |
+| **introduces or changes concurrency** — threads, async boundaries, a new `#[tauri::command]` that touches disk or network, anything that can deadlock or race | planner `planner-xhigh`, implementer `implementer` |
+| must **establish an unknown game mechanism**, not verify a suspected one — the "which of N candidates does X" shape | planner `planner-xhigh`, implementer `implementer` |
 | falls in the **suspend-the-game-loop class** (`AGENTS.md`) | stop — read `ForgePact/docs/menu-pause-plan.md` §0 with the user before planning at all |
-| touches **only docs, tests or config** — no product source, no hook, no binding | planner `opus`, implementer `sonnet` |
-| everything else — including hook attachment and three-binding contracts, which had their own `opus`/`opus` rows when the default implementer was `sonnet` | the agents' own pins (planner `opus`, implementer `opus`) |
+| touches **only docs, tests or config** — no product source, no hook, no binding | planner `planner-medium`, implementer `implementer-medium` with `model: sonnet` |
+| everything else — including hook attachment and three-binding contracts, which had their own `opus`/`opus` rows when the default implementer was `sonnet` | the agents' own pins (`planner` and `implementer`, both opus/high) |
+
+**A tier is an agent name, and sometimes a model.** The names are effort
+variants: `planner-xhigh` is `planner` at `xhigh` effort, generated from
+`planner.md`'s `effort-variants:` by `tools/sync_agent_tooling.py`, with the
+same instructions word for word. Spawn the variant as the `subagent_type`;
+the `Agent` tool takes a `model` per call but no effort, so the name is the
+only way to choose one. In workflow mode pass `implementerEffort`
+(`high` or `medium`) and `implementerModel`. Every variant runs on `opus`
+unless a row names another model. `fable` is not a tier: the owner's
+license dropped it on 2026-10-05, so the pipeline escalates effort on
+`opus` wherever it once escalated to `fable` (§ "Model tiers").
 
 The implementer's default is `opus` since 2026-09-22 (see "Model tiers"):
 Opus 5.5 reads cache at Sonnet 5's price, and 99% of an implementer's tokens
@@ -425,14 +436,15 @@ plan and context files were the two most-read files of the pipeline: 915
   `## Context`. Then it is an **amendment**:
 
   1. `py -3 tools/amend_check.py save <plan> <context>`;
-  2. spawn `planner` fresh with `model: opus`, with the description
+  2. spawn `planner-medium` fresh with `model: opus`, with the description
      `amendment: <slug> <what>` and the correction verbatim (planner.md "When
      you are spawned as an amendment").
-     An amendment planner always runs on opus, never fable.
+     An amendment planner always runs as planner-medium on opus, never escalated.
      That holds whatever `planner-tier=` the State records and whatever tier
      the last replan ran at: an amendment applies one stated correction, and
      the escalation ladder below is for replans. `tools/workorder_audit.py`
-     R27 fails an `amendment:` planner whose transcript ran fable;
+     R27 fails an `amendment:` planner whose transcript ran fable, or that
+     ran as `planner-xhigh` or `planner-max`;
   3. `py -3 tools/amend_check.py check <plan> <context>` once it returns.
 
   Exit 0 (`AMENDMENT`) means Goal, Out of scope and Needs human judgement are
@@ -471,22 +483,24 @@ plan and context files were the two most-read files of the pipeline: 915
 
   | Replan | Spawn `planner` with | Because |
   |---|---|---|
-  | 1st | `model: opus` (its default) | most wrong plans are wrong about one fact, not about the mechanism |
-  | 2nd | `model: fable` | cheaper reasoning has now demonstrably failed twice on the same problem |
+  | 1st | the first plan's tier (`planner`, or `planner-xhigh` on a hard triage row) | most wrong plans are wrong about one fact, not about the mechanism |
+  | 2nd | `planner-max` | cheaper reasoning has now demonstrably failed twice on the same problem |
   | 3rd | — stop, ask the user | a goal that survives two replans is usually not well posed |
 
   Spend money where it's earned, not guessed. Planning is *not* cheap: over
-  2026-09-19..22 the planner was 22% of list-price spend, and a Fable 5.1
-  plan averaged $10.38 against $4.00 on Opus 5 (about $2.60 on Opus 5.5) —
-  Fable's output costs 2.5× Opus 5.5's, and a planner writes more output than
-  any other phase. One Fable replan still costs less than the round it saves
-  and far less than a wrong mechanism model's live session, which is why it
-  is the *second* replan's tier and not the first plan's.
+  2026-09-19..22 the planner was 22% of list-price spend, and a planner
+  writes more output than any other phase, so more thinking per turn costs
+  most here. This ladder escalated to Fable 5.1 until 2026-10-05, when the
+  owner's license dropped it; `max` effort on `opus` takes its place, and is
+  the *second* replan's tier rather than the first plan's for the same
+  reason Fable was: one expensive replan costs less than the round it saves,
+  but not less than a plan that needed no escalation.
 
   Record the escalation under the round's heading in the context file's
-  `## Log` (`planner escalated to fable after 2nd PLAN-DEFECT`). A Fable
-  failure signals the problem is under-specified, not difficult — say so to
-  the user when you stop.
+  `## Log` (`planner escalated to planner-max after 2nd PLAN-DEFECT`), and
+  write the tier into `## State` › `agents:` as `planner-tier=planner-max`.
+  A `planner-max` failure signals the problem is under-specified, not
+  difficult — say so to the user when you stop.
 
 ### Re-entering a phase: resume, or fresh spawn
 
@@ -527,10 +541,10 @@ goes back unforwarded — an asker with no view hasn't thought about the
 problem, and answering it turns consultation into delegation: the weaker model
 stops deciding and the pipeline pays two tiers for one phase.
 
-**Spawn `consultant` at `opus`** by default. For a question in the `fable` rows
-of the triage table, pass `model: fable` — one focused question is the
-cheapest place in this pipeline to buy the strongest model, far cheaper than
-running a whole phase there.
+**Spawn `consultant`** (opus/xhigh) by default. For a question in the
+`planner-xhigh` rows of the triage table, spawn `consultant-max` — one
+focused question is the cheapest place in this pipeline to buy the most
+thinking, far cheaper than running a whole phase at `max`.
 
 **Cap: 2 consultations per round.** A third is a signal, not a quota to spend:
 triage was wrong, so escalate the *phase* — re-spawn it a tier up with what's
@@ -726,11 +740,11 @@ The line, when a reviewer's label looks wrong to you:
   - **A plan change:** run `tools/amend_check.py save`, *then* record the
     owner's answer under `### Decisions` as `owner, <YYYY-MM-DD>: "<their
     words>"`, then spawn the planner (labelled `amendment: <slug> owner
-    scope ...`, with `model: opus`), then `check`.
-    An amendment planner always runs on opus, never fable.
+    scope ...`, as `planner-medium` with `model: opus`), then `check`.
+    An amendment planner always runs as planner-medium on opus, never escalated.
     Never pass the workorder's escalated `planner-tier=` here: the one fable
     amendment measured (forgepact-74, 2026-10-02) came by this route, and R27
-    now fails it. When the change would otherwise be a replan
+    now fails it, and an amendment run as `planner-xhigh` or `planner-max`. When the change would otherwise be a replan
     (the Goal or scope moved, a section came or went, more than 20 lines
     changed) and the context gained an owner line since `save`, `check`
     prints `SCOPE: <k> new owner decision(s)` and exits 0. A change small
@@ -755,8 +769,10 @@ The line, when a reviewer's label looks wrong to you:
   `instrument-blindness-reviewer`, because what a hook sees is not settled by
   applying an edit someone wrote down. In a patch round:
 
-  - one implementer (`patch-implementer:r<n>`) applies those fixes and
-    nothing else;
+  - one implementer (`patch-implementer:r<n>`), spawned as
+    `implementer-medium` whatever the triaged implementer, applies those
+    fixes and nothing else: the fixes are written down already, and the size
+    check below measures whether applying them stayed that small;
   - `verifier`, fresh as always, re-verifies only the criteria the patch can
     reach (below, "Re-verify what the fix reaches"): the previous verify
     failed no criterion, so nothing else is owed;
@@ -1239,7 +1255,7 @@ the Workflow tool requires, so don't ask again. It carried
 
 ```
 Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
-           args: { slug, planPath, contextPath, checkoutRoot, goalExcerpt, implementerModel, round,
+           args: { slug, planPath, contextPath, checkoutRoot, goalExcerpt, implementerModel, implementerEffort, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
                    submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
                    lanes: [{ name, files: [...] }, ...], join,
@@ -1412,9 +1428,42 @@ Set in each agent's frontmatter, with an `effort:` beside every tier that
 takes one: `planner` opus/high, `implementer` opus/high, `consultant`
 opus/xhigh, `instrument-blindness-reviewer` opus/high, the other reviewers and
 `live-operator` sonnet/high, `verifier` and `scribe` haiku (Haiku 4.5 takes no
-effort). Override the model for one run by passing `model` on the Agent call;
-effort has no per-call override, which is why it is pinned — an agent without
-one inherits whatever the session runs at.
+effort). Override the model for one run by passing `model` on the Agent call.
+Effort has no per-call override on the Agent tool, which is why it is pinned
+— an agent without one inherits whatever the session runs at.
+
+**Effort variants choose effort per spawn.** An agent's
+`effort-variants:` line lists the other levels /workorder runs it at, and
+`py -3 tools/sync_agent_tooling.py` writes one `<agent>-<level>.md` for each,
+same body, own `name:` and `effort:`; `tests/test_agent_tooling_sync.py`
+fails a variant that drifted from its source. Today: `planner-medium`,
+`planner-xhigh`, `planner-max`, `implementer-medium`, `consultant-max`.
+Spawn the variant by name, in a driver's `Agent` call and in
+`workorder-rounds.js` alike. A Workflow `agent()` call does accept an
+`effort` option, but whether it beats the agent's own pinned `effort:` is
+not documented, and a transcript records no effort level at all, so the
+name is the one spelling that both runs at that effort and lets
+`workorder_audit.py` see it (`split_effort_variant`; `--calibrate` reports
+per role, model *and* effort). To add a level, add it to the source's
+`effort-variants:`, re-run the sync, and name it in a table here.
+
+| Spawn | Model / effort | When |
+|---|---|---|
+| `planner-medium` | opus / medium | every amendment; the docs/tests/config triage row |
+| `planner` | opus / high | the default first plan and first replan |
+| `planner-xhigh` | opus / xhigh | the concurrency and unknown-mechanism triage rows |
+| `planner-max` | opus / max | the second replan |
+| `implementer-medium` | opus / medium (sonnet on the docs row) | every patch round; the docs/tests/config triage row |
+| `implementer` | opus / high | everything else |
+| `consultant` | opus / xhigh | the default consultation |
+| `consultant-max` | opus / max | a question from a `planner-xhigh` triage row |
+
+**Fable left this pipeline on 2026-10-05**, when the owner's license
+stopped carrying it. Every place it held — the two hard triage rows, the
+second replan, the consultant on a hard row — now holds the `opus` variant
+one or two effort levels up, per the table above. Its price row below
+stays, because `workorder_audit.py` still prices older transcripts that
+ran it.
 
 **Where Opus 5.5 fits (2026-09-22).** `opus` resolves to Claude Opus 5.5; it
 did so already for the last sessions of the calibration set, with no file
@@ -1440,25 +1489,30 @@ have cost about half as much. Hence:
   tokens on average (11.2M against 17.4M) while carrying the hard triage
   rows, and the four Opus 5.5 runs averaged $4.82. Same money, no tail.
 - **planner, consultant, instrument-blindness-reviewer stay `opus`**, now
-  cheaper. `fable` keeps the two rows above plus the second replan.
-- **amendment planner → always `opus`, passed explicitly.**
-  An amendment planner always runs on opus, never fable.
+  cheaper. Until 2026-10-05 `fable` kept the two hard triage rows plus the
+  second replan; those are now `planner-xhigh` and `planner-max`.
+- **amendment planner → always `planner-medium`, with `model: opus` passed explicitly.**
+  An amendment planner always runs as planner-medium on opus, never escalated.
   It applies one correction someone already stated, so the replan ladder
-  does not reach it: spawn it with `model: opus` whatever `planner-tier=`
+  does not reach it: spawn it as `planner-medium` whatever `planner-tier=`
   the State records. In the 18 sessions after 2026-10-02 one amendment ran
   fable because the driver carried an escalated tier over; fable planners
   averaged 8.49M input tokens a run there. `workorder_audit.py` R27
   (`amendment-tier`) fails an `amendment:` planner whose transcript ran
-  fable, and `workorder-rounds.js` spawns its own amendments with `model:
-  'opus'`.
+  fable or that ran as `planner-xhigh`/`planner-max`, and
+  `workorder-rounds.js` spawns its own amendments as `planner-medium` with
+  `model: 'opus'`.
 - **reviewers stay `sonnet`, verifier and scribe `haiku`.** On the same
   tokens Opus 5.5 would cost the reviewers 1.2× and the verifier 2.9×, with no
   finding of theirs measured as missed.
 - **Effort.** Opus 5.5 defaults to `medium` and thinks more per turn than
   Opus 5 at the same level; `high` is pinned for the phases that carry long
   agentic work and `xhigh` for the one narrow question `consultant` answers.
-  Neither is measured yet: `tools/workorder_audit.py --calibrate` reports
-  per role *and model*, so the next recalibration says whether they hold.
+  `medium` is used where the correction is already written (amendments,
+  patch rounds) or the change is docs only, and `max` only where cheaper
+  reasoning has failed twice. None of these levels is measured yet:
+  `tools/workorder_audit.py --calibrate` reports per role, model *and*
+  effort, so the next recalibration says whether they hold.
 
 `tools/workorder_audit.py` prices every transcript at these rates
 (`MODEL_PRICES`), so a report's cost line tracks a tier change without anyone
@@ -1471,7 +1525,8 @@ a stale-ID sweep every generation — not the `*Rva*` case from `AGENTS.md`,
 since an alias is a documented moving pointer, not a silently-drifted
 constant.
 
-**When to reach for `fable` yourself,** beyond the automatic escalation above:
+**When to reach for `planner-xhigh` or `consultant-max` yourself,** beyond the
+automatic escalation above (these were the reasons to reach for `fable`):
 
 - The plan must establish an **unknown** game mechanism, not verify a
   suspected one — the "which of 34 candidates does X" shape, where a wrong
@@ -1481,6 +1536,5 @@ constant.
   player's session.
 
 Not on a routine change, or the implementer or a reviewer — those run at high
-volume where 2.5× is real money for no measured gain — and not as the
-default planner: at 22% of spend with Fable averaging 2.6× an Opus 5 plan, it
-is no longer "nearly free".
+volume, where more thinking per turn is real money for no measured gain —
+and not as the default planner, which is 22% of spend already.
