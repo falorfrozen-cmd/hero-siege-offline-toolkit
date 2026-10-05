@@ -72,9 +72,10 @@
       "code": 9,
       "rarity": "Heroic",
       "branch": "the closure's own branch for 9",
-      "announced_online": "yes",
-      "decided_by": "the closure itself (gml_Script_anon@1138@gml_Object_Loot_Ground_obj_Create_0); gml_Script_GetRareDropAnnouncement does not decide 9",
-      "status": "static_reading"
+      "announced_online": "not_established",
+      "decided_by": "the closure itself (gml_Script_anon@1138@gml_Object_Loot_Ground_obj_Create_0); gml_Script_GetRareDropAnnouncement was not read answering true for 9",
+      "status": "static_reading",
+      "note": "the branch is a static reading; whether that branch announces a Heroic drop online was not read, and what the closure does after a false GetRareDropAnnouncement answer depends on a value whose meaning is not established (the same position as Satanic). ForgePact announces it (the owner's scope)"
     },
     {
       "code": 6,
