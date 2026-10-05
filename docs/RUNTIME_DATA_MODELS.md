@@ -4467,13 +4467,13 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   `Visual_Effect_Simple_obj`); `machines=2` (the same two ids) before and
   after. **Measured (Live 3).**
 - Live 3's sixteen-spin window produced two item builds with the machine as
-  `self`, about four spins apart, each followed by more spins, so neither was
-  the explosion the owner describes below. Gold arrived separately, as
-  `instance_create_layer` of `Coin_obj` with the machine as `self` (three
-  times), never through `CreateDefaultParams`, and the HUD gold went back up
-  afterwards. Over that session `CreateDefaultParams` ran 109 times, 2 of them
-  with the machine as `self`: monster drops pass through it too. **Measured
-  (Live 3).** How often the machine pays out is not established; the
+  `self`, about four spins apart, each followed by more spins. Gold arrived
+  separately, as `instance_create_layer` of `Coin_obj` with the machine as
+  `self` (three times), never through `CreateDefaultParams`, and the HUD gold
+  went back up afterwards. Over that session `CreateDefaultParams` ran 109
+  times, 2 of them with the machine as `self`: monster drops pass through it
+  too. **Measured (Live 3).** By the owner's report below, neither build was
+  its explosion. How often the machine pays out is not established; the
   `rollTimes01`..`rollTimes04` counters stay only as § 20.3's static reading.
   `CreateDefaultParams` itself reads nothing from `self`: it returns
   `{j, b, c}` from its three arguments alone (§ 13.4). **Static reading.**
