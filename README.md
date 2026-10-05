@@ -47,9 +47,18 @@ added catalog entries.
 
 - **Windows 10 or 11**, 64-bit. The hub itself is Windows-only; the Steam Deck
   save editor it can open is a browser page and works anywhere.
-- The installer is per-user and needs no Administrator. The three tools that
-  edit game memory do, and the hub asks Windows for it per launch rather than
-  running elevated itself.
+- A release carries two installers; use one, not both. The `-setup.exe` one
+  installs for your user only and needs no Administrator. The `.msi` one
+  installs for every user of the PC, so Windows asks for Administrator when you
+  install it and again each time the hub updates itself. If you decline that
+  prompt during an update, the hub stays closed and on the old version; start
+  it again from the Start menu. The `.msi` is there because some antivirus
+  programs flag a helper file inside the `-setup.exe` installer.
+- If the hub is already installed, let it update itself rather than
+  downloading the other installer over it. To change from one installer to the
+  other, uninstall the hub first; that leaves your tools and settings alone.
+- The three tools that edit game memory need Administrator, and the hub asks
+  Windows for it per launch rather than running elevated itself.
 - **Windows will warn you about the download.** There is no code-signing
   certificate for this project or its tools. Choose *More info →
   Run anyway*. The hash pinning described above is what stands in for a
@@ -107,7 +116,7 @@ cd hub
 npm install
 npm start     # run it in development
 npm test      # the Rust engine's tests
-npm run release   # build the installer
+npm run release   # build both installers (setup.exe and .msi)
 ```
 
 Needs Node 20.19+ and Rust 1.88+. `npm start` opens the app against a Vite dev
