@@ -108,9 +108,11 @@ bag into the stash, and the map owner per tab kind; see `docs/RUNTIME_DATA_MODEL
 against the SDK and that doc section by `tests/test_curated_stash_containers.py`.
 `gamba_measurements.json` (2026-10-04, ForgePact issue #134's gamba machine research, phase 1:
 G1-G3 the static reading of `Slot_Machine_01_obj`, its parents and its creation call, G4-G9 measured
-with the research build's `gambaprobe` in two live sessions, G10 the spin checks no session could
-reach) is data only, in the shape of `jump_measurements.json` (`measurements[]` with `id`, `kind`,
-`status`, `date`, `source`, `what`, `values`), with no generator, no model and no consumer yet; its
+with the research build's `gambaprobe` in the first two of three live sessions, G10 the spin checks
+the first two sessions never reached, G11-G13 the phase-1c static readings of the `Alarm_9` guard,
+`sCP` and the extension-function state route, G14-G17 the third session's spin, payout, prize roll
+and spawn-route measurements) is data only, in the shape of `jump_measurements.json`
+(`measurements[]` with `id`, `kind`, `status`, `date`, `source`, `what`, `values`), with no generator, no model and no consumer yet; its
 prose is `docs/RUNTIME_DATA_MODELS.md` § 20 and its argument ForgePact's
 `docs/gamba-machine-research.md`.
 

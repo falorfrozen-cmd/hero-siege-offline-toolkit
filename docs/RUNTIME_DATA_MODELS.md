@@ -4144,7 +4144,7 @@ are not, and are written "Live 1 run Jn" here.
 
 What ForgePact's Goburin's Head pity research (#134, phase 1) established about
 the gamba machine on 2026-10-04: a static reading of the object's events, and
-two live sessions with its `gambaprobe` instrument (research build), on save
+three live sessions with its `gambaprobe` instrument (research build), on save
 slot 14 ("Sorak"), mostly in the Town of Inoya. The argument, the controls and
 the check tables are in ForgePact's
 [`docs/gamba-machine-research.md`](../ForgePact/docs/gamba-machine-research.md);
@@ -4221,8 +4221,8 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   inside the creating call and, in its first step, runs `Alarm_9`, which
   removes it: `CleanUp_0` runs nested inside `Alarm_9` (the stack walk taken
   at `CleanUp_0` shows, under the runner's frames, a frame in
-  `gml_Object_Slot_Machine_01_obj_Alarm_9`). `Step_0` never runs, and nothing
-  is left on screen. Seven machines, all the same: three by
+  `gml_Object_Slot_Machine_01_obj_Alarm_9`). `Step_0` never runs for those seven,
+  and nothing is left on screen. Seven machines, all the same: three by
   `instance_create_depth` at depth 0 (two in town, one in a Hell zone), then
   one each by the game's own `instance_create` script called by name with the
   player as `self`, by `instance_create_layer` on the player's `layer` value,
@@ -4253,8 +4253,10 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   lie inside that routine and its callee). Nothing else in `Alarm_9`
   destroys or deactivates. **Static reading** (2026-10-04).
 - `Create_0` initialises `pSpwd` to false, so every machine ForgePact
-  created so far died for one reason: nobody set `pSpwd` to true between
-  `Create_0` and the first step. **Static reading** (2026-10-04).
+  created so far died for one reason: `pSpwd` was still false at the first step.
+  On the routes above it was never set true; on the `spawn scp` route
+  `sCP` called `SetVariable(key, true)` but the stamp did not take effect
+  (below). **Static reading** (2026-10-04).
 - The `spawn scp` route (§ 20.5) meets the guard on paper and still dies:
   Live 3's `gambaprobe spawn scp` created a machine (`object=4644`, the game's
   own `sCP` frame in its caller walk) that its own `Alarm_9` removed at its
@@ -4275,9 +4277,11 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
 - The payout is a random roll, and the machine is not destroyed by it: the
   prize roll is the script `GetUniqueRepoStruct` with the machine as `self`
   (`argc=3`, arguments `1, 0, 72`), whose randomness goes through the
-  `cpr_irandom` and `cpr_rand32` script rows (`scope=machine-event`), not a
-  builtin RNG (the `irandom` lever armed for the roll stayed `INERT`). The
-  prize is built by `CreateDefaultParams` (`(0,72,true)` then `(0,11,
+  `cpr_irandom` and `cpr_rand32` script rows (`scope=machine-event`); the
+  `irandom` lever armed for the roll stayed `INERT`, which is not-observed on
+  that row (the builtin rows are unproven against a compiled call),
+  not proof the roll passes no builtin. The prize is built by
+  `CreateDefaultParams` (`(0,72,true)` then `(0,11,
   undefined)`) and placed by `LootGroundCreate` -> `CreateLootInFreePos` ->
   `instance_create_layer` (`Loot_Ground_obj`, plus `Coin_obj`,
   `Loot_Pillar_obj`, `Impact_Sound_obj`, `Visual_Effect_Simple_obj`);
@@ -4299,8 +4303,8 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   builtins were not called at all (an `irandom` sent through `CallBuiltin` in
   the same session did register, so those rows could see a call). Combat's
   rolls go through the `cpr_*` scripts. **Measured** (2026-10-04). The
-  machine's prize roll passes the same `cpr_*` scripts, not a builtin RNG row
-  (above). **Measured (Live 3).**
+  machine's prize roll passes the same `cpr_*` scripts (above); a builtin RNG
+  row did not move, which is not-observed. **Measured (Live 3).**
 
 [Live 2 results](../ForgePact/docs/gamba-machine-research.md#live-2-results)
 [Live 3 results](../ForgePact/docs/gamba-machine-research.md#live-3-results)

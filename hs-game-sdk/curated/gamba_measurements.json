@@ -267,7 +267,7 @@
       "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 3 results"}],
       "objects": ["Slot_Machine_01_obj"],
       "scripts": ["gml_Script_GetUniqueRepoStruct", "gml_Script_CreateDefaultParams", "gml_Script_LootGroundCreate", "gml_Script_CreateLootInFreePos", "gml_Script_cpr_irandom", "gml_Script_cpr_rand32", "gml_Script_PickUpGoldCheck"],
-      "what": "The spin, on the natural machine: each spin debits 10,000 gold through PickUpGoldCheck with the machine as self (a1=-10000, one call per spin); GetGoldAmount with the machine as self read 1001114 -> 991114 -> 981114 -> 971114 -> ... Sixteen PickUpGoldCheck calls fired, with no instance_destroy carrying a machine argument. The payout is a random roll: GetUniqueRepoStruct with the machine as self (args 1, 0, 72), whose randomness goes through the cpr_irandom/cpr_rand32 script rows (scope=machine-event), not a builtin. The prize is built by CreateDefaultParams ((0,72,true) then (0,11,undefined)) and placed by LootGroundCreate -> CreateLootInFreePos -> instance_create_layer. The machine is not destroyed by a payout (machines=2 before and after).",
+      "what": "The spin, on the natural machine: each spin debits 10,000 gold through PickUpGoldCheck with the machine as self (a1=-10000, one call per spin); GetGoldAmount with the machine as self read 1001114 -> 991114 -> 981114 -> 971114 -> ... Sixteen PickUpGoldCheck calls fired, with no instance_destroy carrying a machine argument. The payout is a random roll: GetUniqueRepoStruct with the machine as self (args 1, 0, 72), whose randomness goes through the cpr_irandom/cpr_rand32 script rows (scope=machine-event), not observed on a builtin row. The prize is built by CreateDefaultParams ((0,72,true) then (0,11,undefined)) and placed by LootGroundCreate -> CreateLootInFreePos -> instance_create_layer. The machine is not destroyed by a payout (machines=2 before and after).",
       "values": {
         "gold_per_spin": 10000,
         "pickup_gold_check_calls": 16,
@@ -277,7 +277,7 @@
         "create_default_params": [{"b": 72, "j": 0, "c": 1}, {"b": 11, "j": 0, "c": 0}],
         "prize_route": ["LootGroundCreate", "CreateLootInFreePos", "instance_create_layer"],
         "machine_destroyed_by_payout": false,
-        "builtin_rng_decides_prize": false
+        "builtin_rng_observed": false
       }
     },
     {
@@ -288,7 +288,7 @@
       "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 3 results"}],
       "objects": ["Slot_Machine_01_obj"],
       "scripts": [],
-      "what": "The irandom lever armed for the prize roll stayed INERT (no machine-self builtin RNG call reached it), confirming the prize roll does not pass a builtin RNG row. fallback-drop did not run (gambaprobe drop was refused by the auto-mode permission classifier before it was sent), and a second machine's fresh state was not observed (no spawn route survived; the second natural machine was present but not spun).",
+      "what": "The irandom lever armed for the prize roll stayed INERT (no machine-self builtin RNG call reached it), which is not-observed on that row (the builtin rows are unproven against a compiled call), not proof the roll passes no builtin. fallback-drop did not run (gambaprobe drop was refused by the auto-mode permission classifier before it was sent), and a second machine's fresh state was not observed (no spawn route survived; the second natural machine was present but not spun).",
       "values": {
         "forced_head": "INERT",
         "fallback_drop": "not-run",
