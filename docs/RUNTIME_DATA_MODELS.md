@@ -4275,32 +4275,59 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   `self` reads the balance after each. Sixteen `PickUpGoldCheck` calls fired
   over the window, with no `instance_destroy` carrying a machine argument.
   **Measured (Live 3).**
-- The payout is a random roll, and the machine is not destroyed by it: the
-  prize roll is the script `GetUniqueRepoStruct` with the machine as `self`
-  (`argc=3`, arguments `1, 0, 72`), whose randomness goes through the
-  `cpr_irandom` and `cpr_rand32` script rows (`scope=machine-event`); the
+- A payout between spins is a random roll, and the machine is not destroyed
+  by it: the unique pick is the script `GetUniqueRepoStruct` with the machine
+  as `self` (`argc=3`, arguments `1, 0, 72`), whose randomness goes through
+  the `cpr_irandom` and `cpr_rand32` script rows (`scope=machine-event`); the
   `irandom` lever armed for the roll stayed `INERT`, which is not-observed on
-  that row (the builtin rows are unproven against a compiled call),
-  not proof the roll passes no builtin. The prize is built by
-  `CreateDefaultParams` (`(0,72,true)` then `(0,11,
-  undefined)`) and placed by `LootGroundCreate` -> `CreateLootInFreePos` ->
-  `instance_create_layer` (`Loot_Ground_obj`, plus `Coin_obj`,
-  `Loot_Pillar_obj`, `Impact_Sound_obj`, `Visual_Effect_Simple_obj`);
-  `machines=2` (the same two ids) before and after. **Measured (Live 3).**
-- A payout is not a per-spin event. The sixteen spins of that window produced
-  one prize build and one coins build, both with the machine as `self`: the
-  `CreateDefaultParams` call with a truthy third argument (`c=1`, the unique
-  repository) is the prize, and the one whose third argument is `undefined`
-  (`c=0`) is the coins. **Measured (Live 3).** The machine's four
-  `rollTimes01`..`rollTimes04` counters, which `Alarm_9` seeds at 8 plus the
-  result of a runtime routine called with 8 (§ 20.3), are read as the payout
-  cycle: a payout arrives about once per 8-16 spins. **Static reading**,
-  cross-checked only by that one measured window; how the counters are spent
-  and how the picked entry reaches the build are not established. So anything
-  that acts on the prize build (`gambapity`'s force) acts on the machine's
-  next payout, not on a chosen spin. `CreateDefaultParams` itself reads
-  nothing from `self`: it returns `{j, b, c}` from its three arguments alone
-  (§ 13.4). **Static reading.**
+  that row (the builtin rows are unproven against a compiled call), not proof
+  the roll passes no builtin. Two different items were built through
+  `CreateDefaultParams`: the unique pick's `(0,72,true)`, placed by
+  `LootGroundCreate` with type `1.0` (a unique), and a separate
+  `(0,11,undefined)`, placed with type `15.0` (a socketable built by
+  `CreateItemNew`). Placement runs `LootGroundCreate` ->
+  `CreateLootInFreePos` -> `instance_create_layer` (`Loot_Ground_obj`, plus
+  `Coin_obj`, `Loot_Pillar_obj`, `Impact_Sound_obj`,
+  `Visual_Effect_Simple_obj`); `machines=2` (the same two ids) before and
+  after. **Measured (Live 3).**
+- Live 3's sixteen-spin window produced two item builds with the machine as
+  `self`, about four spins apart, each followed by more spins, so neither was
+  the explosion the owner describes below. Gold arrived separately, as
+  `instance_create_layer` of `Coin_obj` with the machine as `self` (three
+  times), never through `CreateDefaultParams`, and the HUD gold went back up
+  afterwards. Over that session `CreateDefaultParams` ran 109 times, 2 of them
+  with the machine as `self`: monster drops pass through it too. **Measured
+  (Live 3).** How often the machine pays out is not established; the
+  `rollTimes01`..`rollTimes04` counters stay only as § 20.3's static reading.
+  `CreateDefaultParams` itself reads nothing from `self`: it returns
+  `{j, b, c}` from its three arguments alone (§ 13.4). **Static reading.**
+- The explosion, by the owner's report (2026-10-05), **not measured**: it is
+  not a payout; it comes after roughly 10-14 spins, it is the machine's last
+  act, and the machine cannot be used afterwards; in the unmodded game it is
+  the only time Goburin's Head drops. Nothing has observed it yet. After Live
+  3's last spin the last machine-self call was an `instance_create_layer` of
+  `Visual_Effect_Simple_obj` and the instance still existed (`machines=2`,
+  the same ids); whether that machine exploded there is not established, and
+  that probe did not log calls whose `self` was another object. So the
+  explosion's route, its `self` and whether it builds an item are not
+  established; the research build's explosion watch (`gambaprobe window`,
+  Live procedure 4) measures them. A force that acts on a payout build acts
+  on the wrong event.
+- The executable has the sprite `Slot_Machine_01_Destroyed_spr` (Python SDK
+  sprite 26574). **Static search**: it is the likely look of a used-up
+  machine; **not established** that the explosion sets it.
+- `Step_0` does not decompile on this build (the decompiler process died on
+  it). A call-by-call listing of it, with callees named from the symbol dump,
+  shows only these named script calls: 7 `CreateDefaultParams`, 3
+  `GetUniqueRepoStruct`, 2 `LootBlocksUseKey`, 2 `GetGoldAmount`, 2
+  `GoldOperationPending`, 2 `NetworkSendClientEffect` and 1
+  `GetGoldCounterHash`. The builds sit in one stretch: three builds with no
+  pick before them, three pick-then-build pairs and one trailing build. Each
+  pick site loads the same small constants at the same distances before the
+  call, consistent with all three picking the measured `(1, 0, 72)`, and no
+  site was seen loading 10 or 98. **Static reading, not verified** (a small
+  operand can be a stack offset); it cannot say which build, if any, is the
+  explosion's.
 - `Step_0` is the only event that calls `GetUniqueRepoStruct` (3 sites) and
   `CreateDefaultParams` (7) directly, the pair the Angelic roll uses (§ 13.4).
   No event calls `LootGroundCreate`, `LootGroundCreateFromItem`,
