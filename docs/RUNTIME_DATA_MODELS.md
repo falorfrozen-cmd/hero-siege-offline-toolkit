@@ -4287,6 +4287,20 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   `instance_create_layer` (`Loot_Ground_obj`, plus `Coin_obj`,
   `Loot_Pillar_obj`, `Impact_Sound_obj`, `Visual_Effect_Simple_obj`);
   `machines=2` (the same two ids) before and after. **Measured (Live 3).**
+- A payout is not a per-spin event. The sixteen spins of that window produced
+  one prize build and one coins build, both with the machine as `self`: the
+  `CreateDefaultParams` call with a truthy third argument (`c=1`, the unique
+  repository) is the prize, and the one whose third argument is `undefined`
+  (`c=0`) is the coins. **Measured (Live 3).** The machine's four
+  `rollTimes01`..`rollTimes04` counters, which `Alarm_9` seeds at 8 plus the
+  result of a runtime routine called with 8 (§ 20.3), are read as the payout
+  cycle: a payout arrives about once per 8-16 spins. **Static reading**,
+  cross-checked only by that one measured window; how the counters are spent
+  and how the picked entry reaches the build are not established. So anything
+  that acts on the prize build (`gambapity`'s force) acts on the machine's
+  next payout, not on a chosen spin. `CreateDefaultParams` itself reads
+  nothing from `self`: it returns `{j, b, c}` from its three arguments alone
+  (§ 13.4). **Static reading.**
 - `Step_0` is the only event that calls `GetUniqueRepoStruct` (3 sites) and
   `CreateDefaultParams` (7) directly, the pair the Angelic roll uses (§ 13.4).
   No event calls `LootGroundCreate`, `LootGroundCreateFromItem`,
