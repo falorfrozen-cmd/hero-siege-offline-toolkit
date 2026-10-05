@@ -1201,8 +1201,23 @@ async fn install_hub_update(app: AppHandle, hub: State<'_, Arc<Hub>>) -> Result<
     };
 
     let version = update.version.clone();
+    // On Windows the updater starts the installer and exits this process from
+    // inside `download_and_install`, so nothing below that call runs there and
+    // this is the last line hub.log gets. It matters for an MSI install, whose
+    // installer asks for Administrator only after the hub has gone: a declined
+    // prompt leaves the hub closed and the old version in place, and without
+    // this line the log would not show that an update was ever started.
+    let handed_over = {
+        let hub = Arc::clone(&hub);
+        let version = version.clone();
+        move || {
+            hub.log.info(format!(
+                "downloaded hub update {version}; starting its installer, which closes the hub"
+            ))
+        }
+    };
     update
-        .download_and_install(|_, _| {}, || {})
+        .download_and_install(|_, _| {}, handed_over)
         .await
         .map_err(|error| error.to_string())?;
     hub.log.info(format!("installed hub update {version}"));
