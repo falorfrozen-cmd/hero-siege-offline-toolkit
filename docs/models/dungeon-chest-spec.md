@@ -208,8 +208,9 @@ decides a number.
   open zone, Steam Train, not a key dungeon): on those three kinds the
   protected pack state behind `spawnPack` tells fired from not: ancient
   creators read 1 before their birth and 3 after, colossal chest creators 0
-  before their chest was opened and 2 after, and miniboss creators already
-  read 2 at zone arrival (`docs/RUNTIME_DATA_MODELS.md` § 11.2).
+  before their chest was opened and 2 after, and miniboss creators read 2
+  (fired) from zone arrival on; no miniboss creator was read unfired, so
+  its unfired value is not measured (`docs/RUNTIME_DATA_MODELS.md` § 11.2).
 
 ## Our code
 

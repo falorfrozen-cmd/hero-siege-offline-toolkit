@@ -1690,7 +1690,7 @@ All **measured** (2026-09-10/11).
 [§3](../ForgePact/docs/map-reveal-research.md#3-waypoint-icon-reveal-does-not-unlock-the-waypoint),
 [§9](../ForgePact/docs/map-reveal-research.md#9-fog-robustness-minimapcellsxminimapcellsy-change-across-zones)
 
-### 11.2 Spawners: packs do not exist until the player is near
+### 11.2 Spawners: most packs are built when the player comes near, some at arrival
 
 - Every `Enemy_Creator_*` spawner exists and is awake from zone generation (one
   zone: 271 `Enemy_Creator_obj`, 13 Ambush, 19 Ancient, 7 Legion, with 208 live
@@ -1832,12 +1832,16 @@ All **measured** (2026-09-10/11).
     and others) and writes 2. No miniboss event tests the player's distance,
     so a miniboss pack is built at zone arrival, not on approach. Create also
     asks `ZoneStateExists`; what that changes on a revisit was not read.
-    *Measured (Live 4):* 2 on all 4 at arrival, before the player came near,
-    with one `Hellspawn_Guardsman_obj` attributed to each by our create
-    hooks (in Steam Train); the creator still exists after its pack is
-    killed, and none of its protected values or instance variables changed
-    with the kill (the state stayed 2), so nothing on the creator marks the
-    pack's death.
+    *Measured (Live 4):* 2 on all 4 at arrival, read with the player still
+    at the zone's waypoint (2976,3648), about 900-1460 px from the four
+    creators, with one `Hellspawn_Guardsman_obj` attributed to each by our
+    create hooks (in Steam Train). The creator still exists after its pack
+    is killed (262691 and 262694 read before the warp, 5 s after it and
+    after the kill): its six protected values (state 2, zone state 1,
+    self-destroy 0 and the rest) and its instance variables did not change,
+    apart from `img`, which advanced steadily throughout; built-in variables
+    such as its alarms were not read. So none of the values read marks the
+    pack's death (not observed, not ruled out).
   - `Enemy_Creator_Legion_obj`: Create writes 1 and arms an alarm (about
     1.5 s in one branch), which builds the pack (named monsters such as
     `Hellspawn_Guardsman_obj`, `Undead_Raider_obj`, `Skinwalker_obj`) and
@@ -1863,8 +1867,10 @@ All **measured** (2026-09-10/11).
     *Measured (Live 4):* 1 before its birth, 3 after: at arrival 50 read 1
     and the 12 already born read 3, and one creator watched through its
     birth went 1 → 3 as `enemyArray` became an array and
-    `enemyCreatorTimer` went away. Every born plain creator that session
-    read 3 and every unborn one 1.
+    `enemyCreatorTimer` went away. At every census that session the number
+    of plain creators reading 3 equalled the number whose `enemyArray` was
+    an array (12, 25, 30, 37); the per-creator match was read on the
+    watched creator only.
 
   **On a revisit** (*measured, Live 4*): leaving a zone by waypoint and
   coming back gives every creator a new instance id (262xxx → 321xxx; no
@@ -1873,8 +1879,9 @@ All **measured** (2026-09-10/11).
   every kind measured: normal 1 on 25 and 3 on 37, ancient 1 on 3 and 3 on
   7, colossal chest 2 on all 6, miniboss 2 on all 4. The plain creators
   kept their timer split (25 with a timer, 37 without), but none carried an
-  `enemyArray` that was an array after the revisit, so on a revisit only
-  the protected state still tells a born plain creator from an unborn one.
+  `enemyArray` that was an array after the revisit, so on a revisit
+  `enemyArray` no longer tells a born plain creator from an unborn one; the
+  protected state and the timer's absence still do, by count (37 and 37).
 
   **Measured 2026-10-06** (issue #181, capture
   `forgepact-181-map-reveal-icons-live-4.md`, one zone, Steam Train, zone
