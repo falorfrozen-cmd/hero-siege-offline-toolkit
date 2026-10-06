@@ -193,9 +193,16 @@ decides a number.
   a birth before the census and the 5 alive match; whether those were their
   packs or idle monsters that come with a spawner is not established. If they
   were idle ones, all 122 creators were still to spawn.
-- **Whether `enemyArray` marks every creator type.** Only the 8 sampled
-  `Enemy_Creator_obj` instances were read before and after; the other creator
-  objects were counted, not sampled.
+- **Whether `enemyArray` marks every creator type: partly answered.** Here
+  only the 8 sampled `Enemy_Creator_obj` instances were read before and
+  after. Map reveal's issue #181 sessions (2026-10-06) then sampled five
+  creator kinds: the plain and ambush creators carry `enemyArray`; the
+  ancient, miniboss and colossal chest creators do not, and an ancient
+  creator still did not after a birth the owner saw
+  (`docs/RUNTIME_DATA_MODELS.md` § 11.2). Champion and legion creators were
+  not sampled. An inference, not measured: if the estimate counts a creator
+  without `enemyArray` as still to spawn, a dungeon holding ancient, miniboss
+  or colossal chest creators would be over-counted for the whole run.
 
 ## Our code
 

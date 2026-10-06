@@ -1733,7 +1733,9 @@ All **measured** (2026-09-10/11).
   being undefined both before a creator arms and after it spawns. 5 of the 122
   had spawned by first sight, and the rest made about 5.25 kills each (614 for
   117). **Measured 2026-10-03**; the other creator objects' `enemyArray` was
-  not sampled ([dungeon chest, Live procedure 1b](../ForgePact/docs/dungeon-chest-research.md#live-procedure-1b)).
+  not sampled then ([dungeon chest, Live procedure 1b](../ForgePact/docs/dungeon-chest-research.md#live-procedure-1b));
+  of the five kinds sampled since, only the plain and ambush creators carry
+  it (the per-kind bullet below).
 - **The SDK script table lists a Create-event closure for the plain creator
   only, and the seven creator objects are unrelated to one another.** Of the
   seven, only `Enemy_Creator_obj` has a Create-event closure in the SDK script
@@ -1745,28 +1747,55 @@ All **measured** (2026-09-10/11).
   root object in the SDK parent table, with no parent and no children, so
   `instance_number`/`instance_find` on one never counts another's instances.
   **Static reading** of the SDK tables, 2026-10-06 (falorfrozen-cmd/ForgePact#181).
-- **Only the plain and ambush creators carry `enemyArray`, and only the plain
-  creator carries `enemyCreatorTimer`.** Per kind sampled, read by name with
+- **Of the five creator kinds sampled, only the plain and ambush creators
+  carried `enemyArray`, and only the plain creator carried
+  `enemyCreatorTimer`.** Per kind sampled, read by name with
   `variable_instance_exists` on every creator of that kind in the zone:
   - `Enemy_Creator_obj` (control): `enemyCreatorTimer` a number on unspawned
     creators; `enemyArray` undefined before birth and an array after, as
-    above.
+    above. On a revisit (leaving the zone and returning, 2026-10-06) all 92
+    plain creators read `enemyArray` undefined, including the 10 whose
+    `enemyCreatorTimer` was undefined and whose `enemyArray` had read an
+    array before the player left; so after a revisit `enemyArray` not being
+    an array does not show a creator is still to spawn. Why is not
+    established.
   - `Enemy_Creator_Ambush_obj` (9 in one zone): no `enemyCreatorTimer`
     (absent). `enemyArray` exists and reads undefined before birth; when the
     player was moved beside them, 6 of the 9 read an array.
   - `Enemy_Creator_Ancient_obj` (15 and 10, two zones),
     `Enemy_Creator_Miniboss_obj` (3 and 4) and
     `Enemy_Creator_Colossal_Chest_obj` (6, one zone): neither variable exists
-    on any of them. None of these was seen to spawn, so what they hold after
-    birth is **not established**.
+    on any of them. No colossal chest creator had a create attributed to it.
+    Miniboss creators did (`Hellspawn_Guardsman_obj` 4 in one zone and
+    `Servant_of_Devil_obj` 3 in the other, from creators about 3000 px from
+    the player) and still read both variables absent afterwards. Whether
+    those creates were the pack's birth, and what a miniboss or colossal
+    chest creator holds after birth, is **not established**.
+  - Ancient creators at a forced birth: warping the player beside an ancient
+    creator's position twice in a Depths of Hell zone (zone level 514), the
+    owner saw monsters appear at each warp, and creates were attributed to
+    ancient creators (0 before, 3 after the first warp, 7 after a warp beside
+    a miniboss creator in the same area, 10 after the second ancient warp:
+    `Hell_Beast_Passive_obj` 3, `Skeleton_Mage_Fire_obj` 3,
+    `Imp_Passive_obj` 2, `Undead_Priest_Passive_obj` 2). All 15 ancient
+    creators still existed afterwards and still read both variables absent.
+    So an ancient creator carries neither variable after its birth either.
+    **Measured 2026-10-06** (issue #181, capture
+    `forgepact-181-map-reveal-icons-live-3.md`). In the same session no
+    create was attributed to a miniboss creator at a warp beside one,
+    although named monsters showed nearby.
   - `Enemy_Creator_Champion_obj` and `Enemy_Creator_Legion_obj`: none in
     either zone sampled, **not established**.
 
-  So an unspawned ancient, miniboss or colossal chest creator can never show
-  a numeric timer, and "still to spawn" cannot be read from `enemyArray` on
-  those three. **Measured 2026-10-06** (issue #181, capture
-  `forgepact-181-map-reveal-icons-live-1.md`;
-  [map reveal §11, Live 1 results](../ForgePact/docs/map-reveal-research.md#live-1-results)).
+  So in both zones sampled, no ancient, miniboss or colossal chest creator
+  showed a numeric timer or an `enemyArray`, and "still to spawn" could not
+  be read from either variable on those three. For ancient creators that
+  holds after birth too (above); for miniboss and colossal chest creators,
+  whether either is set later (nearer the player, or at birth) is not
+  observed. **Measured 2026-10-06** (issue #181, captures
+  `forgepact-181-map-reveal-icons-live-1.md` and `-live-3.md`;
+  [map reveal §11, Live 1 results](../ForgePact/docs/map-reveal-research.md#live-1-results)
+  and [Live 3 results](../ForgePact/docs/map-reveal-research.md#live-3-results)).
 - `EnemyCreatorPending` only reports whether a creator still has an alarm running.
   Creators make density copies through four-argument `instance_create_*` calls.
   **Static reading.**
