@@ -1083,6 +1083,7 @@ audit`) on the changed UI instead. `.impeccable/config.json` is shared by both.
 |---|---|
 | `tauri-hub` | driving a running debug hub through its bridge on `127.0.0.1:9223` |
 | `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close), under one machine-wide game lease (`hs_lease_acquire` / `hs_lease_status` / `hs_lease_release`) that stops a second session driving the same install — a local stdio server in `tools/hs_drive_mcp/` |
+| `ghidra` | the local Ghidra project as tools (search functions, decompile by address, callers, callees, xrefs, strings), from [bethington/ghidra-mcp](https://github.com/bethington/ghidra-mcp) v6.0.0 pinned by sha256: one shared headless server on `127.0.0.1:8089` over a *copy* of the research project, plus a stdio bridge per session, started by `tools/ghidra_mcp.py` |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
 | `github` | releases, dispatches and pointer PRs across the eleven repositories |
 | `figma` | reading Figma designs (layout, styles, images) into code — [`figma-developer-mcp`](https://github.com/GLips/Figma-Context-MCP) (MIT), run locally and pinned, authenticated by the `FIGMA_API_KEY` personal access token |
@@ -1116,6 +1117,19 @@ session holds its machine-wide lease; the `live-operator` takes it with
 [`docs/tools/hs-drive-mcp.md`](../docs/tools/hs-drive-mcp.md) has the tool
 surface, the refusal vocabulary and the sharp edges, including why the server's
 process must keep the real `LOCALAPPDATA`.
+
+`ghidra` is the other local entry, `py -3 -m tools.ghidra_mcp`. It needs
+Ghidra, a JDK 21 and the research project, plus `py -3 -m tools.ghidra_mcp
+setup` once per machine, which downloads the pinned release (ask the owner
+first). The first session to use it starts a shared headless server, and later
+sessions, worktrees and Codex reuse it, because a Ghidra project allows one
+lock. It binds to loopback, has script execution off, and serves a copy of the
+project, so `DecompileTo.java` runs on the original keep working. What it
+decompiles stays out of tracked files (AGENTS.md § "Legal"). Under Codex, whose
+MCP startup timeout is 10 s, run `py -3 -m tools.ghidra_mcp start` first if
+the server is cold.
+[`docs/tools/ghidra-mcp.md`](../docs/tools/ghidra-mcp.md) explains why this
+server and not pyghidra-mcp, and covers the overrides and the sharp edges.
 
 `github` does **not** authenticate interactively. Claude Code tries OAuth
 dynamic client registration, that endpoint does not support it, and the session
@@ -1254,6 +1268,7 @@ py -3 -m unittest tests.test_hs_drive_mcp_charselect -v        # hs_select_chara
 py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # parsing ForgePact's menulayout listing, and the refusals it decides
 py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the machine-wide game lease, across real processes
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
+py -3 -m unittest tests.test_ghidra_mcp -v                     # the ghidra launcher: git refusal, loopback, stripped env, version check
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 

@@ -8,6 +8,10 @@
       "command": "py",
       "args": ["-3", "-m", "tools.hs_drive_mcp"]
     },
+    "ghidra": {
+      "command": "py",
+      "args": ["-3", "-m", "tools.ghidra_mcp"]
+    },
     "context7": {
       "command": "npx",
       "args": ["-y", "-p", "@upstash/context7-mcp@4.1.1", "context7-mcp"]
