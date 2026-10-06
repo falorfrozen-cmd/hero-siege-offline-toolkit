@@ -40,9 +40,9 @@ never a plan, just a conversation someone was still holding in their head.
 ## The loop
 
 ```
-planner(opus) → implementer(opus) → verifier+reviewers(haiku,sonnet/opus) → PASS ─→ report
+planner(opus) → implementer(opus) → verifier+reviewers(haiku,opus) → PASS ─→ report
   ▲ PLAN-DEFECT ◄───────┘ ◄──────────────────── IMPL-DEFECT / BLOCKING
-                                    PASS-PENDING-HUMAN → live-operator(sonnet) → report
+                                    PASS-PENDING-HUMAN → live-operator(opus) → report
 ```
 
 ### Step 0 — decide whether this is worth a workorder
@@ -94,7 +94,7 @@ about whether it can. These are checkable:
 | **introduces or changes concurrency** — threads, async boundaries, a new `#[tauri::command]` that touches disk or network, anything that can deadlock or race | planner `planner-xhigh`, implementer `implementer` |
 | must **establish an unknown game mechanism**, not verify a suspected one — the "which of N candidates does X" shape | planner `planner-xhigh`, implementer `implementer` |
 | falls in the **suspend-the-game-loop class** (`AGENTS.md`) | stop — read `ForgePact/docs/menu-pause-plan.md` §0 with the user before planning at all |
-| touches **only docs, tests or config** — no product source, no hook, no binding | planner `planner-medium`, implementer `implementer-medium` with `model: sonnet` |
+| touches **only docs, tests or config** — no product source, no hook, no binding | planner `planner-medium`, implementer `implementer-medium` |
 | everything else — including hook attachment and three-binding contracts, which had their own `opus`/`opus` rows when the default implementer was `sonnet` | the agents' own pins (`planner` and `implementer`, both opus/high) |
 
 **A tier is an agent name, and sometimes a model.** The names are effort
@@ -111,9 +111,12 @@ license dropped it on 2026-10-05, so the pipeline escalates effort on
 The implementer's default is `opus` since 2026-09-22 (see "Model tiers"):
 Opus 5.5 reads cache at Sonnet 5's price, and 99% of an implementer's tokens
 are cache reads, so the tier costs about the same per token while the Sonnet
-tail (p90 46.8M tokens, max 78.9M) was what hit the round caps. `sonnet` is
-kept for the one row where its median run (8.2M tokens, $2.62) is all the
-work there is.
+tail (p90 46.8M tokens, max 78.9M) was what hit the round caps. The docs row
+ran `sonnet` until 2026-10-06; it now runs `implementer-medium` on `opus`
+too, because at medium effort Opus 5.5 scores ahead of Sonnet 5.5 for about
+the same cost on cache-read work (§ "Model tiers", "Reviewers, live-operator
+and the docs row → `opus`/`medium`"). `implementerModel: 'sonnet'` still
+works for a run the owner asks to put on it.
 
 Say which row you matched and why, in one line, before you spawn — a triage
 nobody can see is a triage nobody can correct, and the user is the cheapest
@@ -1427,7 +1430,7 @@ backwards is cheap and correct. That is the whole design.
 Set in each agent's frontmatter, with an `effort:` beside every tier that
 takes one: `planner` opus/high, `implementer` opus/high, `consultant`
 opus/xhigh, `instrument-blindness-reviewer` opus/high, the other reviewers and
-`live-operator` sonnet/high, `verifier` and `scribe` haiku (Haiku 4.5 takes no
+`live-operator` opus/medium, `verifier` and `scribe` haiku (Haiku 4.5 takes no
 effort). Override the model for one run by passing `model` on the Agent call.
 Effort has no per-call override on the Agent tool, which is why it is pinned
 — an agent without one inherits whatever the session runs at.
@@ -1453,10 +1456,20 @@ per role, model *and* effort). To add a level, add it to the source's
 | `planner` | opus / high | the default first plan and first replan |
 | `planner-xhigh` | opus / xhigh | the concurrency and unknown-mechanism triage rows |
 | `planner-max` | opus / max | the second replan |
-| `implementer-medium` | opus / medium (sonnet on the docs row) | every patch round; the docs/tests/config triage row |
+| `implementer-medium` | opus / medium | every patch round; the docs/tests/config triage row |
 | `implementer` | opus / high | everything else |
 | `consultant` | opus / xhigh | the default consultation |
 | `consultant-max` | opus / max | a question from a `planner-xhigh` triage row |
+
+**The driver is the session itself**, so no frontmatter pins it: run the
+session that runs /workorder on `opus` at `medium` effort, and raise it to
+`high` for a session whose product is the driver's own judgement (triaging a
+bug batch into items, deciding how to split a plan). Drivers were 30% of the
+calibration set's spend over hundreds of turns, many above 300K tokens, and
+effort is paid on every one of them. Their job is routing by written rules;
+the hard calls already go to `consultant` and replans to the planner, and the
+driver failures the audit recorded (R10) were discipline, not reasoning,
+which more effort does not fix. Chosen 2026-10-06 (#436), not measured.
 
 **Fable left this pipeline on 2026-10-05**, when the owner's license
 stopped carrying it. Every place it held — the two hard triage rows, the
@@ -1502,9 +1515,25 @@ have cost about half as much. Hence:
   fable or that ran as `planner-xhigh`/`planner-max`, and
   `workorder-rounds.js` spawns its own amendments as `planner-medium` with
   `model: 'opus'`.
-- **reviewers stay `sonnet`, verifier and scribe `haiku`.** On the same
-  tokens Opus 5.5 would cost the reviewers 1.2× and the verifier 2.9×, with no
-  finding of theirs measured as missed.
+- **Reviewers, live-operator and the docs row → `opus`/`medium`
+  (2026-10-06, #436).** Until then `sdk-contract-reviewer`,
+  `tauri-command-reviewer`, `docs-sync-reviewer`, `decompile-output-guard`
+  and `live-operator` ran sonnet/high, and the docs triage row's implementer
+  ran `sonnet`. Artificial Analysis's Intelligence Index against cost per
+  task (read 2026-10-06) puts Opus 5.5 ahead of Sonnet 5.5 at every effort
+  level for about the same price: Opus medium about 51 at $1.40 a task,
+  Sonnet high about 47 at $1.10, Sonnet xhigh about 52 at $2.75 against Opus
+  high's 53.5 at $1.85. That benchmark prices mostly output and thinking;
+  here 92-99% of tokens are cache reads at $0.20 on both, so the model step
+  costs less still, and effort is what moves the bill, hence `medium`
+  rather than the `high` they had. On the calibration set's tokens Opus 5.5
+  costs the reviewers about 1.2× what Sonnet did. No reviewer finding was
+  ever measured as missed on `sonnet`, so this is a capability bet chosen
+  from a benchmark, not a measured fix; `--calibrate` will say whether it
+  holds.
+- **verifier and scribe stay `haiku`.** They run commands and paste text;
+  Opus 5.5 would cost the verifier 2.9× on the same tokens for nothing it
+  needs.
 - **Effort.** Opus 5.5 defaults to `medium` and thinks more per turn than
   Opus 5 at the same level; `high` is pinned for the phases that carry long
   agentic work and `xhigh` for the one narrow question `consultant` answers.

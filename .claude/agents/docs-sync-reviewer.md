@@ -2,8 +2,8 @@
 name: docs-sync-reviewer
 description: Finds documentation a change has invalidated but not updated — submodule instructions.md, README files, docs/, and ForgePact release notes. Use before any commit or PR that changes a feature, workflow, command, dependency or architecture. This is the rule whose violation caused CLAUDE.md to exist.
 tools: Read, Grep, Glob, Bash
-model: sonnet
-effort: high
+model: opus
+effort: medium
 color: cyan
 ---
 
