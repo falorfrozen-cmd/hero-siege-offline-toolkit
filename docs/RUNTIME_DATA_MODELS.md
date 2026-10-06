@@ -1697,8 +1697,9 @@ All **measured** (2026-09-10/11).
   enemies). The family is `Enemy_Creator_obj` plus `_Champion_`, `_Ancient_`,
   `_Legion_`, `_Miniboss_`, `_Ambush_` and `_Colossal_Chest_`. **Measured**; family
   from names.
-- Each creator registers a periodic timer with the game's timer system and keeps
-  its handle in **`enemyCreatorTimer`** (period about 116 frames). The check spawns
+- Each plain creator (`Enemy_Creator_obj`; the other kinds below) registers a
+  periodic timer with the game's timer system and keeps its handle in
+  **`enemyCreatorTimer`** (period about 116 frames). The check spawns
   the pack when `distance_to_object(Player_obj)` is under **1050 px**, then
   destroys the timer — a creator spawns once. A pack's position and kind are known
   before birth; its rarity and affixes are rolled at birth, in the creator's
@@ -1733,17 +1734,39 @@ All **measured** (2026-09-10/11).
   had spawned by first sight, and the rest made about 5.25 kills each (614 for
   117). **Measured 2026-10-03**; the other creator objects' `enemyArray` was
   not sampled ([dungeon chest, Live procedure 1b](../ForgePact/docs/dungeon-chest-research.md#live-procedure-1b)).
-- **Only the plain creator has its own Create-event closure, and the seven
-  creator objects are unrelated to one another.** Of the seven, only
-  `Enemy_Creator_obj` has a Create-event closure in the SDK script table,
-  `anon@886@gml_Object_Enemy_Creator_obj_Create_0` (the `anon@N` part is
-  patch-specific, §5.3); the Ambush, Ancient, Champion, Colossal Chest, Legion
-  and Miniboss creators have none. All seven (objects 1409-1415) are each a
+- **The SDK script table lists a Create-event closure for the plain creator
+  only, and the seven creator objects are unrelated to one another.** Of the
+  seven, only `Enemy_Creator_obj` has a Create-event closure in the SDK script
+  table, `anon@886@gml_Object_Enemy_Creator_obj_Create_0` (the `anon@N` part
+  is patch-specific, §5.3); the Ambush, Ancient, Champion, Colossal Chest,
+  Legion and Miniboss creators have none listed. That absence says nothing
+  about whether the other six have Create events of their own; what they carry
+  is the measured bullet below. All seven (objects 1409-1415) are each a
   root object in the SDK parent table, with no parent and no children, so
   `instance_number`/`instance_find` on one never counts another's instances.
-  Whether the other six carry `enemyCreatorTimer` or `enemyArray` at all is
-  **not established**: both were only ever measured on `Enemy_Creator_obj`.
   **Static reading** of the SDK tables, 2026-10-06 (falorfrozen-cmd/ForgePact#181).
+- **Only the plain and ambush creators carry `enemyArray`, and only the plain
+  creator carries `enemyCreatorTimer`.** Per kind sampled, read by name with
+  `variable_instance_exists` on every creator of that kind in the zone:
+  - `Enemy_Creator_obj` (control): `enemyCreatorTimer` a number on unspawned
+    creators; `enemyArray` undefined before birth and an array after, as
+    above.
+  - `Enemy_Creator_Ambush_obj` (9 in one zone): no `enemyCreatorTimer`
+    (absent). `enemyArray` exists and reads undefined before birth; when the
+    player was moved beside them, 6 of the 9 read an array.
+  - `Enemy_Creator_Ancient_obj` (15 and 10, two zones),
+    `Enemy_Creator_Miniboss_obj` (3 and 4) and
+    `Enemy_Creator_Colossal_Chest_obj` (6, one zone): neither variable exists
+    on any of them. None of these was seen to spawn, so what they hold after
+    birth is **not established**.
+  - `Enemy_Creator_Champion_obj` and `Enemy_Creator_Legion_obj`: none in
+    either zone sampled, **not established**.
+
+  So an unspawned ancient, miniboss or colossal chest creator can never show
+  a numeric timer, and "still to spawn" cannot be read from `enemyArray` on
+  those three. **Measured 2026-10-06** (issue #181, capture
+  `forgepact-181-map-reveal-icons-live-1.md`;
+  [map reveal §11, Live 1 results](../ForgePact/docs/map-reveal-research.md#live-1-results)).
 - `EnemyCreatorPending` only reports whether a creator still has an alarm running.
   Creators make density copies through four-argument `instance_create_*` calls.
   **Static reading.**
