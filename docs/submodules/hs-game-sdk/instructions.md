@@ -801,18 +801,20 @@ it is not ours to patch. Pass a **static, zero-initialised** original pointer: i
 is how the installer knows which install is the first.
 
 **Every detour pays Aurie's freeze, and the freeze scales with the whole
-machine's thread count.** Static reading of Aurie v2.0.2, not yet measured in the
-game: `MmCreateHook` suspends the process's other threads, creates the hook, and
-resumes them, and both the suspend and the resume start from a
+machine's thread count.** Measured in ForgePact#151's Live 1 (2026-10-06, the
+owner's machine, about 6000 threads system-wide, 76 in the game): one
+`MmCreateHook` detour cost 66-73 ms, 2.1 times one timed system-wide thread
+snapshot (32.8 ms median), and the detours were 97.5% of ForgePact's 1268 ms
+start-up setup (18 detours); 20 hooks installed on demand in town held one frame
+1.5 s. Why it costs that much is a static reading of Aurie v2.0.2, which the
+ratio agrees with: `MmCreateHook` suspends the process's other threads, creates
+the hook, and resumes them, and both the suspend and the resume start from a
 `CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD)`, which lists every thread on the
 system, not only the game's. So each install that detours pays for two
-system-wide thread snapshots. Offline, on the planning machine (2026-10-06, no
-game, 5909 threads system-wide), one snapshot and its full walk took a median of
-47.8 ms, which predicts about 95 ms per detour, so a frame that installs many
-hooks holds the game for seconds (ForgePact's start-up setup measured 2.5 s in
-#76's Live 3). ForgePact's setup line and its `incident setup` verb time each
-part of an install. The reading, the measurement and the
-live results are in
+system-wide thread snapshots, and a frame that installs many hooks holds the
+game for about 70 ms per hook on that machine. ForgePact's setup line and its `incident setup`
+verb time each part of an install. The reading, the measurements and the
+fix route chosen (patching Aurie's freeze) are in
 [`ForgePact/docs/setup-stall-research.md`](../../../ForgePact/docs/setup-stall-research.md)
 (ForgePact#151).
 
