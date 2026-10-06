@@ -101,7 +101,7 @@ next one a document rather than a conversation. They are driven by
 | `implementer` | opus | executes the steps; returns `PLAN-DEFECT` with evidence rather than improvising around a plan that turns out to be wrong |
 | `verifier` | haiku | runs the acceptance criteria (first through `tools/run_criteria.py --jobs auto`, which runs every command-shaped criterion in one call, independent ones at once; after a fix, only the criteria the fix reaches plus the failed ones), or one item's `checks:` in a streamed plan, and reports what they actually printed; read-only, and judges nothing it cannot execute |
 | `consultant` | opus | answers **one** narrow question from a phase that hit a decision above its tier, then stops; never implements, plans or reviews |
-| `live-operator` | sonnet | runs a workorder's written `### Live procedure <n>` against the real game through `hs-drive` — its own save backup, the positive control first, raw output to `<slug>-live-<n>.md` — and hands every in-game action a person must take back to the driver; never installs a build, never judges the mechanism |
+| `live-operator` | opus | runs a workorder's written `### Live procedure <n>` against the real game through `hs-drive` — its own save backup, the positive control first, raw output to `<slug>-live-<n>.md` — and hands every in-game action a person must take back to the driver; never installs a build, never judges the mechanism |
 | `scribe` | haiku | pastes a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Grep`/`Edit` only (no shell); spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
 
 Why these tiers: planning carries the most judgement that is written down
@@ -112,7 +112,9 @@ the cliff instead of stopping — so it gets a capable one: `opus` since
 this cache-read-dominated work and the Sonnet tail was what hit the round caps
 (`skills/workorder/SKILL.md` § "Model tiers" has the prices and the
 measurement). Verification against mechanical criteria is genuinely cheap, so
-it gets the cheapest. Every agent that can take one also pins `effort:`, for
+it gets the cheapest. The domain reviewers and `live-operator` run opus at
+`medium` effort since 2026-10-06 (#436), and the session that drives
+`/workorder` should run opus/medium too (§ "Model tiers" says why). Every agent that can take one also pins `effort:`, for
 the same reason it pins `model:` — left out, it silently follows the session.
 Where `/workorder` runs one agent at more than one effort, the agent lists
 the extra levels in `effort-variants:` and `tools/sync_agent_tooling.py`
@@ -222,10 +224,10 @@ class that has recurred here. Wall-clock is one agent; only tokens add up.
 
 | Agent | Model | Reviews |
 |---|---|---|
-| `sdk-contract-reviewer` | sonnet | `hs-game-sdk/`, `tests/cpp/`, and anything reading runtime values: identity-by-positive-signal, instance-handle kind gates, cross-binding parity and test-stub fidelity |
-| `tauri-command-reviewer` | sonnet | `hub/src-tauri/src/`: command threading annotations, `announce()` after state changes, independent failure paths, and the debug-only MCP bridge gate |
-| `decompile-output-guard` | sonnet | whether a change carries the game's own expression rather than facts about it — the judgement half of `decompiled_output.py` |
-| `docs-sync-reviewer` | sonnet | which `instructions.md`, README, index entry, ADR or `release-notes-vX.Y.Z.md` the change just made wrong |
+| `sdk-contract-reviewer` | opus | `hs-game-sdk/`, `tests/cpp/`, and anything reading runtime values: identity-by-positive-signal, instance-handle kind gates, cross-binding parity and test-stub fidelity |
+| `tauri-command-reviewer` | opus | `hub/src-tauri/src/`: command threading annotations, `announce()` after state changes, independent failure paths, and the debug-only MCP bridge gate |
+| `decompile-output-guard` | opus | whether a change carries the game's own expression rather than facts about it — the judgement half of `decompiled_output.py` |
+| `docs-sync-reviewer` | opus | which `instructions.md`, README, index entry, ADR or `release-notes-vX.Y.Z.md` the change just made wrong |
 | `instrument-blindness-reviewer` | opus | table-only hook installs, hand-resolved addresses, struct-layout assumptions, and negatives recorded without a positive control |
 
 **Delta-scoped from round 1 on.** No reviewer is given the workorder path —
