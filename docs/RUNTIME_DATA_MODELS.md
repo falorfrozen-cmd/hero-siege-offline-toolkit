@@ -4508,6 +4508,23 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   is the only time Goburin's Head drops. Neither Live 4 explosion dropped
   the head, so the route a natural head takes, and whether an explosion
   that drops one builds it through the build rows, are not observed.
+- A Goburin's Head built from JSON and placed at a destroyed machine, with
+  the player as `self`, lands as one ground item: ForgePact's `gambapity`
+  read the machine's sprite change to `Slot_Machine_01_Destroyed_spr` once a
+  frame and, 60 presented frames later, ran `json_parse` of the charm's
+  `{w, a, j, b, c}` record (`j` 0, `b` 98, `c` 1), `InitItemFromJson` and
+  `LootGroundCreateFromItem` at the machine's `x`/`y` (7920,3448) with the
+  local player as `self`; `instance_exists` confirmed the returned instance
+  on the first attempt, and the built item's rarity read 10. A scan of
+  `Loot_Ground_obj` within 256 px of the machine then found exactly one
+  charm (`itemType` 10, `j` 0, `b` 98), the drop's own `CreateItemNew`
+  returned the charm, and a screenshot showed one `Goburin's Head` label by
+  the wreck. The same machine took 12 `PickUpGoldCheck` debits for the
+  person's count of 12 spins, the exploding spin included; with Live 4's
+  machine 1 at 12 debits for 13, whether the exploding spin is debited
+  stays not established (one sample each way). **Measured (Live 5, one
+  natural machine, 2026-10-06, player build).** No natural head appeared, so
+  how the game builds its own head is still not observed.
 - `Step_0` does not decompile on this build (the decompiler process died on
   it). A call-by-call listing of it, with callees named from the symbol dump,
   shows only these named script calls: 7 `CreateDefaultParams`, 3
@@ -4544,6 +4561,7 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
 
 [Live 2 results](../ForgePact/docs/gamba-machine-research.md#live-2-results)
 [Live 3 results](../ForgePact/docs/gamba-machine-research.md#live-3-results)
+[Live 5 results](../ForgePact/docs/gamba-machine-research.md#live-5-results)
 
 ### 20.5 The spawned flag and the game's spawner
 

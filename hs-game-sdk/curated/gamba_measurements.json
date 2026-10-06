@@ -1,5 +1,5 @@
 {
-  "$schema_note": "The gamba machine (Slot_Machine_01_obj) and Goburin's Head (ForgePact#134 phase 1, 2026-10-04). Static readings of the object's events (a local reading of the game's compiled-code table and event bodies, kept on the reader's machine; nothing quoted) and four live sessions with the research build's `gambaprobe` instrument on save slot 14, character Sorak: Live 1 (ForgePact research build, INSTRUMENT-BLIND), Live 2 (research build SHA-256 eb1fcf0997b535241ea536974f48a79658886b004266e14ff56b4d10dc87f2c0, Town of Inoya, then the first combat zone outside it), Live 3 (research build SHA-256 1ee2b7542445ff08477c189eefb802dda6dcd75b81509f09d553211df66f5379, Town of Inoya and the Fields of Battle) and Live 4 (phase 4's explosion watch, research build SHA-256 cfaeadc4e7799199a7cab31278f766269cc222971ee13a42349ba9a0eccaaa50, 2026-10-05/06, two natural machines run to their explosion). The argument, the controls and the check tables are in ForgePact docs/gamba-machine-research.md, Live 1 results, Live 2 results, Live 3 results and Live 4 results; the shared facts are docs/RUNTIME_DATA_MODELS.md section 20. Data only: no generator reads this file and there is no model. Every status is `measured`, `not-observed` or `static-reading`. No instrument-created machine survived its first step in any session; Live 3 measured a spin and a payout on a machine the game placed itself, and Live 4 two machines' explosions.",
+  "$schema_note": "The gamba machine (Slot_Machine_01_obj) and Goburin's Head (ForgePact#134 phase 1, 2026-10-04). Static readings of the object's events (a local reading of the game's compiled-code table and event bodies, kept on the reader's machine; nothing quoted) and four live sessions with the research build's `gambaprobe` instrument on save slot 14, character Sorak: Live 1 (ForgePact research build, INSTRUMENT-BLIND), Live 2 (research build SHA-256 eb1fcf0997b535241ea536974f48a79658886b004266e14ff56b4d10dc87f2c0, Town of Inoya, then the first combat zone outside it), Live 3 (research build SHA-256 1ee2b7542445ff08477c189eefb802dda6dcd75b81509f09d553211df66f5379, Town of Inoya and the Fields of Battle) and Live 4 (phase 4's explosion watch, research build SHA-256 cfaeadc4e7799199a7cab31278f766269cc222971ee13a42349ba9a0eccaaa50, 2026-10-05/06, two natural machines run to their explosion), then Live 5 (the player build's gambapity explosion force, SHA-256 e01251d6b0f9fef7d0ebcbe8743ac9d45f8e71cb43f1f70aacc2523fd0a946c4, 2026-10-06, one natural machine). The argument, the controls and the check tables are in ForgePact docs/gamba-machine-research.md, Live 1 results, Live 2 results, Live 3 results, Live 4 results and Live 5 results; the shared facts are docs/RUNTIME_DATA_MODELS.md section 20. Data only: no generator reads this file and there is no model. Every status is `measured`, `not-observed` or `static-reading`. No instrument-created machine survived its first step in any session; Live 3 measured a spin and a payout on a machine the game placed itself, and Live 4 two machines' explosions.",
   "measurements": [
     {
       "id": "G1",
@@ -341,6 +341,58 @@
         "samples": 2,
         "window_control": "FAIL-literal / control-observed",
         "combat_window_build_dropped": [110, 159]
+      }
+    },
+    {
+      "id": "G20",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-06",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 5 results"}],
+      "objects": ["Slot_Machine_01_obj", "Loot_Ground_obj"],
+      "scripts": [
+        "gml_Script_PickUpGoldCheck",
+        "gml_Script_InitItemFromJson",
+        "gml_Script_LootGroundCreateFromItem",
+        "gml_Script_CreateItemNew"
+      ],
+      "what": "ForgePact's gambapity explosion force on one natural machine (id 367244), player build SHA-256 e01251d6b0f9fef7d0ebcbe8743ac9d45f8e71cb43f1f70aacc2523fd0a946c4, counter at 12 and threshold 10 before the first spin. The per-frame sprite read saw the machine first (machine seen, heads-nearby=0) and then its change to Slot_Machine_01_Destroyed_spr (explosion count=24 threshold=10 frame=50736). 60 presented frames later the loader route - json_parse of the charm's {w, a, j, b, c} record with j 0, b 98, c 1, InitItemFromJson, then LootGroundCreateFromItem at the machine's x/y (7920,3448) with the local player as self - placed a ground item that instance_exists confirmed on the first attempt; the built item's rarity read 10. The ground scan after the drop found exactly one charm on a Loot_Ground_obj near the machine (heads=1, the ground check's control), the drop's own CreateItemNew returned the charm (own-head-builds=1, the head-build detector's control), the counter reset to 0 and its file to {\"count\":0}, and a screenshot showed one Goburin's Head label by the wreck (the head was not picked up). No forced line came before the explosion line while about 50,380 gold came back in payouts. The count went from 12 to 24 over the person's 12 spins, the exploding spin included: 12 machine-self PickUpGoldCheck debits for 12 counted spins, read only before and at the explosion. Live 4's machine 1 read 12 debits for the person's 13, so whether the exploding spin is debited stays not established (one sample each way).",
+      "values": {
+        "machines": 1,
+        "count_before": 12,
+        "threshold": 10,
+        "count_at_explosion": 24,
+        "debits_before_change": 12,
+        "person_spin_count": "12",
+        "exploding_spin_debited": "not-established",
+        "settle_frames": 60,
+        "drop_route": "json_parse > InitItemFromJson > LootGroundCreateFromItem",
+        "drop_self": "local player",
+        "drop_position": [7920, 3448],
+        "read_back_attempts": 1,
+        "rarity": 10,
+        "ground_heads_after_drop": 1,
+        "own_head_builds": 1,
+        "heads_seen_on_screen": 1,
+        "picked_up": false,
+        "count_after": 0,
+        "fallback_drop": "proven"
+      }
+    },
+    {
+      "id": "G21",
+      "kind": "target",
+      "status": "not-observed",
+      "date": "2026-10-06",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 5 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_CreateItemNew", "gml_Script_CreateDefaultParams"],
+      "what": "The explosion force's other outcomes in Live 5: no second machine appeared, so an explosion below the threshold keeping the counter (below-control) was not observed (below=0); the game dropped no head of its own, so a natural head seen at an explosion, and the reset it makes, was not observed (natural=0, no natural line). How the game builds its own Goburin's Head stays not observed (G19).",
+      "values": {
+        "below_control": "not-observed",
+        "natural_head": "not-observed",
+        "below": 0,
+        "natural": 0
       }
     }
   ]
