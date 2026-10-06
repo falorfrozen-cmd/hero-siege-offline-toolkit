@@ -97,8 +97,9 @@ replaces those walks with one over this process's own threads.
   `[hs] MmCreateHook freeze: per-process thread walk, first freeze suspended N thread(s) in P pass(es), K not suspendable`.
 - **Markers.** `MmCreateHook freeze: per-process thread walk`,
   `FELL BACK to the system-wide thread snapshot`.
-- **Measured vs assumed.** The host test below, on the build machine. The cost
-  inside the game is NOT RUN (launch gate). The fallback is compiled and
+- **Measured vs assumed.** The host test below, on the build machine. That the
+  freeze suspends anything inside the game (N >= 1 in the line above) and its
+  cost there are NOT RUN (launch gate). The fallback is compiled and
   marker-checked, but no host test forces it: the test can neither unexport
   `NtGetNextThread` nor deny the process access to its own thread.
 
@@ -190,9 +191,9 @@ results, the source zip's id; `live_gameplay_verified` is always `false`); and
 | Host test | `hosttests` step | 1 of 1 files, 10 of 10 cases | Verified | 2026-10-06 |
 | Marker check | `verify-dll` step | 4 markers in the DLL, none in unpatched upstream | Verified | 2026-10-06 |
 | Marker check, negative control | `verify-dll --dll ForgePact/modfiles_shipped/AurieCore.dll` (upstream's v2.0.2 release, 967,680 bytes, sha256 `18e3a1de980f487a6b3858b673d2030e96984dd96de3a047b43a263a5ba829ae`) | Exit 1, naming all 4 markers as NOT in the DLL | Verified | 2026-10-06 |
-| Identity and freeze lines in `aurie.log` | Live procedure 1, step 3 | - | NOT RUN | - |
+| Identity and freeze lines in `aurie.log`, and the freeze suspended threads in the game | Live procedure 1, step 3: the identity line, the `per-process thread walk` line and no `FELL BACK` line. Parse N, P and K from `first freeze suspended N thread(s) in P pass(es), K not suspendable`, and record N beside the game's thread count from the same session, `(Get-Process Hero_Siege).Threads.Count` at `plugin_ready`. The first freeze may come from an early YYToolkit or Aurie hook, while the game has fewer threads than at `plugin_ready`, so N is recorded beside that count, not required to equal it less one | Passes only with N >= 1. N = 0 fails the row (the live check `marker`, or a separate required `freeze-suspends` check): the freeze reported itself armed while the game's threads kept running as SafetyHook rewrote the bytes | NOT RUN | - |
 | Hooks attach as before (18 at the setup, 20 on demand, no `TABLE-ONLY`) | Live procedure 1, steps 2 and 6 | - | NOT RUN | - |
-| Case A: start-up setup cost against Live 1 (detour ms per hook at most a quarter of the snapshot median) | Live procedure 1, steps 2 and 4 | - | NOT RUN | - |
+| Case A: start-up setup cost against Live 1 (detour ms per hook at most a quarter of the snapshot median) | Live procedure 1, steps 2 and 4 (live check `setup-detour`). A fast detour counts only when the `aurie.log` row above passed with N >= 1, because a freeze that suspended nothing would also be fast | - | NOT RUN | - |
 | Case C: 20 on-demand installs in town (`ipc` worst under 250 ms) | Live procedure 1, steps 5 to 7 | - | NOT RUN | - |
 | Clean exit | Live procedure 1, step 8 | - | NOT RUN | - |
 
