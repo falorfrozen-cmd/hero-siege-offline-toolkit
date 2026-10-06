@@ -1,5 +1,5 @@
 {
-  "$schema_note": "The gamba machine (Slot_Machine_01_obj) and Goburin's Head (ForgePact#134 phase 1, 2026-10-04). Static readings of the object's events (a local reading of the game's compiled-code table and event bodies, kept on the reader's machine; nothing quoted) and four live sessions with the research build's `gambaprobe` instrument on save slot 14, character Sorak: Live 1 (ForgePact research build, INSTRUMENT-BLIND), Live 2 (research build SHA-256 eb1fcf0997b535241ea536974f48a79658886b004266e14ff56b4d10dc87f2c0, Town of Inoya, then the first combat zone outside it), Live 3 (research build SHA-256 1ee2b7542445ff08477c189eefb802dda6dcd75b81509f09d553211df66f5379, Town of Inoya and the Fields of Battle) and Live 4 (phase 4's explosion watch, research build SHA-256 cfaeadc4e7799199a7cab31278f766269cc222971ee13a42349ba9a0eccaaa50, 2026-10-05/06, two natural machines run to their explosion), then Live 5 (the player build's gambapity explosion force, SHA-256 e01251d6b0f9fef7d0ebcbe8743ac9d45f8e71cb43f1f70aacc2523fd0a946c4, 2026-10-06, one natural machine). The argument, the controls and the check tables are in ForgePact docs/gamba-machine-research.md, Live 1 results, Live 2 results, Live 3 results, Live 4 results and Live 5 results; the shared facts are docs/RUNTIME_DATA_MODELS.md section 20. Data only: no generator reads this file and there is no model. Every status is `measured`, `not-observed` or `static-reading`. No instrument-created machine survived its first step in any session; Live 3 measured a spin and a payout on a machine the game placed itself, and Live 4 two machines' explosions.",
+  "$schema_note": "The gamba machine (Slot_Machine_01_obj) and Goburin's Head (ForgePact#134 phase 1, 2026-10-04). Static readings of the object's events (a local reading of the game's compiled-code table and event bodies, kept on the reader's machine; nothing quoted) and four live sessions with the research build's `gambaprobe` instrument on save slot 14, character Sorak: Live 1 (ForgePact research build, INSTRUMENT-BLIND), Live 2 (research build SHA-256 eb1fcf0997b535241ea536974f48a79658886b004266e14ff56b4d10dc87f2c0, Town of Inoya, then the first combat zone outside it), Live 3 (research build SHA-256 1ee2b7542445ff08477c189eefb802dda6dcd75b81509f09d553211df66f5379, Town of Inoya and the Fields of Battle) and Live 4 (phase 4's explosion watch, research build SHA-256 cfaeadc4e7799199a7cab31278f766269cc222971ee13a42349ba9a0eccaaa50, 2026-10-05/06, two natural machines run to their explosion), then Live 5 (the player build's gambapity explosion force, SHA-256 e01251d6b0f9fef7d0ebcbe8743ac9d45f8e71cb43f1f70aacc2523fd0a946c4, 2026-10-06, one natural machine), then Live 6 (phase 6's explosion count, player build SHA-256 85fda2eed6a100b8ccb876dcb4ad1618c79c018eee8710b84406d22eb9a56e99 and, for the migration re-check, 0a493c3f6ca8dd8bb7bd0aa26751035a738eee2d1dfc9bdc8248bc8703acb101, 2026-10-06, two natural machines). The argument, the controls and the check tables are in ForgePact docs/gamba-machine-research.md, Live 1 results, Live 2 results, Live 3 results, Live 4 results, Live 5 results and Live 6 results; the shared facts are docs/RUNTIME_DATA_MODELS.md section 20. Data only: no generator reads this file and there is no model. Every status is `measured`, `not-observed` or `static-reading`. No instrument-created machine survived its first step in any session; Live 3 measured a spin and a payout on a machine the game placed itself, Live 4 two machines' explosions, Live 5 one and Live 6 two more.",
   "measurements": [
     {
       "id": "G1",
@@ -392,6 +392,41 @@
         "below_control": "not-observed",
         "natural_head": "not-observed",
         "below": 0,
+        "natural": 0
+      }
+    },
+    {
+      "id": "G22",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-06",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 6 results"}],
+      "objects": ["Slot_Machine_01_obj", "Loot_Ground_obj"],
+      "scripts": ["gml_Script_InitItemFromJson", "gml_Script_LootGroundCreateFromItem", "gml_Script_CreateItemNew"],
+      "what": "ForgePact's gambapity explosion count (phase 6: machine explosions without a head, not spins) on two natural machines with the threshold at 2, player build SHA-256 85fda2eed6a100b8ccb876dcb4ad1618c79c018eee8710b84406d22eb9a56e99; the counter file's migration re-run alone on the fixed build SHA-256 0a493c3f6ca8dd8bb7bd0aa26751035a738eee2d1dfc9bdc8248bc8703acb101. Spins were no input: after three spins on machine A (id 622504) the count read 0 while the HUD gold fell 30,000. A exploded after the person's 13 spins with no head: explosion count=1 threshold=2, then the below-threshold line, status below=1 forced=0 natural=0, the counter file {\"version\":2,\"count\":1}. Machine B (id 795130) exploded after the person's 9 spins: explosion count=2 threshold=2, then the loader route (json_parse, InitItemFromJson, LootGroundCreateFromItem with the local player as self) placed one charm at 7584,4552, read back on the first attempt with rarity 10; the ground check after the drop read heads=1, own-head-builds=1, the counter reset to 0 and its file to {\"version\":2,\"count\":0}, and a screenshot showed one Goburin's Head label by the wreck (not picked up). The older spin file {\"count\":12} printed the migration line on both builds but stayed unmigrated on the first (a .tmp holding the version-2 text left beside it; the load held the file open during the rename, read from the source, not measured); on the fixed build it read {\"version\":2,\"count\":0} with no .tmp right after the first status, and the next launch printed no migration line. No natural head at either explosion (natural=0, no natural line), so the natural-head reset stays not observed. The person's spin counts are reports, not debits; the HUD gold fell less than 10,000 a spin over both machines (70,000 over 13, 30,000 over 9), not reconciled with the payouts.",
+      "values": {
+        "machines": 2,
+        "threshold": 2,
+        "person_spin_counts": [13, 9],
+        "spin_no_count": true,
+        "count_after_first_explosion": 1,
+        "count_at_second_explosion": 2,
+        "below": 1,
+        "forced": 1,
+        "drop_route": "json_parse > InitItemFromJson > LootGroundCreateFromItem",
+        "drop_self": "local player",
+        "drop_position": [7584, 4552],
+        "read_back_attempts": 1,
+        "rarity": 10,
+        "ground_heads_after_drop": 1,
+        "own_head_builds": 1,
+        "heads_seen_on_screen": 1,
+        "picked_up": false,
+        "count_after": 0,
+        "counter_file_after": ["{\"version\":2,\"count\":1}", "{\"version\":2,\"count\":0}"],
+        "migrate_once_first_build": "fail",
+        "migrate_once_fixed_build": "pass",
+        "natural_head": "not-observed",
         "natural": 0
       }
     }

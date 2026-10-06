@@ -4525,6 +4525,19 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   stays not established (one sample each way). **Measured (Live 5, one
   natural machine, 2026-10-06, player build).** No natural head appeared, so
   how the game builds its own head is still not observed.
+- Two more natural machines exploded in one session, after the person's
+  counts of 13 and 9 spins (no debit was read: ForgePact's phase-6 build
+  hooks no spin), and neither dropped a head of the game's own. At the
+  first, the ground scan and the head-build window saw no charm and a
+  screenshot showed none by the wreck. At the second, the same loader route
+  with the player as `self` placed a charm at the machine (7584,4552), read
+  back on the first attempt with rarity 10, and the ground scan after it
+  found exactly that one (`heads=1`). Two machines stood in one zone (Deep
+  Space, Pyramid Level 1) before the first spin. Across Live 4, 5 and 6,
+  five natural machines exploded, at the person's counts of 13, 8/9, 12, 13
+  and 9 spins, none with a head of the game's own; what decides the
+  explosion is still not established. **Measured (Live 6, two natural
+  machines, 2026-10-06, player build).**
 - `Step_0` does not decompile on this build (the decompiler process died on
   it). A call-by-call listing of it, with callees named from the symbol dump,
   shows only these named script calls: 7 `CreateDefaultParams`, 3
@@ -4562,6 +4575,7 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
 [Live 2 results](../ForgePact/docs/gamba-machine-research.md#live-2-results)
 [Live 3 results](../ForgePact/docs/gamba-machine-research.md#live-3-results)
 [Live 5 results](../ForgePact/docs/gamba-machine-research.md#live-5-results)
+[Live 6 results](../ForgePact/docs/gamba-machine-research.md#live-6-results)
 
 ### 20.5 The spawned flag and the game's spawner
 
