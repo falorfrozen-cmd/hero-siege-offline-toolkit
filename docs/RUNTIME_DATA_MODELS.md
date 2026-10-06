@@ -926,7 +926,7 @@ Measured on 2026-10-04 on Sorak, a White Mage, in town and in Outskirts of Inoya
   `StatAOESkillSize` and `LoadAllModifiers` itself; and many casts carry a second
   `ReturnExtraSpellProjectiles` call with a base of 6. A hook on these scripts
   sees all of them.
-- **Added after the sliders shipped** (ForgePact 2.3.0's `skillslider`, two
+- **Added after the sliders shipped** (ForgePact 2.2.0's `skillslider`, two
   live sessions on 2026-10-04 on the same character, research doc
   `## Implementation live 1`; all **measured** unless labelled):
   - **The top of each range.** Adding 5 to `ReturnExtraSpellProjectiles`'
