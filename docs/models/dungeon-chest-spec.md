@@ -198,7 +198,8 @@ decides a number.
   after. Map reveal's issue #181 sessions (2026-10-06) then sampled five
   creator kinds: the plain and ambush creators carry `enemyArray`; the
   ancient, miniboss and colossal chest creators do not, and an ancient
-  creator still did not after a birth the owner saw
+  creator still did not after creates were attributed to it at a warp where
+  the owner saw monsters appear (normal packs were born there too)
   (`docs/RUNTIME_DATA_MODELS.md` § 11.2). Champion and legion creators were
   not sampled. An inference, not measured: if the estimate counts a creator
   without `enemyArray` as still to spawn, a dungeon holding ancient, miniboss

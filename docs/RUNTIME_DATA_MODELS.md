@@ -1729,7 +1729,9 @@ All **measured** (2026-09-10/11).
   and both `enemyCreatorTimer` and `enemyArray` undefined; once armed,
   `alarm[0]` was -1 and `enemyCreatorTimer` a real; once spawned, `enemyArray`
   was an array and `enemyCreatorTimer` no longer listed. So "still to spawn"
-  is `enemyArray` not being an array; `enemyCreatorTimer` alone cannot tell it,
+  is `enemyArray` not being an array within one visit; after leaving and
+  returning, all 92 plain creators read undefined (per-kind bullet below);
+  `enemyCreatorTimer` alone cannot tell it,
   being undefined both before a creator arms and after it spawns. 5 of the 122
   had spawned by first sight, and the rest made about 5.25 kills each (614 for
   117). **Measured 2026-10-03**; the other creator objects' `enemyArray` was
@@ -1771,15 +1773,20 @@ All **measured** (2026-09-10/11).
     the player) and still read both variables absent afterwards. Whether
     those creates were the pack's birth, and what a miniboss or colossal
     chest creator holds after birth, is **not established**.
-  - Ancient creators at a forced birth: warping the player beside an ancient
-    creator's position twice in a Depths of Hell zone (zone level 514), the
+  - Ancient creators after creates were attributed to them: warping the
+    player beside an ancient creator's position twice in a Depths of Hell zone (zone level 514), the
     owner saw monsters appear at each warp, and creates were attributed to
     ancient creators (0 before, 3 after the first warp, 7 after a warp beside
     a miniboss creator in the same area, 10 after the second ancient warp:
     `Hell_Beast_Passive_obj` 3, `Skeleton_Mage_Fire_obj` 3,
     `Imp_Passive_obj` 2, `Undead_Priest_Passive_obj` 2). All 15 ancient
     creators still existed afterwards and still read both variables absent.
-    So an ancient creator carries neither variable after its birth either.
+    So an ancient creator that has made creates still carries neither
+    variable. Whether those creates were its pack's birth is not
+    established: normal packs were born at both ancient warps too (normal
+    `stateborn` 10 → 22 at the first, 48 → 57 across the second), so the
+    owner's report of monsters appearing does not single out an ancient pack;
+    7 of the 10 creates are `*_Passive_obj`; and 4 came at the miniboss warp.
     **Measured 2026-10-06** (issue #181, capture
     `forgepact-181-map-reveal-icons-live-3.md`). In the same session no
     create was attributed to a miniboss creator at a warp beside one,
@@ -1790,8 +1797,8 @@ All **measured** (2026-09-10/11).
   So in both zones sampled, no ancient, miniboss or colossal chest creator
   showed a numeric timer or an `enemyArray`, and "still to spawn" could not
   be read from either variable on those three. For ancient creators that
-  holds after birth too (above); for miniboss and colossal chest creators,
-  whether either is set later (nearer the player, or at birth) is not
+  holds after creates were attributed to them too (above); for miniboss and
+  colossal chest creators, whether either is set later (nearer the player, or at birth) is not
   observed. **Measured 2026-10-06** (issue #181, captures
   `forgepact-181-map-reveal-icons-live-1.md` and `-live-3.md`;
   [map reveal §11, Live 1 results](../ForgePact/docs/map-reveal-research.md#live-1-results)
