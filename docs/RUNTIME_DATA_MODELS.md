@@ -4404,8 +4404,9 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   removes it: `CleanUp_0` runs nested inside `Alarm_9` (the stack walk taken
   at `CleanUp_0` shows, under the runner's frames, a frame in
   `gml_Object_Slot_Machine_01_obj_Alarm_9`). `Step_0` never runs for those seven,
-  and nothing is left on screen. Seven machines, all the same: three by
-  `instance_create_depth` at depth 0 (two in town, one in a Hell zone), then
+  and nothing is left on screen. Seven machines, all the same: four by
+  `instance_create_depth` at depth 0 (three in Live 1: two in town, one in a
+  Hell zone; one as Live 2's control in town), then
   one each by the game's own `instance_create` script called by name with the
   player as `self`, by `instance_create_layer` on the player's `layer` value,
   and by `instance_create_depth` with the player as `self` and `other`. The
