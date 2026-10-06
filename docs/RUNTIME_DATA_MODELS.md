@@ -4421,8 +4421,8 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
 - `Alarm_9` logs "Slot Machine Spawned" through `DebugLogAddExt` first, on
   every path, and reports the spawn to clients; "out of thin air" is on a
   later branch. **Static reading.**
-- `Alarm_9` reads the machine's protected value `activated` through
-  `GetVariable` first; when it is false it sets `activated` and `isActive`
+- After the log, `Alarm_9` reads the machine's protected value `activated`
+  through `GetVariable`; when it is false it sets `activated` and `isActive`
   true and `rollTimes01`..`rollTimes04` each to 8 plus a runtime routine
   called directly with the argument 8 (the shape of the runner's `irandom`
   core - a sign-adjusted argument, an integer result - **not verified**; if
