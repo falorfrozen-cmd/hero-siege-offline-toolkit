@@ -204,6 +204,12 @@ decides a number.
   not sampled. An inference, not measured: if the estimate counts a creator
   without `enemyArray` as still to spawn, a dungeon holding ancient, miniboss
   or colossal chest creators would be over-counted for the whole run.
+  Measured later (capture `forgepact-181-map-reveal-icons-live-4.md`, one
+  open zone, Steam Train, not a key dungeon): on those three kinds the
+  protected pack state behind `spawnPack` tells fired from not: ancient
+  creators read 1 before their birth and 3 after, colossal chest creators 0
+  before their chest was opened and 2 after, and miniboss creators already
+  read 2 at zone arrival (`docs/RUNTIME_DATA_MODELS.md` § 11.2).
 
 ## Our code
 

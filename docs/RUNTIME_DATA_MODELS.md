@@ -1821,7 +1821,9 @@ All **measured** (2026-09-10/11).
     wormhole creator) writes 2 and arms an alarm for the next frame; that
     alarm builds the pack from the zone's enemy pool, rolls its rarity and
     affixes, and writes 3. The creator stays. So an ancient pack exists at
-    most one frame after the state leaves 1.
+    most one frame after the state leaves 1. *Measured (Live 4):* 1 on all
+    10 at arrival, 3 on each born one (1 → 3 at a warp beside it), and the
+    creator still exists; the state 2 between them was never read.
   - `Enemy_Creator_Miniboss_obj`: Create writes 1 and arms an alarm, due the
     next frame in most rooms and a few seconds later in seven named rooms
     (Ruby Gardens, Tomb of Amun Ra 02, the Fortune Teller room and four Act 9
@@ -1830,6 +1832,12 @@ All **measured** (2026-09-10/11).
     and others) and writes 2. No miniboss event tests the player's distance,
     so a miniboss pack is built at zone arrival, not on approach. Create also
     asks `ZoneStateExists`; what that changes on a revisit was not read.
+    *Measured (Live 4):* 2 on all 4 at arrival, before the player came near,
+    with one `Hellspawn_Guardsman_obj` attributed to each by our create
+    hooks (in Steam Train); the creator still exists after its pack is
+    killed, and none of its protected values or instance variables changed
+    with the kill (the state stayed 2), so nothing on the creator marks the
+    pack's death.
   - `Enemy_Creator_Legion_obj`: Create writes 1 and arms an alarm (about
     1.5 s in one branch), which builds the pack (named monsters such as
     `Hellspawn_Guardsman_obj`, `Undead_Raider_obj`, `Skinwalker_obj`) and
@@ -1841,24 +1849,48 @@ All **measured** (2026-09-10/11).
     state is 1 and writes 2. The chest sets that 1: `ChestColossalSpawnEnemies`,
     run when the player opens a `Colossal_Chest_obj`, sets it on the nearby
     colossal chest creators whose state is unset. So a colossal chest pack is
-    born when its chest is opened.
+    born when its chest is opened. *Measured (Live 4):* 0 on all 6 at
+    arrival and until the chest was opened, 2 on all 6 afterwards, with one
+    `Abomination_obj` attributed to each; the state 1 between was not read.
   - `Enemy_Creator_Ambush_obj`: while the state is unset, its step counts
     down a check timer and tests the player's distance; once near, it writes
     1, shows the ambush effect and arms the alarm that builds the pack (and
-    fills `enemyArray`, measured above).
+    fills `enemyArray`, measured above). *Measured (Live 4):* 0 (unset) on
+    all 9 at arrival; no ambush birth was seen that session.
   - `Enemy_Creator_obj`: Create writes several protected values; about 0.4 s
     later an alarm reads the state before it registers the periodic timer
-    (`enemyCreatorTimer`). Which value means born was not read. That the
-    revisit above kept the 82/10 split (82 plain creators with a timer, the
-    10 spawned ones without) fits a born state that survives a revisit; not
-    established.
+    (`enemyCreatorTimer`). Which value means born was not read statically.
+    *Measured (Live 4):* 1 before its birth, 3 after: at arrival 50 read 1
+    and the 12 already born read 3, and one creator watched through its
+    birth went 1 → 3 as `enemyArray` became an array and
+    `enemyCreatorTimer` went away. Every born plain creator that session
+    read 3 and every unborn one 1.
 
-  Not read: what the zone state restores on a revisit, the plain creator's
-  pack-building alarm (it exceeded the decompiler's time limit), and the
-  miniboss alarm beyond its state test and its final write. **Static
-  reading**, 2026-10-06 (falorfrozen-cmd/ForgePact#181, replan 2 of the hub
-  workorder `forgepact-181-map-reveal-icons`); none of it is measured yet.
-  That workorder's Live procedure 4 measures it.
+  **On a revisit** (*measured, Live 4*): leaving a zone by waypoint and
+  coming back gives every creator a new instance id (262xxx → 321xxx; no
+  creator id seen on the first visit was listed again, for any kind), at
+  the same position. The protected pack state comes back with the zone for
+  every kind measured: normal 1 on 25 and 3 on 37, ancient 1 on 3 and 3 on
+  7, colossal chest 2 on all 6, miniboss 2 on all 4. The plain creators
+  kept their timer split (25 with a timer, 37 without), but none carried an
+  `enemyArray` that was an array after the revisit, so on a revisit only
+  the protected state still tells a born plain creator from an unborn one.
+
+  **Measured 2026-10-06** (issue #181, capture
+  `forgepact-181-map-reveal-icons-live-4.md`, one zone, Steam Train, zone
+  level 293; [map reveal §11, Live 4 results](../ForgePact/docs/map-reveal-research.md#live-4-results)):
+  that the getter, given the key `spawnPack` holds, returns a state that
+  moves with the pack's birth as above (a positive control on a known slot
+  through the same getter answered in every census), and each *Measured (Live 4)* line and the
+  revisit paragraph above. Everything else in this bullet is still the
+  **static reading**, 2026-10-06 (falorfrozen-cmd/ForgePact#181, replan 2
+  of the hub workorder `forgepact-181-map-reveal-icons`): where the record
+  is allocated and freed, the alarms, the distance tests and the intermediate states, the miniboss room list and
+  unique set, and the whole legion and champion lines, since that session
+  had no legion or champion creator (not observed). Not read: what the
+  zone state restores on a revisit beyond the values above, the plain
+  creator's pack-building alarm (it exceeded the decompiler's time limit),
+  and the miniboss alarm beyond its state test and its final write.
 - `EnemyCreatorPending` only reports whether a creator still has an alarm running.
   Creators make density copies through four-argument `instance_create_*` calls.
   **Static reading.**
