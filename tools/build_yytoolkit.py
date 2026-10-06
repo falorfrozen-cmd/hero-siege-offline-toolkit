@@ -1,5 +1,17 @@
 """Build the hub's modified YYToolkit.dll: one pinned upstream commit plus the
-patch series in `third_party/yytoolkit/`, and nothing else.
+patch series in `third_party/yytoolkit/`, and nothing else. The same steps
+build the modified AurieCore.dll from `third_party/aurie/`:
+
+    product     pin directory           entry point
+    YYToolkit   third_party/yytoolkit   tools/build_yytoolkit.py (this file)
+    Aurie       third_party/aurie       tools/build_aurie.py
+
+What differs between them -- the pin directory, the project file, the DLL's
+name, the host-test directory, the default work directory, the names of what
+`verify-dll` writes -- is a `Product` profile below, and nothing else is. A
+copy of this file per product was rejected: a provenance fix to one copy would
+miss the other. YYToolkit is the default, so this file's command line,
+refusals, exit codes and outputs are what they were before Aurie was added.
 
 Run it:
 
@@ -10,6 +22,7 @@ Run it:
     py -3 tools/build_yytoolkit.py hosttests
     py -3 tools/build_yytoolkit.py verify-dll
     py -3 tools/build_yytoolkit.py verify-dll --dll some\\other\\YYToolkit.dll
+    py -3 tools/build_aurie.py all --allow-network
 
 The DLL this project shipped was built from a tree nobody kept, and its strings
 show changes that no document describes. Every step here exists so that cannot
@@ -29,22 +42,27 @@ that gets built. Each patch is checked on top of the ones before it -- handing
 wrongly rejects a patch stacked on an earlier one -- and the first one that does
 not apply is named. Nothing is applied in that case.
 
-`build` runs upstream's own `YYToolkit.vcxproj`, Release|x64, unedited. `/Brepro`
-and `/PDBALTPATH` arrive through a props file this tool writes into the work
-directory and hands to MSBuild as `ForceImportAfterCppTargets`, which makes two
-builds on one toolchain byte-identical. `CL`, `_CL_`, `LINK` and `_LINK_` are
+`build` runs upstream's own project file (`YYToolkit.vcxproj`,
+`AurieCore.vcxproj`), Release|x64, unedited. `/Brepro` and `/PDBALTPATH`
+arrive through a props file this tool writes into the work directory and hands
+to MSBuild as `ForceImportAfterCppTargets`, which makes two builds on one
+toolchain byte-identical. For Aurie, whose project does not trim the build
+directory out of `__FILE__` the way YYToolkit's series makes its project do,
+the props file adds `/d1trimfile` too. `CL`, `_CL_`, `LINK` and `_LINK_` are
 removed from the environment first: they add compiler and linker flags that no
 project file and no log shows.
 
-`hosttests` compiles and runs every `YYToolkit/hs-tests/*.cpp` in the patched
-tree with `cl`. A tree with no host tests fails unless `--allow-no-hosttests`
-says that is expected -- zero tests passing is not a result.
+`hosttests` compiles and runs every `YYToolkit/hs-tests/*.cpp` (for Aurie,
+`Aurie/hs-tests/*.cpp`) in the patched tree with `cl`. A tree with no host
+tests fails unless `--allow-no-hosttests` says that is expected -- zero tests
+passing is not a result.
 
 `verify-dll` is the check that would have caught the original failure. Every
 literal a patch declares on a `Log-markers:` header line has to occur in the DLL
 as ASCII, and must NOT occur in unpatched upstream, where it would prove
 nothing. Only then does it write `YYToolkit-BUILD-INFO.json`, the `.sha256` and
-`yytoolkit-source-<id>.zip` beside the DLL. `live_gameplay_verified` is always
+`yytoolkit-source-<id>.zip` beside the DLL (for Aurie `AurieCore-BUILD-INFO.json`
+and `aurie-source-<id>.zip`). `live_gameplay_verified` is always
 written as false: this tool cannot know, and launching the game is a person's
 row in the README table. With `--dll` it checks the markers of any file,
 read-only, and writes nothing -- point it at a binary of unknown origin to see
@@ -53,11 +71,48 @@ which documented changes it lacks.
     Log-markers: none
     Log-markers: "first literal", "second, with a comma"
 
-The work directory has to be short and outside the repository. Upstream's
-longest path is 92 characters below it and this worktree's own prefix is 97, so
-MAX_PATH is a real limit here, and an over-long `--work-dir` is refused rather
-than warned about. A directory that is not empty and was not created by this
-tool is refused as well, because every step deletes what it is about to rebuild.
+The work directory has to be short and outside the repository. YYToolkit's
+longest path is 92 characters below it (Aurie's 59) and this worktree's own
+prefix is 97, so MAX_PATH is a real limit here, and an over-long `--work-dir` is
+refused rather than warned about. A directory that is not empty and was not
+created by this tool is refused as well, because every step deletes what it is
+about to rebuild. The defaults are `%LOCALAPPDATA%\\hstk\\yk` and `...\\hstk\\au`.
+
+Writing a patch needs no git of your own and no edit outside the checkout,
+for a session that may only write inside it:
+
+    py -3 tools/build_aurie.py materialise --allow-network
+    py -3 tools/build_aurie.py overlay --overlay build/aurie-overlay Aurie/source/AurieMain.cpp
+    (edit build/aurie-overlay/Aurie/source/AurieMain.cpp; create new files there too)
+    py -3 tools/build_aurie.py make-patch --overlay build/aurie-overlay \\
+        --name 0001-series-identity.patch --message <message file>
+    py -3 tools/build_aurie.py make-patch --overlay build/aurie-overlay \\
+        --message <message file> --regenerate-last
+
+`overlay` copies named upstream files, as pristine upstream plus the series so
+far leaves them, into the overlay at their upstream-relative paths; it will not
+overwrite a copy already there without `--replace`. `make-patch` lays the
+overlay over that tree and writes the difference as the next numbered patch,
+appended to `patches/series`. With `--regenerate-last` the difference is taken
+from the tree before the last patch and replaces it, so the overlay only needs
+the files that change again. Both work from an empty series. The tool runs git
+itself, in its work directory, against an empty git configuration. The patch
+has the series' mail shape: a zero commit id, one fixed author and `Date:`,
+`[PATCH n/m]` (the earlier patches' totals are renumbered to match), LF only.
+The message file is the subject line, a blank line, and a body carrying `Why:`,
+`Evidence:`, `Fails-safe:`, `Log-markers:` and `Upstream-status:`. Before
+anything is written the whole new series is checked to apply.
+
+`make-patch` refuses, writing nothing: an overlay inside the checkout that git
+does not ignore (`build/` is ignored), or one sharing the work or the pin
+directory; a `--name` that is not `NNNN-<slug>.patch` with the next number (or
+the last one's, with `--regenerate-last`); a message without all five fields,
+or whose `Log-markers:` does not parse; an overlay that changes nothing; a path
+outside the product's directory (`YYToolkit/`, `Aurie/`) or one the product
+marks plugin-facing (the shared headers plugins compile against); CR bytes or
+binary content. Deleting a file is not supported: a file absent from the
+overlay keeps whatever the tree has. The README rows, the NOTICE entry and a
+`series_revision` bump stay the author's to write.
 
 What it never does: launch the game, read or write the game directory, copy the
 DLL out of the work directory, or use the network -- unless `--upstream` is
@@ -65,7 +120,8 @@ omitted AND `--allow-network` is passed, which fetches the one pinned commit.
 
 Exit codes: 0 done; 1 a step ran and failed (patch does not apply, MSBuild or a
 host test failed, a marker is missing); 2 refused before doing anything (work
-directory, pin, series, missing `--upstream`); 3 the toolchain is not there.
+directory, pin, series, missing `--upstream`, overlay, name or message); 3 the
+toolchain is not there.
 """
 
 from __future__ import annotations
@@ -86,17 +142,106 @@ from pathlib import Path
 from typing import Callable, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_PIN_DIR = ROOT / "third_party" / "yytoolkit"
 
 #: Longest `--work-dir` accepted, as an absolute path. 40 + the 92 characters
-#: upstream needs below it leaves MSBuild's tlog names and cl/link temp files
-#: well inside MAX_PATH (260).
+#: YYToolkit's upstream needs below it leaves MSBuild's tlog names and cl/link
+#: temp files well inside MAX_PATH (260). Aurie needs 59.
 MAX_WORK_DIR_LEN = 40
 
-#: Dropped into the work directory when this tool creates it. Every step deletes
-#: directories called `src`, `o`, `i`... inside it, so it will only do that in a
-#: directory it made (or an empty one).
-WORK_MARKER = ".hstk-yytoolkit-work"
+
+@dataclass(frozen=True)
+class Product:
+    """Everything that differs between the upstreams this tool builds. Every
+    step reads these and nothing else product-specific, so a fix to a step
+    reaches both DLLs."""
+
+    name: str
+    #: Written into BUILD-INFO's `tool`, the work marker and the error prefix.
+    tool: str
+    pin_dir: Path
+    #: (directory, project file) inside upstream's tree.
+    project: Tuple[str, str]
+    dll_name: str
+    build_info_name: str
+    #: MSBuild names `<ProjectName>.tlog/<ProjectName>.lastbuildstate` after this.
+    project_name: str
+    host_tests: Tuple[str, ...]
+    #: Include directories for the host tests, relative to the project directory.
+    host_test_includes: Tuple[str, ...]
+    #: `<zip_stem>-<12 hex>.zip`, every entry under `zip_prefix`.
+    zip_stem: str
+    zip_prefix: str
+    #: Last component of the default work directory.
+    work_leaf: str
+    #: Dropped into the work directory when this tool creates it. Every step
+    #: deletes directories called `src`, `o`, `i`... inside it, so it will only
+    #: do that in a directory it made (or an empty one).
+    work_marker: str
+    #: Upstream's longest path below the work directory, for the refusal text.
+    longest_upstream_path: int
+    #: Inject `/d1trimfile:<project dir>` through the props file, for a project
+    #: whose own file does not strip the build directory from `__FILE__`.
+    trim_project_dir: bool
+    #: Every path a patch touches is under this directory of upstream's tree.
+    source_root: str
+    #: What plugins compile against. The authoring path refuses a patch that
+    #: touches a path starting with one of these: plugins built against the
+    #: unmodified pinned headers would silently change ABI.
+    plugin_facing: Tuple[str, ...]
+
+    @property
+    def error_prefix(self) -> str:
+        return Path(self.tool).stem
+
+
+YYTOOLKIT = Product(
+    name="YYToolkit",
+    tool="tools/build_yytoolkit.py",
+    pin_dir=ROOT / "third_party" / "yytoolkit",
+    project=("YYToolkit", "YYToolkit.vcxproj"),
+    dll_name="YYToolkit.dll",
+    build_info_name="YYToolkit-BUILD-INFO.json",
+    project_name="YYToolkit",
+    host_tests=("YYToolkit", "hs-tests"),
+    host_test_includes=("include", "source"),
+    zip_stem="yytoolkit-source",
+    zip_prefix="third_party/yytoolkit/",
+    work_leaf="yk",
+    work_marker=".hstk-yytoolkit-work",
+    longest_upstream_path=92,
+    # Patch 0006 of the series puts /d1trimfile:$(SolutionDir) in the project.
+    trim_project_dir=False,
+    source_root="YYToolkit/",
+    plugin_facing=("YYToolkit/source/YYTK/Shared/", "ExamplePlugin/"),
+)
+
+AURIE = Product(
+    name="Aurie",
+    tool="tools/build_aurie.py",
+    pin_dir=ROOT / "third_party" / "aurie",
+    project=("Aurie", "AurieCore.vcxproj"),
+    dll_name="AurieCore.dll",
+    build_info_name="AurieCore-BUILD-INFO.json",
+    project_name="AurieCore",
+    host_tests=("Aurie", "hs-tests"),
+    host_test_includes=("source", "source/include"),
+    zip_stem="aurie-source",
+    zip_prefix="third_party/aurie/",
+    work_leaf="au",
+    work_marker=".hstk-aurie-work",
+    longest_upstream_path=59,
+    # Upstream's AurieCore.vcxproj does not trim, and the default work
+    # directory is under the user profile: a `__FILE__` would carry its path.
+    trim_project_dir=True,
+    # AuriePatcher/, AurieInstaller/ and TestModule/ are outside it.
+    source_root="Aurie/",
+    plugin_facing=("Aurie/source/framework/shared.hpp",),
+)
+
+PRODUCTS = {"yytoolkit": YYTOOLKIT, "aurie": AURIE}
+
+#: Kept for callers that predate the profiles.
+DEFAULT_PIN_DIR = YYTOOLKIT.pin_dir
 
 #: These silently add flags to every cl.exe / link.exe invocation.
 STRIPPED_ENV = ("CL", "_CL_", "LINK", "_LINK_")
@@ -105,12 +250,6 @@ STRIPPED_ENV = ("CL", "_CL_", "LINK", "_LINK_")
 #: machine's default would export CRLF. longpaths on: git resolves a junction to
 #: its real, possibly long, path.
 GIT_FLAGS = ("-c", "core.autocrlf=false", "-c", "core.longpaths=true")
-
-DLL_NAME = "YYToolkit.dll"
-BUILD_INFO_NAME = "YYToolkit-BUILD-INFO.json"
-PROJECT = ("YYToolkit", "YYToolkit.vcxproj")
-HOST_TESTS = ("YYToolkit", "hs-tests")
-ZIP_PREFIX = "third_party/yytoolkit/"
 
 #: VS 2022 only by default: upstream's project pins PlatformToolset v143.
 DEFAULT_VS_RANGE = "[17.0,18.0)"
@@ -136,19 +275,19 @@ MARKER_LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
 REPRO_PROPS = """\
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Written by tools/build_yytoolkit.py; passed as
-  /p:ForceImportAfterCppTargets=<this file>. Upstream's YYToolkit.vcxproj is
+  Written by {tool}; passed as
+  /p:ForceImportAfterCppTargets=<this file>. Upstream's {project_file} is
   not edited.
 
   /Brepro              : cl + link stop stamping wall-clock time; the PE
                          TimeDateStamp and the PDB GUID become content hashes.
-  /PDBALTPATH:%_PDB%   : the DLL records "YYToolkit.pdb", not the absolute
-                         build directory.
+  /PDBALTPATH:%_PDB%   : the DLL records "{pdb}", not the absolute
+                         build directory.{trim_comment}
 -->
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalOptions>%(AdditionalOptions) /Brepro</AdditionalOptions>
+      <AdditionalOptions>%(AdditionalOptions) /Brepro{trim}</AdditionalOptions>
     </ClCompile>
     <Link>
       <AdditionalOptions>%(AdditionalOptions) /Brepro /PDBALTPATH:%25_PDB%25</AdditionalOptions>
@@ -156,7 +295,28 @@ REPRO_PROPS = """\
   </ItemDefinitionGroup>
 </Project>
 """
+# $(ProjectDir) ends in a backslash; the second one keeps it from escaping the
+# closing quote, as YYToolkit's own project does for $(SolutionDir).
+TRIM_OPTION = ' /d1trimfile:"$(ProjectDir)\\"'
+TRIM_COMMENT = """
+  /d1trimfile:<project directory>
+                       : __FILE__ is recorded relative to the project, not
+                         under the work directory (a user-profile path)."""
 CONFIGURATION = "Release|x64 + repro.props (/Brepro, /PDBALTPATH:%_PDB%)"
+CONFIGURATION_TRIMMED = "Release|x64 + repro.props (/Brepro, /PDBALTPATH:%_PDB%, /d1trimfile)"
+
+
+def repro_props(product: Product) -> str:
+    return REPRO_PROPS.format(
+        tool=product.tool, project_file=product.project[1],
+        pdb=Path(product.dll_name).stem + ".pdb",
+        trim_comment=TRIM_COMMENT if product.trim_project_dir else "",
+        trim=TRIM_OPTION if product.trim_project_dir else "",
+    )
+
+
+def configuration(product: Product) -> str:
+    return CONFIGURATION_TRIMMED if product.trim_project_dir else CONFIGURATION
 
 GIT_TIMEOUT = 600
 FETCH_TIMEOUT = 1800
@@ -292,10 +452,16 @@ def parse_markers(name: str, data: bytes) -> Tuple[str, ...]:
     return tuple(markers)
 
 
-def load_series(pin_dir: Path) -> List[Patch]:
-    """The patches, in the order `patches/series` lists them."""
+def load_series(pin_dir: Path, *, allow_empty: bool = False) -> List[Patch]:
+    """The patches, in the order `patches/series` lists them.
+
+    Building needs at least one. The authoring path starts from none, so with
+    `allow_empty` a series that lists nothing, or does not exist yet, is [].
+    """
     patch_dir = Path(pin_dir) / "patches"
     series = patch_dir / "series"
+    if allow_empty and not series.exists():
+        return []
     try:
         raw = series.read_bytes()
     except OSError as error:
@@ -323,7 +489,7 @@ def load_series(pin_dir: Path) -> List[Patch]:
             )
         patches.append(Patch(name, data, hashlib.sha256(data).hexdigest(),
                              parse_markers(name, data)))
-    if not patches:
+    if not patches and not allow_empty:
         raise Refused(f"{series} lists no patches")
     return patches
 
@@ -389,18 +555,19 @@ def is_within(path: Path, parent: Path) -> bool:
         return False
 
 
-def default_work_dir(environ: Mapping[str, str]) -> Path:
+def default_work_dir(environ: Mapping[str, str], product: Product = YYTOOLKIT) -> Path:
+    leaf = product.work_leaf
     if os.name == "nt":
         local = env_get(environ, "LOCALAPPDATA")
         if local:
-            candidate = Path(local) / "hstk" / "yk"
+            candidate = Path(local) / "hstk" / leaf
             if len(str(candidate)) <= MAX_WORK_DIR_LEN:
                 return candidate
         # A long profile name makes even %LOCALAPPDATA% too long.
         drive = env_get(environ, "SystemDrive") or "C:"
-        return Path(drive + "\\") / "hstk" / "yk"
+        return Path(drive + "\\") / "hstk" / leaf
     cache = env_get(environ, "XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(cache) / "hstk" / "yk"
+    return Path(cache) / "hstk" / leaf
 
 
 def git_blob_id(data: bytes) -> str:
@@ -434,7 +601,8 @@ def verify_tree(root: Path, expected: Mapping[str, str], what: str) -> None:
 
 @dataclass
 class Context:
-    pin_dir: Path = DEFAULT_PIN_DIR
+    #: None: the product's own pin directory.
+    pin_dir: Optional[Path] = None
     work_dir: Optional[Path] = None
     runner: Runner = run_process
     environ: Mapping[str, str] = field(default_factory=lambda: os.environ)
@@ -442,11 +610,14 @@ class Context:
     #: the unit tests must use is itself longer than the limit on Windows.
     max_work_dir_len: int = MAX_WORK_DIR_LEN
     log: Callable[[str], None] = say
+    product: Product = YYTOOLKIT
     _prepared: bool = False
 
     def __post_init__(self) -> None:
-        self.pin_dir = Path(os.path.abspath(str(self.pin_dir)))
-        chosen = self.work_dir if self.work_dir is not None else default_work_dir(self.environ)
+        pin_dir = self.pin_dir if self.pin_dir is not None else self.product.pin_dir
+        self.pin_dir = Path(os.path.abspath(str(pin_dir)))
+        chosen = self.work_dir if self.work_dir is not None else \
+            default_work_dir(self.environ, self.product)
         self.work_dir = Path(os.path.abspath(str(chosen)))
 
     def path(self, *parts: str) -> Path:
@@ -473,8 +644,9 @@ class Context:
         if len(str(work)) > self.max_work_dir_len:
             raise Refused(
                 f"--work-dir is {len(str(work))} characters ({work}); the limit is "
-                f"{self.max_work_dir_len}. Upstream needs 92 more below it and MAX_PATH "
-                f"is 260 - use a short path such as C:\\hstk\\yk."
+                f"{self.max_work_dir_len}. Upstream needs {self.product.longest_upstream_path} "
+                f"more below it and MAX_PATH is 260 - use a short path such as "
+                f"C:\\hstk\\{self.product.work_leaf}."
             )
         for root in self.forbidden_roots():
             for candidate in (work, Path(os.path.realpath(str(work)))):
@@ -494,15 +666,15 @@ class Context:
             if not work.is_dir():
                 raise Refused(f"--work-dir {work} is not a directory")
             entries = os.listdir(work)
-            if entries and WORK_MARKER not in entries:
+            if entries and self.product.work_marker not in entries:
                 raise Refused(
                     f"--work-dir {work} is not empty and was not created by this tool. "
                     f"Every step deletes what it rebuilds, so it only works in its own directory."
                 )
         work.mkdir(parents=True, exist_ok=True)
-        marker = work / WORK_MARKER
+        marker = work / self.product.work_marker
         if not marker.exists():
-            marker.write_text("created by tools/build_yytoolkit.py; safe to delete whole\n",
+            marker.write_text(f"created by {self.product.tool}; safe to delete whole\n",
                               encoding="utf-8")
         self._prepared = True
 
@@ -515,17 +687,21 @@ class Context:
                              f"build (MSBuild, mspdbsrv) still holding it?") from error
 
     def run(self, argv: Sequence[str], *, cwd: Optional[Path] = None,
-            timeout: Optional[int] = None, capture: bool = True):
+            timeout: Optional[int] = None, capture: bool = True,
+            env_extra: Optional[Mapping[str, str]] = None):
+        env = self.env()
+        env.update(env_extra or {})
         try:
-            return self.runner(list(argv), cwd=str(cwd) if cwd else None, env=self.env(),
+            return self.runner(list(argv), cwd=str(cwd) if cwd else None, env=env,
                                timeout=timeout, capture=capture)
         except FileNotFoundError as error:
             raise ToolchainMissing(f"cannot start {argv[0]}: {error}") from error
         except subprocess.TimeoutExpired as error:
             raise Failed(f"{argv[0]} did not finish within {timeout} s") from error
 
-    def git(self, *args: str, check: bool = True, timeout: int = GIT_TIMEOUT):
-        result = self.run(["git", *GIT_FLAGS, *args], timeout=timeout)
+    def git(self, *args: str, check: bool = True, timeout: int = GIT_TIMEOUT,
+            env_extra: Optional[Mapping[str, str]] = None):
+        result = self.run(["git", *GIT_FLAGS, *args], timeout=timeout, env_extra=env_extra)
         if check and result.returncode != 0:
             detail = (result.stderr or "").strip()
             raise Failed(f"git {' '.join(args)} exited {result.returncode}: {detail}")
@@ -603,7 +779,7 @@ def materialise(ctx: Context, upstream: Optional[Path] = None, *,
     # Only now is anything written: a refused pin leaves no trace behind.
     ctx.prepare()
     # A new export invalidates everything built from the old one.
-    ctx.reset("up", "src", "chk", "p", "o", "i", "t", "log",
+    ctx.reset("up", "src", "chk", "p", "o", "i", "t", "log", "a", "ap",
               MATERIALISED, APPLIED, BUILT, HOSTTESTS, "up.zip")
     archive = ctx.path("up.zip")
     # The commit object, not the checkout: no stale .obj/.iobj, no local edits.
@@ -763,9 +939,10 @@ def _cl_version(ctx: Context, toolchain: Toolchain) -> Optional[str]:
 
 def msbuild_command(ctx: Context, toolchain: Toolchain) -> List[str]:
     sep = os.sep
-    project_dir = ctx.path("src", PROJECT[0])
+    project = ctx.product.project
+    project_dir = ctx.path("src", project[0])
     return [
-        toolchain.msbuild, str(project_dir / PROJECT[1]),
+        toolchain.msbuild, str(project_dir / project[1]),
         "/t:Rebuild", "/m", "/nr:false", "/nologo",
         "/p:Configuration=Release", "/p:Platform=x64",
         f"/p:SolutionDir={project_dir}{sep}",       # what /d1trimfile strips from __FILE__
@@ -784,7 +961,8 @@ def build(ctx: Context, *, toolchain: Optional[Toolchain] = None,
     patches = load_series(ctx.pin_dir)
     ctx.prepare()
     require_applied(ctx, pin, patches)
-    project = ctx.path("src", *PROJECT)
+    product = ctx.product
+    project = ctx.path("src", *product.project)
     if not project.is_file():
         raise Refused(f"{project} is missing from the patched tree")
     toolchain = toolchain or locate_toolchain(ctx, vs_version_range)
@@ -794,7 +972,7 @@ def build(ctx: Context, *, toolchain: Optional[Toolchain] = None,
     ctx.reset("o", "i", "log", BUILT)
     for name in ("o", "i", "log"):
         ctx.path(name).mkdir()
-    ctx.path("repro.props").write_bytes(REPRO_PROPS.encode("utf-8"))
+    ctx.path("repro.props").write_bytes(repro_props(product).encode("utf-8"))
 
     argv = msbuild_command(ctx, toolchain)
     ctx.log("build: " + " ".join(argv))
@@ -803,14 +981,15 @@ def build(ctx: Context, *, toolchain: Optional[Toolchain] = None,
     seconds = round(time.monotonic() - started, 1)
     if result.returncode != 0:
         raise Failed(f"MSBuild exited {result.returncode}; see {ctx.path('log', 'msbuild.log')}")
-    dll = ctx.path("o", DLL_NAME)
+    dll = ctx.path("o", product.dll_name)
     if not dll.is_file():
         raise Failed(f"MSBuild succeeded but {dll} is missing")
 
     data = dll.read_bytes()
     version = ctx.run([toolchain.msbuild, "-nologo", "-version"], timeout=GIT_TIMEOUT)
     version_lines = [l.strip() for l in (version.stdout or "").splitlines() if l.strip()]
-    state_file = ctx.path("i", "YYToolkit.tlog", "YYToolkit.lastbuildstate")
+    state_file = ctx.path("i", product.project_name + ".tlog",
+                          product.project_name + ".lastbuildstate")
     try:
         build_state = state_file.read_text(encoding="utf-8", errors="replace").splitlines()[0].strip()
     except (OSError, IndexError):
@@ -834,7 +1013,7 @@ def build(ctx: Context, *, toolchain: Optional[Toolchain] = None,
             "build_state": build_state,
             "cl": _cl_version(ctx, toolchain),
         },
-        "configuration": CONFIGURATION,
+        "configuration": configuration(product),
         "warnings": warnings,
     }
     write_json(ctx.path(BUILT), record)
@@ -854,14 +1033,15 @@ def hosttests(ctx: Context, *, toolchain: Optional[Toolchain] = None,
     patches = load_series(ctx.pin_dir)
     ctx.prepare()
     require_applied(ctx, pin, patches)
-    test_dir = ctx.path("src", *HOST_TESTS)
+    product = ctx.product
+    test_dir = ctx.path("src", *product.host_tests)
     sources = sorted(test_dir.glob("*.cpp")) if test_dir.is_dir() else []
     ctx.reset("t", HOSTTESTS)
     record = {"series": series_record(pin, patches), "ran": 0, "passed": 0, "files": []}
     if not sources:
         if not allow_none:
             raise Failed(
-                f"no host tests: {'/'.join(HOST_TESTS)}/*.cpp matches nothing in the patched "
+                f"no host tests: {'/'.join(product.host_tests)}/*.cpp matches nothing in the patched "
                 f"tree. Zero tests passing is not a result; pass --allow-no-hosttests if the "
                 f"series really carries none."
             )
@@ -874,8 +1054,9 @@ def hosttests(ctx: Context, *, toolchain: Optional[Toolchain] = None,
         raise ToolchainMissing("vcvars64.bat not found in the Visual Studio install")
     out = ctx.path("t")
     out.mkdir()
-    project_dir = ctx.path("src", PROJECT[0])
-    includes = [d for d in (project_dir / "include", project_dir / "source", test_dir)
+    project_dir = ctx.path("src", product.project[0])
+    includes = [d for d in [project_dir.joinpath(*rel.split("/"))
+                            for rel in product.host_test_includes] + [test_dir]
                 if d.is_dir()]
     failures: List[str] = []
     for source in sources:
@@ -956,8 +1137,10 @@ def check_markers(patches: Sequence[Patch], dll: bytes, pristine: Optional[Path]
     return verified
 
 
-def build_source_zip(pin_dir: Path, dest_dir: Path) -> Tuple[Path, str]:
-    """A deterministic zip of `third_party/yytoolkit`, named by its content."""
+def build_source_zip(pin_dir: Path, dest_dir: Path,
+                     product: Product = YYTOOLKIT) -> Tuple[Path, str]:
+    """A deterministic zip of the pin directory (`third_party/<product>`),
+    named by its content."""
     pin_dir = Path(pin_dir)
     files = sorted(
         (p.relative_to(pin_dir).as_posix(), p) for p in pin_dir.rglob("*")
@@ -970,10 +1153,10 @@ def build_source_zip(pin_dir: Path, dest_dir: Path) -> Tuple[Path, str]:
         contents.append((rel, data))
         listing.update(f"{rel}\x00{hashlib.sha256(data).hexdigest()}\n".encode("utf-8"))
     source_id = listing.hexdigest()
-    dest = Path(dest_dir) / f"yytoolkit-source-{source_id[:12]}.zip"
+    dest = Path(dest_dir) / f"{product.zip_stem}-{source_id[:12]}.zip"
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as bundle:
         for rel, data in contents:
-            entry = zipfile.ZipInfo(ZIP_PREFIX + rel, date_time=(1980, 1, 1, 0, 0, 0))
+            entry = zipfile.ZipInfo(product.zip_prefix + rel, date_time=(1980, 1, 1, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_DEFLATED
             entry.create_system = 3
             entry.external_attr = 0o644 << 16
@@ -1029,11 +1212,13 @@ def verify_dll(ctx: Context, *, dll: Optional[Path] = None,
         return {"dll": {"size": len(data), "sha256": sha256}, "markers_verified": verified}
 
     ctx.prepare()
+    product = ctx.product
+    dll_name, build_info_name = product.dll_name, product.build_info_name
     out = ctx.path("o")
     # A failed verification must not leave an older success lying beside the DLL.
     if out.is_dir():
-        for stale in list(out.glob("yytoolkit-source-*.zip")) + [out / BUILD_INFO_NAME,
-                                                                  out / (DLL_NAME + ".sha256")]:
+        for stale in list(out.glob(product.zip_stem + "-*.zip")) + [out / build_info_name,
+                                                                     out / (dll_name + ".sha256")]:
             if stale.is_file():
                 stale.unlink()
     require_applied(ctx, pin, patches)
@@ -1043,7 +1228,7 @@ def verify_dll(ctx: Context, *, dll: Optional[Path] = None,
     if built.get("series") != series_record(pin, patches):
         raise Refused("the DLL in the work directory was built from a different series; "
                       "run `build` again")
-    path = out / DLL_NAME
+    path = out / dll_name
     try:
         data = path.read_bytes()
     except OSError as error:
@@ -1062,10 +1247,10 @@ def verify_dll(ctx: Context, *, dll: Optional[Path] = None,
     if not isinstance(tests, dict) or tests.get("series") != series_record(pin, patches):
         tests = None
     hub_commit, hub_dirty = _hub_commit(ctx)
-    archive, source_id = build_source_zip(ctx.pin_dir, out)
+    archive, source_id = build_source_zip(ctx.pin_dir, out, product)
     info = {
         "schema": 1,
-        "tool": "tools/build_yytoolkit.py",
+        "tool": product.tool,
         "upstream": {"repo": pin.repo, "tag": pin.tag, "commit": pin.commit, "tree": pin.tree},
         "hub": {"commit": hub_commit, "patch_directory_dirty": hub_dirty},
         "patches": [{"name": p.name, "sha256": p.sha256, "log_markers": list(p.markers)}
@@ -1073,7 +1258,7 @@ def verify_dll(ctx: Context, *, dll: Optional[Path] = None,
         "toolchain": built.get("toolchain"),
         "configuration": built.get("configuration"),
         "warnings": built.get("warnings"),
-        "dll": {"name": DLL_NAME, "size": len(data), "sha256": sha256},
+        "dll": {"name": dll_name, "size": len(data), "sha256": sha256},
         "markers_verified": verified,
         "host_tests": None if tests is None else
         {"ran": tests.get("ran"), "passed": tests.get("passed"), "files": tests.get("files")},
@@ -1083,14 +1268,14 @@ def verify_dll(ctx: Context, *, dll: Optional[Path] = None,
         # README's verification row; a build cannot know.
         "live_gameplay_verified": False,
     }
-    write_json(out / BUILD_INFO_NAME, info)
-    (out / (DLL_NAME + ".sha256")).write_bytes(f"{sha256}  {DLL_NAME}\n".encode("ascii"))
+    write_json(out / build_info_name, info)
+    (out / (dll_name + ".sha256")).write_bytes(f"{sha256}  {dll_name}\n".encode("ascii"))
     ctx.log(f"verify-dll: {path}")
     ctx.log(f"verify-dll: size   {len(data)}")
     ctx.log(f"verify-dll: sha256 {sha256}")
     ctx.log(f"verify-dll: {len(verified)} marker(s) present in the DLL and absent from "
             f"unpatched upstream")
-    ctx.log(f"verify-dll: wrote {BUILD_INFO_NAME}, {DLL_NAME}.sha256 and {archive.name} "
+    ctx.log(f"verify-dll: wrote {build_info_name}, {dll_name}.sha256 and {archive.name} "
             f"in {out}")
     ctx.log("verify-dll: live_gameplay_verified is false - this binary has never been "
             "launched against the game")
@@ -1098,17 +1283,416 @@ def verify_dll(ctx: Context, *, dll: Optional[Path] = None,
 
 
 # --------------------------------------------------------------------------
+# 6. authoring: overlay and make-patch
+# --------------------------------------------------------------------------
+
+#: The series' mail shape. Every patch carries the same zero commit id, author
+#: and date, so a regenerated patch differs from the old one only where its
+#: content does.
+MAIL_SEPARATOR = "From " + "0" * 40 + " Mon Sep 17 00:00:00 2001"
+MAIL_FROM = "Hero Siege Offline Toolkit <noreply@example.invalid>"
+MAIL_DATE = "Sat, 19 Sep 2026 12:00:00 +0000"
+#: `git format-patch` folds the Subject header at this width.
+SUBJECT_WIDTH = 78
+SUBJECT_PREFIX = re.compile(r"^\[PATCH (\d+)/(\d+)\] ")
+NUMBERED_NAME = re.compile(r"(\d{4})-[a-z0-9][a-z0-9._-]*\.patch")
+MESSAGE_FIELDS = ("Why", "Evidence", "Fails-safe", "Log-markers", "Upstream-status")
+MESSAGE_FIELD = re.compile(r"^(Why|Evidence|Fails-safe|Log-markers|Upstream-status):[ \t]*(.*)$")
+#: Fixed, so neither this machine's diff settings nor git's defaults moving
+#: shape a patch. No --binary: a binary hunk is refused, not written.
+DIFF_FLAGS = (
+    "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--unified=3",
+    "--src-prefix=a/", "--dst-prefix=b/", "--abbrev=7", "--diff-algorithm=myers",
+)
+#: Work-directory names the authoring path uses; `materialise` resets them.
+AUTHOR_TREE, AUTHOR_PATCHES, AUTHOR_CHECK = "a", "ap", "ac"
+
+
+def overlay_example(product: Product) -> str:
+    return f"build/{product.name.lower()}-overlay"
+
+
+def scope_problem(product: Product, rel: str) -> Optional[str]:
+    """Why a patch may not touch `rel` (upstream-relative, `/`-separated), or None."""
+    if not rel.startswith(product.source_root):
+        return (f"{rel} is outside {product.source_root}; the series changes the DLL's "
+                f"project and nothing else in upstream's repository")
+    for prefix in product.plugin_facing:
+        if rel == prefix or rel.startswith(prefix):
+            return (f"{rel} is plugin-facing ({prefix}). Plugins compile against the "
+                    f"UNMODIFIED pinned header, so a change here silently breaks the ABI of "
+                    f"every plugin already built; keep new declarations in a DLL-private header")
+    return None
+
+
+def _upstream_rel(product: Product, raw: str) -> str:
+    rel = str(raw).replace("\\", "/")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    parts = rel.split("/")
+    if not rel or rel.startswith("/") or ":" in parts[0] or any(p in ("", ".", "..") for p in parts):
+        raise Refused(f"{raw!r} is not a plain upstream-relative path such as "
+                      f"{product.project[0]}/{product.project[1]}")
+    problem = scope_problem(product, rel)
+    if problem:
+        raise Refused(problem)
+    return rel
+
+
+def check_overlay(ctx: Context, overlay: Path) -> Path:
+    """An overlay lives outside the checkout, or inside it where git ignores it
+    -- never where upstream's files could be committed. It may not share the
+    work directory (every step deletes there) or the pin directory (the source
+    zip packs that whole)."""
+    overlay = Path(os.path.abspath(str(overlay)))
+    work = ctx.work_dir
+    if is_within(overlay, work) or is_within(work, overlay):
+        raise Refused(f"--overlay {overlay} and the work directory {work} must not contain "
+                      f"one another; the work directory is deleted step by step")
+    if is_within(overlay, ctx.pin_dir) or is_within(ctx.pin_dir, overlay):
+        raise Refused(f"--overlay {overlay} and the pin directory {ctx.pin_dir} must not "
+                      f"contain one another; the source zip packs the pin directory whole")
+    candidates = (overlay, Path(os.path.realpath(str(overlay))))
+    for root in dict.fromkeys(ctx.forbidden_roots()):
+        outers = (root, Path(os.path.realpath(str(root))))
+        if not any(is_within(c, o) for c in candidates for o in outers):
+            continue
+        result = ctx.git("-C", str(root), "check-ignore", "-q", "--", str(overlay), check=False)
+        if result.returncode == 1:
+            raise Refused(
+                f"--overlay {overlay} is inside the checkout {root} and git does not ignore "
+                f"it, so upstream's files could be committed. Use an ignored directory such "
+                f"as {overlay_example(ctx.product)}, or one outside the checkout.")
+        if result.returncode != 0:
+            raise Refused(f"--overlay {overlay} is inside {root}, and git cannot say whether "
+                          f"it ignores it (exit {result.returncode}): "
+                          f"{(result.stderr or '').strip()}")
+    return overlay
+
+
+def _author_env(ctx: Context) -> Dict[str, str]:
+    """git with no user or system configuration, so a diff.noprefix, a rename
+    setting or a template hook on this machine cannot shape a patch."""
+    config = ctx.path("gitconfig")
+    if not config.exists():
+        config.write_bytes(b"")
+    return {"GIT_CONFIG_GLOBAL": str(config), "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+def _stage(ctx: Context, patches: Sequence[Patch]) -> List[Tuple[Patch, Path]]:
+    ctx.reset(AUTHOR_PATCHES)
+    ctx.path(AUTHOR_PATCHES).mkdir()
+    staged = []
+    for patch in patches:
+        copy = ctx.path(AUTHOR_PATCHES, patch.name)
+        copy.write_bytes(patch.data)
+        staged.append((patch, copy))
+    return staged
+
+
+def _author_tree(ctx: Context, pin: Pin, patches: Sequence[Patch]) -> Path:
+    """Pristine upstream plus `patches`, in its own repository under the work
+    directory. The build tree (`src`) is not touched."""
+    ctx.prepare()
+    record = require_materialised(ctx, pin)
+    verify_tree(ctx.path("up"), record["files"],
+                "the materialised upstream was modified (run `materialise` again)")
+    tree = ctx.path(AUTHOR_TREE)
+    ctx.reset(AUTHOR_TREE)
+    _patched_copy(ctx, tree, _stage(ctx, patches), check_first=False)
+    return tree
+
+
+def overlay_files(ctx: Context, overlay: Path, files: Sequence[str], *,
+                  replace: bool = False) -> List[Path]:
+    """Copy upstream files, as pristine upstream plus the whole series leaves
+    them, into `overlay` at their upstream-relative paths, to be edited there."""
+    pin = load_pin(ctx.pin_dir)
+    patches = load_series(ctx.pin_dir, allow_empty=True)
+    overlay = check_overlay(ctx, overlay)
+    if not files:
+        raise Refused("name at least one upstream file to copy into the overlay")
+    rels = list(dict.fromkeys(_upstream_rel(ctx.product, f) for f in files))
+    tree = _author_tree(ctx, pin, patches)
+    for rel in rels:
+        if not (tree / rel).is_file():
+            raise Refused(f"{rel} is not a file in upstream plus the series. A new file is "
+                          f"created in the overlay directly, at its upstream-relative path.")
+        if (overlay / rel).exists() and not replace:
+            raise Refused(f"{overlay / rel} already exists and may hold edits; delete it or "
+                          f"pass --replace")
+    written = []
+    for rel in rels:
+        dest = overlay / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(tree / rel, dest)
+        written.append(dest)
+        ctx.log(f"overlay: {rel} -> {dest}")
+    ctx.log(f"overlay: {len(written)} file(s) from upstream plus {len(patches)} patch(es); edit "
+            f"them there, then run make-patch")
+    return written
+
+
+def fold_subject(subject: str) -> List[str]:
+    """`Subject: <subject>`, folded the way `git format-patch` folds it."""
+    lines: List[str] = []
+    current = "Subject:"
+    for word in subject.split():
+        if current not in ("Subject:", "") and len(current) + 1 + len(word) > SUBJECT_WIDTH:
+            lines.append(current)
+            current = ""
+        current += " " + word
+    lines.append(current)
+    return lines
+
+
+def renumber_subject(data: bytes, total: int) -> bytes:
+    """The patch with its `[PATCH n/m]` total set to `total`; otherwise unchanged."""
+    text = data.decode("utf-8")
+    head, sep, rest = text.partition("\n\n")
+    lines = head.split("\n")
+    start = next((i for i, line in enumerate(lines) if line.startswith("Subject: ")), None)
+    if start is None:
+        return data
+    end = start + 1
+    while end < len(lines) and lines[end].startswith(" "):
+        end += 1
+    subject = " ".join(line.strip() for line in lines[start:end])[len("Subject: "):]
+    match = SUBJECT_PREFIX.match(subject)
+    if not match or int(match.group(2)) == total:
+        return data
+    subject = f"[PATCH {match.group(1)}/{total}] " + subject[match.end():]
+    lines[start:end] = fold_subject(subject)
+    return ("\n".join(lines) + sep + rest).encode("utf-8")
+
+
+def read_message(path: Path, name: str) -> Tuple[str, str]:
+    """(subject, body) of a message file: the subject line, a blank line, then a
+    body carrying the five fields, each once."""
+    try:
+        text = Path(path).read_bytes().decode("utf-8")
+    except OSError as error:
+        raise Refused(f"cannot read --message {path}: {error}") from error
+    except UnicodeDecodeError as error:
+        raise Refused(f"--message {path} is not UTF-8: {error}") from error
+    lines = [line.rstrip() for line in text.replace("\r\n", "\n").split("\n")]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    subject = lines[0].strip() if lines else ""
+    if not subject or MESSAGE_FIELD.match(subject):
+        raise Refused(f"--message {path}: the first line is the subject, then a blank line, "
+                      f"then the body")
+    if subject.startswith("[PATCH"):
+        raise Refused(f"--message {path}: leave out the [PATCH n/m] prefix; the tool writes it")
+    if len(lines) < 3 or lines[1]:
+        raise Refused(f"--message {path}: the subject must be followed by a blank line and a body")
+    body_lines = lines[2:]
+    for line in body_lines:
+        if line.startswith(("diff --git ", "Index: ")) or line == "---":
+            raise Refused(f"--message {path}: the line {line!r} would end the message early "
+                          f"for `git apply` and every reader of the series")
+    # A field runs from its `Key:` line to the next blank line.
+    fields: Dict[str, List[List[str]]] = {}
+    current: Optional[List[str]] = None
+    for line in body_lines:
+        match = MESSAGE_FIELD.match(line)
+        if match:
+            current = [match.group(2)]
+            fields.setdefault(match.group(1), []).append(current)
+        elif not line.strip():
+            current = None
+        elif current is not None:
+            current.append(line.strip())
+    problems = []
+    for key in MESSAGE_FIELDS:
+        values = fields.get(key, [])
+        if not values:
+            problems.append(f"no `{key}:` field")
+        elif len(values) > 1:
+            problems.append(f"`{key}:` appears {len(values)} times")
+        elif not " ".join(values[0]).strip():
+            problems.append(f"`{key}:` is empty")
+    if problems:
+        raise Refused(f"--message {path}: {'; '.join(problems)}. Every patch message carries "
+                      f"{', '.join(k + ':' for k in MESSAGE_FIELDS)}")
+    body = "\n".join(body_lines)
+    parse_markers(name, body.encode("utf-8"))       # refuses a grammar it cannot read
+    return subject, body
+
+
+def _diff_sections(diff: bytes) -> List[Tuple[str, bytes]]:
+    """(upstream-relative path, bytes) of each file in a `git diff`. The path
+    may contain spaces, so `a/X b/X` is split by length, not on " b/"."""
+    sections = []
+    for chunk in re.split(rb"(?m)^(?=diff --git )", diff):
+        if chunk.startswith(b"diff --git "):
+            rest = chunk.split(b"\n", 1)[0].decode("utf-8", "replace")[len("diff --git "):]
+            size = (len(rest) - len("a/ b/")) // 2
+            sections.append((rest[2:2 + size], chunk))
+    return sections
+
+
+def make_patch(ctx: Context, overlay: Path, message: Path, *, name: Optional[str] = None,
+               regenerate_last: bool = False) -> Path:
+    """Turn the overlay into the next numbered patch, or regenerate the last one.
+
+    New: the overlay is laid over upstream plus the whole series and the
+    difference is the next patch. --regenerate-last: the overlay is laid over
+    upstream plus the whole series, and the difference from the tree BEFORE
+    the last patch replaces it, so the overlay only needs the files that
+    change again. Deleting a file is not supported: a file missing from the
+    overlay keeps whatever the tree has.
+    """
+    product = ctx.product
+    pin = load_pin(ctx.pin_dir)
+    patches = load_series(ctx.pin_dir, allow_empty=True)
+    patch_dir = Path(ctx.pin_dir) / "patches"
+    overlay = check_overlay(ctx, overlay)
+
+    if regenerate_last:
+        if not patches:
+            raise Refused("--regenerate-last: patches/series lists nothing to regenerate")
+        last = patches[-1]
+        number, base = len(patches), list(patches[:-1])
+        name = name or last.name
+    else:
+        if not name:
+            raise Refused(f"--name is required for a new patch: "
+                          f"{len(patches) + 1:04d}-<slug>.patch")
+        last, number, base = None, len(patches) + 1, list(patches)
+    match = NUMBERED_NAME.fullmatch(name)
+    if not match or int(match.group(1)) != number:
+        raise Refused(
+            f"--name {name!r} is out of sequence: patches/series lists {len(patches)}, so "
+            f"{'the regenerated' if regenerate_last else 'the next'} patch is "
+            f"{number:04d}-<slug>.patch (a lower-case slug of letters, digits, '.', '-', '_')")
+    taken = {p.name for p in base}
+    if name in taken or ((patch_dir / name).exists() and (last is None or name != last.name)):
+        raise Refused(f"{patch_dir / name} already exists; a new change is a new number")
+    subject, body = read_message(message, name)
+
+    if not overlay.is_dir():
+        raise Refused(f"--overlay {overlay} is not a directory; run `overlay` first")
+    rels = sorted(p.relative_to(overlay).as_posix() for p in overlay.rglob("*") if p.is_file())
+    if not rels:
+        raise Refused(f"--overlay {overlay} holds no files; the patch would change nothing")
+    problems = [problem for problem in (scope_problem(product, rel) for rel in rels) if problem]
+    if problems:
+        raise Refused("the overlay holds files no patch may touch:\n  " + "\n  ".join(problems))
+
+    tree = _author_tree(ctx, pin, base)
+    env = _author_env(ctx)
+    ctx.git("-C", str(tree), "add", "-A", "-f", env_extra=env)
+    before = ctx.git("-C", str(tree), "write-tree", env_extra=env).stdout.strip()
+    if last is not None:
+        copy = ctx.path(AUTHOR_PATCHES, last.name)
+        copy.write_bytes(last.data)
+        result = ctx.git("-C", str(tree), "apply", "--whitespace=nowarn", str(copy),
+                         check=False, env_extra=env)
+        if result.returncode != 0:
+            raise Failed(f"{last.name} does not apply on top of the {len(base)} before it; "
+                         f"run `apply` to see the series' state.\n{_tail(result.stderr)}")
+    for rel in rels:
+        dest = tree / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(overlay / rel, dest)
+    ctx.git("-C", str(tree), "add", "-A", "-f", env_extra=env)
+    after = ctx.git("-C", str(tree), "write-tree", env_extra=env).stdout.strip()
+    output = ctx.path("author.diff")
+    ctx.git("-C", str(tree), "diff", *DIFF_FLAGS, f"--output={output}", before, after,
+            env_extra=env)
+    diff = output.read_bytes()
+    output.unlink()
+
+    if not diff.strip():
+        raise Refused(f"the overlay changes nothing against upstream plus "
+                      f"{len(base) + (last is not None)} patch(es); there is no patch to write")
+    sections = _diff_sections(diff)
+    binary = [path for path, chunk in sections
+              if b"\nBinary files " in chunk or b"\nGIT binary patch" in chunk]
+    if binary:
+        raise Refused("binary content: " + ", ".join(binary) + ". The series is reviewable "
+                      "text only.")
+    with_cr = [path for path, chunk in sections if b"\r" in chunk]
+    if with_cr:
+        raise Refused("CR bytes in the change to " + ", ".join(with_cr) + ". Patches are LF "
+                      "only; save the overlay copy with LF line endings, as upstream has them.")
+    deleted = [path for path, chunk in sections if b"\ndeleted file mode " in chunk]
+    if deleted:
+        raise Refused("a deletion: " + ", ".join(deleted) + ". Deleting a file is not supported.")
+
+    header = [MAIL_SEPARATOR, "From: " + MAIL_FROM, "Date: " + MAIL_DATE]
+    header += fold_subject(f"[PATCH {number}/{number}] {subject}")
+    data = ("\n".join(header) + "\n\n" + body + "\n\n").encode("utf-8") + diff
+    markers = parse_markers(name, data)
+    host_tests = "/".join(product.host_tests) + "/"
+    added = "\n".join(line for path, chunk in sections if not path.startswith(host_tests)
+                      for line in chunk.decode("utf-8", "replace").split("\n")
+                      if line.startswith("+") and not line.startswith("+++"))
+    for marker in markers:
+        if marker not in added:
+            ctx.log(f"make-patch: WARNING - Log-markers literal {marker!r} is in no line this "
+                    f"patch adds to the DLL's source; verify-dll will not find it")
+
+    # The new series, checked whole on a scratch copy before anything is written.
+    final = [Patch(p.name, renumber_subject(p.data, number), "", p.markers) for p in base]
+    final.append(Patch(name, data, hashlib.sha256(data).hexdigest(), markers))
+    ctx.reset(AUTHOR_CHECK)
+    _patched_copy(ctx, ctx.path(AUTHOR_CHECK), _stage(ctx, final), check_first=True)
+    ctx.reset(AUTHOR_CHECK)
+
+    patch_dir.mkdir(parents=True, exist_ok=True)
+    renumbered = []
+    for old, new in zip(base, final):
+        if new.data != old.data:
+            (patch_dir / old.name).write_bytes(new.data)
+            renumbered.append(old.name)
+    if last is not None and name != last.name:
+        (patch_dir / last.name).unlink()
+    path = patch_dir / name
+    path.write_bytes(data)
+    series = patch_dir / "series"
+    entries = series.read_text(encoding="utf-8").split("\n") if series.exists() \
+        else ["# application order"]
+    while entries and not entries[-1].strip():
+        entries.pop()
+    if last is not None:
+        entries = [name if line.strip() == last.name else line for line in entries]
+    else:
+        entries.append(name)
+    series.write_bytes(("\n".join(entries) + "\n").encode("utf-8"))
+
+    for section_path, chunk in sections:
+        lines = chunk.split(b"\n")
+        plus = sum(1 for l in lines if l.startswith(b"+") and not l.startswith(b"+++ "))
+        minus = sum(1 for l in lines if l.startswith(b"-") and not l.startswith(b"--- "))
+        ctx.log(f"make-patch: {section_path}  +{plus} -{minus}")
+    if renumbered:
+        ctx.log(f"make-patch: [PATCH n/{number}] renumbered in {', '.join(renumbered)}")
+    ctx.log(f"make-patch: {'regenerated' if last is not None else 'wrote'} {path}  "
+            f"{len(data)} bytes  sha256 {hashlib.sha256(data).hexdigest()}")
+    ctx.log(f"make-patch: patches/series lists {number}; the series applies whole. Its README "
+            f"row and section, launch-gate row and NOTICE entry are yours to write.")
+    return path
+
+
+# --------------------------------------------------------------------------
 # command line
 # --------------------------------------------------------------------------
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(product: Product = YYTOOLKIT) -> argparse.ArgumentParser:
+    pin_rel = product.zip_prefix.rstrip("/")
+    tests_rel = "/".join(product.host_tests)
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--work-dir", type=Path, default=None,
                         help=f"short directory OUTSIDE the repository, at most "
-                             f"{MAX_WORK_DIR_LEN} characters (default: %%LOCALAPPDATA%%\\hstk\\yk)")
-    common.add_argument("--pin-dir", type=Path, default=DEFAULT_PIN_DIR,
-                        help="directory holding upstream.json and patches/ "
-                             "(default: third_party/yytoolkit)")
+                             f"{MAX_WORK_DIR_LEN} characters (default: "
+                             f"%%LOCALAPPDATA%%\\hstk\\{product.work_leaf})")
+    common.add_argument("--pin-dir", type=Path, default=product.pin_dir,
+                        help=f"directory holding upstream.json and patches/ "
+                             f"(default: {pin_rel})")
     source = argparse.ArgumentParser(add_help=False)
     source.add_argument("--upstream", type=Path, default=None,
                         help="local clone that contains the pinned commit; only ever read")
@@ -1119,14 +1703,20 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"vswhere -version range (default: {DEFAULT_VS_RANGE}, VS 2022)")
     tests = argparse.ArgumentParser(add_help=False)
     tests.add_argument("--allow-no-hosttests", action="store_true",
-                       help="do not fail when the patched tree has no YYToolkit/hs-tests/*.cpp")
+                       help=f"do not fail when the patched tree has no {tests_rel}/*.cpp")
     expect = argparse.ArgumentParser(add_help=False)
     expect.add_argument("--expected-sha256", default=None,
                         help="fail unless the DLL hashes to this")
+    overlay = argparse.ArgumentParser(add_help=False)
+    overlay.add_argument("--overlay", type=Path, required=True,
+                         help=f"directory of upstream-relative files to edit: outside the "
+                              f"checkout, or ignored by git inside it "
+                              f"(e.g. {overlay_example(product)})")
 
     parser = argparse.ArgumentParser(
-        description="build the modified YYToolkit.dll from the pinned upstream commit "
-                    "and third_party/yytoolkit/patches/series")
+        prog=Path(product.tool).name,
+        description=f"build the modified {product.dll_name} from the pinned upstream commit "
+                    f"and {pin_rel}/patches/series")
     commands = parser.add_subparsers(dest="command", required=True, metavar="command")
     commands.add_parser("materialise", aliases=["materialize"], parents=[common, source],
                         help="export the pinned commit into the work directory and verify it")
@@ -1135,24 +1725,49 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("build", parents=[common, studio],
                         help="MSBuild Release|x64 with /Brepro injected through a props file")
     commands.add_parser("hosttests", parents=[common, studio, tests],
-                        help="compile and run every YYToolkit/hs-tests/*.cpp")
+                        help=f"compile and run every {tests_rel}/*.cpp")
     verify = commands.add_parser("verify-dll", parents=[common, expect],
                                  help="size, sha256, log markers; writes BUILD-INFO and the source zip")
     verify.add_argument("--dll", type=Path, default=None,
                         help="check the markers of this file instead, read-only; writes nothing")
     commands.add_parser("all", parents=[common, source, studio, tests, expect],
                         help="materialise, apply, build, hosttests, verify-dll")
+    copy = commands.add_parser(
+        "overlay", parents=[common, overlay],
+        help="copy upstream files, as upstream plus the series leaves them, into --overlay")
+    copy.add_argument("--replace", action="store_true",
+                      help="overwrite a copy that is already in the overlay")
+    copy.add_argument("files", nargs="+", metavar="PATH",
+                      help=f"upstream-relative path, e.g. {product.project[0]}/{product.project[1]}")
+    make = commands.add_parser(
+        "make-patch", parents=[common, overlay],
+        help="turn --overlay into the next numbered patch, or regenerate the last one")
+    make.add_argument("--message", type=Path, required=True,
+                      help="UTF-8 file: the subject line, a blank line, then a body with "
+                           "Why:, Evidence:, Fails-safe:, Log-markers: and Upstream-status:")
+    make.add_argument("--name", default=None,
+                      help="NNNN-<slug>.patch, NNNN the next number (with --regenerate-last "
+                           "the last patch's number; default: its current name)")
+    make.add_argument("--regenerate-last", action="store_true",
+                      help="replace the last patch instead of adding one")
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None, *, runner: Runner = run_process,
          environ: Optional[Mapping[str, str]] = None,
-         toolchain: Optional[Toolchain] = None) -> int:
-    args = build_parser().parse_args(argv)
+         toolchain: Optional[Toolchain] = None, product: Product = YYTOOLKIT) -> int:
+    args = build_parser(product).parse_args(argv)
     ctx = Context(pin_dir=args.pin_dir, work_dir=args.work_dir, runner=runner,
-                  environ=os.environ if environ is None else environ)
+                  environ=os.environ if environ is None else environ, product=product)
     command = "materialise" if args.command == "materialize" else args.command
     try:
+        if command == "overlay":
+            overlay_files(ctx, args.overlay, args.files, replace=args.replace)
+            return 0
+        if command == "make-patch":
+            make_patch(ctx, args.overlay, args.message, name=args.name,
+                       regenerate_last=args.regenerate_last)
+            return 0
         if command in ("materialise", "all"):
             materialise(ctx, args.upstream, allow_network=args.allow_network)
         if command in ("apply", "all"):
@@ -1166,7 +1781,7 @@ def main(argv: Optional[Sequence[str]] = None, *, runner: Runner = run_process,
             verify_dll(ctx, dll=getattr(args, "dll", None),
                        expected_sha256=args.expected_sha256)
     except ToolError as error:
-        print(f"build_yytoolkit: {type(error).__name__.upper()}: {error}", file=sys.stderr)
+        print(f"{product.error_prefix}: {type(error).__name__.upper()}: {error}", file=sys.stderr)
         return error.exit_code
     return 0
 

@@ -341,6 +341,32 @@ for why it is a patch series, and
 [`docs/agents/yytoolkit-provenance.md`](docs/agents/yytoolkit-provenance.md)
 for what went wrong with the binary it replaces.
 
+## Modified Aurie
+
+ForgePact also ships a modified `AurieCore.dll`, from the
+[Aurie Framework](https://github.com/AurieFramework/Aurie) (AGPL-3.0). Its
+source of truth is [`third_party/aurie/`](third_party/aurie), kept under the
+same rules as the YYToolkit series: one pinned upstream commit (Aurie v2.0.2),
+a patch series whose every patch carries `Why` / `Evidence` / `Fails-safe` /
+`Log-markers` / `Upstream-status`, upstream's licence and the AGPL notice. No
+binary is committed; [`tools/build_aurie.py`](tools/build_aurie.py), a second
+profile of the same build tool, builds one:
+
+```powershell
+py -3 tools/build_aurie.py all --upstream C:\src\Aurie
+```
+
+The series changes one thing about the framework: when `MmCreateHook` freezes
+the game to write a hook, it walks only the game process's own threads instead
+of taking two thread snapshots of the whole system, which ForgePact #151
+measured at about 69 ms per hook. Hooks attach exactly as before. The build
+travels as the hub library release `aurie-v2.0.2-hs.1` (`--latest=false`),
+which ForgePact's toolchain pin names; HS-Offline-Tracker still bundles
+upstream's `AurieCore.dll`. The directory's
+[README](third_party/aurie/README.md) holds the patch table and the launch
+gate, and [ADR 0006](docs/adr/0006-modified-auriecore-is-a-patch-series-in-the-hub.md)
+says why the fix is a patch series here.
+
 ## Context7 MCP
 
 For AI-assisted development — retrieving `YYToolkit` API documentation across

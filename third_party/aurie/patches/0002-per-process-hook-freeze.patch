@@ -1,0 +1,1217 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hero Siege Offline Toolkit <noreply@example.invalid>
+Date: Sat, 19 Sep 2026 12:00:00 +0000
+Subject: [PATCH 2/2] Freeze only this process's threads around a hook write
+
+Why: Every hook install and removal suspends the rest of the process
+while SafetyHook rewrites the target, and upstream finds those threads
+by taking a Toolhelp snapshot of every thread on the system, once to
+suspend and once more to resume. On a desktop that is two walks over
+thousands of threads per hook, paid on the game's frame thread: Hero
+Siege holds its main menu at start-up and hitches in play while ForgePact
+installs its hooks. The freeze now lists this process's threads only,
+through ntdll's NtGetNextThread resolved by name, so its cost no longer
+grows with the system's thread count. It also closes three gaps in
+upstream's walk: it repeats the walk until a pass meets no thread it has
+not already suspended (a thread started during upstream's single pass
+keeps running), it waits with GetThreadContext until each suspension has
+taken effect (SuspendThread only queues it), and the resume resumes
+exactly the threads this freeze suspended, once each, where upstream
+resumes every thread of the process, so a thread created suspended in
+the window was started early and a thread suspended by someone else got
+an unmatched resume. MmpFreezeCurrentProcess and MmpResumeCurrentProcess
+keep their names, signatures and every call site; their bodies call a
+new unit, thread_freeze.cpp, that needs Windows SDK headers only, so the
+host test runs the code the DLL runs. No exported function and no
+plugin-facing header changes, and hooks attach exactly as before.
+
+Evidence: ForgePact #151's Live 1 (2026-10-06, ForgePact
+docs/setup-stall-research.md, "Live 1"), measured with ForgePact's own
+`incident setup` timer: a start-up setup of 1268.7 ms, of which 1237.0 ms
+(97.5%) was 18 MmCreateHook detours, 68.7 ms each, against a median of
+32.8 ms for one system-wide thread snapshot timed in the same session -
+2.10 times, the two snapshots plus about 3 ms of other work. In play,
+`dropmult relic 2` installed 20 hooks in town and the frame monitor
+judged one 1546.5 ms frame. Static reading of upstream v2.0.2 (Aurie's
+own source, 2026-10-06): the freeze and the resume each call
+ElForEachThread, whose CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, ...)
+ignores its process id and lists every thread on the system; the freeze
+suspends each thread of this process in that one list and ignores every
+failure; the resume takes a new snapshot and resumes every thread of the
+process but the caller; nothing waits for a suspension to land. The host
+test Aurie/hs-tests/thread_freeze_test.cpp runs upstream's walk (moved
+into the unit unchanged) and the new one against 4 spinning workers and
+a child process holding 1100 idle threads. With the unit holding
+upstream's walk only, the 4 baseline cases passed and all 6 target cases
+failed (the five freeze cases and target-logs-once); with the
+per-process walk all 10 cases pass, and on the build machine the
+freeze+resume medians over 9 runs were 0.21 ms per-process
+against 103 to 156 ms for the snapshot pair. NOT measured: the cost
+inside the game, which is the hub README's launch gate.
+
+Fails-safe: When NtGetNextThread cannot be resolved, no thread-local slot
+or handle storage can be had, the process has more threads than one
+freeze holds (1024), or NtGetNextThread returns an error before the end
+of the thread list (a thread it cannot open would hide the ones after
+it), that call gives back what it suspended and runs upstream's walk,
+unchanged, and the first such call writes one line once its threads
+are resumed, naming the reason. Everything that can allocate, log or
+take the loader lock happens before the first SuspendThread or after
+the last ResumeThread.
+The behaviour upstream already has and this patch keeps is in the hub
+README's Known limitations: two threads freezing at once can suspend
+each other (ForgePact installs from its frame thread only), a thread
+suspended while holding the heap or loader lock, a thread stopped inside
+the bytes being rewritten, and threads another process starts after the
+last pass.
+
+Log-markers: "MmCreateHook freeze: per-process thread walk", "FELL BACK to the system-wide thread snapshot"
+
+Upstream-status: not submitted. Offering it upstream is the owner's
+decision; the patch is written against v2.0.2 so it could be.
+
+diff --git a/Aurie/AurieCore.vcxproj b/Aurie/AurieCore.vcxproj
+index 52c2641..cec0010 100644
+--- a/Aurie/AurieCore.vcxproj
++++ b/Aurie/AurieCore.vcxproj
+@@ -24,6 +24,7 @@
+     <ClInclude Include="source\framework\Early Launch\early_launch.hpp" />
+     <ClInclude Include="source\framework\shared.hpp" />
+     <ClInclude Include="source\framework\Memory Manager\memory.hpp" />
++    <ClInclude Include="source\framework\Memory Manager\thread_freeze.hpp" />
+     <ClInclude Include="source\framework\Module Manager\module.hpp" />
+     <ClInclude Include="source\framework\Object Manager\object.hpp" />
+     <ClInclude Include="source\framework\PE Parser\pe.hpp" />
+@@ -150,6 +151,7 @@
+     <ClCompile Include="source\framework\Debugging\debug.cpp" />
+     <ClCompile Include="source\framework\Early Launch\early_launch.cpp" />
+     <ClCompile Include="source\framework\Memory Manager\memory.cpp" />
++    <ClCompile Include="source\framework\Memory Manager\thread_freeze.cpp" />
+     <ClCompile Include="source\framework\Module Manager\module.cpp" />
+     <ClCompile Include="source\framework\Object Manager\object.cpp" />
+     <ClCompile Include="source\framework\PE Parser\pe.cpp" />
+diff --git a/Aurie/hs-tests/thread_freeze_test.cpp b/Aurie/hs-tests/thread_freeze_test.cpp
+new file mode 100644
+index 0000000..6ec7f85
+--- /dev/null
++++ b/Aurie/hs-tests/thread_freeze_test.cpp
+@@ -0,0 +1,483 @@
++// Host test for the thread freeze around a hook write (Hero Siege patch series, patch 0002).
++// No game, no Aurie framework, no SafetyHook: the unit stands alone and is included here whole.
++//
++// Build and run, from a Visual Studio x64 developer prompt:
++//   cl /nologo /std:c++latest /EHsc /W3 thread_freeze_test.cpp && thread_freeze_test.exe
++//
++// One line per case, PASS or FAIL. Exit code 0 only if every case passed.
++//
++// The baseline-* cases pin upstream's walk (one Toolhelp snapshot of every thread on the system)
++// as it behaves today, faults included. The target-* cases are what the per-process walk has to
++// do. Both run against the same threads: at least 4 workers that each spin on a counter of their
++// own, and a child process (this executable again, with --child) that holds at least 1000 idle
++// threads, so the system's thread count rises while this process's own count does not. The test
++// reads suspend counts from what SuspendThread and ResumeThread return, and ends the child it
++// started.
++//
++// Nothing in this file is compiled into the DLL.
++
++#define AURIE_HS_FREEZE_TEST_SEAM 1
++#include "../source/framework/Memory Manager/thread_freeze.cpp"
++
++#include <TlHelp32.h>
++#include <algorithm>
++#include <cstdarg>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <cwchar>
++#include <string>
++#include <vector>
++
++namespace HsFreeze = Aurie::Internal::HsFreeze;
++
++namespace
++{
++	constexpr int kWorkers = 4;
++	constexpr unsigned kChildThreads = 1100;
++	constexpr int kCostRuns = 9;
++	constexpr DWORD kSettleMs = 20;
++	constexpr DWORD kGapMs = 60;
++
++	int g_Failures = 0;
++	int g_Cases = 0;
++
++	void Check(const char* Name, bool Passed, const std::string& Detail)
++	{
++		g_Cases++;
++		if (!Passed)
++			g_Failures++;
++		std::printf("%s %s: %s\n", Passed ? "PASS" : "FAIL", Name, Detail.c_str());
++		std::fflush(stdout);
++	}
++
++	std::string Format(const char* Pattern, ...)
++	{
++		char buffer[512];
++		va_list list;
++		va_start(list, Pattern);
++		std::vsnprintf(buffer, sizeof(buffer), Pattern, list);
++		va_end(list);
++		return buffer;
++	}
++
++	// ===== Threads of this process =====
++
++	volatile LONG g_Stop = 0;
++	HANDLE g_StopEvent = nullptr;
++	// Set by Idle on entry, when the new thread's start-up (which holds the loader lock for a
++	// moment) is over: a later freeze must not catch it there.
++	HANDLE g_IdleStarted = nullptr;
++
++	struct Worker
++	{
++		HANDLE Thread = nullptr;
++		volatile LONG64 Counter = 0;
++	};
++
++	Worker g_Workers[kWorkers];
++
++	DWORD WINAPI Spin(LPVOID Parameter)
++	{
++		auto* counter = static_cast<volatile LONG64*>(Parameter);
++		while (!g_Stop)
++		{
++			InterlockedIncrement64(counter);
++			SwitchToThread();
++		}
++		return 0;
++	}
++
++	// Idle until the test ends: a thread whose suspend count is read must still exist then.
++	DWORD WINAPI Idle(LPVOID)
++	{
++		SetEvent(g_IdleStarted);
++		WaitForSingleObject(g_StopEvent, INFINITE);
++		return 0;
++	}
++
++	LONG64 Read(volatile LONG64* Counter)
++	{
++		return InterlockedCompareExchange64(Counter, 0, 0);
++	}
++
++	// Two reads kGapMs apart, after a settle: true when the counter did not move.
++	bool Stopped(volatile LONG64* Counter)
++	{
++		Sleep(kSettleMs);
++		LONG64 first = Read(Counter);
++		Sleep(kGapMs);
++		return Read(Counter) == first;
++	}
++
++	bool Moving(volatile LONG64* Counter)
++	{
++		LONG64 first = Read(Counter);
++		Sleep(kGapMs);
++		return Read(Counter) != first;
++	}
++
++	// The suspend count, read without changing it: SuspendThread returns the count before it
++	// added one, and ResumeThread takes that one away again. MAXDWORD when the call failed.
++	DWORD SuspendCount(HANDLE Thread)
++	{
++		DWORD previous = SuspendThread(Thread);
++		if (previous != static_cast<DWORD>(-1))
++			ResumeThread(Thread);
++		return previous;
++	}
++
++	unsigned OwnThreadCount()
++	{
++		unsigned count = 0;
++		HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
++		if (snapshot == INVALID_HANDLE_VALUE)
++			return 0;
++		THREADENTRY32 entry = {}; entry.dwSize = sizeof(entry);
++		if (Thread32First(snapshot, &entry))
++		{
++			do
++			{
++				if (entry.th32OwnerProcessID == GetCurrentProcessId())
++					count++;
++			} while (Thread32Next(snapshot, &entry));
++		}
++		CloseHandle(snapshot);
++		return count;
++	}
++
++	// ===== The thread a seam starts between two passes =====
++
++	// One per case that starts one, each with a counter of its own: the baseline's keeps running.
++	Worker g_Late[2];
++	Worker* volatile g_LateSlot = nullptr;
++
++	void StartLateThread(unsigned Pass)
++	{
++		Worker* slot = static_cast<Worker*>(InterlockedExchangePointer(
++			reinterpret_cast<PVOID volatile*>(&g_LateSlot), nullptr));
++		if (Pass != 1 || !slot)
++			return;
++		slot->Thread = CreateThread(nullptr, 0, Spin, const_cast<LONG64*>(&slot->Counter), 0, nullptr);
++	}
++
++	// ===== The child that holds many idle threads =====
++
++	DWORD WINAPI ChildIdle(LPVOID Parameter)
++	{
++		WaitForSingleObject(static_cast<HANDLE>(Parameter), INFINITE);
++		return 0;
++	}
++
++	int RunChild(HANDLE Ready)
++	{
++		HANDLE never = CreateEventW(nullptr, TRUE, FALSE, nullptr);
++		for (unsigned i = 0; i < kChildThreads; i++)
++		{
++			HANDLE thread = CreateThread(nullptr, 64 * 1024, ChildIdle, never,
++			                             STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
++			if (!thread)
++				return 2;
++			CloseHandle(thread);
++		}
++		SetEvent(Ready);
++		Sleep(INFINITE);
++		return 0;
++	}
++
++	struct Child
++	{
++		HANDLE Job = nullptr;
++		HANDLE Process = nullptr;
++	};
++
++	bool StartChild(Child& Out, std::string& Why)
++	{
++		SECURITY_ATTRIBUTES inherit = { sizeof(inherit), nullptr, TRUE };
++		HANDLE ready = CreateEventW(&inherit, TRUE, FALSE, nullptr);
++		wchar_t self[MAX_PATH] = {};
++		GetModuleFileNameW(nullptr, self, MAX_PATH);
++		wchar_t command[MAX_PATH + 64] = {};
++		std::swprintf(command, MAX_PATH + 64, L"\"%ls\" --child %llu", self,
++		              static_cast<unsigned long long>(reinterpret_cast<ULONG_PTR>(ready)));
++
++		// A job that kills the child when this process ends, however it ends.
++		Out.Job = CreateJobObjectW(nullptr, nullptr);
++		JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
++		limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
++		if (Out.Job)
++			SetInformationJobObject(Out.Job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
++
++		STARTUPINFOW startup = { sizeof(startup) };
++		PROCESS_INFORMATION process = {};
++		if (!CreateProcessW(nullptr, command, nullptr, nullptr, TRUE, CREATE_SUSPENDED, nullptr,
++		                    nullptr, &startup, &process))
++		{
++			Why = Format("CreateProcessW failed, error %lu", GetLastError());
++			return false;
++		}
++		if (Out.Job)
++			AssignProcessToJobObject(Out.Job, process.hProcess);
++		ResumeThread(process.hThread);
++		CloseHandle(process.hThread);
++		Out.Process = process.hProcess;
++
++		HANDLE waits[2] = { ready, process.hProcess };
++		DWORD woke = WaitForMultipleObjects(2, waits, FALSE, 60000);
++		CloseHandle(ready);
++		if (woke != WAIT_OBJECT_0)
++		{
++			Why = woke == WAIT_OBJECT_0 + 1 ? "the child exited before it was ready"
++			                                : "the child was not ready within 60 s";
++			return false;
++		}
++		return true;
++	}
++
++	void EndChild(Child& Started)
++	{
++		if (Started.Process)
++		{
++			TerminateProcess(Started.Process, 0);
++			WaitForSingleObject(Started.Process, 10000);
++			CloseHandle(Started.Process);
++		}
++		if (Started.Job)
++			CloseHandle(Started.Job);
++	}
++
++	// ===== Cases =====
++
++	// One freeze/resume pair, either walk, for the cases both walks share.
++	struct Pair
++	{
++		bool Target;
++		unsigned Freeze() const
++		{
++			if (Target)
++			{
++				HsFreeze::Freeze();
++				return 0;
++			}
++			return HsFreeze::FreezeSystemSnapshot();
++		}
++		void Resume() const
++		{
++			if (Target)
++				HsFreeze::Resume();
++			else
++				HsFreeze::ResumeSystemSnapshot();
++		}
++	};
++
++	void SuspendsOthers(const Pair& Walk, const char* Name)
++	{
++		// The target case also holds one worker the test suspended itself beforehand: a freeze
++		// must give it back exactly as suspended as it found it.
++		HANDLE held = Walk.Target ? g_Workers[0].Thread : nullptr;
++		if (held)
++			SuspendThread(held);
++
++		Walk.Freeze();
++		bool all_stopped = true;
++		for (auto& worker : g_Workers)
++			all_stopped = Stopped(&worker.Counter) && all_stopped;
++		Walk.Resume();
++
++		bool all_moving = true;
++		for (auto& worker : g_Workers)
++		{
++			if (worker.Thread == held)
++				continue;
++			all_moving = Moving(&worker.Counter) && all_moving;
++		}
++
++		std::string detail = Format("workers stopped while frozen: %s; moving again after resume: %s",
++		                            all_stopped ? "yes" : "NO", all_moving ? "yes" : "NO");
++		bool passed = all_stopped && all_moving;
++		if (Walk.Target)
++		{
++			HsFreeze::Report report = HsFreeze::LastReport();
++			DWORD count = SuspendCount(held);
++			ResumeThread(held);
++			bool per_process = report.Route == HsFreeze::Walk::PerProcess;
++			bool counted = report.Suspended >= kWorkers;
++			detail += Format("; held worker's suspend count after resume: %lu (want 1); route: %s; "
++			                 "suspended by the walk: %u (want >= %d)",
++			                 count, per_process ? "per-process" : "NOT per-process",
++			                 report.Suspended, kWorkers);
++			passed = passed && count == 1 && per_process && counted;
++		}
++		Check(Name, passed, detail);
++	}
++
++	void UnseenThread(const Pair& Walk, const char* Name, DWORD Want)
++	{
++		Walk.Freeze();
++		HANDLE created = CreateThread(nullptr, 0, Idle, nullptr, CREATE_SUSPENDED, nullptr);
++		Walk.Resume();
++
++		DWORD count = created ? SuspendCount(created) : static_cast<DWORD>(-1);
++		Check(Name, count == Want,
++		      Format("a thread created CREATE_SUSPENDED between freeze and resume has suspend "
++		             "count %lu after resume (want %lu)", count, Want));
++		if (created)
++		{
++			DWORD previous;
++			do
++				previous = ResumeThread(created);
++			while (previous > 1 && previous != static_cast<DWORD>(-1));
++			WaitForSingleObject(g_IdleStarted, 5000);
++			CloseHandle(created);
++		}
++	}
++
++	void LateThread(const Pair& Walk, const char* Name, bool WantSuspended, Worker& Late)
++	{
++		Late.Thread = nullptr;
++		InterlockedExchangePointer(reinterpret_cast<PVOID volatile*>(&g_LateSlot), &Late);
++		HsFreeze::g_AfterPass = StartLateThread;
++		Walk.Freeze();
++		HsFreeze::g_AfterPass = nullptr;
++
++		DWORD count = Late.Thread ? SuspendCount(Late.Thread) : static_cast<DWORD>(-1);
++		bool running = Late.Thread && Moving(&Late.Counter);
++		Walk.Resume();
++
++		bool started = Late.Thread != nullptr;
++		bool suspended = started && count != static_cast<DWORD>(-1) && count >= 1;
++		bool passed = started && (WantSuspended ? (suspended && !running) : (!suspended && running));
++		Check(Name, passed,
++		      Format("a thread started between passes: suspend count %lu and %s when freeze returned "
++		             "(want %s)", count, running ? "running" : "not running",
++		             WantSuspended ? "suspended" : "running"));
++	}
++
++	double Milliseconds(LARGE_INTEGER From, LARGE_INTEGER To)
++	{
++		LARGE_INTEGER frequency;
++		QueryPerformanceFrequency(&frequency);
++		return 1000.0 * static_cast<double>(To.QuadPart - From.QuadPart) / static_cast<double>(frequency.QuadPart);
++	}
++
++	double Median(std::vector<double> Values)
++	{
++		std::sort(Values.begin(), Values.end());
++		return Values[Values.size() / 2];
++	}
++
++	double TimePair(const Pair& Walk)
++	{
++		LARGE_INTEGER start, end;
++		QueryPerformanceCounter(&start);
++		Walk.Freeze();
++		Walk.Resume();
++		QueryPerformanceCounter(&end);
++		return Milliseconds(start, end);
++	}
++}
++
++int wmain(int argc, wchar_t** argv)
++{
++	if (argc == 3 && std::wcscmp(argv[1], L"--child") == 0)
++		return RunChild(reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(std::wcstoull(argv[2], nullptr, 10))));
++
++	g_StopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
++	g_IdleStarted = CreateEventW(nullptr, FALSE, FALSE, nullptr);
++	for (auto& worker : g_Workers)
++		worker.Thread = CreateThread(nullptr, 0, Spin, const_cast<LONG64*>(&worker.Counter), 0, nullptr);
++	// Every worker past its start-up before the first freeze.
++	for (auto& worker : g_Workers)
++		while (Read(&worker.Counter) == 0)
++			Sleep(1);
++
++	Child child;
++	std::string why;
++	if (!StartChild(child, why))
++	{
++		std::printf("FAIL setup: %s\n", why.c_str());
++		EndChild(child);
++		return 1;
++	}
++	std::printf("setup: %d workers; a child process holds %u idle threads; this process has %u threads\n",
++	            kWorkers, kChildThreads, OwnThreadCount());
++
++	const Pair baseline{ false };
++	const Pair target{ true };
++
++	// --- baseline: upstream's walk, as it behaves today ---
++	SuspendsOthers(baseline, "baseline-suspends-others");
++	{
++		unsigned visited = HsFreeze::FreezeSystemSnapshot();
++		HsFreeze::ResumeSystemSnapshot();
++		Check("baseline-scales-with-system", visited >= kChildThreads,
++		      Format("the snapshot walk visited %u entries; the child alone holds %u threads", visited, kChildThreads));
++	}
++	UnseenThread(baseline, "baseline-resumes-unseen", 0);
++	LateThread(baseline, "baseline-misses-late-thread", false, g_Late[0]);
++
++	// --- target: the per-process walk ---
++	SuspendsOthers(target, "target-suspends-others");
++	{
++		HsFreeze::Freeze();
++		// Nothing in this process can start or end a thread now except this one.
++		unsigned own = OwnThreadCount();
++		HsFreeze::Resume();
++		HsFreeze::Report report = HsFreeze::LastReport();
++		bool per_process = report.Route == HsFreeze::Walk::PerProcess;
++		Check("target-own-threads-only",
++		      per_process && report.VisitedLastPass == own && report.VisitedFirstPass < kChildThreads,
++		      Format("route %s; the last pass visited %u entries, this process has %u threads; the first "
++		             "pass visited %u (the child's %u threads must not count)",
++		             per_process ? "per-process" : "NOT per-process", report.VisitedLastPass, own,
++		             report.VisitedFirstPass, kChildThreads));
++	}
++	UnseenThread(target, "target-leaves-unseen", 1);
++	LateThread(target, "target-catches-late-thread", true, g_Late[1]);
++
++	{
++		std::vector<double> snapshot, per_process;
++		for (int run = 0; run < kCostRuns; run++)
++		{
++			snapshot.push_back(TimePair(baseline));
++			per_process.push_back(TimePair(target));
++		}
++		double snapshot_median = Median(snapshot);
++		double per_process_median = Median(per_process);
++		Check("target-cost", per_process_median * 5.0 < snapshot_median,
++		      Format("freeze+resume median over %d runs with the child running: per-process %.3f ms, "
++		             "system snapshot %.3f ms (want per-process under a fifth)",
++		             kCostRuns, per_process_median, snapshot_median));
++	}
++
++	{
++		// The first per-process freeze hands out one line, once; the snapshot pairs above are
++		// upstream's walk called directly and hand out none.
++		const char* first = HsFreeze::TakeNote();
++		const char* second = HsFreeze::TakeNote();
++		const char* prefix = "[hs] MmCreateHook freeze: per-process thread walk";
++		bool named = first && std::strncmp(first, prefix, std::strlen(prefix)) == 0;
++		Check("target-logs-once", named && !second,
++		      Format("first note: %s; second note: %s", first ? first : "(none)", second ? second : "(none)"));
++	}
++
++	// Ends every thread this test started, and the child.
++	InterlockedExchange(&g_Stop, 1);
++	SetEvent(g_StopEvent);
++	for (auto& worker : g_Workers)
++	{
++		WaitForSingleObject(worker.Thread, 10000);
++		CloseHandle(worker.Thread);
++	}
++	for (auto& late : g_Late)
++	{
++		if (!late.Thread)
++			continue;
++		WaitForSingleObject(late.Thread, 10000);
++		CloseHandle(late.Thread);
++	}
++	EndChild(child);
++
++	std::printf("%d of %d cases passed\n", g_Cases - g_Failures, g_Cases);
++	return g_Failures == 0 ? 0 : 1;
++}
+diff --git a/Aurie/source/framework/Memory Manager/memory.cpp b/Aurie/source/framework/Memory Manager/memory.cpp
+index c37aafa..1d50011 100644
+--- a/Aurie/source/framework/Memory Manager/memory.cpp	
++++ b/Aurie/source/framework/Memory Manager/memory.cpp	
+@@ -1,4 +1,5 @@
+ #include "memory.hpp"
++#include "thread_freeze.hpp"
+ 
+ namespace Aurie
+ {
+@@ -935,54 +936,20 @@ namespace Aurie
+ 
+ 		void MmpFreezeCurrentProcess()
+ 		{
+-			ElForEachThread(
+-				[](IN const THREADENTRY32& Entry) -> bool
+-				{
+-					// Skip my thread
+-					if (GetCurrentThreadId() == Entry.th32ThreadID)
+-						return false;
+-
+-					// Skip everything that's not my process
+-					if (GetCurrentProcessId() != Entry.th32OwnerProcessID)
+-						return false;
+-
+-					HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME, false, Entry.th32ThreadID);
+-
+-					if (!thread)
+-						return false;
+-
+-					SuspendThread(thread);
+-					CloseHandle(thread);
+-
+-					return false;
+-				}
+-			);
++			// Hero Siege patch series: walks this process's own threads, not a snapshot of every
++			// thread on the system, and returns once each suspension has taken effect. Upstream's
++			// walk is kept in the same unit as the fallback (thread_freeze.cpp).
++			HsFreeze::Freeze();
+ 		}
+ 
+ 		void MmpResumeCurrentProcess()
+ 		{
+-			ElForEachThread(
+-				[](IN const THREADENTRY32& Entry) -> bool
+-				{
+-					// Skip my thread
+-					if (GetCurrentThreadId() == Entry.th32ThreadID)
+-						return false;
+-
+-					// Skip everything that's not my process
+-					if (GetCurrentProcessId() != Entry.th32OwnerProcessID)
+-						return false;
+-
+-					HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME, false, Entry.th32ThreadID);
+-
+-					if (!thread)
+-						return false;
++			// Resumes exactly the threads the matching freeze suspended.
++			HsFreeze::Resume();
+ 
+-					ResumeThread(thread);
+-					CloseHandle(thread);
+-
+-					return false;
+-				}
+-			);
++			// Logged here, once every thread runs again: the frozen window writes no log.
++			while (const char* note = HsFreeze::TakeNote())
++				DbgPrintEx(LOG_SEVERITY_INFO, "%s", note);
+ 		}
+ 
+ 		AurieStatus MmpGetRegistersForRPHook(
+diff --git a/Aurie/source/framework/Memory Manager/thread_freeze.cpp b/Aurie/source/framework/Memory Manager/thread_freeze.cpp
+new file mode 100644
+index 0000000..6773825
+--- /dev/null
++++ b/Aurie/source/framework/Memory Manager/thread_freeze.cpp	
+@@ -0,0 +1,477 @@
++// File: thread_freeze.cpp
++//
++// The thread freeze around a hook write (Hero Siege patch series, patch 0002). See
++// thread_freeze.hpp for what calls it and why it stands alone.
++//
++// Upstream suspends the process with one Toolhelp snapshot of every thread on the system, and
++// resumes it with a second one. Each snapshot costs tens of milliseconds on a desktop with a few
++// thousand threads, and a hook install pays for two. The freeze here lists this process's threads
++// only, through ntdll's NtGetNextThread, keeps a handle to each thread it suspended, and resumes
++// exactly those. Upstream's walk stays below, unchanged, as the fallback.
++//
++// Between the first SuspendThread and the last ResumeThread, nothing here allocates, logs, or
++// calls anything that takes the loader lock: a suspended thread may hold the heap lock or the
++// loader lock, and the calling thread would then wait on it forever. The handle storage is
++// reserved and NtGetNextThread resolved before the first thread is suspended, and the log lines
++// are handed out by TakeNote after the last one is resumed.
++
++#include "thread_freeze.hpp"
++#include <TlHelp32.h>
++#include <stdio.h>
++
++namespace Aurie
++{
++	namespace Internal
++	{
++		namespace HsFreeze
++		{
++#ifdef AURIE_HS_FREEZE_TEST_SEAM
++			// Host test only, never defined in the DLL build: called after every pass of either
++			// walk, while what that pass suspended stays suspended, so the test can start a thread
++			// between passes.
++			void (*g_AfterPass)(unsigned Pass) = nullptr;
++#define HS_FREEZE_AFTER_PASS(Pass) do { if (g_AfterPass) g_AfterPass(Pass); } while (0)
++#else
++#define HS_FREEZE_AFTER_PASS(Pass) ((void)0)
++#endif
++
++			namespace
++			{
++				// NtGetNextThread is exported by ntdll.dll since Windows Vista and is not in the SDK
++				// headers. It opens the thread after ThreadHandle in ProcessHandle's thread list (the
++				// first one when ThreadHandle is null), and fails when there is none left.
++				using FnNtGetNextThread = LONG(NTAPI*)(
++					HANDLE ProcessHandle,
++					HANDLE ThreadHandle,
++					ACCESS_MASK DesiredAccess,
++					ULONG HandleAttributes,
++					ULONG Flags,
++					PHANDLE NewThreadHandle
++				);
++
++				// Threads one freeze can hold. The game runs a few dozen; a process with more
++				// falls back to upstream's walk for that call.
++				constexpr unsigned kCapacity = 1024;
++
++				// Passes are repeated until one finds no thread it has not suspended yet. A
++				// thread suspended in pass n can no longer start one, so pass n + 1 normally ends
++				// it; the cap only bounds a process that keeps creating threads from outside.
++				constexpr unsigned kMaxPasses = 8;
++
++				constexpr ACCESS_MASK kThreadAccess =
++					THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION;
++
++				struct Entry
++				{
++					// Held until the resume when Suspended; closed at once otherwise.
++					HANDLE Thread;
++					DWORD ThreadId;
++					BOOL Suspended;
++				};
++
++				// One per Freeze call, owned by the calling thread from Freeze to Resume.
++				struct FreezeSet
++				{
++					FreezeSet* Previous;
++					Report Stats;
++					unsigned Count;
++					Entry Entries[kCapacity];
++				};
++
++				INIT_ONCE g_InitOnce = INIT_ONCE_STATIC_INIT;
++				FnNtGetNextThread g_NtGetNextThread = nullptr;
++				DWORD g_TlsSlot = TLS_OUT_OF_INDEXES;
++
++				// The most recent report, published after a resume.
++				SRWLOCK g_ReportLock = SRWLOCK_INIT;
++				Report g_LastReport = {};
++
++				// The log lines: each is written once per process, by the thread that claims it.
++				// The first reason any call fell back, a string literal (const char*).
++				PVOID volatile g_FallbackReason = nullptr;
++				volatile LONG g_FallbackNoteTaken = 0;
++				volatile LONG g_PerProcessReady = 0;
++				volatile LONG g_PerProcessNoteTaken = 0;
++				Report g_FirstPerProcess = {};
++				char g_FallbackNote[192] = {};
++				char g_PerProcessNote[192] = {};
++
++				BOOL CALLBACK Initialise(PINIT_ONCE, PVOID, PVOID*)
++				{
++					HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
++					if (ntdll)
++					{
++						g_NtGetNextThread = reinterpret_cast<FnNtGetNextThread>(
++							reinterpret_cast<void*>(GetProcAddress(ntdll, "NtGetNextThread"))
++						);
++					}
++					g_TlsSlot = TlsAlloc();
++					return TRUE;
++				}
++
++				void NoteFallback(const char* Reason)
++				{
++					InterlockedCompareExchangePointer(
++						&g_FallbackReason,
++						const_cast<char*>(Reason),
++						nullptr
++					);
++				}
++
++				// Upstream's ElForEachThread loop: the process id handed to the snapshot is
++				// ignored for TH32CS_SNAPTHREAD, so it lists every thread on the system.
++				template <typename Callback>
++				unsigned ForEachSystemThread(Callback&& Visit)
++				{
++					unsigned visited = 0;
++					HANDLE thread_snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0x1337);
++
++					if (thread_snapshot == INVALID_HANDLE_VALUE)
++						return visited;
++
++					THREADENTRY32 thread_entry = {}; thread_entry.dwSize = sizeof(thread_entry);
++
++					if (!Thread32First(thread_snapshot, &thread_entry))
++					{
++						CloseHandle(thread_snapshot);
++						return visited;
++					}
++
++					do
++					{
++						visited++;
++						Visit(thread_entry);
++					} while (Thread32Next(thread_snapshot, &thread_entry));
++
++					CloseHandle(thread_snapshot);
++					return visited;
++				}
++
++				bool Known(const FreezeSet* Set, DWORD ThreadId)
++				{
++					for (unsigned i = 0; i < Set->Count; i++)
++					{
++						if (Set->Entries[i].ThreadId == ThreadId)
++							return true;
++					}
++					return false;
++				}
++
++				// One pass over this process's threads. Suspends each thread it has not seen in
++				// an earlier pass, other than the caller. Returns how many it suspended. Sets
++				// Incomplete to the reason, and stops, when the pass cannot cover the whole list:
++				// a thread would not fit in the storage, or NtGetNextThread failed before the end
++				// (a thread it cannot open hides every thread after it, since it is the cursor).
++				unsigned WalkProcessOnce(FreezeSet* Set, DWORD Self, unsigned& Visited, const char*& Incomplete)
++				{
++					unsigned suspended = 0;
++					HANDLE current = nullptr;
++					bool keep = false;
++
++					for (;;)
++					{
++						HANDLE next = nullptr;
++						LONG status = g_NtGetNextThread(GetCurrentProcess(), current, kThreadAccess, 0, 0, &next);
++
++						// The previous handle was the cursor; it is closed now unless the set holds it.
++						if (current && !keep)
++							CloseHandle(current);
++						current = nullptr;
++						keep = false;
++
++						if (status < 0 || !next)
++						{
++							// The end of the list is STATUS_NO_MORE_ENTRIES, a warning-severity
++							// status (top two bits 10). An error-severity one (11), such as an
++							// access denial, means the list did not end here.
++							if ((static_cast<ULONG>(status) >> 30) == 3 || (status >= 0 && !next))
++								Incomplete = "NtGetNextThread failed before the end of this process's thread list";
++							break;
++						}
++
++						current = next;
++						Visited++;
++
++						DWORD thread_id = GetThreadId(next);
++
++						// The caller, by id, is never suspended. A thread whose id cannot be read
++						// cannot be told from the caller, so it is left alone too.
++						if (thread_id == 0 || thread_id == Self || Known(Set, thread_id))
++							continue;
++
++						if (Set->Count == kCapacity)
++						{
++							Incomplete = "the process has more threads than one freeze can hold";
++							CloseHandle(current);
++							current = nullptr;
++							break;
++						}
++
++						Entry& entry = Set->Entries[Set->Count++];
++						entry.ThreadId = thread_id;
++
++						if (SuspendThread(next) == static_cast<DWORD>(-1))
++						{
++							// Remembered, so the next pass does not count it as new, but never resumed.
++							entry.Thread = nullptr;
++							entry.Suspended = FALSE;
++							Set->Stats.NotSuspended++;
++							continue;
++						}
++
++						entry.Thread = next;
++						entry.Suspended = TRUE;
++						keep = true;
++						suspended++;
++						Set->Stats.Suspended++;
++					}
++
++					return suspended;
++				}
++
++				// SuspendThread only queues the suspension. GetThreadContext returns once the
++				// thread has actually stopped, so after this nothing suspended is still running.
++				void WaitUntilStopped(const FreezeSet* Set, unsigned From)
++				{
++					for (unsigned i = From; i < Set->Count; i++)
++					{
++						const Entry& entry = Set->Entries[i];
++						if (!entry.Suspended)
++							continue;
++
++						CONTEXT context = {};
++						context.ContextFlags = CONTEXT_INTEGER;
++						GetThreadContext(entry.Thread, &context);
++					}
++				}
++
++				void ResumeAndClose(FreezeSet* Set)
++				{
++					for (unsigned i = 0; i < Set->Count; i++)
++					{
++						if (Set->Entries[i].Suspended)
++							ResumeThread(Set->Entries[i].Thread);
++					}
++					for (unsigned i = 0; i < Set->Count; i++)
++					{
++						if (Set->Entries[i].Thread)
++							CloseHandle(Set->Entries[i].Thread);
++					}
++					Set->Count = 0;
++				}
++
++				// Only ever called once the threads run again, so no frozen thread can be the one
++				// holding g_ReportLock while this waits for it.
++				void Publish(const Report& Done)
++				{
++					AcquireSRWLockExclusive(&g_ReportLock);
++					g_LastReport = Done;
++					ReleaseSRWLockExclusive(&g_ReportLock);
++				}
++			}
++
++			unsigned FreezeSystemSnapshot()
++			{
++				unsigned visited = ForEachSystemThread(
++					[](const THREADENTRY32& Entry)
++					{
++						// Skip my thread
++						if (GetCurrentThreadId() == Entry.th32ThreadID)
++							return;
++
++						// Skip everything that's not my process
++						if (GetCurrentProcessId() != Entry.th32OwnerProcessID)
++							return;
++
++						HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME, false, Entry.th32ThreadID);
++
++						if (!thread)
++							return;
++
++						SuspendThread(thread);
++						CloseHandle(thread);
++					}
++				);
++
++				HS_FREEZE_AFTER_PASS(1);
++				return visited;
++			}
++
++			unsigned ResumeSystemSnapshot()
++			{
++				return ForEachSystemThread(
++					[](const THREADENTRY32& Entry)
++					{
++						// Skip my thread
++						if (GetCurrentThreadId() == Entry.th32ThreadID)
++							return;
++
++						// Skip everything that's not my process
++						if (GetCurrentProcessId() != Entry.th32OwnerProcessID)
++							return;
++
++						HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME, false, Entry.th32ThreadID);
++
++						if (!thread)
++							return;
++
++						ResumeThread(thread);
++						CloseHandle(thread);
++					}
++				);
++			}
++
++			void Freeze()
++			{
++				// Everything that may allocate or take the loader lock happens here, first.
++				InitOnceExecuteOnce(&g_InitOnce, Initialise, nullptr, nullptr);
++
++				FreezeSet* set = nullptr;
++				const char* reason = nullptr;
++
++				if (g_TlsSlot == TLS_OUT_OF_INDEXES)
++					reason = "no thread-local slot is free for the freeze's state";
++				else if (!g_NtGetNextThread)
++					reason = "ntdll.dll does not export NtGetNextThread";
++				else
++				{
++					set = static_cast<FreezeSet*>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(FreezeSet)));
++					if (!set)
++						reason = "the handle storage could not be reserved";
++				}
++
++				if (!set)
++				{
++					// Stateless: Resume finds no set and runs upstream's resume walk.
++					NoteFallback(reason);
++					FreezeSystemSnapshot();
++					return;
++				}
++
++				// Pushed before the first suspension: TlsSetValue may allocate the first time a
++				// thread uses a slot above the first 64.
++				set->Previous = static_cast<FreezeSet*>(TlsGetValue(g_TlsSlot));
++				if (!TlsSetValue(g_TlsSlot, set))
++				{
++					HeapFree(GetProcessHeap(), 0, set);
++					NoteFallback("the freeze's state could not be stored for the calling thread");
++					FreezeSystemSnapshot();
++					return;
++				}
++
++				set->Stats.Route = Walk::PerProcess;
++				const DWORD self = GetCurrentThreadId();
++				const char* incomplete = nullptr;
++
++				for (unsigned pass = 1; pass <= kMaxPasses; pass++)
++				{
++					unsigned visited = 0;
++					unsigned from = set->Count;
++					WalkProcessOnce(set, self, visited, incomplete);
++
++					WaitUntilStopped(set, from);
++
++					set->Stats.Passes = pass;
++					set->Stats.VisitedTotal += visited;
++					set->Stats.VisitedLastPass = visited;
++					if (pass == 1)
++						set->Stats.VisitedFirstPass = visited;
++
++					HS_FREEZE_AFTER_PASS(pass);
++
++					// Done when this pass met no thread an earlier pass had not already met.
++					if (incomplete || set->Count == from)
++						break;
++				}
++
++				if (incomplete)
++				{
++					// This call cannot see or hold every thread. Give back what it took, then
++					// freeze the way upstream does; Resume sees the route and resumes the same way.
++					ResumeAndClose(set);
++					set->Stats.Route = Walk::SystemSnapshot;
++					set->Stats.FallbackReason = incomplete;
++					set->Stats.VisitedFirstPass = set->Stats.VisitedLastPass = set->Stats.VisitedTotal =
++						FreezeSystemSnapshot();
++					set->Stats.Passes = 1;
++				}
++			}
++
++			void Resume()
++			{
++				FreezeSet* set = g_TlsSlot == TLS_OUT_OF_INDEXES
++					? nullptr
++					: static_cast<FreezeSet*>(TlsGetValue(g_TlsSlot));
++
++				if (!set)
++				{
++					// The freeze fell back before it had a set: it suspended the upstream way.
++					Report report = {};
++					report.Route = Walk::SystemSnapshot;
++					report.FallbackReason = static_cast<const char*>(g_FallbackReason);
++					report.Passes = 1;
++					report.VisitedFirstPass = report.VisitedLastPass = report.VisitedTotal = ResumeSystemSnapshot();
++					Publish(report);
++					return;
++				}
++
++				if (set->Stats.Route == Walk::PerProcess)
++					ResumeAndClose(set);
++				else
++					ResumeSystemSnapshot();
++
++				// Every thread runs again from here on.
++				TlsSetValue(g_TlsSlot, set->Previous);
++				Report report = set->Stats;
++				HeapFree(GetProcessHeap(), 0, set);
++
++				if (report.Route == Walk::PerProcess)
++				{
++					if (InterlockedCompareExchange(&g_PerProcessReady, 2, 0) == 0)
++					{
++						g_FirstPerProcess = report;
++						InterlockedExchange(&g_PerProcessReady, 1);
++					}
++				}
++				else
++				{
++					NoteFallback(report.FallbackReason);
++				}
++
++				Publish(report);
++			}
++
++			const char* TakeNote()
++			{
++				const char* reason = static_cast<const char*>(g_FallbackReason);
++				if (reason && InterlockedCompareExchange(&g_FallbackNoteTaken, 1, 0) == 0)
++				{
++					_snprintf_s(g_FallbackNote, sizeof(g_FallbackNote), _TRUNCATE,
++						"[hs] MmCreateHook freeze: FELL BACK to the system-wide thread snapshot: %s", reason);
++					return g_FallbackNote;
++				}
++
++				if (InterlockedCompareExchange(&g_PerProcessReady, 1, 1) == 1 &&
++					InterlockedCompareExchange(&g_PerProcessNoteTaken, 1, 0) == 0)
++				{
++					const Report& first = g_FirstPerProcess;
++					_snprintf_s(g_PerProcessNote, sizeof(g_PerProcessNote), _TRUNCATE,
++						"[hs] MmCreateHook freeze: per-process thread walk, first freeze suspended %u thread(s) "
++						"in %u pass(es), %u not suspendable",
++						first.Suspended, first.Passes, first.NotSuspended);
++					return g_PerProcessNote;
++				}
++
++				return nullptr;
++			}
++
++			Report LastReport()
++			{
++				AcquireSRWLockShared(&g_ReportLock);
++				Report report = g_LastReport;
++				ReleaseSRWLockShared(&g_ReportLock);
++				return report;
++			}
++		}
++	}
++}
+diff --git a/Aurie/source/framework/Memory Manager/thread_freeze.hpp b/Aurie/source/framework/Memory Manager/thread_freeze.hpp
+new file mode 100644
+index 0000000..30a8c6e
+--- /dev/null
++++ b/Aurie/source/framework/Memory Manager/thread_freeze.hpp	
+@@ -0,0 +1,73 @@
++// File: thread_freeze.hpp
++//
++// The thread freeze around a hook write (Hero Siege patch series, patch 0002).
++//
++// MmCreateHook, MmCreateUnsafeHook, MmCreateMidfunctionHook and the three hook removals suspend
++// every other thread of this process while SafetyHook rewrites the target's first bytes, and
++// resume them afterwards. MmpFreezeCurrentProcess and MmpResumeCurrentProcess in memory.cpp keep
++// their names, signatures and call sites; their bodies call this unit.
++//
++// Plain logic over Win32 calls: nothing here knows an Aurie type, and only Windows SDK headers
++// are included, on purpose - keep it that way, or the host test stops compiling. The host test
++// (thread_freeze_test.cpp in the project's hs-tests directory) includes thread_freeze.cpp itself,
++// so it runs the very code the DLL does.
++
++#ifndef AURIE_HS_THREAD_FREEZE_H_
++#define AURIE_HS_THREAD_FREEZE_H_
++
++#include <Windows.h>
++
++namespace Aurie
++{
++	namespace Internal
++	{
++		namespace HsFreeze
++		{
++			enum class Walk : unsigned
++			{
++				None = 0,
++				PerProcess = 1,
++				SystemSnapshot = 2
++			};
++
++			// What one freeze did. Filled while the threads are frozen, published when they run
++			// again. For the log line and the host test; nothing decides anything from it.
++			struct Report
++			{
++				Walk Route;
++				// nullptr, or why this call ran the system-wide snapshot walk instead.
++				const char* FallbackReason;
++				unsigned Passes;
++				unsigned VisitedFirstPass;
++				unsigned VisitedLastPass;
++				unsigned VisitedTotal;
++				// SuspendThread succeeded: these, and only these, are resumed.
++				unsigned Suspended;
++				// Opened, but SuspendThread failed: left alone, never resumed.
++				unsigned NotSuspended;
++			};
++
++			// The body of MmpFreezeCurrentProcess. Every other thread of the process is
++			// suspended, and each suspension has taken effect, when it returns.
++			void Freeze();
++
++			// The body of MmpResumeCurrentProcess: undoes the calling thread's last Freeze.
++			void Resume();
++
++			// A line to log, or nullptr. Call it after Resume, until it returns nullptr: each
++			// line is handed out once per process, and never while threads are frozen.
++			const char* TakeNote();
++
++			// Upstream's walk, moved here unchanged: one Toolhelp snapshot of every thread on the
++			// system, filtered to this process. The fallback runs it, and the host test pins it.
++			// Both return the number of snapshot entries they visited.
++			unsigned FreezeSystemSnapshot();
++			unsigned ResumeSystemSnapshot();
++
++			// The report of the most recent Freeze/Resume pair to finish, in any thread.
++			Report LastReport();
++		}
++	}
++}
++
++#endif // AURIE_HS_THREAD_FREEZE_H_

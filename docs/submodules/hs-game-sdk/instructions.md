@@ -800,6 +800,32 @@ function - and the table entry must be executable code inside the game module, o
 it is not ours to patch. Pass a **static, zero-initialised** original pointer: it
 is how the installer knows which install is the first.
 
+**Every detour pays Aurie's freeze, and the freeze scales with the whole
+machine's thread count.** Measured in ForgePact#151's Live 1 (2026-10-06, the
+owner's machine, about 6000 threads system-wide, 76 in the game): one
+`MmCreateHook` detour cost 66-73 ms, 2.1 times one timed system-wide thread
+snapshot (32.8 ms median), and the detours were 97.5% of ForgePact's 1268 ms
+start-up setup (18 detours); 20 hooks installed on demand in town held one frame
+1.5 s. Why it costs that much is a static reading of Aurie v2.0.2, which the
+ratio agrees with: `MmCreateHook` suspends the process's other threads, creates
+the hook, and resumes them, and both the suspend and the resume start from a
+`CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD)`, which lists every thread on the
+system, not only the game's. So each install that detours pays for two
+system-wide thread snapshots, and a frame that installs many hooks holds the
+game for about 70 ms per hook on that machine. ForgePact's setup line and its `incident setup`
+verb time each part of an install. That is upstream Aurie's cost. The hub's
+patched `AurieCore.dll` ([`third_party/aurie/`](../../../third_party/aurie/README.md),
+series `hs.1`, which ForgePact ships from 2.2.0) walks only the game's own
+threads, and its Live 2 (2026-10-06, same machine and plugin, only the DLL
+changed; capture `.claude/workorders/forgepact-151-aurie-freeze-live-1.md`)
+measured a detour at 1.56 ms against a 37.9 ms system-wide snapshot median,
+ForgePact's setup at 47.8 ms (18 detours, 28.1 ms of them), and the 20 on-demand
+installs at 35.0 ms of detours with the worst frame 122 ms. A detour under
+upstream's `AurieCore.dll` (HS-Offline-Tracker still ships it) still pays the
+system-wide walk. The reading, the measurements and the route as built are in
+[`ForgePact/docs/setup-stall-research.md`](../../../ForgePact/docs/setup-stall-research.md)
+(ForgePact#151).
+
 `InstallScriptHookTableOnly` is a deliberately limited variant, named so the
 limitation is visible at the call site. It exists for research - observing
 table-routed calls without patching code - and still preserves the original
