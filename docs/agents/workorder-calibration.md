@@ -1288,6 +1288,56 @@ not only model, to set each session's and each step's cost.
 - Whether `opus` at `max` recovers the plans a Fable replan used to. The
   stop after a third `PLAN-DEFECT` is unchanged, so a weaker escalation
   shows up as more stops, not as more rounds.
-- Reviewer effort. Reviewers stay at their pinned `high`. A
-  `docs-sync-reviewer-medium` is one `effort-variants:` line away once a
-  calibration shows the reviewers' tail can afford it.
+- Reviewer effort. Superseded on 2026-10-06: the reviewers moved to
+  opus/medium (below).
+
+# Reviewers, live-operator and the driver on opus/medium (2026-10-06)
+
+## The question
+
+Issue #436. Should the roles still on `sonnet` move to `opus`, and at what
+effort should the session that drives /workorder run, which no file stated?
+
+## What was found
+
+Read from Artificial Analysis's Intelligence Index against weighted cost per
+index task, 2026-10-06 (approximate values off the chart):
+
+| Model / effort | Index | $ per task |
+|---|---|---|
+| Opus 5.5 low | 42 | 0.55 |
+| Opus 5.5 medium | 51 | 1.40 |
+| Opus 5.5 high | 53.5 | 1.85 |
+| Opus 5.5 xhigh | 56 | 3.50 |
+| Opus 5.5 max | 58 | 6.00 |
+| Sonnet 5.5 low | 36 | 0.42 |
+| Sonnet 5.5 medium | 41 | 0.58 |
+| Sonnet 5.5 high | 47 | 1.10 |
+| Sonnet 5.5 xhigh | 52 | 2.75 |
+| Opus 5 max | 51 | 5.90 |
+| Sonnet 5 high | 32 | 1.80 |
+
+Opus 5.5 is ahead of Sonnet 5.5 at every effort level for about the same
+price, and every Opus 5 level is behind Opus 5.5 at medium. The benchmark's
+cost is mostly output and thinking; this pipeline's is 92-99% cache reads,
+priced the same on both models, so the model step costs less here than the
+chart shows and effort is the lever that moves the bill. Past `high`, each
+step costs about twice as much for 2-3 points.
+
+## What changed
+
+- `sdk-contract-reviewer`, `tauri-command-reviewer`, `docs-sync-reviewer`,
+  `decompile-output-guard` and `live-operator`: sonnet/high to opus/medium.
+- The docs/tests/config triage row's `implementer-medium` runs on `opus`,
+  no longer `sonnet`.
+- SKILL.md § "Model tiers" names the driver's tier: opus/medium, `high` for
+  a session whose product is the driver's own triage judgement.
+
+## Not yet measured
+
+- All three changes are chosen from a benchmark, not measured on this
+  pipeline. No reviewer finding was ever measured as missed on `sonnet`;
+  the next `--calibrate` over sessions after 2026-10-06 says whether
+  opus/medium reviewers find more, cost the expected ~1.2×, or neither.
+- The driver's effort is not visible in a transcript, so the audit cannot
+  check it; a driver's per-turn tokens before and after are the proxy.
