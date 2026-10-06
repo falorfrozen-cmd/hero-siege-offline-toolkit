@@ -18,9 +18,13 @@ gives.
 | [`tools/build_aurie.py`](../../tools/build_aurie.py) | Pin + series -> DLL, host tests, marker check, provenance files. An entry point to `tools/build_yytoolkit.py`'s Aurie profile: the same steps, refusals and exit codes. |
 
 > **State on 2026-10-06:** built, host-tested and marker-checked; upstream's
-> release DLL fails the marker check, as it should. **Not yet launched
-> against the game** - the [launch gate](#launch-gate) is NOT RUN for every
-> in-game row. Nothing in ForgePact's shipped release carries this build yet.
+> release DLL fails the marker check, as it should. **Launched against the
+> game on 2026-10-06** (Live procedure 1 of workorder
+> `forgepact-151-aurie-freeze`, capture
+> `.claude/workorders/forgepact-151-aurie-freeze-live-1.md`): every in-game row
+> of the [launch gate](#launch-gate) passed, and ForgePact's start-up setup
+> measured 47.8 ms against 1268.7 ms with upstream's DLL. ForgePact pins this
+> build for its 2.2.0 release; no published ForgePact release carries it yet.
 
 ## Why this exists
 
@@ -97,9 +101,11 @@ replaces those walks with one over this process's own threads.
   `[hs] MmCreateHook freeze: per-process thread walk, first freeze suspended N thread(s) in P pass(es), K not suspendable`.
 - **Markers.** `MmCreateHook freeze: per-process thread walk`,
   `FELL BACK to the system-wide thread snapshot`.
-- **Measured vs assumed.** The host test below, on the build machine. That the
-  freeze suspends anything inside the game (N >= 1 in the line above) and its
-  cost there are NOT RUN (launch gate). The fallback is compiled and
+- **Measured vs assumed.** The host test below, on the build machine. In the
+  game, measured on 2026-10-06 (launch gate): the first freeze suspended
+  N = 4 threads in 2 passes, 0 not suspendable, and a detour cost 1.56 ms
+  against upstream's 68.7 ms. How many threads each later freeze suspends is
+  not logged, so not observed. The fallback is compiled and
   marker-checked, but no host test forces it: the test can neither unexport
   `NtGetNextThread` nor deny the process access to its own thread.
 
@@ -191,18 +197,24 @@ results, the source zip's id; `live_gameplay_verified` is always `false`); and
 | Host test | `hosttests` step | 1 of 1 files, 10 of 10 cases | Verified | 2026-10-06 |
 | Marker check | `verify-dll` step | 4 markers in the DLL, none in unpatched upstream | Verified | 2026-10-06 |
 | Marker check, negative control | `verify-dll --dll ForgePact/modfiles_shipped/AurieCore.dll` (upstream's v2.0.2 release, 967,680 bytes, sha256 `18e3a1de980f487a6b3858b673d2030e96984dd96de3a047b43a263a5ba829ae`) | Exit 1, naming all 4 markers as NOT in the DLL | Verified | 2026-10-06 |
-| Identity and freeze lines in `aurie.log`, and the freeze suspended threads in the game | Live procedure 1, step 3: the identity line, the `per-process thread walk` line and no `FELL BACK` line. Parse N, P and K from `first freeze suspended N thread(s) in P pass(es), K not suspendable`, and record N beside the game's thread count from the same session, `(Get-Process Hero_Siege).Threads.Count` at `plugin_ready`. The first freeze may come from an early YYToolkit or Aurie hook, while the game has fewer threads than at `plugin_ready`, so N is recorded beside that count, not required to equal it less one | Passes only with N >= 1. N = 0 fails the row (the live check `marker`, or a separate required `freeze-suspends` check): the freeze reported itself armed while the game's threads kept running as SafetyHook rewrote the bytes | NOT RUN | - |
-| Hooks attach as before (18 at the setup, 20 on demand, no `TABLE-ONLY`) | Live procedure 1, steps 2 and 6 | - | NOT RUN | - |
-| Case A: start-up setup cost against Live 1 (detour ms per hook at most a quarter of the snapshot median) | Live procedure 1, steps 2 and 4 (live check `setup-detour`). A fast detour counts only when the `aurie.log` row above passed with N >= 1, because a freeze that suspended nothing would also be fast | - | NOT RUN | - |
-| Case C: 20 on-demand installs in town (`ipc` worst under 250 ms) | Live procedure 1, steps 5 to 7 | - | NOT RUN | - |
-| Clean exit | Live procedure 1, step 8 | - | NOT RUN | - |
+| Identity and freeze lines in `aurie.log`, and the freeze suspended threads in the game | Live procedure 1, step 3: the identity line, the `per-process thread walk` line and no `FELL BACK` line (live check `marker`). Parse N, P and K from `first freeze suspended N thread(s) in P pass(es), K not suspendable`, and record N beside the game's thread count from the same session, `(Get-Process Hero_Siege).Threads.Count` at `plugin_ready`. The first freeze may come from an early YYToolkit or Aurie hook, while the game has fewer threads than at `plugin_ready`, so N is recorded beside that count, not required to equal it less one | Measured: both `[hs]` lines, no `FELL BACK`; N = 4, P = 2, K = 0 beside 77 threads at `plugin_ready` (the first freeze runs before YYToolkit is mapped). The required live check `freeze-suspends` decides this row: it passes only with N >= 1, and N = 0 fails it, because the freeze would have reported itself armed while the game's threads kept running as SafetyHook rewrote the bytes. `marker` checks only the lines | Verified | 2026-10-06 |
+| Hooks attach as before (18 at the setup, 20 on demand, no `TABLE-ONLY`) | Live procedure 1, steps 2 and 6 (live check `hooks-attach`) | Measured: Live 1's 18 hooks at the setup and 20 on demand by name, no `TABLE-ONLY` line in the session, `untagged 0` | Verified | 2026-10-06 |
+| Case A: start-up setup cost against Live 1 (detour ms per hook at most a quarter of the snapshot median) | Live procedure 1, steps 2 and 4 (live check `setup-detour`). A fast detour counts only with `freeze-suspends` passing (N >= 1), because a freeze that suspended nothing would also be fast; with `freeze-suspends` failed, `setup-detour` fails too | Measured with `freeze-suspends` passing: `installs 18, detours 18`, detour 28.1 ms, 1.56 ms a hook against a 37.9 ms snapshot median (0.041x; Live 1 2.10x, 68.7 ms a hook). Setup 47.8 ms, `hooks` 47.4 ms (Live 1: 1268.7 / 1268.3 ms) | Verified | 2026-10-06 |
+| Case C: 20 on-demand installs in town (`ipc` worst under 250 ms) | Live procedure 1, steps 5 to 7 (live check `on-demand`) | Measured: detours 19 -> 39, 35.0 ms for the 20; `ipc` worst 122.12 ms (Live 1: 1542.58 ms); `reports written 0` (Live 1: 1) | Verified | 2026-10-06 |
+| Clean exit | Live procedure 1, step 8 (live check `clean-exit`) | Measured: the process exited without force; `out.txt` ended `==== clean shutdown ====` | Verified | 2026-10-06 |
 
-Case B (item truth off) is not run, by the owner's choice. No release should
-carry this build until the in-game rows carry a date, the DLL's sha256 and the
-kept capture. The live procedure installs `<work>\o\AurieCore.dll` over the
-game's `AurieCore.dll` (ForgePact's Install Mod Plugin path), keeping
-upstream's copy aside; the first `[hs]` line of `aurie.log`, not the file date,
-says which DLL ran.
+The in-game rows ran against the DLL of sha256 `3cf98af9...ac06800cb` (the
+`hs.1` build above; live check `aurie-hash`) and ForgePact's ship plugin of
+Live 1, unchanged (`dll-hash`). The kept capture is
+`.claude/workorders/forgepact-151-aurie-freeze-live-1.md` in the hub (a local
+workorder file, not committed); `ForgePact/docs/setup-stall-research.md`
+§ "Live 2" records it. Case B (item truth off) is not run, by the owner's
+choice, and the fallback path did not run in the game (no `FELL BACK` line), so
+both are not observed. A new series revision resets these rows to NOT RUN. The
+live procedure installs `<work>\o\AurieCore.dll` over the game's
+`AurieCore.dll` (ForgePact's Install Mod Plugin path), keeping upstream's copy
+aside; the first `[hs]` line of `aurie.log`, not the file date, says which DLL
+ran.
 
 ## How to change the series
 
@@ -274,7 +286,8 @@ Added or narrowed by this patch:
   threads running, as upstream always does.
 - **The host test's numbers are one machine's.** The red and green runs were on
   the build machine, about 7,300 threads on the system. The cost in the game is
-  the launch gate's to measure.
+  the launch gate's, measured on one machine in one session (2026-10-06,
+  about 6,660 threads on the system, 77 in the game).
 - **HS-Offline-Tracker keeps upstream's `AurieCore.dll`.** A player with only
   the Tracker keeps upstream's freeze cost; shipping this build there is a
   follow-up in that repository.
@@ -287,4 +300,5 @@ As a hub library release, tag `aurie-v2.0.2-hs.1`, titled `Modified Aurie
 assets are the DLL, its `.sha256`, `AurieCore-BUILD-INFO.json`, the source zip
 and `NOTICE.md`. ForgePact's `tools/toolchain-pins.json` pins the DLL at
 `https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit/releases/download/aurie-v2.0.2-hs.1/AurieCore.dll`.
-**Not yet published** on 2026-10-06: it waits for the launch gate.
+**Not yet published** on 2026-10-06: the launch gate passed that day, and
+publishing is a separate step.

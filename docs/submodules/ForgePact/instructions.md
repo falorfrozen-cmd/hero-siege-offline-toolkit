@@ -4447,13 +4447,19 @@ setup <total> ms at frame <fc>: config <ms> ms, hooks <ms> ms (<the three
 slowest installers, name and ms>)`. `InstallHook` marks a lap
 (`SetupLap("<installer>")`) after each installer of its normal path, which
 in the shipping build stops after the custom-item, item-truth, auto-arm and
-Headhunter installers; a later `InstallHook` call records no lap. Making the
-setup faster is decided but not built: Live 3 measured the laps (see
-Verification), ForgePact#151's Live 1 measured the installs themselves (the
-`MmCreateHook` detour was 97.5% of `hooks`, about 69 ms a detour, two
-system-wide thread snapshots each), and the owner chose to patch Aurie's
-freeze in a follow-up workorder rather than spread the installs over
-frames. Right after that line the block prints a second one,
+Headhunter installers; a later `InstallHook` call records no lap. Live 3
+measured the laps (see Verification), ForgePact#151's Live 1 measured the
+installs themselves (the `MmCreateHook` detour was 97.5% of `hooks`, about
+69 ms a detour, two system-wide thread snapshots each), and the owner chose
+to patch Aurie's freeze rather than spread the installs over frames. That is
+built and ships from 2.2.0: the hub's `third_party/aurie/` series `hs.1`,
+whose `AurieCore.dll` freezes only the game's own threads, with no plugin
+change. #151's Live 2 (2026-10-06, only that DLL changed; capture
+`.claude/workorders/forgepact-151-aurie-freeze-live-1.md` in the hub) measured
+the setup at 47.8 ms against Live 1's 1268.7 ms (detour 28.1 ms for 18,
+1.56 ms each against 68.7 ms), and `dropmult relic 2`'s 20 installs at 35.0 ms
+of detours with an `ipc` worst of 122.12 ms against 1542.58 ms and no report.
+Right after that line the block prints a second one,
 `incident: setup installs <n>, detours <d>: resolve ... ms, detour ... ms
 (worst ... ms <hook id>), log ... ms, rest ... ms, outside installers ... ms`:
 `HookOneScript` and `HookBuiltin` time each install by part through
@@ -4461,9 +4467,12 @@ frames. Right after that line the block prints a second one,
 `MmCreateHook` call, the `Out` writes, the rest) between `SetupLapStart` and
 `SetupSlowest`, and `outside installers` is the `hooks` value minus the
 installs' time. `incident setup` reprints it with the session's install
-totals and one timed thread snapshot. The reading behind it (every detour
-pays Aurie's freeze, two system-wide thread snapshots), the instrument and
-the fix routes are in `ForgePact/docs/setup-stall-research.md`.
+totals and one timed thread snapshot, which still times the system-wide walk
+upstream's freeze took (37.6-38.5 ms in Live 2), so it stays the positive
+control for the patched freeze. The reading behind it (under upstream's
+Aurie every detour pays two system-wide thread snapshots), the instrument,
+Live 1 and Live 2 and the fix routes, with the one built, are in
+`ForgePact/docs/setup-stall-research.md`.
 
 **No notice.** Every bundle, PERF, FREEZE or CRASH, is written without a
 notice from either side (owner, 2026-10-02: "No notice at all"): the panel
@@ -4570,10 +4579,13 @@ room the table lacks is judged like any other room. The start-up setup's
 about 2.5-2.7 s frame (Live 3) shows as the `setup` row's worst for a minute after it;
 the `incident: setup installs ...` line splits it by install part. In
 ForgePact#151's Live 1 the setup took 1.27 s with item truth on and 0.48 s
-without, almost all of it Aurie's `MmCreateHook` detours, and an on-demand
-`dropmult relic 2` held one in-town frame 1.5 s and wrote a PERF report;
-`ForgePact/docs/setup-stall-research.md` has the split and the chosen fix
-route. A report holds a module and an offset, never
+without, almost all of it upstream Aurie's `MmCreateHook` detours, and an
+on-demand `dropmult relic 2` held one in-town frame 1.5 s and wrote a PERF
+report. With the patched `AurieCore.dll` 2.2.0 ships, #151's Live 2
+(2026-10-06) measured the setup at 47.8 ms with item truth on and that
+`dropmult relic 2` at an `ipc` worst of 122.12 ms, no report written;
+`ForgePact/docs/setup-stall-research.md` has the split and the route as
+built. A report holds a module and an offset, never
 a function name, and the PDB artifact's file (`BloodPactPlugin_ship.pdb`)
 must be renamed to `BloodPactPlugin.pdb`, the name `/PDBALTPATH` embeds,
 before a debugger will load it. FPS drops are not reported for 5 s after a

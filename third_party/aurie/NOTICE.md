@@ -78,6 +78,12 @@ at the hub commit BUILD-INFO records.
 
 Built, host-tested (1 of 1 host test files, every case passing) and checked
 for every log line the patches declare; upstream's v2.0.2 release DLL fails
-the same marker check, as it should. **Not yet launched against the game.**
-The directory's `README.md` carries the launch gate; until its rows carry a
-date, this build's effect in the game is not established.
+the same marker check, as it should. **Launched against the game on
+2026-10-06** (capture `.claude/workorders/forgepact-151-aurie-freeze-live-1.md`
+in the hub, a local workorder file): measured that day on one machine, its
+`aurie.log` named series `hs.1` and the per-process freeze, whose first freeze
+suspended 4 threads; ForgePact's hooks attached as with upstream's DLL; and
+ForgePact's start-up setup took 47.8 ms against 1268.7 ms with upstream's
+v2.0.2 DLL, about 1.6 ms a hook against 68.7 ms. The fallback to upstream's
+walk did not run in the game, so it is not observed there. The directory's
+`README.md` carries the launch gate with every row.

@@ -813,8 +813,16 @@ the hook, and resumes them, and both the suspend and the resume start from a
 system, not only the game's. So each install that detours pays for two
 system-wide thread snapshots, and a frame that installs many hooks holds the
 game for about 70 ms per hook on that machine. ForgePact's setup line and its `incident setup`
-verb time each part of an install. The reading, the measurements and the
-fix route chosen (patching Aurie's freeze) are in
+verb time each part of an install. That is upstream Aurie's cost. The hub's
+patched `AurieCore.dll` ([`third_party/aurie/`](../../../third_party/aurie/README.md),
+series `hs.1`, which ForgePact ships from 2.2.0) walks only the game's own
+threads, and its Live 2 (2026-10-06, same machine and plugin, only the DLL
+changed; capture `.claude/workorders/forgepact-151-aurie-freeze-live-1.md`)
+measured a detour at 1.56 ms against a 37.9 ms system-wide snapshot median,
+ForgePact's setup at 47.8 ms (18 detours, 28.1 ms of them), and the 20 on-demand
+installs at 35.0 ms of detours with the worst frame 122 ms. A detour under
+upstream's `AurieCore.dll` (HS-Offline-Tracker still ships it) still pays the
+system-wide walk. The reading, the measurements and the route as built are in
 [`ForgePact/docs/setup-stall-research.md`](../../../ForgePact/docs/setup-stall-research.md)
 (ForgePact#151).
 
