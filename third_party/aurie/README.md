@@ -185,7 +185,7 @@ results, the source zip's id; `live_gameplay_verified` is always `false`); and
 
 | Step | How | Result | Status | Date |
 | --- | --- | --- | --- | --- |
-| Build | `build_aurie.py all --allow-network` on the toolset above, from an uncommitted working tree (`patch_directory_dirty: true`) | 968,704 bytes, the sha256 under [How to build](#how-to-build); `warnings: 0` | Verified | 2026-10-06 |
+| Build | `build_aurie.py all --allow-network` on the toolset above, twice: from the uncommitted working tree (`patch_directory_dirty: true`), then from the committed series (`false`) | 968,704 bytes and the sha256 under [How to build](#how-to-build) both times, so the build reproduces; `warnings: 0` | Verified | 2026-10-06 |
 | Host test, red | the host test against the unit holding upstream's walk only | 4 baseline cases pass, all 6 target cases fail | Verified | 2026-10-06 |
 | Host test | `hosttests` step | 1 of 1 files, 10 of 10 cases | Verified | 2026-10-06 |
 | Marker check | `verify-dll` step | 4 markers in the DLL, none in unpatched upstream | Verified | 2026-10-06 |
