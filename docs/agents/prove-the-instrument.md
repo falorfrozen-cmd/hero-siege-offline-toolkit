@@ -41,6 +41,31 @@ original, detour attempted only on the first install, and a result that *says*
 limitation is visible at the call site. A correction landing in one submodule is
 not done until the shared SDK that other submodules copy has it too.
 
+## Dual install is still not every route: calls by name (ForgePact #134)
+
+The inline detour closed the direct-`call` gap, and Live 2 of the gamba
+machine research (2026-10-04) found a route it does not close. The static
+reading puts about 80 calls by name to `InitPV`, `SPV` and `GPV` in the
+machine's `Create_0`, and `CleanUp_0` calls `FPV` by name. The `gambaprobe`
+instrument resolved both the short and the `gml_Script_` name of each script
+through `GetNamedRoutineIndex`, and all 24 of its script rows read
+`byname=same`: both names name the script itself (a word that only shows
+which entry `GetNamedRoutineIndex` prefers; a same-named functions-array
+routine is not ruled out; `gambaprobe fnwalk` was built to walk the array
+for one, but in Live 3 it could not locate the table (`table not found`), so
+the by-name route stays blind - RUNTIME_DATA_MODELS § 20.5). Yet four `Create_0` runs left those four rows at zero
+calls with the machine as `self`, while the event detours counted every
+`Create_0`, and the builtin rows' own positive control (`selftest`: one
+`irandom` sent through `CallBuiltin`, the row moved by exactly one) passed in
+the same session. So a by-name call can reach a script's code without passing
+the detour at its entry, and a zero on such a row is **not observed by the
+detour**, never "not called". The dungeon-chest research's `store GPV calls=2`
+over a whole dungeon has the same shape. Before you trust a zero on a script
+that compiled GML reaches by name, find a positive control on that row
+itself: a call you know the game makes, by name, with the `self` you filter
+on. The argument and the counts are in
+`ForgePact/docs/gamba-machine-research.md` § Results, "Live 2 results".
+
 ## The same shape outside C++, in a Python MCP server (hs-drive)
 
 Everything above is a C++ hook, which is a problem for this rule's reach: a

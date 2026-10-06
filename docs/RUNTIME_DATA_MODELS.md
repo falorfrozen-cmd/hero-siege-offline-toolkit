@@ -2652,7 +2652,7 @@ A monster that special content spawned carries a non-zero `specialType` in its s
   - the Traveling Merchant fills it from the unique list;
   - Veras's Black Market fills it from uniques and exclusives.
 
-  No stock routine offers keys, fragments, materials, socketables or relics, and no gamble routine was found in Season 10.
+  No stock routine offers keys, fragments, materials, socketables or relics. The gamble is not a vendor routine or a named script: it is the gamba machine object, `Slot_Machine_01_obj`, whose logic lives in its own events (§ 20).
 - **Selling to a vendor pays** the item's info value 9 × the stack, rounded up. Materials are worth a token 10, runes and gems 125-381, most keys 15-5,000. **Static reading.**
 - **Gold** is account-wide, with separate pools for softcore, hardcore and Blood Pact (`hs2saves\shop.ini`, `[gold]`). The offline cap is 500,000,000.
   - `PickUpGoldCheck(GetCounterHash(), amount, …)` is the only call that changes the balance, both credits and debits. `GoldLogAdd` only writes the UI log.
@@ -2768,8 +2768,13 @@ directions are a **static reading**. Also in
 - Only `Spawn_Abyss_obj` sets `discoverable` true; measured on it: `discoverRange`
   1000, `discoverTimer` 30 (frozen out of range), `collisionRadius` 200,
   `activateTimer` -1 until discovered.
-- `sCP(object ref, x, y)` creates the object on `gameLayer` and records it in
-  `pSpwd`; Battlefield, Rift and Shadow Realm go through it. **Static reading.**
+- `sCP(x, y, object)` creates the object on `gameLayer` and records it in
+  `pSpwd`; Battlefield, Rift and Shadow Realm go through it. **Static
+  reading** (2026-10-04). The S10 notes' `(object ref, x, y)` order was a
+  reading not confirmed; this one follows the builtin's argument list, and
+  Live 3's `spawn scp` answered `object=4644` with the default `(x, y,
+  object)` order, so `(x, y, object)` is the right order. **Measured (Live
+  3)** for the order.
 - The reward portals (`Portal_Battlefield_obj`, `Rift_Portal_obj`,
   `Portal_Shadow_Realm_obj`) do their work in `Alarm_0` and stay dormant unless
   their spawner sets it; a `Portal_Battlefield_obj` carries 59 variables
@@ -2808,7 +2813,7 @@ All **measured** unless marked.
 | Writing `dropTable` on piles, destructibles, `Cursed_Orb_obj` | GML error (static reading) | §13.1 |
 | `DropDungeonKeys` with argument 5 undefined | GML error (static reading) | §13.3 |
 | Overriding `eSt` at Room Start, or zeroing `ReturnSpecificStat`'s return | crash | §14.2 ([S10](../ForgePact/docs/S10-special-content-notes.md#simdiye-kadar-denenen-ve-coken-yollarin-tam-listesi)) |
-| Calling `sCP` directly | crash | [S10](../ForgePact/docs/S10-special-content-notes.md#scpyi-dogrudan-cagirmak-cokertiyor) |
+| Calling `sCP` directly | crashed in S10 (2026-08-25) with the then-assumed `(object ref, x, y)` order and a suspect call format; called by name as `spawn scp` with `(x, y, object)` (§ 14.3) it does not crash (Live 3 created object 4644), but the machine it makes still dies of its own `Alarm_9` (§ 20.3), not a crash | [S10](../ForgePact/docs/S10-special-content-notes.md#scpyi-dogrudan-cagirmak-cokertiyor) |
 | Duplicating `Spawn_*` instances | crash (their zone-state keys collide) | [S10](../ForgePact/docs/S10-special-content-notes.md#simdiye-kadar-denenen-ve-coken-yollarin-tam-listesi) |
 | Duplicating reward-portal objects | infinite loading | [S10](../ForgePact/docs/S10-special-content-notes.md#portal-cogaltmasi--sonsuz-loading--2026-08-25-2155-geri-alindi) |
 | Hooking the game's internal integer-die helper | crash | [S10](../ForgePact/docs/S10-special-content-notes.md#simdiye-kadar-denenen-ve-coken-yollarin-tam-listesi) |
@@ -4308,3 +4313,314 @@ are not, and are written "Live 1 run Jn" here.
   walkable map's edge is **not observed**.
 
 [Mod live 1 results](../ForgePact/docs/jump-scenery-research.md#mod-live-1-results)
+
+---
+
+## 20. Gamba machines
+
+What ForgePact's Goburin's Head pity work (#134) established about the gamba
+machine: in phase 1, on 2026-10-04, a static reading of the object's events
+and three live sessions with its `gambaprobe` instrument (research build), on
+save slot 14 ("Sorak"), mostly in the Town of Inoya, with Live 3 also in the
+Fields of Battle; in phase 4, Live 4 (2026-10-05/06, research build), whose
+explosion watch measured two natural machines' explosions; and in phases 5
+and 6, Lives 5 and 6 (2026-10-06) on the player build's `gambapity`, which
+measured three more natural explosions and the heads the mod placed at two of them
+(§ 20.4). The argument, the controls and the check tables are in ForgePact's
+[`docs/gamba-machine-research.md`](../ForgePact/docs/gamba-machine-research.md);
+the measurements are also in `hs-game-sdk/curated/gamba_measurements.json`.
+**No instrument-created machine has survived its first step** (§ 20.3); a spin
+was first measured in Live 3, on a machine the game placed itself (§ 20.4).
+
+### 20.1 The object
+
+- `Slot_Machine_01_obj` (4644) is the gamba machine. Its parents are
+  `Collision_Prop_obj` (959) -> `Collision_Parent_obj` (957) ->
+  `Avoidable_Parent_obj` (433) (`hs-game-sdk` `kObjectParents`). **Static
+  search.**
+- Its events are `Create_0`, `Alarm_0`, `Alarm_9`, `Step_0`, `Draw_0`,
+  `Draw_64` and `CleanUp_0`, plus one Create closure,
+  `gml_Script_anon_1474_gml_Object_Slot_Machine_01_obj_Create_0` (5343; the
+  name moves with every patch, §5.3). `Collision_Prop_obj` owns a `Create_0`
+  and an `Alarm_11`; the two parents above it own a `Create_0` only. **Static
+  reading.**
+- The event names do not resolve through `GetNamedRoutinePointer` (no
+  `gml_Object_*` name does: 22 of 22 raw event names returned not found,
+  `pet-quest-collector-research.md`, 2026-09-10); they are reached by name in the
+  compiled-code table, and detours placed there counted `Create_0`, `Alarm_9`
+  and `CleanUp_0` on every spawned machine. **Measured.**
+- The machine's logic is in these events, not in a named script: no script is
+  named for gamba, gamble, slot, jackpot or casino. **Static search.**
+- Goburin's Head, the unique charm at repository type 10 / sub 0 / base 98
+  (key `charms_goburins_head`), is the prize ForgePact #134 is about; the
+  executable stores "Gamba Machine" beside the charm keys as the item
+  database's drop-source label. **Static search.** Its rarity code is 10:
+  **Measured (Live 5 and Live 6)** on heads built through the loader route
+  (§ 20.4). A head the game drops on its own has **not been observed**, so
+  the rarity of a natural drop is the part still open.
+
+### 20.2 Creation and state
+
+- The game creates a machine from `gml_Script_ClientCreateEffect` (568), in
+  the one case of its switch that carries the object index 4644: a single call
+  of the game's own `gml_Script_instance_create` (4556) with x, y and the
+  object. `instance_create` takes a layer from a global array and calls the
+  `instance_create_layer` builtin on it. **Static reading.**
+  `Zone_State_Buffer_obj` (6015)'s Create closures also name the object,
+  presumably how machines persist between visits to a zone; those bodies were
+  **not read**.
+- `Create_0` has one exit and no early return. In order it updates the depth
+  (`gml_Script_UpdateDepth`, 4576), arms its alarm 9 for the next step, runs
+  the inherited `Collision_Prop_obj` Create (the depth again, alarm 11 two
+  steps out), and then sets up the machine's state with about 80 calls by name
+  to `gml_Script_InitPV` (119), `gml_Script_SPV` (121) and `gml_Script_GPV`
+  (120). `CleanUp_0` frees it through `gml_Script_FPV` (122). **Static
+  reading.** So the spin count, the gold spent and the threshold are values in
+  the protected `GPV`/`SPV` store the dungeon chest and the satanic zone also
+  use (§ 11, § 14), not instance variables, and
+  `variable_instance_get_names` will not list them. Which keys hold them is
+  **not established**.
+- Those by-name calls are **not observed by** a `HookOneScript` detour on the
+  scripts' own functions. Both the short name and the `gml_Script_` name of
+  `InitPV`, `SPV`, `GPV` and `FPV` resolve through `GetNamedRoutineIndex` to
+  the script itself (an index of 100000 or more, so `GetNamedRoutineIndex`
+  prefers the script; this does not rule out a same-named functions-array
+  entry; `fnwalk` was built to walk the array for one but in Live 3 could not
+  locate the table, so the by-name route stays blind - § 20.5,
+  `ForgePact/docs/gamba-machine-research.md` § Instrument), yet over four `Create_0` runs with a machine as `self` the four
+  rows counted no call with the machine as `self`. **Measured** (2026-10-04).
+  Read a zero on those rows as "not observed by the detour", never as "not
+  called"; the dungeon chest's `store GPV calls=2` over a whole dungeon
+  (`dungeon-chest-research.md`) has the same shape. How the call reaches the
+  store without passing the detour is **not established**.
+- `Draw_64` draws each machine's gold spent, so a per-machine gold-spent value
+  exists, and the prompt offers a spin for 10,000 gold. **Static reading.**
+
+[Live 2 results](../ForgePact/docs/gamba-machine-research.md#live-2-results)
+
+### 20.3 A spawned machine removes itself
+
+- A machine created from outside the game's own effect route runs `Create_0`
+  inside the creating call and, in its first step, runs `Alarm_9`, which
+  removes it: `CleanUp_0` runs nested inside `Alarm_9` (the stack walk taken
+  at `CleanUp_0` shows, under the runner's frames, a frame in
+  `gml_Object_Slot_Machine_01_obj_Alarm_9`). `Step_0` never runs for those seven,
+  and nothing is left on screen. Seven machines, all the same: four by
+  `instance_create_depth` at depth 0 (three in Live 1: two in town, one in a
+  Hell zone; one as Live 2's control in town), then
+  one each by the game's own `instance_create` script called by name with the
+  player as `self`, by `instance_create_layer` on the player's `layer` value,
+  and by `instance_create_depth` with the player as `self` and `other`. The
+  route, the layer and the caller's identity varied; the outcome did not. The one exception is the `spawn scp` machine of Live 3 (below): it ran one `Step_0` (`step=1`) before its `Alarm_9` removed it.
+  **Measured** (2026-10-04).
+- No script or builtin row the instrument held (`instance_destroy`,
+  `instance_change`, `layer_destroy_instances` and
+  `instance_deactivate_object` among them) counted a call with the machine as
+  `self` during that removal. Which runner routine `Alarm_9` removes the
+  machine through is **not established**. **Measured.**
+- `Alarm_9` logs "Slot Machine Spawned" through `DebugLogAddExt` first, on
+  every path, and reports the spawn to clients; "out of thin air" is on a
+  later branch. **Static reading.**
+- After the log, `Alarm_9` reads the machine's protected value `activated`
+  through `GetVariable`; when it is false it sets `activated` and `isActive`
+  true and `rollTimes01`..`rollTimes04` each to 8 plus a runtime routine
+  called directly with the argument 8 (the shape of the runner's `irandom`
+  core - a sign-adjusted argument, an integer result - **not verified**; if
+  so, that one call bypasses the `irandom` builtin's table entry), all
+  through `SetVariable` by name. **Static reading** (2026-10-04).
+- `Alarm_9` then reads the protected value `pSpwd` (instance variable
+  `pSpwd` is the key) through `GetVariable`; when it is false it reports
+  "Slot Machine Spawned out of thin air" and destroys the machine through
+  the runner's instance-destroy routine, called directly - not the
+  `instance_destroy` builtin's table entry (Live 2's `instance_destroy` row
+  counted no machine call, and the `CleanUp_0-caller` walk's runner frames
+  lie inside that routine and its callee). Nothing else in `Alarm_9`
+  destroys or deactivates. **Static reading** (2026-10-04).
+- `Create_0` initialises `pSpwd` to false, so every machine ForgePact
+  created so far died for one reason: `pSpwd` was still false at the first step.
+  On the routes above it was never set true; on the `spawn scp` route
+  `sCP` called `SetVariable(key, true)` but the stamp did not take effect
+  (below). **Static reading** (2026-10-04), the `spawn scp` stamp outcome
+  measured in Live 3 (next).
+- The `spawn scp` route (§ 20.5) meets the guard on paper and still dies:
+  Live 3's `gambaprobe spawn scp` created a machine (`object=4644`, the game's
+  own `sCP` frame in its caller walk) that its own `Alarm_9` removed at its
+  first step (`create=1 alarm9=1 step=1 cleanup=1`, `machines=0`), so `sCP`'s
+  `SetVariable(key, true)` stamp did not take effect. The `spawn stamp` route
+  was refused outright (`dispatch failed: GetVariable`), because the extension
+  functions do not resolve by name (§ 20.5). A machine the game placed itself
+  survived and spun (§ 20.4). **Measured (Live 3)**.
+
+### 20.4 Spin, explosion and prize
+
+- The spin, first measured on a machine the game placed itself (§ 20.3): each
+  spin debits 10,000 gold through `PickUpGoldCheck` with the machine as `self`
+  (`a1=-10000`, one call per spin), and `GetGoldAmount` with the machine as
+  `self` reads the balance after each. Sixteen `PickUpGoldCheck` calls fired
+  over the window, with no `instance_destroy` carrying a machine argument.
+  **Measured (Live 3).**
+- A payout between spins is a random roll, and the machine is not destroyed
+  by it: the unique pick is the script `GetUniqueRepoStruct` with the machine
+  as `self` (`argc=3`, arguments `1, 0, 72`), whose randomness goes through
+  the `cpr_irandom` and `cpr_rand32` script rows (`scope=machine-event`); the
+  `irandom` lever armed for the roll stayed `INERT`, which is not-observed on
+  that row (the builtin rows are unproven against a compiled call), not proof
+  the roll passes no builtin. Two different items were built through
+  `CreateDefaultParams`: the unique pick's `(0,72,true)`, placed by
+  `LootGroundCreate` with type `1.0` (a unique), and a separate
+  `(0,11,undefined)`, placed with type `15.0` (a socketable built by
+  `CreateItemNew`). Placement runs `LootGroundCreate` ->
+  `CreateLootInFreePos` -> `instance_create_layer` (`Loot_Ground_obj`, plus
+  `Coin_obj`, `Loot_Pillar_obj`, `Impact_Sound_obj`,
+  `Visual_Effect_Simple_obj`); `machines=2` (the same two ids) before and
+  after. **Measured (Live 3).**
+- Live 3's sixteen-spin window produced two item builds with the machine as
+  `self`, about four spins apart, each followed by more spins. Gold arrived
+  separately, as `instance_create_layer` of `Coin_obj` with the machine as
+  `self` (three times), never through `CreateDefaultParams`, and the HUD gold
+  went back up afterwards. Over that session `CreateDefaultParams` ran 109
+  times, 2 of them with the machine as `self`: monster drops pass through it
+  too. **Measured (Live 3).** By the owner's report below, neither build was
+  its explosion. How often the machine pays out is not established; the
+  `rollTimes01`..`rollTimes04` counters stay only as § 20.3's static reading.
+  `CreateDefaultParams` itself reads nothing from `self`: it returns
+  `{j, b, c}` from its three arguments alone (§ 13.4). **Static reading.**
+- The explosion is the machine's sprite changing from `Slot_Machine_01_spr`
+  to `Slot_Machine_01_Destroyed_spr` (Python SDK sprite 26574); the instance
+  stays: the change line is read off the live instance, and a screenshot
+  after the explosion shows the wreck in place. (No `gone` line followed,
+  but that line has no positive control: none was recorded even when the
+  person left the first machine's zone.) With the machine as `self`, an
+  `instance_create_layer` of `Visual_Effect_Simple_obj` comes 2 frames
+  before the change, which itself comes about 190-200 frames after the
+  machine's last `PickUpGoldCheck` debit. It is not a payout: inside an open
+  window whose closed line read `build-dropped=0`, none of the eight build
+  rows (`CreateDefaultParams`, `CreateItemNew`, `GetUniqueRepoStruct`,
+  `LootGroundCreate`, `LootGroundCreateFromItem`, `CreateLootInFreePos`,
+  `DropItem`, `DropUniqueItems`) ran for any `self`, and no `Loot_Ground_obj` was created, while the
+  machine's `Coin_obj` creates in the same window showed that the window saw
+  its creates; neither explosion (no head dropped in either) built an item.
+  The two machines exploded after 12 debits (13 other machine-self calls,
+  the person counted 13) and 9 debits (the person counted 8/9), so they did
+  not share one spin count. Whether the exploding spin is debited is not
+  established (machine 1's 13 against 12 suggests it is not, which would
+  make machine 2's count 9-10), and neither is what decides the explosion. **Measured
+  (Live 4, two natural machines, 2026-10-05/06; `explosion-route: none`).**
+  So after Live 3's last spin, where the last machine-self call was the same
+  `Visual_Effect_Simple_obj` create and the instance still existed
+  (`machines=2`), that machine may have exploded; its probe did not read the
+  sprite. A force that acts on a payout build acts on the wrong event.
+- By the owner's report (2026-10-05), **not observed**: the explosion is
+  the machine's last act, the machine cannot be used afterwards (not tried
+  in Live 4), it comes after roughly 10-14 spins, and in the unmodded game it
+  is the only time Goburin's Head drops. Neither Live 4 explosion dropped
+  the head, so the route a natural head takes, and whether an explosion
+  that drops one builds it through the build rows, are not observed.
+- A Goburin's Head built from JSON and placed at a destroyed machine, with
+  the player as `self`, lands as one ground item: ForgePact's `gambapity`
+  read the machine's sprite change to `Slot_Machine_01_Destroyed_spr` once a
+  frame and, 60 presented frames later, ran `json_parse` of the charm's
+  `{w, a, j, b, c}` record (`j` 0, `b` 98, `c` 1), `InitItemFromJson` and
+  `LootGroundCreateFromItem` at the machine's `x`/`y` (7920,3448) with the
+  local player as `self`; `instance_exists` confirmed the returned instance
+  on the first attempt, and the built item's rarity read 10. A scan of
+  `Loot_Ground_obj` within 256 px of the machine then found exactly one
+  charm (`itemType` 10, `j` 0, `b` 98), the drop's own `CreateItemNew`
+  returned the charm, and a screenshot showed one `Goburin's Head` label by
+  the wreck. The same machine took 12 `PickUpGoldCheck` debits for the
+  person's count of 12 spins, the exploding spin included; with Live 4's
+  machine 1 at 12 debits for 13, whether the exploding spin is debited
+  stays not established (one sample each way). **Measured (Live 5, one
+  natural machine, 2026-10-06, player build).** No natural head appeared, so
+  how the game builds its own head is still not observed.
+- Two more natural machines exploded in one session, after the person's
+  counts of 13 and 9 spins (no debit was read: ForgePact's phase-6 build
+  hooks no spin), and neither dropped a head of the game's own. At the
+  first, the ground scan and the head-build window saw no charm and a
+  screenshot showed none by the wreck. At the second, the same loader route
+  with the player as `self` placed a charm at the machine (7584,4552), read
+  back on the first attempt with rarity 10, and the ground scan after it
+  found exactly that one (`heads=1`). Two machines stood in one zone (Deep
+  Space, Pyramid Level 1) before the first spin. Across Live 4, 5 and 6,
+  five natural machines exploded, at the person's counts of 13, 8/9, 12, 13
+  and 9 spins, none with a head of the game's own; what decides the
+  explosion is still not established. **Measured (Live 6, two natural
+  machines, 2026-10-06, player build).**
+- `Step_0` does not decompile on this build (the decompiler process died on
+  it). A call-by-call listing of it, with callees named from the symbol dump,
+  shows only these named script calls: 7 `CreateDefaultParams`, 3
+  `GetUniqueRepoStruct`, 2 `LootBlocksUseKey`, 2 `GetGoldAmount`, 2
+  `GoldOperationPending`, 2 `NetworkSendClientEffect` and 1
+  `GetGoldCounterHash`. The builds sit in one stretch: three builds with no
+  pick before them, three pick-then-build pairs and one trailing build. Each
+  pick site loads the same small constants at the same distances before the
+  call, consistent with all three picking the measured `(1, 0, 72)`, and no
+  site was seen loading 10 or 98. **Static reading, not verified** (a small
+  operand can be a stack offset); it cannot say which build, if any, is the
+  explosion's.
+- `Step_0` is the only event that calls `GetUniqueRepoStruct` (3 sites) and
+  `CreateDefaultParams` (7) directly, the pair the Angelic roll uses (§ 13.4).
+  No event calls `LootGroundCreate`, `LootGroundCreateFromItem`,
+  `CreateLootInFreePos`, `DropItem`, `DropUniqueItems`, `cpr_irandom` or
+  `cpr_rand32` directly, and none names them for lookup. Neither 10,000 nor
+  750 appears as a literal in the `Create_0`, `Alarm_0` or closure bodies, so
+  the price and the odds live in constant tables or the protected store.
+  **Static reading.**
+- `PickUpGoldCheck` is the only call that changes the gold balance (§ 13.10);
+  the spin's gold debit is measured through it with the machine as `self`
+  (above). **Measured (Live 3).**
+- In about 15 seconds of combat with no mod on, `gml_Script_cpr_irandom` (707)
+  was called 1,308 times and `gml_Script_cpr_rand32` (709) 1,386 times, while
+  the `irandom`, `irandom_range`, `random`, `random_range` and `choose`
+  builtin rows did not move (an `irandom` sent through `CallBuiltin` in the
+  same session did register, so the rows see a `CallBuiltin`-routed call; they
+  are unproven against a compiled call, so this is not-observed, not proof
+  combat calls no builtin RNG). Combat's rolls go through the `cpr_*` scripts.
+  **Measured (Live 2)**. The
+  machine's prize roll passes the same `cpr_*` scripts (above); a builtin RNG
+  row did not move, which is not-observed. **Measured (Live 3).**
+
+[Live 2 results](../ForgePact/docs/gamba-machine-research.md#live-2-results)
+[Live 3 results](../ForgePact/docs/gamba-machine-research.md#live-3-results)
+[Live 5 results](../ForgePact/docs/gamba-machine-research.md#live-5-results)
+[Live 6 results](../ForgePact/docs/gamba-machine-research.md#live-6-results)
+
+### 20.5 The spawned flag and the game's spawner
+
+- The spawned flag is a protected value, keyed by the ordinary instance
+  variable `pSpwd`'s value; `Create_0` initialises the flag to false through
+  `InitPV`, and `Alarm_9` destroys a machine whose flag is still false in its
+  first step (§ 20.3). `sCP` is the game's own spawner that sets it true.
+  **Static reading** (2026-10-04).
+- `sCP(x, y, object)` (474) calls the `instance_create_layer` builtin with
+  `(x, y, global.gameLayer[room][0], object)` - the layer the game's own
+  `instance_create` script also picks - then reads the new instance's `pSpwd`
+  key and calls `SetVariable(key, true)` by name with the caller as `self`,
+  and returns the instance. No early return, no other check. **Static
+  reading** (2026-10-04). The argument order `(x, y, object)` contradicts
+  `S10-special-content-notes.md` ("object ref, x, y"), which § 14.3's bullet
+  once copied (it now reads `sCP(x, y, object)`); Live 3's `spawn scp` answered `object=4644` with the default
+  `(x, y, object)` order, confirming it. **Measured (Live 3)** for the order.
+- The same `pSpwd` guard is shared game-wide: 60 compiled functions read that
+  variable slot - chests, portals, shrines, globes, pickups, the zone state
+  buffer's Create closure, `ZoneGenPopulatePresetObjects`, `CreateItemDrop`,
+  `DropGold`, `LoadBossDeath`, and `ClientCreateEffect` once inside its
+  machine case. So § 20.2's "a single call of the game's own
+  `instance_create`" was incomplete: the effect case also stamps `pSpwd`,
+  which is why the `game` spawn route (the call without the stamp) died.
+  **Static reading** (2026-10-04).
+- `Alarm_9` and `sCP` do not use the store scripts at all: they reach the
+  machine's state through the extension functions `GetVariable`,
+  `SetVariable` and `SetVariableToUndefined`, called by name with the builtin
+  convention (a compiled `SetVariable` call branches on `is_undefined(value)`
+  to `SetVariableToUndefined(key)`). **Static reading** (2026-10-04).
+- The three extension functions do **not** resolve by name from the plugin:
+  `GetVariable`, `SetVariable` and `SetVariableToUndefined` all read
+  `(not found by name, st=4) missing` at `hook`, so the state route is blind
+  (`state-route: blind`) and the `spawn stamp` route is refused (`dispatch
+  failed: GetVariable`). **Measured (Live 3).**
+- `fnwalk` could not locate the functions array by validation: `gambaprobe
+  fnwalk: table not found (no aligned qword equal to camera_create's routine
+  with eight valid entries)`, so the by-name route stays blind
+  (`byname-route: blind`) and whether the array holds same-named entries for
+  the store scripts is still open. **Measured (Live 3).**
