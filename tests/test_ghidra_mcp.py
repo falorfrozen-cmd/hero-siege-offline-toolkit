@@ -1,0 +1,200 @@
+"""tools/ghidra_mcp.py: the `ghidra` MCP server's launcher.
+
+Every case runs on temp-directory fixtures: a fake Ghidra tree of empty jars, a
+fake project, and a stand-in HTTP server. Nothing here starts Java, reads the
+real Ghidra project, or touches port 8089.
+
+What is pinned is the launcher's own contract, the part a careless edit could
+quietly break:
+- it never puts the project copy or its server files inside a git tree;
+- the server binds to loopback, has script execution stripped from its
+  environment, and has its file endpoints confined to the project's directory;
+- the classpath carries the release jar first and Ghidra's jar directories, and
+  goes through an @argfile rather than the command line;
+- only a GhidraMCP server of the pinned version counts as "ours" on the port;
+- `.mcp.json` starts it the way `hs-drive` is started, and Codex gets the same.
+Each acceptance has a negative control beside it.
+"""
+import http.server
+import json
+import os
+import sys
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from tools import ghidra_mcp  # noqa: E402
+
+
+def _cfg(base: Path, **over) -> ghidra_mcp.Config:
+    values = dict(
+        ghidra=base / "ghidra_12.1.4_PUBLIC",
+        home=base / "tools" / "ghidra-mcp",
+        source_project=base / "projects" / "HeroSiege.gpr",
+        project=base / "projects" / "mcp" / "HeroSiege.gpr",
+        program="/Hero_Siege.exe",
+        port=8089,
+    )
+    values.update(over)
+    return ghidra_mcp.Config(**values)
+
+
+def _fake_ghidra(root: Path) -> None:
+    for kind, module in (("Framework", "Generic"), ("Features", "Base"), ("Processors", "x86"), ("Extensions", "Other")):
+        lib = root / "Ghidra" / kind / module / "lib"
+        lib.mkdir(parents=True)
+        (lib / f"{module}.jar").write_bytes(b"")
+
+
+class ConfigTests(unittest.TestCase):
+    def test_defaults_follow_the_conventional_paths(self):
+        with tempfile.TemporaryDirectory() as d:
+            user = Path(d)
+            (user / "tools" / "ghidra_12.0.1_PUBLIC").mkdir(parents=True)
+            (user / "tools" / "ghidra_12.1.4_PUBLIC").mkdir()
+            cfg = ghidra_mcp.load_config({"USERPROFILE": str(user)})
+            self.assertEqual(cfg.ghidra, user / "tools" / "ghidra_12.1.4_PUBLIC")
+            self.assertEqual(cfg.source_project, user / "ghidra_projects" / "HeroSiege.gpr")
+            self.assertEqual(cfg.project, user / "ghidra_projects" / "mcp" / "HeroSiege.gpr")
+            self.assertNotEqual(cfg.project, cfg.source_project)
+            self.assertEqual(cfg.url, "http://127.0.0.1:8089")
+
+    def test_env_overrides_each_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = ghidra_mcp.load_config({
+                "USERPROFILE": d, "GHIDRA_INSTALL_DIR": "G", "HS_GHIDRA_MCP_HOME": "H",
+                "HS_GHIDRA_MCP_PROJECT": "P.gpr", "HS_GHIDRA_MCP_PORT": "9001",
+            })
+            self.assertEqual((cfg.ghidra, cfg.home, cfg.project, cfg.port), (Path("G"), Path("H"), Path("P.gpr"), 9001))
+
+    def test_missing_pieces_are_named_with_their_fix(self):
+        with tempfile.TemporaryDirectory() as d:
+            found = ghidra_mcp.problems(_cfg(Path(d)))
+            self.assertEqual(len(found), 3)
+            self.assertTrue(any("GHIDRA_INSTALL_DIR" in p for p in found))
+            self.assertTrue(all("setup" in p for p in found[1:]))
+
+
+class GitRefusalTests(unittest.TestCase):
+    def test_refuses_a_path_inside_a_git_tree(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d) / "repo"
+            (repo / "sub").mkdir(parents=True)
+            (repo / ".git").write_text("gitdir: elsewhere")  # a worktree's .git is a file
+            with self.assertRaises(SystemExit) as cm:
+                ghidra_mcp.refuse_inside_git(repo / "sub" / "HeroSiege.gpr", "project copy")
+            self.assertIn("Legal", str(cm.exception))
+
+    def test_allows_a_path_outside_any_git_tree(self):
+        with tempfile.TemporaryDirectory() as d:
+            ghidra_mcp.refuse_inside_git(Path(d) / "mcp" / "HeroSiege.gpr", "project copy")
+
+    def test_setup_refuses_a_home_inside_this_repository(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = _cfg(Path(d), home=ROOT / ".claude" / "scratch" / "ghidra-mcp")
+            with self.assertRaises(SystemExit):
+                ghidra_mcp.setup(cfg, refresh_project=False)
+            self.assertFalse(cfg.home.exists())
+
+
+class ServerCommandTests(unittest.TestCase):
+    def test_binds_loopback_and_uses_an_argfile_classpath(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            cfg = _cfg(base)
+            _fake_ghidra(cfg.ghidra)
+            cfg.home.mkdir(parents=True)
+            cmd = ghidra_mcp.server_command(cfg)
+            self.assertEqual(cmd[cmd.index("--bind") + 1], "127.0.0.1")
+            self.assertEqual(cmd[cmd.index("--project") + 1], str(cfg.project))
+            self.assertIn(f"@{cfg.argfile}", cmd)
+            self.assertFalse(any(".jar" in a for a in cmd), "the classpath belongs in the argfile")
+            cp = cfg.argfile.read_text(encoding="utf-8")
+            self.assertTrue(cp.startswith('-classpath "'))
+            entries = cp.split('"')[1].split(os.pathsep)
+            self.assertEqual(Path(entries[0]).name, ghidra_mcp.JAR)
+            names = {Path(e).name for e in entries}
+            self.assertEqual(names, {ghidra_mcp.JAR, "Generic.jar", "Base.jar", "x86.jar"})
+            self.assertNotIn("Other.jar", names)  # Extensions is not on the server's classpath
+
+    def test_environment_strips_scripts_and_confines_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = _cfg(Path(d))
+            os.environ["GHIDRA_MCP_ALLOW_SCRIPTS"] = "1"
+            os.environ["GHIDRA_MCP_BIND_ADDRESS"] = "0.0.0.0"
+            try:
+                env = ghidra_mcp.server_env(cfg)
+            finally:
+                del os.environ["GHIDRA_MCP_ALLOW_SCRIPTS"], os.environ["GHIDRA_MCP_BIND_ADDRESS"]
+            self.assertNotIn("GHIDRA_MCP_ALLOW_SCRIPTS", env)
+            self.assertNotIn("GHIDRA_MCP_BIND_ADDRESS", env)
+            self.assertEqual(env["GHIDRA_MCP_FILE_ROOT"], str(cfg.project.parent))
+            self.assertIn("PATH", env)  # control: the rest of the environment passes through
+
+
+class _Health(http.server.BaseHTTPRequestHandler):
+    body = b"{}"
+
+    def do_GET(self):  # noqa: N802
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(self.body)
+
+    def log_message(self, *a):
+        pass
+
+
+class HealthTests(unittest.TestCase):
+    def _serve(self, payload: dict) -> int:
+        handler = type("H", (_Health,), {"body": json.dumps(payload).encode()})
+        srv = http.server.HTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return srv.server_address[1]
+
+    def test_accepts_the_pinned_headless_version(self):
+        port = self._serve({"status": "healthy", "version": f"{ghidra_mcp.VERSION}-headless", "program_loaded": True})
+        with tempfile.TemporaryDirectory() as d:
+            self.assertTrue(ghidra_mcp.health(_cfg(Path(d), port=port))["program_loaded"])
+
+    def test_rejects_another_service_on_the_port(self):
+        port = self._serve({"status": "healthy", "version": "5.14.2"})
+        with tempfile.TemporaryDirectory() as d:
+            cfg = _cfg(Path(d), port=port)
+            self.assertIsNone(ghidra_mcp.health(cfg))
+            # Everything else present, so start() reaches the port check: it must
+            # neither adopt the foreign service nor launch a server beside it.
+            _fake_ghidra(cfg.ghidra)
+            cfg.bridge.parent.mkdir(parents=True)
+            cfg.bridge.write_bytes(b"")
+            cfg.jar.write_bytes(b"")
+            cfg.project.parent.mkdir(parents=True)
+            cfg.project.write_text("")
+            self.assertEqual(ghidra_mcp.problems(cfg), [])
+            with self.assertRaises(SystemExit) as cm:
+                ghidra_mcp.start(cfg)
+            self.assertIn("not as GhidraMCP", str(cm.exception))
+            self.assertFalse(cfg.pidfile.exists())
+
+
+class WiringTests(unittest.TestCase):
+    def test_mcp_json_and_codex_start_it_like_hs_drive(self):
+        servers = json.loads((ROOT / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]
+        self.assertEqual(servers["ghidra"], {"command": "py", "args": ["-3", "-m", "tools.ghidra_mcp"]})
+        self.assertEqual(servers["hs-drive"]["args"][:2], ["-3", "-m"])
+        codex = (ROOT / ".codex" / "config.toml").read_text(encoding="utf-8")
+        self.assertIn('[mcp_servers.ghidra]\ncommand = "py"\nargs = ["-3", "-m", "tools.ghidra_mcp"]', codex)
+
+    def test_pinned_release_digests_are_full_sha256(self):
+        self.assertEqual(set(ghidra_mcp.SHA256), {ghidra_mcp.ZIP, ghidra_mcp.WHEEL})
+        for digest in ghidra_mcp.SHA256.values():
+            self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -155,6 +155,12 @@ refuses with `lease_held`, naming the holder. See
 [`docs/tools/hs-drive-mcp.md`](docs/tools/hs-drive-mcp.md). Nothing about it
 ships to a player.
 
+The `ghidra` MCP server (`tools/ghidra_mcp.py`) puts the local Ghidra project
+behind tool calls: search functions, decompile by address, follow callers and
+xrefs, with no headless run per question. It serves a copy of the research
+project from one shared headless server on loopback, and what it decompiles
+stays local. See [`docs/tools/ghidra-mcp.md`](docs/tools/ghidra-mcp.md).
+
 | | |
 | --- | --- |
 | Source, and how to work on it | [`hub/`](hub) · [`hub/instructions.md`](hub/instructions.md) |
