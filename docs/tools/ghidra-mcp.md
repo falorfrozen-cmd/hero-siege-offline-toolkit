@@ -32,9 +32,9 @@ The server is shared because a Ghidra project takes one lock. A server per
 session would let the first session in `.claude/worktrees/` lock out every
 other one. Sessions that start together (Claude Code and Codex, two worktrees) take
 `server.lock` in turn: the first launches, and the rest re-check `/health`
-once they hold the lock and find the server already up. `server.pid` is
-written only after the launched process passes its own health check (PR #449
-review). A service on the port that is not GhidraMCP 6.0.0 is never adopted,
+once they hold the lock and find the server already up. A launch that is
+not healthy by its deadline is killed, so it never holds the project behind a
+failed start. A service on the port that is not GhidraMCP 6.0.0 is never adopted,
 and the launcher refuses rather than starting a second server beside it.
 
 ## The project it opens is a copy
@@ -82,14 +82,17 @@ Everything goes outside any git checkout, and the tool refuses otherwise:
 | What | Default | Override |
 |---|---|---|
 | Ghidra install | newest `%USERPROFILE%\tools\ghidra_*_PUBLIC` | `GHIDRA_INSTALL_DIR` |
-| jar, bridge venv, `server.log`, `server.pid` | `%USERPROFILE%\tools\ghidra-mcp-6.0.0` | `HS_GHIDRA_MCP_HOME` |
+| jar, bridge venv, `server.log`, `server.lock` | `%USERPROFILE%\tools\ghidra-mcp-6.0.0` | `HS_GHIDRA_MCP_HOME` |
 | research project (copied from) | `%USERPROFILE%\ghidra_projects\HeroSiege.gpr` | `HS_GHIDRA_SOURCE_PROJECT` |
 | project copy (served) | `%USERPROFILE%\ghidra_projects\mcp\HeroSiege.gpr` | `HS_GHIDRA_MCP_PROJECT` |
 | program | `/Hero_Siege.exe` | `HS_GHIDRA_MCP_PROGRAM` |
 | port | `8089` | `HS_GHIDRA_MCP_PORT` |
 
-`start` and `stop` manage the server by hand. `stop` ends only the process
-whose pid this tool recorded.
+`start` and `stop` manage the server by hand. `stop` finds the process
+listening on the port and kills it only if it runs GhidraMCP's server class on
+this project copy. Otherwise it reports what holds the port and kills nothing.
+There is no pid file. The PR #449 review showed one goes stale after a crash or
+reboot, or is never written when a launcher dies mid-start.
 
 ## What it refuses, and what stays local
 

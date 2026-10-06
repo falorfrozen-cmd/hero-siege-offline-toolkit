@@ -30,12 +30,12 @@ Subcommands (all paths overridable, see `Config`):
     py -3 -m tools.ghidra_mcp            # stdio MCP server (what .mcp.json runs)
     py -3 -m tools.ghidra_mcp status     # resolved paths, server health
     py -3 -m tools.ghidra_mcp start      # start the shared server, wait for it
-    py -3 -m tools.ghidra_mcp stop       # stop the server this tool started
+    py -3 -m tools.ghidra_mcp stop       # stop the server on this project copy
     py -3 -m tools.ghidra_mcp setup [--refresh-project]
         # download + sha256-check the pinned release, make the bridge venv,
         # copy the project. Downloads: ask the owner first.
 
-Everything this writes (jar, venv, log, pid, project copy) lives outside any
+Everything this writes (jar, venv, log, lock, project copy) lives outside any
 git checkout; it refuses otherwise, because the project copy and the server's
 caches hold decompiled game code. Decompiled output reaching the agent is fine;
 it reaching a tracked file is not (AGENTS.md § "Legal").
@@ -107,10 +107,6 @@ class Config:
     @property
     def log(self) -> Path:
         return self.home / "server.log"
-
-    @property
-    def pidfile(self) -> Path:
-        return self.home / "server.pid"
 
     @property
     def argfile(self) -> Path:
@@ -278,13 +274,11 @@ def launch(cfg: Config, wait: float) -> dict:
     while (h := health(cfg)) is None:
         if time.monotonic() > deadline:
             code = proc.poll()
-            state = f"exited with {code}" if code is not None else f"not healthy after {wait:.0f}s"
+            if code is None:  # ours and never healthy: don't leave it holding the project
+                proc.kill()
+            state = f"exited with {code}" if code is not None else f"not healthy after {wait:.0f}s; killed it"
             raise SystemExit(f"ghidra_mcp: server {state}; see {cfg.log}")
         time.sleep(1)
-    # Record the pid only for a process that is ours and still up, so `stop`
-    # never holds a dead pid while the real server runs on unrecorded.
-    if proc.poll() is None:
-        cfg.pidfile.write_text(str(proc.pid), encoding="ascii")
     return h
 
 
@@ -305,19 +299,60 @@ def start(cfg: Config, wait: float = 120) -> dict:
     return h
 
 
-def stop(cfg: Config) -> int:
-    """Stop the server this tool started (by its pid file), never anything else."""
-    if not cfg.pidfile.is_file():
-        print("ghidra_mcp: no pid file; nothing this tool started is recorded")
-        return 1
-    pid = cfg.pidfile.read_text(encoding="ascii").strip()
+def listener_pid(port: int) -> int | None:
+    """The pid listening on 127.0.0.1:<port>, or None."""
     if os.name == "nt":
-        rc = subprocess.run(["taskkill", "/PID", pid, "/T", "/F"], capture_output=True).returncode
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            cols = line.split()
+            if len(cols) == 5 and cols[1] == f"127.0.0.1:{port}" and cols[3] == "LISTENING":
+                return int(cols[4])
+        return None
+    out = subprocess.run(["lsof", "-nP", f"-iTCP@127.0.0.1:{port}", "-sTCP:LISTEN", "-t"],
+                         capture_output=True, text=True).stdout.split()
+    return int(out[0]) if out else None
+
+
+def command_line(pid: int) -> str:
+    if os.name == "nt":
+        ps = f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"
+        return subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                              capture_output=True, text=True).stdout.strip()
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+    except OSError:
+        return ""
+
+
+def is_our_server(cmdline: str, cfg: Config) -> bool:
+    """A GhidraMCP headless server on *this* project copy, by what it runs."""
+    norm = (lambda s: s.lower().replace("\\", "/")) if os.name == "nt" else (lambda s: s)
+    return SERVER_CLASS in cmdline and norm(str(cfg.project)) in norm(cmdline)
+
+
+def stop(cfg: Config) -> int:
+    """Stop the server for this project copy, never anything else.
+
+    It is found by the process listening on the port, and killed only if that
+    process runs GhidraMCP's server class on this project copy. A pid file was
+    tried first and failed both ways (PR #449 review): a launcher killed before
+    `/health` answered left the server unrecorded, and a stale pid survives a
+    crash or reboot to name an unrelated process.
+    """
+    pid = listener_pid(cfg.port)
+    if pid is None:
+        print(f"ghidra_mcp: nothing listens on 127.0.0.1:{cfg.port}; killed nothing")
+        return 0
+    if not is_our_server(command_line(pid), cfg):
+        print(f"ghidra_mcp: pid {pid} holds port {cfg.port} but is not the GhidraMCP server for "
+              f"{cfg.project}; killed nothing")
+        return 1
+    if os.name == "nt":
+        rc = subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True).returncode
     else:
-        rc = subprocess.run(["kill", pid]).returncode
-    cfg.pidfile.unlink(missing_ok=True)
-    print(f"ghidra_mcp: stopped server pid {pid}" if rc == 0 else f"ghidra_mcp: pid {pid} was not running")
-    return 0
+        rc = subprocess.run(["kill", str(pid)]).returncode
+    print(f"ghidra_mcp: stopped server pid {pid}" if rc == 0 else f"ghidra_mcp: could not stop pid {pid}")
+    return 0 if rc == 0 else 1
 
 
 def _sha256(path: Path) -> str:

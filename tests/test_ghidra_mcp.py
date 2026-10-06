@@ -187,7 +187,6 @@ class HealthTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as cm:
                 ghidra_mcp.start(cfg)
             self.assertIn("not as GhidraMCP", str(cm.exception))
-            self.assertFalse(cfg.pidfile.exists())
 
 
 _HOLD_LOCK = """
@@ -207,14 +206,18 @@ class _Proc:
 
     def __init__(self, code):
         self.code = code
+        self.killed = False
 
     def poll(self):
         return self.code
 
+    def kill(self):
+        self.killed = True
+
 
 class StartRaceTests(unittest.TestCase):
-    """PR #449 review: sessions starting together must launch one server, and
-    `server.pid` must only ever name a live server this tool launched."""
+    """PR #449 review: sessions starting together must launch one server, and a
+    launch that never turns healthy must not leave a server running behind it."""
 
     def _held_elsewhere(self, home: Path, seconds: float) -> subprocess.Popen:
         proc = subprocess.Popen([sys.executable, "-c", _HOLD_LOCK, str(ROOT), str(home), str(seconds)],
@@ -240,31 +243,82 @@ class StartRaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             cfg = _cfg(Path(d))
             up = {"version": f"{ghidra_mcp.VERSION}-headless", "program_loaded": True}
-            with mock.patch.object(ghidra_mcp, "health", side_effect=[None, up]),                  mock.patch.object(ghidra_mcp, "launch") as launch:
+            with mock.patch.object(ghidra_mcp, "health", side_effect=[None, up]), \
+                    mock.patch.object(ghidra_mcp, "launch") as launch:
                 self.assertEqual(ghidra_mcp.start(cfg), up)
             launch.assert_not_called()
             # control: still nothing after the lock, so this session launches
-            with mock.patch.object(ghidra_mcp, "health", side_effect=[None, None]),                  mock.patch.object(ghidra_mcp, "launch", return_value=up) as launch:
+            with mock.patch.object(ghidra_mcp, "health", side_effect=[None, None]), \
+                    mock.patch.object(ghidra_mcp, "launch", return_value=up) as launch:
                 ghidra_mcp.start(cfg)
             launch.assert_called_once()
 
-    def _launch(self, cfg, proc_code, healths):
+    def _launch(self, cfg, proc, healths, clock):
         _complete(cfg)
-        with mock.patch.object(ghidra_mcp, "_request", return_value=None),              mock.patch.object(ghidra_mcp, "health", side_effect=healths),              mock.patch.object(ghidra_mcp.subprocess, "Popen", return_value=_Proc(proc_code)),              mock.patch.object(ghidra_mcp.time, "sleep"):
+        with mock.patch.object(ghidra_mcp, "_request", return_value=None), \
+                mock.patch.object(ghidra_mcp, "health", side_effect=healths), \
+                mock.patch.object(ghidra_mcp.subprocess, "Popen", return_value=proc), \
+                mock.patch.object(ghidra_mcp.time, "monotonic", side_effect=clock), \
+                mock.patch.object(ghidra_mcp.time, "sleep"):
             return ghidra_mcp.launch(cfg, wait=30)
 
-    def test_an_exited_launch_still_finds_a_healthy_server_and_records_no_pid(self):
+    def test_an_exited_launch_still_finds_a_healthy_server(self):
         with tempfile.TemporaryDirectory() as d:
-            cfg = _cfg(Path(d))
             up = {"version": f"{ghidra_mcp.VERSION}-headless"}
-            self.assertEqual(self._launch(cfg, 1, [None, None, up]), up)
-            self.assertFalse(cfg.pidfile.exists())
+            proc = _Proc(1)
+            self.assertEqual(self._launch(_cfg(Path(d)), proc, [None, None, up], [0, 1, 2]), up)
+            self.assertFalse(proc.killed)
 
-    def test_a_live_launch_records_its_pid_after_health(self):
+    def test_a_launch_past_its_deadline_is_killed(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc = _Proc(None)
+            with self.assertRaises(SystemExit) as cm:
+                self._launch(_cfg(Path(d)), proc, [None, None], [0, 5, 31])
+            self.assertTrue(proc.killed)
+            self.assertIn("killed it", str(cm.exception))
+            # control: one that already exited is reported, not killed
+            proc = _Proc(1)
+            with self.assertRaises(SystemExit) as cm:
+                self._launch(_cfg(Path(d) / "b"), proc, [None], [0, 31])
+            self.assertFalse(proc.killed)
+            self.assertIn("exited with 1", str(cm.exception))
+
+
+class StopTests(unittest.TestCase):
+    """`stop` finds the server by the process holding the port and kills it only
+    if that process runs GhidraMCP's server on this project copy (PR #449
+    review: a pid file went stale, or was never written)."""
+
+    def _stop(self, cfg, pid, cmdline):
+        with mock.patch.object(ghidra_mcp, "listener_pid", return_value=pid), \
+                mock.patch.object(ghidra_mcp, "command_line", return_value=cmdline), \
+                mock.patch.object(ghidra_mcp.subprocess, "run",
+                                  return_value=subprocess.CompletedProcess([], 0)) as run:
+            return ghidra_mcp.stop(cfg), run
+
+    def test_kills_the_server_on_this_project(self):
         with tempfile.TemporaryDirectory() as d:
             cfg = _cfg(Path(d))
-            self._launch(cfg, None, [None, {"version": ghidra_mcp.VERSION}])
-            self.assertEqual(cfg.pidfile.read_text(), "4242")
+            cmd = f"java -Xmx4g {ghidra_mcp.SERVER_CLASS} --bind 127.0.0.1 --project {cfg.project}"
+            rc, run = self._stop(cfg, 777, cmd)
+            self.assertEqual(rc, 0)
+            self.assertIn("777", run.call_args.args[0])
+            self.assertNotIn("/T", run.call_args.args[0])  # the process, not a tree
+
+    def test_kills_nothing_when_another_process_holds_the_port(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = _cfg(Path(d))
+            for cmd in ("C:\\Windows\\notepad.exe",  # a reused pid
+                        f"java {ghidra_mcp.SERVER_CLASS} --project C:\\elsewhere\\Other.gpr"):  # another project
+                rc, run = self._stop(cfg, 777, cmd)
+                self.assertEqual(rc, 1)
+                run.assert_not_called()
+
+    def test_kills_nothing_when_the_port_is_silent(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, run = self._stop(_cfg(Path(d)), None, "")
+            self.assertEqual(rc, 0)
+            run.assert_not_called()
 
 
 class WiringTests(unittest.TestCase):
