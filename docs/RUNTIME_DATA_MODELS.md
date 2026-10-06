@@ -1733,6 +1733,17 @@ All **measured** (2026-09-10/11).
   had spawned by first sight, and the rest made about 5.25 kills each (614 for
   117). **Measured 2026-10-03**; the other creator objects' `enemyArray` was
   not sampled ([dungeon chest, Live procedure 1b](../ForgePact/docs/dungeon-chest-research.md#live-procedure-1b)).
+- **Only the plain creator has its own Create-event closure, and the seven
+  creator objects are unrelated to one another.** Of the seven, only
+  `Enemy_Creator_obj` has a Create-event closure in the SDK script table,
+  `anon@886@gml_Object_Enemy_Creator_obj_Create_0` (the `anon@N` part is
+  patch-specific, §5.3); the Ambush, Ancient, Champion, Colossal Chest, Legion
+  and Miniboss creators have none. All seven (objects 1409-1415) are each a
+  root object in the SDK parent table, with no parent and no children, so
+  `instance_number`/`instance_find` on one never counts another's instances.
+  Whether the other six carry `enemyCreatorTimer` or `enemyArray` at all is
+  **not established**: both were only ever measured on `Enemy_Creator_obj`.
+  **Static reading** of the SDK tables, 2026-10-06 (falorfrozen-cmd/ForgePact#181).
 - `EnemyCreatorPending` only reports whether a creator still has an alarm running.
   Creators make density copies through four-argument `instance_create_*` calls.
   **Static reading.**
