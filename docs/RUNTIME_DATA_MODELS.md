@@ -4385,7 +4385,8 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   `InitPV`, `SPV`, `GPV` and `FPV` resolve through `GetNamedRoutineIndex` to
   the script itself (an index of 100000 or more, so `GetNamedRoutineIndex`
   prefers the script; this does not rule out a same-named functions-array
-  entry, which `fnwalk` walks - § 20.5,
+  entry; `fnwalk` was built to walk the array for one but in Live 3 could not
+  locate the table, so the by-name route stays blind - § 20.5,
   `ForgePact/docs/gamba-machine-research.md` § Instrument), yet over four `Create_0` runs with a machine as `self` the four
   rows counted no call with the machine as `self`. **Measured** (2026-10-04).
   Read a zero on those rows as "not observed by the detour", never as "not

@@ -51,8 +51,9 @@ instrument resolved both the short and the `gml_Script_` name of each script
 through `GetNamedRoutineIndex`, and all 24 of its script rows read
 `byname=same`: both names name the script itself (a word that only shows
 which entry `GetNamedRoutineIndex` prefers; a same-named functions-array
-routine is not ruled out, and `gambaprobe fnwalk` now walks the array for
-one). Yet four `Create_0` runs left those four rows at zero
+routine is not ruled out; `gambaprobe fnwalk` was built to walk the array
+for one, but in Live 3 it could not locate the table (`table not found`), so
+the by-name route stays blind - RUNTIME_DATA_MODELS § 20.5). Yet four `Create_0` runs left those four rows at zero
 calls with the machine as `self`, while the event detours counted every
 `Create_0`, and the builtin rows' own positive control (`selftest`: one
 `irandom` sent through `CallBuiltin`, the row moved by exactly one) passed in
