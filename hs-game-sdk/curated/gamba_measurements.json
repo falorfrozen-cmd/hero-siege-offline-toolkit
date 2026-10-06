@@ -274,7 +274,8 @@
         "roll_script": "gml_Script_GetUniqueRepoStruct",
         "roll_args": [1, 0, 72],
         "roll_rng": ["gml_Script_cpr_irandom", "gml_Script_cpr_rand32"],
-        "create_default_params": [{"b": 72, "j": 0, "c": 1}, {"b": 11, "j": 0, "c": 0}],
+        "create_default_params": [{"args": [0, 72, true], "returned": {"b": 72, "j": 0, "c": 1}}, {"args": [0, 11, null], "returned": {"b": 11, "j": 0, "c": 0}}],
+        "create_default_params_note": "args are the call's three arguments (null = the runtime's undefined); returned is the struct the call returned, as the probe printed it (Live 3). The undefined third argument came back as c=0 in the returned struct; that is measured for this one call, not a claim that undefined and 0 behave alike elsewhere.",
         "prize_route": ["LootGroundCreate", "CreateLootInFreePos", "instance_create_layer"],
         "machine_destroyed_by_payout": false,
         "prize_roll_builtin_rng_observed": false
