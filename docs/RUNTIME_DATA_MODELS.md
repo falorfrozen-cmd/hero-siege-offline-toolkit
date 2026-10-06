@@ -4318,11 +4318,15 @@ are not, and are written "Live 1 run Jn" here.
 
 ## 20. Gamba machines
 
-What ForgePact's Goburin's Head pity research (#134, phase 1) established about
-the gamba machine on 2026-10-04: a static reading of the object's events, and
-three live sessions with its `gambaprobe` instrument (research build), on save
-slot 14 ("Sorak"), mostly in the Town of Inoya, with Live 3 also in the Fields
-of Battle. The argument, the controls and the check tables are in ForgePact's
+What ForgePact's Goburin's Head pity work (#134) established about the gamba
+machine: in phase 1, on 2026-10-04, a static reading of the object's events
+and three live sessions with its `gambaprobe` instrument (research build), on
+save slot 14 ("Sorak"), mostly in the Town of Inoya, with Live 3 also in the
+Fields of Battle; in phase 4, Live 4 (2026-10-05/06, research build), whose
+explosion watch measured two natural machines' explosions; and in phases 5
+and 6, Lives 5 and 6 (2026-10-06) on the player build's `gambapity`, which
+measured three more natural explosions and the head the mod places at one
+(§ 20.4). The argument, the controls and the check tables are in ForgePact's
 [`docs/gamba-machine-research.md`](../ForgePact/docs/gamba-machine-research.md);
 the measurements are also in `hs-game-sdk/curated/gamba_measurements.json`.
 **No instrument-created machine has survived its first step** (§ 20.3); a spin
@@ -4350,8 +4354,10 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
 - Goburin's Head, the unique charm at repository type 10 / sub 0 / base 98
   (key `charms_goburins_head`), is the prize ForgePact #134 is about; the
   executable stores "Gamba Machine" beside the charm keys as the item
-  database's drop-source label. **Static search.** Its rarity code (7, 10 or
-  neither) is **not established**.
+  database's drop-source label. **Static search.** Its rarity code is 10:
+  **Measured (Live 5 and Live 6)** on heads built through the loader route
+  (§ 20.4). A head the game drops on its own has **not been observed**, so
+  the rarity of a natural drop is the part still open.
 
 ### 20.2 Creation and state
 
@@ -4590,8 +4596,8 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   key and calls `SetVariable(key, true)` by name with the caller as `self`,
   and returns the instance. No early return, no other check. **Static
   reading** (2026-10-04). The argument order `(x, y, object)` contradicts
-  `S10-special-content-notes.md` ("object ref, x, y") and § 14.3's bullet
-  copied from it; Live 3's `spawn scp` answered `object=4644` with the default
+  `S10-special-content-notes.md` ("object ref, x, y"), which § 14.3's bullet
+  once copied (it now reads `sCP(x, y, object)`); Live 3's `spawn scp` answered `object=4644` with the default
   `(x, y, object)` order, confirming it. **Measured (Live 3)** for the order.
 - The same `pSpwd` guard is shared game-wide: 60 compiled functions read that
   variable slot - chests, portals, shrines, globes, pickups, the zone state
