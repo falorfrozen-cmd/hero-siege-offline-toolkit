@@ -100,9 +100,10 @@ exception, because it drives Claude Code's own subagent and workflow tools.
   design-detector hook under Claude Code; set `IMPECCABLE_HOOK_DISABLED=1` to
   switch it off for yourself. Under Codex, run `$impeccable audit` on changed
   UI instead.
-- **MCP servers**: `tauri-hub`, `hs-drive`, `context7`, `github`, `figma` and
-  `playwright`. Use `playwright` to drive and screenshot a browser-based
-  frontend, the same way `tauri-hub` drives the hub. `github` and `figma` need
+- **MCP servers**: `tauri-hub`, `hs-drive`, `ghidra`, `context7`, `github`,
+  `figma` and `playwright`. Use `playwright` to drive and screenshot a
+  browser-based frontend, the same way `tauri-hub` drives the hub. `ghidra`
+  reads the local Ghidra project (§ "Check for a Named Ghidra Project" below). `github` and `figma` need
   a personal access token; on a new machine, run
   `py -3 tools/setup_agent_secrets.py` once. On Windows it asks for each
   missing token and saves it as a user environment variable that both agents
@@ -277,6 +278,11 @@ this machine has a named Ghidra project, and say what you found.
   section above requires. The reading scripts (`DecompileTo.java`,
   `FindCallers.java` and the rest) are in `ForgePact/tools/ghidra/`; run them
   as [ForgePact/tools/ghidra/README.md](ForgePact/tools/ghidra/README.md) says.
+  For a quick question (find a function, decompile it, list its callers),
+  prefer the `ghidra` MCP server: it serves a copy of that project, so it never
+  locks the original, and it needs no headless run. If
+  `py -3 -m tools.ghidra_mcp status` reports something missing, its `setup`
+  fixes it ([docs/tools/ghidra-mcp.md](docs/tools/ghidra-mcp.md)).
 - **If it is not present, offer the owner two options** and let them choose:
   1. **Set up Ghidra first (recommended).** Install a JDK 21 and Ghidra; run
      `citrace symdump` in the research build to write `bp_ipc\symbols.csv`;
