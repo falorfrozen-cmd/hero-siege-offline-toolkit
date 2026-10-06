@@ -7,7 +7,7 @@ It was written for ForgePact#160 (hub #408), the research phase of three player
 sliders: how many projectiles a skill fires, how fast they fly, and how large an
 area skill is. It answers, for each, what the game does with the stat before a
 hook changes anything, so the sliders start from numbers rather than a guess.
-They shipped in ForgePact 2.3.0 as `skillslider` (the implementation workorder of
+They shipped in ForgePact 2.2.0 as `skillslider` (the implementation workorder of
 ForgePact#160), and the test pins them as its `slider_*` transforms (§ "Our
 code"). The research behind it, with the candidate table and the live
 procedure, is ForgePact's
@@ -138,7 +138,7 @@ The rows from `slider-amount-shadowbolt-off` on check them:
 
 ## Our code
 
-**The shipped sliders** (ForgePact 2.3.0, `skillslider`,
+**The shipped sliders** (ForgePact 2.2.0, `skillslider`,
 `plugin/include/ForgePact/SkillSlidersMod.hpp`, off by default) are the test's
 three `slider_*` transforms, each pinned to that header's ceilings and its
 add-after-the-original shape by `LeverParityTests`:
