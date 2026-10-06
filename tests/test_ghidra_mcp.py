@@ -18,11 +18,14 @@ Each acceptance has a negative control beside it.
 import http.server
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -48,6 +51,16 @@ def _fake_ghidra(root: Path) -> None:
         lib = root / "Ghidra" / kind / module / "lib"
         lib.mkdir(parents=True)
         (lib / f"{module}.jar").write_bytes(b"")
+
+
+def _complete(cfg: ghidra_mcp.Config) -> None:
+    """Everything `problems()` asks for, as empty stand-ins."""
+    _fake_ghidra(cfg.ghidra)
+    cfg.bridge.parent.mkdir(parents=True)
+    cfg.bridge.write_bytes(b"")
+    cfg.jar.write_bytes(b"")
+    cfg.project.parent.mkdir(parents=True)
+    cfg.project.write_text("")
 
 
 class ConfigTests(unittest.TestCase):
@@ -169,17 +182,89 @@ class HealthTests(unittest.TestCase):
             self.assertIsNone(ghidra_mcp.health(cfg))
             # Everything else present, so start() reaches the port check: it must
             # neither adopt the foreign service nor launch a server beside it.
-            _fake_ghidra(cfg.ghidra)
-            cfg.bridge.parent.mkdir(parents=True)
-            cfg.bridge.write_bytes(b"")
-            cfg.jar.write_bytes(b"")
-            cfg.project.parent.mkdir(parents=True)
-            cfg.project.write_text("")
+            _complete(cfg)
             self.assertEqual(ghidra_mcp.problems(cfg), [])
             with self.assertRaises(SystemExit) as cm:
                 ghidra_mcp.start(cfg)
             self.assertIn("not as GhidraMCP", str(cm.exception))
             self.assertFalse(cfg.pidfile.exists())
+
+
+_HOLD_LOCK = """
+import sys, time
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from tools import ghidra_mcp
+cfg = ghidra_mcp.Config(None, Path(sys.argv[2]), Path("s.gpr"), Path("p.gpr"), "/x", 1)
+with ghidra_mcp.spawn_lock(cfg, timeout=5):
+    print("held", flush=True)
+    time.sleep(float(sys.argv[3]))
+"""
+
+
+class _Proc:
+    pid = 4242
+
+    def __init__(self, code):
+        self.code = code
+
+    def poll(self):
+        return self.code
+
+
+class StartRaceTests(unittest.TestCase):
+    """PR #449 review: sessions starting together must launch one server, and
+    `server.pid` must only ever name a live server this tool launched."""
+
+    def _held_elsewhere(self, home: Path, seconds: float) -> subprocess.Popen:
+        proc = subprocess.Popen([sys.executable, "-c", _HOLD_LOCK, str(ROOT), str(home), str(seconds)],
+                                stdout=subprocess.PIPE, text=True)
+        self.addCleanup(proc.wait)
+        self.assertEqual(proc.stdout.readline().strip(), "held")
+        return proc
+
+    def test_lock_excludes_another_process_until_it_lets_go(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = _cfg(Path(d))
+            self._held_elsewhere(cfg.home, 2)
+            with self.assertRaises(SystemExit):
+                with ghidra_mcp.spawn_lock(cfg, timeout=0.5):
+                    pass
+            # control: the same call, given time for the holder to finish, gets it
+            t = time.monotonic()
+            with ghidra_mcp.spawn_lock(cfg, timeout=10):
+                pass
+            self.assertLess(time.monotonic() - t, 10)
+
+    def test_start_rechecks_health_once_the_lock_is_held(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = _cfg(Path(d))
+            up = {"version": f"{ghidra_mcp.VERSION}-headless", "program_loaded": True}
+            with mock.patch.object(ghidra_mcp, "health", side_effect=[None, up]),                  mock.patch.object(ghidra_mcp, "launch") as launch:
+                self.assertEqual(ghidra_mcp.start(cfg), up)
+            launch.assert_not_called()
+            # control: still nothing after the lock, so this session launches
+            with mock.patch.object(ghidra_mcp, "health", side_effect=[None, None]),                  mock.patch.object(ghidra_mcp, "launch", return_value=up) as launch:
+                ghidra_mcp.start(cfg)
+            launch.assert_called_once()
+
+    def _launch(self, cfg, proc_code, healths):
+        _complete(cfg)
+        with mock.patch.object(ghidra_mcp, "_request", return_value=None),              mock.patch.object(ghidra_mcp, "health", side_effect=healths),              mock.patch.object(ghidra_mcp.subprocess, "Popen", return_value=_Proc(proc_code)),              mock.patch.object(ghidra_mcp.time, "sleep"):
+            return ghidra_mcp.launch(cfg, wait=30)
+
+    def test_an_exited_launch_still_finds_a_healthy_server_and_records_no_pid(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = _cfg(Path(d))
+            up = {"version": f"{ghidra_mcp.VERSION}-headless"}
+            self.assertEqual(self._launch(cfg, 1, [None, None, up]), up)
+            self.assertFalse(cfg.pidfile.exists())
+
+    def test_a_live_launch_records_its_pid_after_health(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = _cfg(Path(d))
+            self._launch(cfg, None, [None, {"version": ghidra_mcp.VERSION}])
+            self.assertEqual(cfg.pidfile.read_text(), "4242")
 
 
 class WiringTests(unittest.TestCase):

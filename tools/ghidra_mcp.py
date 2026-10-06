@@ -47,6 +47,7 @@ file-path endpoints to the project copy's directory (`GHIDRA_MCP_FILE_ROOT`).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -217,37 +218,90 @@ def health(cfg: Config) -> dict | None:
     return h
 
 
+@contextlib.contextmanager
+def spawn_lock(cfg: Config, timeout: float):
+    """Hold `<home>/server.lock` exclusively, across processes.
+
+    Sessions start together (Claude Code and Codex, two worktrees), and `/health`
+    stays silent for the ~9 s a cold JVM takes to boot, so without this each one
+    sees no server and launches its own against the same port and project. The
+    OS releases the lock if its holder dies, so a crashed session cannot wedge it.
+    """
+    cfg.home.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout
+    with open(cfg.home / "server.lock", "a+b") as f:
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise SystemExit(f"ghidra_mcp: another session held {f.name} for {timeout:.0f}s")
+                time.sleep(0.2)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                import msvcrt
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def launch(cfg: Config, wait: float) -> dict:
+    """Start the server and wait for it. Call only while holding `spawn_lock`."""
+    missing = problems(cfg)
+    if missing:
+        raise SystemExit("ghidra_mcp: cannot start the server:\n  " + "\n  ".join(missing))
+    refuse_inside_git(cfg.project, "project copy")
+    refuse_inside_git(cfg.home, "server directory")
+    if _request(cfg, "/health") is not None:
+        raise SystemExit(f"ghidra_mcp: port {cfg.port} answers, but not as GhidraMCP {VERSION} "
+                         "headless (set HS_GHIDRA_MCP_PORT)")
+    flags = 0
+    if os.name == "nt":  # outlive this session; no console window
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+    with open(cfg.log, "ab") as log:
+        proc = subprocess.Popen(server_command(cfg), stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                                env=server_env(cfg), creationflags=flags, start_new_session=os.name != "nt")
+    deadline = time.monotonic() + wait
+    # An exit is not the end: a server launched outside this lock (by hand, or
+    # an older launcher) may own the port, so keep asking until the deadline.
+    while (h := health(cfg)) is None:
+        if time.monotonic() > deadline:
+            code = proc.poll()
+            state = f"exited with {code}" if code is not None else f"not healthy after {wait:.0f}s"
+            raise SystemExit(f"ghidra_mcp: server {state}; see {cfg.log}")
+        time.sleep(1)
+    # Record the pid only for a process that is ours and still up, so `stop`
+    # never holds a dead pid while the real server runs on unrecorded.
+    if proc.poll() is None:
+        cfg.pidfile.write_text(str(proc.pid), encoding="ascii")
+    return h
+
+
 def start(cfg: Config, wait: float = 120) -> dict:
     """Return the server's health, starting the shared server first if needed."""
     h = health(cfg)
-    if h is None:
-        missing = problems(cfg)
-        if missing:
-            raise SystemExit("ghidra_mcp: cannot start the server:\n  " + "\n  ".join(missing))
-        refuse_inside_git(cfg.project, "project copy")
-        refuse_inside_git(cfg.home, "server directory")
-        if _request(cfg, "/health") is not None:
-            raise SystemExit(f"ghidra_mcp: port {cfg.port} answers, but not as GhidraMCP {VERSION} "
-                             "headless (set HS_GHIDRA_MCP_PORT)")
-        flags = 0
-        if os.name == "nt":  # outlive this session; no console window
-            flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-        with open(cfg.log, "ab") as log:
-            proc = subprocess.Popen(server_command(cfg), stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                                    env=server_env(cfg), creationflags=flags, start_new_session=os.name != "nt")
-        cfg.pidfile.write_text(str(proc.pid), encoding="ascii")
-        deadline = time.monotonic() + wait
-        while (h := health(cfg)) is None:
-            if proc.poll() is not None:
-                raise SystemExit(f"ghidra_mcp: server exited with {proc.returncode}; see {cfg.log}")
-            if time.monotonic() > deadline:
-                raise SystemExit(f"ghidra_mcp: server not healthy after {wait:.0f}s; see {cfg.log}")
-            time.sleep(1)
-    if not h.get("program_loaded"):
-        r = _request(cfg, "/load_program_from_project", {"path": cfg.program}, timeout=300)
-        if not r or not r.get("success"):
-            raise SystemExit(f"ghidra_mcp: could not load {cfg.program}: {r}")
-        h = health(cfg) or h
+    if h is None or not h.get("program_loaded"):
+        # The program load runs under the lock too, so sessions don't race to load it.
+        with spawn_lock(cfg, timeout=wait + 330):
+            h = health(cfg)  # another session may have finished while we waited
+            if h is None:
+                h = launch(cfg, wait)
+            if not h.get("program_loaded"):
+                r = _request(cfg, "/load_program_from_project", {"path": cfg.program}, timeout=300)
+                if not r or not r.get("success"):
+                    raise SystemExit(f"ghidra_mcp: could not load {cfg.program}: {r}")
+                h = health(cfg) or h
     return h
 
 

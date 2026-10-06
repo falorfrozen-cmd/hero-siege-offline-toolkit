@@ -30,7 +30,11 @@ hands stdio to the bridge.
 
 The server is shared because a Ghidra project takes one lock. A server per
 session would let the first session in `.claude/worktrees/` lock out every
-other one. A service on the port that is not GhidraMCP 6.0.0 is never adopted,
+other one. Sessions that start together (Claude Code and Codex, two worktrees) take
+`server.lock` in turn: the first launches, and the rest re-check `/health`
+once they hold the lock and find the server already up. `server.pid` is
+written only after the launched process passes its own health check (PR #449
+review). A service on the port that is not GhidraMCP 6.0.0 is never adopted,
 and the launcher refuses rather than starting a second server beside it.
 
 ## The project it opens is a copy
