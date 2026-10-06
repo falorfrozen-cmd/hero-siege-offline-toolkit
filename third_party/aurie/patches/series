@@ -1,0 +1,3 @@
+# application order
+0001-series-identity.patch
+0002-per-process-hook-freeze.patch
