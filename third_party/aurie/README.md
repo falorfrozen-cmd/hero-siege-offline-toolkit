@@ -300,5 +300,15 @@ As a hub library release, tag `aurie-v2.0.2-hs.1`, titled `Modified Aurie
 assets are the DLL, its `.sha256`, `AurieCore-BUILD-INFO.json`, the source zip
 and `NOTICE.md`. ForgePact's `tools/toolchain-pins.json` pins the DLL at
 `https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit/releases/download/aurie-v2.0.2-hs.1/AurieCore.dll`.
-**Not yet published** on 2026-10-06: the launch gate passed that day, and
-publishing is a separate step.
+**Published 2026-10-06** - published, not a draft, with `--latest=false`, so
+the repository's latest release is still `hub-v1.0.6`. The tag points at hub
+commit `b650302`, the commit named in the released DLL's own
+`AurieCore-BUILD-INFO.json`: the release was cut from a clean
+`build_aurie.py all --allow-network` of that commit, which reproduced the
+968,704 bytes and sha256 under [How to build](#how-to-build) once more. The
+source zip is `aurie-source-daa28744eef0.zip` (its id differs from earlier
+builds' because this README and `NOTICE.md`, which the zip carries, changed;
+the DLL's bytes did not). ForgePact's `aurie-modified/AurieCore-BUILD-INFO.json` is that
+release's copy, and the pin's provenance names the same commit. Players
+receive the DLL only with ForgePact's next release; HS-Offline-Tracker keeps
+upstream's until falorfrozen-cmd/HS-Offline-Tracker#13.

@@ -158,3 +158,12 @@ path against a synthetic upstream.
   Live 1's baseline.
 - **Offering the patch upstream** to AurieFramework is the owner's call; every
   patch says `Upstream-status: not submitted` until it is.
+
+**Added 2026-10-06.** The hub library release now exists and is published
+(`aurie-v2.0.2-hs.1`, `--latest=false`, so the repository's latest release is
+still `hub-v1.0.6`), tagged at hub commit `b650302`, the commit its DLL's
+BUILD-INFO names. ForgePact's pin resolves against it, so the consequence
+above that the release must precede any ForgePact release is met. That is the
+library release only: no ForgePact release has shipped the DLL yet, and the
+HS-Offline-Tracker follow-up is falorfrozen-cmd/HS-Offline-Tracker#13
+(`third_party/aurie/README.md`, "Where the binary is published").
