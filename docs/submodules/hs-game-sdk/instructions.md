@@ -821,7 +821,7 @@ changed; capture `.claude/workorders/forgepact-151-aurie-freeze-live-1.md`)
 measured a detour at 1.56 ms against a 37.9 ms system-wide snapshot median,
 ForgePact's setup at 47.8 ms (18 detours, 28.1 ms of them), and the 20 on-demand
 installs at 35.0 ms of detours with the worst frame 122 ms. A detour under
-upstream's `AurieCore.dll` (HS-Offline-Tracker still ships it) still pays the
+upstream's `AurieCore.dll` (what HS-Offline-Tracker shipped through 0.1.3) still pays the
 system-wide walk. The reading, the measurements and the route as built are in
 [`ForgePact/docs/setup-stall-research.md`](../../../ForgePact/docs/setup-stall-research.md)
 (ForgePact#151).
