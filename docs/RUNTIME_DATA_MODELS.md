@@ -4325,7 +4325,7 @@ save slot 14 ("Sorak"), mostly in the Town of Inoya, with Live 3 also in the
 Fields of Battle; in phase 4, Live 4 (2026-10-05/06, research build), whose
 explosion watch measured two natural machines' explosions; and in phases 5
 and 6, Lives 5 and 6 (2026-10-06) on the player build's `gambapity`, which
-measured three more natural explosions and the head the mod places at one
+measured three more natural explosions and the heads the mod placed at two of them
 (§ 20.4). The argument, the controls and the check tables are in ForgePact's
 [`docs/gamba-machine-research.md`](../ForgePact/docs/gamba-machine-research.md);
 the measurements are also in `hs-game-sdk/curated/gamba_measurements.json`.
