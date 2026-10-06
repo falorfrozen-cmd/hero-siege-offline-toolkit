@@ -163,6 +163,46 @@ class FakeKernel32:
         return 1
 
 
+class FakeExitKernel32:
+    """The four calls `procs.watch_exit` / `procs.exits` make, over a table of
+    processes the test controls.
+
+    `processes` maps a PID to `None` while it runs and to its exit code once it
+    has ended. Like the real kernel, `GetExitCodeProcess` on a running process
+    answers 259 (STILL_ACTIVE) -- the value that is also a legal exit code, and
+    the reason `exits` must ask the handle whether it is signalled instead.
+    A PID absent from the table cannot be opened, like a PID that is gone or
+    belongs to a process this user cannot open.
+    """
+
+    STILL_ACTIVE = 259
+
+    def __init__(self, processes=None):
+        self.processes = dict(processes or {})
+        self.opened: list[tuple[int, int]] = []
+        self.closed: list[int] = []
+        self.code_reads: list[int] = []
+
+    def OpenProcess(self, access, inherit, pid):  # noqa: N802
+        self.opened.append((int(access), int(pid)))
+        return 0x2000 + int(pid) if int(pid) in self.processes else 0
+
+    def WaitForSingleObject(self, handle, milliseconds):  # noqa: N802
+        ended = self.processes.get(int(handle) - 0x2000) is not None
+        return procs.WAIT_OBJECT_0 if ended else 0x102  # WAIT_TIMEOUT
+
+    def GetExitCodeProcess(self, handle, pointer):  # noqa: N802
+        pid = int(handle) - 0x2000
+        self.code_reads.append(pid)
+        code = self.processes.get(pid)
+        pointer._obj.value = self.STILL_ACTIVE if code is None else code
+        return 1
+
+    def CloseHandle(self, handle):  # noqa: N802
+        self.closed.append(int(handle))
+        return 1
+
+
 @unittest.skipIf(SKIP_REASON is not None, SKIP_REASON or "")
 class LaunchFixture(unittest.TestCase):
     """A modded install fixture, and every poll shortened."""
@@ -200,6 +240,12 @@ class LaunchFixture(unittest.TestCase):
         self.enterContext(patch.object(launcher_bridge, "read_config",
                                        return_value={"game_exe": str(self.exe)}))
         self.enterContext(patch.object(launch, "_LAUNCHED", set()))
+        # The exit watch never opens a real process from a test: by default no
+        # PID can be opened, and every test starts with an empty registry.
+        self.exit_kernel = FakeExitKernel32()
+        self.enterContext(patch.object(procs, "_EXITS", []))
+        self.enterContext(patch.object(procs, "kernel32",
+                                       side_effect=lambda: self.exit_kernel))
         self.enterContext(patch.object(launch, "PROCESS_POLL_S", 0.01))
         self.enterContext(patch.object(ipc, "CONSUME_POLL_S", 0.01))
         self.enterContext(patch.object(ipc, "SETTLE_POLL_S", 0.01))
@@ -798,6 +844,168 @@ class StopTests(LaunchFixture):
         self.assertEqual(kernel.terminated, [])
         self.assertFalse(result["exited"])
         self.assertIn("OpenProcess", str(result["errors"]))
+
+
+class ExitWatchTests(LaunchFixture):
+    """hs-drive reports the exit code of every game it launched (ForgePact #173).
+
+    The baseline is the stop and status tests above: before this, nothing read
+    a launched game's exit code, so a crash left no answer in either tool. The
+    target is here, with the Windows calls faked so that the two readings that
+    look alike -- a live process and one that exited with 259 -- can both be
+    produced on demand. `RealExitCodeTests` below runs the same path against a
+    real child process.
+    """
+
+    def do_launch(self, pid=4242):
+        with patch.object(self.engine, "launch_game", self.launch_ok(pid)):
+            return launch.hs_launch(gate=gate_sequence("running"), timeout_s=0.2,
+                                    wait_for_plugin=False)
+
+    def stop_exits(self):
+        with patch.object(procs, "game_pids", return_value=[]):
+            result = launch.hs_stop_game(timeout_s=0.1,
+                                         gate=gate_sequence("not_running"))
+        self.assertTrue(result["ok"], result)
+        return result["exits"]
+
+    def status_exits(self):
+        with patch.object(self.engine, "processes", return_value=[]), \
+                patch.object(self.engine, "eac_service_status",
+                             return_value="stopped"), \
+                patch.object(self.engine, "EXE_FACTS_CACHE", {}):
+            report = procs.status()
+        self.assertTrue(report["ok"], report)
+        return report["exits"]
+
+    def assert_both_report(self, expected):
+        self.assertEqual(self.stop_exits(), expected, "hs_stop_game's exits")
+        self.assertEqual(self.status_exits(), expected, "hs_status's exits")
+
+    def test_a_launched_game_that_crashed_is_reported_with_its_code(self):
+        self.exit_kernel.processes = {4242: None}
+        result = self.do_launch()
+        self.assertEqual(result["exit_watch"], "held", result)
+        self.assertEqual(self.exit_kernel.opened,
+                         [(procs.PROCESS_QUERY_LIMITED_INFORMATION
+                           | procs.SYNCHRONIZE, 4242)])
+        self.exit_kernel.processes[4242] = 0xC0000005
+        self.assert_both_report([{"pid": 4242, "exit_code": "0xC0000005"}])
+        self.assertEqual(self.exit_kernel.closed, [0x2000 + 4242],
+                         "the handle is closed once, after its code was read")
+        self.assertEqual(self.exit_kernel.code_reads, [4242],
+                         "a code once read is cached, not read again")
+
+    def test_a_launched_game_still_running_is_not_listed(self):
+        self.exit_kernel.processes = {4242: None}
+        self.assertEqual(self.do_launch()["exit_watch"], "held")
+        self.assert_both_report([])
+        self.assertEqual(self.exit_kernel.code_reads, [],
+                         "the exit code was read from a process that had not "
+                         "ended; 259 would then be reported as an exit")
+        self.assertEqual(self.exit_kernel.closed, [])
+
+    def test_a_pid_this_server_did_not_launch_never_appears(self):
+        # 999 ended with an access violation too, and is openable: it must
+        # still not appear, because this server never launched it.
+        self.exit_kernel.processes = {4242: None, 999: 0xC0000005}
+        self.do_launch(4242)
+        self.exit_kernel.processes[4242] = 0
+        self.assert_both_report([{"pid": 4242, "exit_code": "0x00000000"}])
+        self.assertNotIn(999, [pid for _, pid in self.exit_kernel.opened])
+
+    def test_an_exit_code_of_259_is_an_exit_not_still_active(self):
+        self.exit_kernel.processes = {4242: None}
+        self.do_launch()
+        self.exit_kernel.processes[4242] = 259
+        self.assert_both_report([{"pid": 4242, "exit_code": "0x00000103"}])
+
+    def test_an_unopenable_pid_is_unavailable_and_never_listed(self):
+        self.exit_kernel.processes = {}
+        result = self.do_launch()
+        self.assertTrue(result["exit_watch"].startswith("unavailable ("), result)
+        self.assertIn("OpenProcess", result["exit_watch"])
+        self.assertIn("4242", result["exit_watch"])
+        # The process is openable and ended now; without a handle from the
+        # launch it is still not this server's to report.
+        self.exit_kernel.processes[4242] = 0xC0000005
+        self.assert_both_report([])
+
+    def test_a_launch_with_no_pid_is_unavailable(self):
+        result = self.do_launch(pid=0)
+        self.assertTrue(result["exit_watch"].startswith("unavailable ("), result)
+        self.assertEqual(self.exit_kernel.opened, [])
+
+    def test_two_launches_are_listed_oldest_first(self):
+        self.exit_kernel.processes = {4242: None, 5151: None}
+        self.do_launch(4242)
+        self.do_launch(5151)
+        self.exit_kernel.processes[5151] = 1
+        self.assert_both_report([{"pid": 5151, "exit_code": "0x00000001"}])
+        self.exit_kernel.processes[4242] = 0xC0000409
+        self.assert_both_report([{"pid": 4242, "exit_code": "0xC0000409"},
+                                 {"pid": 5151, "exit_code": "0x00000001"}])
+
+    def test_off_windows_exits_is_empty_and_nothing_raises(self):
+        self.exit_kernel.processes = {4242: 0xC0000005}
+        with patch.object(procs, "on_windows", return_value=False), \
+                patch.object(procs, "kernel32",
+                             side_effect=AssertionError("kernel32 off Windows")):
+            result = self.do_launch()
+            self.assertTrue(result["exit_watch"].startswith("unavailable ("),
+                            result)
+            self.assertEqual(procs.exits(), [])
+            self.assertEqual(self.stop_exits(), [])
+
+    def test_a_refused_force_still_carries_exits(self):
+        self.exit_kernel.processes = {4242: None}
+        self.do_launch(4242)
+        self.exit_kernel.processes[4242] = 0xC0000005
+        user = FakeUser32([])
+        with patch.object(capture, "user32", return_value=user), \
+                patch.object(procs, "game_pids", return_value=[77]):
+            result = launch.hs_stop_game(force=True, timeout_s=0.05,
+                                         gate=gate_sequence("running"))
+        self.assertEqual(result["reason"], "not_launched_here", result)
+        self.assertEqual(result["exits"],
+                         [{"pid": 4242, "exit_code": "0xC0000005"}])
+
+
+@unittest.skipIf(SKIP_REASON is not None, SKIP_REASON or "")
+class RealExitCodeTests(unittest.TestCase):
+    """The positive control for the fakes above: the real Win32 calls, on a real
+    child process this test starts and ends, with the code it chose."""
+
+    def setUp(self):
+        self.enterContext(patch.object(procs, "_EXITS", []))
+
+    def child(self, code: int):
+        import subprocess
+        proc = subprocess.Popen(
+            [sys.executable, "-c",
+             f"import sys; sys.stdin.read(); sys.exit({code})"],
+            stdin=subprocess.PIPE)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        return proc
+
+    def finish(self, proc):
+        proc.stdin.close()
+        proc.wait(timeout=30)
+
+    def test_a_real_access_violation_code_and_a_real_259(self):
+        crashed, still_active = self.child(0xC0000005), self.child(259)
+        self.assertEqual(procs.watch_exit(crashed.pid), "held")
+        self.assertEqual(procs.watch_exit(still_active.pid), "held")
+        self.assertEqual(procs.exits(), [], "a running child was reported")
+        self.finish(crashed)
+        self.assertEqual(procs.exits(),
+                         [{"pid": crashed.pid, "exit_code": "0xC0000005"}])
+        self.finish(still_active)
+        self.assertEqual(procs.exits(),
+                         [{"pid": crashed.pid, "exit_code": "0xC0000005"},
+                          {"pid": still_active.pid, "exit_code": "0x00000103"}])
+        for record in procs._EXITS:
+            self.assertIsNone(record["handle"], "a read handle was not closed")
 
 
 @unittest.skipIf(SKIP_REASON is not None, SKIP_REASON or "")
