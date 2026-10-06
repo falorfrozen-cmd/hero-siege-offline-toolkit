@@ -1832,12 +1832,15 @@ All **measured** (2026-09-10/11).
     and others) and writes 2. No miniboss event tests the player's distance,
     so a miniboss pack is built at zone arrival, not on approach. Create also
     asks `ZoneStateExists`; what that changes on a revisit was not read.
-    *Measured (Live 4):* 2 on all 4 at arrival, read with the player still
-    at the zone's waypoint (2976,3648), about 900-1460 px from the four
-    creators, with one `Hellspawn_Guardsman_obj` attributed to each by our
-    create hooks (in Steam Train). The creator still exists after its pack
-    is killed (262691 and 262694 read before the warp, 5 s after it and
-    after the kill): its six protected values (state 2, zone state 1,
+    *Measured (Live 4):* 2 on all 4 at arrival, read with the player at
+    the zone's waypoint (2976,3648, the position `playerwarp` reported
+    before the step-4 warp; no movement in between was recorded), about
+    900-1460 px from the four creators, with one `Hellspawn_Guardsman_obj`
+    attributed to each by our create hooks (in Steam Train). The creator
+    still exists after its pack is killed (262691 read in full before the
+    warp, 5 s after it, about 16 s after it and after the kill; 262694 in
+    full 5 s after the warp and after the kill, and before the warp only
+    its census row, spawnPack 2): its six protected values (state 2, zone state 1,
     self-destroy 0 and the rest) and its instance variables did not change,
     apart from `img`, which advanced steadily throughout; built-in variables
     such as its alarms were not read. So none of the values read marks the
