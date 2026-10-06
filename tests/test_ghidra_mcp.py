@@ -175,6 +175,49 @@ class HealthTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertTrue(ghidra_mcp.health(_cfg(Path(d), port=port))["program_loaded"])
 
+    def test_rejects_the_same_version_when_not_headless(self):
+        port = self._serve({"status": "healthy", "version": ghidra_mcp.VERSION, "program_loaded": True})
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(ghidra_mcp.health(_cfg(Path(d), port=port)))
+
+    def _start_against(self, cfg, cmdline):
+        """start() against the stand-in server, its port held by `cmdline`."""
+        paths = []
+        real = ghidra_mcp._request
+
+        def record(c, path, body=None, timeout=3):
+            paths.append(path)
+            if path == "/load_program_from_project":
+                return {"success": True}
+            return real(c, path, body, timeout)
+
+        with mock.patch.object(ghidra_mcp, "listener_pid", return_value=555), \
+                mock.patch.object(ghidra_mcp, "command_line", return_value=cmdline), \
+                mock.patch.object(ghidra_mcp, "_request", side_effect=record), \
+                mock.patch.object(ghidra_mcp, "launch") as launch:
+            try:
+                result = ghidra_mcp.start(cfg)
+            except SystemExit as e:
+                result = e
+        return result, paths, launch
+
+    def test_refuses_a_headless_server_on_another_project(self):
+        port = self._serve({"status": "healthy", "version": f"{ghidra_mcp.VERSION}-headless",
+                            "program_loaded": False})
+        with tempfile.TemporaryDirectory() as d:
+            cfg = _cfg(Path(d), port=port)
+            original = cfg.source_project  # e.g. one started by hand on the research project
+            got, paths, launch = self._start_against(cfg, f"java {ghidra_mcp.SERVER_CLASS} --project {original}")
+            self.assertIsInstance(got, SystemExit)
+            self.assertIn("not serving", str(got))
+            launch.assert_not_called()
+            self.assertNotIn("/load_program_from_project", paths)
+            # control: the same server on this copy is adopted, and its program loaded
+            got, paths, launch = self._start_against(cfg, f"java {ghidra_mcp.SERVER_CLASS} --project {cfg.project}")
+            self.assertNotIsInstance(got, SystemExit)
+            self.assertIn("/load_program_from_project", paths)
+            launch.assert_not_called()
+
     def test_rejects_another_service_on_the_port(self):
         port = self._serve({"status": "healthy", "version": "5.14.2"})
         with tempfile.TemporaryDirectory() as d:
@@ -243,12 +286,12 @@ class StartRaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             cfg = _cfg(Path(d))
             up = {"version": f"{ghidra_mcp.VERSION}-headless", "program_loaded": True}
-            with mock.patch.object(ghidra_mcp, "health", side_effect=[None, up]), \
+            with mock.patch.object(ghidra_mcp, "adopt", side_effect=[None, up]), \
                     mock.patch.object(ghidra_mcp, "launch") as launch:
                 self.assertEqual(ghidra_mcp.start(cfg), up)
             launch.assert_not_called()
             # control: still nothing after the lock, so this session launches
-            with mock.patch.object(ghidra_mcp, "health", side_effect=[None, None]), \
+            with mock.patch.object(ghidra_mcp, "adopt", side_effect=[None, None]), \
                     mock.patch.object(ghidra_mcp, "launch", return_value=up) as launch:
                 ghidra_mcp.start(cfg)
             launch.assert_called_once()
@@ -256,7 +299,7 @@ class StartRaceTests(unittest.TestCase):
     def _launch(self, cfg, proc, healths, clock):
         _complete(cfg)
         with mock.patch.object(ghidra_mcp, "_request", return_value=None), \
-                mock.patch.object(ghidra_mcp, "health", side_effect=healths), \
+                mock.patch.object(ghidra_mcp, "adopt", side_effect=healths), \
                 mock.patch.object(ghidra_mcp.subprocess, "Popen", return_value=proc), \
                 mock.patch.object(ghidra_mcp.time, "monotonic", side_effect=clock), \
                 mock.patch.object(ghidra_mcp.time, "sleep"):

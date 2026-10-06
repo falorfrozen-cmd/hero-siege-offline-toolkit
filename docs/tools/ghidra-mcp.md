@@ -34,8 +34,12 @@ other one. Sessions that start together (Claude Code and Codex, two worktrees) t
 `server.lock` in turn: the first launches, and the rest re-check `/health`
 once they hold the lock and find the server already up. A launch that is
 not healthy by its deadline is killed, so it never holds the project behind a
-failed start. A service on the port that is not GhidraMCP 6.0.0 is never adopted,
-and the launcher refuses rather than starting a second server beside it.
+failed start. The launcher adopts a running server only if it reports
+`6.0.0-headless` and the process holding the port runs that server on this
+project copy. Anything else is refused rather than used, and no second server
+is started beside it. That includes the GUI plugin, another version, and a
+headless server on the original research project or on another checkout's
+copy (PR #449 review).
 
 ## The project it opens is a copy
 

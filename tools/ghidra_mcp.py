@@ -206,11 +206,31 @@ def _request(cfg: Config, path: str, body: dict | None = None, timeout: float = 
 
 
 def health(cfg: Config) -> dict | None:
-    """The server's /health, or None. A different service on the port (the GUI
-    plugin, another tool) does not count as ours."""
+    """The /health of a GhidraMCP headless server of the pinned version, or None.
+    Another service on the port (the GUI plugin, another tool, another version)
+    is None. Which *project* it serves is `adopt`'s question, not this one's."""
     h = _request(cfg, "/health")
-    if not h or not str(h.get("version", "")).startswith(VERSION):
+    if not h or h.get("version") != f"{VERSION}-headless":
         return None
+    return h
+
+
+def adopt(cfg: Config) -> dict | None:
+    """`health`, but only for the server on *this* project copy.
+
+    A headless server on another project (one started by hand on the original
+    research project, or another checkout's `HS_GHIDRA_MCP_PROJECT`) answers
+    /health just the same, and adopting it would send every call, writes
+    included, to that project (PR #449 review). So the process holding the port
+    must run the server class on this copy; otherwise refuse, never adopt.
+    """
+    h = health(cfg)
+    if h is None:
+        return None
+    pid = listener_pid(cfg.port)
+    if pid is None or not is_our_server(command_line(pid), cfg):
+        raise SystemExit(f"ghidra_mcp: port {cfg.port} is held by a GhidraMCP server (pid {pid}) that is "
+                         f"not serving {cfg.project}; refusing to use it (stop it, or set HS_GHIDRA_MCP_PORT)")
     return h
 
 
@@ -271,7 +291,7 @@ def launch(cfg: Config, wait: float) -> dict:
     deadline = time.monotonic() + wait
     # An exit is not the end: a server launched outside this lock (by hand, or
     # an older launcher) may own the port, so keep asking until the deadline.
-    while (h := health(cfg)) is None:
+    while (h := adopt(cfg)) is None:
         if time.monotonic() > deadline:
             code = proc.poll()
             if code is None:  # ours and never healthy: don't leave it holding the project
@@ -284,11 +304,11 @@ def launch(cfg: Config, wait: float) -> dict:
 
 def start(cfg: Config, wait: float = 120) -> dict:
     """Return the server's health, starting the shared server first if needed."""
-    h = health(cfg)
+    h = adopt(cfg)
     if h is None or not h.get("program_loaded"):
         # The program load runs under the lock too, so sessions don't race to load it.
         with spawn_lock(cfg, timeout=wait + 330):
-            h = health(cfg)  # another session may have finished while we waited
+            h = adopt(cfg)  # another session may have finished while we waited
             if h is None:
                 h = launch(cfg, wait)
             if not h.get("program_loaded"):
