@@ -11,6 +11,10 @@ the decompiler had left unnamed.
 Nothing here ships to a player. It is a stdlib script under `tools/`, like
 `source_index.py` and `stash_tab_counts.py`, and it needs no Ghidra run.
 
+The index covers files written by a headless run. A decompile through the
+`ghidra` MCP server ([ghidra-mcp.md](ghidra-mcp.md)) writes no file, so it has
+nothing to `scan`, and asking the server again is cheap.
+
 ## Where the index lives, and why never in a repository
 
 The index is one JSON Lines file on the researcher's machine, next to the
