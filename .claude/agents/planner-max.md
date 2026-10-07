@@ -75,8 +75,13 @@ you find yourself wanting to, that is a signal the plan is not finished.
    and walk callers, callees and xrefs from there. An empty callers or xrefs
    answer is "not observed", never "has none": the project was imported
    without analysis and this build's GML calls scripts by direct `call rel32`,
-   so Ghidra's reference table is mostly empty until
-   `ForgePact/tools/ghidra/FindCallers.java`'s byte scan backs the negative.
+   so Ghidra's reference table is mostly empty. A `FindCallers.java` zero
+   does not close the question either: it sees only direct `E8`/`E9` sites,
+   needs a positive control in the same project, and is blind to calls
+   through the script table, a global pointer or a method value; plan the
+   live measurement, with its positive control, before treating a route as
+   closed (`AGENTS.md` § "Prove the Instrument Before Trusting a Negative
+   Result").
    Take the headless route (`analyzeHeadless` with
    `ForgePact/tools/ghidra/*.java`) only for what the MCP cannot do: a fresh
    import, bulk dumps to files, byte scans, the slot-name table. Before a
