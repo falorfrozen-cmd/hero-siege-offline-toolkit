@@ -592,7 +592,8 @@ samples. The tool's bucket totals agreed with the plugin's on all six.
 captures on the v2.1.0 player build, with ForgePact's `density` raised and
 `farsleep`, `densityroll` and `hiddenloot` off. Shares are of all frame-thread samples; the
 frame thread worked 100% of the time in both, and the tool's buckets agreed
-with the plugin's.
+with the plugin's. Fewer than 0.1% of samples' walks ended early in any Live 1
+capture, and H1 and H2 found the same step and draw dispatchers as town.
 
 | Room | fps | Monsters | Step phase | Draw phase | Outside the phases |
 |---|---|---|---|---|---|
