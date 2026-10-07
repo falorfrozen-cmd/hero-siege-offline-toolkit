@@ -58,8 +58,15 @@ called, what arguments and `self` it wants, what it reads or leaves behind),
 run `py -3 -m tools.ghidra_mcp status` first. With no `missing` line, check the
 premise with your `mcp__ghidra__*` read tools: search by name, decompile by
 address, walk callers and xrefs. An empty callers or xrefs answer is "not
-observed", not "has none": the project carries few references, and
-`ForgePact/tools/ghidra/FindCallers.java`'s byte scan is what backs a negative.
+observed", not "has none": the project carries few references. A
+`ForgePact/tools/ghidra/FindCallers.java` zero does not close the question
+either: its byte scan sees only direct `E8`/`E9` call sites, needs a positive
+control in the same project (a function you know is called, scanned the same
+way), and is blind to calls through the script table, a global pointer or a
+method value. So never answer "X is not called" or "X is not reached" from
+static evidence alone: say what you searched, label the result "not observed",
+and name the live measurement, with its positive control, that would settle it
+(`AGENTS.md` § "Prove the Instrument Before Trusting a Negative Result").
 If the server is unavailable, say so in your answer and name `py -3 -m
 tools.ghidra_mcp setup`; do not answer the mechanism from guesswork as if you
 had read it. Never call a ghidra tool that writes (`rename_*`, `set_*`,
