@@ -9,7 +9,7 @@ performance question: after the queues empty, the remaining 30-80 ms frames at
 dynamic layer over `Enemy_Parent_obj`, one health-bar instance per monster
 with a Draw GUI event, the monster Draw event, and the 30-frame
 `monsterHandleArray` rebuild in `ActivateDeactivateProps`). Only monsters inside
-the player box step; the game never deactivates monsters. Pacing, admission and
+the player box step; the game's enemy loop never deactivates monsters. Pacing, admission and
 copy-queue work cannot lower that cost. The recommended direction is to stop
 keeping far packs alive (pack markers plus a rolling spawn radius), with
 GameMaker deactivation of far pass-born packs as a fail-open, opt-in experiment.
@@ -24,7 +24,7 @@ game's minimap surface. `reveal packs` / the panel's `map_reveal_packs` now mean
 the markers; the real spawn pass is `reveal spawn` / `map_reveal_spawn`, off by
 default (`m_Packs{ false }`), with its whole admission/capacity machinery
 unchanged behind it. `BeWakeObject` now activates first and walks only if the
-count changed (`g_BeWakeSnapshot`), since the game never deactivates monsters.
+count changed (`g_BeWakeSnapshot`), since the game's enemy loop never deactivates monsters.
 `packmarks stat|style|alpha|scale|ring|radius|list` (a player command: cosmetics
 and counters only) tunes the look live. Since issue #181 the `packmarks stat`
 line also carries `kinds=normal:<n>,ambush:<n>,ancient:<n>,champion:<n>,colossal_chest:<n>,legion:<n>,miniboss:<n>`
@@ -5179,7 +5179,7 @@ research doc's § "The lever, measured" (`lever-result: saves`).
 **Verified live** (same capture, player build, all 18 checks pass): in
 Act_01_01 with the fill off, `fillroll stat` read `fill off`, `answered 0`,
 `held back 0` and the work matched within 0.3%; in the fresh zone, 78
-spawners answered and over 41,000 checks held back; after a `playerwarp`
+fill answers and over 41,000 checks held back; after a `playerwarp`
 about 4,900 px from the arrival point, answered rose from 78 to 248 in 20 s
 against 0 while standing; and `fillroll 0` filled the zone to 2,092 monsters
 within 40 s. A first warp of about 9,800 px was moved back to the arrival
@@ -5197,6 +5197,10 @@ point by the game (why is not established); the shorter one held.
   beyond the local player's reach is not filled by the pass (the game's own
   proximity rule still applies to it). Not measured.
 - A walk at normal speed through a filled zone, and other acts.
+- With `fillroll` on, the pack window stays open for the whole zone visit,
+  so density copies share the pack budget (one third of the population
+  budget) for the whole visit rather than only the arrival pass; what that
+  does to the number of copies made is not measured.
 
 **Record:** `ForgePact/docs/main-thread-offload-research.md` § "The lever"
 and § "The lever, measured".

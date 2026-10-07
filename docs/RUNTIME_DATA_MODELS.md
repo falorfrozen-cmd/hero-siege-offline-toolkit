@@ -662,7 +662,8 @@ setting `visible` as ways to shorten the runner's walks
 - **Depth follows y, 2 px a layer.** `UpdateDepth` takes a y (by default the
   instance's own) and an optional anchor (default -1), and always records
   `yDepthSet` = y. With no anchor it moves the instance to
-  `gameLayer[room][clamp(y div 2, 0, 5500)]` (truncating division), so one
+  the room's `Game_Layer` whose index is y halved, rounded toward zero and
+  clamped to 0-5500 (from the game's `gameLayer` table), so one
   `Game_Layer_i` covers 2 px of y and sits at depth -i. With an anchor it does
   nothing while the anchor is within 4 px of y, and otherwise adds
   `renderGroup` (undefined counts as 0) to the index. The player, the
@@ -723,7 +724,12 @@ setting `visible` as ways to shorten the runner's walks
 **Measured**, re-reading Live 1's Act_01_02 `.stacks.txt` (forgepact-183,
 2026-10-07): the hard-light pass is 9.11% of frame-thread samples, of which
 struct member reads are 4.75%, on-screen tests 1.83%, sprite checks 0.37% and
-lock calls 0.13%. So its cost follows the number of registered lights.
+lock calls 0.13%. Inferred from the static reading above: the per-light
+reads run for every registered light, so the pass's cost should follow their
+number. Live 1 of forgepact-183-frame-thread-lever is consistent with that
+(`light-follows`: the `Darkness_Overlay_obj` Draw share fell from 10.01% to
+5.04% when far packs were not yet born), but it varied the light count only
+together with the monster count.
 
 **Measured**, Live 1 of workorder forgepact-183-frame-thread-lever
 (2026-10-07): Act_01_02 at density 2 with the map filled, the rolling fill
@@ -774,6 +780,10 @@ The functions' build-specific addresses stay in the research doc.
   **measured 2026-09-23.** This is the global, per-player form of §1's slot table.
   The relic slots 10-14 resolve the same way, **measured 2026-09-27** (§1).
   [miner's helmet, Runtime](../ForgePact/docs/miner-helmet-prototype.md#runtime)
+- Player position: **measured 2026-10-07** (forgepact-183-frame-thread-lever
+  Live 1), cause not established: in Act_01_02, setting the player about
+  9,800 px from the arrival point was undone by the game (the player returned
+  to the arrival point within 3 s); a move of about 4,900 px held.
 
 ### 6.2 Buffs
 
