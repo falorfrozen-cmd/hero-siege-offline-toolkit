@@ -267,23 +267,45 @@ really called, what arguments and `self` it wants, what it leaves behind — can
 only be answered by guessing, building and asking the owner for a live session.
 Each guess costs a whole round. Reading the script's body locally usually
 answers the question before the first build, so development without it is much
-slower. Before planning research into an unknown game mechanism, check whether
-this machine has a named Ghidra project, and say what you found.
+slower. Before planning or researching an unknown game mechanism, check what
+this machine can read, and say what you found.
 
-- **If it is present, give its paths** in the plan or report: the Ghidra install
-  (conventionally `%USERPROFILE%\tools\ghidra_<version>_PUBLIC`, launched
-  headless through `support\analyzeHeadless.bat`) and the project
-  (conventionally `%USERPROFILE%\ghidra_projects\HeroSiege`, program
-  `Hero_Siege.exe`). Use them, and keep what they show local, as the Legal
-  section above requires. The reading scripts (`DecompileTo.java`,
-  `FindCallers.java` and the rest) are in `ForgePact/tools/ghidra/`; run them
-  as [ForgePact/tools/ghidra/README.md](ForgePact/tools/ghidra/README.md) says.
-  For a quick question (find a function, decompile it, list its callers),
-  prefer the `ghidra` MCP server: it serves a copy of that project, so it never
-  locks the original, and it needs no headless run. If
-  `py -3 -m tools.ghidra_mcp status` reports something missing, its `setup`
-  fixes it ([docs/tools/ghidra-mcp.md](docs/tools/ghidra-mcp.md)).
-- **If it is not present, offer the owner two options** and let them choose:
+- **The `ghidra` MCP server comes first.** Run
+  `py -3 -m tools.ghidra_mcp status`; when it prints no `missing` line,
+  answer the question through the `mcp__ghidra__*` read tools (search and
+  list functions and strings,
+  decompile, xrefs, callers, callees and call graph, function info). It serves
+  a copy of the research project, so it never locks the original. The planner
+  and its effort variants, `implementer`, `implementer-medium`, `consultant`
+  and `consultant-max` carry those read tools; none of them carries a write or
+  debugger tool, and none may reach one through the server's REST port either
+  ([docs/tools/ghidra-mcp.md](docs/tools/ghidra-mcp.md)).
+- **An empty callers or xrefs answer is "not observed", not a negative.** The
+  MCP's callers and xrefs come from Ghidra's reference table, which this
+  `-noanalysis` project leaves mostly empty, and compiled GML calls scripts by
+  direct `call rel32`. Back an empty answer with a `FindCallers.java` byte scan
+  before it closes anything (§ "Prove the Instrument" below).
+- **The headless route is the fallback**, for what the read tools cannot do: a
+  fresh import and symbol naming (`ImportSymbols.java`), bulk dumps to files
+  (`DecompileTo.java`), byte-level scans (`FindCallers.java`, `FindWrites.java`
+  and the rest) and the slot-name table. It runs `analyzeHeadless` from the
+  Ghidra install (conventionally `%USERPROFILE%\tools\ghidra_<version>_PUBLIC`,
+  through `support\analyzeHeadless.bat`) on the project (conventionally
+  `%USERPROFILE%\ghidra_projects\HeroSiege`, program `Hero_Siege.exe`), with
+  the scripts in `ForgePact/tools/ghidra/`, as
+  [ForgePact/tools/ghidra/README.md](ForgePact/tools/ghidra/README.md) says.
+  Give those paths in the plan or report when you use it.
+- **If the MCP is unavailable but the project is present**, say what `status`
+  printed and offer `py -3 -m tools.ghidra_mcp setup` (its download needs the
+  owner's go-ahead); meanwhile the headless route still works.
+- **Record the check.** A plan that researches a game mechanism carries one
+  `## State` line, `ghidra mcp: used — <what it answered>`, `ghidra mcp:
+  unavailable — <what status printed>; offered setup` or `ghidra mcp: skipped —
+  <reason>`. `tools/plan_lint.py` refuses a research plan without it
+  (`ghidra-unchecked`) or with another value (`ghidra-bad-value`).
+- **Whichever route answers, decompiled text never reaches a tracked file**,
+  a commit message, an issue or a PR (§ "Legal" above). Paraphrase.
+- **If there is no Ghidra project at all, offer the owner two options** and let them choose:
   1. **Set up Ghidra first (recommended).** Install a JDK 21 and Ghidra; run
      `citrace symdump` in the research build to write `bp_ipc\symbols.csv`;
      then import the exe headless with `-noanalysis` and
@@ -303,10 +325,11 @@ table hooks were in place, so until someone checks it, run `citrace symdump`
 with no ForgePact hooks installed as a precaution, not a known fix (see
 [static-model-workflow.md](docs/agents/static-model-workflow.md#tooling-findings)).
 
-**Ask the decompile index before you decompile.** A script someone already
+**Ask the decompile index before a headless decompile.** A script someone already
 decompiled for this build is a file on this machine, not a new headless run, but
 only if it can be found: on 2026-10-04 ForgePact #160 decompiled scripts again
-because the earlier output had no index.
+because the earlier output had no index. MCP reads need no indexing: a tool
+call writes no file, so there is nothing to `scan`, and asking again is cheap.
 
 - Before decompiling, run `py -3 tools/decomp_index.py has <name>` (add
   `--contains` for a partial name) and reuse what it lists for the current

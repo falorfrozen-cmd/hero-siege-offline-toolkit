@@ -125,6 +125,19 @@ source and re-run the sync. The verifier
 never sees the implementer's reasoning, because sharing that context would mean
 sharing its blind spots.
 
+The `planner` (and its variants), `implementer`, `implementer-medium`,
+`consultant` and `consultant-max` reach the `ghidra` MCP server's read tools,
+named `mcp__ghidra__<tool>` in their `tools:` lines: search, list, decompile,
+xrefs, callers, callees, call graph and function info. The read set is
+`AGENT_READ_TOOLS` in `tools/ghidra_mcp.py`, and
+`tests/test_ghidra_agent_tools.py` pins those lines to it and fails any write
+or debugger tool on them. Every other agent (verifier, scribe, `live-operator`,
+the reviewers) gets none. Their prompts put the MCP first for a game-mechanism
+question, treat an empty callers or xrefs answer as "not observed" until
+`FindCallers.java` backs it, and keep headless `analyzeHeadless` with
+`ForgePact/tools/ghidra/*.java` as the fallback (AGENTS.md § "Check for a Named
+Ghidra Project Before Researching a Game Mechanism").
+
 ### Getting a harder model onto a harder problem
 
 Three mechanisms, because they cover three different failures. A pipeline with
@@ -896,6 +909,19 @@ JSON line `{"lanes": [{"name", "files"}, ...], "join": true|false}`, which
 the driver pastes into the workflow's `lanes`/`join` args, so lanes the lint
 rejected cannot be launched. A plan without lanes prints `{"lanes": [],
 "join": false}`.
+Two plan-level findings, each exiting 1, hold a plan to AGENTS.md § "Check
+for a Named Ghidra Project": a plan that researches a game mechanism records
+its Ghidra MCP check on one `## State` line, `ghidra mcp: used — <what it
+answered>`, `ghidra mcp: unavailable — <what status printed>; offered setup`
+or `ghidra mcp: skipped — <reason>`. A plan counts as mechanism research when
+it or its `-context.md` has a `### Live procedure` heading, a backticked
+`route tokens:` State value, the text `analyzeHeadless`, `DecompileTo`,
+`decomp_index.py has` or `mcp__ghidra__`, or a
+`ForgePact/docs/<name>-research.md` path. `ghidra-unchecked` fires when such a
+plan has no `ghidra mcp:` line, and its excerpt names the trigger;
+`ghidra-bad-value` fires, trigger or not, on a value other than those three
+words, or `skipped` with no reason. The trigger is broad on purpose: a plan
+that only mentions these tools clears it with one `skipped — <reason>` line.
 `run_criteria.py <plan>` is the verifier's first call. It runs every
 command-shaped criterion (a backticked span starting with `py`, `git`, `grep`,
 `node`, `cd` and the like) exactly as written, in bash from the checkout
@@ -1130,6 +1156,7 @@ MCP startup timeout is 10 s, run `py -3 -m tools.ghidra_mcp start` first if
 the server is cold.
 [`docs/tools/ghidra-mcp.md`](../docs/tools/ghidra-mcp.md) explains why this
 server and not pyghidra-mcp, and covers the overrides and the sharp edges.
+Which agents may call which of its tools is in § "Agents" above.
 
 `github` does **not** authenticate interactively. Claude Code tries OAuth
 dynamic client registration, that endpoint does not support it, and the session
@@ -1219,6 +1246,13 @@ What does not carry over:
   generated `planner`, `implementer` and `verifier` agents.
 - **The `ai-review` CI job** runs Claude Code in GitHub Actions whichever agent
   opened the pull request; the label works the same for both.
+- **The `tools:` allowlist, and with it the `mcp__ghidra__*` read set.**
+  `tools/sync_agent_tooling.py` reads an agent's `tools:` line only to decide
+  `sandbox_mode`, so every Codex agent sees every server in
+  `.codex/config.toml` with all its tools, the `ghidra` server's writes and
+  `debugger_*` included. A server-wide `disabled_tools` would strip the
+  owner's own Codex session too, so the restriction there is the ban written
+  in the agent bodies, which reach `.codex/agents/*.toml` verbatim.
 
 ## A trap worth knowing: `#` in frontmatter
 
@@ -1269,6 +1303,7 @@ py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # parsing ForgePa
 py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the machine-wide game lease, across real processes
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
 py -3 -m unittest tests.test_ghidra_mcp -v                     # the ghidra launcher: git refusal, loopback, stripped env, version check
+py -3 -m unittest tests.test_ghidra_agent_tools -v              # the phase agents' mcp__ghidra__* tools match AGENT_READ_TOOLS; no write or debugger tool
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 
