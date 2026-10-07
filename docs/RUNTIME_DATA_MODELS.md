@@ -507,6 +507,49 @@ main menu on 2026-09-26 (`pe-6aaa6779-0cad4fc8`). All **measured**.
 [Decompile index and slot-name helpers](tools/decomp-index.md),
 [skill sliders research](../ForgePact/docs/skill-sliders-research.md)
 
+### 5.11 Threads the runner starts
+
+**Static reading**, 2026-10-06 (ForgePact #183), in our own words; not measured
+live. On 2026-10-07 the installed exe was checked to contain the thread and
+switch names below; nothing else was re-read.
+
+- Garbage collection runs on its own "GC Thread". The runner's
+  `MultithreadGCOn`/`MultithreadGCOff` debug switch defaults to on.
+- A job pool, "JobManager", runs up to 8 "Job Worker Thread"s. They decode
+  images and texture pages (PNG, GIF, JPEG, QOI, external `texture_%d.yytex`),
+  run `buffer_save_async` and `buffer_load_async`, and load zip and HTTP
+  textures.
+- Audio has its own thread, and so does HTTP ("GameMaker HTTP").
+- Direct3D 11 is created with device flags 0x820 (BGRA support 0x20 plus video
+  support 0x800). It is not single-threaded (0x1 unset), and the driver's own
+  threading is not turned off (0x8 unset).
+- The game's `SaveFileGMAsync` and `SaveCommit` scripts exist. Whether they
+  reach `buffer_save_async`, and so the job pool, is not established; a
+  `HookBuiltin` counter on it during a save would settle it.
+- The runner refuses some operations off the main thread, with
+  "THREAD SAFETY ERROR, this code can only be executed on the main thread".
+  Native code that calls into the runner from a worker thread can fail by
+  design.
+
+**Measured**, 2026-09-28 `frameprof` captures:
+
+- The frame thread used 93-99% of one core; every other game thread together
+  used 4-10% of one core.
+- `GetThreadDescription` was empty for every game thread: the runner names no
+  thread for Windows, so the names above are strings in the exe, not
+  descriptions a tool can see.
+- A GC thread existing does not mean collections leave the frame alone: §5.9
+  measured `gc_collect`'s walk landing one frame later and taking
+  12.7-31.7 ms. Whether the frame thread waits on the GC thread is not
+  established.
+
+The build-specific addresses behind these readings (job submit, worker spawn,
+the device creation call, the GC thread's start and the switch's flag byte)
+stay in the research doc, with the exe's SHA-256.
+
+[Main-thread offload research](../ForgePact/docs/main-thread-offload-research.md#static-reading-threads-the-runner-starts),
+[frame profiler](../ForgePact/docs/frame-profiler.md)
+
 ---
 
 ## 6. Player and Global State
