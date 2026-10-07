@@ -536,11 +536,14 @@ switch names below; nothing else was re-read.
 - In the six 2026-09-28 captures, the frame thread used 98-99% of one core
   (93-94% in frame-profiler.md's earlier pair); every other thread in the
   process together used 4-10% of one core.
-- `GetThreadDescription` was empty for every thread each capture lists.
-  `frameprof` keeps only the 24 busiest threads by CPU (`threads.top`), and the
-  idle runner threads named above are likely past that cut, so a Windows thread
-  name was not observed, and whether the runner names any thread is not
-  established. The names above are strings in the exe.
+- **Thread names not observed.** `GetThreadDescription` was empty for every
+  game thread among the 24 each capture lists (`threads.top[].name`). The JSON
+  keeps only the 24 busiest threads by CPU, and each list ends among 0%
+  threads. The read works, because the profiler's own named thread reads back
+  in every capture, but threads past the cut were not seen: `HookEvents`
+  appears in only one of the six captures, and the idle GC, job-worker, audio
+  and HTTP threads would sit there too. Whether the runner names any thread is
+  not established. The names above are strings in the exe.
 - A GC thread existing does not mean collections leave the frame alone: §5.9
   measured `gc_collect`'s walk landing one frame later and taking
   12.7-31.7 ms. Whether the frame thread waits on the GC thread is not
