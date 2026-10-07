@@ -550,6 +550,66 @@ stay in the research doc, with the exe's SHA-256.
 [Main-thread offload research](../ForgePact/docs/main-thread-offload-research.md#static-reading-threads-the-runner-starts),
 [frame profiler](../ForgePact/docs/frame-profiler.md)
 
+### 5.12 Frame thread time by phase
+
+The runner's frame has a **step phase** (Begin Step through End Step, with
+alarms, motion and collisions) and a **draw phase** (Pre-Draw through Draw GUI
+End), both run by one per-frame function, plus a presentation step that holds
+the frame limiter. `frameprof`'s report tool (`ForgePact/tools/frameprof_report.py`)
+finds the two phases' dispatchers on a capture's own stacks and splits the
+frame thread's time between them and the rest.
+
+**Measured**, the six 15 s Act_01_01 `frameprof` captures of 2026-09-28 (the
+hidden-loot A/B), re-read offline 2026-10-07. Shares are of all frame-thread
+samples. The tool's bucket totals agreed with the plugin's on all six.
+
+| Loot | fps | Step phase | Draw phase | Outside the phases |
+|---|---|---|---|---|
+| asleep (3 captures) | 139-143 | 45.2-47.3%: game 21.0-22.4, runtime 23.7-25.0 | 37.1-37.8%: game 8.6-9.7, runtime 24.4-24.8, graphics 1.5-2.2, mods 1.8-2.2 | 15.0-17.7%: limiter spinning 9.5-12.2, runtime 3.4-3.6, graphics 1.3-1.8 |
+| awake (2 captures) | 45-46 | 72.0-72.2%: game 58.6-59.5, runtime 12.6-13.3 | 25.3-25.5%: game 8.8-9.3, runtime 9.3, graphics 2.6-2.7, mods 4.3-4.5 | 2.4-2.5% |
+| awake (1 capture) | 30 | 52.9%: game 44.3, runtime 8.5 | 44.9%: game 27.7, runtime 7.4, graphics 7.1, mods 2.7 | 2.2% |
+
+- At about 140 fps, the "GameMaker runtime with no game code on
+  the stack" bucket splits almost evenly between the two phases, 23.7-25.0%
+  of samples each.
+- In the step phase, that runtime time is mostly fixed passes over instances,
+  the collision pass (7.4-7.9% of samples) and the alarm countdown
+  (6.0-6.4%) above all; dispatching the Step-family events themselves costs
+  1.3-1.6%.
+- In the draw phase it is the room draw per view (11.3-12.7%) and the
+  Post-Draw and GUI event passes (9.3-10.1%). Graphics-driver frames are only
+  1.5-2.2% there.
+- At about 140 fps most of the time outside the phases is the frame limiter
+  spinning rather than sleeping.
+
+**Static reading**, 2026-10-07, in the local Ghidra project, in our own words:
+
+- The per-frame function runs, in order: input and housekeeping work, the step
+  phase, and then, when no room change is pending, the draw phase. It returns
+  before the step when the game window is inactive and a pause-when-unfocused
+  switch is set, and it ends the frame with a region the runner labels
+  "Garbage Collector".
+- The step dispatcher first walks every instance to save its previous position
+  and advance its animation frame. Then it runs Begin Step, further event
+  passes (alarms among them), Step, motion (or a physics world step), the
+  collision pass (skipped when the physics world stepped) and End Step. After
+  each pass it stops early if a room change is pending.
+- The draw dispatcher runs Pre-Draw, draws the room once per enabled view
+  (Draw Begin, the layers in depth order with each instance's Draw event, and
+  Draw End), then Post-Draw, and then the three Draw GUI events. A second Draw
+  Begin, Draw and Draw End pass over layers that a different layer mask selects
+  is interleaved with the GUI events; what that mask selects is not established.
+- The frame limiter waits out a deadline either by sleeping on a waitable
+  timer or by sleeping part of it and spinning on the performance counter for
+  the rest. Which setting makes this build spin is not established.
+
+The functions' build-specific addresses, the per-capture table and each
+callee's share stay in the research doc.
+
+[Main-thread offload research, runner phases](../ForgePact/docs/main-thread-offload-research.md#runner-phases-in-the-2026-09-28-captures),
+[the per-frame functions](../ForgePact/docs/main-thread-offload-research.md#the-per-frame-functions-static-reading),
+[frame profiler](../ForgePact/docs/frame-profiler.md)
+
 ---
 
 ## 6. Player and Global State
