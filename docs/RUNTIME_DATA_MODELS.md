@@ -642,6 +642,90 @@ callee's share stay in the research doc.
 [the per-frame functions](../ForgePact/docs/main-thread-offload-research.md#the-per-frame-functions-static-reading),
 [frame profiler](../ForgePact/docs/frame-profiler.md)
 
+### 5.13 Layers, depth and what the draw passes skip
+
+**Static reading**, 2026-10-07, in the local Ghidra project (build
+498d588550d8), in our own words. These readings ruled out hiding layers and
+setting `visible` as ways to shorten the runner's walks
+([forgepact-183](../ForgePact/docs/main-thread-offload-research.md#static-reading-layers-visibility-and-the-light-renderer)).
+
+- **Every room's fixed layers.** `SetupRoomLayers`, called only from
+  `RoomGoto`, creates the same layers in every room: `Layer_Shadows` (depth
+  +4), `Particles_1` (-11001), `Water_Overlay` (-11500), `Outline` (-11601),
+  `UI_7999` (-11999), `UI_8000` (-12000), `UI_COMBAT_TEXT` (-12001),
+  `Vignette` (-12500), `UI_Pickup_Log_obj` (-12997), `UI_Controller_obj`
+  (-12998), `UI_9000` (-13000), `UI_9001` (-13001), `Camera_obj` (-13900),
+  `Loot_Manager_obj` (-13999), `UI_10000` (-14000), `Menu_Controller`
+  (-14001), `Darkness` (-14002) and `Color_Blind` (-14003). It also creates
+  `Layer_UI_Parent_0..49` at depth -13000-i, kept in
+  `global.uiLayer[room][i]`, and `Game_Layer_0..5500` at depth -i.
+- **Depth follows y, 2 px a layer.** `UpdateDepth` takes a y (by default the
+  instance's own) and an optional anchor (default -1), and always records
+  `yDepthSet` = y. With no anchor it moves the instance to
+  `gameLayer[room][clamp(y div 2, 0, 5500)]` (truncating division), so one
+  `Game_Layer_i` covers 2 px of y and sits at depth -i. With an anchor it does
+  nothing while the anchor is within 4 px of y, and otherwise adds
+  `renderGroup` (undefined counts as 0) to the index. The player, the
+  mercenary and the enemy begin step pass the anchor, so they change layer
+  only after more than 4 px of drift.
+- **Who calls it.** 2,746 call sites: 2,007 in Create events (mostly prop
+  children, once each), 601 in Step events and about 120 in Alarm events.
+  Every step: the player, the mercenary, ordinary monsters inside the player
+  box (through `enemyParentBeginStepFunc`), bosses, and player and enemy
+  projectiles. Once: shadows, props, ground effects, and monsters at creation
+  and in their Alarm 4. `Enemy_Health_Bar_Parent_obj` never calls it.
+- **Health bars are not on a game layer.** `Enemy_Parent_obj`'s Alarm 4
+  creates the bar with `instance_create_layer` on `Layer_UI_Controller_obj`
+  (depth -12998). `updateLightShadowBarsPos` copies the monster's `visible`,
+  x and y into the bar (that it does so only after the monster moved is
+  inferred, not read). The bar's Draw GUI draws only while the bar is
+  visible and the enemy-health option or `healthBarDraw` is set, at the bar's
+  own coordinates through `GetGuiCoords`.
+- **The draw passes skip a hidden layer, not an invisible instance.** The
+  runner's Pre-Draw pass, its layer-by-layer event pass (Post-Draw and the
+  three Draw GUI events) and its main layer pass walk the room's layers in
+  depth order and skip a layer whose visible flag is clear before touching its
+  elements. Inside a visible layer each instance's own flags are tested, so an
+  instance with `visible` false is still visited.
+- **`layer_set_visible` deactivates.** It writes the layer's visible flag,
+  and on a real change, for every layer kind but one, it also deactivates
+  every instance element of the layer when hiding it and reactivates them when
+  showing it. What the layer kinds mean is inferred. Hiding a non-empty layer
+  through the builtin is therefore wholesale deactivation, the class
+  AGENTS.md § "Don't Suspend the Game's Own Runtime" does not recommend.
+- **`ActivateDeactivateProps` culls by `visible`; it deactivates nothing.**
+  Props (`Collision_Prop_obj`, `Destructible_NoCollision_Parent_obj`,
+  `Visual_Parent_obj`) are culled against `viewBoxL/R/T/B`, and one of those
+  blocks also sets the prop's `light.visible`. Monsters
+  (`Enemy_Child_Basic_obj`, through `monsterHandleArray` and
+  `playerBoxL/R/T/B`) get `visible`, `myShadow.visible` and
+  `myHealthBar.visible` set and `wasActive`/`isMoving` cleared. It also runs
+  `m_CorpseStep` and `m_runEnemyBuffs`. The every-30-frames walk over the
+  player box (§ 11.3) is this function's.
+- **Deactivation is rare.** `DeactivateObject` removes an instance's light
+  from the renderer and then calls `instance_deactivate_object`. It is called
+  only from `Satanic_Cube_obj`'s Alarm 2 and the `Labyrinth_Trigger_*`
+  collisions.
+- **The light renderer walks every registered light.** `Darkness_Overlay_obj`'s
+  Draw runs the Bulb renderer's update. Its hard-light pass walks every
+  registered point light each frame: it drops lights whose weak reference died
+  or that were destroyed, skips invisible ones, and tests the visible ones
+  against the screen and draws those. 168 Create events reference `light`:
+  flames, torches, braziers, lanterns and candles, plus `Visual_Parent_obj`,
+  `Enemy_Parent_obj`, `Player_obj`, `Projectile_Player_obj`,
+  `Skill_Ground_Effect_obj`, `Portal_Parent_obj` and `Shrine_Parent_obj`.
+  Which of them register a light in a given zone is **not established**.
+
+**Measured**, re-reading Live 1's Act_01_02 `.stacks.txt` (forgepact-183,
+2026-10-07): the hard-light pass is 9.11% of frame-thread samples, of which
+struct member reads are 4.75%, on-screen tests 1.83%, sprite checks 0.37% and
+lock calls 0.13%. So its cost follows the number of registered lights.
+
+The functions' build-specific addresses stay in the research doc.
+
+[Main-thread offload research, layers, visibility and the light renderer](../ForgePact/docs/main-thread-offload-research.md#static-reading-layers-visibility-and-the-light-renderer),
+[far scenery sleep](../ForgePact/docs/far-sleep-research.md)
+
 ---
 
 ## 6. Player and Global State
@@ -2053,16 +2137,22 @@ All **measured** (2026-09-10/11).
 
 ### 11.3 The enemy loop
 
-- **The game never deactivates monsters**; it deactivates only props and their
-  lights. Far monsters simply get no step. **Static reading**, consistent with
-  the census.
+- **The game never deactivates monsters.** It culls props, as it culls
+  monsters, by setting `visible`, and deactivates only from the Satanic cube
+  (`Satanic_Cube_obj`'s Alarm 2) and the `Labyrinth_Trigger_*` collisions
+  (§ 5.13; corrected 2026-10-07, an earlier reading here said props and their
+  lights were deactivated). Far monsters simply get no step. **Static
+  reading**, consistent with the census.
 - Every 30 frames (`updateEnemyTimer`; `updateEnemies` forces it)
-  `EnemyStepHandleNew` walks every active `Enemy_Child_Basic_obj`, tests it
+  `ActivateDeactivateProps` walks every active `Enemy_Child_Basic_obj`, tests it
   against the player box (`playerBoxL/R/T/B`) and rebuilds
-  `monsterHandleArray`/`monsterHandleArrayCount`. Monsters leaving the box get
-  `wasActive`/`isMoving` cleared, their target dropped and their path ended. Each
-  frame it makes one `m_EnemyStep` call per handle; AI, pathfinding and effect
-  timers run only inside the box. **Static reading.**
+  `monsterHandleArray`/`monsterHandleArrayCount`, setting each monster's
+  `visible` (and its shadow's and health bar's) as it goes; § 5.13. Monsters
+  leaving the box get `wasActive`/`isMoving` cleared, their target dropped and
+  their path ended. Each frame `EnemyStepHandleNew` makes one `m_EnemyStep`
+  call per handle; AI, pathfinding and effect timers run only inside the box.
+  (An earlier reading here gave the 30-frame walk to `EnemyStepHandleNew`;
+  corrected 2026-10-07.) **Static reading.**
 - Every monster owns an `Enemy_Health_Bar_Parent_obj` (`myHealthBar`) whose Draw
   GUI is the only caller of `DrawEnemyHealthBars` (**measured** at 4.14 ms a
   frame); `objMinimap`'s Draw GUI runs `DrawMinimap` → `DrawMinimapDynamic`, which
