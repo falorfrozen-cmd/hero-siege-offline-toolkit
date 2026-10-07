@@ -1827,9 +1827,11 @@ All **measured** (2026-09-10/11).
   - `Enemy_Creator_Miniboss_obj`: Create writes 1 and arms an alarm, due the
     next frame in most rooms and a few seconds later in seven named rooms
     (Ruby Gardens, Tomb of Amun Ra 02, the Fortune Teller room and four Act 9
-    boss rooms). That alarm, while the state is 1, builds one of a fixed set
-    of named uniques (`Mancrusher_obj`, `Queen_Bee_obj`, `Black_Plague_obj`
-    and others) and writes 2. No miniboss event tests the player's distance,
+    boss rooms). That alarm, while the state is 1, builds the miniboss and
+    writes 2. It references named uniques (`Mancrusher_obj`, `Queen_Bee_obj`,
+    `Black_Plague_obj` and others), but how it picks what it builds was not
+    read, so these are not a set it is known to build from; Live 4 attributed
+    a `Hellspawn_Guardsman_obj` to each creator (below). No miniboss event tests the player's distance,
     so a miniboss pack is built at zone arrival, not on approach. Create also
     asks `ZoneStateExists`; what that changes on a revisit was not read.
     *Measured (Live 4):* 2 on all 4 at arrival, read with the player at
@@ -1896,11 +1898,12 @@ All **measured** (2026-09-10/11).
   **static reading**, 2026-10-06 (falorfrozen-cmd/ForgePact#181, replan 2
   of the hub workorder `forgepact-181-map-reveal-icons`): where the record
   is allocated and freed, the alarms, the distance tests and the intermediate states, the miniboss room list and
-  unique set, and the whole legion and champion lines, since that session
+  the unique names its alarm references, and the whole legion and champion lines, since that session
   had no legion or champion creator (not observed). Not read: what the
   zone state restores on a revisit beyond the values above, the plain
   creator's pack-building alarm (it exceeded the decompiler's time limit),
-  and the miniboss alarm beyond its state test and its final write.
+  and the miniboss alarm beyond its state test and its final write, which
+  includes how it picks the unit it builds.
 - `EnemyCreatorPending` only reports whether a creator still has an alarm running.
   Creators make density copies through four-argument `instance_create_*` calls.
   **Static reading.**
