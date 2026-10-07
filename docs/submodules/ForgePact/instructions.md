@@ -5164,22 +5164,42 @@ see, and `test_rolling_fill_panel_contract.py` the panel half.
 `test_rolling_density_contract.py` keep passing; the last one's fill
 assertion now names the `fillroll` condition. See Repository Layout above.
 
-**Measured.** Not yet: the live A/B (H2 filled, with and without `fillroll`,
-by `frameprof`) is the workorder's Live procedure 1, and its result is
-recorded here and in the research doc.
+**Measured** (2026-10-07, capture `forgepact-183-frame-thread-lever-live-1`,
+by `frameprof`, 30 s each at the arrival point of Act_01_02 at density 2,
+filled): with `fillroll` on the frame thread did 5.43 ms of work a frame, and
+6.16 ms after `fillroll 0` let the whole zone fill, a saving of 11.8% (0.73 ms).
+The rolling fill held 682 monsters and 5,028 instances against 2,092 and
+9,304. The runtime fell 0.55 ms, about 0.13 µs per instance, not the 0.34 µs
+the prediction used, so the saving came in under its 13-20%. The light
+renderer (`Darkness_Overlay_obj` Draw) fell from 10.01% to 5.04% with the
+monsters, and the mods bucket rose from 3.63% to 6.95% (+0.23 ms, the
+plugin's inclusive cost; the 11.8% is net of it). Table and arithmetic: the
+research doc's § "The lever, measured" (`lever-result: saves`).
+
+**Verified live** (same capture, player build, all 18 checks pass): in
+Act_01_01 with the fill off, `fillroll stat` read `fill off`, `answered 0`,
+`held back 0` and the work matched within 0.3%; in the fresh zone, 78
+spawners answered and over 41,000 checks held back; after a `playerwarp`
+about 4,900 px from the arrival point, answered rose from 78 to 248 in 20 s
+against 0 while standing; and `fillroll 0` filled the zone to 2,092 monsters
+within 40 s. A first warp of about 9,800 px was moved back to the arrival
+point by the game (why is not established); the shorter one held.
 
 **Not known.**
 
-- The saving in play (above).
-- Whether monsters register lights in Act_01_02, and so whether the light
-  renderer's share falls with them (Live 1's `light-follows`; light culling
-  is the next lever if it does not).
+- Which objects own the lights that fall with the monsters (the research
+  doc; light culling is not the next lever, since the share follows the fill).
+- Why the mods bucket rises under the rolling fill; that the held-back checks
+  going on to the game's real answer are the cost is inferred.
+- Whether the saving repeats: one pair of 30 s captures, against a largest
+  no-change difference of 4.9% (town) that session.
 - Co-op: a peer's position is not consulted, so a spawner near a peer but
   beyond the local player's reach is not filled by the pass (the game's own
   proximity rule still applies to it). Not measured.
 - A walk at normal speed through a filled zone, and other acts.
 
-**Record:** `ForgePact/docs/main-thread-offload-research.md` § "The lever".
+**Record:** `ForgePact/docs/main-thread-offload-research.md` § "The lever"
+and § "The lever, measured".
 The player text is in the ForgePact README (§ "Fill the map as you approach
 (lighter frames while the map is filled)") and
 `ForgePact/release-notes-v2.3.0.md`.

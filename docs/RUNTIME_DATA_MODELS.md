@@ -725,6 +725,21 @@ setting `visible` as ways to shorten the runner's walks
 struct member reads are 4.75%, on-screen tests 1.83%, sprite checks 0.37% and
 lock calls 0.13%. So its cost follows the number of registered lights.
 
+**Measured**, Live 1 of workorder forgepact-183-frame-thread-lever
+(2026-10-07): Act_01_02 at density 2 with the map filled, the rolling fill
+(`fillroll`) against the full fill, at the same spot. The 1,410 extra monsters
+of the full fill came with 4,276 extra active instances, **3.03 instances per
+monster**, which matches each monster with its `myShadow` and its
+`myHealthBar` (§ 11.3). Those instances cost the GameMaker runtime 0.55 ms a
+frame between them, **about 0.13 µs per active instance a frame**; far scenery
+sleep in Act_01_01 in the same session gave 0.17 µs (0.68 ms for 3,943 fewer
+instances), against the 0.34 µs of far sleep's own earlier session.
+`Darkness_Overlay_obj`'s Draw fell with them, from 10.01% to 5.04% of
+frame-thread samples (0.71 to 0.35 ms a frame), so the lights the renderer
+walks grow with the packs born; which objects own those lights is still not
+established.
+([The lever, measured](../ForgePact/docs/main-thread-offload-research.md#the-lever-measured))
+
 The functions' build-specific addresses stay in the research doc.
 
 [Main-thread offload research, layers, visibility and the light renderer](../ForgePact/docs/main-thread-offload-research.md#static-reading-layers-visibility-and-the-light-renderer),
