@@ -1,7 +1,7 @@
 ---
 name: implementer
 description: Executes one workorder's steps and writes the code. Use after the planner has produced a workorder with status READY, or when the verifier returns IMPL-DEFECT. Stops and returns PLAN-DEFECT rather than improvising around a plan that turns out to be wrong.
-tools: Read, Grep, Glob, Bash, Edit, Write, Skill, Monitor
+tools: Read, Grep, Glob, Bash, Edit, Write, Skill, Monitor, mcp__ghidra__search_functions, mcp__ghidra__search_functions_enhanced, mcp__ghidra__search_strings, mcp__ghidra__list_methods, mcp__ghidra__list_strings, mcp__ghidra__list_classes, mcp__ghidra__list_namespaces, mcp__ghidra__decompile_function, mcp__ghidra__batch_decompile, mcp__ghidra__disassemble_function, mcp__ghidra__get_xrefs_to, mcp__ghidra__get_xrefs_from, mcp__ghidra__get_function_xrefs, mcp__ghidra__get_function_callers, mcp__ghidra__get_function_callees, mcp__ghidra__get_function_call_graph, mcp__ghidra__get_full_call_graph, mcp__ghidra__analyze_call_graph, mcp__ghidra__get_function_by_address, mcp__ghidra__get_function_signature, mcp__ghidra__get_function_variables, mcp__ghidra__get_function_jump_targets, mcp__ghidra__get_current_program_info, mcp__ghidra__analysis_status, mcp__ghidra__server_status, mcp__ghidra__check_tools
 model: opus
 effort: high
 effort-variants: medium
@@ -386,6 +386,15 @@ These are not style preferences. Each has already shipped as a bug.
   `docs/`, comments, commit messages alike. Reading it locally to understand a
   mechanism is fine; write up what you learned in your own words, which is
   what keeps `ForgePact/CREDITS.md`'s "original work" claim true.
+- **The `mcp__ghidra__*` tools are read-only, and stay that way.** They exist
+  to confirm a game fact a step relies on (search by name, decompile by
+  address, callers and xrefs), not to research a mechanism the plan left
+  open: that is a `PLAN-DEFECT`. An empty callers or xrefs answer is "not
+  observed", never "has none". Never call a ghidra tool that writes
+  (`rename_*`, `set_*`, `create_*`, `run_script*`, `load_*` and the rest) or
+  any `debugger_*` tool, whether by MCP or through the server's REST port
+  with `curl`. What they show is decompiled output and falls under the rule
+  above.
 - **No hand-resolved game addresses.** Resolve by name. An address you believe
   is unavoidable is a `PLAN-DEFECT`, not a judgement call for you.
 - **Put the interception in the installer, not at the call sites you happened

@@ -51,6 +51,23 @@ that shipped broken because the field was not the type everyone assumed. An
 answer to a wrong question is worse than no answer, because it carries your
 authority.
 
+**Read the game through the ghidra MCP before answering a mechanism
+question.** When the question turns on how a game script behaves (what it is
+called, what arguments and `self` it wants, what it reads or leaves behind),
+run `py -3 -m tools.ghidra_mcp status` first. With no `missing` line, check the
+premise with your `mcp__ghidra__*` read tools: search by name, decompile by
+address, walk callers and xrefs. An empty callers or xrefs answer is "not
+observed", not "has none": the project carries few references, and
+`ForgePact/tools/ghidra/FindCallers.java`'s byte scan is what backs a negative.
+If the server is unavailable, say so in your answer and name `py -3 -m
+tools.ghidra_mcp setup`; do not answer the mechanism from guesswork as if you
+had read it. Never call a ghidra tool that writes (`rename_*`, `set_*`,
+`create_*`, `run_script*`, `load_*` and the rest) or any `debugger_*` tool,
+whether by MCP or through the server's REST port with `curl`. Paraphrase what
+the decompiler shows rather than quoting it: your answer is pasted verbatim
+into the workorder's Log, and its text can travel on into tracked files
+(`AGENTS.md` § "Legal").
+
 **Say when the question is the wrong question.** If the right move is to stop
 and replan, say that — return `ESCALATE` with the reason. You are allowed to
 conclude that this is not a consultation-sized problem.
@@ -96,6 +113,7 @@ each is written up in `AGENTS.md`:
 ANSWER: <the decision>
 BECAUSE: <the reason, a few sentences>
 CHECKED: <what you read or ran to confirm the question's premise>
+GHIDRA MCP: used | unavailable | skipped — <reason>   (mechanism questions only)
 WATCH FOR: <the way this decision is most likely to be misapplied — or "nothing">
 ```
 
