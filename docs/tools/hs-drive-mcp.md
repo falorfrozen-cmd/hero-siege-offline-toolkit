@@ -1260,7 +1260,7 @@ rather than by falling back to another launcher:
   crash: check for the incident monitor's clean-shutdown line, and the dump's
   stack, before blaming ForgePact or the game. Measured 2026-10-07: both
   graceful closes of ForgePact #173's sessions read `0xC0000409` after
-  `==== clean shutdown ====` (Verification, "Exit codes").
+  `==== clean shutdown ====` (Verification, "Exit codes (ForgePact #173)").
 - **Backups accumulate and nothing prunes them.** Removal is deliberately out
   of scope — no tool in this server has removal as its effect. Each backup is
   about 1.5 MB, and a restore writes two (the pre-restore one, plus whatever
@@ -1459,6 +1459,8 @@ capture once it has run.
 | V4 | Identity control: `hs_stash_tab("materials", backup_id="no-such-backup")` refused before anything is sent (`verb_trail` and `layout_trail` empty). The shared gate answers a missing id `invalid_backup_id`, a present id without a manifest `backup_incomplete` | live 3 | **pass — 2026-09-26.** Refused `invalid_backup_id` ("No backup 'no-such-backup' under ...; nothing was sent"), `verb_trail: [] layout_trail: []` |
 | V5 | `hs_stash_close` `ok` (the close is the save); then `hs_stash_tab` and `hs_stash_close` refused `stash_not_open` | live 3 | **pass — 2026-09-26.** `hs_stash_close` → `ok phase:stash_closed` (one transient "not confirmed" poll frame, resolved); a second `hs_stash_tab` and a second `hs_stash_close` both refused `stash_not_open` |
 | V6 | Stop, inspect (`stash.hss` and the character file changed), restore the live-3 backup, inspect clean, release; the DLL hash unchanged | live 3 | **pass — 2026-09-26.** `hs_stop_game` exited cleanly (`forced:false`); `hs_saves_inspect` changed `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini`, `stash.hss`, nothing added/missing; DLL hash after equalled before; restore performed afterward by the driver on the owner's word |
+
+### Exit codes (ForgePact #173)
 
 The rows below belong to `forgepact-173-dropmult-gold-crash`, the workorder
 that added `exit_watch` and `exits` ("Exit codes: every game this server
