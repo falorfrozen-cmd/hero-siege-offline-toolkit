@@ -507,6 +507,251 @@ main menu on 2026-09-26 (`pe-6aaa6779-0cad4fc8`). All **measured**.
 [Decompile index and slot-name helpers](tools/decomp-index.md),
 [skill sliders research](../ForgePact/docs/skill-sliders-research.md)
 
+### 5.11 Threads the runner starts
+
+**Static reading**, 2026-10-06 (ForgePact #183), in our own words; not measured
+live. On 2026-10-07 the installed exe was checked to contain the thread and
+switch names below; nothing else was re-read.
+
+- Garbage collection runs on its own "GC Thread". The runner's
+  `MultithreadGCOn`/`MultithreadGCOff` debug switch defaults to on.
+- A job pool, "JobManager", runs up to 8 "Job Worker Thread"s. They decode
+  images and texture pages (PNG, GIF, JPEG, QOI, external `texture_%d.yytex`),
+  run `buffer_save_async` and `buffer_load_async`, and load zip and HTTP
+  textures.
+- Audio has its own thread, and so does HTTP ("GameMaker HTTP").
+- Direct3D 11 is created with device flags 0x820 (BGRA support 0x20 plus video
+  support 0x800). It is not single-threaded (0x1 unset), and the driver's own
+  threading is not turned off (0x8 unset).
+- The game's `SaveFileGMAsync` and `SaveCommit` scripts exist. Whether they
+  reach `buffer_save_async`, and so the job pool, is not established; a
+  `HookBuiltin` counter on it during a save would settle it.
+- The runner refuses some operations off the main thread, with
+  "THREAD SAFETY ERROR, this code can only be executed on the main thread".
+  Native code that calls into the runner from a worker thread can fail by
+  design.
+
+**Measured**, 2026-09-28 `frameprof` captures:
+
+- In the six 2026-09-28 captures, the frame thread used 98-99% of one core
+  (93-94% in frame-profiler.md's earlier pair); every other thread in the
+  process together used 4-10% of one core.
+- **Thread names not observed.** `GetThreadDescription` was empty for every
+  game thread among the 24 each capture lists (`threads.top[].name`). The JSON
+  keeps only the 24 busiest threads by CPU, and each list ends among 0%
+  threads. The read works, because the profiler's own named thread reads back
+  in every capture, but threads past the cut were not seen: `HookEvents`
+  appears in only one of the six captures, and the idle GC, job-worker, audio
+  and HTTP threads would sit there too, so they may never have been read.
+  Whether the runner names any thread is not established.
+- A GC thread existing does not mean collections leave the frame alone: §5.9
+  measured `gc_collect`'s walk landing one frame later and taking
+  12.7-31.7 ms. Whether the frame thread waits on the GC thread is not
+  established.
+
+The build-specific addresses behind these readings (job submit, worker spawn,
+the device creation call, the GC thread's start and the switch's flag byte)
+stay in the research doc, with the exe's SHA-256.
+
+[Main-thread offload research](../ForgePact/docs/main-thread-offload-research.md#static-reading-threads-the-runner-starts),
+[frame profiler](../ForgePact/docs/frame-profiler.md)
+
+### 5.12 Frame thread time by phase
+
+The runner's frame has a **step phase** (Begin Step through End Step, with
+alarms, motion and collisions) and a **draw phase** (Pre-Draw through Draw GUI
+End), both run by one per-frame function, plus a presentation step that holds
+the frame limiter. `frameprof`'s report tool (`ForgePact/tools/frameprof_report.py`)
+finds the two phases' dispatchers on a capture's own stacks and splits the
+frame thread's time between them and the rest.
+
+**Measured**, the six 15 s Act_01_01 `frameprof` captures of 2026-09-28 (the
+hidden-loot A/B), re-read offline 2026-10-07. Shares are of all frame-thread
+samples. The tool's bucket totals agreed with the plugin's on all six.
+
+| Loot | fps | Step phase | Draw phase | Outside the phases |
+|---|---|---|---|---|
+| asleep (3 captures) | 139-143 | 45.2-47.3%: game 21.0-22.4, runtime 23.7-25.0 | 37.1-37.8%: game 8.6-9.7, runtime 24.4-24.8, graphics 1.5-2.2, mods 1.8-2.2 | 15.0-17.7%: limiter spinning 9.5-12.2, runtime 3.4-3.6, graphics 1.3-1.8 |
+| awake (2 captures) | 45-46 | 72.0-72.2%: game 58.6-59.5, runtime 12.6-13.3 | 25.3-25.5%: game 8.8-9.3, runtime 9.3, graphics 2.6-2.7, mods 4.3-4.5 | 2.4-2.5% |
+| awake (1 capture) | 30 | 52.9%: game 44.3, runtime 8.5 | 44.9%: game 27.7, runtime 7.4, graphics 7.1, mods 2.7 | 2.2% |
+
+- At about 140 fps, the "GameMaker runtime with no game code on
+  the stack" bucket splits almost evenly between the two phases, 23.7-25.0%
+  of samples each.
+- In the step phase, that runtime time is mostly fixed passes over instances,
+  the collision pass (7.4-7.9% of samples) and the alarm countdown
+  (6.0-6.4%) above all; dispatching the Step-family events themselves costs
+  1.3-1.6%.
+- In the draw phase it is the room draw per view (11.3-12.7%) and the
+  Post-Draw and GUI event passes (9.3-10.1%). Graphics-driver frames are only
+  1.5-2.2% there.
+- At about 140 fps most of the time outside the phases is the frame limiter
+  spinning rather than sleeping.
+
+**Measured, Live 1 of forgepact-183, 2026-10-07**, the heavy rooms: 30 s
+captures on the v2.1.0 player build, with ForgePact's `density` raised and
+`farsleep`, `densityroll` and `hiddenloot` off. Shares are of all frame-thread samples; the
+frame thread worked 100% of the time in both, and the tool's buckets agreed
+with the plugin's. Fewer than 0.1% of samples' walks ended early in any Live 1
+capture, and H1 and H2 found the same step and draw dispatchers as town.
+
+| Room | fps | Monsters | Step phase | Draw phase | Outside the phases |
+|---|---|---|---|---|---|
+| Act_01_01, density 5 | 126.8 | 469 | 53.1%: game 34.2, runtime 18.9 | 40.9%: game 10.9, runtime 26.3, graphics 2.0, mods 1.7 | 6.0%: runtime 3.2, graphics 1.2, mods 1.6 |
+| Act_01_02, density 2, map filled | 118.5 | 2,167 | 45.7%: game 25.3, runtime 18.7, mods 1.7 | 48.9%: game 19.7, runtime 25.7, graphics 2.2, mods 1.3 | 5.4%: runtime 3.0, graphics 1.0, mods 1.5 |
+
+- Over the whole frame the runtime with no game code on the stack was 47-48%
+  of samples, game code 45%, and graphics-driver frames 3.2%; no sample waited
+  on the GPU or the display.
+- The draw phase's runtime time is again the room draw per view and the
+  layer-by-layer event passes, 21.6-21.8% of samples together. In the step
+  phase the alarm pass is the largest runtime-only part (5.6-6.3%).
+- In Act_01_02 the game's light renderer, run from `Darkness_Overlay_obj`'s
+  Draw event, took 9.25% of samples. `ActivateDeactivateProps` took at most
+  0.64%.
+
+The per-case tables, each callee's share and the ceilings these give each
+offload candidate are in
+[the research doc's Live 1 results](../ForgePact/docs/main-thread-offload-research.md#live-1-results).
+
+**Static reading**, 2026-10-07, in the local Ghidra project, in our own words:
+
+- The per-frame function runs, in order: input and housekeeping work, the step
+  phase, and then, when no room change is pending, the draw phase. It returns
+  before the step when the game window is inactive and a pause-when-unfocused
+  switch is set, and it ends the frame with a region the runner labels
+  "Garbage Collector".
+- The step dispatcher first walks every instance to save its previous position
+  and advance its animation frame. Then it runs Begin Step, further event
+  passes (alarms among them), Step, motion (or a physics world step), the
+  collision pass (skipped when the physics world stepped) and End Step. After
+  each pass it stops early if a room change is pending.
+- The draw dispatcher runs Pre-Draw, draws the room once per enabled view
+  (Draw Begin, the layers in depth order with each instance's Draw event, and
+  Draw End), then Post-Draw, and then the three Draw GUI events. A second Draw
+  Begin, Draw and Draw End pass over layers that a different layer mask selects
+  is interleaved with the GUI events; what that mask selects is not established.
+- The frame limiter waits out a deadline either by sleeping on a waitable
+  timer or by sleeping part of it and spinning on the performance counter for
+  the rest. Which setting makes this build spin is not established.
+
+The functions' build-specific addresses, the per-capture table and each
+callee's share stay in the research doc.
+
+[Main-thread offload research, runner phases](../ForgePact/docs/main-thread-offload-research.md#runner-phases-in-the-2026-09-28-captures),
+[the per-frame functions](../ForgePact/docs/main-thread-offload-research.md#the-per-frame-functions-static-reading),
+[frame profiler](../ForgePact/docs/frame-profiler.md)
+
+### 5.13 Layers, depth and what the draw passes skip
+
+**Static reading**, 2026-10-07, in the local Ghidra project (build
+498d588550d8), in our own words. These readings ruled out hiding layers and
+setting `visible` as ways to shorten the runner's walks
+([forgepact-183](../ForgePact/docs/main-thread-offload-research.md#static-reading-layers-visibility-and-the-light-renderer)).
+
+- **Every room's fixed layers.** `SetupRoomLayers`, called only from
+  `RoomGoto`, creates the same layers in every room: `Layer_Shadows` (depth
+  +4), `Particles_1` (-11001), `Water_Overlay` (-11500), `Outline` (-11601),
+  `UI_7999` (-11999), `UI_8000` (-12000), `UI_COMBAT_TEXT` (-12001),
+  `Vignette` (-12500), `UI_Pickup_Log_obj` (-12997), `UI_Controller_obj`
+  (-12998), `UI_9000` (-13000), `UI_9001` (-13001), `Camera_obj` (-13900),
+  `Loot_Manager_obj` (-13999), `UI_10000` (-14000), `Menu_Controller`
+  (-14001), `Darkness` (-14002) and `Color_Blind` (-14003). It also creates
+  `Layer_UI_Parent_0..49` at depth -13000-i, kept in
+  `global.uiLayer[room][i]`, and `Game_Layer_0..5500` at depth -i.
+- **Depth follows y, 2 px a layer.** `UpdateDepth` takes a y (by default the
+  instance's own) and an optional anchor (default -1), and always records
+  `yDepthSet` = y. With no anchor it moves the instance to
+  the room's `Game_Layer` whose index is y halved, rounded toward zero and
+  clamped to 0-5500 (from the game's `gameLayer` table), so one
+  `Game_Layer_i` covers 2 px of y and sits at depth -i. With an anchor it does
+  nothing while the anchor is within 4 px of y, and otherwise adds
+  `renderGroup` (undefined counts as 0) to the index. The player, the
+  mercenary and the enemy begin step pass the anchor, so they change layer
+  only after more than 4 px of drift.
+- **Who calls it.** 2,746 call sites: 2,007 in Create events (mostly prop
+  children, once each), 601 in Step events and about 120 in Alarm events.
+  Every step: the player, the mercenary, ordinary monsters inside the player
+  box (through `enemyParentBeginStepFunc`), bosses, and player and enemy
+  projectiles. Once: shadows, props, ground effects, and monsters at creation
+  and in their Alarm 4. `Enemy_Health_Bar_Parent_obj` never calls it.
+- **Health bars are not on a game layer.** `Enemy_Parent_obj`'s Alarm 4
+  creates the bar with `instance_create_layer` on `Layer_UI_Controller_obj`
+  (depth -12998). `updateLightShadowBarsPos` copies the monster's `visible`,
+  x and y into the bar (that it does so only after the monster moved is
+  inferred, not read). The bar's Draw GUI draws only while the bar is
+  visible and the enemy-health option or `healthBarDraw` is set, at the bar's
+  own coordinates through `GetGuiCoords`.
+- **The draw passes skip a hidden layer, not an invisible instance.** The
+  runner's Pre-Draw pass, its layer-by-layer event pass (Post-Draw and the
+  three Draw GUI events) and its main layer pass walk the room's layers in
+  depth order and skip a layer whose visible flag is clear before touching its
+  elements. Inside a visible layer each instance's own flags are tested, so an
+  instance with `visible` false is still visited.
+- **`layer_set_visible` deactivates.** It writes the layer's visible flag,
+  and on a real change, for every layer kind but one, it also deactivates
+  every instance element of the layer when hiding it and reactivates them when
+  showing it. What the layer kinds mean is inferred. Hiding a non-empty layer
+  through the builtin is therefore wholesale deactivation, the class
+  AGENTS.md § "Don't Suspend the Game's Own Runtime" does not recommend.
+- **`ActivateDeactivateProps` culls by `visible`; it deactivates nothing.**
+  Props (`Collision_Prop_obj`, `Destructible_NoCollision_Parent_obj`,
+  `Visual_Parent_obj`) are culled against `viewBoxL/R/T/B`, and one of those
+  blocks also sets the prop's `light.visible`. Monsters
+  (`Enemy_Child_Basic_obj`, through `monsterHandleArray` and
+  `playerBoxL/R/T/B`) get `visible`, `myShadow.visible` and
+  `myHealthBar.visible` set and `wasActive`/`isMoving` cleared. It also runs
+  `m_CorpseStep` and `m_runEnemyBuffs`. The every-30-frames walk over the
+  player box (§ 11.3) is this function's.
+- **`DeactivateObject` has two direct callers.** It removes an instance's
+  light from the renderer and then calls `instance_deactivate_object`. Its
+  direct (`call rel32`) callers are only `Satanic_Cube_obj`'s Alarm 2 and the
+  `Labyrinth_Trigger_*` collisions. That scan covers this one script: the
+  game's direct calls to the `instance_deactivate_object`, `_region`, `_all`
+  and `_layer` builtins and to `layer_set_visible` were **not searched**, and
+  a call through `script_execute` or a method value cannot be seen by it. So
+  where else the game deactivates is **not established**.
+- **The light renderer walks every registered light.** `Darkness_Overlay_obj`'s
+  Draw runs the Bulb renderer's update. Its hard-light pass walks every
+  registered point light each frame: it drops lights whose weak reference died
+  or that were destroyed, skips invisible ones, and tests the visible ones
+  against the screen and draws those. 168 Create events reference `light`:
+  flames, torches, braziers, lanterns and candles, plus `Visual_Parent_obj`,
+  `Enemy_Parent_obj`, `Player_obj`, `Projectile_Player_obj`,
+  `Skill_Ground_Effect_obj`, `Portal_Parent_obj` and `Shrine_Parent_obj`.
+  Which of them register a light in a given zone is **not established**.
+
+**Measured**, re-reading Live 1's Act_01_02 `.stacks.txt` (forgepact-183,
+2026-10-07): the hard-light pass is 9.11% of frame-thread samples, of which
+struct member reads are 4.75%, on-screen tests 1.83%, sprite checks 0.37% and
+lock calls 0.13%. Inferred from the static reading above: the per-light
+reads run for every registered light, so the pass's cost should follow their
+number. Live 1 of forgepact-183-frame-thread-lever is consistent with that
+(`light-follows`: the `Darkness_Overlay_obj` Draw share fell from 10.01% to
+5.04% when far packs were not yet born), but Live 1 counted no lights; the
+share moved together with the monster count (2,092 vs 682), so the two are
+not separated.
+
+**Measured**, Live 1 of workorder forgepact-183-frame-thread-lever
+(2026-10-07): Act_01_02 at density 2 with the map filled, the rolling fill
+(`fillroll`) against the full fill, at the same spot. The 1,410 extra monsters
+of the full fill came with 4,276 extra active instances, **3.03 instances per
+monster**, which matches each monster with its `myShadow` and its
+`myHealthBar` (§ 11.3). Those instances cost the GameMaker runtime 0.55 ms a
+frame between them, **about 0.13 µs per active instance a frame**; far scenery
+sleep in Act_01_01 in the same session gave 0.17 µs (0.68 ms for 3,943 fewer
+instances), against the 0.34 µs of far sleep's own earlier session.
+`Darkness_Overlay_obj`'s Draw fell with them, from 10.01% to 5.04% of
+frame-thread samples (0.71 to 0.35 ms a frame), so the lights the renderer
+walks grow with the packs born; which objects own those lights is still not
+established.
+([The lever, measured](../ForgePact/docs/main-thread-offload-research.md#the-lever-measured))
+
+The functions' build-specific addresses stay in the research doc.
+
+[Main-thread offload research, layers, visibility and the light renderer](../ForgePact/docs/main-thread-offload-research.md#static-reading-layers-visibility-and-the-light-renderer),
+[far scenery sleep](../ForgePact/docs/far-sleep-research.md)
+
 ---
 
 ## 6. Player and Global State
@@ -536,6 +781,10 @@ main menu on 2026-09-26 (`pe-6aaa6779-0cad4fc8`). All **measured**.
   **measured 2026-09-23.** This is the global, per-player form of §1's slot table.
   The relic slots 10-14 resolve the same way, **measured 2026-09-27** (§1).
   [miner's helmet, Runtime](../ForgePact/docs/miner-helmet-prototype.md#runtime)
+- Player position: **measured 2026-10-07** (forgepact-183-frame-thread-lever
+  Live 1), cause not established: in Act_01_02, setting the player about
+  9,800 px from the arrival point was undone by the game (the player returned
+  to the arrival point within 3 s); a move of about 4,900 px held.
 
 ### 6.2 Buffs
 
@@ -1918,16 +2167,27 @@ All **measured** (2026-09-10/11).
 
 ### 11.3 The enemy loop
 
-- **The game never deactivates monsters**; it deactivates only props and their
-  lights. Far monsters simply get no step. **Static reading**, consistent with
-  the census.
+- **The enemy loop never deactivates monsters.** `ActivateDeactivateProps`
+  culls props, as it culls monsters, by setting `visible` (§ 5.13; corrected
+  2026-10-07, an earlier reading here said props and their lights were
+  deactivated). Far monsters simply get no step. **Static reading** of the
+  box pass, consistent with the census. The deactivating script
+  `DeactivateObject` has direct callers only in `Satanic_Cube_obj`'s Alarm 2
+  and the `Labyrinth_Trigger_*` collisions (a `call rel32` scan, § 5.13).
+  Direct calls to the `instance_deactivate_*` builtins and to
+  `layer_set_visible` were **not searched**, and calls through
+  `script_execute` or a method value cannot be seen by that scan, so other
+  deactivation routes are **not established**.
 - Every 30 frames (`updateEnemyTimer`; `updateEnemies` forces it)
-  `EnemyStepHandleNew` walks every active `Enemy_Child_Basic_obj`, tests it
+  `ActivateDeactivateProps` walks every active `Enemy_Child_Basic_obj`, tests it
   against the player box (`playerBoxL/R/T/B`) and rebuilds
-  `monsterHandleArray`/`monsterHandleArrayCount`. Monsters leaving the box get
-  `wasActive`/`isMoving` cleared, their target dropped and their path ended. Each
-  frame it makes one `m_EnemyStep` call per handle; AI, pathfinding and effect
-  timers run only inside the box. **Static reading.**
+  `monsterHandleArray`/`monsterHandleArrayCount`, setting each monster's
+  `visible` (and its shadow's and health bar's) as it goes; § 5.13. Monsters
+  leaving the box get `wasActive`/`isMoving` cleared, their target dropped and
+  their path ended. Each frame `EnemyStepHandleNew` makes one `m_EnemyStep`
+  call per handle; AI, pathfinding and effect timers run only inside the box.
+  (An earlier reading here gave the 30-frame walk to `EnemyStepHandleNew`;
+  corrected 2026-10-07.) **Static reading.**
 - Every monster owns an `Enemy_Health_Bar_Parent_obj` (`myHealthBar`) whose Draw
   GUI is the only caller of `DrawEnemyHealthBars` (**measured** at 4.14 ms a
   frame); `objMinimap`'s Draw GUI runs `DrawMinimap` → `DrawMinimapDynamic`, which
