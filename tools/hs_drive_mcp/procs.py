@@ -27,10 +27,27 @@ caller rather than guessing which one the caller meant.
 this machine's process, anti-cheat and install state -- `server.py` stays
 registration only, which is how the launch, IPC and screenshot tools were added
 there without touching any logic.
+
+**Exit codes of the games this server launched** live here too, for the same
+reason: `hs_status` and `hs_stop_game` both report them, and `launch.py`
+already imports this module, so the registry sits where both can reach it
+without an import cycle. `hs_launch` calls `watch_exit(pid)` right after the
+engine starts the game; that opens a handle with query-limited-information and
+synchronize access (the ForgePact panel's `open_exit_handle` shape), which
+keeps the exit code readable after the process is gone. `exits()` then lists
+every watched PID that has ended. Whether it ended is asked of the handle --
+signalled or not -- and never inferred from the code, because a process may
+exit with 259, which is also `STILL_ACTIVE`. A code once read is cached and its
+handle closed. The registry is this server process's memory only: a PID from an
+earlier run of the server has no handle here, so it is never reported, and a
+PID somebody else started is never watched at all (ForgePact #173: a crash that
+left neither a dump nor a clean-shutdown line, and an exit code nobody read).
 """
 from __future__ import annotations
 
+import ctypes
 import os
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -150,6 +167,119 @@ def game_pids(engine: Any = None) -> list[int]:
     return [] if rows is None else [int(pid) for pid, _ in rows]
 
 
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+SYNCHRONIZE = 0x00100000
+WAIT_OBJECT_0 = 0
+
+#: One record per PID `hs_launch` started and could open, in launch order:
+#: `{"pid", "handle", "code"}`. `handle` is None once `code` has been read.
+#: A PID whose handle could not be opened is never recorded, so it can never be
+#: reported -- `hs_launch` says `exit_watch: unavailable (...)` instead.
+_EXITS: list[dict[str, Any]] = []
+_EXITS_LOCK = threading.Lock()
+_KERNEL32: Any = None
+
+
+def on_windows() -> bool:
+    """A seam the tests turn off; exit codes are read through Win32 only."""
+    return os.name == "nt"
+
+
+def kernel32() -> Any:
+    """kernel32 with the four exit-code calls typed, so a HANDLE is not
+    truncated to a C int on 64-bit Python."""
+    global _KERNEL32
+    if _KERNEL32 is None:
+        from ctypes import wintypes
+        api = ctypes.WinDLL("kernel32", use_last_error=True)
+        api.OpenProcess.restype = wintypes.HANDLE
+        api.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        api.WaitForSingleObject.restype = wintypes.DWORD
+        api.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        api.GetExitCodeProcess.restype = wintypes.BOOL
+        api.GetExitCodeProcess.argtypes = (wintypes.HANDLE,
+                                           ctypes.POINTER(wintypes.DWORD))
+        api.CloseHandle.argtypes = (wintypes.HANDLE,)
+        _KERNEL32 = api
+    return _KERNEL32
+
+
+def exit_code_text(code: int) -> str:
+    """An exit code as Windows writes one: `0xC0000005`."""
+    return f"0x{int(code) & 0xFFFFFFFF:08X}"
+
+
+def watch_exit(pid: int) -> str:
+    """Hold a handle on a PID this server launched. `held` or `unavailable (why)`.
+
+    The reason travels with the answer: an `exits` list that does not name a
+    PID means "it has not ended" only when this said `held`.
+    """
+    pid = int(pid or 0)
+    if not pid:
+        return "unavailable (the launch engine reported no pid)"
+    if not on_windows():
+        return (f"unavailable (exit codes are read through Win32, and os.name "
+                f"is {os.name!r})")
+    try:
+        api = kernel32()
+        handle = api.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+                                 False, pid)
+    except (OSError, AttributeError, ValueError) as exc:
+        return f"unavailable ({type(exc).__name__}: {exc})"
+    if not handle:
+        return (f"unavailable (OpenProcess(QUERY_LIMITED_INFORMATION | "
+                f"SYNCHRONIZE, {pid}) failed, GetLastError "
+                f"{ctypes.get_last_error()})")
+    with _EXITS_LOCK:
+        _EXITS.append({"pid": pid, "handle": handle, "code": None})
+    return "held"
+
+
+def _ended_code(api: Any, handle: Any) -> int | None:
+    """The exit code once the handle is signalled; None while the process runs.
+
+    Ended is the wait's answer, not the code's: 259 is a real exit code and
+    `STILL_ACTIVE` both, so reading the code first would report a live process
+    as exited, or a process that exited with 259 as live.
+    """
+    if api.WaitForSingleObject(handle, 0) != WAIT_OBJECT_0:
+        return None
+    from ctypes import wintypes
+    code = wintypes.DWORD()
+    if not api.GetExitCodeProcess(handle, ctypes.byref(code)):
+        return None
+    return int(code.value)
+
+
+def exits() -> list[dict[str, Any]]:
+    """`{"pid", "exit_code"}` for every launched PID that has ended, oldest
+    launch first. Empty off Windows, and never raises."""
+    if not on_windows():
+        return []
+    reported: list[dict[str, Any]] = []
+    with _EXITS_LOCK:
+        api = None
+        for record in _EXITS:
+            if record["code"] is None:
+                try:
+                    api = kernel32() if api is None else api
+                    code = _ended_code(api, record["handle"])
+                except (OSError, AttributeError, ValueError):
+                    code = None
+                if code is None:
+                    continue
+                record["code"] = code
+                try:
+                    api.CloseHandle(record["handle"])
+                except (OSError, AttributeError, ValueError):
+                    pass
+                record["handle"] = None
+            reported.append({"pid": record["pid"],
+                             "exit_code": exit_code_text(record["code"])})
+    return reported
+
+
 def gate() -> tuple[str, str]:
     """The callable the save tools inject: `(state, why)`.
 
@@ -173,7 +303,8 @@ def status(tool: str = "hs_status") -> dict[str, Any]:
     """
     engine, blocked, why = load_engine()
     if blocked == ENGINE_MISSING:
-        return results.refuse(tool, "engine_source_missing", why)
+        # The exit codes need no engine, so a refusal still carries them.
+        return results.refuse(tool, "engine_source_missing", why, exits=exits())
     if blocked:
         # Present but unimportable. A traceback across the transport is not a
         # result a caller can branch on; this module's own rule is that a
@@ -181,7 +312,8 @@ def status(tool: str = "hs_status") -> dict[str, Any]:
         return results.refuse(
             tool, "engine_import_failed",
             f"{why} Reinstall or re-check out ForgePact, and confirm this "
-            "Python can import ctypes.wintypes on this platform.")
+            "Python can import ctypes.wintypes on this platform.",
+            exits=exits())
 
     state = game_state(engine)
     pids = game_pids(engine)
@@ -215,6 +347,7 @@ def status(tool: str = "hs_status") -> dict[str, Any]:
         ipc_dir=None if directory is None else str(directory),
         bp_ipc_exists=bool(directory is not None and directory.is_dir()),
         launch=dict(engine.launch_status()),
+        exits=exits(),
     )
 
 

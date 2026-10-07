@@ -39,6 +39,13 @@ to a game instead of a dev server. Nothing here suspends, freezes or restores
 runtime state; § "Don't Suspend the Game's Own Runtime" was checked and this
 module stays on the read-or-ask-nicely side of it.
 
+**Every game this server launches is watched for its exit code.** `hs_launch`
+opens a query-only handle on the PID the engine started and reports
+`exit_watch` (`held`, or `unavailable (<why>)`); `hs_stop_game` and `hs_status`
+then list each watched PID that has ended in `exits`, with its code as Windows
+writes it (`0xC0000005`). The registry and the reasoning are `procs.watch_exit`
+and `procs.exits`.
+
 The envelope's `ok` says whether the tool did its job; `ready`, `exited` and
 `phase` say what the game did. A launch that ran and then sat at a channel
 nothing consumed is `ok: true, ready: false, phase:
@@ -405,12 +412,16 @@ def _launch(exe_path: str | None, wait_for_plugin: bool, timeout_s: float, *,
         # Recorded before the wait: a launch that times out waiting for the
         # plugin is still a process this server started.
         _LAUNCHED.add(pid)
+    # Also before the wait, so a game that dies during startup still leaves its
+    # exit code readable through `hs_status`'s `exits`.
+    exit_watch = procs.watch_exit(pid)
 
     report = wait_ready(engine=engine, gate=gate, timeout_s=timeout_s,
                         require_plugin=wait_for_plugin, tool=tool, pid=pid,
                         started=started)
     return {**report, "exe_path": str(exe), "exe_path_override": override,
-            "launched_here": bool(pid), "launch_message": str(outcome.get("ok", ""))}
+            "launched_here": bool(pid), "launch_message": str(outcome.get("ok", "")),
+            "exit_watch": exit_watch}
 
 
 def hs_wait_ready(timeout_s: float = DEFAULT_LAUNCH_TIMEOUT_S,
@@ -447,8 +458,10 @@ def _stop_game(force: bool, timeout_s: float, *, gate: Gate | None,
     def done(**fields: Any) -> dict[str, Any]:
         fields.setdefault("terminated", [])
         fields.setdefault("errors", [])
+        # Read last, after the wait: a game this server launched that has now
+        # exited reports its code here (`procs.exits`).
         return results.ok(tool, elapsed_s=round(time.monotonic() - started, 3),
-                          **fields)
+                          exits=procs.exits(), **fields)
 
     state, why = gate()
     if state == procs.NOT_RUNNING:
@@ -520,7 +533,7 @@ def _stop_game(force: bool, timeout_s: float, *, gate: Gate | None,
             exited=False, pids_closed=pids_closed, forced=False,
             terminated=[], errors=errors, game_state=state,
             windows_found=len(windows), launched_here=sorted(_LAUNCHED),
-            elapsed_s=round(time.monotonic() - started, 3))
+            exits=procs.exits(), elapsed_s=round(time.monotonic() - started, 3))
 
     terminated: list[int] = []
     for pid in remaining:
