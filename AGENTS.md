@@ -887,7 +887,17 @@ nobody kept, which is why nobody can say what is in it.
 `tests/test_yytoolkit_patch_series.py` enforces the series' shape mechanically,
 and `verify-dll` fails a binary that lacks a marker its patches declare.
 
-Story and evidence: [docs/agents/yytoolkit-provenance.md](docs/agents/yytoolkit-provenance.md)
+**The modified `AurieCore.dll`'s source of truth is
+[`third_party/aurie/`](third_party/aurie/README.md)**, under the same rules:
+one pinned upstream commit (Aurie v2.0.2) plus a documented patch series, built
+by `tools/build_aurie.py` (a second profile of the same build tool), never an
+edited tree, and never a patch to the plugin-facing `shared.hpp`.
+`ForgePact/aurie-modified/` holds only the notice and BUILD-INFO that ship
+beside the DLL, not its source. `tests/test_aurie_patch_series.py` enforces the
+series' shape; [ADR 0006](docs/adr/0006-modified-auriecore-is-a-patch-series-in-the-hub.md)
+says why the hook-freeze fix took this form.
+
+Story and evidence for the YYToolkit series: [docs/agents/yytoolkit-provenance.md](docs/agents/yytoolkit-provenance.md)
 
 ## HS Game SDK Usage
 
