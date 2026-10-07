@@ -1258,7 +1258,9 @@ rather than by falling back to another launcher:
   (`docs/submodules/ForgePact/instructions.md`, Known Limitations item 25). So
   `0xC0000409` on a close that `hs_stop_game` requested is not by itself a
   crash: check for the incident monitor's clean-shutdown line, and the dump's
-  stack, before blaming ForgePact or the game.
+  stack, before blaming ForgePact or the game. Measured 2026-10-07: both
+  graceful closes of ForgePact #173's sessions read `0xC0000409` after
+  `==== clean shutdown ====` (Verification, "Exit codes").
 - **Backups accumulate and nothing prunes them.** Removal is deliberately out
   of scope — no tool in this server has removal as its effect. Each backup is
   about 1.5 MB, and a restore writes two (the pre-restore one, plus whatever
@@ -1457,6 +1459,20 @@ capture once it has run.
 | V4 | Identity control: `hs_stash_tab("materials", backup_id="no-such-backup")` refused before anything is sent (`verb_trail` and `layout_trail` empty). The shared gate answers a missing id `invalid_backup_id`, a present id without a manifest `backup_incomplete` | live 3 | **pass — 2026-09-26.** Refused `invalid_backup_id` ("No backup 'no-such-backup' under ...; nothing was sent"), `verb_trail: [] layout_trail: []` |
 | V5 | `hs_stash_close` `ok` (the close is the save); then `hs_stash_tab` and `hs_stash_close` refused `stash_not_open` | live 3 | **pass — 2026-09-26.** `hs_stash_close` → `ok phase:stash_closed` (one transient "not confirmed" poll frame, resolved); a second `hs_stash_tab` and a second `hs_stash_close` both refused `stash_not_open` |
 | V6 | Stop, inspect (`stash.hss` and the character file changed), restore the live-3 backup, inspect clean, release; the DLL hash unchanged | live 3 | **pass — 2026-09-26.** `hs_stop_game` exited cleanly (`forced:false`); `hs_saves_inspect` changed `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini`, `stash.hss`, nothing added/missing; DLL hash after equalled before; restore performed afterward by the driver on the owner's word |
+
+The rows below belong to `forgepact-173-dropmult-gold-crash`, the workorder
+that added `exit_watch` and `exits` ("Exit codes: every game this server
+launched"). They are ForgePact #173's Live 1 and Live 2 of 2026-10-07
+(`ForgePact/docs/dropmult-gold-crash-research.md` § "Results"), both launched
+by this server.
+
+| # | Check | Command | Result |
+| --- | --- | --- | --- |
+| X1 | A server started before the change has no `exits`; after a reconnect it is present and empty | `hs_status`, before and after `/mcp` -> hs-drive -> Reconnect | **pass — 2026-10-07.** The first `hs_status` had no `exits` key; after the reconnect `"exits":[]`. The lease record of the old server process read `stale` and the next `hs_lease_acquire` recovered it. |
+| X2 | `hs_launch` holds the handle | `hs_launch` | **pass — 2026-10-07.** `exit_watch: "held"` on all three launches (Live 1 twice, Live 2 once). |
+| X3 | A crash's code (positive control) | `crashwatch crash confirm` on the research build, then `hs_status` | **pass — 2026-10-07.** `"game_state":"not_running"`, `"exits":[{"pid":28660,"exit_code":"0xC0000005"}]`; Windows wrote `Hero_Siege.exe.28660.dmp` and an Application Error record with the same code and PID. An `hs_status` taken while the process was still going listed it running with `exits` empty. |
+| X4 | A running game is not listed | `hs_status` during play | **pass — 2026-10-07.** Throughout Live 1's play, `exits` carried only the crashed PID 28660, never the running 14736. |
+| X5 | A graceful close's code, in `hs_stop_game`'s own answer | `hs_stop_game` (`force=false`) | **pass — 2026-10-07.** Live 1: `{"pid":14736,"exit_code":"0xC0000409"}`, `forced:false`, 6.6 s; Live 2: `{"pid":34868,"exit_code":"0xC0000409"}`, 7.2 s, with the earlier PIDs still listed oldest first. Both after `==== clean shutdown ====`; the Live 2 close logged `ucrtbase.dll`, `0xc0000409` and left a dump (ForgePact guide, Known Limitations item 25). |
 
 ## Skills and talents
 
