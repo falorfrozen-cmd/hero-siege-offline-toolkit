@@ -728,8 +728,9 @@ lock calls 0.13%. Inferred from the static reading above: the per-light
 reads run for every registered light, so the pass's cost should follow their
 number. Live 1 of forgepact-183-frame-thread-lever is consistent with that
 (`light-follows`: the `Darkness_Overlay_obj` Draw share fell from 10.01% to
-5.04% when far packs were not yet born), but it varied the light count only
-together with the monster count.
+5.04% when far packs were not yet born), but Live 1 counted no lights; the
+share moved together with the monster count (2,092 vs 682), so the two are
+not separated.
 
 **Measured**, Live 1 of workorder forgepact-183-frame-thread-lever
 (2026-10-07): Act_01_02 at density 2 with the map filled, the rolling fill
