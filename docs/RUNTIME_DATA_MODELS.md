@@ -588,6 +588,31 @@ samples. The tool's bucket totals agreed with the plugin's on all six.
 - At about 140 fps most of the time outside the phases is the frame limiter
   spinning rather than sleeping.
 
+**Measured, Live 1 of forgepact-183, 2026-10-07**, the heavy rooms: 30 s
+captures on the v2.1.0 player build, with ForgePact's `density` raised and
+`farsleep`, `densityroll` and `hiddenloot` off. Shares are of all frame-thread samples; the
+frame thread worked 100% of the time in both, and the tool's buckets agreed
+with the plugin's.
+
+| Room | fps | Monsters | Step phase | Draw phase | Outside the phases |
+|---|---|---|---|---|---|
+| Act_01_01, density 5 | 126.8 | 469 | 53.1%: game 34.2, runtime 18.9 | 40.9%: game 10.9, runtime 26.3, graphics 2.0, mods 1.7 | 6.0%: runtime 3.2, graphics 1.2, mods 1.6 |
+| Act_01_02, density 2, map filled | 118.5 | 2,167 | 45.7%: game 25.3, runtime 18.7, mods 1.7 | 48.9%: game 19.7, runtime 25.7, graphics 2.2, mods 1.3 | 5.4%: runtime 3.0, graphics 1.0, mods 1.5 |
+
+- Over the whole frame the runtime with no game code on the stack was 47-48%
+  of samples, game code 45%, and graphics-driver frames 3.2%; no sample waited
+  on the GPU or the display.
+- The draw phase's runtime time is again the room draw per view and the
+  layer-by-layer event passes, 21.6-21.8% of samples together. In the step
+  phase the alarm pass is the largest runtime-only part (5.6-6.3%).
+- In Act_01_02 the game's light renderer, run from `Darkness_Overlay_obj`'s
+  Draw event, took 9.25% of samples. `ActivateDeactivateProps` took at most
+  0.64%.
+
+The per-case tables, each callee's share and the ceilings these give each
+offload candidate are in
+[the research doc's Live 1 results](../ForgePact/docs/main-thread-offload-research.md#live-1-results).
+
 **Static reading**, 2026-10-07, in the local Ghidra project, in our own words:
 
 - The per-frame function runs, in order: input and housekeeping work, the step
