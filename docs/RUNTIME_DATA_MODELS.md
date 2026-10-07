@@ -542,8 +542,8 @@ switch names below; nothing else was re-read.
   threads. The read works, because the profiler's own named thread reads back
   in every capture, but threads past the cut were not seen: `HookEvents`
   appears in only one of the six captures, and the idle GC, job-worker, audio
-  and HTTP threads would sit there too. Whether the runner names any thread is
-  not established. The names above are strings in the exe.
+  and HTTP threads would sit there too, so they may never have been read.
+  Whether the runner names any thread is not established.
 - A GC thread existing does not mean collections leave the frame alone: §5.9
   measured `gc_collect`'s walk landing one frame later and taking
   12.7-31.7 ms. Whether the frame thread waits on the GC thread is not
