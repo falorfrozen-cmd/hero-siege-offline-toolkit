@@ -144,6 +144,27 @@ live capture or on data that does not exist yet is `reversible: no` with
                    decompile-output question is never defaultable (AGENTS.md,
                    "Legal: Decompiled Output Never Reaches Any Origin").
 
+And the Ghidra MCP check (hub #468, 2026-10-07), so a plan that researches a
+game mechanism has asked the local decompiler first (AGENTS.md, "Check for a
+Named Ghidra Project Before Researching a Game Mechanism"). Such a plan
+records the check on one `## State` line, `ghidra mcp: used -- <what it
+answered>`, `unavailable -- <what status printed>; offered setup` or `skipped
+-- <reason>`, the key in any case. A plan is mechanism research when it, or
+its sibling `<slug>-context.md`, has a `### Live procedure` heading, a `route
+tokens:` State line holding a backticked token, the text `analyzeHeadless`,
+`DecompileTo`, `decomp_index.py has` or `mcp__ghidra__`, or a
+`ForgePact/docs/<name>-research.md` path. The heuristic is broad on purpose:
+a plan that only mentions these tools clears it with one `skipped` line.
+Both are findings, not warnings, so the exit code refuses the plan.
+
+  ghidra-unchecked mechanism research and no `ghidra mcp:` State line. The
+                   excerpt names the trigger that fired and where.
+  ghidra-bad-value a `ghidra mcp:` State line whose value's first word is
+                   not `used`, `unavailable` or `skipped`, or `skipped` with
+                   nothing after it but dashes, colons and whitespace
+                   (`-`, an en or em dash). Checked whether
+                   or not a trigger fired.
+
 Usage:
     py -3 tools/plan_lint.py <slug>-plan.md [...]
     py -3 tools/plan_lint.py <slug>-plan.md --lanes-json
@@ -222,6 +243,16 @@ LEGAL_RE = re.compile(r"decompil|disassembl|legal|licen[cs]e|copyright|ghidra|\b
 NUMBERED_STEP_RE = re.compile(r"^\s*\d+\.\s")
 BULLET_RE = re.compile(r"^\s*[-*]\s+")
 STATE_HEADING_RE = re.compile(r"^##\s+State\s*$")
+# Mechanism research (hub #468): a plan that must record its Ghidra MCP check.
+LIVE_PROCEDURE_RE = re.compile(r"^###\s+Live procedure", re.I)
+ROUTE_TOKENS_RE = re.compile(r"^\s*(?:[-*]\s+)?\**route tokens:\**(.*)$", re.I)
+GHIDRA_TEXT_RE = re.compile(r"analyzeHeadless|DecompileTo|decomp_index\.py\s+has\b|mcp__ghidra__")
+RESEARCH_DOC_RE = re.compile(r"ForgePact[/\\]docs[/\\][\w.-]+-research\.md")
+GHIDRA_MCP_RE = re.compile(r"^\s*(?:[-*]\s+)?\**ghidra mcp:\**(.*)$", re.I)
+GHIDRA_MCP_WORD_RE = re.compile(r"\s*[`*]*([A-Za-z]+)[`*]*(.*)$")
+GHIDRA_MCP_VALUES = ("used", "unavailable", "skipped")
+# What may separate `skipped` from its reason; nothing else left means none.
+GHIDRA_REASON_SEPARATORS = "—–-: \t"
 # `(reads `a/**`, `b.py`)`: backticked globs, which may hold parentheses.
 READS_DECL_RE = re.compile(r"\(reads\s+((?:`[^`]*`|[^()`])*)\)")
 INFER_DIR_RE = re.compile(r"(?:\bcd\s+|--prefix[=\s]+)(\"[^\"]+\"|'[^']+'|[^\s;&|]+)")
@@ -431,6 +462,80 @@ def draft(text: str, plan_dir: Path | None = None) -> list:
         shown.append(f"{slug} ({theirs or 'no plan beside this one'})")
     waits = ("waits on " + ", ".join(shown)) if shown else "names no `depends on:`"
     return [("plan-draft", f"status: DRAFT, {waits}; re-plan against the finished result, then set READY")]
+
+
+def _state_lines(text: str) -> list:
+    """The lines of the first `## State` section, up to the next `## `."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if STATE_HEADING_RE.match(line):
+            out = []
+            for body in lines[i + 1:]:
+                if NEXT_H2_RE.match(body):
+                    break
+                out.append(body)
+            return out
+    return []
+
+
+def mechanism_trigger(text: str) -> str | None:
+    """What makes `text` mechanism research (hub #468), as the excerpt names
+    it, or None: a `### Live procedure` heading, a `route tokens:` State line
+    holding a backticked token, a headless-Ghidra or Ghidra-MCP name, or a
+    ForgePact research doc."""
+    for line in text.splitlines():
+        if LIVE_PROCEDURE_RE.match(line):
+            return "a `### Live procedure` heading"
+    for line in _state_lines(text):
+        m = ROUTE_TOKENS_RE.match(line)
+        if m and BACKTICK_RE.search(m.group(1)):
+            return "a `route tokens:` State line with a token"
+    for pattern in (GHIDRA_TEXT_RE, RESEARCH_DOC_RE):
+        m = pattern.search(text)
+        if m:
+            return f"`{m.group(0)}`"
+    return None
+
+
+def _ghidra_value_problem(value: str) -> str | None:
+    """Why a `ghidra mcp:` value is not `used`, `unavailable` or `skipped`
+    with a reason, or None when it is one of them."""
+    m = GHIDRA_MCP_WORD_RE.match(value)
+    word = m.group(1).lower() if m else ""
+    if word not in GHIDRA_MCP_VALUES:
+        return "the value starts with none of `used`, `unavailable`, `skipped`"
+    if word == "skipped" and not m.group(2).strip(GHIDRA_REASON_SEPARATORS):
+        return "`skipped` needs a reason after it"
+    return None
+
+
+def ghidra_findings(text: str, context: str | None = None) -> list:
+    """`[(rule, excerpt)]` for the plan's Ghidra MCP record (hub #468):
+    `ghidra-bad-value` per `ghidra mcp:` State line with a value outside the
+    three words, and `ghidra-unchecked` when the plan or its context file is
+    mechanism research and `## State` has no such line."""
+    out, recorded = [], False
+    for line in _state_lines(text):
+        m = GHIDRA_MCP_RE.match(line)
+        if not m:
+            continue
+        recorded = True
+        problem = _ghidra_value_problem(m.group(1))
+        if problem:
+            shown = line.strip()
+            shown = shown if len(shown) <= 80 else shown[:77] + "..."
+            out.append(("ghidra-bad-value", f"`{shown}`: {problem}"))
+    if recorded:
+        return out
+    for where, source in (("the plan", text), ("the context file", context)):
+        trigger = mechanism_trigger(source or "")
+        if trigger:
+            out.append(("ghidra-unchecked",
+                        f"mechanism research ({trigger} in {where}) and `## State` has no `ghidra mcp:` "
+                        "line; add `ghidra mcp: used|unavailable|skipped -- <what it answered, what "
+                        "status printed, or why>`"))
+            break
+    return out
 
 
 def _looks_like_sha(run: str) -> bool:
@@ -824,7 +929,10 @@ def lint(path: Path) -> tuple:
     items_ = criteria(text)
     if items_ is None:
         return None, []
-    out = [("plan", rule, excerpt) for rule, excerpt in draft(text, path.parent)]
+    context = sibling_context(path)
+    context_text = context.read_text(encoding="utf-8", errors="replace") if context and context.is_file() else None
+    out = [("plan", rule, excerpt)
+           for rule, excerpt in draft(text, path.parent) + ghidra_findings(text, context_text)]
     merges = plan_merges(text)
     for k, item in enumerate(items_, 1):
         for rule, excerpt in lint_criterion(item, merges):
@@ -835,8 +943,6 @@ def lint(path: Path) -> tuple:
     declared_items = items(text)
     for iid, rule, excerpt in lint_items(declared_items, bool(declared_lanes)):
         out.append((f"item {iid}", rule, excerpt))
-    context = sibling_context(path)
-    context_text = context.read_text(encoding="utf-8", errors="replace") if context and context.is_file() else None
     out += lint_owner(declared_items, text, context_text)
     return len(items_), out
 

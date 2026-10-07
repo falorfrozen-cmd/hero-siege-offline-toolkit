@@ -80,6 +80,57 @@ SERVER_CLASS = "com.xebyte.headless.GhidraMCPHeadlessServer"
 # docker/entrypoint.sh.
 JAR_DIRS = ("Framework", "Features", "Processors")
 
+# The tools the workorder phase agents (planner, implementer, consultant and
+# their effort variants) may call, as bare names; their `tools:` lines carry
+# each as `mcp__ghidra__<name>`. Classified against GhidraMCP 6.0.0's live
+# `/mcp/schema` plus the bridge's static tools: every one is an HTTP GET.
+# Excluded, as classes rather than tool by tool: every POST endpoint, read-looking
+# or not (the server marks state-changing endpoints POST, and one rule read off
+# the schema stays correct where a judgement per tool drifts); every write and
+# project or session change (rename_*, set_*, create_*, run_script*, load_*,
+# switch_program, connect_instance and the rest); and every debugger_* tool,
+# because attaching to the running game is hs-drive's job, under its lease.
+# docs/tools/ghidra-mcp.md says why each tool is in or out.
+# tests/test_ghidra_agent_tools.py pins this set to the agents' tool lines.
+AGENT_READ_TOOLS = (
+    # search
+    "search_functions",
+    "search_functions_enhanced",
+    "search_strings",
+    # list
+    "list_methods",
+    "list_strings",
+    "list_classes",
+    "list_namespaces",
+    # decompile
+    "decompile_function",
+    "batch_decompile",
+    "disassemble_function",
+    # xrefs
+    "get_xrefs_to",
+    "get_xrefs_from",
+    "get_function_xrefs",
+    # callers, callees, call graph
+    "get_function_callers",
+    "get_function_callees",
+    "get_function_call_graph",
+    "get_full_call_graph",
+    "analyze_call_graph",
+    # function info
+    "get_function_by_address",
+    "get_function_signature",
+    "get_function_variables",
+    "get_function_jump_targets",
+    # status
+    "get_current_program_info",
+    "analysis_status",
+    "server_status",
+    "check_tools",
+)
+# The release the set above was classified against. A VERSION bump fails
+# tests/test_ghidra_agent_tools.py until someone reclassifies the new schema.
+AGENT_READ_TOOLS_CLASSIFIED_FOR = "6.0.0"
+
 
 @dataclass
 class Config:
