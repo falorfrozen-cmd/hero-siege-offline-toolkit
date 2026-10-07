@@ -5206,4 +5206,4 @@ point by the game (why is not established); the shorter one held.
 and § "The lever, measured".
 The player text is in the ForgePact README (§ "Fill the map as you approach
 (lighter frames while the map is filled)") and
-`ForgePact/release-notes-v2.3.0.md`.
+`ForgePact/release-notes-v2.2.0.md`.
