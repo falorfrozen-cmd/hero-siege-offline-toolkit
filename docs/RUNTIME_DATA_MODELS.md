@@ -1690,15 +1690,16 @@ All **measured** (2026-09-10/11).
 [§3](../ForgePact/docs/map-reveal-research.md#3-waypoint-icon-reveal-does-not-unlock-the-waypoint),
 [§9](../ForgePact/docs/map-reveal-research.md#9-fog-robustness-minimapcellsxminimapcellsy-change-across-zones)
 
-### 11.2 Spawners: packs do not exist until the player is near
+### 11.2 Spawners: most packs are built when the player comes near, some at arrival
 
 - Every `Enemy_Creator_*` spawner exists and is awake from zone generation (one
   zone: 271 `Enemy_Creator_obj`, 13 Ambush, 19 Ancient, 7 Legion, with 208 live
   enemies). The family is `Enemy_Creator_obj` plus `_Champion_`, `_Ancient_`,
   `_Legion_`, `_Miniboss_`, `_Ambush_` and `_Colossal_Chest_`. **Measured**; family
   from names.
-- Each creator registers a periodic timer with the game's timer system and keeps
-  its handle in **`enemyCreatorTimer`** (period about 116 frames). The check spawns
+- Each plain creator (`Enemy_Creator_obj`; the other kinds below) registers a
+  periodic timer with the game's timer system and keeps its handle in
+  **`enemyCreatorTimer`** (period about 116 frames). The check spawns
   the pack when `distance_to_object(Player_obj)` is under **1050 px**, then
   destroys the timer — a creator spawns once. A pack's position and kind are known
   before birth; its rarity and affixes are rolled at birth, in the creator's
@@ -1728,11 +1729,181 @@ All **measured** (2026-09-10/11).
   and both `enemyCreatorTimer` and `enemyArray` undefined; once armed,
   `alarm[0]` was -1 and `enemyCreatorTimer` a real; once spawned, `enemyArray`
   was an array and `enemyCreatorTimer` no longer listed. So "still to spawn"
-  is `enemyArray` not being an array; `enemyCreatorTimer` alone cannot tell it,
+  is `enemyArray` not being an array within one visit; after leaving and
+  returning, all 92 plain creators read undefined (per-kind bullet below);
+  `enemyCreatorTimer` alone cannot tell it,
   being undefined both before a creator arms and after it spawns. 5 of the 122
   had spawned by first sight, and the rest made about 5.25 kills each (614 for
   117). **Measured 2026-10-03**; the other creator objects' `enemyArray` was
-  not sampled ([dungeon chest, Live procedure 1b](../ForgePact/docs/dungeon-chest-research.md#live-procedure-1b)).
+  not sampled then ([dungeon chest, Live procedure 1b](../ForgePact/docs/dungeon-chest-research.md#live-procedure-1b));
+  of the five kinds sampled since, only the plain and ambush creators carry
+  it (the per-kind bullet below).
+- **The SDK script table lists a Create-event closure for the plain creator
+  only, and the seven creator objects are unrelated to one another.** Of the
+  seven, only `Enemy_Creator_obj` has a Create-event closure in the SDK script
+  table, `anon@886@gml_Object_Enemy_Creator_obj_Create_0` (the `anon@N` part
+  is patch-specific, §5.3); the Ambush, Ancient, Champion, Colossal Chest,
+  Legion and Miniboss creators have none listed. That absence says nothing
+  about whether the other six have Create events of their own; what they carry
+  is the measured bullet below. All seven (objects 1409-1415) are each a
+  root object in the SDK parent table, with no parent and no children, so
+  `instance_number`/`instance_find` on one never counts another's instances.
+  **Static reading** of the SDK tables, 2026-10-06 (falorfrozen-cmd/ForgePact#181).
+- **Of the five creator kinds sampled, only the plain and ambush creators
+  carried `enemyArray`, and only the plain creator carried
+  `enemyCreatorTimer`.** Per kind sampled, read by name with
+  `variable_instance_exists` on every creator of that kind in the zone:
+  - `Enemy_Creator_obj` (control): `enemyCreatorTimer` a number on unspawned
+    creators; `enemyArray` undefined before birth and an array after, as
+    above. On a revisit (leaving the zone and returning, 2026-10-06) all 92
+    plain creators read `enemyArray` undefined, including the 10 whose
+    `enemyCreatorTimer` was undefined and whose `enemyArray` had read an
+    array before the player left; so after a revisit `enemyArray` not being
+    an array does not show a creator is still to spawn. Why is not
+    established.
+  - `Enemy_Creator_Ambush_obj` (9 in one zone): no `enemyCreatorTimer`
+    (absent). `enemyArray` exists and reads undefined before birth; when the
+    player was moved beside them, 6 of the 9 read an array.
+  - `Enemy_Creator_Ancient_obj` (15 and 10, two zones),
+    `Enemy_Creator_Miniboss_obj` (3 and 4) and
+    `Enemy_Creator_Colossal_Chest_obj` (6, one zone): neither variable exists
+    on any of them. No colossal chest creator had a create attributed to it.
+    Miniboss creators did (`Hellspawn_Guardsman_obj` 4 in one zone and
+    `Servant_of_Devil_obj` 3 in the other, from creators about 3000 px from
+    the player) and still read both variables absent afterwards. Whether
+    those creates were the pack's birth, and what a miniboss or colossal
+    chest creator holds after birth, is **not established**.
+  - Ancient creators after creates were attributed to them: warping the
+    player beside an ancient creator's position twice in a Depths of Hell zone (zone level 514), the
+    owner saw monsters appear at each warp, and creates were attributed to
+    ancient creators (0 before, 3 after the first warp, 7 after a warp beside
+    a miniboss creator in the same area, 10 after the second ancient warp:
+    `Hell_Beast_Passive_obj` 3, `Skeleton_Mage_Fire_obj` 3,
+    `Imp_Passive_obj` 2, `Undead_Priest_Passive_obj` 2). All 15 ancient
+    creators still existed afterwards and still read both variables absent.
+    So an ancient creator that has made creates still carries neither
+    variable. Whether those creates were its pack's birth is not
+    established: normal packs were born at both ancient warps too (normal
+    `stateborn` 10 → 22 at the first, 48 → 57 across the second), so the
+    owner's report of monsters appearing does not single out an ancient pack;
+    7 of the 10 creates are `*_Passive_obj`; and 4 came at the miniboss warp.
+    **Measured 2026-10-06** (issue #181, capture
+    `forgepact-181-map-reveal-icons-live-3.md`). In the same session no
+    create was attributed to a miniboss creator at a warp beside one,
+    although named monsters showed nearby.
+  - `Enemy_Creator_Champion_obj` and `Enemy_Creator_Legion_obj`: none in
+    either zone sampled, **not established**.
+
+  So in both zones sampled, no ancient, miniboss or colossal chest creator
+  showed a numeric timer or an `enemyArray`, and "still to spawn" could not
+  be read from either variable on those three; by the static reading in the
+  next bullet, their pack state is held in the protected-store record their
+  `spawnPack` variable names. For ancient creators that
+  holds after creates were attributed to them too (above); for miniboss and
+  colossal chest creators, whether either is set later (nearer the player, or at birth) is not
+  observed. **Measured 2026-10-06** (issue #181, captures
+  `forgepact-181-map-reveal-icons-live-1.md` and `-live-3.md`;
+  [map reveal §11, Live 1 results](../ForgePact/docs/map-reveal-research.md#live-1-results)
+  and [Live 3 results](../ForgePact/docs/map-reveal-research.md#live-3-results)).
+- **Every creator keeps its pack state in a protected-store record named by
+  its `spawnPack` variable.** All seven creator objects allocate a record in
+  the game's protected value store in their Create event, keep its key in the
+  instance variable `spawnPack`, and free it in CleanUp; their own events read
+  and write the pack state as that record's value. So
+  `variable_instance_get(creator, "spawnPack")` returns a key, not the state
+  (the same trap as a monster's `damage`, §13.7), and the state is
+  `PC_GetVariableGMLWrapper(key)`. Check the key before that call: a key
+  outside 0..262143 must never reach the store's getter, since the store
+  holds 262,144 records (§5.8) and a -1 key faulted the game. What moves the
+  state, per kind:
+  - `Enemy_Creator_Ancient_obj`: 1 after Create. While it is 1, each step
+    tests the player's distance, and within about 1200 px (or always, for a
+    wormhole creator) writes 2 and arms an alarm for the next frame; that
+    alarm builds the pack from the zone's enemy pool, rolls its rarity and
+    affixes, and writes 3. The creator stays. So an ancient pack exists at
+    most one frame after the state leaves 1. *Measured (Live 4):* 1 on all
+    10 at arrival, 3 on each born one (1 → 3 at a warp beside it), and the
+    creator still exists; the state 2 between them was never read.
+  - `Enemy_Creator_Miniboss_obj`: Create writes 1 and arms an alarm, due the
+    next frame in most rooms and a few seconds later in seven named rooms
+    (Ruby Gardens, Tomb of Amun Ra 02, the Fortune Teller room and four Act 9
+    boss rooms). That alarm, while the state is 1, builds the miniboss and
+    writes 2. It references named uniques (`Mancrusher_obj`, `Queen_Bee_obj`,
+    `Black_Plague_obj` and others), but how it picks what it builds was not
+    read, so these are not a set it is known to build from; Live 4 attributed
+    a `Hellspawn_Guardsman_obj` to each creator (below). No miniboss event tests the player's distance,
+    so a miniboss pack is built at zone arrival, not on approach. Create also
+    asks `ZoneStateExists`; what that changes on a revisit was not read.
+    *Measured (Live 4):* 2 on all 4 at arrival, read with the player at
+    the zone's waypoint (2976,3648, the position `playerwarp` reported
+    before the step-4 warp; no movement in between was recorded), about
+    900-1460 px from the four creators, with one `Hellspawn_Guardsman_obj`
+    attributed to each by our create hooks (in Steam Train). The creator
+    still exists after its pack is killed (262691 read in full before the
+    warp, 5 s after it, about 16 s after it and after the kill; 262694 in
+    full 5 s after the warp and after the kill, and before the warp only
+    its census row, spawnPack 2): its six protected values (state 2, zone state 1,
+    self-destroy 0 and the rest) and its instance variables did not change,
+    apart from `img`, which advanced steadily throughout; built-in variables
+    such as its alarms were not read. So none of the values read marks the
+    pack's death (not observed, not ruled out).
+  - `Enemy_Creator_Legion_obj`: Create writes 1 and arms an alarm (about
+    1.5 s in one branch), which builds the pack (named monsters such as
+    `Hellspawn_Guardsman_obj`, `Undead_Raider_obj`, `Skinwalker_obj`) and
+    writes 2. No distance test: built at arrival.
+  - `Enemy_Creator_Champion_obj`: its step sets the state to 1 when unset,
+    builds the pack while it is 1 and writes 2. No distance test: built in
+    its first steps.
+  - `Enemy_Creator_Colossal_Chest_obj`: its step builds its wave while the
+    state is 1 and writes 2. The chest sets that 1: `ChestColossalSpawnEnemies`,
+    run when the player opens a `Colossal_Chest_obj`, sets it on the nearby
+    colossal chest creators whose state is unset. So a colossal chest pack is
+    born when its chest is opened. *Measured (Live 4):* 0 on all 6 at
+    arrival and until the chest was opened, 2 on all 6 afterwards, with one
+    `Abomination_obj` attributed to each; the state 1 between was not read.
+  - `Enemy_Creator_Ambush_obj`: while the state is unset, its step counts
+    down a check timer and tests the player's distance; once near, it writes
+    1, shows the ambush effect and arms the alarm that builds the pack (and
+    fills `enemyArray`, measured above). *Measured (Live 4):* 0 (unset) on
+    all 9 at arrival; no ambush birth was seen that session.
+  - `Enemy_Creator_obj`: Create writes several protected values; about 0.4 s
+    later an alarm reads the state before it registers the periodic timer
+    (`enemyCreatorTimer`). Which value means born was not read statically.
+    *Measured (Live 4):* 1 before its birth, 3 after: at arrival 50 read 1
+    and the 12 already born read 3, and one creator watched through its
+    birth went 1 → 3 as `enemyArray` became an array and
+    `enemyCreatorTimer` went away. At every census that session the number
+    of plain creators reading 3 equalled the number whose `enemyArray` was
+    an array (12, 25, 30, 37); the per-creator match was read on the
+    watched creator only.
+
+  **On a revisit** (*measured, Live 4*): leaving a zone by waypoint and
+  coming back gives every creator a new instance id (262xxx → 321xxx; no
+  creator id seen on the first visit was listed again, for any kind), at
+  the same position. The protected pack state comes back with the zone for
+  every kind measured: normal 1 on 25 and 3 on 37, ancient 1 on 3 and 3 on
+  7, colossal chest 2 on all 6, miniboss 2 on all 4. The plain creators
+  kept their timer split (25 with a timer, 37 without), but none carried an
+  `enemyArray` that was an array after the revisit, so on a revisit
+  `enemyArray` no longer tells a born plain creator from an unborn one; the
+  protected state and the timer's absence still do, by count (37 and 37).
+
+  **Measured 2026-10-06** (issue #181, capture
+  `forgepact-181-map-reveal-icons-live-4.md`, one zone, Steam Train, zone
+  level 293; [map reveal §11, Live 4 results](../ForgePact/docs/map-reveal-research.md#live-4-results)):
+  that the getter, given the key `spawnPack` holds, returns a state that
+  moves with the pack's birth as above (a positive control on a known slot
+  through the same getter answered in every census), and each *Measured (Live 4)* line and the
+  revisit paragraph above. Everything else in this bullet is still the
+  **static reading**, 2026-10-06 (falorfrozen-cmd/ForgePact#181, replan 2
+  of the hub workorder `forgepact-181-map-reveal-icons`): where the record
+  is allocated and freed, the alarms, the distance tests and the intermediate states, the miniboss room list and
+  the unique names its alarm references, and the whole legion and champion lines, since that session
+  had no legion or champion creator (not observed). Not read: what the
+  zone state restores on a revisit beyond the values above, the plain
+  creator's pack-building alarm (it exceeded the decompiler's time limit),
+  and the miniboss alarm beyond its state test and its final write, which
+  includes how it picks the unit it builds.
 - `EnemyCreatorPending` only reports whether a creator still has an alarm running.
   Creators make density copies through four-argument `instance_create_*` calls.
   **Static reading.**
