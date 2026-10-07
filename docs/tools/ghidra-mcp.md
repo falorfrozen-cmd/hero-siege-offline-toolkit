@@ -74,7 +74,9 @@ on demand, as `DecompileTo.java` does, and needs no analysis pass.
 ## Setup on a new machine
 
 Downloads need the owner's go-ahead. With Ghidra and a JDK 21 installed and
-the research project in place (AGENTS.md § "Check for a Named Ghidra Project"):
+the research project in place (AGENTS.md § "Check for a Named Ghidra Project
+Before Researching a Game Mechanism", which puts this server ahead of the
+headless route):
 
 ```bash
 py -3 -m tools.ghidra_mcp setup    # fetch + sha256-check the release, make the bridge venv, copy the project
@@ -118,6 +120,47 @@ reboot, or is never written when a launcher dies mid-start.
   for headless output and for its `slot-name` / `find-name` naming of unnamed
   globals.
 
+## Which agents reach it, and with what
+
+The `/workorder` phase agents that research or decide (`planner` and its
+effort variants, `implementer`, `implementer-medium`, `consultant`,
+`consultant-max`) list the server's read tools, the set `AGENT_READ_TOOLS`
+names, in their `tools:` lines, as `mcp__ghidra__<tool>`: search, list, decompile, xrefs, callers, callees, call
+graph, function info and status. The verifier, the scribe, `live-operator`
+and the reviewers get none.
+
+- **The read set's source is `AGENT_READ_TOOLS` in
+  [`tools/ghidra_mcp.py`](../../tools/ghidra_mcp.py).** The bridge names a
+  tool after its REST path (`/server/status` becomes `server_status`).
+- **What is left out, by rule:** every `POST` endpoint, read-looking ones
+  included, because the server marks state-changing endpoints `POST`; every
+  write and project or session change (`rename_*`, `set_*`, `create_*`,
+  `delete_*`, `load_*`, `run_script*` and the rest); every `debugger_*` and
+  `emulate_*` tool; `force_decompile`, which only matters after a rename;
+  `list_functions` and `list_functions_enhanced`, which flood the context on
+  307,150 functions (`list_methods` and `search_functions` page); and the
+  tool-discovery helpers other than `check_tools`. Reads outside those
+  categories, such as `read_memory`, are added to the set and the test together.
+- **The test:** `py -3 -m unittest tests.test_ghidra_agent_tools` pins each
+  of those agents' `mcp__ghidra__*` names to `AGENT_READ_TOOLS` and fails any
+  write or debugger tool on any agent.
+- **The list does not seal the server off.** Each of these agents has `Bash`,
+  and the REST port answers `curl` on `127.0.0.1:8089`, so the prompts forbid
+  that route as well. A write would land only in the project copy.
+- **Codex gets no allowlist.** `tools/sync_agent_tooling.py` does not
+  translate `tools:`, so a Codex agent sees every tool of every server, and
+  the ban in the agent's prompt is the only restriction (`.claude/README.md`
+  § "Codex").
+- **Headless is the fallback**, for what these reads cannot do:
+  `ImportSymbols.java` for a fresh import and symbol naming; `DecompileTo.java`
+  (with `DecompileToLong.java` / `DecompileToHuge.java` for long timeouts)
+  for bulk dumps that `tools/decomp_index.py scan` indexes; `FindCallers.java`,
+  `FindWrites.java`, `FindPointers.java`, `FindRvaTable.java`,
+  `ListCallsIn.java` and `DecompileAround.java` for byte-level scans; and
+  `FindSlotNames.java` for the slot-name table. They run under
+  `analyzeHeadless` against the research project, which this server never
+  locks.
+
 ## Sharp edges
 
 - **The bridge registers about 244 tools.** Claude Code defers MCP tools behind
@@ -128,6 +171,19 @@ reboot, or is never written when a launcher dies mid-start.
   finds the server warm.
 - **Decompile by address.** `decompile_function` takes `address`, not a name.
   Get the address from `search_functions` (`name_pattern`) first.
+- **An empty callers or xrefs answer is "not observed", not a negative.**
+  `get_function_callers` and the xrefs tools read Ghidra's reference table,
+  which a `-noanalysis` import is inferred to leave mostly empty. On 2026-10-07
+  `search_functions` found `SaveStash`, `get_function_callers` answered "No
+  callers found", and `get_function_xrefs` returned one `DATA` reference.
+  That one probe is the whole basis for "mostly empty": it is inferred, not
+  measured across the project. Whether `SaveStash` has direct callers was not
+  checked in that run, but this build's compiled GML calls scripts by direct
+  `call rel32`, which only a byte scan sees. `FindCallers.java` scans `.text`
+  for `E8`/`E9` sites aimed at the target, and a zero from it does not close
+  the question either: it sees only those direct sites, needs a
+  positive control in the same project (a script it finds callers for), and
+  is blind to calls through the script table, a global pointer or a method value.
 - **The `debugger_*` and `emulate_*` tools** are part of the release's surface.
   They are not used or verified here. Attaching to a running game is
   `hs-drive`'s territory and subject to its lease.
@@ -140,3 +196,7 @@ reboot, or is never written when a launcher dies mid-start.
 fixtures: the git-tree refusal, the loopback bind, the stripped environment,
 the argfile classpath, the version check on the port, and the `.mcp.json` and
 Codex wiring. It never starts Java or opens the real project.
+
+`py -3 -m unittest tests.test_ghidra_agent_tools -v` pins which agents carry
+which `mcp__ghidra__*` tools against `AGENT_READ_TOOLS`, and fails any write
+or debugger tool on an agent (§ "Which agents reach it, and with what").
