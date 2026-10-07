@@ -133,8 +133,10 @@ xrefs, callers, callees, call graph and function info. The read set is
 `tests/test_ghidra_agent_tools.py` pins those lines to it and fails any write
 or debugger tool on them. Every other agent (verifier, scribe, `live-operator`,
 the reviewers) gets none. Their prompts put the MCP first for a game-mechanism
-question, treat an empty callers or xrefs answer as "not observed" until
-`FindCallers.java` backs it, and keep headless `analyzeHeadless` with
+question, treat an empty callers or xrefs answer as "not observed", and do not
+let a `FindCallers.java` zero close the question either: it counts only direct
+E8/E9 call sites, needs a positive control in the same project, and is blind to
+calls through the script table, a global pointer or a method value. They keep headless `analyzeHeadless` with
 `ForgePact/tools/ghidra/*.java` as the fallback (AGENTS.md § "Check for a Named
 Ghidra Project Before Researching a Game Mechanism").
 
