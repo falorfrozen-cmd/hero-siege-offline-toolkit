@@ -340,7 +340,12 @@ a step or a reviewer is pointed at it). `## State` carries `round:`, `phase:`,
 "while the Log lacks X"), `gates pending:` and `route tokens:`, `round base:` (the `round_delta.py` snapshot for
 this round), `agents:` (each phase's agent id, for the resume mechanism
 above), `reviewers:`, `open defects:`, `patch rounds:` (the patch rounds
-that held, which the round cap does not count) and `decisions in force:`. `gates:`
+that held, which the round cap does not count), `decisions in force:` and,
+on a plan that researches a game mechanism, `ghidra mcp:` (whether the
+`ghidra` MCP answered the research: `used — <what it answered>`,
+`unavailable — <what status printed>; offered setup` or `skipped —
+<reason>`, which `tools/plan_lint.py` checks as `ghidra-unchecked` and
+`ghidra-bad-value`). `gates:`
 lists only the gates that are set, or `none`. Every gate a criterion may
 later need sits on `gates pending:`, and the possible research outcomes sit
 on `route tokens:`. A gate counts as set only when `gates:` literally carries

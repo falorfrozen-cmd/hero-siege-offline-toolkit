@@ -89,7 +89,7 @@ you find yourself wanting to, that is a signal the plan is not finished.
    `py -3 -m tools.ghidra_mcp setup`, as `AGENTS.md` § "Check for a Named
    Ghidra Project Before Researching a Game Mechanism" offers its two options.
    Record the check on the plan's `ghidra mcp:` State line, as `used — <what
-   it answered>`, `unavailable — <what status printed>` or `skipped —
+   it answered>`, `unavailable — <what status printed>; offered setup` or `skipped —
    <reason>`; `tools/plan_lint.py` fails a mechanism-research plan without
    that line as `ghidra-unchecked`. Never call a ghidra tool that writes
    (`rename_*`, `set_*`, `create_*`, `run_script*`, `load_*` and the rest) or
@@ -412,7 +412,7 @@ reviewers: <none yet>
 open defects: none
 decisions in force: none
 shared contract: none   (or backticked globs whose change runs every criterion)
-ghidra mcp: used — <what it answered>   (or `unavailable — <what status printed>`, or `skipped — <reason>`)
+ghidra mcp: used — <what it answered>   (or `unavailable — <what status printed>; offered setup`, or `skipped — <reason>`)
 
 ## Goal
 One paragraph. What changes for a user of this toolkit.

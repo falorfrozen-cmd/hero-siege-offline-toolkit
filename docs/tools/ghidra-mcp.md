@@ -124,8 +124,8 @@ reboot, or is never written when a launcher dies mid-start.
 
 The `/workorder` phase agents that research or decide (`planner` and its
 effort variants, `implementer`, `implementer-medium`, `consultant`,
-`consultant-max`) list 26 of the server's tools in their `tools:` lines, as
-`mcp__ghidra__<tool>`: search, list, decompile, xrefs, callers, callees, call
+`consultant-max`) list the server's read tools, the set `AGENT_READ_TOOLS`
+names, in their `tools:` lines, as `mcp__ghidra__<tool>`: search, list, decompile, xrefs, callers, callees, call
 graph, function info and status. The verifier, the scribe, `live-operator`
 and the reviewers get none.
 
@@ -173,13 +173,17 @@ and the reviewers get none.
   Get the address from `search_functions` (`name_pattern`) first.
 - **An empty callers or xrefs answer is "not observed", not a negative.**
   `get_function_callers` and the xrefs tools read Ghidra's reference table,
-  and a `-noanalysis` import leaves it mostly empty. On 2026-10-07
+  which a `-noanalysis` import is inferred to leave mostly empty. On 2026-10-07
   `search_functions` found `SaveStash`, `get_function_callers` answered "No
   callers found", and `get_function_xrefs` returned one `DATA` reference.
-  Whether `SaveStash` has direct callers was not checked in that run, but this
-  build's compiled GML calls scripts by direct `call rel32`, which only a byte
-  scan sees. Back an empty answer with `FindCallers.java`, which scans `.text`
-  for `E8`/`E9` sites aimed at the target, before it closes a question.
+  That one probe is the whole basis for "mostly empty": it is inferred, not
+  measured across the project. Whether `SaveStash` has direct callers was not
+  checked in that run, but this build's compiled GML calls scripts by direct
+  `call rel32`, which only a byte scan sees. `FindCallers.java` scans `.text`
+  for `E8`/`E9` sites aimed at the target, and a zero from it does not close
+  the question either: it sees only those direct sites, needs a
+  positive control in the same project (a script it finds callers for), and
+  is blind to calls through the script table, a global pointer or a method value.
 - **The `debugger_*` and `emulate_*` tools** are part of the release's surface.
   They are not used or verified here. Attaching to a running game is
   `hs-drive`'s territory and subject to its lease.

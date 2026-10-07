@@ -277,14 +277,21 @@ this machine can read, and say what you found.
   decompile, xrefs, callers, callees and call graph, function info). It serves
   a copy of the research project, so it never locks the original. The planner
   and its effort variants, `implementer`, `implementer-medium`, `consultant`
-  and `consultant-max` carry those read tools; none of them carries a write or
-  debugger tool, and none may reach one through the server's REST port either
-  ([docs/tools/ghidra-mcp.md](docs/tools/ghidra-mcp.md)).
+  and `consultant-max` carry those read tools and no write or debugger tool.
+  Under Claude Code that `tools:` allowlist keeps the MCP write tools off them,
+  but it does not stop a Bash `curl` to the server's REST port, and Codex has
+  no allowlist at all, so the ban on writes and debugging through either route
+  is a prompt rule each of those agents is told to keep, not something the
+  tooling enforces ([docs/tools/ghidra-mcp.md](docs/tools/ghidra-mcp.md)).
 - **An empty callers or xrefs answer is "not observed", not a negative.** The
-  MCP's callers and xrefs come from Ghidra's reference table, which this
-  `-noanalysis` project leaves mostly empty, and compiled GML calls scripts by
-  direct `call rel32`. Back an empty answer with a `FindCallers.java` byte scan
-  before it closes anything (§ "Prove the Instrument" below).
+  MCP's callers and xrefs come from Ghidra's reference table, and compiled GML
+  calls scripts by direct `call rel32`. That a `-noanalysis` import leaves the
+  table mostly empty is inferred from one probe (`SaveStash`: no callers, one
+  `DATA` xref), not measured across the project. A `FindCallers.java` zero does
+  not close the question either: it sees only direct `E8`/`E9` sites, needs a
+  positive control in the same project, and is blind to calls through the
+  script table, a global pointer or a method value (§ "Prove the Instrument"
+  below).
 - **The headless route is the fallback**, for what the read tools cannot do: a
   fresh import and symbol naming (`ImportSymbols.java`), bulk dumps to files
   (`DecompileTo.java`), byte-level scans (`FindCallers.java`, `FindWrites.java`
