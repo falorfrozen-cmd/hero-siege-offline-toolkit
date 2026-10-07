@@ -1,0 +1,435 @@
+{
+  "$schema_note": "The gamba machine (Slot_Machine_01_obj) and Goburin's Head (ForgePact#134 phase 1, 2026-10-04). Static readings of the object's events (a local reading of the game's compiled-code table and event bodies, kept on the reader's machine; nothing quoted) and four live sessions with the research build's `gambaprobe` instrument on save slot 14, character Sorak: Live 1 (ForgePact research build, INSTRUMENT-BLIND), Live 2 (research build SHA-256 eb1fcf0997b535241ea536974f48a79658886b004266e14ff56b4d10dc87f2c0, Town of Inoya, then the first combat zone outside it), Live 3 (research build SHA-256 1ee2b7542445ff08477c189eefb802dda6dcd75b81509f09d553211df66f5379, Town of Inoya and the Fields of Battle) and Live 4 (phase 4's explosion watch, research build SHA-256 cfaeadc4e7799199a7cab31278f766269cc222971ee13a42349ba9a0eccaaa50, 2026-10-05/06, two natural machines run to their explosion), then Live 5 (the player build's gambapity explosion force, SHA-256 e01251d6b0f9fef7d0ebcbe8743ac9d45f8e71cb43f1f70aacc2523fd0a946c4, 2026-10-06, one natural machine), then Live 6 (phase 6's explosion count, player build SHA-256 85fda2eed6a100b8ccb876dcb4ad1618c79c018eee8710b84406d22eb9a56e99 and, for the migration re-check, 0a493c3f6ca8dd8bb7bd0aa26751035a738eee2d1dfc9bdc8248bc8703acb101, 2026-10-06, two natural machines). The argument, the controls and the check tables are in ForgePact docs/gamba-machine-research.md, Live 1 results, Live 2 results, Live 3 results, Live 4 results, Live 5 results and Live 6 results; the shared facts are docs/RUNTIME_DATA_MODELS.md section 20. Data only: no generator reads this file and there is no model. Every status is `measured`, `not-observed` or `static-reading`. No instrument-created machine survived its first step in any session; Live 3 measured a spin and a payout on a machine the game placed itself, Live 4 two machines' explosions, Live 5 one and Live 6 two more.",
+  "measurements": [
+    {
+      "id": "G1",
+      "kind": "baseline",
+      "status": "static-reading",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Static reading"}],
+      "objects": ["Slot_Machine_01_obj", "Collision_Prop_obj", "Collision_Parent_obj", "Avoidable_Parent_obj"],
+      "scripts": ["gml_Script_anon_1474_gml_Object_Slot_Machine_01_obj_Create_0"],
+      "what": "The gamba machine is an object whose logic is in its events, not a named script. Its parent chain is Collision_Prop_obj -> Collision_Parent_obj -> Avoidable_Parent_obj; Collision_Prop_obj owns a Create_0 and an Alarm_11, the two above it a Create_0 only.",
+      "values": {
+        "object_index": 4644,
+        "parents": [959, 957, 433],
+        "events": ["Create_0", "Alarm_0", "Alarm_9", "Step_0", "Draw_0", "Draw_64", "CleanUp_0"],
+        "create_closures": 1
+      }
+    },
+    {
+      "id": "G2",
+      "kind": "baseline",
+      "status": "static-reading",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "The game's own creation call"}],
+      "objects": ["Slot_Machine_01_obj", "Zone_State_Buffer_obj"],
+      "scripts": ["gml_Script_ClientCreateEffect", "gml_Script_instance_create"],
+      "what": "The game creates a machine from ClientCreateEffect, in the one case of its switch that carries object index 4644: one call of the game's own instance_create script with x, y and the object. instance_create takes a layer from a global array and calls the instance_create_layer builtin on it. Zone_State_Buffer_obj's Create closures also name the object (not read).",
+      "values": {
+        "creation_script_argc": 3,
+        "creation_builtin": "instance_create_layer"
+      }
+    },
+    {
+      "id": "G3",
+      "kind": "baseline",
+      "status": "static-reading",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "What `Create_0` runs, and the parent chain"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_UpdateDepth", "gml_Script_InitPV", "gml_Script_SPV", "gml_Script_GPV", "gml_Script_FPV", "gml_Script_DebugLogAddExt"],
+      "what": "Create_0 has one exit: it updates the depth, arms alarm 9 for the next step, runs the inherited Collision_Prop_obj Create (depth again, alarm 11 two steps out), then sets up the machine's state with about 80 calls by name to InitPV, SPV and GPV. CleanUp_0 frees it through FPV. Alarm_9 logs the spawn through DebugLogAddExt first, on every path.",
+      "values": {
+        "create_by_name_store_calls_approx": 80,
+        "alarm9_steps": 1,
+        "alarm11_steps": 2
+      }
+    },
+    {
+      "id": "G4",
+      "kind": "control",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": [],
+      "what": "The instrument's positive controls in Live 2: every row installed (none missing, none table-only), and one irandom(100) sent through CallBuiltin moved the irandom builtin row by exactly one call, so the builtin rows see a call. The hook took about 9 seconds, with the game frozen for them.",
+      "values": {
+        "rows": 41,
+        "missing": 0,
+        "table_only": 0,
+        "detoured": 32,
+        "detoured_under": 1,
+        "shared": 8,
+        "selftest_irandom_calls": [0, 1],
+        "compiled_code_rows_for_caller_walk": 20893,
+        "hook_freeze_seconds_approx": 9
+      }
+    },
+    {
+      "id": "G5",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_InitPV", "gml_Script_SPV", "gml_Script_GPV", "gml_Script_FPV"],
+      "what": "By name: both the short name and the gml_Script_ name of every hooked script resolve through GetNamedRoutineIndex to the script itself (byname=same only shows which entry the one index per name prefers; the array was never walked here; `gambaprobe fnwalk` was built to walk it, but in Live 3 it found no table (G15), so the by-name route stays blind). Yet across four Create_0 runs with a machine as self, the InitPV, SPV, GPV and FPV rows counted no call with the machine as self: the by-name store calls are not observed by the detour on the scripts' own functions (Live 1 counted the same zeros).",
+      "values": {
+        "byname_same": 24,
+        "byname_detoured": 0,
+        "byname_shared": 0,
+        "byname_missing": 0,
+        "create_runs": 4,
+        "InitPV_machine_self": 0,
+        "SPV_machine_self": 0,
+        "GPV_machine_self": 0,
+        "FPV_machine_self": 0
+      }
+    },
+    {
+      "id": "G6",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 1 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": [],
+      "what": "Live 1: three machines created by instance_create_depth at depth 0 at the player (two in town, one in a Hell zone) each ran Create_0 inside the call, then CleanUp_0 and Alarm_9 in the next step, and never Step_0; status read machines=0 each time.",
+      "values": {
+        "spawns": 3,
+        "route": "depth",
+        "step_0_calls": 0,
+        "machines_after": 0
+      }
+    },
+    {
+      "id": "G7",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_instance_create"],
+      "what": "Live 2: four spawn routes, one machine each, in the Town of Inoya. depth = instance_create_depth at depth 0 (the control); game = the game's own instance_create script by name with the player as self; layer = instance_create_layer on the player's layer value; self = instance_create_depth with the player as self and other. Every machine ran Create_0 and was removed by its own Alarm_9 in its first step, never reaching Step_0. The layer and depth read at Create_0 differed by route; the outcome did not.",
+      "values": {
+        "routes": {
+          "depth": {"create_layer": -1, "create_depth": 0, "alarm9_layer": 20359, "alarm9_depth": -419, "survived": false},
+          "game": {"create_layer": 19940, "create_depth": 0, "survived": false},
+          "layer": {"create_layer": 20351, "create_depth": -411, "survived": false},
+          "self": {"create_layer": -1, "create_depth": 0, "survived": false}
+        },
+        "status_after_four": {"create": 4, "alarm9": 4, "cleanup": 4, "step": 0, "machines": 0}
+      }
+    },
+    {
+      "id": "G8",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": [],
+      "what": "Who removes a spawned machine: its own Alarm_9. On all four spawns the stack walk taken at CleanUp_0 shows, below the plugin's detour and eight runner frames, a frame in gml_Object_Slot_Machine_01_obj_Alarm_9, so CleanUp_0 runs nested inside Alarm_9, through the runner. Alarm_9's own walk shows only runner frames (the alarm dispatch). No script or builtin row the instrument held counted a call with the machine as self during the removal (the probe's machine-self total was the three event rows, once each per spawn), so which runner routine removes it is not established. Live 1's order (CleanUp_0's line before Alarm_9's) is the order the event lines print, after each original returns.",
+      "values": {
+        "cleanup_caller_lines": 4,
+        "runner_frames_between": 8,
+        "alarm9_at_alarm9": 0,
+        "alarm11_at_alarm9": 2,
+        "machine_self_after_one_spawn": 3,
+        "machine_self_after_four_spawns": 12
+      }
+    },
+    {
+      "id": "G9",
+      "kind": "control",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
+      "objects": [],
+      "scripts": ["gml_Script_cpr_irandom", "gml_Script_cpr_rand32"],
+      "what": "About 15 seconds of combat in the first zone outside the Town of Inoya, no mod on: the game's rolls passed the cpr_irandom and cpr_rand32 script rows, while the irandom, irandom_range, random, random_range and choose builtin rows did not move (irandom kept its one self-test call). Whether the machine's prize roll passes either is not established.",
+      "values": {
+        "cpr_irandom_calls": [0, 1308],
+        "cpr_rand32_calls": [0, 1386],
+        "irandom_calls": [1, 1],
+        "irandom_range_calls": [0, 0],
+        "random_calls": [0, 0],
+        "random_range_calls": [0, 0],
+        "choose_calls": [0, 0]
+      }
+    },
+    {
+      "id": "G10",
+      "kind": "target",
+      "status": "not-observed",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 2 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": [],
+      "what": "A spin, its gold debit, the explosion, the prize roll and its ground placement, a forced Goburin's Head and a second machine's starting state. No machine lived to spin, so none was observed, and the loader-route fallback drop was not run. The research doc's Decision reads every spin key not-observed, fallback-drop not-run and pity-design blocked.",
+      "values": {
+        "checks": ["spin-trace", "gold-debit", "explosion-trace", "prize-trace", "roll-identity", "forced-head", "second-machine", "fallback-drop"],
+        "gold_spent": 0
+      }
+    },
+    {
+      "id": "G11",
+      "kind": "baseline",
+      "status": "static-reading",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "What `Alarm_9` checks before it removes the machine"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": [],
+      "what": "Why every spawned machine died in its first step. After logging the spawn, Alarm_9 reads the machine's protected value activated through GetVariable and, when false, sets activated and isActive true and rollTimes01..rollTimes04 each to 8 plus a runtime routine called directly with the argument 8 (the shape of the runner's irandom core, not verified; if so, that one call bypasses the irandom builtin's table entry), all through SetVariable by name. It then reads the protected value pSpwd (instance variable pSpwd is the key) through GetVariable and, when false, reports the spawn as out of thin air and destroys the machine through the runner's instance-destroy routine, called directly - not the instance_destroy builtin's table entry. Create_0 initialises pSpwd to false, and it was still false at the first step, so every machine died. On the routes above it was never set true; on the spawn scp route sCP called SetVariable(key, true) but the stamp did not take effect.",
+      "values": {
+        "guard_key": "pSpwd",
+        "guard_false_destroys": true,
+        "destroy_route": "runner instance-destroy routine, called directly"
+      }
+    },
+    {
+      "id": "G12",
+      "kind": "baseline",
+      "status": "static-reading",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Who sets the spawned flag"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_sCP"],
+      "what": "sCP(x, y, object) is the game's own stamping spawner: it calls the instance_create_layer builtin with (x, y, global.gameLayer[room][0], object), then reads the new instance's pSpwd key and calls SetVariable(key, true) by name with the caller as self, and returns the instance. No early return, no other check. The argument order (x, y, object) contradicts the S10 notes' (object ref, x, y); this reading follows the builtin's argument list, confirmed by Live 3 (`spawn scp` answered `object=4644`).",
+      "values": {
+        "script_index": 474,
+        "argc": 3,
+        "arg_order": ["x", "y", "object"],
+        "creation_builtin": "instance_create_layer",
+        "stamps": "pSpwd"
+      }
+    },
+    {
+      "id": "G13",
+      "kind": "baseline",
+      "status": "static-reading",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Instrument"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": [],
+      "what": "Alarm_9 and sCP do not use the store scripts (InitPV/SPV/GPV/FPV) at all: they read and write the machine's state through the extension functions GetVariable, SetVariable and SetVariableToUndefined, called by name with the builtin convention (a compiled SetVariable call branches on is_undefined(value) to SetVariableToUndefined(key)). These three are the state route the spin trace's three new builtin rows hook; whether they resolve by name from the plugin is open until Live 3 (pet-relic-collector-research.md called GetVariable by name and got undefined, which that doc left open).",
+      "values": {
+        "state_route": "extension-functions",
+        "functions": ["GetVariable", "SetVariable", "SetVariableToUndefined"]
+      }
+    },
+    {
+      "id": "G14",
+      "kind": "control",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 3 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": [],
+      "what": "Live 3's instrument: hook installed 44 rows, 0 table-only, and the only 3 missing are the three extension-function builtin rows GetVariable, SetVariable and SetVariableToUndefined, all reading 'not found by name, st=4' (ext-rows-hooked fail: the extension functions do not resolve by name, so the state route is blind). The hook took 8612 ms (events 424, byname 2, scripts 2022, builtins 828, table 5334), and selftest moved the irandom row 0 -> 1.",
+      "values": {
+        "rows": 44,
+        "missing": 3,
+        "table_only": 0,
+        "extension_rows": ["GetVariable", "SetVariable", "SetVariableToUndefined"],
+        "extension_rows_resolve_by_name": false,
+        "hook_ms": {"total": 8612, "events": 424, "byname": 2, "scripts": 2022, "builtins": 828, "table": 5334},
+        "selftest_irandom_calls": [0, 1]
+      }
+    },
+    {
+      "id": "G15",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 3 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_sCP"],
+      "what": "spawn scp created a machine (object=4644, the game's own sCP frame in its caller walk, so the (x, y, object) order is right) that its own Alarm_9 removed at its first step (create=1 alarm9=1 step=1 cleanup=1, machines=0); spawn stamp was refused (dispatch failed: GetVariable). No spawn route survived, but a natural machine the game placed itself did (machines=2, step=14219) and was spun. fnwalk found no functions array (table not found), so the by-name route stayed blind.",
+      "values": {
+        "spawn_scp": {"object_index": 4644, "arg_order": ["x", "y", "object"], "survived": false},
+        "spawn_stamp": {"refused": "dispatch failed: GetVariable"},
+        "spawn_route": "natural",
+        "fnwalk": "table not found (no aligned qword equal to camera_create's routine with eight valid entries)",
+        "natural_machines": 2,
+        "natural_step": 14219,
+        "byname_route": "blind",
+        "state_route": "blind"
+      }
+    },
+    {
+      "id": "G16",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 3 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_GetUniqueRepoStruct", "gml_Script_CreateDefaultParams", "gml_Script_LootGroundCreate", "gml_Script_CreateLootInFreePos", "gml_Script_cpr_irandom", "gml_Script_cpr_rand32", "gml_Script_PickUpGoldCheck"],
+      "what": "The spin, on the natural machine: each spin debits 10,000 gold through PickUpGoldCheck with the machine as self (a1=-10000, one call per spin); GetGoldAmount with the machine as self read 1001114 -> 991114 -> 981114 -> 971114 -> ... Sixteen PickUpGoldCheck calls fired, with no instance_destroy carrying a machine argument. The payout is a random roll: GetUniqueRepoStruct with the machine as self (args 1, 0, 72), whose randomness goes through the cpr_irandom/cpr_rand32 script rows (scope=machine-event), not observed on a builtin row. The prize is built by CreateDefaultParams ((0,72,true) then (0,11,undefined)) and placed by LootGroundCreate -> CreateLootInFreePos -> instance_create_layer. The machine is not destroyed by a payout (machines=2 before and after).",
+      "values": {
+        "gold_per_spin": 10000,
+        "pickup_gold_check_calls": 16,
+        "roll_script": "gml_Script_GetUniqueRepoStruct",
+        "roll_args": [1, 0, 72],
+        "roll_rng": ["gml_Script_cpr_irandom", "gml_Script_cpr_rand32"],
+        "create_default_params": [{"args": [0, 72, true], "returned": {"b": 72, "j": 0, "c": 1}}, {"args": [0, 11, null], "returned": {"b": 11, "j": 0, "c": 0}}],
+        "create_default_params_note": "args are the call's three arguments (null = the runtime's undefined); returned is the struct the call returned, as the probe printed it (Live 3). The undefined third argument came back as c=0 in the returned struct; that is measured for this one call, not a claim that undefined and 0 behave alike elsewhere.",
+        "prize_route": ["LootGroundCreate", "CreateLootInFreePos", "instance_create_layer"],
+        "machine_destroyed_by_payout": false,
+        "prize_roll_builtin_rng_observed": false
+      }
+    },
+    {
+      "id": "G17",
+      "kind": "target",
+      "status": "not-observed",
+      "date": "2026-10-04",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 3 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": [],
+      "what": "The irandom lever armed for the prize roll stayed INERT (no machine-self builtin RNG call reached it), which is not-observed on that row (the builtin rows are unproven against a compiled call), not proof the roll passes no builtin. fallback-drop did not run (gambaprobe drop was refused by the auto-mode permission classifier before it was sent), and a second machine's fresh state was not observed (no spawn route survived; the second natural machine was present but not spun).",
+      "values": {
+        "forced_head": "INERT",
+        "fallback_drop": "not-run",
+        "second_machine": "not-observed",
+        "state_trace": "not-observed"
+      }
+    },
+    {
+      "id": "G18",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-06",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 4 results"}],
+      "objects": ["Slot_Machine_01_obj", "Visual_Effect_Simple_obj", "Coin_obj", "Loot_Ground_obj"],
+      "scripts": ["gml_Script_PickUpGoldCheck", "gml_Script_CreateDefaultParams", "gml_Script_CreateItemNew", "gml_Script_GetUniqueRepoStruct", "gml_Script_LootGroundCreate", "gml_Script_CreateLootInFreePos", "gml_Script_DropItem", "gml_Script_DropUniqueItems"],
+      "what": "The explosion, on two natural machines, each inside an open explosion-watch window that closed build-dropped=0: the machine's sprite changed from Slot_Machine_01_spr to Slot_Machine_01_Destroyed_spr and the instance stayed: the change line is read off the live instance, and a screenshot after machine 1's explosion shows the wreck in place. No gone line was printed, but the gone line has no positive control (none was recorded even when the person left machine 1's zone). A machine-self instance_create_layer of Visual_Effect_Simple_obj came 2 frames before the change, about 190-200 frames after the last machine-self PickUpGoldCheck debit. None of the eight build rows (CreateDefaultParams, CreateItemNew, GetUniqueRepoStruct, LootGroundCreate, LootGroundCreateFromItem, CreateLootInFreePos, DropItem, DropUniqueItems) ran for any self and no Loot_Ground_obj was created in either window, while the machine's own Coin_obj creates in the same windows were logged (the instance channel's positive control): neither explosion (no head dropped in either) built an item (explosion-route none). One machine exploded after 12 debits (13 other machine-self calls, the person counted 13), the other after 9 debits (the person counted 8/9). Whether the exploding spin is debited is not established (machine 1's 13 against 12 suggests it is not, which would make machine 2's count 9-10), and neither is what decides the explosion.",
+      "values": {
+        "machines": 2,
+        "sprite_before": "Slot_Machine_01_spr",
+        "sprite_after": "Slot_Machine_01_Destroyed_spr",
+        "instance_removed": false,
+        "instance_kept_evidence": ["sprite change line read off the live instance", "post-explosion screenshot of the wreck"],
+        "gone_line_positive_control": false,
+        "vfx_frames_before_change": [2, 2],
+        "frames_after_last_debit": [189, 198],
+        "debits_before_change": [12, 9],
+        "other_machine_self_calls_machine1": 13,
+        "exploding_spin_debited": "not-established",
+        "person_spin_count": ["13", "8/9"],
+        "explosion_window_closed": [
+          {"build_lines": 0, "build_dropped": 0, "instance_lines": 135, "instance_dropped": 120, "capped": 1},
+          {"build_lines": 0, "build_dropped": 0, "instance_lines": 66, "instance_dropped": 36, "capped": 1}
+        ],
+        "machine_coin_obj_creates_in_window": [4, 1],
+        "explosion_route": "none",
+        "explosion_rule": "not-observed"
+      }
+    },
+    {
+      "id": "G19",
+      "kind": "target",
+      "status": "not-observed",
+      "date": "2026-10-06",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 4 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_GetUniqueRepoStruct"],
+      "what": "Goburin's Head from the game itself: neither of Live 4's two explosions dropped it, and no window showed a built line with itemType=10 j=0 b=98 or a GetUniqueRepoStruct call with 10, 0, 98. The route a natural head takes, and whether an explosion that drops one builds it through the build rows, are not observed. That the head drops only on an explosion is the owner's report (2026-10-05), not a measurement. Live 4's window-control check failed its literal rule (two combat windows closed build-dropped 110 and 159 after a chest's burst of about 20 items in one frame) while its control was observed (other-self build lines and numeric built lines); the workorder's driver accepted that on 2026-10-06 on condition that each explosion window closed build-dropped=0, which both did.",
+      "values": {
+        "head_route": "not-observed",
+        "samples": 2,
+        "window_control": "FAIL-literal / control-observed",
+        "combat_window_build_dropped": [110, 159]
+      }
+    },
+    {
+      "id": "G20",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-06",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 5 results"}],
+      "objects": ["Slot_Machine_01_obj", "Loot_Ground_obj"],
+      "scripts": [
+        "gml_Script_PickUpGoldCheck",
+        "gml_Script_InitItemFromJson",
+        "gml_Script_LootGroundCreateFromItem",
+        "gml_Script_CreateItemNew"
+      ],
+      "what": "ForgePact's gambapity explosion force on one natural machine (id 367244), player build SHA-256 e01251d6b0f9fef7d0ebcbe8743ac9d45f8e71cb43f1f70aacc2523fd0a946c4, counter at 12 and threshold 10 before the first spin. The per-frame sprite read saw the machine first (machine seen, heads-nearby=0) and then its change to Slot_Machine_01_Destroyed_spr (explosion count=24 threshold=10 frame=50736). 60 presented frames later the loader route - json_parse of the charm's {w, a, j, b, c} record with j 0, b 98, c 1, InitItemFromJson, then LootGroundCreateFromItem at the machine's x/y (7920,3448) with the local player as self - placed a ground item that instance_exists confirmed on the first attempt; the built item's rarity read 10. The ground scan after the drop found exactly one charm on a Loot_Ground_obj near the machine (heads=1, the ground check's control), the drop's own CreateItemNew returned the charm (own-head-builds=1, the head-build detector's control), the counter reset to 0 and its file to {\"count\":0}, and a screenshot showed one Goburin's Head label by the wreck (the head was not picked up). No forced line came before the explosion line while about 50,380 gold came back in payouts. The count went from 12 to 24 over the person's 12 spins, the exploding spin included: 12 machine-self PickUpGoldCheck debits for 12 counted spins, read only before and at the explosion. Live 4's machine 1 read 12 debits for the person's 13, so whether the exploding spin is debited stays not established (one sample each way). The count here is the phase 5 build's (the phase 5 build, whose count was machine-self `PickUpGoldCheck` debits, one per spin; from phase 6 the field counts explosions).",
+      "values": {
+        "machines": 1,
+        "count_before": 12,
+        "threshold": 10,
+        "count_at_explosion": 24,
+        "debits_before_change": 12,
+        "person_spin_count": "12",
+        "exploding_spin_debited": "not-established",
+        "settle_frames": 60,
+        "drop_route": "json_parse > InitItemFromJson > LootGroundCreateFromItem",
+        "drop_self": "local player",
+        "drop_position": [7920, 3448],
+        "read_back_attempts": 1,
+        "rarity": 10,
+        "ground_heads_after_drop": 1,
+        "own_head_builds": 1,
+        "heads_seen_on_screen": 1,
+        "picked_up": false,
+        "count_after": 0,
+        "fallback_drop": "proven"
+      }
+    },
+    {
+      "id": "G21",
+      "kind": "target",
+      "status": "not-observed",
+      "date": "2026-10-06",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 5 results"}],
+      "objects": ["Slot_Machine_01_obj"],
+      "scripts": ["gml_Script_CreateItemNew", "gml_Script_CreateDefaultParams"],
+      "what": "The explosion force's other outcomes in Live 5: no second machine appeared, so an explosion below the threshold keeping the counter (below-control) was not observed (below=0); the game dropped no head of its own, so a natural head seen at an explosion, and the reset it makes, was not observed (natural=0, no natural line). How the game builds its own Goburin's Head stays not observed (G19).",
+      "values": {
+        "below_control": "not-observed",
+        "natural_head": "not-observed",
+        "below": 0,
+        "natural": 0
+      }
+    },
+    {
+      "id": "G22",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-06",
+      "source": [{"path": "ForgePact/docs/gamba-machine-research.md", "section": "Live 6 results"}],
+      "objects": ["Slot_Machine_01_obj", "Loot_Ground_obj"],
+      "scripts": ["gml_Script_InitItemFromJson", "gml_Script_LootGroundCreateFromItem", "gml_Script_CreateItemNew"],
+      "what": "ForgePact's gambapity explosion count (phase 6: machine explosions without a head, not spins) on two natural machines with the threshold at 2, player build SHA-256 85fda2eed6a100b8ccb876dcb4ad1618c79c018eee8710b84406d22eb9a56e99; the counter file's migration re-run alone on the fixed build SHA-256 0a493c3f6ca8dd8bb7bd0aa26751035a738eee2d1dfc9bdc8248bc8703acb101. Spins were no input: after three spins on machine A (id 622504) the count read 0 while the HUD gold fell 30,000. A exploded after the person's 13 spins with no head: explosion count=1 threshold=2, then the below-threshold line, status below=1 forced=0 natural=0, the counter file {\"version\":2,\"count\":1}. Machine B (id 795130) exploded after the person's 9 spins: explosion count=2 threshold=2, then the loader route (json_parse, InitItemFromJson, LootGroundCreateFromItem with the local player as self) placed one charm at 7584,4552, read back on the first attempt with rarity 10; the ground check after the drop read heads=1, own-head-builds=1, the counter reset to 0 and its file to {\"version\":2,\"count\":0}, and a screenshot showed one Goburin's Head label by the wreck (not picked up). The older spin file {\"count\":12} printed the migration line on both builds but stayed unmigrated on the first (a .tmp holding the version-2 text left beside it; the load held the file open during the rename, read from the source, not measured); on the fixed build it read {\"version\":2,\"count\":0} with no .tmp right after the first status, and the next launch printed no migration line. No natural head at either explosion (natural=0, no natural line), so the natural-head reset stays not observed. The person's spin counts are reports, not debits; the HUD gold fell less than 10,000 a spin over both machines (70,000 over 13, 30,000 over 9), not reconciled with the payouts.",
+      "values": {
+        "machines": 2,
+        "threshold": 2,
+        "person_spin_counts": [13, 9],
+        "spin_no_count": true,
+        "count_after_first_explosion": 1,
+        "count_at_second_explosion": 2,
+        "below": 1,
+        "forced": 1,
+        "drop_route": "json_parse > InitItemFromJson > LootGroundCreateFromItem",
+        "drop_self": "local player",
+        "drop_position": [7584, 4552],
+        "read_back_attempts": 1,
+        "rarity": 10,
+        "ground_heads_after_drop": 1,
+        "own_head_builds": 1,
+        "heads_seen_on_screen": 1,
+        "picked_up": false,
+        "count_after": 0,
+        "counter_file_after": ["{\"version\":2,\"count\":1}", "{\"version\":2,\"count\":0}"],
+        "migrate_once_first_build": "fail",
+        "migrate_once_fixed_build": "pass",
+        "natural_head": "not-observed",
+        "natural": 0
+      }
+    }
+  ]
+}

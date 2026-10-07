@@ -89,6 +89,11 @@ def hs_status() -> dict[str, Any]:
     Windows process snapshot could not be taken. `unknown` is never read as
     "not running" anywhere in this server.
 
+    `exits` lists, oldest launch first, one `{"pid", "exit_code"}` per game
+    this server process's own `hs_launch` started that has since ended, the
+    code written as `0xC0000005`. A PID somebody else started, or one from
+    before this server restarted, never appears; off Windows it is empty.
+
     Refusals: `engine_source_missing`, `engine_import_failed`. A missing
     ForgePact panel configuration is reported through `exe_validation` rather
     than refusing, because the process and anti-cheat readings are still
@@ -256,7 +261,10 @@ def hs_launch(
     flag that says whether a command would be answered, and it is true only for
     `plugin_ready`; `ok` only says the tool ran. The game starts at its main
     menu: most gameplay commands act once a character is loaded, which nothing
-    here can do.
+    here can do. `exit_watch` is `held` when this server holds a handle that
+    will read the launched game's exit code into `hs_status`'s and
+    `hs_stop_game`'s `exits`, or `unavailable (<reason>)`, in which case that
+    PID is never listed there.
 
     Refusals: `lease_held`, `lease_unavailable`, `engine_source_missing`,
     `engine_import_failed`, `forgepact_config_missing`,
@@ -316,6 +324,9 @@ def hs_stop_game(
     server started in this process, and only after the graceful wait has already
     timed out. A process this server did not start is refused, because killing
     one can lose whatever it had not written yet.
+
+    `exits` is the same list `hs_status` reports, read after the wait: each
+    game this server launched that has ended, with its exit code.
 
     Refusals: `lease_held`, `lease_unavailable`, `not_launched_here`.
     """

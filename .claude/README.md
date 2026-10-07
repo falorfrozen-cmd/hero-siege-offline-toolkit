@@ -101,8 +101,8 @@ next one a document rather than a conversation. They are driven by
 | `implementer` | opus | executes the steps; returns `PLAN-DEFECT` with evidence rather than improvising around a plan that turns out to be wrong |
 | `verifier` | haiku | runs the acceptance criteria (first through `tools/run_criteria.py --jobs auto`, which runs every command-shaped criterion in one call, independent ones at once; after a fix, only the criteria the fix reaches plus the failed ones), or one item's `checks:` in a streamed plan, and reports what they actually printed; read-only, and judges nothing it cannot execute |
 | `consultant` | opus | answers **one** narrow question from a phase that hit a decision above its tier, then stops; never implements, plans or reviews |
-| `live-operator` | sonnet | runs a workorder's written `### Live procedure <n>` against the real game through `hs-drive` — its own save backup, the positive control first, raw output to `<slug>-live-<n>.md` — and hands every in-game action a person must take back to the driver; never installs a build, never judges the mechanism |
-| `scribe` | haiku | pastes a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Edit` only; spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
+| `live-operator` | opus | runs a workorder's written `### Live procedure <n>` against the real game through `hs-drive` — its own save backup, the positive control first, raw output to `<slug>-live-<n>.md` — and hands every in-game action a person must take back to the driver; never installs a build, never judges the mechanism |
+| `scribe` | haiku | pastes a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Grep`/`Edit` only (no shell); spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
 
 Why these tiers: planning carries the most judgement that is written down
 nowhere, so it gets the strongest model. Implementation is *not* the easy part —
@@ -112,8 +112,16 @@ the cliff instead of stopping — so it gets a capable one: `opus` since
 this cache-read-dominated work and the Sonnet tail was what hit the round caps
 (`skills/workorder/SKILL.md` § "Model tiers" has the prices and the
 measurement). Verification against mechanical criteria is genuinely cheap, so
-it gets the cheapest. Every agent that can take one also pins `effort:`, for
-the same reason it pins `model:` — left out, it silently follows the session. The verifier
+it gets the cheapest. The domain reviewers and `live-operator` run opus at
+`medium` effort since 2026-10-06 (#436), and the session that drives
+`/workorder` should run opus/medium too (§ "Model tiers" says why). Every agent that can take one also pins `effort:`, for
+the same reason it pins `model:` — left out, it silently follows the session.
+Where `/workorder` runs one agent at more than one effort, the agent lists
+the extra levels in `effort-variants:` and `tools/sync_agent_tooling.py`
+generates `<agent>-<level>.md` for each (`planner-xhigh`, `implementer-medium`
+and so on): the `Agent` tool takes a model per call but no effort, so the
+agent's name is how a spawn picks one. Never edit a variant; edit its
+source and re-run the sync. The verifier
 never sees the implementer's reasoning, because sharing that context would mean
 sharing its blind spots.
 
@@ -134,8 +142,8 @@ reliable signal available. The driver states which row it matched, so the user
 can correct it for free.
 
 **Consultation, mid-phase.** A phase can return `ADVICE-NEEDED` with one narrow
-question; the driver spawns `consultant` (opus, read-only, `fable` for the
-hardest rows), then re-enters the phase with the answer appended to the
+question; the driver spawns `consultant` (opus, read-only, `consultant-max`
+for the hardest rows), then re-enters the phase with the answer appended to the
 workorder's `## Log`. Same-phase, same-tier re-entry is a `SendMessage` to
 that phase's own agent id (recorded in `## State` › `agents:` when it was
 spawned) — the send is what actually keeps its context and progress, not a
@@ -153,12 +161,15 @@ job one question at a time. A question without it is sent back. Cap is two per
 round; a third means triage was wrong and the *phase* escalates instead, which
 makes the frequency itself the signal rather than an open tab.
 
-**Escalation, on repeated failure.** The planner moves to `fable` on a second
-`PLAN-DEFECT` and stops on a third. This is the backstop for what the first two
-missed, not the router. It works because planning is the cheapest phase by token
-volume — a plan is a few thousand output tokens against an implementation's
-hundred thousand — so one Fable replan costs less than the implement round it
-saves.
+**Escalation, on repeated failure.** The planner moves to `planner-max`
+(opus at `max` effort) on a second `PLAN-DEFECT` and stops on a third. This is
+the backstop for what the first two missed, not the router. It works because
+planning is the cheapest phase by token volume — a plan is a few thousand
+output tokens against an implementation's hundred thousand — so one
+maximum-effort replan costs less than the implement round it saves. Until
+2026-10-05 the escalation, the hard triage rows and the hard-row consultant
+went to `fable`; the owner's license dropped it that day, and each became an
+`opus` effort variant one or two levels up.
 
 The reviewers never escalate and never consult: they run at high volume on every
 change, where 2× is real money for no measured gain. Neither does the verifier,
@@ -213,10 +224,10 @@ class that has recurred here. Wall-clock is one agent; only tokens add up.
 
 | Agent | Model | Reviews |
 |---|---|---|
-| `sdk-contract-reviewer` | sonnet | `hs-game-sdk/`, `tests/cpp/`, and anything reading runtime values: identity-by-positive-signal, instance-handle kind gates, cross-binding parity and test-stub fidelity |
-| `tauri-command-reviewer` | sonnet | `hub/src-tauri/src/`: command threading annotations, `announce()` after state changes, independent failure paths, and the debug-only MCP bridge gate |
-| `decompile-output-guard` | sonnet | whether a change carries the game's own expression rather than facts about it — the judgement half of `decompiled_output.py` |
-| `docs-sync-reviewer` | sonnet | which `instructions.md`, README, index entry, ADR or `release-notes-vX.Y.Z.md` the change just made wrong |
+| `sdk-contract-reviewer` | opus | `hs-game-sdk/`, `tests/cpp/`, and anything reading runtime values: identity-by-positive-signal, instance-handle kind gates, cross-binding parity and test-stub fidelity |
+| `tauri-command-reviewer` | opus | `hub/src-tauri/src/`: command threading annotations, `announce()` after state changes, independent failure paths, and the debug-only MCP bridge gate |
+| `decompile-output-guard` | opus | whether a change carries the game's own expression rather than facts about it — the judgement half of `decompiled_output.py` |
+| `docs-sync-reviewer` | opus | which `instructions.md`, README, index entry, ADR or `release-notes-vX.Y.Z.md` the change just made wrong |
 | `instrument-blindness-reviewer` | opus | table-only hook installs, hand-resolved addresses, struct-layout assumptions, and negatives recorded without a positive control |
 
 **Delta-scoped from round 1 on.** No reviewer is given the workorder path —
@@ -441,6 +452,30 @@ of a context file, since `Read` is not the only way in). The workflow now
 passes the path and the command — the plan's own path for a legacy single-file
 plan.
 
+**`tools/workorder_brief.py <plan> <selector>` prints one implementer's slice
+of a workorder in one call**, built on `section.py`'s heading matching,
+`plan_lint.py`'s lane and item parsers and `run_criteria.py`'s criterion
+numbering. The selector is `--round N`, `--lane NAME`, `--join`, `--item ID`,
+`--paths P[,P...]` or `--criteria K[,K...]` (the last also adds criteria next
+to another selector), and `--context`, `--base REF`/`DIR=REF`,
+`--since-round K` and `--amended` add to it. Every brief prints a header with
+its size against the plan's and context's, `## Goal`, `## Out of scope`,
+`## State`, the preconditions above the first lane, item or join, the
+selection, each Context subsection the printed steps and criteria cite by
+`ctx:` (an unresolved citation prints `ctx not found: "<cite>"`),
+`### Decisions`, the `git diff` commands for the selection's files when a
+base is given (it prints them and never runs git), and a footer listing the
+Context headings it left out with the full files named as the fallback.
+Nothing else from `## Log` is printed, except the previous round's entry for
+`--round N` past 0 and the newest amendment with `--amended`. Exit 0
+printed, 2 a usage error or unreadable plan, 3 a lane, item or criterion
+that does not exist, 5 an unclosed fence. Every implementer prompt
+`workorder-rounds.js` writes names its brief command first, with the plan
+and context paths kept as the fallback, and SKILL.md's Step 2 spawn does the
+same. `workorder-rounds.js` runs in the Workflow tool, which cannot read a
+file, so the prompt names a command rather than carrying the slice. Tests:
+`tests/test_workorder_brief.py`.
+
 **It also provisions each module's local-only build prerequisites**, on both
 the fresh-init path and an already-initialized one.
 `.claude/skills/workorder/local_prereqs.json` lists, per module, paths a
@@ -538,10 +573,17 @@ the `log` block and `state` it should have written and `then`. The scribe is
 handed absolute paths, joined under the driver's `checkoutRoot` (`git
 rev-parse --show-toplevel`): on 2026-09-24 a scribe given relative ones in a
 worktree resolved them against the main checkout, wrote nothing, and its "N/A"
-report came back as a false `STATE-LOST`.
+report came back as a false `STATE-LOST`. Both blocks sit between marker
+lines (`<<<LOG-BLOCK-BEGIN>>>` …, `<<<STATE-LINES-BEGIN>>>` …), the Log append
+is one `Edit` anchored on the file's last line with the block after it, and
+the scribe returns the file's last lines afterwards (`log_tail`): a block
+that is not the last thing there ends the launch as `LOG-DAMAGED`, carrying
+`log`, the `anchor` the scribe used, and `then`. On 2026-10-03 a scribe given
+unfenced blocks pasted its own State instruction into the Log and wrote the
+block before its anchor, moving the previous entry's last line to the end.
 
 It runs as the restricted `scribe` agent type (`.claude/agents/scribe.md`,
-`Read`/`Edit` only), not the unrestricted `workflow-subagent` every other
+`Read`/`Grep`/`Edit` only), not the unrestricted `workflow-subagent` every other
 Record-phase agent here still is. On 2026-09-19 an unrestricted scribe read
 the harness's relayed user message next to a round's findings and acted on
 it instead of only recording it — resolving the prompt's relative paths
@@ -562,7 +604,7 @@ Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
            args: { slug, planPath, contextPath, goalExcerpt, implementerModel, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
                    submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
-                   lanes, join, items: [{ id, files, checks, after, shares, owner, default, reversible }, ...],
+                   lanes, join, items: [{ id, files, checks, after, shares, owner, default, reversible, build_reads }, ...],
                    streaming, answered, reviewScopes,
                    maxParallel /* DEFAULT_MAX_PARALLEL, 4; 1-16 */, maxAgents, tokenCeiling, itemAttempts, reviewPassCap } })
 ```
@@ -647,7 +689,7 @@ items gate) start `run_criteria.py` in the background and poll it with
 
 It returns to the driver on anything needing judgement — `PASS`,
 `PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`,
-`STATE-LOST`, `SCRIBE-FAILED` or `CAP` — so replans, consultations, human questions and the step-5 report stay with
+`STATE-LOST`, `SCRIBE-FAILED`, `LOG-DAMAGED` or `CAP` — so replans, consultations, human questions and the step-5 report stay with
 the driver either way (only a confirmed amendment runs inside), and one launch may cover several rounds (a
 `PLAN-DEFECT` hand-back means relaunching after the replan). A laned round
 that ends before its join also returns `lanes`, each lane's `name`,
@@ -749,9 +791,11 @@ one object.
 | R20 live-capture-author | any agent but `live-operator` (the driver included) whose `Edit`/`Write` landed on a `.claude/workorders/<slug>-live-<n>.md` capture. A capture a criterion cannot read is reported, never repaired |
 | R21 verifier-interpreter | a verifier shell command that runs `python` or `python3` in command position (a `grep python` does not count) — this repository's commands are `py -3`, and the verifier runs a criterion exactly as written |
 | R22 verifier-suite-once | a verifier that runs the same `unittest discover` suite (same `cd` directory, same arguments) more than once, counting ForgePact's `tools/run_tests_parallel.py` as the same suite as its serial `discover -s tests` — after a timeout, or to read another slice of the output |
-| R23 lane-git-mutation | a lane implementer (`implementer:<lane>:r<n>`, any lane but `join`) that ran a git command outside the read-only allow-list R16 uses. Lanes share one checkout and `.git/index.lock` fails instead of waiting, so only the join commits; the join and a laneless implementer are exempt |
+| R23 lane-git-mutation | a lane implementer (`implementer:<lane>:r<n>`, any lane but `join`) that ran a git command outside the read-only allow-list R16 uses (a `git config` that only reads, such as `git config core.autocrlf` or `--get`, is on it). Lanes share one checkout and `.git/index.lock` fails instead of waiting, so only the join commits; the join and a laneless implementer are exempt |
 | R24 cheap-routes | an `amendment:` planner with no `tools/amend_check.py save` before it or no `check` after it, made by the driver or, for a planner a workflow launch spawned (`amendment: <slug> <id>:r<n>`), by another agent of that same launch (`amend-save:`/`amend-check:`), never the planner itself; a second amendment with no implementer between it and the first (inside a launch, of the same item); or two `patch-implementer` rounds back to back in one workflow launch. Both routes skip work, so each runs only where something other than the agent taking it has checked that it applies. R11 accepts the same in-launch `check` |
 | R25 owner-scope | a `tools/amend_check.py check` that printed `SCOPE:` (a plan change following a new owner decision, exempt from the replan cap and the tier ladder) with no message typed by the user since the previous `check`, or since the first planner started. The driver writes the decision line, so the audit checks the owner actually said something |
+| R26 reread-after-write | an implementer or planner that reads a file it had already written (`Edit`/`Write`) whole more than twice — a `Read` with no `offset` or `limit`, or a bare `cat`/`type`/`Get-Content` of it — with no shell command naming the file in between (which may have rewritten it). After a write, read `git diff -- <file>`, a grep or the range instead (the owner, 2026-10-02) |
+| R27 amendment-tier | an `amendment:` planner whose transcript's model (the majority model of its assistant records) is a `fable` model, or that ran as an escalated effort variant (`planner-xhigh`, `planner-max`; amendments spawn as `planner-medium`). An amendment applies one stated correction and always runs on opus, whatever tier the workorder's replans escalated to; the one fable amendment measured (forgepact-74, 2026-10-02) came from a driver carrying `planner-tier=fable` over. The evidence names the label and the model |
 
 Every budget is a named module-level constant in the tool itself
 (`IMPLEMENTER_MAX_TURNS`, `VERIFIER_MAX_TOKENS`, `BATCHABLE_SHARE_MAX`, and so
@@ -794,8 +838,19 @@ each launch's item windows (`max_concurrent`, `minutes_at_cap`,
 `queued_behind_cap`, `finding_to_fix_minutes`), verifies by kind, the
 `run_criteria` calls the Bash limit killed, owner waits, the implementers'
 check catch rate, routes (amendments, in-launch amendments, replans,
-consultations) and the audit's lane summary. The module docstring defines
-each one. Exit 0 when the report was produced, 2 on a usage error.
+consultations), the audit's lane summary, and `workorder_reads`. That last
+one is keyed by role and counts how each role read the workorder's own
+files: `agents`, `plan_calls`/`plan_kb` (a `Read` of a `-plan.md`, or a
+shell command naming one, except a command that runs `run_criteria.py`,
+`plan_lint.py`, `amend_check.py`, `live_checks.py`, `item_commit.py` or
+`workorder_brief.py`, or `git add`/`git commit`), `context_calls`/
+`context_kb` (the same for `-context.md`), `brief_calls`/`brief_kb` (shell
+calls of `workorder_brief.py`) and `report_calls`/`report_kb` (a `Read`,
+`cat`, `type` or `Get-Content` of a `report.txt`); the text format prints
+the implementer's and the verifier's rows. It is what shows whether the
+brief and the digest moved reading off the whole files
+(`docs/agents/workorder-calibration.md`, 2026-10-03). The module docstring
+defines each figure. Exit 0 when the report was produced, 2 on a usage error.
 `docs/agents/workorder-calibration.md` § "Measuring where the pipeline spends
 its time" holds the 2026-09-27 baseline and the exact commands to re-run it.
 Tests: `tests/test_workorder_speed.py`, synthetic sessions only, each measure
@@ -809,7 +864,10 @@ verdict is the first word after a line's last `|`, anything after it a note.
 It exits 1 on a missing, renamed, duplicated or unreadable check, or a
 `--require-pass` check (`dll-hash`, `marker`, `control`, a shipped feature's
 acceptance checks) that did not pass; a research check's `fail`,
-`not-observed` or `not-run (instrument: …)` is a finding and exits 0. It replaces the
+`not-observed` or `not-run (instrument: …)` is a finding and exits 0. A
+capture with no list but a `| Check | Result |` table under `## Checks
+summary` (forgepact-issue-36 Live 1 wrote one, and a capture is never edited)
+is read from the table by the same rules; the list wins when both exist. It replaces the
 `| (pass|fail|not-observed)$` greps that cost forgepact-issue-14 three rounds
 and a split workorder on the operator's punctuation. `plan_lint.py <plan>`
 checks `## Acceptance criteria` for four defects that each cost a round there
@@ -873,8 +931,22 @@ file or for a run that refused before running anything. A new run clears an
 earlier run's `status.json` and `report.txt` from its `--out` before it can
 refuse, so a poll never reads the earlier one as this one; `--wait` polls for at most S ≤ 220 seconds, so a poll stays under audit
 R5. That is how the whole-tree verifiers run in the background: start the
-run with `run_in_background` and `--out`, poll `--status`, read
-`report.txt`.
+run with `run_in_background` and `--out`, poll `--status`, then judge from
+`run_criteria.py --digest <out>`.
+`run_criteria.py --digest <out>` needs no plan: the run records in its out
+directory what the digest needs, each criterion's full text included. It
+exits as `--status` would for the same run (0 finished, 3 running with the
+status lines printed, 4 stale, 2 for no status file, a refused run or a usage
+error). On a finished run it prints a header (criteria, how many shown in
+full, `report.txt`'s KB), the scope block when the run was scoped, and per
+criterion either one line or the whole block exactly as `report.txt` has
+it. One line is for a SKIPPED or NOT SELECTED criterion, and for an
+exit-only criterion (its prose says nothing but `exits <n>` once the
+backticked spans and the `(reads ...)`, `(final)`, `(gate ...)`, `(class
+...)`, `(after ...)` and `(all-parents)` declarations are removed) whose
+every command exited as expected. It judges nothing, and `report.txt` keeps
+its bytes. Verifiers read `report.txt` whole after 2026-10-02, 100-217 KB a
+run, which is why it exists.
 Owner questions carry a default: an item's `owner:` line needs `default:`
 and `reversible: yes|no` beside it, and so does each entry of `## Needs
 human judgement`, read in the plan and in its sibling `<slug>-context.md`.
@@ -928,11 +1000,40 @@ returns the region and function containing a line. It only ever prints
 identifiers and banner titles from the file it is given, never the file's own
 text.
 
-`implementer.md` is the rule that sends the implementer here: for a source
-file over 2,000 lines, run `source_index.py --find <name>` first and `Read`
-only the range it prints, instead of an exploratory grep chain. Measured
-against the file it was built for (`ForgePact/plugin/ModuleMain.cpp`, 997KB /
-18,144 lines): `--regions` prints 94 regions in about 6KB.
+Measured against the file it was built for (`ForgePact/plugin/ModuleMain.cpp`,
+997KB / 18,144 lines then): `--regions` prints 94 regions in about 6KB.
+
+**`section.py`'s code mode is built on it.** `section.py <file> --toc
+[--grep REGEX]` and `section.py <file> '<symbol>' [--grep REGEX]` take a
+`.cpp .cc .c .hpp .h .py .js .mjs .ts` file; every other file keeps the
+markdown behaviour. `source_index.py` gained a symbol index behind it (its
+existing modes print what they always did): C/C++ functions at file scope
+and inside `namespace` blocks at any depth, out-of-line `Class::Method`
+definitions, and `struct`/`class`/`enum` definitions with their inline
+methods, read with the same comment stripping and guard spans; Python's
+top-level `def`/`async def`/`class` and their methods through `ast`; and
+JS/TS functions, classes, `export` forms, `const|let|var NAME =`
+definitions and class methods, through a lexer that knows strings, template
+literals with nested `${}`, comments and regex literals. `--toc` prints
+`<start>-<end>  <KB>KB  <kind> <name>` per symbol in file order; past 20 KB
+it prints the symbol count, the banner regions and a line saying to narrow
+it with `--grep`. A symbol prints `-- <path> lines <start>-<end> (<kind>
+<qualified name>)` and then its lines exactly as in the file, decorators
+included. It matches the exact name, then the qualified name, then the name
+case-insensitively; exit 3 lists up to 20 near names, 4 lists every match of
+an ambiguous one, and with `--grep` it prints the body's matching lines with
+two lines of context and exits 7 when none match. A 2.5 MB generated C++
+file is indexed and looked up in under 10 seconds.
+
+`implementer.md` and `planner.md` send their agents here: for a source file
+over about 200 KB, `section.py <file> --toc --grep <regex>`, then
+`section.py <file> '<symbol>'`, one call per symbol, never `grep -n`
+followed by `sed -n`. In the 18 sessions after 2026-10-02 ModuleMain.cpp
+took 422 implementer and 168 planner shell reads that way, two turns per
+lookup (`docs/agents/workorder-calibration.md`, 2026-10-03).
+`source_index.py --regions` stays the banner map. Tests:
+`tests/test_section_code_mode.py`, one fixture per language with its
+outliers, the size test and the toc cap.
 
 Tests (`tests/test_source_index.py`) cover a synthetic fixture (banners,
 nested guard spans, a function inside and outside a guard, `--find`, `--at`)
@@ -982,6 +1083,7 @@ audit`) on the changed UI instead. `.impeccable/config.json` is shared by both.
 |---|---|
 | `tauri-hub` | driving a running debug hub through its bridge on `127.0.0.1:9223` |
 | `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close), under one machine-wide game lease (`hs_lease_acquire` / `hs_lease_status` / `hs_lease_release`) that stops a second session driving the same install — a local stdio server in `tools/hs_drive_mcp/` |
+| `ghidra` | the local Ghidra project as tools (search functions, decompile by address, callers, callees, xrefs, strings), from [bethington/ghidra-mcp](https://github.com/bethington/ghidra-mcp) v6.0.0 pinned by sha256: one shared headless server on `127.0.0.1:8089` over a *copy* of the research project, plus a stdio bridge per session, started by `tools/ghidra_mcp.py` |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
 | `github` | releases, dispatches and pointer PRs across the eleven repositories |
 | `figma` | reading Figma designs (layout, styles, images) into code — [`figma-developer-mcp`](https://github.com/GLips/Figma-Context-MCP) (MIT), run locally and pinned, authenticated by the `FIGMA_API_KEY` personal access token |
@@ -1015,6 +1117,19 @@ session holds its machine-wide lease; the `live-operator` takes it with
 [`docs/tools/hs-drive-mcp.md`](../docs/tools/hs-drive-mcp.md) has the tool
 surface, the refusal vocabulary and the sharp edges, including why the server's
 process must keep the real `LOCALAPPDATA`.
+
+`ghidra` is the other local entry, `py -3 -m tools.ghidra_mcp`. It needs
+Ghidra, a JDK 21 and the research project, plus `py -3 -m tools.ghidra_mcp
+setup` once per machine, which downloads the pinned release (ask the owner
+first). The first session to use it starts a shared headless server, and later
+sessions, worktrees and Codex reuse it, because a Ghidra project allows one
+lock. It binds to loopback, has script execution off, and serves a copy of the
+project, so `DecompileTo.java` runs on the original keep working. What it
+decompiles stays out of tracked files (AGENTS.md § "Legal"). Under Codex, whose
+MCP startup timeout is 10 s, run `py -3 -m tools.ghidra_mcp start` first if
+the server is cold.
+[`docs/tools/ghidra-mcp.md`](../docs/tools/ghidra-mcp.md) explains why this
+server and not pyghidra-mcp, and covers the overrides and the sharp edges.
 
 `github` does **not** authenticate interactively. Claude Code tries OAuth
 dynamic client registration, that endpoint does not support it, and the session
@@ -1090,7 +1205,9 @@ Start Codex at the repository root: the hook command is a relative path.
 The generated agents keep each Claude agent's instructions verbatim, with a
 preamble translating tool names. A Claude agent without write tools becomes
 `sandbox_mode = "read-only"`. Its `effort:` becomes `model_reasoning_effort`
-(`max` becomes `xhigh`), and a Haiku-tier agent asks for `low`. The Claude
+(`max` becomes `xhigh`), and a Haiku-tier agent asks for `low`. Effort
+variants get a Codex twin like any other agent, so `planner-max` and
+`planner-xhigh` are the same there. The Claude
 model tier is not translated: Codex has no fixed model per tier, so the agent
 inherits the session's model, and the tier is recorded in a comment.
 
@@ -1121,7 +1238,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Nineteen suites cover this page's tooling. Eighteen are Python and run
+Twenty-five suites cover this page's tooling. Twenty-four are Python and run
 automatically under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
@@ -1135,9 +1252,11 @@ py -3 -m unittest tests.test_claude_workorder_section -v  # section.py, plus the
 py -3 -m unittest tests.test_workorder_audit -v   # workorder_audit.py's rules, each with a failing fixture and a passing control
 py -3 -m unittest tests.test_workorder_plan_tools -v  # live_checks.py, plan_lint.py, amend_check.py and run_criteria.py, on the capture, criterion and plan-diff shapes that cost rounds
 py -3 -m unittest tests.test_workorder_plan_lint_owner -v  # plan_lint.py's owner-question rules, each with a failing fixture and a passing control
-py -3 -m unittest tests.test_workorder_run_criteria_status -v  # run_criteria.py's status.json, report.txt and --status exit codes
+py -3 -m unittest tests.test_workorder_run_criteria_status -v  # run_criteria.py's status.json, report.txt, --status exit codes and --digest
 py -3 -m unittest tests.test_workorder_speed -v   # workorder_speed.py's measures on synthetic sessions, each with a control
 py -3 -m unittest tests.test_source_index -v      # source_index.py against a synthetic fixture, plus a real-ModuleMain.cpp smoke test
+py -3 -m unittest tests.test_section_code_mode -v  # section.py's code mode: one fixture per language with its outliers, the 2.5 MB size test, the toc cap
+py -3 -m unittest tests.test_workorder_brief -v   # workorder_brief.py's selectors, each with a control that it prints nothing it was not asked for
 py -3 -m unittest tests.test_hs_drive_mcp_server -v            # the hs-drive tool surface, over a real stdio session
 py -3 -m unittest tests.test_hs_drive_mcp_engine_bridge -v     # ENGINE_SYMBOLS still resolve, and importing the engine starts nothing
 py -3 -m unittest tests.test_hs_drive_mcp_saves -v             # the fail-closed save backup/restore contract
@@ -1149,6 +1268,7 @@ py -3 -m unittest tests.test_hs_drive_mcp_charselect -v        # hs_select_chara
 py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # parsing ForgePact's menulayout listing, and the refusals it decides
 py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the machine-wide game lease, across real processes
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
+py -3 -m unittest tests.test_ghidra_mcp -v                     # the ghidra launcher: git refusal, loopback, stripped env, version check
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 

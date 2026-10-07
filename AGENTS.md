@@ -22,7 +22,7 @@ each at its own pinned model tier and effort (`planner`, `implementer`,
 escalating the whole phase, a `live-operator` that runs a workorder's written
 live-game procedure so the driver only relays to the person, a `scribe` that
 pastes a round's precomputed Log/State text into a workorder's own files with
-`Read`/`Edit` only, and three skills:
+`Read`/`Grep`/`Edit` only, and three skills:
 `/catalog-rebuild`, `/workorder` (drives those phases
 and routes defects back to the phase that caused them), and
 `submodule-context` (loads the guide named above). MCP servers are in
@@ -76,7 +76,9 @@ one source and a derived copy for the other agent:
 
 Edit the source, then run `py -3 tools/sync_agent_tooling.py`;
 `tests/test_agent_tooling_sync.py` fails on a copy edited by hand or left
-stale. Never add a skill, agent or server for one agent only without saying
+stale. The effort variants in `.claude/agents/` (`planner-xhigh.md` and the
+rest, how `/workorder` picks an effort per spawn) are derived the same way,
+from their source agent's `effort-variants:` line. Never add a skill, agent or server for one agent only without saying
 why in `.claude/README.md` § "Codex"; `/workorder` is the one current
 exception, because it drives Claude Code's own subagent and workflow tools.
 
@@ -98,9 +100,10 @@ exception, because it drives Claude Code's own subagent and workflow tools.
   design-detector hook under Claude Code; set `IMPECCABLE_HOOK_DISABLED=1` to
   switch it off for yourself. Under Codex, run `$impeccable audit` on changed
   UI instead.
-- **MCP servers**: `tauri-hub`, `hs-drive`, `context7`, `github`, `figma` and
-  `playwright`. Use `playwright` to drive and screenshot a browser-based
-  frontend, the same way `tauri-hub` drives the hub. `github` and `figma` need
+- **MCP servers**: `tauri-hub`, `hs-drive`, `ghidra`, `context7`, `github`,
+  `figma` and `playwright`. Use `playwright` to drive and screenshot a
+  browser-based frontend, the same way `tauri-hub` drives the hub. `ghidra`
+  reads the local Ghidra project (§ "Check for a Named Ghidra Project" below). `github` and `figma` need
   a personal access token; on a new machine, run
   `py -3 tools/setup_agent_secrets.py` once. On Windows it asks for each
   missing token and saves it as a user environment variable that both agents
@@ -170,13 +173,24 @@ So, in `/workorder` and anything run like it:
   pull requests.
 - **Batch the owner's decisions before the next plan, and fix a flaky test
   in the round that saw it**, rather than retrying it.
-- **After a small fix, re-run only the checks it can reach** (the owner,
-  2026-09-27: *"run relevant tests only if possible"*): a fix round after a
-  verify that passed everything else runs the criteria whose `(reads ...)`
-  the fix touches plus the failed ones (`tools/run_criteria.py
-  --changed-since`), and the full set runs at the final gate before push, or
-  whenever the delta is unknown, touches a shared contract, or the verifier
-  cannot tell.
+- **During development run only the relevant subset; the full suite runs
+  once, as the last step before the pull request** (the owner, 2026-09-27:
+  *"run relevant tests only if possible"*, widened 2026-10-02: *"full suite
+  runs shouldnt be run so frequently. it should be reserved to the last step
+  before the pr"*). A first verify and an items gate run every criterion but
+  the whole suites and the ones marked `(final)` (`tools/run_criteria.py
+  --dev`); a fix round after a verify that passed everything else runs the
+  criteria whose `(reads ...)` the fix touches plus the failed ones
+  (`--changed-since`), deferring the same. The full set runs at the final
+  gate before the PR, or whenever the delta is unknown, touches a shared
+  contract, or the verifier cannot tell. So every module a change touches
+  needs a targeted criterion beside its whole suite.
+- **After a write, read the diff, not the file** (the owner, 2026-10-02):
+  an agent checks its own edit with `git diff -- <path>`, a grep or a ranged
+  read, and an agent after it (verifier, reviewer, re-entered implementer,
+  replanning planner, scribe) reads the diff since its base or the one
+  section it needs, never the whole file again. `workorder_audit.py` R26
+  fails an implementer or planner that does.
 - **A question never idles the pipeline.** Before asking the owner, start
   everything the answer cannot change. Spin off an out-of-scope bug instead
   of asking about it. Apply the default to a reversible choice and say how
@@ -261,7 +275,14 @@ this machine has a named Ghidra project, and say what you found.
   headless through `support\analyzeHeadless.bat`) and the project
   (conventionally `%USERPROFILE%\ghidra_projects\HeroSiege`, program
   `Hero_Siege.exe`). Use them, and keep what they show local, as the Legal
-  section above requires.
+  section above requires. The reading scripts (`DecompileTo.java`,
+  `FindCallers.java` and the rest) are in `ForgePact/tools/ghidra/`; run them
+  as [ForgePact/tools/ghidra/README.md](ForgePact/tools/ghidra/README.md) says.
+  For a quick question (find a function, decompile it, list its callers),
+  prefer the `ghidra` MCP server: it serves a copy of that project, so it never
+  locks the original, and it needs no headless run. If
+  `py -3 -m tools.ghidra_mcp status` reports something missing, its `setup`
+  fixes it ([docs/tools/ghidra-mcp.md](docs/tools/ghidra-mcp.md)).
 - **If it is not present, offer the owner two options** and let them choose:
   1. **Set up Ghidra first (recommended).** Install a JDK 21 and Ghidra; run
      `citrace symdump` in the research build to write `bp_ipc\symbols.csv`;
@@ -281,6 +302,22 @@ cause is an open question: one untested explanation is that the dump ran while
 table hooks were in place, so until someone checks it, run `citrace symdump`
 with no ForgePact hooks installed as a precaution, not a known fix (see
 [static-model-workflow.md](docs/agents/static-model-workflow.md#tooling-findings)).
+
+**Ask the decompile index before you decompile.** A script someone already
+decompiled for this build is a file on this machine, not a new headless run, but
+only if it can be found: on 2026-10-04 ForgePact #160 decompiled scripts again
+because the earlier output had no index.
+
+- Before decompiling, run `py -3 tools/decomp_index.py has <name>` (add
+  `--contains` for a partial name) and reuse what it lists for the current
+  build. A match labelled as another build is stale, not missing.
+- After a headless run, `scan` its output directory so the next reader finds it.
+- The index file and every decompile stay outside any repository; the tool
+  refuses to write either inside a git checkout.
+- In a body the decompiler left unnamed, name a variable slot with the tool's
+  `slot-name`, `find-name` and `annotate` subcommands rather than by guessing.
+
+Detail, defaults and the slot-name mechanism: [docs/tools/decomp-index.md](docs/tools/decomp-index.md).
 
 ## Mod Development Workflow: Test Before / After, Then Build to It
 
@@ -663,7 +700,8 @@ mod's developers read it. Facts about the game itself belong to every module:
 where a structure lives, what a container holds, what a script reads and
 writes, what an argument means, which call crashes the game. So when a
 research phase is recorded, the facts it established about the game go into
-the shared references as part of the same feature, not "later". The shared
+the shared references as part of the same feature, not "later" (a static
+reading goes in even sooner, as the paragraph after the list says). The shared
 references live in this hub, so they ride the feature's hub pull request: the
 one that accompanies the submodule's PR, per § "One Branch and One Pull
 Request per Module, per Feature" below. A later commit on that same hub
@@ -688,6 +726,16 @@ reading as a reading, in your own words, per the Legal section above. Leave
 the argument, the negative results and the session history in the research
 doc, and link to it. A fact that exists only in one mod's research doc gets
 rediscovered by the next mod, at the price of another live session.
+
+**Fold a static reading when it is made**, not after the live session. A local
+reading that establishes a game fact goes into `docs/RUNTIME_DATA_MODELS.md` in
+the same feature and at the time it is made, labelled as a static reading and
+in your own words; when a later session measures it, change the label to
+measured. Plans are written from the shared
+references, so a reading that is not there yet cannot shape the next live
+procedure: in ForgePact #160 (2026-10-04) the readings reached this file only
+after a live session, and Live 1 was planned around a script that White Mage
+casts never reach.
 
 ## Every Piece of Work Belongs to an Issue on the Board
 
@@ -794,15 +842,19 @@ repository:
    starts the AI review; a pull request without it gets no reviewer.
 2. **Wait for the review, then fix what it found** on the same branch, per the
    rule above. Reply to each comment with what changed, or why nothing did.
-   After fixing, comment `@claude review` to have the fixes reviewed; the label
-   does not re-run on later pushes.
+   After fixing, request a re-review with a comment whose body **starts
+   with** `@claude review`; the label does not re-run on later pushes. Post it
+   as its own comment, apart from the fix summary: `ai-review.yml` checks
+   `startsWith(comment.body, '@claude review')`, so a trigger anywhere but the
+   start is skipped without a word (hub #402, 2026-10-03). Then confirm the
+   run started (`gh run list --workflow ai-review.yml -L 1`).
 3. **Do not merge, and do not report the pull request ready to merge, while
    the review has not posted or a comment of it is unaddressed** — nor while CI
    is red. Merging is still the owner's call, per pull request.
 
 The review workflow (`.github/workflows/ai-review.yml`) exists in this hub and
-in `ForgePact`, `HS-Offline-Tracker`, `hero-siege-item-editor` and
-`HS-AFK-Expedition`. The other submodules have neither the workflow nor the
+in `ForgePact`, `HS-Offline-Tracker` and `hero-siege-item-editor`. The other
+submodules have neither the workflow nor the
 label. Before opening a pull request in one of them, check
 (`gh api repos/<owner>/<repo>/contents/.github/workflows`), and if it is
 missing, **offer the owner two options** rather than skipping the review
@@ -835,14 +887,24 @@ nobody kept, which is why nobody can say what is in it.
 `tests/test_yytoolkit_patch_series.py` enforces the series' shape mechanically,
 and `verify-dll` fails a binary that lacks a marker its patches declare.
 
-Story and evidence: [docs/agents/yytoolkit-provenance.md](docs/agents/yytoolkit-provenance.md)
+**The modified `AurieCore.dll`'s source of truth is
+[`third_party/aurie/`](third_party/aurie/README.md)**, under the same rules:
+one pinned upstream commit (Aurie v2.0.2) plus a documented patch series, built
+by `tools/build_aurie.py` (a second profile of the same build tool), never an
+edited tree, and never a patch to the plugin-facing `shared.hpp`.
+`ForgePact/aurie-modified/` holds only the notice and BUILD-INFO that ship
+beside the DLL, not its source. `tests/test_aurie_patch_series.py` enforces the
+series' shape; [ADR 0006](docs/adr/0006-modified-auriecore-is-a-patch-series-in-the-hub.md)
+says why the hook-freeze fix took this form.
+
+Story and evidence for the YYToolkit series: [docs/agents/yytoolkit-provenance.md](docs/agents/yytoolkit-provenance.md)
 
 ## HS Game SDK Usage
 
 When developing, modifying, testing, or reverse-engineering game logic, hooks, drops, and items across any submodules:
 - Use `hs-game-sdk` (`hs-game-sdk/`) as the central source of truth for GameMaker object indices, script names, room indices, sprite indices, sound indices, stat IDs, proc bundles, and runtime item/stat structs.
-- In **C++** plugins (`ForgePact/plugin`, `HS-Offline-Tracker/aurie-producer`, `hs-stat-forge`, `HS-AFK-Expedition/plugin`), `#include <hs_game_sdk/hs_game_sdk.hpp>` and use strongly-typed definitions from namespace `HeroSiege` (such as `HeroSiege::Objects::GameObject`, `HeroSiege::Scripts::gml_Script_*`, `HeroSiege::Stats::StatId`, and `HeroSiege::YYTK`).
-- In **Python** submodules (`ForgePact/src`, `hero-siege-item-editor`, `HSSaveEditor`, `HS-Offline-Launcher`, `HS-AFK-Expedition/tools`), import models and constants from `hs_game_sdk` (e.g. `from hs_game_sdk import GameObject, GameScript, StatId, PROC_FAMILIES, ItemDefinitionStruct, ItemStatStruct`).
+- In **C++** plugins (`ForgePact/plugin`, `HS-Offline-Tracker/aurie-producer`, `hs-stat-forge`), `#include <hs_game_sdk/hs_game_sdk.hpp>` and use strongly-typed definitions from namespace `HeroSiege` (such as `HeroSiege::Objects::GameObject`, `HeroSiege::Scripts::gml_Script_*`, `HeroSiege::Stats::StatId`, and `HeroSiege::YYTK`).
+- In **Python** submodules (`ForgePact/src`, `hero-siege-item-editor`, `HSSaveEditor`, `HS-Offline-Launcher`), import models and constants from `hs_game_sdk` (e.g. `from hs_game_sdk import GameObject, GameScript, StatId, PROC_FAMILIES, ItemDefinitionStruct, ItemStatStruct`).
 - In **TypeScript / Web** submodules (`HSCraftSim`, `HS-Offline-Tracker/src`), import from `@hero-siege/sdk`.
 - Avoid declaring raw string literals or magic numbers for game scripts, asset indices, object types, and stat keys when equivalent constants exist in `hs-game-sdk`.
 - If game updates shift asset or script indices, regenerate the SDK bindings using `tools/extract_and_generate_sdk.py`.

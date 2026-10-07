@@ -50,6 +50,13 @@ you find yourself wanting to, that is a signal the plan is not finished.
    `ForgePact/docs/*-research.md` enumerate every plausible candidate free. If
    your plan's first step is "hook one thing and relaunch the game", enumerate
    *every* candidate instead and hook them all in one build, one command.
+   In a large source file (about 200 KB and up, `.cpp .cc .c .hpp .h .py
+   .js .mjs .ts`), search by symbol, not by `grep -n` then `sed -n`: `py -3
+   .claude/skills/workorder/section.py <file> --toc --grep <regex>` lists
+   the matching functions, classes and methods with their line ranges, and
+   `section.py <file> '<symbol>'` prints one whole in a single call. In the
+   18 sessions after 2026-10-02, planners made 168 shell reads of
+   `ForgePact/plugin/ModuleMain.cpp` the two-turn way.
 
 3. **Read the existing research before re-running it.** `ForgePact/docs/`
    keeps negative results deliberately. A negative labelled "does not happen"
@@ -58,6 +65,23 @@ you find yourself wanting to, that is a signal the plan is not finished.
    <doc> --toc`, then by heading or `--grep`, never whole.
    `crafting-materials-research.md` reached 426 KB during forgepact-issue-14,
    and research docs were about $19 of that feature's re-read cost.
+
+4. **Look up what a live procedure relies on, and decompile only what is
+   missing.** Before decompiling a script, run
+   `py -3 tools/decomp_index.py has <name>` (`--contains` for a partial name)
+   and reuse what it lists for this build; after decompiling, run
+   `py -3 tools/decomp_index.py scan <output dir>` so the next reader finds it
+   (`AGENTS.md` § "Check for a Named Ghidra Project Before Researching a Game
+   Mechanism"). Before writing a live procedure, search `docs/RUNTIME_DATA_MODELS.md`,
+   `hs-game-sdk/curated/` and the `ForgePact/docs/*-research.md` docs
+   (`section.py <doc> --grep <name>`) for every script and object the
+   procedure relies on, and cite what you found in its **relies on** field
+   below. A reading that establishes a game fact is folded into
+   `docs/RUNTIME_DATA_MODELS.md` in the same feature, labelled as a static
+   reading (`AGENTS.md` § "Fold What a Mod Learned About the Game Into the
+   Shared References"). In ForgePact #160 (2026-10-04) the readings were not
+   in the shared references yet, and Live 1 was planned around a script that
+   White Mage casts never reach.
 
 ## What a usable acceptance criterion looks like
 
@@ -110,7 +134,12 @@ When a criterion needs the running game, write the session as a
   action a person takes, with the **expected** result beside it;
 - **cases**: one or two ordinary cases plus the outliers that take a different
   code path — not every skill or item (`AGENTS.md` § "Mod Development
-  Workflow").
+  Workflow");
+- **relies on**: each script or object the checks depend on, with where it is
+  documented (a `docs/RUNTIME_DATA_MODELS.md` section, a curated file, a
+  research doc heading), or "not found in the shared references or research
+  docs". A session built on an unchecked script can measure a path the game
+  never takes: ForgePact #160's Live 1 (2026-10-04) did.
 
 The session criterion reads the capture with the tool, never a hand-written
 grep: `py -3 tools/live_checks.py .claude/workorders/<slug>-live-<n>.md
@@ -151,12 +180,30 @@ not the code — measured at two replans, 12.9M tokens and 45 minutes in one
 workorder — and reduces the implementer to a typist instead of someone who can
 adapt to what they actually find.
 
+## After a write, read the diff, not the file
+
+An `Edit` that returned success landed. Do not read a plan or context file
+back after editing it: check the one section with `section.py <file>
+'<heading>'`, the outline with `grep -n '^## \\|^### ' <file>`, and the plan's
+shape with `py -3 tools/plan_lint.py <plan>`. The owner, 2026-10-02: after
+each write, read only the difference or the relevant part. A replan or an
+amendment reads the code its defect names the same way, by `git diff <base>
+-- <path>` and the ranges around its hunks. `tools/workorder_audit.py` R26
+fails a planner that reads a file it wrote whole more than twice.
+
 ## Pre-flight, before `verdict: PLAN-READY`
 
 Confirm every path, symbol, script/object name, command and expected output
 the plan names against the working tree, in this run — grep, ls, or run it.
 Mark anything unconfirmed `UNVERIFIED:` in place, or move it to `## Needs
 human judgement`. Never state it as fact.
+
+Cite every Context subsection a step needs as `ctx: "<heading>"`, with the
+heading exactly as written. The implementer starts from `py -3
+tools/workorder_brief.py`, which prints the Context subsections the selected
+steps and criteria cite and nothing else, so a step that leans on Context it
+does not cite sends its implementer back to the whole file. A citation the
+brief cannot resolve prints `ctx not found: "<cite>"` in that brief.
 
 Then run `py -3 tools/plan_lint.py .claude/workorders/<slug>-plan.md` and fix
 every finding before returning: a criterion in prose, a heading slice not
@@ -193,6 +240,20 @@ wait"; evidence in `docs/agents/workorder-calibration.md`).
   exclusive)`, and write `(after 3)` on a criterion that reads what
   criterion 3's command writes. An unmarked command it does not recognise
   runs alone in its place in the plan, which is safe and slow.
+- **Whole suites run once, before the pull request.** The owner,
+  2026-10-02: "full suite runs shouldnt be run so frequently. it should be
+  reserved to the last step before the pr. during development only relevant
+  subset should be run." Every verify during development is scoped: a first
+  verify and the items gate run `run_criteria.py --dev`, a fix round runs by
+  reach, and both defer each criterion whose every command is a whole suite
+  (`unittest discover`, `run_tests_parallel.py`, a bare `pytest`) and each
+  one you mark `(final)` (a perf benchmark, an oracle replay, anything slow
+  that only the finished change needs). So give every module the change
+  touches its own **targeted** criterion beside the whole suite: `py -3 -m
+  unittest tests.test_<x>` for the test modules that cover it, the module's
+  `npm test`, the e2e suite for the screen it touched. Without one,
+  development verifies nothing for that module, and a regression first shows
+  at the final gate, the most expensive place to find it.
 - **Tier the verification.** A middle workorder, one whose output another
   workorder in the same feature will build on and verify again, puts in its
   criteria only what its change can reach: the module's `npm test`, the e2e
@@ -318,7 +379,7 @@ planning: complete        (`streaming` while items are still being released)
 gates: none
 gates pending: `build: complete`; `live1: complete`
 round base: <none yet>
-agents: planner-tier=opus
+agents: planner-tier=planner        (the agent type you were spawned as: planner, planner-xhigh, planner-max)
 reviewers: <none yet>
 open defects: none
 decisions in force: none
@@ -450,7 +511,9 @@ running item holds its files, runs the item's `checks:` through an
 independent verifier the moment it is done, and commits it. Reviewers read
 each commit as it lands, and their findings become fix items at once. The
 `## Acceptance criteria` are the whole-tree gate, run once when nothing is
-left to run: the full suite, every e2e suite, perf, the oracle. An item that
+left to run, as a development verify (`--dev`): every criterion but the whole
+suites and the `(final)` ones, which the final gate before the pull request
+runs. An item that
 parks (an owner question, a `PLAN-DEFECT`, three failed attempts) holds only
 what depends on it. Each item is a level-3 `### Item: <id>` heading under
 `## Steps` (id in `[a-z0-9-]+`, an optional `— <title>`), then, before its
@@ -464,7 +527,9 @@ first numbered step:
   item's change can reach (the unit tests of the module it changed, the e2e
   suite of the screen it touched, a grep). Each is a criterion in the usual
   form, with `(class ...)` where it needs one. Never the full suite: that is
-  the gate's.
+  the gate's. A build check carries `(reads ...)` naming the sources it
+  builds from: the workflow re-runs a done build when a later fix lands on
+  them, and a build check with no `(reads ...)` re-runs after any commit.
 - `owner:` — the question this item waits on, when the owner has not
   answered it yet. Only this item waits; ask the others' questions up front.
   It always comes with `default:` and `reversible:`, below.
@@ -535,9 +600,12 @@ You are being told the plan was wrong, and the Log carries the reason. This is
 the system working, not a failure — a plan that survives contact untouched is
 rare, and the implementer stopping to say so is the behaviour you want.
 
-Do not defend the plan. Read the plan file, all of `## Log`, and only the
-Context subsections the defect implicates, then **`Edit` only the sections it
-invalidates** — never re-`Write` the plan file; a rewrite destroys the diff a
+Do not defend the plan. Read the sections of the plan the defect names (by
+heading, with `section.py`), the `## Log` entries since your last `### Plan`
+or `### Replan <k>` (the rounds and amendments after it; your own entry and
+earlier ones you wrote are already true or now superseded by the evidence),
+and only the Context subsections the defect implicates, then **`Edit` only
+the sections it invalidates** — never re-`Write` the plan file; a rewrite destroys the diff a
 resumed reader depends on. Append what changed, and why, under a new
 `### Replan <k>` heading in the context file's `## Log`. If the goal itself was
 wrong, say so and set `status: BLOCKED` — a human decides whether to keep

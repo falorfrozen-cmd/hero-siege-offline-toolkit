@@ -47,9 +47,18 @@ added catalog entries.
 
 - **Windows 10 or 11**, 64-bit. The hub itself is Windows-only; the Steam Deck
   save editor it can open is a browser page and works anywhere.
-- The installer is per-user and needs no Administrator. The three tools that
-  edit game memory do, and the hub asks Windows for it per launch rather than
-  running elevated itself.
+- A release carries two installers; use one, not both. The `-setup.exe` one
+  installs for your user only and needs no Administrator. The `.msi` one
+  installs for every user of the PC, so Windows asks for Administrator when you
+  install it and again each time the hub updates itself. If you decline that
+  prompt during an update, the hub stays closed and on the old version; start
+  it again from the Start menu. The `.msi` is there because some antivirus
+  programs flag a helper file inside the `-setup.exe` installer.
+- If the hub is already installed, let it update itself rather than
+  downloading the other installer over it. To change from one installer to the
+  other, uninstall the hub first; that leaves your tools and settings alone.
+- The three tools that edit game memory need Administrator, and the hub asks
+  Windows for it per launch rather than running elevated itself.
 - **Windows will warn you about the download.** There is no code-signing
   certificate for this project or its tools. Choose *More info →
   Run anyway*. The hash pinning described above is what stands in for a
@@ -84,11 +93,6 @@ project. Codex is a release-only integration and has no source submodule.
 Existing Toolkit 1.0.5 users can refresh the library while online to see it
 under All or search; a Toolkit application upgrade is not required.
 
-AFK FARM ([HS-AFK-Expedition](https://github.com/falorfrozen-cmd/HS-AFK-Expedition))
-is out of the hub for now: the hub no longer lists or installs it, while its
-source, releases and [developer guide](docs/submodules/HS-AFK-Expedition/instructions.md)
-stay public.
-
 ---
 
 ## Notes
@@ -112,7 +116,7 @@ cd hub
 npm install
 npm start     # run it in development
 npm test      # the Rust engine's tests
-npm run release   # build the installer
+npm run release   # build both installers (setup.exe and .msi)
 ```
 
 Needs Node 20.19+ and Rust 1.88+. `npm start` opens the app against a Vite dev
@@ -150,6 +154,12 @@ process holds it, every tool that drives the game or overwrites saves
 refuses with `lease_held`, naming the holder. See
 [`docs/tools/hs-drive-mcp.md`](docs/tools/hs-drive-mcp.md). Nothing about it
 ships to a player.
+
+The `ghidra` MCP server (`tools/ghidra_mcp.py`) puts the local Ghidra project
+behind tool calls: search functions, decompile by address, follow callers and
+xrefs, with no headless run per question. It serves a copy of the research
+project from one shared headless server on loopback, and what it decompiles
+stays local. See [`docs/tools/ghidra-mcp.md`](docs/tools/ghidra-mcp.md).
 
 | | |
 | --- | --- |
@@ -288,6 +298,16 @@ and only once. See [its page](docs/tools/save-item-keys.md):
 py -3 tools/save_item_keys.py <stash.hss> <inventory_order_13.hss> <herosiege13.hss> --key <0-0-n-class>
 ```
 
+`tools/button_label_check.py` measures, on a game screenshot, whether a
+button's label is drawn centred inside its box, against a button the game
+draws itself as the reference. Which member, if any, says where the game draws
+a node's label is not established, so ForgePact issue #131's live sessions
+judge the label from the picture. See [its page](docs/tools/button-label-check.md):
+
+```powershell
+py -3 tools/button_label_check.py <png> --gui 2560x1440 --box <l,t,r,b> --ref <l,t,r,b>
+```
+
 ## Modified YYToolkit
 
 ForgePact and HS Offline Tracker load their plugins through a modified
@@ -320,6 +340,33 @@ launch-gate record,
 for why it is a patch series, and
 [`docs/agents/yytoolkit-provenance.md`](docs/agents/yytoolkit-provenance.md)
 for what went wrong with the binary it replaces.
+
+## Modified Aurie
+
+ForgePact also ships a modified `AurieCore.dll`, from the
+[Aurie Framework](https://github.com/AurieFramework/Aurie) (AGPL-3.0). Its
+source of truth is [`third_party/aurie/`](third_party/aurie), kept under the
+same rules as the YYToolkit series: one pinned upstream commit (Aurie v2.0.2),
+a patch series whose every patch carries `Why` / `Evidence` / `Fails-safe` /
+`Log-markers` / `Upstream-status`, upstream's licence and the AGPL notice. No
+binary is committed; [`tools/build_aurie.py`](tools/build_aurie.py), a second
+profile of the same build tool, builds one:
+
+```powershell
+py -3 tools/build_aurie.py all --upstream C:\src\Aurie
+```
+
+The series changes one thing about the framework: when `MmCreateHook` freezes
+the game to write a hook, it walks only the game process's own threads instead
+of taking two thread snapshots of the whole system, which ForgePact #151
+measured at about 69 ms per hook. Hooks attach exactly as before. The build
+travels as the hub library release `aurie-v2.0.2-hs.1` (`--latest=false`),
+which ForgePact's toolchain pin names; HS-Offline-Tracker ships the same
+build from its next release (0.1.4, falorfrozen-cmd/HS-Offline-Tracker#14).
+The directory's
+[README](third_party/aurie/README.md) holds the patch table and the launch
+gate, and [ADR 0006](docs/adr/0006-modified-auriecore-is-a-patch-series-in-the-hub.md)
+says why the fix is a patch series here.
 
 ## Context7 MCP
 

@@ -410,7 +410,7 @@ class StatusCompositionTests(unittest.TestCase):
         report = self.status(rows=[(1, "steam.exe")])
         for key in ("game_state", "game_pids", "eac_service", "exe_path",
                     "exe_valid", "exe_validation", "mod_chain", "ipc_dir",
-                    "bp_ipc_exists", "launch"):
+                    "bp_ipc_exists", "launch", "exits"):
             self.assertIn(key, report)
         self.assertEqual(report["eac_service"], "stopped")
         self.assertEqual(report["exe_path"], str(self.exe))
@@ -439,6 +439,37 @@ class StatusCompositionTests(unittest.TestCase):
         self.assertEqual(set(report["mod_chain"].values()), {False})
         self.assertIsNone(report["ipc_dir"])
         self.assertFalse(report["bp_ipc_exists"])
+
+    def test_exits_lists_only_watched_pids_that_ended(self):
+        """`exits` comes from the launch watch, not the process table: a game
+        row nobody launched is never in it, and a watched PID appears only once
+        its handle is signalled."""
+        class Kernel:
+            ended = {}
+
+            def OpenProcess(self, access, inherit, pid):  # noqa: N802
+                return 0x3000 + int(pid)
+
+            def WaitForSingleObject(self, handle, ms):  # noqa: N802
+                return 0 if (int(handle) - 0x3000) in self.ended else 0x102
+
+            def GetExitCodeProcess(self, handle, pointer):  # noqa: N802
+                pointer._obj.value = self.ended[int(handle) - 0x3000]
+                return 1
+
+            def CloseHandle(self, handle):  # noqa: N802
+                return 1
+
+        kernel = Kernel()
+        self.enterContext(patch.object(self.procs, "_EXITS", []))
+        self.enterContext(patch.object(self.procs, "on_windows", return_value=True))
+        self.enterContext(patch.object(self.procs, "kernel32", return_value=kernel))
+        self.assertEqual(self.procs.watch_exit(42), "held")
+        rows = [(1, "steam.exe"), (42, "Hero_Siege.exe"), (77, "Hero_Siege.exe")]
+        self.assertEqual(self.status(rows=rows)["exits"], [])
+        kernel.ended = {42: 0xC0000005, 77: 0xC0000005}
+        self.assertEqual(self.status(rows=[(1, "steam.exe")])["exits"],
+                         [{"pid": 42, "exit_code": "0xC0000005"}])
 
 
 class SelfCheckSideEffectTests(unittest.TestCase):

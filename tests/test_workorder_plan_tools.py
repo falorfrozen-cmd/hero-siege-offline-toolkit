@@ -148,6 +148,95 @@ class LiveChecksTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(run(live_checks.main, [self.write("c-live-1.md", "## Step 1\n- a | pass\n")])[0], 2)
 
 
+TABLE_CAPTURE = """# forgepact-x live 1
+
+## Step 1
+reroll -> pays out
+
+## Checks summary
+
+| Check | Result |
+|---|---|
+| dll-hash | pass — e1c5eb99..., matches dispatch |
+| rerun-pays-out | pass (finding: rerun: pays-out) |
+| bonus-finds | not-observed (ids 693-700 all 0 all session) |
+| helmet-rolls3 | not-run (no helmet) |
+
+## Teardown
+restored
+"""
+
+
+class LiveChecksTableTests(TempDirMixin, unittest.TestCase):
+    # forgepact-issue-36 Live 1 (2026-09-28): the operator wrote a table under
+    # `## Checks summary` instead of the list. The capture is never edited
+    # (audit R20), so the tool reads the table with the list form's rules.
+    EXPECT = "dll-hash,rerun-pays-out,bonus-finds,helmet-rolls3"
+
+    def test_a_table_capture_passes_with_the_expected_names(self):
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", TABLE_CAPTURE), "--expect", self.EXPECT,
+                                         "--require-pass", "dll-hash,rerun-pays-out"])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("dll-hash pass  — e1c5eb99..., matches dispatch", out)
+        self.assertIn("rerun-pays-out pass  (finding: rerun: pays-out)", out)
+        self.assertIn("bonus-finds not-observed  (ids 693-700 all 0 all session)", out)
+        self.assertIn("helmet-rolls3 not-run  (no helmet)", out)
+        self.assertIn("checks: 4 (pass 2, fail 0, not-observed 1, not-run 1)", out)
+        self.assertNotIn("Check ", out)  # the header row is not a check
+        self.assertNotIn("---", out)     # nor the separator
+
+    def test_a_table_under_checks_reads_the_same(self):
+        text = TABLE_CAPTURE.replace("## Checks summary", "## Checks")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text), "--expect", self.EXPECT])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("checks: 4 (pass 2, fail 0, not-observed 1, not-run 1)", out)
+
+    def test_a_wider_table_reads_the_last_cell_and_crash_is_fail(self):
+        text = ("## Checks summary\n\n| Check | Expected | Observed | Result |\n|:--|---|---|--:|\n"
+                "| a | x | y | crash (fail) - the game ended |\n| b | x | y | Not observed - timed out |\n")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text), "--expect", "a,b"])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("a fail  crash (fail) - the game ended", out)
+        self.assertIn("b not-observed  - timed out", out)
+
+    def test_fail_a_table_with_a_missing_check(self):
+        text = TABLE_CAPTURE.replace("| bonus-finds | not-observed (ids 693-700 all 0 all session) |\n", "")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text), "--expect", self.EXPECT])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing check: bonus-finds", out)
+
+    def test_fail_a_table_with_a_duplicate_and_an_unreadable_row(self):
+        text = TABLE_CAPTURE.replace("| helmet-rolls3 | not-run (no helmet) |",
+                                     "| helmet-rolls3 | not-run (no helmet) |\n| dll-hash | looked fine |")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text), "--expect", self.EXPECT])
+        self.assertEqual(rc, 1)
+        self.assertIn("dll-hash UNREADABLE", out)
+        self.assertIn("check listed twice: dll-hash", out)
+
+    def test_fail_a_table_require_pass_check_that_did_not_run(self):
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", TABLE_CAPTURE), "--expect", self.EXPECT,
+                                         "--require-pass", "helmet-rolls3"])
+        self.assertEqual(rc, 1)
+        self.assertIn("helmet-rolls3 must be pass, read not-run (the instrument did not run it)", out)
+
+    def test_a_table_under_an_unrelated_heading_is_not_read(self):
+        # Negative control: a table elsewhere in the capture is not a checks block.
+        text = TABLE_CAPTURE.replace("## Checks summary", "## Results")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text), "--expect", self.EXPECT])
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, "")
+
+    def test_the_list_wins_over_a_table(self):
+        # A capture carrying both keeps the list form's reading; the table is
+        # only a fallback for a capture with no list.
+        text = CAPTURE + "\n" + TABLE_CAPTURE.split("## Step 1", 1)[1].replace("## Teardown\nrestored\n", "")
+        rc, out = run(live_checks.main, [self.write("c-live-1.md", text),
+                                         "--expect", LiveChecksTests.EXPECT])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("checks: 5 (pass 3, fail 1, not-observed 1, not-run 0)", out)
+        self.assertNotIn("helmet-rolls3", out)
+
+
 PLAN = """# x
 
 ## State
@@ -903,6 +992,28 @@ class PlanLintItemTests(TempDirMixin, unittest.TestCase):
         self.assertTrue(table["complete"])
         self.assertEqual([it["id"] for it in table["items"]], ["tokens", "toolbar"])
 
+    def test_items_json_reports_what_each_items_build_checks_read(self):
+        # forgepact-124-pet-relics, 2026-10-02: the round engine left a build
+        # done after a fix landed on its sources; it re-runs one only if this
+        # field says what the build reads.
+        build = '`cd ForgePact && cmd //c "plugin_build\\build.bat dev"` exits 0'
+        self.assertEqual(plan_lint.build_reads([build + " (reads `ForgePact/plugin/**`, `hs-game-sdk/cpp/**`)"]),
+                         ["ForgePact/plugin/**", "hs-game-sdk/cpp/**"])
+        self.assertEqual(plan_lint.build_reads([build]), ["*"], "a build declaring no reads reads whatever changed")
+        self.assertEqual(plan_lint.build_reads(["`py -3 -m unittest tests.test_x` exits 0 (class exclusive) (reads `tools/x.py`)"]),
+                         ["tools/x.py"])
+        # Controls: a targeted test, and a command classify() only calls
+        # `exclusive` because it does not recognise it, are not builds.
+        self.assertEqual(plan_lint.build_reads(["`npm test` exits 0 (reads `panel/**`)", '`bash -c "echo x"` exits 0']), [])
+        rc, out = self.lint(itemised(("build-dev", {"files": "`ForgePact/plugin_build/build.log`",
+                                                    "checks": build + " (reads `ForgePact/plugin/**`)"}),
+                                     ("docs", {"files": "`docs/d.md`", "checks": "`grep -c x docs/d.md` prints `1`"})),
+                            "--items-json")
+        self.assertEqual(rc, 0, out)
+        table = {it["id"]: it for it in json.loads(out.strip().splitlines()[-1])["items"]}
+        self.assertEqual(table["build-dev"]["build_reads"], ["ForgePact/plugin/**"])
+        self.assertEqual(table["docs"]["build_reads"], [])
+
     def test_fail_an_undeclared_overlap_and_pass_a_declared_one(self):
         overlapping = {"files": "`panel/src/app.css`", "checks": "`grep a b` exits 0"}
         rc, out = self.lint(itemised(("one", overlapping), ("two", overlapping)))
@@ -1072,7 +1183,29 @@ class ReachSelectionTests(unittest.TestCase):
         self.assertEqual(self.chosen(["ForgePact/panel/src/lib/enabled-mods-undo.js"]), {1, 2})
         self.assertEqual(self.chosen(["ForgePact/panel/src/app.css"]), {1, 5},
                          "the glob and the literal that both cover app.css")
-        self.assertEqual(self.chosen(["ForgePact/tests/test_x.py"]), {3}, "control: one reader, one criterion")
+        self.assertEqual(self.chosen(["docs/submodules/ForgePact/instructions.md"]), {4}, "control: one reader, one criterion")
+
+    def test_a_whole_suite_waits_for_the_final_gate(self):
+        # The owner, 2026-10-02: the full suite is for the last step before
+        # the PR; development runs the relevant subset. Criterion 3 is
+        # ForgePact's whole suite, so a change it reads defers it ...
+        _, _, scope = run_criteria.select(self.items, ["ForgePact/tests/test_x.py"])
+        self.assertEqual(scope[3], (False, run_criteria.FINAL_REASON))
+        # ... unless it failed last time: then the fix must show it green.
+        self.assertEqual(self.chosen(["ForgePact/tests/test_x.py"], failed=[3]), {3})
+        # A targeted test is not a whole suite (control), and `(final)`
+        # defers any criterion, whatever its command.
+        targeted = "(reads `ForgePact/tests/**`) `cd ForgePact; py -3 -m unittest tests.test_x` exits 0"
+        final = "(reads `docs/**`) (final) `grep -c x docs/a.md` prints a number"
+        _, _, scope = run_criteria.select([targeted, final], ["ForgePact/tests/test_x.py", "docs/a.md"])
+        self.assertTrue(scope[1][0])
+        self.assertEqual(scope[2], (False, run_criteria.FINAL_REASON))
+        self.assertFalse(run_criteria.final_only("`py -3 -m unittest discover -s tests` and `grep -c x a.md` both pass"),
+                         "a criterion that also runs a targeted check is not deferred")
+        self.assertTrue(run_criteria.final_only("`py -3 -m unittest discover -s tests` exits 0"))
+        # The full run is the final gate: an unknown delta still runs it all.
+        full, _, scope = run_criteria.select(self.items, None, unknown="x")
+        self.assertTrue(full and scope[3][0])
 
     def test_a_criterion_without_reads_runs_whatever_changed(self):
         # An old plan, with no map at all, still verifies fully.
@@ -1230,8 +1363,23 @@ class ReachRunTests(TempDirMixin, unittest.TestCase):
         self.assertIn("scope: full -- delta unknown: cannot read", out)
         self.assertEqual(ran, ["1", "2", "3", "4"])
 
+    def test_dev_runs_every_criterion_but_the_final_gate_ones(self):
+        # The owner, 2026-10-02: the full suite waits for the last step
+        # before the PR. A first verify has no delta to select by, so --dev
+        # runs everything else, including criteria the change never touched.
+        text = self.plan.read_text(encoding="utf-8").replace(
+            "(reads `tools/**`) `bash", "(reads `tools/**`) (final) `bash")
+        self.plan.write_text(text, encoding="utf-8")
+        rc, out, ran = self.runner("--dev")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(ran, ["1", "2", "3"], out)
+        self.assertIn("scope: development verify: every criterion but the final-gate ones", out)
+        self.assertIn(f"NOT SELECTED ({run_criteria.FINAL_REASON})", out)
+        self.assertEqual(self.runner()[2], ["1", "2", "3", "4"], "control: the full run is the final gate")
+
     def test_usage_errors_exit_2(self):
-        for argv in (["--failed", "1"], ["--changed-since", "base", "--failed", "9"],
+        for argv in (["--dev", "--changed-since", "base"], ["--dev", "--item", "a"], ["--dev", "--failed", "1"],
+                     ["--failed", "1"], ["--changed-since", "base", "--failed", "9"],
                      ["--changed-since", "base", "--failed", "one"], ["--changed-since", "Mod=base"],
                      ["--changed-since", "base", "--item", "a"], ["--changed-since", "base", "--changed-from", "-"],
                      ["--changed-since", "base", "--changed-since", "base"]):

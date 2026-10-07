@@ -17,7 +17,6 @@ TOOLS = frozenset({
     "ForgePact", "HSCraftSim", "HSSaveEditor", "HSSaveEditor-SteamDeck-",
     "HS-Offline-Launcher", "HS-Offline-Tracker", "HS-ValueEditor",
     "Hs-Offline-Loot-Forge", "hs-stat-forge", "hero-siege-item-editor",
-    "HS-AFK-Expedition",
 })
 
 

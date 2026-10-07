@@ -4,6 +4,7 @@ description: Answers one narrow, specific question from a phase agent that has h
 tools: Read, Grep, Glob, Bash
 model: opus
 effort: xhigh
+effort-variants: max
 color: purple
 ---
 

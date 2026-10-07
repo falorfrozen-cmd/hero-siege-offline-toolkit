@@ -40,9 +40,9 @@ never a plan, just a conversation someone was still holding in their head.
 ## The loop
 
 ```
-planner(opus) → implementer(opus) → verifier+reviewers(haiku,sonnet/opus) → PASS ─→ report
+planner(opus) → implementer(opus) → verifier+reviewers(haiku,opus) → PASS ─→ report
   ▲ PLAN-DEFECT ◄───────┘ ◄──────────────────── IMPL-DEFECT / BLOCKING
-                                    PASS-PENDING-HUMAN → live-operator(sonnet) → report
+                                    PASS-PENDING-HUMAN → live-operator(opus) → report
 ```
 
 ### Step 0 — decide whether this is worth a workorder
@@ -91,18 +91,32 @@ about whether it can. These are checkable:
 
 | The change… | Start at |
 |---|---|
-| **introduces or changes concurrency** — threads, async boundaries, a new `#[tauri::command]` that touches disk or network, anything that can deadlock or race | planner `fable`, implementer `opus` |
-| must **establish an unknown game mechanism**, not verify a suspected one — the "which of N candidates does X" shape | planner `fable`, implementer `opus` |
+| **introduces or changes concurrency** — threads, async boundaries, a new `#[tauri::command]` that touches disk or network, anything that can deadlock or race | planner `planner-xhigh`, implementer `implementer` |
+| must **establish an unknown game mechanism**, not verify a suspected one — the "which of N candidates does X" shape | planner `planner-xhigh`, implementer `implementer` |
 | falls in the **suspend-the-game-loop class** (`AGENTS.md`) | stop — read `ForgePact/docs/menu-pause-plan.md` §0 with the user before planning at all |
-| touches **only docs, tests or config** — no product source, no hook, no binding | planner `opus`, implementer `sonnet` |
-| everything else — including hook attachment and three-binding contracts, which had their own `opus`/`opus` rows when the default implementer was `sonnet` | the agents' own pins (planner `opus`, implementer `opus`) |
+| touches **only docs, tests or config** — no product source, no hook, no binding | planner `planner-medium`, implementer `implementer-medium` |
+| everything else — including hook attachment and three-binding contracts, which had their own `opus`/`opus` rows when the default implementer was `sonnet` | the agents' own pins (`planner` and `implementer`, both opus/high) |
+
+**A tier is an agent name, and sometimes a model.** The names are effort
+variants: `planner-xhigh` is `planner` at `xhigh` effort, generated from
+`planner.md`'s `effort-variants:` by `tools/sync_agent_tooling.py`, with the
+same instructions word for word. Spawn the variant as the `subagent_type`;
+the `Agent` tool takes a `model` per call but no effort, so the name is the
+only way to choose one. In workflow mode pass `implementerEffort`
+(`high` or `medium`) and `implementerModel`. Every variant runs on `opus`
+unless a row names another model. `fable` is not a tier: the owner's
+license dropped it on 2026-10-05, so the pipeline escalates effort on
+`opus` wherever it once escalated to `fable` (§ "Model tiers").
 
 The implementer's default is `opus` since 2026-09-22 (see "Model tiers"):
 Opus 5.5 reads cache at Sonnet 5's price, and 99% of an implementer's tokens
 are cache reads, so the tier costs about the same per token while the Sonnet
-tail (p90 46.8M tokens, max 78.9M) was what hit the round caps. `sonnet` is
-kept for the one row where its median run (8.2M tokens, $2.62) is all the
-work there is.
+tail (p90 46.8M tokens, max 78.9M) was what hit the round caps. The docs row
+ran `sonnet` until 2026-10-06; it now runs `implementer-medium` on `opus`
+too, because at medium effort Opus 5.5 scores ahead of Sonnet 5.5 for about
+the same cost on cache-read work (§ "Model tiers", "Reviewers, live-operator
+and the docs row → `opus`/`medium`"). `implementerModel: 'sonnet'` still
+works for a run the owner asks to put on it.
 
 Say which row you matched and why, in one line, before you spawn — a triage
 nobody can see is a triage nobody can correct, and the user is the cheapest
@@ -277,8 +291,8 @@ diffs against it, and every later round repeats this before re-entering.
 **A laned plan** (Step 1's `--lanes-json` printed lanes) runs its lanes only
 on the first implementation of the plan's steps: round 0, or the relaunch
 after a replan. Pass `lanes` and `join` to the workflow then, and never when
-relaunching after an `IMPL-DEFECT` (a `continue` from `STATE-LOST` or
-`SCRIBE-FAILED`, or a fresh `resume` past round 0): a defect round is a fix
+relaunching after an `IMPL-DEFECT` (a `continue` from `STATE-LOST`,
+`SCRIBE-FAILED` or `LOG-DAMAGED`, or a fresh `resume` past round 0): a defect round is a fix
 on a small delta, and no failed criterion or reviewer finding says which
 lane it belongs to, so it runs one implementer that owns every file set.
 Each lane implementer works only inside its `files:`, runs no git command
@@ -323,9 +337,26 @@ steps 2-4 run as one workflow launch with no rounds inside it
   on the files the findings name (or, with no path, run alone once the rest
   are done). A reviewer may be split by screen or dimension with
   `reviewScopes`, and its scopes run as separate reviewers.
-- When nothing is left to run, the `## Acceptance criteria` run once, the
-  only full verify. A failure becomes one fix that runs alone, and the gate
-  runs again, three times at most.
+- A build is never trusted past a later commit on what it reads. An item
+  whose `build`/`exclusive` checks declare `(reads ...)` (`plan_lint.py
+  --items-json` hands the workflow their globs as `build_reads`; a build
+  check with no `(reads ...)` reads everything) does not start while a fix
+  that may land on those globs is queued or running, or while another item
+  editing them runs. That wait never starves the queue: a pass it would
+  leave with nothing running and nothing started runs without it. If a commit by any other item or fix lands on them after
+  the build passed, the build goes back to pending and runs again once that
+  commit is in (a build still running when it lands runs again when it
+  finishes); its attempt budget starts over, and the result's row carries
+  `rebuilds`; a sixth re-run parks it instead (`REBUILD_CAP`), so two builds
+  that commit into what the other reads cannot loop. In
+  forgepact-124-pet-relics (2026-10-02) a reviewer's fix landed minutes after
+  `build-dev` passed, three times, and each launch came back `PARKED` with
+  `build-dev=done` and a DLL older than the fix. So give a build check its
+  `(reads ...)`: without one any commit re-runs it.
+- When nothing is left to run, the `## Acceptance criteria` run once, as a
+  development verify (`--dev`: whole suites and `(final)` criteria wait for
+  the final gate before the pull request). A failure becomes one fix that
+  runs alone, and the gate runs again, three times at most.
 - An item that stops parks alone. What depends on it is held, and
   everything else keeps flowing. The launch returns `PARKED` once nothing
   else can run, before the gate, with every item's status, reason and
@@ -379,7 +410,17 @@ what is running and returns `CEILING`; relaunch, or stop and report. Pushing,
 installing and anything destructive stay gated on the owner's word exactly as
 before: nothing in items mode pushes.
 
-Spawn `implementer` with the plan and context paths. Three outcomes:
+Spawn `implementer` with the plan and context paths and its brief command:
+`py -3 tools/workorder_brief.py "<plan>" --round <n>`, plus `--since-round
+<n-1>` past round 0 (and `--amended` on the re-run after an amendment). The
+implementer runs it first: one call prints the Goal, Out of scope, State,
+the steps and criteria, every Context subsection a step cites by `ctx:`, the
+Decisions, the previous round's Log entry and the `git diff` pointers since
+that round's snapshot. The full files stay named as the fallback, read by
+section for what the brief lacks. Over the 18 sessions after 2026-10-02 the
+plan and context files were the two most-read files of the pipeline: 915
+`Read` calls and 12 MB, plus 400 shell reads by implementers
+(docs/agents/workorder-calibration.md, 2026-10-03). Three outcomes:
 
 - **`IMPL-DONE`** → go to step 3.
 - **`ADVICE-NEEDED`** → see "Consultation" below — not a failure, doesn't count
@@ -398,9 +439,15 @@ Spawn `implementer` with the plan and context paths. Three outcomes:
   `## Context`. Then it is an **amendment**:
 
   1. `py -3 tools/amend_check.py save <plan> <context>`;
-  2. spawn `planner` fresh at its default tier, with the description
+  2. spawn `planner-medium` fresh with `model: opus`, with the description
      `amendment: <slug> <what>` and the correction verbatim (planner.md "When
-     you are spawned as an amendment");
+     you are spawned as an amendment").
+     An amendment planner always runs as planner-medium on opus, never escalated.
+     That holds whatever `planner-tier=` the State records and whatever tier
+     the last replan ran at: an amendment applies one stated correction, and
+     the escalation ladder below is for replans. `tools/workorder_audit.py`
+     R27 fails an `amendment:` planner whose transcript ran fable, or that
+     ran as `planner-xhigh` or `planner-max`;
   3. `py -3 tools/amend_check.py check <plan> <context>` once it returns.
 
   Exit 0 (`AMENDMENT`) means Goal, Out of scope and Needs human judgement are
@@ -439,22 +486,24 @@ Spawn `implementer` with the plan and context paths. Three outcomes:
 
   | Replan | Spawn `planner` with | Because |
   |---|---|---|
-  | 1st | `model: opus` (its default) | most wrong plans are wrong about one fact, not about the mechanism |
-  | 2nd | `model: fable` | cheaper reasoning has now demonstrably failed twice on the same problem |
+  | 1st | the first plan's tier (`planner`, or `planner-xhigh` on a hard triage row) | most wrong plans are wrong about one fact, not about the mechanism |
+  | 2nd | `planner-max` | cheaper reasoning has now demonstrably failed twice on the same problem |
   | 3rd | — stop, ask the user | a goal that survives two replans is usually not well posed |
 
   Spend money where it's earned, not guessed. Planning is *not* cheap: over
-  2026-09-19..22 the planner was 22% of list-price spend, and a Fable 5.1
-  plan averaged $10.38 against $4.00 on Opus 5 (about $2.60 on Opus 5.5) —
-  Fable's output costs 2.5× Opus 5.5's, and a planner writes more output than
-  any other phase. One Fable replan still costs less than the round it saves
-  and far less than a wrong mechanism model's live session, which is why it
-  is the *second* replan's tier and not the first plan's.
+  2026-09-19..22 the planner was 22% of list-price spend, and a planner
+  writes more output than any other phase, so more thinking per turn costs
+  most here. This ladder escalated to Fable 5.1 until 2026-10-05, when the
+  owner's license dropped it; `max` effort on `opus` takes its place, and is
+  the *second* replan's tier rather than the first plan's for the same
+  reason Fable was: one expensive replan costs less than the round it saves,
+  but not less than a plan that needed no escalation.
 
   Record the escalation under the round's heading in the context file's
-  `## Log` (`planner escalated to fable after 2nd PLAN-DEFECT`). A Fable
-  failure signals the problem is under-specified, not difficult — say so to
-  the user when you stop.
+  `## Log` (`planner escalated to planner-max after 2nd PLAN-DEFECT`), and
+  write the tier into `## State` › `agents:` as `planner-tier=planner-max`.
+  A `planner-max` failure signals the problem is under-specified, not
+  difficult — say so to the user when you stop.
 
 ### Re-entering a phase: resume, or fresh spawn
 
@@ -495,10 +544,10 @@ goes back unforwarded — an asker with no view hasn't thought about the
 problem, and answering it turns consultation into delegation: the weaker model
 stops deciding and the pipeline pays two tiers for one phase.
 
-**Spawn `consultant` at `opus`** by default. For a question in the `fable` rows
-of the triage table, pass `model: fable` — one focused question is the
-cheapest place in this pipeline to buy the strongest model, far cheaper than
-running a whole phase there.
+**Spawn `consultant`** (opus/xhigh) by default. For a question in the
+`planner-xhigh` rows of the triage table, spawn `consultant-max` — one
+focused question is the cheapest place in this pipeline to buy the most
+thinking, far cheaper than running a whole phase at `max`.
 
 **Cap: 2 consultations per round.** A third is a signal, not a quota to spend:
 triage was wrong, so escalate the *phase* — re-spawn it a tier up with what's
@@ -544,6 +593,21 @@ one `docs-sync-reviewer` that ran 40 turns twice:
 that the context file is opened one cited heading at a time with
 `section.py`, never whole.
 
+**Every verify before the pull request is a development verify.** The
+owner, 2026-10-02: *"full suite runs shouldnt be run so frequently. it should
+be reserved to the last step before the pr. during development only relevant
+subset should be run."* So a round's first verify, and the items gate, run
+`run_criteria.py <plan> --jobs auto --dev`: every criterion except a whole
+suite (`unittest discover`, `run_tests_parallel.py`, a bare `pytest`) or one
+marked `(final)`, which it prints as `NOT SELECTED (final gate only: ...)`;
+the verifier skips its step-3 root suite. A fix round runs by reach (Step 4,
+"Re-verify what the fix reaches"), which defers the same criteria. The full
+set runs once, as the final gate before the pull request (Step 5).
+`workorder-rounds.js` hands each verifier its scope; under `fullVerify: true`
+every verify of the launch is the full set. A criterion about a file the
+change forgot to touch still runs under `--dev`, which is why a first verify
+is not a reach selection.
+
 **The verifier starts with `tools/run_criteria.py <plan> --jobs auto`.** The
 script runs every command-shaped criterion in one call, exactly as written,
 once per distinct command, and skips gated ones. With `--jobs` it runs
@@ -564,9 +628,17 @@ re-verify, the items gate). The verifier starts `run_criteria.py <plan>
 --jobs auto --out <its scratchpad>/criteria` with `run_in_background: true`,
 so no Bash limit can kill it, then re-issues `py -3 tools/run_criteria.py
 --status <out> --wait 220` at a Bash timeout of 300000 while it exits 3, and
-reads `<out>/report.txt` once it exits 0. The runner keeps
+once it exits 0 judges from `py -3 tools/run_criteria.py --digest <out>`,
+not from `report.txt` whole. The runner keeps
 `<out>/status.json` current (each criterion's state and each command's exit
-code and seconds) and writes everything it prints to `report.txt`. Exit 4
+code and seconds) and writes everything it prints to `report.txt`. The
+digest prints an exit-only criterion whose commands all exited as expected
+as one line, and every other criterion's block exactly as `report.txt` has
+it; it judges nothing. The verifier opens `cmd-<n>.log`, or a ranged read of
+`report.txt`, only for a one-line criterion whose expectation needs output.
+After 2026-10-02 verifiers read `report.txt` whole, 100-217 KB a run, and it
+was the one figure of theirs that rose (docs/agents/workorder-calibration.md,
+2026-10-03). Exit 4
 means the run went stale (not finished, and not updated for 1,900 s): the
 verifier re-runs the criteria not yet done in the background, with
 `--start`. Exit 2 means there is no status file. `--wait` can never exceed
@@ -671,7 +743,11 @@ The line, when a reviewer's label looks wrong to you:
   - **A plan change:** run `tools/amend_check.py save`, *then* record the
     owner's answer under `### Decisions` as `owner, <YYYY-MM-DD>: "<their
     words>"`, then spawn the planner (labelled `amendment: <slug> owner
-    scope ...`), then `check`. When the change would otherwise be a replan
+    scope ...`, as `planner-medium` with `model: opus`), then `check`.
+    An amendment planner always runs as planner-medium on opus, never escalated.
+    Never pass the workorder's escalated `planner-tier=` here: the one fable
+    amendment measured (forgepact-74, 2026-10-02) came by this route, and R27
+    now fails it, and an amendment run as `planner-xhigh` or `planner-max`. When the change would otherwise be a replan
     (the Goal or scope moved, a section came or went, more than 20 lines
     changed) and the context gained an owner line since `save`, `check`
     prints `SCOPE: <k> new owner decision(s)` and exits 0. A change small
@@ -696,8 +772,10 @@ The line, when a reviewer's label looks wrong to you:
   `instrument-blindness-reviewer`, because what a hook sees is not settled by
   applying an edit someone wrote down. In a patch round:
 
-  - one implementer (`patch-implementer:r<n>`) applies those fixes and
-    nothing else;
+  - one implementer (`patch-implementer:r<n>`), spawned as
+    `implementer-medium` whatever the triaged implementer, applies those
+    fixes and nothing else: the fixes are written down already, and the size
+    check below measures whether applying them stayed that small;
   - `verifier`, fresh as always, re-verifies only the criteria the patch can
     reach (below, "Re-verify what the fix reaches"): the previous verify
     failed no criterion, so nothing else is owed;
@@ -727,7 +805,10 @@ The line, when a reviewer's label looks wrong to you:
   another full verify behind a ~20-minute Python suite: *"run relevant tests
   only if possible"*. A fix round, patch or ordinary, that follows a verify
   which passed every criterion but the failed ones re-verifies only the
-  criteria the fix can reach, plus the failed ones:
+  criteria the fix can reach, plus the failed ones. A criterion the earlier
+  verify deferred to the final gate counts as a known standing here, not an
+  unknown one (2026-10-02), and the runner defers it again unless `--failed`
+  names it:
 
   ```bash
   py -3 tools/run_criteria.py <plan> --jobs auto --changed-since <hub base> \
@@ -927,9 +1008,16 @@ Set `status: PASS` in the workorder and tell the user:
 - what changed, and the acceptance criteria with their **real** output;
 - when the last verify was scoped (`verifyScope: 'reach'`, or `verify
   scope:` in the round's Log), `PASS (scoped)` and the criteria it ran and
-  skipped, as the runner printed them. Before any push, run the full set
-  once as the final gate — a fresh `verifier` on the whole plan — unless a
-  later workorder in the feature runs it and says so in its plan;
+  skipped, as the runner printed them. Every PASS before the final gate is
+  scoped (`verifyScope: 'dev'` or `'reach'`);
+- **the final gate, as the last step before the pull request** is opened or
+  pushed to: a fresh `verifier` on the whole plan with no `--dev`,
+  `--changed-since` or `--item` (or a launch with `fullVerify: true`), so
+  the whole suites, `(final)` criteria and the root suite run once. It is
+  the only full verify of the feature: a middle workorder whose result a
+  later one builds on does not run it, and says which workorder does. A
+  failure there is fixed and re-verified by reach plus `--failed`, which
+  re-runs the failed suite itself;
 - every reviewer that ran and what it concluded, including the clean ones, and
   every reviewer skipped this round as `clean@round<n>, not re-run`;
 - anything left under `NOT DONE` or `Needs human judgement`;
@@ -1063,11 +1151,29 @@ for this round's implementer, or a split right away; it is never re-run in
 the hope of a green. The redesign's polish workorder spent its cap on a
 Chromium `ERR_UNSAFE_PORT` flake.
 
-**7. After a small fix, re-run only the checks it can reach.** A fix round
-after a verify that passed every other criterion runs the criteria the fix
-reaches plus the failed ones (`run_criteria.py --changed-since`), and the
-full set runs once at the final gate before the push. The conditions and
-fallbacks are in Step 4, "Re-verify what the fix reaches".
+**7. During development run the relevant subset; the full set runs once,
+before the pull request.** A first verify and the items gate run `--dev`, a
+fix round after a verify that passed every other criterion runs the
+criteria the fix reaches plus the failed ones (`run_criteria.py
+--changed-since`), and both defer the whole suites and `(final)` criteria.
+The full set runs once at the final gate before the push (Step 5). The
+conditions and fallbacks are in Step 3 and Step 4, "Re-verify what the fix
+reaches".
+
+**7b. After a write, read the diff, not the file.** The owner, 2026-10-02:
+after each write, agents *"spend lots of times on reads ... make sure only
+difference or relevant things are read after every write instead"*. An agent
+checks its own edit with `git diff -- <path>`, a grep or a ranged read, and
+every agent downstream of a write reads the diff since its base: reviewers
+already get `git diff <base> -- <paths>`, a re-entered implementer gets the
+failed criteria, the evidence and `git diff <base> -- <path>` for what
+earlier rounds changed, a replanning planner reads the Log since its last
+plan and the sections the defect names, and the scribe reads the `## State`
+range and the Log's tail. Measured over the 14 days before: scribes read
+both workorder files whole every round (about 13 MB over 228 runs), and
+fix-round implementers averaged 22 reads and 134 KB each, 105 of them the
+whole plan. `tools/workorder_audit.py` R26 fails an implementer or planner
+that reads a file it wrote whole more than twice.
 
 **8. A question never idles the pipeline.** In the ForgePact UI redesign 19
 of 60.75 hours passed with a question open and nothing running; the four
@@ -1152,11 +1258,11 @@ the Workflow tool requires, so don't ask again. It carried
 
 ```
 Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
-           args: { slug, planPath, contextPath, checkoutRoot, goalExcerpt, implementerModel, round,
+           args: { slug, planPath, contextPath, checkoutRoot, goalExcerpt, implementerModel, implementerEffort, round,
                    reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
                    submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
                    lanes: [{ name, files: [...] }, ...], join,
-                   items: [{ id, title, files, checks, after, shares, owner, default, reversible }, ...], streaming, answered: ['<id>', ...],
+                   items: [{ id, title, files, checks, after, shares, owner, default, reversible, build_reads }, ...], streaming, answered: ['<id>', ...],
                    reviewScopes: { '<reviewer>': [{ label, paths: [...] }, ...] },
                    maxParallel, maxAgents, tokenCeiling, itemAttempts, reviewPassCap } })
 ```
@@ -1241,7 +1347,7 @@ before a launch ends is not carried over; the relaunch runs an ordinary round.
 A plan of items returns `PASS`, `PASS-PENDING-HUMAN`, `PARKED`, `PLAN-DEFECT`
 (a reviewer's plan defect, the gate's unrunnable criterion, or a refill that
 `plan_lint` refused), `CEILING`, `CAP` (the gate failed three times),
-`AGENT-FAILED`, `STATE-LOST` or `SCRIBE-FAILED`, always with `items:` beside
+`AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED` or `LOG-DAMAGED`, always with `items:` beside
 it (each item's `id`, `status`, `reason`, `attempts`, `commits`, `evidence`
 and `progress`, and `replan` when an amendment was tried and did not hold)
 and `gate:` (each gate run). It also carries `defaulted` (each owner item
@@ -1255,7 +1361,7 @@ or `PASS-PENDING-HUMAN`), `unblocked` (Step 2, "Items"). Its Log entry is
 
 A plan without items loops implement → verify+reviewers → route as code (same 3-round cap,
 scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,
-`PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED` or `CAP`. One
+`PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED`, `LOG-DAMAGED` or `CAP`. One
 launch may cover several rounds; `PLAN-DEFECT` means relaunching after the
 replan. `STATE-LOST` means the scribe's own before/after report shows a
 State line gone that the round did not replace; the launch stops there, before
@@ -1276,6 +1382,17 @@ then act on its `then` the same way. Before this outcome existed, the
 `hs-drive-game-lease` scribe's "N/A - files do not exist" report was read as a
 State with every driver-owned line gone and returned `STATE-LOST` for a round
 that had lost nothing.
+`LOG-DAMAGED` means the scribe's report of the context file's last lines
+(`log_tail`) does not end with the round's Log block: it pasted something
+after the block, or wrote the block before its anchor line (`anchor`) and so
+moved that line to the end. Make the end of `## Log` read the entry that
+ended with `anchor`, whole, then the result's `log` and nothing after it,
+then act on its `then`. A `STATE-LOST` whose Log was damaged too carries
+`log_damaged: true` and the same `log`; repair both. On 2026-10-03
+(`forgepact-16-jump-scenery-research`, a laned `PLAN-DEFECT`) a scribe pasted
+its own State instruction into the Log and cut the `### Plan` entry's last
+line off to after the round entry, and nothing noticed until the driver read
+the file.
 A rounds-mode result whose implementer's `CORRECTION:` was tried carries
 `amendment` (`amended`, `why`, `verdict`), and a `PASS-PENDING-HUMAN` carries
 `unblocked`, empty when nothing else is left.
@@ -1313,10 +1430,53 @@ backwards is cheap and correct. That is the whole design.
 Set in each agent's frontmatter, with an `effort:` beside every tier that
 takes one: `planner` opus/high, `implementer` opus/high, `consultant`
 opus/xhigh, `instrument-blindness-reviewer` opus/high, the other reviewers and
-`live-operator` sonnet/high, `verifier` and `scribe` haiku (Haiku 4.5 takes no
-effort). Override the model for one run by passing `model` on the Agent call;
-effort has no per-call override, which is why it is pinned — an agent without
-one inherits whatever the session runs at.
+`live-operator` opus/medium, `verifier` and `scribe` haiku (Haiku 4.5 takes no
+effort). Override the model for one run by passing `model` on the Agent call.
+Effort has no per-call override on the Agent tool, which is why it is pinned
+— an agent without one inherits whatever the session runs at.
+
+**Effort variants choose effort per spawn.** An agent's
+`effort-variants:` line lists the other levels /workorder runs it at, and
+`py -3 tools/sync_agent_tooling.py` writes one `<agent>-<level>.md` for each,
+same body, own `name:` and `effort:`; `tests/test_agent_tooling_sync.py`
+fails a variant that drifted from its source. Today: `planner-medium`,
+`planner-xhigh`, `planner-max`, `implementer-medium`, `consultant-max`.
+Spawn the variant by name, in a driver's `Agent` call and in
+`workorder-rounds.js` alike. A Workflow `agent()` call does accept an
+`effort` option, but whether it beats the agent's own pinned `effort:` is
+not documented, and a transcript records no effort level at all, so the
+name is the one spelling that both runs at that effort and lets
+`workorder_audit.py` see it (`split_effort_variant`; `--calibrate` reports
+per role, model *and* effort). To add a level, add it to the source's
+`effort-variants:`, re-run the sync, and name it in a table here.
+
+| Spawn | Model / effort | When |
+|---|---|---|
+| `planner-medium` | opus / medium | every amendment; the docs/tests/config triage row |
+| `planner` | opus / high | the default first plan and first replan |
+| `planner-xhigh` | opus / xhigh | the concurrency and unknown-mechanism triage rows |
+| `planner-max` | opus / max | the second replan |
+| `implementer-medium` | opus / medium | every patch round; the docs/tests/config triage row |
+| `implementer` | opus / high | everything else |
+| `consultant` | opus / xhigh | the default consultation |
+| `consultant-max` | opus / max | a question from a `planner-xhigh` triage row |
+
+**The driver is the session itself**, so no frontmatter pins it: run the
+session that runs /workorder on `opus` at `medium` effort, and raise it to
+`high` for a session whose product is the driver's own judgement (triaging a
+bug batch into items, deciding how to split a plan). Drivers were 30% of the
+calibration set's spend over hundreds of turns, many above 300K tokens, and
+effort is paid on every one of them. Their job is routing by written rules;
+the hard calls already go to `consultant` and replans to the planner, and the
+driver failures the audit recorded (R10) were discipline, not reasoning,
+which more effort does not fix. Chosen 2026-10-06 (#436), not measured.
+
+**Fable left this pipeline on 2026-10-05**, when the owner's license
+stopped carrying it. Every place it held — the two hard triage rows, the
+second replan, the consultant on a hard row — now holds the `opus` variant
+one or two effort levels up, per the table above. Its price row below
+stays, because `workorder_audit.py` still prices older transcripts that
+ran it.
 
 **Where Opus 5.5 fits (2026-09-22).** `opus` resolves to Claude Opus 5.5; it
 did so already for the last sessions of the calibration set, with no file
@@ -1342,15 +1502,46 @@ have cost about half as much. Hence:
   tokens on average (11.2M against 17.4M) while carrying the hard triage
   rows, and the four Opus 5.5 runs averaged $4.82. Same money, no tail.
 - **planner, consultant, instrument-blindness-reviewer stay `opus`**, now
-  cheaper. `fable` keeps the two rows above plus the second replan.
-- **reviewers stay `sonnet`, verifier and scribe `haiku`.** On the same
-  tokens Opus 5.5 would cost the reviewers 1.2× and the verifier 2.9×, with no
-  finding of theirs measured as missed.
+  cheaper. Until 2026-10-05 `fable` kept the two hard triage rows plus the
+  second replan; those are now `planner-xhigh` and `planner-max`.
+- **amendment planner → always `planner-medium`, with `model: opus` passed explicitly.**
+  An amendment planner always runs as planner-medium on opus, never escalated.
+  It applies one correction someone already stated, so the replan ladder
+  does not reach it: spawn it as `planner-medium` whatever `planner-tier=`
+  the State records. In the 18 sessions after 2026-10-02 one amendment ran
+  fable because the driver carried an escalated tier over; fable planners
+  averaged 8.49M input tokens a run there. `workorder_audit.py` R27
+  (`amendment-tier`) fails an `amendment:` planner whose transcript ran
+  fable or that ran as `planner-xhigh`/`planner-max`, and
+  `workorder-rounds.js` spawns its own amendments as `planner-medium` with
+  `model: 'opus'`.
+- **Reviewers, live-operator and the docs row → `opus`/`medium`
+  (2026-10-06, #436).** Until then `sdk-contract-reviewer`,
+  `tauri-command-reviewer`, `docs-sync-reviewer`, `decompile-output-guard`
+  and `live-operator` ran sonnet/high, and the docs triage row's implementer
+  ran `sonnet`. Artificial Analysis's Intelligence Index against cost per
+  task (read 2026-10-06) puts Opus 5.5 ahead of Sonnet 5.5 at every effort
+  level for about the same price: Opus medium about 51 at $1.40 a task,
+  Sonnet high about 47 at $1.10, Sonnet xhigh about 52 at $2.75 against Opus
+  high's 53.5 at $1.85. That benchmark prices mostly output and thinking;
+  here 92-99% of tokens are cache reads at $0.20 on both, so the model step
+  costs less still, and effort is what moves the bill, hence `medium`
+  rather than the `high` they had. On the calibration set's tokens Opus 5.5
+  costs the reviewers about 1.2× what Sonnet did. No reviewer finding was
+  ever measured as missed on `sonnet`, so this is a capability bet chosen
+  from a benchmark, not a measured fix; `--calibrate` will say whether it
+  holds.
+- **verifier and scribe stay `haiku`.** They run commands and paste text;
+  Opus 5.5 would cost the verifier 2.9× on the same tokens for nothing it
+  needs.
 - **Effort.** Opus 5.5 defaults to `medium` and thinks more per turn than
   Opus 5 at the same level; `high` is pinned for the phases that carry long
   agentic work and `xhigh` for the one narrow question `consultant` answers.
-  Neither is measured yet: `tools/workorder_audit.py --calibrate` reports
-  per role *and model*, so the next recalibration says whether they hold.
+  `medium` is used where the correction is already written (amendments,
+  patch rounds) or the change is docs only, and `max` only where cheaper
+  reasoning has failed twice. None of these levels is measured yet:
+  `tools/workorder_audit.py --calibrate` reports per role, model *and*
+  effort, so the next recalibration says whether they hold.
 
 `tools/workorder_audit.py` prices every transcript at these rates
 (`MODEL_PRICES`), so a report's cost line tracks a tier change without anyone
@@ -1363,7 +1554,8 @@ a stale-ID sweep every generation — not the `*Rva*` case from `AGENTS.md`,
 since an alias is a documented moving pointer, not a silently-drifted
 constant.
 
-**When to reach for `fable` yourself,** beyond the automatic escalation above:
+**When to reach for `planner-xhigh` or `consultant-max` yourself,** beyond the
+automatic escalation above (these were the reasons to reach for `fable`):
 
 - The plan must establish an **unknown** game mechanism, not verify a
   suspected one — the "which of 34 candidates does X" shape, where a wrong
@@ -1373,6 +1565,5 @@ constant.
   player's session.
 
 Not on a routine change, or the implementer or a reviewer — those run at high
-volume where 2.5× is real money for no measured gain — and not as the
-default planner: at 22% of spend with Fable averaging 2.6× an Opus 5 plan, it
-is no longer "nearly free".
+volume, where more thinking per turn is real money for no measured gain —
+and not as the default planner, which is 22% of spend already.

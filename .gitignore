@@ -34,6 +34,8 @@ hs-game-sdk/data/
 **/decompiled/
 **/disassembly/
 *.dis
+# tools/decomp_index.py's index of local decompiles (docs/tools/decomp-index.md)
+decomp-index*.jsonl
 
 # Python Build, Bytecode & Environments
 __pycache__/

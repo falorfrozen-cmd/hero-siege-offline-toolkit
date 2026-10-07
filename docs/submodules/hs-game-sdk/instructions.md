@@ -33,6 +33,11 @@ hs-game-sdk/
 │   ├── satanic_zone.json       # Satanic Zone buff/debuff ids/names/descriptions + Controller_obj var names
 │   ├── drop_types.json         # LoadDrops drop types + GetNormalRepoStruct repository categories (data only)
 │   ├── drop_roll_measurements.json # M1-M10: recorded drop-roll numbers drop_roll_model.py is tested against (data only)
+│   ├── mining_reward_measurements.json # MR1-MR9: recorded mining-dig numbers mining_reward_model.py is tested against (data only)
+│   ├── monster_rank_measurements.json # MK1-MK24: what a monster's rank does (§13.7), the boss report, and ForgePact #44's Live 1 and 1b on bosses, for monster_rank_model.py (data only)
+│   ├── dungeon_chest_measurements.json # DC1-DC23: the dungeon chest's static reading, the kill path (§13.5), and ForgePact #31's Live 1, Live 1b, Live 2 and Live 3 measurements (the estimate's mean, the player build's census, latch and head label), for dungeon_chest_model.py (data only)
+│   ├── skill_sliders_measurements.json # ForgePact #160's live values for skill_sliders_model.py (data only)
+│   ├── loot_announcement_measurements.json # ForgePact #17: the rare-drop announcement chain, the rarity codes its closure branches on and the route ForgePact ships (§16.10; data only, no model)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
@@ -49,6 +54,10 @@ hs-game-sdk/
 │   │   ├── player.py           # EquipmentSlot enums, PlayerEquipment, container scanners
 │   │   ├── item_type.py        # ItemType IntEnum: the item instance's itemType class (hand-written)
 │   │   ├── drop_roll_model.py  # Two-stage drop roll model, stdlib only, not exported from __init__ (hand-written)
+│   │   ├── mining_reward_model.py # What one mining dig pays (ore stacks, bonus rolls), stdlib only, not exported (hand-written)
+│   │   ├── monster_rank_model.py # What a monster's rank does to health, damage, XP and drop values, stdlib only, not exported (hand-written)
+│   │   ├── dungeon_chest_model.py # When a key dungeon's end chest opens (no monster alive) and the kill tally's quantities, stdlib only, not exported (hand-written)
+│   │   ├── skill_sliders_model.py # Projectile count, AoE scale and projectile deltaSpeed from their stats, stdlib only, not exported (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
 │   ├── pyproject.toml
@@ -61,7 +70,7 @@ hs-game-sdk/
 │       ├── stats.hpp           # Stat constants & proc families
 │       ├── yytk_helpers.hpp    # Typed helper wrappers for YYTKInterface
 │       ├── hooks.hpp           # InstallScriptHook: table swap + inline detour, repeat-safe
-│       ├── player.hpp          # Player discovery; relic scanners (positive ID only)
+│       ├── player.hpp          # Player discovery; relic scanners and ReadGroundRelic (positive ID only)
 │       ├── item_type.hpp       # HeroSiege::Items::ItemType + enumerable kItemTypes (hand-written, no YYToolkit)
 │       ├── satanic_zone.hpp    # HeroSiege::SatanicZone::kBuffs/kDebuffs, generated from curated/satanic_zone.json
 │       └── hs_game_sdk.hpp     # Main aggregate header
@@ -98,6 +107,18 @@ checks every script and object they name is bound.
 ForgePact #68's `bag_to_stash_move`: the routines, selfs and argument order of a move from the
 bag into the stash, and the map owner per tab kind; see `docs/RUNTIME_DATA_MODELS.md` § 17) is data-only too, with no generator and no consumer yet, checked
 against the SDK and that doc section by `tests/test_curated_stash_containers.py`.
+`gamba_measurements.json` (2026-10-04 to 2026-10-06, ForgePact issue #134's gamba machine work,
+G1-G22: G1-G3 the static reading of `Slot_Machine_01_obj`, its parents and its creation call, G4-G9
+measured with the research build's `gambaprobe` in Lives 1 and 2, G10 the spin checks those two
+sessions never reached, G11-G13 the phase-1c static readings of the `Alarm_9` guard, `sCP` and the
+extension-function state route, G14-G17 Live 3's spin, payout, prize roll and spawn-route
+measurements, G18-G19 Live 4's two natural explosions (research build, 2026-10-05/06) and the head
+the game did not drop at them, G20-G21 Live 5's forced head through the player build's `gambapity`
+and the outcomes it did not reach, and G22 Live 6's explosion count on two more natural machines)
+is data only, in the shape of `jump_measurements.json`
+(`measurements[]` with `id`, `kind`, `status`, `date`, `source`, `what`, `values`), with no generator, no model and no consumer yet; its
+prose is `docs/RUNTIME_DATA_MODELS.md` § 20 and its argument ForgePact's
+`docs/gamba-machine-research.md`.
 
 **Models (`drop_roll_model.py`, 2026-09-24, issue #162):** a model is a hand-written, stdlib-only,
 deterministic function of the game's mechanism, built from a written spec
@@ -107,6 +128,60 @@ a mod's levers are that mod's code and live in the test as input transforms. It 
 `from hs_game_sdk import drop_roll_model` and deliberately not exported from the generator-owned
 `__init__.py`. There is no C++ or TypeScript counterpart, so no parity across bindings is claimed.
 Why and how: `docs/agents/static-model-workflow.md`.
+
+`mining_reward_model.py` (2026-09-28, ForgePact issue #36) is the second model, built the same
+way: spec `docs/models/mining-reward-spec.md`, fixture `curated/mining_reward_measurements.json`
+(MR1-MR9: MR1-MR3 from 2026-09-23, MR4-MR9 from issue #36's Live procedure 1 on 2026-09-28), checks `tests/test_mining_reward_model.py`. It gives the ore stacks one dig drops from a
+node's list and the chance of a stat-gated bonus find; ForgePact's Mining Ore Multiplier, the Miner's
+Helmet and Mining Ore Extra Rolls stay in the test as transforms, pinned to `MiningOreMod.hpp` and
+`src/forgepact.py` by `RollsLeverParityTests`.
+
+`monster_rank_model.py` (2026-10-02, ForgePact issue #44, hub #379) is built the same way: spec
+`docs/models/monster-rank-spec.md`, fixture `curated/monster_rank_measurements.json` (MK1-MK24:
+MK1-MK4 AFK FARM's § 13.7 rank table, MK5 the reported Anubis HP jump, `reported`, not measured,
+and MK6-MK24 ForgePact #44's Live procedures 1 and 1b on bosses), checks
+`tests/test_monster_rank_model.py`. It gives a rank's health, damage and XP multipliers and its
+protected drop values. Whether a boss follows the same rows is carried one dimension at a time in
+`monster_rank_model.HYPOTHESES`, each `None` (not established) until a measured row about a boss,
+with nothing else changed or the change matched by an identity control, decides it:
+`boss_hp_follows_rank_table` `None` (the boss's health carried a ForgePact affix top-up and had no
+control), `boss_damage_follows_rank_table` `None` (one confounded spawn, 0.4% outside the
+control's tolerance), `boss_xp_follows_rank_table` `None` (measured ×6.2505 against ×6.25 on one
+Karp King, one spawn, whose affix top-up the control did not share; rank 3 not measured on a boss)
+and `boss_drop_rank_reaches_dropitem` `None` (`DropItem`'s first argument 1 -> 4, measured on the
+same spawn, the same unmatched top-up). The test compares a boss row's top-up with its control's
+at the boss's rank, so an unmatched one keeps the row out by itself. The test fails when a
+hypothesis and the fixture disagree. ForgePact's Bosses control stays in the test as `force_boss_rank`, pinned to
+`BossRarityMod.hpp` and `src/forgepact.py` by `LeverParityTests`.
+
+`dungeon_chest_model.py` (2026-10-03, ForgePact issue #31) is built the same way: spec
+`docs/models/dungeon-chest-spec.md`, fixture `curated/dungeon_chest_measurements.json` (DC1-DC5
+the static reading of `Dungeon_Chest_obj` and its neighbours, DC6 the measured kill path of
+`docs/RUNTIME_DATA_MODELS.md` § 13.5, DC7-DC11 and DC13 measured in ForgePact #31's Live procedure 1,
+DC12 not observed, DC14-DC19 its Live procedure 1b, DC20-DC21 its Live procedure 2 and DC22-DC23 its
+Live procedure 3 on the player build, 2026-10-04), checks
+`tests/test_dungeon_chest_model.py`. It models the game's rule (the chest opens once no monster is
+alive) and ForgePact's progress: kills counted in the dungeon over its planned total, fixed at the
+chest's first sight (`planned_total`, `estimated_total`, `progress`). What Live 1 settled (the chest
+polls `instance_exists` itself; monsters stream from spawners present at load) and what is still
+open (where the planned total comes from) are carried in `dungeon_chest_model.HYPOTHESES`, each
+`None` until a measured entry decides it. ForgePact's Dungeon
+chest opens early stays in the test as input transforms, pinned to `DungeonChestMod.hpp` and
+`src/forgepact.py` by `LeverParityTests`.
+
+`skill_sliders_model.py` (2026-10-04, ForgePact issue #160, hub #408) is built the same way: spec
+`docs/models/skill-sliders-spec.md` (written from the static reading in ForgePact's
+`docs/skill-sliders-research.md`), fixture `curated/skill_sliders_measurements.json` (#160's three
+live sessions of 2026-10-04; `MeasuredTests` checks each `measured` row's `model` call, applying
+the row's research `lever` to the result and allowing only its printed-precision `tolerance`, and
+skips a row whose `status` is not `measured`), checks `tests/test_skill_sliders_model.py`. It gives
+what the game's two extra-projectile helpers return, the AoE size a projectile's or skill object's
+scale gains, and the `deltaSpeed` the projectile-speed stats leave. What is still open (how
+`LoadAllModifiers` stores stats 74 and 75, the order they combine in on `deltaSpeed`, which the
+required keyword-only `order` stands for, the AoE factor callers pass, the outcome of the chance
+rolls) is a parameter, never a guessed constant. ForgePact's research levers (`projprobe amount`,
+`aoe`, `speed`) stay in the test as transforms, pinned to `plugin/ModuleMain.cpp` by
+`LeverParityTests`.
 
 ---
 
@@ -439,6 +514,9 @@ contributor can be assumed to have:
 | `test_object_hierarchy.py` → `TestObjectsJsonMatchesBindings` | `hs-game-sdk/data/` | skips |
 | `test_extractor_layout.py` | nothing (builds a synthetic `data.win`) | always runs |
 | `test_drop_roll_model.py` | nothing (the model, its fixture and the pilot docs); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/ModuleMain.cpp` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
+| `test_mining_reward_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `RollsLeverParityTests` | always runs; only `RollsLeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/MiningOreMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
+| `test_monster_rank_model.py` | nothing (the model, its fixture, its spec and the tracked object bindings); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/BossRarityMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
+| `test_dungeon_chest_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/DungeonChestMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths and local `.claude/workorders/` captures |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_sdk_lazy_import.py` | nothing (starts fresh interpreters of the Python running the suite) | always runs |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
@@ -539,6 +617,41 @@ zero says which stage read nothing. `tests/cpp/test_sdk_player_hooks.cpp`'s
 `TestEquippedSlots` drives it through a stub whose `CallGameScriptEx` answers per
 script name with a struct, a number or undefined.
 
+**The relic tab is read the same way** (C++, `Player::ScanRelicTab`, called by
+`GetOwnedRelicLevels` after the equipped slots; ForgePact #125, hub #324). The
+relics a character owns but does not wear sit in
+`Controller_obj.inventoryData[key - 1].inventoryRelicGrid[relicId][0][0]`, one
+grid node per owned relic id, whose `nodeFingerprint` is the fingerprint. `key` is
+1 when `global.onl` is 1 and the player row (`global.mplr`) otherwise. That is the
+rule the game's own `PickupRelic` and `RelicCheckAchievement` use, with
+`GetProfileInventoryData` reading index `key - 1` (static reading of the Sep-17
+build, 2026-09-30; hub `docs/models/relic-pick-spec.md`). Measured live the same
+day (ForgePact #125, Live 1): offline, `mplr` is 1, `inventoryData` holds one
+`New_Inventory_Data_obj` reference, and its 156-cell grid holds `[[node]]` or
+`[[undefined]]`. The scan resolved all 100 of the character's tab relics and named
+its two maxed ones:
+
+```
+relicfilter: relic tab key=1 profile=0 online=no grid=156 cells=156 nodes=100 strings=100 owner=ok resolved=100 refused=0 nonstruct=0 noclass=0 relic=100 otherclass=0 maxed=92@10,128@10 stopped=none
+```
+ `Controller_obj` is found by name
+(`GetObjectName`, then the runner's `asset_get_index` and `instance_find(obj, 0)`),
+the profile entry may be a struct or an instance reference, and each fingerprint
+goes through the same owner and resolver as the equipped slots. The route reads
+variables only and never calls `GetProfileInventoryData`, which has crashed the
+game when called cold (RUNTIME_DATA_MODELS §9.4). `RelicTabScanReport` and
+`FormatRelicTabScanReport` count each stage and name the one a short scan stopped
+at, beside the maxed relics it found; pass one as
+`GetOwnedRelicLevels`/`GetMaxedRelicIds`' fourth argument. Only a node with a
+non-empty `nodeFingerprint` string reaches the resolver. C++ only, like the equipped-slot route: the Python binding reads the
+same tab from a save (`inventory_relic_tab`, keyed `x-y-<stamp>-16`, `o` absent at
+level 1), pinned by `tests/test_relic_identification.py` (`TestSaveRelicTab`).
+`TestRelicTab` in `tests/cpp/test_sdk_player_hooks.cpp` drives the C++ route:
+the offline and online keys and their `key - 1` index, a row of 0 with no profile,
+a missing controller, a key past the profiles, a profile without a grid, a bare
+string where a node belongs, a refused owner, and the tab joining the equipped
+slots.
+
 A level-shaped field is not evidence of relic-ness, and this was a real defect
 (REPORTED 2026-09-12 against PR #3): the scanner accepted `isRelic || level > 0`,
 so the ordinary item `{b:15, c:8, level:100}` was reported as maxed relic 15.
@@ -594,6 +707,61 @@ traversal differs because the inputs do. There is no TypeScript scanner -
 `ts/src/player.ts` only carries `EquipmentSlot` - so the contract covers exactly
 these two implementations.
 
+### `Player::ReadGroundRelic` — is this ground item a relic, and which one
+
+```cpp
+HeroSiege::Player::GroundRelicRead read;
+if (HeroSiege::Player::ReadGroundRelic(yytk, groundInstance, read)) {
+    // read.relicId is the relic's id, 0 .. kRelicIdLimit - 1
+} else {
+    Log("not a relic: " + HeroSiege::Player::FormatGroundRelicRead(read));  // stage=not-relic class=4 id=-1
+}
+```
+
+Added for ForgePact#124 (the pet collecting relics). A dropped item is a `Loot_Ground_obj`
+instance, and the read goes through the item instance it holds in `kGroundItemInstanceField`
+(`itemInstance`): the class in that item's `kItemInstanceTypeField` (`itemType`) and the
+definition in its `kItemInstanceDefinitionField` (`itemDefinitionStruct`), whose first present
+`kRelicIdFields` entry (`b`) is the id. A class-shaped variable on the ground instance itself
+is never read. It is
+the same positive identification the owned-relic scan uses: the class must equal
+`kRelicItemClass`, never a literal `16`, and an id-shaped or level-shaped field (`relicLevel`
+included) is never evidence on its own. A definition with no class beside it is refused,
+because a relic's definition carries `c` 0 and no class (#93).
+
+It accepts both instance kinds through `IsInstanceHandle`, `VALUE_OBJECT` and the
+`VALUE_REF` this runner produces, and reads them through `variable_instance_*`, which takes a
+reference straight through. It returns true only when it reaches `Ok`. `GroundRelicRead` is
+reset on every call, so a refusal never keeps an earlier read's id, and it names the stage
+the read stopped at:
+
+| Stage (`GroundRelicStageName`) | Meaning |
+| --- | --- |
+| `no-handle` | no interface, the value is not an instance handle, or the read threw |
+| `no-item-instance` | no `itemInstance` on the ground instance, or one that holds no struct or reference |
+| `no-class` | no numeric `itemType` on the item instance |
+| `not-relic` | the class is read (`itemClass`) and is not `kRelicItemClass` |
+| `no-definition` | a relic class, but no `itemDefinitionStruct` struct |
+| `no-id` | the definition has no id, or one outside `0 .. kRelicIdLimit - 1` |
+| `ok` | a relic; `relicId` is set |
+
+`not-run` is the default of a `GroundRelicRead` no call has filled.
+
+**C++ only.** A ground instance exists only in the running game's memory, and the Python
+binding reads saves, so there is no Python twin and no parity claim beyond the shared
+constants the read uses. **The variable names are measured** (ForgePact#124 Live 1,
+2026-10-02, research build): `petrelic census` read 42 of 42 ground relics on screen
+(`read stages: ok=42`) through `itemInstance`, its `itemType` (16) and its
+`itemDefinitionStruct.b` (the relic id the research command had placed). They came first
+from a static reading of the ground item's Create. Whether the ground instance also carries
+a top-level `itemType` copy is still **not established**: the capture did not record the
+census's `first relic vars:` dump, so the read never looks for one. Should a later game build
+make the read refuse every ground item on screen, suspect the names before the item.
+`tests/cpp/test_sdk_player_hooks.cpp` (`TestGroundRelic`, driven
+by `tests/test_cpp_sdk.py`) pins a relic through both kinds, an ordinary glove and a
+material stack refused as `not-relic`, a classless instance refused as `no-class`, and an
+undefined value refused as `no-handle` as the negative control for accepting a reference.
+
 ### `Hooks::InstallScriptHook` — both call routes, and safe to install twice
 
 ```cpp
@@ -632,6 +800,32 @@ function - and the table entry must be executable code inside the game module, o
 it is not ours to patch. Pass a **static, zero-initialised** original pointer: it
 is how the installer knows which install is the first.
 
+**Every detour pays Aurie's freeze, and the freeze scales with the whole
+machine's thread count.** Measured in ForgePact#151's Live 1 (2026-10-06, the
+owner's machine, about 6000 threads system-wide, 76 in the game): one
+`MmCreateHook` detour cost 66-73 ms, 2.1 times one timed system-wide thread
+snapshot (32.8 ms median), and the detours were 97.5% of ForgePact's 1268 ms
+start-up setup (18 detours); 20 hooks installed on demand in town held one frame
+1.5 s. Why it costs that much is a static reading of Aurie v2.0.2, which the
+ratio agrees with: `MmCreateHook` suspends the process's other threads, creates
+the hook, and resumes them, and both the suspend and the resume start from a
+`CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD)`, which lists every thread on the
+system, not only the game's. So each install that detours pays for two
+system-wide thread snapshots, and a frame that installs many hooks holds the
+game for about 70 ms per hook on that machine. ForgePact's setup line and its `incident setup`
+verb time each part of an install. That is upstream Aurie's cost. The hub's
+patched `AurieCore.dll` ([`third_party/aurie/`](../../../third_party/aurie/README.md),
+series `hs.1`, which ForgePact ships from 2.2.0) walks only the game's own
+threads, and its Live 2 (2026-10-06, same machine and plugin, only the DLL
+changed; capture `.claude/workorders/forgepact-151-aurie-freeze-live-1.md`)
+measured a detour at 1.56 ms against a 37.9 ms system-wide snapshot median,
+ForgePact's setup at 47.8 ms (18 detours, 28.1 ms of them), and the 20 on-demand
+installs at 35.0 ms of detours with the worst frame 122 ms. A detour under
+upstream's `AurieCore.dll` (what HS-Offline-Tracker shipped through 0.1.3) still pays the
+system-wide walk. The reading, the measurements and the route as built are in
+[`ForgePact/docs/setup-stall-research.md`](../../../ForgePact/docs/setup-stall-research.md)
+(ForgePact#151).
+
 `InstallScriptHookTableOnly` is a deliberately limited variant, named so the
 limitation is visible at the call site. It exists for research - observing
 table-routed calls without patching code - and still preserves the original
@@ -652,8 +846,9 @@ re-run it; regeneration is idempotent, so a second run must produce no diff.
 `tools/generate_satanic_zone_sdk.py` and are regenerated from `curated/satanic_zone.json`.
 
 "Every file" is broader than the code, though: `player.py`/`.hpp`/`.ts`, `hooks.hpp`,
-`mod_registry.py`, `item_type.py`/`.hpp`/`.ts` and `drop_roll_model.py` are hand-written, and the
-generator neither writes nor deletes them. Edit those in place. `drop_roll_model.py` is not wired
+`mod_registry.py`, `item_type.py`/`.hpp`/`.ts`, `drop_roll_model.py`, `mining_reward_model.py`,
+`monster_rank_model.py` and `dungeon_chest_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
+models are not wired
 into any aggregate on purpose (import it by its module name), and it has no C++ or TypeScript
 counterpart. They still have to be wired into the aggregates
 through the templates — `init_content`, `main_header` and `index_content` all include

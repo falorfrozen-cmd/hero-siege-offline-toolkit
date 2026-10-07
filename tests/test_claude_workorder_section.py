@@ -17,6 +17,7 @@ The last class pins the sentences in the agent and skill files that carry the
 same lesson, so a later edit cannot drop one silently.
 """
 
+import re
 import subprocess
 import sys
 import tempfile
@@ -327,6 +328,39 @@ class TestThePipelineSaysSo(unittest.TestCase):
         self.assertIn("### Step 0.25", text)
         self.assertIn("git rev-parse --show-toplevel", text)
         self.assertNotIn("escape hatch", text, "repoRoot from a worktree session is refused, not offered")
+
+    def test_the_skill_pins_the_amendment_planner_to_opus_in_each_route(self):
+        # One fable amendment cost 8.5M tokens because the driver carried the
+        # workorder's escalated planner tier over to it. The sentence sits on
+        # one line in each of the three places a driver spawns an amendment
+        # from, so `grep -c` counts the places, not the wraps.
+        lines = self.read("skills", "workorder", "SKILL.md").splitlines()
+        sentence = "An amendment planner always runs as planner-medium on opus, never escalated"
+        self.assertGreaterEqual(sum(sentence in line for line in lines), 3)
+        self.assertIn("R27", self.flat("skills", "workorder", "SKILL.md"))
+        self.assertNotIn("spawn `planner` fresh at its default tier", self.flat("skills", "workorder", "SKILL.md"))
+
+    def test_the_skill_never_spawns_fable(self):
+        # The owner's license dropped Fable on 2026-10-05; a spawn naming it
+        # fails. The ladder escalates effort on opus instead, through the
+        # generated variants, and every variant a tier table names must exist.
+        text = self.flat("skills", "workorder", "SKILL.md")
+        for spawn in ("model: fable", "`model: fable`", "planner `fable`"):
+            self.assertNotIn(spawn, text)
+        named = set(re.findall(r"`((?:planner|implementer|consultant)-(?:low|medium|high|xhigh|max))`", text))
+        self.assertTrue({"planner-medium", "planner-xhigh", "planner-max", "implementer-medium", "consultant-max"} <= named, named)
+        for name in named:
+            self.assertTrue((REPO / ".claude" / "agents" / f"{name}.md").is_file(), f"SKILL.md names {name}, which no sync generated")
+
+    def test_the_verifier_judges_a_criteria_run_from_its_digest(self):
+        text = self.flat("agents", "verifier.md")
+        self.assertIn("run_criteria.py --digest", text)
+        self.assertIn("Never `Read` `report.txt` whole", text)
+
+    def test_the_implementer_starts_from_its_brief(self):
+        text = self.flat("agents", "implementer.md")
+        self.assertIn("tools/workorder_brief.py", text)
+        self.assertIn("section.py <file> '<symbol>'", text)
 
 
 if __name__ == "__main__":

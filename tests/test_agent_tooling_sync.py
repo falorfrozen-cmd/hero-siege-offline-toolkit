@@ -66,6 +66,22 @@ class TestDerivedCopiesAreCurrent(unittest.TestCase):
                 data = tomllib.loads((REPO / ".codex" / "agents" / f"{path.stem}.toml").read_text(encoding="utf-8"))
                 self.assertEqual(data["sandbox_mode"], "read-only")
 
+    def test_effort_variants_are_their_source_at_another_effort(self):
+        """A variant differs from its source in name, effort and description
+        only; the body is the same instructions, byte for byte."""
+        variants = [p for p in sorted(sync.CLAUDE_AGENTS.glob("*.md")) if sync.is_generated_variant(p)]
+        self.assertTrue(variants, "the /workorder tier tables name effort variants; none were generated")
+        for path in variants:
+            fields, body = sync.parse_frontmatter(path.read_text(encoding="utf-8"))
+            base, _, level = fields["name"].rpartition("-")
+            src_fields, src_body = sync.parse_frontmatter((sync.CLAUDE_AGENTS / f"{base}.md").read_text(encoding="utf-8"))
+            self.assertIn(level, src_fields["effort-variants"], path.name)
+            self.assertEqual(fields["effort"], level, path.name)
+            self.assertEqual(fields["model"], src_fields["model"], path.name)
+            self.assertEqual(fields["tools"], src_fields["tools"], path.name)
+            self.assertEqual(body, src_body, path.name)
+            self.assertNotIn("effort-variants", fields, path.name)
+
     def test_codex_mcp_servers_match_mcp_json(self):
         claude = json.loads((REPO / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]
         codex = tomllib.loads((REPO / ".codex" / "config.toml").read_text(encoding="utf-8"))["mcp_servers"]
@@ -184,6 +200,43 @@ class TestTheCheckerItself(unittest.TestCase):
         rc, out = run_check()
         self.assertEqual(rc, 1)
         self.assertIn(".codex/agents/verifier.toml", out)
+
+    def test_changed_agent_source_reaches_its_effort_variants(self):
+        src = self.tmp / ".claude" / "agents" / "planner.md"
+        src.write_text(src.read_text(encoding="utf-8") + "\nA new rule.\n", encoding="utf-8")
+        rc, out = run_check()
+        self.assertEqual(rc, 1)
+        self.assertIn(".claude/agents/planner-xhigh.md", out)
+        with redirect_stdout(io.StringIO()):
+            sync.main([])
+        self.assertEqual(run_check()[0], 0)
+        self.assertTrue((self.tmp / ".claude" / "agents" / "planner-xhigh.md").read_text(encoding="utf-8")
+                        .endswith("\nA new rule.\n"))
+
+    def test_hand_edited_effort_variant_is_caught(self):
+        variant = self.tmp / ".claude" / "agents" / "planner-max.md"
+        variant.write_text(variant.read_text(encoding="utf-8").replace("effort: max", "effort: high"), encoding="utf-8")
+        rc, out = run_check()
+        self.assertEqual(rc, 1)
+        self.assertIn("planner-max.md", out)
+
+    def test_dropped_effort_variant_is_caught_and_removed(self):
+        src = self.tmp / ".claude" / "agents" / "consultant.md"
+        src.write_text(src.read_text(encoding="utf-8").replace("effort-variants: max\n", ""), encoding="utf-8")
+        rc, out = run_check()
+        self.assertEqual(rc, 1)
+        self.assertIn("consultant-max.md", out)
+        with redirect_stdout(io.StringIO()):
+            sync.main([])
+        self.assertFalse((self.tmp / ".claude" / "agents" / "consultant-max.md").exists())
+        self.assertFalse((self.tmp / ".codex" / "agents" / "consultant-max.toml").exists())
+        self.assertEqual(run_check()[0], 0)
+
+    def test_unknown_effort_variant_refuses(self):
+        src = self.tmp / ".claude" / "agents" / "consultant.md"
+        src.write_text(src.read_text(encoding="utf-8").replace("effort-variants: max", "effort-variants: extreme"), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            run_check()
 
     def test_changed_mcp_server_is_caught(self):
         data = json.loads((self.tmp / ".mcp.json").read_text(encoding="utf-8"))

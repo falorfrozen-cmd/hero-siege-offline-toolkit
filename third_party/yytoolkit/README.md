@@ -605,11 +605,40 @@ receive `bb113eef…`.
 1. **A new change is a new numbered patch** (`NNNN-<slug>.patch`, next number),
    added as the last line of `patches/series`. Never replace an upstream file
    wholesale, and never fold a second reason into an existing patch.
-2. **Generate it, do not edit it.** Apply the series to a scratch clone of
-   upstream at the pin (`git am`), commit the change, and write the file with
-   `git format-patch`. A hand-edited diff has wrong hunk counts and `index`
-   lines and fails in ways that do not say why. Patches are LF only
-   (`.gitattributes` keeps them `-text`); the tool refuses a CR.
+2. **Generate it, do not edit it.** A hand-edited diff has wrong hunk counts
+   and `index` lines and fails in ways that do not say why. Two routes give
+   the series' shape:
+   - **The build tool's authoring path**, which needs no git of your own and
+     no write outside this checkout, so it also works in an agent session
+     confined to its worktree, and from an empty series:
+
+     ```bash
+     py -3 tools/build_yytoolkit.py materialise --upstream <clone>
+     py -3 tools/build_yytoolkit.py overlay --overlay build/yytoolkit-overlay <upstream path>...
+     # edit the copies under build/yytoolkit-overlay/ (create new files there too)
+     py -3 tools/build_yytoolkit.py make-patch --overlay build/yytoolkit-overlay --name NNNN-<slug>.patch --message <file>
+     ```
+
+     `overlay` copies upstream files as upstream plus the series leaves them.
+     `make-patch` writes the difference as the next patch and appends it to
+     `patches/series`; `--regenerate-last` rewrites the last patch instead,
+     diffing from the tree before it. The message file is the subject line, a
+     blank line, and a body carrying the five fields of point 3. The tool runs
+     git itself in its work directory, writes the zero commit id, fixed author
+     and `Date:` and `[PATCH n/m]` of the patches above (renumbering the
+     earlier ones' totals), and checks that the whole series still applies
+     before it writes. It refuses an overlay inside the checkout that git does
+     not ignore (`build/` is), a name out of sequence, a message missing a
+     field or with an unreadable `Log-markers:`, an overlay that changes
+     nothing, a path outside `YYToolkit/` or under the plugin-facing headers
+     of point 4, and CR bytes. It cannot delete a file. `tools/build_aurie.py`
+     is the same tool for `third_party/aurie/`.
+   - **A scratch clone**: apply the series to a clone of upstream at the pin
+     (`git am`), commit the change, and write the file with
+     `git format-patch`.
+
+   Patches are LF only (`.gitattributes` keeps them `-text`); the tool refuses
+   a CR.
 3. **The message carries the five fields**: `Why:`, `Evidence:`, `Fails-safe:`
    (what happens when the heuristic does not match: fall back to upstream
    behaviour, or refuse with a line that says why), `Log-markers:` and

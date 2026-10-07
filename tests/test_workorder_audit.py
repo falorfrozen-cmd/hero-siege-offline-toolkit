@@ -1141,6 +1141,66 @@ class R15Tests(TempDirMixin, unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+# R26 reread-after-write
+# --------------------------------------------------------------------------
+
+class R26Tests(TempDirMixin, unittest.TestCase):
+    """The owner, 2026-10-02: after a write, read only the difference or the
+    relevant part, never the whole file again."""
+    SRC = "C:/repo/.claude/worktrees/wt/tools/run_criteria.py"
+
+    def _agent(self, records, agent_type="implementer"):
+        _, results = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).workflow_agent(
+            "wf_a", agent_type, f"{agent_type}:r0", records).evaluate()
+        return get_rule(results, "R26")
+
+    def _rereads(self, count, read_input=None, start=1):
+        records = tool_turn(0, 0, "Edit", {"file_path": self.SRC, "old_string": "a", "new_string": "b"},
+                            result="The file has been updated.")
+        for i in range(count):
+            records += tool_turn(10 + i * 10, start + i, "Read", read_input or {"file_path": self.SRC}, result="x" * 50)
+        return records
+
+    def test_fail_whole_rereads_past_the_allowance(self):
+        r = self._agent(self._rereads(wa.REREAD_AFTER_WRITE_ALLOWANCE + 1))
+        self.assertFalse(r.passed)
+        self.assertIn("run_criteria.py", r.evidence[0])
+        self.assertIn("git diff", r.evidence[0])
+        self.assertFalse(self._agent(self._rereads(3), agent_type="planner").passed)
+
+    def test_pass_within_the_allowance_ranged_reads_and_other_roles(self):
+        self.assertTrue(self._agent(self._rereads(wa.REREAD_AFTER_WRITE_ALLOWANCE)).passed)
+        ranged = {"file_path": self.SRC, "offset": 300, "limit": 40}
+        self.assertTrue(self._agent(self._rereads(6, ranged)).passed, "a ranged read is the relevant part")
+        self.assertTrue(self._agent(self._rereads(6), agent_type="verifier").passed, "control: not a writing role")
+
+    def test_shell_cat_counts_and_a_command_that_may_rewrite_the_file_clears_it(self):
+        records = self._rereads(0)
+        for i in range(3):
+            records += tool_turn(10 + i * 10, 1 + i, "Bash", {"command": "cd C:/repo && cat tools/run_criteria.py"}, result="x")
+        self.assertFalse(self._agent(records).passed)
+        # A generator run that names the file may have rewritten it: its
+        # output is new, so reading it afterwards is not re-reading an edit.
+        records = self._rereads(0) + tool_turn(5, 1, "Bash", {"command": "py -3 gen.py --out tools/run_criteria.py"}, result="ok")
+        for i in range(3):
+            records += tool_turn(10 + i * 10, 2 + i, "Read", {"file_path": self.SRC}, result="x")
+        self.assertTrue(self._agent(records).passed)
+        # Neither a grep, a diff nor a heredoc write is a whole read.
+        records = self._rereads(0)
+        for i, cmd in enumerate(["git diff -- tools/run_criteria.py", "grep -n select tools/run_criteria.py",
+                                 "cat > tools/run_criteria.py <<'EOF'\nx\nEOF", "cat tools/run_criteria.py | head -5"]):
+            records += tool_turn(10 + i * 10, 1 + i, "Bash", {"command": cmd}, result="x")
+        self.assertTrue(self._agent(records).passed)
+
+    def test_reading_a_file_before_writing_it_is_not_a_reread(self):
+        records = []
+        for i in range(4):
+            records += tool_turn(i * 10, i, "Read", {"file_path": self.SRC}, result="x")
+        records += tool_turn(100, 9, "Edit", {"file_path": self.SRC, "old_string": "a", "new_string": "b"}, result="ok")
+        self.assertTrue(self._agent(records).passed)
+
+
+# --------------------------------------------------------------------------
 # R16 scribe-scope
 # --------------------------------------------------------------------------
 
@@ -1744,6 +1804,25 @@ class CalibrationTests(TempDirMixin, unittest.TestCase):
         rc = wa.main(["--calibrate", str(listing), "--projects-dir", str(a.projects_dir), "--project", "proj"])
         self.assertEqual(rc, 0)
 
+    def test_an_effort_variant_counts_as_its_role_and_keeps_its_level(self):
+        self.assertEqual(wa.split_effort_variant("planner-xhigh"), ("planner", "xhigh"))
+        self.assertEqual(wa.split_effort_variant("implementer-medium"), ("implementer", "medium"))
+        # Negative controls: a hyphenated name is not a variant unless it ends
+        # in a level.
+        self.assertEqual(wa.split_effort_variant("docs-sync-reviewer"), ("docs-sync-reviewer", None))
+        self.assertEqual(wa.split_effort_variant("planner"), ("planner", None))
+        s = SessionBuilder(self.tmp_path, session_id="cccc0000-0000")
+        s.driver([turn(0, 0)]).subagent("implementer-medium", "patch r1", make_turns(3, start_idx=100))
+        s.subagent("implementer", "Implement x", make_turns(2, start_idx=200))
+        s.build()
+        session = wa.discover_session(s.projects_dir, "proj", "cccc0000-0000",
+                                      s.projects_dir / "proj" / "cccc0000-0000.jsonl")
+        cal = wa.calibrate([session])
+        self.assertEqual(cal["roles"]["implementer"]["turns"]["n"], 2)
+        keys = [k for k in cal["roles_by_model"] if k.startswith("implementer /")]
+        self.assertTrue(any(k.endswith("/ medium") for k in keys), keys)
+        self.assertTrue(any(k.endswith("/ pinned") for k in keys), keys)
+
 
 # --------------------------------------------------------------------------
 # R17 live-operator-scope
@@ -2091,6 +2170,29 @@ class LaneTests(TempDirMixin, unittest.TestCase):
                             label="implementer:code:r0")
         self.assertTrue(r.passed, r.evidence)
 
+    def test_git_config_reads_are_not_writes(self):
+        # wf_8fd71d61-4ca: two lanes failed R23 for `git config core.autocrlf`,
+        # which only reads.
+        for cmd in ("git config core.autocrlf; cat .gitattributes 2>/dev/null | head",
+                    "git config --get core.autocrlf && git ls-files --eol x",
+                    "git -C repo config --show-origin --get-all core.autocrlf",
+                    "git config --file .gitmodules --get-regexp path",
+                    "git config -l | grep crlf", "git config --list --global",
+                    "git config get core.autocrlf", "git config --get remote.origin.url '^https'"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(wa._git_mutations(cmd), [])
+        # control: writes still count, including after a read on the same line
+        for cmd in ("git config core.autocrlf false", "git config --global user.name x",
+                    "git config --unset core.autocrlf", "git config --add a.b c",
+                    "git config set core.autocrlf true", "git config --file .gitmodules a.b c",
+                    "git config core.autocrlf; git config core.autocrlf input"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(wa._git_mutations(cmd), ["config"])
+        r = _one_agent_rule(self.tmp_path / "cfg", "R23", "implementer",
+                            ("Bash", {"command": "git config core.autocrlf; git ls-files --eol tools/x.py"}),
+                            label="implementer:code:r0")
+        self.assertTrue(r.passed, r.evidence)
+
     def test_lane_column_from_label(self):
         self.assertEqual(wa.lane_of("implementer:code:r0"), "code")
         self.assertEqual(wa.lane_of("implementer:plan-tools:r2"), "plan-tools")
@@ -2158,3 +2260,64 @@ class LaneTests(TempDirMixin, unittest.TestCase):
         b.workflow_agent("wf_a", "verifier", "verifier:r0", _span(0, 600, 300, cache_read=per_turn))
         _, results = b.evaluate()
         self.assertFalse(get_rule(results, "R13").passed)
+
+
+# --------------------------------------------------------------------------
+# R27 amendment-tier
+# --------------------------------------------------------------------------
+
+class R27Tests(TempDirMixin, unittest.TestCase):
+    """An amendment planner always runs on opus, never fable: the one fable
+    amendment on record came from a driver that carried the workorder's
+    escalated planner tier over to it."""
+
+    def _rule(self, label, model, sub, workflow=False, agent_type="planner"):
+        b = SessionBuilder(self.tmp_path / sub).driver([turn(0, 9000)])
+        b.subagent("planner", "Plan x", _span(0, 100, 100, model="claude-fable-5-1"))
+        if workflow:
+            b.workflow_agent("wf_a", agent_type, label, _span(400, 450, 300, model=model))
+        else:
+            b.subagent(agent_type, label, _span(400, 450, 300, model=model))
+        return get_rule(b.evaluate()[1], "R27")
+
+    def test_fail_an_amendment_planner_at_escalated_effort(self):
+        # Since 2026-10-05 the ladder escalates effort, not model: an
+        # amendment run as `planner-xhigh`/`planner-max` is the same mistake.
+        for level in ("xhigh", "max"):
+            r = self._rule("amendment: x c3", "claude-opus-5-5", f"eff-{level}", agent_type=f"planner-{level}")
+            self.assertFalse(r.passed, level)
+            self.assertIn(f"planner-{level}", r.evidence[0])
+        self.assertFalse(self._rule("amendment: slug x:r0", "claude-opus-5-5", "eff-wf", workflow=True,
+                                    agent_type="planner-max").passed)
+
+    def test_pass_an_amendment_planner_at_medium_or_pinned_effort(self):
+        for sub, agent_type in (("eff-med", "planner-medium"), ("eff-pin", "planner")):
+            r = self._rule("amendment: x c3", "claude-opus-5-5", sub, agent_type=agent_type)
+            self.assertTrue(r.passed, r.evidence)
+
+    def test_pass_an_escalated_planner_that_is_not_an_amendment(self):
+        r = self._rule("Replan x after round 2", "claude-opus-5-5", "eff-replan", agent_type="planner-max")
+        self.assertTrue(r.passed, r.evidence)
+
+    def test_fail_an_amendment_planner_on_fable(self):
+        r = self._rule("amendment: x live2 owner scope", "claude-fable-5-1", "fable")
+        self.assertFalse(r.passed)
+        self.assertEqual(r.name, "amendment-tier")
+        self.assertIn("amendment: x live2 owner scope", r.evidence[0])
+        self.assertIn("claude-fable-5-1", r.evidence[0])
+        self.assertFalse(self._rule("amendment: slug x:r0", "claude-fable-5-1", "wf", workflow=True).passed,
+                         "an in-launch amendment is held to it too")
+
+    def test_pass_the_same_planner_on_opus(self):
+        r = self._rule("amendment: x live2 owner scope", "claude-opus-5-5", "opus")
+        self.assertTrue(r.passed, r.evidence)
+        self.assertEqual(r.evidence, [])
+
+    def test_pass_a_fable_planner_that_is_not_an_amendment(self):
+        # Control: the first plan above already ran on fable, and a replan
+        # may escalate to it; only the amendment route is pinned.
+        r = self._rule("Replan x after round 2", "claude-fable-5-1", "replan")
+        self.assertTrue(r.passed, r.evidence)
+
+    def test_r27_is_the_last_rule(self):
+        self.assertIs(wa.ALL_RULES[-1], wa.rule_r27_amendment_tier)

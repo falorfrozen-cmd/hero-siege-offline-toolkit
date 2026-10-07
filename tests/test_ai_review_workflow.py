@@ -42,12 +42,28 @@ run ends with the turn. `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` keeps agents in
 the foreground, and a final step fails the job when no comment appeared, so the
 next variant of this bug is red instead of silent.
 
+**That a posted comment is not taken for a review.** On hub #365 and ForgePact
+#141 the model skipped the command's agents, read part of the diff itself in
+10-20 seconds, posted "No issues found" and said in its last message that it
+had not run the review; both jobs went green. The model is now set (by family alias), the notes
+say the agents are not optional, the read-only text tools a review reaches for
+are allowed, and a step reads the transcript and fails a run that launched
+fewer agents than steps 1 to 4 of the command do, finished in seconds, or
+admitted skipping. Where `bash` and `jq` are both on the path (they are on a
+GitHub runner), that step's own script is run against small transcripts.
+
 The file is read as text rather than parsed: CI runs this suite with
 `python -m unittest discover -s tests` and installs nothing, so PyYAML is not
 available there.
 """
 
+import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -330,7 +346,196 @@ class TheReviewRunsToTheEnd(unittest.TestCase):
         self.assertTrue(-1 < started < review < check, (started, review, check))
 
 
+# The last messages of the runs that skipped the review, as the
+# `claude-execution-output` artifacts recorded them (2026-10-02).
+SKIPPED_REVIEW_MESSAGES = {
+    "hub #365": "I did not run the full multi-agent review. I read the code diff for "
+    "`tools/live_checks.py` and `mining_reward_model.py` myself and found no bugs.",
+    "ForgePact #141": "I reviewed the diff myself in a single pass and did not launch the "
+    "parallel review and validation agents the workflow describes.",
+    "ForgePact #140": "I ran one bug pass and one CLAUDE.md pass, not the four the review "
+    "recipe describes.",
+}
+
+# What a review that followed the command might say, including what it did not
+# run that has nothing to do with its agents.
+REAL_REVIEW_MESSAGE = (
+    "No issues found. Checked for bugs and CLAUDE.md compliance. The four review "
+    "agents flagged two candidates and validation rejected both. I did not run the "
+    "test suite, and I did not build anything."
+)
+
+PROCESS_GATE = "Fail if the review skipped the command's agents"
+SUMMARY_STEP = "Summarize the review run"
+
+
+def step_env(body, key):
+    match = re.search(rf'(?m)^          {re.escape(key)}: "(.*)"$', body or "")
+    return None if match is None else match.group(1)
+
+
+def step_script(body):
+    _, _, script = (body or "").partition("        run: |\n")
+    return textwrap.dedent(script)
+
+
+def claude_args(text):
+    match = re.search(r"(?m)^          claude_args: '(.*)'$", text)
+    return None if match is None else match.group(1)
+
+
+class TheReviewFollowsTheCommand(unittest.TestCase):
+    """hub #365, ForgePact #141: a comment was posted, and no review was run."""
+
+    def test_the_model_that_follows_the_command_is_set_by_alias(self):
+        # A family alias, so each run gets the latest model in it; a dated
+        # version would need bumping by hand.
+        args = claude_args(workflow_text())
+        self.assertIsNotNone(args, "claude_args not found")
+        self.assertRegex(args, r"--model (opus|sonnet|haiku) ")
+        self.assertNotRegex(args, r"--model claude-")
+
+    def test_the_notes_say_the_agents_are_not_optional(self):
+        body = step_body(workflow_text(), "Read the request") or ""
+        self.assertIn("Run the review through the code-review command's agents", body)
+        self.assertIn("Do not replace them with a review of your own", body)
+
+    def test_the_read_only_text_tools_are_allowed(self):
+        tools = allowed_tools(workflow_text()) or set()
+        for tool in ("Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(sed -n:*)"):
+            self.assertIn(tool, tools)
+        # Plain `sed` would allow `sed -i`, an edit; only the printing form is wanted.
+        self.assertNotIn("Bash(sed:*)", tools)
+
+    def test_the_gate_counts_agents_against_steps_1_to_4(self):
+        body = step_body(workflow_text(), PROCESS_GATE)
+        self.assertIsNotNone(body, "process gate step not found")
+        self.assertIn('.name == "Agent" or .name == "Task"', body)
+        self.assertGreaterEqual(int(step_env(body, "MIN_AGENTS") or 0), 7)
+        self.assertGreaterEqual(int(step_env(body, "MIN_SECONDS") or 0), 30)
+        self.assertIn("exit 1", body)
+
+    def test_the_gate_runs_after_the_posted_nothing_check(self):
+        text = workflow_text()
+        posted = text.find("- name: Fail if the review posted nothing")
+        gate = text.find(f"- name: {PROCESS_GATE}")
+        self.assertTrue(-1 < posted < gate, (posted, gate))
+
+    def test_admitted_matches_every_recorded_skip(self):
+        pattern = re.compile(step_env(step_body(workflow_text(), PROCESS_GATE), "ADMITTED"), re.I)
+        for run, message in SKIPPED_REVIEW_MESSAGES.items():
+            self.assertRegex(message, pattern, run)
+
+    def test_negative_control_admitted_spares_a_real_review(self):
+        pattern = re.compile(step_env(step_body(workflow_text(), PROCESS_GATE), "ADMITTED"), re.I)
+        self.assertIsNone(pattern.search(REAL_REVIEW_MESSAGE))
+
+    def test_the_summary_points_at_the_artifact_whatever_happened(self):
+        text = workflow_text()
+        body = step_body(text, SUMMARY_STEP)
+        self.assertIsNotNone(body, "summary step not found")
+        self.assertIn("if: always()", body)
+        self.assertIn('>> "$GITHUB_STEP_SUMMARY"', body)
+        self.assertIn("claude-execution-output", body)
+        upload = text.find("- name: Keep the run's full result")
+        self.assertTrue(-1 < upload < text.find(f"- name: {SUMMARY_STEP}"))
+
+
+def transcript(agents, seconds, message):
+    """A minimal `claude-execution-output.json` in the shape the action writes."""
+    calls = [
+        {"type": "tool_use", "name": "Agent", "input": {"description": f"agent {i}"}}
+        for i in range(agents)
+    ]
+    return [
+        {"type": "system", "subtype": "init", "model": "claude-opus-5-5"},
+        {"type": "assistant", "message": {"content": calls + [{"type": "text", "text": "x"}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "num_turns": 4,
+            "duration_ms": seconds * 1000,
+            "total_cost_usd": 0.2,
+            "permission_denials": [],
+            "result": message,
+        },
+    ]
+
+
+@unittest.skipUnless(shutil.which("bash") and shutil.which("jq"), "needs bash and jq")
+class TheGateScriptsRun(unittest.TestCase):
+    """The steps' own scripts, run against small transcripts."""
+
+    def run_step(self, name, data):
+        body = step_body(workflow_text(), name)
+        self.assertIsNotNone(body, name)
+        with tempfile.TemporaryDirectory() as tmp:
+            result = Path(tmp, "claude-execution-output.json")
+            result.write_text(json.dumps(data), encoding="utf-8")
+            summary = Path(tmp, "summary.md")
+            env = dict(os.environ, RESULT_FILE=str(result), GITHUB_STEP_SUMMARY=str(summary), PR="1")
+            for key in ("MIN_AGENTS", "MIN_SECONDS", "ADMITTED"):
+                value = step_env(body, key)
+                if value is not None:
+                    env[key] = value
+            proc = subprocess.run(
+                ["bash", "-e", "-c", step_script(body)],
+                env=env, capture_output=True, text=True, encoding="utf-8",
+            )
+            written = summary.read_text(encoding="utf-8") if summary.exists() else ""
+        return proc, written
+
+    def test_a_skipped_review_fails(self):
+        proc, _ = self.run_step(PROCESS_GATE, transcript(0, 10, SKIPPED_REVIEW_MESSAGES["hub #365"]))
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("launched no agent", proc.stdout)
+        self.assertIn("its last message says so", proc.stdout)
+
+    def test_an_eligibility_stop_is_named_as_one(self):
+        proc, _ = self.run_step(PROCESS_GATE, transcript(1, 25, "The pull request is a draft; stopping."))
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("launched 1 agent(s)", proc.stdout)
+        self.assertIn("- agent 0", proc.stdout)
+        self.assertIn("The pull request is a draft; stopping.", proc.stdout)
+
+    def test_negative_control_a_full_review_passes(self):
+        proc, _ = self.run_step(PROCESS_GATE, transcript(9, 150, REAL_REVIEW_MESSAGE))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_the_summary_names_the_numbers_and_the_artifact(self):
+        proc, written = self.run_step(SUMMARY_STEP, transcript(9, 150, REAL_REVIEW_MESSAGE))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("| Agents launched | 9 |", written)
+        self.assertIn("| Duration | 150 s |", written)
+        self.assertIn("claude-execution-output", written)
+        self.assertIn(REAL_REVIEW_MESSAGE, written)
+
 TRIGGER = "@claude review"
+
+
+def usable_bash():
+    """A bash that is not WSL's System32 launcher, or None."""
+    found = shutil.which("bash")
+    return found if found and "system32" not in found.lower() else None
+
+
+def run_request_step(comment):
+    """The "Read the request" script run with `gh` and `git` stubbed out (a
+    `main` base, no binaries); returns the `notes` output it wrote."""
+    body = step_body(workflow_text(), "Read the request")
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, out in (("gh", "main"), ("git", "")):
+            stub = Path(tmp, name)
+            stub.write_text(f"#!/bin/sh\necho '{out}'\n" if out else "#!/bin/sh\nexit 0\n", encoding="utf-8", newline="\n")
+            stub.chmod(0o755)
+        output = Path(tmp, "output")
+        env = dict(os.environ, GITHUB_OUTPUT=str(output), GH_TOKEN="x", PR="1", COMMENT_BODY=comment,
+                   GITHUB_REPOSITORY="o/r", PATH=tmp + os.pathsep + os.environ.get("PATH", ""))
+        proc = subprocess.run([usable_bash(), "-e", "-c", step_script(body)], env=env,
+                              capture_output=True, text=True, encoding="utf-8")
+        if proc.returncode != 0:
+            raise AssertionError(proc.stdout + proc.stderr)
+        return output.read_text(encoding="utf-8")
 
 
 class TheRequestCarriesItsInstructions(unittest.TestCase):
@@ -355,6 +560,20 @@ class TheRequestCarriesItsInstructions(unittest.TestCase):
         # output early and write further step outputs.
         body = step_body(workflow_text(), "Read the request") or ""
         self.assertIn('delim="EOF_$(openssl rand -hex 16)"', body)
+
+    @unittest.skipUnless(usable_bash() and shutil.which("openssl"), "needs bash and openssl")
+    def test_every_request_says_an_earlier_review_is_no_reason_to_stop(self):
+        # hub #382 (run 37051071633): a bare `@claude review` after fixes hit
+        # the command's "Claude has already commented" stop, posted nothing
+        # and failed the gate; the note only went to a request with
+        # instructions. A label run (empty body) gets it too: hub #350's
+        # reruns after an outage stopped the same way.
+        for comment in ("@claude review", "@claude review only tools/", ""):
+            with self.subTest(comment=comment):
+                notes = run_request_step(comment)
+                self.assertIn("an earlier review on this pull request is not a reason", notes)
+                self.assertIn("which commits are new since that review", notes)
+                self.assertEqual("<requester-instructions>" in notes, comment.startswith("@claude review "), notes)
 
     def test_the_prompt_carries_the_notes(self):
         step = review_step(workflow_text()) or ""

@@ -127,15 +127,15 @@ skill tools are described in "Skills and talents", the stash and bag tools in
 
 | Tool | Hints | Inputs | Returns |
 | --- | --- | --- | --- |
-| `hs_status` | read-only | — | `game_state`, `game_pids`, `eac_service`, `exe_path`, `exe_valid`, `exe_validation`, `mod_chain`, `ipc_dir`, `bp_ipc_exists`, `launch` |
+| `hs_status` | read-only | — | `game_state`, `game_pids`, `eac_service`, `exe_path`, `exe_valid`, `exe_validation`, `mod_chain`, `ipc_dir`, `bp_ipc_exists`, `launch`, `exits[]` (`pid`, `exit_code`; see "Exit codes") |
 | `hs_selfcheck` | read-only | — | `checks[]`, `summary` |
 | `hs_saves_backup` | writes | `label` | `backup_id`, `files`, `total_bytes`, `path`, `skipped_links` |
 | `hs_saves_restore` | **destructive** | `backup_id`, `confirm_backup_id`, `remove_extra=false` | `restored`, `files`, `pre_restore_backup_id`, `moved_extras`, `extras_not_moved` |
 | `hs_saves_list` | read-only | `limit` 1–100 = 20, `offset` | `total`, `count`, `has_more`, `next_offset`, `backups[]` |
 | `hs_saves_inspect` | read-only | `backup_id` | `manifest`, `changed[]`, `added[]`, `missing[]` |
-| `hs_launch` | writes | `exe_path=null`, `wait_for_plugin=true`, `timeout_s` 5–600 = 90 | `phase`, `ready`, `plugin`, `plugin_reply`, `pid`, `pids`, `launch`, `exe_path`, `exe_path_override`, `launched_here`, `launch_message`, `elapsed_s` |
+| `hs_launch` | writes | `exe_path=null`, `wait_for_plugin=true`, `timeout_s` 5–600 = 90 | `phase`, `ready`, `plugin`, `plugin_reply`, `pid`, `pids`, `launch`, `exe_path`, `exe_path_override`, `launched_here`, `launch_message`, `exit_watch` (`held` \| `unavailable (<reason>)`), `elapsed_s` |
 | `hs_wait_ready` | writes (one ping) | `timeout_s` 5–600 = 90, `require_plugin=true` | the same readiness fields, without the launch ones |
-| `hs_stop_game` | **destructive** | `force=false`, `timeout_s` 1–300 = 30 | `exited`, `pids_closed`, `forced`, `terminated`, `windows_found`, `errors`, `game_state` |
+| `hs_stop_game` | **destructive** | `force=false`, `timeout_s` 1–300 = 30 | `exited`, `pids_closed`, `forced`, `terminated`, `windows_found`, `errors`, `game_state`, `exits[]` (as `hs_status`, read after the wait) |
 | `hs_command` | writes | `lines[]`, `timeout_s` 1–120 = 10, `queue=false` | `consumed`, `reply`, `reply_lines`, `queued`, `pending_before`, `pending_left`, `observed_consumption`, `out_bytes_before`, `out_bytes_after`, `rotated`, `sent`, `wrote_bytes`, `aborted` |
 | `hs_ipc_tail` | read-only | `lines` 1–500 = 40 | `exists`, `lines[]`, `bytes_total`, `requested`, `truncated`, `path` |
 | `hs_screenshot` | writes | `target` `game`\|`screen` = `game`, `method` `grab_bbox`\|`grab_window` = `grab_bbox`, `label` | `path`, `width`, `height`, `bbox`, `capture_method`, `hwnd`, `pid`, `flat`, `warning`, `bytes_written`, `transport_width`, `transport_height` — **plus** a JSON text block and a PNG image block |
@@ -460,6 +460,44 @@ Nothing here pauses, freezes, time-scales or restores runtime state.
 whole workorder; `WM_CLOSE` is a request the game is free to handle its own way,
 which is the opposite of taking its loop away.
 
+### Exit codes: every game this server launched
+
+A game that dies leaves an exit code, and before ForgePact #173 nothing read it:
+the 2026-10-04 crash left no dump, no event-log record and no clean-shutdown
+line, so there was no answer to "what ended it". Now:
+
+- **`hs_launch` holds a handle on the PID it started**, opened with
+  query-limited-information plus synchronize access (the ForgePact panel's
+  `open_exit_handle` shape), right after the engine starts the game and before
+  the readiness wait, so a game that dies during startup is covered too. It
+  reports `exit_watch`: `held`, or `unavailable (<reason>)` when the handle
+  could not be opened (the reason names the failed call and its
+  `GetLastError`), the engine reported no PID, or this is not Windows.
+- **`hs_status` and `hs_stop_game` report `exits`**: one
+  `{"pid": <int>, "exit_code": "0xC0000005"}` per watched PID that has ended,
+  oldest launch first, the code written as Windows writes it (`0x%08X`).
+  `hs_stop_game` reads it last, after its wait, so a close that ended the game
+  carries the game's code in the same answer. A refusal from `hs_status` still
+  carries `exits`, since the codes need no engine.
+- **"Ended" is asked of the handle, never read from the code.** The handle is
+  signalled once the process has exited; a process can exit with 259, which is
+  also `STILL_ACTIVE`, so reading the code first would report a live game as
+  exited or a game that exited with 259 as live. 259 is reported as
+  `0x00000103`. Once read, the code is cached and its handle closed.
+- **A launched game still running is not listed**, and neither is any PID this
+  server did not launch, nor one whose `exit_watch` was `unavailable`. Off
+  Windows `exits` is an empty list and nothing raises.
+
+Reading a code: `0x00000000` is a normal exit, `0xC0000005` an access violation,
+`0xC0000409` a fast-fail abort (`STATUS_STACK_BUFFER_OVERRUN`), and `0x00000001`
+what `force=true`'s `TerminateProcess` leaves. Since ForgePact's launch engine
+starts the game with `CREATE_DEFAULT_ERROR_MODE` (ForgePact #173), a crash also
+gets Windows' own report and dump as a player's would, but **the exit code is
+the reading to judge a close by**: a game started with an inherited
+`SEM_NOGPFAULTERRORBOX` error mode leaves no dump at all. `launcher_bridge`
+imports the engine once, when this server starts, so reconnect the server
+before a live session that depends on the engine's newer behaviour.
+
 ## The command channel
 
 ForgePact's IPC is two files in `<dir of game_exe>\bp_ipc\`, created by the
@@ -561,6 +599,9 @@ convenience.
 
 Files land in `%LOCALAPPDATA%\HSDriveMcp\screenshots\<UTC stamp>[_label].png` at
 full resolution and nothing prunes them.
+
+To measure whether a button's label is drawn centred inside its box on such a
+capture, use [`tools/button_label_check.py`](button-label-check.md).
 
 ## Character select
 
@@ -1206,6 +1247,20 @@ rather than by falling back to another launcher:
 - **A forced stop is not available for a game you started yourself.** That is
   the point of `not_launched_here`, not an oversight. Close it from its own
   window.
+- **`exits` covers only games this server process launched, and forgets them
+  when the server restarts.** The handles live in the server's memory, like the
+  launched set `force=true` checks: a game you started yourself, or one an
+  earlier run of the server launched, never has an exit code here. Reconnecting
+  the MCP server between a launch and its crash loses that code; read
+  `hs_status` before reconnecting.
+- **A normal close can read `0xC0000409`.** The shipped HS-Offline-Tracker
+  producer aborts at process exit, after the game's own clean shutdown
+  (`docs/submodules/ForgePact/instructions.md`, Known Limitations item 25). So
+  `0xC0000409` on a close that `hs_stop_game` requested is not by itself a
+  crash: check for the incident monitor's clean-shutdown line, and the dump's
+  stack, before blaming ForgePact or the game. Measured 2026-10-07: both
+  graceful closes of ForgePact #173's sessions read `0xC0000409` after
+  `==== clean shutdown ====` (Verification, "Exit codes (ForgePact #173)").
 - **Backups accumulate and nothing prunes them.** Removal is deliberately out
   of scope — no tool in this server has removal as its effect. Each backup is
   about 1.5 MB, and a restore writes two (the pre-restore one, plus whatever
@@ -1404,6 +1459,22 @@ capture once it has run.
 | V4 | Identity control: `hs_stash_tab("materials", backup_id="no-such-backup")` refused before anything is sent (`verb_trail` and `layout_trail` empty). The shared gate answers a missing id `invalid_backup_id`, a present id without a manifest `backup_incomplete` | live 3 | **pass — 2026-09-26.** Refused `invalid_backup_id` ("No backup 'no-such-backup' under ...; nothing was sent"), `verb_trail: [] layout_trail: []` |
 | V5 | `hs_stash_close` `ok` (the close is the save); then `hs_stash_tab` and `hs_stash_close` refused `stash_not_open` | live 3 | **pass — 2026-09-26.** `hs_stash_close` → `ok phase:stash_closed` (one transient "not confirmed" poll frame, resolved); a second `hs_stash_tab` and a second `hs_stash_close` both refused `stash_not_open` |
 | V6 | Stop, inspect (`stash.hss` and the character file changed), restore the live-3 backup, inspect clean, release; the DLL hash unchanged | live 3 | **pass — 2026-09-26.** `hs_stop_game` exited cleanly (`forced:false`); `hs_saves_inspect` changed `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini`, `stash.hss`, nothing added/missing; DLL hash after equalled before; restore performed afterward by the driver on the owner's word |
+
+### Exit codes (ForgePact #173)
+
+The rows below belong to `forgepact-173-dropmult-gold-crash`, the workorder
+that added `exit_watch` and `exits` ("Exit codes: every game this server
+launched"). They are ForgePact #173's Live 1 and Live 2 of 2026-10-07
+(`ForgePact/docs/dropmult-gold-crash-research.md` § "Results"), both launched
+by this server.
+
+| # | Check | Command | Result |
+| --- | --- | --- | --- |
+| X1 | A server started before the change has no `exits`; after a reconnect it is present and empty | `hs_status`, before and after `/mcp` -> hs-drive -> Reconnect | **pass — 2026-10-07.** The first `hs_status` had no `exits` key; after the reconnect `"exits":[]`. The lease record of the old server process read `stale` and the next `hs_lease_acquire` recovered it. |
+| X2 | `hs_launch` holds the handle | `hs_launch` | **pass — 2026-10-07.** `exit_watch: "held"` on all three launches (Live 1 twice, Live 2 once). |
+| X3 | A crash's code (positive control) | `crashwatch crash confirm` on the research build, then `hs_status` | **pass — 2026-10-07.** `"game_state":"not_running"`, `"exits":[{"pid":28660,"exit_code":"0xC0000005"}]`; Windows wrote `Hero_Siege.exe.28660.dmp` and an Application Error record with the same code and PID. An `hs_status` taken while the process was still going listed it running with `exits` empty. |
+| X4 | A running game is not listed | `hs_status` during play | **pass — 2026-10-07.** Throughout Live 1's play, `exits` carried only the crashed PID 28660, never the running 14736. |
+| X5 | A graceful close's code, in `hs_stop_game`'s own answer | `hs_stop_game` (`force=false`) | **pass — 2026-10-07.** Live 1: `{"pid":14736,"exit_code":"0xC0000409"}`, `forced:false`, 6.6 s; Live 2: `{"pid":34868,"exit_code":"0xC0000409"}`, 7.2 s, with the earlier PIDs still listed oldest first. Both after `==== clean shutdown ====`; the Live 2 close logged `ucrtbase.dll`, `0xc0000409` and left a dump (ForgePact guide, Known Limitations item 25). |
 
 ## Skills and talents
 

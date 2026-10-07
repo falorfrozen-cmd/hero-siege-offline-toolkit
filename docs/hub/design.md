@@ -287,6 +287,43 @@ that uses it. `latest.json` is published by `tauri-action` with
 `includeUpdaterJson: true` and signed with `TAURI_SIGNING_PRIVATE_KEY`; the
 matching public key is in `tauri.conf.json`.
 
+#### Two installers
+
+`bundle.targets` builds both an NSIS installer (`-setup.exe`, per-user, no
+Administrator) and an MSI (WiX, per-machine). The MSI was added because
+antivirus heuristics flag `nsis_tauri_utils.dll`, a helper inside the NSIS
+installer, as a potentially unwanted program (issue #427). NSIS was kept
+because every hub up to hub-v1.0.6 was installed from it.
+
+- **Each hub updates through its own format.** The updater plugin knows which
+  bundle the running hub came from and asks `latest.json` for
+  `windows-x86_64-nsis` or `windows-x86_64-msi`, then for plain
+  `windows-x86_64`. `tauri-action` writes all three when both installers
+  exist. `hub-release.yml` sets `updaterJsonPreferNsis: true` so the plain
+  entry is the NSIS one.
+- **Dropping NSIS would move every existing install across formats.** With
+  the MSI as the only target, an NSIS hub falls back to the plain entry and
+  runs the MSI. Tauri's WiX template reads the NSIS install directory from the
+  registry and installs there, which for this hub is the data root
+  (`%LOCALAPPDATA%\Hero Siege Toolkit`), and the NSIS uninstall entry stays
+  beside the new one. This is a reading of the plugin and the template, not a
+  measured update; nobody has run one. `tests/test_hub_installer_targets.py`
+  fails if `nsis` leaves the targets or the fallback stops being NSIS.
+- **An MSI hub needs Administrator for every self-update, and a declined
+  prompt is silent.** The plugin starts `msiexec` and exits the hub at once,
+  before Windows asks. If the prompt is declined, or the account cannot
+  elevate, the hub is closed and the old version is still installed. No error
+  can reach the interface, because the process that would show it has gone.
+  `install_hub_update` writes `downloaded hub update <version>; starting its
+  installer, which closes the hub` to `hub.log` before the hand-off, so the
+  log at least shows that an update was started. The README tells players
+  this, and that the NSIS installer avoids it.
+- **Not yet verified live:** that WiX builds this bundle on `windows-latest`
+  (a manual dry run of `hub-release.yml` shows it, and the real `latest.json`
+  keys), that an MSI-installed hub restarts non-elevated after an update (the
+  template's launch action impersonates the user, which is a reading), and
+  that the MSI clears the antivirus flag.
+
 A manual dry run of `hub-release.yml` builds the bundle and uploads it as a
 workflow artifact, with no release inputs at all. It once passed `--no-bundle`
 while still supplying `tagName`, which cannot work: `tauri-action` fails with
@@ -678,7 +715,9 @@ change has nothing to review. Reviewing on open would spend a review on every
 one of them, so the request is the trigger instead:
 
 - add the **`ai-review`** label in the pull request sidebar, or
-- comment **`@claude review`** on the pull request.
+- comment **`@claude review`** on the pull request. The comment must **start
+  with** the phrase: the workflow checks `startsWith`, so a summary with the
+  trigger on a later line is skipped silently.
 
 Anything written after `@claude review` in the comment is passed to the reviewer
 as the requester's instructions, and takes precedence over the default scope —
@@ -727,12 +766,44 @@ deliberate stop red: the command skips a pull request that is closed, a draft,
 or already commented on by Claude. That is on purpose, since a review was
 requested and none was posted, and the printed message says why.
 
+The "already commented" stop, though, turned every re-review red. A bare
+`@claude review` after fixes (hub #382, 2026-10-02) and a rerun after an
+outage (#350) both stopped there and failed the gate. Only a request with
+text after the trigger was told that an earlier review is no reason to stop.
+Every run is a request (the label was just added, or someone commented), so
+every run now gets that note. It also tells the reviewer to name the commits
+that are new since the last review, and to say whether each earlier finding
+is now resolved. Closed and draft pull requests still stop.
+
+A posted comment is not proof of a review either. On hub #365 and ForgePact
+#141 (2026-10-02) the model skipped the command's agents altogether, read part
+of the diff itself in 10-20 seconds, posted "No issues found", and said in its
+last message that it had not run the multi-agent review; both jobs went green.
+Four changes answer that (#366). `claude_args` sets the model that follows the
+command to `--model opus`, an alias that always means the latest Opus, since the
+command takes no effort or level argument and both skips ran on the default
+Sonnet. The
+notes tell it that the agents are not optional and that only the eligibility
+agent may decide a pull request needs no review. The read-only text tools a
+review reaches for (`cat`, `head`, `tail`, `wc`, `sed -n`) are on the
+allow-list, because ForgePact #141 was denied a compound `head`/`cat` command
+and stopped short. And a step after the posted-nothing check, "Fail if the
+review skipped the command's agents", reads the transcript: it fails a run that
+launched fewer than the seven agents steps 1 to 4 launch, finished in under a
+minute, or said in its last message that it skipped the review. It prints each
+agent the run did launch and the last message, so an eligibility stop reads as
+one rather than as a skip, though it is red all the same.
+
 The action's log shows a trimmed result -- no per-model token counts, and a
 denial *count* but not which tools were denied. The full result is written to
 `${{ runner.temp }}/claude-execution-output.json` and deleted with the runner, so
 the workflow uploads it as the `claude-execution-output` artifact (14 days,
 uploaded even when the review fails). It includes the review transcript, visible
 to anyone with read access to the repository.
+The job's summary page (`Summarize the review run`, which runs whatever
+happened) shows the model, the agents launched, turns, duration, cost, any
+denied calls and the last message, and names that artifact as the place to
+read the full transcript.
 
 ### Tool notifications
 

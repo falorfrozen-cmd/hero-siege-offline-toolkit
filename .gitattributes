@@ -43,3 +43,12 @@ catalog/catalog-signing.pub    -text
 third_party/yytoolkit/patches/*.patch   -text
 third_party/yytoolkit/patches/series    text eol=lf
 third_party/yytoolkit/LICENSE           -text
+
+# The modified AurieCore.dll is kept the same way, against Aurie's LF blobs,
+# and `tools/build_aurie.py` (the same build tool, with its Aurie profile)
+# refuses a CR byte in the series or a patch for the same reason. LICENSE is
+# upstream's file byte for byte, which tests/test_aurie_patch_series.py pins
+# by blob id.
+third_party/aurie/patches/*.patch       -text
+third_party/aurie/patches/series        text eol=lf
+third_party/aurie/LICENSE               -text

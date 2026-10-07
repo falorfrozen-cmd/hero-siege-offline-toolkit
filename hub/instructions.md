@@ -7,8 +7,10 @@
   change here is an ordinary commit rather than a pointer move.
 - **Stack:** Tauri 2 + Svelte 5 (runes) frontend, Rust 2021 backend
   (`rust-version = "1.88"`), Vite 8, Node 20.19+.
-- **Bundle:** NSIS, per-user, Windows x64 only. Identifier
-  `io.falorfrozen.herosiegetoolkithub`.
+- **Bundle:** two installers, Windows x64 only: NSIS (`-setup.exe`,
+  per-user) and MSI (WiX, per-machine). Each installed hub updates through the
+  format it was installed from; see `docs/hub/design.md` § "Two installers".
+  Identifier `io.falorfrozen.herosiegetoolkithub`.
 - **Purpose:** Install, launch, update and roll back the ten tools in the
   toolkit from a signed, hash-pinned catalog, without changing how any of them
   behaves when started by hand.
@@ -75,7 +77,7 @@ npm start           # the desktop app against a Vite dev server
 npm run dev         # the frontend alone, in a plain browser
 npm test            # frontend tests, then cargo test (the Rust engine)
 npm run build       # the frontend bundle
-npm run release     # the NSIS installer
+npm run release     # the NSIS and MSI installers
 npm run check       # build + test, what CI runs
 ```
 

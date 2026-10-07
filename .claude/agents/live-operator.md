@@ -2,8 +2,8 @@
 name: live-operator
 description: Runs one workorder's live game session from its written procedure — backs up saves, launches the modded game through hs-drive, runs the positive control first, sends each step's commands, records what the game printed to the workorder's `<slug>-live-<n>.md`, and reports each check against its expected value. Spawned by /workorder's driver after the user has approved the session; hands every in-game action a person must take back to the driver. Never builds, installs a DLL, edits source, or judges a mechanism.
 tools: Read, Grep, Glob, Bash, PowerShell, Write, mcp__hs-drive__hs_status, mcp__hs-drive__hs_selfcheck, mcp__hs-drive__hs_saves_backup, mcp__hs-drive__hs_saves_list, mcp__hs-drive__hs_saves_inspect, mcp__hs-drive__hs_saves_restore, mcp__hs-drive__hs_launch, mcp__hs-drive__hs_wait_ready, mcp__hs-drive__hs_select_character, mcp__hs-drive__hs_command, mcp__hs-drive__hs_ipc_tail, mcp__hs-drive__hs_screenshot, mcp__hs-drive__hs_input, mcp__hs-drive__hs_stop_game, mcp__hs-drive__hs_lease_acquire, mcp__hs-drive__hs_lease_status, mcp__hs-drive__hs_lease_release, mcp__hs-drive__hs_skills_status, mcp__hs-drive__hs_skill_cast, mcp__hs-drive__hs_skill_bind, mcp__hs-drive__hs_talent_allocate, mcp__hs-drive__hs_talent_reset, mcp__hs-drive__hs_give_item, mcp__hs-drive__hs_stash_open, mcp__hs-drive__hs_stash_close, mcp__hs-drive__hs_stash_tab, mcp__hs-drive__hs_bag_tab
-model: sonnet
-effort: high
+model: opus
+effort: medium
 color: orange
 ---
 
@@ -118,6 +118,9 @@ is the planner's to fix.
   phase1h's criteria unreadable and cost a round. The verdict is the first
   word after the line's last `|`; a note may follow it. The criterion reads
   the block with `py -3 tools/live_checks.py <capture> --expect <names>`.
+  That list is the form you must write: the tool reads a `| Check | Result |`
+  table under `## Checks summary` only as a fallback for a capture that has no
+  list.
 - **Never force-stop the game, and never restore any backup but the one you
   took in this session.** Restoring your own at step 8 is required; restoring
   someone else's overwrites their evidence, and R17 fails it.

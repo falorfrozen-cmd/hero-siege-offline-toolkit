@@ -266,6 +266,30 @@ class TestCppSdkBehaviour(unittest.TestCase):
         """#93: global.equippedItems' relic slots, resolved through the game's own scripts."""
         self.assertIn("equipped_slot_maxed_relics=2", self.output, self.output)
 
+    def test_the_relic_tab_resolves_to_its_maxed_relic(self):
+        """ForgePact#125: Controller_obj.inventoryData[key].inventoryRelicGrid, resolved the same way."""
+        self.assertIn("relic_tab_maxed_relics=1 id40=1", self.output, self.output)
+
+    def test_ground_relic_read_identifies_a_relic_instance(self):
+        """ForgePact#124: a relic on the ground, its class and id on the instance's own variables."""
+        self.assertIn("ground_relic_object read=1 id=42 stage=ok", self.output, self.output)
+
+    def test_ground_relic_read_accepts_an_instance_reference(self):
+        """The ground instance as the VALUE_REF this runner produces reads the same as a struct."""
+        self.assertIn("ground_relic_reference read=1 id=42 stage=ok", self.output, self.output)
+
+    def test_ground_relic_read_refuses_an_ordinary_item(self):
+        """Refused by class, never by a level- or id-shaped field, with the stage named.
+
+        The undefined value is the negative control for accepting a reference.
+        """
+        self.assertIn(
+            "ground_relic_refused ordinary=not-relic material=not-relic "
+            "classless=no-class undefined=no-handle",
+            self.output,
+            self.output,
+        )
+
     def test_compiled_item_type_table_matches_python(self):
         """The compiled kItemTypes, not the header text tests/test_item_type_parity.py parses.
 

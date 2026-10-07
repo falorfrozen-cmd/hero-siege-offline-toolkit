@@ -90,9 +90,19 @@ it exits 3 (still running): each poll returns within 220 s, under the
 four-minute limit `workorder_audit.py` R5 holds every blocking call to. Then
 act on its exit code:
 
-- **0, finished.** Read `<scratch>/criteria/report.txt`. It is everything
-  the runner printed, byte for byte, the same output a foreground run
-  gives, and you judge it as below.
+- **0, finished.** Run `py -3 tools/run_criteria.py --digest
+  "<scratch>/criteria"` and judge from that, as below. The digest prints a
+  header (how many criteria, how many shown in full, `report.txt`'s size),
+  the scope block when the run was scoped, and then per criterion, in plan
+  order: a SKIPPED or NOT SELECTED criterion as its one report line, an
+  exit-only criterion whose every command exited as expected as one line
+  (`criterion k: exit-only, expects exit N: cmd-1 exit 0 (12s)`), and every
+  other criterion's block exactly as `report.txt` has it. It judges nothing:
+  you still decide. Open `<scratch>/criteria/cmd-<n>.log`, or a ranged read
+  of `report.txt`, only for a criterion the digest prints in one line whose
+  expectation needs output. Never `Read` `report.txt` whole: it is 100-217 KB
+  a run, and reading it whole was the one cost of the verifier's that rose
+  after 2026-10-02 (docs/agents/workorder-calibration.md, 2026-10-03).
 - **4, stale** (not finished and not updated for over 1,900 s, so the runner
   died). Start it again in the background from the first criterion the
   status lines do not show as `done`, with `--start <that k>` and a fresh
@@ -161,7 +171,13 @@ is a failed criterion, quoted with its error, not a `NEEDS HUMAN` entry. On
 false verdict (forgepact-issue-14-phase1j-record, round 0);
 `tools/workorder_audit.py` R21 fails a verifier that runs `python`.
 
-**3. Run the full root suite** unless the workorder says otherwise — **once**.
+**3. Run the full root suite only on a full verify** — the final gate before
+the pull request, or a dispatch with no `--dev`, `--changed-since` or
+`--item` — and then **once**. A development verify (`--dev`, or a reach
+re-verify) skips this step unless a selected criterion runs the suite: the
+owner, 2026-10-02, "full suite runs ... should be reserved to the last step
+before the pr. during development only relevant subset should be run."
+
 When a criterion already ran it (the runner printed `py -3 -m unittest
 discover -s tests` from the checkout root), that run *is* the suite run: grep
 its `cmd-<n>.log` and do not run it again. Otherwise run it with the Bash
@@ -210,10 +226,10 @@ reaches"). Your dispatch then gives you the runner command with
 `--changed-since <base>` (one per repo) and `--failed <k,...>`. Run exactly
 that command, in place of the plain one in step 2, and run it the same way:
 in the background with `--out`, waited on with the capped `run_criteria.py
---status <out> --wait 220` poll, read from `<out>/report.txt`, and restarted
-with `--start` if it goes stale. The runner prints the scope before it runs
-anything, so the scope is the head of `report.txt`: the changed paths, then
-each criterion as `run` or `skip` with its reason.
+--status <out> --wait 220` poll, judged from `run_criteria.py --digest
+<out>`, and restarted with `--start` if it goes stale. The runner prints the
+scope before it runs anything, and the digest repeats that block exactly:
+the changed paths, then each criterion as `run` or `skip` with its reason.
 
 - Report every criterion it selected exactly as in step 2.
 - Report every criterion it prints as `NOT SELECTED (<why>)` with the
@@ -231,6 +247,18 @@ each criterion as `run` or `skip` with its reason.
 
 Do not narrow a verify on your own. Without those flags in your dispatch,
 you run every criterion.
+
+## When you run a development verify
+
+A workorder's first verify, and the items gate, run during development. Your
+dispatch then gives you `run_criteria.py <plan> --jobs auto --dev`: every
+criterion except a whole suite (`unittest discover`, `run_tests_parallel.py`,
+a bare `pytest`) and any marked `(final)`, which the runner prints as `NOT
+SELECTED (final gate only: ...)`. Run it exactly as step 2 says, in the
+background, and report each deferred criterion as `not-selected` with that
+reason, never `pass`. Skip step 3. The full set, suites included, runs once
+as the final gate before the pull request, from a dispatch with none of
+these flags.
 
 ## When you check one item
 

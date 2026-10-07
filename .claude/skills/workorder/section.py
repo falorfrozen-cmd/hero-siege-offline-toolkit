@@ -51,13 +51,34 @@ printed as a window around each match. Why: agents did read ForgePact's guide
 because 23 of its lines hold 128KB (measured 2026-09-22) -- a 20-line window
 returned 45.6KB.
 
-Exit codes: 0 printed; 2 usage, or the file cannot be read; 3 no such
-heading (the file's headings are listed on stderr); 4 the heading is
-ambiguous (each match is listed on stderr -- add its `#`s, or fix the plan);
-5 a code fence is never closed, so sections cannot be told apart (the old
-behaviour was to print to the end of the file, Log and all, with exit 0);
-6 the heading is in the Log and `--log` was not given; 7 `--grep` matched
-nothing in the section.
+A code file -- `.cpp .cc .c .hpp .h .py .js .mjs .ts` -- is read by symbol
+instead of by heading (every other file is markdown, as above):
+
+    py -3 .claude/skills/workorder/section.py <file> --toc [--grep '<regex>']
+    py -3 .claude/skills/workorder/section.py <file> '<symbol>' [--grep '<regex>']
+
+`--toc` lists one line per function, class or method, `<start>-<end>  <KB>KB
+<kind> <name>`, in file order; past 20 KB it prints the symbol count, the
+file's banner regions and how to narrow it, and `--grep` keeps the symbols
+whose names match. `'<symbol>'` prints a header line, `-- <file> lines
+<start>-<end> (<kind> <qualified name>)`, then the definition exactly as the
+file has it, decorators included and the comment above it not. A name is
+matched exactly, then as a qualified name (`Class::Method`, `Class.method`),
+then case-insensitively; `--grep` prints only the body's matching lines, each
+with its file line number and two lines of context. The index is
+`tools/source_index.py`'s `index_code`. Why: measured 2026-10-03, an
+implementer reached a function in a 2.5 MB source file with a `grep -n` and a
+`sed -n` range, two or three calls a time, and `source_index.py --functions`
+saw nothing inside a `namespace` block.
+
+Exit codes: 0 printed; 2 usage, or the file cannot be read (or, for code, be
+parsed); 3 no such heading or symbol (the file's headings, or up to 20 names
+containing the request, are listed on stderr); 4 the heading or symbol is
+ambiguous (each match is listed on stderr -- add its `#`s or its class, or
+fix the plan); 5 a code fence is never closed, so sections cannot be told
+apart (the old behaviour was to print to the end of the file, Log and all,
+with exit 0); 6 the heading is in the Log and `--log` was not given; 7
+`--grep` matched nothing in the section, the symbol, or the toc.
 """
 
 from __future__ import annotations
@@ -240,6 +261,131 @@ def grep_section(body: str, pattern: str, first_line: int) -> str:
     return "\n\n".join(out) + ("\n" if out else "")
 
 
+CODE_SUFFIXES = (".cpp", ".cc", ".c", ".hpp", ".h", ".py", ".js", ".mjs", ".ts")
+TOC_CAP_BYTES = 20 * 1024
+CONTEXT_LINES = 2
+
+
+def _source_index():
+    """`tools/source_index.py`, loaded from this file's own checkout -- not
+    from the working directory, which an agent may have moved anywhere."""
+    import importlib.util
+    path = Path(__file__).resolve().parents[3] / "tools" / "source_index.py"
+    spec = importlib.util.spec_from_file_location("source_index", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _index(path: str, text: str) -> tuple:
+    """(lines, symbols, regions, None) or (None, None, None, error text)."""
+    try:
+        lines, symbols, regions = _source_index().index_code(text, Path(path).suffix)
+    except SyntaxError as exc:
+        return None, None, None, f"cannot index {path}: {type(exc).__name__}: {exc.msg} (line {exc.lineno})\n"
+    return lines, symbols, regions, None
+
+
+def _find_symbol(symbols: list, request: str) -> list:
+    """The symbols the strictest matching tier names: the exact name, then
+    the qualified name (also as the tail of the namespace-qualified one), then
+    the name or qualified name case-insensitively. Within a tier, listed
+    symbols win over a definition nested inside a function."""
+    req = request.strip()
+    low = req.lower()
+    tiers = (
+        lambda s: s["name"] == req,
+        lambda s: req in (s["qual"], s["full"]) or s["full"].endswith(("::" + req, "." + req)),
+        lambda s: low in (s["name"].lower(), s["qual"].lower()),
+    )
+    for tier in tiers:
+        hits = [s for s in symbols if tier(s)]
+        if hits:
+            return [s for s in hits if s["toc"]] or hits
+    return []
+
+
+def code_toc(path: str, text: str, pattern=None) -> tuple:
+    """(exit code, stdout, stderr): one line per listed symbol, or -- past
+    TOC_CAP_BYTES -- the count, the banner regions and how to narrow it."""
+    lines, symbols, regions, err = _index(path, text)
+    if err:
+        return 2, "", err
+    listed = [s for s in symbols if s["toc"]]
+    if pattern is not None:
+        try:
+            rx = re.compile(pattern, re.IGNORECASE)
+        except re.error as exc:
+            return 2, "", f"bad --grep pattern {pattern!r}: {exc}\n"
+        listed = [s for s in listed if rx.search(s["qual"])]
+        if not listed:
+            return 7, "", f"no symbol in {path} matches {pattern!r}\n"
+    if not listed:
+        return 0, f"no symbols found in {path}\n", ""
+    cum = [0]
+    for line in lines:
+        cum.append(cum[-1] + len(line.encode("utf-8")) + 1)
+    out = "".join(f"{s['start']}-{s['end']}  {(cum[s['end']] - cum[s['start'] - 1]) / 1024.0:.1f}KB  "
+                  f"{s['kind']} {s['qual']}\n" for s in listed)
+    size = len(out.encode("utf-8"))
+    if size <= TOC_CAP_BYTES:
+        return 0, out, ""
+    si = _source_index()
+    what = "symbols" if pattern is None else f"symbols matching {pattern!r}"
+    summary = [f"{path}: {len(listed)} {what}; the listing is {size / 1024.0:.1f}KB, over the "
+               f"{TOC_CAP_BYTES // 1024}KB cap."]
+    if regions:
+        summary.append("banner regions (source_index.py; [R] = research-only guard):")
+        summary.extend(si._fmt_region_line(r) for r in regions)
+    summary.append(f"narrow the list with --grep '<regex>' (matched against symbol names, case-insensitive), "
+                   f"or print one: section.py {path} '<symbol>'")
+    return 0, "\n".join(summary) + "\n", ""
+
+
+def _grep_lines(body: list, first: int, pattern: str) -> str:
+    """The lines of `body` matching `pattern` (case-insensitive) as `N:text`,
+    with CONTEXT_LINES of context each side as `N-text`, groups split by
+    `--` -- grep -n -C's own shape."""
+    rx = re.compile(pattern, re.IGNORECASE)
+    hits = [i for i, line in enumerate(body) if rx.search(line)]
+    keep = sorted({k for i in hits for k in range(max(0, i - CONTEXT_LINES), min(len(body), i + CONTEXT_LINES + 1))})
+    out, prev = [], None
+    for k in keep:
+        if prev is not None and k != prev + 1:
+            out.append("--")
+        out.append(f"{first + k}{':' if k in hits else '-'}{body[k]}")
+        prev = k
+    return "\n".join(out) + ("\n" if out else "")
+
+
+def code_extract(path: str, text: str, request: str, pattern=None) -> tuple:
+    """(exit code, stdout, stderr): the header line and the symbol's lines."""
+    lines, symbols, _, err = _index(path, text)
+    if err:
+        return 2, "", err
+    hits = _find_symbol(symbols, request)
+    if not hits:
+        low = request.strip().lower()
+        near = list(dict.fromkeys(s["qual"] for s in symbols if low and low in s["qual"].lower()))[:20]
+        listing = "\n".join(f"  {name}" for name in near) or "  (none)"
+        return 3, "", f"no symbol {request!r} in {path}; names containing it:\n{listing}\n"
+    if len(hits) > 1:
+        listing = "\n".join(f"  lines {s['start']}-{s['end']}  {s['kind']} {s['full']}" for s in hits)
+        return 4, "", f"symbol {request!r} is ambiguous in {path}:\n{listing}\n"
+    s = hits[0]
+    header = f"-- {path} lines {s['start']}-{s['end']} ({s['kind']} {s['full']})\n"
+    body = lines[s["start"] - 1:s["end"]]
+    if pattern is None:
+        return 0, header + "\n".join(body) + "\n", ""
+    try:
+        found = _grep_lines(body, s["start"], pattern)
+    except re.error as exc:
+        return 2, "", f"bad --grep pattern {pattern!r}: {exc}\n"
+    if not found:
+        return 7, "", f"nothing in {request!r} matches {pattern!r}\n"
+    return 0, header + found, ""
+
+
 def _option(argv: list, name: str) -> tuple:
     """(value or None, argv without `name value`)."""
     if name not in argv:
@@ -256,7 +402,10 @@ def main(argv: list) -> int:
     argv = [a for a in argv if a not in ("--log", "--toc")]
     pattern, argv = _option(argv, "--grep")
     usage = ("usage: section.py <file> '<heading>' [--log] [--grep <regex>]\n"
-             "       section.py <file> --toc [--log]\n")
+             "       section.py <file> --toc [--log]\n"
+             "       section.py <code file> '<symbol>' [--grep <regex>]\n"
+             "       section.py <code file> --toc [--grep <regex>]\n"
+             f"       (a code file ends in {' '.join(CODE_SUFFIXES)})\n")
     if pattern == "" or len(argv) != (1 if want_toc else 2):
         sys.stderr.write(usage)
         return 2
@@ -266,7 +415,12 @@ def main(argv: list) -> int:
     except OSError as exc:
         sys.stderr.write(f"cannot read {argv[0]}: {exc}\n")
         return 2
-    if want_toc:
+    if Path(argv[0]).suffix.lower() in CODE_SUFFIXES:
+        if want_toc:
+            code, out, err = code_toc(argv[0], text, pattern)
+        else:
+            code, out, err = code_extract(argv[0], text, argv[1], pattern)
+    elif want_toc:
         code, out, err = toc(text, allow_log)
     else:
         code, out, err = extract(text, argv[1], allow_log)

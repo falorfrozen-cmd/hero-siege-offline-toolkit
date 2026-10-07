@@ -210,10 +210,64 @@ GIT_SUBCOMMAND_RE = re.compile(
     re.IGNORECASE)
 
 
+# `git config` reads or writes depending on its arguments. These read whatever
+# else is on the line; a write option, or a key followed by a value, writes.
+GIT_CONFIG_READ_OPTIONS = frozenset({
+    "--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color",
+    "--get-colorbool", "--list", "-l",
+})
+GIT_CONFIG_WRITE_OPTIONS = frozenset({
+    "--add", "--unset", "--unset-all", "--replace-all", "--rename-section",
+    "--remove-section", "--edit", "-e",
+})
+# Options that take a value as the next word, so it is not a key or value.
+GIT_CONFIG_VALUED_OPTIONS = frozenset({"--file", "-f", "--blob", "--type", "--default", "--comment"})
+# git >= 2.46 spells the action as a word: `git config get <key>`.
+GIT_CONFIG_READ_ACTIONS = frozenset({"get", "list"})
+GIT_CONFIG_WRITE_ACTIONS = frozenset({"set", "unset", "rename-section", "remove-section", "edit"})
+_SHELL_SEPARATOR_RE = re.compile(r"&&|\|\||[;|&\n]")
+
+
+def _git_config_reads_only(args: str) -> bool:
+    """Whether `git config <args>` (args cut at the next shell separator) only reads."""
+    words = args.split()
+    if words and words[0] in GIT_CONFIG_READ_ACTIONS:
+        return True
+    if words and words[0] in GIT_CONFIG_WRITE_ACTIONS:
+        return False
+    positional, reads, skip = [], False, False
+    for word in words:
+        if skip:
+            skip = False
+            continue
+        option = word.split("=", 1)[0]
+        if option in GIT_CONFIG_WRITE_OPTIONS:
+            return False
+        if option in GIT_CONFIG_READ_OPTIONS:
+            reads = True
+        elif word.startswith("-"):
+            skip = option in GIT_CONFIG_VALUED_OPTIONS and "=" not in word
+        else:
+            positional.append(word)
+    # `--get <key> [<value-pattern>]` takes two words and still reads; a bare
+    # `<key>` reads, and `<key> <value>` writes.
+    return reads or len(positional) <= 1
+
+
 def _git_mutations(cmd: str) -> List[str]:
-    """Every git subcommand in `cmd` that is not a known read-only one."""
-    return [m.group(2).lower() for m in GIT_SUBCOMMAND_RE.finditer(cmd)
-            if m.group(2).lower() not in GIT_READ_ONLY_SUBCOMMANDS]
+    """Every git subcommand in `cmd` that is not a known read-only one.
+
+    `git config` counts only when its arguments write (`git config core.autocrlf`
+    reads; `git config core.autocrlf false` writes)."""
+    found = []
+    for m in GIT_SUBCOMMAND_RE.finditer(cmd):
+        sub = m.group(2).lower()
+        if sub in GIT_READ_ONLY_SUBCOMMANDS:
+            continue
+        if sub == "config" and _git_config_reads_only(_SHELL_SEPARATOR_RE.split(cmd[m.end():], 1)[0]):
+            continue
+        found.append(sub)
+    return found
 
 SHELL_WRITE_VERB_RE = re.compile(
     r"\b(tee|cp|mv|rm)\b|\bsed\s+-i\w*\b|"
@@ -427,6 +481,10 @@ class AgentTranscript:
     session_id: str
     path: Path
     round: Optional[int] = None
+    # The effort level of a generated effort variant (`planner-xhigh` runs as
+    # agent_type "planner", effort "xhigh"); None for an agent spawned under
+    # its own name, which runs at the `effort:` its definition pins.
+    effort: Optional[str] = None
     workflow_id: Optional[str] = None
     is_driver: bool = False
 
@@ -530,15 +588,32 @@ SHELL_TIMEOUT_RE = re.compile(r"did not complete within its \d+\s*s timeout|Comm
 CHECK_FAILURE_RE = re.compile(r"\bFAIL:|\bERROR:|\bFAILED\b|\bEXIT=(?!0\b)-?\d+|-> exit (?!0\b)-?\d+")
 
 
+# `tools/sync_agent_tooling.py` writes `<agent>-<effort>.md` for each level an
+# agent's `effort-variants:` lists, so /workorder can pick an effort per spawn
+# (the Agent tool takes no effort, and a transcript records none). Each rule
+# here asks about the role, so the variant counts as its base agent and keeps
+# its level beside it.
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+EFFORT_VARIANT_RE = re.compile(r"^(?P<base>[\w:-]+?)-(?P<effort>" + "|".join(EFFORT_LEVELS) + r")$")
+
+
+def split_effort_variant(agent_type: str) -> tuple:
+    """(base agent type, effort) for a generated variant name, else
+    (agent_type, None)."""
+    m = EFFORT_VARIANT_RE.match(agent_type or "")
+    return (m.group("base"), m.group("effort")) if m else (agent_type, None)
+
+
 def parse_transcript(path: Path, agent_type: str, label: str, session_id: str,
                       round_: Optional[int] = None, workflow_id: Optional[str] = None,
                       is_driver: bool = False, until: Optional[datetime] = None) -> AgentTranscript:
     """Parse one transcript. `until`, when given, skips every timestamped
     record after it, so a snapshot of a session that is still running can
     be reproduced later; records without a timestamp are kept either way."""
+    agent_type, effort = split_effort_variant(agent_type)
     agent = AgentTranscript(
         agent_type=agent_type, label=label, session_id=session_id, path=path,
-        round=round_, workflow_id=workflow_id, is_driver=is_driver,
+        round=round_, workflow_id=workflow_id, is_driver=is_driver, effort=effort,
     )
     pending: dict = {}  # tool_use_id -> ToolCall
     user_candidates: list = []  # (ts, text, origin kind), resolved once the whole transcript is read
@@ -1736,6 +1811,97 @@ def rule_r25_owner_scope(session: Session) -> RuleResult:
     return RuleResult("R25", "owner-scope", passed=not evidence, evidence=evidence)
 
 
+# R26 read the diff after a write. The owner, 2026-10-02: after each write
+# agents "spend lots of times on reads ... make sure only difference or
+# relevant things are read after every write instead". Over the 14 days
+# before, planners read back files they had just written 619 times and
+# implementers 225, most of them the whole file, to confirm an edit the
+# `Edit` result had already confirmed. An implementer or planner that reads
+# a file it wrote whole -- `Read` with no offset or limit, or a bare `cat`,
+# `type` or `Get-Content` of it -- more than the allowance fails. A shell
+# command that names the file in between may have rewritten it (a generator,
+# a formatter), so it clears the file: reading that output is not re-reading
+# one's own edit. `git diff -- <file>`, a grep or a ranged read is the route.
+REREAD_AFTER_WRITE_ALLOWANCE = 2
+REREAD_ROLES = {"implementer", "planner"}
+WHOLE_SHELL_READ_RE = re.compile(
+    r"^(?:cd\s+(?:\"[^\"]+\"|'[^']+'|\S+)\s*(?:;|&&)\s*)*(?:cat|type|Get-Content|gc)\s+(?!.*[|>])(?!.*-(?:TotalCount|Tail|Head|First)\b)(.+)$",
+    re.I | re.S)
+
+
+def _base(path: str) -> str:
+    return path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
+
+
+def whole_rereads(calls: list) -> list:
+    """[(call, path)] for each whole-file read of a path this agent wrote,
+    with no shell command naming it in between."""
+    written: dict = {}  # basename -> full path last written
+    found = []
+    for c in calls:
+        inp = c.tool_input or {}
+        if c.name in EDIT_TOOLS and not c.is_error and not c.guard_refused:
+            path = str(inp.get("file_path", ""))
+            if path:
+                written[_base(path)] = path
+        elif c.name == "Read":
+            path = str(inp.get("file_path", ""))
+            if _base(path) in written and inp.get("offset") is None and inp.get("limit") is None:
+                found.append((c, path))
+        elif c.name in SHELL_TOOLS:
+            cmd = str(inp.get("command", ""))
+            m = WHOLE_SHELL_READ_RE.match(cmd.strip())
+            names = {k for k in written if k and k in cmd.lower()}
+            if m and names:
+                found.append((c, written[sorted(names)[0]]))
+            else:
+                for k in names:
+                    del written[k]
+    return found
+
+
+def rule_r26_reread_after_write(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_subagents(session):
+        if agent.agent_type not in REREAD_ROLES:
+            continue
+        found = whole_rereads(agent.tool_calls)
+        if len(found) > REREAD_AFTER_WRITE_ALLOWANCE:
+            paths = sorted({_base(p) for _, p in found})
+            evidence.append(f"{agent.label or agent.agent_type}: {len(found)} whole-file reads of files it had just "
+                            f"written ({', '.join(paths[:5])}{', ...' if len(paths) > 5 else ''}); allowance "
+                            f"{REREAD_AFTER_WRITE_ALLOWANCE} -- read the diff (`git diff -- <file>`) or the range instead")
+    return RuleResult("R26", "reread-after-write", passed=not evidence, evidence=evidence)
+
+
+# R27 the amendment tier. An amendment applies one correction someone else
+# already stated, so it never needs the top tier: an amendment planner always
+# runs on opus, never fable, and since 2026-10-05 (fable left the owner's
+# license; the ladder now escalates effort) never at `xhigh` or `max` either
+# -- SKILL.md spawns it as `planner-medium`. The audit of 2026-10-03 found one that ran on
+# fable, from a driver that spawned it through SKILL.md's owner-scope route
+# and carried the workorder's escalated `planner-tier=` over to it, while its
+# sibling amendment in the same session ran opus. The model read is the one
+# most of the transcript's turns ran on (`AgentTranscript.model`), not the
+# alias that was asked for.
+AMENDMENT_TOO_HIGH = {"xhigh", "max"}
+
+
+def rule_r27_amendment_tier(session: Session) -> RuleResult:
+    evidence = []
+    for agent in all_subagents(session):
+        model = agent.model or ""
+        if not is_amendment(agent):
+            continue
+        if "fable" in model.lower():
+            evidence.append(f"{agent.label}: ran on {model}; an amendment planner always runs on opus, "
+                            f"never fable -- spawn it with model: opus whatever planner-tier the State records")
+        elif agent.effort in AMENDMENT_TOO_HIGH:
+            evidence.append(f"{agent.label}: ran as planner-{agent.effort}; an amendment planner is never "
+                            f"escalated -- spawn planner-medium whatever planner-tier the State records")
+    return RuleResult("R27", "amendment-tier", passed=not evidence, evidence=evidence)
+
+
 ALL_RULES = [
     rule_r1_reviewer_reads_workorder,
     rule_r2_verifier_scope,
@@ -1762,6 +1928,8 @@ ALL_RULES = [
     rule_r23_lane_git_mutation,
     rule_r24_cheap_routes,
     rule_r25_owner_scope,
+    rule_r26_reread_after_write,
+    rule_r27_amendment_tier,
 ]
 
 
@@ -1781,6 +1949,7 @@ def _agent_row(agent: AgentTranscript) -> dict:
         "round": agent.round if agent.round is not None else "-",
         "lane": lane_of(agent.label) or "-",
         "model": (agent.model or "-").replace("claude-", ""),
+        "effort": agent.effort or "-",
         "turns": agent.turn_count,
         "tokens": agent.total_tokens,
         "output_tokens": agent.total_output_tokens,
@@ -1964,7 +2133,8 @@ def _spread(values: list) -> dict:
 
 def calibrate(sessions: list) -> dict:
     """The distributions the budgets above are set from, over many sessions:
-    per role (and per reviewer type, and per role and model) turns, tokens,
+    per role (and per reviewer type, and per role, model and effort -- an
+    effort variant's level, "pinned" for its definition's own) turns, tokens,
     context per turn and list-price cost; per-round subagent tokens, round 0
     apart from later rounds; driver turns per round; and how many sessions
     each rule fails as the constants stand. Each budget's comment names the
@@ -1977,9 +2147,9 @@ def calibrate(sessions: list) -> dict:
     for session in sessions:
         for agent in all_subagents(session):
             by_role[agent.agent_type].append(agent)
-            by_role_model[(agent.agent_type, agent.model or "?")].append(agent)
+            by_role_model[(agent.agent_type, agent.model or "?", agent.effort or "pinned")].append(agent)
         by_role["driver"].append(session.driver)
-        by_role_model[("driver", session.driver.model or "?")].append(session.driver)
+        by_role_model[("driver", session.driver.model or "?", "session")].append(session.driver)
         for (_wf, round_), total in round_totals(session).items():
             (rounds0 if round_ == 0 else rounds_later).append(total)
         driver_rounds.extend(driver_turns_per_round(session).values())
@@ -1999,7 +2169,7 @@ def calibrate(sessions: list) -> dict:
         "sessions": len(sessions),
         "cost_usd": round(sum(costs), 2),
         "roles": {k: role_row(v) for k, v in sorted(by_role.items())},
-        "roles_by_model": {f"{k[0]} / {k[1]}": role_row(v) for k, v in sorted(by_role_model.items())},
+        "roles_by_model": {f"{k[0]} / {k[1]} / {k[2]}": role_row(v) for k, v in sorted(by_role_model.items())},
         "round0_tokens": _spread(rounds0),
         "later_round_tokens": _spread(rounds_later),
         "driver_turns_per_round": _spread(driver_rounds),
@@ -2012,7 +2182,7 @@ def format_calibration(cal: dict) -> str:
         return (f"n={s['n']:<3} p50={s['p50'] / scale:,.1f}{unit} p75={s['p75'] / scale:,.1f}{unit} "
                 f"p90={s['p90'] / scale:,.1f}{unit} max={s['max'] / scale:,.1f}{unit}")
     out = [f"{cal['sessions']} sessions, list-price cost ${cal['cost_usd']:,.2f}", ""]
-    for title, rows in (("per role", cal["roles"]), ("per role and model", cal["roles_by_model"])):
+    for title, rows in (("per role", cal["roles"]), ("per role, model and effort", cal["roles_by_model"])):
         out.append(f"{title}:")
         for name, r in rows.items():
             out.append(f"  {name}  (${r['cost_usd']:,.2f})")

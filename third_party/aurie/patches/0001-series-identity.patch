@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hero Siege Offline Toolkit <noreply@example.invalid>
+Date: Sat, 19 Sep 2026 12:00:00 +0000
+Subject: [PATCH 1/2] Name the Hero Siege patch series in the log
+
+Why: The AurieCore.dll this toolkit distributes stops being upstream's
+binary with this series, and a log has to say which build wrote it. One
+line straight after upstream's "loaded at" line names the upstream
+version and this series' revision, so an aurie.log from a player can
+always be matched to the patch series, and through it to the source,
+that produced the DLL. The YYToolkit series does the same in its first
+log line; the provenance problem that line answers there (a distributed
+binary whose changes no document listed) is the one this line prevents
+here.
+
+Evidence: Upstream v2.0.2 writes "Aurie Core v2.0.2 loaded at <address>"
+as the first line of <game>\bin\aurie.log and nothing that tells an
+upstream build from a modified one (read 2026-10-06). The revision string
+compiled here is the "series_revision" of third_party/aurie/upstream.json
+in hero-siege-offline-toolkit; tests/test_aurie_patch_series.py there
+fails when the two differ.
+
+Fails-safe: One informational log line, written after the logger exists
+and before any module loads. It reads three compile-time version macros
+and a string constant, and changes nothing Aurie does.
+
+Log-markers: "Hero Siege patch series", "(hero-siege-offline-toolkit, third_party/aurie)"
+
+Upstream-status: not submitted. The line identifies a Hero Siege
+distribution and has no use upstream.
+
+diff --git a/Aurie/source/AurieMain.cpp b/Aurie/source/AurieMain.cpp
+index dbddf56..37be18e 100644
+--- a/Aurie/source/AurieMain.cpp
++++ b/Aurie/source/AurieMain.cpp
+@@ -8,6 +8,11 @@
+ 
+ #include "framework/framework.hpp"
+ 
++// Hero Siege patch series: the revision of the series this DLL was built from. It must equal
++// "series_revision" in third_party/aurie/upstream.json of hero-siege-offline-toolkit; that
++// repository's tests/test_aurie_patch_series.py compares the two.
++static const char* const g_HeroSiegeSeriesRevision = "hs.1";
++
+ // Unload routine, frees everything properly
+ static void ArProcessDetach(HINSTANCE)
+ {
+@@ -125,6 +130,17 @@ static void ArProcessAttach(HINSTANCE Instance)
+ 
+ 	DbgPrintEx(LOG_SEVERITY_TRACE, "Aurie Core v%d.%d.%d loaded at %p", AURIE_FWK_MAJOR, AURIE_FWK_MINOR, AURIE_FWK_PATCH, Instance);
+ 
++	// Hero Siege patch series: name the source of this build, so that an aurie.log can always be
++	// matched to the patch series that produced the DLL which wrote it.
++	DbgPrintEx(
++		LOG_SEVERITY_INFO,
++		"[hs] Aurie Core %d.%d.%d, Hero Siege patch series %s (hero-siege-offline-toolkit, third_party/aurie)",
++		AURIE_FWK_MAJOR,
++		AURIE_FWK_MINOR,
++		AURIE_FWK_PATCH,
++		g_HeroSiegeSeriesRevision
++	);
++
+ 	LPWSTR command_line = GetCommandLineW();
+ 	if (wcsstr(command_line, L"-aurie_wait_for_debug"))
+ 	{

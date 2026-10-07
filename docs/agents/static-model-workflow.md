@@ -95,13 +95,33 @@ count again.
   **Run `symdump` in a game with no ForgePact hooks installed** until this is
   checked. A note in `ImportSymbols.java` would belong to a separate ForgePact
   change.
-- **The reading scripts are not in any repository.** Apart from
-  `ImportSymbols.java`, the helpers used for reading (`DecompileTo.java`,
-  `FindCallers.java` and others) exist only in `%USERPROFILE%\ghidra_scripts` on
-  one machine. A second reader would have to rewrite them.
+- **The Ghidra reading scripts, the index and the slot-name helpers are all
+  committed now.** The Ghidra scripts used for reading (`DecompileTo.java`,
+  `FindCallers.java`, `FindSlotNames.java` and eleven more) used to exist on one
+  machine only, so a second reader would have had to rewrite them. Since
+  2026-10-04 they are in `ForgePact/tools/ghidra/`, beside `ImportSymbols.java`
+  (ForgePact issue 169), and
+  [ForgePact/tools/ghidra/README.md](../../ForgePact/tools/ghidra/README.md)
+  says how to run each one headless. The decompile index (which scripts have
+  already been decompiled for which build, and where the files are) and the
+  helpers that name variable slots in an unnamed body are in
+  `tools/decomp_index.py`, described in
+  [docs/tools/decomp-index.md](../tools/decomp-index.md). Since 2026-10-04
+  (hub #413), ask it with `has` before decompiling and record new output with
+  `scan`.
 - **One YYC drop script decompiles to about 50KB.** The planning pass stopped
   before it reached the direction of the inner adjustment. That is why `s` is a
   parameter and not a number.
+- **Keep the decompiler's default limits.** `LoadAllModifiers` (script 2129)
+  does not decompile. With the defaults it hit Ghidra's flow limit. Two local
+  runs with raised settings each ended in a file holding only "Decompiler
+  process died": one with a 1800 s timeout, the other with the same timeout
+  plus `setMaxInstructions(2000000)` and `setMaxPayloadMBytes(2000)`. The
+  owner observed `decompile.exe` growing past 22 GB of memory with the limits
+  raised (an observation from hub #413, in no log). ForgePact #160 measured
+  the value it needed live instead (its Live 3). When a function exceeds the
+  defaults, read the call sites around it or measure it live; do not raise the
+  limits.
 
 ## What the pilot did not show
 

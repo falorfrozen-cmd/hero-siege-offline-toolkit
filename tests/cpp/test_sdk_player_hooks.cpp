@@ -56,16 +56,23 @@ public:
     FakeStruct instanceFields;
     std::map<std::string, RValue> globals;
     std::map<std::string, PVOID> routines;
+    // Instances other than the one instanceFields stands for, by the id a
+    // VALUE_REF carries: a reference whose id is listed here reads these
+    // fields through `variable_instance_*`, the way the runner follows a
+    // reference to its own target. Any other value reads instanceFields.
+    std::map<double, FakeStruct> refInstances;
 
     RValue CallBuiltin(std::string_view name, std::vector<RValue> args) override {
         const std::string key = args.size() >= 2 ? args[1].m_String : std::string();
 
         if (name == "variable_instance_exists") {
-            return RValue(instanceFields.count(key) > 0);
+            const FakeStruct& fields = InstanceOf(args.empty() ? RValue() : args[0]);
+            return RValue(fields.count(key) > 0);
         }
         if (name == "variable_instance_get") {
-            auto it = instanceFields.find(key);
-            return it == instanceFields.end() ? RValue() : it->second;
+            const FakeStruct& fields = InstanceOf(args.empty() ? RValue() : args[0]);
+            auto it = fields.find(key);
+            return it == fields.end() ? RValue() : it->second;
         }
         if (name == "variable_struct_exists") {
             const FakeStruct* fields = StructOf(args.empty() ? RValue() : args[0]);
@@ -96,8 +103,25 @@ public:
             if (index < 0 || index >= static_cast<int>(args[0].m_Elements->size())) return RValue();
             return (*args[0].m_Elements)[static_cast<size_t>(index)];
         }
+        // An asset the map does not name is -1, as the runner answers for an
+        // unknown name; an object with no instance listed has none (`noone`).
+        if (name == "asset_get_index") {
+            const std::string asset = args.empty() ? std::string() : args[0].m_String;
+            auto it = assets.find(asset);
+            return RValue(it == assets.end() ? -1.0 : it->second);
+        }
+        if (name == "instance_find") {
+            const double object = args.empty() ? -1.0 : args[0].ToDouble();
+            auto it = firstInstances.find(object);
+            return it == firstInstances.end() ? RValue(-4.0) : it->second;
+        }
         return RValue();
     }
+
+    /// Asset name -> index (`asset_get_index`), and an object's first instance
+    /// (`instance_find(object, 0)`).
+    std::map<std::string, double> assets;
+    std::map<double, RValue> firstInstances;
 
     RValue CallGameScript(std::string, const std::vector<RValue>&) override { return RValue(); }
 
@@ -151,6 +175,14 @@ private:
 
     static const FakeStruct* StructOf(const RValue& value) {
         return value.m_Struct ? value.m_Struct.get() : nullptr;
+    }
+
+    const FakeStruct& InstanceOf(const RValue& value) const {
+        if (value.m_Kind == YYTK::VALUE_REF) {
+            auto it = refInstances.find(value.m_Real);
+            if (it != refInstances.end()) return it->second;
+        }
+        return instanceFields;
     }
 };
 
@@ -394,8 +426,9 @@ static const char* kFpOrdinary = "0-0-210025648571-7";
 // global.equippedItems as the game lays it out: one row per online player,
 // whose [0] array holds the local character's slots. Slot 8 holds an ordinary
 // weapon, 10-12 three relics (two maxed), 13 a fingerprint the resolver does
-// not know, 14 a number where a string belongs.
-static void FillEquippedSlots(ControlledYYTK& yytk) {
+// not know, 14 a number where a string belongs. `mplr` picks the row the
+// character sits on; the rows before it are empty.
+static void FillEquippedSlots(ControlledYYTK& yytk, int mplr = 0) {
     std::vector<RValue> slots(15);
     slots[8] = RValue(std::string(kFpOrdinary));
     slots[10] = RValue(std::string(kFpRelic135));
@@ -403,9 +436,10 @@ static void FillEquippedSlots(ControlledYYTK& yytk) {
     slots[12] = RValue(std::string(kFpRelic15));
     slots[13] = RValue(std::string(kFpUnresolved));
     slots[14] = RValue(7);
-    const RValue row = RValue::Array({ RValue::Array(std::move(slots)) });
-    yytk.globals["mplr"] = RValue(0);
-    yytk.globals["equippedItems"] = RValue::Array({ row });
+    std::vector<RValue> rows(static_cast<size_t>(mplr) + 1, RValue::Array({}));
+    rows[static_cast<size_t>(mplr)] = RValue::Array({ RValue::Array(std::move(slots)) });
+    yytk.globals["mplr"] = RValue(mplr);
+    yytk.globals["equippedItems"] = RValue::Array(std::move(rows));
 
     yytk.gameScripts[std::string(HeroSiege::Scripts::gml_Script_GetOnlinePlayerItemOwner)] =
         [](const std::vector<RValue>&) { return RValue(0); };
@@ -488,6 +522,408 @@ static void TestEquippedSlots() {
         CHECK_EQ(owned.size(), static_cast<size_t>(4));
         if (owned.count(1)) CHECK_EQ(owned.at(1), 3);
         if (owned.count(15)) CHECK_EQ(owned.at(15), 10);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ForgePact#125: the relic tab. Relics owned but not worn sit in
+// Controller_obj.inventoryData[key - 1].inventoryRelicGrid[relicId][0][0] as
+// a grid node carrying the owned copy's `nodeFingerprint`; key is 1 online and
+// the player row (mplr) offline. Measured live 2026-09-30 (Live 1): offline
+// mplr is 1, inventoryData holds one instance reference, and a cell is
+// `[[node]]` or `[[undefined]]`. The fixture below lays that out, with the
+// negative cases beside the real ones.
+// ---------------------------------------------------------------------------
+
+static const char* kFpTab40 = "0-0-211821263155-16";
+static const char* kFpTab7 = "0-0-210869177253-16";
+static const char* kFpTabUnresolved = "0-0-210869177999-16";
+static const char* kFpTabOnline = "0-0-210869184312-16";
+static constexpr double kControllerObject = 984.0;
+
+static RValue TabCell(const char* fingerprint) {
+    const RValue node = RValue::Struct({
+        { "nodeStartX", RValue(0) }, { "nodeStartY", RValue(0) }, { "nodeLocked", RValue(false) },
+        { "nodeIsPermanent", RValue(0) }, { "nodeFingerprint", RValue(std::string(fingerprint)) },
+    });
+    return RValue::Array({ RValue::Array({ node }) });
+}
+
+// One profile's relic grid, 45 cells long: 40 holds a relic at 10/10, 7 one
+// with no `o` at all (level 1, as the save stores it), 12 a fingerprint the
+// resolver does not know, 20 a number, 25 a bare fingerprint string (not the
+// measured node shape, so never read) and 30 nothing. `secondProfile` puts
+// one relic, 42 at 10/10, in that profile instead.
+static RValue RelicGrid(bool secondProfile) {
+    std::vector<RValue> cells(45, RValue::Array({ RValue::Array({ RValue() }) }));
+    if (secondProfile) {
+        cells[42] = TabCell(kFpTabOnline);
+    } else {
+        cells[40] = TabCell(kFpTab40);
+        cells[7] = TabCell(kFpTab7);
+        cells[12] = TabCell(kFpTabUnresolved);
+        cells[20] = RValue::Array({ RValue::Array({ RValue(-4) }) });
+        cells[25] = RValue::Array({ RValue::Array({ RValue(std::string(kFpTab40)) }) });
+        cells[30] = RValue();
+    }
+    return RValue::Array(std::move(cells));
+}
+
+// inventoryData[0] is the profile the game reads for key 1 (offline mplr 1,
+// or online), inventoryData[1] the one for key 2.
+static void FillRelicTab(ControlledYYTK& yytk) {
+    yytk.globals["mplr"] = RValue(1);
+    yytk.globals["onl"] = RValue(0);
+    yytk.assets["Controller_obj"] = kControllerObject;
+    RValue controller;
+    controller.m_Kind = YYTK::VALUE_REF;
+    controller.m_Real = 100002.0;
+    yytk.firstInstances[kControllerObject] = controller;
+    yytk.instanceFields["inventoryData"] = RValue::Array({
+        RValue::Struct({ { "inventoryRelicGrid", RelicGrid(false) } }),
+        RValue::Struct({ { "inventoryRelicGrid", RelicGrid(true) } }),
+    });
+
+    yytk.gameScripts[std::string(HeroSiege::Scripts::gml_Script_GetOnlinePlayerItemOwner)] =
+        [](const std::vector<RValue>&) { return RValue(0); };
+    yytk.gameScripts[std::string(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint)] =
+        [](const std::vector<RValue>& args) {
+            const std::string fp = args.empty() ? std::string() : args[0].m_String;
+            if (fp == kFpTab40) return RelicInstance(40, 10, 0);
+            if (fp == kFpTabOnline) return RelicInstance(42, 10, 0);
+            if (fp == kFpTab7) {
+                return RValue::Struct({
+                    { "itemType", RValue(16) },
+                    { "itemDefinitionStruct", RValue::Struct({ { "b", RValue(7) }, { "c", RValue(0) } }) },
+                });
+            }
+            return RValue();  // VALUE_UNDEFINED: resolves to nothing
+        };
+}
+
+static void TestRelicTab() {
+    using namespace HeroSiege::Player;
+    const std::string resolver(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint);
+
+    // 1. Offline, mplr 1: key 1 reads inventoryData[0]. 40 is maxed, 7 is
+    //    owned at level 1, and only the three nodes' fingerprints reached the
+    //    resolver; the bare string in cell 25 is not a node and is never read.
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        RelicTabScanReport report;
+        const auto owned = GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report);
+        CHECK_EQ(owned.size(), static_cast<size_t>(2));
+        if (owned.count(40)) CHECK_EQ(owned.at(40), 10);
+        if (owned.count(7)) CHECK_EQ(owned.at(7), 1);
+        CHECK(report.stopped == nullptr);
+        CHECK_EQ(report.key, 1);
+        CHECK_EQ(report.profile, 0);
+        CHECK(!report.online);
+        CHECK_EQ(report.gridLength, 45);
+        CHECK_EQ(report.cells, 45);          // every entry within the limit, arrays or not
+        CHECK_EQ(report.nodes, 3);
+        CHECK_EQ(report.strings, 3);
+        CHECK(report.ownerResolved);
+        CHECK_EQ(report.itemsResolved, 3);
+        CHECK_EQ(report.nonStructResults, 1);
+        CHECK_EQ(report.relicInstances, 2);
+        CHECK_EQ(report.maxed.size(), static_cast<size_t>(1));
+        CHECK_EQ(yytk.CallsTo(resolver), static_cast<size_t>(3));
+        for (const auto& call : yytk.scriptCalls) {
+            CHECK(call.selfAndOtherAreGlobal);
+            if (call.name != resolver) continue;
+            CHECK(call.args.size() == 2);
+            if (call.args.size() == 2) CHECK(call.args[0].m_Kind == YYTK::VALUE_STRING);
+        }
+        CHECK(FormatRelicTabScanReport(report) ==
+              "key=1 profile=0 online=no grid=45 cells=45 nodes=3 strings=3 owner=ok resolved=3 refused=0 "
+              "nonstruct=1 noclass=0 relic=2 otherclass=0 maxed=40@10 stopped=none");
+        const auto maxed = GetMaxedRelicIds(&yytk, FakePlayerRef());
+        std::printf("C++: relic_tab_maxed_relics=%d id40=%d\n", static_cast<int>(maxed.size()),
+                    maxed.count(40) ? 1 : 0);
+    }
+
+    // 2. The key: offline it is the player row, so mplr 2 reads
+    //    inventoryData[1]; online it is 1 whatever mplr says, so the same
+    //    world reads inventoryData[0]; and a row of 0 has no profile at all.
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.globals["mplr"] = RValue(2);
+        RelicTabScanReport report;
+        const auto maxed = GetMaxedRelicIds(&yytk, FakePlayerRef(), nullptr, &report);
+        CHECK_EQ(report.key, 2);
+        CHECK_EQ(report.profile, 1);
+        CHECK_EQ(maxed.size(), static_cast<size_t>(1));
+        CHECK(maxed.count(42) == 1);
+    }
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.globals["mplr"] = RValue(2);
+        yytk.globals["onl"] = RValue(1);
+        RelicTabScanReport report;
+        const auto maxed = GetMaxedRelicIds(&yytk, FakePlayerRef(), nullptr, &report);
+        CHECK_EQ(report.key, 1);
+        CHECK_EQ(report.profile, 0);
+        CHECK(report.online);
+        CHECK(maxed.count(40) == 1);
+        CHECK(maxed.count(42) == 0);
+    }
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.globals["mplr"] = RValue(0);
+        RelicTabScanReport report;
+        CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report).empty());
+        CHECK(report.stopped != nullptr && std::string(report.stopped) == "key");
+        CHECK(yytk.scriptCalls.empty());
+    }
+
+    // 3. No Controller_obj: the scan stops there and calls nothing.
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.firstInstances.clear();
+        RelicTabScanReport report;
+        CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report).empty());
+        CHECK(report.stopped != nullptr && std::string(report.stopped) == "controller");
+        CHECK(yytk.scriptCalls.empty());
+    }
+
+    // 4. A key past the profiles, and a profile without a grid, stop at their
+    //    own stages.
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.globals["mplr"] = RValue(4);
+        RelicTabScanReport report;
+        CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report).empty());
+        CHECK(report.stopped != nullptr && std::string(report.stopped) == "inventoryData");
+    }
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.instanceFields["inventoryData"] = RValue::Array({ RValue::Struct({ { "other", RValue(1) } }) });
+        RelicTabScanReport report;
+        CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report).empty());
+        CHECK(report.stopped != nullptr && std::string(report.stopped) == "profile");
+    }
+
+    // 5. The owner script is refused: the stage is named, no item is resolved.
+    {
+        ControlledYYTK yytk;
+        FillRelicTab(yytk);
+        yytk.gameScripts.erase(std::string(HeroSiege::Scripts::gml_Script_GetOnlinePlayerItemOwner));
+        RelicTabScanReport report;
+        CHECK(GetOwnedRelicLevels(&yytk, FakePlayerRef(), nullptr, &report).empty());
+        CHECK(report.stopped != nullptr && std::string(report.stopped) == "owner");
+        CHECK_EQ(yytk.CallsTo(resolver), static_cast<size_t>(0));
+    }
+
+    // 6. The relic tab joins the equipped slots: two maxed relics worn, one in
+    //    the tab, both read for the offline character on row 1.
+    {
+        ControlledYYTK yytk;
+        FillEquippedSlots(yytk, 1);
+        const auto equippedFingerprints = yytk.gameScripts[resolver];
+        FillRelicTab(yytk);
+        const auto tabFingerprints = yytk.gameScripts[resolver];
+        yytk.gameScripts[resolver] = [equippedFingerprints, tabFingerprints](const std::vector<RValue>& args) {
+            RValue item = tabFingerprints(args);
+            return item.m_Kind == YYTK::VALUE_UNDEFINED ? equippedFingerprints(args) : item;
+        };
+        const auto maxed = GetMaxedRelicIds(&yytk, FakePlayerRef());
+        CHECK_EQ(maxed.size(), static_cast<size_t>(3));
+        CHECK(maxed.count(135) == 1);
+        CHECK(maxed.count(109) == 1);
+        CHECK(maxed.count(40) == 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ForgePact#124: a relic lying on the ground. A dropped item is a
+// Loot_Ground_obj instance whose `itemInstance` variable holds the item
+// instance, and that item instance carries the item class (`itemType`) and the
+// definition (`itemDefinitionStruct`, `b` the id) - a static reading of the
+// ground item's Create, not yet confirmed live. The whole item struct is
+// filled under the ground instance's `itemInstance`, and the ground instance
+// handed over both as a struct-shaped instance and as the reference this
+// runner produces.
+// ---------------------------------------------------------------------------
+
+static void FillGroundItem(ControlledYYTK& yytk, const RValue& item) {
+    yytk.instanceFields[std::string(HeroSiege::Player::kGroundItemInstanceField)] = item;
+}
+
+static RValue FakeRef(double id) {
+    RValue ref;
+    ref.m_Kind = YYTK::VALUE_REF;
+    ref.m_Real = id;
+    return ref;
+}
+
+static void TestGroundRelic() {
+    using namespace HeroSiege::Player;
+
+    // 1. A relic instance handed over as VALUE_OBJECT reads as relic 42.
+    {
+        ControlledYYTK yytk;
+        FillGroundItem(yytk, RelicInstance(42, 1, 0));
+        GroundRelicRead read;
+        const bool ok = ReadGroundRelic(&yytk, FakePlayer(), read);
+        std::printf("C++: ground_relic_object read=%d id=%d stage=%s\n", ok ? 1 : 0, read.relicId,
+                    GroundRelicStageName(read.stage));
+        CHECK(ok);
+        CHECK(read.stage == GroundRelicStage::Ok);
+        CHECK_EQ(read.relicId, 42);
+        CHECK_EQ(read.itemClass, kRelicItemClass);
+        CHECK(FormatGroundRelicRead(read) == "stage=ok class=16 id=42");
+    }
+
+    // 2. The same instance as the VALUE_REF this runner hands back reads the
+    //    same. A struct-only accessor would read nothing off a reference.
+    {
+        ControlledYYTK yytk;
+        FillGroundItem(yytk, RelicInstance(42, 1, 0));
+        GroundRelicRead read;
+        const bool ok = ReadGroundRelic(&yytk, FakePlayerRef(), read);
+        std::printf("C++: ground_relic_reference read=%d id=%d stage=%s\n", ok ? 1 : 0, read.relicId,
+                    GroundRelicStageName(read.stage));
+        CHECK(ok);
+        CHECK(read.stage == GroundRelicStage::Ok);
+        CHECK_EQ(read.relicId, 42);
+    }
+
+    // 2b. The item instance, and then its definition too, as a VALUE_REF the
+    //     runner may hand back for a nested value: read through
+    //     `variable_instance_*`, the same relic 42.
+    {
+        ControlledYYTK yytk;
+        yytk.instanceFields[std::string(kGroundItemInstanceField)] = FakeRef(200001.0);
+        yytk.refInstances[200001.0] = *RelicInstance(42, 1, 0).m_Struct;
+        GroundRelicRead read;
+        const bool ok = ReadGroundRelic(&yytk, FakePlayerRef(), read);
+        CHECK(ok);
+        CHECK(read.stage == GroundRelicStage::Ok);
+        CHECK_EQ(read.relicId, 42);
+
+        yytk.refInstances[200001.0]["itemDefinitionStruct"] = FakeRef(200002.0);
+        yytk.refInstances[200002.0] = FakeStruct{ { "b", RValue(42) }, { "c", RValue(0) }, { "o", RValue(1) } };
+        GroundRelicRead refDefinition;
+        const bool refOk = ReadGroundRelic(&yytk, FakePlayerRef(), refDefinition);
+        std::printf("C++: ground_relic_nested_reference read=%d id=%d stage=%s\n", refOk ? 1 : 0,
+                    refDefinition.relicId, GroundRelicStageName(refDefinition.stage));
+        CHECK(refOk);
+        CHECK(refDefinition.stage == GroundRelicStage::Ok);
+        CHECK_EQ(refDefinition.relicId, 42);
+        CHECK(FormatGroundRelicRead(refDefinition) == "stage=ok class=16 id=42");
+    }
+
+    // 2c. Negative control for the nesting: the relic's fields copied flat
+    //     onto the ground instance, with no `itemInstance`, identify nothing.
+    //     A top-level `itemType` is never read.
+    {
+        ControlledYYTK yytk;
+        const RValue flat = RelicInstance(42, 1, 0);
+        for (const auto& [name, value] : *flat.m_Struct) yytk.instanceFields[name] = value;
+        GroundRelicRead read;
+        const bool ok = ReadGroundRelic(&yytk, FakePlayerRef(), read);
+        std::printf("C++: ground_relic_flat read=%d id=%d stage=%s\n", ok ? 1 : 0, read.relicId,
+                    GroundRelicStageName(read.stage));
+        CHECK(!ok);
+        CHECK(read.stage == GroundRelicStage::NoItemInstance);
+        CHECK_EQ(read.itemClass, -1);
+        CHECK_EQ(read.relicId, -1);
+    }
+
+    // 3. Refusals, each naming the stage it stopped at. A refusal also clears
+    //    what an earlier read left in the same struct.
+    const auto refuse = [](const RValue& instance, const RValue* item) {
+        ControlledYYTK yytk;
+        if (item) FillGroundItem(yytk, *item);
+        GroundRelicRead read;
+        read.relicId = 99;
+        read.stage = GroundRelicStage::Ok;
+        const bool ok = ReadGroundRelic(&yytk, instance, read);
+        CHECK(!ok);
+        CHECK_EQ(read.relicId, -1);
+        return read;
+    };
+
+    // A ground instance with no `itemInstance` at all stops at the first
+    // stage, before any class is looked for.
+    CHECK(refuse(FakePlayerRef(), nullptr).stage == GroundRelicStage::NoItemInstance);
+
+    // An `itemInstance` that is no item: a plain number is neither a struct
+    // nor a reference, and a VALUE_OBJECT with no object behind it holds
+    // nothing. Both stop before any class is looked for.
+    const RValue numberItem = RValue(42);
+    RValue nullObjectItem;
+    nullObjectItem.m_Kind = ::YYTK::VALUE_OBJECT;
+    nullObjectItem.m_Object = nullptr;
+    const GroundRelicRead notAnItem = refuse(FakePlayerRef(), &numberItem);
+    CHECK(notAnItem.stage == GroundRelicStage::NoItemInstance);
+    CHECK_EQ(notAnItem.itemClass, -1);
+    CHECK(refuse(FakePlayerRef(), &nullObjectItem).stage == GroundRelicStage::NoItemInstance);
+
+    // An ordinary unique glove (class 4) and a material stack (class 14) whose
+    // `o` would read as maxed: the class says not a relic.
+    const RValue glove = OrdinaryGloveInstance();
+    const RValue material = MaterialStackInstance();
+    const GroundRelicRead ordinary = refuse(FakePlayerRef(), &glove);
+    const GroundRelicRead stack = refuse(FakePlayerRef(), &material);
+    CHECK(ordinary.stage == GroundRelicStage::NotRelic);
+    CHECK_EQ(ordinary.itemClass, 4);
+    CHECK(stack.stage == GroundRelicStage::NotRelic);
+
+    // A definition but no class field. Id-shaped and level-shaped fields -
+    // the relic-only `relicLevel` included - are never evidence on their own.
+    const RValue classless = RValue::Struct({
+        { "b", RValue(42) }, { "relicLevel", RValue(3) },
+        { "itemDefinitionStruct", RValue::Struct({ { "b", RValue(42) }, { "c", RValue(16) }, { "o", RValue(3) } }) },
+    });
+    const GroundRelicRead noClass = refuse(FakePlayerRef(), &classless);
+    CHECK(noClass.stage == GroundRelicStage::NoClass);
+
+    // A class that is not a number is no class either.
+    const RValue stringClass = RValue::Struct({
+        { "itemType", RValue(std::string("16")) },
+        { "itemDefinitionStruct", RValue::Struct({ { "b", RValue(42) } }) },
+    });
+    CHECK(refuse(FakePlayerRef(), &stringClass).stage == GroundRelicStage::NoClass);
+
+    // A relic class with no definition, a definition that is not a struct, a
+    // definition with no id, and an id outside the relic range.
+    const RValue noDefinition = RValue::Struct({ { "itemType", RValue(16) } });
+    const RValue numberDefinition = RValue::Struct({ { "itemType", RValue(16) }, { "itemDefinitionStruct", RValue(42) } });
+    const RValue noId = RValue::Struct({
+        { "itemType", RValue(16) }, { "itemDefinitionStruct", RValue::Struct({ { "o", RValue(1) } }) },
+    });
+    const RValue idOutOfRange = RelicInstance(kRelicIdLimit, 1, 0);
+    CHECK(refuse(FakePlayerRef(), &noDefinition).stage == GroundRelicStage::NoDefinition);
+    CHECK(refuse(FakePlayerRef(), &numberDefinition).stage == GroundRelicStage::NoDefinition);
+    CHECK(refuse(FakePlayerRef(), &noId).stage == GroundRelicStage::NoId);
+    CHECK(refuse(FakePlayerRef(), &idOutOfRange).stage == GroundRelicStage::NoId);
+
+    // Negative control for accepting a reference: an undefined value is not an
+    // instance, even with relic fields on offer.
+    const RValue relic = RelicInstance(42, 1, 0);
+    const GroundRelicRead undefined = refuse(RValue(), &relic);
+    CHECK(undefined.stage == GroundRelicStage::NoHandle);
+    CHECK(refuse(RValue(42), &relic).stage == GroundRelicStage::NoHandle);
+
+    std::printf("C++: ground_relic_refused ordinary=%s material=%s classless=%s undefined=%s notitem=%s\n",
+                GroundRelicStageName(ordinary.stage), GroundRelicStageName(stack.stage),
+                GroundRelicStageName(noClass.stage), GroundRelicStageName(undefined.stage),
+                GroundRelicStageName(notAnItem.stage));
+
+    // No interface at all reads nothing.
+    {
+        GroundRelicRead read;
+        CHECK(!ReadGroundRelic(nullptr, FakePlayerRef(), read));
+        CHECK(read.stage == GroundRelicStage::NoHandle);
     }
 }
 
@@ -805,6 +1241,8 @@ static void TestHookInstaller() {
 int main() {
     TestRelicIdentification();
     TestEquippedSlots();
+    TestRelicTab();
+    TestGroundRelic();
     TestCrossLanguageCases();
     PrintContract();
     PrintItemTypes();

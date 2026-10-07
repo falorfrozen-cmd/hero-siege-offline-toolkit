@@ -995,3 +995,349 @@ compare with this section's rows:
 The implementers' check catch rate (38-58% above) is measured only, and
 nothing here changes their own check run. What the joins cost against the
 lanes' saving (§ "Lanes") is not established.
+
+# The full suite once, before the pull request; the diff after a write (2026-10-02)
+
+## The question
+
+The owner asked for two more cuts: *"full suite runs shouldnt be run so
+frequently. it should be reserved to the last step before the pr. during
+development only relevant subset should be run"*, and, since agents *"seem to
+spend lots of times on reads"* after each write, *"make sure only difference
+or relevant things are read after every write instead"*.
+
+## What was measured
+
+Over the 491 subagent transcripts of the 14 days before (`agentType` from
+each `.meta.json`):
+
+- Only a fix round after an otherwise clean verify was scoped (the
+  2026-09-27 section above). Every round 0 and every items gate ran the full
+  set, and the verifier's step 3 ran the hub's root suite on top of it.
+- Reads after writes did not go where expected. Whole-file re-reads of a
+  file the same agent had just edited were rare: at most one per implementer
+  or planner, none over two. The volume was elsewhere. The scribe, which
+  pastes one Log entry and a few State lines, read both workorder files
+  whole every round: 13 MB over 228 runs, 69 KB a run. Fix-round
+  implementers, fresh agents with no memory of round 0, averaged 22 reads and
+  134 KB each; 105 of their reads were the whole plan and 253 were ranges of
+  the context file, against 90 `section.py` calls.
+
+## What changed
+
+- `run_criteria.py --dev` runs every criterion except a whole suite
+  (`unittest discover`, `run_tests_parallel.py`, a bare `pytest`) and any
+  marked `(final)`; a reach run (`--changed-since`) defers the same ones
+  unless `--failed` names them. `workorder-rounds.js` gives a launch's first
+  verify and the items gate `--dev`, counts a deferred criterion as a known
+  standing so the next fix round can still go by reach, and reports
+  `verifyScope: 'dev'` with a note to run the full set at the final gate.
+  `fullVerify: true` makes a launch the final gate. The verifier skips its
+  step-3 root suite on any development verify. A first verify is `--dev`
+  rather than a reach selection on purpose: a criterion about a file the
+  change forgot to touch would not be selected by reach, and would first
+  fail at the final gate.
+- The scribe reads the `## State` range and the Log's last 30 lines through
+  `Grep` and ranged `Read`s; it now has `Grep`, still no shell. A re-entered
+  implementer is told to read the failed criteria, what the evidence names
+  and `git diff <base> -- <path>` for what earlier rounds changed, not the
+  plan or the files whole. A replanning planner reads the Log since its last
+  plan, not all of it, and no agent reads back a file it just edited.
+- `tools/workorder_audit.py` R26 fails an implementer or planner with more
+  than two whole-file reads of files it wrote.
+
+## Not yet measured
+
+- How much a development verify saves per round. It is the suite's own
+  time (ForgePact's Python suite 11-17 minutes in the UI redesign, the hub's
+  150-170 s) for each round before the final gate, if the plan carries
+  targeted criteria beside it.
+- What deferring finds late: a regression only a whole suite catches now
+  shows at the final gate. Count the final-gate failures a development
+  verify would have caught.
+- The scribe's and the fix-round implementers' read volume after the
+  change, against 69 KB and 134 KB a run above. R26 is calibrated to fail
+  none of the 527 implementer and planner runs measured, so it guards
+  against a regression rather than measuring this one.
+
+# A build is re-run after a fix lands on its sources (2026-10-02)
+
+## The question
+
+In streamed items, a build item (`build-dev`, check `cd ForgePact && cmd //c
+"plugin_build\build.bat dev"`) was marked done the moment its check passed.
+Reviewers keep reading commits after that, and their `BLOCKING` findings
+become fix items that commit to the very sources the build compiled. Nothing
+sent the build back, so a launch could return `PARKED` with
+`build-dev=done` and a DLL older than the last fix.
+
+## What was measured
+
+In workorder `forgepact-124-pet-relics` on 2026-10-02 this happened three
+times in one day. Each time the DLL was a few minutes older than the fix
+commit: 17:50 against 17:53, 18:33 against 18:36, 19:33 against 19:35. Each
+one cost the driver a hand edit of State (`build-dev=held`) and a relaunch.
+
+## What changed
+
+- `plan_lint.py --items-json` adds `build_reads` to every item: the
+  `(reads ...)` globs of its `build`/`exclusive` checks (a declared
+  `(class ...)`, or a command `run_criteria.py` recognises as a build or a
+  barrier; a command it calls `exclusive` only because it does not know it
+  does not count). A build check that declares no `(reads ...)` gives `["*"]`.
+  An item with no such check gives `[]` and is scheduled as before.
+- `workorder-rounds.js` will not start an item with `build_reads` while a fix
+  that may land on those globs is queued or running, or while any other item
+  editing them runs. Waiting for a plan item that is only pending is left to
+  `after:`. A fix with unknown files no longer queues behind a build that is
+  waiting for it, so the two cannot deadlock.
+- When any other item or fix commits a path those globs cover, a done build
+  goes back to pending, and a running one goes back as soon as it finishes.
+  Its implementer is told which commit and paths made it stale, its attempt
+  budget starts over, and its result row carries `rebuilds`. A sixth re-run
+  parks it instead, so two builds that commit into what the other reads
+  cannot loop. This also
+  applies to a build that State's `items:` line carried in as done from an
+  earlier launch.
+- The planner's item rules ask for `(reads ...)` on a build check.
+  `workorder-rounds.test.mjs` replays the sequence with the fix landing after
+  the build and during it, plus a relaunch. With the change switched off,
+  five of the new tests fail.
+
+## Not yet measured
+
+- How many rebuilds a real launch pays. It is one build per fix that lands
+  on the build's sources after the build ran. A build check with no
+  `(reads ...)` pays one for every commit, so watch the `rebuilds` counts in
+  the next plans of items.
+- Whether holding a build behind an overlapping running item costs more
+  wall time than it saves in builds that would have gone stale.
+
+# Plan slices, the amendment tier and symbol lookup (2026-10-03)
+
+## The question
+
+"After a write, read the diff" (2026-10-02, above) cut what agents re-read
+after their own edits. What did they still read, and which of it could one
+command replace? The audit behind this section asked where the input tokens
+went in the sessions after that change, by agent and by file.
+
+## What was measured
+
+Every subagent transcript under the project's transcript directories (each
+`.meta.json` with its `.jsonl`), split at 2026-10-02T08:28Z, the commit that
+landed "after a write, read the diff". **Caveat: the before and after
+workloads differ, so every before/after figure below is a direction, not a
+controlled A/B.**
+
+Per run, before -> after (cache-read Mtok per run; KB read through `Read`
+per run):
+
+| role | Mtok/run | KB/run | other |
+|---|---|---|---|
+| implementer (opus) | 8.70 -> 2.52 | 110 -> 37 | output 3.8k -> 1.3k tokens; 339 -> 287 runs |
+| planner | 5.38 -> 4.16 | 45 -> 14 | |
+| live-operator | 19.9 -> 4.0 | | |
+| verifier (haiku) | 1.17 -> 0.32 | whole-file 17 -> 30 | the rise is `criteria/report.txt`, 100-217 KB each, read whole |
+| scribe | | whole-read 58 -> 4.6 | |
+| reviewers | about halved | | except instrument-blindness-reviewer 0.65 -> 0.81 |
+
+Input tokens after the cut, about 1.53B in all, by agent:
+
+- implementer (opus): 745M over 283 runs.
+- planner: 272M. Opus ran 49 of those runs for 154M; fable ran 14 for 119M,
+  8.49M a run. The fable runs were first plans, second-or-later replans and
+  one amendment, `amendment: forgepact-74 live2 owner scope inject round`.
+  The driver spawned it by SKILL.md's owner-scope plan-change route and
+  passed the workorder's escalated planner tier along; its sibling
+  amendment in the same session ran opus. None of the 17 amendments run
+  inside a workflow launch ran fable, but nothing there named a model
+  either.
+- instrument-blindness-reviewer: 125M. live-operator: 79M. The other
+  reviewers: about 200M, on sonnet. verifier: 51M. scribe: 26M.
+
+The most-read files after the cut:
+
+- The workorder plan: 448 `Read` calls, 7.9 MB, plus 400 implementer shell
+  reads of workorder files, 1.7 MB.
+- The context file: 467 reads, 4.2 MB.
+- `ForgePact/plugin/ModuleMain.cpp` (2.26 MB): 154 `Read`s (947 KB), 422
+  implementer shell reads (1.19 MB) and 168 planner shell reads (680 KB),
+  mostly `grep -n` followed by `sed -n`, two turns per lookup.
+  `tools/source_index.py --functions` finds 1,204 functions in it, against
+  roughly 1,225 file-scope bodies, and finds none in
+  `hs-game-sdk/cpp/include/hs_game_sdk/player.hpp`, whose functions all sit
+  inside `namespace HeroSiege::Player`.
+- `docs/submodules/ForgePact/instructions.md` (1.0 MB): about 500 calls,
+  about 2.1 MB, although it could already be read by section.
+
+`tools/workorder_speed.py` over the 18 sessions after the cut: concurrency
+0.87, a 15% parallel share and a 47% single-agent share. Agent-minutes by
+phase: implement 1883 (331 agents), amend 1523 (54 agents, 1008 of them sole
+minutes, more than plan's 430), review 1001 (649 agents), verify 699, live
+306, record 247, replan 217 (12). `run_criteria` was called 747 times and
+the Bash limit killed 2. Items `queued_behind_cap` was 0. The implementers'
+check catch rate was 0.34, against 0.38-0.58 before the cut.
+
+## What changed
+
+- **A brief per implementer.** `tools/workorder_brief.py <plan> <selector>`
+  prints one implementer's slice of a workorder in one call: Goal, Out of
+  scope, State, the preconditions, its own steps (and criteria, for a round
+  or the join), each Context subsection those cite by `ctx:`, the
+  Decisions, the previous round's Log entry past round 0, the `git diff`
+  commands since a base, and a footer naming what it left out. Every
+  implementer prompt in `workorder-rounds.js` and SKILL.md's own Step 2
+  spawn name that command first, with the plan and context paths kept as
+  the fallback. It is a command rather than a pasted slice because the
+  workflow script cannot read a file, and the driver's context would carry
+  every slice in driver mode. `planner.md` now asks for exact `ctx:`
+  headings, since the brief prints only what a step cites.
+- **The amendment tier.** An amendment planner always runs on opus: SKILL.md
+  says so in each route a driver spawns one from, `workorder-rounds.js`
+  passes `model: 'opus'` to its own, and `tools/workorder_audit.py` R27
+  (`amendment-tier`) fails an `amendment:` planner whose transcript ran
+  fable. The first-plan and replan tiers did not change.
+- **Symbol lookup.** `section.py` reads a `.cpp .cc .c .hpp .h .py .js .mjs
+  .ts` file by symbol: `--toc [--grep]` lists its functions, classes and
+  methods with line ranges (capped at 20 KB, past which it says to narrow
+  with `--grep`), and `'<symbol>'` prints one whole. C/C++ is indexed into
+  `namespace` blocks, Python through `ast`, JS/TS through a lexer that
+  knows template literals and regex literals. `implementer.md` and
+  `planner.md` send any source file over about 200 KB there, in place of
+  `grep -n` then `sed -n`.
+- **A criteria digest.** `run_criteria.py --digest <out>` prints a finished
+  run with every exit-only criterion that exited as expected on one line
+  and every other criterion's block exactly as `report.txt` has it. The
+  verifier judges from it and never reads `report.txt` whole; it still
+  decides every criterion itself.
+- **The measure.** `workorder_speed.py` reports `workorder_reads` per role:
+  plan, context, brief and `report.txt` reads, as calls and KB. The tools
+  that take a plan path as an argument (`run_criteria.py`, `plan_lint.py`
+  and the like) are not counted as reads of it.
+
+## Not yet measured
+
+- The implementers' check catch rate fell to 0.34, from 0.38-0.58 before
+  the cut. Nothing here changes how implementers run their checks; whether
+  the brief moves the rate either way is for the next measurement.
+- Whether the brief cuts plan and context reads. Read `workorder_reads`
+  for the implementer row on the next batch of sessions, against the 915
+  plan and context `Read` calls and 400 shell reads above.
+- What the symbol mode saves. The planning session estimated about 600
+  turns, or 40-60M cache-read tokens (3-5% of input). That is an estimate,
+  not a measurement, and it was not run against the real ModuleMain.cpp in
+  the worktree that built it, where the submodule was not initialized.
+- Whether the digest brings the verifier's whole-file KB back below the
+  17 KB a run it read before the cut; `report_kb` in `workorder_reads` is
+  the figure.
+- The amend phase: 1523 agent-minutes over 54 amendments, 1008 of them with
+  no other agent running. Amendments still hold every item and fix while
+  they run; this change makes each one cheaper, not concurrent.
+- Why instrument-blindness-reviewer's per-run tokens rose (0.65 -> 0.81
+  Mtok) while every other reviewer's about halved.
+- Concurrency stayed at 0.87 with a 47% single-agent share. Nothing here
+  targets it.
+
+# Effort instead of Fable (2026-10-05)
+
+## The question
+
+The owner's license stopped carrying Fable 5.1, so every `fable` spawn the
+pipeline made would fail: the two hard triage rows' first plan, the second
+replan, and the consultant on a hard row. The owner also asked for effort,
+not only model, to set each session's and each step's cost.
+
+## What was found
+
+- The `Agent` tool takes a `model` per call and no effort, which is why
+  every agent pins `effort:` in its frontmatter.
+- A Workflow `agent()` call does accept an `effort` option
+  (`low`..`max`). Claude Code's documentation does not say whether it
+  beats an `agentType`'s pinned `effort:`.
+- Subagent transcripts record no effort level, so before this change the
+  audit could not tell a `high` run from an `xhigh` one.
+- Agent frontmatter accepts `xhigh` and `max`.
+
+## What changed
+
+- **Effort variants.** An agent's `effort-variants:` line makes
+  `tools/sync_agent_tooling.py` write `<agent>-<level>.md`, the same body
+  under its own name and effort. The name is the one spelling that runs at
+  that effort on both routes (driver and workflow) and shows in a
+  transcript. Generated: `planner-medium`, `planner-xhigh`, `planner-max`,
+  `implementer-medium` and `consultant-max`.
+- **Tiers.** Hard triage rows: `planner-xhigh`, not `fable`. Second replan:
+  `planner-max`. A hard-row question goes to `consultant-max`. Amendments run
+  as `planner-medium` and patch rounds as `implementer-medium`, because both
+  apply a correction someone already wrote down. The docs/tests/config row
+  runs `planner-medium` and `implementer-medium` on `sonnet`.
+- **Workflow.** `workorder-rounds.js` takes `implementerEffort`
+  (`high`|`medium`) and refuses `implementerModel: 'fable'` before a spawn.
+- **Audit.** `split_effort_variant` counts a variant as its base role and
+  keeps its level. `--calibrate` groups by role, model and effort. R27 also
+  fails an amendment planner run as `planner-xhigh` or `planner-max`.
+  `MODEL_PRICES` keeps Fable's row for older transcripts.
+
+## Not yet measured
+
+- Every new level. None of medium-for-amendments, medium-for-patches,
+  xhigh-for-hard-rows or max-for-the-second-replan has a run behind it.
+  The next `--calibrate` over sessions after 2026-10-05 reports each one
+  apart.
+- Whether `opus` at `max` recovers the plans a Fable replan used to. The
+  stop after a third `PLAN-DEFECT` is unchanged, so a weaker escalation
+  shows up as more stops, not as more rounds.
+- Reviewer effort. Superseded on 2026-10-06: the reviewers moved to
+  opus/medium (below).
+
+# Reviewers, live-operator and the driver on opus/medium (2026-10-06)
+
+## The question
+
+Issue #436. Should the roles still on `sonnet` move to `opus`, and at what
+effort should the session that drives /workorder run, which no file stated?
+
+## What was found
+
+Read from Artificial Analysis's Intelligence Index against weighted cost per
+index task, 2026-10-06 (approximate values off the chart):
+
+| Model / effort | Index | $ per task |
+|---|---|---|
+| Opus 5.5 low | 42 | 0.55 |
+| Opus 5.5 medium | 51 | 1.40 |
+| Opus 5.5 high | 53.5 | 1.85 |
+| Opus 5.5 xhigh | 56 | 3.50 |
+| Opus 5.5 max | 58 | 6.00 |
+| Sonnet 5.5 low | 36 | 0.42 |
+| Sonnet 5.5 medium | 41 | 0.58 |
+| Sonnet 5.5 high | 47 | 1.10 |
+| Sonnet 5.5 xhigh | 52 | 2.75 |
+| Opus 5 max | 51 | 5.90 |
+| Sonnet 5 high | 32 | 1.80 |
+
+Opus 5.5 is ahead of Sonnet 5.5 at every effort level for about the same
+price, and every Opus 5 level is behind Opus 5.5 at medium. The benchmark's
+cost is mostly output and thinking; this pipeline's is 92-99% cache reads,
+priced the same on both models, so the model step costs less here than the
+chart shows and effort is the lever that moves the bill. Past `high`, each
+step costs about twice as much for 2-3 points.
+
+## What changed
+
+- `sdk-contract-reviewer`, `tauri-command-reviewer`, `docs-sync-reviewer`,
+  `decompile-output-guard` and `live-operator`: sonnet/high to opus/medium.
+- The docs/tests/config triage row's `implementer-medium` runs on `opus`,
+  no longer `sonnet`.
+- SKILL.md § "Model tiers" names the driver's tier: opus/medium, `high` for
+  a session whose product is the driver's own triage judgement.
+
+## Not yet measured
+
+- All three changes are chosen from a benchmark, not measured on this
+  pipeline. No reviewer finding was ever measured as missed on `sonnet`;
+  the next `--calibrate` over sessions after 2026-10-06 says whether
+  opus/medium reviewers find more, cost the expected ~1.2×, or neither.
+- The driver's effort is not visible in a transcript, so the audit cannot
+  check it; a driver's per-turn tokens before and after are the proxy.

@@ -24,7 +24,10 @@ export const meta = {
 //   checkoutRoot,                       // this session's `git rev-parse --show-toplevel`; the scribe is handed
 //                                       // planPath/contextPath joined under it (2g below). Required unless both are absolute.
 //   goalExcerpt,                        // '## Goal' + '## Out of scope', pasted by the driver
-//   implementerModel,                   // 'opus' (the default) | 'sonnet' | 'fable', from step 0.5 triage
+//   implementerModel,                   // 'opus' (the default) | 'sonnet', from step 0.5 triage. 'fable' is BAD-ARGS
+//                                       // since 2026-10-05: the owner's license no longer carries it
+//   implementerEffort,                  // 'high' (the default, `implementer`) | 'medium' (`implementer-medium`), from
+//                                       // step 0.5 triage. A patch round (2i) always runs `implementer-medium`
 //   round,                              // the round to start at (State's `round:`)
 //   reviewers: { '<name>': 'never' | 'clean' | 'blocking' },   // applicable reviewers and their last verdict
 //   submodules: ['ForgePact', ...],     // dirs whose own diff the reviewers must read, relative to repoRoot
@@ -44,7 +47,7 @@ export const meta = {
 //                                       // and only for a first implementation of the plan's steps (round 0, or the
 //                                       // relaunch after a replan; never after an IMPL-DEFECT). Absent or [] runs
 //                                       // exactly as a plan without lanes (2h below)
-//   items,                              // [{ id, title, files, checks, after, shares, owner, default, reversible }, ...]
+//   items,                              // [{ id, title, files, checks, after, shares, owner, default, reversible, build_reads }, ...]
 //                                       // pasted from `plan_lint.py <plan> --items-json`: the launch streams (3b below)
 //                                       // instead of running rounds. Absent or [] runs in rounds exactly as before
 //   streaming, answered,                // items mode: the planner is still releasing items; ids whose owner: question
@@ -55,7 +58,9 @@ export const meta = {
 //                                       // number from 1 to 16, anything else is BAD-ARGS before a spawn), agents per
 //                                       // launch (120),
 //   tokenCeiling, itemAttempts,         // output tokens per launch (none), implement attempts per item (3)
-//   reviewPassCap                       // passes a reviewer makes before it waits for the final catch-up (4)
+//   reviewPassCap,                      // passes a reviewer makes before it waits for the final catch-up (4)
+//   fullVerify                          // true only for the final gate before the PR: every verify runs the full
+//                                       // set. Absent, a first verify is `--dev` and a later one by reach (2j)
 // }
 //
 // The count of patch rounds already spent (2i below) is read from `state`'s
@@ -135,6 +140,44 @@ const pathsOverlap = (a, b) => {
 }
 const filesOverlap = (fa, fb) => fa === '*' || fb === '*' || fa.some(a => fb.some(b => pathsOverlap(a, b)))
 
+// Whether a changed `path` is one a `(reads ...)` glob covers -- plan_lint's
+// `reads_path`: `*` crosses `/`, a `**/` may match no directory at all, and a
+// literal covers itself and, as a directory, everything under it.
+const readsPath = (glob, path) => {
+  const g = String(glob).replace(/\\/g, '/').replace(/^\.\//, ''), p = String(path).replace(/\\/g, '/').replace(/^\.\//, '')
+  if (['', '*', '**'].includes(g.replace(/\/+$/, ''))) return true
+  if (!SCHED_GLOB.test(g)) { const d = g.replace(/\/+$/, ''); return p === d || p.startsWith(d + '/') }
+  const forms = new Set([g]), todo = [g]
+  while (todo.length) {
+    const f = todo.pop()
+    for (let i = f.indexOf('**/'); i >= 0; i = f.indexOf('**/', i + 1)) {
+      if (i > 0 && f[i - 1] !== '/') continue
+      const shorter = f.slice(0, i) + f.slice(i + 3)
+      if (!forms.has(shorter)) { forms.add(shorter); todo.push(shorter) }
+    }
+  }
+  return [...forms].some(f => schedGlobRe(f).test(p))
+}
+// Whether a file set (globs, literals or '*') can touch what `reads` covers.
+const readsOverlap = (reads, files) => files === '*' || filesOverlap(reads, files) || reads.some(g => files.some(f => readsPath(g, f)))
+// A build item -- one whose `build`/`exclusive` checks read something
+// (`build_reads` from plan_lint) -- waits while a fix that may land on what
+// it reads is queued or running, or while any other item doing so runs. A
+// pending plan item does not hold it: `after:` orders those, and one that
+// lands later puts the build back to pending (staleBuilds) instead.
+function buildWaitsFor(items, st, it) {
+  if (!(it.buildReads || []).length) return null
+  return items.find(o => o !== it && (st[o.id].status === 'running' || (st[o.id].status === 'pending' && o.kind && o.kind !== 'item')) &&
+    readsOverlap(it.buildReads, o.files)) || null
+}
+// The build items a commit by `by` on `paths` made stale: every item but
+// `by` with a `build_reads` glob covering one of the paths that is done (its
+// build names the old tree) or running (it may have built before the commit).
+function staleBuilds(items, st, by, paths) {
+  return items.filter(it => it.id !== by && (it.buildReads || []).length && ['done', 'running'].includes(st[it.id].status) &&
+    paths.some(p => it.buildReads.some(g => readsPath(g, p))))
+}
+
 // Whether `item` waits, through its `after:` chain, on the item `id`.
 function waitsOn(byId, item, id, seen = new Set()) {
   for (const d of item.after || []) {
@@ -147,7 +190,25 @@ function waitsOn(byId, item, id, seen = new Set()) {
 }
 
 // The ids to start now, in plan order, at most `maxParallel` running in all.
+// The build wait (buildWaitsFor) is a preference, never a reason to start
+// nothing: when honouring it would leave nothing running and nothing
+// started, the pass is redone without it, as the scheduler ran before it
+// existed (PR #382 review: build, fix and an item `after:` the build could
+// otherwise wait on each other forever).
 function nextToStart(items, st, maxParallel) {
+  const out = startPass(items, st, maxParallel, true)
+  if (out.length || items.some(it => st[it.id].status === 'running')) return out
+  return startPass(items, st, maxParallel, false)
+}
+// Whether a pending item is, or waits through `after:` on, a pending build
+// held by buildWaitsFor: such an item is not ahead of anything in the queue.
+function behindWaitingBuild(byId, items, st, it, seen = new Set()) {
+  if (seen.has(it.id)) return false
+  seen.add(it.id)
+  if (st[it.id].status === 'pending' && buildWaitsFor(items, st, it)) return true
+  return (it.after || []).some(d => byId[d] && st[d] && st[d].status === 'pending' && behindWaitingBuild(byId, items, st, byId[d], seen))
+}
+function startPass(items, st, maxParallel, buildWait) {
   const byId = Object.fromEntries(items.map(it => [it.id, it]))
   const running = items.filter(it => st[it.id].status === 'running')
   if (running.some(it => it.files === '*')) return []
@@ -161,11 +222,15 @@ function nextToStart(items, st, maxParallel) {
     if (busy.some(o => filesOverlap(o.files, it.files))) continue
     // An earlier item that itself waits on this one (`after:`, directly or
     // through others) is not ahead of it in the queue: holding this one for
-    // it would leave both pending forever.
+    // it would leave both pending forever. Nor is a build waiting for a fix
+    // (buildWaitsFor), which may be this one, or an item `after:` such a build.
     const queuedAhead = items.slice(0, i).some(o => filesOverlap(o.files, it.files) && !waitsOn(byId, o, it.id) &&
-      (st[o.id].status === 'pending' || ((st[o.id].status === 'parked' || st[o.id].status === 'held') && st[o.id].touched)))
+      ((st[o.id].status === 'pending' && !(buildWait && behindWaitingBuild(byId, items, st, o))) || ((st[o.id].status === 'parked' || st[o.id].status === 'held') && st[o.id].touched)))
     if (queuedAhead) continue
     if (it.files === '*' && busy.length) continue
+    // A build waits for a fix queued or running on what it reads: built
+    // first, it would only be built again once that fix lands.
+    if (buildWait && buildWaitsFor(items, st, it)) continue
     out.push(it.id)
     slots--
     if (it.files === '*') break
@@ -348,13 +413,29 @@ const SCRIBE_CONTEXT = A.contextPath && inCheckout(A.contextPath)
 
 const SCRIBE_SCHEMA = {
   type: 'object',
-  properties: { written: { type: 'boolean' }, note: { type: 'string' }, state_before: { type: 'string' }, state_after: { type: 'string' } },
-  required: ['written', 'note', 'state_before', 'state_after'],
+  properties: { written: { type: 'boolean' }, note: { type: 'string' }, state_before: { type: 'string' }, state_after: { type: 'string' }, log_anchor: { type: 'string' }, log_tail: { type: 'string' } },
+  required: ['written', 'note', 'state_before', 'state_after', 'log_anchor', 'log_tail'],
 }
 
 if (!SLUG || !A.planPath || !A.contextPath || !A.goalExcerpt || !A.reviewers) {
   return { outcome: 'BAD-ARGS', detail: 'need slug, planPath, contextPath, goalExcerpt, reviewers' }
 }
+// Effort is chosen by agent type, not by `agent()`'s `effort` option: which
+// of that and the definition's pinned `effort:` wins is not documented, and
+// a transcript records no effort, so `implementer-medium` (generated by
+// `tools/sync_agent_tooling.py` from implementer.md's `effort-variants:`) is
+// the one spelling that both runs at medium and shows in the audit.
+const IMPLEMENTER_BY_EFFORT = { high: 'implementer', medium: 'implementer-medium' }
+const IMPLEMENTER_MODELS = ['opus', 'sonnet']
+if (A.implementerModel !== undefined && !IMPLEMENTER_MODELS.includes(A.implementerModel)) {
+  return { outcome: 'BAD-ARGS', detail: `implementerModel must be one of ${IMPLEMENTER_MODELS.join(', ')} (default opus), not ${JSON.stringify(A.implementerModel)}` }
+}
+if (A.implementerEffort !== undefined && !IMPLEMENTER_BY_EFFORT[A.implementerEffort]) {
+  return { outcome: 'BAD-ARGS', detail: `implementerEffort must be one of ${Object.keys(IMPLEMENTER_BY_EFFORT).join(', ')} (default high), not ${JSON.stringify(A.implementerEffort)}` }
+}
+const IMPLEMENTER = IMPLEMENTER_BY_EFFORT[A.implementerEffort || 'high']
+// Every patch spawn, the first and the re-run after an amendment alike (2i).
+const PATCH_IMPLEMENTER = 'implementer-medium'
 if (!CHECKOUT_ROOT && !(isAbsolutePath(A.planPath) && isAbsolutePath(A.contextPath))) {
   return { outcome: 'BAD-ARGS', detail: 'need checkoutRoot (`git rev-parse --show-toplevel` in this session) or absolute planPath and contextPath: the scribe resolves a relative path against the wrong checkout' }
 }
@@ -573,23 +654,75 @@ const gatesSet = entries => {
   return new Set(gateTokens(value.split(/\bnot yet\b/i)[0]))
 }
 
+// --- 2k: the payload is fenced, and the append is spelled out --------------
+//
+// Measured 2026-10-03 (forgepact-16-jump-scenery-research, wf_4a87e39a-b1c, a
+// laned round that ended PLAN-DEFECT before the join): the Log block and the
+// State lines sat in this prompt as bare paragraphs, so a lane's free-prose
+// evidence ran on into the next paragraph -- the State instruction itself --
+// and the scribe pasted that instruction at the end of '## Log'. Told only to
+// "anchor your Edit on the final lines", it also took the file's last line as
+// old_string and wrote the block *before* it, which moved the last line of
+// `### Plan` to the end of the file, after the round entry. So each payload
+// now sits between marker lines the scribe pastes nothing outside of, the
+// append Edit is spelled out (anchor first, block after), and the scribe
+// reports the Log's tail: a block that is not the last thing in the file
+// stops the launch as LOG-DAMAGED (recordState below).
+const LOG_BEGIN = '<<<LOG-BLOCK-BEGIN>>>'
+const LOG_END = '<<<LOG-BLOCK-END>>>'
+const STATE_BEGIN = '<<<STATE-LINES-BEGIN>>>'
+const STATE_END = '<<<STATE-LINES-END>>>'
+const FENCE = /^<<<(LOG-BLOCK|STATE-LINES)-(BEGIN|END)>>>$/gm
+// A payload can never close its own fence early.
+const fenced = (begin, text, end) => `${begin}\n${String(text).replace(FENCE, '')}\n${end}`
+const logTailLines = block => block.split('\n').length + 5
 const scribe = (n, block, updates) => {
   const keys = updates.map(u => `\`${u.key}:\``).join(', ')
   const stateAsk = knownState.length
-    ? `In ${SCRIBE_PLAN}, replace the lines under '## State' with exactly these lines. They are the whole State: this round's ${keys} values merged into the lines already there, so every other line (\`gates:\`, \`round base:\`, \`agents:\`, \`decisions in force:\` and any other) is already in it, verbatim:\n\n${stateText(mergeState(knownState, updates))}\n\n`
-    : `In ${SCRIBE_PLAN} under '## State', change only the lines whose key (the text before the first ':') is ${keys}, to exactly these lines:\n\n${stateText(updates)}\n\n` +
+    ? `STATE. In ${SCRIBE_PLAN}, replace the lines under '## State' with exactly the lines between ${STATE_BEGIN} and ${STATE_END} below. They are the whole State: this round's ${keys} values merged into the lines already there, so every other line (\`gates:\`, \`round base:\`, \`agents:\`, \`decisions in force:\` and any other) is already in it, verbatim:\n\n${fenced(STATE_BEGIN, stateText(mergeState(knownState, updates)), STATE_END)}\n\n`
+    : `STATE. In ${SCRIBE_PLAN} under '## State', change only the lines whose key (the text before the first ':') is ${keys}, to exactly the lines between ${STATE_BEGIN} and ${STATE_END} below:\n\n${fenced(STATE_BEGIN, stateText(updates), STATE_END)}\n\n` +
       `Use one Edit per line, whose old_string is that single line. Never use an old_string spanning several lines: other lines (\`gates:\`, \`round base:\`, \`agents:\`, \`decisions in force:\` and any other) sit between these, and every one of them must stay exactly as it is. If no line has one of these keys, add it as a new last line of '## State'. `
   return agent(
     `You are a scribe for the workorder '${SLUG}'. Both file paths below are absolute: use them exactly as written, ` +
-    `and never resolve them against another checkout or directory. In ${SCRIBE_CONTEXT}, append this block verbatim under '## Log' ` +
-    `(if a '### Round ${n}' heading is already there, append under it instead of duplicating it):\n\n${block}\n\n` +
+    `and never resolve them against another checkout or directory. ` +
+    `Each thing you paste sits between two marker lines (${LOG_BEGIN} ... ${LOG_END}, ${STATE_BEGIN} ... ${STATE_END}). Paste exactly the lines between the markers: never a marker line itself, and never a word of this prompt that sits outside them. ` +
+    `LOG. In ${SCRIBE_CONTEXT}, append the lines between ${LOG_BEGIN} and ${LOG_END} verbatim at the end of '## Log' ` +
+    `(if a '### Round ${n}' heading with the same text is already the last heading there, append under it instead of duplicating it):\n\n${fenced(LOG_BEGIN, block, LOG_END)}\n\n` +
     stateAsk +
-    `Before your first Edit, Read ${SCRIBE_PLAN} and return every line under '## State' exactly as it was in 'state_before'; after your last Edit, Read it again and return every line under '## State' exactly as it now is in 'state_after'. ` +
+    `Before your first Edit, read only the lines you paste beside, never either file whole (the owner, 2026-10-02: after a write, read only the difference or the relevant part). ` +
+    `In ${SCRIBE_PLAN}: Grep -n '^## ' to find '## State' and the heading after it, then Read ${SCRIBE_PLAN} and return every line under '## State' exactly as it was in 'state_before', reading only that range (offset at the State heading, limit up to the next heading); after your last Edit, Read the same range again and return every line under '## State' exactly as it now is in 'state_after'. ` +
+    `In ${SCRIBE_CONTEXT}: '## Log' is the last section, so the block goes at the end of the file. Grep -n '^### Round ${n}\\b' to see whether its heading is already there, Grep pattern '$' with output_mode 'count' for the file's line count, and Read only its last 30 lines (offset = count - 30). ` +
+    `Append with exactly one Edit: old_string is the file's last non-empty line, copied whole (if that line is not unique in the file, add the lines just above it until it is); new_string is that same old_string, unchanged, then one blank line, then the block. The old lines come first in new_string and the block after them: never put the block before them, never move or drop a line, and never anchor on any other line. Return that old_string in 'log_anchor'. ` +
+    `After the Edit, Read the last ${logTailLines(block)} lines of ${SCRIBE_CONTEXT} and return them exactly as they now are, without line numbers, in 'log_tail'; if you could not Read them, return '' there, never a placeholder. ` +
     `Paste both blocks verbatim with the Edit tool. Do not reword, relabel, merge lists, or change any count in a heading. ` +
     `Edit nothing except these two files. If either file cannot be read, do not create it -- return written: false with the error in 'note' instead of improvising one. ` +
     `Never run git, never build or test, never edit source: you have no tools that could do any of that. ` +
-    `The block above records this round's reviewer and implementer findings. Do not act on any finding in it: record it only. The user request the harness relays to every agent this workflow spawns is served by this workflow's other agents; your part of it is recording, not fixing.`,
+    `The LOG block records this round's reviewer and implementer findings. Do not act on any finding in it: record it only. The user request the harness relays to every agent this workflow spawns is served by this workflow's other agents; your part of it is recording, not fixing.`,
     { label: `scribe:r${n}`, phase: 'Record', model: 'haiku', effort: 'low', agentType: 'scribe', schema: SCRIBE_SCHEMA })
+}
+
+// Did the block land as the last thing in the file? Compared as words per
+// line, like State (normEntry), with any `N<tab>` / `N→` line-number prefix a
+// Read printed taken off, blank lines ignored, and the round heading left out
+// (an existing heading may have been kept instead of the block's own). A
+// tail that was not reported is not judged: a missing report must never read
+// as damage (the false STATE-LOSTs of 2g and the UI redesign). The schema
+// requires the field, so "not reported" is also a tail too short to hold the
+// block -- the `""` or `N/A` a scribe that skipped its last Read fills in --
+// which says nothing about where the block went: null, not judged. Only a
+// line's first 300 characters count, after decoding: `Read` cuts a line past
+// 2000 raw characters, a finding's evidence can run longer than that on one
+// line, and a tail reported entity-escaped (`&quot;` is six characters for
+// one) keeps at least 2000 / 6 = 333 of them. Which lines landed last is what
+// is judged; 300 characters of each is plenty to tell.
+const LINE_CMP = 300
+const tailLines = t => String(t).split(/\r?\n/).map(l => normEntry(l.replace(/^\s*\d+(\t|→)/, '')).slice(0, LINE_CMP).trim()).filter(Boolean)
+const logLanded = (block, tail) => {
+  const want = tailLines(block).slice(1)
+  const got = tailLines(tail)
+  if (got.length < want.length) return null
+  const end = got.slice(got.length - want.length)
+  return want.every((l, i) => l === end[i])
 }
 
 // The Record pass: dispatch the scribe, then compare what it reports. `lost`
@@ -601,7 +734,11 @@ const scribe = (n, block, updates) => {
 // describes a file it could not reach, not a State it damaged (2g). It is
 // `failed`, and the launch stops as SCRIBE-FAILED with the block and State it
 // should have written, so the driver pastes both before anything reads them.
-const recordState = async (n, block, stateLines) => {
+// The block is unfenced once, here, so the prompt, the tail check and the
+// `log` a stop hands the driver are the same text (a marker line left in
+// the check but blanked in the prompt read as LOG-DAMAGED on every try).
+const recordState = async (n, rawBlock, stateLines) => {
+  const block = String(rawBlock).replace(FENCE, '')
   const updates = stateEntries(stateLines)
   const wrote = await scribe(n, block, updates)
   if (!wrote || !wrote.written) {
@@ -621,7 +758,8 @@ const recordState = async (n, block, stateLines) => {
     lost = base.filter(e => !replaced.has(e.key) && !after.has(normEntry(e.text))).map(e => e.text)
   }
   knownState = reported && !lost.length ? stateEntries(wrote.state_after) : expected
-  return { wrote, lost, expected: stateText(expected) }
+  const logDamaged = typeof wrote.log_tail === 'string' && logLanded(block, wrote.log_tail) === false
+  return { wrote, lost, expected: stateText(expected), log: block, logDamaged }
 }
 const stateLost = (n, rec, then) => ({
   outcome: 'STATE-LOST', then, round: n, lost: rec.lost, state: rec.expected,
@@ -631,7 +769,15 @@ const scribeFailed = (n, rec, then) => ({
   outcome: 'SCRIBE-FAILED', then, round: n, log: rec.log, state: rec.expected,
   detail: `the scribe wrote nothing (${rec.wrote ? `note: ${rec.wrote.note || 'none'}` : 'no result'}); no State was lost. Append 'log' under '## Log' in ${A.contextPath}, replace '## State' in ${A.planPath} with 'state', then act on 'then'`,
 })
-const recordStop = (n, rec, then) => rec.failed ? scribeFailed(n, rec, then) : rec.lost.length ? stateLost(n, rec, then) : null
+// Checked after STATE-LOST, which stops first and then carries the Log
+// report too (`log_damaged`), so the driver repairs both from one stop.
+const logDamaged = (n, rec, then) => ({
+  outcome: 'LOG-DAMAGED', then, round: n, log: rec.log, anchor: rec.wrote.log_anchor || '', tail: rec.wrote.log_tail,
+  detail: `the Log block is not the last thing in ${A.contextPath} (the scribe anchored on ${JSON.stringify(rec.wrote.log_anchor || '')}); make the end of '## Log' read: the entry that ended with that anchor, whole, then 'log' and nothing after it -- remove anything else the scribe pasted -- then act on 'then'`,
+})
+const recordStop = (n, rec, then) => rec.failed ? scribeFailed(n, rec, then)
+  : rec.lost.length ? { ...stateLost(n, rec, then), ...(rec.logDamaged ? { log_damaged: true, log: rec.log, tail: rec.wrote.log_tail } : {}) }
+  : rec.logDamaged ? logDamaged(n, rec, then) : null
 
 // --- 2d: a reviewer is told what not to spend calls on ----------------------
 //
@@ -669,13 +815,24 @@ const SECTION_CMD = file => `\`py -3 .claude/skills/workorder/section.py "${file
 const verifierCriteriaNote = (extra = '') => ` Take the criteria and the gate tokens with exactly \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\` and \`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'State'\`; do not Read the plan whole.` +
   ` A gate is set only when the \`gates:\` line itself carries its token. \`gates pending:\` and \`route tokens:\` set nothing, and a \`gates:\` value with \`|\` alternatives is a template that sets nothing. Put the token a gated criterion names in its 'gate'. A criterion whose gate is not set is 'unattempted' (gate <token> not set), never 'fail'. Put each STRUCTURAL FINDING and each NOT DONE/DEVIATIONS finding in 'other_defects'.` +
   ` Put each criterion's number in plan order, as the runner prints it, in 'k'.` +
-  ` First run every command-shaped criterion in one background run: start \`py -3 tools/run_criteria.py "${A.planPath}" --jobs auto${extra} --out "<your scratchpad>/criteria"\` with \`run_in_background: true\`, so no Bash limit can kill it. Then poll it with \`py -3 tools/run_criteria.py --status "<your scratchpad>/criteria" --wait 220\` at a Bash timeout of 300000, re-issued while it exits 3 (still running); exit 0 means it finished, and then you read \`<your scratchpad>/criteria/report.txt\`. Exit 4 (stale: it stopped updating) or 2 (no status file) means the run died: say so with the status output, and run the criteria it had not finished yourself. Never read a status or out directory you did not start.` +
+  ` First run every command-shaped criterion in one background run: start \`py -3 tools/run_criteria.py "${A.planPath}" --jobs auto${extra} --out "<your scratchpad>/criteria"\` with \`run_in_background: true\`, so no Bash limit can kill it. Then poll it with \`py -3 tools/run_criteria.py --status "<your scratchpad>/criteria" --wait 220\` at a Bash timeout of 300000, re-issued while it exits 3 (still running); exit 0 means it finished. Then run \`py -3 tools/run_criteria.py --digest "<your scratchpad>/criteria"\` and judge from what it prints: every criterion whose command missed its expected exit, has no command or expects printed output comes out whole, as report.txt has it, and an exit-only criterion whose commands exited as expected comes out as one line. Open that criterion's \`cmd-<n>.log\` only when the digest shows it in one line but its expectation needs output. Never read report.txt whole. Exit 4 (stale: it stopped updating) or 2 (no status file) means the run died: say so with the status output, and run the criteria it had not finished yourself. Never read a status or out directory you did not start.` +
   ` The runner runs each distinct command once, exactly as written, independent ones at the same time (builds first), skips criteria whose gate is not set, and prints each exit code and output tail in plan order (full output in cmd-<n>.log); it judges nothing, so decide each criterion from what it printed, check the ones it prints as 'no command' by reading, run by hand only a command that could not start in bash, and if its output stops early re-run it with --start <next criterion>. A root suite the runner already ran is the suite run: grep its log, never run it again.` +
   ` Run each criterion's command exactly as written: never swap \`py -3\` for \`python\`; a command that cannot start is a failed criterion with its error. Run each test suite once, with the Bash timeout at 240000 and its output sent to a scratch file you grep; never run a suite again to read another slice.`
 const VERIFIER_CRITERIA_NOTE = verifierCriteriaNote()
+// 2j: during development no verify runs the whole suites. The owner,
+// 2026-10-02: "full suite runs shouldnt be run so frequently. it should be
+// reserved to the last step before the pr. during development only relevant
+// subset should be run." A first verify and the items gate run `--dev`:
+// every criterion but a whole suite or one marked `(final)`, so a criterion
+// about a file the change forgot to touch still runs. `fullVerify` (the final
+// gate before the PR) restores the full set.
+const DEV = !A.fullVerify
+const DEV_FINAL_NOTE = 'the last verify deferred the whole suites and the (final) criteria; run the full set once at the final gate before push'
+const VERIFIER_DEV_NOTE = ` This is a development verify: the runner defers each whole-suite criterion and each one marked \`(final)\` to the final gate before the PR and prints it as NOT SELECTED. Report each one it prints that way with status 'not-selected' and its reason as the evidence, never as 'pass', and skip your procedure's step 3 root suite.`
+const devCriteriaNote = () => DEV ? verifierCriteriaNote(' --dev') + VERIFIER_DEV_NOTE : VERIFIER_CRITERIA_NOTE
 // 2j: a fix round after a verify that passed every other criterion runs only
 // what the fix can reach, plus what failed (reachScope below).
-const VERIFIER_REACH_NOTE = ` This is a reach re-verify: the previous verify passed every criterion except the ones --failed names, so the runner selects only the criteria this round's change can reach (each criterion's \`(reads ...)\`) plus those, and prints the scope before it runs anything. Report each criterion it prints as NOT SELECTED with status 'not-selected' and its reason as the evidence, never as 'pass'. Skip your procedure's step 3 root suite unless a selected criterion runs it. If it prints \`scope: full\`, this is an ordinary full verify, step 3 included. If you cannot tell from its scope whether this round's change could reach a criterion it skipped, run the plan again without --changed-since and --failed, and say why.`
+const VERIFIER_REACH_NOTE = ` This is a reach re-verify: the previous verify passed every criterion except the ones --failed names, so the runner selects only the criteria this round's change can reach (each criterion's \`(reads ...)\`) plus those, defers whole suites and \`(final)\` criteria to the final gate before the PR, and prints the scope before it runs anything. Report each criterion it prints as NOT SELECTED with status 'not-selected' and its reason as the evidence, never as 'pass'. Skip your procedure's step 3 root suite unless a selected criterion runs it. If it prints \`scope: full\`, this is an ordinary full verify, step 3 included. If you cannot tell from its scope whether this round's change could reach a criterion it skipped, run the plan again without --changed-since and --failed, and say why.`
 const VERIFIER_CONTEXT_NOTE = A.contextPath !== A.planPath
   ? ` Context file: ${A.contextPath} -- open it only for a heading a criterion cites, with ${SECTION_CMD(A.contextPath)}; never read it whole, its '## Log' is the implementer's reasoning.`
   : ` This is a single-file plan: open a section a criterion cites with ${SECTION_CMD(A.planPath)} rather than reading on past the criteria; its '## Log' is the implementer's reasoning.`
@@ -703,20 +860,65 @@ const VERIFIER_CONTEXT_NOTE = A.contextPath !== A.planPath
 const START = A.round || 0
 const VERDICT_ASK = `Return your usual verdict; put the PLAN-DEFECT evidence block or the ADVICE-NEEDED request, verbatim, in 'evidence'/'question'.`
 const workorderLine = n => `Workorder: ${A.planPath}${A.contextPath !== A.planPath ? ` (context file: ${A.contextPath})` : ''}. This is round ${n}. `
+// --- 2k: every implementer starts from its brief -----------------------------
+//
+// Measured 2026-10-03 (workorder-calibration.md, "Plan slices, the amendment
+// tier and symbol lookup"): implementers sliced the plan and the context file
+// for themselves, 5-20 Read/sed calls each, and fix-round implementers read
+// the whole plan 105 times in 14 days. This script cannot read a file or run
+// a shell -- every command goes through an agent -- so pasting a slice here
+// would cost an agent per implementer. Each prompt instead names the one
+// command that prints that implementer's slice, with its own selector
+// (`tools/workorder_brief.py`: the selection, the preconditions, the Context
+// subsections it cites and '### Decisions'), as the first thing to run. The
+// plan and context paths (workorderLine) stay as the fallback. An empty
+// selector -- a fixer or a patch with no file to name -- gets no brief line.
+const BRIEF_CMD = `py -3 tools/workorder_brief.py "${A.planPath}"${A.contextPath !== A.planPath ? ` --context "${A.contextPath}"` : ''}`
+const briefLine = sel => sel
+  ? `Run \`${BRIEF_CMD} ${sel}\` first: one call prints your part of the plan, the Context subsections it cites and '### Decisions'. ` +
+    `Read the plan or the context file beyond it only by section (\`py -3 .claude/skills/workorder/section.py <file> '<heading>'\`), for something it lacks; the paths above are the fallback. `
+  : ''
+// Double-quoted, comma-joined, each path once, as `--paths` takes them.
+const pathsSel = paths => {
+  const uniq = [...new Set(paths)]
+  return uniq.length ? `--paths "${uniq.join(',')}"` : ''
+}
+// After an in-launch amendment (3d) the brief adds the newest '### Amendment'
+// entry, which AMENDED_NOTE sends the implementer to.
+const amendedSel = (sel, amended) => sel && amended ? `${sel} --amended` : sel
+// A finding's `where` is `path:line` or prose: the text before the first `:`
+// is a path only when it carries a `/` or a `.`.
+const findingPaths = findings => findings.map(f => String(f.where || '').split(':')[0].trim()).filter(p => /[/.]/.test(p))
 // Any round past 0 follows a defect round -- '## State' only bumps `round:`
 // after one -- including the first round of a fresh launch, which has no
-// memory of it (the gap priorFindings closes for reviewers).
-const reentry = n => n > 0 ? `You are re-entered after a defect: read '## Log' > '### Round ${n - 1}'` +
-  `, and '### Round ${n}' if it is already there (this round was relaunched after a replan or a consultation, and that entry is the newer evidence),` +
-  ` for the evidence before anything else. ` : ''
+// memory of it (the gap priorFindings closes for reviewers). `brief` says
+// what the implementer's brief already prints: the rounds-mode brief
+// (`--round n`) carries the round's Log entries and every criterion, the
+// join's (`--join`) every criterion, a lane's neither.
+const reentry = (n, brief = {}) => {
+  if (!(n > 0)) return ''
+  const rounds = `'## Log' > '### Round ${n - 1}', and '### Round ${n}' if it is already there (this round was relaunched after a replan or a consultation, and that entry is the newer evidence)`
+  const criteria = brief.criteria ? 'the failed criteria (your brief prints every criterion)' : `the failed criteria (\`py -3 .claude/skills/workorder/section.py "${A.planPath}" 'Acceptance criteria'\`)`
+  // The owner, 2026-10-02: after a write, read only the difference or the
+  // relevant part. Fix-round implementers averaged 22 reads and 134 KB each
+  // over the 14 days before, 105 of them the whole plan.
+  const diff = `read its diff (${brief.log ? "the brief's `git diff` lines, or " : ''}\`git diff <base> -- <path>\`${brief.log ? ' with' : ','} the base from \`${DELTA} heads ${SLUG} ${n - 1}${DELTA_ROOT_ARG}\`) and the ranges around those hunks. `
+  return brief.log
+    ? `You are re-entered after a defect: your brief prints ${rounds}; read that evidence before anything else. ` +
+      `Then read only what that evidence needs beyond the brief: the Context subsections and files it names that the brief does not print -- not the whole plan, and not a file earlier rounds changed: ${diff}`
+    : `You are re-entered after a defect: read ${rounds}, for the evidence before anything else. ` +
+      `Then read only what that evidence needs: ${criteria} and the steps, Context subsections and files it names -- not the whole plan, and not a file earlier rounds changed: ${diff}`
+}
 const LANE_NAMES = LANES.map(l => l.name).join(', ')
 const LANED_LATER_NOTE = `This plan declares lanes (${LANE_NAMES}), but this round runs one implementer, not lanes: you own every lane's file set and the join's steps, and the lane-only rules (no git writes, the stop marker) do not apply to you. `
 // `amended`: the re-run after an in-launch amendment (3d). It is one
 // implementer even on a laned first round, owning every lane and the join.
-const implPrompt = (n, amended = false) => workorderLine(n) + reentry(n) + (LANES.length && (n > START || amended) ? LANED_LATER_NOTE : '') +
+const implPrompt = (n, amended = false) => workorderLine(n) +
+  briefLine(amendedSel(`--round ${n}${n > 0 ? ` --since-round ${n - 1}` : ''}`, amended)) +
+  reentry(n, { log: true, criteria: true }) + (LANES.length && (n > START || amended) ? LANED_LATER_NOTE : '') +
   (amended ? AMENDED_NOTE : '') + VERDICT_ASK
-const implOpts = (label, schema) => ({ label, phase: 'Implement', agentType: 'implementer', model: A.implementerModel || 'opus', schema })
-const lanePrompt = (n, lane) => workorderLine(n) + reentry(n) +
+const implOpts = (label, schema, agentType = IMPLEMENTER) => ({ label, phase: 'Implement', agentType, model: A.implementerModel || 'opus', schema })
+const lanePrompt = (n, lane) => workorderLine(n) + briefLine(`--lane ${lane.name}`) + reentry(n) +
   `You are lane '${lane.name}', one of ${LANES.length} lanes (${LANE_NAMES}) running at the same time in separate implementers: follow your "When you are one lane, or the join" section. ` +
   `Carry out only the steps under '### Lane: ${lane.name}' in '## Steps', after the preconditions written above the first '### Lane:'; the '### Join' steps and every other lane's steps are not yours. ` +
   `Your file set is ${lane.files.map(f => `\`${f}\``).join(', ')}: edit nothing outside it -- an edit you need outside it is a PLAN-DEFECT. ` +
@@ -732,7 +934,7 @@ const laneCommit = files => Object.entries(splitPathsByRepo(files)).filter(([, p
   const git = k === '.' ? (REPO_ROOT ? `git -C "${REPO_ROOT}"` : 'git') : `git -C ${repoTarget(k)}`
   return `\`${git} add -- ${ps.map(p => `"${p}"`).join(' ')}\` then \`${git} commit\``
 }).join(' and ')
-const joinPrompt = (n, lanes) => workorderLine(n) + reentry(n) +
+const joinPrompt = (n, lanes) => workorderLine(n) + briefLine('--join') + reentry(n, { criteria: true }) +
   `You are the join: the ${LANES.length} lanes (${LANE_NAMES}) each returned IMPL-DONE, and none of their work is committed; follow your "When you are one lane, or the join" section. ` +
   `First commit each lane's file set as its own commit, in this order, with a message naming the lane: ` +
   LANES.map(l => `lane ${l.name}: ${laneCommit(l.files)}`).join('; ') + '; ' +
@@ -776,7 +978,8 @@ const PATCH_EXCLUDED = p => /^ForgePact\/plugin\//.test(p) || /^hs-game-sdk\/.*(
 const patchable = (verdict, failed, otherDefects, blocking) => blocking.length > 0 &&
   (verdict === 'PASS' || verdict === 'PASS-PENDING-HUMAN') && !failed.length && !otherDefects.length &&
   blocking.every(f => typeof f.fix === 'string' && f.fix.trim() && !PATCH_NEVER.has(f.reviewer))
-const patchPrompt = (n, findings, amended = false) => workorderLine(n) + (amended ? AMENDED_NOTE : '') +
+const patchPrompt = (n, findings, amended = false) => workorderLine(n) +
+  briefLine(amendedSel(pathsSel(findingPaths(findings)), amended)) + (amended ? AMENDED_NOTE : '') +
   `This is a patch round: the previous round's only defects were BLOCKING reviewer findings, each with the exact fix its reviewer stated. Apply exactly these fixes, then commit:\n` +
   findings.map(f => `- [${f.reviewer}] ${f.where}: ${f.problem}\n  fix: ${f.fix}`).join('\n') + '\n' +
   `Read the plan and context only where a fix needs them, start no other step, and run no full build or suite: the verifier runs the criteria. ` +
@@ -805,7 +1008,7 @@ const patchMiss = delta => {
 // lane's, never a reviewer's) PLAN-DEFECT whose evidence carries a
 // `CORRECTION:` other than `none` is amended here, the way SKILL.md Step 2's
 // "Amend, or replan" does it: `amend_check.py save` (a haiku agent,
-// `amend-save:<id>:r<n>`), a fresh planner at its own default tier
+// `amend-save:<id>:r<n>`), a fresh `planner-medium` on opus, never escalated
 // (`amendment: <slug> <id>:r<n>`, the correction verbatim), then
 // `amend_check.py check` (`amend-check:<id>:r<n>`). Only exit 0 with the
 // verdict line `AMENDMENT` re-runs the work, and the check always runs once a
@@ -888,7 +1091,13 @@ async function amendOnce(spawnFn, tag, who, correction, evidence) {
     `Record what you changed, and the evidence it answers, under a new '### Amendment <k>' heading in the context file's '## Log', run \`py -3 tools/plan_lint.py "${A.planPath}"\`, and return verdict PLAN-READY. ` +
     `If the correction cannot be made without touching '## Goal', '## Out of scope' or '## Needs human judgement', adding or removing a section, or changing more than 20 lines -- or the stated fix is wrong -- make no edit and return verdict NOT AN AMENDMENT with why in 'reason'. ` +
     `Other implementers may be working in this checkout: edit only the plan and the context file. amend_check.py check runs after you, from the files.`,
-    { label: `amendment: ${SLUG} ${tag}`, phase: 'Amend', agentType: 'planner', schema: AMEND_PLANNER_SCHEMA })
+    // Always opus at medium effort (`planner-medium`), never escalated, named
+    // here rather than left to the planner's frontmatter default. The one
+    // amendment measured on fable (2026-10-03 audit) was a driver spawn that
+    // carried the workorder's escalated planner tier over to a job that
+    // applies one stated correction. `workorder_audit.py` R27 fails an
+    // amendment planner on fable or as `planner-xhigh`/`planner-max`.
+    { label: `amendment: ${SLUG} ${tag}`, phase: 'Amend', agentType: 'planner-medium', model: 'opus', schema: AMEND_PLANNER_SCHEMA })
   const check = await spawnFn(
     `Run exactly: ${amendCmd('check')}  — report its exit code, its whole output in 'raw_output', and its last line (\`AMENDMENT\`, \`SCOPE: ...\` or \`REPLAN: ...\`) verbatim in 'verdict_line'. Run nothing else, and edit nothing.`,
     { label: `amend-check:${tag}`, phase: 'Amend', model: 'haiku', effort: 'low', schema: AMEND_CMD_SCHEMA })
@@ -945,6 +1154,7 @@ const ITEMS_IN = Array.isArray(A.items) ? A.items : []
 const ITEM_ATTEMPTS = A.itemAttempts || 3
 const FIX_CAP = 3
 const GATE_CAP = 3
+const REBUILD_CAP = 5
 const REFILL_CAP = 40
 // Measured 2026-09-27 (workorder-calibration.md, "Measuring where the pipeline
 // spends its time"): in the ForgePact bug batch at most 3 items ran at once and
@@ -1027,11 +1237,11 @@ async function runItems(n) {
   const all = []
   const st = {}
   const add = raw => {
-    const it = { id: raw.id, title: raw.title || '', files: raw.files, after: raw.after || [], shares: raw.shares || [], owner: raw.owner || null, default: raw.default, reversible: raw.reversible, checks: raw.checks || [], kind: raw.kind || 'item', findings: raw.findings, reviewer: raw.reviewer, failed: raw.failed }
+    const it = { id: raw.id, title: raw.title || '', files: raw.files, after: raw.after || [], shares: raw.shares || [], owner: raw.owner || null, default: raw.default, reversible: raw.reversible, checks: raw.checks || [], buildReads: Array.isArray(raw.build_reads) ? raw.build_reads : [], kind: raw.kind || 'item', findings: raw.findings, reviewer: raw.reviewer, failed: raw.failed }
     all.push(it)
     // Only a plan item carries over from State: fix ids are this launch's own.
     const prior = it.kind === 'item' ? itemsState[it.id] : undefined
-    const s = { status: 'pending', touched: false, attempts: 0, amendCount: 0, reason: '', commits: [], evidence: '' }
+    const s = { status: 'pending', touched: false, attempts: 0, amendCount: 0, chargeFrom: 0, rebuilds: 0, reason: '', commits: [], evidence: '' }
     const unanswered = it.owner && !answered.has(it.id)
     // 3c: a defaulted item stays `defaulted` in State's items: line, so the
     // relaunch that carries the owner's answer (its id in `answered`) runs it
@@ -1083,7 +1293,20 @@ async function runItems(n) {
   const itemTitle = it => it.title ? ` (${it.title})` : ''
   const fileWords = it => it.files === '*' ? 'every file: you run alone, with no other implementer in the checkout' : it.files.map(f => `\`${f}\``).join(', ')
   const inFlight = () => all.filter(it => ['pending', 'running'].includes(st[it.id].status) && it.kind === 'item')
+  // 2k: an attempt after the first reads what earlier attempts committed
+  // against the launch's own base heads (`--base`, `.` for the hub).
+  const baseSel = s => s.attempts > 1 && baseHeads ? Object.entries(baseHeads).map(([k, sha]) => ` --base ${k}=${sha}`).join('') : ''
+  // A gate-fix names the criteria that failed, by the number the runner gave
+  // them; one with no numbered failure (a structural finding) has no brief.
+  const fixSel = it => {
+    if (it.kind === 'gate-fix') {
+      const ks = [...new Set((it.failed || []).map(c => c.k).filter(Number.isInteger))]
+      return ks.length ? `--criteria ${ks.join(',')}` : ''
+    }
+    return it.files === '*' ? '' : pathsSel(it.files)
+  }
   const itemPrompt = (it, s) => workorderLine(n) +
+    briefLine(`${amendedSel(`--item ${it.id}`, s.retry === 'amended')}${baseSel(s)}`) +
     `You are item '${it.id}'${itemTitle(it)}, one of ${all.filter(x => x.kind === 'item').length} items; other items' implementers work in this checkout at the same time: follow your "When you are one item" section. ` +
     `Carry out only the steps under '### Item: ${it.id}' in '## Steps', after the preconditions written above the first '### Item:'. ` +
     `Your file set is ${fileWords(it)}: edit nothing outside it -- an edit you need outside it is a PLAN-DEFECT. ` +
@@ -1093,8 +1316,9 @@ async function runItems(n) {
     `Run no full build and no full suite. Before returning IMPL-DONE run your item's checks once, \`py -3 tools/run_criteria.py "${A.planPath}" --item ${it.id} --jobs auto --out "<your scratchpad>/item-${it.id}"\` (Bash timeout 600000), and fix what fails; an independent verifier runs them again after you. ` +
     (s.retry === 'checks' ? `This is attempt ${s.attempts}: after the previous attempt's IMPL-DONE the item's checks failed, and the verifier reported:\n${s.evidence}\nFix that, commit again, and return. ` : '') +
     (s.retry === 'amended' ? `This is attempt ${s.attempts}. ${AMENDED_NOTE}` : '') +
+    (s.retry === 'rebuild' ? `This item was done, then ${s.staleBy} committed ${s.stalePaths}, which its build checks read, so what it built names the old tree. Carry out its steps again against the tree as it is now, commit only if a file in your set changed, and run its checks. ` : '') +
     VERDICT_ASK
-  const fixPrompt = (it, s) => workorderLine(n) +
+  const fixPrompt = (it, s) => workorderLine(n) + briefLine(amendedSel(fixSel(it), !!(s && s.retry === 'amended'))) +
     (it.kind === 'gate-fix'
       ? `You are fixer '${it.id}': every item is done, and the workorder's whole-tree acceptance criteria then failed:\n${it.failed.map(c => `- ${c.criterion}: ${c.evidence}`).join('\n')}\nFix those failures and nothing else. `
       : `You are fixer '${it.id}': a reviewer read committed work and raised these BLOCKING findings. Resolve exactly these, nothing else:\n` +
@@ -1113,12 +1337,16 @@ async function runItems(n) {
     const s = st[it.id]
     for (;;) {
       s.attempts++
+      // A commit that made an earlier attempt stale is already in the tree
+      // this one starts from (a check retry, or a re-run after an amendment).
+      s.stale = false
       const label = it.kind === 'item' ? `item-implementer:${it.id}:a${s.attempts}:r${n}` : `fix-implementer:${it.id}:r${n}`
-      const impl = await spawn(it.kind === 'item' ? itemPrompt(it, s) : fixPrompt(it, s), { label, phase: 'Implement', agentType: 'implementer', model: A.implementerModel || 'opus', schema: ITEM_IMPL_SCHEMA })
+      const impl = await spawn(it.kind === 'item' ? itemPrompt(it, s) : fixPrompt(it, s), { label, phase: 'Implement', agentType: IMPLEMENTER, model: A.implementerModel || 'opus', schema: ITEM_IMPL_SCHEMA })
       if (!impl) return { park: 'the implementer returned nothing' }
       if (impl.commits && impl.commits.length) {
         s.commits.push(...impl.commits)
         landed.push({ id: it.id, paths: impl.paths || [], flags: impl.flags || '' })
+        ;(s.landedPaths = s.landedPaths || []).push(...(impl.paths || []))
       }
       // `fromImplementer`: only an implementer's or a fixer's own PLAN-DEFECT
       // may be amended in the launch (3d), never the item-check verifier's.
@@ -1135,7 +1363,7 @@ async function runItems(n) {
       s.retry = 'checks'
       if (v.verdict === 'PLAN-DEFECT') return { verdict: 'PLAN-DEFECT', evidence: s.evidence }
       // An attempt that ended in an amendment (3d) is not charged to the budget.
-      const charged = s.attempts - s.amendCount
+      const charged = s.attempts - s.chargeFrom - s.amendCount
       if (charged >= ITEM_ATTEMPTS) return { park: `budget: ${charged} attempts and its checks still fail`, evidence: s.evidence }
       if (overCeiling()) return { park: 'the launch reached its ceiling with this item\'s checks failing', evidence: s.evidence }
     }
@@ -1146,6 +1374,29 @@ async function runItems(n) {
       for (const h of held) { st[h.id].status = 'held'; st[h.id].reason = h.reason; st[h.id].heldBy = h.by }
     }
   }
+  // A build is re-run, not trusted, once a later commit lands on what it
+  // reads: in forgepact-124-pet-relics (2026-10-02) a reviewer's fix landed
+  // three times minutes after `build-dev` passed, and each launch came back
+  // PARKED with build-dev=done and a DLL older than the fix. A done build goes
+  // back to pending at once; a running one finishes, then goes back.
+  const repend = id => {
+    const s = st[id]
+    // Two builds that each commit into what the other reads would re-run
+    // each other for ever; past the cap the item parks for the driver.
+    if (s.rebuilds >= REBUILD_CAP) { Object.assign(s, { status: 'parked', stale: false, reason: `budget: re-run ${s.rebuilds} times after commits landed on what it reads (last by ${s.staleBy})` }); return }
+    Object.assign(s, { status: 'pending', reason: '', stale: false, retry: 'rebuild', chargeFrom: s.attempts, amendCount: 0 })
+    s.rebuilds++
+  }
+  const markStale = (by, paths) => {
+    for (const b of staleBuilds(all, st, by, paths)) {
+      const s = st[b.id]
+      const hit = paths.filter(p => b.buildReads.some(g => readsPath(g, p)))
+      s.staleBy = by
+      s.stalePaths = hit.slice(0, 8).map(p => `\`${p}\``).join(', ') + (hit.length > 8 ? ` and ${hit.length - 8} more` : '')
+      if (s.status === 'done') repend(b.id)
+      else s.stale = true
+    }
+  }
   const settleItem = (it, r) => {
     const s = st[it.id]
     // A finished fix is always re-read by the reviewer that raised it --
@@ -1153,6 +1404,9 @@ async function runItems(n) {
     // which lands no commit that would otherwise make the reviewer due.
     const raisedBy = it.kind === 'fix' && reviewers.find(rv => rv.key === it.reviewer)
     if (raisedBy && r && r.verdict === 'DONE') raisedBy.recheck = s.committed ? null : { fix: it.id, report: s.report }
+    // Whatever its verdict, what it committed may have made a build stale.
+    if (s.landedPaths && s.landedPaths.length) { markStale(it.id, s.landedPaths); s.landedPaths = [] }
+    if (r && r.verdict === 'DONE' && s.stale) { repend(it.id); return }
     if (r && r.verdict === 'DONE') { s.status = 'done'; s.pending = r.pending || []; return }
     s.status = 'parked'
     if (!r) { s.reason = 'the item threw'; return }
@@ -1218,6 +1472,7 @@ async function runItems(n) {
       x.title = raw.title || x.title
       x.files = raw.files
       x.checks = raw.checks || []
+      x.buildReads = Array.isArray(raw.build_reads) ? raw.build_reads : []
       x.after = (raw.after || []).filter(d => st[d])
       x.shares = (raw.shares || []).filter(d => st[d])
     }
@@ -1375,7 +1630,7 @@ async function runItems(n) {
     }
     for (const it of all) {
       const s = st[it.id]
-      lines.push(`- ${it.id}${itemTitle(it)}: ${s.status}${s.reason ? ` -- ${s.reason}` : ''}${s.status !== 'done' && s.replan ? `; replan: ${s.replan}` : ''}${s.attempts ? ` (attempts ${s.attempts})` : ''}${s.commits.length ? `; commits ${s.commits.map(c => `${c.repo}:${String(c.sha).slice(0, 12)}`).join(', ')}` : ''}`)
+      lines.push(`- ${it.id}${itemTitle(it)}: ${s.status}${s.reason ? ` -- ${s.reason}` : ''}${s.status !== 'done' && s.replan ? `; replan: ${s.replan}` : ''}${s.attempts ? ` (attempts ${s.attempts})` : ''}${s.rebuilds ? ` (rebuilt ${s.rebuilds}x after ${s.staleBy})` : ''}${s.commits.length ? `; commits ${s.commits.map(c => `${c.repo}:${String(c.sha).slice(0, 12)}`).join(', ')}` : ''}`)
       if (s.status !== 'done' && s.evidence) lines.push(...String(s.evidence).split('\n').map(l => `  ${l}`))
       if (s.status !== 'done' && s.progress) lines.push(`  progress: ${s.progress}`)
     }
@@ -1401,7 +1656,7 @@ async function runItems(n) {
     const rec = await recordState(n, block(outcome, defaulted, unblocked), [`round: ${clean ? n : n + 1}`, `phase: ${phase}`, itemsLine(), reviewersLine(), openLine()].join('\n'))
     const result = {
       outcome, round: n, agents,
-      items: all.map(it => ({ id: it.id, kind: it.kind, status: st[it.id].status, reason: st[it.id].reason, attempts: st[it.id].attempts, commits: st[it.id].commits, evidence: st[it.id].evidence, progress: st[it.id].progress, ...(st[it.id].replan ? { replan: st[it.id].replan } : {}) })),
+      items: all.map(it => ({ id: it.id, kind: it.kind, status: st[it.id].status, reason: st[it.id].reason, attempts: st[it.id].attempts, ...(st[it.id].rebuilds ? { rebuilds: st[it.id].rebuilds } : {}), commits: st[it.id].commits, evidence: st[it.id].evidence, progress: st[it.id].progress, ...(st[it.id].replan ? { replan: st[it.id].replan } : {}) })),
       gate: gateRuns, blocking, nonBlocking, defaulted, amendments, ...(unblocked ? { unblocked } : {}), ...extra,
     }
     const stop = recordStop(n, rec, outcome)
@@ -1427,7 +1682,7 @@ async function runItems(n) {
       return finish('PARKED', { detail: `BLOCKING findings still open with no fix to run: ${stillBlocking.map(rv => rv.key).join(', ')}` })
     }
     // 3b: the whole tree, once.
-    const v = await spawn(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${VERIFIER_CRITERIA_NOTE}${VERIFIER_CONTEXT_NOTE}`,
+    const v = await spawn(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${devCriteriaNote()}${VERIFIER_CONTEXT_NOTE}`,
       { label: k === 1 ? `verifier:r${n}` : `verifier:g${k}:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA })
     if (!v) return finish('AGENT-FAILED', { detail: 'the gate verifier returned nothing' })
     const gates = gatesSet(knownState)
@@ -1440,7 +1695,7 @@ async function runItems(n) {
     const pendingHuman = [...new Set([...(v.pending_human || []), ...all.flatMap(it => st[it.id].pending || []),
       ...gatePending.map(c => `${c.criterion} -> UNATTEMPTED (gate ${gateTokens(c.gate).filter(t => !gates.has(t)).join('; ')} not set)`)])]
     gateRuns.push({ k, verdict, verifierSaid: onlyGated ? v.verdict : undefined, failed, gatePending })
-    if (verdict === 'PASS' || verdict === 'PASS-PENDING-HUMAN') return finish(verdict, { pending_human: pendingHuman })
+    if (verdict === 'PASS' || verdict === 'PASS-PENDING-HUMAN') return finish(verdict, { pending_human: pendingHuman, ...(DEV ? { verifyScope: 'dev', note: DEV_FINAL_NOTE } : {}) })
     if (verdict === 'PLAN-DEFECT') return finish('PLAN-DEFECT', { detail: 'the gate verifier found a criterion that cannot be run as written' })
     if (k >= GATE_CAP) return finish('CAP', { detail: `the whole-tree criteria failed ${k} times; split the open failures into a new workorder` })
     const why = failed.length ? failed : (v.other_defects || []).map(d => ({ criterion: 'structural', evidence: d }))
@@ -1474,16 +1729,19 @@ const REACH_FINAL_NOTE = 'the last verify ran only the criteria this round could
 const noteCriteria = (v, gatedUnset, full) => {
   const criteria = v.criteria || []
   critNumbered = criteria.length > 0 && criteria.every(c => Number.isInteger(c.k) && c.k >= 1)
-  if (full) { critState.clear(); critCount = criteria.length }
+  if (full || !critCount) { critState.clear(); critCount = criteria.length }
   for (const c of criteria) {
     if (!Number.isInteger(c.k)) continue
-    if (c.status === 'not-selected') { if (!critState.has(c.k)) critState.set(c.k, 'unknown'); continue }
+    // Not selected: out of this verify's reach, or deferred to the final
+    // gate. Either way its earlier standing holds; with none, it is
+    // 'deferred' -- known, and owed to the final gate's full set.
+    if (c.status === 'not-selected') { if (!critState.has(c.k)) critState.set(c.k, DEV ? 'deferred' : 'unknown'); continue }
     critState.set(c.k, gatedUnset(c) && c.status !== 'pass' ? 'gated' : c.status === 'pass' ? 'pass' : c.status === 'fail' ? 'fail' : 'unknown')
   }
 }
 // The runner arguments for a reach re-verify, or null for the full set.
 const reachScope = (heads, deltaUsable) => {
-  if (!rounds.length || !critNumbered || !deltaUsable || !heads || critState.size !== critCount) return null
+  if (!rounds.length || !critCount || !critNumbered || !deltaUsable || !heads || critState.size !== critCount) return null
   if ([...critState.values()].some(s => s === 'unknown')) return null
   const entries = Object.entries(heads)
   if (!heads['.'] || entries.some(([, sha]) => !sha)) return null
@@ -1503,10 +1761,11 @@ let reviewerState = { ...A.reviewers }
 const lastFindings = { ...(A.priorFindings || {}) } // reviewer -> its BLOCKING findings from the round before
 let lastVerifier = null // the previous round's full verifier result, reused when nothing changed
 // 2j: each criterion's standing as of the last verify that ran it, by plan
-// number -- 'pass', 'fail', 'gated' (its gate not set) or 'unknown'. A reach
-// re-verify is allowed only while every criterion stands at one of the first
-// three and every one carries its number; a fresh launch starts empty, so its
-// first verify is always the full set.
+// number -- 'pass', 'fail', 'gated' (its gate not set), 'deferred' (to the
+// final gate) or 'unknown'. A reach re-verify is allowed only while no
+// criterion is 'unknown' and every one carries its number; a fresh launch
+// starts empty, so its first verify is `--dev` (or the full set under
+// fullVerify).
 const critState = new Map()
 let critNumbered = false
 let critCount = 0
@@ -1550,7 +1809,10 @@ for (let n = START; n - patchCount - scopeCount < ROUND_CAP || patchNext; n++) {
     if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'the join implementer returned nothing', lanes, rounds }
   } else if (isPatch) {
     // Labelled apart from `implementer:<lane>:r<n>` so the audit never reads a patch as a lane.
-    impl = await agent(patchPrompt(n, patchFindings), implOpts(`patch-implementer:r${n}`, IMPL_SCHEMA))
+    // Medium effort: the fixes are written out already, so the work is
+    // applying them, and `round_delta.py size` measures afterwards whether it
+    // stayed that small.
+    impl = await agent(patchPrompt(n, patchFindings), implOpts(`patch-implementer:r${n}`, IMPL_SCHEMA, PATCH_IMPLEMENTER))
     if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'patch implementer returned nothing', rounds }
   } else {
     impl = await agent(implPrompt(n), implOpts(`implementer:r${n}`, IMPL_SCHEMA))
@@ -1569,7 +1831,7 @@ for (let n = START; n - patchCount - scopeCount < ROUND_CAP || patchNext; n++) {
       amendment = { amended: am.confirmed, why: am.why, verdict: am.verdict }
       if (am.confirmed) {
         impl = isPatch
-          ? await agent(patchPrompt(n, patchFindings, true), implOpts(`patch-implementer:r${n}`, IMPL_SCHEMA))
+          ? await agent(patchPrompt(n, patchFindings, true), implOpts(`patch-implementer:r${n}`, IMPL_SCHEMA, PATCH_IMPLEMENTER))
           : await agent(implPrompt(n, true), implOpts(`implementer:r${n}`, IMPL_SCHEMA))
         if (!impl) return { outcome: 'AGENT-FAILED', round: n, detail: 'the implementer re-run after an amendment returned nothing', amendment, rounds }
         if (impl.verdict === 'PLAN-DEFECT') amendment.why = 'PLAN-DEFECT again after its amendment in this launch, with no IMPL-DONE between'
@@ -1643,7 +1905,7 @@ for (let n = START; n - patchCount - scopeCount < ROUND_CAP || patchNext; n++) {
   // edit the tree this verifier is reading. Streaming findings into fixes is
   // the driver's procedure outside a round (SKILL.md "Spend each check once").
   const results = await parallel([
-    () => nothingChanged ? Promise.resolve(lastVerifier) : agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${reach ? verifierCriteriaNote(reach.extra) + VERIFIER_REACH_NOTE : VERIFIER_CRITERIA_NOTE}${VERIFIER_CONTEXT_NOTE}`,
+    () => nothingChanged ? Promise.resolve(lastVerifier) : agent(`Workorder: ${A.planPath}. Run its acceptance criteria and report what they printed.${reach ? verifierCriteriaNote(reach.extra) + VERIFIER_REACH_NOTE : devCriteriaNote()}${VERIFIER_CONTEXT_NOTE}`,
       { label: `verifier:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA }),
     ...toRun.map(name => () => agent(
       `You are reviewing a change. You are NOT given the workorder; this is its intent:\n${A.goalExcerpt}\n${OUT_OF_SCOPE_NOTE}\n${scope(name)}\n` +
@@ -1685,6 +1947,7 @@ for (let n = START; n - patchCount - scopeCount < ROUND_CAP || patchNext; n++) {
   const record = { round: n, verifier: verdict, verifierSaid: onlyGated ? verifier.verdict : undefined, failed, gatePending, pending_human: pendingHuman, blocking, nonBlocking, notReRun: skipped, reviewerState: { ...reviewerState } }
   if (!nothingChanged) noteCriteria(verifier, gatedUnset, !reach)
   if (reach) record.verifyScope = reach.label
+  else if (DEV && !nothingChanged) record.verifyScope = 'development: every criterion but the whole suites and (final) ones'
   if (amendmentWords) record.amendment = amendmentWords
   if (isPatch) {
     record.patch = patchHeld
@@ -1710,7 +1973,7 @@ for (let n = START; n - patchCount - scopeCount < ROUND_CAP || patchNext; n++) {
   if (stop) return { ...stop, rounds, ...(record.unblocked ? { unblocked: record.unblocked } : {}) }
 
   if (planDefect) return { outcome: 'PLAN-DEFECT', round: n, rounds }
-  if (clean) return { outcome: verdict, round: n, pending_human: pendingHuman, rounds, ...(record.unblocked ? { unblocked: record.unblocked } : {}), ...(reach ? { verifyScope: 'reach', note: REACH_FINAL_NOTE } : {}) }
+  if (clean) return { outcome: verdict, round: n, pending_human: pendingHuman, rounds, ...(record.unblocked ? { unblocked: record.unblocked } : {}), ...(reach ? { verifyScope: 'reach', note: REACH_FINAL_NOTE } : DEV ? { verifyScope: 'dev', note: DEV_FINAL_NOTE } : {}) }
 }
 
 return { outcome: 'CAP', detail: `${ROUND_CAP} implement->verify rounds used` + (scopeCount ? ` (plus ${scopeCount} owner-scope round(s))` : '') + `; split the open findings into a new workorder`, rounds }
