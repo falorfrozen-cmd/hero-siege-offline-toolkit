@@ -702,10 +702,14 @@ setting `visible` as ways to shorten the runner's walks
   `myHealthBar.visible` set and `wasActive`/`isMoving` cleared. It also runs
   `m_CorpseStep` and `m_runEnemyBuffs`. The every-30-frames walk over the
   player box (§ 11.3) is this function's.
-- **Deactivation is rare.** `DeactivateObject` removes an instance's light
-  from the renderer and then calls `instance_deactivate_object`. It is called
-  only from `Satanic_Cube_obj`'s Alarm 2 and the `Labyrinth_Trigger_*`
-  collisions.
+- **`DeactivateObject` has two direct callers.** It removes an instance's
+  light from the renderer and then calls `instance_deactivate_object`. Its
+  direct (`call rel32`) callers are only `Satanic_Cube_obj`'s Alarm 2 and the
+  `Labyrinth_Trigger_*` collisions. That scan covers this one script: the
+  game's direct calls to the `instance_deactivate_object`, `_region`, `_all`
+  and `_layer` builtins and to `layer_set_visible` were **not searched**, and
+  a call through `script_execute` or a method value cannot be seen by it. So
+  where else the game deactivates is **not established**.
 - **The light renderer walks every registered light.** `Darkness_Overlay_obj`'s
   Draw runs the Bulb renderer's update. Its hard-light pass walks every
   registered point light each frame: it drops lights whose weak reference died
@@ -2137,12 +2141,17 @@ All **measured** (2026-09-10/11).
 
 ### 11.3 The enemy loop
 
-- **The game never deactivates monsters.** It culls props, as it culls
-  monsters, by setting `visible`, and deactivates only from the Satanic cube
-  (`Satanic_Cube_obj`'s Alarm 2) and the `Labyrinth_Trigger_*` collisions
-  (§ 5.13; corrected 2026-10-07, an earlier reading here said props and their
-  lights were deactivated). Far monsters simply get no step. **Static
-  reading**, consistent with the census.
+- **The enemy loop never deactivates monsters.** `ActivateDeactivateProps`
+  culls props, as it culls monsters, by setting `visible` (§ 5.13; corrected
+  2026-10-07, an earlier reading here said props and their lights were
+  deactivated). Far monsters simply get no step. **Static reading** of the
+  box pass, consistent with the census. The deactivating script
+  `DeactivateObject` has direct callers only in `Satanic_Cube_obj`'s Alarm 2
+  and the `Labyrinth_Trigger_*` collisions (a `call rel32` scan, § 5.13).
+  Direct calls to the `instance_deactivate_*` builtins and to
+  `layer_set_visible` were **not searched**, and calls through
+  `script_execute` or a method value cannot be seen by that scan, so other
+  deactivation routes are **not established**.
 - Every 30 frames (`updateEnemyTimer`; `updateEnemies` forces it)
   `ActivateDeactivateProps` walks every active `Enemy_Child_Basic_obj`, tests it
   against the player box (`playerBoxL/R/T/B`) and rebuilds
