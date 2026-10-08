@@ -1755,6 +1755,24 @@ class ModelAndCostTests(TempDirMixin, unittest.TestCase):
         # The fact the implementer's tier move rests on.
         self.assertEqual(wa.MODEL_PRICES["claude-opus-5-5"][2], wa.MODEL_PRICES["claude-sonnet-5"][2])
 
+    def test_sonnet_5_5_is_priced(self):
+        records = with_model(make_turns(1, input_tokens=0, cache_read=1_000_000, output_tokens=0), "claude-sonnet-5-5")
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).subagent("docs-sync-reviewer", "docs-sync-reviewer:r0", records)
+        session, _ = b.evaluate()
+        row = [r for r in wa.build_table(session) if r["agent_type"] == "docs-sync-reviewer"][0]
+        self.assertAlmostEqual(row["cost_usd"], 0.20, places=2)
+
+    def test_haiku_5_5_picks_its_rate_card_per_turn_by_prompt_length(self):
+        # One turn at a 100K prompt (short card, $0.01/M cache reads) and one
+        # just over it (long card, $0.05/M): the split is per turn, at > 100K.
+        records = with_model([turn(0, 0, input_tokens=0, cache_read=100_000, output_tokens=0),
+                              turn(1, 1, input_tokens=0, cache_read=100_001, output_tokens=0)],
+                             "claude-haiku-5-5")
+        b = SessionBuilder(self.tmp_path).driver([turn(0, 9000)]).subagent("verifier", "verifier:r0", records)
+        session, _ = b.evaluate()
+        verifier = [a for a in wa.all_subagents(session) if a.agent_type == "verifier"][0]
+        self.assertAlmostEqual(verifier.cost_usd, (100_000 * 0.01 + 100_001 * 0.05) / 1e6, places=9)
+
 
 class LocateSessionTests(TempDirMixin, unittest.TestCase):
     def test_a_session_in_another_worktree_of_the_same_repo_is_found(self):

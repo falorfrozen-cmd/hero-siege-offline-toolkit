@@ -1341,3 +1341,69 @@ step costs about twice as much for 2-3 points.
   opus/medium reviewers find more, cost the expected ~1.2×, or neither.
 - The driver's effort is not visible in a transcript, so the audit cannot
   check it; a driver's per-turn tokens before and after are the proxy.
+
+# Haiku 5.5: verifier and scribe pin an effort (2026-10-08)
+
+## The question
+
+Issue #473. Claude Haiku 5.5 came out on 2026-10-07 with an `effort`
+parameter (`low` to `max`, default `medium`) and a much lower price. Which
+roles should move to it, and at what effort?
+
+## What was found
+
+Artificial Analysis, read 2026-10-08. The Intelligence Index and its cost
+per task are the chart's labels. The Coding Agent Index (Claude Code as the
+agent) costs are read off a log-scale chart, so they are approximate; the
+Haiku ones match the values embedded in the page.
+
+| Model / effort | Intelligence | $ per task | Coding Agent | $ per task |
+|---|---|---|---|---|
+| Opus 5.5 max / xhigh / high / medium / low | 58 / 56 / 54 / 51 / 42 | 5.98 / 3.46 / 1.82 / 1.34 / 0.55 | 66 (max only) | 13.0 |
+| Sonnet 5.5 max / xhigh / high / medium / low | 56 / 52 / 47 / 41 / 36 | 5.46 / 2.01 / 0.88 / 0.48 / 0.35 | 68 / 63 / 55 / 46 / 42 | 14.2 / 3.33 / 1.24 / 0.62 / 0.49 |
+| Haiku 5.5 max / xhigh / high / medium / low | 43 / 41 / 38 / 34 / 29 | 0.21 / 0.12 / 0.08 / 0.05 / 0.02 | 36 / 41 / 35 / 34 / 28 | 2.58 / 0.61 / 0.37 / 0.23 / 0.14 |
+
+Haiku 5.5 lists at $0.10 / $0.50 / $0.01 (in / out / cache read) while a
+prompt is at most 100K tokens, and $0.50 / $2.50 / $0.05 above that. Its
+best Coding Agent score (41, at `xhigh`) is below Sonnet 5.5 at `low`
+(42), and `max` is worse than `xhigh` at four times the cost.
+
+The token profile of the 87 /workorder sessions since 2026-09-22, each role
+repriced on its own tokens (same tokens on each model, so Haiku's column
+understates a run at higher effort):
+
+| Role | Median prompt | p90 prompt | Turns > 100K | $/run Opus 5.5 | $/run Haiku 5.5 |
+|---|---|---|---|---|---|
+| implementer | 131K | 293K | 67% | 2.20 | 0.33 |
+| driver | 262K | 493K | 98% | 11.79 | 2.34 |
+| planner | 136K | 275K | 67% | 2.52 | 0.37 |
+| live-operator | 127K | 367K | 63% | 4.01 | 0.67 |
+| reviewers (4) | 49-65K | 97-121K | 9-20% | 0.43-0.74 | 0.02-0.05 |
+| verifier | 44K | 64K | 0% | 0.55 | 0.02 |
+| scribe | 42K | 70K | 1% | 0.48 | 0.01 |
+
+The `haiku` alias still resolved to `claude-haiku-4-5-20251001` in the last
+runs on 2026-10-07 (Claude Code 2.1.294).
+
+## What changed
+
+- `verifier` pins `effort: medium`, `scribe` `effort: low`. Haiku 4.5
+  ignored effort, so neither had one; Haiku 5.5 honours it, and an unpinned
+  agent inherits the driver's. `tests/test_claude_agents.py` no longer
+  exempts Haiku agents from pinning one.
+- `tools/workorder_audit.py` prices `claude-sonnet-5-5` (before, those runs
+  showed as unpriced) and `claude-haiku-5-5`, choosing Haiku 5.5's rate card
+  per turn from that turn's prompt length (`LONG_PROMPT_PRICES`).
+- Nothing else moves. The reviewers' prompts would mostly stay under 100K,
+  but they are where a miss ships a defect, and Haiku's best index is
+  10 points under the Opus 5.5 `medium` they run at. Implementer, planner,
+  driver and live-operator sit over 100K on most turns, where Haiku 5.5's
+  price advantage shrinks to 4x on cache reads.
+
+## Not yet measured
+
+- Whether `medium` is enough for the verifier on Haiku 5.5. A false
+  `IMPL-DEFECT` or `PASS` shows up as an extra round; the next `--calibrate`
+  after the alias moves compares verifier runs before and after.
+- A patch round (an implementer applying a reviewer's written `fix`) is a
+  candidate for Haiku 5.5 at `high` or `xhigh`; not tried.

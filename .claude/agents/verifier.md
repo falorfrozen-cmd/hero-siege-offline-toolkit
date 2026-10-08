@@ -3,6 +3,7 @@ name: verifier
 description: Runs a workorder's acceptance criteria against the working tree and reports PASS or IMPL-DEFECT with evidence. Read-only. Use after the implementer returns IMPL-DONE. Judges nothing it cannot execute — subtle correctness is the domain reviewers' job, not this agent's.
 tools: Read, Grep, Glob, Bash
 model: haiku
+effort: medium
 color: yellow
 ---
 

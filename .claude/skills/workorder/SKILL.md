@@ -1430,8 +1430,8 @@ backwards is cheap and correct. That is the whole design.
 Set in each agent's frontmatter, with an `effort:` beside every tier that
 takes one: `planner` opus/high, `implementer` opus/high, `consultant`
 opus/xhigh, `instrument-blindness-reviewer` opus/high, the other reviewers and
-`live-operator` opus/medium, `verifier` and `scribe` haiku (Haiku 4.5 takes no
-effort). Override the model for one run by passing `model` on the Agent call.
+`live-operator` opus/medium, `verifier` haiku/medium, `scribe` haiku/low.
+Override the model for one run by passing `model` on the Agent call.
 Effort has no per-call override on the Agent tool, which is why it is pinned
 — an agent without one inherits whatever the session runs at.
 
@@ -1488,8 +1488,11 @@ chosen by. List prices per million tokens (input / output / cache read):
 | Fable 5.1 (`fable`) | $10 | $50 | $0.25 |
 | Opus 5.5 (`opus`) | $4 | $20 | $0.20 |
 | Opus 5 (was `opus`) | $5 | $25 | $0.50 |
-| Sonnet 5 (`sonnet`) | $2 | $10 | $0.20 |
-| Haiku 4.5 (`haiku`) | $1 | $5 | $0.10 |
+| Sonnet 5.5 (`sonnet`) | $2 | $10 | $0.20 |
+| Sonnet 5 (was `sonnet`) | $2 | $10 | $0.20 |
+| Haiku 5.5 (`haiku`), prompt ≤ 100K tokens | $0.10 | $0.50 | $0.01 |
+| Haiku 5.5 (`haiku`), prompt > 100K tokens | $0.50 | $2.50 | $0.05 |
+| Haiku 4.5 (was `haiku`) | $1 | $5 | $0.10 |
 
 92-99% of every role's tokens here are cache reads, so for this pipeline
 Opus 5.5 costs about what Sonnet 5 does, and 40-60% less than Opus 5 did:
@@ -1531,9 +1534,24 @@ have cost about half as much. Hence:
   ever measured as missed on `sonnet`, so this is a capability bet chosen
   from a benchmark, not a measured fix; `--calibrate` will say whether it
   holds.
-- **verifier and scribe stay `haiku`.** They run commands and paste text;
-  Opus 5.5 would cost the verifier 2.9× on the same tokens for nothing it
-  needs.
+- **verifier and scribe stay `haiku`, now with an effort pinned
+  (2026-10-08).** They run commands and paste text. Haiku 5.5 (released
+  2026-10-07) honours `effort` where Haiku 4.5 ignored it, so an unpinned
+  one would run at the driver's level: `verifier` is pinned `medium`
+  (Haiku 5.5's own default; a false verdict costs a round, and at about
+  $0.02 a run the step down to `low` saves nothing worth that), `scribe`
+  `low` (it pastes precomputed text). Haiku 5.5 bills a turn whose prompt
+  is over 100K tokens at 5×, and both stay under it: on 87 sessions since
+  2026-09-22 the verifier's p90 prompt was 64K with no turn over 100K, the
+  scribe's 70K with 1%. Repriced on those tokens a verifier run costs
+  about $0.02 against $0.55 on Opus 5.5. Not moved to Haiku: the
+  reviewers, live-operator, planner and implementer. Artificial
+  Analysis (read 2026-10-08) puts Haiku 5.5's best Coding Agent Index (41,
+  at `xhigh`; `max` scores 36 at four times the cost) below Sonnet 5.5 at
+  `low` (42), and its Intelligence Index at `xhigh` (41) well below Opus
+  5.5 at `medium` (51); those roles' prompts also sit mostly over 100K
+  (implementer and planner 67% of turns). The `haiku` alias still
+  resolved to Haiku 4.5 on 2026-10-07; it moves by itself.
 - **Effort.** Opus 5.5 defaults to `medium` and thinks more per turn than
   Opus 5 at the same level; `high` is pinned for the phases that carry long
   agentic work and `xhigh` for the one narrow question `consultant` answers.

@@ -54,8 +54,9 @@ CLAUDE_ONLY_SKILLS = {"workorder"}
 
 #: Claude Code `effort:` -> Codex `model_reasoning_effort`. Codex has no `max`.
 EFFORT = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh"}
-#: A Claude agent pinned to Haiku takes no effort; its point is to be cheap,
-#: so its Codex twin asks for low effort rather than inheriting the parent's.
+#: Fallback for a Haiku agent with no `effort:` (every one pins one since
+#: Haiku 5.5, which honours it): its point is to be cheap, so its Codex twin
+#: asks for low effort rather than inheriting the parent's.
 TIER_DEFAULT_EFFORT = {"haiku": "low"}
 #: Claude tools that write. An agent with none of these is read-only in Codex.
 WRITE_TOOLS = {"Edit", "Write", "NotebookEdit"}
