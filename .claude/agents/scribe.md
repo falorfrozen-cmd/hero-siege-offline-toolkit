@@ -3,6 +3,7 @@ name: scribe
 description: Pastes a precomputed round Log entry and replacement State lines into a workorder's own -plan.md/-context.md; spawned only by workorder-rounds.js. Records the round's findings, never acts on them.
 tools: Read, Grep, Edit
 model: haiku
+effort: low
 color: gray
 ---
 

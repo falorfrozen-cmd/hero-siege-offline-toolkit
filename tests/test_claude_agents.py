@@ -118,14 +118,12 @@ class TestAgentDefinitions(unittest.TestCase):
         "not a decision anybody made" as an unpinned model, and it now moves
         cost as much as the tier does: Opus 5.5 defaults to `medium`, the
         Claude Code session to something else, and a subagent silently takes
-        whichever it was launched under. Haiku 4.5 takes no effort at all, so
-        a pin there would be ignored at best."""
+        whichever it was launched under. Haiku agents included: Haiku 4.5
+        ignored effort, but Haiku 5.5 honours it (default `medium`), so an
+        unpinned `verifier` or `scribe` would run at the driver's level."""
         for path in self.agents:
             with self.subTest(agent=path.name):
                 fields, _ = parse_frontmatter(read(path))
-                if fields.get("model") == "haiku":
-                    self.assertNotIn("effort", fields, f"{path.name}: Haiku 4.5 takes no effort level")
-                    continue
                 self.assertIn(fields.get("effort"), VALID_EFFORTS,
                               f"{path.name} must pin `effort:` to one of {sorted(VALID_EFFORTS)}")
 

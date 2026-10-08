@@ -318,7 +318,7 @@ SHELL_TOOLS = {"Bash", "PowerShell"}
 EDIT_TOOLS = {"Edit", "Write"}
 
 # List prices, $ per million tokens: (input, output, cache read), as published
-# 2026-09 (the `claude-api` skill's model table). A cache write bills
+# 2026-10 (the `claude-api` skill's model table). A cache write bills
 # CACHE_WRITE_MULTIPLIER x input. These are for comparing roles and tiers with
 # each other, not an invoice: a subscription does not bill per token. Price is
 # why the tiers are where they are -- 92-99% of every role's tokens here are
@@ -327,9 +327,18 @@ MODEL_PRICES = {
     "claude-fable-5-1": (10.0, 50.0, 0.25),
     "claude-opus-5-5": (4.0, 20.0, 0.20),
     "claude-opus-5": (5.0, 25.0, 0.50),
+    "claude-sonnet-5-5": (2.0, 10.0, 0.20),
     "claude-sonnet-5": (2.0, 10.0, 0.20),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01),
     "claude-haiku-4-5-20251001": (1.0, 5.0, 0.10),
     "claude-haiku-4-5": (1.0, 5.0, 0.10),
+}
+# A model with a second rate card for long prompts: (prompt-token threshold,
+# prices above it). Claude Haiku 5.5 bills a turn whose prompt (input + cache
+# write + cache read) exceeds 100K tokens at 5x, cache reads included, so the
+# card is chosen per turn, not per transcript.
+LONG_PROMPT_PRICES = {
+    "claude-haiku-5-5": (100_000, (0.50, 2.50, 0.05)),
 }
 CACHE_WRITE_MULTIPLIER = 1.25
 
@@ -533,12 +542,15 @@ class AgentTranscript:
         price = MODEL_PRICES.get(self.model or "")
         if price is None:
             return None
-        inp, out, read = price
-        t = self.turns.values()
-        return (sum(x.input_tokens for x in t) * inp
-                + sum(x.cache_creation_tokens for x in t) * inp * CACHE_WRITE_MULTIPLIER
-                + sum(x.cache_read_tokens for x in t) * read
-                + sum(x.output_tokens for x in t) * out) / 1e6
+        threshold, long_price = LONG_PROMPT_PRICES.get(self.model, (None, None))
+        total = 0.0
+        for x in self.turns.values():
+            inp, out, read = long_price if threshold is not None and x.total_tokens > threshold else price
+            total += (x.input_tokens * inp
+                      + x.cache_creation_tokens * inp * CACHE_WRITE_MULTIPLIER
+                      + x.cache_read_tokens * read
+                      + x.output_tokens * out)
+        return total / 1e6
 
     @property
     def wall_minutes(self) -> float:

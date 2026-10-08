@@ -99,10 +99,10 @@ next one a document rather than a conversation. They are driven by
 |---|---|---|
 | `planner` | opus | researches the change and writes `.claude/workorders/<slug>-plan.md`, whose acceptance criteria are commands and files, never prose |
 | `implementer` | opus | executes the steps; returns `PLAN-DEFECT` with evidence rather than improvising around a plan that turns out to be wrong |
-| `verifier` | haiku | runs the acceptance criteria (first through `tools/run_criteria.py --jobs auto`, which runs every command-shaped criterion in one call, independent ones at once; after a fix, only the criteria the fix reaches plus the failed ones), or one item's `checks:` in a streamed plan, and reports what they actually printed; read-only, and judges nothing it cannot execute |
+| `verifier` | haiku (medium) | runs the acceptance criteria (first through `tools/run_criteria.py --jobs auto`, which runs every command-shaped criterion in one call, independent ones at once; after a fix, only the criteria the fix reaches plus the failed ones), or one item's `checks:` in a streamed plan, and reports what they actually printed; read-only, and judges nothing it cannot execute |
 | `consultant` | opus | answers **one** narrow question from a phase that hit a decision above its tier, then stops; never implements, plans or reviews |
 | `live-operator` | opus | runs a workorder's written `### Live procedure <n>` against the real game through `hs-drive` — its own save backup, the positive control first, raw output to `<slug>-live-<n>.md` — and hands every in-game action a person must take back to the driver; never installs a build, never judges the mechanism |
-| `scribe` | haiku | pastes a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Grep`/`Edit` only (no shell); spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
+| `scribe` | haiku (low) | pastes a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Grep`/`Edit` only (no shell); spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
 
 Why these tiers: planning carries the most judgement that is written down
 nowhere, so it gets the strongest model. Implementation is *not* the easy part —
@@ -228,11 +228,12 @@ judgement: the loop has to be followable at any tier, because the tier is not
 ours to choose. If you run the session on Haiku, the phases still run at their
 own pinned tiers; only the routing between them gets cheaper.
 
-Note one hard limit behind the tiers: Haiku 4.5 has a 200K context where the
-others have 1M. It is comfortable for acceptance criteria plus the one context
-section a criterion cites, which is all the verifier opens, and that is part of
-why the verifier's job is scoped
-to what it can execute rather than to reviewing the change.
+Note one limit behind the tiers: Haiku 5.5 has a 1M context, as the others
+do, but bills any turn whose prompt is over 100K tokens at 5x (Haiku 4.5 had a
+hard 200K context). Acceptance criteria plus the one context section a
+criterion cites, which is all the verifier opens, stay well under it (p90 64K
+over 87 sessions), and that is part of why the verifier's job is scoped to
+what it can execute rather than to reviewing the change.
 
 **Domain reviewers run in parallel**, are read-only, and each covers one bug
 class that has recurred here. Wall-clock is one agent; only tokens add up.
