@@ -998,8 +998,24 @@ All **measured** (2026-09-21/22).
   copy of these members from one node onto another carries the first node's
   place, not its look. A node's `bbox_*` follow its drawn sprite instead.
   Detail: § "Moving an item from the bag into the stash" below.
-- **`navBbox*` is the box the game hovers and highlights: a static reading,
-  not measured.** Support: the name; on the hotbar a `row0` slot's
+- **`navBbox*` is the box the game hovers and highlights. Measured**
+  (2026-10-08, two sessions; ForgePact `stash-move-research.md` § Live 8
+  results and § Live 9 results). With ForgePact's Move All node carrying
+  `createX`/`navBboxX`/`navBboxY` displaced onto its own box and
+  `navBboxWidth`/`navBboxHeight` its own size, hovering InventorySort flips
+  five of Sort's members (`image_index` 0 to 1, `inFocus`, `mouseHover` and
+  `stopAnimation` false to true, `mouseHoverSound` true to false: the
+  instrument's positive control), hovering the node's drawn box flips the
+  same five on the node the same way, and the mouse over Sort flips none of
+  the node's. Measured at 2560×1440 fullscreen (GUI 2560×1440) and at
+  1920×1080 windowed (a 1920×1090 client, GUI 2560×1368 in town as on the
+  main menu); fullscreen 1920×1080 and other GUI scales not observed.
+  Not separated: `createX` and `navBboxX` were moved together, so which of
+  the two the game takes the box's left edge from; and in both sessions the
+  node sat level with Sort at Sort's size (displacement 0 in y, scale 1), so
+  only the x displacement was exercised. Before those sessions it was a
+  static reading,
+  on this support: the name; on the hotbar a `row0` slot's
   `navBbox*` is the rectangle sitting on its button (§ 8.3); and the owner's
   report that ForgePact's Move All button, which then carried Sort's
   `navBboxX`/`navBboxY` while drawn one Sort width to Sort's left, lit only
@@ -1009,9 +1025,8 @@ All **measured** (2026-09-21/22).
   `ui_cursor_in_gui`, bound by `MouseGuiFuncs`) each test a device-to-GUI
   point against a box they are handed, but every member read on that path
   goes through a variable slot this build leaves unnamed, so which member
-  supplies the box was not settled by reading. A live check comparing a
-  hovered node's members against an unhovered one (`stash-move-research.md`
-  § Live procedure 8, `node-hover`) is what would make this measured.
+  supplies the box was not settled by reading; the two sessions above
+  measured it (`node-hover`, `node-hover-win`).
 - **What a mod that copies a node's look should do with them**, as ForgePact
   does since 2026-10-08: write `createX`, `navBboxX` and `navBboxY` as the
   source node's value displaced by the target box's offset from the source's
@@ -4031,7 +4046,7 @@ kind. **M** measured live; **R** a static reading, not measured.
   places the label on either axis (they were written together, in Live 5's
   trial and in the shipped copy), what the `navi*` and `navBbox*` members do
   beyond the label (gamepad navigation, for example; that `navBbox*` is the
-  hover and highlight box is a static reading, § 8.1), and whether the game
+  hover and highlight box is measured since 2026-10-08, § 8.1), and whether the game
   rewrites any of them in longer play. **The Mercenary button** (M, Live 5
   and Live 6): with the bag open on its own (the `C` key) the game lists a
   `UI_Button_Open_Mercenary_obj` (SDK object 5004, `uiNodeCallstack`
