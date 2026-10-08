@@ -1219,10 +1219,9 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   `itemInfoStruct["28"]`, the character's from the player's `name`) shows as
   a red `SERVER: Sorak found Headhunter` line, one per call. ForgePact's Loot
   announcements switch (`lootann`) ships this route for Heroic, Angelic and
-  Unholy items, and since 2026-10-08 (the owner's decision) for Satanic and
-  Mythic items too; in Live procedure 3, before that change, it announced
-  placed items, held a Satanic one, held a bag drop, and announced one
-  natural drop with Magic Find raised.
+  Unholy items; in Live procedure 3 it announced placed items, held a
+  Satanic one, held a bag drop, and announced one natural drop with Magic
+  Find raised.
 
 [dungeon chest, Chat route](../ForgePact/docs/dungeon-chest-research.md#chat-route),
 [loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading),
