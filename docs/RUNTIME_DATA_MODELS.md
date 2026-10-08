@@ -984,6 +984,56 @@ All **measured** (2026-09-21/22).
 [character select, Results](../ForgePact/docs/character-select-research.md#results),
 [menu layout, Results](../ForgePact/docs/menu-layout-research.md#results)
 
+**A node's place members, and the box it is highlighted by** (ForgePact #68 /
+#131; the owner's report of 2026-10-08):
+
+- **Three members hold an absolute GUI position. Measured** (Live 5 and 6,
+  2026-09-30). On a `UI_Button_Small_obj`, `createX`, `navBboxX` and
+  `navBboxY` are absolute GUI coordinates: on the bag's `InventorySort` they
+  are its own box's top-left corner (2290, 1262 at 2560×1440); on a node made
+  by `UiCreateNode` they are the corner of its box as first made (1988, 1238
+  for ForgePact's Move All node under its original sprite), and they are not
+  updated when the node's sprite or scale is changed afterwards.
+  `navBboxWidth`/`navBboxHeight` hold the box's size (192×66 on Sort). So a
+  copy of these members from one node onto another carries the first node's
+  place, not its look. A node's `bbox_*` follow its drawn sprite instead.
+  Detail: § "Moving an item from the bag into the stash" below.
+- **`navBbox*` is the box the game hovers and highlights. Measured**
+  (2026-10-08, two sessions; ForgePact `stash-move-research.md` § Live 8
+  results and § Live 9 results). With ForgePact's Move All node carrying
+  `createX`/`navBboxX`/`navBboxY` displaced onto its own box and
+  `navBboxWidth`/`navBboxHeight` its own size, hovering InventorySort flips
+  five of Sort's members (`image_index` 0 to 1, `inFocus`, `mouseHover` and
+  `stopAnimation` false to true, `mouseHoverSound` true to false: the
+  instrument's positive control), hovering the node's drawn box flips the
+  same five on the node the same way, and the mouse over Sort flips none of
+  the node's. Measured at 2560×1440 fullscreen (GUI 2560×1440) and at
+  1920×1080 windowed (a 1920×1090 client, GUI 2560×1368 in town as on the
+  main menu); fullscreen 1920×1080 and other GUI scales not observed.
+  Not separated: `createX` and `navBboxX` were moved together, so which of
+  the two the game takes the box's left edge from; and in both sessions the
+  node sat level with Sort at Sort's size (displacement 0 in y, scale 1), so
+  only the x displacement was exercised. Before those sessions it was a
+  static reading,
+  on this support: the name; on the hotbar a `row0` slot's
+  `navBbox*` is the rectangle sitting on its button (§ 8.3); and the owner's
+  report that ForgePact's Move All button, which then carried Sort's
+  `navBboxX`/`navBboxY` while drawn one Sort width to Sort's left, lit only
+  with the mouse to its right, over Sort, while a click on the drawn button
+  still worked (ForgePact's own press poll tests the node's `bbox_*`). The
+  game's GUI mouse helpers (`mouse_in_gui`, `mouse_in_check_gui`,
+  `ui_cursor_in_gui`, bound by `MouseGuiFuncs`) each test a device-to-GUI
+  point against a box they are handed, but every member read on that path
+  goes through a variable slot this build leaves unnamed, so which member
+  supplies the box was not settled by reading; the two sessions above
+  measured it (`node-hover`, `node-hover-win`).
+- **What a mod that copies a node's look should do with them**, as ForgePact
+  does since 2026-10-08: write `createX`, `navBboxX` and `navBboxY` as the
+  source node's value displaced by the target box's offset from the source's
+  box, and `navBboxWidth`/`navBboxHeight` scaled by the target's size over
+  the source's, so the source's own relation between those members and its
+  box is kept rather than assumed.
+
 ### 8.2 Main menu and character select
 
 - Flow: `Main_Menu_rm` → *Play local* → `Chose_rm` (save slots, then the character
@@ -3995,7 +4045,8 @@ kind. **M** measured live; **R** a static reading, not measured.
   font's own top spacing included, is not separated. Not read: which of the 13
   places the label on either axis (they were written together, in Live 5's
   trial and in the shipped copy), what the `navi*` and `navBbox*` members do
-  beyond the label (gamepad navigation, for example), and whether the game
+  beyond the label (gamepad navigation, for example; that `navBbox*` is the
+  hover and highlight box is measured since 2026-10-08, § 8.1), and whether the game
   rewrites any of them in longer play. **The Mercenary button** (M, Live 5
   and Live 6): with the bag open on its own (the `C` key) the game lists a
   `UI_Button_Open_Mercenary_obj` (SDK object 5004, `uiNodeCallstack`
