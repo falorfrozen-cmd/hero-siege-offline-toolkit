@@ -1240,7 +1240,9 @@ Start Codex at the repository root: the hook command is a relative path.
 The generated agents keep each Claude agent's instructions verbatim, with a
 preamble translating tool names. A Claude agent without write tools becomes
 `sandbox_mode = "read-only"`. Its `effort:` becomes `model_reasoning_effort`
-(`max` becomes `xhigh`), and a Haiku-tier agent asks for `low`. Effort
+(`max` becomes `xhigh`); a Haiku-tier agent that pins no `effort:` falls
+back to `low` (`TIER_DEFAULT_EFFORT` in `tools/sync_agent_tooling.py`),
+though every Haiku agent now pins one. Effort
 variants get a Codex twin like any other agent, so `planner-max` and
 `planner-xhigh` are the same there. The Claude
 model tier is not translated: Codex has no fixed model per tier, so the agent
