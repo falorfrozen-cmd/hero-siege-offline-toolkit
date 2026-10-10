@@ -1,6 +1,6 @@
 # Findings ledger
 
-Evidence labels: M = measured (transcripts, `.audit/data/*`), SV = statically verified (code), E = estimated, H = hypothesis.
+Evidence labels: M = measured (transcripts, `data/*`), SV = statically verified (code), E = estimated, H = hypothesis.
 WF = `.claude/workflows/workorder-rounds.js`, SK = `.claude/skills/workorder/SKILL.md`.
 
 | ID | Pri | Finding | Evidence | Label | Status |
@@ -19,6 +19,5 @@ WF = `.claude/workflows/workorder-rounds.js`, SK = `.claude/skills/workorder/SKI
 | F12 | P2 | Untyped utility agents get unrestricted tools + full listings for one command | WF:1786 etc. (no agentType) | SV | open |
 | F13 | P2 | Uncapped loops: PLAN-DEFECT before verify not counted; relaunch after PARKED/CEILING uncapped; rebuild resets item attempts | WF:1844-1848, 1157, 1386-1388; SK:381-411 | SV | open |
 | F14 | P3 | 4 planner / 2 implementer / 2 consultant files are byte-identical bodies; listing repeats ghidra tool lists ~8x (~2.8k tok est.) | discovery-context-inventory.md | SV+E | open |
-| F15 | P3 | PostToolUse dispatcher runs ~12 git status per Bash/Edit; recorded hook durations small (median 75-276 ms, n=22) | .claude/hooks/post_tool_use.py; data/peek2 output | SV+M(small n) | open |
+| F15 | P3 | PostToolUse dispatcher runs ~12 git status per Bash/Edit; recorded hook durations small (median 75-276 ms, n=22) | .claude/hooks/post_tool_use.py; transcript hook attachments (n=22) | SV+M(small n) | open |
 | F16 | P3 | Driver used 1,171 shell reads of plan files and 536 section.py calls (copying State/lint JSON into launch args) | data/reads.md; SK:1270-1325 | M+SV | open |
-| S01 | — | Security (outside scope): GITHUB_MCP_PAT value printed into a subagent transcript during discovery; rotate it | discovery agent report | M | reported to owner |

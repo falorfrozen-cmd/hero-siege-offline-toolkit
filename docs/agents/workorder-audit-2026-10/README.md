@@ -1,14 +1,29 @@
 # `/workorder` Architecture Audit
 
 Repository: hero-siege-offline-toolkit, audited at `c4529da` (worktree `audit-workorder-architecture`), 2026-10-11.
-Spec: `audit.md` (owner's desktop). Read-only: nothing outside `.audit/` was changed, and no model call was made to gather evidence.
+Spec: `audit.md` (the owner's brief). The audit itself was read-only: no model call was made to gather evidence. Every path:line below refers to the tree **at `c4529da`, before the fixes**. Line numbers in `workorder-rounds.js` and `SKILL.md` have moved since.
 
 Companion files:
-- `.audit/ledger.md`: the findings ledger.
-- `.audit/discovery-execution-path.md`: the call graph, with path:line evidence.
-- `.audit/discovery-context-inventory.md`: the fixed-context inventory.
-- `.audit/data/*.md|csv`: the measurements.
-- `.audit/scripts/*.py`: the local scripts that produced them. They make no model calls, and re-running `usage.py` then the others reproduces every number.
+- `ledger.md`: the findings ledger.
+- `discovery-execution-path.md`: the call graph, with path:line evidence.
+- `discovery-context-inventory.md`: the fixed-context inventory.
+- `data/*.md`: the measurements. The raw per-request CSVs are gitignored.
+- `scripts/*.py`: the local scripts that produced them. They read `~/.claude/projects/*hero-siege-offline-toolkit*` and make no model calls. Run `usage.py` first; then `analyze.py`, `timing.py`, `wfruns.py`, `wfresults.py`, `reads.py`, `cost.py` and `cachew.py` each write one `data/*.md`. `otel_summary.py` summarises the telemetry week (Appendix C).
+
+## Implementation status (hub #485)
+
+| Finding | What changed | Where |
+|---|---|---|
+| F01 scribe bookkeeping | The launch returns `record {rounds:[{stateLines, logBlock}]}`. The driver applies it with `tools/workorder_record.py apply --run <runId>` (idempotent per run and round). STATE-LOST, LOG-DAMAGED and SCRIBE-FAILED are removed. The scribe agent is retired, but its file is kept for a follow-up removal | `workorder-rounds.js`, `SKILL.md`, `tools/workorder_record.py` |
+| F02 snapshot/delta agents | The implementer runs snapshot first and delta, the greps and `decompile_check` last, and reports them in its schema. Lanes keep one snapshot agent, because they would race on the file | `workorder-rounds.js`, `implementer.md` |
+| F03 reviewer yield | Only instrument-blindness runs every round. sdk-contract, docs-sync and tauri run at the `finalGate: true` launch, which has no implementer. decompile-output-guard is replaced per round by `tools/decompile_check.py`, which reuses the hook's detection; the LLM guard runs at the final gate only when docs or `*.md` change | `workorder-rounds.js`, `tools/decompile_check.py` |
+| F04/F16 driver | The driver ends the session at owner and live gates and resumes from the files. `workorder_brief.py --launch-args`. SKILL.md went from 101.7 KB to 65.9 KB, with path sections split into `items.md`, `amendments.md`, `live-gate.md`, `checks-and-overlap.md`, `model-tiers.md` and `verify-mechanics.md` | `.claude/skills/workorder/` |
+| F05/F11/F14 spawn context | `omitClaudeMd: true` on the verifier, the five reviewers and the scribe. The rules each one applies are restated in its body. Planner and implementer duplicates of AGENTS.md became pointers, which also fixes the Ghidra drift. Variant descriptions are shortened | `.claude/agents/`, `tools/sync_agent_tooling.py` |
+| F08 one round per launch | IMPL-DEFECT and BLOCKING rounds continue inside the launch up to the caps | `workorder-rounds.js` |
+| F10 duplicate criteria | `run_criteria.py --reuse <dir>`: a result is reused only on matching HEADs and `(reads)` hash, never for `(final)`, whole-suite or unread criteria, and never at the final gate. Approved by the owner on 2026-10-11 | `tools/run_criteria.py`, `verifier.md`, `workorder-rounds.js` |
+| F13 uncapped loops | A `launches:` State line, with a stop for the owner after 6. Every PLAN-DEFECT counts toward `replans:` | `workorder-rounds.js`, `SKILL.md` |
+| F06/F09 implementer and planner cost | Not changed: measure first (§23) | — |
+| Telemetry (Appendix C) | One week of local OTel, set up outside the repo in user settings | `scripts/otel_summary.py` |
 
 Abbreviations: **WF** = `.claude/workflows/workorder-rounds.js`, **SK** = `.claude/skills/workorder/SKILL.md`, **CAL** = `docs/agents/workorder-calibration.md`.
 Labels: **M** measured · **SV** statically verified · **E** estimated · **H** hypothesis · **IE** insufficient evidence.
@@ -723,7 +738,7 @@ Monetary values are list price, not invoice: subscription billing. Percentages h
 
 ## 23. Validation plan
 
-1. **Workload:** replay the next 10 real workorders, stratified by triage row (≥3 docs-only, ≥4 default, ≥2 hard). Keep this audit's sample as the historical baseline: `.audit/data/*`, regenerated with `.audit/scripts/usage.py` and then the others.
+1. **Workload:** replay the next 10 real workorders, stratified by triage row (≥3 docs-only, ≥4 default, ≥2 hard). Keep this audit's sample as the historical baseline: `data/*`, regenerated with `scripts/usage.py` and then the others.
 2. **Instrumentation first:** per-launch `metrics.jsonl` (§18 item 1), and a `/usage` snapshot at the end of each workorder (owner action).
 3. **Per change, measure:**
 
@@ -837,7 +852,7 @@ Each running Claude Code process then serves `http://localhost:9464/metrics`, fo
    ```
 
 4. Leave `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_TOOL_DETAILS` and `OTEL_LOG_RAW_API_BODIES` **off**. Without them no prompt, command or file content is logged.
-5. After a week, a local script (same style as `.audit/scripts`) aggregates:
+5. After a week, a local script (same style as `scripts`) aggregates:
    - `claude_code.hook_execution_complete` durations (closes F15);
    - `claude_code.api_request` `duration_ms` per `query_source` (model time per role);
    - `claude_code.tool_result` `duration_ms`;

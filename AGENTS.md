@@ -20,9 +20,7 @@ three phase agents that run a change through plan → implement → verify,
 each at its own pinned model tier and effort (`planner`, `implementer`,
 `verifier`), a `consultant` a phase can put one hard decision to without
 escalating the whole phase, a `live-operator` that runs a workorder's written
-live-game procedure so the driver only relays to the person, a `scribe` that
-pastes a round's precomputed Log/State text into a workorder's own files with
-`Read`/`Grep`/`Edit` only, and three skills:
+live-game procedure so the driver only relays to the person, and three skills:
 `/catalog-rebuild`, `/workorder` (drives those phases
 and routes defects back to the phase that caused them), and
 `submodule-context` (loads the guide named above). MCP servers are in
@@ -55,6 +53,12 @@ Codex runs the same hook dispatcher and gets the same agents and skills, from
 If a hook blocks an edit, it is quoting a rule from this file — read what it
 printed rather than working around it. If you add a rule here that is
 mechanically checkable, add the check too; `.claude/README.md` says how.
+
+Round bookkeeping (snapshot, delta, State/Log) is deterministic code, not
+agents, since hub #485. Read the measurements behind that, and behind which
+reviewers run per round, in
+[docs/agents/workorder-audit-2026-10/](docs/agents/workorder-audit-2026-10/README.md)
+before adding an agent to the round loop.
 
 Story and evidence: [docs/agents/rules-enforced.md](docs/agents/rules-enforced.md);
 where `/workorder`'s budgets and tiers come from:

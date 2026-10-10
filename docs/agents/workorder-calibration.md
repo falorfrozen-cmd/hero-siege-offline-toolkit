@@ -326,8 +326,14 @@ established.
   The saving is the turns: the runner runs every command-shaped criterion in
   one call and prints what each printed, and the verifier judges from that.
   A root suite a criterion already ran also stops being run again as
-  `verifier.md` step 3's own suite. Caching a result across agents stays
-  rejected, as above.
+  `verifier.md` step 3's own suite. Caching a result across agents was
+  rejected, as above. **That was superseded on 2026-10-11** (owner: "share
+  test results if it makes sense"; hub #485). `run_criteria.py --reuse <dir>`
+  now copies the runner's own result only when the repository HEADs and the
+  `(reads)` content hash match. It never does so for `(final)`, whole-suite or
+  unread criteria, and never at the final gate. The verifier still reports
+  what a runner printed; it has not stopped observing. Evidence:
+  [workorder-audit-2026-10](workorder-audit-2026-10/README.md) F10.
 - **R24** fails an amendment with no `save` or `check` around it, two
   amendments with no implementer between them, and two patch rounds back to
   back. **R11** stops counting an amendment whose `check` passed.
@@ -1290,7 +1296,7 @@ not only model, to set each session's and each step's cost.
   shows up as more stops, not as more rounds.
 - Reviewer effort. Superseded on 2026-10-06: the reviewers moved to
   opus/medium (below).
-
+
 # Reviewers, live-operator and the driver on opus/medium (2026-10-06)
 
 ## The question

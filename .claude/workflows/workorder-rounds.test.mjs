@@ -26,42 +26,135 @@ const BASE = {
   reviewers: { 'docs-sync-reviewer': 'never', 'decompile-output-guard': 'never', 'instrument-blindness-reviewer': 'never' },
 }
 
+// 2m: a rounds implementer (one, a join or a patch -- never a lane) runs the
+// round's bookkeeping itself and returns it in its own result. The stubs keep
+// answering those commands under the labels the haiku agents they replaced
+// had -- `snapshot:r<n>`, `delta:r<n>`, plus `decompile:r<n>` -- and run()
+// folds the answers into the implementer's result, without counting a call:
+// none of them is an agent any more. A stub that sets `snapshot`, `delta` or
+// `decompile` itself wins.
+const ROUNDS_IMPL = /^(implementer:(join:)?r\d+|patch-implementer:r\d+)$/
 async function run(args, reply) {
   const calls = []
-  const agent = async (prompt, opts) => { calls.push(opts.label); return reply(opts.label, prompt, opts) }
+  const agent = async (prompt, opts) => {
+    calls.push(opts.label)
+    let out = await reply(opts.label, prompt, opts)
+    if (out && typeof out === 'object' && ROUNDS_IMPL.test(opts.label)) {
+      const n = opts.label.match(/:r(\d+)$/)[1]
+      out = { ...out }
+      if (!('snapshot' in out) && /Bookkeeping first/.test(prompt)) out.snapshot = await reply(`snapshot:r${n}`, prompt, opts)
+      if (out.verdict === 'IMPL-DONE' && /Bookkeeping last/.test(prompt)) {
+        if (!('delta' in out)) out.delta = await reply(`delta:r${n}`, prompt, opts)
+        if (!('decompile' in out)) out.decompile = await reply(`decompile:r${n}`, prompt, opts)
+      }
+    }
+    return out
+  }
   const parallel = thunks => Promise.all(thunks.map(t => t().catch(() => null)))
   const result = await script(args, agent, parallel, null, () => {}, () => {}, {}, null)
   return { result, calls }
 }
 
+const DECOMPILE_CLEAN = { exit_code: 0, hits: [] }
 const standard = (overrides = {}) => label => {
   for (const [prefix, value] of Object.entries(overrides)) if (label.startsWith(prefix)) return typeof value === 'function' ? value(label) : value
   if (label.startsWith('snapshot')) return DELTA([]) // no `heads` field by default -> the heads-unavailable fallback path
   if (label.startsWith('delta')) return DELTA([])
+  if (label.startsWith('decompile:')) return DECOMPILE_CLEAN
   if (label.startsWith('implementer') || label.startsWith('patch-implementer')) return DONE
   if (label.startsWith('verifier')) return PASS
-  if (label.startsWith('scribe')) return { written: true, note: '' }
   return CLEAN
 }
+// The State lines and Log block the launch hands back for one round (2b).
+// recordPrompts files each round's text under `record:r<n>` beside the agent
+// prompts a run captured, its Log block first, then its State lines.
+const recordPrompts = (result, prompts) => {
+  for (const r of (result && result.record && result.record.rounds) || []) {
+    const key = `record:r${r.round}`
+    prompts[key] = (prompts[key] || '') + `${r.logBlock}\n${r.stateLines}\n`
+  }
+}
+const recorded = (result, round) => result.record.rounds.filter(r => r.round === round)
+const between = (s, a, b) => { const i = s.indexOf(a); return i < 0 ? null : s.slice(i + a.length, s.indexOf(b, i + a.length)) }
+const recordedState = (result, round) => recorded(result, round).map(r => r.stateLines).join('\n')
+const recordedLog = (result, round) => recorded(result, round).map(r => r.logBlock).join('\n')
 
-test('round 0 runs every applicable reviewer and passes', async () => {
+test('round 0 runs the per-round reviewer and defers the rest to the final gate', async () => {
   const { result, calls } = await run(BASE, standard())
   assert.equal(result.outcome, 'PASS')
-  for (const name of Object.keys(BASE.reviewers)) assert.ok(calls.includes(`${name}:r0`), name)
+  assert.ok(calls.includes('instrument-blindness-reviewer:r0'))
+  assert.ok(!calls.includes('docs-sync-reviewer:r0') && !calls.includes('decompile-output-guard:r0'), 'F03: deferred to the final gate')
+  assert.deepEqual(result.rounds[0].deferred.sort(), ['decompile-output-guard', 'docs-sync-reviewer'])
+  assert.match(recordedLog(result, 0), /deferred to the final gate: docs-sync-reviewer, decompile-output-guard/)
+  assert.match(recordedState(result, 0), /docs-sync-reviewer: never, deferred/)
 })
 
-test('a test-only delta re-runs the decompile guard and nothing else', async () => {
+test('a round spawns no snapshot, delta or scribe agent: the implementer runs the bookkeeping', async () => {
+  const prompts = {}
+  const { result, calls } = await run(BASE, (label, prompt) => { prompts[label] = prompt; return standard()(label) })
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(!calls.some(c => /^(snapshot|delta|scribe|decompile)/.test(c)), calls.join(', '))
+  assert.match(prompts['implementer:r0'], /Bookkeeping first, before you read or edit anything: run exactly `py -3 \.claude\/skills\/workorder\/round_delta\.py snapshot zz 0`/)
+  assert.match(prompts['implementer:r0'], /round_delta\.py heads zz 0`/)
+  assert.match(prompts['implementer:r0'], /Bookkeeping last, after your last commit, and only when you return IMPL-DONE: run exactly `py -3 \.claude\/skills\/workorder\/round_delta\.py delta zz 0`/)
+  assert.match(prompts['implementer:r0'], /`py -3 tools\/decompile_check\.py zz 0`/)
+  assert.ok(prompts['implementer:r0'].indexOf('Bookkeeping first') < prompts['implementer:r0'].indexOf('workorder_brief.py'), 'the snapshot comes before the brief')
+})
+
+test('the result carries the record of every round, and nothing is written by an agent', async () => {
   let verifies = 0
-  const { result, calls } = await run(BASE, standard({
+  const { result } = await run({ ...BASE, state: 'round: 0\ngates: none\nlaunches: 2\nagents: planner-tier=planner' }, standard({
+    verifier: () => (verifies++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] } : PASS),
+  }))
+  assert.equal(result.outcome, 'PASS')
+  assert.equal(result.record.slug, 'zz')
+  assert.equal(result.record.launch, 3)
+  assert.deepEqual(result.record.rounds.map(r => r.round), [0, 1])
+  assert.match(result.record.rounds[0].logBlock, /^### Round 0\n\nverifier: IMPL-DEFECT\n- FAILED c: e/)
+  assert.match(result.record.rounds[0].stateLines, /^round: 1\nphase: implement\n/m)
+  assert.match(result.record.rounds[1].stateLines, /^round: 1\nphase: pass$/m)
+  for (const r of result.record.rounds) assert.match(r.stateLines, /^launches: 3$/m)
+  assert.match(result.record.state, /^gates: none$/m, 'the merged State keeps the lines no round writes')
+  assert.match(result.record.state, /^agents: planner-tier=planner$/m)
+})
+
+test('a test-only delta re-runs nothing but the verifier; the deterministic check covers decompile output', async () => {
+  let verifies = 0
+  const { result, calls } = await run({ ...BASE, round: 1, reviewers: { ...BASE.reviewers, 'instrument-blindness-reviewer': 'clean' } }, standard({
     delta: DELTA(['tests/test_x.py']),
     verifier: () => (verifies++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] } : PASS),
   }))
   assert.equal(result.outcome, 'PASS')
-  assert.equal(result.round, 1)
-  assert.ok(calls.includes('decompile-output-guard:r1'), 'a .py file changed: the guard must run')
-  assert.ok(!calls.includes('docs-sync-reviewer:r1'), 'tests only: docs-sync must not re-run')
-  assert.ok(!calls.includes('instrument-blindness-reviewer:r1'))
-  assert.deepEqual(result.rounds[1].notReRun.sort(), ['docs-sync-reviewer', 'instrument-blindness-reviewer'])
+  assert.equal(result.round, 2)
+  assert.ok(!calls.includes('decompile-output-guard:r2'), 'decompile_check.py ran clean: the LLM guard is not needed')
+  assert.ok(!calls.includes('docs-sync-reviewer:r2'))
+  assert.ok(!calls.includes('instrument-blindness-reviewer:r2'), 'tests only: no instrument trigger')
+  assert.deepEqual(result.rounds[1].notReRun, ['instrument-blindness-reviewer'])
+  assert.match(recordedLog(result, 2), /decompile check: clean/)
+})
+
+test('decompile: a decompile_check.py hit is a BLOCKING finding that spends a round', async () => {
+  let checks = 0
+  const { result, calls } = await run(BASE, standard({
+    decompile: () => (checks++ === 0 ? { exit_code: 1, hits: ["docs/notes.md:12  adds a Ghidra auto-generated symbol: 'FUN_00401000'"] } : DECOMPILE_CLEAN),
+  }))
+  assert.equal(result.outcome, 'PASS')
+  assert.equal(result.round, 1, 'the hit spent round 0')
+  assert.equal(result.rounds[0].verifier, 'PASS')
+  assert.deepEqual(result.rounds[0].blocking.map(f => [f.reviewer, f.where]), [['decompile-check', 'docs/notes.md:12']])
+  assert.match(recordedLog(result, 0), /BLOCKING \(1\)\n- \[decompile-check\] docs\/notes\.md:12: adds a Ghidra auto-generated symbol/)
+  assert.match(recordedState(result, 0), /^open defects: decompile-check: adds a Ghidra/m)
+  assert.ok(!calls.includes('decompile-output-guard:r0'), 'the check ran, so the LLM guard did not')
+  assert.ok(calls.includes('implementer:r1'), 'the fix round runs in the same launch')
+})
+
+test('decompile: a check that did not run puts the LLM guard back for that round', async () => {
+  for (const decompile of [{ exit_code: 2, hits: [] }, undefined]) {
+    const { result, calls } = await run(BASE, standard({ implementer: { ...DONE, decompile } }))
+    assert.equal(result.outcome, 'PASS')
+    assert.ok(calls.includes('decompile-output-guard:r0'), JSON.stringify(decompile))
+    assert.match(recordedLog(result, 0), /decompile check: did not run .*decompile-output-guard reviewed instead/)
+  }
 })
 
 test('a plugin path or a hook-shaped string re-runs the instrument reviewer', async () => {
@@ -81,22 +174,31 @@ test('a reviewer that was blocking runs again whatever the delta says', async ()
   assert.ok(calls.includes('tauri-command-reviewer:r1'))
 })
 
-test('an unusable delta runs every reviewer', async () => {
-  const state = { ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'clean', 'decompile-output-guard': 'clean' } }
+test('an unusable delta runs every per-round reviewer, and a deferred one stays deferred', async () => {
+  const state = { ...BASE, round: 1, reviewers: { 'instrument-blindness-reviewer': 'clean', 'docs-sync-reviewer': 'clean', 'decompile-output-guard': 'clean' } }
   const { result, calls } = await run(state, standard({ snapshot: { ...DELTA([]), exit_code: 3 }, delta: { ...DELTA([]), exit_code: 3 } }))
   assert.equal(result.outcome, 'PASS')
-  assert.ok(calls.includes('docs-sync-reviewer:r1') && calls.includes('decompile-output-guard:r1'))
+  assert.ok(calls.includes('instrument-blindness-reviewer:r1'))
+  assert.ok(!calls.includes('docs-sync-reviewer:r1') && !calls.includes('decompile-output-guard:r1'))
 })
 
-test('a delta that reports most files missing (exit_code 3) runs every reviewer', async () => {
-  // 2c: the delta agent itself decides "too many files missing to trust" and
-  // reports exit_code 3 -- the same fallback as an unusable snapshot/delta.
-  const state = { ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'clean', 'decompile-output-guard': 'clean' } }
+test('a delta that reports most files missing (exit_code 3) runs every per-round reviewer', async () => {
+  // 2c: the implementer's own delta step decides "too many files missing to
+  // trust" and reports exit_code 3 -- the same fallback as an unusable snapshot.
+  const state = { ...BASE, round: 1, reviewers: { 'instrument-blindness-reviewer': 'clean', 'docs-sync-reviewer': 'clean' } }
   const { result, calls } = await run(state, standard({
     delta: { exit_code: 3, paths: ['a.md', 'b.md', 'c.md'], instrumentContent: false, sdkContent: false, files_checked: 1, files_missing: 2, raw_output: '' },
   }))
   assert.equal(result.outcome, 'PASS')
-  assert.ok(calls.includes('docs-sync-reviewer:r1') && calls.includes('decompile-output-guard:r1'))
+  assert.ok(calls.includes('instrument-blindness-reviewer:r1'))
+})
+
+test('a delta the implementer never reported is unusable, never empty', async () => {
+  const state = { ...BASE, round: 1, reviewers: { 'instrument-blindness-reviewer': 'clean' } }
+  const { result, calls } = await run(state, standard({ implementer: { ...DONE, delta: undefined } }))
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(calls.includes('instrument-blindness-reviewer:r1'), 'no delta -> every per-round reviewer runs')
+  assert.ok(calls.includes('verifier:r1'))
 })
 
 test('a reviewer that returns nothing is never counted as clean', async () => {
@@ -110,20 +212,22 @@ test('PLAN-DEFECT and ADVICE-NEEDED hand back to the driver without verifying', 
     const { result, calls } = await run(BASE, standard({ implementer: { ...DONE, verdict, evidence: 'ev' } }))
     assert.equal(result.outcome, verdict)
     assert.ok(!calls.some(c => c.startsWith('verifier')))
+    assert.match(recordedState(result, 0), /^phase: blocked$/m)
+    assert.equal(/^replans: 1$/m.test(recordedState(result, 0)), verdict === 'PLAN-DEFECT', 'F13: a PLAN-DEFECT before any verify counts toward replans')
   }
 })
 
 test('an empty delta after a PASS skips the verifier and re-runs only the blocking reviewer', async () => {
-  let docsSeen = 0
+  let ibSeen = 0
   const { result, calls } = await run(BASE, standard({
     delta: DELTA([]),
-    'docs-sync-reviewer': () => (docsSeen++ === 0 ? { ...CLEAN, blocking: [{ where: 'a', problem: 'claimed', evidence: 'x' }] } : CLEAN),
+    'instrument-blindness-reviewer': () => (ibSeen++ === 0 ? { ...CLEAN, blocking: [{ where: 'a', problem: 'claimed', evidence: 'x' }] } : CLEAN),
   }))
   assert.equal(result.outcome, 'PASS')
   assert.equal(result.round, 1)
   assert.ok(!calls.includes('verifier:r1'), 'nothing changed: the round-0 PASS stands')
-  assert.ok(calls.includes('docs-sync-reviewer:r1'), 'the blocking reviewer confirms or withdraws')
-  assert.ok(!calls.includes('decompile-output-guard:r1') && !calls.includes('instrument-blindness-reviewer:r1'))
+  assert.ok(calls.includes('instrument-blindness-reviewer:r1'), 'the blocking reviewer confirms or withdraws')
+  assert.ok(!calls.includes('decompile-output-guard:r1') && !calls.includes('docs-sync-reviewer:r1'))
 })
 
 test('an empty delta on a fresh invocation still runs the verifier', async () => {
@@ -132,19 +236,19 @@ test('an empty delta on a fresh invocation still runs the verifier', async () =>
   assert.ok(calls.includes('verifier:r1'), 'no previous verdict to reuse')
 })
 
-test('the delta dispatch says an empty result is a valid answer', async () => {
+test('the delta step says an empty result is a valid answer', async () => {
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
   await run(BASE, reply)
-  assert.match(prompts['delta:r0'], /An empty path list with exit code 0 is a valid answer/)
+  assert.match(prompts['implementer:r0'], /An empty path list with exit code 0 is a valid answer/)
 })
 
 test('a blocking finding spends a round; a non-blocking one does not', async () => {
-  let r = await run(BASE, standard({ 'docs-sync-reviewer': { ...CLEAN, non_blocking: [{ where: 'a', problem: 'nit', evidence: '' }] } }))
+  let r = await run(BASE, standard({ 'instrument-blindness-reviewer': { ...CLEAN, non_blocking: [{ where: 'a', problem: 'nit', evidence: '' }] } }))
   assert.equal(r.result.outcome, 'PASS')
   assert.equal(r.result.round, 0)
   let seen = 0
-  r = await run(BASE, standard({ 'docs-sync-reviewer': () => (seen++ === 0 ? { ...CLEAN, blocking: [{ where: 'a', problem: 'wrong', evidence: 'x' }] } : CLEAN) }))
+  r = await run(BASE, standard({ 'instrument-blindness-reviewer': () => (seen++ === 0 ? { ...CLEAN, blocking: [{ where: 'a', problem: 'wrong', evidence: 'x' }] } : CLEAN) }))
   assert.equal(r.result.outcome, 'PASS')
   assert.equal(r.result.round, 1)
 })
@@ -175,54 +279,55 @@ test('owner-scope rounds from State extend the cap, at most SCOPE_CAP in all', a
 // owner waits can be read from the Log alone; a snapshot that printed no time
 // (or garbage) leaves the heading exactly as before.
 test('a round heading carries the snapshot time when one was printed', async () => {
-  for (const [taken, heading] of [['2026-09-27T10:11:12Z', '### Round 0 (started 2026-09-27T10:11:12Z)'], [undefined, '### Round 0\n'], ['soon', '### Round 0\n']]) {
-    const prompts = []
-    const { calls } = await run(BASE, (label, prompt, opts) => {
-      if (label.startsWith('scribe')) prompts.push(prompt)
-      return standard({ snapshot: DELTA([], taken ? { taken_utc: taken } : {}) })(label, prompt, opts)
-    })
-    assert.ok(calls.some(c => c.startsWith('scribe')))
-    assert.ok(prompts.some(p => p.includes(heading)), `${taken}: ${prompts[0] && prompts[0].slice(0, 400)}`)
+  for (const [taken, heading] of [['2026-09-27T10:11:12Z', '### Round 0 (started 2026-09-27T10:11:12Z)\n'], [undefined, '### Round 0\n'], ['soon', '### Round 0\n']]) {
+    const { result } = await run(BASE, standard({ snapshot: DELTA([], taken ? { taken_utc: taken } : {}) }))
+    assert.ok(recordedLog(result, 0).startsWith(heading), `${taken}: ${recordedLog(result, 0).slice(0, 200)}`)
   }
 })
 
-test('when the scribe cannot write, the launch stops as SCRIBE-FAILED carrying the evidence', async () => {
-  for (const scribe of [{ written: false, note: 'edit failed' }, null]) {
-    const { result, calls } = await run(BASE, standard({
-      scribe,
-      verifier: { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'REAL-OUTPUT-42' }], pending_human: [] },
-    }))
-    assert.equal(result.outcome, 'SCRIBE-FAILED')
-    assert.equal(result.then, 'continue')
-    assert.match(result.log, /REAL-OUTPUT-42/)
-    assert.match(result.state, /^round: 1$/m)
-    assert.ok(!calls.includes('implementer:r1'), 'no round may start from a Log that was never written')
-  }
+// F08: an IMPL-DEFECT round goes straight on to the next round in the same
+// launch. The files are a launch behind until the driver applies the record,
+// so the next implementer is handed the round's Log block and the merged
+// State inline.
+test('a failed round continues in the launch, and the next implementer gets its Log block and State inline', async () => {
+  const prompts = {}
+  let verifies = 0
+  const { result, calls } = await run({ ...BASE, state: 'round: 0\ngates: `build: complete`' }, (label, prompt) => {
+    prompts[label] = prompt
+    return standard({ verifier: () => (verifies++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'REAL-OUTPUT-42' }], pending_human: [] } : PASS) })(label)
+  })
+  assert.equal(result.outcome, 'PASS')
+  assert.deepEqual(calls.filter(c => c.startsWith('implementer')), ['implementer:r0', 'implementer:r1'])
+  assert.doesNotMatch(prompts['implementer:r0'], /are out of date/, 'the first round of a launch reads the files')
+  const p = prompts['implementer:r1']
+  assert.match(p, /are out of date\. These two blocks supersede them/)
+  assert.match(p, /----- current '## State' -----\nround: 1\ngates: `build: complete`\nphase: implement\n/)
+  assert.match(p, /----- '## Log' > round 0, not yet in the file -----\n### Round 0\n\nverifier: IMPL-DEFECT\n- FAILED c: REAL-OUTPUT-42/)
+  assert.ok(p.indexOf('workorder_brief.py') < p.indexOf('are out of date'), 'the inline blocks follow the brief they supersede')
 })
 
 test('omitted repoRoot produces the exact commands as before', async () => {
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
   await run({ ...BASE, submodules: ['ForgePact'] }, reply)
-  assert.equal(prompts['snapshot:r0'],
-    'Run exactly: py -3 .claude/skills/workorder/round_delta.py snapshot zz 0  — then report its exit code and output. ' +
-    'Then run exactly: py -3 .claude/skills/workorder/round_delta.py heads zz 0  — report its exit code (3 if either command exited 3) and each printed line, split into repo and sha at the first tab, as heads: [{repo, sha}]. ' +
-    'The snapshot command\'s `taken_utc: <time>` line, if it printed one, goes in taken_utc verbatim. Edit nothing.')
-  assert.ok(prompts['delta:r0'].startsWith(
-    'Run exactly: py -3 .claude/skills/workorder/round_delta.py delta zz 0  — report its exit code'))
+  assert.ok(prompts['implementer:r0'].includes('run exactly `py -3 .claude/skills/workorder/round_delta.py snapshot zz 0`, then exactly `py -3 .claude/skills/workorder/round_delta.py heads zz 0`.'))
+  assert.ok(prompts['implementer:r0'].includes('run exactly `py -3 .claude/skills/workorder/round_delta.py delta zz 0` and report'))
+  assert.ok(prompts['implementer:r0'].includes('cd . first'))
   // No usable heads (the stub snapshot omits `heads`) -> the legacy HEAD-relative
   // whole-change commands, unchanged since before baseHeads existed.
-  assert.ok(prompts['docs-sync-reviewer:r0'].includes(
+  assert.ok(prompts['instrument-blindness-reviewer:r0'].includes(
     'Read the whole change: git status --porcelain -uall ; git diff HEAD ; git -C ForgePact status --porcelain -uall ; git -C ForgePact diff HEAD'))
 })
 
-test('a set repoRoot rewrites the delta command and every diff command', async () => {
+test('a set repoRoot rewrites the bookkeeping commands and every diff command', async () => {
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
   await run({ ...BASE, repoRoot: '/repo root', submodules: ['ForgePact'] }, reply)
-  assert.ok(prompts['snapshot:r0'].includes('snapshot zz 0 --root "/repo root"'))
-  assert.ok(prompts['delta:r0'].includes('delta zz 0 --root "/repo root"'))
-  assert.ok(prompts['docs-sync-reviewer:r0'].includes(
+  assert.ok(prompts['implementer:r0'].includes('snapshot zz 0 --root "/repo root"'))
+  assert.ok(prompts['implementer:r0'].includes('delta zz 0 --root "/repo root"'))
+  assert.ok(prompts['implementer:r0'].includes('decompile_check.py zz 0 --root "/repo root"'))
+  assert.ok(prompts['implementer:r0'].includes('cd "/repo root" first'))
+  assert.ok(prompts['instrument-blindness-reviewer:r0'].includes(
     'Read the whole change: git -C "/repo root" status --porcelain -uall ; git -C "/repo root" diff HEAD ; ' +
     'git -C "/repo root/ForgePact" status --porcelain -uall ; git -C "/repo root/ForgePact" diff HEAD'))
 })
@@ -231,10 +336,10 @@ test('submodules combine with repoRoot; an already-absolute entry is left alone'
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
   await run({ ...BASE, repoRoot: 'C:/repo', submodules: ['C:/other/ForgePact', 'HSCraftSim'] }, reply)
-  assert.ok(prompts['docs-sync-reviewer:r0'].includes(
+  assert.ok(prompts['instrument-blindness-reviewer:r0'].includes(
     'git -C "C:/other/ForgePact" status --porcelain -uall ; git -C "C:/other/ForgePact" diff HEAD ; ' +
     'git -C "C:/repo/HSCraftSim" status --porcelain -uall ; git -C "C:/repo/HSCraftSim" diff HEAD'))
-  assert.ok(!prompts['docs-sync-reviewer:r0'].includes('C:/repo/C:/other'))
+  assert.ok(!prompts['instrument-blindness-reviewer:r0'].includes('C:/repo/C:/other'))
 })
 
 // The plan_defect clause a reviewer is dispatched with must be the exact
@@ -247,9 +352,9 @@ test('the reviewer dispatch states the narrow plan_defect rule', async () => {
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
   await run(BASE, reply)
-  assert.match(prompts['docs-sync-reviewer:r0'],
+  assert.match(prompts['instrument-blindness-reviewer:r0'],
     /set plan_defect only when no implementation of the plan as written could satisfy its Goal/)
-  assert.match(prompts['docs-sync-reviewer:r0'],
+  assert.match(prompts['instrument-blindness-reviewer:r0'],
     /a missing assert, pin or sentence the plan did not forbid goes to the implementer, not plan_defect/)
 })
 
@@ -273,16 +378,16 @@ test('missing arguments are refused', async () => {
 test('read commands use the WORKORDER base sha for a never reviewer and this round\'s own sha for a re-run', async () => {
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard({ snapshot: HEADS([{ repo: '.', sha: 'BASE-SHA' }]) })(label) }
-  await run({ ...BASE, reviewers: { 'docs-sync-reviewer': 'never' } }, reply)
-  assert.ok(prompts['docs-sync-reviewer:r0'].includes('git -C . diff BASE-SHA'))
-  assert.ok(prompts['docs-sync-reviewer:r0'].includes('log --oneline BASE-SHA..HEAD'))
+  await run({ ...BASE, reviewers: { 'instrument-blindness-reviewer': 'never' } }, reply)
+  assert.ok(prompts['instrument-blindness-reviewer:r0'].includes('git -C . diff BASE-SHA'))
+  assert.ok(prompts['instrument-blindness-reviewer:r0'].includes('log --oneline BASE-SHA..HEAD'))
 
   const prompts2 = {}
   const reply2 = (label, prompt) => {
     prompts2[label] = prompt
     return standard({ snapshot: HEADS([{ repo: '.', sha: 'ROUND-SHA' }]), delta: DELTA(['README.md']) })(label)
   }
-  await run({ ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'clean' } }, reply2)
+  await run({ ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' } }, reply2)
   assert.ok(prompts2['docs-sync-reviewer:r1'].includes('git -C . diff ROUND-SHA -- README.md'))
   assert.ok(!prompts2['docs-sync-reviewer:r1'].includes('log --oneline'), 'a re-run reads only the delta, not the log')
 })
@@ -296,7 +401,7 @@ test('re-run commands split delta paths per repo from this round\'s own heads, s
       delta: DELTA(['README.md', 'ForgePact/src/x.py']),
     })(label)
   }
-  const state = { ...BASE, round: 1, submodules: ['ForgePact'], reviewers: { 'docs-sync-reviewer': 'clean' } }
+  const state = { ...BASE, round: 1, submodules: ['ForgePact'], reviewers: { 'docs-sync-reviewer': 'blocking' } }
   await run(state, reply)
   assert.ok(prompts['docs-sync-reviewer:r1'].includes('git -C . diff aaa111 -- README.md'))
   assert.ok(prompts['docs-sync-reviewer:r1'].includes('git -C ForgePact diff bbb222 -- src/x.py'))
@@ -309,90 +414,58 @@ test('repoRoot paths are quoted in the head-based commands', async () => {
     return standard({ snapshot: HEADS([{ repo: '.', sha: 'aaa' }, { repo: 'ForgePact', sha: 'bbb' }]) })(label)
   }
   await run({ ...BASE, repoRoot: '/repo root', submodules: ['ForgePact'] }, reply)
-  assert.ok(prompts['docs-sync-reviewer:r0'].includes('git -C "/repo root" diff aaa'))
-  assert.ok(prompts['docs-sync-reviewer:r0'].includes('git -C "/repo root/ForgePact" diff bbb'))
+  assert.ok(prompts['instrument-blindness-reviewer:r0'].includes('git -C "/repo root" diff aaa'))
+  assert.ok(prompts['instrument-blindness-reviewer:r0'].includes('git -C "/repo root/ForgePact" diff bbb'))
 })
 
-test('args.baseHeads wins over the first snapshot\'s heads for a never reviewer', async () => {
+test('args.baseHeads wins over the first snapshot\'s heads for a never reviewer, and bases the decompile check', async () => {
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard({ snapshot: HEADS([{ repo: '.', sha: 'FROM-SNAPSHOT' }]) })(label) }
-  await run({ ...BASE, baseHeads: { '.': 'FROM-BASEHEADS' } }, reply)
-  assert.ok(prompts['docs-sync-reviewer:r0'].includes('git -C . diff FROM-BASEHEADS'))
-  assert.ok(!prompts['docs-sync-reviewer:r0'].includes('FROM-SNAPSHOT'))
+  await run({ ...BASE, baseHeads: { '.': 'FROM-BASEHEADS', ForgePact: 'FP-BASE' } }, reply)
+  assert.ok(prompts['instrument-blindness-reviewer:r0'].includes('git -C . diff FROM-BASEHEADS'))
+  assert.ok(!prompts['instrument-blindness-reviewer:r0'].includes('FROM-SNAPSHOT'))
+  assert.ok(prompts['implementer:r0'].includes('`py -3 tools/decompile_check.py zz 0 --base .=FROM-BASEHEADS --base ForgePact=FP-BASE`'))
+})
+
+test('without args.baseHeads the decompile check of a later round is based on this launch\'s first snapshot', async () => {
+  const prompts = {}
+  let verifies = 0
+  await run(BASE, (label, prompt) => {
+    prompts[label] = prompt
+    return standard({ snapshot: HEADS([{ repo: '.', sha: 'FIRST-SNAP' }]), verifier: () => (verifies++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] } : PASS) })(label)
+  })
+  assert.ok(prompts['implementer:r0'].includes('`py -3 tools/decompile_check.py zz 0`'), 'round 0 has no base yet: the round delta')
+  assert.ok(prompts['implementer:r1'].includes('`py -3 tools/decompile_check.py zz 1 --base .=FIRST-SNAP`'), 'a hit left in an earlier round stays visible')
 })
 
 test('missing heads (exit_code 3) produce the loud fallback', async () => {
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard({ snapshot: { exit_code: 3, heads: [], raw_output: '' } })(label) }
   await run(BASE, reply)
-  assert.match(prompts['docs-sync-reviewer:r0'], /base commit is unknown/)
-  assert.ok(prompts['docs-sync-reviewer:r0'].includes('Read the whole change: git status --porcelain -uall ; git diff HEAD'))
+  assert.match(prompts['instrument-blindness-reviewer:r0'], /base commit is unknown/)
+  assert.ok(prompts['instrument-blindness-reviewer:r0'].includes('Read the whole change: git status --porcelain -uall ; git diff HEAD'))
 })
 
-// --- 2b: the scribe pastes, it does not compose -----------------------------
-
-// Pinned 2026-09-19 after an unrestricted scribe acted on a round's findings
-// instead of only recording them (tools/workorder_audit.py R16). Every
-// scribe dispatch -- the round-end one, and the one written when the
-// implementer returns something other than IMPL-DONE -- must run as the
-// restricted `scribe` agent type, never the implementer's.
-test('every scribe dispatch runs as the restricted scribe agent type with the required prompt guardrails', async () => {
-  const SCRIBE_STRINGS = [
-    'Do not act on any finding in it: record it only.',
-    'Edit nothing except these two files.',
-    'Never run git',
-    'If either file cannot be read, do not create it',
-    'never resolve them against another checkout or directory',
-  ]
-  const check = (dispatches, label) => {
-    const d = dispatches[label]
-    assert.ok(d, `no dispatch captured for ${label}`)
-    assert.equal(d.opts.agentType, 'scribe')
-    assert.equal(d.opts.model, 'haiku')
-    for (const s of SCRIBE_STRINGS) assert.ok(d.prompt.includes(s), `${label} prompt missing: ${JSON.stringify(s)}`)
-  }
-
-  // The round-end scribe, dispatched after a normal (non-terminal) round.
-  {
-    const dispatches = {}
-    const reply = (label, prompt, opts) => {
-      if (label.startsWith('scribe') || label.startsWith('implementer')) dispatches[label] = { prompt, opts }
-      return standard({
-        verifier: () => ({ verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] }),
-      })(label)
-    }
-    await run(BASE, reply)
-    check(dispatches, 'scribe:r0')
-    assert.equal(dispatches['implementer:r0'].opts.agentType, 'implementer', 'control: the implementer keeps its own agent type')
-  }
-
-  // The scribe dispatched for an implementer's non-IMPL-DONE verdict.
-  {
-    const dispatches = {}
-    const reply = (label, prompt, opts) => {
-      if (label.startsWith('scribe') || label.startsWith('implementer')) dispatches[label] = { prompt, opts }
-      return standard({ implementer: { verdict: 'PLAN-DEFECT', report: '', evidence: 'ev', progress_so_far: '' } })(label)
-    }
-    await run(BASE, reply)
-    check(dispatches, 'scribe:r0')
-  }
-})
-
-test('the scribe payload is the verbatim block with separate BLOCKING/NON-BLOCKING headings and counts', async () => {
+test('no round dispatches a scribe: the record carries the Log block with separate BLOCKING/NON-BLOCKING headings and counts', async () => {
   const nb = i => ({ where: `w${i}`, problem: `p${i}`, evidence: `e${i}` })
-  const prompts = {}
-  const reply = (label, prompt) => {
-    prompts[label] = prompt
-    return standard({
-      'docs-sync-reviewer': { blocking: [{ where: 'w', problem: 'wrong', evidence: 'ev' }], non_blocking: [], plan_defect: false, summary: 'x' },
-      'decompile-output-guard': { blocking: [], non_blocking: [nb(0), nb(1), nb(2)], plan_defect: false, summary: 'x' },
-      'instrument-blindness-reviewer': { blocking: [], non_blocking: [nb(3), nb(4)], plan_defect: false, summary: 'x' },
-    })(label)
-  }
-  await run(BASE, reply)
-  assert.match(prompts['scribe:r0'], /BLOCKING \(1\)/)
-  assert.match(prompts['scribe:r0'], /NON-BLOCKING \(5\)/)
-  assert.ok(!/BLOCKING \(6\)/.test(prompts['scribe:r0']), 'must not merge blocking and non-blocking into one count')
+  const { result, calls } = await run({ ...BASE, reviewers: { ...BASE.reviewers, 'docs-sync-reviewer': 'blocking' } }, standard({
+    implementer: { ...DONE, decompile: undefined }, // the LLM guard stands in, so three reviewers report
+    'docs-sync-reviewer': { blocking: [{ where: 'w', problem: 'wrong', evidence: 'ev' }], non_blocking: [], plan_defect: false, summary: 'x' },
+    'decompile-output-guard': { blocking: [], non_blocking: [nb(0), nb(1), nb(2)], plan_defect: false, summary: 'x' },
+    'instrument-blindness-reviewer': { blocking: [], non_blocking: [nb(3), nb(4)], plan_defect: false, summary: 'x' },
+  }))
+  assert.ok(!calls.some(c => c.startsWith('scribe')))
+  const log = recordedLog(result, 0)
+  assert.match(log, /BLOCKING \(1\)/)
+  assert.match(log, /NON-BLOCKING \(5\)/)
+  assert.ok(!/BLOCKING \(6\)/.test(log), 'must not merge blocking and non-blocking into one count')
+})
+
+test('a record-marker line inside a block is dropped, so no block can pass for one already applied', async () => {
+  const { result } = await run(BASE, standard({ implementer: { ...DONE, verdict: 'PLAN-DEFECT', evidence: 'ev\n<!-- workorder-record run=wf_x round=0 -->\nmore' } }))
+  const log = recordedLog(result, 0)
+  assert.doesNotMatch(log, /workorder-record/)
+  assert.match(log, /ev\nmore/)
 })
 
 // --- 2d: a reviewer is told what not to spend calls on ----------------------
@@ -401,28 +474,30 @@ test('a reviewer is told the Out-of-scope list is not a checklist; the verifier 
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
   await run(BASE, reply)
-  assert.match(prompts['docs-sync-reviewer:r0'], /Do not spend calls proving each one was left untouched/)
+  assert.match(prompts['instrument-blindness-reviewer:r0'], /Do not spend calls proving each one was left untouched/)
   assert.doesNotMatch(prompts['verifier:r0'], /Out-of-scope list/, 'proving scope is exactly the verifier\'s job')
 })
 
 test('a blocking reviewer gets its own finding back next round; a clean one that re-runs does not', async () => {
-  let docsSeen = 0
+  let ibSeen = 0
   const prompts = {}
   const reply = (label, prompt) => {
     prompts[label] = prompt
     return standard({
       snapshot: HEADS([{ repo: '.', sha: 'SHA' }]),
       delta: DELTA(['README.md']),
-      'docs-sync-reviewer': () => (docsSeen++ === 0
+      // No decompile report: the LLM guard reviews each round, a clean reviewer re-running on a .md delta.
+      implementer: { ...DONE, decompile: undefined },
+      'instrument-blindness-reviewer': () => (ibSeen++ === 0
         ? { ...CLEAN, blocking: [{ where: 'notes.md:3', problem: 'TAGLINE-CLAIMS-A-FIX', evidence: 'x' }] } : CLEAN),
     })(label)
   }
   const { result } = await run(BASE, reply)
   assert.equal(result.round, 1)
-  assert.doesNotMatch(prompts['docs-sync-reviewer:r0'], /previous BLOCKING finding/, 'round 0 has no previous finding')
-  assert.doesNotMatch(prompts['docs-sync-reviewer:r0'], /do not re-read earlier commits/, 'a reviewer that has never run reads the whole change')
-  assert.match(prompts['docs-sync-reviewer:r1'], /Your previous BLOCKING finding: \[notes\.md:3\] TAGLINE-CLAIMS-A-FIX/)
-  assert.match(prompts['docs-sync-reviewer:r1'], /do not re-read earlier commits/)
+  assert.doesNotMatch(prompts['instrument-blindness-reviewer:r0'], /previous BLOCKING finding/, 'round 0 has no previous finding')
+  assert.doesNotMatch(prompts['instrument-blindness-reviewer:r0'], /do not re-read earlier commits/, 'a reviewer that has never run reads the whole change')
+  assert.match(prompts['instrument-blindness-reviewer:r1'], /Your previous BLOCKING finding: \[notes\.md:3\] TAGLINE-CLAIMS-A-FIX/)
+  assert.match(prompts['instrument-blindness-reviewer:r1'], /do not re-read earlier commits/)
   // decompile-output-guard re-runs on a .md delta but was clean: nothing to hand back.
   assert.ok(prompts['decompile-output-guard:r1'], 'control: the clean reviewer did re-run')
   assert.doesNotMatch(prompts['decompile-output-guard:r1'], /previous BLOCKING finding/)
@@ -431,7 +506,7 @@ test('a blocking reviewer gets its own finding back next round; a clean one that
 
 test('a fresh launch hands a blocking reviewer the findings the driver copied from the Log', async () => {
   const prompts = {}
-  const reply = (label, prompt) => { prompts[label] = prompt; return standard({ delta: DELTA(['README.md']) })(label) }
+  const reply = (label, prompt) => { prompts[label] = prompt; return standard({ delta: DELTA(['README.md']), implementer: { ...DONE, decompile: undefined } })(label) }
   const state = {
     ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking', 'decompile-output-guard': 'clean' },
     priorFindings: {
@@ -449,7 +524,6 @@ test('a fresh launch hands a blocking reviewer the findings the driver copied fr
   await run({ ...state, priorFindings: undefined }, (label, prompt) => { bare[label] = prompt; return standard({ delta: DELTA(['README.md']) })(label) })
   assert.doesNotMatch(bare['docs-sync-reviewer:r1'], /previous BLOCKING finding/)
 })
-
 test('the verifier is given the context path and the one command that opens a cited heading', async () => {
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
@@ -470,11 +544,11 @@ test('when nothing changed, the blocking reviewer is not pointed at a diff that 
     return standard({
       snapshot: HEADS([{ repo: '.', sha: 'SHA' }]),
       delta: DELTA([]),
-      'docs-sync-reviewer': () => (docsSeen++ === 0 ? { ...CLEAN, blocking: [{ where: 'a', problem: 'DISPUTED', evidence: 'x' }] } : CLEAN),
+      'instrument-blindness-reviewer': () => (docsSeen++ === 0 ? { ...CLEAN, blocking: [{ where: 'a', problem: 'DISPUTED', evidence: 'x' }] } : CLEAN),
     })(label)
   }
   await run(BASE, reply)
-  const p = prompts['docs-sync-reviewer:r1']
+  const p = prompts['instrument-blindness-reviewer:r1']
   assert.match(p, /nothing changed this round: there is no new diff/)
   assert.match(p, /\[a\] DISPUTED\nThis is the finding the implementer disputes\./)
   assert.doesNotMatch(p, /do not re-read earlier commits|from this diff/, 'the finding lives in the earlier commits')
@@ -508,7 +582,7 @@ test('an empty delta on a fresh launch gives the blocking reviewer no phantom di
     return standard({ snapshot: HEADS([{ repo: '.', sha: 'SHA' }]), delta: DELTA([]) })(label)
   }
   const state = {
-    ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking', 'decompile-output-guard': 'never' },
+    ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking', 'instrument-blindness-reviewer': 'never' },
     priorFindings: { 'docs-sync-reviewer': [{ where: 'a', problem: 'FIRST' }] },
   }
   const { calls } = await run(state, reply)
@@ -518,27 +592,27 @@ test('an empty delta on a fresh launch gives the blocking reviewer no phantom di
   assert.match(p, /\[a\] FIRST\nThis is the finding the implementer disputes\./)
   assert.doesNotMatch(p, /from this diff|do not re-read earlier commits|This is a re-run\.  /)
   // A reviewer that has never run made no finding to dispute, and reads the whole change.
-  assert.doesNotMatch(prompts['decompile-output-guard:r1'], /previous BLOCKING finding|Nothing changed this round/)
-  assert.match(prompts['decompile-output-guard:r1'], /Read the whole change/)
+  assert.doesNotMatch(prompts['instrument-blindness-reviewer:r1'], /previous BLOCKING finding|Nothing changed this round/)
+  assert.match(prompts['instrument-blindness-reviewer:r1'], /Read the whole change/)
 })
 
 test('the path list ends before the re-run note when the round base is unknown', async () => {
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard({ delta: DELTA(['a.md', 'b.md']) })(label) }
-  await run({ ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'clean' } }, reply)
+  await run({ ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' } }, reply)
   assert.ok(prompts['docs-sync-reviewer:r1'].includes('restricted to them): a.md, b.md. Earlier rounds reviewed'))
 })
 
 // --- 2c: delta greps run in the repository ----------------------------------
 
-test('the delta dispatch runs the content greps from the repo root', async () => {
+test('the implementer\'s delta step runs the content greps from the repo root', async () => {
   const prompts = {}
   const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
   await run(BASE, reply)
-  assert.match(prompts['delta:r0'], /cd \./)
-  assert.match(prompts['delta:r0'], /grep -lE/)
+  assert.match(prompts['implementer:r0'], /cd \. first/)
+  assert.match(prompts['implementer:r0'], /grep -lE/)
   await run({ ...BASE, repoRoot: '/repo root' }, reply)
-  assert.match(prompts['delta:r0'], /cd "\/repo root"/)
+  assert.match(prompts['implementer:r0'], /cd "\/repo root" first/)
 })
 
 test('the verifier is handed the criteria extraction, not left to read the plan whole', async () => {
@@ -561,8 +635,10 @@ test('the implementer runs at opus unless triage says otherwise', async () => {
 // Pinned 2026-09-23: handed four lines and told to replace them, the haiku
 // scribe replaced the whole '## State' block with those four, so the next
 // round's verifier read no `gates:` and reported gated criteria pending
-// instead of running them. These stubs *apply* the scribe's instructions to an
-// in-memory plan, so what survives a Record pass is measured, not assumed.
+// instead of running them. Since 2026-10-11 no agent writes State: the record
+// carries only the keys a round changes, `workorder_record.py` merges them by
+// key (tests/test_workorder_record.py), and the script's own merged copy is
+// what a later round of the launch is handed.
 const PLAN_STATE = [
   'round: 0        phase: plan',
   'gates: `build: complete` (set 2026-09-23); `live1: complete`',
@@ -573,197 +649,58 @@ const PLAN_STATE = [
   'decisions in force: D1, D2 (context file, `### Decisions`)',
 ].join('\n')
 const DRIVER_OWNED = /^(gates|round base|agents|decisions in force):/
-const planFile = state => `---\nslug: zz\n---\n\n## State\n${state}\n\n## Goal\ng\n`
-const stateOf = plan => plan.split('## State\n')[1].split('\n\n')[0]
-const between = (s, a, b) => { const i = s.indexOf(a); return i < 0 ? null : s.slice(i + a.length, s.indexOf(b, i + a.length)) }
-// The State lines the scribe is handed sit between fence lines (2k): the
-// whole block when the prompt says it is the whole State, else keyed lines.
-const fencedState = prompt => between(prompt, '<<<STATE-LINES-BEGIN>>>\n', '\n<<<STATE-LINES-END>>>')
-const wholeState = prompt => prompt.includes('already in it, verbatim:') ? fencedState(prompt) : null
-const keyedState = prompt => prompt.includes('already in it, verbatim:') ? null : fencedState(prompt)
-// A faithful scribe: pastes the whole block when handed one, else edits each
-// keyed line in place (adding a key the State lacks at its end).
-const faithfulScribe = file => prompt => {
-  const before = stateOf(file.plan)
-  const whole = wholeState(prompt)
-  let after
-  if (whole !== null) after = whole
-  else {
-    const lines = before.split('\n')
-    for (const u of keyedState(prompt).split('\n')) {
-      const key = u.slice(0, u.indexOf(':') + 1)
-      const i = lines.findIndex(l => l.startsWith(key))
-      if (i >= 0) lines[i] = u; else lines.push(u)
-    }
-    after = lines.join('\n')
-  }
-  file.plan = file.plan.replace(`## State\n${before}\n`, `## State\n${after}\n`)
-  return { written: true, note: '', state_before: before, state_after: after }
-}
-// The measured 2026-09-23 behaviour: the lines this round computed replace the
-// whole block, and nothing else is kept.
-const incidentScribe = file => prompt => {
-  const before = stateOf(file.plan)
-  const keys = [...(between(prompt, "this round's ", ' values merged') ?? '').matchAll(/`([^`]+)`/g)].map(m => m[1])
-  const handed = keyedState(prompt) ??
-    wholeState(prompt).split('\n')
-      .filter(l => keys.some(k => l.startsWith(k))).join('\n')
-  file.plan = file.plan.replace(`## State\n${before}\n`, `## State\n${handed}\n`)
-  return { written: true, note: '', state_before: before, state_after: handed }
-}
-const withPlan = (file, scribeFn, overrides = {}) => (label, prompt) =>
-  label.startsWith('scribe') ? scribeFn(file)(prompt) : standard(overrides)(label)
 const defectThenPass = () => {
   let v = 0
   return () => (v++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] } : PASS)
 }
 
-test('a gates: line survives a Record pass, and the round after it', async () => {
-  const file = { plan: planFile(PLAN_STATE) }
-  const prompts = {}
-  const reply = withPlan(file, faithfulScribe, { verifier: defectThenPass() })
-  const { result } = await run({ ...BASE, state: `## State\n${PLAN_STATE}\n` }, (label, prompt, opts) => { prompts[label] = prompt; return reply(label, prompt, opts) })
+test('a round records only the keys it changes, and the merged State keeps every driver-owned line', async () => {
+  const { result } = await run({ ...BASE, state: `## State\n${PLAN_STATE}\n` }, standard({ verifier: defectThenPass() }))
   assert.equal(result.outcome, 'PASS')
   assert.equal(result.round, 1)
-  const lines = stateOf(file.plan).split('\n')
-  for (const line of PLAN_STATE.split('\n').filter(l => DRIVER_OWNED.test(l))) assert.ok(lines.includes(line), `lost after two Record passes: ${line}`)
+  for (const r of result.record.rounds) {
+    assert.ok(!r.stateLines.split('\n').some(l => DRIVER_OWNED.test(l)), `a round never rewrites a driver-owned line: ${r.stateLines}`)
+  }
+  const lines = result.record.state.split('\n')
+  for (const line of PLAN_STATE.split('\n').filter(l => DRIVER_OWNED.test(l))) assert.ok(lines.includes(line), `lost from the merged State: ${line}`)
   assert.ok(lines.includes('round: 1') && lines.includes('phase: pass'), lines.join('\n'))
   assert.ok(!lines.some(l => /phase: plan/.test(l)), 'the combined `round: 0  phase: plan` line is replaced, not kept beside the new one')
   assert.equal(lines.filter(l => l.startsWith('round:')).length, 1)
-  assert.ok(prompts['scribe:r0'].includes('gates: `build: complete`'), 'the scribe is handed the gates line, not asked to keep it from memory')
 })
 
-test('without args.state the scribe is told one Edit per line, and gates: still survives', async () => {
-  const file = { plan: planFile(PLAN_STATE.replace('round: 0        phase: plan', 'round: 0\nphase: plan')) }
-  const prompts = {}
-  const reply = withPlan(file, faithfulScribe)
-  const { result } = await run(BASE, (label, prompt, opts) => { prompts[label] = prompt; return reply(label, prompt, opts) })
-  assert.equal(result.outcome, 'PASS')
-  assert.match(prompts['scribe:r0'], /one Edit per line/)
-  assert.match(prompts['scribe:r0'], /Never use an old_string spanning several lines/)
-  assert.ok(stateOf(file.plan).split('\n').includes('gates: `build: complete` (set 2026-09-23); `live1: complete`'))
-})
-
-test('a scribe that drops gates: stops the launch as STATE-LOST before the next verifier', async () => {
-  for (const state of [`## State\n${PLAN_STATE}`, undefined]) {
-    const file = { plan: planFile(PLAN_STATE) }
-    const { result, calls } = await run({ ...BASE, state }, withPlan(file, incidentScribe, { verifier: defectThenPass() }))
-    const tag = `args.state ${state ? 'given' : 'absent'}`
-    assert.equal(result.outcome, 'STATE-LOST', tag)
-    assert.equal(result.then, 'continue')
-    assert.ok(result.lost.some(l => l.startsWith('gates:')), JSON.stringify(result.lost))
-    assert.ok(result.lost.some(l => l.startsWith('decisions in force:')), tag)
-    assert.ok(result.state.includes('gates: `build: complete`') && /^round: 1$/m.test(result.state), result.state)
-    assert.ok(!calls.includes('verifier:r1'), 'no verifier may read the damaged block')
-  }
-})
-
-test('control: a faithful scribe on a clean pass reports no STATE-LOST', async () => {
-  const file = { plan: planFile(PLAN_STATE) }
-  const { result } = await run({ ...BASE, state: PLAN_STATE }, withPlan(file, faithfulScribe))
-  assert.equal(result.outcome, 'PASS')
-  assert.equal(result.lost, undefined)
-})
-
-// ForgePact UI redesign: four STATE-LOST stops on entries nothing removed --
-// a multi-line entry re-indented between the scribe's before and after
-// reports, and `<none yet>` reported back as `&lt;none yet&gt;`.
-test('re-indented continuation lines and escaped brackets are not a lost entry', async () => {
-  const multi = PLAN_STATE.replace('decisions in force: D1, D2 (context file, `### Decisions`)',
-    'decisions in force: D1 both repositories take `origin/main` by a merge\n  commit (never a rebase)')
-  const relayout = file => prompt => {
-    const res = faithfulScribe(file)(prompt)
-    return { ...res, state_after: res.state_after.replace('\n  commit (never', '\n    commit (never').replace('<none yet>', '&lt;none yet&gt;') }
-  }
-  const file = { plan: planFile(multi) }
-  const { result } = await run({ ...BASE, state: multi }, withPlan(file, relayout, { verifier: defectThenPass() }))
-  assert.equal(result.outcome, 'PASS', JSON.stringify(result.lost))
-  // control: an entry whose words changed is still lost
-  const dropper = file => prompt => {
-    const res = faithfulScribe(file)(prompt)
-    return { ...res, state_after: res.state_after.replace('never a rebase', 'rebase is fine') }
-  }
-  const file2 = { plan: planFile(multi) }
-  const { result: r2 } = await run({ ...BASE, state: multi }, withPlan(file2, dropper, { verifier: defectThenPass() }))
-  assert.equal(r2.outcome, 'STATE-LOST')
-  assert.ok(r2.lost.some(l => l.startsWith('decisions in force:')), JSON.stringify(r2.lost))
-})
-
-test('the implementer-verdict Record pass keeps reviewers: and open defects:', async () => {
+test('the implementer-verdict record keeps reviewers: and open defects: as they were', async () => {
   const withReviewers = PLAN_STATE.replace('reviewers: <none yet>', 'reviewers: docs-sync-reviewer: blocking')
     .replace('open defects: none', 'open defects: docs-sync-reviewer: stale README')
-  const blocked = { implementer: { ...DONE, verdict: 'PLAN-DEFECT', evidence: 'ev' } }
-  {
-    const file = { plan: planFile(withReviewers) }
-    const { result } = await run({ ...BASE, state: withReviewers }, withPlan(file, faithfulScribe, blocked))
-    assert.equal(result.outcome, 'PLAN-DEFECT')
-    const lines = stateOf(file.plan).split('\n')
-    assert.ok(lines.includes('phase: blocked'), lines.join('\n'))
-    assert.ok(lines.includes('reviewers: docs-sync-reviewer: blocking') && lines.includes('open defects: docs-sync-reviewer: stale README'), lines.join('\n'))
-  }
-  {
-    // Keeping only round/phase is what phase1c's scribe did on 2026-09-23.
-    const file = { plan: planFile(withReviewers) }
-    const { result } = await run({ ...BASE, state: withReviewers }, withPlan(file, incidentScribe, blocked))
-    assert.equal(result.outcome, 'STATE-LOST')
-    assert.equal(result.then, 'PLAN-DEFECT')
-    assert.ok(result.lost.some(l => l.startsWith('reviewers:')), JSON.stringify(result.lost))
-  }
+  const { result } = await run({ ...BASE, state: withReviewers }, standard({ implementer: { ...DONE, verdict: 'PLAN-DEFECT', evidence: 'ev' } }))
+  assert.equal(result.outcome, 'PLAN-DEFECT')
+  assert.doesNotMatch(recordedState(result, 0), /^(reviewers|open defects):/m, 'a blocked round writes round:, phase:, launches: and replans: only')
+  const lines = result.record.state.split('\n')
+  assert.ok(lines.includes('phase: blocked'), lines.join('\n'))
+  assert.ok(lines.includes('reviewers: docs-sync-reviewer: blocking') && lines.includes('open defects: docs-sync-reviewer: stale README'), lines.join('\n'))
 })
 
-test('a scribe that could read nothing is SCRIBE-FAILED, not STATE-LOST', async () => {
-  const { result } = await run({ ...BASE, state: PLAN_STATE }, standard({ scribe: { written: false, note: 'no such file', state_before: '', state_after: '' } }))
-  assert.equal(result.outcome, 'SCRIBE-FAILED')
-  assert.equal(result.then, 'PASS')
+test('launches: and replans: count up from State', async () => {
+  const { result } = await run({ ...BASE, round: 2, state: 'round: 2\nlaunches: 5\nreplans: 1' }, standard({ implementer: { ...DONE, verdict: 'PLAN-DEFECT', evidence: 'ev' } }))
+  assert.match(recordedState(result, 2), /^launches: 6$/m)
+  assert.match(recordedState(result, 2), /^replans: 2$/m)
+  // A launch that finished no round still records itself.
+  const { result: failed } = await run({ ...BASE, state: 'launches: 1' }, standard({ implementer: null }))
+  assert.equal(failed.outcome, 'AGENT-FAILED')
+  assert.deepEqual(failed.record.rounds, [{ round: 0, stateLines: 'launches: 2', logBlock: '' }])
 })
 
-// --- 2g: the scribe gets absolute paths -------------------------------------
-//
-// Pinned 2026-09-24 (hs-drive-game-lease, wf_949ed012-a02): run from a
-// worktree, the scribe resolved its relative paths against the main checkout,
-// found no files, and returned written: false with a non-empty "N/A" State.
-// The Record pass compared that against the driver's State and reported
-// STATE-LOST, listing every driver-owned line, though nothing had been lost.
-test('a scribe that found no files routes as SCRIBE-FAILED with nothing listed lost', async () => {
-  const na = { written: false, note: 'files do not exist', state_before: 'N/A - files do not exist', state_after: 'N/A - files do not exist' }
-  for (const blocked of [{}, { implementer: { ...DONE, verdict: 'PLAN-DEFECT', evidence: 'ev' } }]) {
-    const { result, calls } = await run({ ...BASE, state: PLAN_STATE }, standard({ scribe: na, verifier: defectThenPass(), ...blocked }))
-    assert.equal(result.outcome, 'SCRIBE-FAILED', JSON.stringify(result))
-    assert.equal(result.lost, undefined)
-    assert.equal(result.then, blocked.implementer ? 'PLAN-DEFECT' : 'continue')
-    for (const line of PLAN_STATE.split('\n').filter(l => DRIVER_OWNED.test(l))) assert.ok(result.state.includes(line), `state to paste lacks: ${line}`)
-    assert.match(result.log, /^### Round 0$/m)
-    assert.ok(!calls.includes('verifier:r1'))
-  }
+test('the record names the plan, the context file and the checkout, relative paths as given', async () => {
+  const { result } = await run({ ...BASE, planPath: '.claude/workorders/zz-plan.md', contextPath: '.claude/workorders/zz-context.md', checkoutRoot: 'C:\\wt\\here\\' }, standard())
+  assert.equal(result.record.planPath, '.claude/workorders/zz-plan.md')
+  assert.equal(result.record.contextPath, '.claude/workorders/zz-context.md')
+  assert.equal(result.record.checkoutRoot, 'C:\\wt\\here')
 })
 
-test('the scribe is handed absolute paths under checkoutRoot, never relative ones', async () => {
-  const prompts = {}
-  const reply = (label, prompt) => { prompts[label] = prompt; return standard()(label) }
-  await run({ ...BASE, planPath: '.claude/workorders/zz-plan.md', contextPath: './.claude/workorders/zz-context.md', checkoutRoot: 'C:\\wt\\here\\' }, reply)
-  const p = prompts['scribe:r0']
-  assert.ok(p.includes('In C:\\wt\\here/.claude/workorders/zz-context.md, append'), p)
-  assert.ok(p.includes('Read C:\\wt\\here/.claude/workorders/zz-plan.md and return'), p)
-  assert.doesNotMatch(p, /relative to your current working directory/)
-  // The owner, 2026-10-02: after a write, read only what changed. The scribe
-  // reads the State range and the Log's tail, never either file whole.
-  assert.match(p, /never either file whole/)
-  assert.match(p, /reading only that range \(offset at the State heading/)
-  assert.match(p, /Read only its last 30 lines \(offset = count - 30\)/)
-  assert.ok(p.includes("Grep -n '^### Round 0\\b'"), p)
-  // An already-absolute path is used as it is.
-  await run({ ...BASE, planPath: 'D:/x/p.md', contextPath: 'D:/x/c.md' }, reply)
-  assert.ok(prompts['scribe:r0'].includes('In D:/x/c.md, append'))
-})
-
-test('control: without checkoutRoot a relative plan path is refused, an absolute one is not', async () => {
+test('without checkoutRoot a launch still runs: nothing in it writes a file', async () => {
   const { checkoutRoot, ...noRoot } = BASE
-  let r = await run(noRoot, standard())
-  assert.equal(r.result.outcome, 'BAD-ARGS')
-  assert.match(r.result.detail, /checkoutRoot/)
-  assert.deepEqual(r.calls, [])
-  r = await run({ ...noRoot, planPath: 'D:/x/p.md', contextPath: 'D:/x/c.md' }, standard())
+  const r = await run(noRoot, standard())
   assert.equal(r.result.outcome, 'PASS')
+  assert.equal(r.result.record.checkoutRoot, '')
 })
 
 // --- 2f: a criterion gated on a gate not set is pending, never a defect -----
@@ -787,9 +724,9 @@ test('failures gated only on a template gates: line route as PASS-PENDING-HUMAN,
   assert.equal(calls.filter(c => c.startsWith('implementer')).length, 1)
   assert.deepEqual(result.rounds[0].failed, [])
   assert.ok(result.pending_human.some(p => /gate live1: complete not set/.test(p)), JSON.stringify(result.pending_human))
-  assert.match(prompts['scribe:r0'], /verifier: PASS-PENDING-HUMAN \(the verifier said IMPL-DEFECT/)
-  assert.match(prompts['scribe:r0'], /- PENDING \(gate live1: complete not set\) phase1j rows=/)
-  assert.match(prompts['scribe:r0'], /^phase: pass$/m)
+  assert.match(recordedLog(result, 0), /verifier: PASS-PENDING-HUMAN \(the verifier said IMPL-DEFECT/)
+  assert.match(recordedLog(result, 0), /- PENDING \(gate live1: complete not set\) phase1j rows=/)
+  assert.match(recordedState(result, 0), /^phase: pass$/m)
 })
 
 test('control: the same failure with its gate literally set on gates: is a defect', async () => {
@@ -810,15 +747,15 @@ test('an ungated failure beside a gated one is still a defect, and only it is re
   })
   assert.equal(result.outcome, 'PASS-PENDING-HUMAN')
   assert.equal(result.round, 1, 'round 0 had a real failure')
-  assert.match(prompts['scribe:r0'], /- FAILED doc structure/)
-  assert.doesNotMatch(prompts['scribe:r0'], /- FAILED phase1j/)
+  assert.match(recordedLog(result, 0), /- FAILED doc structure/)
+  assert.doesNotMatch(recordedLog(result, 0), /- FAILED phase1j/)
 })
 
 test('a BLOCKING finding still spends a round when every failure is gated', async () => {
   let seen = 0
   const { result } = await run({ ...BASE, state: gatedState(TEMPLATE_GATES) }, standard({
     verifier: failing(LIVE),
-    'docs-sync-reviewer': () => (seen++ === 0 ? { ...CLEAN, blocking: [{ where: 'a', problem: 'wrong', evidence: 'x' }] } : CLEAN),
+    'instrument-blindness-reviewer': () => (seen++ === 0 ? { ...CLEAN, blocking: [{ where: 'a', problem: 'wrong', evidence: 'x' }] } : CLEAN),
   }))
   assert.equal(result.outcome, 'PASS-PENDING-HUMAN')
   assert.equal(result.round, 1)
@@ -851,14 +788,6 @@ test('an "or" between backticked tokens on gates: is a template too', async () =
   assert.equal(r.result.outcome, 'CAP')
 })
 
-test('a dropped State line on an all-gated round reports then: PASS-PENDING-HUMAN', async () => {
-  const state = gatedState(TEMPLATE_GATES)
-  const file = { plan: planFile(state) }
-  const { result } = await run({ ...BASE, state }, withPlan(file, incidentScribe, { verifier: failing(LIVE) }))
-  assert.equal(result.outcome, 'STATE-LOST')
-  assert.equal(result.then, 'PASS-PENDING-HUMAN')
-})
-
 test('a structural finding keeps an all-gated round a defect', async () => {
   const { result } = await run({ ...BASE, state: gatedState(TEMPLATE_GATES) },
     standard({ verifier: { ...failing(LIVE), other_defects: ['ForgePact/plugin/x.cpp:12 *Rva* constant reachable from release'] } }))
@@ -870,14 +799,15 @@ test('NON-BLOCKING Log lines carry no evidence tail; BLOCKING lines keep theirs'
   const reply = (label, prompt) => {
     prompts[label] = prompt
     return standard({
-      'docs-sync-reviewer': { blocking: [{ where: 'w', problem: 'wrong', evidence: 'BLOCK-EV' }], non_blocking: [], plan_defect: false, summary: 'x' },
+      implementer: { ...DONE, decompile: undefined },
+      'instrument-blindness-reviewer': { blocking: [{ where: 'w', problem: 'wrong', evidence: 'BLOCK-EV' }], non_blocking: [], plan_defect: false, summary: 'x' },
       'decompile-output-guard': { blocking: [], non_blocking: [{ where: 'nw', problem: 'nit', evidence: 'NB-EV' }], plan_defect: false, summary: 'x' },
     })(label)
   }
-  await run(BASE, reply)
-  assert.match(prompts['scribe:r0'], /\[docs-sync-reviewer\] w: wrong — evidence: BLOCK-EV/)
-  assert.match(prompts['scribe:r0'], /\[decompile-output-guard\] nw: nit/)
-  assert.doesNotMatch(prompts['scribe:r0'], /NB-EV/)
+  const { result } = await run(BASE, reply)
+  assert.match(recordedLog(result, 0), /\[instrument-blindness-reviewer\] w: wrong — evidence: BLOCK-EV/)
+  assert.match(recordedLog(result, 0), /\[decompile-output-guard\] nw: nit/)
+  assert.doesNotMatch(recordedLog(result, 0), /NB-EV/)
 })
 
 test('the verifier is told to run criteria as written and each suite once', async () => {
@@ -946,9 +876,25 @@ test('lanes: two declared lanes run concurrently and the join runs after both', 
   assert.ok(opts['implementer:code:r0'].schema.properties.verdict.enum.includes('STOPPED'))
   assert.equal(opts['implementer:code:r0'].schema.properties.lane.type, 'string')
   assert.ok(!opts['implementer:join:r0'].schema.properties.verdict.enum.includes('STOPPED'), 'the join returns the laneless verdicts')
-  // the round goes on to the delta and the verifier, once
-  assert.ok(calls.indexOf('delta:r0') > calls.indexOf('implementer:join:r0'))
+  // 2m: one snapshot agent before the lanes (they would race on its file);
+  // the join, not an agent, reports the delta; the verifier runs once.
+  assert.ok(calls.indexOf('snapshot:r0') >= 0 && calls.indexOf('snapshot:r0') < calls.indexOf('implementer:code:r0'))
+  assert.equal(calls.filter(c => c.startsWith('snapshot')).length, 1)
+  assert.ok(!calls.some(c => c.startsWith('delta') || c.startsWith('scribe')))
   assert.equal(calls.filter(c => c === 'verifier:r0').length, 1)
+})
+
+test('lanes: the join takes no snapshot and reports the delta; a lane does neither', async () => {
+  const prompts = {}
+  await run(LANED, (label, prompt, o) => { prompts[label] = prompt; return laneReply()(label, prompt, o) })
+  const join = prompts['implementer:join:r0']
+  assert.match(join, /This round's snapshot was already taken before the lanes started: do not run `round_delta\.py snapshot`/)
+  assert.match(join, /Bookkeeping last, after your last commit/)
+  assert.ok(join.includes('round_delta.py delta zz 0'))
+  for (const lane of ['implementer:code:r0', 'implementer:docs:r0']) {
+    assert.doesNotMatch(prompts[lane], /Bookkeeping (first|last)/, lane)
+    assert.ok(!prompts[lane].includes('round_delta.py delta'), lane)
+  }
 })
 
 test('lanes: three declared lanes run concurrently and the join runs after all three', async () => {
@@ -995,13 +941,14 @@ test('lanes: a lane PLAN-DEFECT skips the join and hands the round back with the
   assert.ok(!calls.some(c => c.startsWith('verifier') || c.startsWith('delta')))
   assert.deepEqual(result.lanes.map(l => [l.name, l.verdict, l.progress_so_far]),
     [['code', 'PLAN-DEFECT', 'PROGRESS-OF-code'], ['docs', 'STOPPED', 'PROGRESS-OF-docs']])
-  const s = prompts['scribe:r0']
+  const s = recordedLog(result, 0)
   assert.match(s, /^### Round 0$/m)
   assert.match(s, /lane code: PLAN-DEFECT/)
   assert.match(s, /EVIDENCE-CODE/)
   assert.match(s, /lane docs: STOPPED/)
   assert.ok(s.includes('PROGRESS-OF-code') && s.includes('PROGRESS-OF-docs'), s)
-  assert.match(s, /^phase: blocked$/m)
+  assert.match(recordedState(result, 0), /^phase: blocked$/m)
+  assert.match(recordedState(result, 0), /^replans: 1$/m)
 })
 
 test('lanes: a lane ADVICE-NEEDED does the same, and PLAN-DEFECT outranks it', async () => {
@@ -1078,8 +1025,8 @@ test('lanes: a join verdict routes like the laneless implementer', async () => {
     assert.equal(result.outcome, verdict)
     assert.equal(result.implementer.evidence, `JOIN-EV-${verdict}`)
     assert.ok(!calls.some(c => c.startsWith('verifier')))
-    assert.match(prompts['scribe:r0'], new RegExp(`JOIN-EV-${verdict}`))
-    assert.match(prompts['scribe:r0'], /^phase: blocked$/m)
+    assert.match(recordedLog(result, 0), new RegExp(`JOIN-EV-${verdict}`))
+    assert.match(recordedState(result, 0), /^phase: blocked$/m)
   }
   const { result } = await run(LANED, laneReply({}, { 'implementer:join': null }))
   assert.equal(result.outcome, 'AGENT-FAILED')
@@ -1120,7 +1067,7 @@ test('effort: implementerEffort picks the implementer variant, and bad tiers are
     if (label.startsWith('delta')) return DELTA(['docs/x.md'], { size_exit_code: 0, lines_changed: 2, new_files: 0 })
     return standard()(label)
   }
-  await run({ ...BASE, reviewers: { 'docs-sync-reviewer': 'never', 'decompile-output-guard': 'never' } }, patchReply)
+  await run({ ...BASE, reviewers: { 'docs-sync-reviewer': 'blocking', 'decompile-output-guard': 'never' } }, patchReply)
   assert.equal(seen['patch-implementer:r1'].agentType, 'implementer-medium')
   assert.equal(seen['implementer:r0'].agentType, 'implementer')
   for (const bad of [{ implementerEffort: 'max' }, { implementerModel: 'fable' }]) {
@@ -1133,13 +1080,18 @@ test('effort: implementerEffort picks the implementer variant, and bad tiers are
 // --- 2i: the patch route ------------------------------------------------------
 // A round whose only defects are BLOCKING findings that each carry the
 // reviewer's exact fix is followed by a patch round: fix-only implementer,
-// verifier as usual, only the finding reviewers (plus the decompile guard on
-// its trigger) re-run, and -- when `round_delta.py size` says it stayed small
-// -- not counted against the cap. Each property has its control beside it.
+// verifier as usual, only the finding reviewers re-run, and -- when
+// `round_delta.py size` says it stayed small -- not counted against the cap.
+// Each property has its control beside it. Since F03 a non-instrument
+// reviewer runs in the rounds only to confirm a finding it entered with, so
+// docs-sync enters `blocking` here, as it would after a final gate.
 const FIXED = { where: 'docs/x.md:3', problem: 'wrong flag', evidence: 'line 3 says --a', fix: 'change `--a` to `--b` on docs/x.md:3' }
 const UNFIXED = { where: 'docs/x.md:3', problem: 'wrong flag', evidence: 'line 3 says --a' }
 const SMALL = (paths = ['docs/x.md'], extra = {}) => DELTA(paths, { size_exit_code: 0, lines_changed: 2, new_files: 0, ...extra })
-const PATCH_BASE = { ...BASE, reviewers: { 'docs-sync-reviewer': 'never', 'decompile-output-guard': 'never', 'tauri-command-reviewer': 'never' } }
+const PATCH_BASE = { ...BASE, reviewers: { 'docs-sync-reviewer': 'blocking', 'decompile-output-guard': 'never', 'tauri-command-reviewer': 'never' } }
+// No decompile report from any implementer: the LLM guard reviews every round,
+// a reviewer that stays eligible however often it comes back clean.
+const NO_CHECK = { implementer: { ...DONE, decompile: undefined }, 'patch-implementer': { ...DONE, decompile: undefined } }
 const blockingOnce = finding => { let seen = 0; return () => (seen++ === 0 ? { ...CLEAN, blocking: [finding] } : CLEAN) }
 const recording = (prompts, reply) => (label, prompt, opts) => { prompts[label] = prompt; return reply(label, prompt, opts) }
 const implementers = calls => calls.filter(c => /implementer/.test(c))
@@ -1151,30 +1103,34 @@ test('patch: every BLOCKING finding carrying its fix runs a patch round that is 
   assert.deepEqual(implementers(calls), ['implementer:r0', 'patch-implementer:r1'])
   assert.match(prompts['patch-implementer:r1'], /patch round/)
   assert.ok(prompts['patch-implementer:r1'].includes(FIXED.fix), 'the patch implementer is handed the fix itself')
-  assert.ok(prompts['delta:r1'].includes('round_delta.py size zz 1'), 'a patch round is measured')
-  assert.ok(!prompts['delta:r0'].includes('round_delta.py size'), 'control: an ordinary round is not')
+  assert.ok(prompts['patch-implementer:r1'].includes('round_delta.py size zz 1'), 'a patch round is measured')
+  assert.ok(prompts['patch-implementer:r1'].includes('decompile_check.py zz 1'), 'and checked for decompiled text')
+  assert.ok(!prompts['implementer:r0'].includes('round_delta.py size'), 'control: an ordinary round is not')
   assert.ok(calls.includes('verifier:r1'), 'the verifier still runs every criterion')
   assert.ok(calls.includes('docs-sync-reviewer:r1'), 'the reviewer that found it confirms it')
-  assert.ok(calls.includes('decompile-output-guard:r1'), 'a .md changed: the legal guard is never skipped')
+  assert.ok(!calls.includes('decompile-output-guard:r1'), 'decompile_check.py ran clean: the LLM guard is not needed')
   assert.ok(!calls.includes('tauri-command-reviewer:r1'))
   assert.match(result.rounds[0].next, /patch round/)
   assert.match(result.rounds[1].patch, /^held \(2 lines in 1 file\(s\)\)/)
-  assert.match(prompts['scribe:r1'], /patch rounds: 1/)
-  assert.match(prompts['scribe:r0'], /phase: patch/)
+  assert.match(recordedState(result, 1), /patch rounds: 1/)
+  assert.match(recordedState(result, 0), /phase: patch/)
 })
 
-test('patch: a held patch skips a clean reviewer whose trigger matches; an ordinary round would run it', async () => {
-  // docs-sync's trigger matches any non-test path, so an ordinary re-run of a
-  // clean docs-sync on docs/x.md runs it -- a held patch does not.
-  const reviewers = { 'docs-sync-reviewer': 'never', 'decompile-output-guard': 'never' }
-  const tauri = blockingOnce({ ...FIXED, where: 'hub/src-tauri/src/x.rs:1' })
-  let r = await run({ ...BASE, reviewers: { ...reviewers, 'tauri-command-reviewer': 'never' } }, standard({ delta: SMALL(), 'tauri-command-reviewer': tauri }))
+test('patch: a held patch re-runs the decompile guard standing in, but not a clean reviewer whose trigger matches', async () => {
+  // Without a decompile report the LLM guard stands in, and its trigger matches
+  // a .md: a legal check is never skipped, held patch or not.
+  const reviewers = { 'docs-sync-reviewer': 'blocking', 'decompile-output-guard': 'clean' }
+  let r = await run({ ...BASE, reviewers }, standard({ ...NO_CHECK, delta: SMALL(), 'docs-sync-reviewer': blockingOnce(FIXED) }))
   assert.ok(r.calls.includes('patch-implementer:r1'))
-  assert.ok(!r.calls.includes('docs-sync-reviewer:r1'), 'held patch: a clean docs-sync is not re-run')
-  assert.ok(r.calls.includes('tauri-command-reviewer:r1'))
-  r = await run({ ...BASE, reviewers: { ...reviewers, 'tauri-command-reviewer': 'never' } },
-    standard({ delta: SMALL(), 'tauri-command-reviewer': blockingOnce({ ...UNFIXED, where: 'hub/src-tauri/src/x.rs:1' }) }))
-  assert.ok(r.calls.includes('docs-sync-reviewer:r1'), 'control: an ordinary round re-runs it on the same delta')
+  assert.ok(r.calls.includes('decompile-output-guard:r1'), 'held patch: a legal check that did not run is never skipped')
+  // A clean instrument reviewer whose trigger matches (docs/*.md) is not re-run after a held patch...
+  const ib = { 'docs-sync-reviewer': 'blocking', 'instrument-blindness-reviewer': 'clean' }
+  r = await run({ ...BASE, reviewers: ib }, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce(FIXED) }))
+  assert.ok(r.calls.includes('patch-implementer:r1'))
+  assert.ok(!r.calls.includes('instrument-blindness-reviewer:r1'), 'held patch: a clean instrument reviewer is not re-run')
+  // ...and is, on the same delta, after an ordinary round.
+  r = await run({ ...BASE, reviewers: ib }, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce(UNFIXED) }))
+  assert.ok(r.calls.includes('instrument-blindness-reviewer:r1'), 'control: an ordinary round re-runs it on the same delta')
 })
 
 test('patch: control -- a BLOCKING finding without a fix spends an ordinary round', async () => {
@@ -1193,7 +1149,7 @@ test('patch: one finding without a fix among fixed ones makes the round ordinary
   assert.deepEqual(implementers(calls), ['implementer:r0', 'implementer:r1'])
 })
 
-test('patch: a failed criterion, a structural finding, a plan defect or an instrument finding never patches', async () => {
+test('patch: a failed criterion, a structural finding, a plan defect, an instrument finding or a decompile hit never patches', async () => {
   const fail = { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] }
   const structural = { verdict: 'IMPL-DEFECT', criteria: [], pending_human: [], other_defects: ['NOT DONE: step 3'] }
   for (const verifierReply of [fail, structural]) {
@@ -1205,6 +1161,11 @@ test('patch: a failed criterion, a structural finding, a plan defect or an instr
   assert.equal(r.result.outcome, 'PLAN-DEFECT')
   assert.ok(!r.calls.some(c => c.startsWith('patch-implementer')))
   r = await run({ ...BASE, reviewers: { 'instrument-blindness-reviewer': 'never' } }, standard({ delta: SMALL(), 'instrument-blindness-reviewer': blockingOnce(FIXED) }))
+  assert.deepEqual(implementers(r.calls), ['implementer:r0', 'implementer:r1'])
+  // A fixed finding beside a decompile hit: the hit has no fix, so the round is ordinary.
+  let checks = 0
+  r = await run(PATCH_BASE, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce(FIXED),
+    decompile: () => (checks++ === 0 ? { exit_code: 1, hits: ['docs/x.md:4  adds a GML positional argument: \'argument0\''] } : DECOMPILE_CLEAN) }))
   assert.deepEqual(implementers(r.calls), ['implementer:r0', 'implementer:r1'])
 })
 
@@ -1253,32 +1214,31 @@ test('patch: two patch rounds never run back to back', async () => {
 test('patch: a patch decided on the last counted round still runs, and the cap stands after it', async () => {
   const fail = { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] }
   let v = 0
-  const { result, calls } = await run(PATCH_BASE, standard({
+  const { result, calls } = await run({ ...BASE, reviewers: { 'decompile-output-guard': 'never' } }, standard({
+    ...NO_CHECK,
     delta: SMALL(),
     verifier: () => (v++ < 2 ? fail : PASS),
-    'docs-sync-reviewer': label => (label.endsWith(':r2') || label.endsWith(':r3') ? { ...CLEAN, blocking: [FIXED] } : CLEAN),
+    'decompile-output-guard': label => (label.endsWith(':r2') || label.endsWith(':r3') ? { ...CLEAN, blocking: [FIXED] } : CLEAN),
   }))
   assert.equal(result.outcome, 'CAP')
   assert.deepEqual(implementers(calls), ['implementer:r0', 'implementer:r1', 'implementer:r2', 'patch-implementer:r3'])
 })
 
 test('patch: patch rounds already spent are read from State and keep counting', async () => {
-  const prompts = {}
   const state = { ...PATCH_BASE, round: 3, reviewers: { 'docs-sync-reviewer': 'blocking' }, state: '## State\nround: 3\nphase: implement\npatch rounds: 1\n' }
-  const { result, calls } = await run(state, recording(prompts, standard({ delta: SMALL() })))
+  const { result, calls } = await run(state, standard({ delta: SMALL() }))
   assert.equal(result.outcome, 'PASS')
   assert.ok(calls.includes('implementer:r3'), 'round 3 with one patch spent is the third counted round, not past the cap')
-  assert.match(prompts['scribe:r3'], /patch rounds: 1/)
+  assert.match(result.record.state, /patch rounds: 1/)
   const control = await run({ ...state, state: '## State\nround: 3\nphase: implement\n' }, standard({ delta: SMALL() }))
   assert.equal(control.result.outcome, 'CAP', 'control: without patch rounds, round 3 is past the cap')
 })
 
 test('patch: the Log line of a BLOCKING finding carries its fix', async () => {
-  const prompts = {}
-  await run(PATCH_BASE, recording(prompts, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce(FIXED) })))
-  assert.ok(prompts['scribe:r0'].includes(`— fix: ${FIXED.fix}`))
-  assert.ok(prompts['scribe:r0'].includes('next: patch round'))
-  assert.ok(prompts['scribe:r1'].includes('patch: held'))
+  const { result } = await run(PATCH_BASE, standard({ delta: SMALL(), 'docs-sync-reviewer': blockingOnce(FIXED) }))
+  assert.ok(recordedLog(result, 0).includes(`— fix: ${FIXED.fix}`))
+  assert.ok(recordedLog(result, 0).includes('next: patch round'))
+  assert.ok(recordedLog(result, 1).includes('patch: held'))
 })
 
 test('patch: reviewers are told what a fix is and when to leave it out', async () => {
@@ -1380,7 +1340,7 @@ const itemsReply = (overrides = {}) => label => {
     return { ...DONE, commits: [{ repo: '.', sha: `sha-${id}` }], paths: [`panel/${id}.css`], flags: '' }
   }
   if (label.startsWith('item-verifier') || label.startsWith('verifier')) return PASS
-  if (label.startsWith('scribe')) return { written: true, note: '' }
+  
   return { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'head' }] }
 }
 // Every stub takes a few ms, and the run records which agents overlapped.
@@ -1396,6 +1356,7 @@ async function runTimed(args, reply) {
   }
   const parallel = thunks => Promise.all(thunks.map(t => t().catch(() => null)))
   const result = await script(args, agent, parallel, null, () => {}, () => {}, {}, null)
+  recordPrompts(result, prompts)
   return { result, calls, spans, prompts }
 }
 const overlaps = (s, x, y) => s[x][0] < s[y][1] && s[y][0] < s[x][1]
@@ -1441,7 +1402,7 @@ test('items: an owner question parks only its item until the driver passes it as
   assert.ok(!r.calls.some(c => c.startsWith('item-implementer:d:')))
   assert.equal(r.result.items.find(i => i.id === 'd').reason, 'owner: keep the old tray?')
   assert.deepEqual(r.result.items.filter(i => i.status === 'done').map(i => i.id), ['a', 'b', 'c'])
-  assert.match(r.prompts['scribe:r0'], /items: a=done; b=done; c=done; d=parked\n/)
+  assert.match(r.prompts['record:r0'], /items: a=done; b=done; c=done; d=parked\n/)
   // The relaunch: done items stay done, the answered item runs, the gate runs once.
   let docs = 0
   const blockingOnceOnD = () => (docs++ === 0
@@ -1515,11 +1476,12 @@ test('items: a PLAN-DEFECT parks its item and holds only what it may invalidate'
   assert.deepEqual(result.items.map(i => [i.id, i.status]), [['a', 'parked'], ['b', 'held'], ['c', 'done']])
 })
 
-test('items: the scribe records every item and State carries the items line', async () => {
-  const { prompts } = await runTimed({ ...ITEMS_BASE, state: '## State\nround: 0\ngates: none\n' }, itemsReply())
-  assert.match(prompts['scribe:r0'], /### Round 0 \(items\)/)
-  assert.match(prompts['scribe:r0'], /items: a=done; b=done; c=done/)
-  assert.match(prompts['scribe:r0'], /gates: none/, 'a driver-owned State line was dropped')
+test('items: the record carries every item and State carries the items line', async () => {
+  const { prompts, result, calls } = await runTimed({ ...ITEMS_BASE, state: '## State\nround: 0\ngates: none\n' }, itemsReply())
+  assert.match(prompts['record:r0'], /### Round 0 \(items\)/)
+  assert.match(prompts['record:r0'], /items: a=done; b=done; c=done/)
+  assert.match(result.record.state, /gates: none/, 'a driver-owned State line was dropped')
+  assert.ok(!calls.some(c => c.startsWith('scribe')), 'items mode writes nothing through an agent either')
 })
 
 test('items: args that could not have come from plan_lint --items-json are refused', async () => {
@@ -1688,6 +1650,7 @@ async function runDelayed(args, reply, delays) {
   }
   const parallel = thunks => Promise.all(thunks.map(t => t().catch(() => null)))
   const result = await script(args, agent, parallel, null, () => {}, () => {}, {}, null)
+  recordPrompts(result, prompts)
   return { result, calls, spans, prompts }
 }
 const builds = calls => calls.filter(c => c.startsWith('item-implementer:build-dev:'))
@@ -1784,6 +1747,7 @@ const reachRun = async (verifies, overrides = {}, args = BASE) => {
     })(label)
   }
   const { result, calls } = await run(args, reply)
+  recordPrompts(result, prompts)
   return { result, calls, prompts }
 }
 const FAILED_2 = { verdict: 'IMPL-DEFECT', criteria: [CRIT(1, 'pass'), CRIT(2, 'fail'), CRIT(3, 'pass')], pending_human: [] }
@@ -1858,6 +1822,22 @@ test('development verifies defer the whole suites; only fullVerify runs the full
   assert.ok(!itemsFull.prompts['verifier:r0'].includes('--dev'))
 })
 
+// #485 F10, owner 2026-10-11: "implementer and verifier may share test results
+// if it makes sense". A development verify passes the implementer's criteria
+// dir to run_criteria --reuse; the final gate never does.
+test('a development verify reuses the implementer\'s criteria run; the final gate never does', async () => {
+  const withDir = label => ({ ...DONE, criteria_dir: 'C:/scratch/impl/criteria' })
+  const dev = await reachRun([PASS], { implementer: withDir })
+  assert.ok(dev.prompts['verifier:r0'].includes('--dev --reuse "C:/scratch/impl/criteria" --out'), dev.prompts['verifier:r0'])
+  assert.match(dev.prompts['verifier:r0'], /REUSED from the implementer's run/)
+  // Control: no reported dir, no --reuse.
+  const none = await reachRun([PASS])
+  assert.ok(!none.prompts['verifier:r0'].includes('--reuse'), none.prompts['verifier:r0'])
+  // The final gate before the PR runs everything itself.
+  const full = await reachRun([PASS], { implementer: withDir }, { ...BASE, fullVerify: true })
+  assert.ok(!full.prompts['verifier:r0'].includes('--reuse'), full.prompts['verifier:r0'])
+})
+
 // --- goal 4: maxParallel is validated, its default named ---------------------
 //
 // Measured 2026-09-27: no item in the ForgePact bug batch waited on the cap
@@ -1909,8 +1889,8 @@ test('owner: a reversible default runs and is listed under defaulted; an irrever
   assert.deepEqual(result.defaulted.map(d => [d.id, d.question, d.default, d.status]), [['d', 'question d?', 'keep the old tray', 'done']])
   assert.deepEqual(result.defaulted[0].commits, [{ repo: '.', sha: 'sha-d' }])
   assert.match(result.defaulted[0].undo, /revert \.:sha-d, record the owner's answer under '### Decisions', and relaunch with 'd' in answered/)
-  assert.match(prompts['scribe:r0'], /defaulted \(1\):\n- d: "question d\?" -> default "keep the old tray" \(done\); undo: revert \.:sha-d/)
-  assert.match(prompts['scribe:r0'], /items: a=done; b=done; c=done; d=defaulted; e=parked; f=parked; g=parked\n/)
+  assert.match(prompts['record:r0'], /defaulted \(1\):\n- d: "question d\?" -> default "keep the old tray" \(done\); undo: revert \.:sha-d/)
+  assert.match(prompts['record:r0'], /items: a=done; b=done; c=done; d=defaulted; e=parked; f=parked; g=parked\n/)
 })
 
 test('owner: a defaulted item stays done on a relaunch, and runs again once the owner answers', async () => {
@@ -1920,12 +1900,12 @@ test('owner: a defaulted item stays done on a relaunch, and runs again once the 
   assert.equal(again.result.outcome, 'PASS')
   assert.ok(!again.calls.some(c => c.startsWith('item-implementer:')), 'a defaulted item ran again with no answer')
   assert.equal(again.result.defaulted[0].id, 'd', 'the defaulted item dropped off the list')
-  assert.match(again.prompts['scribe:r1'], /d=defaulted\n/)
+  assert.match(again.prompts['record:r1'], /d=defaulted\n/)
   const answered = await runTimed({ ...args, answered: ['d'] }, itemsReply())
   assert.deepEqual(answered.calls.filter(c => c.startsWith('item-implementer:')), ['item-implementer:d:a1:r1'])
   assert.match(answered.prompts['item-implementer:d:a1:r1'], /has answered this item's question/)
   assert.deepEqual(answered.result.defaulted, [])
-  assert.match(answered.prompts['scribe:r1'], /d=done\n/)
+  assert.match(answered.prompts['record:r1'], /d=done\n/)
 })
 
 // --- goal 3: a wait on a person names the work that does not wait on it -----
@@ -1941,13 +1921,13 @@ test('unblocked: a PLAN-DEFECT independent of an owner-parked item is listed; th
   assert.equal(result.outcome, 'PARKED')
   assert.deepEqual(result.items.map(i => [i.id, i.status]), [['o', 'parked'], ['w', 'held'], ['p', 'parked'], ['q', 'done']])
   assert.deepEqual(result.unblocked, [{ id: 'p', reason: 'PLAN-DEFECT', route: 'amend-or-replan' }])
-  assert.match(prompts['scribe:r0'], /\nunblocked: p \(PLAN-DEFECT -> amend-or-replan\)\n/)
+  assert.match(prompts['record:r0'], /\nunblocked: p \(PLAN-DEFECT -> amend-or-replan\)\n/)
   // Control: the same PLAN-DEFECT with no owner question waits on no person, so no list.
   const noOwner = { ...args, items: args.items.filter(it => it.id !== 'o').map(it => ({ ...it, after: [] })) }
   const r = await runTimed(noOwner, itemsReply({ 'item-implementer:p:': defect }))
   assert.equal(r.result.outcome, 'PARKED')
   assert.ok(!('unblocked' in r.result), 'a result that waits on no person carried unblocked')
-  assert.ok(!/\nunblocked:/.test(r.prompts['scribe:r0']))
+  assert.ok(!/\nunblocked:/.test(r.prompts['record:r0']))
 })
 
 test('unblocked: every hold is traced to its root, and each route is named', () => {
@@ -1973,12 +1953,12 @@ test('unblocked: a pass pending a human carries an empty list, in items mode and
   const items = await runTimed(ITEMS_BASE, itemsReply({ 'verifier:': pending }))
   assert.equal(items.result.outcome, 'PASS-PENDING-HUMAN')
   assert.deepEqual(items.result.unblocked, [])
-  assert.match(items.prompts['scribe:r0'], /\nunblocked: none\n/)
+  assert.match(items.prompts['record:r0'], /\nunblocked: none\n/)
   const prompts = {}
   const rounds = await run(BASE, (label, prompt) => { prompts[label] = prompt; return standard({ verifier: pending })(label) })
   assert.equal(rounds.result.outcome, 'PASS-PENDING-HUMAN')
   assert.deepEqual(rounds.result.unblocked, [])
-  assert.match(prompts['scribe:r0'], /\nunblocked: none\n/)
+  assert.match(recordedLog(rounds.result, 0) + '\n', /\nunblocked: none\n/)
   // Control: a plain PASS waits on no one.
   const pass = await run(BASE, standard())
   assert.ok(!('unblocked' in pass.result))
@@ -2070,7 +2050,7 @@ test('amend: items mode -- a stated CORRECTION is saved, amended, checked, the t
   assert.match(prompts['item-implementer:a:a2:r0'], /plan was amended in this launch/)
   assert.ok(!/checks failed/.test(prompts['item-implementer:a:a2:r0']))
   assert.deepEqual(result.amendments, [{ id: 'a', amended: true, why: '', verdict: 'AMENDMENT' }])
-  assert.match(prompts['scribe:r0'], /\namendments \(1\):\n- a: AMENDMENT; re-run\n/)
+  assert.match(prompts['record:r0'], /\namendments \(1\):\n- a: AMENDMENT; re-run\n/)
 })
 
 test('amend: items mode -- REPLAN, NOT AN AMENDMENT, SCOPE, a failed check or lint, and CORRECTION: none each park the item unrun', async () => {
@@ -2100,8 +2080,8 @@ test('amend: items mode -- REPLAN, NOT AN AMENDMENT, SCOPE, a failed check or li
       assert.ok(!calls.includes('amend-restore:a:r0'), 'control: nothing was saved, so nothing is restored')
     }
     assert.deepEqual(result.amendments.map(x => [x.id, x.amended]), [['a', false]], why)
-    assert.match(prompts['scribe:r0'], /\n- a: not amended -- /, why)
-    assert.match(prompts['scribe:r0'], /\n- a \(toolbar\): parked -- PLAN-DEFECT; replan: /, why)
+    assert.match(prompts['record:r0'], /\n- a: not amended -- /, why)
+    assert.match(prompts['record:r0'], /\n- a \(toolbar\): parked -- PLAN-DEFECT; replan: /, why)
   }
   // `CORRECTION: none` is the implementer's own "needs a replan": no amendment runs at all.
   const none = await runAmend(ITEMS_BASE, itemsReply({ 'item-implementer:a:a1:': CORRECTED('none'), ...AMEND_OK }))
@@ -2204,7 +2184,7 @@ test('amend: items mode -- after a failed restore a queued amendment is not atte
   assert.deepEqual([q.status, q.reason], ['parked', 'PLAN-DEFECT'])
   assert.match(q.replan, /^its amendment was not attempted: REPLAN: p\.md: ## goal changed; restoring the saved plan failed/)
   assert.deepEqual(result.amendments.map(x => [x.id, x.amended]), [[first, false], [second, false]])
-  assert.match(prompts['scribe:r0'], new RegExp(`\\n- ${second}: not amended -- its amendment was not attempted: `))
+  assert.match(prompts['record:r0'], new RegExp(`\\n- ${second}: not amended -- its amendment was not attempted: `))
   assert.ok(!calls.some(c => /^item-implementer:[ac]:a2:/.test(c)), 'an item re-ran on a plan that may carry the rejected edit')
   // Control: with the restore succeeding, the second amendment does run.
   const ok = await runAmend(args, itemsReply(stubs))
@@ -2224,7 +2204,7 @@ test('amend: rounds mode -- an amendment re-runs the same round, uncounted; a se
   assert.deepEqual(once.calls.filter(c => c.startsWith('verifier')), ['verifier:r0'])
   assert.match(prompts['implementer:r0'], /plan was amended in this launch/, 'the re-run was not told why it runs again')
   assert.match(once.result.rounds[0].amendment, /^AMENDMENT; this round re-ran, not counted$/)
-  assert.match(prompts['scribe:r0'], /\namendment: AMENDMENT; this round re-ran, not counted\n/)
+  assert.match(recordedLog(once.result, 0) + '\n', /\namendment: AMENDMENT; this round re-ran, not counted\n/)
   // The amendment spends no round: three failing verifies still make three rounds.
   const fail = { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'c', status: 'fail', evidence: 'e' }], pending_human: [] }
   impls = 0
@@ -2253,7 +2233,7 @@ test('amend: rounds mode -- a patch re-run after its amendment is still implemen
   const types = []
   let patches = 0, blocked = 0
   const FIX = { where: 'docs/x.md:3', problem: 'p', evidence: 'e', fix: 'change a to b' }
-  const { result } = await run({ ...BASE, reviewers: { 'docs-sync-reviewer': 'never', 'decompile-output-guard': 'never' } }, (label, prompt, opts) => {
+  const { result } = await run({ ...BASE, reviewers: { 'docs-sync-reviewer': 'blocking', 'decompile-output-guard': 'never' } }, (label, prompt, opts) => {
     if (label.startsWith('patch-implementer')) { types.push(opts.agentType); return patches++ === 0 ? CORRECTED() : DONE }
     if (label.startsWith('docs-sync-reviewer')) return blocked++ === 0 ? { ...CLEAN, blocking: [FIX] } : CLEAN
     if (label.startsWith('delta')) return DELTA(['docs/x.md'], { size_exit_code: 0, lines_changed: 2, new_files: 0 })
@@ -2293,8 +2273,9 @@ test('brief: rounds mode names --round, --since-round past round 0, and --amende
   await run(BASE, recording(prompts, standard()))
   assert.equal(briefOf(prompts['implementer:r0']), `${BRIEF} --round 0`)
   assert.ok(hasPlanPaths(prompts['implementer:r0']), 'the plan and context paths stay as the fallback')
-  // The brief is the first thing the implementer runs: only the workorder line comes before it.
-  assert.match(prompts['implementer:r0'], /^Workorder: p\.md \(context file: c\.md\)\. This is round 0\. Run `py -3 tools\/workorder_brief\.py/)
+  // The brief is the first thing the implementer reads: only the workorder
+  // line and the snapshot it must take before reading anything come before it.
+  assert.match(prompts['implementer:r0'], /^Workorder: p\.md \(context file: c\.md\)\. This is round 0\. Bookkeeping first, [^`]*`[^`]*round_delta\.py snapshot zz 0`[^]*?raw_output\. Run `py -3 tools\/workorder_brief\.py/)
   await run({ ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' } }, recording(prompts, standard()))
   assert.equal(briefOf(prompts['implementer:r1']), `${BRIEF} --round 1 --since-round 0`)
   assert.ok(hasPlanPaths(prompts['implementer:r1']))
@@ -2408,169 +2389,72 @@ test('digest: every whole-tree verifier judges from run_criteria.py --digest and
   assert.ok(items.prompts['item-verifier:a:a1:r0'].includes('--out "<your scratchpad>/item-a-a1"'))
 })
 
-// --- 2k: the payload is fenced, and the append is spelled out --------------
-//
-// Pinned 2026-10-03 (forgepact-16-jump-scenery-research, wf_4a87e39a-b1c, a
-// laned round that ended PLAN-DEFECT before the join): the scribe pasted its
-// own State instruction at the end of '## Log', and anchored its append on
-// the file's last line with the block written *before* it, which moved the
-// last line of `### Plan` to after the round entry. These stubs apply the
-// scribe's Log instruction to an in-memory context file, the faithful way and
-// the measured way, so what reaches the Log is measured, not assumed.
-const LOG_FENCE = prompt => between(prompt, '<<<LOG-BLOCK-BEGIN>>>\n', '\n<<<LOG-BLOCK-END>>>')
-const PLAN_TAIL = 'the "valid target" rule and the family list are all unknown or the owner\'s.'
-const CONTEXT = ['## Context the implementer needs', '', 'c', '', '## Log', '', '### Decisions', '', '- D1', '', '### Plan', '',
-  'Planned the research build. What the session cannot settle before Live 1:', PLAN_TAIL, ''].join('\n')
-const tailOf = (text, k) => text.split('\n').slice(-k).join('\n')
-// What the prompt asks: anchor on the last non-empty line, the block after it.
-const faithfulLog = (file, numbered = false) => prompt => {
-  const block = LOG_FENCE(prompt)
-  const anchor = file.context.trimEnd().split('\n').pop()
-  file.context = `${file.context.trimEnd()}\n\n${block}\n`
-  const k = Number(/Read the last (\d+) lines of/.exec(prompt)[1])
-  const tail = tailOf(file.context, k).split('\n').map((l, i) => numbered ? `${100 + i}\t${l}` : l).join('\n')
-  return { anchor, tail }
-}
-// What the 2026-10-03 scribe did: the block plus the instruction paragraph
-// after it, written before the file's last line.
-const incidentLog = file => prompt => {
-  const block = LOG_FENCE(prompt)
-  const after = prompt.slice(prompt.indexOf('\n<<<LOG-BLOCK-END>>>') + '\n<<<LOG-BLOCK-END>>>'.length).trim().split('\n')[0]
-  const lines = file.context.trimEnd().split('\n')
-  const anchor = lines.pop()
-  file.context = [...lines, '', block, '', after, anchor, ''].join('\n')
-  return { anchor, tail: tailOf(file.context, 40) }
-}
-const withFiles = (file, logFn, reportTail = true) => prompt => {
-  const state = faithfulScribe(file)(prompt)
-  const { anchor, tail } = logFn(file)(prompt)
-  return reportTail ? { ...state, log_anchor: anchor, log_tail: tail } : state
-}
-const LANE_DEFECT = { verdict: 'PLAN-DEFECT', report: '', progress_so_far: 'p', lane: 'docs',
-  evidence: 'The plan names criterion 13 as a grep.\n\nIn the plan, the gate line reads two ways.' }
-const laneDefectRun = (file, logFn, extra = {}) => {
-  const prompts = {}
-  const reply = laneReply({ docs: LANE_DEFECT })
-  return run({ ...LANED, state: PLAN_STATE, ...extra }, (label, prompt, o) => {
-    prompts[label] = prompt
-    return label.startsWith('scribe') ? logFn(prompt) : reply(label, prompt, o)
-  }).then(r => ({ ...r, prompts }))
-}
+// --- 2l: the final gate is a verify, not a round -----------------------------
 
-test('scribe: the Log block and the State lines sit between fence lines, and no instruction is inside them', async () => {
-  const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
-  const { result, prompts } = await laneDefectRun(file, withFiles(file, faithfulLog))
-  assert.equal(result.outcome, 'PLAN-DEFECT')
-  const p = prompts['scribe:r0']
-  const block = LOG_FENCE(p)
-  assert.ok(block, p)
-  assert.match(block, /^### Round 0\n/)
-  assert.match(block, /lane docs: PLAN-DEFECT\nThe plan names criterion 13/)
-  assert.match(block, /progress: p$/, 'the fence closes right after the block')
-  assert.doesNotMatch(block, /## State|replace the lines|STATE\./, 'the State instruction is outside the Log fence')
-  assert.doesNotMatch(fencedState(p), /replace the lines|In C:/, 'the State fence holds State lines only')
-  assert.match(p, /never a marker line itself, and never a word of this prompt that sits outside them/)
-  assert.match(p, /new_string is that same old_string, unchanged, then one blank line, then the block/)
-  assert.match(p, /never put the block before them/)
+const FINAL = { ...BASE, finalGate: true, round: 2, baseHeads: { '.': 'WO-BASE' },
+  reviewers: { 'instrument-blindness-reviewer': 'clean', 'docs-sync-reviewer': 'never', 'sdk-contract-reviewer': 'never', 'tauri-command-reviewer': 'never', 'decompile-output-guard': 'never' } }
+
+test('final gate: no snapshot and no implementer, the full verifier beside the deferred reviewers over the whole change', async () => {
+  const prompts = {}
+  const { result, calls } = await run({ ...FINAL, branchPaths: ['tools/x.py', 'hub/src-tauri/src/a.rs'] }, recording(prompts, standard()))
+  assert.equal(result.outcome, 'PASS')
+  assert.equal(result.finalGate, true)
+  assert.equal(result.verifyScope, 'full')
+  assert.ok(!calls.some(c => /implementer|snapshot|delta|scribe/.test(c)), calls.join(', '))
+  assert.deepEqual([...calls].sort(), ['docs-sync-reviewer:final:r2', 'sdk-contract-reviewer:final:r2', 'tauri-command-reviewer:final:r2', 'verifier:final:r2'])
+  assert.doesNotMatch(prompts['verifier:final:r2'], /--dev|--changed-since|NOT SELECTED/, 'the final gate runs the full set')
+  assert.match(prompts['verifier:final:r2'], /run_criteria\.py "p\.md" --jobs auto --out/)
+  assert.ok(prompts['docs-sync-reviewer:final:r2'].includes('git -C . diff WO-BASE'), 'the whole change since the workorder began')
+  assert.match(recordedLog(result, 2), /^### Round 2 \(final gate\)\n\nverifier: PASS/)
+  assert.match(recordedState(result, 2), /^final gate: pass$/m)
+  assert.match(recordedState(result, 2), /^round: 2\nphase: pass$/m)
 })
 
-test('scribe: a faithful append leaves the Plan paragraph whole and the block last', async () => {
-  for (const numbered of [false, true]) {
-    const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
-    const { result } = await laneDefectRun(file, withFiles(file, f => faithfulLog(f, numbered)))
-    assert.equal(result.outcome, 'PLAN-DEFECT', `line numbers ${numbered}: ${JSON.stringify(result)}`)
-    assert.ok(file.context.includes(`Live 1:\n${PLAN_TAIL}\n\n### Round 0`), file.context)
-    assert.match(file.context, /progress: p\n$/)
-    assert.doesNotMatch(file.context, /replace the lines under '## State'|<<</)
+test('final gate: the decompile guard reads the branch only when it touches docs/ or a .md, or the paths are unknown', async () => {
+  for (const [branchPaths, runs] of [[['tools/x.py'], false], [['docs/notes.txt'], true], [['ForgePact/README.md'], true], [undefined, true]]) {
+    const { calls } = await run({ ...FINAL, branchPaths }, standard())
+    assert.equal(calls.includes('decompile-output-guard:final:r2'), runs, JSON.stringify(branchPaths))
   }
 })
 
-test('scribe: the 2026-10-03 paste stops the launch as LOG-DAMAGED carrying the block', async () => {
-  const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
-  const { result, calls } = await laneDefectRun(file, withFiles(file, incidentLog))
-  // The stub reproduces the measured damage...
-  assert.ok(file.context.endsWith(`${PLAN_TAIL}\n`) && /replace the lines under '## State'/.test(file.context), file.context)
-  // ...and the launch reports it instead of handing back a clean PLAN-DEFECT.
-  assert.equal(result.outcome, 'LOG-DAMAGED', JSON.stringify(result))
-  assert.equal(result.then, 'PLAN-DEFECT')
-  assert.equal(result.anchor, PLAN_TAIL)
-  assert.match(result.log, /^### Round 0\n/)
-  assert.match(result.detail, /not the last thing/)
-  assert.deepEqual(result.lanes.map(l => l.verdict), ['IMPL-DONE', 'PLAN-DEFECT'])
-  assert.ok(!calls.includes('implementer:join:r0'))
-})
-
-test('scribe: an ordinary round is checked the same way, and a STATE-LOST carries the Log report too', async () => {
-  const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
-  const reply = standard({ verifier: defectThenPass() })
-  const { result, calls } = await run({ ...BASE, state: PLAN_STATE }, (label, prompt, o) =>
-    label.startsWith('scribe') ? withFiles(file, incidentLog)(prompt) : reply(label, prompt, o))
-  assert.equal(result.outcome, 'LOG-DAMAGED')
-  assert.equal(result.then, 'continue')
-  assert.ok(!calls.includes('verifier:r1'), 'no later round runs on a damaged Log')
-  const file2 = { plan: planFile(PLAN_STATE), context: CONTEXT }
-  const both = prompt => ({ ...incidentScribe(file2)(prompt), ...(({ anchor, tail }) => ({ log_anchor: anchor, log_tail: tail }))(incidentLog(file2)(prompt)) })
-  const { result: r2 } = await run({ ...BASE, state: PLAN_STATE }, (label, prompt, o) => label.startsWith('scribe') ? both(prompt) : reply(label, prompt, o))
-  assert.equal(r2.outcome, 'STATE-LOST')
-  assert.equal(r2.log_damaged, true)
-  assert.match(r2.log, /^### Round 0\n/)
-})
-
-test('scribe: control -- a tail not reported is not judged, and a fence marker in lane evidence cannot close the fence', async () => {
-  const file = { plan: planFile(PLAN_STATE), context: CONTEXT }
-  const { result } = await laneDefectRun(file, withFiles(file, incidentLog, false))
-  assert.equal(result.outcome, 'PLAN-DEFECT', 'no log_tail: nothing to compare, so no LOG-DAMAGED')
-  // The schema requires log_tail, so a scribe that skipped its last Read fills
-  // it with '' or a placeholder: too short to hold the block, so not judged.
-  for (const tail of ['', 'N/A', 'N/A - could not read the file']) {
-    const f = { plan: planFile(PLAN_STATE), context: CONTEXT }
-    const { result: r } = await laneDefectRun(f, prompt => ({ ...withFiles(f, faithfulLog)(prompt), log_tail: tail }))
-    assert.equal(r.outcome, 'PLAN-DEFECT', `log_tail ${JSON.stringify(tail)}: ${JSON.stringify(r)}`)
+test('final gate: an instrument reviewer the rounds left clean is not re-run; one that never ran or is blocking is', async () => {
+  for (const [state, runs] of [['clean', false], ['never', true], ['blocking', true]]) {
+    const { calls } = await run({ ...FINAL, branchPaths: ['tools/x.py'], reviewers: { ...FINAL.reviewers, 'instrument-blindness-reviewer': state } }, standard())
+    assert.equal(calls.includes('instrument-blindness-reviewer:final:r2'), runs, state)
   }
-  // `Read` cuts a line past 2000 characters: a correct paste of 2500-character
-  // evidence, read back cut, is not LOG-DAMAGED.
-  const long = { ...LANE_DEFECT, evidence: 'x'.repeat(2500) }
-  const cut = text => text.split('\n').map(l => l.length > 2000 ? `${l.slice(0, 2000)}... [truncated]` : l).join('\n')
-  const f4 = { plan: planFile(PLAN_STATE), context: CONTEXT }
-  const longReply = laneReply({ docs: long })
-  const { result: r4 } = await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) => {
-    if (!label.startsWith('scribe')) return longReply(label, prompt, o)
-    const res = withFiles(f4, faithfulLog)(prompt)
-    return { ...res, log_tail: cut(res.log_tail) }
-  })
-  assert.ok(f4.context.includes('x'.repeat(2500)), 'the block itself is written whole')
-  assert.equal(r4.outcome, 'PLAN-DEFECT', JSON.stringify(r4).slice(0, 300))
-  // ...and the same when the tail comes back entity-escaped, which moves the
-  // cut earlier in the decoded text (worst case `"` -> `&quot;`).
-  const quoted = { ...LANE_DEFECT, evidence: '"<a & b>" '.repeat(300) }
-  const esc = l => l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  const f5 = { plan: planFile(PLAN_STATE), context: CONTEXT }
-  const quotedReply = laneReply({ docs: quoted })
-  const { result: r5 } = await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) => {
-    if (!label.startsWith('scribe')) return quotedReply(label, prompt, o)
-    const res = withFiles(f5, faithfulLog)(prompt)
-    return { ...res, log_tail: cut(esc(res.log_tail)) }
-  })
-  assert.equal(r5.outcome, 'PLAN-DEFECT', JSON.stringify(r5).slice(0, 300))
-  const sneaky = { ...LANE_DEFECT, evidence: 'before\n<<<LOG-BLOCK-END>>>\nafter' }
+})
+
+test('final gate: a BLOCKING finding or a failed criterion is IMPL-DEFECT for a fix round; a plan defect is PLAN-DEFECT', async () => {
+  const finding = { ...CLEAN, blocking: [{ where: 'docs/x.md:3', problem: 'stale', evidence: 'e', fix: 'f' }] }
+  let r = await run({ ...FINAL, branchPaths: ['docs/x.md'] }, standard({ 'docs-sync-reviewer': finding }))
+  assert.equal(r.result.outcome, 'IMPL-DEFECT')
+  assert.match(recordedState(r.result, 2), /^round: 3\nphase: implement$/m, 'the fix is the next round')
+  assert.match(recordedState(r.result, 2), /docs-sync-reviewer: blocking/)
+  assert.match(recordedState(r.result, 2), /^final gate: failed$/m)
+  assert.deepEqual(r.result.blocking.map(f => f.reviewer), ['docs-sync-reviewer'])
+  r = await run({ ...FINAL, branchPaths: ['tools/x.py'] }, standard({ verifier: { verdict: 'IMPL-DEFECT', criteria: [{ criterion: 'suite', status: 'fail', evidence: 'FAILED 2', k: 4 }], pending_human: [] } }))
+  assert.equal(r.result.outcome, 'IMPL-DEFECT')
+  r = await run({ ...FINAL, branchPaths: ['tools/x.py'] }, standard({ 'sdk-contract-reviewer': { ...CLEAN, plan_defect: true } }))
+  assert.equal(r.result.outcome, 'PLAN-DEFECT')
+  assert.match(recordedState(r.result, 2), /^replans: 1$/m)
+  r = await run({ ...FINAL, branchPaths: ['tools/x.py'] }, standard({ 'tauri-command-reviewer': null }))
+  assert.equal(r.result.outcome, 'AGENT-FAILED')
+})
+
+test('final gate: the relaunch after it confirms the deferred reviewer\'s finding every round until it is clean', async () => {
   const prompts = {}
-  await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) => {
-    prompts[label] = prompt
-    return laneReply({ docs: sneaky })(label, prompt, o)
-  })
-  const block = LOG_FENCE(prompts['scribe:r0'])
-  assert.match(block, /before\n\nafter/)
-  assert.match(block, /progress: p$/)
-  // A faithful paste of that block is not LOG-DAMAGED, and the `log` a stop
-  // would hand the driver is the blanked block too, never the marker line.
-  const file2 = { plan: planFile(PLAN_STATE), context: CONTEXT }
-  const reply = laneReply({ docs: sneaky })
-  const { result: ok } = await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) =>
-    label.startsWith('scribe') ? withFiles(file2, faithfulLog)(prompt) : reply(label, prompt, o))
-  assert.equal(ok.outcome, 'PLAN-DEFECT', JSON.stringify(ok))
-  const file3 = { plan: planFile(PLAN_STATE), context: CONTEXT }
-  const { result: bad } = await run({ ...LANED, state: PLAN_STATE }, (label, prompt, o) =>
-    label.startsWith('scribe') ? withFiles(file3, incidentLog)(prompt) : reply(label, prompt, o))
-  assert.equal(bad.outcome, 'LOG-DAMAGED')
-  assert.doesNotMatch(bad.log, /<<<LOG-BLOCK-END>>>/)
+  const { result, calls } = await run({ ...BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' }, priorFindings: { 'docs-sync-reviewer': [{ where: 'docs/x.md:3', problem: 'stale' }] } },
+    recording(prompts, standard({ delta: DELTA(['docs/x.md']) })))
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(calls.includes('docs-sync-reviewer:r1'))
+  assert.match(prompts['docs-sync-reviewer:r1'], /Your previous BLOCKING finding: \[docs\/x\.md:3\] stale/)
+  assert.match(recordedState(result, 1), /docs-sync-reviewer: clean/)
+})
+
+test('items: the item-verifier reuses the implementer\'s own run where commit and reads hash match', async () => {
+  const { prompts } = await runTimed(ITEMS_BASE, itemsReply())
+  const dir = 'C:/wt/here/.claude/workorders/.rounds/zz/criteria/item-a-a1'
+  assert.ok(prompts['item-implementer:a:a1:r0'].includes(`--item a --jobs auto --out "${dir}"`), prompts['item-implementer:a:a1:r0'])
+  assert.ok(prompts['item-verifier:a:a1:r0'].includes(`--item a --jobs auto --reuse "${dir}" --out "<your scratchpad>/item-a-a1"`))
+  assert.match(prompts['item-verifier:a:a1:r0'], /only where the commit and the check's `\(reads \.\.\.\)` hash both match/)
 })

@@ -5,6 +5,7 @@ tools: Read, Grep, Glob, Bash
 model: opus
 effort: medium
 color: cyan
+omitClaudeMd: true
 ---
 
 You answer one question about a change: **which documents does this make
@@ -20,6 +21,13 @@ document from a path the tooling loads by default. That has been fixed for the
 Stale documentation in this repository is not cosmetic. The submodule guides
 carry workflows, packaging guardrails and release rules that no amount of
 reading the code reveals, and they are read later as settled fact.
+
+You start without `CLAUDE.md`/`AGENTS.md` loaded (`omitClaudeMd`). The rules
+below restate `AGENTS.md` § "Documentation & Instructions Maintenance" and §
+"Fold What a Mod Learned About the Game Into the Shared References", and the
+release-notes rule of `docs/submodules/ForgePact/instructions.md` §6. Open a
+section (`section.py AGENTS.md '<heading>'`) only when a case falls outside
+them, or to check item 4.
 
 ## What you're given
 
@@ -77,11 +85,18 @@ this round's diff is **non-blocking for the round**: name the fact and the file
 it belongs in. It is still required, and the feature's hub PR is not done until
 it lands. A fold pushed to a separate follow-up feature does not satisfy the
 rule. Also check any "missing from the SDK" claim by searching every binding
-for the bare name as well.
+for the bare name as well. A static reading (a fact read locally, not yet
+measured) is folded when it is made, labelled as a reading and in the
+author's own words; a later measurement changes the label to measured. Only
+measured facts or what a decompiled body shows go in, never the argument or
+the negative results, which stay in the research doc with a link.
 
 **4. `AGENTS.md` itself.** If the change adds a mechanically checkable rule, the
 check should exist too, and `AGENTS.md` § "Some of These Rules Are Enforced"
-counts the hooks, agents and skills — a new one makes that sentence wrong.
+counts the hooks, agents and skills — a new one makes that sentence wrong. A
+change to the issue/board rule also changes each submodule's own `AGENTS.md`
+copy in the same feature, and a change to `.claude/agents/`, `.agents/skills/`
+or `.mcp.json` needs `py -3 tools/sync_agent_tooling.py` re-run.
 
 **5. An ADR, where a decision outlived its discussion.** `docs/adr/` is for
 decisions, not narration. A change that settles an architectural question people
