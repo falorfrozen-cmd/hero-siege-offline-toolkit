@@ -47,7 +47,7 @@ The plan and State live in two gitignored markdown files per workorder (`<slug>-
 | Biggest scalability constraint | The driver is a serial bottleneck holding all cross-launch state in context. Launches average **one round each** (median 1; M), so every round needs at least one driver turn and a relaunch. |
 | Most damaging repeat behaviour | The LLM bookkeeping step fails often: **92 of 353 launches (26%) ended STATE-LOST, LOG-DAMAGED or SCRIBE-FAILED** (M). Each one forces a driver repair, then a relaunch, then a fresh round of spawns. Neither loop is a runaway: rounds cap at 3 (+3 owner-scope), replans at 2, items launches at 120 agents (SV). But relaunches after PARKED/CEILING and pre-verify PLAN-DEFECTs are uncapped (SV). |
 | Highest-impact architectural mistake | **Deterministic bookkeeping is routed through LLM agents** because the round loop lives in a runtime with no I/O. That costs ~1,130 extra spawns (scribe, snapshot, delta and amend agents), serial minutes on every round, and the 26% failure rate above. |
-| Overall avoidable waste (E) | **~15-25% of list cost** with the evidence in hand. Agent spawns per workorder fall ~40%. The STATE-LOST relaunch class disappears. Wall-clock gains are smaller, because owner wait dominates. |
+| Overall avoidable waste (E) | **~15% of list cost expected, 7-25% range**, with the evidence in hand. Agent spawns per workorder fall ~40%. The STATE-LOST relaunch class disappears. Wall-clock gains are smaller, because owner wait dominates. |
 
 **Top five changes**
 
@@ -77,6 +77,7 @@ The plan and State live in two gitignored markdown files per workorder (`<slug>-
 | Workflow run records | 353 `workflows/wf_*.json` (outcome, rounds, verifier verdict, blocking findings per reviewer) |
 | Traced | entry (SK) → triage → planner → plan_lint → Workflow args → WF round loop and items loop → routing → scribe → driver routing → live gate → final gate → audit tools |
 | Not traced / limits | System-prompt and built-in tool-schema size per agent: not on disk (**IE**). Hooks' actual per-call latency: only 22 recorded durations. Quality impact of each change: no controlled run (**IE**). Codex path (`.codex/`): out of scope. `/usage` and `/context` not run, because they need the owner |
+| Owner-supplied measurements (2026-10-11) | `/usage` and `/context` from the issue-484 (x64dbg MCP) session. **`/usage`:** $123.79; API 4h33m vs wall 11h20m (**API = 40% of wall**); Opus 5.5 $123.41 of it; main prompt cache: 142 requests, 98% from cache, 2 misses (412k re-cached), "cold — idle 1h57m, next turn re-caches ~383.6k". Usage attribution: implementer 29%, planner-max 13%, instrument-blindness 6%, live-operator 5%. **`/context`** (driver, 383.6k): system prompt 3.6k, system tools 12.5k, MCP tools 1.5k (deferred, 407 tools), MCP instructions 2.2k, custom agents 2.2k, **memory files (CLAUDE.md + AGENTS.md + MEMORY.md) 25.2k**, skills 10k, messages 326.4k (M) |
 | Docs verified against | code.claude.com/docs/en/workflows (no fs/shell in scripts; 5-min agent TTL; `subagentPromptCacheTtl`; prefix sharing only for same model, effort, type, tools, schema and cwd; schema retries 5; stall restarts ≤5), /sub-agents (`omitClaudeMd` ≥ v2.1.271; settings hooks fire in subagents; auto memory not loaded in subagents; fresh spawn vs resume) |
 
 How this report is built: every token or cost figure is from transcripts (M). Byte sizes are from files (SV), and token equivalents of file sizes are bytes/4 ±20% (E).
@@ -167,6 +168,7 @@ No overall average is given: the bookkeeping failure rate (F01) and driver accum
   - M, `data/cachew.md`: 48% of driver cache writes (27M tokens) follow an idle gap longer than 1 hour (94 events); 40% are growth.
   - SV: driver work between launches is SK:183-231 (plan read and lint), SK:1259-1325 (copying lint JSON, `section.py State`, `priorFindings` and `baseHeads` into Workflow args), SK:1347-1398 (routing), SK:874-1002 (live relay), SK:1004-1049 (report).
   - M, `data/reads.md`: the driver ran **1,171 shell reads of plan/context files and 536 `section.py` calls**.
+- **Direct confirmation (M, owner `/usage`, issue-484 session):** 2 cache misses re-cached 412k tokens, and at the time of the reading the driver was "cold — idle 1h57m, next turn re-caches ~383.6k". Messages are 326.4k of the 383.6k context.
 - **Mechanism:**
   - Prompt orchestration: each driver turn re-sends the whole history. Cumulative input grows roughly with turns × context.
   - Owner gates (live tests, questions) leave the driver idle for longer than the 1-hour TTL. The next turn rewrites the whole ~300k prefix at the 1-hour write price (2× input; ASSUMPTION used in `cost.py`).
@@ -228,7 +230,8 @@ No overall average is given: the bookkeeping failure rate (F01) and driver accum
 
 ### F05: Spawn tax, because every agent loads the full CLAUDE.md and AGENTS.md hierarchy
 - **Evidence:**
-  - SV: no agent sets `omitClaudeMd` or `maxTurns` (`discovery-context-inventory.md`). CLAUDE.md + AGENTS.md = 63,857 B ≈ 16k tokens (E).
+  - SV: no agent sets `omitClaudeMd` or `maxTurns` (`discovery-context-inventory.md`). CLAUDE.md + AGENTS.md = 63,857 B.
+  - **M (owner `/context`):** CLAUDE.md + AGENTS.md + MEMORY.md = **25.2k tokens**, so CLAUDE.md + AGENTS.md ≈ 23.7k. That is 1.5× the bytes/4 estimate of 16k used before this measurement. Subagents do not load auto memory (docs), so each spawn carries ≈ 23.7k.
   - Docs: "Every other built-in and custom subagent loads both [CLAUDE.md and git status], unless its definition sets `omitClaudeMd`" (v2.1.271+; installed 2.1.296).
   - For the scribe, verifier, reviewers and live-operator, CLAUDE.md + AGENTS.md is ≥70% of the known fixed context (E).
 - **Measured (`data/aggregates.md:166-190`, `data/cachew.md`):**
@@ -243,8 +246,8 @@ No overall average is given: the bookkeeping failure rate (F01) and driver accum
 
   The first request of a spawn is 45% of all workflow cache-write tokens (148M) and 25% of subagent cache writes.
 - **Impact (E):**
-  - Affected roles (verifier, reviewers, scribe, utility): ~3,760 spawns × 16k ≈ 60M first-request tokens, plus ~40k later requests × 16k ≈ 645M cache-read tokens.
-  - At list prices (Haiku 4.5, Sonnet and Opus mix) that is **≈ $230-300**, about 4% (±40%).
+  - Affected roles (verifier, reviewers, scribe, utility): ~3,760 spawns × 23.7k ≈ 89M first-request tokens, plus ~40k later requests × 23.7k ≈ 950M cache-read tokens.
+  - At list prices (Haiku 4.5, Sonnet and Opus mix) that is **≈ $340-440**, about 6% (±30%; the per-spawn size is now measured, the price mix is still estimated).
 - **Remedy (configuration only):** set `omitClaudeMd: true` on verifier, scribe (if kept), all five reviewers and the utility agents (via an `agentType` for them; see F12). Move the 2-4 rules each one actually needs (Legal for decompile-output-guard; prove-the-instrument for instrument-blindness) into its body. Most are already restated there (`discovery-context-inventory.md` duplicate list).
 - **Risk:** an agent loses a rule that only AGENTS.md carried. Verify with one recorded round replayed through the reviewer prompts, checking that the same findings come back.
 
@@ -307,7 +310,7 @@ No overall average is given: the bookkeeping failure rate (F01) and driver accum
 
 | ID | Pri | Finding | Evidence | Remedy | Config only? |
 |---|---|---|---|---|---|
-| F10 | P2 | Criteria run twice per round: by the implementer while working, then by the verifier. Items mode runs the *identical* `run_criteria --item` in both | WF:1316 vs 1331; implementer.md:216-273; verifier.md:73-121; M: verifier 1,189 `run_criteria` / 43.8 busy-h | Keep the verifier as the independent run, and have the implementer run only targeted checks (it already has `--dev`). In items mode, let the item-verifier read the implementer's `status.json` only for criteria whose `reads` are unchanged, re-running the rest. That partially reverses the CAL decision, so it is the owner's call | code |
+| F10 | P2 | Criteria run twice per round: by the implementer while working, then by the verifier. Items mode runs the *identical* `run_criteria --item` in both | WF:1316 vs 1331; implementer.md:216-273; verifier.md:73-121; M: verifier 1,189 `run_criteria` / 43.8 busy-h | Keep the verifier as the independent run, and have the implementer run only targeted checks (it already has `--dev`). In items mode, let the item-verifier read the implementer's `status.json` only for criteria whose `reads` are unchanged, re-running the rest. **Owner decision (2026-10-11): share results "if it makes sense".** Safe form:<br>(1) only `run_criteria.py`'s own `status.json` and `cmd-n.log` are shared, never an agent's report of them;<br>(2) each result is keyed by the commit hash plus a hash of the criterion's `reads`;<br>(3) the verifier reuses a result only when both keys match the tree it is verifying, and re-runs everything else;<br>(4) `(final)` criteria and the final gate always re-run.<br>That keeps "the verifier reports what was printed", since the runner printed it, while removing identical re-runs (items mode: every `--item` check) | code |
 | F11 | P2 | Prompt bulk: SK 102 KB resident in every driver turn; planner body 42.7 KB restates AGENTS.md:153-176, 188-194, 286-294 (and has drifted on the Ghidra claim) | `discovery-context-inventory.md` | Split SK by path; dedupe agent bodies against AGENTS.md | config |
 | F12 | P2 | Utility agents have no `agentType`, so they run as a generic agent with unrestricted tools and full listings to run one command | WF:1786, 1864, 1066, 1084, 1103, 1444, 1552 | If any survive F01/F02, define a `runner` agent: tools `Bash` only, `omitClaudeMd`, Haiku | config |
 | F13 | P2 | Uncapped loops: a PLAN-DEFECT before verify does not count as a round; relaunch after PARKED/CEILING has no cap; each rebuild resets an item's attempts (worst ≈ 36 spawns per item) | WF:1844-1848, 1157, 1386-1388; SK:381-411 | Count every launch in State (`launches:`) and stop at a cap, e.g. 6 per workorder, for the owner to decide | code |
@@ -431,7 +434,7 @@ flowchart TD
 
 | Context | Median first-request tokens |
 |---|---:|
-| Driver session start | ~60k (E: 56k known, plus system prompt and tools) |
+| Driver session start | **57.2k measured** before SK (owner `/context`: system 3.6k, tools 12.5k, MCP 3.7k, agents 2.2k, CLAUDE.md/AGENTS.md/MEMORY.md 25.2k, skills 10k), plus SK ~25k (E) on `/workorder` |
 | Implementer | 53k |
 | Utility agent | 54k |
 | Planner | 49k |
@@ -648,7 +651,7 @@ Baseline (M) is per workorder session over 103 priced sessions. Projections are 
 
 | Metric | Current baseline (M) | Conservative | Expected | Optimistic |
 |---|---:|---:|---:|---:|
-| List cost per workorder (mean) | $63 ($6,473 / 103) | −6% ($59) | −13% ($55) | −24% ($48) |
+| List cost per workorder (mean) | $63 ($6,473 / 103) | −7% ($59) | −15% ($54) | −25% ($47) |
 | Total billed tokens per workorder (mean) | 141M | −5% | −12% | −22% |
 | Output tokens per workorder (mean) | 586k | −4% | −10% | −15% |
 | Input (incl. cache) tokens per workorder | ~140M | −5% | −12% | −22% |
@@ -657,9 +660,11 @@ Baseline (M) is per workorder session over 103 priced sessions. Projections are 
 
 | Scenario | Changes counted | Savings |
 |---|---|---|
-| Conservative | F01 + F02 ($110); decompile guard only ($145); F05 on the verifier and the remaining reviewers ($150) | ≈ $405 |
-| Expected | F01 + F02 ($110); F03 ($380); F05 net of F03 ($170); F04 re-warms ($216) | ≈ $876 |
-| Optimistic | Expected, plus F04 context shrink ($180), F06 fix rounds on medium at an equal pass rate ($300, H), and F09 fewer planner contexts ($200, H) | ≈ $1,556 |
+| Conservative | F01 + F02 ($110); decompile guard only ($145); F05 on the verifier and the remaining reviewers ($220) | ≈ $475 |
+| Expected | F01 + F02 ($110); F03 ($380); F05 net of F03 ($260); F04 re-warms ($216) | ≈ $966 |
+| Optimistic | Expected, plus F04 context shrink ($180), F06 fix rounds on medium at an equal pass rate ($300, H), and F09 fewer planner contexts ($200, H) | ≈ $1,646 |
+
+F05 was revised upward after the owner's `/context` measured the per-spawn instruction load at 23.7k, not the 16k estimated earlier. The F10 sharing approved on 2026-10-11 is not priced: it saves verifier time (43.8 busy-h) more than tokens.
 
 Monetary values are list price, not invoice: subscription billing. Percentages hold only against this sample (2026-09-18 → 10-10).
 
@@ -710,7 +715,7 @@ Monetary values are list price, not invoice: subscription billing. Percentages h
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | Deterministic bookkeeping: snapshot in the driver, delta in the implementer, `workorder_record.py` for State/Log from the run record; remove scribe and utility agents | P0 | WF:679-780, 1063-1111, 1782-1864; SK:1259-1398; new `tools/workorder_record.py`; `tests/` for WF | −$110 directly, −~1,100 spawns, plus 92 repair/relaunch loops | −~141 s per round; removes the driver repair turns | Medium (code) | Medium: run-record parsing; State idempotency | — | the STATE-LOST/LOG-DAMAGED/SCRIBE-FAILED share falls from 26% to 0 over the next 20 launches; `workorder-rounds.test.mjs` |
 | 2 | Reviewer frequency by measured yield: instrument-blindness per round; sdk, docs-sync and tauri at the final gate; decompile guard → hook plus grep | P1 | WF:1905-1917; SK reviewer table; `run_criteria` criterion; `.claude/hooks/decompiled_output.py` | −$350-420 (5-6%), −~1,000 spawns | small | Low (code plus config) | Medium: later docs or SDK findings | — | final-gate BLOCKING from moved reviewers ≤ their per-round totals; no extra fix rounds per workorder |
-| 3 | `omitClaudeMd: true` on verifier, reviewers, live-operator and the remaining utility agents; move each one's needed rules into its body; dedupe planner and implementer bodies against AGENTS.md | P1 | `.claude/agents/*.md` (source) → `tools/sync_agent_tooling.py` | −$170-260 (3-4%) | slightly faster first turn | Low (config) | Low-medium: a missed rule | — | replay 3 recorded rounds' reviewer prompts and compare findings; first-request context of those agents drops ~16k |
+| 3 | `omitClaudeMd: true` on verifier, reviewers, live-operator and the remaining utility agents; move each one's needed rules into its body; dedupe planner and implementer bodies against AGENTS.md | P1 | `.claude/agents/*.md` (source) → `tools/sync_agent_tooling.py` | −$250-330 net of #2 (4-5%) | slightly faster first turn | Low (config) | Low-medium: a missed rule | — | replay 3 recorded rounds' reviewer prompts and compare findings; first-request context of those agents drops ~23.7k (measured size) |
 | 4 | End the driver at owner and live gates and resume from files; `workorder_brief.py --launch-args`; split SK path sections | P0 | SK:183-231, 874-1002, 1259-1325; `tools/workorder_brief.py` | −$216 re-warms, plus −10-15% driver cache-read | removes the ~300k reprocess after gaps | Low-medium | Low: the plan already survives a split by rule | #1 makes resume cheaper | driver re-warm writes (`data/cachew.md` main row) fall >80%; median driver peak context <200k |
 | 5 | Keep fix rounds inside one launch and never idle on a question: loop to the cap within the launch once #1 removes the bookkeeping stops; start independent work before `AskUserQuestion` | P1 | WF round loop routing (WF:1929-1973); SK owner-question section | −relaunch overhead (driver turns per round) | launches per workorder fall; owner-wait share with nothing running → ~0 | Medium | Low | #1 | rounds per launch median >1; `workorder_speed` "owner blocks with nothing running" ≈ 0 |
 
@@ -761,7 +766,7 @@ Monetary values are list price, not invoice: subscription billing. Percentages h
    - 47% of driver wall-clock is waiting on the owner and 25% waiting on serial background launches; model time is 12%.
    - A median launch takes 26 min for one round.
    - (H) Overnight idle inflates the means: the 62 h sessions are mostly idle.
-9. **Achievable improvement:** about 13% of list cost (expected; 6-24% range), about 40% fewer spawns, ~25% shorter rounds and no bookkeeping failures. Wall-clock improvement is bounded by owner availability.
+9. **Achievable improvement:** about 15% of list cost (expected; 7-25% range), about 40% fewer spawns, ~25% shorter rounds and no bookkeeping failures. Wall-clock improvement is bounded by owner availability.
 10. **Still unknown:**
     - The quality impact of reviewer and implementer-effort changes (needs the validation runs).
     - Exact system-prompt and tool-schema tokens per agent (needs `/context` in a spawned agent).
@@ -796,7 +801,48 @@ Option (b) is worth a spike only if (a) cannot remove the scribe class.
 
 ## Appendix B: Measurements requested from the owner
 
-1. `/usage` at the end of the next representative workorder. Record "Total duration (API)" vs "(wall)" and the per-skill/subagent attribution.
-2. `/context` in a fresh `/workorder resume` session, and in a session started with `claude --agent verifier`. That is an approximation: a main-session agent still loads CLAUDE.md even with `omitClaudeMd`. This gives the true fixed budget for §10.
-3. Optional: enable OTel metrics in **user** settings (§18 item 4) for one week, for hook durations and per-agent token attribution.
-4. A decision on F10 (sharing criteria results between the implementer and verifier). CAL rejected it on independence grounds, so it is your call.
+1. ~~`/usage`~~: **received** 2026-10-11 (issue-484 session), folded into §2, F04 and F05.
+2. ~~`/context`~~: **received** for the driver; folded into F05 and §10. Still open: one spawned verifier's fixed budget (system prompt and tools in a subagent).
+3. **A week of OpenTelemetry**, mainly for hook durations and per-agent tokens across all sessions. Recipe in Appendix C.
+4. ~~F10 decision~~: **received**. Share when it makes sense; the safe form is in the F10 row of §7.
+
+## Appendix C: One week of telemetry
+
+The exporter variables are ignored in a repository's `.claude/settings*.json` (docs), so they go in the shell or in **user** `~/.claude/settings.json`.
+
+**Option 1: metrics only, no collector.** Start Claude Code with:
+
+```json
+{ "env": {
+  "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+  "OTEL_METRICS_EXPORTER": "prometheus"
+} }
+```
+
+Each running Claude Code process then serves `http://localhost:9464/metrics`, for example `claude_code.token.usage` by `type`, `model`, `query_source`, `agent.name` and `skill.name`. A scrape loop has to save it. Concurrent sessions contend for one port, which is why this is the weaker option.
+
+**Option 2 (recommended): metrics and events into local files through an OpenTelemetry Collector.**
+1. Download the `otelcol-contrib` Windows binary from the opentelemetry-collector-releases GitHub page (your go-ahead for the download).
+2. Run it with a config containing an `otlp` receiver (grpc `127.0.0.1:4317`) and a `file` exporter writing `C:\Users\stann\otel\claude-%Y%m%d.jsonl` with rotation, for both the `metrics` and `logs` pipelines.
+3. In user settings:
+
+   ```json
+   { "env": {
+     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+     "OTEL_METRICS_EXPORTER": "otlp",
+     "OTEL_LOGS_EXPORTER": "otlp",
+     "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4317"
+   } }
+   ```
+
+4. Leave `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_TOOL_DETAILS` and `OTEL_LOG_RAW_API_BODIES` **off**. Without them no prompt, command or file content is logged.
+5. After a week, a local script (same style as `.audit/scripts`) aggregates:
+   - `claude_code.hook_execution_complete` durations (closes F15);
+   - `claude_code.api_request` `duration_ms` per `query_source` (model time per role);
+   - `claude_code.tool_result` `duration_ms`;
+   - `claude_code.compaction`;
+   - `claude_code.subagent_completed` by agent type.
+6. Turn it off by removing the `env` keys and stopping the collector.
+
+Everything else this audit needed (tokens, spawns, outcomes, timings) the transcripts already give, so the telemetry week mainly answers the hook-latency question and gives model time per role.
