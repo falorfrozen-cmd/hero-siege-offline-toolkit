@@ -504,7 +504,8 @@ def expected_edited(blob: bytes, rel: str) -> bytes:
 
 
 def _git(src: Path, *args: str) -> bytes:
-    return subprocess.run(["git", "-C", str(src), *args], capture_output=True, check=True).stdout
+    return subprocess.run(["git", "-C", str(src), *args], capture_output=True, check=True,
+                          **_no_window()).stdout
 
 
 def dirty_beyond_our_edits(src: Path, git: Callable[..., bytes] | None = None) -> list[str]:
@@ -938,7 +939,8 @@ def game_check(cfg: Config, pid: int, baseline: Iterable[int] = ()) -> dict[str,
     if not cfg.probe_cmd:
         return thread_state.check(int(pid), baseline=baseline)
     try:
-        r = subprocess.run([*cfg.probe_cmd, str(int(pid))], capture_output=True, text=True, timeout=60)
+        r = subprocess.run([*cfg.probe_cmd, str(int(pid))], capture_output=True, text=True, timeout=60,
+                           **_no_window())
         data = json.loads(r.stdout)
         if isinstance(data, dict) and data.get("verdict") in thread_state.VERDICTS:
             return data
@@ -1088,11 +1090,18 @@ class PluginClient:
 
 def _detached_flags() -> dict[str, Any]:
     """Popen arguments that let a process outlive the shell that started it:
-    no console, its own process group, so no Ctrl event reaches it."""
+    its own process group, so no Ctrl event reaches it, and a hidden console of
+    its own. Not DETACHED_PROCESS: Windows ignores CREATE_NO_WINDOW beside it,
+    and a keeper with no console at all makes every console child it starts
+    (the headless, a probe) open a visible window of its own."""
     if os.name == "nt":
-        return {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-                | subprocess.CREATE_NO_WINDOW}
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
     return {"start_new_session": True}
+
+
+def _no_window() -> dict[str, Any]:
+    """Popen arguments for a short child whose output is captured: no console window."""
+    return {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 
 def _headless_flags() -> dict[str, Any]:

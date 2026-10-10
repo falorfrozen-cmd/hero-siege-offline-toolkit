@@ -30,6 +30,9 @@ sys.path.insert(0, str(ROOT))
 
 from tools import thread_state as ts  # noqa: E402
 
+# Every child these tests start runs without a console window on Windows.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 MISSING_PID = 4194300  # above every pid this machine hands out; pinned by criterion 8 too
 WAITING, SUSPENDED = 5, 5
 RUNNING_STATE, EXECUTIVE = 2, 0
@@ -149,6 +152,28 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(r["verdict"], "running")
         self.assertGreater(r["progress"], 0)
 
+    def test_classify_transient_suspended_at_every_instant_while_switching_reads_running(self):
+        # Negative control: x64dbg holding the game at each logpoint hit can catch a
+        # thread with a suspend count of 1 in every sample, yet its own switches advance,
+        # so it was scheduled between them and is not left suspended.
+        s = [[T(1, 10), T(2, 20, WAITING, SUSPENDED, 1)],
+             [T(1, 40), T(2, 45, WAITING, SUSPENDED, 1)],
+             [T(1, 90), T(2, 70, WAITING, SUSPENDED, 2)]]
+        r = ts.classify(77, s)
+        self.assertEqual(r["verdict"], "running")
+        self.assertEqual((r["suspended"], r["stopped"]), ([], []))
+
+    def test_classify_suspended_in_every_sample_with_no_switch_reads_suspended(self):
+        # Positive control beside it: the same suspend counts with the thread's own
+        # switches standing still is a thread left suspended.
+        s = [[T(1, 10), T(2, 20, WAITING, SUSPENDED, 1)],
+             [T(1, 40), T(2, 20, WAITING, SUSPENDED, 1)],
+             [T(1, 90), T(2, 20, WAITING, SUSPENDED, 2)]]
+        r = ts.classify(77, s)
+        self.assertEqual(r["verdict"], "threads-suspended")
+        self.assertEqual(r["suspended"], [{"tid": 2, "suspend_count": 2}])
+        self.assertEqual(r["stopped"], [2])
+
     def test_classify_baseline_leaves_out_a_thread_already_suspended(self):
         s = [[T(1, 10), T(2, 5, WAITING, SUSPENDED, 1)],
              [T(1, 80), T(2, 5, WAITING, SUSPENDED, 1)]]
@@ -195,7 +220,7 @@ class GoneTest(unittest.TestCase):
 class CliTest(unittest.TestCase):
     def run_cli(self, *args):
         return subprocess.run([sys.executable, "-m", "tools.thread_state", *args], cwd=ROOT,
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, text=True, timeout=60, **NO_WINDOW)
 
     def main_with(self, verdict):
         fake = {"verdict": verdict, "threads": 3, "progress": 9, "suspended": [], "stopped": [],
@@ -255,7 +280,7 @@ class RealOsTest(unittest.TestCase):
         self.k32.DebugActiveProcessStop.argtypes = [wintypes.DWORD]
         self.k32.DebugSetProcessKillOnExit.argtypes = [wintypes.BOOL]
         self.child = subprocess.Popen([sys.executable, "-I", "-c", CHILD],
-                                      stdout=subprocess.PIPE, text=True)
+                                      stdout=subprocess.PIPE, text=True, **NO_WINDOW)
         self.addCleanup(self._kill_child)
         self.workers = json.loads(self.child.stdout.readline())
         self.assertEqual(len(self.workers), 3)
@@ -321,7 +346,7 @@ class RealOsTest(unittest.TestCase):
 
     def test_real_os_cli_reads_the_child_as_running(self):
         r = subprocess.run([sys.executable, "-m", "tools.thread_state", str(self.child.pid)],
-                           cwd=ROOT, capture_output=True, text=True, timeout=60)
+                           cwd=ROOT, capture_output=True, text=True, timeout=60, **NO_WINDOW)
         self.assertEqual(r.returncode, 0, (r.stdout, r.stderr))
         self.assertEqual(json.loads(r.stdout)["verdict"], "running")
 

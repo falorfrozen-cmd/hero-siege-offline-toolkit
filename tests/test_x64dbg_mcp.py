@@ -75,6 +75,9 @@ sys.path.insert(0, str(ROOT))
 
 from tools import x64dbg_mcp as xm  # noqa: E402
 
+# Every child these tests start runs without a console window on Windows.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 _STATE: dict = {}
 
 
@@ -379,7 +382,8 @@ class SessionMixin:
         cfg = _cfg(base, port=plugin.port, headless_cmd=(sys.executable, str(FAKE_HEADLESS), str(self.work)),
                    probe_cmd=probe_cmd, **(cfg_over or {}))
         _install_fixture(cfg)
-        target = subprocess.Popen([sys.executable, "-I", "-c", STAND_IN_GAME], stdout=subprocess.PIPE, text=True)
+        target = subprocess.Popen([sys.executable, "-I", "-c", STAND_IN_GAME], stdout=subprocess.PIPE, text=True,
+                                  **NO_WINDOW)
         self.addCleanup(target.stdout.close)
         self.addCleanup(target.wait)
         self.addCleanup(target.kill)
@@ -821,11 +825,11 @@ class OfflineTests(unittest.TestCase):
 
     def test_offline_guard_refuses_an_unexpected_process(self):
         with self.assertRaises(xm.OfflineGuardError):
-            subprocess.run(["git", "--version"], capture_output=True)
+            subprocess.run(["git", "--version"], capture_output=True, **NO_WINDOW)
         with self.assertRaises(xm.OfflineGuardError):
-            subprocess.run("echo hi", shell=True, capture_output=True)
+            subprocess.run("echo hi", shell=True, capture_output=True, **NO_WINDOW)
         # control: the interpreter the tests run is allowed
-        self.assertEqual(subprocess.run([sys.executable, "-c", "pass"]).returncode, 0)
+        self.assertEqual(subprocess.run([sys.executable, "-c", "pass"], **NO_WINDOW).returncode, 0)
 
     def test_offline_guard_control_loopback_connects(self):
         srv = socket.socket()
@@ -838,7 +842,8 @@ class OfflineTests(unittest.TestCase):
     def test_offline_module_imports_without_mcp(self):
         code = ("import sys; sys.modules['mcp'] = None; sys.path.insert(0, sys.argv[1]); "
                 "import tools.x64dbg_mcp as x; print(len(x.LIVE_OPERATOR_TOOLS))")
-        r = subprocess.run([sys.executable, "-c", code, str(ROOT)], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, "-c", code, str(ROOT)], capture_output=True, text=True,
+                           **NO_WINDOW)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "8")
 
@@ -846,12 +851,12 @@ class OfflineTests(unittest.TestCase):
         env = dict(os.environ, USERPROFILE=tempfile.gettempdir(), HOME=tempfile.gettempdir(),
                    HS_X64DBG_DIR=str(Path(tempfile.gettempdir()) / "x64dbg-mcp-absent"))
         r = subprocess.run([sys.executable, "-m", "tools.x64dbg_mcp", "--help"], cwd=str(ROOT),
-                           capture_output=True, text=True, env=env)
+                           capture_output=True, text=True, env=env, **NO_WINDOW)
         self.assertEqual(r.returncode, 0, r.stderr)
         for word in ("serve", "status", "setup", "attach", "detach", "tool"):
             self.assertIn(word, r.stdout)
         s = subprocess.run([sys.executable, "-m", "tools.x64dbg_mcp", "status"], cwd=str(ROOT),
-                           capture_output=True, text=True, env=env, timeout=60)
+                           capture_output=True, text=True, env=env, timeout=60, **NO_WINDOW)
         self.assertEqual(s.returncode, 0, s.stderr)
         self.assertIn("127.0.0.1", s.stdout)
         self.assertIn("missing", s.stdout)
@@ -945,8 +950,11 @@ class AttachRefusalTests(unittest.TestCase):
         self.assertIn("1234", argv)
         kwargs = popen.call_args.kwargs
         if os.name == "nt":
-            want = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            want = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
             self.assertEqual(kwargs["creationflags"] & want, want)
+            # DETACHED_PROCESS would void CREATE_NO_WINDOW and leave the keeper's own
+            # console children opening visible windows.
+            self.assertFalse(kwargs["creationflags"] & subprocess.DETACHED_PROCESS)
         else:
             self.assertTrue(kwargs["start_new_session"])
         self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
@@ -2012,7 +2020,7 @@ class CliToolTests(unittest.TestCase):
         env = dict(os.environ, HS_X64DBG_MCP_SESSION=str(Path(tmp.name) / "session"),
                    HS_X64DBG_MCP_PORT="1", HS_DRIVE_LEASE_DIR=str(Path(tmp.name) / "lease"))
         return subprocess.run([sys.executable, "-m", "tools.x64dbg_mcp", "tool", *args], cwd=str(ROOT),
-                              capture_output=True, text=True, env=env, timeout=60)
+                              capture_output=True, text=True, env=env, timeout=60, **NO_WINDOW)
 
     def test_cli_tool_prints_the_reply_as_json_and_exits_by_ok(self):
         s = self.run_tool("status")
