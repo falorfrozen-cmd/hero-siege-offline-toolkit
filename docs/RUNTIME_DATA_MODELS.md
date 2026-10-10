@@ -4410,7 +4410,8 @@ the numbers are also in `hs-game-sdk/curated/jump_measurements.json`.
 ### 19.1 The universal jump
 
 - The jump key (Space by default) jumps **towards the mouse cursor**. The
-  owner's account, 2026-10-03.
+  owner's account, 2026-10-03; 19.5 measured that the jump ends near the
+  cursor, up to a maximum length.
 - The local jump runs through `gml_Script_skillsLeap` (3664) and
   `gml_Script_playerJumpGravity` (2764): each is called once per frame, with
   the player as `self`, for the jump's whole length, whether the player moves
@@ -4512,8 +4513,10 @@ are not, and are written "Live 1 run Jn" here.
   **Measured.**
 - A jump at the prop that blocks it does not move the player (0 px, twice),
   and answering the player's five builtins "no collision" during that jump
-  lets it cross: 125 px, about 50 px short of the open-ground jump. Why the
-  crossing jump ends shorter is **not established**. **Measured.**
+  lets it cross: 125 px, about 50 px short of the open-ground jump. **Measured.**
+  That session did not record where the cursor was, so why the crossing jump
+  ended shorter was not established there; 19.5 measured that a jump's length
+  follows the cursor distance, which fits both lengths.
 - A jump aimed so that it would end inside a horse carriage did not move the
   player even with the five builtins' blocked player-self family queries
   answered (1152 answers in that jump), as in phase 1: something the mod does
@@ -4537,6 +4540,46 @@ are not, and are written "Live 1 run Jn" here.
   walkable map's edge is **not observed**.
 
 [Mod live 1 results](../ForgePact/docs/jump-scenery-research.md#mod-live-1-results)
+
+### 19.5 The v2.2.1 hotfix sessions
+
+What the v2.2.1 hotfix's first live session (ForgePact #206) measured about
+the game on 2026-10-09, on the shipped ForgePact 2.2.0 player plugin, slot 14
+("Sorak"), in `Town_01_rm` and in `Act_01_01` (the Outskirts of Inoya).
+Curated entries J16 to J21. Positions are `menulayout Player_obj`'s `gui=`
+reads, which are room coordinates; the operator converted a screen point to
+the room as room = view origin + screen ÷ 2 (`menulayout`'s `view=`, a
+1280 × 720 view under a 2560 × 1440 GUI).
+
+- **A jump ends near the mouse cursor, not at a fixed length.** On open
+  ground in town, from (912.0, 822.0) with the cursor at (912, 922), 100 px
+  away, the player ended at (911.0, 910.8): 88.8 px, about 11 px short of the
+  cursor. In `Act_01_01`, from (2031.8, 3966.0) with the cursor at (2131.5,
+  3916.0), 111.5 px away, the player ended at (2129.8, 3909.7): 113.0 px,
+  about 6.5 px from it. **Measured.** The length follows the cursor distance
+  up to a maximum; the longest jump measured for this character was 189.8 px
+  (below), so that maximum is at least about 190 px, and it is **not
+  measured**. 19.4's 175 px open-ground jump and 125 px crossing fit the same
+  rule with the cursor at different distances; that session did not record
+  its cursor, so for it this is a reading. Whether the game takes the target
+  from `mouse_x` / `mouse_y` or an aim value of its own is **not
+  established** (`skillsLeap` does not decompile in the unanalysed import).
+- **`Player_obj` gets a new instance id on a room change.** 261723 in
+  `Town_01_rm`, 297089 in `Act_01_01` after walking from the Town of Inoya
+  into the Outskirts of Inoya. **Measured.** Anything keyed on the player's
+  instance id is new in every room.
+- **`Act_01_01`'s `room_width` × `room_height` is 18272 × 8704.** **Measured.**
+- **Outdoor scenery.** In `Act_01_01`, a jump beside a large tree with the
+  cursor beyond it (at (1901.5, 3867.5), 163.3 px from the take-off) did not
+  move the player (0 px), as 19.2's town prop; a jump beside a rock with the
+  cursor beyond it went past the rock, from (1916.2, 4115.9) to (2059.9,
+  3991.9), 189.8 px. Both with the mod off. **Measured.** So a rock does not
+  necessarily stop a jump while a large tree does; the props were the owner's
+  choice and are not identified by object. Whether the tree blocks through
+  the five builtins of 19.2 was not reached (the 2.2.0 mod refused the jump
+  itself), so it is **not established**.
+
+[Hotfix live 1 results](../ForgePact/docs/jump-scenery-research.md#hotfix-live-1-results)
 
 ---
 
