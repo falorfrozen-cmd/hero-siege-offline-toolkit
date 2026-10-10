@@ -35,6 +35,8 @@ Subcommands (all paths overridable, see `load_config`):
     py -3 -m tools.x64dbg_mcp setup      # download, clone, edit, build, install
     py -3 -m tools.x64dbg_mcp attach --game | <pid>
     py -3 -m tools.x64dbg_mcp detach     # detach, then end headless x64dbg
+    py -3 -m tools.x64dbg_mcp tool <name> ['<json object of arguments>']
+                                         # one of the eight tools from a shell
 
 `serve` prints nothing to stdout itself, starts no process and never launches
 x64dbg: `attach` does, under a live hs-drive lease, through a detached
@@ -55,6 +57,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
+import inspect
 import json
 import os
 import re
@@ -1033,9 +1036,15 @@ class Keeper:
     else can close it, and serves `send` and `detach` requests left as files
     in the session directory."""
 
+    # How long one `late_attach` retry may keep plugin `run`s going: well under
+    # the detach tool's wait (`detach_timeout + 30` s), which also covers the
+    # teardown itself.
+    RETRY_BUDGET = 10.0
+
     def __init__(self, cfg: Config, target_pid: int):
         self.cfg = cfg
         self.target_pid = target_pid
+        self.retry_at = 0.0
         self.plugin = PluginClient(cfg.url, timeout=5)
         self.proc: subprocess.Popen | None = None
         self.state: dict[str, Any] = {
@@ -1123,25 +1132,47 @@ class Keeper:
                             "Sent run on stdin; the keeper resumes the game if the attach completes later. "
                             "Run detach (`py -3 -m tools.x64dbg_mcp detach`) rather than use this session")
             return True
-        reply = self.resume()
-        self.save(state="running", ready=True, run_reply=reply, attach_logged="Attached" in self.log_text())
+        reply, confirmed = self.resume()
+        if confirmed:
+            self.save(state="running", ready=True, run_reply=reply, attach_logged="Attached" in self.log_text())
+        else:
+            self.unconfirmed_resume(reply)
         return True
 
     def late_attach(self) -> None:
         """In `attach-unconfirmed`: once the plugin answers a debug-only call,
         the attach has completed and may have paused the game, so resume it
-        and only then call the session `running`."""
-        if self.plugin.debug_state() != "debugging":
+        and only call the session `running` once the game is seen running."""
+        if time.monotonic() < self.retry_at or self.plugin.debug_state() != "debugging":
             return
-        reply = self.resume()
+        reply, confirmed = self.resume(budget=self.RETRY_BUDGET)
+        if not confirmed:
+            self.unconfirmed_resume(reply)
+            return
         self.save(state="running", ready=True, run_reply=reply, late_ready_utc=_utc(), error=None)
         self.note("late attach confirmed; resumed the game")
 
-    def resume(self) -> str:
+    def unconfirmed_resume(self, reply: str) -> None:
+        """The attach completed, but no plugin `run` reported the game running:
+        it may still be paused, so the session is not `running`. The keeper's
+        loop retries through `late_attach`, serving detach in between."""
+        self.retry_at = time.monotonic() + 2 * self.cfg.settle
+        self.save(state="attach-unconfirmed", ready=False, run_reply=reply,
+                  attach_logged="Attached" in self.log_text(),
+                  error="the attach completed, but the game was never seen running after it (no plugin run "
+                        f"reported RUNNING; the last answer was {reply!r}), so it may be paused. The keeper keeps "
+                        "trying to resume it. Run detach (`py -3 -m tools.x64dbg_mcp detach`) rather than use "
+                        "this session")
+
+    def resume(self, budget: float | None = None) -> tuple[str, bool]:
         """`run` through the plugin until it reports RUNNING twice, a settle
-        apart (a late attach breakpoint would pause the game again); stdin
-        `run` if the plugin never says so."""
+        apart (a late attach breakpoint would pause the game again): (the last
+        reply, True). Otherwise stdin `run` as a last try and (reply, False):
+        the game was never seen running. With `budget`, no new attempt starts
+        after that many seconds, so a retry never holds up a detach request
+        for long."""
         running, reply = 0, ""
+        deadline = None if budget is None else time.monotonic() + budget
         for _ in range(10):
             try:
                 reply, _ = self.plugin.call(PLUGIN_RUN)
@@ -1149,10 +1180,12 @@ class Keeper:
                 reply = str(e)
             running = running + 1 if "RUNNING" in reply.upper() else 0
             if running >= 2:
-                return reply
+                return reply, True
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             time.sleep(self.cfg.settle if running else self.cfg.poll)
         self.send("run")
-        return f"{reply} (and run on stdin)"
+        return f"{reply} (and run on stdin)", False
 
     def serve_requests(self) -> None:
         self.cfg.requests.mkdir(parents=True, exist_ok=True)
@@ -1331,7 +1364,16 @@ def detach(cfg: Config) -> int:
 
 _HEX = re.compile(r"^(?:0x)?([0-9A-Fa-f]+)$")
 _MODULE_OFFSET = re.compile(r"^([^\s+]+)\+(?:0x)?([0-9A-Fa-f]+)$")
-_MODULE_ROW = re.compile(r"^(\S+)\s.*?0x([0-9A-Fa-f]{8,16})\s+0x([0-9A-Fa-f]{8,16})\s+0x[0-9A-Fa-f]+\s*$")
+# One row of the plugin's GetAllModulesFromMemMap table: name, path, then base,
+# end and size. The pinned plugin prints those three as **decimal digits behind
+# a literal `0x`**: it formats pointer-sized integers with a hex specifier, but
+# it targets net472, where that type ignores the specifier (read from the
+# pinned source, and measured live on 2026-10-10). So a row is read only when
+# each column is decimal with no leading zero (plain decimal never has one; a
+# zero-padded hex rendering always does) and end == base + size. Any other row
+# is refused, never guessed at: a hex value made only of digits also reads as
+# decimal.
+_MODULE_ROW = re.compile(r"^(\S+)\s.*?\s0x([1-9][0-9]*)\s+0x([1-9][0-9]*)\s+0x([1-9][0-9]*)\s*$")
 # x64dbg's bplist row: `<enabled>:<type>:<address>[:"<name>"]`, the first
 # field 1 for an enabled breakpoint and 0 for a disabled one, the type `HW` for
 # a hardware breakpoint.
@@ -1341,8 +1383,9 @@ _BPLIST_ROW = re.compile(r"^\s*(\d+):([^:\s]+):([0-9A-Fa-f]+)(?::|\s|$)")
 _LISTING_ROW = re.compile(r"^\s*(?:0x)?([0-9A-Fa-f]{8,16})\s+((?:[0-9A-Fa-f]{2}-)*[0-9A-Fa-f]{2})(?:\s|$)")
 # What the plugin's ExecuteDbgCommand answers when x64dbg printed nothing. At
 # the pinned commit its capture helper never returns blank: with no output it
-# returns PLUGIN_EXEC_SILENT_OK, or PLUGIN_EXEC_FAILED when x64dbg would not
-# take the command (DotNetPlugin.Impl/Plugin.Commands.cs:589), and
+# returns PLUGIN_EXEC_SILENT_OK, or PLUGIN_EXEC_FAILED when the command could
+# not be queued to x64dbg's command thread (DotNetPlugin.Impl/Plugin.Commands.cs:589);
+# a command x64dbg ran and rejected arrives as `Result: <its text>` instead. And
 # ExecuteDbgCommand wraps any non-blank text as `Result: <text>` (:2914-2917).
 # So a successful silent command reads `Result: <PLUGIN_EXEC_SILENT_OK>`; the
 # bare `_QUEUED_REPLY` form is what ExecuteDbgCommand would give for a blank
@@ -1440,8 +1483,9 @@ class Tools:
         if state.get("state") == "attach-unconfirmed" and "attach-unconfirmed" not in states \
                 and alive(state.get("keeper")):
             return _refusal(tool, "attach_unconfirmed",
-                            "the attach was never confirmed: the plugin has not answered a debug-only call, so "
-                            "the game may be paused at x64dbg's attach break. Run the detach tool (or "
+                            "the attach was never confirmed: the plugin has not answered a debug-only call, or "
+                            "the game was never seen running after it, so the game may be paused at x64dbg's "
+                            "attach break. Run the detach tool (or "
                             "`py -3 -m tools.x64dbg_mcp detach`); nothing else is served on this session")
         if state.get("state") not in states or not alive(state.get("keeper")):
             return _refusal(tool, "not_attached",
@@ -1505,10 +1549,11 @@ class Tools:
         return text
 
     def _still_running(self) -> str | None:
-        """After the final `run`, wait the settle time and ask again: a
-        breakpoint whose never-break condition did not take pauses the game on
-        its first hit. None when the plugin still reports RUNNING, otherwise
-        what it said."""
+        """After the first `run` reported RUNNING, wait the settle time and
+        ask again: a breakpoint whose never-break condition did not take
+        pauses the game on its first hit. This sees only a hit within the
+        plugin's own re-check (about 250 ms) after this second `run`. None
+        when the plugin still reports RUNNING, otherwise what it said."""
         time.sleep(self.cfg.settle)
         try:
             text, _ = self.plugin.call_checked(PLUGIN_RUN)
@@ -1544,9 +1589,15 @@ class Tools:
         if not m:
             raise Refused("bad_address", f"{address!r}: give 0x<hex>, <hex> or <module>+<hex offset> "
                                          f"(e.g. {GAME_IMAGE}+427460)")
-        bases = module_bases(self.plugin.call_checked(PLUGIN_MODULES)[0])
-        base = bases.get(m.group(1).lower())
+        table = self.plugin.call_checked(PLUGIN_MODULES)[0]
+        base = module_bases(table).get(m.group(1).lower())
         if base is None:
+            row = module_row(table, m.group(1))
+            if row is not None:
+                raise Refused("module_row_unreadable",
+                              f"{m.group(1)!r} has a row in the plugin's module list, but not in the format the "
+                              f"pinned plugin prints (decimal base, end and size behind 0x, end = base + size), "
+                              f"so no base was read from it rather than a wrong one: {row!r}")
             raise Refused("no_such_module", f"{m.group(1)!r} is not in the plugin's module list")
         return base + int(m.group(2), 16)
 
@@ -1636,7 +1687,21 @@ class Tools:
             stage = "listed-but-disabled" if isinstance(e, _ListedDisabled) else "set"
             return {"ok": False, "tool": tool, "stage": stage, "detail": str(e), "address": hexaddr,
                     "steps": steps, **run, **checked}
-        run = self._resume()
+        # The plugin's `run` answers RUNNING only when x64dbg still reports the
+        # game running about 250 ms after it, so a PAUSED (or any other)
+        # answer here is direct evidence that the breakpoint broke on a hit.
+        # Act on it, rather than resume on stdin and hope the re-check below
+        # lands on a later hit.
+        try:
+            run, _ = self.plugin.call_checked(PLUGIN_RUN)
+        except PluginError as e:
+            run = str(e)
+        if "RUNNING" not in run.upper():
+            out = self._clear_and_resume(hexaddr)
+            return {"ok": False, "tool": tool, "stage": "running",
+                    "detail": f"the first run after {hexaddr} was armed did not report the game running "
+                              f"({run.strip()}): the breakpoint may have broken on a hit, so it was cleared",
+                    "address": hexaddr, "steps": steps, "first_run": run, **out, **checked}
         paused = self._still_running()
         if paused is not None:
             out = self._clear_and_resume(hexaddr)
@@ -1738,13 +1803,26 @@ class Tools:
 
 
 def module_bases(text: str) -> dict[str, int]:
-    """Lower-cased module name -> base, from GetAllModulesFromMemMap's table."""
+    """Lower-cased module name -> base, from GetAllModulesFromMemMap's table,
+    for each row in the pinned plugin's format (`_MODULE_ROW`). A row in any
+    other format gives no base."""
     out = {}
     for line in text.splitlines():
         m = _MODULE_ROW.match(line.strip())
         if m:
-            out[m.group(1).lower()] = int(m.group(2), 16)
+            base, end, size = (int(g, 10) for g in m.group(2, 3, 4))
+            if end == base + size:
+                out[m.group(1).lower()] = base
     return out
+
+
+def module_row(text: str, name: str) -> str | None:
+    """The table row whose first column is `name` (any case), or None."""
+    for line in text.splitlines():
+        words = line.split(None, 1)
+        if words and words[0].lower() == name.lower():
+            return line.strip()
+    return None
 
 
 def bplist_entry(lines: list[str], addr: int) -> str | None:
@@ -1861,6 +1939,37 @@ def serve(cfg: Config) -> int:
     return 0
 
 
+def tool_cli(cfg: Config, name: str, raw: str | None) -> int:
+    """`tool <name> [<json object>]`: one of the eight tools from a shell, for
+    an operator whose session has not loaded the MCP server. The same `Tools`
+    method `serve` registers, so the same gates, under the same offline guard.
+    Prints the reply as one JSON object; exits 0 when its `ok` is true, 1 when
+    not, and 2 for a name or arguments it cannot call."""
+    if name not in LIVE_OPERATOR_TOOLS:
+        print(f"x64dbg_mcp tool: {name!r} is not one of the eight tools ({', '.join(LIVE_OPERATOR_TOOLS)})",
+              file=sys.stderr)
+        return 2
+    try:
+        args = json.loads(raw) if raw is not None else {}
+    except ValueError as e:
+        args = e
+    if not isinstance(args, dict):
+        print(f"x64dbg_mcp tool: the arguments must be one JSON object, e.g. '{{\"after\": 120}}', not {raw!r}",
+              file=sys.stderr)
+        return 2
+    install_offline_guard(allowed_executables=())
+    method = getattr(Tools(cfg), name)
+    try:
+        inspect.signature(method).bind(**args)
+    except TypeError as e:
+        params = ", ".join(inspect.signature(method).parameters) or "no arguments"
+        print(f"x64dbg_mcp tool: {name} takes {params}; {e}", file=sys.stderr)
+        return 2
+    reply = method(**args)
+    print(json.dumps(reply, default=str))
+    return 0 if reply.get("ok") is True else 1
+
+
 # --- status and main --------------------------------------------------------
 
 def status(cfg: Config) -> int:
@@ -1894,7 +2003,7 @@ def status(cfg: Config) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="x64dbg_mcp", description=__doc__.splitlines()[0])
-    sub = ap.add_subparsers(dest="cmd", metavar="{serve,status,setup,attach,detach}")
+    sub = ap.add_subparsers(dest="cmd", metavar="{serve,status,setup,attach,detach,tool}")
     sub.add_parser("serve", help="the stdio MCP server (the default; what .mcp.json runs)")
     sub.add_parser("status", help="paths, pins, what is missing, the session and the lease")
     sub.add_parser("setup", help="download, clone, edit, build and install, each step skipped when done")
@@ -1902,6 +2011,10 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("pid", nargs="?", type=int)
     a.add_argument("--game", action="store_true", help=f"the sole running {GAME_IMAGE}")
     sub.add_parser("detach", help="detach (confirmed), then end headless x64dbg")
+    t = sub.add_parser("tool", help="call one of the eight MCP tools from a shell, its reply printed as JSON "
+                                    "(for a session that has not loaded the x64dbg server)")
+    t.add_argument("name", help=f"one of: {', '.join(LIVE_OPERATOR_TOOLS)}")
+    t.add_argument("arguments", nargs="?", help="the tool's arguments as one JSON object, e.g. '{\"after\": 120}'")
     k = sub.add_parser("keeper")
     k.add_argument("--session", required=True, type=Path)
     k.add_argument("--pid", required=True, type=int)
@@ -1919,6 +2032,8 @@ def main(argv: list[str] | None = None) -> int:
         if (args.pid is None) == (not args.game):
             ap.error("attach takes a pid or --game, not both")
         return attach(cfg, args.pid, args.game)
+    if args.cmd == "tool":
+        return tool_cli(cfg, args.name, args.arguments)
     return detach(cfg)
 
 

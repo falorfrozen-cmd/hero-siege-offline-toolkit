@@ -176,6 +176,24 @@ The `command` allowlist's exact spellings are in `tools/x64dbg_mcp.py`, which
 is their source. Every tool that acts on the debuggee also refuses when no
 live hs-drive lease is held.
 
+**The same eight from a shell.** A session that has not loaded the
+`mcp__x64dbg__*` tools (one started before the server entered `.mcp.json`, for
+instance) calls them through the CLI instead:
+
+```bash
+py -3 -m tools.x64dbg_mcp tool status
+py -3 -m tools.x64dbg_mcp tool log '{"after": 120, "limit": 5000}'
+```
+
+`tool <name> [<json object of arguments>]` calls the same `Tools` method that
+`serve` registers, so the gates are the same (an attached session, a live
+lease, the allowlist), under the same offline guard. It prints the tool's
+reply as one JSON object and exits 0 when the reply's `ok` is true, 1 when it
+is not. A name outside the eight, arguments that are not one JSON object, or
+an argument the tool does not take (or a required one left out) exits 2,
+naming the problem, before anything is called. Never import the module
+through `py -3 -c` instead: that route is unsupported and skips the guard.
+
 **Left out on purpose:** breaking breakpoints, stepping, registers and call
 stacks. Each one stops the game's loop (AGENTS.md § "Don't Suspend the Game's
 Own Runtime"). A logging breakpoint can log the return address and the argument
@@ -214,21 +232,40 @@ These come from the 2026-10-10 probes recorded on issue #484.
   its bytes and a note, and its zero is not evidence until they are compared.
   A function ForgePact detours starts with the detour's jump in the live
   process, not with Ghidra's bytes, so expect a mismatch there.
+- **The module table's numbers are decimal behind `0x`.** The pinned plugin's
+  `GetAllModulesFromMemMap` prints each module's base, end and size as decimal
+  digits after a literal `0x` (it asks for hex, but on the .NET Framework it
+  targets, a pointer-sized integer ignores the format). Measured live on
+  2026-10-10: the game's row read `0x140694867017728 0x140695154032640
+  0x287014912`, which is base `0x7FF613920000`. So `modules` and every
+  `<module>+<offset>` address read those columns as decimal, and only a row
+  whose three columns are decimal with no leading zero and whose end equals
+  base plus size. A row in any other format (a later plugin build, a hex
+  rendering) gives no base: `resolve`, and so `logpoint` and `disasm`, refuse
+  with `module_row_unreadable`, quoting the row, rather than guess between
+  hex and decimal and misresolve. A module with no row at all is
+  `no_such_module`. The other plugin outputs the tool parses (the
+  `ReadDismAtAddress` listing) are hex, as before.
 - **Two guards keep a logpoint from pausing the game.** x64dbg prints nothing
   when a `Set*` step succeeds. At the pinned commit the plugin never hands back
   a blank reply: when x64dbg printed nothing it answers `Result: Command
   executed successfully (no output captured)`, and `Result: Command execution
-  failed (no output captured)` when x64dbg would not take the command. So the
-  first is a `Set*` step's success, and any other output, which the plugin
-  hands back as `Result: <text>`, fails the logpoint, and its breakpoint is
-  cleared. That output can be a rejected never-break condition, and the
-  second form fails every command. After the final `run`,
-  `logpoint` waits the settle time and sends `run` again: if the game reports
-  paused, the condition did not take, and the breakpoint is cleared and the
-  game resumed. The plugin offers no way to ask whether the game is running
-  without resuming it, so that second check sees only a breakpoint hit within
-  the settle time (1.5 s). For a rarely called function, a pause that comes
-  later shows as the game freezing: `detach` ends it.
+  failed (no output captured)` when the command could not be queued to
+  x64dbg's command thread (a command x64dbg ran and rejected arrives as
+  `Result: <its text>` instead). So the first is a `Set*` step's success, and
+  any other output fails the logpoint, and its breakpoint is cleared. That
+  output can be a rejected never-break condition, and the second form fails
+  every command. Then the game's own answers are checked. The plugin's `run`
+  reports RUNNING only when x64dbg still says the game runs about 250 ms after
+  the run command, so the first `run` after arming that reports anything else
+  (PAUSED) is direct evidence that the breakpoint broke on a hit: `logpoint`
+  clears it, resumes the game and fails with stage `running`, quoting that
+  answer. After a first `run` that reported RUNNING, it waits the settle time
+  and sends `run` again, with the same result on a pause. The plugin offers no
+  way to ask whether the game is running without resuming it, so each check
+  sees only a breakpoint hit within about 250 ms after either plugin `run`
+  (the plugin's own re-check delay). For a rarely called function, a pause
+  that comes later shows as the game freezing: `detach` ends it.
 - **Keep the control armed while a candidate's zero is read.** Clear
   candidates to free a debug register, never the control: a zero with no
   control logging in the same window measured nothing.
@@ -292,7 +329,10 @@ already live. It then starts the detached keeper and returns once the keeper
 reports `running`, `attach-unconfirmed` (exit 1, below), or failed.
 
 - **x64dbg pauses the process on attach** until it is told to `run`. In the
-  probe that was a 10.65 s freeze. A `run` sent before the attach completes
+  probe that was a 10.65 s freeze. In the first live session (2026-10-10,
+  `tooling-484-x64dbg-mcp` live 1) `attach` took 8.53 s wall clock, and
+  ForgePact's incident monitor recorded one freeze episode across it, with a
+  worst frame of 4201 ms. A `run` sent before the attach completes
   fails and leaves the game paused once it does. So the keeper sends the
   attach on headless's stdin, waits until the plugin answers a debug-only call
   without "No active debugging session", then sends `run`, and records
@@ -305,6 +345,14 @@ reports `running`, `attach-unconfirmed` (exit 1, below), or failed.
   the session `running`. Until then every tool but `detach` refuses the
   session, `attach` exits 1 and says the game may be paused, and the thing to
   do is `detach`.
+- **An attach whose resume was never confirmed is `attach-unconfirmed` too.**
+  The keeper resumes the game with the plugin's `run` until it reports RUNNING
+  twice, a settle apart. If no `run` ever does, the attach completed but the
+  game was never seen running, so it may be paused: the keeper sends `run` on
+  stdin as a last try and records `attach-unconfirmed` with `ready: false`,
+  never `running`. It then keeps retrying the resume, each retry kept short
+  (10 s) so a `detach` request is still served within the detach tool's wait,
+  and calls the session `running` only once a resume is confirmed.
 - **The keeper is the only holder of headless's stdin** for the session's
   whole life. What headless does on stdin EOF, and whether it ends the
   debuggee by exiting while attached, is not established. So the keeper is
@@ -332,6 +380,16 @@ that logs nothing; breakpoints only through `logpoint`; `detach` before
 `hs_stop_game`; never `StopDebug`, never killing headless, no software
 breakpoints and no memory writes.
 
+- **The CLI route, for an operator without the tools loaded.** When a
+  session has not loaded the `mcp__x64dbg__*` tools (the first live session's
+  driver had most likely started before the server entered `.mcp.json`;
+  inferred, not measured), `live-operator` runs the same eight as
+  `py -3 -m tools.x64dbg_mcp tool <name> '<json>'` (§ "The eight tools"),
+  never by importing the module through `py -3 -c`. The CLI adds no
+  capability: any agent with a shell could already run `attach` or import the
+  module, and the boundary stays the eight tools and their gates. Other
+  agents go through neither route. Like the plugin's own port below, that is
+  a prompt rule, not something the tooling enforces.
 - **Codex gets no allowlist** (`.claude/README.md` § "Codex"): a Codex session
   sees all eight tools. The eight are the whole surface the proxy serves, so
   the plugin's stopping, writing, dumping and stepping tools are out of reach
@@ -374,8 +432,20 @@ and attach refusals, the keeper's attach-then-`run`, its `attach-unconfirmed`
 state and late resume, and teardown order, `logpoint`'s read-back (a row
 listed but disabled fails), its `Set*` output check, its re-check that the
 game kept running, its `expect_bytes` refusal and always-`run` failure path,
-the `command` allowlist and its stdin route, and the `.mcp.json` and Codex
-wiring. A guard fails any URL fetch that is not
+the `command` allowlist and its stdin route, the CLI `tool` route (the reply
+as JSON, exit by `ok`, exit 2 for a name outside the eight or arguments it
+cannot take), and the `.mcp.json` and Codex wiring.
+
+The stand-in plugin prints the module table as the pinned plugin does,
+decimal behind `0x`; for nine rounds it printed padded hex, which is how a
+wrong live resolve passed every test. A regression test feeds live 1's
+`hero_siege.exe` row verbatim and resolves `Hero_Siege.exe+427460` to
+`0x7FF613D47460` through the stand-in, and its negative control serves the
+hex table and expects `module_row_unreadable`, not a base. Two stand-in modes
+cover the game's answers: `paused_runs` answers PAUSED to chosen plugin `run`
+calls after arming (the first, for `logpoint`'s first-run check; the second,
+for its re-check), and `never_running` never reports RUNNING, for the
+keeper's unconfirmed resume. A guard fails any URL fetch that is not
 `127.0.0.1` and any subprocess the test did not expect, and a test proves the
 guard trips: no network, no download, no clone, no MSBuild, no real x64dbg,
 game or lease. The stdio round trip needs the `mcp` package and skips without

@@ -102,7 +102,9 @@ is the planner's to fix.
 Only then: a procedure without debugger steps never attaches x64dbg. The
 debugger answers "does this function fire, with what arguments, how often" on
 the running game, with no research build and no relaunch
-(`docs/tools/x64dbg-mcp.md`).
+(`docs/tools/x64dbg-mcp.md`). When the `mcp__x64dbg__*` tools are not loaded
+in your session, the same tools run as `py -3 -m tools.x64dbg_mcp tool <name>
+'<json>'`, never through `py -3 -c`; say in the capture which route you used.
 
 1. **Attach after the game's positive control**, under the lease you already
    hold; the attach refuses without it. Run `py -3 -m tools.x64dbg_mcp attach

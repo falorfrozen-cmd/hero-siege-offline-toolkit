@@ -24,8 +24,13 @@ quietly break:
 - `command`'s allowlist, sent on headless's stdin, and `logpoint`'s checks: a
   plugin that says "executed successfully" for a breakpoint x64dbg never set,
   a row listed but disabled, a never-break condition x64dbg rejected or that
-  did not take, and code that differs from `expect_bytes` are none of them a
-  pass;
+  did not take, a first `run` after arming that came back paused, and code
+  that differs from `expect_bytes` are none of them a pass;
+- the module table is read as the pinned plugin prints it (decimal behind
+  `0x`, live 1's row verbatim), and a row in any other format is refused;
+- a keeper that never saw the game running again leaves the session
+  `attach-unconfirmed`, not ready;
+- the CLI `tool` route serves exactly the eight tools, through the same gates;
 - `.mcp.json` and Codex start the stdio launcher, not the plugin's URL.
 Each acceptance has a negative control beside it.
 """
@@ -158,14 +163,33 @@ for raw in sys.stdin.buffer:
         break
 '''
 
-MODULE_TABLE = (
-    "[GetAllModulesFromMemMap] Found 2 image modules:\n"
-    f"{'Name':<30} {'Path':<70} {'Base Address':<18} {'End Address':<18} {'Size':<10}\n"
-    + "-" * 150 + "\n"
-    f"{'Hero_Siege.exe':<30} {'C:/Games/Hero Siege/Hero_Siege.exe':<70} 0x00007FF6A0000000 0x00007FF6A9000000 0x9000000\n"
-    f"{'kernel32.dll':<30} {'C:/Windows/System32/kernel32.dll':<70} 0x00007FFB10000000 0x00007FFB100C0000 0xC0000\n"
-)
 GAME_BASE = 0x7FF6A0000000
+
+
+def _module_table(rows) -> str:
+    """GetAllModulesFromMemMap's table as the pinned plugin lays it out: the
+    name and path columns padded, then base, end and size each behind `0x`."""
+    head = (f"[GetAllModulesFromMemMap] Found {len(rows)} image modules:\n"
+            f"{'Name':<30} {'Path':<70} {'Base Address':<18} {'End Address':<18} {'Size':<10}\n" + "-" * 150 + "\n")
+    return head + "".join(f"{n:<30} {p:<70} 0x{b} 0x{e} 0x{s}\n" for n, p, b, e, s in rows)
+
+
+# What the pinned plugin prints: decimal digits behind a literal `0x` (it
+# targets net472, where a pointer-sized integer ignores the hex format
+# specifier). Measured live on 2026-10-10.
+MODULE_TABLE = _module_table([
+    ("Hero_Siege.exe", "C:/Games/Hero Siege/Hero_Siege.exe", GAME_BASE, GAME_BASE + 0x9000000, 0x9000000),
+    ("kernel32.dll", "C:/Windows/System32/kernel32.dll", 0x7FFB10000000, 0x7FFB100C0000, 0xC0000),
+])
+# The format the real plugin never printed, and the stand-in used to: padded
+# hex. Every round that served this passed while the live resolve was wrong.
+HEX_MODULE_TABLE = _module_table([
+    ("Hero_Siege.exe", "C:/Games/Hero Siege/Hero_Siege.exe", "00007FF6A0000000", "00007FF6A9000000", "9000000"),
+    ("kernel32.dll", "C:/Windows/System32/kernel32.dll", "00007FFB10000000", "00007FFB100C0000", "C0000"),
+])
+# Live 1's row for the game, verbatim (tooling-484-x64dbg-mcp, 2026-10-10).
+LIVE_ROW = "hero_siege.exe  hero_siege.exe  0x140694867017728 0x140695154032640 0x287014912"
+LIVE_BASE = 0x7FF613920000
 
 
 # The stand-in function's first instructions, as the plugin's listing shows
@@ -184,16 +208,22 @@ class StandInPlugin:
     `fail_condition` (x64dbg prints an error for the never-break condition),
     `fail_queue` (the plugin could not queue a `Set*` step and printed
     nothing), `condition_ignored` (it prints nothing, yet the game pauses once
-    a breakpoint is armed)."""
+    a breakpoint is armed), `paused_runs` (which plugin `run` calls after the
+    latest `bph`, counted from 1, answer PAUSED; the rest answer RUNNING),
+    `never_running` (no `run` ever reports RUNNING), and `module_table` (what
+    GetAllModulesFromMemMap prints)."""
 
     def __init__(self, record: Path, bps: Path, *, sse=False, false_success=False, never_detach=False,
                  never_ready=False, debugging=None, execute_arg="command", listed_as=(1, "HW"),
-                 fail_condition=False, condition_ignored=False, fail_queue=False):
+                 fail_condition=False, condition_ignored=False, fail_queue=False, paused_runs=(),
+                 never_running=False, module_table=MODULE_TABLE):
         self.record, self.bps = record, bps
         self.sse, self.false_success, self.never_detach = sse, false_success, never_detach
         self.never_ready, self.forced, self.execute_arg = never_ready, debugging, execute_arg
         self.listed_as, self.fail_condition, self.condition_ignored = listed_as, fail_condition, condition_ignored
-        self.fail_queue = fail_queue
+        self.fail_queue, self.paused_runs, self.never_running = fail_queue, tuple(paused_runs), never_running
+        self.module_table = module_table
+        self.runs_since_armed: int | None = None  # None until the first bph
         self.calls: list[tuple[str, dict]] = []
         self.sessions: list[str | None] = []
         self.addrs: list[int] = []
@@ -281,6 +311,7 @@ class StandInPlugin:
             m = re.match(r"bph (0x[0-9A-Fa-f]+)", cmd)
             if m and not self.false_success:
                 self.addrs.append(int(m.group(1), 16))
+                self.runs_since_armed = 0
             m = re.match(r"bphc(?: (0x[0-9A-Fa-f]+))?$", cmd)
             if m:
                 self.addrs = [a for a in self.addrs if m.group(1) and a != int(m.group(1), 16)]
@@ -294,11 +325,15 @@ class StandInPlugin:
             # "Command '<cmd>' executed successfully.", is what success reads as.
             return f"Result: {xm.PLUGIN_EXEC_SILENT_OK}", False
         if name == xm.PLUGIN_MODULES:
-            return MODULE_TABLE, False
+            return self.module_table, False
         if name == xm.PLUGIN_PAUSE:
-            return "SUCCESS: Debuggee paused at 0x7FF6A0001000 (Hero_Siege.exe).", False
+            # the address as the plugin prints the module table's: decimal behind 0x
+            return f"SUCCESS: Debuggee paused at 0x{GAME_BASE + 0x1000} (Hero_Siege.exe).", False
         if name == xm.PLUGIN_RUN:
-            if self.condition_ignored and self.addrs:
+            if self.runs_since_armed is not None:
+                self.runs_since_armed += 1
+            if self.never_running or (self.condition_ignored and self.addrs) \
+                    or self.runs_since_armed in self.paused_runs:
                 return "STATUS: PAUSED. Process resumed but hit an immediate breakpoint.", False
             return "STATUS: RUNNING. The target process is now in a running state.", False
         if name == xm.PLUGIN_DISASM:
@@ -771,7 +806,7 @@ class OfflineTests(unittest.TestCase):
         r = subprocess.run([sys.executable, "-m", "tools.x64dbg_mcp", "--help"], cwd=str(ROOT),
                            capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
-        for word in ("serve", "status", "setup", "attach", "detach"):
+        for word in ("serve", "status", "setup", "attach", "detach", "tool"):
             self.assertIn(word, r.stdout)
         s = subprocess.run([sys.executable, "-m", "tools.x64dbg_mcp", "status"], cwd=str(ROOT),
                            capture_output=True, text=True, env=env, timeout=60)
@@ -1037,6 +1072,66 @@ class LoopbackClientTests(unittest.TestCase):
         self.assertEqual(xm.PluginClient(f"http://127.0.0.1:{p.port}/", timeout=1).debug_state(), "unknown")
 
 
+# --- the module table -------------------------------------------------------
+
+class ModuleTableTests(unittest.TestCase):
+    """The pinned plugin prints the module table's base, end and size as
+    decimal digits behind `0x`. The stand-in printed padded hex for nine
+    rounds, which is how a wrong live resolve passed every test."""
+
+    def tools(self, table):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        p = StandInPlugin(Path(tmp.name) / "rec", Path(tmp.name) / "bps", debugging=True, module_table=table)
+        self.addCleanup(p.close)
+        return xm.Tools(_cfg(Path(tmp.name), port=p.port))
+
+    def test_live_decimal_row_resolves_to_the_real_base(self):
+        self.assertEqual(xm.module_bases(LIVE_ROW), {"hero_siege.exe": LIVE_BASE})
+        tools = self.tools(_module_table([]).replace("Found 0", "Found 1") + LIVE_ROW + "\n")
+        self.assertEqual(tools.resolve("Hero_Siege.exe+427460"), 0x7FF613D47460)
+        self.assertEqual(tools.resolve("hero_siege.exe+0"), LIVE_BASE)
+        with mock.patch.object(tools, "_gate", return_value=None):
+            self.assertEqual(tools.modules()["bases"], {"hero_siege.exe": "0x7FF613920000"})
+
+    def test_live_decimal_row_layout_is_what_the_stand_in_serves(self):
+        self.assertEqual(xm.module_bases(MODULE_TABLE), {"hero_siege.exe": GAME_BASE, "kernel32.dll": 0x7FFB10000000})
+        self.assertIn(f"0x{GAME_BASE} 0x{GAME_BASE + 0x9000000} 0x{0x9000000}", MODULE_TABLE)
+        tools = self.tools(MODULE_TABLE)
+        self.assertEqual(tools.resolve("Hero_Siege.exe+427460"), GAME_BASE + 0x427460)
+        with mock.patch.object(tools, "_gate", return_value=None):
+            self.assertEqual(tools.modules()["bases"], {"hero_siege.exe": "0x7FF6A0000000",
+                                                        "kernel32.dll": "0x7FFB10000000"})
+
+    def test_hex_formatted_row_gives_no_base_and_resolve_refuses(self):
+        self.assertEqual(xm.module_bases(HEX_MODULE_TABLE), {})
+        # a hex rendering made only of digits passes end == base + size under a
+        # decimal reading; its leading zeros are what refuse it
+        self.assertEqual(xm.module_bases("a.dll  C:/a.dll  0x0000000140000000 0x0000000150000000 0x10000000"), {})
+        tools = self.tools(HEX_MODULE_TABLE)
+        with self.assertRaises(xm.Refused) as cm:
+            tools.resolve("Hero_Siege.exe+427460")
+        self.assertEqual(cm.exception.reason, "module_row_unreadable")
+        self.assertIn("0x00007FF6A0000000", cm.exception.detail)
+        # control: a module with no row at all is still no_such_module
+        with self.assertRaises(xm.Refused) as cm:
+            tools.resolve("absent.dll+10")
+        self.assertEqual(cm.exception.reason, "no_such_module")
+
+    def test_hex_formatted_row_refused_by_logpoint_before_anything_is_set(self):
+        tools = self.tools(HEX_MODULE_TABLE)
+        _fake_live_session(tools.cfg)
+        _hold_lease()
+        self.addCleanup(_drop_lease)
+        result = tools.logpoint("Hero_Siege.exe+427460", "hit")
+        self.assertEqual(result["reason"], "module_row_unreadable", result)
+
+    def test_hex_formatted_row_end_must_equal_base_plus_size(self):
+        self.assertEqual(xm.module_bases("a.dll  C:/a.dll  0x1000 0x3000 0x1000"), {})
+        self.assertEqual(xm.module_bases("a.dll  C:/a.dll  0x1000 0x2000 0x1000"), {"a.dll": 1000})  # control
+        self.assertEqual(xm.module_bases("a.dll  C:/a.dll  0x4198400 0x4202496 0x4096"), {"a.dll": 4198400})
+
+
 # --- the keeper, teardown and false success (real processes) ---------------
 
 class KeeperTests(SessionMixin, unittest.TestCase):
@@ -1081,6 +1176,28 @@ class KeeperTests(SessionMixin, unittest.TestCase):
         self.assertIn("RUNNING", late["run_reply"])
         self.assertIsNone(late["error"])
         self.assertIn(xm.PLUGIN_RUN, plugin.names())
+
+    def test_keeper_unconfirmed_resume_is_attach_unconfirmed_not_running(self):
+        # The plugin answers, so the attach completed, but no run ever reports
+        # RUNNING: the game may still be paused, so the session is not ready.
+        cfg, plugin, state, record, _ = self.start_session(never_running=True)
+        self.assertEqual(state["state"], "attach-unconfirmed", state)
+        self.assertFalse(state["ready"])
+        self.assertIn("never seen running", state["error"])
+        self.assertIn("detach", state["error"])
+        self.assertIn(xm.PLUGIN_RUN, plugin.names())
+        self.assertIn("run", self.stdin_lines(record))
+        time.sleep(1)  # the keeper retries; still never running, so never `running`
+        later = xm.read_state(cfg)
+        self.assertEqual((later["state"], later["ready"]), ("attach-unconfirmed", False), later)
+        refused = xm.Tools(cfg).bplist()
+        self.assertEqual(refused["reason"], "attach_unconfirmed", refused)
+        with mock.patch.object(xm, "start_session", return_value=state), mock.patch("sys.stdout"):
+            self.assertEqual(xm.attach(cfg, 1, False), 1)
+        detached = xm.Tools(cfg).detach()
+        self.assertTrue(detached["ok"], detached)
+        self.assertEqual(detached["state"], "ended")
+        self.assertEqual(self.stdin_lines(record)[-3:], ["bphc", "detach", "exit"])
 
     def test_keeper_refuses_a_second_attach_while_live(self):
         cfg, _, _, _, target = self.start_session()
@@ -1232,10 +1349,40 @@ class FalseSuccessTests(SessionMixin, unittest.TestCase):
         result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["stage"], "running")
-        self.assertIn("did not stay running", result["detail"])
+        # every run pauses, so the first run after arming already says so
+        self.assertIn("did not report the game running", result["detail"])
         self.assertIn("RUNNING", result["run"])  # cleared, then resumed for real
         sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
         self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
+        self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
+
+    def test_false_success_a_paused_first_run_is_cleared(self):
+        # Only the first run after arming answers PAUSED: the breakpoint was
+        # hit before the plugin's own re-check. The second run would say
+        # RUNNING, so the later check alone would have passed it.
+        cfg, plugin, _, _, _ = self.start_session(paused_runs=(1,))
+        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["stage"], "running")
+        self.assertIn("PAUSED", result["detail"])
+        self.assertIn("PAUSED", result["first_run"])
+        self.assertIn("RUNNING", result["run"])  # cleared, then resumed
+        sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
+        self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
+        self.assertEqual(plugin.addrs, [])
+        # the first run's answer was acted on: the last set step, that run,
+        # the clear and the resume, with no re-check run in between
+        self.assertEqual(plugin.names()[-4:], [xm.PLUGIN_EXECUTE, xm.PLUGIN_RUN, xm.PLUGIN_EXECUTE, xm.PLUGIN_RUN])
+
+    def test_false_success_a_pause_seen_only_on_the_recheck_is_cleared(self):
+        cfg, plugin, _, _, _ = self.start_session(paused_runs=(2,))
+        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["stage"], "running")
+        self.assertIn("did not stay running", result["detail"])
+        self.assertIn("RUNNING", result["first_run"])
+        self.assertEqual([a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE][-1],
+                         "bphc 0x7FF6A0427460")
         self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
 
     def test_false_success_bplist_rows_by_enabled_flag_and_type(self):
@@ -1263,6 +1410,62 @@ class FalseSuccessTests(SessionMixin, unittest.TestCase):
         self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
         self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)  # never left paused
         self.assertTrue(all("executed successfully" in s["reply"] for s in result["steps"][1:]))
+
+
+# --- the CLI `tool` route ---------------------------------------------------
+
+class CliToolTests(unittest.TestCase):
+    """`py -3 -m tools.x64dbg_mcp tool <name> [<json>]`: the eight tools for an
+    operator whose session has not loaded the MCP server, through the same
+    `Tools` methods and gates."""
+
+    def run_tool(self, *args):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        env = dict(os.environ, HS_X64DBG_MCP_SESSION=str(Path(tmp.name) / "session"),
+                   HS_X64DBG_MCP_PORT="1", HS_DRIVE_LEASE_DIR=str(Path(tmp.name) / "lease"))
+        return subprocess.run([sys.executable, "-m", "tools.x64dbg_mcp", "tool", *args], cwd=str(ROOT),
+                              capture_output=True, text=True, env=env, timeout=60)
+
+    def test_cli_tool_prints_the_reply_as_json_and_exits_by_ok(self):
+        s = self.run_tool("status")
+        self.assertEqual(s.returncode, 0, s.stdout + s.stderr)
+        reply = json.loads(s.stdout)
+        self.assertEqual((reply["ok"], reply["state"]), (True, "none"), reply)
+        # the same gate as the MCP tool: no session, so refused, exit 1
+        m = self.run_tool("modules")
+        self.assertEqual(m.returncode, 1, m.stdout + m.stderr)
+        self.assertEqual(json.loads(m.stdout)["reason"], "not_attached")
+        c = self.run_tool("command", '{"command": "StopDebug"}')
+        self.assertEqual(c.returncode, 1, c.stdout + c.stderr)
+        self.assertEqual(json.loads(c.stdout)["reason"], "not_allowed")
+        lg = self.run_tool("log", '{"after": 0, "limit": 5}')
+        self.assertEqual(lg.returncode, 0, lg.stdout + lg.stderr)
+        self.assertEqual(json.loads(lg.stdout)["total"], 0)
+
+    def test_cli_tool_refuses_a_name_outside_the_eight(self):
+        for name in ("StopDebug", "keeper", "serve"):
+            with self.subTest(name=name):
+                r = self.run_tool(name)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                for tool in xm.LIVE_OPERATOR_TOOLS:
+                    self.assertIn(tool, r.stdout + r.stderr)
+
+    def test_cli_tool_refuses_arguments_that_are_not_a_json_object(self):
+        for arg in ("[1]", "not json", '"after"', "3"):
+            with self.subTest(arg=arg):
+                r = self.run_tool("log", arg)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn("JSON object", r.stdout + r.stderr)
+
+    def test_cli_tool_refuses_an_argument_the_tool_does_not_take(self):
+        r = self.run_tool("status", '{"verbose": true}')
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("verbose", r.stdout + r.stderr)
+        # a required argument left out is refused the same way, before the gate
+        r = self.run_tool("logpoint", '{"log": "x"}')
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("address", r.stdout + r.stderr)
 
 
 # --- wiring -----------------------------------------------------------------
