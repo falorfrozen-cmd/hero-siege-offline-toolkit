@@ -1347,8 +1347,9 @@ py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the machine-wid
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
 py -3 -m unittest tests.test_ghidra_mcp -v                     # the ghidra launcher: git refusal, loopback, stripped env, version check
 py -3 -m unittest tests.test_ghidra_agent_tools -v              # the phase agents' mcp__ghidra__* tools match AGENT_READ_TOOLS; no write or debugger tool
-py -3 -m unittest tests.test_x64dbg_mcp -v                     # the x64dbg launcher: git refusal, loopback, the two edits, build argv, lease, keeper, attach-unconfirmed, teardown, allowlist, logpoint read-back and reply checks, the decimal module table, the `tools.x64dbg_mcp tool` CLI route
+py -3 -m unittest tests.test_x64dbg_mcp -v                     # the x64dbg launcher: git refusal, loopback, the two edits, build argv, lease, keeper, attach-unconfirmed, the watchdog, held changes, teardown and the verified release (game-not-released), allowlist, logpoint read-back and reply checks, the decimal module table, the `tools.x64dbg_mcp tool` CLI route
 py -3 -m unittest tests.test_x64dbg_agent_tools -v              # live-operator alone carries mcp__x64dbg__*, exactly LIVE_OPERATOR_TOOLS
+py -3 -m unittest tests.test_thread_state -v                    # the read-only outside check of a process's threads: the measured layout, the verdicts, the CLI, a throwaway child on Windows
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 
@@ -1367,12 +1368,15 @@ its gate is injected and its whole channel is two files in a temporary
 directory, which is deliberate: it covers the rules most likely to be broken by
 an edit somewhere else. Each skip names its reason.
 
-The two `test_x64dbg_*` suites run on fixtures and fakes too: a stand-in
-plugin on `127.0.0.1`, a fake headless, and a guard that fails any non-loopback
+The two `test_x64dbg_*` suites and `test_thread_state` run on fixtures and
+fakes too: a stand-in plugin on `127.0.0.1`, a fake headless, a fake probe
+behind the outside check's seam, and a guard that fails any non-loopback
 fetch or unexpected subprocess. On CI, which has neither `mcp` nor Windows,
-only the stdio round trip skips, naming why; the one test that checks how the
-keeper is detached asserts the Windows creation flags or the POSIX
-`start_new_session`, whichever platform it runs on.
+the stdio round trip skips, and so do the Windows-only `real_os` tests in
+`test_x64dbg_mcp` and `test_thread_state` (which read a throwaway child's
+threads from the OS), each naming why; everything else runs. The one test
+that checks how the keeper is detached asserts the Windows creation flags or
+the POSIX `start_new_session`, whichever platform it runs on.
 
 **`.claude/workflows/*.js` and `*.mjs` must stay LF.** `.gitattributes` forces
 `text eol=lf` on both globs: the Workflow tool's permission handler refuses to

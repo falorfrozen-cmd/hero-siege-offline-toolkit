@@ -106,11 +106,22 @@ the running game, with no research build and no relaunch
 in your session, the same tools run as `py -3 -m tools.x64dbg_mcp tool <name>
 '<json>'`, never through `py -3 -c`; say in the capture which route you used.
 
+The tools never pause the game: `logpoint` arms on the running game, and the
+keeper resumes every pause x64dbg takes on its own (`breaks_resumed` and
+`last_break` in `status`). Do not take a tool's word for it, though: whether
+the game's threads run is read from outside the debugger with
+`py -3 -m tools.thread_state <pid>`, a read-only check that prints one JSON
+object and exits 0 only for the verdict `running`. Quote its output into the
+capture each time the steps below run it.
+
 1. **Attach after the game's positive control**, under the lease you already
    hold; the attach refuses without it. Run `py -3 -m tools.x64dbg_mcp attach
    --game` (or `attach <pid>`), then the `status` tool, and copy the session
-   state it reports into the capture. x64dbg pauses the game while it
-   attaches; an attach that exits 0 with `ready: true` has resumed it. A
+   state it reports into the capture, with its `instrument` field verbatim
+   (the outside check before attach, at x64dbg's attach break, and after the
+   resume, and whether that sequence is `proven`). Then run
+   `py -3 -m tools.thread_state <pid>` yourself. x64dbg pauses the game while
+   it attaches; an attach that exits 0 with `ready: true` has resumed it. A
    non-zero exit, `ready: false`, or the state `attach-unconfirmed` means the
    game may still be paused: run `detach` (step 5) and return
    `LIVE-ABORTED`, quoting what `attach` printed.
@@ -119,6 +130,13 @@ in your session, the same tools run as `py -3 -m tools.x64dbg_mcp tool <name>
    (`#{d:$breakpointcounter}`), then read its hits through `log` and quote
    them. No hits is `INSTRUMENT-BLIND`: tear down (step 5) before you return
    it.
+   **After every `logpoint`**, the control's and each candidate's, take
+   `hs_command` `incident stat` straight away and run
+   `py -3 -m tools.thread_state <pid>` again, and quote both with the
+   logpoint's reply (its `held`, `window_break`, `x64dbg_state` and `game`).
+   An arming that holds the game shows in ForgePact's incident monitor, so a
+   slowdown check over a later window must start from the `incident stat`
+   taken after it, not before.
 3. **Breakpoints only through `logpoint`**: a hardware breakpoint that logs
    and never stops the game, at most four at once (the control and three
    candidates; clear a candidate with `command` `bphc <address>` to arm the
@@ -134,9 +152,18 @@ in your session, the same tools run as `py -3 -m tools.x64dbg_mcp tool <name>
    `disasm` shows is disassembled game code: it may go in the capture, which
    is gitignored, and nowhere else.
 5. **Tear down with `detach` before `hs_stop_game`**, and quote what it
-   returned. A `detach-unconfirmed` state means x64dbg may still be attached:
-   leave the game running and the lease held, skip step 8 of the session,
-   and say so on the `STATE:` and `LEASE:` lines of your return.
+   returned, then run `py -3 -m tools.thread_state <pid>` once more and quote
+   it. Carry on to step 8 of the session only when the detach reply reads
+   `state: ended` with `game_released: true` (or the game was gone). Three
+   replies mean the game may be left frozen or attached instead:
+   `game-not-released` (the detach was confirmed, but game threads are still
+   suspended, and the reply names them), a reply whose `game_released` is not
+   true, and `detach-unconfirmed` (x64dbg may still be attached). On any of
+   them: no `hs_stop_game` and no restore. Leave the game as it is, keep the
+   lease, skip step 8, and return `LIVE-ABORTED`, quoting the reply and the
+   outside check, and saying so on the `STATE:` and `LEASE:` lines. Only a
+   force-stop releases suspended threads; the driver runs `hs_stop_game` with
+   `force=true` and restores the saves, and you never do either.
 
 ## Things you never do
 
