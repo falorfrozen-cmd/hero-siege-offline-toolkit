@@ -34,12 +34,15 @@ Measured on this machine (Windows 11 build 26300, x64), 2026-10-10:
 The verdicts, in order: no such process is `gone`; not Windows is
 `unsupported`; a failed sample is `unreadable`; no context switch across the
 window is `frozen` (an idle process reads `frozen` too, and the game renders
-every frame, so it never idles); a thread suspended in *every* sample, or in
-Waiting/Suspended with no switch across the window, is `threads-suspended`;
-otherwise `running`. One sample is not enough, because x64dbg suspends every
-other thread for each logpoint hit's step, so a single sample during logging
-can catch them all suspended. A suspend count that cannot be read is counted
-in `detail` and never read as 0.
+every frame, so it never idles); a thread that did not switch across the
+window and was suspended in *every* sample, or in Waiting/Suspended in every
+sample, is `threads-suspended`; otherwise `running`. Neither the samples nor
+the instants are enough on their own: x64dbg suspends every other thread for
+each logpoint hit's step and holds the game at each hit, so under a hot
+logpoint every sample can land inside a hit and catch a thread suspended that
+still runs hundreds of times between them. A thread left suspended cannot be
+scheduled, so its own context-switch count is the positive signal. A suspend
+count that cannot be read is counted in `detail` and never read as 0.
 """
 from __future__ import annotations
 
@@ -143,9 +146,13 @@ def classify(pid: int, samples: list[list[ThreadSample]], interval: float = 0.4,
             unknown.add(tid)
         if tid in skip:
             continue
-        if all(t.suspend_count is not None and t.suspend_count >= 1 for t in seen):
+        # A thread left suspended cannot be scheduled, so its own switches stand
+        # still. One that switched between the samples was only caught suspended
+        # at each instant, as while x64dbg holds the game at logpoint hits.
+        ran = seen[-1].context_switches != seen[0].context_switches
+        if not ran and all(t.suspend_count is not None and t.suspend_count >= 1 for t in seen):
             suspended.append({"tid": tid, "suspend_count": seen[-1].suspend_count})
-        if all(_held(t) for t in seen) and seen[-1].context_switches == seen[0].context_switches:
+        if not ran and all(_held(t) for t in seen):
             stopped.append(tid)
     if progress == 0:
         verdict = "frozen"
@@ -155,7 +162,7 @@ def classify(pid: int, samples: list[list[ThreadSample]], interval: float = 0.4,
         verdict = "running"
     detail = (f"pid {pid}: {verdict}; {len(last)} threads, {progress} context switches across "
               f"{len(samples)} samples {interval} s apart; {len(suspended)} suspended in every "
-              f"sample, {len(stopped)} stopped in Waiting/Suspended")
+              f"sample with no switch, {len(stopped)} stopped in Waiting/Suspended")
     if skip:
         detail += f", {len(skip)} left out as baseline"
     if unknown:
