@@ -210,14 +210,17 @@ class StandInPlugin:
     nothing), `condition_ignored` (it prints nothing, yet the game pauses once
     a breakpoint is armed), `paused_runs` (which plugin `run` calls after the
     latest `bph`, counted from 1, answer PAUSED; the rest answer RUNNING),
-    `never_running` (no `run` ever reports RUNNING), and `module_table` (what
-    GetAllModulesFromMemMap prints)."""
+    `never_running` (no `run` ever reports RUNNING), `module_table` (what
+    GetAllModulesFromMemMap prints), and `echo` (how much of the plugin's own
+    echo of an ExecuteDbgCommand call its reply carries: `full`, the default
+    and what live 1 measured, `tail` or `none`)."""
 
     def __init__(self, record: Path, bps: Path, *, sse=False, false_success=False, never_detach=False,
                  never_ready=False, debugging=None, execute_arg="command", listed_as=(1, "HW"),
                  fail_condition=False, condition_ignored=False, fail_queue=False, paused_runs=(),
-                 never_running=False, module_table=MODULE_TABLE):
+                 never_running=False, module_table=MODULE_TABLE, echo="full"):
         self.record, self.bps = record, bps
+        self.echo = echo
         self.sse, self.false_success, self.never_detach = sse, false_success, never_detach
         self.never_ready, self.forced, self.execute_arg = never_ready, debugging, execute_arg
         self.listed_as, self.fail_condition, self.condition_ignored = listed_as, fail_condition, condition_ignored
@@ -316,14 +319,17 @@ class StandInPlugin:
             if m:
                 self.addrs = [a for a in self.addrs if m.group(1) and a != int(m.group(1), 16)]
             self.bps.write_text(json.dumps([[*self.listed_as, a] for a in self.addrs]), encoding="utf-8")
-            if self.fail_condition and cmd.startswith("SetHardwareBreakpointCondition"):
-                return f"Result: Can't set break condition on breakpoint \"{cmd.split()[1].rstrip(',')}\"", False
             if self.fail_queue and cmd.startswith("Set"):
+                # nothing reached x64dbg's log, so the plugin's could-not-queue text
                 return f"Result: {xm.PLUGIN_EXEC_FAILED}", False
-            # The pinned plugin's reply when x64dbg printed nothing: its
-            # capture helper never returns blank, so this, not the bare
-            # "Command '<cmd>' executed successfully.", is what success reads as.
-            return f"Result: {xm.PLUGIN_EXEC_SILENT_OK}", False
+            printed = []
+            if cmd.startswith("bph "):
+                printed = [f"Hardware breakpoint at {int(cmd.split()[1].rstrip(','), 16):016X} set!"]
+            elif cmd.startswith("bphc"):
+                printed = ["Hardware breakpoint deleted!"]
+            elif self.fail_condition and cmd.startswith("SetHardwareBreakpointCondition"):
+                printed = [f"Can't set break condition on breakpoint \"{cmd.split()[1].rstrip(',')}\""]
+            return self._execute_reply(cmd, printed), False
         if name == xm.PLUGIN_MODULES:
             return self.module_table, False
         if name == xm.PLUGIN_PAUSE:
@@ -344,6 +350,20 @@ class StandInPlugin:
                 at += len(ins)
             return "\n".join(rows) + "\n", False
         return f"Tool '{name}' not found.", True
+
+    def _execute_reply(self, cmd, printed):
+        """ExecuteDbgCommand's reply as the pinned plugin builds it: whatever
+        reached x64dbg's log while the command ran, behind `Result: `. The
+        plugin writes its own echo of the call to that log first, so the
+        capture carries all of the echo (`full`, live 1's SetHardwareBreakpointLog),
+        only its last line (`tail`, live 1's bphc), or none of it (`none`),
+        then what x64dbg printed. Blank, it is the no-output success text."""
+        rule = "-" * 40
+        echo = {"full": [rule, "METHOD: ExecuteDbgCommand", f"command: {cmd}", rule,
+                         f"Executing DbgCmdExec: {cmd}"],
+                "tail": [f"Executing DbgCmdExec: {cmd}"], "none": []}[self.echo]
+        lines = echo + list(printed)
+        return "Result: " + "\r\n".join(lines) if lines else f"Result: {xm.PLUGIN_EXEC_SILENT_OK}"
 
     def names(self):
         return [n for n, _ in self.calls]
@@ -1030,7 +1050,7 @@ class LoopbackClientTests(unittest.TestCase):
         c = xm.PluginClient(f"http://127.0.0.1:{p.port}/")
         text, is_error = c.call_checked(xm.PLUGIN_EXECUTE, {"command": "bplist"})
         self.assertFalse(is_error)
-        self.assertIn("executed successfully", text)
+        self.assertIn("Executing DbgCmdExec: bplist", text)
         self.assertEqual(p.sessions[0], None)  # initialize
         self.assertTrue(all(s == "standin-session" for s in p.sessions[1:]), p.sessions)
 
@@ -1127,9 +1147,39 @@ class ModuleTableTests(unittest.TestCase):
         self.assertEqual(result["reason"], "module_row_unreadable", result)
 
     def test_hex_formatted_row_end_must_equal_base_plus_size(self):
-        self.assertEqual(xm.module_bases("a.dll  C:/a.dll  0x1000 0x3000 0x1000"), {})
-        self.assertEqual(xm.module_bases("a.dll  C:/a.dll  0x1000 0x2000 0x1000"), {"a.dll": 1000})  # control
-        self.assertEqual(xm.module_bases("a.dll  C:/a.dll  0x4198400 0x4202496 0x4096"), {"a.dll": 4198400})
+        self.assertEqual(xm.module_bases("a.dll  C:/a.dll  0x65536 0x73728 0x4096"), {})
+        self.assertEqual(xm.module_bases("a.dll  C:/a.dll  0x65536 0x69632 0x4096"), {"a.dll": 0x10000})  # control
+        self.assertEqual(xm.module_bases("a.dll  C:/a.dll  0x4194304 0x4198400 0x4096"), {"a.dll": 0x400000})
+
+    def test_hex_formatted_row_unpadded_and_all_digits_gives_no_base(self):
+        # Unpadded hex using only the digits 0-9, with no carry from base to
+        # end: 0x180000000 + 0x1000 reads as 180000000 + 1000 = 180001000, so
+        # the end check passes under a decimal reading. Windows maps an image
+        # on a 64 KiB boundary, and 180000000 (0xABA9500) is not on one.
+        row = "a.dll  C:/a.dll  0x180000000 0x180001000 0x1000"
+        self.assertEqual(xm.module_bases(row), {})
+        tools = self.tools(_module_table([]).replace("Found 0", "Found 1") + row + "\n")
+        with self.assertRaises(xm.Refused) as cm:
+            tools.resolve("a.dll+10")
+        self.assertEqual(cm.exception.reason, "module_row_unreadable")
+        # control: the same image in the pinned format (decimal) is read
+        self.assertEqual(xm.module_bases(f"a.dll  C:/a.dll  0x{0x180000000} 0x{0x180001000} 0x{0x1000}"),
+                         {"a.dll": 0x180000000})
+
+    def test_hex_formatted_row_listed_as_unreadable_by_modules(self):
+        tools = self.tools(HEX_MODULE_TABLE)
+        with mock.patch.object(tools, "_gate", return_value=None):
+            result = tools.modules()
+        self.assertEqual(result["bases"], {})
+        self.assertEqual(len(result["unreadable"]), 2, result)
+        self.assertTrue(result["unreadable"][0].startswith("Hero_Siege.exe"), result["unreadable"])
+        self.assertIn("module_row_unreadable", result["note"])
+        # control: the pinned format leaves nothing unreadable
+        tools = self.tools(MODULE_TABLE)
+        with mock.patch.object(tools, "_gate", return_value=None):
+            result = tools.modules()
+        self.assertEqual(result["unreadable"], [], result)
+        self.assertEqual(len(result["bases"]), 2)
 
 
 # --- the keeper, teardown and false success (real processes) ---------------
@@ -1334,15 +1384,57 @@ class FalseSuccessTests(SessionMixin, unittest.TestCase):
         self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
 
     def test_false_success_silent_step_replies_by_shape(self):
+        cmd = 'SetHardwareBreakpointName 0x1, "a"'
         # Success: what the pinned plugin returns when x64dbg printed nothing,
         # plus the two blank forms its ExecuteDbgCommand could give.
         for ok in (f"Result: {xm.PLUGIN_EXEC_SILENT_OK}", "Command 'SetHardwareBreakpointName 0x1, \"a\"' "
                    "executed successfully.", "Result:", "", f"  Result: {xm.PLUGIN_EXEC_SILENT_OK}\r\n"):
-            self.assertTrue(xm.silent_reply_ok(ok), ok)
+            self.assertTrue(xm.silent_reply_ok(ok, cmd), ok)
         # Failure: anything x64dbg printed, and the plugin's own could-not-queue reply.
         for bad in (f"Result: {xm.PLUGIN_EXEC_FAILED}", "Result: Can't set break condition on breakpoint \"0x1\"",
                     f"Result: {xm.PLUGIN_EXEC_SILENT_OK}\nCan't set log text", "Result: Command executed"):
-            self.assertFalse(xm.silent_reply_ok(bad), bad)
+            self.assertFalse(xm.silent_reply_ok(bad, cmd), bad)
+
+    def test_false_success_live_set_reply_carrying_the_plugin_echo_is_ok(self):
+        # Live 1 (2026-10-10), verbatim: the pinned plugin's reply to a Set*
+        # step x64dbg printed nothing for. The plugin writes its own echo of
+        # the call to x64dbg's log, and its capture of that log while the
+        # command runs picks the echo up. x64dbg logged no error after it.
+        cmd = 'SetHardwareBreakpointLog 0x7FF613D47460, "ctu #{d:$breakpointcounter} self={rcx} other={rdx} argc={d:r9d}"'
+        live = ("Result: ----------------------------------------\r\nMETHOD: ExecuteDbgCommand\r\n"
+                f"command: {cmd}\r\n----------------------------------------\r\nExecuting DbgCmdExec: {cmd}")
+        self.assertTrue(xm.silent_reply_ok(live, cmd))
+        # live 1's bphc reply carried only the echo's last line: any tail of it is the echo
+        self.assertTrue(xm.silent_reply_ok(f"Result: Executing DbgCmdExec: {cmd}", cmd))
+        self.assertTrue(xm.silent_reply_ok("Result: " + live.split("\r\n", 1)[1], cmd))  # from METHOD on
+        # Negative controls: an x64dbg line after the echo is the command's
+        # failure, and so is an echo that is not this command's, out of
+        # order, or the no-output text beside a capture.
+        for bad in (live + "\r\nInvalid address \"0x7FF613D47460\"",
+                    live + "\r\nCan't set log text on hardware breakpoint",
+                    live.replace("0x7FF613D47460", "0x7FF613D47461"),
+                    f"Result: Executing DbgCmdExec: {cmd}\r\nMETHOD: ExecuteDbgCommand",
+                    f"Result: Executing DbgCmdExec: {cmd}\r\n{xm.PLUGIN_EXEC_SILENT_OK}",
+                    "Result: Executing DbgCmdExec: bphc 0x7FF613D47460",
+                    f"Result: ctu #12 self=1 other=1 argc=3\r\nExecuting DbgCmdExec: {cmd}"):
+            self.assertFalse(xm.silent_reply_ok(bad, cmd), bad)
+
+    def test_false_success_logpoint_accepts_each_echo_the_plugin_can_capture(self):
+        for echo in ("full", "tail", "none"):
+            with self.subTest(echo=echo):
+                cfg, plugin, _, _, _ = self.start_session(echo=echo)
+                result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit", name="control")
+                self.assertTrue(result["ok"], result)
+                self.assertEqual(plugin.addrs, [0x7FF6A0427460])
+
+    def test_false_success_an_x64dbg_error_after_the_echo_is_not_ok(self):
+        cfg, plugin, _, _, _ = self.start_session(fail_condition=True, echo="full")
+        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["stage"], "set")
+        self.assertIn("Can't set break condition", result["detail"])
+        self.assertIn("METHOD: ExecuteDbgCommand", result["detail"])  # the whole reply is quoted
+        self.assertEqual(plugin.addrs, [])
 
     def test_false_success_a_breakpoint_that_pauses_the_game_is_cleared(self):
         cfg, plugin, _, _, _ = self.start_session(condition_ignored=True)
@@ -1409,7 +1501,9 @@ class FalseSuccessTests(SessionMixin, unittest.TestCase):
         sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
         self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
         self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)  # never left paused
-        self.assertTrue(all("executed successfully" in s["reply"] for s in result["steps"][1:]))
+        # every step was taken as done: the Set* replies carried only the echo
+        self.assertEqual([s["step"].split()[0] for s in result["steps"][1:]],
+                         ["bph", "SetHardwareBreakpointLog", "SetHardwareBreakpointCondition"])
 
 
 # --- the CLI `tool` route ---------------------------------------------------
@@ -1466,6 +1560,18 @@ class CliToolTests(unittest.TestCase):
         r = self.run_tool("logpoint", '{"log": "x"}')
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIn("address", r.stdout + r.stderr)
+
+    def test_cli_tool_refuses_an_argument_of_the_wrong_type(self):
+        # the name binds, the value does not: exit 2 naming it, not a traceback
+        for arg in ('{"after": "x"}', '{"limit": [1]}'):
+            with self.subTest(arg=arg):
+                r = self.run_tool("log", arg)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertNotIn("Traceback", r.stderr)
+                self.assertIn("log", r.stderr)
+        # control: the right type is served
+        r = self.run_tool("log", '{"after": "0"}')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
 # --- wiring -----------------------------------------------------------------

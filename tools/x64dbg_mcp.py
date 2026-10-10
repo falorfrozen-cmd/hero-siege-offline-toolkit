@@ -1370,10 +1370,14 @@ _MODULE_OFFSET = re.compile(r"^([^\s+]+)\+(?:0x)?([0-9A-Fa-f]+)$")
 # it targets net472, where that type ignores the specifier (read from the
 # pinned source, and measured live on 2026-10-10). So a row is read only when
 # each column is decimal with no leading zero (plain decimal never has one; a
-# zero-padded hex rendering always does) and end == base + size. Any other row
-# is refused, never guessed at: a hex value made only of digits also reads as
-# decimal.
+# zero-padded hex rendering always does), end == base + size, and the base is
+# on a 64 KiB boundary (`module_row_base`). Any other row is refused, never
+# guessed at: a hex value made only of digits also reads as decimal.
 _MODULE_ROW = re.compile(r"^(\S+)\s.*?\s0x([1-9][0-9]*)\s+0x([1-9][0-9]*)\s+0x([1-9][0-9]*)\s*$")
+# Any row ending in three `0x` columns, readable or not.
+_MODULE_ROW_SHAPE = re.compile(r"^\S+\s.*\s0x\S+\s+0x\S+\s+0x\S+\s*$")
+# Windows maps an image at a multiple of its allocation granularity, 64 KiB.
+_IMAGE_ALIGNMENT = 0x10000
 # x64dbg's bplist row: `<enabled>:<type>:<address>[:"<name>"]`, the first
 # field 1 for an enabled breakpoint and 0 for a disabled one, the type `HW` for
 # a hardware breakpoint.
@@ -1381,18 +1385,33 @@ _BPLIST_ROW = re.compile(r"^\s*(\d+):([^:\s]+):([0-9A-Fa-f]+)(?::|\s|$)")
 # One instruction row of the plugin's ReadDismAtAddress listing: the address,
 # then the instruction's bytes as `48-89-5C`, then its text.
 _LISTING_ROW = re.compile(r"^\s*(?:0x)?([0-9A-Fa-f]{8,16})\s+((?:[0-9A-Fa-f]{2}-)*[0-9A-Fa-f]{2})(?:\s|$)")
-# What the plugin's ExecuteDbgCommand answers when x64dbg printed nothing. At
-# the pinned commit its capture helper never returns blank: with no output it
-# returns PLUGIN_EXEC_SILENT_OK, or PLUGIN_EXEC_FAILED when the command could
-# not be queued to x64dbg's command thread (DotNetPlugin.Impl/Plugin.Commands.cs:589);
-# a command x64dbg ran and rejected arrives as `Result: <its text>` instead. And
-# ExecuteDbgCommand wraps any non-blank text as `Result: <text>` (:2914-2917).
-# So a successful silent command reads `Result: <PLUGIN_EXEC_SILENT_OK>`; the
-# bare `_QUEUED_REPLY` form is what ExecuteDbgCommand would give for a blank
+# What the plugin's ExecuteDbgCommand answers. At the pinned commit it returns
+# whatever reached x64dbg's log while the command ran (it redirects the log to
+# a file around the command and reads the file back), behind `Result: `
+# (DotNetPlugin.Impl/Plugin.Commands.cs:534-599, :2914-2917). With nothing
+# captured it returns PLUGIN_EXEC_SILENT_OK, or PLUGIN_EXEC_FAILED when the
+# command could not be queued to x64dbg's command thread (:589); a command
+# x64dbg ran and rejected arrives as `Result: <its text>` instead. The bare
+# `_QUEUED_REPLY` form is what ExecuteDbgCommand would give for a blank
 # capture, kept in case a later plugin returns one.
 PLUGIN_EXEC_SILENT_OK = "Command executed successfully (no output captured)"
 PLUGIN_EXEC_FAILED = "Command execution failed (no output captured)"
 _QUEUED_REPLY = re.compile(r"^Command '.*' executed successfully\.?$", re.S)
+# The plugin also writes its own echo of each ExecuteDbgCommand call to that
+# same log (its console is x64dbg's log) just before it starts the capture,
+# and the echo still lands in it ahead of anything x64dbg printed: measured
+# live on 2026-10-10, all five lines for one call and only the last for
+# another. `plugin_echo` is those five lines; any tail of them is the
+# plugin talking, not x64dbg.
+_ECHO_RULE = "-" * 40
+
+
+def plugin_echo(command: str) -> list[str]:
+    """The lines the pinned plugin writes to x64dbg's log for one
+    ExecuteDbgCommand call, in order: a rule, the method, the command, a
+    rule, and the line it writes as it hands the command to x64dbg."""
+    return [_ECHO_RULE, f"METHOD: {PLUGIN_EXECUTE}", f"command: {command}", _ECHO_RULE,
+            f"Executing DbgCmdExec: {command}"]
 # The most bytes `expect_bytes` may carry.
 EXPECT_BYTES_MAX = 32
 
@@ -1405,16 +1424,22 @@ def _reply_body(reply: str) -> str:
     return text.strip()
 
 
-def silent_reply_ok(reply: str) -> bool:
-    """Whether a reply to a command x64dbg prints nothing for on success (the
-    `Set*` steps) says it printed nothing: exactly the plugin's no-output
-    success text, its bare queued form, or blank. Any other text is something
-    x64dbg printed, which for these commands is their failure, and so is the
-    plugin's PLUGIN_EXEC_FAILED."""
+def silent_reply_ok(reply: str, command: str) -> bool:
+    """Whether a reply to `command`, one x64dbg prints nothing for on success
+    (the `Set*` steps), says x64dbg printed nothing: exactly the plugin's
+    no-output success text, its bare queued form, blank, or a capture holding
+    only a tail of the plugin's own echo of this very command, in order. Any
+    other line is something x64dbg printed, which for these commands is their
+    failure, and so is the plugin's PLUGIN_EXEC_FAILED."""
     text = reply.strip()
     if _QUEUED_REPLY.match(text):
         return True
-    return _reply_body(text) in ("", PLUGIN_EXEC_SILENT_OK)
+    body = _reply_body(text)
+    if body in ("", PLUGIN_EXEC_SILENT_OK):
+        return True
+    lines = [ln.rstrip() for ln in body.splitlines() if ln.strip()]
+    echo = plugin_echo(command)
+    return any(lines == echo[k:] for k in range(len(echo)))
 
 
 def command_refusal(command: str) -> str | None:
@@ -1537,15 +1562,16 @@ class Tools:
 
     def _execute(self, command: str, silent: bool = False) -> str:
         """One command through the plugin. With `silent`, for a command x64dbg
-        prints nothing for when it succeeds (the `Set*` steps): any output at
-        all, which the plugin hands back as `Result: <text>`, is its failure."""
+        prints nothing for when it succeeds (the `Set*` steps): any output
+        beyond the plugin's own echo of the call, which the plugin hands back
+        as `Result: <text>`, is its failure."""
         text, is_error = self.plugin.call_checked(PLUGIN_EXECUTE, {"command": command})
         stripped = text.strip()
         if is_error or stripped.lower().startswith(("error", "exception")) or _reply_body(stripped) == PLUGIN_EXEC_FAILED:
             raise PluginError(f"{command!r}: {text}")
-        if silent and not silent_reply_ok(stripped):
-            raise PluginError(f"`{command}` printed: {stripped} (it prints nothing when it succeeds, so that "
-                              "output is its failure)")
+        if silent and not silent_reply_ok(stripped, command):
+            raise PluginError(f"`{command}` printed: {stripped} (beyond the plugin's own echo of the call, it "
+                              "prints nothing when it succeeds, so that output is its failure)")
         return text
 
     def _still_running(self) -> str | None:
@@ -1596,7 +1622,8 @@ class Tools:
             if row is not None:
                 raise Refused("module_row_unreadable",
                               f"{m.group(1)!r} has a row in the plugin's module list, but not in the format the "
-                              f"pinned plugin prints (decimal base, end and size behind 0x, end = base + size), "
+                              f"pinned plugin prints (decimal base, end and size behind 0x, end = base + size, "
+                              f"base on a 64 KiB boundary), "
                               f"so no base was read from it rather than a wrong one: {row!r}")
             raise Refused("no_such_module", f"{m.group(1)!r} is not in the plugin's module list")
         return base + int(m.group(2), 16)
@@ -1769,8 +1796,14 @@ class Tools:
             text, is_error = self.plugin.call_checked(PLUGIN_MODULES)
         except PluginError as e:
             return _refusal("modules", "plugin", str(e))
-        return {"ok": not is_error, "tool": "modules", "reply": text,
-                "bases": {k: f"0x{v:X}" for k, v in module_bases(text).items()}}
+        result = {"ok": not is_error, "tool": "modules", "reply": text,
+                  "bases": {k: f"0x{v:X}" for k, v in module_bases(text).items()},
+                  "unreadable": unreadable_module_rows(text)}
+        if result["unreadable"]:
+            result["note"] = ("these rows are not in the pinned plugin's format (decimal base, end and size behind "
+                              "0x, end = base + size, base on a 64 KiB boundary), so no base was read from them; "
+                              "an address in one of these modules is refused with module_row_unreadable")
+        return result
 
     def disasm(self, address: str, byte_count: int = 64) -> dict[str, Any]:
         gate = self._gate("disasm")
@@ -1802,18 +1835,40 @@ class Tools:
         return {"tool": "detach", **reply, **session_summary(self.cfg)}
 
 
+def module_row_base(line: str) -> tuple[str, int] | None:
+    """(lower-cased name, base) from one row of GetAllModulesFromMemMap's
+    table in the pinned plugin's format (`_MODULE_ROW`), or None. Besides the
+    format and end == base + size, the base must sit on a 64 KiB boundary, as
+    every image Windows maps does: an unpadded hex rendering made only of the
+    digits 0-9 with no carry from base to end (0x180000000 0x180001000 0x1000)
+    passes the other two rules under a decimal reading, and its decimal
+    misreading (180000000, 0xABA9500) is not on one."""
+    m = _MODULE_ROW.match(line.strip())
+    if not m:
+        return None
+    base, end, size = (int(g, 10) for g in m.group(2, 3, 4))
+    if end != base + size or base % _IMAGE_ALIGNMENT:
+        return None
+    return m.group(1).lower(), base
+
+
 def module_bases(text: str) -> dict[str, int]:
     """Lower-cased module name -> base, from GetAllModulesFromMemMap's table,
-    for each row in the pinned plugin's format (`_MODULE_ROW`). A row in any
-    other format gives no base."""
+    for each row `module_row_base` reads. A row in any other format gives no
+    base."""
     out = {}
     for line in text.splitlines():
-        m = _MODULE_ROW.match(line.strip())
-        if m:
-            base, end, size = (int(g, 10) for g in m.group(2, 3, 4))
-            if end == base + size:
-                out[m.group(1).lower()] = base
+        row = module_row_base(line)
+        if row:
+            out[row[0]] = row[1]
     return out
+
+
+def unreadable_module_rows(text: str) -> list[str]:
+    """The table's rows that end in three `0x` columns, as a module row does,
+    but that `module_row_base` does not read: present, and refused."""
+    return [line.strip() for line in text.splitlines()
+            if _MODULE_ROW_SHAPE.search(line) and module_row_base(line) is None]
 
 
 def module_row(text: str, name: str) -> str | None:
@@ -1965,7 +2020,12 @@ def tool_cli(cfg: Config, name: str, raw: str | None) -> int:
         params = ", ".join(inspect.signature(method).parameters) or "no arguments"
         print(f"x64dbg_mcp tool: {name} takes {params}; {e}", file=sys.stderr)
         return 2
-    reply = method(**args)
+    try:
+        reply = method(**args)
+    except (TypeError, ValueError) as e:
+        # the names bound, a value did not (`{"after": "x"}`)
+        print(f"x64dbg_mcp tool: {name} could not take {raw}: {type(e).__name__}: {e}", file=sys.stderr)
+        return 2
     print(json.dumps(reply, default=str))
     return 0 if reply.get("ok") is True else 1
 

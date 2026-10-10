@@ -164,11 +164,11 @@ the set, and each is named `mcp__x64dbg__<tool>` on an agent's `tools:` line:
 | Tool | What it does |
 |---|---|
 | `mcp__x64dbg__status` | session state (`none`, `attaching`, `attach-unconfirmed`, `running`, `detaching`, `ended`, `detach-unconfirmed`), the target pid, whether the keeper and headless are alive, whether the plugin answers on loopback, and the hs-drive lease state |
-| `mcp__x64dbg__logpoint` | adds one non-breaking hardware logging breakpoint: an `address` (an x64dbg expression such as `Hero_Siege.exe+427460`), a `log` format string (`{` `}` allowed, `"` refused), an optional log condition, an optional name, and an optional `expect_bytes`: the function's first bytes as Ghidra's copy has them, in hex. It first reads the code at the address and returns its first bytes; with `expect_bytes` a mismatch is refused before anything is paused or set. Then it pauses the debuggee, sets the hardware breakpoint (`bph`), its log text and optional log condition, sets its break condition to `0` so it never breaks, reads `bplist` back from the session log, sends `run`, and after the settle time asks again whether the game is running. It reports ok only when the read-back lists the resolved address as an enabled hardware breakpoint, every `Set*` step printed nothing, and the game is still running. On any failure after the pause it clears that breakpoint and still sends `run`: it never leaves the game paused |
+| `mcp__x64dbg__logpoint` | adds one non-breaking hardware logging breakpoint: an `address` (an x64dbg expression such as `Hero_Siege.exe+427460`), a `log` format string (`{` `}` allowed, `"` refused), an optional log condition, an optional name, and an optional `expect_bytes`: the function's first bytes as Ghidra's copy has them, in hex. It first reads the code at the address and returns its first bytes; with `expect_bytes` a mismatch is refused before anything is paused or set. Then it pauses the debuggee, sets the hardware breakpoint (`bph`), its log text and optional log condition, sets its break condition to `0` so it never breaks, reads `bplist` back from the session log, and sends `run`. That first `run` must itself report RUNNING; any other answer means the breakpoint broke on a hit, and `logpoint` fails with stage `running`. After a RUNNING it waits the settle time and asks again. It reports ok only when the read-back lists the resolved address as an enabled hardware breakpoint, x64dbg printed nothing for any `Set*` step (the plugin's own echo of the call aside), and both runs reported RUNNING. On any failure after the pause it clears that breakpoint and still sends `run`: it never leaves the game paused. The game is paused for about 3.4 s per plugin command, so 10 to 17 s per call (§ "Breakpoint rules") |
 | `mcp__x64dbg__command` | one allowlisted x64dbg command, sent on headless's stdin (not through the plugin, § "Breakpoint rules"): delete, enable or disable a hardware breakpoint, name it, set its log condition, reset its hit count, or `bplist`. It returns the log lines that followed. Everything else is refused, naming the allowlist: in particular a new hardware breakpoint (use `logpoint`), every software or memory breakpoint, setting a breakpoint command, `StopDebug`, `detach`, `exit`, memory writes, and any command with a `;` outside a double-quoted string. Reading a hit count is not on the list: x64dbg's `GetHardwareBreakpointHitCount` sets `$result` and, as far as is known, prints nothing, so it would answer ok with no number |
 | `mcp__x64dbg__bplist` | sends `bplist` and returns the log lines it produced |
 | `mcp__x64dbg__log` | the session log's lines after a given line number (by default the last 200), with the total line count, so logging-breakpoint hits can be paged |
-| `mcp__x64dbg__modules` | the loaded modules from the memory map; gives `Hero_Siege.exe`'s base |
+| `mcp__x64dbg__modules` | the loaded modules from the memory map; gives `Hero_Siege.exe`'s base. `bases` holds only rows in the pinned plugin's format (decimal behind `0x`, § "Breakpoint rules"); a row in any other format is listed under `unreadable`, with a note, and an address in that module is refused with `module_row_unreadable` |
 | `mcp__x64dbg__disasm` | disassembly at an address, for checking that an address maps to the function Ghidra names (it stays local; § "What stays local") |
 | `mcp__x64dbg__detach` | the teardown in § "Attach, the keeper, and teardown", through the keeper |
 
@@ -239,12 +239,16 @@ These come from the 2026-10-10 probes recorded on issue #484.
   2026-10-10: the game's row read `0x140694867017728 0x140695154032640
   0x287014912`, which is base `0x7FF613920000`. So `modules` and every
   `<module>+<offset>` address read those columns as decimal, and only a row
-  whose three columns are decimal with no leading zero and whose end equals
-  base plus size. A row in any other format (a later plugin build, a hex
-  rendering) gives no base: `resolve`, and so `logpoint` and `disasm`, refuse
-  with `module_row_unreadable`, quoting the row, rather than guess between
-  hex and decimal and misresolve. A module with no row at all is
-  `no_such_module`. The other plugin outputs the tool parses (the
+  whose three columns are decimal with no leading zero, whose end equals
+  base plus size, and whose base sits on a 64 KiB boundary, as every image
+  Windows maps does. The last rule catches an unpadded hex rendering made only
+  of the digits 0-9 with no carry from base to end (`0x180000000 0x180001000
+  0x1000` reads as a decimal sum too, but 180000000 is not on a boundary). A
+  row in any other format (a later plugin build, a hex rendering) gives no
+  base: `resolve`, and so `logpoint` and `disasm`, refuse with
+  `module_row_unreadable`, quoting the row, rather than guess between hex and
+  decimal and misresolve, and `modules` lists the row under `unreadable`. A
+  module with no row at all is `no_such_module`. The other plugin outputs the tool parses (the
   `ReadDismAtAddress` listing) are hex, as before.
 - **Two guards keep a logpoint from pausing the game.** x64dbg prints nothing
   when a `Set*` step succeeds. At the pinned commit the plugin never hands back
@@ -252,10 +256,23 @@ These come from the 2026-10-10 probes recorded on issue #484.
   executed successfully (no output captured)`, and `Result: Command execution
   failed (no output captured)` when the command could not be queued to
   x64dbg's command thread (a command x64dbg ran and rejected arrives as
-  `Result: <its text>` instead). So the first is a `Set*` step's success, and
-  any other output fails the logpoint, and its breakpoint is cleared. That
-  output can be a rejected never-break condition, and the second form fails
-  every command. Then the game's own answers are checked. The plugin's `run`
+  `Result: <its text>` instead). What the plugin hands back is everything that
+  reached x64dbg's log while the command ran, and the plugin writes its own
+  echo of each call to that log (a rule, `METHOD: ExecuteDbgCommand`,
+  `command: <the command>`, a rule, `Executing DbgCmdExec: <the command>`)
+  just before. Live 1 of `tooling-484-x64dbg-mcp-live-fixes` (2026-10-10)
+  found that echo inside the reply: all five lines for one call, only the
+  last for another, and x64dbg printed nothing after it. So a `Set*` step
+  succeeds on the first form, or on a reply holding only a tail of the echo
+  of that very command, in order. Any other line fails the logpoint, and its
+  breakpoint is cleared: a rejected never-break condition, an echo of another
+  command, and the second form, which fails every command. Live 1 read the
+  echo as a failure, refused both logpoints at stage `set`, and is why the
+  stand-in now answers with it. One gap stays: a step the plugin could not
+  queue while the echo was captured reads as a success, because the plugin
+  returns the capture and drops the queue result; the `bplist` read-back
+  below still catches it for `bph`, not for a `Set*` step. Then the game's own
+  answers are checked. The plugin's `run`
   reports RUNNING only when x64dbg still says the game runs about 250 ms after
   the run command, so the first `run` after arming that reports anything else
   (PAUSED) is direct evidence that the breakpoint broke on a hit: `logpoint`
@@ -266,6 +283,23 @@ These come from the 2026-10-10 probes recorded on issue #484.
   sees only a breakpoint hit within about 250 ms after either plugin `run`
   (the plugin's own re-check delay). For a rarely called function, a pause
   that comes later shows as the game freezing: `detach` ends it.
+- **A logpoint pauses the game for 10 to 17 seconds.** Read from the pinned
+  source: the plugin's `ExecuteDbgCommand` waits 3 s for x64dbg's output
+  after each command, plus about 150 ms around its log redirect, so each
+  plugin command costs about 3.4 s, and `logpoint` sends them while the game
+  is paused: `bph`, `SetHardwareBreakpointLog` and
+  `SetHardwareBreakpointCondition` always (about 10 s), plus one each for a
+  name and a log condition (about 13.5 s with a name, 17 s with both). Not
+  yet measured as a frame time. A failure after the
+  pause adds the `bphc` that clears the breakpoint. ForgePact's incident
+  monitor counts each such pause as a freeze episode, so take `incident
+  stat` right after each `logpoint`, not only before it, or a slowdown check
+  over a later window counts the logpoint's own pause. In live 1 of
+  `tooling-484-x64dbg-mcp-live-fixes` the episodes went from 2 after attach
+  to 4 after two logpoints that failed at stage `set` (pause, `bph`, one
+  `Set*` step, `bphc`: about 10 s each), with a worst judged frame of
+  12032 ms. Those pauses fit that worst frame, but no `incident stat` was
+  taken between the two, so which episode it was is not established.
 - **Keep the control armed while a candidate's zero is read.** Clear
   candidates to free a debug register, never the control: a zero with no
   control logging in the same window measured nothing.
@@ -434,15 +468,22 @@ listed but disabled fails), its `Set*` output check, its re-check that the
 game kept running, its `expect_bytes` refusal and always-`run` failure path,
 the `command` allowlist and its stdin route, the CLI `tool` route (the reply
 as JSON, exit by `ok`, exit 2 for a name outside the eight or arguments it
-cannot take), and the `.mcp.json` and Codex wiring.
+cannot take, by name or by type), and the `.mcp.json` and Codex wiring.
 
 The stand-in plugin prints the module table as the pinned plugin does,
 decimal behind `0x`; for nine rounds it printed padded hex, which is how a
 wrong live resolve passed every test. A regression test feeds live 1's
 `hero_siege.exe` row verbatim and resolves `Hero_Siege.exe+427460` to
 `0x7FF613D47460` through the stand-in, and its negative control serves the
-hex table and expects `module_row_unreadable`, not a base. Two stand-in modes
-cover the game's answers: `paused_runs` answers PAUSED to chosen plugin `run`
+hex table and expects `module_row_unreadable`, not a base, with an unpadded,
+all-digit hex row (refused by the 64 KiB rule) and `modules`' `unreadable`
+list beside it. The stand-in answers `ExecuteDbgCommand` as the pinned plugin
+does, with its echo of the call ahead of what x64dbg printed: by default all
+five lines, as live 1 measured, and in its `echo` mode only the last line or
+none. A regression test feeds live 1's `SetHardwareBreakpointLog` reply
+verbatim and expects success, beside negative controls (an x64dbg line after
+the echo, another command's echo, the echo out of order), and `logpoint` is
+run once per echo shape. Two stand-in modes cover the game's answers: `paused_runs` answers PAUSED to chosen plugin `run`
 calls after arming (the first, for `logpoint`'s first-run check; the second,
 for its re-check), and `never_running` never reports RUNNING, for the
 keeper's unconfirmed resume. A guard fails any URL fetch that is not
