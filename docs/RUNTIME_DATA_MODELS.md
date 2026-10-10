@@ -1472,7 +1472,9 @@ On the 2026-09-11 build the closures were `m_QuestUseKey` `anon@1400`,
   nothing. `mouse_x_prev`/`mouse_y_prev` track the cursor in screen space and are
   overwritten by the device within 1–2 frames; `mouse_x`/`mouse_y` have no runtime
   handle at all. Input cannot be simulated by writing these. **Measured
-  2026-09-10.**
+  2026-09-10.** (That is as instance variables; read as built-in variables,
+  `mouse_x`/`mouse_y` answer in room coordinates, § 19.5, measured
+  2026-10-10.)
 
 [pet-quest B4, Phase 0 checklist](../ForgePact/docs/pet-quest-collector-b4-research.md#phase-0-checklist-status-plan-5)
 
@@ -4546,7 +4548,9 @@ are not, and are written "Live 1 run Jn" here.
 What the v2.2.1 hotfix's first live session (ForgePact #206) measured about
 the game on 2026-10-09, on the shipped ForgePact 2.2.0 player plugin, slot 14
 ("Sorak"), in `Town_01_rm` and in `Act_01_01` (the Outskirts of Inoya).
-Curated entries J16 to J21. Positions are `menulayout Player_obj`'s `gui=`
+Curated entries J16 to J21. The second live session (2026-10-10, the 2.2.1
+player build, same character, `Town_01_rm` and `Act_01_01` again) added
+curated J22 to J27. Positions are `menulayout Player_obj`'s `gui=`
 reads, which are room coordinates; the operator converted a screen point to
 the room as room = view origin + screen ÷ 2 (`menulayout`'s `view=`, a
 1280 × 720 view under a 2560 × 1440 GUI).
@@ -4556,19 +4560,33 @@ the room as room = view origin + screen ÷ 2 (`menulayout`'s `view=`, a
   away, the player ended at (911.0, 910.8): 88.8 px, about 11 px short of the
   cursor. In `Act_01_01`, from (2031.8, 3966.0) with the cursor at (2131.5,
   3916.0), 111.5 px away, the player ended at (2129.8, 3909.7): 113.0 px,
-  about 6.5 px from it. **Measured.** The length follows the cursor distance
-  up to a maximum; the longest jump measured for this character was 189.8 px
-  (below), so that maximum is at least about 190 px, and it is **not
-  measured**. 19.4's 175 px open-ground jump and 125 px crossing fit the same
-  rule with the cursor at different distances; that session did not record
-  its cursor, so for it this is a reading. Whether the game takes the target
-  from `mouse_x` / `mouse_y` or an aim value of its own is **not
-  established** (`skillsLeap` does not decompile in the unanalysed import).
+  about 6.5 px from it. **Measured.** The second session repeated the town
+  jump and ended at the same point, (911.0, 910.8) (J24). The length follows
+  the cursor distance up to a maximum. **The maximum, measured**: from
+  (912.0, 822.0) with the cursor at (912, 1122), 300 px away, the player
+  moved 246.3 px to (911.2, 1068.3), 53.7 px short of the cursor (J25), so
+  this character's longest jump is about **246 px**, from one jump. How it
+  depends on Jump Power is **not measured** (Jump Power was not read).
+  19.4's 175 px open-ground jump and 125 px crossing fit the same rule with
+  the cursor at different distances; that session did not record its
+  cursor, so for it this is a reading.
+- **`mouse_x` / `mouse_y` read in room coordinates.** Read by name as
+  built-in variables through ForgePact's `GetBuiltin`, they gave the room
+  point the mouse had been moved to within 1 px on each axis, on four aims in
+  two rooms (J22). **Measured.** The jump ends within about 11 px of that
+  point. Whether the game itself takes the target from `mouse_x` / `mouse_y`
+  or from an aim value of its own is **not established** (`skillsLeap` does
+  not decompile in the unanalysed import). `device_mouse_x` was not read.
 - **`Player_obj` gets a new instance id on a room change.** 261723 in
   `Town_01_rm`, 297089 in `Act_01_01` after walking from the Town of Inoya
-  into the Outskirts of Inoya. **Measured.** Anything keyed on the player's
-  instance id is new in every room.
-- **`Act_01_01`'s `room_width` × `room_height` is 18272 × 8704.** **Measured.**
+  into the Outskirts of Inoya; again in the second session, 261723 in town
+  and 306593 in `Act_01_01` after taking the town waypoint (J26).
+  **Measured.** Anything keyed on the player's instance id is new in every
+  room.
+- **`Act_01_01`'s room size changes between visits.** `room_width` ×
+  `room_height` read 18272 × 8704 on 2026-10-09 and 15296 × 12960 on
+  2026-10-10 (J18, J26). **Measured.** A position in the Outskirts of Inoya
+  does not carry over to another visit.
 - **Outdoor scenery.** In `Act_01_01`, a jump beside a large tree with the
   cursor beyond it (at (1901.5, 3867.5), 163.3 px from the take-off) did not
   move the player (0 px), as 19.2's town prop; a jump beside a rock with the
@@ -4576,10 +4594,18 @@ the room as room = view origin + screen ÷ 2 (`menulayout`'s `view=`, a
   3991.9), 189.8 px. Both with the mod off. **Measured.** So a rock does not
   necessarily stop a jump while a large tree does; the props were the owner's
   choice and are not identified by object. Whether the tree blocks through
-  the five builtins of 19.2 was not reached (the 2.2.0 mod refused the jump
-  itself), so it is **not established**.
+  the five builtins of 19.2 was not reached in that session (the 2.2.0 mod
+  refused the jump itself).
+- **A large tree outdoors blocks through the five builtins of 19.2.** In the
+  second session, beside another large tree in `Act_01_01` at (10640, 6965)
+  with the cursor 199 px east past it, a jump with the mod off moved 0 px;
+  with the 2.2.1 mod answering the player's blocked family queries "no
+  collision" (1133 answers), the same jump moved 197.7 px toward the cursor
+  and ended on open ground (J27). **Measured** for that tree; the tree is
+  not identified by object.
 
-[Hotfix live 1 results](../ForgePact/docs/jump-scenery-research.md#hotfix-live-1-results)
+[Hotfix live 1 results](../ForgePact/docs/jump-scenery-research.md#hotfix-live-1-results);
+[Hotfix live 2 results](../ForgePact/docs/jump-scenery-research.md#hotfix-live-2-results)
 
 ---
 
