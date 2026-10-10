@@ -315,7 +315,9 @@ and the `.mcp.json` and Codex wiring. A guard fails any URL fetch that is not
 `127.0.0.1` and any subprocess the test did not expect, and a test proves the
 guard trips: no network, no download, no clone, no MSBuild, no real x64dbg,
 game or lease. The stdio round trip needs the `mcp` package and skips without
-it, as do the Windows-only parts on CI, each with a named reason.
+it, naming the reason. Nothing else skips: the one platform-specific test, how
+the keeper is detached, checks the Windows creation flags on Windows and
+`start_new_session` elsewhere.
 
 `py -3 -m unittest tests.test_x64dbg_agent_tools -v` pins `live-operator`'s
 `tools:` line to exactly `mcp__x64dbg__` plus each name in

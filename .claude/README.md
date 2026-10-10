@@ -1368,7 +1368,9 @@ an edit somewhere else. Each skip names its reason.
 The two `test_x64dbg_*` suites run on fixtures and fakes too: a stand-in
 plugin on `127.0.0.1`, a fake headless, and a guard that fails any non-loopback
 fetch or unexpected subprocess. On CI, which has neither `mcp` nor Windows,
-only the stdio round trip and the Windows-only parts skip, each naming why.
+only the stdio round trip skips, naming why; the one test that checks how the
+keeper is detached asserts the Windows creation flags or the POSIX
+`start_new_session`, whichever platform it runs on.
 
 **`.claude/workflows/*.js` and `*.mjs` must stay LF.** `.gitattributes` forces
 `text eol=lf` on both globs: the Workflow tool's permission handler refuses to
