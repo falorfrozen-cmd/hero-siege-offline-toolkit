@@ -4573,8 +4573,9 @@ the room as room = view origin + screen ÷ 2 (`menulayout`'s `view=`, a
 - **`mouse_x` / `mouse_y` read in room coordinates.** Read by name as
   built-in variables through ForgePact's `GetBuiltin`, they gave the room
   point the mouse had been moved to within 1 px on each axis, on four aims in
-  two rooms (J22). **Measured.** The jump ends within about 11 px of that
-  point. Whether the game itself takes the target from `mouse_x` / `mouse_y`
+  two rooms (J22). **Measured.** For a cursor within the jump's maximum, the
+  jump ends within about 11 px of that point (J23, J24); beyond it the jump
+  stops at the maximum (J25, 53.7 px short). Whether the game itself takes the target from `mouse_x` / `mouse_y`
   or from an aim value of its own is **not established** (`skillsLeap` does
   not decompile in the unanalysed import). `device_mouse_x` was not read.
 - **`Player_obj` gets a new instance id on a room change.** 261723 in
