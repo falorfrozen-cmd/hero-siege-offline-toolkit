@@ -182,16 +182,18 @@ class StandInPlugin:
     The failure modes it can play: `false_success` (a `bph` reported done that
     x64dbg never set), `listed_as` (the bplist row's enabled flag and type),
     `fail_condition` (x64dbg prints an error for the never-break condition),
-    `condition_ignored` (it prints nothing, yet the game pauses once a
-    breakpoint is armed)."""
+    `fail_queue` (the plugin could not queue a `Set*` step and printed
+    nothing), `condition_ignored` (it prints nothing, yet the game pauses once
+    a breakpoint is armed)."""
 
     def __init__(self, record: Path, bps: Path, *, sse=False, false_success=False, never_detach=False,
                  never_ready=False, debugging=None, execute_arg="command", listed_as=(1, "HW"),
-                 fail_condition=False, condition_ignored=False):
+                 fail_condition=False, condition_ignored=False, fail_queue=False):
         self.record, self.bps = record, bps
         self.sse, self.false_success, self.never_detach = sse, false_success, never_detach
         self.never_ready, self.forced, self.execute_arg = never_ready, debugging, execute_arg
         self.listed_as, self.fail_condition, self.condition_ignored = listed_as, fail_condition, condition_ignored
+        self.fail_queue = fail_queue
         self.calls: list[tuple[str, dict]] = []
         self.sessions: list[str | None] = []
         self.addrs: list[int] = []
@@ -285,7 +287,12 @@ class StandInPlugin:
             self.bps.write_text(json.dumps([[*self.listed_as, a] for a in self.addrs]), encoding="utf-8")
             if self.fail_condition and cmd.startswith("SetHardwareBreakpointCondition"):
                 return f"Result: Can't set break condition on breakpoint \"{cmd.split()[1].rstrip(',')}\"", False
-            return f"Command '{cmd}' executed successfully.", False
+            if self.fail_queue and cmd.startswith("Set"):
+                return f"Result: {xm.PLUGIN_EXEC_FAILED}", False
+            # The pinned plugin's reply when x64dbg printed nothing: its
+            # capture helper never returns blank, so this, not the bare
+            # "Command '<cmd>' executed successfully.", is what success reads as.
+            return f"Result: {xm.PLUGIN_EXEC_SILENT_OK}", False
         if name == xm.PLUGIN_MODULES:
             return MODULE_TABLE, False
         if name == xm.PLUGIN_PAUSE:
@@ -1198,6 +1205,27 @@ class FalseSuccessTests(SessionMixin, unittest.TestCase):
         sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
         self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
         self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
+
+    def test_false_success_a_set_step_the_plugin_could_not_queue_is_not_ok(self):
+        cfg, plugin, _, _, _ = self.start_session(fail_queue=True)
+        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["stage"], "set")
+        self.assertIn(xm.PLUGIN_EXEC_FAILED, result["detail"])
+        sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
+        self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
+        self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
+
+    def test_false_success_silent_step_replies_by_shape(self):
+        # Success: what the pinned plugin returns when x64dbg printed nothing,
+        # plus the two blank forms its ExecuteDbgCommand could give.
+        for ok in (f"Result: {xm.PLUGIN_EXEC_SILENT_OK}", "Command 'SetHardwareBreakpointName 0x1, \"a\"' "
+                   "executed successfully.", "Result:", "", f"  Result: {xm.PLUGIN_EXEC_SILENT_OK}\r\n"):
+            self.assertTrue(xm.silent_reply_ok(ok), ok)
+        # Failure: anything x64dbg printed, and the plugin's own could-not-queue reply.
+        for bad in (f"Result: {xm.PLUGIN_EXEC_FAILED}", "Result: Can't set break condition on breakpoint \"0x1\"",
+                    f"Result: {xm.PLUGIN_EXEC_SILENT_OK}\nCan't set log text", "Result: Command executed"):
+            self.assertFalse(xm.silent_reply_ok(bad), bad)
 
     def test_false_success_a_breakpoint_that_pauses_the_game_is_cleared(self):
         cfg, plugin, _, _, _ = self.start_session(condition_ignored=True)

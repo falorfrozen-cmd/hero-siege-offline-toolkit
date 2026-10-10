@@ -215,9 +215,14 @@ These come from the 2026-10-10 probes recorded on issue #484.
   A function ForgePact detours starts with the detour's jump in the live
   process, not with Ghidra's bytes, so expect a mismatch there.
 - **Two guards keep a logpoint from pausing the game.** x64dbg prints nothing
-  when a `Set*` step succeeds. So any output from one, which the plugin hands
-  back as `Result: <text>`, fails the logpoint, and its breakpoint is cleared.
-  That output can be a rejected never-break condition. After the final `run`,
+  when a `Set*` step succeeds. At the pinned commit the plugin never hands back
+  a blank reply: when x64dbg printed nothing it answers `Result: Command
+  executed successfully (no output captured)`, and `Result: Command execution
+  failed (no output captured)` when x64dbg would not take the command. So the
+  first is a `Set*` step's success, and any other output, which the plugin
+  hands back as `Result: <text>`, fails the logpoint, and its breakpoint is
+  cleared. That output can be a rejected never-break condition, and the
+  second form fails every command. After the final `run`,
   `logpoint` waits the settle time and sends `run` again: if the game reports
   paused, the condition did not take, and the breakpoint is cleared and the
   game resumed. The plugin offers no way to ask whether the game is running
@@ -284,7 +289,7 @@ py -3 -m tools.x64dbg_mcp detach           # exits 0 only on a confirmed detach
 process; the target is `Hero_Siege.exe` (with `--game`, none or several
 running is a refusal); x64dbg and the plugin are installed; and no session is
 already live. It then starts the detached keeper and returns once the keeper
-reports `running`, or failed.
+reports `running`, `attach-unconfirmed` (exit 1, below), or failed.
 
 - **x64dbg pauses the process on attach** until it is told to `run`. In the
   probe that was a 10.65 s freeze. A `run` sent before the attach completes

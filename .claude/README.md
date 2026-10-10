@@ -1345,7 +1345,7 @@ py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the machine-wid
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
 py -3 -m unittest tests.test_ghidra_mcp -v                     # the ghidra launcher: git refusal, loopback, stripped env, version check
 py -3 -m unittest tests.test_ghidra_agent_tools -v              # the phase agents' mcp__ghidra__* tools match AGENT_READ_TOOLS; no write or debugger tool
-py -3 -m unittest tests.test_x64dbg_mcp -v                     # the x64dbg launcher: git refusal, loopback, the two edits, build argv, lease, keeper, teardown, allowlist
+py -3 -m unittest tests.test_x64dbg_mcp -v                     # the x64dbg launcher: git refusal, loopback, the two edits, build argv, lease, keeper, attach-unconfirmed, teardown, allowlist, logpoint read-back and reply checks
 py -3 -m unittest tests.test_x64dbg_agent_tools -v              # live-operator alone carries mcp__x64dbg__*, exactly LIVE_OPERATOR_TOOLS
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```

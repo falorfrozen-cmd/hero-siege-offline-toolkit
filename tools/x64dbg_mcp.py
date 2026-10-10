@@ -1339,10 +1339,39 @@ _BPLIST_ROW = re.compile(r"^\s*(\d+):([^:\s]+):([0-9A-Fa-f]+)(?::|\s|$)")
 # One instruction row of the plugin's ReadDismAtAddress listing: the address,
 # then the instruction's bytes as `48-89-5C`, then its text.
 _LISTING_ROW = re.compile(r"^\s*(?:0x)?([0-9A-Fa-f]{8,16})\s+((?:[0-9A-Fa-f]{2}-)*[0-9A-Fa-f]{2})(?:\s|$)")
-# What the plugin's ExecuteDbgCommand answers when x64dbg printed nothing.
+# What the plugin's ExecuteDbgCommand answers when x64dbg printed nothing. At
+# the pinned commit its capture helper never returns blank: with no output it
+# returns PLUGIN_EXEC_SILENT_OK, or PLUGIN_EXEC_FAILED when x64dbg would not
+# take the command (DotNetPlugin.Impl/Plugin.Commands.cs:589), and
+# ExecuteDbgCommand wraps any non-blank text as `Result: <text>` (:2914-2917).
+# So a successful silent command reads `Result: <PLUGIN_EXEC_SILENT_OK>`; the
+# bare `_QUEUED_REPLY` form is what ExecuteDbgCommand would give for a blank
+# capture, kept in case a later plugin returns one.
+PLUGIN_EXEC_SILENT_OK = "Command executed successfully (no output captured)"
+PLUGIN_EXEC_FAILED = "Command execution failed (no output captured)"
 _QUEUED_REPLY = re.compile(r"^Command '.*' executed successfully\.?$", re.S)
 # The most bytes `expect_bytes` may carry.
 EXPECT_BYTES_MAX = 32
+
+
+def _reply_body(reply: str) -> str:
+    """An ExecuteDbgCommand reply without its `Result:` wrapper, stripped."""
+    text = reply.strip()
+    if text[:7].lower() == "result:":
+        text = text[7:]
+    return text.strip()
+
+
+def silent_reply_ok(reply: str) -> bool:
+    """Whether a reply to a command x64dbg prints nothing for on success (the
+    `Set*` steps) says it printed nothing: exactly the plugin's no-output
+    success text, its bare queued form, or blank. Any other text is something
+    x64dbg printed, which for these commands is their failure, and so is the
+    plugin's PLUGIN_EXEC_FAILED."""
+    text = reply.strip()
+    if _QUEUED_REPLY.match(text):
+        return True
+    return _reply_body(text) in ("", PLUGIN_EXEC_SILENT_OK)
 
 
 def command_refusal(command: str) -> str | None:
@@ -1467,10 +1496,10 @@ class Tools:
         prints nothing for when it succeeds (the `Set*` steps): any output at
         all, which the plugin hands back as `Result: <text>`, is its failure."""
         text, is_error = self.plugin.call_checked(PLUGIN_EXECUTE, {"command": command})
-        if is_error or text.lstrip().lower().startswith(("error", "exception")):
-            raise PluginError(f"{command!r}: {text}")
         stripped = text.strip()
-        if silent and not _QUEUED_REPLY.match(stripped) and stripped.lower() not in ("result:", ""):
+        if is_error or stripped.lower().startswith(("error", "exception")) or _reply_body(stripped) == PLUGIN_EXEC_FAILED:
+            raise PluginError(f"{command!r}: {text}")
+        if silent and not silent_reply_ok(stripped):
             raise PluginError(f"`{command}` printed: {stripped} (it prints nothing when it succeeds, so that "
                               "output is its failure)")
         return text
