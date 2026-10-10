@@ -32,11 +32,14 @@ quietly break:
   `bphc`, a settle at running, `detach`, confirm, `exit` and the outside
   check, which ends `game-not-released` when game threads stay suspended,
   never killing an unconfirmed headless;
-- `command`'s allowlist, sent on headless's stdin, and `logpoint`'s checks: a
-  plugin that says "executed successfully" for a breakpoint x64dbg never set,
-  a row listed but disabled, a never-break condition x64dbg rejected or that
-  did not take, a first `run` after arming that came back paused, and code
-  that differs from `expect_bytes` are none of them a pass;
+- `logpoint` and `command` never pause the game: no `pause` on stdin and no
+  plugin `PauseDebug`, `run` or `ExecuteDbgCommand`. They arm and change
+  hardware breakpoints through a hold, held at a hit of a logging breakpoint
+  when one is armed. A `bph` x64dbg reported set and never listed, a row
+  listed but disabled, a never-break condition x64dbg rejected or that did
+  not take (a break on it in the verification window), a game the outside
+  check does not read running, and code that differs from `expect_bytes` are
+  none of them a pass, and each is cleared;
 - the module table is read as the pinned plugin prints it (decimal behind
   `0x`, live 1's row verbatim), and a row in any other format is refused;
 - a keeper that never saw x64dbg settle at running leaves the session
@@ -210,42 +213,29 @@ CODE = (bytes.fromhex("4889542410"), bytes.fromhex("53"), bytes.fromhex("4883EC3
 class StandInPlugin:
     """The plugin's MCP endpoint, as far as this proxy uses it. Whether x64dbg
     is "debugging" follows the fake headless's stdin record, as the real
-    plugin follows x64dbg's state; breakpoints set through `bph` are what the
-    fake headless's `bplist` prints. Its `run` and `PauseDebug` answers touch
-    nothing the fake headless prints, except an `async_pause`: the keeper
-    never asks the plugin either, and reads x64dbg's state from the session
-    log.
+    plugin follows x64dbg's state. Breakpoints live in the fake headless
+    (`bps`, its list, which this stand-in never writes). It logs every call.
 
-    The failure modes it can play: `false_success` (a `bph` reported done that
-    x64dbg never set), `listed_as` (the bplist row's enabled flag and type),
-    `fail_condition` (x64dbg prints an error for the never-break condition),
-    `fail_queue` (the plugin could not queue a `Set*` step and printed
-    nothing), `condition_ignored` (it prints nothing, yet the game pauses once
-    a breakpoint is armed), `paused_runs` (which plugin `run` calls after the
-    latest `bph`, counted from 1, answer PAUSED; the rest answer RUNNING),
-    `module_table` (what GetAllModulesFromMemMap prints), `echo` (how much of
-    the plugin's own echo of an ExecuteDbgCommand call its reply carries:
-    `full`, the default and what live 1 measured, `tail` or `none`), and
-    `async_pause` (PauseDebug answers Live 2's "settling" text and the fake
-    headless breaks a few seconds later: the asynchronous pause)."""
+    No tool path calls its ExecuteDbgCommand, `run` or `PauseDebug` any more,
+    and the tests assert that; they answer as the pinned plugin does.
+    ExecuteDbgCommand replies with the plugin's own echo of the call (`echo`:
+    `full`, the default and what live 1 measured, `tail` or `none`). `run`
+    answers RUNNING and touches nothing. `PauseDebug` is asynchronous, as
+    Live 2 measured: it answers the "settling" text and leaves a request that
+    the fake headless turns into a break a few seconds later. `module_table`
+    is what GetAllModulesFromMemMap prints."""
 
     SETTLING = "Pause command sent but process may still be settling. Try again or use StepInto."
 
-    def __init__(self, record: Path, bps: Path, *, sse=False, false_success=False, never_detach=False,
-                 never_ready=False, debugging=None, execute_arg="command", listed_as=(1, "HW"),
-                 fail_condition=False, condition_ignored=False, fail_queue=False, paused_runs=(),
-                 module_table=MODULE_TABLE, echo="full", async_pause=False):
+    def __init__(self, record: Path, bps: Path, *, sse=False, never_detach=False, never_ready=False,
+                 debugging=None, execute_arg="command", module_table=MODULE_TABLE, echo="full"):
         self.record, self.bps = record, bps
-        self.echo, self.async_pause = echo, async_pause
-        self.sse, self.false_success, self.never_detach = sse, false_success, never_detach
+        self.echo = echo
+        self.sse, self.never_detach = sse, never_detach
         self.never_ready, self.forced, self.execute_arg = never_ready, debugging, execute_arg
-        self.listed_as, self.fail_condition, self.condition_ignored = listed_as, fail_condition, condition_ignored
-        self.fail_queue, self.paused_runs = fail_queue, tuple(paused_runs)
         self.module_table = module_table
-        self.runs_since_armed: int | None = None  # None until the first bph
         self.calls: list[tuple[str, dict]] = []
         self.sessions: list[str | None] = []
-        self.addrs: list[int] = []
         plugin = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -326,42 +316,15 @@ class StandInPlugin:
 
     def call(self, name, args):
         if name == xm.PLUGIN_EXECUTE:
-            cmd = args.get(self.execute_arg, "")
-            m = re.match(r"bph (0x[0-9A-Fa-f]+)", cmd)
-            if m and not self.false_success:
-                self.addrs.append(int(m.group(1), 16))
-                self.runs_since_armed = 0
-            m = re.match(r"bphc(?: (0x[0-9A-Fa-f]+))?$", cmd)
-            if m:
-                self.addrs = [a for a in self.addrs if m.group(1) and a != int(m.group(1), 16)]
-            self.bps.write_text(json.dumps([{"addr": a, "enabled": self.listed_as[0], "type": self.listed_as[1]}
-                                            for a in self.addrs]), encoding="utf-8")
-            if self.fail_queue and cmd.startswith("Set"):
-                # nothing reached x64dbg's log, so the plugin's could-not-queue text
-                return f"Result: {xm.PLUGIN_EXEC_FAILED}", False
-            printed = []
-            if cmd.startswith("bph "):
-                printed = [f"Hardware breakpoint at {int(cmd.split()[1].rstrip(','), 16):016X} set!"]
-            elif cmd.startswith("bphc"):
-                printed = ["Hardware breakpoint deleted!"]
-            elif self.fail_condition and cmd.startswith("SetHardwareBreakpointCondition"):
-                printed = [f"Can't set break condition on breakpoint \"{cmd.split()[1].rstrip(',')}\""]
-            return self._execute_reply(cmd, printed), False
+            return self._execute_reply(args.get(self.execute_arg, ""), []), False
         if name == xm.PLUGIN_MODULES:
             return self.module_table, False
         if name == xm.PLUGIN_PAUSE:
-            if self.async_pause:
-                # x64dbg's `pause` lands when a thread next runs the planted
-                # instruction: the fake headless breaks a few seconds later
-                (self.record.parent / "pause_request").write_text(str(time.time()), encoding="utf-8")
-                return self.SETTLING, False
-            # the address as the plugin prints the module table's: decimal behind 0x
-            return f"SUCCESS: Debuggee paused at 0x{GAME_BASE + 0x1000} (Hero_Siege.exe).", False
+            # x64dbg's `pause` lands when a thread next runs the planted
+            # instruction: the fake headless breaks a few seconds later
+            (self.record.parent / "pause_request").write_text(str(time.time()), encoding="utf-8")
+            return self.SETTLING, False
         if name == xm.PLUGIN_RUN:
-            if self.runs_since_armed is not None:
-                self.runs_since_armed += 1
-            if (self.condition_ignored and self.addrs) or self.runs_since_armed in self.paused_runs:
-                return "STATUS: PAUSED. Process resumed but hit an immediate breakpoint.", False
             return "STATUS: RUNNING. The target process is now in a running state.", False
         if name == xm.PLUGIN_DISASM:
             at = int(str(args.get("address")), 16)
@@ -1067,6 +1030,25 @@ class GateTests(unittest.TestCase):
                 result = self.tools.logpoint("0x1000", **kwargs)
                 self.assertEqual(result["reason"], "bad_argument", result)
 
+    def test_refuses_logpoint_while_x64dbg_is_not_running(self):
+        _fake_live_session(self.cfg)
+        _hold_lease()
+        state = xm.read_state(self.cfg)
+        code = bytes.fromhex("4889542410")
+        with mock.patch.object(xm.Tools, "resolve", return_value=0x7FF6A0427460), \
+                mock.patch.object(xm.Tools, "_code_at", return_value=code), \
+                mock.patch.object(xm, "keeper_request", side_effect=xm.Refused("keeper_gone", "stand-in")) as asked:
+            for settled in ("paused", None):
+                with self.subTest(x64dbg_state=settled):
+                    xm.write_json(self.cfg.state_file, {**state, "x64dbg_state": settled})
+                    result = self.tools.logpoint("0x7FF6A0427460", "hit")
+                    self.assertEqual(result["reason"], "not_running", result)
+            asked.assert_not_called()  # nothing reached the keeper
+            # the control: a running x64dbg passes, and the next step asks the keeper
+            xm.write_json(self.cfg.state_file, {**state, "x64dbg_state": "running"})
+            self.assertEqual(self.tools.logpoint("0x7FF6A0427460", "hit")["reason"], "keeper_gone")
+            asked.assert_called_once()
+
     def test_expect_bytes_parses_every_hex_spelling(self):
         for spelled in ("48 89 54 24 10", "48-89-54-24-10", "4889542410", "0x4889542410"):
             with self.subTest(spelled=spelled):
@@ -1253,7 +1235,7 @@ class ModuleTableTests(unittest.TestCase):
         self.assertEqual(len(result["bases"]), 2)
 
 
-# --- the keeper, teardown and false success (real processes) ---------------
+# --- the keeper, teardown and release (real processes) ---------------------
 
 PLUGIN_STATE_CALLS = (xm.PLUGIN_RUN, xm.PLUGIN_PAUSE, xm.PLUGIN_EXECUTE)
 
@@ -1636,74 +1618,334 @@ class RealOsTests(SessionMixin, unittest.TestCase):
         self.assertEqual(state["game"]["verdict"], "running")
 
 
-class FalseSuccessTests(SessionMixin, unittest.TestCase):
+# --- logpoint and command: arming without a pause (real processes) --------
+
+A = GAME_BASE + 0x427460
+B = GAME_BASE + 0x428000
+C = GAME_BASE + 0x429000
+
+
+def _hits(cfg, prefix: str) -> int:
+    """How many `<prefix> #<n>` hit lines the session log holds."""
+    lines = cfg.log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+    return sum(1 for ln in lines if ln.startswith(f"{prefix} #"))
+
+
+class ArmingMixin(SessionMixin):
+    def hits_grow(self, cfg, prefix="hot", wait=1.0) -> bool:
+        first = _hits(cfg, prefix)
+        time.sleep(wait)
+        return _hits(cfg, prefix) > first
+
+    def assert_never_paused(self, plugin, record):
+        """Nothing asked x64dbg to pause: no `pause` on stdin, and none of the
+        plugin's PauseDebug, run or ExecuteDbgCommand."""
+        verbs = [ln.split()[0].lower() for ln in self.stdin_lines(record) if ln.strip()]
+        self.assertNotIn("pause", verbs)
+        self.assertFalse([n for n in plugin.names() if n in PLUGIN_STATE_CALLS], plugin.names())
+
+    def hot_after_hold(self, record, addr, delay=0.6):
+        """Mark `addr` hot `delay` seconds after the hold that armed it
+        printed its end marker: its first hit then lands in logpoint's
+        verification window, after the hold has returned."""
+        bph = f"bph 0x{addr:X}, x, 1"
+
+        def run():
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                lines = self.stdin_lines(record)
+                if bph in lines and any(ln.endswith(' end"') for ln in lines[lines.index(bph):]):
+                    time.sleep(delay)
+                    self.set_modes(hot=[addr])
+                    return
+                time.sleep(0.02)
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        self.addCleanup(t.join, 65)
+
+
+class NeverPausesTests(ArmingMixin, unittest.TestCase):
+    """`logpoint` arms on the running game and teardown clears it, and none
+    of them asks x64dbg or the plugin to pause."""
+
+    def test_never_pauses_direct_and_held_logpoints_and_teardown(self):
+        cfg, plugin, _, record, _ = self.start_session()
+        tools = xm.Tools(cfg)
+        direct = tools.logpoint(f"0x{A:X}", "hot")
+        self.assertTrue(direct["ok"], direct)
+        self.assertIsNone(direct["held"])  # nothing was armed, so a direct batch
+        self.set_modes(hot=[A])
+        self.assertTrue(self.hits_grow(cfg), "the hot logpoint never logged")
+        held = tools.logpoint(f"0x{B:X}", "second")
+        self.assertTrue(held["ok"], held)
+        self.assertIn(f"({A:016X})", held["held"] or "", held)
+        code, reply = self.detach_cli(cfg)
+        self.assertEqual(code, 0, reply)
+        self.assert_never_paused(plugin, record)
+        self.assertEqual(xm.read_state(cfg)["breaks_resumed"], 0)  # every pause was a hold's own
+
+    def test_never_pauses_control_the_plugins_pause_lands_late_and_only_the_watchdog_resumes_it(self):
+        # The stand-in's PauseDebug can represent Live 2's failure: it answers
+        # "settling", and the break lands seconds later, with nothing but the
+        # keeper's watchdog there to resume it.
+        cfg, plugin, _, record, _ = self.start_session()
+        runs = self.stdin_lines(record).count("run")
+        text, _ = xm.PluginClient(cfg.url).call_checked(xm.PLUGIN_PAUSE)
+        self.assertIn("settling", text)
+        self.assertEqual(xm.read_state(cfg)["breaks_resumed"], 0)  # not yet: the pause is asynchronous
+        later = self.wait_for(cfg, lambda s: s.get("breaks_resumed") == 1 and s.get("x64dbg_state") == "running")
+        self.assertEqual(later["breaks_resumed"], 1, later)
+        self.assertEqual(later["last_break"]["line"], "paused!", later)
+        self.assertEqual(self.stdin_lines(record).count("run"), runs + 1)
+        self.assertIn(xm.PLUGIN_PAUSE, plugin.names())
+
+
+class WindowBreakTests(ArmingMixin, unittest.TestCase):
+    """A hit between `bph` and its never-break condition breaks: the keeper
+    resumes it, and the logpoint reports it."""
+
+    def test_window_break_is_resumed_and_the_logpoint_is_ok(self):
+        cfg, plugin, _, record, _ = self.start_session(fake={"window_break": True})
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["window_break"], result)
+        self.assertIn(f"({A:016X})", result["window_break_line"])
+        self.assertEqual(result["x64dbg_state"], "running")
+        self.assertEqual(result["game"]["verdict"], "running")
+        self.assertEqual(xm.bplist_entry(result["bplist"], A), "armed")
+        state = self.wait_for(cfg, lambda s: s.get("breaks_resumed") == 1)
+        self.assertEqual(state["breaks_resumed"], 1, state)
+        self.assert_never_paused(plugin, record)
+
+    def test_window_break_control_without_one_it_is_false(self):
+        cfg, _, _, _, _ = self.start_session()
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(result["window_break"], result)
+        self.assertNotIn("window_break_line", result)
+        self.assertEqual(xm.read_state(cfg)["breaks_resumed"], 0)
+
+
+class HeldChangeTests(ArmingMixin, unittest.TestCase):
+    """With a logpoint logging, a change is made with the game held at one of
+    its hits, so it cannot race the debug loop's re-arm."""
+
+    def test_held_change_keeps_a_logging_logpoint_logging(self):
+        cfg, plugin, _, record, _ = self.start_session(fake={"race": True})
+        tools = xm.Tools(cfg)
+        self.assertTrue(tools.logpoint(f"0x{A:X}", "hot")["ok"])
+        self.set_modes(hot=[A])
+        self.assertTrue(self.hits_grow(cfg), "the hot logpoint never logged")
+        result = tools.logpoint(f"0x{B:X}", "second", name="second")
+        self.assertTrue(result["ok"], result)
+        self.assertIn(f"({A:016X})", result["held"] or "", result)
+        sent = self.stdin_lines(record)
+        held_at = sent.index(f"SetHardwareBreakpointCondition 0x{A:X}, 1")
+        self.assertEqual(_commands(sent[held_at:]), [
+            f"SetHardwareBreakpointCondition 0x{A:X}, 1",
+            f"bph 0x{B:X}, x, 1", f"SetHardwareBreakpointCondition 0x{B:X}, 0",
+            f'SetHardwareBreakpointLog 0x{B:X}, "second"', f'SetHardwareBreakpointName 0x{B:X}, "second"',
+            f"SetHardwareBreakpointCondition 0x{A:X}, 0", "bplist", "run"])
+        self.assertTrue(self.hits_grow(cfg), "the held change silenced the hot logpoint")
+        self.assert_never_paused(plugin, record)
+        # control: the same lines sent plainly while it logs race it
+        xm.keeper_request(cfg, "send", timeout=15, lines=[f"bph 0x{C:X}, x, 1"])
+        time.sleep(0.3)
+        self.assertFalse(self.hits_grow(cfg), "the stand-in cannot represent the lost DR7 update")
+
+    def test_held_change_command_changes_debug_registers_through_a_hold(self):
+        cfg, plugin, _, record, _ = self.start_session(fake={"race": True})
+        tools = xm.Tools(cfg)
+        self.assertTrue(tools.logpoint(f"0x{A:X}", "hot")["ok"])
+        self.assertTrue(tools.logpoint(f"0x{B:X}", "second")["ok"])
+        self.set_modes(hot=[A])
+        self.assertTrue(self.hits_grow(cfg), "the hot logpoint never logged")
+        reply = tools.command(f"bphc 0x{B:X}")
+        self.assertTrue(reply["ok"], reply)
+        self.assertIn(f"({A:016X})", reply["held"] or "", reply)
+        self.assertIn("Hardware breakpoint deleted!", reply["lines"])
+        self.assertIsNone(xm.bplist_entry(reply["after"], B))
+        self.assertEqual(reply["x64dbg_state"], "running")
+        self.assertTrue(self.hits_grow(cfg), "the held delete silenced the hot logpoint")
+        # a list-only verb keeps the direct stdin route: no hold, no condition change
+        before = len(self.stdin_lines(record))
+        listed = tools.command("bplist")
+        self.assertTrue(listed["ok"], listed)
+        self.assertNotIn("held", listed)
+        self.assertEqual(self.stdin_lines(record)[before:], ["bplist"])
+        self.assert_never_paused(plugin, record)
+
+
+class PausedFirstRunTests(ArmingMixin, unittest.TestCase):
+    """A never-break condition that did not take shows as a break on the
+    breakpoint: in the verification window after the hold, or during the
+    hold itself. Either way it is cleared and the game resumed."""
+
+    def test_paused_first_run_a_break_in_the_verification_window_is_cleared(self):
+        cfg, plugin, _, record, _ = self.start_session(cfg_over={"settle": 1.5}, fake={"condition_ignored": True})
+        self.hot_after_hold(record, A)
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["stage"], "running")
+        self.assertIn("never-break condition did not take", result["detail"])
+        self.assertIn(f"{A:016X}", result["detail"])
+        self.assertIn("Hardware breakpoint deleted!", result["cleared"])
+        self.assertEqual(result["x64dbg_state"], "running")
+        self.assertIsNone(xm.bplist_entry(xm.Tools(cfg).bplist()["lines"], A))
+        self.assertEqual(self.wait_for(cfg, lambda s: s.get("x64dbg_state") == "running")["x64dbg_state"], "running")
+        self.assert_never_paused(plugin, record)
+
+    def test_paused_first_run_a_breakpoint_that_breaks_from_its_first_hit_is_cleared(self):
+        cfg, plugin, _, record, _ = self.start_session(cfg_over={"hold_timeout": 2},
+                                                       fake={"condition_ignored": True, "hot": [A]})
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["stage"], "running")
+        self.assertIn("Hardware breakpoint deleted!", result["cleared"])
+        self.assertEqual(result["x64dbg_state"], "running")
+        self.assertIsNone(xm.bplist_entry(xm.Tools(cfg).bplist()["lines"], A))
+        self.assert_never_paused(plugin, record)
+
+    def test_paused_first_run_control_a_logging_breakpoint_passes_the_window(self):
+        cfg, _, _, record, _ = self.start_session(cfg_over={"settle": 1.5})
+        self.hot_after_hold(record, A)
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(self.hits_grow(cfg, prefix="hit"), "the logpoint never logged")
+
+
+class FalseSuccessTests(ArmingMixin, unittest.TestCase):
     def test_false_success_control_a_breakpoint_x64dbg_lists_is_ok(self):
         cfg, plugin, _, record, _ = self.start_session()
         result = xm.Tools(cfg).logpoint("Hero_Siege.exe+427460", "hit rcx={rcx} rdx={rdx}", name="control",
                                         expect_bytes="48 89 54 24 10 53")
         self.assertTrue(result["ok"], result)
-        addr = f"0x{GAME_BASE + 0x427460:X}"
+        addr = f"0x{A:X}"
         self.assertEqual(result["address"], addr)
         self.assertTrue(result["bytes_checked"])
         self.assertTrue(result["bytes"].startswith("48 89 54 24 10 53 48 83 EC 30"), result["bytes"])
-        sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
-        self.assertEqual(sent, [f"bph {addr}, x, 1", f'SetHardwareBreakpointLog {addr}, "hit rcx={{rcx}} rdx={{rdx}}"',
-                                f'SetHardwareBreakpointName {addr}, "control"',
-                                f"SetHardwareBreakpointCondition {addr}, 0"])
+        steps = [f"bph {addr}, x, 1", f"SetHardwareBreakpointCondition {addr}, 0",
+                 f'SetHardwareBreakpointLog {addr}, "hit rcx={{rcx}} rdx={{rdx}}"',
+                 f'SetHardwareBreakpointName {addr}, "control"']
+        self.assertEqual(result["steps"], steps)
+        sent = _commands(self.stdin_lines(record))
+        self.assertEqual(sent[sent.index(steps[0]):], [*steps, "bplist"])  # the condition straight after bph
+        self.assertEqual(result["bplist"], [f'1:HW:{A:016X}:"control"'])
+        self.assertIsNone(result["held"])
+        self.assertFalse(result["window_break"])
+        self.assertEqual((result["x64dbg_state"], result["game"]["verdict"]), ("running", "running"))
         names = plugin.names()
-        self.assertLess(names.index(xm.PLUGIN_DISASM), names.index(xm.PLUGIN_PAUSE))
-        self.assertLess(names.index(xm.PLUGIN_PAUSE), names.index(xm.PLUGIN_EXECUTE))
-        self.assertEqual(names[-2:], [xm.PLUGIN_RUN, xm.PLUGIN_RUN])  # resume, then the re-check
-        self.assertIn("bplist", self.stdin_lines(record))
+        self.assertLess(names.index(xm.PLUGIN_MODULES), names.index(xm.PLUGIN_DISASM))
+        self.assert_never_paused(plugin, record)
 
     def test_false_success_without_expect_bytes_says_a_zero_is_not_evidence(self):
         cfg, _, _, _, _ = self.start_session()
-        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertTrue(result["ok"], result)
         self.assertFalse(result["bytes_checked"])
         self.assertIn("not evidence", result["note"])
 
     def test_false_success_refuses_an_address_whose_bytes_differ_from_ghidra(self):
-        cfg, plugin, _, _, _ = self.start_session()
+        cfg, plugin, _, record, _ = self.start_session()
         # Ghidra's copy starts differently: a stale address, or one mid-instruction
-        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit", expect_bytes="48 8B 05 00")
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit", expect_bytes="48 8B 05 00")
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["reason"], "bytes_mismatch")
         self.assertIn("never fires", result["detail"])
         self.assertEqual(result["bytes"][:14], "48 89 54 24 10")
-        names = plugin.names()
-        self.assertNotIn(xm.PLUGIN_PAUSE, names)  # nothing paused, nothing set
-        self.assertNotIn(xm.PLUGIN_EXECUTE, names)
+        self.assertFalse([ln for ln in self.stdin_lines(record) if ln.startswith(("bph", "log", "bplist"))])
+        self.assert_never_paused(plugin, record)
+
+    def test_false_success_an_address_bplist_lists_already_is_refused(self):
+        cfg, _, _, record, _ = self.start_session()
+        tools = xm.Tools(cfg)
+        self.assertTrue(tools.logpoint(f"0x{A:X}", "hit")["ok"])
+        again = tools.logpoint(f"0x{A:X}", "hit")
+        self.assertEqual(again["reason"], "already_armed", again)
+        self.assertEqual(self.stdin_lines(record).count(f"bph 0x{A:X}, x, 1"), 1)  # nothing set again
+        self.assertEqual(xm.bplist_entry(tools.bplist()["lines"], A), "armed")  # and nothing cleared
 
     def test_false_success_a_breakpoint_listed_but_disabled_is_not_ok(self):
-        cfg, plugin, _, _, _ = self.start_session(listed_as=(0, "HW"))
-        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+        cfg, plugin, _, record, _ = self.start_session(fake={"listed_as": [0, "HW"]})
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["stage"], "listed-but-disabled")
         self.assertIn("listed but disabled", result["detail"])
-        sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
-        self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
-        self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
+        self.assertIn("Hardware breakpoint deleted!", result["cleared"])
+        self.assertEqual(_commands(self.stdin_lines(record))[-2:], [f"bphc 0x{A:X}", "bplist"])
+        self.assertEqual(result["x64dbg_state"], "running")
+        self.assert_never_paused(plugin, record)
 
     def test_false_success_a_rejected_never_break_condition_is_not_ok(self):
-        cfg, plugin, _, _, _ = self.start_session(fail_condition=True)
-        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+        cfg, plugin, _, record, _ = self.start_session(fake={"fail_condition": True})
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["stage"], "set")
         self.assertIn("Can't set break condition", result["detail"])
-        sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
-        self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
-        self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
+        self.assertIn("Hardware breakpoint deleted!", result["cleared"])
+        self.assertIn(f"bphc 0x{A:X}", self.stdin_lines(record))
+        self.assertEqual(result["x64dbg_state"], "running")
+        self.assert_never_paused(plugin, record)
 
-    def test_false_success_a_set_step_the_plugin_could_not_queue_is_not_ok(self):
-        cfg, plugin, _, _, _ = self.start_session(fail_queue=True)
-        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+    def test_false_success_a_breakpoint_x64dbg_reported_set_and_never_listed_is_not_ok(self):
+        cfg, plugin, _, record, _ = self.start_session(fake={"false_success": True})
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["stage"], "set")
-        self.assertIn(xm.PLUGIN_EXEC_FAILED, result["detail"])
-        sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
-        self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
-        self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
+        # x64dbg said it was set, then named no such breakpoint for each step
+        # after (with no row to show, the bplist branch is pinned by shape below)
+        self.assertIn(f"Hardware breakpoint at {A:016X} set!", result["lines"])
+        self.assertIn(f'No such breakpoint "0x{A:X}"', result["detail"])
+        self.assertIn(f"bphc 0x{A:X}", self.stdin_lines(record))
+        self.assertEqual(result["x64dbg_state"], "running")
+        self.assert_never_paused(plugin, record)
+
+    def test_false_success_a_game_the_outside_check_reads_held_is_not_ok(self):
+        cfg, _, _, record, _ = self.start_session()
+        held = {"verdict": "frozen", "detail": "stand-in: no thread made progress", "suspended": [], "stopped": []}
+        with mock.patch.object(xm, "game_check", return_value=held):
+            result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["stage"], "game-not-running")
+        self.assertEqual(result["game"]["verdict"], "frozen")
+        self.assertIn("Hardware breakpoint deleted!", result["cleared"])
+        self.assertIn(f"bphc 0x{A:X}", self.stdin_lines(record))
+
+    def test_false_success_arming_failure_reads_the_hold_reply(self):
+        set_line, row = f"Hardware breakpoint at {A:016X} set!", f"1:HW:{A:016X}"
+        self.assertIsNone(xm.arming_failure({"lines": [set_line], "after": [row]}, A, None))
+        self.assertIsNone(xm.arming_failure({"lines": [set_line, "hot #3"], "after": [f'{row}:"ctl"']}, A, "ctl"))
+        cases = [
+            ("set", {"lines": [set_line, f'Can\'t set log text on breakpoint "0x{A:X}"'], "after": [row]}, None),
+            ("set", {"lines": ["You can only set 4 hardware breakpoints"], "after": []}, None),
+            ("set", {"lines": ["Hardware breakpoint already set!"], "after": [row]}, None),
+            ("set", {"lines": [set_line, f'No such breakpoint "0x{A:X}"'], "after": [row]}, None),
+            ("set", {"lines": [set_line, "Not enough arguments!"], "after": [row]}, None),
+            ("set", {"lines": [], "after": [row]}, None),  # x64dbg never said it was set
+            ("set", {"lines": [f"Hardware breakpoint at {A + 1:016X} set!"], "after": [row]}, None),
+            ("set", {"lines": [set_line], "after": []}, None),
+            ("set", {"lines": [set_line], "after": [f"1:BP:{A:016X}"]}, None),
+            ("set", {"lines": [set_line], "after": [row]}, "ctl"),  # the name is missing
+            ("set", {"lines": [set_line], "after": [f'1:HW:{A + 1:016X}:"ctl"', row]}, "ctl"),
+            ("listed-but-disabled", {"lines": [set_line], "after": [f"0:HW:{A:016X}"]}, None),
+        ]
+        for stage, reply, name in cases:
+            with self.subTest(reply=reply, name=name):
+                failure = xm.arming_failure(reply, A, name)
+                self.assertIsNotNone(failure)
+                self.assertEqual(failure[0], stage, failure)
+
+    def test_false_success_break_on_needs_a_break_naming_it_then_a_pause(self):
+        brk = f"Hardware breakpoint (byte, execute) at hero_siege.exe+427460 ({A:016X})!"
+        named = 'Hardware breakpoint (byte, execute) "ctl" at hero_siege.exe+427460!'
+        self.assertEqual(xm.break_on(["hit #1", brk, "[STATE] paused"], A, None), brk)
+        self.assertEqual(xm.break_on([named, "[STATE] paused"], A, "ctl"), named)
+        for lines in ([brk], [brk, "[STATE] running"], ["paused!", "[STATE] paused"],
+                      [f"Hardware breakpoint (byte, execute) at x+1 ({A + 1:016X})!", "[STATE] paused"],
+                      [f"hit {A:016X}", "[STATE] paused"], [brk, "[STATE] running", "[STATE] paused"]):
+            with self.subTest(lines=lines):
+                self.assertIsNone(xm.break_on(lines, A, None))
 
     def test_false_success_silent_step_replies_by_shape(self):
         cmd = 'SetHardwareBreakpointName 0x1, "a"'
@@ -1741,64 +1983,6 @@ class FalseSuccessTests(SessionMixin, unittest.TestCase):
                     f"Result: ctu #12 self=1 other=1 argc=3\r\nExecuting DbgCmdExec: {cmd}"):
             self.assertFalse(xm.silent_reply_ok(bad, cmd), bad)
 
-    def test_false_success_logpoint_accepts_each_echo_the_plugin_can_capture(self):
-        for echo in ("full", "tail", "none"):
-            with self.subTest(echo=echo):
-                cfg, plugin, _, _, _ = self.start_session(echo=echo)
-                result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit", name="control")
-                self.assertTrue(result["ok"], result)
-                self.assertEqual(plugin.addrs, [0x7FF6A0427460])
-
-    def test_false_success_an_x64dbg_error_after_the_echo_is_not_ok(self):
-        cfg, plugin, _, _, _ = self.start_session(fail_condition=True, echo="full")
-        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
-        self.assertFalse(result["ok"], result)
-        self.assertEqual(result["stage"], "set")
-        self.assertIn("Can't set break condition", result["detail"])
-        self.assertIn("METHOD: ExecuteDbgCommand", result["detail"])  # the whole reply is quoted
-        self.assertEqual(plugin.addrs, [])
-
-    def test_false_success_a_breakpoint_that_pauses_the_game_is_cleared(self):
-        cfg, plugin, _, _, _ = self.start_session(condition_ignored=True)
-        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
-        self.assertFalse(result["ok"], result)
-        self.assertEqual(result["stage"], "running")
-        # every run pauses, so the first run after arming already says so
-        self.assertIn("did not report the game running", result["detail"])
-        self.assertIn("RUNNING", result["run"])  # cleared, then resumed for real
-        sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
-        self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
-        self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
-
-    def test_false_success_a_paused_first_run_is_cleared(self):
-        # Only the first run after arming answers PAUSED: the breakpoint was
-        # hit before the plugin's own re-check. The second run would say
-        # RUNNING, so the later check alone would have passed it.
-        cfg, plugin, _, _, _ = self.start_session(paused_runs=(1,))
-        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
-        self.assertFalse(result["ok"], result)
-        self.assertEqual(result["stage"], "running")
-        self.assertIn("PAUSED", result["detail"])
-        self.assertIn("PAUSED", result["first_run"])
-        self.assertIn("RUNNING", result["run"])  # cleared, then resumed
-        sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
-        self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
-        self.assertEqual(plugin.addrs, [])
-        # the first run's answer was acted on: the last set step, that run,
-        # the clear and the resume, with no re-check run in between
-        self.assertEqual(plugin.names()[-4:], [xm.PLUGIN_EXECUTE, xm.PLUGIN_RUN, xm.PLUGIN_EXECUTE, xm.PLUGIN_RUN])
-
-    def test_false_success_a_pause_seen_only_on_the_recheck_is_cleared(self):
-        cfg, plugin, _, _, _ = self.start_session(paused_runs=(2,))
-        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
-        self.assertFalse(result["ok"], result)
-        self.assertEqual(result["stage"], "running")
-        self.assertIn("did not stay running", result["detail"])
-        self.assertIn("RUNNING", result["first_run"])
-        self.assertEqual([a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE][-1],
-                         "bphc 0x7FF6A0427460")
-        self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
-
     def test_false_success_bplist_rows_by_enabled_flag_and_type(self):
         a = 0x7FF6A0427460
         self.assertEqual(xm.bplist_entry([f"1:HW:{a:016X}"], a), "armed")
@@ -1813,19 +1997,6 @@ class FalseSuccessTests(SessionMixin, unittest.TestCase):
                    f"{a + 9:016X}  90                    nop\n; Byte read limit (16) reached\n")
         self.assertEqual(xm.listing_bytes(listing, a), bytes.fromhex("48 89 54 24 10 53"))  # stops at the gap
         self.assertEqual(xm.listing_bytes(listing, a + 1), b"")  # no row starts there
-
-    def test_false_success_a_queued_breakpoint_x64dbg_never_set_is_not_ok(self):
-        cfg, plugin, _, _, _ = self.start_session(false_success=True)
-        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
-        self.assertFalse(result["ok"], result)
-        self.assertEqual(result["stage"], "set")
-        self.assertIn("bplist did not name 0x7FF6A0427460", result["detail"])
-        sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
-        self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
-        self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)  # never left paused
-        # every step was taken as done: the Set* replies carried only the echo
-        self.assertEqual([s["step"].split()[0] for s in result["steps"][1:]],
-                         ["bph", "SetHardwareBreakpointLog", "SetHardwareBreakpointCondition"])
 
 
 # --- the CLI `tool` route ---------------------------------------------------

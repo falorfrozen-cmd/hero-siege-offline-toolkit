@@ -140,9 +140,14 @@ LIVE_OPERATOR_TOOLS = (
 # The plugin tools this proxy calls, with the argument names it passes. The
 # names were read from the pinned commit's source; `PluginClient.call_checked`
 # confirms each one against the live `tools/list` before forwarding.
-PLUGIN_EXECUTE = "ExecuteDbgCommand"       # (command)
 PLUGIN_MODULES = "GetAllModulesFromMemMap"  # ()
 PLUGIN_DISASM = "ReadDismAtAddress"         # (address, byteCount)
+# Named only so the tests can show they are never called. Every command goes
+# on headless's stdin instead of through ExecuteDbgCommand (which redirects
+# x64dbg's whole log around each call); `PauseDebug` is asynchronous (its
+# pause lands whenever a thread next reaches it, Live 2); and the `run` and
+# `PauseDebug` answers read a flag x64dbg's own breakpoint handling flips.
+PLUGIN_EXECUTE = "ExecuteDbgCommand"       # (command)
 PLUGIN_PAUSE = "PauseDebug"                 # ()
 PLUGIN_RUN = "run"                          # ()
 
@@ -970,10 +975,6 @@ class PluginMismatch(PluginError):
     """The plugin's tools/list lacks a tool or an argument the proxy would use."""
 
 
-class _ListedDisabled(PluginError):
-    """bplist lists the breakpoint, with its enabled flag 0."""
-
-
 def parse_reply(body: bytes, content_type: str, want_id: Any) -> dict[str, Any]:
     """One JSON-RPC message from a reply that is JSON or SSE-framed."""
     text = body.decode("utf-8", "replace")
@@ -1528,7 +1529,7 @@ class Keeper:
         listing, listed = self.run_batch(hid, [("list", ["bplist"])], "listed")
         if not listed:
             return self.hold_reply(False, f"x64dbg never printed the end of its bplist within {t:.0f}s, so "
-                                          "nothing was changed", {}, None, None, None)
+                                          "nothing was changed", {}, None, None, None, end_seen=False)
         armed = []
         for row in listing["list"]:
             m = _BPLIST_ROW.match(row)
@@ -1565,14 +1566,20 @@ class Keeper:
         elif not settled:
             detail = (f"x64dbg's state never settled at running within {t:.0f}s after the batch "
                       f"(it reads {self.log.state})")
-        reply = self.hold_reply(done and settled, detail, out, held, held_note, window_break)
+        reply = self.hold_reply(done and settled, detail, out, held, held_note, window_break, end_seen=done)
         return reply
 
     def hold_reply(self, ok: bool, detail: str | None, out: dict[str, list[str]], held: str | None,
-                   held_note: str | None, window_break: str | None) -> dict[str, Any]:
+                   held_note: str | None, window_break: str | None, end_seen: bool) -> dict[str, Any]:
+        """The hold's reply. `end_seen` says whether x64dbg printed the
+        batch's end marker (so its lines are complete), and `log_offset` is
+        how far into the session log the hold read: what x64dbg printed after
+        it is after the hold, where `logpoint`'s verification window looks."""
+        self.log.poll()
         reply: dict[str, Any] = {
             "ok": ok, "lines": out.get("begin", []), "after": out.get("mid", []), "held": held,
             "window_break": window_break, "x64dbg_state": self.log.settled() or self.log.state,
+            "end_seen": end_seen, "log_offset": self.log.offset - len(self.log._partial),
             "game": self.check(),
         }
         if held_note:
@@ -1808,6 +1815,12 @@ def detach_wait(cfg: Config) -> float:
     return 4 * cfg.hold_timeout + Keeper.HOLD_BREAK + cfg.detach_timeout + 30
 
 
+def hold_wait(cfg: Config) -> float:
+    """How long a hold may take: its bplist, the wait for a logging
+    breakpoint to break, the batch, the settle and the outside check."""
+    return 3 * cfg.hold_timeout + Keeper.HOLD_BREAK + 30
+
+
 def detach(cfg: Config) -> int:
     """Exits 0 only for a session `ended` with every game thread running
     again (`game_released` true), or with the game gone."""
@@ -1848,6 +1861,10 @@ _BPLIST_ROW = re.compile(r"^\s*(\d+):([^:\s]+):([0-9A-Fa-f]+)(?::|\s|$)")
 # One instruction row of the plugin's ReadDismAtAddress listing: the address,
 # then the instruction's bytes as `48-89-5C`, then its text.
 _LISTING_ROW = re.compile(r"^\s*(?:0x)?([0-9A-Fa-f]{8,16})\s+((?:[0-9A-Fa-f]{2}-)*[0-9A-Fa-f]{2})(?:\s|$)")
+# No tool path calls the plugin's ExecuteDbgCommand any more: `logpoint`,
+# `command` and teardown send x64dbg's commands on headless's stdin, through
+# the keeper. What follows records the measured shape of its reply, kept with
+# its tests so a later change that calls it again starts from what is known.
 # What the plugin's ExecuteDbgCommand answers. At the pinned commit it returns
 # whatever reached x64dbg's log while the command ran (it redirects the log to
 # a file around the command and reads the file back), behind `Result: `
@@ -1924,6 +1941,68 @@ def command_refusal(command: str) -> str | None:
     if verb.lower() not in _ALLOWED_VERBS:
         return (f"{verb!r} is not on the allowlist ({', '.join(COMMAND_ALLOWLIST)}). "
                 "Add a breakpoint with the logpoint tool; nothing here stops, steps or writes the game")
+    return None
+
+
+# `command`'s verbs that change debug registers. They go through a hold, as
+# `logpoint`'s lines do, so a change never races a logging breakpoint's
+# re-arm; the list-only verbs go straight to headless's stdin.
+_HOLD_VERBS = {"deletehardwarebreakpoint", "bphc", "bphwc", "enablehardwarebreakpoint", "bphe", "bphwe",
+               "disablehardwarebreakpoint", "bphd", "bphwd"}
+# What x64dbg prints when a step of arming a hardware breakpoint fails (read
+# from x64dbg 9c8ca1c's source, docs/tools/x64dbg-mcp.md): the four-breakpoint
+# limit, a failed set, a breakpoint already there, a `Set*` step naming no
+# breakpoint or refused, a short argument list, and an unknown verb.
+_ARM_FAILURE = re.compile(r"^(?:You can only set \d+ hardware breakpoints|Error setting hardware breakpoint|"
+                          r"Hardware breakpoint already set!|No such breakpoint\b|Can't set\b|"
+                          r"Not enough arguments!|Unknown command\b)", re.I)
+
+
+def arming_failure(reply: dict[str, Any], addr: int, name: str | None) -> tuple[str, str] | None:
+    """Why a hold that armed `addr` did not arm it, as (stage, detail), or
+    None. From the hold's `lines` (x64dbg's output for the arming lines): a
+    failure line, or no `Hardware breakpoint at <addr> set!`. From its
+    `after` (the bplist that followed): no row for `addr`, a disabled row,
+    another kind of breakpoint, or a row without the name given."""
+    hexaddr = f"0x{addr:X}"
+    lines = [ln.strip() for ln in reply.get("lines") or []]
+    bad = [ln for ln in lines if _ARM_FAILURE.match(ln)]
+    if bad:
+        return "set", f"x64dbg printed, while arming {hexaddr}: {' | '.join(bad)}"
+    if f"hardware breakpoint at {addr:016x} set!" not in (ln.lower() for ln in lines):
+        return "set", (f"x64dbg never printed `Hardware breakpoint at {addr:016X} set!` for the bph, so {hexaddr} "
+                       f"is not known to be set (it printed {lines!r})")
+    after = [ln.strip() for ln in reply.get("after") or []]
+    listed = bplist_entry(after, addr)
+    if listed is None:
+        return "set", (f"bplist did not name {hexaddr} after x64dbg reported it set (a reported breakpoint is not "
+                       "a set one until x64dbg lists it)")
+    if listed == "disabled":
+        return "listed-but-disabled", (f"bplist has {hexaddr} listed but disabled (its row's first field is 0): "
+                                       "a disabled breakpoint never logs")
+    if listed != "armed":
+        return "set", f"bplist lists {hexaddr} as a {listed} breakpoint, not an enabled hardware one"
+    if name is not None:
+        rows = [ln for ln in after if (m := _BPLIST_ROW.match(ln)) and int(m.group(3), 16) == addr]
+        if not any(f':"{name}"' in ln for ln in rows):
+            return "set", f"bplist lists {hexaddr} without the name {name!r} it was given: {rows!r}"
+    return None
+
+
+def break_on(lines: list[str], addr: int, name: str | None) -> str | None:
+    """The first break line naming `addr` (by its 16 hex digits, or by
+    `name`) that x64dbg followed with `[STATE] paused`, or None."""
+    pending = None
+    for raw in lines:
+        text = raw.strip()
+        m = _STATE_LINE.match(text)
+        if m:
+            if pending and m.group(1).lower() == "paused":
+                return pending
+            pending = None
+        elif _BREAK_LINE.match(text):
+            hit = f"{addr:016X}" in text.upper() or (name is not None and f'"{name}"' in text)
+            pending = text if hit else None
     return None
 
 
@@ -2023,32 +2102,38 @@ class Tools:
     def _bplist_lines(self, wait_for: int | None = None) -> list[str]:
         return self._stdin_lines("bplist", wait_for)
 
-    def _execute(self, command: str, silent: bool = False) -> str:
-        """One command through the plugin. With `silent`, for a command x64dbg
-        prints nothing for when it succeeds (the `Set*` steps): any output
-        beyond the plugin's own echo of the call, which the plugin hands back
-        as `Result: <text>`, is its failure."""
-        text, is_error = self.plugin.call_checked(PLUGIN_EXECUTE, {"command": command})
-        stripped = text.strip()
-        if is_error or stripped.lower().startswith(("error", "exception")) or _reply_body(stripped) == PLUGIN_EXEC_FAILED:
-            raise PluginError(f"{command!r}: {text}")
-        if silent and not silent_reply_ok(stripped, command):
-            raise PluginError(f"`{command}` printed: {stripped} (beyond the plugin's own echo of the call, it "
-                              "prints nothing when it succeeds, so that output is its failure)")
-        return text
+    def _bplist_marked(self) -> list[str]:
+        """bplist on headless's stdin between two `log` markers, and the rows
+        x64dbg printed between them: complete once the end marker is in the
+        log, so an empty list means nothing is listed, not that the rows are
+        late."""
+        hid = uuid.uuid4().hex[:8]
+        start, end = batch_marker(hid, "list"), batch_marker(hid, "listed")
+        offset = self._log_size()
+        self._stdin([f'log "{start}"', "bplist", f'log "{end}"'])
+        deadline = time.monotonic() + self.cfg.hold_timeout
+        while True:
+            lines = [ln.strip() for ln in self._log_after(offset)]
+            if end in lines:
+                return lines[lines.index(start) + 1 if start in lines else 0:lines.index(end)]
+            if time.monotonic() >= deadline:
+                raise Refused("bplist_unanswered", f"x64dbg never printed the end of a bplist within "
+                                                   f"{self.cfg.hold_timeout:.0f}s, so nothing was set")
+            time.sleep(0.05)
 
-    def _still_running(self) -> str | None:
-        """After the first `run` reported RUNNING, wait the settle time and
-        ask again: a breakpoint whose never-break condition did not take
-        pauses the game on its first hit. This sees only a hit within the
-        plugin's own re-check (about 250 ms) after this second `run`. None
-        when the plugin still reports RUNNING, otherwise what it said."""
-        time.sleep(self.cfg.settle)
-        try:
-            text, _ = self.plugin.call_checked(PLUGIN_RUN)
-        except PluginError as e:
-            return str(e)
-        return None if "RUNNING" in text.upper() else text
+    def _hold(self, lines: list[str]) -> dict[str, Any]:
+        """Lines that change hardware breakpoints, through the keeper's hold
+        (`Keeper.hold`): never a pause, and held at a hit of a logging
+        breakpoint when one is armed."""
+        return keeper_request(self.cfg, "hold", timeout=hold_wait(self.cfg), lines=lines)
+
+    def _game(self) -> dict[str, Any] | None:
+        """A fresh outside check of the session's game, or None with no live session."""
+        live = live_session(self.cfg)
+        if live is None or not live.get("target_pid"):
+            return None
+        return game_check(self.cfg, int(live["target_pid"]),
+                          baseline=check_tids((live.get("instrument") or {}).get("before_attach")))
 
     def _code_at(self, addr: int, count: int) -> bytes:
         """The first bytes of code at `addr`, from the plugin's disassembly."""
@@ -2056,16 +2141,6 @@ class Tools:
         if is_error:
             raise PluginError(f"reading code at 0x{addr:X}: {text}")
         return listing_bytes(text, addr)
-
-    def _resume(self) -> str:
-        try:
-            text, _ = self.plugin.call_checked(PLUGIN_RUN)
-            if "RUNNING" in text.upper():
-                return text
-        except PluginError as e:
-            text = str(e)
-        self._stdin(["run"])
-        return f"{text} (and run on stdin)"
 
     def resolve(self, address: str) -> int:
         """An absolute address from `0x<hex>`, `<hex>` or `<module>+<hex>`;
@@ -2102,11 +2177,9 @@ class Tools:
             answers = False
         out = {"ok": True, **session_summary(self.cfg), "plugin_answers": answers,
                "plugin_url": self.cfg.url, "lease": {"state": held, "detail": detail}}
-        live = live_session(self.cfg)
-        if live is not None and live.get("target_pid"):
-            # a fresh outside check of the game, while the session may hold it
-            out["game"] = game_check(self.cfg, int(live["target_pid"]),
-                                     baseline=check_tids((live.get("instrument") or {}).get("before_attach")))
+        game = self._game()  # a fresh outside check of the game, while the session may hold it
+        if game is not None:
+            out["game"] = game
         return out
 
     def logpoint(self, address: str, log: str, log_condition: str | None = None,
@@ -2139,7 +2212,7 @@ class Tools:
         # A hardware execute breakpoint fires only where an instruction starts,
         # so a stale or mid-instruction address arms fine and never logs. Read
         # the code there first, and with `expect_bytes` (from Ghidra's copy of
-        # the same function) refuse before anything is paused or set.
+        # the same function) refuse before anything is set.
         try:
             code = self._code_at(addr, max(16, len(expect or b"")))
         except PluginError as e:
@@ -2154,73 +2227,88 @@ class Tools:
         if expect is None:
             checked["note"] = ("no expect_bytes: these bytes were not compared with Ghidra's, so a zero from this "
                                "address is not evidence until they are")
-        steps: list[dict[str, str]] = []
+        # Refusals that need x64dbg's own view: it must have settled at
+        # running (the keeper resumes every pause it takes), and the address
+        # must not be listed already, since a failure below clears it.
+        settled = read_state(self.cfg).get("x64dbg_state")
+        if settled != "running":
+            return _refusal(tool, "not_running",
+                            f"x64dbg's settled state is {settled}, not running: arming is only done on a running "
+                            "game. The keeper resumes every pause; try again once status reads x64dbg_state "
+                            "running", address=hexaddr, **checked)
         try:
-            text, _ = self.plugin.call_checked(PLUGIN_PAUSE)
-            steps.append({"step": "pause", "reply": text})
-            if "paused" not in text.lower():
-                raise PluginError(f"the game did not report paused: {text}")
-        except PluginError as e:
-            run = self._resume()
-            return {"ok": False, "tool": tool, "stage": "pause", "detail": str(e), "address": hexaddr,
-                    "steps": steps, "run": run}
+            listed = bplist_entry(self._bplist_marked(), addr)
+        except Refused as r:
+            return _refusal(tool, r.reason, r.detail, address=hexaddr, **checked)
+        if listed is not None:
+            return _refusal(tool, "already_armed",
+                            f"bplist already lists {hexaddr} ({listed}); nothing was set. Delete it first with "
+                            f"the command tool (bphc {hexaddr}) to arm it again", address=hexaddr, **checked)
+        # One hold, never a pause. The never-break condition comes straight
+        # after `bph`, so in a direct batch only `bph`'s own pass over the
+        # threads can break on a hit (reported as window_break, and resumed).
+        steps = [f"bph {hexaddr}, x, 1", f"SetHardwareBreakpointCondition {hexaddr}, 0",
+                 f'SetHardwareBreakpointLog {hexaddr}, "{log}"']
+        if log_condition:
+            steps.append(f"SetHardwareBreakpointLogCondition {hexaddr}, {log_condition}")
+        if name:
+            steps.append(f'SetHardwareBreakpointName {hexaddr}, "{name}"')
+        base = {"tool": tool, "address": hexaddr, "steps": steps, **checked}
         try:
-            commands = [f"bph {hexaddr}, x, 1", f'SetHardwareBreakpointLog {hexaddr}, "{log}"']
-            if log_condition:
-                commands.append(f"SetHardwareBreakpointLogCondition {hexaddr}, {log_condition}")
-            if name:
-                commands.append(f'SetHardwareBreakpointName {hexaddr}, "{name}"')
-            commands.append(f"SetHardwareBreakpointCondition {hexaddr}, 0")
-            for c in commands:
-                steps.append({"step": c, "reply": self._execute(c, silent=c.startswith("Set"))})
-            lines = self._bplist_lines(wait_for=addr)
-            listed = bplist_entry(lines, addr)
-            if listed is None:
-                raise PluginError(f"bplist did not name {hexaddr} after the plugin reported every step done "
-                                  "(a queued command is not a set breakpoint)")
-            if listed == "disabled":
-                raise _ListedDisabled(f"bplist has {hexaddr} listed but disabled (its row's first field is 0): "
-                                      "a disabled breakpoint never logs")
-            if listed != "armed":
-                raise PluginError(f"bplist lists {hexaddr} as a {listed} breakpoint, not an enabled hardware one")
-        except (PluginError, Refused) as e:
-            run = self._clear_and_resume(hexaddr)
-            stage = "listed-but-disabled" if isinstance(e, _ListedDisabled) else "set"
-            return {"ok": False, "tool": tool, "stage": stage, "detail": str(e), "address": hexaddr,
-                    "steps": steps, **run, **checked}
-        # The plugin's `run` answers RUNNING only when x64dbg still reports the
-        # game running about 250 ms after it, so a PAUSED (or any other)
-        # answer here is direct evidence that the breakpoint broke on a hit.
-        # Act on it, rather than resume on stdin and hope the re-check below
-        # lands on a later hit.
-        try:
-            run, _ = self.plugin.call_checked(PLUGIN_RUN)
-        except PluginError as e:
-            run = str(e)
-        if "RUNNING" not in run.upper():
-            out = self._clear_and_resume(hexaddr)
-            return {"ok": False, "tool": tool, "stage": "running",
-                    "detail": f"the first run after {hexaddr} was armed did not report the game running "
-                              f"({run.strip()}): the breakpoint may have broken on a hit, so it was cleared",
-                    "address": hexaddr, "steps": steps, "first_run": run, **out, **checked}
-        paused = self._still_running()
-        if paused is not None:
-            out = self._clear_and_resume(hexaddr)
-            return {"ok": False, "tool": tool, "stage": "running",
-                    "detail": f"the game did not stay running after {hexaddr} was armed ({paused}): its "
-                              "never-break condition did not take, so it was cleared",
-                    "address": hexaddr, "steps": steps, "first_run": run, **out, **checked}
-        return {"ok": True, "tool": tool, "address": hexaddr, "steps": steps, "bplist": lines, "run": run,
-                **checked}
+            reply = self._hold(steps)
+        except Refused as r:
+            return self._arming_failed(base, addr, "set", f"the keeper did not answer the hold ({r.reason}): "
+                                                          f"{r.detail}", {})
+        if not reply.get("end_seen"):
+            return self._arming_failed(base, addr, "set", reply.get("detail") or "the hold did not complete", reply)
+        failure = arming_failure(reply, addr, name or None)
+        if failure:
+            return self._arming_failed(base, addr, *failure, reply)
+        if not reply.get("ok"):
+            return self._arming_failed(base, addr, "running", f"{hexaddr} was armed, but {reply.get('detail')}: "
+                                                              "it may break on its hits", reply)
+        # The verification window: a break on this breakpoint after the hold
+        # means its never-break condition did not take.
+        time.sleep(self.cfg.settle)
+        brk = break_on(self._log_after(int(reply.get("log_offset") or 0)), addr, name or None)
+        if brk is not None:
+            return self._arming_failed(base, addr, "running",
+                                       f"x64dbg broke on {hexaddr} within {self.cfg.settle:.1f}s of arming it "
+                                       f"({brk}): its never-break condition did not take", reply)
+        game = self._game() or {"verdict": "unreadable", "detail": "no live session to check"}
+        if game.get("verdict") != "running":
+            return self._arming_failed(base, addr, "game-not-running",
+                                       f"the outside check reads the game {game.get('verdict')}, not running, after "
+                                       f"{hexaddr} was armed: {game.get('detail')}", reply, game=game)
+        rows = [ln.strip() for ln in reply.get("after") or [] if _BPLIST_ROW.match(ln)]
+        return {"ok": True, **base, "bplist": rows, "held": reply.get("held"),
+                "window_break": reply.get("window_break") is not None,
+                **({"window_break_line": reply["window_break"]} if reply.get("window_break") else {}),
+                **({"held_note": reply["held_note"]} if reply.get("held_note") else {}),
+                "x64dbg_state": read_state(self.cfg).get("x64dbg_state") or reply.get("x64dbg_state"),
+                "game": game}
 
-    def _clear_and_resume(self, hexaddr: str) -> dict[str, str]:
-        """Clear one breakpoint and resume the game: every failure path after
-        the pause ends here, so the game is never left paused."""
+    def _arming_failed(self, base: dict[str, Any], addr: int, stage: str, detail: str, reply: dict[str, Any],
+                       **fields: Any) -> dict[str, Any]:
+        """A failure after the hold went out: clear the breakpoint with a hold
+        of its own, and report x64dbg's settled state after it."""
+        hexaddr = f"0x{addr:X}"
         try:
-            cleared = self._execute(f"bphc {hexaddr}")
-        except (PluginError, Refused) as e:
-            cleared = f"clearing failed: {e}"
-        return {"cleared": cleared, "run": self._resume()}
+            clear = self._hold([f"bphc {hexaddr}"])
+            cleared = clear.get("lines", [])
+            settled = clear.get("x64dbg_state")
+            if not clear.get("ok"):
+                fields["clear_detail"] = clear.get("detail")
+        except Refused as r:
+            cleared = [f"clearing failed ({r.reason}): {r.detail}"]
+            settled = read_state(self.cfg).get("x64dbg_state")
+        if settled != "running":
+            fields["note"] = (f"x64dbg's state after the clear is {settled}, not running; the keeper keeps resuming "
+                              "every pause: read status, and detach if it stays so")
+        return {"ok": False, **base, "stage": stage, "detail": detail,
+                "lines": reply.get("lines", []), "after": reply.get("after", []), "held": reply.get("held"),
+                "window_break": reply.get("window_break") is not None, "cleared": cleared,
+                "x64dbg_state": settled, **fields}
 
     def command(self, command: str) -> dict[str, Any]:
         tool = "command"
@@ -2230,11 +2318,27 @@ class Tools:
         gate = self._gate(tool)
         if gate:
             return gate
+        text = command.strip()
+        verb = re.match(r"[^\s,]+", text).group(0).lower()  # type: ignore[union-attr]
+        if verb in _HOLD_VERBS:
+            try:
+                reply = self._hold([text])
+            except Refused as r:
+                return _refusal(tool, r.reason, r.detail)
+            out = {"ok": bool(reply.get("ok")), "tool": tool, "sent": text, "lines": reply.get("lines", []),
+                   "after": reply.get("after", []), "held": reply.get("held"),
+                   "window_break": reply.get("window_break"), "x64dbg_state": reply.get("x64dbg_state"),
+                   "note": "sent through a hold on headless x64dbg's stdin (held at a hit of a logging breakpoint "
+                           "when one is armed); `after` carries the bplist that followed it"}
+            for key in ("held_note", "detail"):
+                if reply.get(key):
+                    out[key] = reply[key]
+            return out
         try:
-            lines = self._stdin_lines(command.strip())
+            lines = self._stdin_lines(text)
         except Refused as r:
             return _refusal(tool, r.reason, r.detail)
-        return {"ok": True, "tool": tool, "sent": command.strip(), "lines": lines,
+        return {"ok": True, "tool": tool, "sent": text, "lines": lines,
                 "note": "sent on headless x64dbg's stdin; x64dbg prints nothing for most of these commands, and "
                         "the lines may include logging-breakpoint hits, so confirm the effect with bplist"}
 
@@ -2404,12 +2508,14 @@ DESCRIPTIONS = {
                 "<module>+<hex>, e.g. Hero_Siege.exe+427460. log: an x64dbg log format string, braces allowed, "
                 "no double quote. expect_bytes: the function's first bytes from Ghidra (hex); a mismatch is "
                 "refused before anything is set, and without it a zero from this address is not evidence. "
-                "Pauses the game for the set-up, reads bplist back (enabled hardware row required), checks "
-                "the game stays running, and always resumes it. Four hardware breakpoints at most: start with "
-                "a positive control.",
+                "Never pauses the game: arms it on the running game (held at a hit of a logging breakpoint "
+                "when one is armed), reads bplist back (enabled hardware row required), watches for a break on "
+                "it, and checks from outside the debugger that the game runs; any failure clears it. Refused "
+                "while x64dbg is not running, during a break storm, or when bplist lists the address already. "
+                "Four hardware breakpoints at most: start with a positive control.",
     "command": "One allowlisted x64dbg command, sent on headless x64dbg's stdin: delete, enable or disable a "
-               "hardware breakpoint, name it, set its log condition, reset its hit count, or bplist. Anything "
-               "else is refused. Most print nothing: confirm with bplist.",
+               "hardware breakpoint (through a hold, as logpoint arms), name it, set its log condition, reset "
+               "its hit count, or bplist. Anything else is refused. Most print nothing: confirm with bplist.",
     "bplist": "Send bplist and return the log lines it produced (the only trustworthy breakpoint list; "
               "the plugin's GetBreakpointInfo is not).",
     "log": "Lines of the session log after line number `after` (default: the last `limit`), with the total "
