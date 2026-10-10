@@ -141,7 +141,10 @@ NO_SESSION_MARKERS = (
 # session needs, by x64dbg's own names and aliases (the aliases checked
 # against the pinned snapshot's x64dbg.dll command table). Matched on the verb,
 # case-insensitively. Adding a breakpoint is `logpoint`'s job, so `bph` and
-# `SetHardwareBreakpoint` are not here.
+# `SetHardwareBreakpoint` are not here. Nor is `GetHardwareBreakpointHitCount`:
+# it sets `$result` and, as far as is known, prints nothing, so it would
+# answer ok with no number. Count hits from the log instead (a counter field
+# in the logpoint's log string, docs/tools/x64dbg-mcp.md).
 COMMAND_ALLOWLIST = (
     "DeleteHardwareBreakpoint", "bphc", "bphwc",
     "EnableHardwareBreakpoint", "bphe", "bphwe",
@@ -149,7 +152,6 @@ COMMAND_ALLOWLIST = (
     "SetHardwareBreakpointName", "bphwname",
     "SetHardwareBreakpointLogCondition", "bphwlogcondition",
     "ResetHardwareBreakpointHitCount",
-    "GetHardwareBreakpointHitCount",
     "bplist",
 )
 _ALLOWED_VERBS = {v.lower() for v in COMMAND_ALLOWLIST}
@@ -191,7 +193,10 @@ PLUGIN_EDITS = (
 
 SESSION_SCHEMA = "x64dbg-mcp-session/1"
 # A session in one of these may still hold the game: refuse a second attach.
-LIVE_STATES = ("attaching", "running", "detaching", "detach-unconfirmed")
+# `attach-unconfirmed`: the plugin never answered a debug-only call within the
+# ready timeout, so the game may sit paused at x64dbg's attach break; the
+# keeper keeps checking and resumes it, and only `detach` is served meanwhile.
+LIVE_STATES = ("attaching", "attach-unconfirmed", "running", "detaching", "detach-unconfirmed")
 
 
 class Refused(Exception):
@@ -893,6 +898,10 @@ class PluginMismatch(PluginError):
     """The plugin's tools/list lacks a tool or an argument the proxy would use."""
 
 
+class _ListedDisabled(PluginError):
+    """bplist lists the breakpoint, with its enabled flag 0."""
+
+
 def parse_reply(body: bytes, content_type: str, want_id: Any) -> dict[str, Any]:
     """One JSON-RPC message from a reply that is JSON or SSE-framed."""
     text = body.decode("utf-8", "replace")
@@ -1071,7 +1080,6 @@ class Keeper:
         self.send(f"attach 0x{self.target_pid:X}")
         if not self.wait_ready():
             return self.finish()
-        self.save(state="running")
         while self.state["state"] != "ended":
             self.serve_requests()
             if self.state["state"] == "ended":
@@ -1079,9 +1087,11 @@ class Keeper:
             if not self.headless_running():
                 self.save(state="ended", error=f"headless x64dbg exited with {self.proc.returncode}")
                 break
-            if self.state["state"] == "running" and not alive(self.state["target"]):
+            if self.state["state"] in ("running", "attach-unconfirmed") and not alive(self.state["target"]):
                 self.target_gone()
                 break
+            if self.state["state"] == "attach-unconfirmed":
+                self.late_attach()
             time.sleep(self.cfg.poll)
         return self.finish()
 
@@ -1101,15 +1111,31 @@ class Keeper:
                 break
             time.sleep(self.cfg.poll)
         else:
-            # Never leave the game paused: run on stdin, and say readiness was not seen.
+            # Readiness not seen. A stdin `run` resumes the game if the attach
+            # has in fact completed, and fails harmlessly if it has not; but a
+            # late attach would still pause the game after it. So the session
+            # is not `running`: the tools refuse it, and the keeper keeps
+            # checking (`late_attach`) until the plugin answers or a detach.
             self.send("run")
-            self.save(state="running", ready=False, attach_logged="Attached" in self.log_text(),
-                      error=f"the plugin did not answer a debug-only call within {self.cfg.ready_timeout:.0f}s; "
-                            "sent run on stdin without it")
+            self.save(state="attach-unconfirmed", ready=False, attach_logged="Attached" in self.log_text(),
+                      error=f"the plugin did not answer a debug-only call within {self.cfg.ready_timeout:.0f}s, "
+                            "so the attach is unconfirmed and the game may be paused at x64dbg's attach break. "
+                            "Sent run on stdin; the keeper resumes the game if the attach completes later. "
+                            "Run detach (`py -3 -m tools.x64dbg_mcp detach`) rather than use this session")
             return True
         reply = self.resume()
-        self.save(ready=True, run_reply=reply, attach_logged="Attached" in self.log_text())
+        self.save(state="running", ready=True, run_reply=reply, attach_logged="Attached" in self.log_text())
         return True
+
+    def late_attach(self) -> None:
+        """In `attach-unconfirmed`: once the plugin answers a debug-only call,
+        the attach has completed and may have paused the game, so resume it
+        and only then call the session `running`."""
+        if self.plugin.debug_state() != "debugging":
+            return
+        reply = self.resume()
+        self.save(state="running", ready=True, run_reply=reply, late_ready_utc=_utc(), error=None)
+        self.note("late attach confirmed; resumed the game")
 
     def resume(self) -> str:
         """`run` through the plugin until it reports RUNNING twice, a settle
@@ -1234,6 +1260,9 @@ def attach(cfg: Config, pid: int | None, game: bool) -> int:
         print(f"x64dbg_mcp: attach refused ({r.reason}): {r.detail}")
         return 1
     print(json.dumps(session_summary(cfg)))
+    if state.get("state") == "attach-unconfirmed":
+        print("x64dbg_mcp: attach unconfirmed: the game may be paused at x64dbg's attach break, and every tool "
+              "but detach refuses this session. Run `py -3 -m tools.x64dbg_mcp detach`.")
     return 0 if state.get("state") == "running" and state.get("ready") else 1
 
 
@@ -1275,7 +1304,8 @@ def start_session(cfg: Config, pid: int | None, game: bool) -> dict[str, Any]:
     deadline = time.monotonic() + cfg.ready_timeout + 30
     while time.monotonic() < deadline:
         state = read_state(cfg)
-        if state.get("keeper") and state.get("state") in ("running", "ended", "detach-unconfirmed"):
+        if state.get("keeper") and state.get("state") in ("running", "attach-unconfirmed", "ended",
+                                                          "detach-unconfirmed"):
             return state
         if keeper.poll() is not None:
             break
@@ -1302,7 +1332,17 @@ def detach(cfg: Config) -> int:
 _HEX = re.compile(r"^(?:0x)?([0-9A-Fa-f]+)$")
 _MODULE_OFFSET = re.compile(r"^([^\s+]+)\+(?:0x)?([0-9A-Fa-f]+)$")
 _MODULE_ROW = re.compile(r"^(\S+)\s.*?0x([0-9A-Fa-f]{8,16})\s+0x([0-9A-Fa-f]{8,16})\s+0x[0-9A-Fa-f]+\s*$")
-_BPLIST_ROW = re.compile(r"^\s*\d+:[^:\s]+:([0-9A-Fa-f]+)(?::|\s|$)")
+# x64dbg's bplist row: `<enabled>:<type>:<address>[:"<name>"]`, the first
+# field 1 for an enabled breakpoint and 0 for a disabled one, the type `HW` for
+# a hardware breakpoint.
+_BPLIST_ROW = re.compile(r"^\s*(\d+):([^:\s]+):([0-9A-Fa-f]+)(?::|\s|$)")
+# One instruction row of the plugin's ReadDismAtAddress listing: the address,
+# then the instruction's bytes as `48-89-5C`, then its text.
+_LISTING_ROW = re.compile(r"^\s*(?:0x)?([0-9A-Fa-f]{8,16})\s+((?:[0-9A-Fa-f]{2}-)*[0-9A-Fa-f]{2})(?:\s|$)")
+# What the plugin's ExecuteDbgCommand answers when x64dbg printed nothing.
+_QUEUED_REPLY = re.compile(r"^Command '.*' executed successfully\.?$", re.S)
+# The most bytes `expect_bytes` may carry.
+EXPECT_BYTES_MAX = 32
 
 
 def command_refusal(command: str) -> str | None:
@@ -1342,6 +1382,20 @@ def _refusal(tool: str, reason: str, detail: str, **fields: Any) -> dict[str, An
     return {"ok": False, "tool": tool, "refused": True, "reason": reason, "detail": detail, **fields}
 
 
+def parse_expect_bytes(value: str) -> bytes:
+    """`expect_bytes` as bytes: hex, with spaces or dashes between bytes
+    allowed (`48 89 5C 24`, `48-89-5C-24`, `48895C24`). Raises ValueError."""
+    text = re.sub(r"[\s-]", "", value)
+    if text.lower().startswith("0x"):
+        text = text[2:]
+    if not text or len(text) % 2 or not re.fullmatch(r"[0-9A-Fa-f]+", text):
+        raise ValueError(f"expect_bytes {value!r} is not whole hex bytes (e.g. '48 89 5C 24 08')")
+    data = bytes.fromhex(text)
+    if len(data) > EXPECT_BYTES_MAX:
+        raise ValueError(f"expect_bytes carries {len(data)} bytes; {EXPECT_BYTES_MAX} at most")
+    return data
+
+
 class Tools:
     """The eight tools' behaviour, apart from MCP, so the tests can drive it."""
 
@@ -1351,9 +1405,16 @@ class Tools:
 
     # gates
 
-    def _gate(self, tool: str, need_lease: bool = True) -> dict[str, Any] | None:
+    def _gate(self, tool: str, need_lease: bool = True,
+              states: tuple[str, ...] = ("running",)) -> dict[str, Any] | None:
         state = read_state(self.cfg)
-        if state.get("state") != "running" or not alive(state.get("keeper")):
+        if state.get("state") == "attach-unconfirmed" and "attach-unconfirmed" not in states \
+                and alive(state.get("keeper")):
+            return _refusal(tool, "attach_unconfirmed",
+                            "the attach was never confirmed: the plugin has not answered a debug-only call, so "
+                            "the game may be paused at x64dbg's attach break. Run the detach tool (or "
+                            "`py -3 -m tools.x64dbg_mcp detach`); nothing else is served on this session")
+        if state.get("state") not in states or not alive(state.get("keeper")):
             return _refusal(tool, "not_attached",
                             f"no attached session (state {state.get('state')}); run "
                             "`py -3 -m tools.x64dbg_mcp attach --game` under the hs-drive lease first")
@@ -1380,25 +1441,58 @@ class Tools:
     def _stdin(self, lines: list[str]) -> dict[str, Any]:
         return keeper_request(self.cfg, "send", timeout=15, lines=lines)
 
-    def _bplist_lines(self, wait_for: int | None = None) -> list[str]:
-        """Send `bplist` on headless's stdin and return the log lines that
-        followed it: until one names `wait_for`, or the settle time passed."""
+    def _stdin_lines(self, line: str, wait_for: int | None = None) -> list[str]:
+        """Send one command on headless's stdin and return the log lines that
+        followed it: until a bplist row names `wait_for`, or the settle time
+        passed. Stdin, not the plugin's ExecuteDbgCommand, because the plugin
+        captures a command's output by redirecting x64dbg's whole log to a temp
+        file for about 3 s, and whether logging-breakpoint hits reach the
+        session log meanwhile is not established."""
         offset = self._log_size()
-        self._stdin(["bplist"])
+        self._stdin([line])
         deadline = time.monotonic() + max(self.cfg.settle, 3.0 if wait_for is not None else 0)
         lines: list[str] = []
         while time.monotonic() < deadline:
             time.sleep(min(0.1, self.cfg.settle))
             lines = self._log_after(offset)
-            if wait_for is not None and _names_address(lines, wait_for):
+            if wait_for is not None and bplist_entry(lines, wait_for) is not None:
                 break
         return lines
 
-    def _execute(self, command: str) -> str:
+    def _bplist_lines(self, wait_for: int | None = None) -> list[str]:
+        return self._stdin_lines("bplist", wait_for)
+
+    def _execute(self, command: str, silent: bool = False) -> str:
+        """One command through the plugin. With `silent`, for a command x64dbg
+        prints nothing for when it succeeds (the `Set*` steps): any output at
+        all, which the plugin hands back as `Result: <text>`, is its failure."""
         text, is_error = self.plugin.call_checked(PLUGIN_EXECUTE, {"command": command})
         if is_error or text.lstrip().lower().startswith(("error", "exception")):
             raise PluginError(f"{command!r}: {text}")
+        stripped = text.strip()
+        if silent and not _QUEUED_REPLY.match(stripped) and stripped.lower() not in ("result:", ""):
+            raise PluginError(f"`{command}` printed: {stripped} (it prints nothing when it succeeds, so that "
+                              "output is its failure)")
         return text
+
+    def _still_running(self) -> str | None:
+        """After the final `run`, wait the settle time and ask again: a
+        breakpoint whose never-break condition did not take pauses the game on
+        its first hit. None when the plugin still reports RUNNING, otherwise
+        what it said."""
+        time.sleep(self.cfg.settle)
+        try:
+            text, _ = self.plugin.call_checked(PLUGIN_RUN)
+        except PluginError as e:
+            return str(e)
+        return None if "RUNNING" in text.upper() else text
+
+    def _code_at(self, addr: int, count: int) -> bytes:
+        """The first bytes of code at `addr`, from the plugin's disassembly."""
+        text, is_error = self.plugin.call_checked(PLUGIN_DISASM, {"address": f"0x{addr:X}", "byteCount": count})
+        if is_error:
+            raise PluginError(f"reading code at 0x{addr:X}: {text}")
+        return listing_bytes(text, addr)
 
     def _resume(self) -> str:
         try:
@@ -1440,7 +1534,7 @@ class Tools:
                 "plugin_url": self.cfg.url, "lease": {"state": held, "detail": detail}}
 
     def logpoint(self, address: str, log: str, log_condition: str | None = None,
-                 name: str | None = None) -> dict[str, Any]:
+                 name: str | None = None, expect_bytes: str | None = None) -> dict[str, Any]:
         tool = "logpoint"
         gate = self._gate(tool)
         if gate:
@@ -1451,12 +1545,34 @@ class Tools:
             if why:
                 return _refusal(tool, "bad_argument", why)
         try:
+            expect = parse_expect_bytes(expect_bytes) if expect_bytes else None
+        except ValueError as e:
+            return _refusal(tool, "bad_argument", str(e))
+        try:
             addr = self.resolve(address)
         except Refused as r:
             return _refusal(tool, r.reason, r.detail)
         except PluginError as e:
             return _refusal(tool, "plugin", str(e))
         hexaddr = f"0x{addr:X}"
+        # A hardware execute breakpoint fires only where an instruction starts,
+        # so a stale or mid-instruction address arms fine and never logs. Read
+        # the code there first, and with `expect_bytes` (from Ghidra's copy of
+        # the same function) refuse before anything is paused or set.
+        try:
+            code = self._code_at(addr, max(16, len(expect or b"")))
+        except PluginError as e:
+            return _refusal(tool, "plugin", str(e), address=hexaddr)
+        if expect is not None and not code.startswith(expect):
+            return _refusal(tool, "bytes_mismatch",
+                            f"the code at {hexaddr} starts {code[:len(expect)].hex(' ').upper() or 'with nothing readable'}, "
+                            f"not {expect.hex(' ').upper()}: a stale or mid-instruction address never fires, so "
+                            "nothing was set", address=hexaddr, bytes=code.hex(" ").upper(),
+                            expect_bytes=expect.hex(" ").upper())
+        checked = {"bytes": code.hex(" ").upper(), "bytes_checked": expect is not None}
+        if expect is None:
+            checked["note"] = ("no expect_bytes: these bytes were not compared with Ghidra's, so a zero from this "
+                               "address is not evidence until they are")
         steps: list[dict[str, str]] = []
         try:
             text, _ = self.plugin.call_checked(PLUGIN_PAUSE)
@@ -1475,22 +1591,41 @@ class Tools:
                 commands.append(f'SetHardwareBreakpointName {hexaddr}, "{name}"')
             commands.append(f"SetHardwareBreakpointCondition {hexaddr}, 0")
             for c in commands:
-                steps.append({"step": c, "reply": self._execute(c)})
+                steps.append({"step": c, "reply": self._execute(c, silent=c.startswith("Set"))})
             lines = self._bplist_lines(wait_for=addr)
-            if not _names_address(lines, addr):
+            listed = bplist_entry(lines, addr)
+            if listed is None:
                 raise PluginError(f"bplist did not name {hexaddr} after the plugin reported every step done "
                                   "(a queued command is not a set breakpoint)")
+            if listed == "disabled":
+                raise _ListedDisabled(f"bplist has {hexaddr} listed but disabled (its row's first field is 0): "
+                                      "a disabled breakpoint never logs")
+            if listed != "armed":
+                raise PluginError(f"bplist lists {hexaddr} as a {listed} breakpoint, not an enabled hardware one")
         except (PluginError, Refused) as e:
-            cleared = ""
-            try:
-                cleared = self._execute(f"bphc {hexaddr}")
-            except (PluginError, Refused) as e2:
-                cleared = f"clearing failed: {e2}"
-            run = self._resume()
-            return {"ok": False, "tool": tool, "stage": "set", "detail": str(e), "address": hexaddr,
-                    "steps": steps, "cleared": cleared, "run": run}
+            run = self._clear_and_resume(hexaddr)
+            stage = "listed-but-disabled" if isinstance(e, _ListedDisabled) else "set"
+            return {"ok": False, "tool": tool, "stage": stage, "detail": str(e), "address": hexaddr,
+                    "steps": steps, **run, **checked}
         run = self._resume()
-        return {"ok": True, "tool": tool, "address": hexaddr, "steps": steps, "bplist": lines, "run": run}
+        paused = self._still_running()
+        if paused is not None:
+            out = self._clear_and_resume(hexaddr)
+            return {"ok": False, "tool": tool, "stage": "running",
+                    "detail": f"the game did not stay running after {hexaddr} was armed ({paused}): its "
+                              "never-break condition did not take, so it was cleared",
+                    "address": hexaddr, "steps": steps, "first_run": run, **out, **checked}
+        return {"ok": True, "tool": tool, "address": hexaddr, "steps": steps, "bplist": lines, "run": run,
+                **checked}
+
+    def _clear_and_resume(self, hexaddr: str) -> dict[str, str]:
+        """Clear one breakpoint and resume the game: every failure path after
+        the pause ends here, so the game is never left paused."""
+        try:
+            cleared = self._execute(f"bphc {hexaddr}")
+        except (PluginError, Refused) as e:
+            cleared = f"clearing failed: {e}"
+        return {"cleared": cleared, "run": self._resume()}
 
     def command(self, command: str) -> dict[str, Any]:
         tool = "command"
@@ -1501,11 +1636,12 @@ class Tools:
         if gate:
             return gate
         try:
-            text, is_error = self.plugin.call_checked(PLUGIN_EXECUTE, {"command": command.strip()})
-        except PluginError as e:
-            return _refusal(tool, "plugin", str(e))
-        return {"ok": not is_error, "tool": tool, "reply": text,
-                "note": "the plugin reports a command done once it is queued; confirm with bplist"}
+            lines = self._stdin_lines(command.strip())
+        except Refused as r:
+            return _refusal(tool, r.reason, r.detail)
+        return {"ok": True, "tool": tool, "sent": command.strip(), "lines": lines,
+                "note": "sent on headless x64dbg's stdin; x64dbg prints nothing for most of these commands, and "
+                        "the lines may include logging-breakpoint hits, so confirm the effect with bplist"}
 
     def bplist(self) -> dict[str, Any]:
         gate = self._gate("bplist")
@@ -1515,8 +1651,9 @@ class Tools:
             lines = self._bplist_lines()
         except Refused as r:
             return _refusal("bplist", r.reason, r.detail)
-        return {"ok": True, "tool": "bplist", "lines": lines,
-                "breakpoints": [ln for ln in lines if _BPLIST_ROW.match(ln)]}
+        rows = [ln for ln in lines if _BPLIST_ROW.match(ln)]
+        return {"ok": True, "tool": "bplist", "lines": lines, "breakpoints": rows,
+                "disabled": [ln for ln in rows if _BPLIST_ROW.match(ln).group(1) == "0"]}  # type: ignore[union-attr]
 
     def log(self, after: int | None = None, limit: int = 200) -> dict[str, Any]:
         limit = max(1, min(int(limit), 5000))
@@ -1558,8 +1695,10 @@ class Tools:
 
     def detach(self) -> dict[str, Any]:
         # No lease check: detaching only gives the game back, and refusing it
-        # would leave the debugger attached.
-        gate = self._gate("detach", need_lease=False)
+        # would leave the debugger attached. Served from an unconfirmed attach
+        # and as a retry of an unconfirmed detach, too.
+        gate = self._gate("detach", need_lease=False,
+                          states=("running", "attach-unconfirmed", "detach-unconfirmed"))
         if gate:
             return gate
         try:
@@ -1579,25 +1718,59 @@ def module_bases(text: str) -> dict[str, int]:
     return out
 
 
-def _names_address(lines: list[str], addr: int) -> bool:
+def bplist_entry(lines: list[str], addr: int) -> str | None:
+    """How bplist lists `addr`: "armed" (an enabled hardware breakpoint,
+    `1:HW:<addr>`), "disabled" (`0:HW:<addr>`: listed, and never logs), the
+    type of another kind of breakpoint there, or None when no row names it."""
+    found = None
     for line in lines:
         m = _BPLIST_ROW.match(line)
-        if m and int(m.group(1), 16) == addr:
-            return True
-    return False
+        if not m or int(m.group(3), 16) != addr:
+            continue
+        if m.group(2).upper() != "HW":
+            found = found or m.group(2)
+        elif m.group(1) != "0":
+            return "armed"
+        else:
+            found = "disabled"
+    return found
+
+
+def listing_bytes(text: str, addr: int) -> bytes:
+    """The code bytes of a ReadDismAtAddress listing, from its first row at
+    `addr` for as long as the rows run on without a gap."""
+    out, at = bytearray(), addr
+    for line in text.splitlines():
+        m = _LISTING_ROW.match(line)
+        if not m:
+            continue
+        row = int(m.group(1), 16)
+        if row != at:
+            if out:
+                break
+            continue
+        data = bytes.fromhex(m.group(2).replace("-", ""))
+        out += data
+        at += len(data)
+    return bytes(out)
 
 
 # --- serve ------------------------------------------------------------------
 
 DESCRIPTIONS = {
-    "status": "Session state (none, attaching, running, detaching, ended, detach-unconfirmed), target pid, "
-              "keeper and headless alive, whether the plugin answers on 127.0.0.1, and the hs-drive lease.",
+    "status": "Session state (none, attaching, attach-unconfirmed, running, detaching, ended, "
+              "detach-unconfirmed), target pid, keeper and headless alive, whether the plugin answers on "
+              "127.0.0.1, and the hs-drive lease. attach-unconfirmed: the game may be paused; run detach.",
     "logpoint": "Add one non-breaking hardware logging breakpoint (bph, never breaks). address: 0x<hex> or "
                 "<module>+<hex>, e.g. Hero_Siege.exe+427460. log: an x64dbg log format string, braces allowed, "
-                "no double quote. Pauses the game for the set-up, reads bplist back, and always resumes it. "
-                "Four hardware breakpoints at most: start with a positive control.",
-    "command": "One allowlisted x64dbg command: delete, enable or disable a hardware breakpoint, name it, set "
-               "its log condition, read or reset its hit count, or bplist. Anything else is refused.",
+                "no double quote. expect_bytes: the function's first bytes from Ghidra (hex); a mismatch is "
+                "refused before anything is set, and without it a zero from this address is not evidence. "
+                "Pauses the game for the set-up, reads bplist back (enabled hardware row required), checks "
+                "the game stays running, and always resumes it. Four hardware breakpoints at most: start with "
+                "a positive control.",
+    "command": "One allowlisted x64dbg command, sent on headless x64dbg's stdin: delete, enable or disable a "
+               "hardware breakpoint, name it, set its log condition, reset its hit count, or bplist. Anything "
+               "else is refused. Most print nothing: confirm with bplist.",
     "bplist": "Send bplist and return the log lines it produced (the only trustworthy breakpoint list; "
               "the plugin's GetBreakpointInfo is not).",
     "log": "Lines of the session log after line number `after` (default: the last `limit`), with the total "
@@ -1628,8 +1801,9 @@ def serve(cfg: Config) -> int:
     def status() -> dict[str, Any]:
         return tools.status()
 
-    def logpoint(address: str, log: str, log_condition: str | None = None, name: str | None = None) -> dict[str, Any]:
-        return tools.logpoint(address, log, log_condition, name)
+    def logpoint(address: str, log: str, log_condition: str | None = None, name: str | None = None,
+                 expect_bytes: str | None = None) -> dict[str, Any]:
+        return tools.logpoint(address, log, log_condition, name, expect_bytes)
 
     def command(command: str) -> dict[str, Any]:
         return tools.command(command)

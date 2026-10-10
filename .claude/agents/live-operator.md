@@ -108,15 +108,25 @@ the running game, with no research build and no relaunch
    hold; the attach refuses without it. Run `py -3 -m tools.x64dbg_mcp attach
    --game` (or `attach <pid>`), then the `status` tool, and copy the session
    state it reports into the capture. x64dbg pauses the game while it
-   attaches; the attach returns once the game is running again.
+   attaches; an attach that exits 0 with `ready: true` has resumed it. A
+   non-zero exit, `ready: false`, or the state `attach-unconfirmed` means the
+   game may still be paused: run `detach` (step 5) and return
+   `LIVE-ABORTED`, quoting what `attach` printed.
 2. **Debugger positive control first.** A `logpoint` on the control address
-   the procedure names, then read its hits through `log` and quote them. No
-   hits is `INSTRUMENT-BLIND`: tear down (step 5) before you return it.
+   the procedure names, with a counter in its log string
+   (`#{d:$breakpointcounter}`), then read its hits through `log` and quote
+   them. No hits is `INSTRUMENT-BLIND`: tear down (step 5) before you return
+   it.
 3. **Breakpoints only through `logpoint`**: a hardware breakpoint that logs
    and never stops the game, at most four at once (the control and three
-   candidates; clear one with `command` `bphc <address>` to arm the next).
-   Confirm each with `bplist`, never with the plugin's `GetBreakpointInfo`,
-   which has reported 0 breakpoints that existed.
+   candidates; clear a candidate with `command` `bphc <address>` to arm the
+   next, never the control). Pass each candidate's first bytes from Ghidra as
+   `expect_bytes`: a stale or mid-instruction address arms and never fires,
+   and a candidate armed without them has a zero that is not evidence.
+   Confirm each with `bplist` (an enabled hardware row starts `1:HW:`), never
+   with the plugin's `GetBreakpointInfo`, which has reported 0 breakpoints
+   that existed. A candidate's zero counts only with its bytes checked and
+   the control still armed and logging in the same window.
 4. **Record the hits** in the capture as you would any step's output: the
    logpoint's address and log string, and the `log` lines verbatim. What
    `disasm` shows is disassembled game code: it may go in the capture, which

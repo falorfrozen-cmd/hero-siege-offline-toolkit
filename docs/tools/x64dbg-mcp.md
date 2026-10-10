@@ -163,9 +163,9 @@ the set, and each is named `mcp__x64dbg__<tool>` on an agent's `tools:` line:
 
 | Tool | What it does |
 |---|---|
-| `mcp__x64dbg__status` | session state (`none`, `attaching`, `running`, `detaching`, `ended`, `detach-unconfirmed`), the target pid, whether the keeper and headless are alive, whether the plugin answers on loopback, and the hs-drive lease state |
-| `mcp__x64dbg__logpoint` | adds one non-breaking hardware logging breakpoint: an `address` (an x64dbg expression such as `Hero_Siege.exe+427460`), a `log` format string (`{` `}` allowed, `"` refused), an optional log condition and an optional name. It pauses the debuggee, sets the hardware breakpoint (`bph`), its log text and optional log condition, sets its break condition to `0` so it never breaks, reads `bplist` back from the session log, and sends `run`. It reports ok only when the read-back names the resolved address. On any failure after the pause it clears that breakpoint and still sends `run`: it never leaves the game paused |
-| `mcp__x64dbg__command` | one allowlisted x64dbg command: delete, enable or disable a hardware breakpoint, name it, set its log condition, read or reset its hit count, or `bplist`. Everything else is refused, naming the allowlist: in particular a new hardware breakpoint (use `logpoint`), every software or memory breakpoint, setting a breakpoint command, `StopDebug`, `detach`, `exit`, memory writes, and any command with a `;` outside a double-quoted string |
+| `mcp__x64dbg__status` | session state (`none`, `attaching`, `attach-unconfirmed`, `running`, `detaching`, `ended`, `detach-unconfirmed`), the target pid, whether the keeper and headless are alive, whether the plugin answers on loopback, and the hs-drive lease state |
+| `mcp__x64dbg__logpoint` | adds one non-breaking hardware logging breakpoint: an `address` (an x64dbg expression such as `Hero_Siege.exe+427460`), a `log` format string (`{` `}` allowed, `"` refused), an optional log condition, an optional name, and an optional `expect_bytes`: the function's first bytes as Ghidra's copy has them, in hex. It first reads the code at the address and returns its first bytes; with `expect_bytes` a mismatch is refused before anything is paused or set. Then it pauses the debuggee, sets the hardware breakpoint (`bph`), its log text and optional log condition, sets its break condition to `0` so it never breaks, reads `bplist` back from the session log, sends `run`, and after the settle time asks again whether the game is running. It reports ok only when the read-back lists the resolved address as an enabled hardware breakpoint, every `Set*` step printed nothing, and the game is still running. On any failure after the pause it clears that breakpoint and still sends `run`: it never leaves the game paused |
+| `mcp__x64dbg__command` | one allowlisted x64dbg command, sent on headless's stdin (not through the plugin, § "Breakpoint rules"): delete, enable or disable a hardware breakpoint, name it, set its log condition, reset its hit count, or `bplist`. It returns the log lines that followed. Everything else is refused, naming the allowlist: in particular a new hardware breakpoint (use `logpoint`), every software or memory breakpoint, setting a breakpoint command, `StopDebug`, `detach`, `exit`, memory writes, and any command with a `;` outside a double-quoted string. Reading a hit count is not on the list: x64dbg's `GetHardwareBreakpointHitCount` sets `$result` and, as far as is known, prints nothing, so it would answer ok with no number |
 | `mcp__x64dbg__bplist` | sends `bplist` and returns the log lines it produced |
 | `mcp__x64dbg__log` | the session log's lines after a given line number (by default the last 200), with the total line count, so logging-breakpoint hits can be paged |
 | `mcp__x64dbg__modules` | the loaded modules from the memory map; gives `Hero_Siege.exe`'s base |
@@ -199,7 +199,55 @@ These come from the 2026-10-10 probes recorded on issue #484.
   and `argc=3`, read from RCX, RDX and R9D. A procedure names its own control;
   this one is an example for that build only.
 - **Verify with `bplist`, never with `GetBreakpointInfo`.** The plugin's
-  `GetBreakpointInfo` reported 0 breakpoints that `bplist` listed.
+  `GetBreakpointInfo` reported 0 breakpoints that `bplist` listed. A `bplist`
+  row reads `<enabled>:<type>:<address>`, then `:"<name>"` when it has one.
+  The first field is `1` for an enabled breakpoint and `0` for a disabled
+  one, and the type is `HW` for a hardware breakpoint. A `0:HW:` row is listed
+  and never logs, so `logpoint` accepts only `1:HW:`, and the `bplist` tool
+  returns the disabled rows apart.
+- **Check each candidate's bytes before trusting its zero.** A hardware execute
+  breakpoint fires only where an instruction starts. An address that is stale
+  (a Ghidra project from another build) or lands mid-instruction arms without
+  complaint and never logs, and the positive control proves only its own
+  address. So pass `expect_bytes`, the first bytes of the function in Ghidra's
+  copy, to every candidate's `logpoint`. A candidate armed without it returns
+  its bytes and a note, and its zero is not evidence until they are compared.
+  A function ForgePact detours starts with the detour's jump in the live
+  process, not with Ghidra's bytes, so expect a mismatch there.
+- **Two guards keep a logpoint from pausing the game.** x64dbg prints nothing
+  when a `Set*` step succeeds. So any output from one, which the plugin hands
+  back as `Result: <text>`, fails the logpoint, and its breakpoint is cleared.
+  That output can be a rejected never-break condition. After the final `run`,
+  `logpoint` waits the settle time and sends `run` again: if the game reports
+  paused, the condition did not take, and the breakpoint is cleared and the
+  game resumed. The plugin offers no way to ask whether the game is running
+  without resuming it, so that second check sees only a breakpoint hit within
+  the settle time (1.5 s). For a rarely called function, a pause that comes
+  later shows as the game freezing: `detach` ends it.
+- **Keep the control armed while a candidate's zero is read.** Clear
+  candidates to free a debug register, never the control: a zero with no
+  control logging in the same window measured nothing.
+- **Counting hits.** Count from the log, not from x64dbg's hit counter, which
+  `command` cannot read. Put a counter field in the `log` string, such as
+  `hit #{d:$breakpointcounter} rcx={rcx}`, or count the lines in `log`. The
+  `$breakpointcounter` field comes from x64dbg's documentation and is **not
+  yet measured live**.
+- **Hit counts across a plugin call are not established.** The plugin
+  captures a command's output by redirecting x64dbg's whole log to a temp file
+  for the length of the call. `headless.exe` implements that redirect, and
+  whether it still writes the log to the session log meanwhile or diverts it
+  is not established. If it diverts, hits inside those windows never reach
+  the session log and `log` undercounts "how often". `command` and `bplist` go
+  on headless's stdin, so no redirect is involved. Every `logpoint` still
+  pauses and resumes through the plugin, and the game runs inside two of its
+  windows: the moment before its pause takes effect, and about a quarter
+  second after each `run`. **First-session check:** give the control a counter
+  field (`#{d:$breakpointcounter}`, above), let it log steadily (about 85
+  hits/s in town for `CheckTalentUse`), then add one more `logpoint`. In `log`,
+  the control's counter should run on with no jump across that call. A jump
+  means the skipped hits went to the redirect file. Look as well for a
+  `[headless] failed to redirect log` line. Record what you saw. Until that
+  check has run, a count that spans a `logpoint` call is a lower bound.
 - **Health under load.** The game stayed healthy under about 50 s of logging:
   ForgePact's `ping` answered and no slowdown episode was seen. The game's
   exit `0xC0000409` on close matched the known `HSOfflineTrackerProducer.dll`
@@ -244,6 +292,14 @@ reports `running`, or failed.
   attach on headless's stdin, waits until the plugin answers a debug-only call
   without "No active debugging session", then sends `run`, and records
   whether readiness was observed.
+- **An attach the keeper never saw complete is `attach-unconfirmed`**, not
+  `running`. If the plugin has not answered within the ready timeout (60 s),
+  the keeper sends `run` on stdin, which resumes the game if the attach did
+  complete. A later attach would still pause the game, so the keeper goes on
+  asking, and once the plugin answers it resumes the game and only then calls
+  the session `running`. Until then every tool but `detach` refuses the
+  session, `attach` exits 1 and says the game may be paused, and the thing to
+  do is `detach`.
 - **The keeper is the only holder of headless's stdin** for the session's
   whole life. What headless does on stdin EOF, and whether it ends the
   debuggee by exiting while attached, is not established. So the keeper is
@@ -309,9 +365,12 @@ breakpoints and no memory writes.
 each acceptance with a negative control beside it: the git-tree refusal, the
 loopback bind and loopback-only client, the two edits (applied, already
 applied, CRLF and LF, refused), the build command line and install, the lease
-and attach refusals, the keeper's attach-then-`run` and teardown order,
-`logpoint`'s read-back and always-`run` failure path, the `command` allowlist,
-and the `.mcp.json` and Codex wiring. A guard fails any URL fetch that is not
+and attach refusals, the keeper's attach-then-`run`, its `attach-unconfirmed`
+state and late resume, and teardown order, `logpoint`'s read-back (a row
+listed but disabled fails), its `Set*` output check, its re-check that the
+game kept running, its `expect_bytes` refusal and always-`run` failure path,
+the `command` allowlist and its stdin route, and the `.mcp.json` and Codex
+wiring. A guard fails any URL fetch that is not
 `127.0.0.1` and any subprocess the test did not expect, and a test proves the
 guard trips: no network, no download, no clone, no MSBuild, no real x64dbg,
 game or lease. The stdio round trip needs the `mcp` package and skips without

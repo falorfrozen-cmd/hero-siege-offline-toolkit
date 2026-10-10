@@ -17,11 +17,15 @@ quietly break:
   endings, and refuse anything else before writing;
 - the build line and environment, and the two-file install;
 - `attach` refuses without a live lease, a game pid, an install, or while a
-  session is live; the keeper sends `run` only once the plugin answers, and
-  teardown is `bphc`, `detach`, confirm, `exit`, never killing an unconfirmed
-  headless;
-- `command`'s allowlist, and `logpoint`'s read-back: a plugin that says
-  "executed successfully" for a breakpoint x64dbg never set is not a pass;
+  session is live; the keeper sends `run` only once the plugin answers, an
+  attach it never saw confirmed is `attach-unconfirmed` (refused by every tool
+  but `detach`) until a late answer lets it resume the game, and teardown is
+  `bphc`, `detach`, confirm, `exit`, never killing an unconfirmed headless;
+- `command`'s allowlist, sent on headless's stdin, and `logpoint`'s checks: a
+  plugin that says "executed successfully" for a breakpoint x64dbg never set,
+  a row listed but disabled, a never-break condition x64dbg rejected or that
+  did not take, and code that differs from `expect_bytes` are none of them a
+  pass;
 - `.mcp.json` and Codex start the stdio launcher, not the plugin's URL.
 Each acceptance has a negative control beside it.
 """
@@ -146,8 +150,8 @@ for raw in sys.stdin.buffer:
             addrs = json.loads(bps.read_text(encoding="utf-8"))
         except Exception:
             addrs = []
-        for a in addrs:
-            print("1:HW:%016X" % a, flush=True)
+        for enabled, kind, a in addrs:
+            print("%d:%s:%016X" % (enabled, kind, a), flush=True)
     elif line == "detach":
         print("Detached!", flush=True)
     elif line == "exit":
@@ -164,17 +168,30 @@ MODULE_TABLE = (
 GAME_BASE = 0x7FF6A0000000
 
 
+# The stand-in function's first instructions, as the plugin's listing shows
+# them: synthetic bytes of our own, not the game's.
+CODE = (bytes.fromhex("4889542410"), bytes.fromhex("53"), bytes.fromhex("4883EC30"), bytes.fromhex("90"))
+
+
 class StandInPlugin:
     """The plugin's MCP endpoint, as far as this proxy uses it. Whether x64dbg
     is "debugging" follows the fake headless's stdin record, as the real
     plugin follows x64dbg's state; breakpoints set through `bph` are what the
-    fake headless's `bplist` prints."""
+    fake headless's `bplist` prints.
+
+    The failure modes it can play: `false_success` (a `bph` reported done that
+    x64dbg never set), `listed_as` (the bplist row's enabled flag and type),
+    `fail_condition` (x64dbg prints an error for the never-break condition),
+    `condition_ignored` (it prints nothing, yet the game pauses once a
+    breakpoint is armed)."""
 
     def __init__(self, record: Path, bps: Path, *, sse=False, false_success=False, never_detach=False,
-                 never_ready=False, debugging=None, execute_arg="command"):
+                 never_ready=False, debugging=None, execute_arg="command", listed_as=(1, "HW"),
+                 fail_condition=False, condition_ignored=False):
         self.record, self.bps = record, bps
         self.sse, self.false_success, self.never_detach = sse, false_success, never_detach
         self.never_ready, self.forced, self.execute_arg = never_ready, debugging, execute_arg
+        self.listed_as, self.fail_condition, self.condition_ignored = listed_as, fail_condition, condition_ignored
         self.calls: list[tuple[str, dict]] = []
         self.sessions: list[str | None] = []
         self.addrs: list[int] = []
@@ -265,16 +282,25 @@ class StandInPlugin:
             m = re.match(r"bphc(?: (0x[0-9A-Fa-f]+))?$", cmd)
             if m:
                 self.addrs = [a for a in self.addrs if m.group(1) and a != int(m.group(1), 16)]
-            self.bps.write_text(json.dumps(self.addrs), encoding="utf-8")
+            self.bps.write_text(json.dumps([[*self.listed_as, a] for a in self.addrs]), encoding="utf-8")
+            if self.fail_condition and cmd.startswith("SetHardwareBreakpointCondition"):
+                return f"Result: Can't set break condition on breakpoint \"{cmd.split()[1].rstrip(',')}\"", False
             return f"Command '{cmd}' executed successfully.", False
         if name == xm.PLUGIN_MODULES:
             return MODULE_TABLE, False
         if name == xm.PLUGIN_PAUSE:
             return "SUCCESS: Debuggee paused at 0x7FF6A0001000 (Hero_Siege.exe).", False
         if name == xm.PLUGIN_RUN:
+            if self.condition_ignored and self.addrs:
+                return "STATUS: PAUSED. Process resumed but hit an immediate breakpoint.", False
             return "STATUS: RUNNING. The target process is now in a running state.", False
         if name == xm.PLUGIN_DISASM:
-            return f"stand-in listing for {args.get('address')} ({args.get('byteCount')} bytes)", False
+            at = int(str(args.get("address")), 16)
+            rows = [f"stand-in listing for {args.get('address')} ({args.get('byteCount')} bytes)"]
+            for ins in CODE:
+                rows.append(f"{at:016X}  {'-'.join(f'{b:02X}' for b in ins):<20}  stand-in instruction")
+                at += len(ins)
+            return "\n".join(rows) + "\n", False
         return f"Tool '{name}' not found.", True
 
     def names(self):
@@ -843,7 +869,9 @@ class AllowlistTests(unittest.TestCase):
     def test_allowlist_refuses_everything_that_breaks_stops_steps_or_writes(self):
         for cmd in ("bph 0x1", "SetHardwareBreakpoint 0x1", "bphws 0x1", "bp 0x1", "SetBreakpointLog 0x1, x",
                     "bpm 0x1", "SetHardwareBreakpointCommand 0x1, run", "StopDebug", "detach", "exit",
-                    "run", "pause", "sti", "mov [0x1], 0", "savedata", "SetHardwareBreakpointSilent 0x1"):
+                    "run", "pause", "sti", "mov [0x1], 0", "savedata", "SetHardwareBreakpointSilent 0x1",
+                    # sets $result and prints nothing: it would answer ok with no number
+                    "GetHardwareBreakpointHitCount 0x1"):
             with self.subTest(cmd=cmd):
                 why = xm.command_refusal(cmd)
                 self.assertIsNotNone(why)
@@ -899,10 +927,35 @@ class GateTests(unittest.TestCase):
         _fake_live_session(self.cfg)
         _hold_lease()
         for kwargs in ({"log": 'say "hi"'}, {"log": "two\nlines"}, {"log": "x", "log_condition": "rcx==1;exit"},
-                       {"log": "x", "log_condition": '"1"'}, {"log": "x", "name": 'a"b'}):
+                       {"log": "x", "log_condition": '"1"'}, {"log": "x", "name": 'a"b'},
+                       {"log": "x", "expect_bytes": "48 8"}, {"log": "x", "expect_bytes": "zz"},
+                       {"log": "x", "expect_bytes": "90" * (xm.EXPECT_BYTES_MAX + 1)}):
             with self.subTest(**kwargs):
                 result = self.tools.logpoint("0x1000", **kwargs)
                 self.assertEqual(result["reason"], "bad_argument", result)
+
+    def test_expect_bytes_parses_every_hex_spelling(self):
+        for spelled in ("48 89 54 24 10", "48-89-54-24-10", "4889542410", "0x4889542410"):
+            with self.subTest(spelled=spelled):
+                self.assertEqual(xm.parse_expect_bytes(spelled), CODE[0])
+
+    def test_refuses_an_unconfirmed_attach_for_every_tool_but_detach(self):
+        _fake_live_session(self.cfg)
+        state = xm.read_state(self.cfg)
+        xm.write_json(self.cfg.state_file, {**state, "state": "attach-unconfirmed"})
+        _hold_lease()
+        for name, call in self.calls().items():
+            with self.subTest(tool=name):
+                if name == "detach":
+                    # the control: detach passes the gate and reaches the keeper
+                    with mock.patch.object(xm, "keeper_request", return_value={"ok": True}) as asked:
+                        call()
+                    asked.assert_called_once()
+                    self.assertEqual(asked.call_args.args[1], "detach")
+                else:
+                    result = call()
+                    self.assertEqual(result["reason"], "attach_unconfirmed", result)
+                    self.assertIn("detach", result["detail"])
 
     def test_status_and_log_answer_without_a_session(self):
         status = self.tools.status()
@@ -994,13 +1047,33 @@ class KeeperTests(SessionMixin, unittest.TestCase):
         self.assertNotEqual(state["keeper"]["pid"], os.getpid())
         self.assertIn("Attached to process!", cfg.log_file.read_text(encoding="utf-8"))
 
-    def test_keeper_without_readiness_still_resumes_the_game_on_stdin(self):
+    def test_keeper_without_readiness_is_attach_unconfirmed_not_running(self):
         cfg, plugin, state, record, _ = self.start_session(cfg_over={"ready_timeout": 1}, never_ready=True)
-        self.assertEqual(state["state"], "running", state)
+        self.assertEqual(state["state"], "attach-unconfirmed", state)
         self.assertFalse(state["ready"])
         self.assertIn("did not answer", state["error"])
+        self.assertIn("may be paused", state["error"])
         self.assertIn("run", self.stdin_lines(record))
         self.assertNotIn(xm.PLUGIN_RUN, plugin.names())
+        refused = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+        self.assertEqual(refused["reason"], "attach_unconfirmed", refused)
+        with mock.patch.object(xm, "start_session", return_value=state), mock.patch("sys.stdout"):
+            self.assertEqual(xm.attach(cfg, 1, False), 1)
+
+    def test_keeper_resumes_a_late_attach_then_calls_it_running(self):
+        cfg, plugin, state, _, _ = self.start_session(cfg_over={"ready_timeout": 1}, never_ready=True)
+        self.assertEqual(state["state"], "attach-unconfirmed", state)
+        time.sleep(0.5)
+        self.assertNotIn(xm.PLUGIN_RUN, plugin.names())  # control: nothing to resume yet
+        plugin.never_ready = False  # the attach completes late
+        deadline = time.monotonic() + 15
+        while xm.read_state(cfg).get("state") != "running" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        late = xm.read_state(cfg)
+        self.assertEqual((late["state"], late["ready"]), ("running", True), late)
+        self.assertIn("RUNNING", late["run_reply"])
+        self.assertIsNone(late["error"])
+        self.assertIn(xm.PLUGIN_RUN, plugin.names())
 
     def test_keeper_refuses_a_second_attach_while_live(self):
         cfg, _, _, _, target = self.start_session()
@@ -1014,7 +1087,9 @@ class KeeperTests(SessionMixin, unittest.TestCase):
         tools = xm.Tools(cfg)
         reply = tools.command("bphc 0x7FF6A0427460")
         self.assertTrue(reply["ok"], reply)
-        self.assertIn(("ExecuteDbgCommand", {"command": "bphc 0x7FF6A0427460"}), plugin.calls)
+        # on headless's stdin, never through the plugin's log-redirecting ExecuteDbgCommand
+        self.assertIn("bphc 0x7FF6A0427460", self.stdin_lines(record))
+        self.assertNotIn(xm.PLUGIN_EXECUTE, plugin.names())
         listed = tools.bplist()
         self.assertTrue(listed["ok"], listed)
         self.assertIn("bplist", self.stdin_lines(record))
@@ -1049,6 +1124,14 @@ class TeardownTests(SessionMixin, unittest.TestCase):
         self.assertTrue(xm.alive(state["headless"]))
         self.assertTrue(xm.alive(state["keeper"]))
 
+    def test_teardown_tool_ends_an_unconfirmed_attach(self):
+        cfg, _, state, record, _ = self.start_session(cfg_over={"ready_timeout": 1}, never_ready=True)
+        self.assertEqual(state["state"], "attach-unconfirmed", state)
+        result = xm.Tools(cfg).detach()
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["state"], "ended")
+        self.assertEqual(self.stdin_lines(record)[-3:], ["bphc", "detach", "exit"])
+
     def test_teardown_tool_needs_no_lease_to_give_the_game_back(self):
         cfg, _, _, _, _ = self.start_session()
         _hold_lease(state="released")
@@ -1060,18 +1143,87 @@ class TeardownTests(SessionMixin, unittest.TestCase):
 class FalseSuccessTests(SessionMixin, unittest.TestCase):
     def test_false_success_control_a_breakpoint_x64dbg_lists_is_ok(self):
         cfg, plugin, _, record, _ = self.start_session()
-        result = xm.Tools(cfg).logpoint("Hero_Siege.exe+427460", "hit rcx={rcx} rdx={rdx}", name="control")
+        result = xm.Tools(cfg).logpoint("Hero_Siege.exe+427460", "hit rcx={rcx} rdx={rdx}", name="control",
+                                        expect_bytes="48 89 54 24 10 53")
         self.assertTrue(result["ok"], result)
         addr = f"0x{GAME_BASE + 0x427460:X}"
         self.assertEqual(result["address"], addr)
+        self.assertTrue(result["bytes_checked"])
+        self.assertTrue(result["bytes"].startswith("48 89 54 24 10 53 48 83 EC 30"), result["bytes"])
         sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
         self.assertEqual(sent, [f"bph {addr}, x, 1", f'SetHardwareBreakpointLog {addr}, "hit rcx={{rcx}} rdx={{rdx}}"',
                                 f'SetHardwareBreakpointName {addr}, "control"',
                                 f"SetHardwareBreakpointCondition {addr}, 0"])
         names = plugin.names()
+        self.assertLess(names.index(xm.PLUGIN_DISASM), names.index(xm.PLUGIN_PAUSE))
         self.assertLess(names.index(xm.PLUGIN_PAUSE), names.index(xm.PLUGIN_EXECUTE))
-        self.assertEqual(names[-1], xm.PLUGIN_RUN)
+        self.assertEqual(names[-2:], [xm.PLUGIN_RUN, xm.PLUGIN_RUN])  # resume, then the re-check
         self.assertIn("bplist", self.stdin_lines(record))
+
+    def test_false_success_without_expect_bytes_says_a_zero_is_not_evidence(self):
+        cfg, _, _, _, _ = self.start_session()
+        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(result["bytes_checked"])
+        self.assertIn("not evidence", result["note"])
+
+    def test_false_success_refuses_an_address_whose_bytes_differ_from_ghidra(self):
+        cfg, plugin, _, _, _ = self.start_session()
+        # Ghidra's copy starts differently: a stale address, or one mid-instruction
+        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit", expect_bytes="48 8B 05 00")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["reason"], "bytes_mismatch")
+        self.assertIn("never fires", result["detail"])
+        self.assertEqual(result["bytes"][:14], "48 89 54 24 10")
+        names = plugin.names()
+        self.assertNotIn(xm.PLUGIN_PAUSE, names)  # nothing paused, nothing set
+        self.assertNotIn(xm.PLUGIN_EXECUTE, names)
+
+    def test_false_success_a_breakpoint_listed_but_disabled_is_not_ok(self):
+        cfg, plugin, _, _, _ = self.start_session(listed_as=(0, "HW"))
+        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["stage"], "listed-but-disabled")
+        self.assertIn("listed but disabled", result["detail"])
+        sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
+        self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
+        self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
+
+    def test_false_success_a_rejected_never_break_condition_is_not_ok(self):
+        cfg, plugin, _, _, _ = self.start_session(fail_condition=True)
+        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["stage"], "set")
+        self.assertIn("Can't set break condition", result["detail"])
+        sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
+        self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
+        self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
+
+    def test_false_success_a_breakpoint_that_pauses_the_game_is_cleared(self):
+        cfg, plugin, _, _, _ = self.start_session(condition_ignored=True)
+        result = xm.Tools(cfg).logpoint("0x7FF6A0427460", "hit")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["stage"], "running")
+        self.assertIn("did not stay running", result["detail"])
+        self.assertIn("RUNNING", result["run"])  # cleared, then resumed for real
+        sent = [a["command"] for n, a in plugin.calls if n == xm.PLUGIN_EXECUTE]
+        self.assertEqual(sent[-1], "bphc 0x7FF6A0427460")
+        self.assertEqual(plugin.names()[-1], xm.PLUGIN_RUN)
+
+    def test_false_success_bplist_rows_by_enabled_flag_and_type(self):
+        a = 0x7FF6A0427460
+        self.assertEqual(xm.bplist_entry([f"1:HW:{a:016X}"], a), "armed")
+        self.assertEqual(xm.bplist_entry([f'1:HW:{a:016X}:"control"'], a), "armed")
+        self.assertEqual(xm.bplist_entry([f"0:HW:{a:016X}"], a), "disabled")
+        self.assertEqual(xm.bplist_entry([f"1:BP:{a:016X}"], a), "BP")
+        self.assertIsNone(xm.bplist_entry([f"1:HW:{a + 1:016X}", "hit 42"], a))
+
+    def test_false_success_listing_bytes_run_from_the_address_without_a_gap(self):
+        a = 0x7FF6A0427460
+        listing = (f"header\nsome_label:\n{a:016X}  48-89-54-24-10        mov\n{a + 5:016X}  53                    push\n"
+                   f"{a + 9:016X}  90                    nop\n; Byte read limit (16) reached\n")
+        self.assertEqual(xm.listing_bytes(listing, a), bytes.fromhex("48 89 54 24 10 53"))  # stops at the gap
+        self.assertEqual(xm.listing_bytes(listing, a + 1), b"")  # no row starts there
 
     def test_false_success_a_queued_breakpoint_x64dbg_never_set_is_not_ok(self):
         cfg, plugin, _, _, _ = self.start_session(false_success=True)
