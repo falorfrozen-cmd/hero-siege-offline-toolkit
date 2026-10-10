@@ -617,7 +617,7 @@
       "scripts": [
         "gml_Script_skillsLeap"
       ],
-      "what": "Outdoor scenery that does not stop a vanilla jump: in Act_01_01, beside a rock (boulder) the owner chose, with the cursor beyond it, a jump with the mod off moved 189.8 px toward the cursor and went past the rock. The cursor was read only from a screenshot, so its room position is approximate. The longest jump measured for this character, so the jump's maximum length for Sorak is at least about 190 px.",
+      "what": "Outdoor scenery that does not stop a vanilla jump: in Act_01_01, beside a rock (boulder) the owner chose, with the cursor beyond it, a jump with the mod off moved 189.8 px toward the cursor and went past the rock. The cursor was read only from a screenshot, so its room position is approximate. The longest jump measured for this character in Live procedure 1; J25 later measured the maximum at about 246 px.",
       "values": {
         "room": "Act_01_01",
         "start": [
@@ -673,7 +673,7 @@
         }
       ],
       "scripts": [],
-      "what": "The v2.2.1 hotfix's Live procedure 2 (ForgePact 2.2.1 player build at 71e5f12, SHA-256 9088231d53bdc462916ffb19f1d4ac668ca0b03bc6e302d782580fa5fd3c7cf4; slot 14 Sorak): the built-in variables mouse_x / mouse_y, read by name through ForgePact's GetBuiltin (jumpscenery stat's cursor=<x>,<y>@mouse_x), give the cursor in room coordinates. On four aims, each a room point converted to the screen as (room - view.xy) x 2 and reached with an injected mouse move, the reading was within 1 px of the aimed room point on each axis. device_mouse_x was not read.",
+      "what": "The v2.2.1 hotfix's Live procedure 2 (ForgePact 2.2.1 player build at 71e5f12, SHA-256 9088231d53bdc462916ffb19f1d4ac668ca0b03bc6e302d782580fa5fd3c7cf4; slot 14 Sorak): the built-in variables mouse_x / mouse_y, read by name through ForgePact's GetBuiltin (jumpscenery stat's cursor=<x>,<y>@mouse_x), give the cursor in room coordinates. On four aims, each a room point converted to the screen as (room - view.xy) x 2 and reached with an injected mouse move, the reading was within 1.2 px of the aimed room point on each axis (the reads are whole numbers). device_mouse_x was not read.",
       "values": {
         "route": "mouse_x",
         "aims": [
@@ -722,7 +722,7 @@
             ]
           }
         ],
-        "max_axis_error_px": 1
+        "max_axis_error_px": 1.2
       }
     },
     {
