@@ -259,7 +259,7 @@ These come from the 2026-10-10 probes recorded on issue #484.
   module with no row at all is `no_such_module`. The other plugin outputs the tool parses (the
   `ReadDismAtAddress` listing) are hex, as before.
 - **No tool pauses the game, because x64dbg's pause cannot be detached from
-  safely.** Until Replan 2 of `tooling-484-x64dbg-mcp-live-fixes`, `logpoint`
+  safely.** Before the no-pause rework that followed Live 2, `logpoint`
   paused the game through the plugin's `PauseDebug`, armed, and resumed
   through the plugin's `run`. Live 2 (2026-10-10) measured why that cannot
   stand. `PauseDebug` is asynchronous: it answered that the process "may still
@@ -310,16 +310,17 @@ These come from the 2026-10-10 probes recorded on issue #484.
   which turns a candidate's zero into a false negative, or re-arm one x64dbg
   has deleted. So whenever `bplist` shows an enabled hardware breakpoint, a
   change to the debug registers is held: the keeper sets each armed one's
-  break condition to 1 and waits up to 2 s for x64dbg to read `paused`. The
-  game is then held at a hit of a breakpoint that was logging, where nothing
-  is mid-hit and the change cannot race the debug loop. The keeper sends the
-  lines, restores each condition to 0, reads `bplist`, and sends `run` at
-  once. The reply's `held` is the break line it paused at. When nothing
-  breaks within 2 s, nothing was logging: the conditions go back to 0, the
-  lines go out as a direct batch, and the reply has `held: null` and a
-  `held_note` saying so. Live procedure 3's `control-survives` check (the
-  control keeps logging across a candidate's arm) measures this guard; until
-  it has run, the guard is a reading. How long a held change holds the game
+  break condition to 1 and waits up to 2 s for a new `[STATE] paused`, one
+  that came after the conditions were set (a pause already there, such as
+  one the watchdog has not resumed yet, does not count). The game is then
+  held at a hit of a breakpoint that was logging, where nothing is mid-hit
+  and the change cannot race the debug loop. The keeper sends the lines,
+  restores each condition to 0, reads `bplist`, and sends `run` at once. The
+  reply's `held` is the break line it paused at. When no armed breakpoint is
+  hit within 2 s, the conditions go back to 0, the lines go out as a direct
+  batch, and the reply has `held: null` and a `held_note` saying so. A live
+  check that the control keeps logging across a candidate's arm measures this
+  guard; until one has run, the guard is a reading. How long a held change holds the game
   is not yet measured; take `hs_command` `incident stat` right after each
   `logpoint` so a later slowdown window does not count it.
 - **x64dbg pauses the game on its own, and the keeper resumes every one.**
@@ -364,9 +365,9 @@ These come from the 2026-10-10 probes recorded on issue #484.
   arming goes through the plugin any more anyway. A held change holds the
   game at one hit, so the control's counter (`#{d:$breakpointcounter}`,
   above) should run on across a `logpoint` with no jump. That is expected,
-  not yet measured: Live procedure 3's `counter-continuity` check measures
-  it, and its `control-survives` check whether the control still logs after
-  a candidate's arm.
+  not yet measured: no live session has yet checked that the counter runs on
+  with no jump across a candidate's arm, or that the control still logs
+  after it.
 - **Health under load.** The game stayed healthy under about 50 s of logging:
   ForgePact's `ping` answered and no slowdown episode was seen. The game's
   exit `0xC0000409` on close matched the known `HSOfflineTrackerProducer.dll`
@@ -428,17 +429,29 @@ starts the detached keeper and returns once the keeper reports `running`,
   session `running`, with `ready: true`. The session's `instrument` field
   holds the three checks, `before_attach`, `attach_break` and
   `after_resume`, and `proven`, true only for the sequence running, frozen,
-  running. A check that does not read the held game as frozen saw nothing:
-  `proven` is false, `instrument` carries a `note` saying so, and its later
-  `running` verdicts prove nothing (AGENTS.md § "Prove the Instrument Before
-  Trusting a Negative Result").
+  running with the held threads named at the attach break: there
+  `suspended` and `stopped` must each list every thread the check before
+  attach saw (less the baseline's), as the child probe measured a pending
+  debug event, and `unreadable_counts` must be empty. A thread first seen at
+  the attach break, the debugger's own break-in thread, is left out. A
+  `frozen` with empty lists could come from a check that read no thread at
+  all. A check that does not read the held game as frozen, or does not name
+  the held threads, saw nothing: `proven` is false, `instrument` carries a
+  `note` naming each missing piece, and its later `running` verdicts prove
+  nothing (AGENTS.md § "Prove the Instrument Before Trusting a Negative
+  Result"). So an unproven instrument leaves the session
+  `attach-unconfirmed`, never `running`, and a detach then reports
+  `game_released: null` with `ok: false` rather than a release.
 - **An attach the keeper did not see through is `attach-unconfirmed`**, not
   `running`, with `ready: false` and an error naming what was not seen within
   the ready timeout (60 s): the plugin never answered a debug-only call, the
   attach break never came, x64dbg never settled at `running` for 1 s, or the
-  after-resume check read the game as something other than `running`. The
-  keeper keeps resuming every pause, and makes the session `running` once all
-  of it has been seen. Until then every tool but `detach` refuses the
+  after-resume check read the game as something other than `running`, or the
+  instrument was not proven. The keeper keeps resuming every pause, and
+  makes the session `running` once all of it has been seen; an instrument
+  whose check before attach or at the attach break fell short cannot be
+  proven later, so that session stays unconfirmed. Until then every tool but
+  `detach` refuses the
   session, `attach` exits 1 and says the game may be paused, and the thing to
   do is `detach`.
 - **The watchdog.** While the session is `running` or `attach-unconfirmed`,
@@ -488,8 +501,11 @@ starts the detached keeper and returns once the keeper reports `running`,
      that has not exited;
   5. the outside check, leaving out the threads the baseline already found
      suspended or stopped. `running` ends the session `ended` with
-     `detach_confirmed: true` and `game_released: true`. `gone` ends it
-     `ended` with `game_released: null` and a note. Anything else is
+     `detach_confirmed: true` and `game_released: true`, when the checks
+     before attach and at the attach break proved the instrument; when they
+     did not, it ends `ended` with `game_released: null`, `ok: false` and a
+     note that the instrument was not proven, and the CLI exits 1. `gone`
+     ends it `ended` with `game_released: null` and a note. Anything else is
      `game-not-released`.
 
   An unconfirmed detach leaves headless alone, sets the state to
@@ -530,16 +546,21 @@ verdict, and 2 for a usage error. The fields:
 | `verdict` | `running`, `frozen`, `threads-suspended`, `gone`, `unreadable` or `unsupported` |
 | `threads` | the number of threads |
 | `progress` | the summed context-switch increase from the first sample to the last, over the threads present in both |
-| `suspended` | `[{"tid": n, "suspend_count": k}]`, each thread whose suspend count is 1 or more in every sample |
+| `suspended` | `[{"tid": n, "suspend_count": k}]`, each thread whose suspend count is 1 or more in every sample and whose own context switches did not advance across the window |
 | `stopped` | the tids in the Waiting/Suspended state with no context switch across the window |
+| `unreadable_counts` | the tids whose suspend count could not be read in some sample (never read as 0) |
+| `tids` | every thread present in every sample, so a caller can tell whether `suspended` and `stopped` cover the threads it expected |
 | `samples`, `interval` | how it sampled (by default 3 samples, 0.4 s apart) |
 | `detail` | one sentence naming the counts |
 
 The verdict, in order: no such process is `gone`; not Windows is
 `unsupported`; a failed sample is `unreadable`; no context switch at all
 (`progress` 0) is `frozen`; a non-empty `suspended` or `stopped` is
-`threads-suspended`; anything else is `running`. A thread whose suspend count
-cannot be read is counted in `detail` and never read as 0. Only a suspension
+`threads-suspended`; a non-empty `unreadable_counts` is `unreadable`;
+anything else is `running`. A thread whose suspend count cannot be read is
+listed in `unreadable_counts`, counted in `detail` and never read as 0, so
+it never reads `running`. Threads in the baseline are left out of
+`suspended`, `stopped` and `unreadable_counts`. Only a suspension
 seen in every sample counts: x64dbg suspends every other thread for each
 logpoint hit's step, so one sample during logging can catch everything
 suspended. An idle process reads `frozen`; the game renders every frame, so
@@ -565,16 +586,22 @@ before the tools used it:
   context switch and suspend count 1, the others going on;
 - held at a pending debug event (`DebugActiveProcess`, its first event not
   continued): no context switch at all, and every original thread in
-  Waiting/Suspended with suspend count 2;
+  Waiting/Suspended with suspend count 2; the debugger's break-in thread was
+  in an Executive wait with count 0;
 - after `DebugActiveProcessStop`, with that event never continued: every
-  thread running again, with suspend count 0. A pending debug event does not
-  leave threads suspended after a detach; Live 2's suspended threads came
+  thread running again, with suspend count 0. So leaving threads suspended
+  after a detach was not observed on a child detached by
+  `DebugActiveProcessStop` with the event never continued; x64dbg's
+  TitanEngine detach path was not measured. Live 2's suspended threads came
   from the synchronized step's explicit `SuspendThread` calls.
 
 The controls run in every session: before attach the game reads `running`,
-at x64dbg's attach break it reads `frozen`, and after the resume `running`
-again (`instrument` in `status`). Only that sequence makes a later `running`
-mean anything. The live procedure runs the CLI itself too, after attach,
+at x64dbg's attach break it reads `frozen` with `suspended` and `stopped`
+each naming every thread the check before attach saw (less the baseline's,
+the new break-in thread left out) and `unreadable_counts` empty, and after
+the resume `running` again (`instrument` in `status`). Only that sequence
+makes a later `running` mean anything: a `frozen` with empty lists could
+come from a check that read no thread at all. The live procedure runs the CLI itself too, after attach,
 after each `logpoint` and after `detach`.
 
 ## Which agents reach it
@@ -626,8 +653,8 @@ breakpoints and no memory writes.
   and its TLS-callback breakpoints (`[Events] TlsCallbacks`) stay on. The
   keeper resumes those pauses instead, and the attach break is where the
   outside check proves it can see a held game.
-- Live procedure 3 of `tooling-484-x64dbg-mcp-live-fixes` is the first
-  session on the no-pause route. Until it has run, the held change, the
+- No live session has run on the no-pause route yet. Until one has, the
+  held change, the
   watchdog on the game and the verified release are tested only against the
   fakes and a throwaway child process.
 - Upstream pull requests for the two plugin edits.
@@ -679,22 +706,32 @@ the lost DR7 update, so the held-change test's control can fail),
 
 The outside check has a probe seam, `probe_cmd` in the session config: the
 logic tests point it at a fake probe whose verdict follows a file the fake
-headless writes (`frozen` at a break, `running` after a `run`,
-`threads-suspended` after a leaking detach). The `real_os` tests use the
-real reader instead, against a stand-in game the test starts (three threads
-sleeping 2 ms in a loop) whose threads the fake headless really suspends at
-the attach break and under `leak_on_detach`: the attach control end to end
-(`proven: true`), a leaking detach (`game-not-released`, CLI exit 1) and a
-clean one (`game_released: true`, CLI exit 0). They run on Windows only and
-skip elsewhere, naming the reason.
+headless writes (`frozen` at a break, at the attach break with its stand-in
+threads listed as suspended and stopped, `running` after a `run`,
+`threads-suspended` after a leaking detach). Two modes are the instrument's
+negative controls: `blind_probe` never reads `frozen`, and `empty_lists`
+reads `frozen` at the attach break with no thread listed. Each must leave
+`proven: false` with a `note` naming the gap, the session
+`attach-unconfirmed`, and a detach with `game_released: null`, `ok: false`
+and CLI exit 1. The `instrument_gaps` tests check each other shortfall on
+hand-built checks: a thread left out of either list, an unread suspend
+count, no `tids`. The `real_os` tests use the real reader instead, against a
+stand-in game the test starts (three threads sleeping 2 ms in a loop) whose
+threads the fake headless really suspends at the attach break and under
+`leak_on_detach`: the attach control end to end (`proven: true`, with every
+stand-in thread in `suspended` and `stopped` at the attach break and
+`unreadable_counts` empty), a leaking detach (`game-not-released`, CLI exit
+1) and a clean one (`game_released: true`, CLI exit 0). They run on Windows
+with a 64-bit Python only and skip elsewhere, naming the reason.
 
 A guard fails any URL fetch that is not `127.0.0.1` and any subprocess the
 test did not expect, and a test proves the guard trips: no network, no
 download, no clone, no MSBuild, no real x64dbg, game or lease. The stdio round
-trip needs the `mcp` package and skips without it, naming the reason. Those
-are the only skips: the platform-specific test of how the keeper is detached
-checks the Windows creation flags on Windows and `start_new_session`
-elsewhere.
+trip needs the `mcp` package and skips without it, naming the reason. Those,
+and the `real_os` tests above off Windows or on a 32-bit Python (in both
+test modules), are the only skips: the platform-specific test of how the
+keeper is detached checks the Windows creation flags on Windows and
+`start_new_session` elsewhere.
 
 `py -3 -m unittest tests.test_thread_state -v` pins the outside check: the
 `parse_layout` tests build a synthetic buffer at the measured offsets and
@@ -703,12 +740,15 @@ check that it parses to the right threads and skips another pid's entry; the
 negative controls (`classify_transient`: one sample with a suspended thread,
 or with every thread suspended while progress continues, reads `running`;
 `classify_baseline`: a thread already suspended at the baseline is not
-reported); the `gone` and `cli` tests check a missing pid, the JSON and the
-exit codes. Its `real_os` tests, Windows only, start a throwaway child and
-read it `running`, then `threads-suspended` with one thread suspended (that
-thread named, count 1), `running` after the resume, `frozen` held at a
-pending debug event, and `running` with nothing suspended after
-`DebugActiveProcessStop`.
+reported); `classify_unreadable_count` reads a switching thread whose count
+could not be read as `unreadable`, listed in `unreadable_counts`, with the
+readable samples as its `running` control; the `gone` and `cli` tests check
+a missing pid, the JSON and the exit codes. Its `real_os` tests, Windows
+only, start a throwaway child and read it `running`, then
+`threads-suspended` with one thread suspended (that thread named, count 1),
+`running` after the resume, `frozen` held at a pending debug event with
+every worker in `suspended` and `stopped` and no count unread, and
+`running` with nothing suspended after `DebugActiveProcessStop`.
 
 `py -3 -m unittest tests.test_x64dbg_agent_tools -v` pins `live-operator`'s
 `tools:` line to exactly `mcp__x64dbg__` plus each name in

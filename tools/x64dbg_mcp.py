@@ -948,7 +948,8 @@ def game_check(cfg: Config, pid: int, baseline: Iterable[int] = ()) -> dict[str,
     except (OSError, subprocess.SubprocessError, ValueError) as e:
         why = f"{type(e).__name__}: {e}"
     return {"verdict": "unreadable", "threads": 0, "progress": 0, "suspended": [], "stopped": [],
-            "samples": 0, "interval": 0.0, "detail": f"pid {pid}: the probe seam answered no check ({why})."}
+            "unreadable_counts": [], "tids": [], "samples": 0, "interval": 0.0,
+            "detail": f"pid {pid}: the probe seam answered no check ({why})."}
 
 
 def check_tids(check: dict[str, Any] | None) -> list[int]:
@@ -957,6 +958,65 @@ def check_tids(check: dict[str, Any] | None) -> list[int]:
         return []
     tids = {int(s["tid"]) for s in check.get("suspended") or [] if isinstance(s, dict) and "tid" in s}
     return sorted(tids | {int(t) for t in check.get("stopped") or []})
+
+
+def instrument_gaps(inst: dict[str, Any]) -> list[tuple[str, str]]:
+    """What keeps the outside check's control from being proven, each as (the
+    check it concerns, why); empty when it is proven. The verdicts must run
+    `running` before attach, `frozen` at x64dbg's attach break and `running`
+    after the resume. A `frozen` verdict alone is not enough, since an
+    instrument that read no thread would give it too, so at the attach break
+    `suspended` and `stopped` must each name every thread seen before attach
+    that is not in the baseline, as the child probe measured a pending debug
+    event, with no suspend count unread. A thread first seen at the attach
+    break (the debugger's own break-in thread, which the probe measured in an
+    Executive wait with count 0) is left out."""
+    before, brk, after = (inst.get(k) for k in ("before_attach", "attach_break", "after_resume"))
+    gaps: list[tuple[str, str]] = []
+    if not before:
+        gaps.append(("before_attach", "no check before attach was recorded"))
+    elif before.get("verdict") != "running":
+        gaps.append(("before_attach", f"the outside check before attach read the game {before.get('verdict')}, "
+                                      "not running"))
+    if not brk:
+        gaps.append(("attach_break", "no check at x64dbg's attach break was recorded"))
+    else:
+        v = brk.get("verdict")
+        if v != "frozen":
+            gaps.append(("attach_break", f"the outside check read the game {v}, not frozen, at x64dbg's attach "
+                                         "break, where x64dbg holds it: it did not see a held game, so its "
+                                         "running verdicts in this session prove nothing"))
+        held = {int(s["tid"]) for s in brk.get("suspended") or [] if isinstance(s, dict) and "tid" in s}
+        stopped = {int(t) for t in brk.get("stopped") or []}
+        if not held or not stopped:
+            gaps.append(("attach_break", f"the check at the attach break named {len(held)} suspended and "
+                                         f"{len(stopped)} stopped thread(s), so it did not show the held "
+                                         "threads themselves"))
+        unread = brk.get("unreadable_counts")
+        if not isinstance(unread, list):
+            gaps.append(("attach_break", "the check at the attach break carried no unreadable_counts"))
+        elif unread:
+            gaps.append(("attach_break", f"the check at the attach break could not read the suspend count of "
+                                         f"{len(unread)} thread(s) (tid {', '.join(map(str, unread[:10]))})"))
+        seen_before, seen_at = (before or {}).get("tids"), brk.get("tids")
+        if not isinstance(seen_before, list) or not isinstance(seen_at, list):
+            gaps.append(("attach_break", "the checks list no tids, so whether suspended and stopped cover the "
+                                         "game's threads is not shown"))
+        else:
+            expected = ({int(t) for t in seen_before} & {int(t) for t in seen_at}) - set(check_tids(before))
+            missing = sorted(expected - (held & stopped))
+            if not expected:
+                gaps.append(("attach_break", "no thread seen before attach was seen again at the attach break"))
+            elif missing:
+                gaps.append(("attach_break", f"{len(missing)} of the {len(expected)} thread(s) seen before attach "
+                                             "were not both suspended and stopped at the attach break (tid "
+                                             f"{', '.join(map(str, missing[:10]))})"))
+    if not after:
+        gaps.append(("after_resume", "no check after the resume was recorded yet"))
+    elif after.get("verdict") != "running":
+        gaps.append(("after_resume", f"the outside check after the resume read the game {after.get('verdict')}, "
+                                     "not running"))
+    return gaps
 
 
 def live_session(cfg: Config) -> dict[str, Any] | None:
@@ -1335,18 +1395,22 @@ class Keeper:
 
     def set_instrument(self, **checks: Any) -> None:
         """Record checks in `instrument`. It is proven only for the sequence
-        running before attach, frozen at the attach break, running after the
-        resume: an instrument that cannot see the held game tells nothing by
-        reading the game running later."""
+        running before attach, frozen at the attach break with the held
+        threads named, running after the resume (`instrument_gaps`): an
+        instrument that cannot see the held game tells nothing by reading the
+        game running later. `note` names each missing piece."""
         inst = {**self.state["instrument"], **checks}
-        verdicts = [(inst.get(k) or {}).get("verdict") for k in ("before_attach", "attach_break", "after_resume")]
-        inst["proven"] = verdicts == ["running", "frozen", "running"]
+        gaps = instrument_gaps(inst)
+        inst["proven"] = not gaps
         inst.pop("note", None)
-        if inst.get("attach_break") is not None and verdicts[1] != "frozen":
-            inst["note"] = (f"the outside check read the game {verdicts[1]}, not frozen, at x64dbg's attach break, "
-                            "where x64dbg holds it: it did not see a held game, so its running verdicts in this "
-                            "session prove nothing")
+        if gaps:
+            inst["note"] = "not proven: " + "; ".join(why for _, why in gaps)
         self.save(instrument=inst)
+
+    def instrument_fixed_gaps(self) -> list[str]:
+        """The gaps no later check can close: the ones before attach and at
+        the attach break, each taken once."""
+        return [why for k, why in instrument_gaps(self.state["instrument"]) if k != "after_resume"]
 
     def see_attach_break(self) -> None:
         """Note x64dbg's attach break (the first `[STATE] paused` after
@@ -1390,12 +1454,19 @@ class Keeper:
 
     def confirm_running(self) -> bool:
         """x64dbg has settled at running: take the after-resume check, and
-        call the session `running` only when it reads the game running."""
+        call the session `running` only when it reads the game running and
+        the instrument is proven. A `running` from a check that never showed
+        it can see the held game is not evidence that the game runs."""
         after = self.check()
         self.set_instrument(after_resume=after)
         if after.get("verdict") != "running":
             self.unconfirmed(f"the outside check after the resume read the game {after.get('verdict')} "
                              f"({after.get('detail')})")
+            return False
+        if not self.state["instrument"].get("proven"):
+            self.unconfirmed(f"the outside check reads the game running, but its instrument was "
+                             f"{self.state['instrument'].get('note')}, so that reading is not evidence; no later "
+                             "check can prove it in this session")
             return False
         late = {"late_ready_utc": _utc()} if self.state["state"] == "attach-unconfirmed" else {}
         self.save(state="running", ready=True, x64dbg_state="running", error=None, **late)
@@ -1433,6 +1504,8 @@ class Keeper:
             self.plugin_ok = self.plugin.debug_state() == "debugging"
         if not (self.plugin_ok and self.attach_pause) or self.log.settled_for("running") < self.ATTACH_STABLE:
             return
+        if self.instrument_fixed_gaps():
+            return  # taken once, before attach and at the attach break: no retry can prove it
         if self.confirm_running():
             self.note("late attach confirmed: the game runs")
 
@@ -1480,11 +1553,14 @@ class Keeper:
             time.sleep(min(self.cfg.poll, 0.05))
         return False
 
-    def wait_state(self, name: str, timeout: float) -> bool:
+    def wait_new_pause(self, after: int, timeout: float) -> bool:
+        """Whether x64dbg reads paused in a pause numbered above `after`
+        within `timeout`: a pause that was already there (the watchdog's last
+        one, say) is not one this caller caused."""
         deadline = time.monotonic() + timeout
         while True:
             self.log.poll()
-            if self.log.state == name:
+            if self.log.pauses > after and self.log.state == "paused":
                 return True
             if time.monotonic() >= deadline:
                 return False
@@ -1524,11 +1600,12 @@ class Keeper:
         between markers, then settle at running, resuming any pause, and
         report one that came as `window_break`. With breakpoints armed, set
         each one's break condition to 1 and wait HOLD_BREAK seconds for one
-        to break: a logging breakpoint then holds the game at its hit, where
-        nothing is mid-hit and the change cannot race x64dbg's debug loop.
-        Send the lines there, restore the conditions to 0, and `run` (a held
-        change, reported as `held`). When nothing breaks, nothing was
-        logging: restore the conditions and send a direct batch."""
+        to break, as a new pause after the conditions were set: a logging
+        breakpoint then holds the game at its hit, where nothing is mid-hit
+        and the change cannot race x64dbg's debug loop. Send the lines there,
+        restore the conditions to 0, and `run` (a held change, reported as
+        `held`). When no armed breakpoint is hit within HOLD_BREAK seconds,
+        restore the conditions and send a direct batch."""
         for line in lines:
             if any(c in line for c in "\r\n"):
                 raise ValueError("one command per line")
@@ -1548,9 +1625,11 @@ class Keeper:
         out: dict[str, list[str]] = {}
         done = False
         if armed:
+            self.log.poll()
+            before = self.log.pauses
             for a in armed:
                 self.send(f"SetHardwareBreakpointCondition 0x{a:X}, 1")
-            if self.wait_state("paused", self.HOLD_BREAK):
+            if self.wait_new_pause(before, self.HOLD_BREAK):
                 n = self.log.pauses
                 held = (self.log.pause_line(n) or {}).get("line") or "a pause with no break line"
                 restore = [f"SetHardwareBreakpointCondition 0x{a:X}, 0" for a in armed]
@@ -1562,7 +1641,8 @@ class Keeper:
                 for a in armed:
                     self.send(f"SetHardwareBreakpointCondition 0x{a:X}, 0")
                 held_note = (f"no armed hardware breakpoint broke within {self.HOLD_BREAK:.0f} s of its break "
-                             "condition being set to 1, so none was logging: the change went out as a direct batch")
+                             f"condition being set to 1 (no armed breakpoint hit within {self.HOLD_BREAK:.0f} s), "
+                             "so the change went out as a direct batch")
         if held is None:
             out, done = self.run_batch(hid, [("begin", lines), ("mid", ["bplist"])], "end")
         settled = self.settle_running(SessionLog.QUIET, time.monotonic() + t)
@@ -1664,10 +1744,25 @@ class Keeper:
     def released(self, cleared: dict[str, Any], paused_at_detach: bool) -> dict[str, Any]:
         """The post-detach check, the threads suspended before attach left
         out: `running` ends the session released, `gone` ends it with a note,
-        and anything else is `game-not-released`."""
+        and anything else is `game-not-released`. A `running` from an
+        instrument not proven on this game ends it with `game_released` null
+        and `ok` false: that reading is not evidence of a release. What the
+        release needs proven is the checks before attach and at the attach
+        break (`instrument_fixed_gaps`); the after-resume check only decides
+        whether a session may be `running`, and an attach that never settled
+        has none."""
         game = self.check()
         verdict = game.get("verdict")
         common = {"detach_confirmed": True, "game": game, "paused_at_detach": paused_at_detach, "cleared": cleared}
+        unproven = self.instrument_fixed_gaps()
+        if verdict == "running" and unproven:
+            note = (f"the outside check reads the game (pid {self.target_pid}) running after the detach, but the "
+                    f"instrument was not proven: {'; '.join(unproven)}. So whether the detach released its "
+                    "threads is not known: check the game by other means, such as hs_command ping")
+            self.save(state="ended", detach_confirmed=True, game_released=None, game=game, error=None, note=note)
+            return {"ok": False, "state": "ended", "game_released": None, "note": note,
+                    "detail": "detached (confirmed), then headless x64dbg exited; the instrument was not proven",
+                    **common}
         if verdict == "running":
             self.save(state="ended", detach_confirmed=True, game_released=True, game=game, error=None)
             return {"ok": True, "state": "ended", "game_released": True,

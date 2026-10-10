@@ -36,13 +36,17 @@ The verdicts, in order: no such process is `gone`; not Windows is
 window is `frozen` (an idle process reads `frozen` too, and the game renders
 every frame, so it never idles); a thread that did not switch across the
 window and was suspended in *every* sample, or in Waiting/Suspended in every
-sample, is `threads-suspended`; otherwise `running`. Neither the samples nor
-the instants are enough on their own: x64dbg suspends every other thread for
-each logpoint hit's step and holds the game at each hit, so under a hot
-logpoint every sample can land inside a hit and catch a thread suspended that
-still runs hundreds of times between them. A thread left suspended cannot be
+sample, is `threads-suspended`; a thread whose suspend count could not be
+read in some sample makes it `unreadable`; otherwise `running`. Neither the
+samples nor the instants are enough on their own: x64dbg suspends every other
+thread for each logpoint hit's step and holds the game at each hit, so under
+a hot logpoint every sample can land inside a hit and catch a thread
+suspended that still runs hundreds of times between them. A thread left suspended cannot be
 scheduled, so its own context-switch count is the positive signal. A suspend
-count that cannot be read is counted in `detail` and never read as 0.
+count that cannot be read is never read as 0: its tid is listed in
+`unreadable_counts`, and the check does not answer `running` while any is.
+`tids` lists every thread present in every sample, so a caller can tell
+whether `suspended` and `stopped` cover the threads it expected.
 """
 from __future__ import annotations
 
@@ -124,9 +128,11 @@ def _held(t: ThreadSample) -> bool:
 
 def _result(pid: int, verdict: str, detail: str, *, threads: int = 0, progress: int = 0,
             suspended: list | None = None, stopped: list | None = None,
+            unreadable_counts: list | None = None, tids: list | None = None,
             samples: int = 0, interval: float = 0.0) -> dict:
     return {"verdict": verdict, "threads": threads, "progress": progress,
             "suspended": suspended or [], "stopped": stopped or [],
+            "unreadable_counts": unreadable_counts or [], "tids": tids or [],
             "samples": samples, "interval": interval, "detail": detail}
 
 
@@ -139,13 +145,13 @@ def classify(pid: int, samples: list[list[ThreadSample]], interval: float = 0.4,
     everywhere = [tid for tid in sorted(last) if all(tid in s for s in by_tid)]
     progress = sum((last[tid].context_switches - first[tid].context_switches) % (1 << 32)
                    for tid in last if tid in first)
-    suspended, stopped, unknown = [], [], set()
+    suspended, stopped, unknown = [], [], []
     for tid in everywhere:
-        seen = [s[tid] for s in by_tid]
-        if any(t.suspend_count is None for t in seen):
-            unknown.add(tid)
         if tid in skip:
             continue
+        seen = [s[tid] for s in by_tid]
+        if any(t.suspend_count is None for t in seen):
+            unknown.append(tid)
         # A thread left suspended cannot be scheduled, so its own switches stand
         # still. One that switched between the samples was only caught suspended
         # at each instant, as while x64dbg holds the game at logpoint hits.
@@ -158,6 +164,9 @@ def classify(pid: int, samples: list[list[ThreadSample]], interval: float = 0.4,
         verdict = "frozen"
     elif suspended or stopped:
         verdict = "threads-suspended"
+    elif unknown:
+        # A count that could not be read is never read as 0, so it cannot read running.
+        verdict = "unreadable"
     else:
         verdict = "running"
     detail = (f"pid {pid}: {verdict}; {len(last)} threads, {progress} context switches across "
@@ -169,7 +178,8 @@ def classify(pid: int, samples: list[list[ThreadSample]], interval: float = 0.4,
         detail += (f"; the suspend count of {len(unknown)} thread"
                    f"{'' if len(unknown) == 1 else 's'} could not be read")
     return _result(pid, verdict, detail + ".", threads=len(last), progress=progress,
-                   suspended=suspended, stopped=stopped, samples=len(samples), interval=interval)
+                   suspended=suspended, stopped=stopped, unreadable_counts=unknown, tids=everywhere,
+                   samples=len(samples), interval=interval)
 
 
 # ---- the OS reads -----------------------------------------------------------------
@@ -255,7 +265,8 @@ def _sample(pid: int) -> list[ThreadSample] | None:
 
 def check(pid: int, samples: int = 3, interval: float = 0.4, baseline: Iterable[int] = ()) -> dict:
     """Sample `pid`'s threads `samples` times, `interval` seconds apart, and classify them.
-    Threads listed in `baseline` (tids) are left out of `suspended` and `stopped`."""
+    Threads listed in `baseline` (tids) are left out of `suspended`, `stopped` and
+    `unreadable_counts`."""
     if samples < 2:
         raise ValueError("samples must be 2 or more: progress is measured first to last")
     if interval <= 0:

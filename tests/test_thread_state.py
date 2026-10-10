@@ -133,6 +133,23 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual((r["suspended"], r["stopped"]), ([], [2]))
         self.assertIn("1 thread", r["detail"])
         self.assertIn("could not be read", r["detail"])
+        self.assertEqual(r["unreadable_counts"], [2])
+
+    def test_classify_unreadable_count_on_a_switching_thread_is_not_running(self):
+        # A count that could not be read is never read as 0: the threads switch,
+        # nothing is caught held, and still the verdict is not `running`.
+        s = [[T(1, 10), T(2, 20, suspend=None)], [T(1, 80), T(2, 90, suspend=None)]]
+        r = ts.classify(77, s)
+        self.assertEqual(r["verdict"], "unreadable")
+        self.assertEqual(r["unreadable_counts"], [2])
+        self.assertEqual(r["tids"], [1, 2])
+        # Control: the same samples with the count read are running, and a
+        # baseline thread's unread count is left out like the rest of it.
+        s_read = [[T(1, 10), T(2, 20)], [T(1, 80), T(2, 90)]]
+        self.assertEqual((ts.classify(77, s_read)["verdict"], ts.classify(77, s_read)["unreadable_counts"]),
+                         ("running", []))
+        r = ts.classify(77, s, baseline=[2])
+        self.assertEqual((r["verdict"], r["unreadable_counts"]), ("running", []))
 
     def test_classify_transient_suspension_in_one_sample_reads_running(self):
         s = [[T(1, 10), T(2, 20)],
@@ -243,7 +260,7 @@ class CliTest(unittest.TestCase):
         d = json.loads(r.stdout)
         self.assertEqual(d["verdict"], "gone")
         self.assertEqual(set(d), {"verdict", "threads", "progress", "suspended", "stopped",
-                                  "samples", "interval", "detail"})
+                                  "unreadable_counts", "tids", "samples", "interval", "detail"})
 
     def test_cli_usage_errors_exit_2(self):
         for args in ((), ("notapid",), ("0",), ("42", "--samples", "1"), ("42", "--interval", "0")):
@@ -334,6 +351,9 @@ class RealOsTest(unittest.TestCase):
             held = {s["tid"]: s["suspend_count"] for s in r["suspended"]}
             for tid in self.workers:
                 self.assertGreaterEqual(held.get(tid, 0), 1, r)
+                self.assertIn(tid, r["stopped"], r)
+                self.assertIn(tid, r["tids"], r)
+            self.assertEqual(r["unreadable_counts"], [], r)
             self.assertTrue(self.k32.DebugActiveProcessStop(pid), self.ctypes.get_last_error())
             attached = False
         finally:

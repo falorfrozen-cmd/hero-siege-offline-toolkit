@@ -46,6 +46,8 @@ Modes:
 - `hot` [addr, ...]: the armed breakpoints the game hits, every 50 ms;
 - `blind_probe`: the probe never reads `frozen` (an instrument that cannot
   see a held game);
+- `empty_lists`: the probe reads `frozen` at the attach break but names no
+  suspended or stopped thread (an instrument that read no thread at all);
 - `real_os`: suspend the stand-in game's threads for real at the attach break
   and under `leak_on_detach`, and resume them on `run` (`spare_tid` is the
   one left running).
@@ -64,7 +66,8 @@ HIT_EVERY = 0.05
 TICK = 0.02
 REPEAT_AFTER = 0.2       # x64dbg's rate-limited repeat of the latest state
 ASYNC_PAUSE_AFTER = 2.0  # how late the plugin's PauseDebug lands
-FAKE_TIDS = (9001, 9002)  # the probe seam's "suspended" threads under leak_on_detach
+FAKE_TIDS = (9001, 9002)  # the probe seam's game threads, "suspended" under leak_on_detach
+BREAKIN_TID = 9003  # the debugger's break-in thread, first seen at the attach break
 DR_VERBS = {"bph", "bphws", "sethardwarebreakpoint", "bphc", "bphwc", "deletehardwarebreakpoint",
             "bphe", "bphwe", "enablehardwarebreakpoint", "bphd", "bphwd", "disablehardwarebreakpoint"}
 DELETE_VERBS = {"bphc", "bphwc", "deletehardwarebreakpoint"}
@@ -72,10 +75,11 @@ ENABLE_VERBS = {"bphe", "bphwe", "enablehardwarebreakpoint"}
 DISABLE_VERBS = {"bphd", "bphwd", "disablehardwarebreakpoint"}
 
 
-def check(verdict: str, detail: str, suspended=(), stopped=()) -> dict:
+def check(verdict: str, detail: str, suspended=(), stopped=(), tids=FAKE_TIDS) -> dict:
     """A check in tools/thread_state.py's shape."""
-    return {"verdict": verdict, "threads": 4, "progress": 0 if verdict == "frozen" else 120,
+    return {"verdict": verdict, "threads": len(tids), "progress": 0 if verdict == "frozen" else 120,
             "suspended": [{"tid": t, "suspend_count": 1} for t in suspended], "stopped": list(stopped),
+            "unreadable_counts": [], "tids": list(tids),
             "samples": 3, "interval": 0.4, "detail": f"stand-in probe: {detail}"}
 
 
@@ -285,7 +289,10 @@ class Fake:
                 self.threads.suspend_all()
             self.paused = True
             self.announce("paused")
-            self.verdict(check("frozen", "held at the attach break"))
+            # Every game thread held, as the child probe measured a pending debug
+            # event, and the break-in thread new and not suspended.
+            held = () if self.modes.get("empty_lists") else FAKE_TIDS
+            self.verdict(check("frozen", "held at the attach break", held, held, (*FAKE_TIDS, BREAKIN_TID)))
         elif low == "run":
             if not self.paused:
                 return  # x64dbg ignores a run while the game runs

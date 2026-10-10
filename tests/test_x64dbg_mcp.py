@@ -25,9 +25,11 @@ quietly break:
   x64dbg's state from the session log only, resumes the attach break once the
   plugin answers and the break is seen, and every later pause x64dbg takes on
   its own (counted, with a storm flag); the outside check must read the game
-  frozen at the attach break for the instrument to count as proven; an attach
-  it never saw settle is `attach-unconfirmed` (refused by every tool but
-  `detach`) until it does; a `hold` changes breakpoints between markers, held
+  frozen at the attach break, naming every thread seen before attach as
+  suspended and stopped there, for the instrument to count as proven, and an
+  unproven one neither makes a session `running` nor reports a detach as
+  releasing the game; an attach it never saw settle is `attach-unconfirmed`
+  (refused by every tool but `detach`) until it does; a `hold` changes breakpoints between markers, held
   at a hit of a logging breakpoint when one is armed; teardown is a held
   `bphc`, a settle at running, `detach`, confirm, `exit` and the outside
   check, which ends `game-not-released` when game threads stay suspended,
@@ -1546,20 +1548,85 @@ class InstrumentTests(SessionMixin, unittest.TestCase):
         inst = state["instrument"]
         self.assertEqual([inst[k]["verdict"] for k in ("before_attach", "attach_break", "after_resume")],
                          ["running", "frozen", "running"], inst)
+        self.assertEqual(xm.check_tids(inst["attach_break"]), [9001, 9002], inst)
+        self.assertEqual(inst["attach_break"]["unreadable_counts"], [], inst)
         self.assertTrue(inst["proven"], inst)
+        self.assertNotIn("note", inst)
         status = xm.Tools(cfg).status()
         self.assertTrue(status["instrument"]["proven"])
         self.assertEqual(status["game"]["verdict"], "running")
 
-    def test_instrument_control_a_blind_probe_is_not_proven_and_status_says_so(self):
-        cfg, _, state, _, _ = self.start_session(fake={"blind_probe": True})
-        self.assertEqual(state["state"], "running", state)
+    def assert_unproven_session(self, cfg, state, says):
+        """Not proven: the attach is unconfirmed, status names the gap, and a
+        clean `running` after the detach is not reported as a release."""
+        self.assertEqual((state["state"], state["ready"]), ("attach-unconfirmed", False), state)
+        self.assertIn("not evidence", state["error"])
         inst = state["instrument"]
-        self.assertEqual(inst["attach_break"]["verdict"], "running", inst)
         self.assertFalse(inst["proven"], inst)
         status = xm.Tools(cfg).status()
         self.assertFalse(status["instrument"]["proven"])
-        self.assertIn("not frozen", status["instrument"]["note"])
+        self.assertIn(says, status["instrument"]["note"])
+        code, reply = self.detach_cli(cfg)
+        self.assertEqual(code, 1, reply)
+        self.assertFalse(reply["ok"], reply)
+        self.assertIsNone(reply["game_released"], reply)
+        self.assertEqual(reply["game"]["verdict"], "running", reply)
+        self.assertIn("not proven", reply["note"])
+        state = xm.read_state(cfg)
+        self.assertEqual((state["state"], state["detach_confirmed"], state["game_released"]),
+                         ("ended", True, None), state)
+
+    def test_instrument_control_a_blind_probe_is_not_proven_and_status_says_so(self):
+        cfg, _, state, _, _ = self.start_session(fake={"blind_probe": True})
+        self.assertEqual(state["instrument"]["attach_break"]["verdict"], "running", state["instrument"])
+        self.assert_unproven_session(cfg, state, "not frozen")
+
+    def test_instrument_control_frozen_with_no_thread_named_is_not_proven(self):
+        # Negative control: `frozen` alone, from a check that named no held thread.
+        cfg, _, state, _, _ = self.start_session(fake={"empty_lists": True})
+        brk = state["instrument"]["attach_break"]
+        self.assertEqual((brk["verdict"], brk["suspended"], brk["stopped"]), ("frozen", [], []), brk)
+        self.assert_unproven_session(cfg, state, "0 suspended and 0 stopped")
+
+
+class InstrumentGapsTests(unittest.TestCase):
+    """`instrument_gaps` on hand-built checks: what the attach-break lists
+    must cover, and each way they can fall short."""
+
+    @staticmethod
+    def chk(verdict, held=(), tids=(1, 2, 3), unread=(), stopped=None):
+        return {"verdict": verdict, "suspended": [{"tid": t, "suspend_count": 2} for t in held],
+                "stopped": list(held if stopped is None else stopped), "unreadable_counts": list(unread),
+                "tids": list(tids)}
+
+    def inst(self, brk, before=None):
+        return {"before_attach": before or self.chk("running"), "attach_break": brk,
+                "after_resume": self.chk("running")}
+
+    def test_instrument_gaps_control_every_thread_held_and_a_new_break_in_thread_is_proven(self):
+        self.assertEqual(xm.instrument_gaps(self.inst(self.chk("frozen", (1, 2, 3), tids=(1, 2, 3, 99)))), [])
+
+    def test_instrument_gaps_a_baseline_thread_need_not_be_listed(self):
+        before = self.chk("running", held=(3,))
+        self.assertEqual(xm.instrument_gaps(self.inst(self.chk("frozen", (1, 2)), before)), [])
+
+    def test_instrument_gaps_name_each_shortfall(self):
+        cases = [
+            (self.chk("frozen", (1, 2)), "1 of the 3 thread(s)"),
+            (self.chk("frozen", (1, 2, 3), stopped=(1, 2)), "tid 3"),
+            (self.chk("frozen", (1, 2, 3), unread=(2,)), "could not read the suspend count"),
+            (self.chk("frozen"), "0 suspended and 0 stopped"),
+            (self.chk("frozen", (1, 2, 3), tids=(7, 8)), "no thread seen before attach"),
+            ({**self.chk("frozen", (1, 2, 3)), "tids": None}, "list no tids"),
+            ({k: v for k, v in self.chk("frozen", (1, 2, 3)).items() if k != "unreadable_counts"},
+             "carried no unreadable_counts"),
+        ]
+        for brk, says in cases:
+            with self.subTest(says=says):
+                gaps = xm.instrument_gaps(self.inst(brk))
+                self.assertTrue(gaps, brk)
+                self.assertEqual({k for k, _ in gaps}, {"attach_break"}, gaps)
+                self.assertIn(says, "; ".join(why for _, why in gaps))
 
 
 class ReleaseTests(SessionMixin, unittest.TestCase):
@@ -1602,6 +1669,14 @@ class RealOsTests(SessionMixin, unittest.TestCase):
         inst = state["instrument"]
         self.assertEqual([inst[k]["verdict"] for k in ("before_attach", "attach_break", "after_resume")],
                          ["running", "frozen", "running"], inst)
+        # The lists at the attach break name the held threads themselves: every
+        # stand-in thread suspended and stopped, no count unread.
+        brk = inst["attach_break"]
+        self.assertEqual(brk["unreadable_counts"], [], brk)
+        held = {s["tid"] for s in brk["suspended"]}
+        self.assertTrue(set(self.workers) <= held, (self.workers, brk))
+        self.assertTrue(set(self.workers) <= set(brk["stopped"]), (self.workers, brk))
+        self.assertTrue(set(inst["before_attach"]["tids"]) <= held & set(brk["stopped"]), inst)
         self.assertTrue(inst["proven"], inst)
 
     def test_real_os_leak_on_detach_is_game_not_released(self):
