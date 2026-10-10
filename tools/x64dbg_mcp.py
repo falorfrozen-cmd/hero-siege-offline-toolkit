@@ -41,10 +41,24 @@ Subcommands (all paths overridable, see `load_config`):
 `serve` prints nothing to stdout itself, starts no process and never launches
 x64dbg: `attach` does, under a live hs-drive lease, through a detached
 **keeper** process that is the only holder of headless's stdin for the whole
-session. x64dbg pauses the game on attach, so the keeper sends `run` as soon as
-the plugin answers a debug-only call. Teardown is `bphc`, `detach`, a
-confirmation that no session remains, then `exit`; headless is never killed
-while it may still be attached. In a live session, detach before `hs_stop_game`.
+session. The keeper keeps the game running, and reads x64dbg's state only
+from the `[STATE] <name>` lines headless prints in the session log, never from
+the plugin's `run` or `PauseDebug` answers (`PauseDebug` is asynchronous, and
+both answers read a flag x64dbg's own breakpoint handling flips). x64dbg holds
+the game at its attach break; the keeper resumes it on stdin once the plugin
+answers a debug-only call and that break has been seen, then resumes every
+later pause x64dbg takes on its own (its TLS-callback breakpoints, a late
+break), counting each. Nothing here asks x64dbg to pause. A change to hardware
+breakpoints while one of them logs is made with the game held at a breaking
+hit of that one and resumed at once (a "held change", `Keeper.hold`). The
+outside check, `tools/thread_state.py`, reads the game's threads from the OS
+before attach, at the attach break (where it must read the game frozen: the
+instrument's control), after the resume and after detach. Teardown is a held
+`bphc`, a settle at running, `detach`, a confirmation that no session remains,
+`exit`, then that outside check: a detach that left game threads suspended
+ends `game-not-released`, naming them, and only a force-stop of the game
+releases them. Headless is never killed while it may still be attached. In a
+live session, detach before `hs_stop_game`.
 
 Anything x64dbg shows of the game's code is disassembly: it stays in the
 session log and the gitignored live capture, never in a tracked file
@@ -72,11 +86,12 @@ import uuid
 import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tools import thread_state  # noqa: E402
 from tools.decomp_index import git_tree_of  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
@@ -196,10 +211,16 @@ PLUGIN_EDITS = (
 
 SESSION_SCHEMA = "x64dbg-mcp-session/1"
 # A session in one of these may still hold the game: refuse a second attach.
-# `attach-unconfirmed`: the plugin never answered a debug-only call within the
-# ready timeout, so the game may sit paused at x64dbg's attach break; the
-# keeper keeps checking and resumes it, and only `detach` is served meanwhile.
+# `attach-unconfirmed`: within the ready timeout the keeper did not see all of
+# the plugin answering, x64dbg's attach break, x64dbg settled at running and
+# the outside check reading the game running; the keeper keeps resuming every
+# pause and promotes the session once it has, and only `detach` is served
+# meanwhile.
 LIVE_STATES = ("attaching", "attach-unconfirmed", "running", "detaching", "detach-unconfirmed")
+# Where a keeper stops. `game-not-released`: the detach was confirmed, but the
+# outside check found game threads still suspended or stopped. Nothing but a
+# force-stop of the game releases them.
+TERMINAL_STATES = ("ended", "game-not-released")
 
 
 class Refused(Exception):
@@ -222,12 +243,18 @@ class Config:
     session: Path
     port: int
     # Test seams, never set by `load_config`: what runs as headless x64dbg,
-    # and how long the keeper waits for the plugin.
+    # what answers the outside check of the game (run with the pid appended,
+    # printing a `tools/thread_state.py` check as JSON; None reads the OS in
+    # this process), and how long the keeper waits for each thing.
     headless_cmd: tuple[str, ...] | None = None
+    probe_cmd: tuple[str, ...] | None = None
     ready_timeout: float = 60.0
     detach_timeout: float = 30.0
     settle: float = 1.5
     poll: float = 0.2
+    # A hold's wait for its end marker, and each wait for x64dbg to settle at
+    # running.
+    hold_timeout: float = 10.0
 
     @property
     def url(self) -> str:
@@ -291,7 +318,8 @@ class Config:
         for k, v in out.items():
             if isinstance(v, Path):
                 out[k] = str(v)
-        out["headless_cmd"] = list(self.headless_cmd) if self.headless_cmd else None
+        for k in ("headless_cmd", "probe_cmd"):
+            out[k] = list(getattr(self, k)) if getattr(self, k) else None
         return out
 
     @classmethod
@@ -301,7 +329,8 @@ class Config:
         for k in paths:
             values[k] = Path(values[k])
         values["dotnet"] = Path(values["dotnet"]) if values.get("dotnet") else None
-        values["headless_cmd"] = tuple(values["headless_cmd"]) if values.get("headless_cmd") else None
+        for k in ("headless_cmd", "probe_cmd"):
+            values[k] = tuple(values[k]) if values.get(k) else None
         return cls(**values)
 
 
@@ -870,17 +899,57 @@ def read_state(cfg: Config) -> dict[str, Any]:
 
 
 def session_summary(cfg: Config) -> dict[str, Any]:
+    """The session at a glance: what `attach` prints and `status` carries.
+    `x64dbg_state` is x64dbg's own settled state from its `[STATE]` lines;
+    `breaks_resumed`, `last_break` and `break_storm` report the pauses the
+    keeper resumed; `instrument` is the outside check's control."""
     state = read_state(cfg)
-    return {
+    out = {
         "state": state.get("state", "none"),
         "target_pid": state.get("target_pid"),
         "keeper_alive": alive(state.get("keeper")),
         "headless_alive": alive(state.get("headless")),
         "ready": state.get("ready"),
         "detach_confirmed": state.get("detach_confirmed"),
+        "x64dbg_state": state.get("x64dbg_state"),
+        "breaks_resumed": state.get("breaks_resumed"),
+        "last_break": state.get("last_break"),
+        "break_storm": state.get("break_storm"),
+        "instrument": state.get("instrument"),
         "error": state.get("error"),
         "log": str(cfg.log_file),
     }
+    for k in ("paused_at_detach", "game_released"):
+        if k in state:
+            out[k] = state[k]
+    return out
+
+
+def game_check(cfg: Config, pid: int, baseline: Iterable[int] = ()) -> dict[str, Any]:
+    """The outside check of the game's threads (`tools/thread_state.py`):
+    read from the OS in this process, or, when the tests set
+    `cfg.probe_cmd`, that command's JSON. Read-only either way. Anything the
+    seam prints that is not a check is `unreadable`, never `running`."""
+    if not cfg.probe_cmd:
+        return thread_state.check(int(pid), baseline=baseline)
+    try:
+        r = subprocess.run([*cfg.probe_cmd, str(int(pid))], capture_output=True, text=True, timeout=60)
+        data = json.loads(r.stdout)
+        if isinstance(data, dict) and data.get("verdict") in thread_state.VERDICTS:
+            return data
+        why = f"no verdict in {r.stdout[:200]!r}"
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
+        why = f"{type(e).__name__}: {e}"
+    return {"verdict": "unreadable", "threads": 0, "progress": 0, "suspended": [], "stopped": [],
+            "samples": 0, "interval": 0.0, "detail": f"pid {pid}: the probe seam answered no check ({why})."}
+
+
+def check_tids(check: dict[str, Any] | None) -> list[int]:
+    """The threads a check found suspended or stopped."""
+    if not check:
+        return []
+    tids = {int(s["tid"]) for s in check.get("suspended") or [] if isinstance(s, dict) and "tid" in s}
+    return sorted(tids | {int(t) for t in check.get("stopped") or []})
 
 
 def live_session(cfg: Config) -> dict[str, Any] | None:
@@ -1031,15 +1100,140 @@ def _headless_flags() -> dict[str, Any]:
     return {"start_new_session": True}
 
 
+# --- x64dbg's own state, from the session log --------------------------------
+
+_STATE_LINE = re.compile(r"^\[STATE\]\s+(\w+)")
+# The lines x64dbg prints for a break (read from x64dbg 9c8ca1c's source,
+# docs/tools/x64dbg-mcp.md): a pause that landed, a software breakpoint (its
+# own TLS-callback ones among them), a hardware breakpoint that broke, and a
+# hit on a breakpoint x64dbg no longer lists.
+_BREAK_LINE = re.compile(r"^(?:paused!|INT3 breakpoint\b|Hardware breakpoint \(|Breakpoint reached not in list!)")
+MARKER_PREFIX = "x64dbg_mcp"
+
+
+def batch_marker(hid: str, name: str) -> str:
+    """A batch marker: the text `log "<text>"` prints on its own line. It
+    carries no comma, because x64dbg splits a command's arguments on commas
+    and a second argument would make the text a format string."""
+    return f"{MARKER_PREFIX} {hid} {name}"
+
+
+class SessionLog:
+    """x64dbg's own state, its break lines and the keeper's batch markers,
+    read from headless's session log. Headless prints every log message
+    there, unbuffered, with no gap during a plugin call, and reading it
+    changes nothing.
+
+    x64dbg prints `[STATE] <name>` (`initialized`, `paused`, `running`,
+    `stopped`) for every debug-state change, once at once and again within
+    about 300 ms, and a non-breaking logpoint hit prints none. So the last
+    `[STATE]` line, once `QUIET` seconds pass with no new one, is x64dbg's
+    settled state. Each change into `paused` is one pause, numbered from 1,
+    with its break line: the last of `_BREAK_LINE`'s lines since the last
+    `[STATE]` line, or failing those the line just before."""
+
+    QUIET = 0.4
+    HISTORY = 64
+
+    def __init__(self, path: Path, offset: int = 0):
+        self.path = path
+        self.offset = offset
+        self._partial = b""
+        self.first = 0  # the number of lines read before lines[0]
+        self.lines: list[str] = []
+        self.state: str | None = None
+        self.state_at = 0.0  # monotonic time the latest [STATE] line was read
+        self.pauses = 0
+        self.pause_lines: dict[int, dict[str, Any]] = {}
+        self._break: str | None = None
+        self._prev: str | None = None
+
+    def poll(self) -> list[str]:
+        """Read the complete lines written since the last poll."""
+        try:
+            with open(self.path, "rb") as f:
+                f.seek(self.offset)
+                data = f.read()
+        except OSError:
+            return []
+        if not data:
+            return []
+        self.offset += len(data)
+        chunks = (self._partial + data).split(b"\n")
+        self._partial = chunks.pop()
+        new = [c.rstrip(b"\r").decode("utf-8", "replace") for c in chunks]
+        for line in new:
+            self._take(line.strip())
+        self.lines.extend(new)
+        return new
+
+    def _take(self, text: str) -> None:
+        m = _STATE_LINE.match(text)
+        if not m:
+            if _BREAK_LINE.match(text):
+                self._break = text
+            if text:
+                self._prev = text
+            return
+        name = m.group(1).lower()
+        if name == "paused" and self.state != "paused":
+            self.pauses += 1
+            self.pause_lines[self.pauses] = {"line": self._break or self._prev, "utc": _utc()}
+            self.pause_lines.pop(self.pauses - self.HISTORY, None)
+        self.state, self.state_at = name, time.monotonic()
+        self._break = None
+
+    def settled(self) -> str | None:
+        """x64dbg's settled state, or None while a change may still follow."""
+        self.poll()
+        if self.state is None or time.monotonic() - self.state_at < self.QUIET:
+            return None
+        return self.state
+
+    def settled_for(self, name: str) -> float:
+        """How long x64dbg's state has read `name` with no new [STATE] line,
+        or -1 when it does not read `name`."""
+        self.poll()
+        return time.monotonic() - self.state_at if self.state == name else -1.0
+
+    def pause_line(self, n: int | None = None) -> dict[str, Any] | None:
+        """Pause `n`'s break line and the time it was read (the latest pause by default)."""
+        return self.pause_lines.get(self.pauses if n is None else n)
+
+    def mark(self) -> int:
+        self.poll()
+        return self.first + len(self.lines)
+
+    def since(self, mark: int) -> list[str]:
+        """The lines read after `mark`."""
+        self.poll()
+        return self.lines[max(0, mark - self.first):]
+
+    def breaks_since(self, mark: int) -> list[str]:
+        return [ln.strip() for ln in self.since(mark) if _BREAK_LINE.match(ln.strip())]
+
+    def forget(self) -> None:
+        """Drop the lines read so far; the state and the pauses stay."""
+        self.first += len(self.lines)
+        self.lines = []
+
+
 class Keeper:
     """Holds headless x64dbg's stdin for the session's whole life, so nothing
-    else can close it, and serves `send` and `detach` requests left as files
-    in the session directory."""
+    else can close it; keeps the game running; and serves `send`, `hold` and
+    `detach` requests left as files in the session directory."""
 
-    # How long one `late_attach` retry may keep plugin `run`s going: well under
-    # the detach tool's wait (`detach_timeout + 30` s), which also covers the
-    # teardown itself.
-    RETRY_BUDGET = 10.0
+    # x64dbg must read running this long, with no new [STATE] line, before an
+    # attach is done.
+    ATTACH_STABLE = 1.0
+    # A `run` the keeper sent that brought no new [STATE] line within this
+    # long is sent again, for the same pause.
+    RESEND = 2.0
+    # A held change waits this long for an armed breakpoint to break.
+    HOLD_BREAK = 2.0
+    # This many resumes within this many seconds are a storm.
+    STORM_COUNT = 10
+    STORM_WINDOW = 10.0
 
     def __init__(self, cfg: Config, target_pid: int):
         self.cfg = cfg
@@ -1047,10 +1241,20 @@ class Keeper:
         self.retry_at = 0.0
         self.plugin = PluginClient(cfg.url, timeout=5)
         self.proc: subprocess.Popen | None = None
+        self.log = SessionLog(cfg.log_file)
+        self.plugin_ok = False
+        self.attach_pause: int | None = None
+        # The pause the keeper's last `run` was for, and when it was sent.
+        self.resumed_pause = 0
+        self.resumed_at = 0.0
+        self.resumes: list[float] = []
         self.state: dict[str, Any] = {
             "schema": SESSION_SCHEMA, "state": "attaching", "target_pid": target_pid,
             "target": identity_of(target_pid), "keeper": identity_of(os.getpid()), "headless": None,
-            "ready": None, "run_reply": None, "attach_logged": None, "detach_confirmed": None,
+            "ready": None, "attach_logged": None, "detach_confirmed": None,
+            "x64dbg_state": None, "breaks_resumed": 0, "last_break": None, "break_storm": False,
+            "instrument": {"before_attach": read_state(cfg).get("baseline"), "attach_break": None,
+                           "after_resume": None, "proven": False},
             "error": None, "started_utc": _utc(), "log": str(cfg.log_file),
         }
 
@@ -1089,18 +1293,24 @@ class Keeper:
         self.send(f"attach 0x{self.target_pid:X}")
         if not self.wait_ready():
             return self.finish()
-        while self.state["state"] != "ended":
+        while self.state["state"] not in TERMINAL_STATES:
             self.serve_requests()
-            if self.state["state"] == "ended":
+            if self.state["state"] in TERMINAL_STATES:
                 break
             if not self.headless_running():
                 self.save(state="ended", error=f"headless x64dbg exited with {self.proc.returncode}")
                 break
-            if self.state["state"] in ("running", "attach-unconfirmed") and not alive(self.state["target"]):
+            live = self.state["state"] in ("running", "attach-unconfirmed")
+            if live and not alive(self.state["target"]):
                 self.target_gone()
                 break
+            if self.state["state"] == "attach-unconfirmed" and self.attach_pause is None:
+                self.see_attach_break()
+            if live:
+                self.watchdog()
             if self.state["state"] == "attach-unconfirmed":
-                self.late_attach()
+                self.promote()
+            self.log.forget()
             time.sleep(self.cfg.poll)
         return self.finish()
 
@@ -1108,84 +1318,268 @@ class Keeper:
         self.note(f"keeper done: {self.state['state']} {self.state.get('error') or ''}")
         return 0 if self.state.get("detach_confirmed") else 1
 
+    def check(self) -> dict[str, Any]:
+        """The outside check of the game, leaving out the threads that were
+        already suspended or stopped before attach."""
+        return game_check(self.cfg, self.target_pid, baseline=check_tids(self.state["instrument"]["before_attach"]))
+
+    def set_instrument(self, **checks: Any) -> None:
+        """Record checks in `instrument`. It is proven only for the sequence
+        running before attach, frozen at the attach break, running after the
+        resume: an instrument that cannot see the held game tells nothing by
+        reading the game running later."""
+        inst = {**self.state["instrument"], **checks}
+        verdicts = [(inst.get(k) or {}).get("verdict") for k in ("before_attach", "attach_break", "after_resume")]
+        inst["proven"] = verdicts == ["running", "frozen", "running"]
+        inst.pop("note", None)
+        if inst.get("attach_break") is not None and verdicts[1] != "frozen":
+            inst["note"] = (f"the outside check read the game {verdicts[1]}, not frozen, at x64dbg's attach break, "
+                            "where x64dbg holds it: it did not see a held game, so its running verdicts in this "
+                            "session prove nothing")
+        self.save(instrument=inst)
+
+    def see_attach_break(self) -> None:
+        """Note x64dbg's attach break (the first `[STATE] paused` after
+        `attach`) and take the outside check while the game is held there.
+        Its `run` is the keeper's own, so the watchdog sends it uncounted."""
+        self.log.poll()
+        if self.attach_pause is not None or not self.log.pauses:
+            return
+        self.attach_pause = 1
+        self.resumed_pause, self.resumed_at = self.attach_pause, 0.0
+        self.set_instrument(attach_break=self.check())
+
     def wait_ready(self) -> bool:
-        """Send `run` once the attach has completed: x64dbg pauses the game on
-        attach, and a `run` sent before then fails and leaves it paused."""
+        """Attach. Wait for the plugin to answer a debug-only call and for
+        x64dbg's attach break, take the outside check there (frozen is
+        expected), send `run` on stdin, resume every further pause until
+        x64dbg has read running for ATTACH_STABLE seconds, and check the game
+        again. Only then is the session `running`."""
         deadline = time.monotonic() + self.cfg.ready_timeout
-        while time.monotonic() < deadline:
+        while True:
             if not self.headless_running():
                 self.save(state="ended", error=f"headless x64dbg exited with {self.proc.returncode} during attach")
                 return False
-            if self.plugin.debug_state() == "debugging":
+            self.see_attach_break()
+            if not self.plugin_ok:
+                self.plugin_ok = self.plugin.debug_state() == "debugging"
+            if (self.plugin_ok and self.attach_pause) or time.monotonic() >= deadline:
                 break
             time.sleep(self.cfg.poll)
-        else:
-            # Readiness not seen. A stdin `run` resumes the game if the attach
-            # has in fact completed, and fails harmlessly if it has not; but a
-            # late attach would still pause the game after it. So the session
-            # is not `running`: the tools refuse it, and the keeper keeps
-            # checking (`late_attach`) until the plugin answers or a detach.
-            self.send("run")
-            self.save(state="attach-unconfirmed", ready=False, attach_logged="Attached" in self.log_text(),
-                      error=f"the plugin did not answer a debug-only call within {self.cfg.ready_timeout:.0f}s, "
-                            "so the attach is unconfirmed and the game may be paused at x64dbg's attach break. "
-                            "Sent run on stdin; the keeper resumes the game if the attach completes later. "
-                            "Run detach (`py -3 -m tools.x64dbg_mcp detach`) rather than use this session")
+        self.save(attach_logged="Attached" in self.log_text())
+        if not (self.plugin_ok and self.attach_pause):
+            self.unconfirmed()
             return True
-        reply, confirmed = self.resume()
-        if confirmed:
-            self.save(state="running", ready=True, run_reply=reply, attach_logged="Attached" in self.log_text())
+        self.send("run")
+        self.resumed_at = time.monotonic()
+        if self.settle_running(self.ATTACH_STABLE, max(deadline, time.monotonic() + self.cfg.hold_timeout)):
+            self.confirm_running()
         else:
-            self.unconfirmed_resume(reply)
+            self.unconfirmed()
         return True
 
-    def late_attach(self) -> None:
-        """In `attach-unconfirmed`: once the plugin answers a debug-only call,
-        the attach has completed and may have paused the game, so resume it
-        and only call the session `running` once the game is seen running."""
-        if time.monotonic() < self.retry_at or self.plugin.debug_state() != "debugging":
-            return
-        reply, confirmed = self.resume(budget=self.RETRY_BUDGET)
-        if not confirmed:
-            self.unconfirmed_resume(reply)
-            return
-        self.save(state="running", ready=True, run_reply=reply, late_ready_utc=_utc(), error=None)
-        self.note("late attach confirmed; resumed the game")
+    def confirm_running(self) -> bool:
+        """x64dbg has settled at running: take the after-resume check, and
+        call the session `running` only when it reads the game running."""
+        after = self.check()
+        self.set_instrument(after_resume=after)
+        if after.get("verdict") != "running":
+            self.unconfirmed(f"the outside check after the resume read the game {after.get('verdict')} "
+                             f"({after.get('detail')})")
+            return False
+        late = {"late_ready_utc": _utc()} if self.state["state"] == "attach-unconfirmed" else {}
+        self.save(state="running", ready=True, x64dbg_state="running", error=None, **late)
+        return True
 
-    def unconfirmed_resume(self, reply: str) -> None:
-        """The attach completed, but no plugin `run` reported the game running:
-        it may still be paused, so the session is not `running`. The keeper's
-        loop retries through `late_attach`, serving detach in between."""
+    def unconfirmed(self, seen: str | None = None) -> None:
+        """Not everything an attach needs was seen: the session is
+        `attach-unconfirmed`, with an error naming what was not. The keeper's
+        loop keeps resuming every pause and promotes it (`promote`) once it
+        has, serving detach in between."""
+        missing = []
+        if not self.plugin_ok:
+            missing.append(f"the plugin did not answer a debug-only call within {self.cfg.ready_timeout:.0f}s")
+        if not self.attach_pause:
+            missing.append("x64dbg's attach break (a [STATE] paused after attach) was never seen")
+        if self.plugin_ok and self.attach_pause and seen is None:
+            missing.append(f"x64dbg's state never settled at running for {self.ATTACH_STABLE:.0f}s (the keeper "
+                           f"resumed {self.state['breaks_resumed']} pause(s) after the attach break)")
+        if seen:
+            missing.append(seen)
         self.retry_at = time.monotonic() + 2 * self.cfg.settle
-        self.save(state="attach-unconfirmed", ready=False, run_reply=reply,
-                  attach_logged="Attached" in self.log_text(),
-                  error="the attach completed, but the game was never seen running after it (no plugin run "
-                        f"reported RUNNING; the last answer was {reply!r}), so it may be paused. The keeper keeps "
-                        "trying to resume it. Run detach (`py -3 -m tools.x64dbg_mcp detach`) rather than use "
-                        "this session")
+        self.save(state="attach-unconfirmed", ready=False,
+                  error="the attach is unconfirmed: " + "; ".join(missing) + ". So the game may be paused. The "
+                        "keeper keeps resuming every pause x64dbg takes, and makes the session running once all of "
+                        "this is seen. Run detach (`py -3 -m tools.x64dbg_mcp detach`) rather than use this session")
 
-    def resume(self, budget: float | None = None) -> tuple[str, bool]:
-        """`run` through the plugin until it reports RUNNING twice, a settle
-        apart (a late attach breakpoint would pause the game again): (the last
-        reply, True). Otherwise stdin `run` as a last try and (reply, False):
-        the game was never seen running. With `budget`, no new attempt starts
-        after that many seconds, so a retry never holds up a detach request
-        for long."""
-        running, reply = 0, ""
-        deadline = None if budget is None else time.monotonic() + budget
-        for _ in range(10):
-            try:
-                reply, _ = self.plugin.call(PLUGIN_RUN)
-            except PluginError as e:
-                reply = str(e)
-            running = running + 1 if "RUNNING" in reply.upper() else 0
-            if running >= 2:
-                return reply, True
-            if deadline is not None and time.monotonic() >= deadline:
+    def promote(self) -> None:
+        """In `attach-unconfirmed`: once the plugin answers, the attach break
+        has been seen and x64dbg has read running for ATTACH_STABLE seconds,
+        check the game and make the session `running`."""
+        if time.monotonic() < self.retry_at:
+            return
+        self.retry_at = time.monotonic() + 2 * self.cfg.settle
+        if not self.plugin_ok:
+            self.plugin_ok = self.plugin.debug_state() == "debugging"
+        if not (self.plugin_ok and self.attach_pause) or self.log.settled_for("running") < self.ATTACH_STABLE:
+            return
+        if self.confirm_running():
+            self.note("late attach confirmed: the game runs")
+
+    def watchdog(self) -> None:
+        """Resume every pause x64dbg has settled in, on stdin. One `run` per
+        pause, counted in `breaks_resumed` with its break line in
+        `last_break` (the attach break and a held change's pause are the
+        keeper's own and are not counted); another `run` for the same pause
+        only when the first brought no new [STATE] line within RESEND
+        seconds. STORM_COUNT resumes within STORM_WINDOW seconds set
+        `break_storm`, which stays set."""
+        settled = self.log.settled()
+        changes: dict[str, Any] = {}
+        if settled and settled != self.state.get("x64dbg_state"):
+            changes["x64dbg_state"] = settled
+        if settled == "paused":
+            now, n = time.monotonic(), self.log.pauses
+            if n != self.resumed_pause:
+                brk = self.log.pause_line(n) or {}
+                self.resumes = [t for t in self.resumes if now - t < self.STORM_WINDOW] + [now]
+                changes["breaks_resumed"] = self.state["breaks_resumed"] + 1
+                changes["last_break"] = {"line": brk.get("line"), "utc": brk.get("utc")}
+                if len(self.resumes) >= self.STORM_COUNT:
+                    changes["break_storm"] = True
+                self.note(f"resuming pause {n}: {brk.get('line')}")
+                self.send("run")
+                self.resumed_pause, self.resumed_at = n, now
+            elif now - self.resumed_at >= self.RESEND:
+                self.send("run")
+                self.resumed_at = now
+        if changes:
+            self.save(**changes)
+
+    def settle_running(self, stable: float, until: float) -> bool:
+        """Resume every pause until x64dbg has read running for `stable`
+        seconds with no new [STATE] line; False when `until` passes first."""
+        while time.monotonic() < until:
+            if not self.headless_running():
+                return False
+            self.watchdog()
+            if self.log.settled_for("running") >= stable:
+                if self.state.get("x64dbg_state") != "running":
+                    self.save(x64dbg_state="running")
+                return True
+            time.sleep(min(self.cfg.poll, 0.05))
+        return False
+
+    def wait_state(self, name: str, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while True:
+            self.log.poll()
+            if self.log.state == name:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.02)
+
+    def run_batch(self, hid: str, sections: list[tuple[str, list[str]]], end: str) -> tuple[dict[str, list[str]], bool]:
+        """Send each section's marker and commands, then the end marker, and
+        wait up to `hold_timeout` for x64dbg to print the end marker. Returns
+        the lines x64dbg printed in each section, and whether the end came."""
+        mark = self.log.mark()
+        for name, commands in sections:
+            self.send(f'log "{batch_marker(hid, name)}"')
+            for c in commands:
+                self.send(c)
+        self.send(f'log "{batch_marker(hid, end)}"')
+        markers = {batch_marker(hid, n): n for n in [*(s for s, _ in sections), end]}
+        deadline = time.monotonic() + self.cfg.hold_timeout
+        while True:
+            lines = [ln.strip() for ln in self.log.since(mark)]
+            done = batch_marker(hid, end) in lines
+            if done or time.monotonic() >= deadline or not self.headless_running():
                 break
-            time.sleep(self.cfg.settle if running else self.cfg.poll)
-        self.send("run")
-        return f"{reply} (and run on stdin)", False
+            time.sleep(0.02)
+        out: dict[str, list[str]] = {name: [] for name, _ in sections}
+        current = None
+        for ln in lines:
+            if ln in markers:
+                current = markers[ln] if markers[ln] in out else None
+            elif current is not None and ln:
+                out[current].append(ln)
+        return out, done
+
+    def hold(self, lines: list[str]) -> dict[str, Any]:
+        """Change hardware breakpoints without asking x64dbg to pause.
+
+        Read bplist. With nothing armed, send the lines as a direct batch
+        between markers, then settle at running, resuming any pause, and
+        report one that came as `window_break`. With breakpoints armed, set
+        each one's break condition to 1 and wait HOLD_BREAK seconds for one
+        to break: a logging breakpoint then holds the game at its hit, where
+        nothing is mid-hit and the change cannot race x64dbg's debug loop.
+        Send the lines there, restore the conditions to 0, and `run` (a held
+        change, reported as `held`). When nothing breaks, nothing was
+        logging: restore the conditions and send a direct batch."""
+        for line in lines:
+            if any(c in line for c in "\r\n"):
+                raise ValueError("one command per line")
+        hid = uuid.uuid4().hex[:8]
+        t = self.cfg.hold_timeout
+        pauses = self.log.pauses
+        listing, listed = self.run_batch(hid, [("list", ["bplist"])], "listed")
+        if not listed:
+            return self.hold_reply(False, f"x64dbg never printed the end of its bplist within {t:.0f}s, so "
+                                          "nothing was changed", {}, None, None, None)
+        armed = []
+        for row in listing["list"]:
+            m = _BPLIST_ROW.match(row)
+            if m and m.group(1) != "0" and m.group(2).upper() == "HW":
+                armed.append(int(m.group(3), 16))
+        held = held_note = None
+        out: dict[str, list[str]] = {}
+        done = False
+        if armed:
+            for a in armed:
+                self.send(f"SetHardwareBreakpointCondition 0x{a:X}, 1")
+            if self.wait_state("paused", self.HOLD_BREAK):
+                n = self.log.pauses
+                held = (self.log.pause_line(n) or {}).get("line") or "a pause with no break line"
+                restore = [f"SetHardwareBreakpointCondition 0x{a:X}, 0" for a in armed]
+                out, done = self.run_batch(hid, [("begin", lines), ("mid", [*restore, "bplist"])], "end")
+                self.send("run")
+                self.resumed_pause, self.resumed_at = n, time.monotonic()
+                pauses = n
+            else:
+                for a in armed:
+                    self.send(f"SetHardwareBreakpointCondition 0x{a:X}, 0")
+                held_note = (f"no armed hardware breakpoint broke within {self.HOLD_BREAK:.0f} s of its break "
+                             "condition being set to 1, so none was logging: the change went out as a direct batch")
+        if held is None:
+            out, done = self.run_batch(hid, [("begin", lines), ("mid", ["bplist"])], "end")
+        settled = self.settle_running(SessionLog.QUIET, time.monotonic() + t)
+        window_break = None
+        if held is None and self.log.pauses > pauses:
+            window_break = (self.log.pause_line(pauses + 1) or {}).get("line") or "a pause with no break line"
+        detail = None
+        if not done:
+            detail = f"x64dbg never printed the batch's end marker within {t:.0f}s"
+        elif not settled:
+            detail = (f"x64dbg's state never settled at running within {t:.0f}s after the batch "
+                      f"(it reads {self.log.state})")
+        reply = self.hold_reply(done and settled, detail, out, held, held_note, window_break)
+        return reply
+
+    def hold_reply(self, ok: bool, detail: str | None, out: dict[str, list[str]], held: str | None,
+                   held_note: str | None, window_break: str | None) -> dict[str, Any]:
+        reply: dict[str, Any] = {
+            "ok": ok, "lines": out.get("begin", []), "after": out.get("mid", []), "held": held,
+            "window_break": window_break, "x64dbg_state": self.log.settled() or self.log.state,
+            "game": self.check(),
+        }
+        if held_note:
+            reply["held_note"] = held_note
+        if detail:
+            reply["detail"] = detail
+        return reply
 
     def serve_requests(self) -> None:
         self.cfg.requests.mkdir(parents=True, exist_ok=True)
@@ -1201,6 +1595,11 @@ class Keeper:
                     for line in data.get("lines", []):
                         self.send(str(line))
                     reply = {"ok": True, "sent": len(data.get("lines", []))}
+                elif data.get("op") == "hold":
+                    if self.state["state"] != "running":
+                        reply = {"ok": False, "detail": f"the session is {self.state['state']}, not running"}
+                    else:
+                        reply = self.hold([str(line) for line in data.get("lines", [])])
                 elif data.get("op") == "detach":
                     reply = self.teardown()
                 else:
@@ -1210,33 +1609,73 @@ class Keeper:
             write_json(self.cfg.replies / req.name, reply)
 
     def teardown(self) -> dict[str, Any]:
-        """`bphc`, `detach`, confirm, `exit`. Only a confirmed detach lets the
-        keeper end a headless that has not exited by itself."""
+        """A held `bphc`, a settle at running, `detach`, confirm, `exit`, then
+        the outside check of the game. Only a confirmed detach lets the keeper
+        end a headless that has not exited by itself, and only a game whose
+        threads all run again is `ended` with `game_released: true`."""
         self.save(state="detaching")
-        self.send("bphc")
+        cleared = self.hold(["bphc"])
+        cleared.pop("game", None)
+        # No tool path plants a pause breakpoint any more, so a game x64dbg
+        # still holds here is detached anyway, and the outside check decides.
+        settled = self.settle_running(SessionLog.QUIET, time.monotonic() + self.cfg.hold_timeout)
+        self.save(paused_at_detach=not settled)
+        mark = self.log.mark()
         self.send("detach")
         deadline = time.monotonic() + self.cfg.detach_timeout
         confirmed = False
         while time.monotonic() < deadline:
-            if self.plugin.debug_state() == "none":
+            if self.plugin.debug_state() == "none" and "Detached!" in (ln.strip() for ln in self.log.since(mark)):
                 confirmed = True
                 break
             time.sleep(self.cfg.poll)
         if not confirmed:
             detail = (f"detach not confirmed within {self.cfg.detach_timeout:.0f}s: the plugin never reported "
-                      f"that no session remains. Headless x64dbg (pid {self.proc.pid}) is left running and "
-                      "was not killed; it may still be attached to the game. Retry detach, or look at "
-                      f"{self.cfg.log_file}")
+                      "that no session remains, or x64dbg never printed Detached!. Headless x64dbg "
+                      f"(pid {self.proc.pid}) is left running and was not killed; it may still be attached to the "
+                      f"game. Retry detach, or look at {self.cfg.log_file}")
             self.save(state="detach-unconfirmed", detach_confirmed=False, error=detail)
-            return {"ok": False, "state": "detach-unconfirmed", "detail": detail}
+            return {"ok": False, "state": "detach-unconfirmed", "detail": detail, "cleared": cleared,
+                    "paused_at_detach": not settled}
         self.send("exit")
         try:
             self.proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             self.proc.terminate()  # the detach was confirmed, so nothing is attached any more
             self.proc.wait(timeout=10)
-        self.save(state="ended", detach_confirmed=True, error=None)
-        return {"ok": True, "state": "ended", "detail": "detached (confirmed), then headless x64dbg exited"}
+        return self.released(cleared, not settled)
+
+    def released(self, cleared: dict[str, Any], paused_at_detach: bool) -> dict[str, Any]:
+        """The post-detach check, the threads suspended before attach left
+        out: `running` ends the session released, `gone` ends it with a note,
+        and anything else is `game-not-released`."""
+        game = self.check()
+        verdict = game.get("verdict")
+        common = {"detach_confirmed": True, "game": game, "paused_at_detach": paused_at_detach, "cleared": cleared}
+        if verdict == "running":
+            self.save(state="ended", detach_confirmed=True, game_released=True, game=game, error=None)
+            return {"ok": True, "state": "ended", "game_released": True,
+                    "detail": "detached (confirmed), headless x64dbg exited, and every game thread runs again",
+                    **common}
+        if verdict == "gone":
+            note = (f"the game (pid {self.target_pid}) was gone by the post-detach check, so whether the detach "
+                    "released its threads is not known")
+            self.save(state="ended", detach_confirmed=True, game_released=None, game=game, error=None, note=note)
+            return {"ok": True, "state": "ended", "game_released": None, "note": note,
+                    "detail": "detached (confirmed), then headless x64dbg exited", **common}
+        released = None if verdict in ("unreadable", "unsupported") else False
+        suspended = game.get("suspended") or []
+        stopped = game.get("stopped") or []
+        error = (f"the detach was confirmed, but the outside check reads the game (pid {self.target_pid}) "
+                 f"{verdict}, not running: {len(suspended)} thread(s) suspended ("
+                 + (", ".join(f"tid {s.get('tid')} count {s.get('suspend_count')}" for s in suspended) or "none")
+                 + f"), {len(stopped)} stopped in Waiting/Suspended ("
+                 + (", ".join(f"tid {t}" for t in stopped) or "none")
+                 + f"). {game.get('detail')} Nothing but a force-stop releases them, and these tools never resume "
+                   "a game thread: the driver runs hs_stop_game with force=true, then hs_saves_restore of this "
+                   "session's backup")
+        self.save(state="game-not-released", detach_confirmed=True, game_released=released, game=game, error=error)
+        return {"ok": False, "state": "game-not-released", "game_released": released, "detail": error, **common}
 
     def target_gone(self) -> None:
         """The game exited under the debugger: nothing is attached any more."""
@@ -1254,7 +1693,9 @@ def keeper_main(session: Path, pid: int) -> int:
         print(f"x64dbg_mcp keeper: no keeper-config.json in {session}", file=sys.stderr)
         return 2
     cfg = Config.from_json(data)
-    install_offline_guard(allowed_executables=(cfg.headless_argv[0],))
+    # headless x64dbg, and the tests' probe seam when one is set
+    install_offline_guard(allowed_executables=(cfg.headless_argv[0], *cfg.probe_cmd[:1]) if cfg.probe_cmd
+                          else (cfg.headless_argv[0],))
     return Keeper(cfg, pid).run()
 
 
@@ -1294,8 +1735,8 @@ def attach(cfg: Config, pid: int | None, game: bool) -> int:
         return 1
     print(json.dumps(session_summary(cfg)))
     if state.get("state") == "attach-unconfirmed":
-        print("x64dbg_mcp: attach unconfirmed: the game may be paused at x64dbg's attach break, and every tool "
-              "but detach refuses this session. Run `py -3 -m tools.x64dbg_mcp detach`.")
+        print("x64dbg_mcp: attach unconfirmed: the game may be paused (the error says what was not seen), and "
+              "every tool but detach refuses this session. Run `py -3 -m tools.x64dbg_mcp detach`.")
     return 0 if state.get("state") == "running" and state.get("ready") else 1
 
 
@@ -1321,6 +1762,17 @@ def start_session(cfg: Config, pid: int | None, game: bool) -> dict[str, Any]:
         raise Refused("session_live", f"a session is already {live.get('state')} on pid {live.get('target_pid')} "
                                       "(detach it first)")
     refuse_inside_git(cfg.session, "session directory")
+    # The baseline of the outside check: attach only to a game seen running,
+    # by an instrument that can read it.
+    baseline = game_check(cfg, pid)
+    verdict = baseline.get("verdict")
+    if verdict in ("unreadable", "unsupported"):
+        raise Refused("game_unreadable", f"the outside check of pid {pid} (tools/thread_state.py) reads {verdict}: "
+                                         f"{baseline.get('detail')} Without it no detach can be shown to release "
+                                         "the game")
+    if verdict != "running":
+        raise Refused("game_not_running", f"the outside check of pid {pid} reads {verdict}, not running: "
+                                          f"{baseline.get('detail')} Attach only to a game that runs")
     cfg.session.mkdir(parents=True, exist_ok=True)
     for d in (cfg.requests, cfg.replies):
         shutil.rmtree(d, ignore_errors=True)
@@ -1329,7 +1781,7 @@ def start_session(cfg: Config, pid: int | None, game: bool) -> dict[str, Any]:
         os.replace(cfg.log_file, cfg.session / "session.prev.log")
     write_json(cfg.keeper_config, cfg.to_json())
     write_json(cfg.state_file, {"schema": SESSION_SCHEMA, "state": "attaching", "target_pid": pid,
-                                "started_utc": _utc()})
+                                "started_utc": _utc(), "baseline": baseline})
     with open(cfg.keeper_log, "ab") as log:
         keeper = subprocess.Popen(
             [sys.executable, "-m", "tools.x64dbg_mcp", "keeper", "--session", str(cfg.session), "--pid", str(pid)],
@@ -1349,15 +1801,26 @@ def start_session(cfg: Config, pid: int | None, game: bool) -> dict[str, Any]:
     return state
 
 
+def detach_wait(cfg: Config) -> float:
+    """How long a detach may take: the held `bphc` (its bplist, the hold, the
+    batch and the settle), the settle before detach, the detach itself, and
+    headless's exit."""
+    return 4 * cfg.hold_timeout + Keeper.HOLD_BREAK + cfg.detach_timeout + 30
+
+
 def detach(cfg: Config) -> int:
+    """Exits 0 only for a session `ended` with every game thread running
+    again (`game_released` true), or with the game gone."""
     try:
-        reply = keeper_request(cfg, "detach", timeout=cfg.detach_timeout + 30)
+        reply = keeper_request(cfg, "detach", timeout=detach_wait(cfg))
     except Refused as r:
         print(f"x64dbg_mcp: detach refused ({r.reason}): {r.detail}")
         return 1
     print(json.dumps(reply))
     state = read_state(cfg)
-    return 0 if state.get("state") == "ended" and state.get("detach_confirmed") else 1
+    gone = (state.get("game") or {}).get("verdict") == "gone"
+    return 0 if state.get("state") == "ended" and state.get("detach_confirmed") \
+        and (state.get("game_released") is True or gone) else 1
 
 
 # --- the eight tools --------------------------------------------------------
@@ -1637,8 +2100,14 @@ class Tools:
             answers = True
         except PluginError:
             answers = False
-        return {"ok": True, **session_summary(self.cfg), "plugin_answers": answers,
-                "plugin_url": self.cfg.url, "lease": {"state": held, "detail": detail}}
+        out = {"ok": True, **session_summary(self.cfg), "plugin_answers": answers,
+               "plugin_url": self.cfg.url, "lease": {"state": held, "detail": detail}}
+        live = live_session(self.cfg)
+        if live is not None and live.get("target_pid"):
+            # a fresh outside check of the game, while the session may hold it
+            out["game"] = game_check(self.cfg, int(live["target_pid"]),
+                                     baseline=check_tids((live.get("instrument") or {}).get("before_attach")))
+        return out
 
     def logpoint(self, address: str, log: str, log_condition: str | None = None,
                  name: str | None = None, expect_bytes: str | None = None) -> dict[str, Any]:
@@ -1646,6 +2115,11 @@ class Tools:
         gate = self._gate(tool)
         if gate:
             return gate
+        if read_state(self.cfg).get("break_storm"):
+            return _refusal(tool, "break_storm",
+                            f"x64dbg paused the game {Keeper.STORM_COUNT} times within {Keeper.STORM_WINDOW:.0f} s "
+                            "on its own; the keeper resumed each (status: breaks_resumed, last_break), but no "
+                            "breakpoint is set on this session any more. Detach, and read the session log")
         for value, what, forbid in ((log, "log", '"'), (log_condition, "log_condition", '";'),
                                     (name, "name", '";')):
             why = _text_refusal(value, what, forbid) if value is not None else None
@@ -1829,7 +2303,7 @@ class Tools:
         if gate:
             return gate
         try:
-            reply = keeper_request(self.cfg, "detach", timeout=self.cfg.detach_timeout + 30)
+            reply = keeper_request(self.cfg, "detach", timeout=detach_wait(self.cfg))
         except Refused as r:
             return _refusal("detach", r.reason, r.detail)
         return {"tool": "detach", **reply, **session_summary(self.cfg)}
@@ -1921,8 +2395,11 @@ def listing_bytes(text: str, addr: int) -> bytes:
 
 DESCRIPTIONS = {
     "status": "Session state (none, attaching, attach-unconfirmed, running, detaching, ended, "
-              "detach-unconfirmed), target pid, keeper and headless alive, whether the plugin answers on "
-              "127.0.0.1, and the hs-drive lease. attach-unconfirmed: the game may be paused; run detach.",
+              "detach-unconfirmed, game-not-released), target pid, keeper and headless alive, x64dbg's own "
+              "state (x64dbg_state), the pauses the keeper resumed (breaks_resumed, last_break, break_storm), "
+              "the outside check's control (instrument) and a fresh check of the game, whether the plugin "
+              "answers on 127.0.0.1, and the hs-drive lease. attach-unconfirmed: the game may be paused; run "
+              "detach.",
     "logpoint": "Add one non-breaking hardware logging breakpoint (bph, never breaks). address: 0x<hex> or "
                 "<module>+<hex>, e.g. Hero_Siege.exe+427460. log: an x64dbg log format string, braces allowed, "
                 "no double quote. expect_bytes: the function's first bytes from Ghidra (hex); a mismatch is "
@@ -1940,7 +2417,9 @@ DESCRIPTIONS = {
     "modules": "The debuggee's modules with their bases (gives Hero_Siege.exe's base).",
     "disasm": "Disassemble byte_count bytes at an address (0x<hex> or <module>+<hex>), to check an address "
               "against Ghidra. Disassembled game code: never paste it into a tracked file.",
-    "detach": "Delete every hardware breakpoint, detach, confirm, then end headless x64dbg. Detach before "
+    "detach": "Delete every hardware breakpoint, let the game run, detach, confirm, end headless x64dbg, then "
+              "check the game's threads from outside the debugger: game-not-released (ok false) names the "
+              "threads left suspended, which only hs_stop_game with force=true releases. Detach before "
               "hs_stop_game.",
 }
 
