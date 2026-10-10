@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Live measurements of the player's universal jump and what blocks it (ForgePact#16 phase 1, Live 1, 2026-10-03). Research build of ForgePact aaf1856 (SHA-256 6a0907ca21f1d2124dc8593e835efd3499aaa43fae7d19e97698fe9688e1e3e9), the `jumpprobe` instrument; save slot 14, character Sorak (level 100, Hell), in Town_01_rm. The jump key is Space and the jump goes towards the mouse cursor. `jumpprobe pass` is the research lever: while on, it answers the player's own collision builtins 'nothing there' without running them, for a query whose object argument is in the chosen family (`props`: Collision_Prop_obj and descendants; `all`: Collision_Parent_obj and descendants); `hold` keeps it on with no jump script. The argument and the controls are in ForgePact docs/jump-scenery-research.md, Live 1 results; the shared facts are docs/RUNTIME_DATA_MODELS.md section 19. Every status is `measured` or `not-observed`; there is no model yet (arc: not-established). Entries J11 to J15 come from phase 2's live session of the Jump through scenery mod (`jumpscenery`, player build of ForgePact b273907, 2026-10-03, same character and room), recorded in ForgePact docs/jump-scenery-research.md, Mod live 1 results, and docs/RUNTIME_DATA_MODELS.md section 19.4. A bare Jn in this file is an entry id here; the research doc's Live 1 run labels (also J1 to J5) are not, and are written 'Live 1 run Jn'.",
+  "$schema_note": "Live measurements of the player's universal jump and what blocks it (ForgePact#16 phase 1, Live 1, 2026-10-03). Research build of ForgePact aaf1856 (SHA-256 6a0907ca21f1d2124dc8593e835efd3499aaa43fae7d19e97698fe9688e1e3e9), the `jumpprobe` instrument; save slot 14, character Sorak (level 100, Hell), in Town_01_rm. The jump key is Space and the jump goes towards the mouse cursor. `jumpprobe pass` is the research lever: while on, it answers the player's own collision builtins 'nothing there' without running them, for a query whose object argument is in the chosen family (`props`: Collision_Prop_obj and descendants; `all`: Collision_Parent_obj and descendants); `hold` keeps it on with no jump script. The argument and the controls are in ForgePact docs/jump-scenery-research.md, Live 1 results; the shared facts are docs/RUNTIME_DATA_MODELS.md section 19. Every status is `measured` or `not-observed`; there is no model yet (arc: not-established). Entries J11 to J15 come from phase 2's live session of the Jump through scenery mod (`jumpscenery`, player build of ForgePact b273907, 2026-10-03, same character and room), recorded in ForgePact docs/jump-scenery-research.md, Mod live 1 results, and docs/RUNTIME_DATA_MODELS.md section 19.4. Entries J16 to J21 come from the v2.2.1 hotfix's Live procedure 1 (the shipped ForgePact v2.2.0 player plugin, 2026-10-09, same character, in Town_01_rm and Act_01_01), recorded in ForgePact docs/jump-scenery-research.md, Phase 3: the v2.2.1 hotfix, Hotfix live 1 results, and docs/RUNTIME_DATA_MODELS.md section 19.5. Entries J22 to J27 come from the hotfix's Live procedure 2 (the ForgePact 2.2.1 player build at 71e5f12, 2026-10-10, same character, in Town_01_rm and Act_01_01), recorded in ForgePact docs/jump-scenery-research.md, Phase 3: the v2.2.1 hotfix, Hotfix live 2 results, and the same section 19.5. A bare Jn in this file is an entry id here; the research doc's Live 1 run labels (also J1 to J5) are not, and are written 'Live 1 run Jn'.",
   "measurements": [
     {
       "id": "J1",
@@ -476,6 +476,426 @@
           ]
         ],
         "edge_jump_made": false
+      }
+    },
+    {
+      "id": "J16",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-09",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Hotfix live 1 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap"
+      ],
+      "what": "The v2.2.1 hotfix's Live procedure 1 (shipped ForgePact v2.2.0 player plugin, SHA-256 3a1414d35c059e268f632fa0636948537d2059fcc625766ec5976f610d268bcb; slot 14 Sorak, Town_01_rm): one jump at open ground, the mod on and answering nothing, with the cursor placed 100 px south of the player in room coordinates (screen point converted as room = view.xy + screen / 2, gui 2560x1440 over a 1280x720 view). The player ended 88.8 px south, about 11 px short of the cursor: the jump goes to the cursor, not a fixed length. Mod live 1's open-ground jump of about 175 px (J11) and its 125 px crossing (J13) fit a cursor placed at different distances; their cursor positions were not recorded.",
+      "values": {
+        "room": "Town_01_rm",
+        "start": [
+          912.0,
+          822.0
+        ],
+        "cursor": [
+          912.0,
+          922.0
+        ],
+        "cursor_distance_px": 100.0,
+        "end": [
+          911.0,
+          910.8
+        ],
+        "distance_px": 88.8,
+        "end_to_cursor_px": 11.2
+      }
+    },
+    {
+      "id": "J17",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-09",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Hotfix live 1 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap"
+      ],
+      "what": "The same session, in Act_01_01 (Outskirts of Inoya): one jump at open ground, the mod on and answering nothing, with the cursor 111.5 px away to the east-north-east in room coordinates. The player moved 113.0 px and ended about 6.5 px from the cursor. A second open-ground jump ending near its cursor.",
+      "values": {
+        "room": "Act_01_01",
+        "start": [
+          2031.8,
+          3966.0
+        ],
+        "cursor": [
+          2131.5,
+          3916.0
+        ],
+        "cursor_distance_px": 111.5,
+        "end": [
+          2129.8,
+          3909.7
+        ],
+        "distance_px": 113.0,
+        "end_to_cursor_px": 6.5
+      }
+    },
+    {
+      "id": "J18",
+      "kind": "control",
+      "status": "measured",
+      "date": "2026-10-09",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Hotfix live 1 results"
+        }
+      ],
+      "scripts": [],
+      "what": "Player_obj's instance id changes on a room change: menulayout Player_obj read id 261723 in Town_01_rm and 297089 in Act_01_01 after the owner walked from the Town of Inoya into the Outskirts of Inoya. Act_01_01's room_width x room_height is 18272 x 8704 (jumpscenery stat's room= field).",
+      "values": {
+        "player_id_town": 261723,
+        "player_id_after_room_change": 297089,
+        "rooms": [
+          "Town_01_rm",
+          "Act_01_01"
+        ],
+        "act_01_01_room_size": [
+          18272,
+          8704
+        ]
+      }
+    },
+    {
+      "id": "J19",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-09",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Hotfix live 1 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap"
+      ],
+      "what": "Outdoor scenery that stops a vanilla jump: in Act_01_01, beside a large tree the owner chose, with the cursor beyond it (163.3 px away, up and to the left), a jump with the mod off moved 0 px. With the v2.2.0 mod on and a learned reach of 113, the same jump was refused by the mod's landing check (refused-landing +1, granted 0) and moved 0 px, so whether the five hooked builtins cover what blocks it was not reached.",
+      "values": {
+        "room": "Act_01_01",
+        "start": [
+          2031.8,
+          3966.0
+        ],
+        "cursor": [
+          1901.5,
+          3867.5
+        ],
+        "cursor_distance_px": 163.3,
+        "off_moved_px": 0,
+        "on_moved_px": 0,
+        "on_granted": 0
+      }
+    },
+    {
+      "id": "J20",
+      "kind": "control",
+      "status": "measured",
+      "date": "2026-10-09",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Hotfix live 1 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap"
+      ],
+      "what": "Outdoor scenery that does not stop a vanilla jump: in Act_01_01, beside a rock (boulder) the owner chose, with the cursor beyond it, a jump with the mod off moved 189.8 px toward the cursor and went past the rock. The cursor was read only from a screenshot, so its room position is approximate. The longest jump measured for this character in Live procedure 1; J25 later measured the maximum at about 246 px.",
+      "values": {
+        "room": "Act_01_01",
+        "start": [
+          1916.2,
+          4115.9
+        ],
+        "end": [
+          2059.9,
+          3991.9
+        ],
+        "distance_px": 189.8
+      }
+    },
+    {
+      "id": "J21",
+      "kind": "target",
+      "status": "not-observed",
+      "date": "2026-10-09",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Hotfix live 1 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap"
+      ],
+      "what": "No crossing through the v2.2.0 mod, switched on at character select as the panel's launch commands do. At Live 1's town prop (1074.2, 1383.7), aimed south: the first jump after loading was refused for no reach (refused-no-reach +1), and after a reach of 89 was learned (J16) the jump was refused by the landing check (refused-landing +1); both moved 0 px. That aim was 100 room px (the procedure's 200 px applied in screen pixels), short of the 125 px where the 2026-10-03 crossing ended free (J13), so by the extent earlier sessions bound for the prop it lay inside it; the prop's far edge was not measured. The tree (J19) was refused the same way. The game's answer to a granted jump outdoors was not reached.",
+      "values": {
+        "town_start": [
+          1074.2,
+          1383.7
+        ],
+        "town_cursor": [
+          1074.2,
+          1483.7
+        ],
+        "town_first_jump": "refused-no-reach",
+        "town_with_reach_89": "refused-landing",
+        "tree_with_reach_113": "refused-landing",
+        "granted": 0
+      }
+    },
+    {
+      "id": "J22",
+      "kind": "control",
+      "status": "measured",
+      "date": "2026-10-10",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Hotfix live 2 results"
+        }
+      ],
+      "scripts": [],
+      "what": "The v2.2.1 hotfix's Live procedure 2 (ForgePact 2.2.1 player build at 71e5f12, SHA-256 9088231d53bdc462916ffb19f1d4ac668ca0b03bc6e302d782580fa5fd3c7cf4; slot 14 Sorak): the built-in variables mouse_x / mouse_y, read by name through ForgePact's GetBuiltin (jumpscenery stat's cursor=<x>,<y>@mouse_x), give the cursor in room coordinates. On four aims, each a room point converted to the screen as (room - view.xy) x 2 and reached with an injected mouse move, the reading was within 1.2 px of the aimed room point on each axis (the reads are whole numbers). device_mouse_x was not read.",
+      "values": {
+        "route": "mouse_x",
+        "aims": [
+          {
+            "room": "Town_01_rm",
+            "aimed": [
+              1074.2,
+              1523.7
+            ],
+            "read": [
+              1073,
+              1523
+            ]
+          },
+          {
+            "room": "Town_01_rm",
+            "aimed": [
+              912.0,
+              922.0
+            ],
+            "read": [
+              911,
+              921
+            ]
+          },
+          {
+            "room": "Town_01_rm",
+            "aimed": [
+              912.0,
+              1122.0
+            ],
+            "read": [
+              911,
+              1121
+            ]
+          },
+          {
+            "room": "Act_01_01",
+            "aimed": [
+              10840.0,
+              6965.0
+            ],
+            "read": [
+              10839,
+              6964
+            ]
+          }
+        ],
+        "max_axis_error_px": 1.2
+      }
+    },
+    {
+      "id": "J23",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-10",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Hotfix live 2 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap"
+      ],
+      "what": "The town prop crossed through the 2.2.1 mod, armed at character select and installed once the character loaded. At Live 1's prop (1074.2, 1383.7) in Town_01_rm, cursor at room (1074.2, 1523.7), 140 px south: the first jump after loading, with reach=175 (start) and no practice jump, moved 133.2 px south to (1073.0, 1516.9), granted +1, last-target=cursor, last-check=139. With the mod off the same jump moved 0 px; with it on again it moved 133.2 px, granted +1. The player ended about 7 px from the cursor.",
+      "values": {
+        "room": "Town_01_rm",
+        "start": [
+          1074.2,
+          1383.7
+        ],
+        "cursor": [
+          1074.2,
+          1523.7
+        ],
+        "end": [
+          1073.0,
+          1516.9
+        ],
+        "first_jump_moved_px": 133.2,
+        "off_moved_px": 0,
+        "on_again_moved_px": 133.2,
+        "last_check_px": 139,
+        "last_target": "cursor",
+        "granted_per_crossing": 1
+      }
+    },
+    {
+      "id": "J24",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-10",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Hotfix live 2 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap"
+      ],
+      "what": "J16 repeated on the 2.2.1 build: open ground in Town_01_rm, cursor read at 911,921 for an aim 100 px south, the mod on and answering nothing (granted +0). The player moved 88.8 px and ended at (911.0, 910.8), the same point as J16, 11.2 px from the aimed point; the mod learned reach=89.",
+      "values": {
+        "room": "Town_01_rm",
+        "start": [
+          912.0,
+          822.0
+        ],
+        "cursor": [
+          912.0,
+          922.0
+        ],
+        "cursor_distance_px": 100.0,
+        "end": [
+          911.0,
+          910.8
+        ],
+        "distance_px": 88.8,
+        "end_to_cursor_px": 11.2,
+        "reach": 89
+      }
+    },
+    {
+      "id": "J25",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-10",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Hotfix live 2 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap"
+      ],
+      "what": "The jump's maximum length for this character: open ground in Town_01_rm, cursor read at 911,1121 for an aim 300 px south, the mod on and answering nothing. The player moved 246.3 px to (911.2, 1068.3), 53.7 px short of the aimed point, and the mod set cap=246 from it. One jump; Jump Power was not read, so how the maximum depends on it is not measured.",
+      "values": {
+        "room": "Town_01_rm",
+        "start": [
+          912.0,
+          822.0
+        ],
+        "cursor": [
+          912.0,
+          1122.0
+        ],
+        "cursor_distance_px": 300.0,
+        "end": [
+          911.2,
+          1068.3
+        ],
+        "distance_px": 246.3,
+        "end_to_cursor_px": 53.7,
+        "cap": 246
+      }
+    },
+    {
+      "id": "J26",
+      "kind": "control",
+      "status": "measured",
+      "date": "2026-10-10",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Hotfix live 2 results"
+        }
+      ],
+      "scripts": [],
+      "what": "A room change through the town waypoint (the F key beside it, then a click on Outskirts of Inoya on its map), with no jump between: Player_obj's id went from 261723 in Town_01_rm to 306593 in Act_01_01, as in J18, and the 2.2.1 mod kept reach=246 and cap=246. Act_01_01's room_width x room_height read 15296 x 12960, against 18272 x 8704 in J18: the room's size changes between visits.",
+      "values": {
+        "player_id_town": 261723,
+        "player_id_after_room_change": 306593,
+        "rooms": [
+          "Town_01_rm",
+          "Act_01_01"
+        ],
+        "act_01_01_room_size": [
+          15296,
+          12960
+        ],
+        "reach_after": 246,
+        "cap_after": 246
+      }
+    },
+    {
+      "id": "J27",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-10",
+      "source": [
+        {
+          "path": "ForgePact/docs/jump-scenery-research.md",
+          "section": "Hotfix live 2 results"
+        }
+      ],
+      "scripts": [
+        "gml_Script_skillsLeap"
+      ],
+      "what": "Outdoor scenery crossed through the 2.2.1 mod: in Act_01_01, beside a large red-leaved tree east of the Outskirts waypoint, with the cursor read at 10839,6964, 199.0 px east past it. With the mod off the jump moved 0 px. With it on the same jump moved 197.7 px east to (10837.6, 6958.0), on open ground, granted +1, answered +1133, refused-landing +0, last-check=199; no-direction also rose by one (a blocked query before the take-off walk gave two circles, left undecided). So this tree blocks a vanilla jump through the five hooked builtins. The tree is not identified by object.",
+      "values": {
+        "room": "Act_01_01",
+        "start": [
+          10640.0,
+          6965.0
+        ],
+        "cursor": [
+          10839.0,
+          6964.0
+        ],
+        "cursor_distance_px": 199.0,
+        "end": [
+          10837.6,
+          6958.0
+        ],
+        "off_moved_px": 0,
+        "on_moved_px": 197.7,
+        "granted": 1,
+        "answered": 1133,
+        "refused_landing": 0,
+        "last_check_px": 199
       }
     }
   ]
