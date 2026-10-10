@@ -140,6 +140,17 @@ calls through the script table, a global pointer or a method value. They keep he
 `ForgePact/tools/ghidra/*.java` as the fallback (AGENTS.md § "Check for a Named
 Ghidra Project Before Researching a Game Mechanism").
 
+`live-operator` alone carries the `x64dbg` MCP server's tools, all eight,
+named `mcp__x64dbg__<tool>` on its `tools:` line: `status`, `logpoint`,
+`command`, `bplist`, `log`, `modules`, `disasm` and `detach`. The set is
+`LIVE_OPERATOR_TOOLS` in `tools/x64dbg_mcp.py`, and
+`tests/test_x64dbg_agent_tools.py` pins the line to it and fails any
+`mcp__x64dbg__*` tool on another agent. Its prompt uses them only when a live
+procedure names debugger steps: attach under the lease it already holds, a
+debugger positive control first, hardware logging breakpoints only, verified
+with `bplist`, and `detach` before `hs_stop_game`
+([`docs/tools/x64dbg-mcp.md`](../docs/tools/x64dbg-mcp.md)).
+
 ### Getting a harder model onto a harder problem
 
 Three mechanisms, because they cover three different failures. A pipeline with
@@ -1118,6 +1129,7 @@ audit`) on the changed UI instead. `.impeccable/config.json` is shared by both.
 | `tauri-hub` | driving a running debug hub through its bridge on `127.0.0.1:9223` |
 | `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close), under one machine-wide game lease (`hs_lease_acquire` / `hs_lease_status` / `hs_lease_release`) that stops a second session driving the same install — a local stdio server in `tools/hs_drive_mcp/` |
 | `ghidra` | the local Ghidra project as tools (search functions, decompile by address, callers, callees, xrefs, strings), from [bethington/ghidra-mcp](https://github.com/bethington/ghidra-mcp) v6.0.0 pinned by sha256: one shared headless server on `127.0.0.1:8089` over a *copy* of the research project, plus a stdio bridge per session, started by `tools/ghidra_mcp.py` |
+| `x64dbg` | a live debugger on the running game, for `live-operator` only: headless x64dbg with the [AgentSmithers/x64DbgMCPServer](https://github.com/AgentSmithers/x64DbgMCPServer) plugin, both pinned, attached under the hs-drive lease, and eight tools of our own (non-breaking hardware logging breakpoints, `bplist`, the session log, modules, disassembly, detach) served over stdio by `tools/x64dbg_mcp.py`, which forwards to the plugin on `127.0.0.1:50300` — see [`docs/tools/x64dbg-mcp.md`](../docs/tools/x64dbg-mcp.md) |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
 | `github` | releases, dispatches and pointer PRs across the eleven repositories |
 | `figma` | reading Figma designs (layout, styles, images) into code — [`figma-developer-mcp`](https://github.com/GLips/Figma-Context-MCP) (MIT), run locally and pinned, authenticated by the `FIGMA_API_KEY` personal access token |
@@ -1165,6 +1177,22 @@ the server is cold.
 [`docs/tools/ghidra-mcp.md`](../docs/tools/ghidra-mcp.md) explains why this
 server and not pyghidra-mcp, and covers the overrides and the sharp edges.
 Which agents may call which of its tools is in § "Agents" above.
+
+`x64dbg` is the third local entry, `py -3 -m tools.x64dbg_mcp`, a stdio proxy
+that is connected from session start and answers "not attached" until a
+debugger session exists. It needs `py -3 -m tools.x64dbg_mcp setup` once per
+machine, which downloads the pinned x64dbg snapshot, clones the plugin at its
+pinned commit, applies our two edits (loopback bind, braces in log lines) and
+builds it with MSBuild and a .NET 8 SDK (ask the owner first). Everything it
+installs stays under `%USERPROFILE%\tools\`, outside any checkout. Attach and
+teardown run through a detached keeper (`attach --game`, `detach`), under the
+hs-drive lease, and the game is detached **before** `hs_stop_game`. It is not
+an HTTP entry pointing at the plugin's own server, because that server exists
+only after the attach and exposes the plugin's whole surface (`StopDebug`,
+memory writes, stepping) to every session; our eight tools are the boundary in
+code. What x64dbg disassembles stays in the live capture (AGENTS.md § "Legal").
+[`docs/tools/x64dbg-mcp.md`](../docs/tools/x64dbg-mcp.md) has the pins, the
+breakpoint rules and the license position.
 
 `github` does **not** authenticate interactively. Claude Code tries OAuth
 dynamic client registration, that endpoint does not support it, and the session
@@ -1262,7 +1290,10 @@ What does not carry over:
   `.codex/config.toml` with all its tools, the `ghidra` server's writes and
   `debugger_*` included. A server-wide `disabled_tools` would strip the
   owner's own Codex session too, so the restriction there is the ban written
-  in the agent bodies, which reach `.codex/agents/*.toml` verbatim.
+  in the agent bodies, which reach `.codex/agents/*.toml` verbatim. The
+  `x64dbg` server is narrower by construction: its stdio proxy serves only its
+  eight tools, so under Codex every agent sees those eight, and the plugin's
+  own surface stays out of reach.
 
 ## A trap worth knowing: `#` in frontmatter
 
@@ -1282,7 +1313,7 @@ To check a file: strip the frontmatter and look for an unquoted ` #` in it.
 
 ## Changing any of this
 
-Twenty-five suites cover this page's tooling. Twenty-four are Python and run
+Twenty-nine suites cover this page's tooling. Twenty-eight are Python and run
 automatically under the first command below; the workflow script's own routing is
 JavaScript and runs separately, under Node:
 
@@ -1314,6 +1345,8 @@ py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the machine-wid
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
 py -3 -m unittest tests.test_ghidra_mcp -v                     # the ghidra launcher: git refusal, loopback, stripped env, version check
 py -3 -m unittest tests.test_ghidra_agent_tools -v              # the phase agents' mcp__ghidra__* tools match AGENT_READ_TOOLS; no write or debugger tool
+py -3 -m unittest tests.test_x64dbg_mcp -v                     # the x64dbg launcher: git refusal, loopback, the two edits, build argv, lease, keeper, teardown, allowlist
+py -3 -m unittest tests.test_x64dbg_agent_tools -v              # live-operator alone carries mcp__x64dbg__*, exactly LIVE_OPERATOR_TOOLS
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 
@@ -1331,6 +1364,11 @@ layout is pure parsing) — the IPC one because
 its gate is injected and its whole channel is two files in a temporary
 directory, which is deliberate: it covers the rules most likely to be broken by
 an edit somewhere else. Each skip names its reason.
+
+The two `test_x64dbg_*` suites run on fixtures and fakes too: a stand-in
+plugin on `127.0.0.1`, a fake headless, and a guard that fails any non-loopback
+fetch or unexpected subprocess. On CI, which has neither `mcp` nor Windows,
+only the stdio round trip and the Windows-only parts skip, each naming why.
 
 **`.claude/workflows/*.js` and `*.mjs` must stay LF.** `.gitattributes` forces
 `text eol=lf` on both globs: the Workflow tool's permission handler refuses to

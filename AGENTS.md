@@ -100,10 +100,13 @@ exception, because it drives Claude Code's own subagent and workflow tools.
   design-detector hook under Claude Code; set `IMPECCABLE_HOOK_DISABLED=1` to
   switch it off for yourself. Under Codex, run `$impeccable audit` on changed
   UI instead.
-- **MCP servers**: `tauri-hub`, `hs-drive`, `ghidra`, `context7`, `github`,
-  `figma` and `playwright`. Use `playwright` to drive and screenshot a
+- **MCP servers**: `tauri-hub`, `hs-drive`, `ghidra`, `x64dbg`, `context7`,
+  `github`, `figma` and `playwright`. Use `playwright` to drive and screenshot a
   browser-based frontend, the same way `tauri-hub` drives the hub. `ghidra`
-  reads the local Ghidra project (§ "Check for a Named Ghidra Project" below). `github` and `figma` need
+  reads the local Ghidra project (§ "Check for a Named Ghidra Project" below).
+  `x64dbg` attaches a headless debugger to the running game for
+  `live-operator` alone, with non-breaking hardware logging breakpoints
+  ([docs/tools/x64dbg-mcp.md](docs/tools/x64dbg-mcp.md)). `github` and `figma` need
   a personal access token; on a new machine, run
   `py -3 tools/setup_agent_secrets.py` once. On Windows it asks for each
   missing token and saves it as a user environment variable that both agents
@@ -441,6 +444,15 @@ done broad enough the first time:
   builtins instead of named scripts) after the broad static-search round has
   been exhausted and come back empty, and even then hook every plausible
   candidate at once rather than one per relaunch.
+
+When the question is "does this function fire, with what arguments, how
+often", a live debugger can answer it without a research build or a relaunch.
+The `x64dbg` MCP server attaches headless x64dbg to the running game, under
+the hs-drive lease, and logs each hit through a non-breaking hardware
+breakpoint: at most four at once, a positive control first, and an address
+mapped from Ghidra stays a research finding. Only `live-operator` carries its
+tools, so a debugger question becomes a step of a written live procedure. See
+[docs/tools/x64dbg-mcp.md](docs/tools/x64dbg-mcp.md).
 
 Story and evidence: [docs/agents/limit-rebuilds-reruns.md](docs/agents/limit-rebuilds-reruns.md)
 
