@@ -28,7 +28,10 @@ Files in `<workdir>`:
 - `modes.json`: the modes below, re-read every tick, so a test can change one
   mid-session;
 - `verdict.json`: the outside check the probe prints;
-- `pause_request`: left by the stand-in plugin's asynchronous PauseDebug.
+- `pause_request`: left by the stand-in plugin's asynchronous PauseDebug;
+- `breaks.txt` and `probes.txt`: the wall-clock time of each break (written
+  before its `[STATE] paused`) and of each probe-seam call, one per line, so
+  a test can tell how long after a break the keeper's check came.
 
 Modes:
 - `tls_breaks` N: N breaks right after attach, one after each run, each on an
@@ -67,7 +70,12 @@ Modes:
 - `real_os`: suspend the stand-in game's threads for real at every break (a
   breaking breakpoint's first-hit hold among them) and under
   `leak_on_detach`, and resume them on `run` and on a clean `detach`, never
-  on `attach` (`spare_tid` is the one `leak_on_detach` leaves running).
+  on `attach` (`spare_tid` is the one `leak_on_detach` leaves running);
+- `context_reads` S, with `real_os`: while paused, every S seconds from the
+  break, read the context of each thread the stand-in suspended, through a
+  handle with get-context access on the test's own child, as x64dbg's
+  memory-map refresh does about once a second (measured on a throwaway,
+  2026-10-11): each read schedules a held thread once without running it.
 """
 from __future__ import annotations
 
@@ -95,7 +103,7 @@ def check(verdict: str, detail: str, suspended=(), stopped=(), tids=FAKE_TIDS, e
     """A check in tools/thread_state.py's shape."""
     return {"verdict": verdict, "threads": len(tids), "progress": 0 if verdict == "frozen" else 120,
             "suspended": [{"tid": t, "suspend_count": 1} for t in suspended], "stopped": list(stopped),
-            "unreadable_counts": [], "tids": list(tids), "executive_waits": list(executive),
+            "unreadable_counts": [], "tids": list(tids), "executive_waits": list(executive), "touched": [],
             "samples": 3, "interval": 0.4, "detail": f"stand-in probe: {detail}"}
 
 
@@ -186,6 +194,27 @@ class Threads:
         finally:
             self.k.CloseHandle(h)
 
+    def read_contexts(self) -> int:
+        """One GetThreadContext on each thread this stand-in suspended, as
+        x64dbg's memory-map refresh reads each thread's instruction pointer
+        while it holds the game; how many reads succeeded."""
+        w, k = self.w, self.k
+        k.GetThreadContext.argtypes = [w.HANDLE, ctypes.c_void_p]
+        k.GetThreadContext.restype = w.BOOL
+        buf = ctypes.create_string_buffer(0x4D0 + 16)  # an x64 CONTEXT, 16-byte aligned
+        at = (ctypes.addressof(buf) + 15) & ~15
+        done = 0
+        for tid in sorted(self.suspended):
+            h = k.OpenThread(0x0008, False, tid)  # THREAD_GET_CONTEXT
+            if not h:
+                continue
+            try:
+                ctypes.c_uint32.from_address(at + 0x30).value = 0x00100001  # ContextFlags: CONTEXT_CONTROL
+                done += bool(k.GetThreadContext(h, ctypes.c_void_p(at)))
+            finally:
+                k.CloseHandle(h)
+        return done
+
     def suspend_all(self, spare: int | None = None) -> None:
         for tid in self.tids():
             if tid != spare and tid not in self.suspended and self._do(tid, True):
@@ -223,6 +252,7 @@ class Fake:
         self.next_hit = 0.0
         self.last_command = time.monotonic()
         self.threads: Threads | None = None
+        self.next_read: float | None = None
         self.done = False
 
     # output
@@ -246,6 +276,10 @@ class Fake:
         a hardware breakpoint's hit, before x64dbg reports the pause."""
         if self.threads is not None:
             self.threads.suspend_all()
+        reads = self.modes.get("context_reads")
+        self.next_read = time.monotonic() + float(reads) if reads and self.threads is not None else None
+        with (self.work / "breaks.txt").open("a", encoding="utf-8") as f:
+            f.write(f"{time.time()!r}\n")
         if line is not None:
             self.out(line)
         self.paused = True
@@ -259,6 +293,7 @@ class Fake:
 
     def resume(self) -> None:
         self.paused = False
+        self.next_read = None
         self.announce("running")
         if self.threads is not None:
             self.threads.resume()
@@ -434,6 +469,9 @@ class Fake:
         if self.repeat_at is not None and now >= self.repeat_at:
             self.repeat_at = None
             self.out(f"[STATE] {self.state}")
+        if self.paused and self.next_read is not None and now >= self.next_read and self.threads is not None:
+            self.threads.read_contexts()
+            self.next_read += float(self.modes.get("context_reads") or 1.0)
         if not self.attached or self.paused:
             return
         settled = self.repeat_at is None  # the last state change has been repeated
@@ -502,6 +540,8 @@ class Fake:
 
 
 def probe(work: Path) -> int:
+    with (work / "probes.txt").open("a", encoding="utf-8") as f:
+        f.write(f"{time.time()!r}\n")
     c = read_json(work / "verdict.json", None) or check("running", "running (nothing written yet)")
     print(json.dumps(c))
     return 0 if c.get("verdict") == "running" else 1

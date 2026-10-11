@@ -983,7 +983,8 @@ def game_check(cfg: Config, pid: int, baseline: Iterable[int] = ()) -> dict[str,
     except (OSError, subprocess.SubprocessError, ValueError) as e:
         why = f"{type(e).__name__}: {e}"
     return {"verdict": "unreadable", "threads": 0, "progress": 0, "suspended": [], "stopped": [],
-            "unreadable_counts": [], "tids": [], "executive_waits": [], "samples": 0, "interval": 0.0,
+            "unreadable_counts": [], "tids": [], "executive_waits": [], "touched": [], "samples": 0,
+            "interval": 0.0,
             "detail": f"pid {pid}: the probe seam answered no check ({why})."}
 
 
@@ -1005,7 +1006,8 @@ def _breaking_thread(brk: dict[str, Any], expected: set[int], held: set[int],
                      missing: list[int]) -> tuple[int | None, str]:
     """The one breaking thread the control hold may exempt from `stopped`, or
     None and why not. It is the single missing thread, suspended in every
-    sample with no switch, in the check's `executive_waits`, and the only
+    sample with no switch beyond a debugger's context reads (`touched` in
+    tools/thread_state.py), in the check's `executive_waits`, and the only
     expected thread there."""
     waits = brk.get("executive_waits")
     if not isinstance(waits, list):
@@ -1017,8 +1019,8 @@ def _breaking_thread(brk: dict[str, Any], expected: set[int], held: set[int],
                       f"an Executive wait{named}")
     t = missing[0]
     if t not in held:
-        return None, (f"tid {t} was not suspended in every sample with no switch, so it is not the breaking "
-                      "thread held at the hit")
+        return None, (f"tid {t} was not suspended in every sample with no switch beyond a debugger's context "
+                      "reads, so it is not the breaking thread held at the hit")
     if t not in executive:
         return None, f"tid {t} did not wait in an Executive wait in every sample, so it is not the breaking thread"
     if executive != [t]:
@@ -1038,7 +1040,10 @@ def instrument_review(inst: dict[str, Any]) -> tuple[list[tuple[str, str]], int 
     at the control hold `suspended` and `stopped` must each name every thread
     seen before attach that is not in the baseline, as the Replan 3 probe
     measured at a hardware breakpoint's hit (Waiting/Suspended, suspend count
-    1, the breaking thread aside), with no suspend count unread. A thread first seen at the hold (one the
+    1, the breaking thread aside), with no suspend count unread. A thread a
+    debugger's context reads switched once or twice while held (the check's
+    `touched`, measured on a throwaway, 2026-10-11) is in those lists like an
+    untouched one. A thread first seen at the hold (one the
     game started since) is left out. One thread is exempt from `stopped`: the
     breaking thread that raised the hit, which waits for the debugger's reply
     in an Executive wait, suspended but not Waiting/Suspended (measured on the
@@ -1446,6 +1451,12 @@ class Keeper:
     RESEND = 2.0
     # A held change waits this long for an armed breakpoint to break.
     HOLD_BREAK = 2.0
+    # The hold-time check starts no sooner than this after the keeper saw the
+    # first-hit pause: x64dbg reads the breaking thread's context at the pause
+    # (measured within 6 ms of `[STATE] paused` on a throwaway, 2026-10-11),
+    # and its memory-map refresh can pass then too, so this puts both behind
+    # the check's window, at ~40 times the measured margin.
+    HOLD_SETTLE = 0.25
     # This many resumes within this many seconds are a storm.
     STORM_COUNT = 10
     STORM_WINDOW = 10.0
@@ -1829,7 +1840,12 @@ class Keeper:
 
         Send the begin marker and `bph` (breaking), and wait up to
         `hold_timeout` for a new pause. Held there: take the outside check
-        (`hold_game`, frozen expected), and while the instrument is not
+        (`hold_game`, frozen expected) no sooner than HOLD_SETTLE after the
+        pause was seen, whatever finding its break line took, so that
+        x64dbg's context reads of the breaking thread at the pause, and a
+        memory-map refresh at the pause, fall before its window (the check
+        counts a debugger's later context reads as held, `touched`, within a
+        bound a running game never meets); and while the instrument is not
         proven record it as `instrument.control_hold`; then send the lines
         (the never-break condition first), the mid marker, bplist and the end
         marker, `run`, settle at running, and record the check after it as
@@ -1856,8 +1872,10 @@ class Keeper:
         held = held_note = hold_game = None
         proving = False
         if self.wait_new_pause(before, t):
+            seen = time.monotonic()
             n = self.log.pauses
             held = self.hold_break_line(mark, n, addr)
+            time.sleep(max(0.0, seen + self.HOLD_SETTLE - time.monotonic()))
             hold_game = self.check()
             if not self.state["instrument"].get("proven"):
                 self.set_instrument(control_hold=hold_game, after_resume=None)

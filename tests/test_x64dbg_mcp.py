@@ -1811,6 +1811,22 @@ class InstrumentTests(SessionMixin, unittest.TestCase):
         self.assert_unproven_session(cfg, "0 suspended and 0 stopped")
 
 
+class ControlSettleTests(SessionMixin, unittest.TestCase):
+    """The hold-time check waits HOLD_SETTLE after the keeper saw the pause, so
+    the at-pause context reads of the breaking thread are behind it."""
+
+    def test_control_settle_the_hold_check_comes_after_the_settle(self):
+        cfg, _, _, _, _ = self.start_session()
+        self.prove(cfg)
+        stamps = lambda name: [float(x) for x in (self.work / name).read_text(encoding="utf-8").split()]
+        brk = stamps("breaks.txt")[0]
+        first = min(p for p in stamps("probes.txt") if p > brk)
+        self.assertGreaterEqual(first - brk, xm.Keeper.HOLD_SETTLE, (brk, first))
+
+    def test_control_settle_is_a_quarter_second(self):
+        self.assertEqual(xm.Keeper.HOLD_SETTLE, 0.25)
+
+
 class InstrumentGapsTests(unittest.TestCase):
     """`instrument_gaps` on hand-built checks: what the control hold's lists
     must cover, and each way they can fall short."""
@@ -2045,6 +2061,32 @@ class RealOsTests(SessionMixin, unittest.TestCase):
         self.assertNotIn(self.workers[0], named)  # the one left running
         for tid in self.workers[1:]:
             self.assertIn(str(tid), state["error"])
+
+    def test_real_os_context_read_at_the_control_hold_is_held_and_proves(self):
+        # x64dbg's memory-map refresh reads every held thread's context about once
+        # a second (measured on a throwaway, 2026-10-11); a 0.6 s period keeps the
+        # hold check's window at one or two reads, which count as held.
+        cfg, _, _, _, _ = self.start_session(fake={"real_os": True, "context_reads": 0.6}, probe=False)
+        reply = self.prove(cfg)
+        hold = reply["hold_game"]
+        self.assertEqual(hold["verdict"], "frozen", hold)
+        inst = xm.read_state(cfg)["instrument"]
+        brk = inst["control_hold"]
+        self.assertGreater(brk["progress"], 0, brk)
+        self.assertTrue(set(inst["before_attach"]["tids"]) <= set(brk["touched"]), inst)
+        self.assertTrue(set(self.workers) <= set(brk["stopped"]), brk)
+        self.assertTrue(inst["proven"], inst)
+
+    def test_real_os_context_read_control_four_reads_a_window_is_not_proven(self):
+        # Negative control: reads every 0.15 s put four or more in the window,
+        # beyond the allowance, so the hold does not read frozen.
+        cfg, _, _, _, _ = self.start_session(fake={"real_os": True, "context_reads": 0.15}, probe=False)
+        self.set_modes(hot=[A])
+        reply = self.first_hit(cfg, A)
+        self.assertIsNotNone(reply["held"], reply)
+        self.assertNotEqual(reply["hold_game"]["verdict"], "frozen", reply)
+        self.assertEqual(reply["hold_game"]["touched"], [], reply)
+        self.assertFalse(xm.read_state(cfg)["instrument"]["proven"])
 
     def test_real_os_clean_detach_releases_the_game(self):
         cfg, _, _, _, _ = self.start_session(fake={"real_os": True}, probe=False)

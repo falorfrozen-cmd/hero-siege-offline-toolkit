@@ -324,7 +324,13 @@ These come from the 2026-10-10 probes recorded on issue #484.
   the freeze risk belongs to the plugin's pause and its software breakpoint,
   which no tool path uses. The first such hold of a session is the **control
   hold**: the outside check taken there is the instrument's frozen reading
-  (§ "Checking the game from outside the debugger").
+  (§ "Checking the game from outside the debugger"). A held thread still
+  switches once per memory-map refresh: x64dbg reads every thread's context
+  about once a second while it holds the game, and each context read
+  schedules a held thread once without running its code (measured on a
+  throwaway, 2026-10-11; who reads is a static reading of x64dbg's source).
+  The outside check counts those switches as held (`touched`), within a
+  bound a running game never meets.
 - **The first hit as the hold.** Arming the first breakpoint of a session
   (the positive control) sends a breaking `bph <A>, x, 1` on the running
   game and waits up to the hold timeout (10 s) for a new `[STATE] paused`:
@@ -521,7 +527,10 @@ starts the detached keeper and returns once the keeper reports `running`,
   `stopped` rightly leaves it out (measured on the Replan 3 probe's
   throwaway process, 2026-10-10, not yet on the game: suspend count 1, no
   context switch across the samples, wait reason Executive, while the six
-  other threads read Waiting/Suspended). It is exempt only on that
+  other threads read Waiting/Suspended). "No context switch" here, and for
+  every thread in `suspended` and `stopped`, allows a debugger's context
+  reads: 1 to `CONTEXT_READS` (2) switches with a suspend count of 1 or
+  more in every sample (the check's `touched`). It is exempt only on that
   signature: it is the single thread missing from `stopped`, it is in
   `suspended`, it is in the check's `executive_waits`, and no other expected
   thread is in `executive_waits`. Two expected threads in an Executive wait,
@@ -531,7 +540,12 @@ starts the detached keeper and returns once the keeper reports `running`,
   `control_hold.breaking_tid`, and `instrument.note` names it; with no
   exemption `breaking_tid` is absent. x64dbg's own output names no thread
   on a hit line in the probe's log, so the signature is the only source of
-  the tid. A `frozen` with empty lists
+  the tid. The keeper takes the control hold's check no sooner than
+  `HOLD_SETTLE` (0.25 s) after it saw the pause: x64dbg reads the breaking
+  thread's context at the pause (measured within 6 ms of `[STATE] paused`
+  on a throwaway, 2026-10-11), and the settle puts those reads, and a
+  memory-map refresh at the pause, behind the check's window, for at most
+  0.25 s more hold. A `frozen` with empty lists
   could come from a check that read no thread at all. A check that does not
   read the held game as frozen, or does not name the held threads, saw
   nothing: `proven` stays false, `instrument` carries a `note` naming each
@@ -641,19 +655,24 @@ verdict, and 2 for a usage error. The fields:
 | `verdict` | `running`, `frozen`, `threads-suspended`, `gone`, `unreadable` or `unsupported` |
 | `threads` | the number of threads |
 | `progress` | the summed context-switch increase from the first sample to the last, over the threads present in both |
-| `suspended` | `[{"tid": n, "suspend_count": k}]`, each thread whose suspend count is 1 or more in every sample and whose own context switches did not advance across the window |
-| `stopped` | the tids in the Waiting/Suspended state with no context switch across the window |
-| `executive_waits` | the tids in the Waiting state with wait reason Executive (0), a suspend count of 1 or more in every sample and no context switch across the window: the breaking thread's signature at a hardware-breakpoint hold (measured on a throwaway process, 2026-10-10). Baseline threads are left out, and it plays no part in the verdict |
+| `suspended` | `[{"tid": n, "suspend_count": k}]`, each thread whose suspend count is 1 or more in every sample and whose own context switches did not advance across the window beyond a debugger's context reads (`touched`) |
+| `stopped` | the tids in the Waiting/Suspended state with no context switch across the window beyond a debugger's context reads (`touched`) |
+| `executive_waits` | the tids in the Waiting state with wait reason Executive (0), a suspend count of 1 or more in every sample and no context switch across the window beyond a debugger's context reads (`touched`): the breaking thread's signature at a hardware-breakpoint hold (measured on a throwaway process, 2026-10-10). Baseline threads are left out, and it plays no part in the verdict |
+| `touched` | the tids with a readable suspend count of 1 or more in every sample whose own context switches across the window are 1 to `CONTEXT_READS` (2): held threads a debugger's context reads scheduled without running them. Baseline threads included; empty on a `gone`, `unreadable` or `unsupported` result |
 | `unreadable_counts` | the tids whose suspend count could not be read in some sample (never read as 0) |
 | `tids` | every thread present in every sample, so a caller can tell whether `suspended` and `stopped` cover the threads it expected |
 | `samples`, `interval` | how it sampled (by default 3 samples, 0.4 s apart) |
 | `detail` | one sentence naming the counts |
 
 The verdict, in order: no such process is `gone`; not Windows is
-`unsupported`; a failed sample is `unreadable`; no context switch at all
-(`progress` 0) is `frozen`; a non-empty `suspended` or `stopped` is
+`unsupported`; a failed sample is `unreadable`; no context switch on any
+thread outside `touched` is `frozen` (with nothing touched, that is
+`progress` 0); a non-empty `suspended` or `stopped` is
 `threads-suspended`; a non-empty `unreadable_counts` is `unreadable`;
-anything else is `running`. A thread whose suspend count cannot be read is
+anything else is `running`. `progress` stays the raw sum, touched threads
+included, and `detail` names the touched count. A thread with more than
+`CONTEXT_READS` switches, or a suspend count of 0 or unread in any sample,
+is never touched. A thread whose suspend count cannot be read is
 listed in `unreadable_counts`, counted in `detail` and never read as 0, so
 it never reads `running`. Threads in the baseline are left out of
 `suspended`, `stopped` and `unreadable_counts`. Only a suspension
@@ -691,13 +710,59 @@ before the tools used it:
   TitanEngine detach path was not measured. Live 2's suspended threads came
   from the synchronized step's explicit `SuspendThread` calls.
 
+A debugger's context reads at a hold, and why `touched` exists:
+
+- **Measured on a throwaway child with no debugger** (2026-10-11, 26
+  threads): every thread `SuspendThread`-ed reads `frozen`, progress 0. One
+  `GetThreadContext` per thread between the first and second sample raised
+  every thread's own switches by exactly 1 (progress 26), two reads by 2,
+  with every sample still Waiting/Suspended at suspend count 1. Held at a
+  pending debug event: +1 per read, count 2. So a context read schedules a
+  held thread once, with its suspend count and its wait unchanged; that
+  Windows runs the read on the target thread itself is our explanation, not
+  measured.
+- **Who reads, a static reading** of x64dbg 9c8ca1c: a background thread
+  wakes x64dbg's memory map refresh every 2 s while a process is debugged,
+  paused or not; the refresh then sleeps at least 1000 ms, and wake-ups
+  during that sleep collapse into one run after it. Every pause also reads
+  the active thread's context and wakes the refresh. The refresh reads each
+  thread's instruction pointer, one context read per thread. The plugin's
+  breakpoint callback only logs.
+- **Measured on headless x64dbg** (the owner's install with its plugin,
+  started as the keeper starts it, against a 70-thread throwaway, two runs):
+  during a hold every thread took one context read per pass, the passes at
+  least 1.004 s apart, the first 0.0 to 1.0 s after `[STATE] paused`. The
+  breaking thread took x64dbg's at-pause reads within 6 ms of the
+  `[STATE] paused` line. About 3 of 1,900 samples taken during holds caught
+  one held thread outside its wait mid-read. Replaying the keeper's
+  three-sample check at every start offset read the hold `frozen` about as
+  often as `running`: a coin flip on timing. Counting the touched threads
+  as held, it read held at 728 of 732, 431 of 432, 532 of 533 and 329 of 333
+  offsets.
+- **The negative controls, same runs**: before attach, attached and
+  running, logging at about 100 hits a second, and after detach, every
+  window read `running` and the allowance never held. While logging, threads
+  read suspended at all three sample instants in thousands of
+  thread-windows, and every one of them switched 499 or more times, so a
+  bound of `CONTEXT_READS` (2) separates a read from a run.
+- **The sample retake.** A sample that catches a thread outside a wait
+  (state not Waiting) while its suspend count is 1 or more caught a held
+  thread mid-read, so `check` takes it again `RETAKE_DELAY` (0.01 s) later,
+  at most `RETAKES` (5) times, and the last one stands. It moves sample
+  instants, never what counts as held.
+- **Not established on the game.** Live 3 rerun 4 read the control hold
+  `running` with progress 69 on 69 threads (every thread +1) and nothing
+  listed: consistent with one memory-map refresh in the window, not
+  profiled on the game. Rerun 2 read `frozen` at the same step.
+
 The controls run in every session: before attach the game reads `running`
 (`before_attach`); at the control hold, the first logpoint's first hit, it
 reads `frozen` with `suspended` and `stopped` each naming every thread the
 check before attach saw (less the baseline's, any thread new since left
 out, and the one breaking thread in an Executive wait exempt from
 `stopped`, recorded as `breaking_tid`) and `unreadable_counts` empty
-(`control_hold`); and after that hold is
+(`control_hold`), and that reading may carry `touched`, naming the threads
+x64dbg's memory-map refresh read during the hold; and after that hold is
 released it reads `running` again (`after_resume`). All three sit in
 `instrument` in `status`. Only that sequence makes a later `running` mean
 anything: a `frozen` with empty lists could come from a check that read no
@@ -851,8 +916,18 @@ the first-hit hold included, and under `leak_on_detach`: the control hold
 end to end (`proven: true`, with every stand-in thread in `suspended` and
 `stopped` at the first-hit hold and `unreadable_counts` empty), a leaking
 detach (`game-not-released`, CLI exit 1) and a clean one
-(`game_released: true`, CLI exit 0). They run on Windows with a 64-bit
-Python only and skip elsewhere, naming the reason.
+(`game_released: true`, CLI exit 0). The stand-in's `context_reads` S mode,
+with `real_os`, reads the context of each thread it suspended every S
+seconds from the break while paused, as x64dbg's memory-map refresh does:
+the `context_read` tests run the control hold with S 0.6 (one or two reads
+in the check's window: `frozen`, `control_hold.touched` covering the
+stand-in game's threads, progress above 0, proven) and, as the negative
+control, with S 0.15 (four or more reads: not `frozen`, nothing touched,
+not proven). The `control_settle` test reads the time of the break and of
+each probe-seam call, which the stand-in leaves in its work directory, and
+checks that the hold-time check came at least `HOLD_SETTLE` after the
+break. The `real_os` tests run on Windows with a 64-bit Python only and
+skip elsewhere, naming the reason.
 
 A guard fails any URL fetch that is not `127.0.0.1` and any subprocess the
 test did not expect, and a test proves the guard trips: no network, no
@@ -873,12 +948,25 @@ or with every thread suspended while progress continues, reads `running`;
 reported); `classify_unreadable_count` reads a switching thread whose count
 could not be read as `unreadable`, listed in `unreadable_counts`, with the
 readable samples as its `running` control; the `gone` and `cli` tests check
-a missing pid, the JSON and the exit codes. Its `real_os` tests, Windows
+a missing pid, the JSON and the exit codes. The `touched` tests replay Live
+3 rerun 4's shape (69 held threads, each +1, one in an Executive wait:
+`frozen`, progress 69, all 69 touched, 68 stopped), +2 each (`frozen`), and
+the negative controls: +3 each, the logging shape (suspended at every
+sample but +500), idle threads switching at count 0, and a thread at count
+0 or unread in one sample all read anything but `frozen` with that thread
+not touched. The `retake` tests patch the sampler: a held thread caught
+outside its wait is sampled again and lands in `stopped`, a running thread
+at count 0 is not retaken, the retakes stop at `RETAKES`, and a pid gone
+during a retake reads `gone`. Its `real_os` tests, Windows
 only, start a throwaway child and read it `running`, then
 `threads-suspended` with one thread suspended (that thread named, count 1),
 `running` after the resume, `frozen` held at a pending debug event with
 every worker in `suspended` and `stopped` and no count unread, and
-`running` with nothing suspended after `DebugActiveProcessStop`.
+`running` with nothing suspended after `DebugActiveProcessStop`; and, with
+every thread suspended, one context read per thread between two samples
+reads `frozen` with progress equal to the threads read, a reader every
+0.6 s during `check` reads `frozen` with threads touched, and the resumed
+child reads `running` with nothing touched.
 
 `py -3 -m unittest tests.test_x64dbg_agent_tools -v` pins `live-operator`'s
 `tools:` line to exactly `mcp__x64dbg__` plus each name in

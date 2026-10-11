@@ -31,13 +31,34 @@ Measured on this machine (Windows 11 build 26300, x64), 2026-10-10:
   original thread read Waiting/Suspended with suspend count 2; after
   `DebugActiveProcessStop` every thread ran again with count 0.
 
+Measured on a throwaway child, 2026-10-11 (Replan 4): one `GetThreadContext`
+on each `SuspendThread`-ed thread between two samples raised every thread's
+own switches by exactly 1, two reads by 2, with every sample still reading
+Waiting/Suspended at suspend count 1 (held at a pending debug event: +1 per
+read, count 2). A context read schedules a held thread once without running
+its code. Headless x64dbg's memory-map refresh reads every thread's context
+this way about once a second while it holds the game, its passes at least
+1.0 s apart (measured on a 70-thread throwaway under the owner's install; why
+it reads is a static reading of x64dbg's source). About 3 samples in 1,900
+taken during holds caught one held thread outside its wait mid-read.
+
 The verdicts, in order: no such process is `gone`; not Windows is
-`unsupported`; a failed sample is `unreadable`; no context switch across the
-window is `frozen` (an idle process reads `frozen` too, and the game renders
-every frame, so it never idles); a thread that did not switch across the
-window and was suspended in *every* sample, or in Waiting/Suspended in every
-sample, is `threads-suspended`; a thread whose suspend count could not be
-read in some sample makes it `unreadable`; otherwise `running`. Neither the
+`unsupported`; a failed sample is `unreadable`; no thread outside `touched`
+switched across the window is `frozen` (an idle process reads `frozen` too,
+and the game renders every frame, so it never idles); a thread that did not
+switch across the window and was suspended in *every* sample, or in
+Waiting/Suspended in every sample, is `threads-suspended`; a thread whose
+suspend count could not be read in some sample makes it `unreadable`;
+otherwise `running`. `touched` lists the threads with a readable suspend
+count of 1 or more in every sample whose own switches across the window are
+1 to `CONTEXT_READS` (2): read by a debugger, not run. Each counts as not
+having switched wherever `suspended`, `stopped` and `executive_waits` ask for
+no switch; `progress` stays the raw sum. A thread with 3 or more switches, or
+a count of 0 or unread in any sample, is never touched: under a hot logpoint
+the threads suspended at every instant switched 499 or more times (measured).
+A sample that catches a thread outside its wait with a count of 1 or more is
+taken again `RETAKE_DELAY` later, at most `RETAKES` times, and the last one
+stands. Neither the
 samples nor the instants are enough on their own: x64dbg suspends every other
 thread for each logpoint hit's step and holds the game at each hit, so under
 a hot logpoint every sample can land inside a hit and catch a thread
@@ -86,6 +107,19 @@ SYSTEM_PROCESS_INFORMATION = 5
 THREAD_SUSPEND_COUNT = 35
 THREAD_QUERY_LIMITED_INFORMATION = 0x0800
 STATUS_INFO_LENGTH_MISMATCH = 0xC0000004
+
+# A held thread whose own switches across the window are 1 to this many, with a
+# suspend count of 1 or more in every sample, was read by a debugger, not run
+# (`touched`): x64dbg's memory-map refresh reads every thread's context at most
+# once a second, so a 0.8 s window holds one read per thread, and 2 leaves one
+# spare. A running game's threads suspended at every instant switched 499 or
+# more times (measured on a throwaway, 2026-10-11).
+CONTEXT_READS = 2
+# A sample that catches a thread outside its wait with a suspend count of 1 or
+# more caught a held thread mid-read; it is taken again this long after, at
+# most this many times (a refresh pass spans 12 ms or less, measured).
+RETAKE_DELAY = 0.01
+RETAKES = 5
 
 
 class ThreadSample(NamedTuple):
@@ -140,12 +174,22 @@ def _executive(t: ThreadSample) -> bool:
 def _result(pid: int, verdict: str, detail: str, *, threads: int = 0, progress: int = 0,
             suspended: list | None = None, stopped: list | None = None,
             unreadable_counts: list | None = None, tids: list | None = None,
-            executive_waits: list | None = None, samples: int = 0, interval: float = 0.0) -> dict:
+            executive_waits: list | None = None, touched: list | None = None, samples: int = 0,
+            interval: float = 0.0) -> dict:
     return {"verdict": verdict, "threads": threads, "progress": progress,
             "suspended": suspended or [], "stopped": stopped or [],
             "unreadable_counts": unreadable_counts or [], "tids": tids or [],
-            "executive_waits": executive_waits or [],
+            "executive_waits": executive_waits or [], "touched": touched or [],
             "samples": samples, "interval": interval, "detail": detail}
+
+
+def _counted(seen: list[ThreadSample]) -> bool:
+    """A readable suspend count of 1 or more in every sample."""
+    return all(t.suspend_count is not None and t.suspend_count >= 1 for t in seen)
+
+
+def _switches(seen: list[ThreadSample]) -> int:
+    return (seen[-1].context_switches - seen[0].context_switches) % (1 << 32)
 
 
 def classify(pid: int, samples: list[list[ThreadSample]], interval: float = 0.4,
@@ -157,6 +201,18 @@ def classify(pid: int, samples: list[list[ThreadSample]], interval: float = 0.4,
     everywhere = [tid for tid in sorted(last) if all(tid in s for s in by_tid)]
     progress = sum((last[tid].context_switches - first[tid].context_switches) % (1 << 32)
                    for tid in last if tid in first)
+    # A debugger reading a held thread's context schedules it once without
+    # running any of its code (measured on a throwaway, 2026-10-11): 1 to
+    # CONTEXT_READS switches with a suspend count of 1 or more in every sample
+    # is such a thread, baseline threads included.
+    touched = []
+    for tid in everywhere:
+        seen = [s[tid] for s in by_tid]
+        if _counted(seen) and 1 <= _switches(seen) <= CONTEXT_READS:
+            touched.append(tid)
+    read = set(touched)
+    moved = sum((last[tid].context_switches - first[tid].context_switches) % (1 << 32)
+                for tid in last if tid in first and tid not in read)
     suspended, stopped, unknown, executive = [], [], [], []
     for tid in everywhere:
         if tid in skip:
@@ -165,20 +221,20 @@ def classify(pid: int, samples: list[list[ThreadSample]], interval: float = 0.4,
         if any(t.suspend_count is None for t in seen):
             unknown.append(tid)
         # A thread left suspended cannot be scheduled, so its own switches stand
-        # still. One that switched between the samples was only caught suspended
-        # at each instant, as while x64dbg holds the game at logpoint hits.
-        ran = seen[-1].context_switches != seen[0].context_switches
-        if not ran and all(t.suspend_count is not None and t.suspend_count >= 1 for t in seen):
+        # still, but for a debugger's context reads (`touched`). One that
+        # switched more between the samples was only caught suspended at each
+        # instant, as while x64dbg holds the game at logpoint hits.
+        ran = _switches(seen) != 0 and tid not in read
+        if not ran and _counted(seen):
             suspended.append({"tid": tid, "suspend_count": seen[-1].suspend_count})
         if not ran and all(_held(t) for t in seen):
             stopped.append(tid)
         # The thread that raised a debug event waits for the debugger's reply in
         # an Executive wait, suspended but not Waiting/Suspended (the Replan 3
         # probe's control hold): reported apart, and no part of the verdict.
-        if not ran and all(_executive(t) and t.suspend_count is not None and t.suspend_count >= 1
-                           for t in seen):
+        if not ran and _counted(seen) and all(_executive(t) for t in seen):
             executive.append(tid)
-    if progress == 0:
+    if moved == 0:
         verdict = "frozen"
     elif suspended or stopped:
         verdict = "threads-suspended"
@@ -192,12 +248,15 @@ def classify(pid: int, samples: list[list[ThreadSample]], interval: float = 0.4,
               f"sample with no switch, {len(stopped)} stopped in Waiting/Suspended")
     if skip:
         detail += f", {len(skip)} left out as baseline"
+    if touched:
+        detail += (f"; {len(touched)} touched (suspended in every sample, with 1 to {CONTEXT_READS} "
+                   "switches from a debugger's context reads)")
     if unknown:
         detail += (f"; the suspend count of {len(unknown)} thread"
                    f"{'' if len(unknown) == 1 else 's'} could not be read")
     return _result(pid, verdict, detail + ".", threads=len(last), progress=progress,
                    suspended=suspended, stopped=stopped, unreadable_counts=unknown, tids=everywhere,
-                   executive_waits=executive, samples=len(samples), interval=interval)
+                   executive_waits=executive, touched=touched, samples=len(samples), interval=interval)
 
 
 # ---- the OS reads -----------------------------------------------------------------
@@ -281,6 +340,25 @@ def _sample(pid: int) -> list[ThreadSample] | None:
     return [t._replace(suspend_count=_suspend_count(t.tid)) for t in threads]
 
 
+def _mid_read(sample: list[ThreadSample]) -> bool:
+    """A held thread caught outside its wait: a debugger's context read in progress."""
+    return any(t.state != STATE_WAITING and t.suspend_count is not None and t.suspend_count >= 1
+               for t in sample)
+
+
+def _take(pid: int) -> list[ThreadSample] | None:
+    """One sample, taken again RETAKE_DELAY later, at most RETAKES times, while
+    it catches a held thread mid-read; the last one taken stands. It moves the
+    sample's instant, never what counts as held."""
+    s = _sample(pid)
+    for _ in range(RETAKES):
+        if s is None or not _mid_read(s):
+            break
+        time.sleep(RETAKE_DELAY)
+        s = _sample(pid)
+    return s
+
+
 def check(pid: int, samples: int = 3, interval: float = 0.4, baseline: Iterable[int] = ()) -> dict:
     """Sample `pid`'s threads `samples` times, `interval` seconds apart, and classify them.
     Threads listed in `baseline` (tids) are left out of `suspended`, `stopped` and
@@ -304,7 +382,7 @@ def check(pid: int, samples: int = 3, interval: float = 0.4, baseline: Iterable[
         if i:
             time.sleep(interval)
         try:
-            s = _sample(pid)
+            s = _take(pid)
         except (OSError, LayoutError) as e:
             return _result(pid, "unreadable", f"pid {pid}: sample {i + 1} failed: {e}.",
                            samples=i, interval=interval)

@@ -1380,9 +1380,9 @@ py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the machine-wid
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
 py -3 -m unittest tests.test_ghidra_mcp -v                     # the ghidra launcher: git refusal, loopback, stripped env, version check
 py -3 -m unittest tests.test_ghidra_agent_tools -v              # the phase agents' mcp__ghidra__* tools match AGENT_READ_TOOLS; no write or debugger tool
-py -3 -m unittest tests.test_x64dbg_mcp -v                     # the x64dbg launcher: git refusal, loopback, the two edits, build argv, lease, keeper, attach with no attach break and the stale-breakpoint clear, attach-unconfirmed, the watchdog, the first-hit hold and the instrument's control hold, held changes, teardown and the verified release (game-not-released), allowlist, logpoint read-back and reply checks, the decimal module table, the `tools.x64dbg_mcp tool` CLI route
+py -3 -m unittest tests.test_x64dbg_mcp -v                     # the x64dbg launcher: git refusal, loopback, the two edits, build argv, lease, keeper, attach with no attach break and the stale-breakpoint clear, attach-unconfirmed, the watchdog, the first-hit hold and the instrument's control hold, held changes, teardown and the verified release (game-not-released), the stale server guard, the exception-shaped first hit, the hold settle before the control hold's check, allowlist, logpoint read-back and reply checks, the decimal module table, the `tools.x64dbg_mcp tool` CLI route
 py -3 -m unittest tests.test_x64dbg_agent_tools -v              # live-operator alone carries mcp__x64dbg__*, exactly LIVE_OPERATOR_TOOLS
-py -3 -m unittest tests.test_thread_state -v                    # the read-only outside check of a process's threads: the measured layout, the verdicts, the CLI, a throwaway child on Windows
+py -3 -m unittest tests.test_thread_state -v                    # the read-only outside check of a process's threads: the measured layout, the verdicts, the context read allowance at a hold (touched), the sample retake, the CLI, a throwaway child on Windows
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 

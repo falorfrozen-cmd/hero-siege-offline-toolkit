@@ -6,6 +6,10 @@ a pid that does not exist, and the CLI's JSON and exit codes. Each verdict has
 a negative control beside it: a suspension seen in one sample only, or every
 thread suspended for one sample while the process keeps switching, reads
 `running`; a thread already suspended at the baseline is not reported.
+The `touched` cases count a debugger's context reads at a hold (1 to
+CONTEXT_READS switches, suspended in every sample) as held, beside controls a
+running process cannot pass; the `retake` cases sample again a held thread
+caught outside its wait.
 
 The `real_os` cases run on Windows only, against a child this test starts
 (three threads sleeping 2 ms in a loop) and kills at cleanup. They suspend one
@@ -20,6 +24,7 @@ import os
 import struct
 import subprocess
 import sys
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -255,6 +260,118 @@ class ExecutiveWaitTest(unittest.TestCase):
         self.assertEqual(ts._result(1, "unreadable", "x")["executive_waits"], [])
 
 
+def rerun4(step, n=69, executive=1, count=1, over=None):
+    """Live 3 rerun 4's shape at the control hold: `n` held threads, three
+    samples, each thread's own switches rising by `step` from the first sample
+    on, tid `executive` in an Executive wait and the rest Waiting/Suspended,
+    each at suspend count `count`. `over` maps (sample index, tid) to a
+    replacement suspend count."""
+    over = over or {}
+    return [[T(tid, 100 + (step if k else 0), WAITING, EXECUTIVE if tid == executive else SUSPENDED,
+               over.get((k, tid), count)) for tid in range(1, n + 1)] for k in range(3)]
+
+
+class TouchedTest(unittest.TestCase):
+    """A debugger's context reads at a hold schedule each held thread once
+    without running its code (measured on a throwaway, 2026-10-11): 1 to
+    CONTEXT_READS switches with a suspend count of 1 or more in every sample
+    count as held, and nothing a running process does meets that."""
+
+    def test_touched_rerun4_shape_reads_frozen(self):
+        r = ts.classify(77, rerun4(1))
+        self.assertEqual(r["verdict"], "frozen", r)
+        self.assertEqual(r["progress"], 69)
+        self.assertEqual(r["touched"], list(range(1, 70)))
+        self.assertEqual(len(r["suspended"]), 69)
+        self.assertEqual(r["stopped"], list(range(2, 70)))
+        self.assertEqual(r["executive_waits"], [1])
+        self.assertIn("69 touched", r["detail"])
+
+    def test_touched_two_reads_each_reads_frozen(self):
+        r = ts.classify(77, rerun4(ts.CONTEXT_READS))
+        self.assertEqual(r["verdict"], "frozen", r)
+        self.assertEqual(len(r["touched"]), 69)
+
+    def test_touched_control_three_switches_each_is_running(self):
+        r = ts.classify(77, rerun4(ts.CONTEXT_READS + 1))
+        self.assertEqual(r["verdict"], "running", r)
+        self.assertEqual((r["suspended"], r["stopped"], r["executive_waits"], r["touched"]), ([], [], [], []))
+
+    def test_touched_control_a_count_of_0_or_unread_in_one_sample_is_not_touched(self):
+        for name, count in (("count 0", 0), ("unread", None)):
+            with self.subTest(name):
+                r = ts.classify(77, rerun4(1, over={(1, 5): count}))
+                self.assertNotIn(5, r["touched"], r)
+                self.assertNotEqual(r["verdict"], "frozen", r)
+                self.assertNotIn(5, [s["tid"] for s in r["suspended"]])
+
+    def test_touched_control_logging_shape_suspended_at_every_sample_is_running(self):
+        # While a logpoint logs, a sample can land inside a hit at every instant;
+        # those threads switched 499 or more times in the window (measured).
+        r = ts.classify(77, rerun4(500))
+        self.assertEqual(r["verdict"], "running", r)
+        self.assertEqual((r["touched"], r["suspended"], r["stopped"]), ([], [], []))
+
+    def test_touched_control_idle_threads_switching_at_count_0_are_running(self):
+        s = [[T(1, 10), T(2, 20)], [T(1, 11), T(2, 21)], [T(1, 11), T(2, 22)]]
+        r = ts.classify(77, s)
+        self.assertEqual(r["verdict"], "running", r)
+        self.assertEqual(r["touched"], [])
+
+    def test_touched_includes_baseline_threads_and_is_empty_on_other_results(self):
+        r = ts.classify(77, rerun4(1, n=3), baseline=[2])
+        self.assertEqual(r["touched"], [1, 2, 3])
+        self.assertNotIn(2, r["stopped"])
+        self.assertEqual(r["verdict"], "frozen")
+        self.assertEqual(ts.check(MISSING_PID)["touched"], [])
+        self.assertEqual(ts._result(1, "unreadable", "x")["touched"], [])
+        with mock.patch.object(ts, "_supported", return_value=(False, "not Windows")), \
+             mock.patch.object(ts, "_exists", return_value=True):
+            self.assertEqual(ts.check(123, samples=2, interval=0.01)["touched"], [])
+
+
+class RetakeTest(unittest.TestCase):
+    """A sample that catches a held thread outside its wait (a context read in
+    progress) is taken again, RETAKE_DELAY later, at most RETAKES times."""
+
+    def check_with(self, takes, samples=3):
+        calls = []
+
+        def sample(pid):
+            calls.append(pid)
+            return takes[min(len(calls), len(takes)) - 1]
+        with mock.patch.object(ts, "_supported", return_value=(True, "")), \
+             mock.patch.object(ts, "_exists", return_value=True), \
+             mock.patch.object(ts, "_sample", side_effect=sample):
+            return ts.check(123, samples=samples, interval=0.01), len(calls)
+
+    def test_retake_a_held_thread_caught_mid_read(self):
+        mid = [T(1, 10, RUNNING_STATE, 0, 1), T(2, 20, WAITING, SUSPENDED, 1)]
+        held = [T(1, 10, WAITING, SUSPENDED, 1), T(2, 20, WAITING, SUSPENDED, 1)]
+        r, calls = self.check_with([mid, held, held, held])
+        self.assertEqual(calls, 4)
+        self.assertEqual(r["verdict"], "frozen", r)
+        self.assertEqual(r["stopped"], [1, 2], r)
+
+    def test_retake_control_a_running_thread_at_count_0_is_not_retaken(self):
+        run = [[T(1, 10 + 40 * i, RUNNING_STATE, 0, 0)] for i in range(3)]
+        r, calls = self.check_with(run)
+        self.assertEqual(calls, 3)
+        self.assertEqual(r["verdict"], "running", r)
+
+    def test_retake_is_bounded_and_the_last_take_stands(self):
+        mid = [T(1, 10, RUNNING_STATE, 0, 1)]
+        r, calls = self.check_with([mid] * 20, samples=2)
+        self.assertEqual(calls, 2 * (1 + ts.RETAKES))
+        self.assertEqual(r["stopped"], [], r)  # never seen in its wait
+        self.assertEqual(r["verdict"], "frozen", r)
+
+    def test_retake_a_pid_gone_during_a_retake_is_gone(self):
+        mid = [T(1, 10, RUNNING_STATE, 0, 1)]
+        r, calls = self.check_with([mid, None])
+        self.assertEqual((r["verdict"], calls), ("gone", 2))
+
+
 class GoneTest(unittest.TestCase):
     def test_gone_for_a_pid_that_does_not_exist(self):
         r = ts.check(MISSING_PID, samples=2, interval=0.05)
@@ -308,8 +425,8 @@ class CliTest(unittest.TestCase):
         d = json.loads(r.stdout)
         self.assertEqual(d["verdict"], "gone")
         self.assertEqual(set(d), {"verdict", "threads", "progress", "suspended", "stopped",
-                                  "unreadable_counts", "tids", "executive_waits", "samples", "interval",
-                                  "detail"})
+                                  "unreadable_counts", "tids", "executive_waits", "touched", "samples",
+                                  "interval", "detail"})
 
     def test_cli_usage_errors_exit_2(self):
         for args in ((), ("notapid",), ("0",), ("42", "--samples", "1"), ("42", "--interval", "0")):
@@ -412,6 +529,71 @@ class RealOsTest(unittest.TestCase):
         r = ts.check(pid)
         self.assertEqual(r["verdict"], "running", r)
         self.assertEqual((r["suspended"], r["stopped"]), ([], []))
+
+    def read_context(self, tid) -> bool:
+        """One GetThreadContext on a thread of our own child, as x64dbg's
+        memory-map refresh reads each thread's instruction pointer."""
+        from ctypes import wintypes
+        k, ctypes = self.k32, self.ctypes
+        k.GetThreadContext.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+        k.GetThreadContext.restype = wintypes.BOOL
+        h = k.OpenThread(0x0008, False, tid)  # THREAD_GET_CONTEXT
+        if not h:
+            return False
+        try:
+            buf = ctypes.create_string_buffer(0x4D0 + 16)  # an x64 CONTEXT, 16-byte aligned
+            at = (ctypes.addressof(buf) + 15) & ~15
+            ctypes.c_uint32.from_address(at + 0x30).value = 0x00100001  # ContextFlags: CONTEXT_CONTROL
+            return bool(k.GetThreadContext(h, ctypes.c_void_p(at)))
+        finally:
+            k.CloseHandle(h)
+
+    def test_real_os_touched_context_reads_of_a_held_child_read_frozen(self):
+        pid = self.child.pid
+        tids = [t.tid for t in ts._sample(pid)]
+        handles = []
+        try:
+            for tid in tids:
+                h = self.k32.OpenThread(0x0002, False, tid)  # THREAD_SUSPEND_RESUME, on our own child
+                self.assertTrue(h, self.ctypes.get_last_error())
+                handles.append(h)
+                self.assertNotEqual(self.k32.SuspendThread(h), 0xFFFFFFFF)
+            time.sleep(0.1)
+            # One context read per thread between two samples: each thread +1.
+            first = ts._sample(pid)
+            read = sum(self.read_context(tid) for tid in tids)
+            last = ts._sample(pid)
+            self.assertEqual(read, len(tids))
+            r = ts.classify(pid, [first, last])
+            self.assertEqual(r["verdict"], "frozen", r)
+            self.assertEqual(r["progress"], read, r)
+            self.assertEqual(r["touched"], sorted(tids), r)
+            # A reader every 0.6 s while the check runs, as x64dbg's refresh reads.
+            stop = threading.Event()
+
+            def reader():
+                while not stop.wait(0.6):
+                    for tid in tids:
+                        self.read_context(tid)
+            t = threading.Thread(target=reader, daemon=True)
+            t.start()
+            try:
+                r = ts.check(pid)
+            finally:
+                stop.set()
+                t.join(5)
+            self.assertEqual(r["verdict"], "frozen", r)
+            self.assertTrue(r["touched"], r)
+            for tid in self.workers:
+                self.assertIn(tid, r["stopped"], r)
+        finally:
+            for h in handles:
+                self.k32.ResumeThread(h)
+                self.k32.CloseHandle(h)
+        time.sleep(0.2)
+        r = ts.check(pid)
+        self.assertEqual(r["verdict"], "running", r)
+        self.assertEqual(r["touched"], [], r)
 
     def test_real_os_cli_reads_the_child_as_running(self):
         r = subprocess.run([sys.executable, "-m", "tools.thread_state", str(self.child.pid)],
