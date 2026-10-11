@@ -161,6 +161,16 @@ xrefs, with no headless run per question. It serves a copy of the research
 project from one shared headless server on loopback, and what it decompiles
 stays local. See [`docs/tools/ghidra-mcp.md`](docs/tools/ghidra-mcp.md).
 
+The `x64dbg` MCP server (`tools/x64dbg_mcp.py`) attaches a headless debugger
+to the running, modded game during a live session and answers "does this
+function fire, with what arguments, how often" through non-breaking hardware
+logging breakpoints, with no research build and no relaunch. Only the
+`live-operator` agent carries its tools, it works under the hs-drive game
+lease, and it detaches before the game is closed. Its one-time setup downloads
+and builds a pinned x64dbg and plugin outside the repository. See
+[`docs/tools/x64dbg-mcp.md`](docs/tools/x64dbg-mcp.md). Nothing about it ships
+to a player.
+
 | | |
 | --- | --- |
 | Source, and how to work on it | [`hub/`](hub) · [`hub/instructions.md`](hub/instructions.md) |
