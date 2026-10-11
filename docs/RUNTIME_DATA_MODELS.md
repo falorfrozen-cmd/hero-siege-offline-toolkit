@@ -3019,6 +3019,72 @@ directions are a **static reading**. Also in
 [sCP](../ForgePact/docs/S10-special-content-notes.md#asil-cevap-gml_script_scp--2026-08-25-2010-statik),
 [Shadow Realm and Chaos Tower gates](../ForgePact/docs/S10-special-content-notes.md#shadow-realm-ve-chaos-tower-kapilari)
 
+### 14.4 Chaos Pillars: the tooltip and what shows it
+
+Everything below is a **static reading** of game build `pe-6aaa6779-0cad4fc8`,
+made 2026-10-11 for ForgePact #7 and written in our own words, except where a
+line says **measured**.
+
+- **Two objects, one tooltip per pillar.** `Chaos_Pillar_obj` (861; parent
+  chain `Quest_NPC_Parent_obj` → `Collision_Parent_obj` →
+  `Avoidable_Parent_obj`; no children) and `Chaos_Pillar_Tooltip_obj` (862; no
+  parent). **Static reading** for the hierarchy. A session counted 18 of each
+  in one map, so the pairing is one to one. **Measured** 2026-08-26, on an
+  older build
+  ([S10, working recipe](../ForgePact/docs/S10-special-content-notes.md#-calisan-tarif---yytoolkit-2026-08-26)).
+- **Events.** The pillar has Create, Alarm 0, Step, Draw, Destroy, CleanUp and
+  the two mouse events `Mouse_10` (mouse enter) and `Mouse_11` (mouse leave);
+  the tooltip has only Create and Draw GUI (`Draw_64`). They are rows of the
+  compiled-code table (`gml_Object_Chaos_Pillar_obj_Mouse_10`, …), not named
+  scripts. **Static reading.**
+- **Create** sets `chaosPillarTooltip` to noone (-4), sets `device`,
+  `isHovered` and `isCoOp` to false, and arms alarm 0. **Static reading.**
+- **Alarm 0 rolls the pillar and builds its tooltip.** It draws the pillar's
+  affixes from `affixPool` (a ds_list) into `affixes`, works out `textHeight`,
+  `rarityColor` and seventeen `tooltip*` display values (`tooltipPackSize`,
+  `tooltipMF`, `tooltipXP`, `tooltipLootAmount`, `tooltipExtraGold`,
+  `tooltipRelic` and the rest), then creates one `Chaos_Pillar_Tooltip_obj` at
+  the pillar's own position on the UI layer named by the global `uiLayer`,
+  stores it in `chaosPillarTooltip` and copies those values onto it. The mods
+  therefore live on the pillar and are copied, once, onto its tooltip. It also
+  sets `device` true when the player's input device reads as a gamepad
+  (`GetPlayerDevice` answering 2), or, with `isCoOp`, when a protected global
+  flag read as local co-op is set (which flag that is was not established).
+  **Static reading.**
+- **The hover gate is the tooltip's built-in `visible`.** Mouse enter sets it
+  true and mouse leave sets it false, each only when `chaosPillarTooltip` is
+  not noone. The tooltip's own code never writes it. Its starting value is an
+  object property rather than code, inferred to be false because the box shows
+  only on hover. **Static reading.**
+- **Step.** A pillar whose `activated` is set takes its own branch and leaves
+  the tooltip alone. Otherwise, and only while `device` is true, it rewrites
+  the tooltip's `visible` every step: true while the local player (in co-op,
+  either player) is within 180 px (`distance_to_object`), false otherwise.
+  With mouse input the Step never touches `visible`, so only the mouse events
+  do. **Static reading.**
+- **The tooltip's Draw GUI** draws nothing unless its own `visible` is true.
+  Then it maps its room x/y through view camera 0 into GUI space (offset from
+  the view's origin, scaled by GUI size over view size, floored) and draws the
+  box of mods there, so the box sits over its pillar wherever the camera is.
+  **Static reading.**
+- **Destroy** destroys the tooltip and sets `chaosPillarTooltip` to -1, not
+  -4, so a reader must treat both as "no tooltip". **Static reading.**
+- **Two negatives, "not observed".** A byte scan for code that uses the
+  `chaosPillarTooltip` variable found its uses only inside the pillar's own
+  Create, Alarm 0, Step, mouse enter, mouse leave and Destroy; a scan for code
+  building a reference to object 862 found only Alarm 0's creation, with the
+  same scan finding the gamba machine's four sites as its positive control
+  (§ 20.2). A reference built another way, or a `variable_instance_*` access by
+  string, would not show in either. `isHovered` is written in Create and read
+  nowhere the scan sees. **Static reading**, not a measured negative.
+
+ForgePact's **Always show Chaos Pillar mods** switch (`pillartips`, off by
+default) is built on this reading: once a frame it sets the on-screen,
+un-activated pillars' tooltips `visible` the way mouse enter would, and clears
+it again when they leave the screen or the switch goes off. The argument, the
+instrument and the live results are in
+[the Chaos Pillar tips research](../ForgePact/docs/chaos-pillar-tips-research.md).
+
 ---
 
 ## 15. Calls That Crash or Hang the Game
