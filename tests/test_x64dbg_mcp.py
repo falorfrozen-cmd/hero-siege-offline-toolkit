@@ -1767,6 +1767,131 @@ class InstrumentGapsTests(unittest.TestCase):
                 self.assertIn(says, "; ".join(why for _, why in gaps))
 
 
+# The Replan 3 probe's run2 (measured 2026-10-10 on a throwaway process, not the
+# game). Before attach, seven threads switching; at the control's first-hit hold,
+# two identical samples per thread of (context switches, state, wait reason,
+# suspend count). State 5 is Waiting; wait reason 5 is Suspended, 0 Executive.
+# 6320 raised the hardware-breakpoint exception and waits for the debugger's reply.
+RUN2_TIDS = [6320, 10656, 11216, 22076, 25024, 31564, 32248]
+RUN2_AFTER_ATTACH = {"verdict": "running", "threads": 7, "progress": 85, "suspended": [], "stopped": [],
+                     "unreadable_counts": [], "tids": RUN2_TIDS, "executive_waits": []}
+RUN2_HELD = {6320: (1717, 5, 0, 1), 31564: (39, 5, 5, 1), 25024: (39, 5, 5, 1), 10656: (40, 5, 5, 1),
+             22076: (65, 5, 5, 1), 32248: (78, 5, 5, 1), 11216: (76, 5, 5, 1)}
+RUN2_HELD_AT_FIRST_HIT = {
+    "verdict": "frozen", "threads": 7, "progress": 0,
+    "suspended": [{"tid": t, "suspend_count": 1} for t in RUN2_TIDS],
+    "stopped": [t for t in RUN2_TIDS if t != 6320], "unreadable_counts": [], "tids": RUN2_TIDS}
+
+
+class BreakingThreadTests(unittest.TestCase):
+    """At the control hold the thread that raised the hit waits in an Executive
+    wait, not Suspended, so `stopped` leaves it out: it is the one exemption,
+    on its signature (suspended, the only expected Executive wait), recorded as
+    `control_hold.breaking_tid`."""
+
+    @staticmethod
+    def hold(**second):
+        """The outside check over the run2 held samples, read by thread_state's own
+        rules; `second` replaces a thread's reading (key `t<tid>`) in the second
+        sample, or in both when the value is a pair of readings."""
+        from tools import thread_state as ts
+        samples = [[], []]
+        for tid, r in RUN2_HELD.items():
+            over = second.get(f"t{tid}", r)
+            pair = over if isinstance(over[0], tuple) else (r, over)
+            for i in (0, 1):
+                samples[i].append(ts.ThreadSample(tid, *pair[i]))
+        return ts.classify(4242, samples)
+
+    @staticmethod
+    def inst(hold):
+        return {"before_attach": RUN2_AFTER_ATTACH, "control_hold": hold, "after_resume": RUN2_AFTER_ATTACH}
+
+    def coverage_gap(self, inst):
+        return "; ".join(why for k, why in xm.instrument_gaps(inst) if k == "control_hold" and "tid " in why)
+
+    def test_breaking_thread_run2_replay_is_proven_and_recorded(self):
+        hold = {**RUN2_HELD_AT_FIRST_HIT, "executive_waits": [6320]}
+        # thread_state's reading of the measured samples is the probe's recorded check
+        read = self.hold()
+        self.assertEqual({k: read[k] for k in hold}, hold)
+        self.assertEqual(xm.instrument_gaps(self.inst(hold)), [])
+        rec = xm.instrument_record(self.inst(hold))
+        self.assertTrue(rec["proven"], rec)
+        self.assertEqual(rec["control_hold"]["breaking_tid"], 6320)
+        self.assertIn("6320", rec["note"])
+        self.assertIn("breaking thread", rec["note"])
+        self.assertNotIn("breaking_tid", hold)  # the check passed in is not changed
+
+    def test_breaking_thread_at_suspend_count_0_is_not_proven(self):
+        hold = self.hold(t6320=((1717, 5, 0, 0), (1717, 5, 0, 0)))
+        self.assertEqual(hold["verdict"], "frozen", hold)
+        self.assertIn("6320", self.coverage_gap(self.inst(hold)))
+        rec = xm.instrument_record(self.inst(hold))
+        self.assertFalse(rec["proven"], rec)
+        self.assertIsNone(rec["control_hold"].get("breaking_tid"), rec)
+
+    def test_breaking_thread_a_second_expected_executive_wait_is_not_proven(self):
+        hold = self.hold(t31564=((39, 5, 0, 1), (39, 5, 0, 1)))
+        self.assertEqual(hold["executive_waits"], [6320, 31564], hold)
+        gap = self.coverage_gap(self.inst(hold))
+        self.assertIn("6320", gap)
+        self.assertIn("31564", gap)
+        self.assertFalse(xm.instrument_record(self.inst(hold))["proven"])
+        # The same on a hand-built check: 31564 stopped, yet a second expected
+        # Executive wait still leaves the one exemption unclaimed.
+        hand = {**RUN2_HELD_AT_FIRST_HIT, "executive_waits": [6320, 31564]}
+        self.assertIn("2 expected thread(s)", self.coverage_gap(self.inst(hand)))
+
+    def test_breaking_thread_switching_between_samples_is_not_proven(self):
+        hold = self.hold(t6320=(1720, 5, 0, 1))
+        self.assertIn("6320", self.coverage_gap(self.inst(hold)))
+        self.assertFalse(xm.instrument_record(self.inst(hold))["proven"])
+
+    def test_breaking_thread_needs_the_executive_waits_field(self):
+        # A check with no executive_waits (an older or stand-in shape) gets no exemption.
+        gap = self.coverage_gap(self.inst(RUN2_HELD_AT_FIRST_HIT))
+        self.assertIn("executive_waits", gap)
+        self.assertIn("6320", gap)
+
+    def test_breaking_thread_not_in_an_executive_wait_is_not_exempt(self):
+        # A missing thread that is suspended but not in the check's executive_waits.
+        hold = {**RUN2_HELD_AT_FIRST_HIT, "executive_waits": []}
+        self.assertIn("Executive", self.coverage_gap(self.inst(hold)))
+
+    def test_breaking_thread_control_every_thread_stopped_needs_no_exemption(self):
+        hold = {**RUN2_HELD_AT_FIRST_HIT, "stopped": RUN2_TIDS, "executive_waits": []}
+        rec = xm.instrument_record(self.inst(hold))
+        self.assertTrue(rec["proven"], rec)
+        self.assertIsNone(rec["control_hold"].get("breaking_tid"))
+        self.assertNotIn("note", rec)
+
+
+class BreakingThreadKeeperTests(SessionMixin, unittest.TestCase):
+    """The same exemption through the keeper, on the stand-in's thread-check
+    route: `breaking_thread` N makes the first N game threads wait in an
+    Executive wait at a break."""
+
+    def test_breaking_thread_keeper_records_the_one_exemption(self):
+        cfg, _, _, _, _ = self.start_session(fake={"breaking_thread": 1, "hot": [A]})
+        reply = self.first_hit(cfg, A)
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(reply["hold_game"]["executive_waits"], [9001], reply)
+        inst = xm.read_state(cfg)["instrument"]
+        self.assertTrue(inst["proven"], inst)
+        self.assertEqual(inst["control_hold"]["breaking_tid"], 9001, inst)
+        self.assertIn("9001", inst["note"])
+        self.assertIn("9001", xm.Tools(cfg).status()["instrument"]["note"])
+
+    def test_breaking_thread_keeper_two_executive_waits_are_not_proven(self):
+        cfg, _, _, _, _ = self.start_session(fake={"breaking_thread": 2, "hot": [A]})
+        self.assertTrue(self.first_hit(cfg, A)["ok"])
+        inst = xm.read_state(cfg)["instrument"]
+        self.assertFalse(inst["proven"], inst)
+        self.assertIsNone(inst["control_hold"].get("breaking_tid"), inst)
+        self.assertIn("not proven", inst["note"])
+
+
 class ReleaseTests(SessionMixin, unittest.TestCase):
     """A detach is checked from outside the debugger: every game thread
     running again, or a loud `game-not-released` naming the threads."""

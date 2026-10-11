@@ -207,6 +207,54 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(r["verdict"], "frozen")
 
 
+# The Replan 3 probe's run2 readings at the control's first-hit hold (measured
+# 2026-10-10 on a throwaway process, not the game): two samples, identical, per
+# thread (context switches, state, wait reason, suspend count). 6320 raised the
+# hardware-breakpoint exception and waits for the debugger's reply in an
+# Executive wait; the six others read Waiting/Suspended.
+RUN2_HELD = {6320: (1717, WAITING, EXECUTIVE, 1), 31564: (39, WAITING, SUSPENDED, 1),
+             25024: (39, WAITING, SUSPENDED, 1), 10656: (40, WAITING, SUSPENDED, 1),
+             22076: (65, WAITING, SUSPENDED, 1), 32248: (78, WAITING, SUSPENDED, 1),
+             11216: (76, WAITING, SUSPENDED, 1)}
+
+
+def run2_held(**second):
+    """The two run2 held samples; `second` replaces a thread's reading in the second
+    one, keyed `t<tid>`."""
+    first = [T(tid, *r) for tid, r in RUN2_HELD.items()]
+    last = [T(tid, *second.get(f"t{tid}", r)) for tid, r in RUN2_HELD.items()]
+    return [first, last]
+
+
+class ExecutiveWaitTest(unittest.TestCase):
+    def test_executive_run2_hold_names_the_breaking_thread_only(self):
+        r = ts.classify(77, run2_held())
+        self.assertEqual(r["verdict"], "frozen")
+        self.assertEqual(sorted(s["tid"] for s in r["suspended"]), sorted(RUN2_HELD))
+        self.assertEqual(r["stopped"], sorted(set(RUN2_HELD) - {6320}))
+        self.assertEqual(r["executive_waits"], [6320])
+
+    def test_executive_baseline_leaves_the_thread_out(self):
+        r = ts.classify(77, run2_held(), baseline=[6320])
+        self.assertEqual(r["executive_waits"], [])
+        self.assertEqual(r["verdict"], "frozen")
+
+    def test_executive_negative_controls(self):
+        # The debugger's break-in thread (count 0, measured), a thread that switched,
+        # and one in Executive in one sample only are not executive waits.
+        cases = {"count 0": run2_held(t6320=(1717, WAITING, EXECUTIVE, 0)),
+                 "switching": run2_held(t6320=(1720, WAITING, EXECUTIVE, 1)),
+                 "one sample": run2_held(t6320=(1717, WAITING, SUSPENDED, 1))}
+        cases["count 0"][0][0] = T(6320, 1717, WAITING, EXECUTIVE, 0)
+        for name, s in cases.items():
+            with self.subTest(name):
+                self.assertEqual(ts.classify(77, s)["executive_waits"], [])
+
+    def test_executive_waits_is_empty_on_a_gone_or_unreadable_result(self):
+        self.assertEqual(ts.check(MISSING_PID)["executive_waits"], [])
+        self.assertEqual(ts._result(1, "unreadable", "x")["executive_waits"], [])
+
+
 class GoneTest(unittest.TestCase):
     def test_gone_for_a_pid_that_does_not_exist(self):
         r = ts.check(MISSING_PID, samples=2, interval=0.05)
@@ -260,7 +308,8 @@ class CliTest(unittest.TestCase):
         d = json.loads(r.stdout)
         self.assertEqual(d["verdict"], "gone")
         self.assertEqual(set(d), {"verdict", "threads", "progress", "suspended", "stopped",
-                                  "unreadable_counts", "tids", "samples", "interval", "detail"})
+                                  "unreadable_counts", "tids", "executive_waits", "samples", "interval",
+                                  "detail"})
 
     def test_cli_usage_errors_exit_2(self):
         for args in ((), ("notapid",), ("0",), ("42", "--samples", "1"), ("42", "--interval", "0")):

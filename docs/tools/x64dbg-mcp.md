@@ -292,8 +292,10 @@ These come from the 2026-10-10 probes recorded on issue #484.
   them.** Measured in Replan 3's probe, against a throwaway process and not
   the game: a breaking hardware execute breakpoint holds the target on its
   first hit about 10 to 15 ms after `bph`, synchronously, with every thread
-  in the Suspended wait at suspend count 1, so the outside check reads
-  `frozen`. `[STATE] paused` is the reliable sign of the hold; the
+  at suspend count 1, so the outside check reads `frozen`: every thread in
+  the Suspended wait but the breaking thread that raised the hit, which
+  waits in an Executive wait ("When the instrument is proven" in § "Attach,
+  the keeper, and teardown"). `[STATE] paused` is the reliable sign of the hold; the
   descriptive `Hardware breakpoint (...)` line can come a beat later. And a
   detach while held at such a hit, with no clear and no `run` first, printed
   `Detached!` and `[STATE] stopped`, and left every thread running at
@@ -481,7 +483,23 @@ starts the detached keeper and returns once the keeper reports `running`,
   threads named, and `running` after its resume. At the control hold
   `suspended` and `stopped` must each list every thread the check before
   attach saw (less the baseline's), and `unreadable_counts` must be empty; a
-  thread first seen at the hold is left out. A `frozen` with empty lists
+  thread first seen at the hold is left out. There is one exemption, the
+  breaking thread: the thread that raised the hardware-breakpoint hit waits
+  for the debugger's reply in an Executive wait, not Waiting/Suspended, so
+  `stopped` rightly leaves it out (measured on the Replan 3 probe's
+  throwaway process, 2026-10-10, not yet on the game: suspend count 1, no
+  context switch across the samples, wait reason Executive, while the six
+  other threads read Waiting/Suspended). It is exempt only on that
+  signature: it is the single thread missing from `stopped`, it is in
+  `suspended`, it is in the check's `executive_waits`, and no other expected
+  thread is in `executive_waits`. Two expected threads in an Executive wait,
+  a missing thread with suspend count 0 or that switched, a missing thread
+  not in an Executive wait, or a check that carries no `executive_waits`
+  field is the same gap as any other. The exempted thread is recorded as
+  `control_hold.breaking_tid`, and `instrument.note` names it; with no
+  exemption `breaking_tid` is absent. x64dbg's own output names no thread
+  on a hit line in the probe's log, so the signature is the only source of
+  the tid. A `frozen` with empty lists
   could come from a check that read no thread at all. A check that does not
   read the held game as frozen, or does not name the held threads, saw
   nothing: `proven` stays false, `instrument` carries a `note` naming each
@@ -593,6 +611,7 @@ verdict, and 2 for a usage error. The fields:
 | `progress` | the summed context-switch increase from the first sample to the last, over the threads present in both |
 | `suspended` | `[{"tid": n, "suspend_count": k}]`, each thread whose suspend count is 1 or more in every sample and whose own context switches did not advance across the window |
 | `stopped` | the tids in the Waiting/Suspended state with no context switch across the window |
+| `executive_waits` | the tids in the Waiting state with wait reason Executive (0), a suspend count of 1 or more in every sample and no context switch across the window: the breaking thread's signature at a hardware-breakpoint hold (measured on a throwaway process, 2026-10-10). Baseline threads are left out, and it plays no part in the verdict |
 | `unreadable_counts` | the tids whose suspend count could not be read in some sample (never read as 0) |
 | `tids` | every thread present in every sample, so a caller can tell whether `suspended` and `stopped` cover the threads it expected |
 | `samples`, `interval` | how it sampled (by default 3 samples, 0.4 s apart) |
@@ -644,7 +663,9 @@ The controls run in every session: before attach the game reads `running`
 (`before_attach`); at the control hold, the first logpoint's first hit, it
 reads `frozen` with `suspended` and `stopped` each naming every thread the
 check before attach saw (less the baseline's, any thread new since left
-out) and `unreadable_counts` empty (`control_hold`); and after that hold is
+out, and the one breaking thread in an Executive wait exempt from
+`stopped`, recorded as `breaking_tid`) and `unreadable_counts` empty
+(`control_hold`); and after that hold is
 released it reads `running` again (`after_resume`). All three sit in
 `instrument` in `status`. Only that sequence makes a later `running` mean
 anything: a `frozen` with empty lists could come from a check that read no
@@ -774,7 +795,16 @@ leave `proven: false` after the control logpoint, with a `note` naming the
 gap that `status` reports, and a detach with `game_released: null`,
 `ok: false` and CLI exit 1. The `instrument_gaps` tests check each other
 shortfall on hand-built checks: a thread left out of either list, an unread
-suspend count, no `tids`. The `real_os` tests use the real reader instead,
+suspend count, no `tids`. The `breaking_thread` tests replay the probe's
+run2 readings at the first-hit hold (seven threads, tid 6320 in an Executive
+wait): the replay is proven with `breaking_tid` 6320 named in the note, and
+each negative control is not: 6320 at suspend count 0, a second expected
+thread in an Executive wait, 6320 switching between samples, a missing
+thread not in `executive_waits`, and a check with no `executive_waits`
+field. The stand-in's `breaking_thread` N mode runs the same through the
+keeper: with 1 the session is proven and records the breaking thread, with
+2 it is not. `tests.test_thread_state`'s `executive` tests read the same
+run2 samples through `classify`. The `real_os` tests use the real reader instead,
 against a stand-in game the test starts (three threads sleeping 2 ms in a
 loop) whose threads the fake headless really suspends at every break,
 the first-hit hold included, and under `leak_on_detach`: the control hold

@@ -56,6 +56,9 @@ Modes:
   see a held game);
 - `empty_lists`: the probe reads `frozen` at a break but names no suspended or
   stopped thread (an instrument that read no thread at all);
+- `breaking_thread` N: at a break the probe reads the first N game threads
+  suspended, in `executive_waits` and not in `stopped` (the breaking thread
+  the Replan 3 probe measured waiting in an Executive wait at the hold);
 - `real_os`: suspend the stand-in game's threads for real at every break (a
   breaking breakpoint's first-hit hold among them) and under
   `leak_on_detach`, and resume them on `run` and on a clean `detach`, never
@@ -83,11 +86,11 @@ ENABLE_VERBS = {"bphe", "bphwe", "enablehardwarebreakpoint"}
 DISABLE_VERBS = {"bphd", "bphwd", "disablehardwarebreakpoint"}
 
 
-def check(verdict: str, detail: str, suspended=(), stopped=(), tids=FAKE_TIDS) -> dict:
+def check(verdict: str, detail: str, suspended=(), stopped=(), tids=FAKE_TIDS, executive=()) -> dict:
     """A check in tools/thread_state.py's shape."""
     return {"verdict": verdict, "threads": len(tids), "progress": 0 if verdict == "frozen" else 120,
             "suspended": [{"tid": t, "suspend_count": 1} for t in suspended], "stopped": list(stopped),
-            "unreadable_counts": [], "tids": list(tids),
+            "unreadable_counts": [], "tids": list(tids), "executive_waits": list(executive),
             "samples": 3, "interval": 0.4, "detail": f"stand-in probe: {detail}"}
 
 
@@ -242,7 +245,11 @@ class Fake:
         self.paused = True
         self.announce("paused")
         held = () if self.modes.get("empty_lists") else FAKE_TIDS
-        self.verdict(check("frozen", "held at a break", held, held))
+        # breaking_thread N: the first N threads wait in an Executive wait,
+        # suspended but not stopped, as the thread that raised the hit did.
+        executive = held[:int(self.modes.get("breaking_thread") or 0)]
+        stopped = [t for t in held if t not in executive]
+        self.verdict(check("frozen", "held at a break", held, stopped, executive=executive))
 
     def resume(self) -> None:
         self.paused = False

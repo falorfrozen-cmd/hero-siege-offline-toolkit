@@ -956,7 +956,7 @@ def game_check(cfg: Config, pid: int, baseline: Iterable[int] = ()) -> dict[str,
     except (OSError, subprocess.SubprocessError, ValueError) as e:
         why = f"{type(e).__name__}: {e}"
     return {"verdict": "unreadable", "threads": 0, "progress": 0, "suspended": [], "stopped": [],
-            "unreadable_counts": [], "tids": [], "samples": 0, "interval": 0.0,
+            "unreadable_counts": [], "tids": [], "executive_waits": [], "samples": 0, "interval": 0.0,
             "detail": f"pid {pid}: the probe seam answered no check ({why})."}
 
 
@@ -970,17 +970,55 @@ def check_tids(check: dict[str, Any] | None) -> list[int]:
 
 def instrument_gaps(inst: dict[str, Any]) -> list[tuple[str, str]]:
     """What keeps the outside check's control from being proven, each as (the
-    check it concerns, why); empty when it is proven. The verdicts must run
-    `running` before attach, `frozen` at the control hold (the first time the
-    keeper holds the game at a hardware breakpoint's hit: headless x64dbg
-    takes no attach break) and `running` after its resume. A `frozen` verdict
-    alone is not enough, since an instrument that read no thread would give
-    it too, so at the control hold `suspended` and `stopped` must each name
-    every thread seen before attach that is not in the baseline, as the
-    Replan 3 probe measured at a hardware breakpoint's hit (every thread
-    Waiting/Suspended, suspend count 1), with no suspend count unread. A
-    thread first seen at the hold (one the game started since) is left out."""
+    check it concerns, why); empty when it is proven (`instrument_review`)."""
+    return instrument_review(inst)[0]
+
+
+def _breaking_thread(brk: dict[str, Any], expected: set[int], held: set[int],
+                     missing: list[int]) -> tuple[int | None, str]:
+    """The one breaking thread the control hold may exempt from `stopped`, or
+    None and why not. It is the single missing thread, suspended in every
+    sample with no switch, in the check's `executive_waits`, and the only
+    expected thread there."""
+    waits = brk.get("executive_waits")
+    if not isinstance(waits, list):
+        return None, "the check carried no executive_waits, so no breaking thread can be told apart"
+    executive = sorted({int(t) for t in waits} & expected)
+    named = f" (tid {', '.join(map(str, executive[:10]))})" if executive else ""
+    if len(missing) != 1:
+        return None, (f"only one breaking thread is exempt, and {len(executive)} expected thread(s) waited in "
+                      f"an Executive wait{named}")
+    t = missing[0]
+    if t not in held:
+        return None, (f"tid {t} was not suspended in every sample with no switch, so it is not the breaking "
+                      "thread held at the hit")
+    if t not in executive:
+        return None, f"tid {t} did not wait in an Executive wait in every sample, so it is not the breaking thread"
+    if executive != [t]:
+        return None, (f"{len(executive)} expected thread(s) waited in an Executive wait{named}, and only one "
+                      "breaking thread is exempt")
+    return t, ""
+
+
+def instrument_review(inst: dict[str, Any]) -> tuple[list[tuple[str, str]], int | None]:
+    """The gaps that keep the outside check's control from being proven, each
+    as (the check it concerns, why), and the breaking thread the control hold
+    exempted (None when it exempted none). The verdicts must run `running`
+    before attach, `frozen` at the control hold (the first time the keeper
+    holds the game at a hardware breakpoint's hit: headless x64dbg takes no
+    attach break) and `running` after its resume. A `frozen` verdict alone is
+    not enough, since an instrument that read no thread would give it too, so
+    at the control hold `suspended` and `stopped` must each name every thread
+    seen before attach that is not in the baseline, as the Replan 3 probe
+    measured at a hardware breakpoint's hit (Waiting/Suspended, suspend count
+    1, the breaking thread aside), with no suspend count unread. A thread first seen at the hold (one the
+    game started since) is left out. One thread is exempt from `stopped`: the
+    breaking thread that raised the hit, which waits for the debugger's reply
+    in an Executive wait, suspended but not Waiting/Suspended (measured on the
+    probe's throwaway, 2026-10-10, not yet on the game); see
+    `_breaking_thread` for its signature."""
     before, brk, after = (inst.get(k) for k in ("before_attach", "control_hold", "after_resume"))
+    breaking: int | None = None
     gaps: list[tuple[str, str]] = []
     if not before:
         gaps.append(("before_attach", "no check before attach was recorded"))
@@ -1019,15 +1057,43 @@ def instrument_gaps(inst: dict[str, Any]) -> list[tuple[str, str]]:
             if not expected:
                 gaps.append(("control_hold", "no thread seen before attach was seen again at the control hold"))
             elif missing:
-                gaps.append(("control_hold", f"{len(missing)} of the {len(expected)} thread(s) seen before attach "
-                                             "were not both suspended and stopped at the control hold (tid "
-                                             f"{', '.join(map(str, missing[:10]))})"))
+                breaking, why = _breaking_thread(brk, expected, held, missing)
+                if breaking is None:
+                    gaps.append(("control_hold", f"{len(missing)} of the {len(expected)} thread(s) seen before "
+                                                 "attach were not both suspended and stopped at the control hold "
+                                                 f"(tid {', '.join(map(str, missing[:10]))}), and {why}"))
     if not after:
         gaps.append(("after_resume", "no check after the control hold's resume was recorded yet"))
     elif after.get("verdict") != "running":
         gaps.append(("after_resume", f"the outside check after the control hold's resume read the game "
                                      f"{after.get('verdict')}, not running"))
-    return gaps
+    return gaps, breaking
+
+
+def instrument_record(inst: dict[str, Any]) -> dict[str, Any]:
+    """`inst` with `proven`, `note` and `control_hold.breaking_tid` set from
+    `instrument_review`: `note` names each missing piece, and the breaking
+    thread when the control hold exempted one. The checks passed in are not
+    changed."""
+    gaps, breaking = instrument_review(inst)
+    out = dict(inst)
+    hold = out.get("control_hold")
+    if isinstance(hold, dict):
+        hold = {k: v for k, v in hold.items() if k != "breaking_tid"}
+        if breaking is not None:
+            hold["breaking_tid"] = breaking
+        out["control_hold"] = hold
+    out["proven"] = not gaps
+    out.pop("note", None)
+    notes = []
+    if gaps:
+        notes.append("not proven: " + "; ".join(why for _, why in gaps))
+    if breaking is not None:
+        notes.append(f"tid {breaking} waited in an Executive wait, not Suspended, at the control hold as the "
+                     "breaking thread that raised the hit: the one exemption from stopped")
+    if notes:
+        out["note"] = ". ".join(notes)
+    return out
 
 
 def live_session(cfg: Config) -> dict[str, Any] | None:
@@ -1407,14 +1473,9 @@ class Keeper:
         running before attach, frozen at the control hold with the held
         threads named, running after its resume (`instrument_gaps`): an
         instrument that cannot see the held game tells nothing by reading the
-        game running later. `note` names each missing piece."""
-        inst = {**self.state["instrument"], **checks}
-        gaps = instrument_gaps(inst)
-        inst["proven"] = not gaps
-        inst.pop("note", None)
-        if gaps:
-            inst["note"] = "not proven: " + "; ".join(why for _, why in gaps)
-        self.save(instrument=inst)
+        game running later. `note` names each missing piece, and the breaking
+        thread when the control hold exempted one (`instrument_record`)."""
+        self.save(instrument=instrument_record({**self.state["instrument"], **checks}))
 
     def instrument_fixed_gaps(self) -> list[str]:
         """The gaps no later after-resume check can close: the one before

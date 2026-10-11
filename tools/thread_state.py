@@ -47,6 +47,12 @@ count that cannot be read is never read as 0: its tid is listed in
 `unreadable_counts`, and the check does not answer `running` while any is.
 `tids` lists every thread present in every sample, so a caller can tell
 whether `suspended` and `stopped` cover the threads it expected.
+`executive_waits` lists the threads that read Waiting with wait reason
+Executive (0) and a suspend count of 1 or more in every sample, with no switch:
+the signature of the thread that raised a debug event and waits for the
+debugger's reply, which `stopped` rightly leaves out (measured at the Replan 3
+probe's hardware-breakpoint hold on a throwaway process, 2026-10-10). It plays
+no part in the verdict.
 """
 from __future__ import annotations
 
@@ -74,6 +80,7 @@ THREAD_STATE_OFF = 68
 THREAD_WAIT_OFF = 72
 STATE_WAITING = 5
 WAIT_SUSPENDED = 5
+WAIT_EXECUTIVE = 0
 
 SYSTEM_PROCESS_INFORMATION = 5
 THREAD_SUSPEND_COUNT = 35
@@ -126,13 +133,18 @@ def _held(t: ThreadSample) -> bool:
     return t.state == STATE_WAITING and t.wait_reason == WAIT_SUSPENDED
 
 
+def _executive(t: ThreadSample) -> bool:
+    return t.state == STATE_WAITING and t.wait_reason == WAIT_EXECUTIVE
+
+
 def _result(pid: int, verdict: str, detail: str, *, threads: int = 0, progress: int = 0,
             suspended: list | None = None, stopped: list | None = None,
             unreadable_counts: list | None = None, tids: list | None = None,
-            samples: int = 0, interval: float = 0.0) -> dict:
+            executive_waits: list | None = None, samples: int = 0, interval: float = 0.0) -> dict:
     return {"verdict": verdict, "threads": threads, "progress": progress,
             "suspended": suspended or [], "stopped": stopped or [],
             "unreadable_counts": unreadable_counts or [], "tids": tids or [],
+            "executive_waits": executive_waits or [],
             "samples": samples, "interval": interval, "detail": detail}
 
 
@@ -145,7 +157,7 @@ def classify(pid: int, samples: list[list[ThreadSample]], interval: float = 0.4,
     everywhere = [tid for tid in sorted(last) if all(tid in s for s in by_tid)]
     progress = sum((last[tid].context_switches - first[tid].context_switches) % (1 << 32)
                    for tid in last if tid in first)
-    suspended, stopped, unknown = [], [], []
+    suspended, stopped, unknown, executive = [], [], [], []
     for tid in everywhere:
         if tid in skip:
             continue
@@ -160,6 +172,12 @@ def classify(pid: int, samples: list[list[ThreadSample]], interval: float = 0.4,
             suspended.append({"tid": tid, "suspend_count": seen[-1].suspend_count})
         if not ran and all(_held(t) for t in seen):
             stopped.append(tid)
+        # The thread that raised a debug event waits for the debugger's reply in
+        # an Executive wait, suspended but not Waiting/Suspended (the Replan 3
+        # probe's control hold): reported apart, and no part of the verdict.
+        if not ran and all(_executive(t) and t.suspend_count is not None and t.suspend_count >= 1
+                           for t in seen):
+            executive.append(tid)
     if progress == 0:
         verdict = "frozen"
     elif suspended or stopped:
@@ -179,7 +197,7 @@ def classify(pid: int, samples: list[list[ThreadSample]], interval: float = 0.4,
                    f"{'' if len(unknown) == 1 else 's'} could not be read")
     return _result(pid, verdict, detail + ".", threads=len(last), progress=progress,
                    suspended=suspended, stopped=stopped, unreadable_counts=unknown, tids=everywhere,
-                   samples=len(samples), interval=interval)
+                   executive_waits=executive, samples=len(samples), interval=interval)
 
 
 # ---- the OS reads -----------------------------------------------------------------
