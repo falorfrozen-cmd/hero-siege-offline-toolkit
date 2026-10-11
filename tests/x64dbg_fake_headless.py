@@ -59,6 +59,12 @@ Modes:
   rerun 3 measured: x64dbg's `[TODO] Not implemented GUI_SET_LAST_EXCEPTION
   (37)` notice, `[STATE] paused`, `First chance exception on <A> (80000004,
   EXCEPTION_SINGLE_STEP)!`, and only then `bph`'s success line;
+- `plugin_hold`: setting an armed breakpoint's break condition to 1 holds
+  the game at its next hit at once, in the order Live 3 rerun 5 measured
+  for a held change: no break line, `[STATE] paused` twice, the plugin's
+  `[PLUGIN, MCP - Agent Smithers] Breakpoint <hex> in hero_siege.exe` line,
+  then the breakpoint's own log line (`"no_log"`: no log line after the
+  plugin's);
 - `hot` [addr, ...]: the armed breakpoints the game hits, every 50 ms;
 - `blind_probe`: the probe never reads `frozen` (an instrument that cannot
   see a held game);
@@ -330,6 +336,18 @@ class Fake:
         name = f'"{b["name"]}" ' if b.get("name") else ""
         return f"Hardware breakpoint (byte, execute) {name}at hero_siege.exe+{b['addr'] & 0xFFFFFF:X} ({b['addr']:016X})!"
 
+    def plugin_hold(self, b: dict, logged: bool) -> None:
+        """A held change's hold as Live 3 rerun 5 printed it: no break line,
+        both state lines at once, the plugin's breakpoint line, then the held
+        breakpoint's own log line."""
+        self.brk(None)
+        self.out("[STATE] paused")
+        self.repeat_at = None
+        self.out(f"[PLUGIN, MCP - Agent Smithers] Breakpoint {b['addr']:X} in hero_siege.exe")
+        if logged:
+            self.counters[b["addr"]] = self.counters.get(b["addr"], 0) + 1
+            self.out(f"{b.get('log') or 'hit'} #{self.counters[b['addr']]}")
+
     # stdin
 
     def handle(self, line: str) -> None:
@@ -401,6 +419,9 @@ class Fake:
                 self.out(f'Can\'t set break condition on breakpoint "{first.strip()}"')
             elif field:
                 b[field] = value.strip('"')
+                held = self.modes.get("plugin_hold")
+                if field == "cond" and value == "1" and held and self.armed(b) and self.attached and not self.paused:
+                    self.plugin_hold(b, held != "no_log")
         elif low == "resethardwarebreakpointhitcount":
             b = self.find(first)
             if b is None:

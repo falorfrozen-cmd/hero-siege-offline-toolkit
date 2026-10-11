@@ -2277,6 +2277,53 @@ class HeldChangeTests(ArmingMixin, unittest.TestCase):
         self.assert_never_paused(plugin, record)
 
 
+class HeldLineTests(ArmingMixin, unittest.TestCase):
+    """Live 3 rerun 5: a held change paused with no break line before the
+    pause, so the line just before it, the keeper's own `listed` marker, came
+    back as `held`. After the pause x64dbg printed the plugin's breakpoint
+    line and then the held logpoint's own log line, which is the held line."""
+
+    def held_change_on_the_live_shape(self, plugin_hold):
+        cfg, plugin, _, record, _ = self.start_session(fake={"hot": [A]})
+        tools = xm.Tools(cfg)
+        self.assertTrue(tools.logpoint(f"0x{A:X}", "ctu", name="ctl")["ok"])
+        self.assertTrue(tools.logpoint(f"0x{B:X}", "cand", name="cand")["ok"])
+        self.assertTrue(self.hits_grow(cfg, prefix="ctu"), "the control never logged")
+        # from here the control's hit comes only at the hold, in Live 3 rerun 5's order
+        self.set_modes(hot=[], plugin_hold=plugin_hold)
+        time.sleep(0.1)
+        reply = tools.command(f"bphc 0x{B:X}")
+        self.assertTrue(reply["ok"], reply)
+        self.assertIsNone(xm.bplist_entry(reply["after"], B))
+        self.assert_never_paused(plugin, record)
+        return cfg, reply
+
+    def assert_not_a_tool_line(self, held):
+        self.assertFalse(held.startswith(xm.MARKER_PREFIX), held)
+        self.assertIsNone(xm._BPLIST_ROW.match(held), held)
+        self.assertFalse(held.startswith("[PLUGIN"), held)
+
+    def test_marker_not_held_held_change_takes_the_held_logpoints_own_line(self):
+        cfg, reply = self.held_change_on_the_live_shape(True)
+        held = reply["held"] or ""
+        self.assert_not_a_tool_line(held)
+        self.assertRegex(held, r"^ctu #\d+$", reply)
+        # the stand-in printed the live shape: marker, row, pause, plugin line, log line
+        log = self.log_lines(cfg)
+        i = log.index(held)
+        shape = log[i - 5:i + 1]
+        self.assertIsNotNone(xm._BPLIST_ROW.match(shape[0]), shape)
+        self.assertTrue(shape[1].startswith(xm.MARKER_PREFIX) and shape[1].endswith(" listed"), shape)
+        self.assertEqual(shape[2:4], ["[STATE] paused", "[STATE] paused"], shape)
+        self.assertTrue(shape[4].startswith("[PLUGIN, MCP - Agent Smithers] Breakpoint"), shape)
+
+    def test_marker_not_held_control_no_held_line_reads_none_found(self):
+        # control: the same pause with no log line after it names no line,
+        # rather than the marker, the bplist row or the plugin's line before it
+        _, reply = self.held_change_on_the_live_shape("no_log")
+        self.assertEqual(reply["held"], "a pause with no break line", reply)
+
+
 class BreakingBphInLinesTests(ArmingMixin, unittest.TestCase):
     """The shape a stale client sent in Live 3 rerun 3: the breaking `bph`
     among a hold's lines, with no `first_hit`. With nothing armed it goes

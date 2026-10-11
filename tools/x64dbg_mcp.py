@@ -1300,6 +1300,22 @@ _SINGLE_STEP_LINE = re.compile(r"^First chance exception on ([0-9A-Fa-f]+) \(800
 # control logpoint's `bph <A>, x, 1` does.
 _BREAKING_BPH = re.compile(r"^\s*(?:bph|bphws|SetHardwareBreakpoint)\s+(?:0x)?([0-9A-Fa-f]+)\s*(?:,.*)?$", re.I)
 MARKER_PREFIX = "x64dbg_mcp"
+# A log text set on a hardware breakpoint, as the keeper sends it.
+_SET_LOG = re.compile(r'^\s*(?:SetHardwareBreakpointLog|bphwlog)\s+(?:0x)?([0-9A-Fa-f]+)\s*,\s*"(.*)"\s*$', re.I)
+_PLUGIN_LINE = re.compile(r"^\[PLUGIN\b")
+
+
+def log_text_prefix(text: str) -> str:
+    """The literal start of a log format string (what precedes its first
+    `{`): every line the breakpoint logs begins with it."""
+    return text.split("{", 1)[0]
+
+
+def _tool_line(line: str) -> bool:
+    """A line that is never the line a hold held the game at: a keeper
+    marker, a `bplist` row or a plugin's own line."""
+    return (line.startswith(MARKER_PREFIX + " ") or bool(_BPLIST_ROW.match(line))
+            or bool(_PLUGIN_LINE.match(line)))
 
 
 def _single_step_on(line: str, addr: int | None) -> bool:
@@ -1328,7 +1344,10 @@ class SessionLog:
     `[STATE]` line, once `QUIET` seconds pass with no new one, is x64dbg's
     settled state. Each change into `paused` is one pause, numbered from 1,
     with its break line: the last of `_BREAK_LINE`'s lines since the last
-    `[STATE]` line, or failing those the line just before. A `[TODO]` notice
+    `[STATE]` line, or failing those the line just before (which can be a
+    keeper marker or a `bplist` row, so a hold takes its held line from
+    `Keeper.hold_break_line`, never from this alone), and `after`, the mark
+    of the first line read after the state line. A `[TODO]` notice
     is never that line: after x64dbg's GUI_SET_LAST_EXCEPTION notice the
     pause's line is the single-step exception line x64dbg prints after the
     pause, filled in when it comes (None until then)."""
@@ -1341,6 +1360,7 @@ class SessionLog:
         self.offset = offset
         self._partial = b""
         self.first = 0  # the number of lines read before lines[0]
+        self.read = 0  # the number of lines read so far (a mark)
         self.lines: list[str] = []
         self.state: str | None = None
         self.state_at = 0.0  # monotonic time the latest [STATE] line was read
@@ -1366,6 +1386,7 @@ class SessionLog:
         self._partial = chunks.pop()
         new = [c.rstrip(b"\r").decode("utf-8", "replace") for c in chunks]
         for line in new:
+            self.read += 1
             self._take(line.strip())
         self.lines.extend(new)
         return new
@@ -1392,10 +1413,12 @@ class SessionLog:
         if name == "paused" and self.state != "paused":
             self.pauses += 1
             if self._break is None and self._notice:
-                self.pause_lines[self.pauses] = {"line": None, "utc": _utc(), "exception": True}
+                self.pause_lines[self.pauses] = {"line": None, "utc": _utc(), "exception": True,
+                                                 "after": self.read}
                 self._awaiting = self.pauses
             else:
-                self.pause_lines[self.pauses] = {"line": self._break or self._prev, "utc": _utc()}
+                self.pause_lines[self.pauses] = {"line": self._break or self._prev, "utc": _utc(),
+                                                 "after": self.read}
             self.pause_lines.pop(self.pauses - self.HISTORY, None)
         elif name != "paused":
             self._awaiting = None
@@ -1457,6 +1480,8 @@ class Keeper:
     # and its memory-map refresh can pass then too, so this puts both behind
     # the check's window, at ~40 times the measured margin.
     HOLD_SETTLE = 0.25
+    # A hold looks this long after its pause for the line it held the game at.
+    HOLD_LINE = 0.5
     # This many resumes within this many seconds are a storm.
     STORM_COUNT = 10
     STORM_WINDOW = 10.0
@@ -1474,6 +1499,9 @@ class Keeper:
         self.resumed_pause = 0
         self.resumed_at = 0.0
         self.resumes: list[float] = []
+        # Each address's log text as the keeper last sent it: a held change
+        # knows its held line by the held logpoint's own log text.
+        self.log_texts: dict[int, str] = {}
         self.state: dict[str, Any] = {
             "schema": SESSION_SCHEMA, "state": "attaching", "target_pid": target_pid,
             "target": identity_of(target_pid), "keeper": identity_of(os.getpid()), "headless": None,
@@ -1496,6 +1524,9 @@ class Keeper:
         if any(c in line for c in "\r\n"):
             raise ValueError("one command per line")
         assert self.proc is not None and self.proc.stdin is not None
+        m = _SET_LOG.match(line)
+        if m:
+            self.log_texts[int(m.group(1), 16)] = m.group(2)
         self.note(f"stdin: {line}")
         self.proc.stdin.write(line.encode("utf-8") + b"\n")
         self.proc.stdin.flush()
@@ -1767,8 +1798,10 @@ class Keeper:
         to break, as a new pause after the conditions were set: a logging
         breakpoint then holds the game at its hit, where nothing is mid-hit
         and the change cannot race x64dbg's debug loop. Send the lines there,
-        restore the conditions to 0, and `run` (a held change, reported as
-        `held`). When no armed breakpoint is hit within HOLD_BREAK seconds,
+        restore the conditions to 0, and `run` (a held change, its held line
+        from `hold_break_line`: never the keeper's own marker or the `bplist`
+        row printed just before the pause). When no armed breakpoint is hit
+        within HOLD_BREAK seconds,
         restore the conditions and send a direct batch."""
         for line in [*lines, *([first_hit] if first_hit else [])]:
             if any(c in line for c in "\r\n"):
@@ -1800,12 +1833,13 @@ class Keeper:
         done = False
         if armed:
             self.log.poll()
-            before = self.log.pauses
+            mark, before = self.log.mark(), self.log.pauses
+            texts = {a: log_text_prefix(self.log_texts.get(a, "")) for a in armed}
             for a in armed:
                 self.send(f"SetHardwareBreakpointCondition 0x{a:X}, 1")
             if self.wait_new_pause(before, self.HOLD_BREAK):
                 n = self.log.pauses
-                held = (self.log.pause_line(n) or {}).get("line") or "a pause with no break line"
+                held = self.hold_break_line(mark, n, armed=texts)
                 restore = [f"SetHardwareBreakpointCondition 0x{a:X}, 0" for a in armed]
                 out, done = self.run_batch(hid, [("begin", lines), ("mid", [*restore, "bplist"])], "end")
                 self.send("run")
@@ -1845,7 +1879,9 @@ class Keeper:
         x64dbg's context reads of the breaking thread at the pause, and a
         memory-map refresh at the pause, fall before its window (the check
         counts a debugger's later context reads as held, `touched`, within a
-        bound a running game never meets); and while the instrument is not
+        bound no running window met in the negative controls (before attach,
+        attached, logging at ~100 hits/s, after detach; measured on a
+        throwaway, 2026-10-11)); and while the instrument is not
         proven record it as `instrument.control_hold`; then send the lines
         (the never-break condition first), the mid marker, bplist and the end
         marker, `run`, settle at running, and record the check after it as
@@ -1898,32 +1934,63 @@ class Keeper:
             self.set_instrument(after_resume=reply["game"])
         return reply
 
-    def hold_break_line(self, mark: int, n: int, addr: int | None = None) -> str:
-        """The break line of pause `n`, which a hold caused: the one x64dbg
-        printed before `[STATE] paused`, or, since that line can lag the
-        state line, the first one it prints within half a second after. When
-        the pause followed x64dbg's GUI_SET_LAST_EXCEPTION notice (the
-        exception-shaped hit), the `First chance exception on <addr> ...`
-        line for the held address, which x64dbg prints after the pause; the
-        `[TODO]` notice itself is never returned."""
-        deadline = time.monotonic() + 0.5
+    def hold_break_line(self, mark: int, n: int, addr: int | None = None,
+                        armed: dict[int, str] | None = None) -> str:
+        """The line the game was held at in pause `n`, which a hold caused;
+        `mark` is the log's mark from before the hold's commands.
+
+        A first-hit hold (`addr`): the break line x64dbg printed before
+        `[STATE] paused`, or, since that line can lag the state line, the
+        first one it prints within HOLD_LINE seconds after. When the pause
+        followed x64dbg's GUI_SET_LAST_EXCEPTION notice (the exception-shaped
+        hit), the `First chance exception on <addr> ...` line for the held
+        address, which x64dbg prints after the pause.
+
+        A held change (`armed`: each armed breakpoint's address and the
+        literal start of its log text, `log_text_prefix`): a `Hardware
+        breakpoint (` line naming an armed breakpoint; else the first line
+        after the pause, within HOLD_LINE seconds, that starts with an armed
+        logpoint's log text (Live 3 rerun 5 printed no break line for a held
+        change: after `[STATE] paused` came the plugin's `[PLUGIN, ...]
+        Breakpoint` line, then the held logpoint's own line); else a
+        single-step exception line on an armed address.
+
+        The `[TODO]` notice, a keeper marker, a `bplist` row and a
+        `[PLUGIN, ...]` line are never returned: with none of the lines
+        above, the answer is "a pause with no break line"."""
+        held = set(armed or ()) or ({addr} if addr is not None else set())
+        prefixes = [p for p in (armed or {}).values() if p.strip()]
+
+        def names(ln: str) -> bool:
+            return not armed or any(f"{a:X}" in ln.upper() for a in held)
+
+        def breaks(ln: str | None) -> bool:
+            return bool(ln) and bool(_BREAK_LINE.match(ln)) and names(ln)
+
+        def step(ln: str | None) -> bool:
+            return bool(ln) and (any(_single_step_on(ln, a) for a in held) if held else _single_step_on(ln, None))
+
+        deadline = time.monotonic() + self.HOLD_LINE
         while True:
             info = self.log.pause_line(n) or {}
             line = info.get("line")
-            if line and (_BREAK_LINE.match(line) or _single_step_on(line, addr)):
-                return line
             lines = [ln.strip() for ln in self.log.since(mark)]
-            steps = [ln for ln in lines if _single_step_on(ln, addr)]
-            if steps:
-                return steps[-1]
-            late = [ln for ln in lines if _BREAK_LINE.match(ln)]
-            if late and not info.get("exception"):
-                return late[-1]
+            late = [ln for ln in lines if breaks(ln)] if not info.get("exception") else []
+            steps = [ln for ln in lines if step(ln)]
+            if armed:
+                after = [ln.strip() for ln in self.log.since(info.get("after", mark))]
+                logged = [ln for ln in after if not _tool_line(ln) and any(ln.startswith(p) for p in prefixes)]
+                tiers = [line if breaks(line) else None, late[-1] if late else None,
+                         logged[0] if logged else None, line if step(line) else None, steps[-1] if steps else None]
+            else:
+                tiers = [line if breaks(line) or step(line) else None, steps[-1] if steps else None,
+                         late[-1] if late else None]
+            found = next((t for t in tiers if t), None)
+            if found:
+                return found
             if time.monotonic() >= deadline:
                 break
             time.sleep(0.02)
-        if line:
-            return line
         if info.get("exception"):
             return "a pause after x64dbg's GUI_SET_LAST_EXCEPTION notice, with no exception line for it"
         return "a pause with no break line"

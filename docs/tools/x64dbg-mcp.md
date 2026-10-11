@@ -330,7 +330,9 @@ These come from the 2026-10-10 probes recorded on issue #484.
   schedules a held thread once without running its code (measured on a
   throwaway, 2026-10-11; who reads is a static reading of x64dbg's source).
   The outside check counts those switches as held (`touched`), within a
-  bound a running game never meets.
+  bound no running window met in the negative controls (before attach,
+  attached, logging at ~100 hits/s, after detach; measured on a throwaway,
+  2026-10-11).
 - **The first hit as the hold.** Arming the first breakpoint of a session
   (the positive control) sends a breaking `bph <A>, x, 1` on the running
   game and waits up to the hold timeout (10 s) for a new `[STATE] paused`:
@@ -378,8 +380,16 @@ These come from the 2026-10-10 probes recorded on issue #484.
   held at a hit of a breakpoint that was logging, where nothing is mid-hit
   and the change cannot race the debug loop. The keeper sends the lines,
   restores each condition to 0, reads `bplist`, and sends `run` at once. The
-  reply's `held` is the break line it paused at. When no armed breakpoint is
-  hit within 2 s, the conditions go back to 0, the lines go out as a direct
+  reply's `held` is the line it paused at: a `Hardware breakpoint (` line
+  naming an armed breakpoint; else the held logpoint's own log line, the
+  first one after the pause that starts with an armed logpoint's log text
+  (Live 3 rerun 5 printed no break line for a held change, only
+  `[STATE] paused`, the plugin's `[PLUGIN, ...] Breakpoint` line and then
+  the control's `ctu #...` line); else a single-step exception line on an
+  armed address. It is never the keeper's own marker, a `bplist` row or a
+  `[PLUGIN, ...]` line, which the line just before the pause can be; with
+  none of these within 0.5 s it reads `a pause with no break line`. When
+  no armed breakpoint is hit within 2 s, the conditions go back to 0, the lines go out as a direct
   batch, and the reply has `held: null` and a `held_note` saying so. A live
   check that the control keeps logging across a candidate's arm measures this
   guard; until one has run, the guard is a reading. How long a held change holds the game
@@ -540,8 +550,8 @@ starts the detached keeper and returns once the keeper reports `running`,
   `control_hold.breaking_tid`, and `instrument.note` names it; with no
   exemption `breaking_tid` is absent. x64dbg's own output names no thread
   on a hit line in the probe's log, so the signature is the only source of
-  the tid. The keeper takes the control hold's check no sooner than
-  `HOLD_SETTLE` (0.25 s) after it saw the pause: x64dbg reads the breaking
+  the tid. The keeper takes every first-hit hold's check (the control
+  hold's among them) no sooner than `HOLD_SETTLE` (0.25 s) after it saw the pause: x64dbg reads the breaking
   thread's context at the pause (measured within 6 ms of `[STATE] paused`
   on a throwaway, 2026-10-11), and the settle puts those reads, and a
   memory-map refresh at the pause, behind the check's window, for at most
