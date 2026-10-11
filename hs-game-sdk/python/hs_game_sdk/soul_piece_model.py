@@ -1,5 +1,5 @@
-"""The act of a room and the gem roll a boss soul piece rides (hand-written,
-stdlib only).
+"""The act of a room, the bag's stack rule, the gem roll a boss soul piece
+rides and the backpack's use (hand-written, stdlib only).
 
 The mechanism is written down, in our own words and with every claim labelled
 static reading, measured, our code or not established, in
@@ -7,22 +7,30 @@ static reading, measured, our code or not established, in
 checks, against `hs-game-sdk/curated/boss_soul_pieces.json` and
 `hs-game-sdk/curated/room_acts.json`.
 
-- The act of a room (static reading): `RoomActIndex(room)` answers the act
-  minus one, 0 to 8, for the 175 rooms of its switch, and undefined for every
-  other room.
+- The act of a room (measured): `RoomActIndex(room)` answers the act itself,
+  1 to 9, for the 175 rooms of its switch (Live procedure 1 read 1 in
+  `Town_01_rm` and `Act_01_01`, 2 in `Act_02_01`), and undefined for every
+  other room (static reading).
+- The stack rule (static reading): the pickup's stack attempts merge an item
+  into one whose class, `b` and `c` match, and the bag's attempt takes only
+  classes 12 to 15. The seed `a` is never compared. Live procedure 1 measured a
+  class-12 item merging into a real key of the same definition.
 - The gem roll (static reading): `DropGems` runs once per dying source whose
   `LoadDrops` drop type 6 gate passed, and rolls the socketables of repository
   category 15 against their `GetDropRate` answer. Whether that gives the Gem
   of Incarnation exactly 1 in its rate is not established
   (`HYPOTHESES['gem_one_in_its_rate']`); the model assumes it, and says so.
+- The use (measured for the Edible PAS Logo): a confirmed right-click asks
+  `PotionUse` with the item, and the game clears the item's cells only when
+  that answers true.
 
 This module models the game only. ForgePact's boss soul pieces (ForgePact#197:
-the piece's denominator, five quarters of the gem's chance, its room rules and
-its verdicts) are that mod's own code and live in the test as input
-transforms, pinned to `SoulPieceMod.hpp`.
+the piece's denominator, five quarters of the gem's chance, its room rules,
+its portal and its verdicts) are that mod's own code and live in the test as
+input transforms, pinned to `SoulPieceMod.hpp`.
 
-Every value is an int or an exact `Fraction`. Nothing here draws a random
-number.
+Every value is an int, a bool or an exact `Fraction`. Nothing here draws a
+random number.
 
 Not exported from `hs_game_sdk/__init__.py`, which the SDK generator owns;
 import it as `from hs_game_sdk import soul_piece_model`.
@@ -31,26 +39,46 @@ import it as `from hs_game_sdk import soul_piece_model`.
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import Dict, Optional, Union
+from typing import Dict, NamedTuple, Optional, Union
 
-#: How many acts `RoomActIndex` answers for (its cases 0..8).
+#: How many acts `RoomActIndex` answers for (1..9).
 ACT_COUNT = 9
+
+#: The item classes the bag's stack attempt accepts (static reading).
+STACKABLE_CLASSES = frozenset({12, 13, 14, 15})
 
 #: ForgePact#197's open questions about the game. Each stays `None` (not
 #: established) until a live check of the curated file's `open_questions`
-#: answers it.
+#: answers it; a measured answer is written here with its check.
 HYPOTHESES: Dict[str, Optional[bool]] = {
     # `DropGems` gives each socketable exactly 1 in its `GetDropRate` answer,
     # rather than picking one by weight (not read; a gem is too rare to measure
     # in one session).
     "gem_one_in_its_rate": None,
-    # The Gem of Incarnation's `droprate.base` is 10,000 (`gem-rate`, Live 1).
-    "gem_rate_is_10000": None,
-    # `DropGems`' self is the dying source (`gems-self`, Live 1).
-    "gem_roll_self_is_the_source": None,
+    # `DropGems`' self is the dying monster (Live procedure 1: 29 rolls, self a
+    # descendant of `Enemy_Parent_obj` every time).
+    "gem_roll_self_is_the_source": True,
+    # A room outside the switch answers undefined (Live procedure 3's
+    # `portal-travel` reads the answer in `Act_01_Boss`, which is not in it).
+    "room_outside_the_switch_is_undefined": None,
+    # A class-11 item never stacks in the bag (Live procedure 3's `piece-apart`).
+    "class_11_never_stacks": None,
+    # `PotionUse` answering true makes the game clear the item's cells (Live
+    # procedure 1's `use-control`, the Edible PAS Logo).
+    "potion_use_true_clears_the_item": True,
 }
 
 Number = Union[int, Fraction]
+
+
+class Item(NamedTuple):
+    """The fields the stack rule reads: class (`itemType`), the definition's
+    `b` and `c`, and the seed `a`, which it never compares."""
+
+    item_type: int
+    b: int
+    c: int
+    a: int = 0
 
 
 def _whole(name: str, value: int) -> int:
@@ -61,14 +89,25 @@ def _whole(name: str, value: int) -> int:
 
 
 def act_of_room(room_act_index: Optional[int]) -> Optional[int]:
-    """The act (1..9) from `RoomActIndex`'s answer, `None` (undefined) for a
-    room outside its switch. An answer outside 0..8 is refused."""
+    """The act (1..9): `RoomActIndex`'s answer itself, `None` (undefined) for a
+    room outside its switch. An answer outside 1..9 is refused."""
     if room_act_index is None:
         return None
     answer = _whole("room_act_index", room_act_index)
-    if not 0 <= answer < ACT_COUNT:
-        raise ValueError(f"RoomActIndex answers 0..{ACT_COUNT - 1} or undefined, got {answer}")
-    return answer + 1
+    if not 1 <= answer <= ACT_COUNT:
+        raise ValueError(f"RoomActIndex answers 1..{ACT_COUNT} or undefined, got {answer}")
+    return answer
+
+
+def stacks(held: Item, picked: Item) -> bool:
+    """Whether the game merges `picked` into `held` on pickup: both of a class
+    the bag stacks (12 to 15), the same class, and the same `b` and `c`."""
+    fields = (held.item_type, held.b, held.c, picked.item_type, picked.b, picked.c)
+    for value in fields:
+        _whole("item field", value)
+    if held.item_type not in STACKABLE_CLASSES:
+        return False
+    return (held.item_type, held.b, held.c) == (picked.item_type, picked.b, picked.c)
 
 
 def gem_chance(gem_rate: Optional[Number]) -> Optional[Fraction]:
@@ -94,3 +133,11 @@ def expected_drops(rolls: int, chance: Optional[Fraction]) -> Fraction:
     if not 0 <= chance <= 1:
         raise ValueError(f"chance must be in [0, 1], got {chance}")
     return rolls * Fraction(chance)
+
+
+def item_used_up(potion_use_answer: bool) -> bool:
+    """Whether a confirmed backpack use leaves the item gone: only when
+    `PotionUse` answered true does the game clear the item's cells."""
+    if not isinstance(potion_use_answer, bool):
+        raise TypeError(f"PotionUse's answer must be a bool, got {type(potion_use_answer).__name__}")
+    return potion_use_answer

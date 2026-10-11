@@ -1,20 +1,25 @@
 """Checks for `hs_game_sdk.soul_piece_model` (ForgePact#197, boss soul pieces).
 
 The model is written from `docs/models/soul-piece-spec.md` and covers the game
-only: `RoomActIndex` gives a room its act, and `DropGems` rolls the Gem of
+only: `RoomActIndex` gives a room its act, the pickup merges an item into a
+stack by class, `b` and `c` (classes 12 to 15 only), `DropGems` rolls the Gem of
 Incarnation against its rate once per dying source whose drop type 6 gate
-passed. ForgePact's boss soul pieces are our code, so they live here as input
-transforms (`piece_denominator`, `decide_drop`, `decide_use`, `veto_stack` and
-the seed helpers): a piece rolls inside that same gem roll at five quarters of
-the gem's chance, in an act's ordinary rooms, from an ordinary monster.
-`ParityTests` pins those transforms' constants, the act table, the room rules
-and the verdict words to `SoulPieceMod.hpp` through the curated file, when
-ForgePact carries the mod.
+passed, and a backpack use clears the item only when `PotionUse` answers true.
+ForgePact's boss soul pieces are our code, so they live here as input
+transforms (`piece_denominator`, `decide_drop`, `decide_use`, `portal_target`,
+`portal_x` and the seed helpers): a piece is an Edible PAS Logo marked by its
+seed, rolls inside that same gem roll at five quarters of the gem's chance, in
+an act's ordinary rooms, from an ordinary monster, and its use opens a portal
+to the act's boss room. `ParityTests` pins those transforms' constants, the act
+table, the room rules and the verdict words to `SoulPieceMod.hpp` through the
+curated file, when ForgePact carries the mod.
 
-Baseline: what the game does with the mod off. Target: what the mod must turn
-it into. That is the order `AGENTS.md` § "Mod Development Workflow" asks for.
-`CuratedTests` checks `hs-game-sdk/curated/room_acts.json` and
-`hs-game-sdk/curated/boss_soul_pieces.json` against the SDK's own tables.
+Baseline: what the game does with the mod off, including Live procedure 1's
+measured merge of a key-base piece into the real key. Target: what the mod must
+turn it into, including a consumable piece that never stacks. That is the order
+`AGENTS.md` § "Mod Development Workflow" asks for. `CuratedTests` checks
+`hs-game-sdk/curated/room_acts.json` and `hs-game-sdk/curated/boss_soul_pieces.json`
+against the SDK's own tables.
 
 Run from the hub root: `py -3 -m unittest tests.test_soul_piece_model -v`.
 """
@@ -36,6 +41,7 @@ SPEC_DOC = ROOT / "docs" / "models" / "soul-piece-spec.md"
 RUNTIME_DOC = ROOT / "docs" / "RUNTIME_DATA_MODELS.md"
 HOOKS_DIR = ROOT / ".claude" / "hooks"
 FORGEPACT_HEADER = ROOT / "ForgePact" / "plugin" / "include" / "ForgePact" / "SoulPieceMod.hpp"
+LIVE_1 = "forgepact-197-boss-soul-pieces-live-1"
 
 sys.path.insert(0, str(SDK_PY))
 from hs_game_sdk import soul_piece_model as model  # noqa: E402
@@ -52,11 +58,17 @@ RATIO_NUMERATOR = 4
 RATIO_DENOMINATOR = 5
 SEED_BASE = 777100
 ACT_COUNT = 9
+PORTAL_OFFSET_PX = 96
+#: A piece's base: the Edible PAS Logo (class 11; `b` 12 measured in Live procedure 1).
+BASE_CLASS = 11
+BASE_B = 12
 DROP_VERDICTS = ("off", "no-act", "town", "boss-room", "not-monster", "boss-kill",
                  "unnamed", "no-rate", "hit", "miss")
-USE_VERDICTS = ("off", "town", "not-piece", "unnamed", "summon")
+USE_VERDICTS = ("off", "not-piece", "no-act", "boss-room", "unnamed", "portal")
 #: act -> (boss object, named); every shipped act is named.
 ACTS = {row["act"]: (row["boss_object"], row["named"]) for row in DATA["acts"]}
+#: act -> the boss room its piece's portal leads to.
+BOSS_ROOMS = {row["act"]: row["boss_room"] for row in DATA["acts"]}
 
 
 def piece_denominator(gem_rate):
@@ -121,23 +133,36 @@ def act_of_seed(seed):
     return act if 1 <= act <= ACT_COUNT else 0
 
 
-def decide_use(mod_on, room, piece_act):
-    """A right-click on an item in the backpack; allowed in any room but a town."""
+def piece_item(act, base_b=BASE_B):
+    """A piece of `act` as the game holds it: an Edible PAS Logo with its seed."""
+    return model.Item(BASE_CLASS, base_b, 0, seed_of_act(act))
+
+
+def decide_use(mod_on, room, room_act, piece_act):
+    """A confirmed right-click on an item in the backpack. Every word but
+    `portal` is a refusal, and the detour then answers `PotionUse` false."""
     if not mod_on:
         return "off"
-    if is_town(room):
-        return "town"
     if not 1 <= piece_act <= ACT_COUNT:
         return "not-piece"
+    if not 1 <= room_act <= ACT_COUNT:
+        return "no-act"
+    if is_boss_room(room):
+        return "boss-room"
     if not ACTS.get(piece_act, (None, False))[1]:
         return "unnamed"
-    return "summon"
+    return "portal"
 
 
-def veto_stack(mod_on, seed_a, seed_b):
-    """Consulted only after the game said the two stack: veto while on when
-    exactly one is a piece or the pieces' acts differ."""
-    return bool(mod_on) and act_of_seed(seed_a) != act_of_seed(seed_b)
+def portal_target(piece_act):
+    """The room a piece's portal leads to: its act's boss room."""
+    return BOSS_ROOMS.get(piece_act)
+
+
+def portal_x(player_x, room_width):
+    """96 px to the player's right, to the left past the room's width."""
+    right = player_x + PORTAL_OFFSET_PX
+    return player_x - PORTAL_OFFSET_PX if room_width > 0 and right > room_width else right
 
 
 def _roll(value):
@@ -155,36 +180,84 @@ def _drop(case, **override):
                        c["gem_rate"], _roll(c["roll"]))
 
 
+def _item(fields):
+    return model.Item(fields["t"], fields["b"], fields["c"], fields["a"])
+
+
 def _table_rooms():
     return {row["room"]: row["act"] for row in ROOMS["rooms"]}
 
 
 class BaselineTests(unittest.TestCase):
-    """The game with the mod off: acts, the gem roll, and no piece at all."""
+    """The game with the mod off: acts, the stack rule, the gem roll, the
+    backpack's use, and no piece at all."""
 
     def test_mod_off_never_drops(self):
         for room, act in _table_rooms().items():
             for forced in (False, True):
                 for roll in (Fraction(0), Fraction(1, 10 ** 6), Fraction(1, 2)):
                     with self.subTest(room=room, forced=forced, roll=roll):
-                        self.assertEqual(decide_drop(False, forced, room, act, True, False, 10000, roll), "off")
+                        self.assertEqual(decide_drop(False, forced, room, act, True, False, 9000, roll), "off")
         for case in _cases("drop"):
             with self.subTest(case=case["id"]):
                 self.assertEqual(_drop(case, mod_on=False), "off")
 
-    def test_mod_off_never_summons_or_vetoes(self):
-        for act in range(1, ACT_COUNT + 1):
-            with self.subTest(act=act):
-                self.assertEqual(decide_use(False, "Act_01_01", act), "off")
-                self.assertFalse(veto_stack(False, seed_of_act(act), seed_of_act(act % ACT_COUNT + 1)))
+    def test_mod_off_never_opens_a_portal(self):
+        for room, room_act in _table_rooms().items():
+            for act in range(1, ACT_COUNT + 1):
+                with self.subTest(room=room, act=act):
+                    self.assertEqual(decide_use(False, room, room_act, act), "off")
+        # A refusal answers PotionUse false, and the game then keeps the piece.
+        self.assertFalse(model.item_used_up(False))
 
-    def test_room_act_index_answers_the_act_minus_one(self):
-        self.assertEqual([model.act_of_room(i) for i in range(9)], list(range(1, 10)))
+    def test_room_act_index_answers_the_act(self):
+        self.assertEqual([model.act_of_room(i) for i in range(1, ACT_COUNT + 1)], list(range(1, 10)))
         self.assertIsNone(model.act_of_room(None))
-        for bad in (-1, 9, True):
+        for bad in (0, -1, 10, True):
             with self.subTest(bad=bad):
                 with self.assertRaises((ValueError, TypeError)):
                     model.act_of_room(bad)
+        # Live procedure 1's three readings: the answer is the room's act itself.
+        measured = {r["room"]: r["act"] for r in ROOMS["rooms"] if r["status"] == "measured"}
+        self.assertEqual(measured, {"Town_01_rm": 1, "Act_01_01": 1, "Act_02_01": 2})
+        for room, answer in measured.items():
+            with self.subTest(room=room):
+                self.assertEqual(model.act_of_room(answer), _table_rooms()[room])
+
+    def test_a_key_piece_merges_with_the_real_key(self):
+        # Live procedure 1: pieces built on a key definition merged on pickup into
+        # the owner's own key stack. The seed is not compared, so marking a piece
+        # by its seed cannot keep it apart on the Key tab.
+        case = next(c for c in _cases("stack") if c["status"] == "measured")
+        self.assertEqual(case["capture"], LIVE_1)
+        self.assertTrue(case["stacks"])
+        self.assertTrue(model.stacks(_item(case["held"]), _item(case["picked"])))
+        real_key = model.Item(12, 30, 0, 767593635)
+        for act in range(1, ACT_COUNT + 1):
+            with self.subTest(act=act):
+                key_piece = model.Item(12, 30, 0, seed_of_act(act))
+                self.assertTrue(model.stacks(real_key, key_piece))
+                self.assertTrue(model.stacks(key_piece, model.Item(12, 30, 0, seed_of_act(act % ACT_COUNT + 1))))
+        # `c` picks the unique repository, so it cannot mark a piece either.
+        self.assertFalse(model.stacks(real_key, model.Item(12, 30, 1, seed_of_act(1))))
+
+    def test_the_bag_stacks_only_classes_12_to_15(self):
+        self.assertEqual(model.STACKABLE_CLASSES, frozenset({12, 13, 14, 15}))
+        for item_type in range(0, 20):
+            with self.subTest(item_type=item_type):
+                same = model.Item(item_type, 4, 0, 1)
+                self.assertEqual(model.stacks(same, same._replace(a=2)), item_type in model.STACKABLE_CLASSES)
+        self.assertFalse(model.stacks(model.Item(12, 4, 0), model.Item(13, 4, 0)))
+        self.assertFalse(model.stacks(model.Item(12, 4, 0), model.Item(12, 5, 0)))
+        with self.assertRaises(TypeError):
+            model.stacks(model.Item(True, 4, 0), model.Item(12, 4, 0))
+
+    def test_the_logo_is_used_up_only_when_potion_use_answers_true(self):
+        self.assertTrue(model.HYPOTHESES["potion_use_true_clears_the_item"])
+        self.assertTrue(model.item_used_up(True))
+        self.assertFalse(model.item_used_up(False))
+        with self.assertRaises(TypeError):
+            model.item_used_up(1)
 
     def test_the_gem_is_one_in_its_rate(self):
         for rate in (9000, 10000, 11000):
@@ -194,28 +267,48 @@ class BaselineTests(unittest.TestCase):
             with self.subTest(unknown=unknown):
                 self.assertIsNone(model.gem_chance(unknown))
         with self.assertRaises(TypeError):
-            model.gem_chance(10000.0)
+            model.gem_chance(9000.0)
 
     def test_expected_gems_are_linear_in_the_rolls(self):
-        chance = model.gem_chance(10000)
+        chance = model.gem_chance(9000)
         self.assertEqual(model.expected_drops(0, chance), 0)
-        self.assertEqual(model.expected_drops(10000, chance), 1)
-        self.assertEqual(model.expected_drops(30000, chance), 3 * model.expected_drops(10000, chance))
+        self.assertEqual(model.expected_drops(9000, chance), 1)
+        self.assertEqual(model.expected_drops(27000, chance), 3 * model.expected_drops(9000, chance))
         self.assertEqual(model.expected_drops(50, None), 0)
         with self.assertRaises(ValueError):
             model.expected_drops(-1, chance)
 
     def test_every_hypothesis_is_none_until_measured(self):
-        answered = {q["hypothesis"] for q in DATA["open_questions"] if q["status"] == "measured"}
+        questions = DATA["open_questions"]
+        keyed = {q["hypothesis"]: q for q in questions if q["hypothesis"]}
+        self.assertEqual(set(keyed), set(model.HYPOTHESES))
+        self.assertEqual(len({q["question"] for q in questions}), len(questions))
         for key, value in model.HYPOTHESES.items():
             with self.subTest(key=key):
-                if key not in answered:
+                if keyed[key]["status"] == "measured":
+                    self.assertIsNotNone(value)
+                    self.assertEqual(keyed[key]["capture"], LIVE_1)
+                else:
                     self.assertIsNone(value)
-        self.assertEqual({q["hypothesis"] for q in DATA["open_questions"]}, set(model.HYPOTHESES))
 
 
 class TargetTests(unittest.TestCase):
-    """What the mod turns it into: a piece rolled inside the gem roll."""
+    """What the mod turns it into: a piece rolled inside the gem roll, kept in
+    its own bag cell, whose use opens a portal to its act's boss room."""
+
+    def test_a_consumable_piece_never_stacks(self):
+        logo = model.Item(BASE_CLASS, BASE_B, 0, 542155217)
+        for act in range(1, ACT_COUNT + 1):
+            piece = piece_item(act)
+            with self.subTest(act=act):
+                self.assertFalse(model.stacks(logo, piece))
+                self.assertFalse(model.stacks(piece, logo))
+                self.assertFalse(model.stacks(piece, piece))
+                for other in range(1, ACT_COUNT + 1):
+                    self.assertFalse(model.stacks(piece, piece_item(other)))
+        self.assertNotIn(DATA["base"]["item_type"], model.STACKABLE_CLASSES)
+        # Negative control: the same rule does merge two items of a stackable class.
+        self.assertTrue(model.stacks(model.Item(12, BASE_B, 0, 1), model.Item(12, BASE_B, 0, 2)))
 
     def test_piece_is_a_quarter_more_common_than_the_gem(self):
         for rate in (9000, 10000, 11000, 9001, 10003, 2, 7):
@@ -233,43 +326,43 @@ class TargetTests(unittest.TestCase):
                     self.assertGreaterEqual(over, 0)
                     self.assertLess(over, Fraction(RATIO_DENOMINATOR, RATIO_NUMERATOR * d))
                     self.assertLess(abs(piece - gem * Fraction(5, 4)), gem)
-        self.assertEqual(piece_denominator(DATA["gem"]["expected_rate"]), 8000)
+        self.assertEqual(piece_denominator(DATA["gem"]["expected_rate"]), 7200)
         self.assertEqual(piece_denominator(1), 1)
 
     def test_more_gem_rolls_give_more_pieces(self):
-        chance = piece_chance(10000)
-        expected = [model.expected_drops(n, chance) for n in (0, 8000, 16000, 80000)]
+        chance = piece_chance(9000)
+        expected = [model.expected_drops(n, chance) for n in (0, 7200, 14400, 72000)]
         self.assertEqual(expected, [0, 1, 2, 10])
         # A lever that lowers the gem's rate lowers D with it: more pieces per roll.
-        self.assertGreater(piece_chance(5000), piece_chance(10000))
+        self.assertGreater(piece_chance(4500), piece_chance(9000))
         # The share of pieces to gems is the same whatever the number of rolls.
         for n in (1000, 123457):
             with self.subTest(rolls=n):
-                self.assertEqual(model.expected_drops(n, chance) / model.expected_drops(n, model.gem_chance(10000)),
+                self.assertEqual(model.expected_drops(n, chance) / model.expected_drops(n, model.gem_chance(9000)),
                                  Fraction(5, 4))
 
     def test_boss_kill_town_and_boss_room_never_drop(self):
         for room, act in _table_rooms().items():
             for forced in (False, True):
                 with self.subTest(room=room, forced=forced):
-                    verdict = decide_drop(True, forced, room, act, True, False, 10000, Fraction(0))
+                    verdict = decide_drop(True, forced, room, act, True, False, 9000, Fraction(0))
                     if is_town(room):
                         self.assertEqual(verdict, "town")
                     elif is_boss_room(room):
                         self.assertEqual(verdict, "boss-room")
                     else:
                         self.assertEqual(verdict, "hit")
-                        self.assertEqual(decide_drop(True, forced, room, act, True, True, 10000, Fraction(0)),
+                        self.assertEqual(decide_drop(True, forced, room, act, True, True, 9000, Fraction(0)),
                                          "boss-kill")
         for room in (r["room"] for r in ROOMS["not_in_table"]):
             with self.subTest(room=room):
-                self.assertEqual(decide_drop(True, True, room, 0, True, False, 10000, Fraction(0)), "no-act")
+                self.assertEqual(decide_drop(True, True, room, 0, True, False, 9000, Fraction(0)), "no-act")
 
     def test_non_monster_source_never_drops(self):
         for forced in (False, True):
             for boss in (False, True):
                 with self.subTest(forced=forced, boss=boss):
-                    self.assertEqual(decide_drop(True, forced, "Act_01_01", 1, False, boss, 10000, Fraction(0)),
+                    self.assertEqual(decide_drop(True, forced, "Act_01_01", 1, False, boss, 9000, Fraction(0)),
                                      "not-monster")
 
     def test_unknown_gem_rate_never_drops(self):
@@ -293,24 +386,44 @@ class TargetTests(unittest.TestCase):
                     self.assertEqual(forced, plain)
 
     def test_the_roll_hits_below_one_in_d_only(self):
-        d = piece_denominator(10000)
-        self.assertEqual(decide_drop(True, False, "Act_01_01", 1, True, False, 10000, Fraction(1, d) - Fraction(1, 10 ** 12)), "hit")
-        self.assertEqual(decide_drop(True, False, "Act_01_01", 1, True, False, 10000, Fraction(1, d)), "miss")
+        d = piece_denominator(9000)
+        self.assertEqual(decide_drop(True, False, "Act_01_01", 1, True, False, 9000, Fraction(1, d) - Fraction(1, 10 ** 12)), "hit")
+        self.assertEqual(decide_drop(True, False, "Act_01_01", 1, True, False, 9000, Fraction(1, d)), "miss")
 
-    def test_every_act_drops_and_summons_in_its_ordinary_rooms(self):
+    def test_use_opens_a_portal_in_towns_and_zones(self):
+        rooms = _table_rooms()
+        towns = [r for r in rooms if is_town(r)]
+        self.assertEqual(len(towns), 8)
+        for room, room_act in rooms.items():
+            for act in range(1, ACT_COUNT + 1):
+                with self.subTest(room=room, act=act):
+                    verdict = decide_use(True, room, room_act, act)
+                    if is_boss_room(room):
+                        self.assertEqual(verdict, "boss-room")
+                    else:
+                        self.assertEqual(verdict, "portal")
+                        self.assertEqual(portal_target(act), "Act_%02d_Boss" % act)
+                        # The game clears the piece only on the portal's true answer.
+                        self.assertTrue(model.item_used_up(verdict == "portal"))
+        for room in (r["room"] for r in ROOMS["not_in_table"]):
+            with self.subTest(room=room):
+                self.assertEqual(decide_use(True, room, 0, 1), "no-act")
+        self.assertEqual(decide_use(True, "Act_01_01", 1, 0), "not-piece")
+        self.assertIsNone(portal_target(0))
+
+    def test_every_act_drops_and_opens_its_portal(self):
         rooms = _table_rooms()
         for act in range(1, ACT_COUNT + 1):
             eligible = [r for r, a in rooms.items() if a == act and room_refusal(r, a) is None]
             with self.subTest(act=act):
                 self.assertTrue(eligible)
-                self.assertEqual(decide_use(True, eligible[0], act), "summon")
+                self.assertEqual(decide_use(True, eligible[0], act, act), "portal")
 
-    def test_use_is_refused_only_in_town_and_when_off(self):
-        for room in ("Act_01_01", "Act_01_Boss", "Act_02_Boss_Dungeon_01", "Uber_Inoya_rm"):
-            with self.subTest(room=room):
-                self.assertEqual(decide_use(True, room, 1), "summon")
-        self.assertEqual(decide_use(True, "Town_01_rm", 1), "town")
-        self.assertEqual(decide_use(True, "Act_01_01", 0), "not-piece")
+    def test_the_portal_stands_beside_the_player(self):
+        self.assertEqual(portal_x(100, 2000), 196)
+        self.assertEqual(portal_x(1950, 2000), 1854)
+        self.assertEqual(portal_x(1950, 0), 2046)
+        self.assertEqual(DATA["portal"]["offset_px"], PORTAL_OFFSET_PX)
 
     def test_seeds_round_trip_and_stay_clear_of_other_items(self):
         for act in range(1, ACT_COUNT + 1):
@@ -322,31 +435,29 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(seed_of_act(0), 0)
         self.assertEqual(seed_of_act(ACT_COUNT + 1), 0)
 
-    def test_stack_veto_keeps_acts_and_keys_apart_only_while_on(self):
-        for act in range(1, ACT_COUNT + 1):
-            with self.subTest(act=act):
-                self.assertFalse(veto_stack(True, seed_of_act(act), seed_of_act(act)))
-                self.assertTrue(veto_stack(True, seed_of_act(act), 4242))
-                self.assertTrue(veto_stack(True, 4242, seed_of_act(act)))
-        self.assertFalse(veto_stack(True, 4242, 4343))
-
     def test_the_shared_cases(self):
+        rooms = _table_rooms()
         for case in DATA["cases"]:
             with self.subTest(case=case["id"]):
+                if case["kind"] in ("drop", "use"):
+                    self.assertEqual(case["act"], rooms.get(case["room"], 0))
                 if case["kind"] == "drop":
                     self.assertEqual(_drop(case), case["verdict"])
                 elif case["kind"] == "use":
-                    self.assertEqual(decide_use(case["mod_on"], case["room"], act_of_seed(case["seed"])),
+                    piece_act = act_of_seed(case["seed"])
+                    self.assertEqual(decide_use(case["mod_on"], case["room"], case["act"], piece_act),
                                      case["verdict"])
+                    if case["verdict"] == "portal":
+                        self.assertEqual(portal_target(piece_act), case["boss_room"])
                     if "boss_object" in case:
-                        self.assertEqual(ACTS[act_of_seed(case["seed"])][0], case["boss_object"])
+                        self.assertEqual(ACTS[piece_act][0], case["boss_object"])
                 else:
                     self.assertEqual(case["kind"], "stack")
-                    self.assertEqual(veto_stack(case["mod_on"], case["seed_a"], case["seed_b"]), case["veto"])
-        verdicts = {c["verdict"] for c in DATA["cases"] if c["kind"] == "drop"}
-        # Every drop verdict but `unnamed` (unreachable with the shipped table) has a case.
-        self.assertEqual(set(DROP_VERDICTS) - verdicts, {"unnamed"})
+                    self.assertEqual(model.stacks(_item(case["held"]), _item(case["picked"])), case["stacks"])
+        # Every verdict but `unnamed` (unreachable with the shipped table) has a case.
+        self.assertEqual(set(DROP_VERDICTS) - {c["verdict"] for c in _cases("drop")}, {"unnamed"})
         self.assertEqual(set(USE_VERDICTS) - {c["verdict"] for c in _cases("use")}, {"unnamed"})
+        self.assertEqual({c["stacks"] for c in _cases("stack")}, {True, False})
 
 
 class CuratedTests(unittest.TestCase):
@@ -365,7 +476,11 @@ class CuratedTests(unittest.TestCase):
             with self.subTest(room=row["room"]):
                 self.assertEqual(ROOM_NAME_TO_INDEX.get(row["room"]), row["index"])
                 self.assertIn(row["act"], range(1, ACT_COUNT + 1))
-                self.assertEqual(row["status"], "static_reading")
+                self.assertIn(row["status"], ("static_reading", "measured"))
+                if row["status"] == "measured":
+                    self.assertEqual(row["capture"], LIVE_1)
+        self.assertEqual(sorted(r["room"] for r in rows if r["status"] == "measured"),
+                         ["Act_01_01", "Act_02_01", "Town_01_rm"])
         # § 21.1's rows per act, 1 to 9.
         per_act = [sum(1 for r in rows if r["act"] == act) for act in range(1, ACT_COUNT + 1)]
         self.assertEqual(per_act, [21, 24, 16, 15, 14, 20, 17, 19, 29])
@@ -378,6 +493,7 @@ class CuratedTests(unittest.TestCase):
                 self.assertEqual(ROOM_NAME_TO_INDEX.get(row["room"]), row["index"])
                 self.assertNotIn(row["room"], _table_rooms())
         self.assertTrue(hasattr(GameScript, ROOMS["script"]))
+        self.assertNotIn("minus one", ROOMS["$schema_note"])
 
     def test_bosses_descend_from_the_boss_parent(self):
         boss_parent = OBJECT_NAME_TO_INDEX[DATA["boss_parent"]]
@@ -394,6 +510,27 @@ class CuratedTests(unittest.TestCase):
                 self.assertEqual(row["seed"], DATA["seed_base"] + row["act"])
         self.assertEqual(DATA["acts"][6]["boss_object"], "Mevius_obj")
 
+    def test_boss_rooms_are_the_sdk_rooms(self):
+        rooms = _table_rooms()
+        outside = {r["room"] for r in ROOMS["not_in_table"]}
+        for row in DATA["acts"]:
+            room = row["boss_room"]
+            with self.subTest(act=row["act"], room=room):
+                self.assertEqual(room, "Act_%02d_Boss" % row["act"])
+                self.assertEqual(ROOM_NAME_TO_INDEX.get(room), row["boss_room_index"])
+                # No piece drops there and no piece's portal opens from there.
+                self.assertTrue(is_boss_room(room))
+                # The room is either outside RoomActIndex's switch or in its own act.
+                if room in outside:
+                    self.assertNotIn(room, rooms)
+                else:
+                    self.assertEqual(rooms[room], row["act"])
+        self.assertEqual(outside, {"Act_01_Boss", "Act_03_Boss", "Act_04_Boss", "Act_05_Boss", "Act_07_Boss"})
+        self.assertIn(DATA["boss_room_object"], OBJECT_NAME_TO_INDEX)
+        portal = DATA["portal"]
+        self.assertEqual(OBJECT_NAME_TO_INDEX.get(portal["object"]), portal["object_index"])
+        self.assertTrue(is_descendant_of(portal["object_index"], OBJECT_NAME_TO_INDEX["Portal_Parent_obj"]))
+
     def test_each_act_says_what_its_boss_rests_on(self):
         statuses = {row["act"]: row["status"] for row in DATA["acts"]}
         self.assertEqual(statuses[7], "owner_named")
@@ -408,17 +545,31 @@ class CuratedTests(unittest.TestCase):
                 self.assertTrue((ROOT / path).is_file())
                 self.assertIn(section, runtime)
 
-    def test_the_gem_rate_is_marked_unverified_with_its_source(self):
+    def test_the_gem_rate_is_the_measured_one(self):
         gem = DATA["gem"]
         self.assertEqual(gem["repository_name"], "socketable_gem_of_incarnation")
         self.assertEqual((gem["category"], gem["item_type"], gem["b"]), (15, 15, 136))
-        self.assertEqual(gem["expected_rate"], 10000)
-        if not model.HYPOTHESES["gem_rate_is_10000"]:
-            self.assertEqual(gem["rate_status"], "unverified")
+        self.assertEqual(gem["expected_rate"], 9000)
+        self.assertEqual(gem["rate_status"], "measured")
+        self.assertEqual(gem["capture"], LIVE_1)
         path, _, section = gem["rate_source"].partition(" § ")
         self.assertIn(section, (ROOT / path).read_text(encoding="utf-8"))
         self.assertEqual((DATA["ratio"]["numerator"], DATA["ratio"]["denominator"]),
                          (RATIO_NUMERATOR, RATIO_DENOMINATOR))
+        self.assertEqual(piece_denominator(gem["expected_rate"]), 7200)
+
+    def test_the_base_is_the_edible_pas_logo(self):
+        base = DATA["base"]
+        self.assertEqual(base["repository_name"], "consumable_edible_pas_logo")
+        self.assertEqual((base["category"], base["item_type"], base["b"], base["c"], base["j"]),
+                         (11, BASE_CLASS, BASE_B, 0, 0))
+        self.assertEqual((base["b_status"], base["capture"]), ("measured", LIVE_1))
+        self.assertEqual((base["name_status"], base["name_live_check"]), ("unverified", "base-consumable"))
+        path, _, section = base["source"].partition(" § ")
+        self.assertIn(section, (ROOT / path).read_text(encoding="utf-8"))
+        for gone in ("key_category", "spawn_offset_px"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, DATA)
 
     def test_the_rules_and_words_are_the_transforms(self):
         self.assertEqual(tuple(DATA["drop_verdicts"]), DROP_VERDICTS)
@@ -429,11 +580,17 @@ class CuratedTests(unittest.TestCase):
         self.assertEqual(rules["boss_room_prefixes"], {"Uber_": "boss-room", "Dev_": "boss-room"})
         self.assertEqual(rules["boss_room_substrings"], {"_Boss": "boss-room"})
         self.assertEqual(rules["no_act"], "no-act")
+        self.assertTrue(DATA["use_rules"]["towns_allowed"])
+        self.assertTrue(hasattr(GameScript, DATA["use_rules"]["use_script"]))
 
     def test_the_game_scripts_are_the_sdks(self):
         for name in ("gml_Script_RoomActIndex", "gml_Script_DropGems", "gml_Script_LoadDrops",
                      "gml_Script_ItemsAreStackable", "gml_Script_GetNormalRepoStruct",
-                     "gml_Script_UiAInventoryConsumeItemConfirm", "gml_Script_PotionUse",
+                     "gml_Script_AddToInventory", "gml_Script_InventoryGridAddToStack",
+                     "gml_Script_GridAddToStack", "gml_Script_IsItemTypeStackable",
+                     "gml_Script_UiAInventoryConsumeItemConfirm", "gml_Script_CanUsePotion",
+                     "gml_Script_PotionUse", "gml_Script_InvGridClearItemNode",
+                     "gml_Script_NetworkRoomGoto", "gml_Script_RoomGoto",
                      "gml_Script_GetDropRate_anon_55737_s_ItemBaseDefinition_DefineStructs"):
             with self.subTest(name=name):
                 self.assertTrue(hasattr(GameScript, name))
@@ -488,14 +645,21 @@ class SpecTests(unittest.TestCase):
         self.assertTrue(min(positions) >= 0 and positions == sorted(positions), positions)
         for name in ("RoomActIndex", "DropGems", "GetDropRate", "LoadDrops",
                      "socketable_gem_of_incarnation", "Enemy_Child_Boss_obj", "Enemy_Parent_obj",
-                     "Mevius_obj", "soul_piece_model", "boss_soul_pieces.json", "room_acts.json",
+                     "Mevius_obj", "Pentagram_Boss_obj", "InventoryGridAddToStack", "GridAddToStack",
+                     "consumable_edible_pas_logo", "PotionUse", "Portal_obj", "NetworkRoomGoto",
+                     LIVE_1, "soul_piece_model", "boss_soul_pieces.json", "room_acts.json",
                      "max(1, floor(G × 4 / 5))", *model.HYPOTHESES):
             with self.subTest(name=name):
                 self.assertIn(name, spec)
 
+    def test_the_act_is_the_answer_everywhere(self):
+        for path in (SPEC_DOC, MODEL_FILE):
+            with self.subTest(path=path.name):
+                self.assertFalse("minus one" in path.read_text(encoding="utf-8"), path.name)
+
     def test_the_model_stays_small_and_stdlib_only(self):
         source = MODEL_FILE.read_text(encoding="utf-8")
-        self.assertLess(len(source.splitlines()), 120)
+        self.assertLess(len(source.splitlines()), 160)
         imported = set()
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.Import):
@@ -503,6 +667,8 @@ class SpecTests(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 imported.add((node.module or "").split(".")[0])
         self.assertLessEqual(imported, {"__future__", "fractions", "typing"})
+        # The game's stack rule only: ForgePact ships no stack hook.
+        self.assertNotIn("veto", source.lower())
 
 
 @unittest.skipUnless(FORGEPACT_HEADER.is_file(),
@@ -527,6 +693,11 @@ class ParityTests(unittest.TestCase):
         self.assertIsNotNone(found, name)
         return re.findall(r'"([^"]*)"', found.group(1))
 
+    def _body(self, signature):
+        found = re.search(re.escape(signature) + r"\([^)]*\)\s*\{(.*?)\n\}", self.code, re.S)
+        self.assertIsNotNone(found, signature)
+        return found.group(1)
+
     def test_header_matches_the_curated_file(self):
         self.assertEqual(int(self._constant("kActCount")), ACT_COUNT)
         self.assertEqual(int(self._constant("kSeedBase")), DATA["seed_base"])
@@ -535,21 +706,38 @@ class ParityTests(unittest.TestCase):
         self.assertEqual(int(self._constant("kExpectedGemRate")), DATA["gem"]["expected_rate"])
         self.assertEqual(int(self._constant("kGemCategory")), DATA["gem"]["category"])
         self.assertEqual(self._constant("kGemRepoName"), '"%s"' % DATA["gem"]["repository_name"])
-        self.assertEqual(int(self._constant("kKeyCategory")), DATA["key_category"])
-        self.assertEqual(float(self._constant("kSpawnOffsetPx")), DATA["spawn_offset_px"])
+        self.assertEqual(int(self._constant("kBaseCategory")), DATA["base"]["category"])
+        self.assertEqual(int(self._constant("kBaseItemType")), DATA["base"]["item_type"])
+        self.assertEqual(self._constant("kBaseRepoName"), '"%s"' % DATA["base"]["repository_name"])
+        self.assertEqual(float(self._constant("kPortalOffsetPx")), DATA["portal"]["offset_px"])
         self.assertEqual(self._constant("kMechanicTag"), '"%s"' % DATA["mechanic_tag"])
+        # The first design's key base, spawn and stack veto are gone.
+        for gone in ("kKeyCategory", "kSpawnOffsetPx", "VetoStack", "Summon"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, self.code)
 
     def test_the_act_table_is_the_header_s(self):
         table = re.search(r"kActs\[kActCount\]\s*=\s*\{(.*?)\n\};", self.code, re.S)
         self.assertIsNotNone(table)
-        rows = re.findall(r'\{\s*(\d+)\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*(true|false)\s*\}', table.group(1))
+        rows = re.findall(r'\{\s*(\d+)\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*(true|false)\s*\}',
+                          table.group(1))
         self.assertEqual(
-            [(int(a), boss, name, named == "true") for a, boss, name, named in rows],
-            [(r["act"], r["boss_object"], r["piece_name"], r["named"]) for r in DATA["acts"]])
+            [(int(a), boss, name, room, named == "true") for a, boss, name, room, named in rows],
+            [(r["act"], r["boss_object"], r["piece_name"], r["boss_room"], r["named"]) for r in DATA["acts"]])
 
     def test_the_verdict_words_are_the_header_s(self):
         self.assertEqual(self._words("kDropVerdictWords"), DATA["drop_verdicts"])
         self.assertEqual(self._words("kUseVerdictWords"), DATA["use_verdicts"])
+        # DecideUse asks them in the words' order.
+        returns = re.findall(r"return UseVerdict::(\w+);", self._body("inline UseVerdict DecideUse"))
+        kebab = [re.sub(r"(?<!^)([A-Z])", r"-\1", word).lower() for word in returns]
+        self.assertEqual(kebab, DATA["use_verdicts"])
+
+    def test_the_act_is_the_room_act_index_answer(self):
+        body = self._body("inline int ActOfRoomActIndex")
+        self.assertRegex(body, r"answer\s*>=\s*1\.0")
+        self.assertRegex(body, r"return static_cast<int>\(answer\);")
+        self.assertNotRegex(body, r"answer\)?\s*\+\s*1")
 
     def test_the_room_rules_are_the_header_s(self):
         town = re.search(r"IsTownRoom\([^)]*\)\s*\{(.*?)\}", self.code, re.S).group(1)
@@ -563,3 +751,9 @@ class ParityTests(unittest.TestCase):
         self.assertRegex(body, r"if\s*\(\s*!\(\s*gemRate\s*>\s*0\.0\s*\)\s*\)\s*return 0;")
         self.assertRegex(body, r"std::floor\(\s*gemRate\s*\*[^;]*kRatioNumerator[^;]*/[^;]*kRatioDenominator")
         self.assertRegex(body, r"d\s*<\s*1\.0\s*\?\s*1")
+
+    def test_the_portal_leads_to_the_boss_room(self):
+        self.assertRegex(self._body("inline const char* PortalTarget"), r"boss->bossRoom")
+        body = self._body("inline double PortalX")
+        self.assertRegex(body, r"playerX\s*\+\s*kPortalOffsetPx")
+        self.assertRegex(body, r"playerX\s*-\s*kPortalOffsetPx")
