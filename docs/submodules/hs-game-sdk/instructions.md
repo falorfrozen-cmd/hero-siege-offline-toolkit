@@ -37,6 +37,8 @@ hs-game-sdk/
 │   ├── monster_rank_measurements.json # MK1-MK24: what a monster's rank does (§13.7), the boss report, and ForgePact #44's Live 1 and 1b on bosses, for monster_rank_model.py (data only)
 │   ├── dungeon_chest_measurements.json # DC1-DC23: the dungeon chest's static reading, the kill path (§13.5), and ForgePact #31's Live 1, Live 1b, Live 2 and Live 3 measurements (the estimate's mean, the player build's census, latch and head label), for dungeon_chest_model.py (data only)
 │   ├── skill_sliders_measurements.json # ForgePact #160's live values for skill_sliders_model.py (data only)
+│   ├── room_acts.json          # RoomActIndex's act per room: 175 rows (SDK room name, index, act), static reading, for soul_piece_model.py's tests (data only; nothing ships it)
+│   ├── boss_soul_pieces.json   # ForgePact #197: act bosses, piece seeds, the Gem of Incarnation's expected rate (unverified), the 4/5 ratio, room rules, verdict words and shared cases (data only)
 │   ├── loot_announcement_measurements.json # ForgePact #17: the rare-drop announcement chain, the rarity codes its closure branches on and the route ForgePact ships (§16.10; data only, no model)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
@@ -58,6 +60,7 @@ hs-game-sdk/
 │   │   ├── monster_rank_model.py # What a monster's rank does to health, damage, XP and drop values, stdlib only, not exported (hand-written)
 │   │   ├── dungeon_chest_model.py # When a key dungeon's end chest opens (no monster alive) and the kill tally's quantities, stdlib only, not exported (hand-written)
 │   │   ├── skill_sliders_model.py # Projectile count, AoE scale and projectile deltaSpeed from their stats, stdlib only, not exported (hand-written)
+│   │   ├── soul_piece_model.py # A room's act (RoomActIndex + 1) and the gem roll a boss soul piece rides, stdlib only, not exported (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
 │   ├── pyproject.toml
@@ -168,6 +171,21 @@ open (where the planned total comes from) are carried in `dungeon_chest_model.HY
 `None` until a measured entry decides it. ForgePact's Dungeon
 chest opens early stays in the test as input transforms, pinned to `DungeonChestMod.hpp` and
 `src/forgepact.py` by `LeverParityTests`.
+
+`soul_piece_model.py` (2026-10-11, ForgePact issue #197, hub #489) is built the same way: spec
+`docs/models/soul-piece-spec.md`, fixtures `curated/room_acts.json` (the act of each of the 175
+rooms `RoomActIndex` knows, with its SDK room index, a static reading; `CuratedTests` checks every
+name and index against `GameRoom`) and `curated/boss_soul_pieces.json` (the nine act bosses, each
+checked to descend from `Enemy_Child_Boss_obj`, the piece seeds, the Gem of Incarnation's expected
+rate of 10,000 marked `unverified`, the 4/5 ratio, the room rules, the verdict words and shared
+cases), checks `tests/test_soul_piece_model.py`. It models the game only: a room's act
+(`RoomActIndex` + 1, none outside its switch) and the gem's chance on one `DropGems` call (1 in its
+rate). Whether `DropGems` really gives 1 in the rate, whether the gem's rate is 10,000 and whether
+the roll's `self` is the dying monster are carried in `soul_piece_model.HYPOTHESES`, each `None`
+until the curated file's `open_questions` entry is measured. ForgePact's Boss soul pieces (the
+piece's 1 in `max(1, floor(G × 4 / 5))`, its room and source rules, its use and stack veto) stays
+in the test as input transforms, pinned to `SoulPieceMod.hpp` through the curated file by
+`ParityTests`.
 
 `skill_sliders_model.py` (2026-10-04, ForgePact issue #160, hub #408) is built the same way: spec
 `docs/models/skill-sliders-spec.md` (written from the static reading in ForgePact's
@@ -517,6 +535,7 @@ contributor can be assumed to have:
 | `test_mining_reward_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `RollsLeverParityTests` | always runs; only `RollsLeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/MiningOreMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_monster_rank_model.py` | nothing (the model, its fixture, its spec and the tracked object bindings); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/BossRarityMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_dungeon_chest_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/DungeonChestMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths and local `.claude/workorders/` captures |
+| `test_soul_piece_model.py` | nothing (the model, its two curated files, its spec and the tracked room and object bindings); `ForgePact/` checked out for `ParityTests` | always runs; only `ParityTests` skips, when `ForgePact/plugin/include/ForgePact/SoulPieceMod.hpp` is absent (hub CI checks out without submodules) |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_sdk_lazy_import.py` | nothing (starts fresh interpreters of the Python running the suite) | always runs |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
@@ -847,7 +866,7 @@ re-run it; regeneration is idempotent, so a second run must produce no diff.
 
 "Every file" is broader than the code, though: `player.py`/`.hpp`/`.ts`, `hooks.hpp`,
 `mod_registry.py`, `item_type.py`/`.hpp`/`.ts`, `drop_roll_model.py`, `mining_reward_model.py`,
-`monster_rank_model.py` and `dungeon_chest_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
+`monster_rank_model.py`, `dungeon_chest_model.py` and `soul_piece_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
 models are not wired
 into any aggregate on purpose (import it by its module name), and it has no C++ or TypeScript
 counterpart. They still have to be wired into the aggregates
