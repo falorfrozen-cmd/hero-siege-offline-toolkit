@@ -5133,11 +5133,15 @@ direct `call rel32` that the import's reference table does not hold.
   (`keys_bifrost_key`) with seeds 777101 and 777102, and named "Piece of
   Gurag's Soul", joined the owner's own Bifröst Key stack on pickup (its count
   `o` went 39, 41, 43; the stack kept its own seed), and the merge survived a
-  reload. A both-route detour on `ItemsAreStackable` counted no call through
-  the merges, in logging and in veto mode. **Measured** (ForgePact #197's Live
-  procedure 1, 2026-10-11). So a seed cannot keep a key apart from the real
-  key of its definition in the Key tab, and the predicate is not on the pickup
-  route that merged them (it may be on another route; **not observed**).
+  reload. **Measured** (ForgePact #197's Live procedure 1, 2026-10-11). So a
+  seed cannot keep a key apart from the real key of its definition in the Key
+  tab. A both-route detour on `ItemsAreStackable` counted no call through the
+  merges (log and veto mode); no call to it was seen anywhere in the session,
+  so the hook has no positive control and the zero is **not observed**, not a
+  negative. With the static reading above (the two stack scripts compare
+  inline and do not call it), the predicate was not seen on the pickup route
+  that merged them; whether any other script on that route reaches it is **not
+  established**.
 - Already in this reference: `LootGroundCreate` writes a fresh seed into `a`
   (§ 18.4); `InitItemFromJson` followed by `LootGroundCreateFromItem` keeps the
   definition it was handed (ForgePact #74's `sigdrop`; relics placed with the
