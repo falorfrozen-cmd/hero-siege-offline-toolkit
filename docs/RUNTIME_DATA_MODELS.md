@@ -3168,8 +3168,10 @@ line says **measured** or **inferred**.
     way is not established.
   - With `visible` written true from ForgePact's HUD hook and no hover, the
     box was drawn (the Draw GUI count rising, the box in a screenshot), so a
-    write there is drawn: the inference from the depths above holds in
-    practice for mouse play.
+    write there is drawn. Whether it is drawn the same frame (the depth-order
+    inference above) is still **not measured**: with mouse input nothing
+    writes `visible` false between frames, so a write drawn one frame late
+    would look the same.
 
 ForgePact's **Always show Chaos Pillar mods** switch (`pillartips`, off by
 default, mouse play only) is built on this reading: once a frame, from its HUD
@@ -3181,7 +3183,8 @@ mouse hover gate, mouse leave's clear, the depths, and that the raw
 on-screen, untouched pillar's box without hover, hiding it off screen and on
 activation, the record turning true when a player activates a pillar, and the
 game's own hover back once the switch is off (Live 2). What is not: which
-code writes the record, the game's hover on an activated pillar with the
+code writes the record, the draw order of `Controller_obj`'s Draw GUI and the
+tooltips' within a frame (inferred from the depths), the game's hover on an activated pillar with the
 switch on (the pillar was removed first), and gamepad play, where the Step
 rewrites `visible` every step and which ForgePact does not support or test
 (that branch stays a static reading).
