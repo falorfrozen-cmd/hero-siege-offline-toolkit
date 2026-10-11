@@ -4185,6 +4185,25 @@ names are the stats' tooltip names (the Item Editor's game-verified stat table).
 
 - `DropGems` (drop type 6, §13.1) picks a socketable from repository category 15
   (§13.2) by drop rate and hands it to `LootGroundCreate`. **Static reading.**
+- How the rate reaches that roll (read 2026-10-11, build `498d588550d8`, for
+  ForgePact #197, § 21). `DropGems` runs only after `LoadDrops`' outer gate
+  passed for the dying source: the monster's `chances[6]` (45 on the sampled
+  monster, `hs-game-sdk/curated/drop_types.json`) against a die whose ceiling
+  lives in `gDataProtected`. Inside, it reads category 15's repository entries,
+  `GetDropRate` and a `gDataProtected` member, floors a value and rolls.
+  `GetDropRate`, a method of the item base definition
+  (`gml_Script_GetDropRate_anon_55737_s_ItemBaseDefinition_DefineStructs`
+  (1058), a closure name that moves with every patch, §5.3), answers
+  `droprate.base`, replaced by a per-place field where the entry carries one and
+  the room matches: boss dungeons, Chaos Tower, Niflheim, rifts, Ruby, Sheep,
+  specials and ubers. **Static reading.** Whether `DropGems` gives each
+  socketable exactly 1 in its rate or picks by weight is **not established**,
+  and no magic-find stat name appears in either body (**not observed**, not a
+  negative). The Gem of Incarnation (`socketable_gem_of_incarnation`, class 15,
+  `b` 136) carried info key `"31"` = 10,000 on every one in the local drop
+  records (`bp_ipc\itemdrops.jsonl`, **measured**); with measured gem bases of
+  9,000 and 11,000 (§13.2), 10,000 is its plausible `droprate.base`,
+  **UNVERIFIED** until a live read.
 - `LootGroundCreate(x, y, type, params, ...)` writes a fresh random seed into the
   params' `a`, creates the item instance and calls `CreateItemNew(instance,
   undefined)`. So a drop's seed is settled between that write and
@@ -4988,12 +5007,17 @@ direct `call rel32` that the import's reference table does not hold.
   | 4 | `Damien_obj` (1115) | `Nightmare_Demon_*` and satanic props |
   | 5 | `Karp_King_obj` (2368) | `Sea_*`, `Fuji_*` |
   | 6 | `Satan_obj` (4266) | `Satan_Light_obj`, `Satan_Pentagram_Trail_obj` |
-  | 7 | not established | `Bad_Trip_*`, which names no boss |
+  | 7 | `Mevius_obj` (2705), named by the owner, 2026-10-11 | `Bad_Trip_*`, which names no boss |
   | 8 | `Odin_Phase_1_obj` (3276) | `Odin_Cutscene_obj`, `Odin_Pillar_*` |
   | 9 | `Cthulhu_obj` (1043) | `Cthulhu_*` |
 
-  **Static reading (boss room decor)** for every row. All eight named objects
-  descend from `Enemy_Child_Boss_obj` (`hs-game-sdk`'s parent table). The Key
+  **Static reading (boss room decor)** for every row but act 7, whose boss the
+  decor does not name and the owner chose (2026-10-11). The SDK also names
+  `Bad_Trip_Mevius_Painting_obj`, `Mevius_Boss_mus` and a room
+  `Act_08_Mevius_Intro`; whether `Act_07_Boss` places a Mevius painting was not
+  read. All nine named objects descend from `Enemy_Child_Boss_obj` through
+  `Enemy_Parent_obj` (`hs-game-sdk`'s parent table, `Mevius_obj` checked
+  2026-10-11 the same way as `Gurag_obj` and `Reaper_obj`). The Key
   of Terror's parts name six bosses (Gurag, Death, Damien, Anubis, Karp King
   and Satan), which agrees with acts 1 to 6 as a set and says nothing about
   their order. **Static search.**
@@ -5051,4 +5075,43 @@ direct `call rel32` that the import's reference table does not hold.
   definition it was handed (ForgePact #74's `sigdrop`; relics placed with the
   player as `self`, § 10.7); a bag drop reaches `LootGroundInit`, and the loot
   announcement's creation guard tells it from a fresh build (§ 16.11); `sCP` is
-  the game's own spawner that stamps the spawned flag (§ 20.5).
+  the game's own spawner that stamps the spawned flag (§ 20.5); and the gem
+  roll a soul piece rides, `DropGems` with `GetDropRate`'s per-place
+  overrides (§ 18.4).
+
+### 21.4 Using an item from the backpack
+
+Read on 2026-10-11 through the same MCP and build, for the owner's choice that a
+soul piece is used by right-clicking it in the backpack, the way a PAS token is.
+
+- `gml_Script_UiAInventoryConsumeItemConfirm` (4087) is a UI action, the answer
+  to the "use this item?" prompt, and takes three values: the item, a second
+  value whose meaning was not read, and the cells the item occupies. It first
+  asks `gml_Script_PotionUse` (2813) about the item, and only when that answers
+  true does it look the item up, clear the item's cells one at a time with
+  `gml_Script_InvGridClearItemNode` (1988), and close the prompt. So the item
+  leaves the bag through the cells, after the use itself said yes. **Static
+  reading.**
+- `gml_Script_CanUsePotion` (2812) reads the item's definition, its info and
+  stats, and the current room before it answers. Which of them decides what is
+  **not established**. **Static reading.**
+- `PotionUse`'s own body is **not established**: the MCP's decompile of it
+  timed out.
+- No script is named for a right-click. The dispatch from the click is inline,
+  as the drag's is (§ 17), and a right-click on a class 7 item equips it
+  (**measured**, ForgePact's
+  [`stash-move-research.md`](../ForgePact/docs/stash-move-research.md)).
+  Whether a right-click on a key (class 12) reaches the prompt or any of the
+  scripts above is **not established**; ForgePact's boss soul pieces Live
+  procedure 1 asks it.
+- `ConsumeToken` (631) and `gml_Script_ConsumeBPToken` (632) are Blood Pact
+  token bookkeeping, not the use of an item. **Static reading**; their callers
+  were not observed.
+- The PAS token: no item of that name is found statically. `data.win` holds no
+  "PAS token" string and the game's `translations*.csv` files no such name. The
+  only PAS-named item is the consumable `consumable_edible_pas_logo` (sprites
+  `Edible_Pas_Logo_spr` and `Pickup_Edible_Pas_Logo_spr`, craft key
+  `craft_consumable_edible_pas_logo`). **Static search.** So the token's class,
+  its `b` and the script its right-click runs are **not established**, and so is
+  the right-click itself; Live procedure 1's control records them from the
+  owner's own token.
