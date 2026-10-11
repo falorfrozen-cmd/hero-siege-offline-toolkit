@@ -2359,6 +2359,7 @@ The data tables in this section are also in
 | 19 | vault | 7 |
 
 Categories 3, 9, 17 and 20–25 are empty (weapons come some other way).
+What the lookup does with an index past its category's end is in § 21.3.
 These numbers coincide with `hs-game-sdk`'s `ItemType` (the value an item instance
 carries in `itemType`) for 0–2, 4–8, 10–12 and 14–16; 13 is "collectibles" here and
 `TAROT` there, and 3 (`WEAPON`) is empty here. That the two are the same field is
@@ -4918,3 +4919,136 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   with eight valid entries)`, so the by-name route stays blind
   (`byname-route: blind`) and whether the array holds same-named entries for
   the store scripts is still open. **Measured (Live 3).**
+
+## 21. Acts, act bosses and boss soul pieces
+
+What ForgePact's boss soul pieces work (ForgePact #197, hub #489) read about
+acts, act bosses and key items on 2026-10-11: through the `ghidra` MCP on build
+`498d588550d8`, and through local byte scans of `Hero_Siege.exe` and `data.win`
+whose positive controls were `PickupLoot`'s known callers and a known object
+event row. **Every claim here is a static reading** until a live session
+measures it; the mod's design, its live procedures and their results are in
+ForgePact's
+[`docs/boss-soul-pieces-research.md`](../ForgePact/docs/boss-soul-pieces-research.md).
+The MCP's callers and xrefs answers were empty for every function read here,
+which is "not observed", not "has no callers": compiled GML calls scripts by a
+direct `call rel32` that the import's reference table does not hold.
+
+### 21.1 The act of a room (`RoomActIndex`)
+
+- `gml_Script_RoomActIndex` (3474) takes a room and answers its act minus one:
+  a switch over 175 room constants into nine cases, 0 to 8. Its result starts
+  undefined and only a matching case sets it, so any room outside the 175
+  answers undefined. **Static reading** (2026-10-11).
+- A byte scan for direct call sites found two callers,
+  `gml_Script_FetchActTexPages` (1574) and the texture manager's `Other_4`
+  event, so the game itself uses the answer to pick an act's texture pages.
+  **Static reading** (byte scan, with `PickupLoot`'s callers as its positive
+  control).
+- Rows per act, 1 to 9: 21, 24, 16, 15, 14, 20, 17, 19 and 29. Besides the
+  act's zones, the switch holds the act's town where it has one (no
+  `Town_08_rm` row), boss dungeons, side dungeons and cellars, the act's
+  `Unstable_Rift_*` rooms, `Uber_Inoya_rm` (act 1), `Multiplayer_Highscores_rm`
+  (act 6) and five `Dev_5_Mika_Test_*_rm` rooms (act 9). A room's name does not
+  always give its act: `Act_08_Orres_Lair_rm` is act 4. **Static reading.**
+- Rooms not in the switch, so answering undefined: `Act_01_Boss`,
+  `Act_03_Boss`, `Act_04_Boss`, `Act_05_Boss` and `Act_07_Boss` (while
+  `Act_02_Boss`, `Act_06_Boss`, `Act_08_Boss` and `Act_09_Boss` are in it), and
+  the fourth act 8 rift: rifts `Unstable_Rift_08_01..03` and `_05` are rows,
+  and `hs-game-sdk` has no room named `Unstable_Rift_08_04`. **Static reading.**
+- The full table, room by room with its `hs-game-sdk` room index, is
+  `hs-game-sdk/curated/room_acts.json`. Room indices move between builds; a
+  consumer that needs a room's act at run time asks `RoomActIndex` by name
+  rather than shipping the table.
+
+### 21.2 Act boss rooms and their bosses
+
+- `Act_01_Boss` (room 12) to `Act_09_Boss` (room 109) place no instance of any
+  descendant of `Enemy_Child_Boss_obj` (1407) in their room instance lists.
+  Each places a `Pentagram_Boss_obj` (3409), beside a `Boss_Block_obj` (682),
+  an `Enemy_Creator_obj` (1415) and an `Enemy_Creator_Ancient_obj` (1410).
+  **Static reading** (`data.win` room lists, read locally).
+- The pentagram's Step event names every act boss room and calls
+  `gml_Script_PlayMusic` (2434), `gml_Script_ScreenShake` (450) and
+  `gml_Script_NetworkSendBoss` (2557), and the last of these only sends a
+  network message. So the act boss arrives at run time, and what creates it is
+  **not established**. **Static reading** (the pentagram's Create, Alarm_4 and
+  Step events).
+- `Boss_Block_obj`'s collision with the player tests for eight boss objects:
+  Uber Anubis, the Architect, Phantom Leviathan, Cthulhu, Uber Reaper, Kaelith,
+  Captain Grimtide and the Blood Maiden. **Static reading.**
+- Which boss belongs to which act, read from the decor each act's boss room
+  places (no room names its boss outright):
+
+  | Act | Boss object | Decor in the act's boss room |
+  |---|---|---|
+  | 1 | `Gurag_obj` (2014) | `Gurag_Dungeon_*`, `Gurag_Board_obj` |
+  | 2 | `Reaper_obj` (4013) | `Winter_Reaper_*`, `Reaper_Flames_*` |
+  | 3 | `Anubis_obj` (241) | `Pyramid_*`, `Pyramid_Anubis_Statue_Dark_obj` |
+  | 4 | `Damien_obj` (1115) | `Nightmare_Demon_*` and satanic props |
+  | 5 | `Karp_King_obj` (2368) | `Sea_*`, `Fuji_*` |
+  | 6 | `Satan_obj` (4266) | `Satan_Light_obj`, `Satan_Pentagram_Trail_obj` |
+  | 7 | not established | `Bad_Trip_*`, which names no boss |
+  | 8 | `Odin_Phase_1_obj` (3276) | `Odin_Cutscene_obj`, `Odin_Pillar_*` |
+  | 9 | `Cthulhu_obj` (1043) | `Cthulhu_*` |
+
+  **Static reading (boss room decor)** for every row. All eight named objects
+  descend from `Enemy_Child_Boss_obj` (`hs-game-sdk`'s parent table). The Key
+  of Terror's parts name six bosses (Gurag, Death, Damien, Anubis, Karp King
+  and Satan), which agrees with acts 1 to 6 as a set and says nothing about
+  their order. **Static search.**
+- The game already has an item named "Gurag's Soul", one of the Key of
+  Terror's parts, in repository category 13. **Static search.**
+- A boss created with `instance_create_depth` in a zone lives, fights and dies
+  through HP 0 with loot, and one created in town removes itself (§ 13.1).
+  That a summoned act boss counts toward its act's quest or completion is
+  **not established**.
+
+### 21.3 Key items: the repository, the Key tab and stacking
+
+- `gml_Script_GetNormalRepoStruct` (818) reads the global `itemRepoNormal` by
+  category and index (weapons by a sub-index as well), and raises the runtime's
+  array-index error for an index past its category's end. **Static reading.**
+  So a saved item whose `b` lies past its category's end cannot load unless
+  something added that entry first: **inference, not measured**. This is why a
+  mod item that must survive the mod's removal reuses an existing repository
+  entry rather than adding one.
+- Category 12 (keys) holds 44 entries (§ 13.2), and `data.win` names 44
+  `keys_*` strings: `ancient`, `angelic`, `ankh_eternal_death`,
+  `ankh_infernal_death`, `axe`, `aztec`, `battle`, `bifrost`, `boreal`,
+  `cellar`, `chaos`, `cloud`, `copper`, `crystal`, `curacan`, `devils`,
+  `frosted`, `garden`, `golden`, `hellflame_torch`, `hive`, `key`,
+  `key_of_infernal_terror`, `key_of_terror`, `magma`, `mysterious`, `mystic`,
+  `naga_scale`, `parasitic`, `pickaxe`, `ruby`, `rusted`, `shovel`,
+  `smelly_cheese`, `storage`, `tablet_of_armada`, `tablet_of_leviathan`,
+  `tablet_of_parasite`, `tomb`, `tower`, `treasure`, `valhalla`, `valor` and
+  `warp` (each `keys_<word>`, most ending `_key`). **Static search.** Which
+  index holds which name is **not established** statically; ForgePact's
+  `droprate list 12` prints the runtime's order.
+- `gml_Script_GetDungeonKeys` (1638) builds the 26-entry pool `DropDungeonKeys`
+  picks from (§ 13.3) out of global constants whose values are not visible
+  statically, so which 26 keys it holds is **not established**. **Static
+  reading.**
+- The bag's Key sub-tab (`InventoryTabKey`, § 17): the slot-name table holds
+  `inventoryKeyGrid`, by analogy with `inventoryMaterialGrid` the Key tab's
+  grid; the object that owns it is **not established**. It holds no
+  `stashKeyTab`- or `stashKeyGrid`-like name, so keys live in the bag's Key
+  sub-tab and a stash tab for keys was **not observed**. The table also holds
+  `itemSprite`, whose meaning is **not established**. **Static search**
+  (`tools/decomp_index.py find-name`).
+- Stacking: `gml_Script_ItemsAreStackable` (1923) needs both items defined,
+  consults the first item's `GetItemInfo` method (a closure, in `hs-game-sdk`
+  as `gml_Script_GetItemInfo_anon_5277_s_ItemInstanceStruct_InventoryV2Funcs`
+  (2035), a name that moves with every patch, §5.3), which can answer false
+  for reasons not read, and then answers true only when the two items'
+  `itemType` match and their `itemDefinitionStruct`'s `b` and `c` match. The
+  seed `a` and the count `o` are not compared, so two items of one key
+  definition stack whatever their seeds. **Static reading.** A byte scan for
+  its direct call sites found none (the same scan found `PickupLoot`'s four
+  callers), so how the game reaches it is **not observed**.
+- Already in this reference: `LootGroundCreate` writes a fresh seed into `a`
+  (§ 18.4); `InitItemFromJson` followed by `LootGroundCreateFromItem` keeps the
+  definition it was handed (ForgePact #74's `sigdrop`; relics placed with the
+  player as `self`, § 10.7); a bag drop reaches `LootGroundInit`, and the loot
+  announcement's creation guard tells it from a fresh build (§ 16.11); `sCP` is
+  the game's own spawner that stamps the spawned flag (§ 20.5).
