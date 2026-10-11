@@ -493,6 +493,9 @@ class Fake:
                 f.write(line + "\n")
             with self.lock:
                 self.last_command = time.monotonic()
+                # a mode a test set just before this command applies to it,
+                # however late the ticker runs on a loaded machine
+                self.modes = read_json(self.modes_file, self.modes) or {}
                 self.handle(line)
                 if self.done:
                     break
