@@ -5402,17 +5402,24 @@ measured the portal and the direct travel; the rest is static reading.
   `room_goto` builtin. **Static reading.** A raw `room_goto` to
   `Uber_Inoya_rm` closed the game (§ 13.1, **measured**); whether the setup
   `RoomGoto` adds would have prevented that is **not established**.
-- A `Portal_obj` created at run time whose `portalZone` record was written with
-  a boss room does not take the player there: entered, it travelled through its
-  Alarm_0 and `NetworkRoomGoto` to `Act_01_Pregame` (the River of Inoya) both
-  times, once opened in `Act_01_01` for `Act_01_Boss` and once in `Town_01_rm`
-  for `Act_02_Boss`, while `NetworkRoomGoto` called
+- A `portalZone` record of a `Portal_obj` created at run time, written with a
+  boss room through `PC_SetVariableGMLWrapper`, read that room back at once
+  (`after=12` for `Act_01_Boss`, `after=26` for `Act_02_Boss`). Read again
+  before entry, the same key resolved to another room: `Act_01_Pregame` (13)
+  for the portal opened in `Town_01_rm`, `Act_01_02` (3) for the one opened in
+  `Act_01_01`, matching the labels on screen ("River of Inoya", "Fields of
+  Battle"). Both portals opened in town and entered took the player through
+  their Alarm_0 and `NetworkRoomGoto` to `Act_01_Pregame` (the second, for
+  `Act_02_Boss`, was not read again before entry, but its label also read
+  "River of Inoya"); the one opened in `Act_01_01` was not entered.
+  `NetworkRoomGoto` called
   with `Act_01_Boss` or `Act_02_Boss` reached that room, whose pentagram then
   brought out Gurag or the Reaper, who died there without a crash; the zone a
   portal was opened in still loaded on a revisit, the portal with it.
   **Measured** (ForgePact #197's Live procedure 3, 2026-10-11, capture
-  `forgepact-197-boss-soul-pieces-live-3`). Why the portal ignored the record's
-  room is **not established**.
+  `forgepact-197-boss-soul-pieces-live-3`). What rewrites the record after
+  creation, and whether a write that persists would route the portal to a boss
+  room, is **not established**.
 
 ### 21.6 Zone state and a boss room's return
 
@@ -5450,10 +5457,11 @@ killed.
   every time the pentagram is created, and its Create, Step and Alarm_0 read no
   quest, act-completion or boss-killed flag: Alarm_0 checks `bossSpawned` and
   whether the boss object exists, and one other event reads a protected value
-  in `Niflhel_01_rm` (204) only. So whether the boss comes out depends on the
-  pentagram instance the room holds, which a revisit restores from the zone
-  state, and a room built without a saved state builds the pentagram as on a
-  first visit. **Static reading** (Amendment 2, 2026-10-11).
+  in `Niflhel_01_rm` (204) only. So, as far as the pentagram's own events go,
+  nothing but its instance state decides whether the boss comes out; whether a
+  revisit restores that state from the zone state, and whether the boss object
+  or the room's creation code reads a kill flag, was not read. **Static
+  reading** (Amendment 2, 2026-10-11).
 - A revisited zone gets new instance ids at the same positions with its
   creators' protected state restored (§ 11.2, **measured**, ForgePact #181's
   Live 4), and Live procedure 3 measured the same for a zone's portals (§ 21.5).
