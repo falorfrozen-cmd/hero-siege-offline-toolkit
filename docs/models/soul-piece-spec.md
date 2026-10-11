@@ -173,7 +173,9 @@ Most are ForgePact#197's Live procedure 3 checks, named in the curated file.
   in its `GetDropRate` answer, or picks one by weight among them. The model
   assumes 1 in the rate. Not measured live: a gem is too rare for one session.
 - **`room_outside_the_switch_is_undefined`**: that a room outside the switch
-  answers undefined is a reading (`portal-travel` reads it in `Act_01_Boss`).
+  answers undefined is a reading, not measured: Live procedure 3's
+  `portal-travel`, which was to read it in `Act_01_Boss`, never reached that
+  room.
 - **`class_11_never_stacks`**: that a class-11 piece takes its own bag cell,
   apart from a real Edible PAS Logo and from other pieces (`piece-apart`).
 - **The base's name**: that category 11's entry 12 is named
