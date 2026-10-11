@@ -5375,7 +5375,8 @@ soul piece is used by right-clicking it in the backpack, the way a PAS token is.
 
 Read in Replan 1 of ForgePact #197 (2026-10-11, the same MCP and build), for
 the owner's choice that using a soul piece opens a portal to its act's boss
-room. Nothing in this subsection is measured yet.
+room. The last bullet is ForgePact #197's Live procedure 3 (2026-10-11), which
+measured the portal and the direct travel; the rest is static reading.
 
 - A portal keeps its state in the protected store. `Portal_Parent_obj`'s Create
   allocates protected records and keeps their keys in the instance variables
@@ -5401,7 +5402,67 @@ room. Nothing in this subsection is measured yet.
   `room_goto` builtin. **Static reading.** A raw `room_goto` to
   `Uber_Inoya_rm` closed the game (§ 13.1, **measured**); whether the setup
   `RoomGoto` adds would have prevented that is **not established**.
-- Whether a `Portal_obj` created at run time with a boss room in its
-  `portalZone` record can be entered and takes the player there, and whether
-  the zone it was opened in still loads when revisited, is **not
-  established**; ForgePact #197's Live procedure 3 asks it.
+- A `Portal_obj` created at run time whose `portalZone` record was written with
+  a boss room does not take the player there: entered, it travelled through its
+  Alarm_0 and `NetworkRoomGoto` to `Act_01_Pregame` (the River of Inoya) both
+  times, once opened in `Act_01_01` for `Act_01_Boss` and once in `Town_01_rm`
+  for `Act_02_Boss`, while `NetworkRoomGoto` called
+  with `Act_01_Boss` or `Act_02_Boss` reached that room, whose pentagram then
+  brought out Gurag or the Reaper, who died there without a crash; the zone a
+  portal was opened in still loaded on a revisit, the portal with it.
+  **Measured** (ForgePact #197's Live procedure 3, 2026-10-11, capture
+  `forgepact-197-boss-soul-pieces-live-3`). Why the portal ignored the record's
+  room is **not established**.
+
+### 21.6 Zone state and a boss room's return
+
+Read in Amendment 2 of ForgePact #197 (2026-10-11, the same MCP and build, with
+variable slots named by `tools/decomp_index.py slot-name`), for the owner's
+choice that every soul piece brings a fresh boss fight, even after the boss was
+killed.
+
+- A room's contents outlive the player's leaving it through the game's zone
+  state, a global map `zoneStates` keyed by room.
+  `gml_Script_ZoneStateSaveController` (4636), run as the player leaves a room,
+  stores the room in it with `gml_Script_ZoneStateSave` (4634) unless one of
+  these holds: the controller's `skipZoneStateSave` flag is set (it clears the
+  flag and saves nothing; `gml_Script_ZoneGenRestart` (3611) sets that flag
+  before `room_restart`); the room's name starts with `Unstable_Rift_` or
+  `Chaos_Tower_` (two prefixes found by a byte scan of the string table; which
+  test reads which is not settled); the room is `The_Labyrinth_01_rm` (230) or
+  `The_Labyrinth_02_rm` (231); or the controller's `zoneStateReset` flag is
+  set. In the last three cases it calls `ZoneStateResetSingle` on the room
+  instead and clears that flag. **Static reading** (Amendment 2, 2026-10-11).
+  Further conditions on the save branch (a pass over the players' rooms, an
+  `endAction` value) were not fully read, so that an act boss room, which none
+  of the exclusions names, is saved on leaving is a reading, not a
+  measurement.
+- `gml_Script_ZoneStateResetSingle` (4632) takes a room index, the same value
+  the controller passes, and, when `zoneStates` holds a state for it, frees
+  that state and deletes the room's entry; its body writes no quest, act,
+  waypoint or save-file value. `gml_Script_ZoneStateExists` (4621) answers the
+  room entry's `zoneVisited` value, and false when there is no entry. **Static
+  reading** (Amendment 2, 2026-10-11). The MCP's reference table holds no
+  caller of `ZoneStateResetSingle`, which is **not observed**, not "has none"
+  (the controller's call above is one). ForgePact's density mod already
+  detours it, so any call to it runs that detour too.
+- `Pentagram_Boss_obj`'s Create sets `bossSpawned` and `bossesKilled` afresh
+  every time the pentagram is created, and its Create, Step and Alarm_0 read no
+  quest, act-completion or boss-killed flag: Alarm_0 checks `bossSpawned` and
+  whether the boss object exists, and one other event reads a protected value
+  in `Niflhel_01_rm` (204) only. So whether the boss comes out depends on the
+  pentagram instance the room holds, which a revisit restores from the zone
+  state, and a room built without a saved state builds the pentagram as on a
+  first visit. **Static reading** (Amendment 2, 2026-10-11).
+- A revisited zone gets new instance ids at the same positions with its
+  creators' protected state restored (§ 11.2, **measured**, ForgePact #181's
+  Live 4), and Live procedure 3 measured the same for a zone's portals (§ 21.5).
+- **Not established**: what `gml_Script_ZoneStateLoad` (4625) restores for a
+  boss room (the pentagram's `bossSpawned`, the boss's absence, the exit a kill
+  leaves), so that re-entering a boss room after a kill does not bring the boss
+  back is the owner's account, not a measurement here; whether `zoneStates`
+  reaches the save file and survives a relaunch; what else a boss room's state
+  holds (loot on its floor, the exit portal); and whether a boss killed again
+  after its room's state was dropped credits its act's quest a second time.
+  ForgePact #197's Live procedure 2 checks that Gurag comes out again after a
+  kill once his room's entry is dropped with `ZoneStateResetSingle`.
