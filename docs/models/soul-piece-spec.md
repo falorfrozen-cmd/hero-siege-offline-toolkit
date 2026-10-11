@@ -8,12 +8,14 @@ against [`hs-game-sdk/curated/boss_soul_pieces.json`](../../hs-game-sdk/curated/
 and [`hs-game-sdk/curated/room_acts.json`](../../hs-game-sdk/curated/room_acts.json).
 It was written for ForgePact#197, whose **Boss soul pieces** switch lets an
 ordinary monster in a zone of an act drop a Piece of that act's boss's Soul.
-Right-clicking a piece in the backpack and confirming opens a portal beside the
-player to that act's boss room, where the room brings out its boss. The spec
-answers three questions: what the game decides (which act a room belongs to,
-which items stack, when the game rolls a gem, and when a backpack use leaves the
-item gone), and exactly what the mod adds on top (which rooms and sources count,
-the piece's chance on the gem's roll, and where its portal leads).
+Right-clicking a piece in the backpack and confirming moves the player straight
+into that act's boss room through the game's own `NetworkRoomGoto`, after
+dropping the room's saved zone state with `ZoneStateResetSingle` so the boss
+comes out again; no portal is opened. The spec answers three questions: what
+the game decides (which act a room belongs to, which items stack, when the game
+rolls a gem, and when a backpack use leaves the item gone), and exactly what the
+mod adds on top (which rooms and sources count, the piece's chance on the gem's
+roll, and which room its use takes the player to).
 
 Every claim carries one of four labels, and a source:
 
@@ -29,8 +31,8 @@ Every claim carries one of four labels, and a source:
 
 The game facts behind this spec are in
 [`docs/RUNTIME_DATA_MODELS.md`](../RUNTIME_DATA_MODELS.md) § 21 (acts, act
-bosses, key items and stacking, the backpack's use path, portals and travel)
-and § 18.4 (how a gem drops).
+bosses, key items and stacking, the backpack's use path, portals and travel,
+zone state) and § 18.4 (how a gem drops).
 
 ## Static reading
 
@@ -88,6 +90,16 @@ byte scans of the game's executable and `data.win` whose positive controls were
   alarm reads the room back and calls `NetworkRoomGoto` with it. Offline,
   `NetworkRoomGoto` ends in `RoomGoto`, which sets the room's layers up once
   and then calls the `room_goto` builtin.
+- **Zone state** (Amendment 2, 2026-10-11). A room's contents outlive the
+  player's leaving it in the game's global `zoneStates` map, keyed by room,
+  which `ZoneStateSaveController` fills as the player leaves; no exclusion it
+  applies names an act boss room. `ZoneStateResetSingle(room)` deletes that
+  room's entry, writing no quest, act or save-file value, and
+  `ZoneStateExists(room)` answers whether the room has a visited entry. The
+  pentagram sets its `bossSpawned` afresh on every creation and reads no
+  boss-killed flag, so a boss room built without a saved state brings its boss
+  out as on a first visit. What a revisit restores for a boss room was not
+  read (`RUNTIME_DATA_MODELS.md` § 21.6).
 - **The gem roll.** `LoadDrops` asks, per drop type, an outer gate for the
   dying source: the monster's own `chances[6]` (45 on the sampled monster)
   against a die whose ceiling lives in `gDataProtected`. Only when it passes
@@ -134,6 +146,21 @@ in our words; the capture holds the lines.
   no `Pentagram_Boss_obj`; a Karp King made the same way in `Act_01_01` died
   cleanly (why they differ is not established).
 
+By Live procedure 3 (`forgepact-197-boss-soul-pieces-live-3`, 2026-10-11, a
+research build with the x64dbg debugger attached), in our words
+(`RUNTIME_DATA_MODELS.md` § 21.5, § 21.6):
+
+- **A portal does not reach the boss room; the game's travel does.** A
+  `Portal_obj` created at run time with a boss room written into its
+  `portalZone` record took the player, through its alarm and `NetworkRoomGoto`,
+  to `Act_01_Pregame` both times (opened in `Act_01_01` for `Act_01_Boss`, and
+  in `Town_01_rm` for `Act_02_Boss`; why it ignored the record's room is not
+  established). `NetworkRoomGoto` called directly with `Act_01_Boss` or
+  `Act_02_Boss`, the player as `self`, reached that room, whose pentagram
+  brought out Gurag or the Reaper, who died there without a crash (the Reaper
+  included, Live procedure 1's crash case). The owner chose the direct transfer
+  (2026-10-11), so the shipped use opens no portal.
+
 ## Not established
 
 Each of these is an open question. Where it decides a number or a rule the
@@ -151,15 +178,15 @@ Most are ForgePact#197's Live procedure 3 checks, named in the curated file.
   apart from a real Edible PAS Logo and from other pieces (`piece-apart`).
 - **The base's name**: that category 11's entry 12 is named
   `consumable_edible_pas_logo` (`base-consumable`).
-- **The use and the portal**: whether a piece's right-click reaches
-  `PotionUse` carrying the piece (`use-reaches-game`); whether a `Portal_obj`
-  whose `portalZone` record holds a boss room takes the player there through
-  the game's own travel (`portal-travel`); whether the room's pentagram brings
-  out the boss (`boss-arrives`) and the boss dies there without a crash
-  (`boss-dies-2`); whether a zone where a portal was opened loads again on
-  revisit (`portal-revisit`). Whether `CanUsePotion` refuses the logo in town
-  or any room, and whether a kill through a piece's portal counts toward the
-  act's quest or completion.
+- **The use and the transfer**: the route itself is measured above
+  (`NetworkRoomGoto` reaches the boss room, whose boss arrives and dies there:
+  Live procedure 3's `goto-travel`, `boss-arrives`, `boss-dies`,
+  `boss-dies-2`). Still open: whether dropping the boss room's
+  zone state with `ZoneStateResetSingle` brings its boss out again after a kill
+  (Live procedure 2's `on-reentry-reset` and `on-reentry-boss`), and what a
+  revisit restores for a boss room without it; whether `CanUsePotion` refuses
+  the logo in town or any room; and whether a kill reached through a piece
+  counts toward the act's quest or completion again.
 - **Magic find.** No magic-find stat name appears in `DropGems`' or
   `GetDropRate`'s body. That is "not observed", not a negative.
 - **Per-place overrides on the gem.** Whether the Gem of Incarnation carries a
@@ -204,20 +231,23 @@ name (category 15, `socketable_gem_of_incarnation`), never by index.
   so a save holding pieces loads.
 - **The use.** A detour on `PotionUse`: for an item that is a piece, the
   original is never called. Verdicts, in order: `off`, `not-piece`, `no-act`
-  (the player's room has no act), `boss-room` (the drop's name rule),
-  `unnamed`, then `portal`. Towns are allowed. On `portal` a `Portal_obj` is
-  made 96 px to the player's right (to the left past the room's width), its
-  `portalZone` record is set to the act's boss room (`Act_0N_Boss`, by SDK room
-  name) and read back, and `PotionUse` answers true, so the game clears the
-  piece's cell itself. Every other verdict, or a portal that did not open,
-  answers false and the piece stays. The game's own travel and the room's
-  pentagram do the rest; nothing of ours creates, moves or kills a boss.
+  (the player's room has no act), `boss-room` (the drop's name rule: a `_Boss`,
+  `Uber_` or `Dev_` room), `unnamed`, then `transfer`. Towns are allowed. On
+  `transfer` the detour checks that there is a player and that the act's boss
+  room (`Act_0N_Boss`, by SDK room name through `asset_get_index`) resolves,
+  records the transfer and answers `PotionUse` true, so the game clears the
+  piece's cell itself. On the next frame tick it calls
+  `ZoneStateResetSingle(Act_0N_Boss)`, dropping the room's saved zone state so
+  the boss comes out again, then `NetworkRoomGoto(Act_0N_Boss)` with the player
+  as `self`, both by SDK script constant. Every other verdict answers false and
+  the piece stays. No portal is opened. The room's pentagram does the rest;
+  nothing of ours creates, moves or kills a boss.
 
 The test file expresses this as input transforms (`piece_denominator`,
-`piece_chance`, `room_refusal`, `decide_drop`, `decide_use`, `portal_target`,
-`portal_x`, the seed helpers), and `ParityTests` pins the constants, the base,
-the act table with its boss rooms, the portal offset, the room rules and the
-verdict words to the header, so a change on either side fails there.
+`piece_chance`, `room_refusal`, `decide_drop`, `decide_use`, `transfer_target`,
+the seed helpers), and `ParityTests` pins the constants, the base, the act
+table with its boss rooms, the room rules and the verdict words to the header,
+so a change on either side fails there.
 
 ## The model
 
@@ -240,13 +270,13 @@ A pure function of whole numbers, booleans and exact fractions
 With the transforms of "Our code", the test checks the baseline and the target.
 Baseline: the measured merge of a key-base piece into the real key (the seed
 cannot keep it apart), the act as `RoomActIndex`'s answer, and no piece and no
-portal with the mod off. Target: a consumable piece never stacks with a real
+transfer with the mod off. Target: a consumable piece never stacks with a real
 logo or another piece; for `G` in 9,000, 10,000 and 11,000 the piece's chance
 over the gem's is exactly 5/4 (every multiple of 5), and otherwise above 5/4 by
 less than `5/(4D)`; over `N` gem rolls the expected pieces are `N/D`, so more
 rolls (more monsters from density, a higher gem chance) give proportionally more
 pieces; an unknown rate, a boss, a town, a boss room or a source that is not a
-monster gives no piece; and a use opens a portal to its act's boss room in
+monster gives no piece; and a use moves the player to its act's boss room in
 towns and zones, never from a boss room or a room with no act.
 
 ## What the model cannot catch
@@ -258,9 +288,11 @@ towns and zones, never from a boss room or a room with no act.
   `G` from `droprate.base`, so where the game uses another value the ratio
   differs.
 - **Whether the detours attach**, whether `RoomActIndex` answers by name at run
-  time, whether a piece's right-click reaches `PotionUse`, whether the portal
-  shows, can be entered and leads to its room through `NetworkRoomGoto`, and
-  whether the room's boss arrives and dies cleanly: those are Live procedure
-  3's and Live procedure 2's checks.
+  time, whether a piece's right-click reaches `PotionUse`, whether the
+  transfer reaches the boss room from a confirmed use, and whether the room's
+  boss arrives and dies cleanly: Gurag twice, the second time after he was
+  killed and his room's zone state dropped, and the Grim Reaper. Those are
+  Live procedure 2's checks (`on-transfer`, `on-boss`, `on-boss-dies`,
+  `on-reentry-reset`, `on-reentry-boss`, `on-use-town`, `on-boss-2`).
 - **What the Edible PAS Logo's own effect is**, and so what using a piece does
   with ForgePact removed, and how the drop rate feels over a season of play.
