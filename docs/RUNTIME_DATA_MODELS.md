@@ -3088,8 +3088,9 @@ line says **measured** or **inferred**.
   faulted the game (§ 5.8). That route is **measured** on creators and
   monsters (§ 11.2, § 13.7); the extension's own `GetVariable` does not
   resolve from the plugin (§ 20.5). Reading a pillar's record through it, and
-  the record turning true when a player activates the pillar, are **not
-  established** yet.
+  the record turning true when a player activates the pillar, are now
+  **measured** (Live 2, below); which code writes it stays **not
+  established**.
 - **Step.** When the pillar's protected `activated` record reads true, the
   Step takes its own branch (the tremble: `trembleTimer`, `angle`, `x2`) and
   leaves the tooltip alone. Otherwise, and only while `device` is true, it
@@ -3139,6 +3140,36 @@ line says **measured** or **inferred**.
     depth later, so the tooltips' Draw GUI runs after `Controller_obj`'s,
     where ForgePact's HUD hook runs (§ 8.3), and a `visible` written from
     that hook is drawn the same frame.
+- **Measured (Live 2, 2026-10-11)**, the same zone, rate and instruments,
+  mouse play, 35 pillars:
+  - **The raw `activated` is a key whose record reads false before any
+    interaction.** On all 35 untouched pillars `activated` held a distinct
+    whole number between 174773 and 175959, and the record behind it, read
+    through `PC_GetVariableGMLWrapper` by name, answered 0. The same pillar's
+    `rarity` and `activateTimer` keys sat two below and one above it. As the
+    read's positive control, the `rarity` records answered 1, 2, 3, 5 and 6
+    across the pillars, and one reading 3 was the pillar the game's own box
+    named "Rare"; `activateTimer`'s record read 216 on every untouched
+    pillar. The getter itself answered the same non-zero number as `GPV` for
+    `gDataProtected[177]` that session.
+  - **The player's activation turns the record true.** Clicking a pillar
+    (rarity 1) opened the game's dialog ("Activate the pillar?", asking for no
+    item at that rarity), and choosing its yes option made the record answer
+    1 within 2 s, under the same key; every other pillar's stayed 0. In the
+    same read the `activateTimer` record had fallen from 216 to about 122,
+    `trembleTimer` from 14.4 to 7.2 and `speakCooldown` from 0 to about
+    -0.29, while `rarity`, `questState`, `isDiscovered`, `image_index` and
+    `sprite_index` were unchanged.
+  - **The tooltip survived that read, then the pillar went.** Within 2 s of
+    the activation the pillar's tooltip still existed (with `visible` 0); a
+    few seconds later the pillar was gone from the room (35 pillars, then
+    34), its place taken by the fight's pentagram. One activation was
+    observed, so whether the game always removes an activated pillar this
+    way is not established.
+  - With `visible` written true from ForgePact's HUD hook and no hover, the
+    box was drawn (the Draw GUI count rising, the box in a screenshot), so a
+    write there is drawn: the inference from the depths above holds in
+    practice for mouse play.
 
 ForgePact's **Always show Chaos Pillar mods** switch (`pillartips`, off by
 default, mouse play only) is built on this reading: once a frame, from its HUD
@@ -3146,12 +3177,14 @@ hook, it sets `visible` on the tooltips of on-screen pillars whose protected
 `activated` record reads false, the way mouse enter would, and clears it again
 when they leave the screen or the switch goes off. What is live-measured: the
 mouse hover gate, mouse leave's clear, the depths, and that the raw
-`activated` variable is not the state (Live 1). What is not: the switch
-showing a box without hover (in Live 1 it read the raw variable, counted all
-17 pillars as activated and showed none; the record read that replaced it has
-not run live), the record turning true when a player activates a pillar,
-whether the tooltip survives activation, and gamepad play, where the Step
-rewrites `visible` every step and which ForgePact does not support or test.
+`activated` variable is not the state (Live 1); the switch showing every
+on-screen, untouched pillar's box without hover, hiding it off screen and on
+activation, the record turning true when a player activates a pillar, and the
+game's own hover back once the switch is off (Live 2). What is not: which
+code writes the record, the game's hover on an activated pillar with the
+switch on (the pillar was removed first), and gamepad play, where the Step
+rewrites `visible` every step and which ForgePact does not support or test
+(that branch stays a static reading).
 The argument, the instrument and the live results are in
 [the Chaos Pillar tips research](../ForgePact/docs/chaos-pillar-tips-research.md).
 
