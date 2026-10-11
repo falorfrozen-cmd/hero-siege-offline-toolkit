@@ -106,8 +106,9 @@ the running game, with no research build and no relaunch
 in your session, the same tools run as `py -3 -m tools.x64dbg_mcp tool <name>
 '<json>'`, never through `py -3 -c`; say in the capture which route you used.
 
-The tools never pause the game: `logpoint` arms on the running game, and the
-keeper resumes every pause x64dbg takes on its own (`breaks_resumed` and
+The tools never ask x64dbg to pause the game: `logpoint` arms on the running
+game, holding it only for a moment at a hardware breakpoint's own hit, and
+the keeper resumes every pause x64dbg takes on its own (`breaks_resumed` and
 `last_break` in `status`). Do not take a tool's word for it, though: whether
 the game's threads run is read from outside the debugger with
 `py -3 -m tools.thread_state <pid>`, a read-only check that prints one JSON
@@ -117,26 +118,35 @@ capture each time the steps below run it.
 1. **Attach after the game's positive control**, under the lease you already
    hold; the attach refuses without it. Run `py -3 -m tools.x64dbg_mcp attach
    --game` (or `attach <pid>`), then the `status` tool, and copy the session
-   state it reports into the capture, with its `instrument` field verbatim
-   (the outside check before attach, at x64dbg's attach break, and after the
-   resume, and whether that sequence is `proven`). Then run
-   `py -3 -m tools.thread_state <pid>` yourself. x64dbg pauses the game while
-   it attaches; an attach that exits 0 with `ready: true` has resumed it. A
+   state it reports into the capture, with its `instrument` field verbatim.
+   Then run `py -3 -m tools.thread_state <pid>` yourself. Attaching does not
+   pause the game (there is no attach break), so right after attach
+   `instrument` holds only the check before attach, with `control_hold`
+   null and `proven: false`: that is expected, not a failure, because the
+   frozen reading comes at the control logpoint's first hit (step 2). A
    non-zero exit, `ready: false`, or the state `attach-unconfirmed` means the
-   game may still be paused: run `detach` (step 5) and return
-   `LIVE-ABORTED`, quoting what `attach` printed.
+   attach was not seen through and the game may be paused: run `detach`
+   (step 5) and return `LIVE-ABORTED`, quoting what `attach` printed.
 2. **Debugger positive control first.** A `logpoint` on the control address
    the procedure names, with a counter in its log string
    (`#{d:$breakpointcounter}`), then read its hits through `log` and quote
    them. No hits is `INSTRUMENT-BLIND`: tear down (step 5) before you return
-   it.
+   it. The control arms by holding the game at its own first hit, where the
+   outside check must read the game frozen: that is the instrument's control
+   hold. After the control's `logpoint`, run `status` again and copy its
+   `instrument` field verbatim (the check before attach, at the control
+   hold, and after its resume, and whether that sequence is `proven`). When
+   `proven` is not true, the outside check could not be shown to see a held
+   game, so none of its `running` verdicts mean anything this session: tear
+   down (step 5) and return what the procedure says, `LIVE-ABORTED` unless it
+   names otherwise.
    **After every `logpoint`**, the control's and each candidate's, take
    `hs_command` `incident stat` straight away and run
    `py -3 -m tools.thread_state <pid>` again, and quote both with the
-   logpoint's reply (its `held`, `window_break`, `x64dbg_state` and `game`).
-   An arming that holds the game shows in ForgePact's incident monitor, so a
-   slowdown check over a later window must start from the `incident stat`
-   taken after it, not before.
+   logpoint's reply (its `held`, `held_note` when present, `x64dbg_state`
+   and `game`). An arming that holds the game shows in ForgePact's incident
+   monitor, so a slowdown check over a later window must start from the
+   `incident stat` taken after it, not before.
 3. **Breakpoints only through `logpoint`**: a hardware breakpoint that logs
    and never stops the game, at most four at once (the control and three
    candidates; clear a candidate with `command` `bphc <address>` to arm the

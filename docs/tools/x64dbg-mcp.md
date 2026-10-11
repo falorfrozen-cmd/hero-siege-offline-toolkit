@@ -34,10 +34,13 @@ instead of guessing. When one is, the proxy forwards to the plugin over
 loopback HTTP (initialize, session id, `tools/list`, `tools/call`), and refuses
 any host but `127.0.0.1`.
 
-No tool asks x64dbg to pause the game. `logpoint` arms its hardware
-breakpoint on the running game, through the keeper and headless's stdin
-(§ "Breakpoint rules"). The keeper resumes every pause x64dbg takes on its
-own and reports each one (§ "Attach, the keeper, and teardown"). Whether the
+No tool asks x64dbg or the plugin to pause the game, and attaching does not
+pause it either (there is no attach break, § "Attach, the keeper, and
+teardown"). `logpoint` arms its hardware breakpoint on the running game,
+through the keeper and headless's stdin. The game is held only at a
+hardware breakpoint's own hit, for the moment a change takes, and resumed at
+once (§ "Breakpoint rules"). The keeper resumes every pause x64dbg takes on
+its own and reports each one. Whether the
 game's threads actually run is checked from outside the debugger, with
 `py -3 -m tools.thread_state <pid>` (§ "Checking the game from outside the
 debugger").
@@ -172,7 +175,7 @@ the set, and each is named `mcp__x64dbg__<tool>` on an agent's `tools:` line:
 | Tool | What it does |
 |---|---|
 | `mcp__x64dbg__status` | session state (`none`, `attaching`, `attach-unconfirmed`, `running`, `detaching`, `ended`, `detach-unconfirmed`, `game-not-released`), the target pid, whether the keeper and headless are alive, whether the plugin answers on loopback, and the hs-drive lease state. Beside those, the keeper's own record: `x64dbg_state` (x64dbg's settled state, read from its `[STATE]` lines), `breaks_resumed`, `last_break`, `break_storm` and `instrument` (§ "Attach, the keeper, and teardown"), and `paused_at_detach` and `game_released` once a teardown has set them. While a session is live it also carries `game`, a fresh outside check of the game (§ "Checking the game from outside the debugger") |
-| `mcp__x64dbg__logpoint` | adds one non-breaking hardware logging breakpoint: an `address` (an x64dbg expression such as `Hero_Siege.exe+427460`), a `log` format string (`{` `}` allowed, `"` refused), an optional log condition, an optional name, and an optional `expect_bytes`: the function's first bytes as Ghidra's copy has them, in hex. It first reads the code at the address and returns its first bytes; with `expect_bytes` a mismatch is refused before anything is set. It refuses `break_storm` while the session has one, `not_running` unless x64dbg's settled state is `running`, and `already_armed` when `bplist` already lists the address. Then it arms on the running game, with no pause: one keeper hold sends, on headless's stdin, `bph <A>, x, 1`, the never-break condition `SetHardwareBreakpointCondition <A>, 0` straight after it, the log text, the optional log condition and name, and a `bplist` read-back. While another logpoint is logging, that hold is a held change (§ "Breakpoint rules"). It fails at stage `set` (a failure line from x64dbg, no `Hardware breakpoint at <A> set!` line, no `bplist` row for A, or a row without the name given), `listed-but-disabled` (A's row starts `0:`), `running` (x64dbg broke on A within 1.5 s after the hold, the settle time: its never-break condition did not take) or `game-not-running` (the outside check after arming reads anything but `running`). Every failure clears A with a hold of `bphc <A>` and returns `cleared` and `x64dbg_state`. Success returns `steps`, `bplist`, `held` (the break line a held change paused at, or null), `window_break` (true when a break came during a direct batch and the keeper resumed it), `x64dbg_state` and `game`, the outside check. It never calls the plugin's `PauseDebug`, `run` or `ExecuteDbgCommand` |
+| `mcp__x64dbg__logpoint` | adds one non-breaking hardware logging breakpoint: an `address` (an x64dbg expression such as `Hero_Siege.exe+427460`), a `log` format string (`{` `}` allowed, `"` refused), an optional log condition, an optional name, and an optional `expect_bytes`: the function's first bytes as Ghidra's copy has them, in hex. It first reads the code at the address and returns its first bytes; with `expect_bytes` a mismatch is refused before anything is set. It refuses `break_storm` while the session has one, `not_running` unless x64dbg's settled state is `running`, and `already_armed` when `bplist` already lists the address. Then it arms through headless's stdin, with no plugin pause, in one keeper hold. With no hardware breakpoint armed yet (the control), it sends a breaking `bph <A>, x, 1` and holds the game at A's own first hit; there it takes the outside check (`hold_game`, which must read `frozen`, and which proves the instrument as its control hold), sets the never-break condition `SetHardwareBreakpointCondition <A>, 0`, the log text, the optional log condition and name, reads `bplist`, and sends `run`. A cold address that is not hit within the hold timeout (10 s) is armed never-break on the running game instead, with `held: null` and a `held_note`, and proves nothing. While another logpoint is logging (a candidate), the same lines go out as a held change at that logpoint's hit (§ "Breakpoint rules"). It fails at stage `set` (a failure line from x64dbg, no `Hardware breakpoint at <A> set!` line, no `bplist` row for A, or a row without the name given), `listed-but-disabled` (A's row starts `0:`), `running` (x64dbg broke on A again in the 1.5 s after the hold: its never-break condition did not take) or `game-not-running` (the outside check after arming reads anything but `running`). Every failure clears A with a hold of `bphc <A>` and returns `cleared` and `x64dbg_state`. Success returns `steps`, `bplist`, `held` (the break line the game was held at while the rest was set: A's own first hit for the control, the logging breakpoint's hit for a candidate, or null), `hold_game` (at a first hit), `x64dbg_state` and `game`, the outside check after the resume. It never calls the plugin's `PauseDebug`, `run` or `ExecuteDbgCommand` |
 | `mcp__x64dbg__command` | one allowlisted x64dbg command, sent on headless's stdin (not through the plugin, § "Breakpoint rules"): delete, enable or disable a hardware breakpoint, name it, set its log condition, reset its hit count, or `bplist`. The verbs that change debug registers (`DeleteHardwareBreakpoint`/`bphc`/`bphwc`, `EnableHardwareBreakpoint`/`bphe`/`bphwe`, `DisableHardwareBreakpoint`/`bphd`/`bphwd`) go through a keeper hold, a held change while a logpoint is logging, and return its `lines`, `after` (with the `bplist` that followed), `held` and `x64dbg_state`. The others change only x64dbg's list and go straight to stdin, returning the log lines that followed. Everything else is refused, naming the allowlist: in particular a new hardware breakpoint (use `logpoint`), every software or memory breakpoint, setting a breakpoint command, `StopDebug`, `detach`, `exit`, memory writes, and any command with a `;` outside a double-quoted string. Reading a hit count is not on the list: x64dbg's `GetHardwareBreakpointHitCount` sets `$result` and, as far as is known, prints nothing, so it would answer ok with no number |
 | `mcp__x64dbg__bplist` | sends `bplist` and returns the log lines it produced |
 | `mcp__x64dbg__log` | the session log's lines after a given line number (by default the last 200), with the total line count, so logging-breakpoint hits can be paged |
@@ -281,24 +284,43 @@ These come from the 2026-10-10 probes recorded on issue #484.
   after a confirmed detach, 69 of 71 game threads sat in the Suspended wait,
   the game answered nothing, and only a force-stop ended it. So `logpoint`,
   `command` and the teardown never call `PauseDebug`, the plugin's `run` or
-  `ExecuteDbgCommand`: they arm on the running game through the keeper,
-  which writes headless's stdin. Live 1 had measured the old route's cost
-  too: each plugin command held the game about 3.4 s, and ForgePact's
-  incident monitor episodes rose 0, 2, 4, with a worst judged frame of
-  12032 ms.
-- **The arming window.** Setting a hardware breakpoint on the running game
-  works, and a `bph` with no condition yet breaks on its first hit (both
-  measured in the issue #484 probe). With nothing else armed, `logpoint`'s
-  lines go out as one direct batch, with the never-break condition straight
-  after `bph`, so the only window in which a hit can break is `bph`'s own
-  pass over the threads (static reading). A break there is resumed by the
-  keeper and reported as `window_break` (true in `logpoint`'s reply, with the
-  break line as `window_break_line`). After the hold, a 1.5 s verification
-  window follows: a break line naming the address (its 16 hex digits or its
-  name) and then `[STATE] paused` means the never-break condition did not
-  take, and `logpoint` clears the breakpoint and fails at stage `running`.
-  The outside check of the game comes last: anything but `running` is stage
-  `game-not-running`.
+  `ExecuteDbgCommand`: they work through the keeper, which writes headless's
+  stdin. Live 1 had measured the old route's cost too: each plugin command
+  held the game about 3.4 s, and ForgePact's incident monitor episodes rose
+  0, 2, 4, with a worst judged frame of 12032 ms.
+- **A hardware breakpoint's hit is the only hold, the control hold among
+  them.** Measured in Replan 3's probe, against a throwaway process and not
+  the game: a breaking hardware execute breakpoint holds the target on its
+  first hit about 10 to 15 ms after `bph`, synchronously, with every thread
+  in the Suspended wait at suspend count 1, so the outside check reads
+  `frozen`. `[STATE] paused` is the reliable sign of the hold; the
+  descriptive `Hardware breakpoint (...)` line can come a beat later. And a
+  detach while held at such a hit, with no clear and no `run` first, printed
+  `Detached!` and `[STATE] stopped`, and left every thread running at
+  suspend count 0: the opposite of Live 2. The static reading agrees: a
+  hardware breakpoint that broke leaves no synchronized step pending once it
+  is removed, and the detach clears the trap flag on every thread first. So
+  the freeze risk belongs to the plugin's pause and its software breakpoint,
+  which no tool path uses. The first such hold of a session is the **control
+  hold**: the outside check taken there is the instrument's frozen reading
+  (§ "Checking the game from outside the debugger").
+- **The first hit as the hold.** Arming the first breakpoint of a session
+  (the positive control) sends a breaking `bph <A>, x, 1` on the running
+  game and waits up to the hold timeout (10 s) for a new `[STATE] paused`:
+  A's own first hit, which comes within one frame for a function that runs
+  every frame. Setting a hardware breakpoint on the running game works, and
+  a `bph` with no condition yet breaks on its first hit (both measured in the
+  issue #484 probe). Held there, the keeper takes the outside check (the
+  control hold), then sets the never-break condition, the log text, the log
+  condition and the name, reads `bplist`, and sends `run`. Nothing else is
+  armed, so nothing races the change. When A is not hit within the hold
+  timeout (a cold address, not a control), the same lines go out on the
+  running game, `held` is null with a `held_note`, and the instrument is not
+  proven by it. After the hold, a 1.5 s verification window follows: a break
+  line naming the address (its 16 hex digits or its name) and then `[STATE]
+  paused` means the never-break condition did not take, and `logpoint`
+  clears the breakpoint and fails at stage `running`. The outside check of
+  the game comes last: anything but `running` is stage `game-not-running`.
 - **A change while another breakpoint logs is a held change.** Static
   reading, not measured: TitanEngine's `SetHardwareBreakPoint` and
   `DeleteHardwareBreakPoint` each read DR7 once, from the thread of the last
@@ -339,6 +361,17 @@ These come from the 2026-10-10 probes recorded on issue #484.
   ten resumes within 10 s (§ "Attach, the keeper, and teardown"). x64dbg's
   settings stay as they are: the tool resumes these pauses rather than switch
   them off.
+- **A stale breakpoint from x64dbg's database is cleared at attach.**
+  Measured in Replan 3's probe: x64dbg saves a module's breakpoints in its
+  database and restores them when it next attaches to the same image,
+  printing `Set hardware breakpoint on <16 hex digits>!` for each before any
+  command; a breakpoint left by one probe run came back on the next attach,
+  and a fresh `bph` on it answered `Hardware breakpoint already set!`. A
+  clean teardown (`bphc`, then a detach that saves the database) leaves
+  nothing behind, but an aborted session can. So once x64dbg has settled at
+  `running` after an attach, the keeper sends one `bphc` (and a `bplist`),
+  recorded in the session as `attach_bphc`. Nothing legitimate is armed at
+  that point, and nothing is logging, so the clear cannot race.
 - **The plugin's `ExecuteDbgCommand` reply, for the record.** No tool path
   uses it now. At the pinned commit the plugin never hands back a blank
   reply: when x64dbg printed nothing it answers `Result: Command executed
@@ -410,56 +443,68 @@ to release the game). That check is the session's baseline. `attach` then
 starts the detached keeper and returns once the keeper reports `running`,
 `attach-unconfirmed` (exit 1, below), or failed.
 
-- **x64dbg pauses the process on attach** until it is told to `run`: the
-  attach break, its system breakpoint (`[Events] SystemBreakpoint`, on by
-  default), which prints `[STATE] paused`. In the probe that was a 10.65 s
-  freeze. In the first live session (2026-10-10, `tooling-484-x64dbg-mcp`
-  live 1) `attach` took 8.53 s wall clock, and ForgePact's incident monitor
-  recorded one freeze episode across it, with a worst frame of 4201 ms. A
-  `run` sent before the attach completes fails and leaves the game paused
-  once it does.
-- **The attach sequence, with the instrument's control in it.** The keeper
-  sends `attach` on headless's stdin and waits for two things: the plugin
-  answering a debug-only call, and a `[STATE] paused` line after the attach
-  (the attach break). There it takes the outside check, which must read the
-  game `frozen`. It sends `run` on stdin and resumes every further pause,
-  the TLS storm of § "Breakpoint rules" (six in Live 2), until x64dbg has
-  read `running` for 1 s with no new `[STATE]` line. Then it takes the
-  outside check again, which must read `running`, and only then is the
-  session `running`, with `ready: true`. The session's `instrument` field
-  holds the three checks, `before_attach`, `attach_break` and
-  `after_resume`, and `proven`, true only for the sequence running, frozen,
-  running with the held threads named at the attach break: there
+- **There is no attach break: x64dbg does not pause the game on attach.**
+  Measured four times in Replan 3's probe against a throwaway process, and
+  matching Live 3: after `attach` the only state lines are `[STATE]
+  initialized` and `[STATE] running` (twice), then `Attached to process!`
+  and the DLL loads, and never `[STATE] paused`. The static reading of this
+  headless build and its TitanEngine (ec7a8b9) agrees: it attaches through
+  `NtDebugActiveProcess` with the remote break-in compiled out, and the
+  initial breakpoint of an attached process takes the "program generated"
+  branch, which does not set the paused state. Live 3's 61 s
+  `attach-unconfirmed` was the keeper of that time waiting for an attach
+  break that never comes. The pauses Live 2 saw just after attach were
+  x64dbg's TLS-callback breakpoints (§ "Breakpoint rules"). What the earlier
+  sessions timed was attach **latency**, not an x64dbg hold: the probe of
+  issue #484 saw 10.65 s, and in the first live session (2026-10-10,
+  `tooling-484-x64dbg-mcp` live 1) `attach` took 8.53 s wall clock while
+  ForgePact's incident monitor recorded one freeze episode with a worst
+  frame of 4201 ms. That is symbol loading and the game hitching while the
+  kernel's debug port attaches (measured by the incident monitor; the cause
+  is a reading).
+- **The attach sequence, with no attach break.** The keeper sends `attach`
+  on headless's stdin, and from then on resumes every pause x64dbg takes on
+  its own (a TLS-callback breakpoint, a late break), counted. It waits for
+  three things: the plugin answering a debug-only call; x64dbg's state
+  settled at `running` for 1 s with no new `[STATE]` line; and the outside
+  check reading the game `running` (`ready_check`). Once x64dbg has settled,
+  before that last check, it sends the one defensive `bphc` that drops a
+  stale breakpoint restored from the database (§ "Breakpoint rules"). Then
+  the session is `running`, with `ready: true`. **The instrument is not yet
+  proven at this point**, because attach holds nothing, so there has been
+  no frozen reading: the session's `instrument` field holds
+  `before_attach` (the baseline), `control_hold: null`, `after_resume: null`
+  and `proven: false`, with a `note` saying what is still missing. The
+  frozen reading comes later, at the first logpoint's control hold.
+- **When the instrument is proven.** `proven` turns true only for the
+  sequence running before attach, `frozen` at the control hold with the held
+  threads named, and `running` after its resume. At the control hold
   `suspended` and `stopped` must each list every thread the check before
-  attach saw (less the baseline's), as the child probe measured a pending
-  debug event, and `unreadable_counts` must be empty. A thread first seen at
-  the attach break, the debugger's own break-in thread, is left out. A
-  `frozen` with empty lists could come from a check that read no thread at
-  all. A check that does not read the held game as frozen, or does not name
-  the held threads, saw nothing: `proven` is false, `instrument` carries a
-  `note` naming each missing piece, and its later `running` verdicts prove
-  nothing (AGENTS.md § "Prove the Instrument Before Trusting a Negative
-  Result"). So an unproven instrument leaves the session
-  `attach-unconfirmed`, never `running`, and a detach then reports
-  `game_released: null` with `ok: false` rather than a release.
+  attach saw (less the baseline's), and `unreadable_counts` must be empty; a
+  thread first seen at the hold is left out. A `frozen` with empty lists
+  could come from a check that read no thread at all. A check that does not
+  read the held game as frozen, or does not name the held threads, saw
+  nothing: `proven` stays false, `instrument` carries a `note` naming each
+  missing piece, and its later `running` verdicts prove nothing (AGENTS.md
+  § "Prove the Instrument Before Trusting a Negative Result"). A detach of a
+  session whose instrument was never proven reports `game_released: null`
+  with `ok: false` rather than a release, so a live procedure arms its
+  control before it tears down.
 - **An attach the keeper did not see through is `attach-unconfirmed`**, not
-  `running`, with `ready: false` and an error naming what was not seen within
-  the ready timeout (60 s): the plugin never answered a debug-only call, the
-  attach break never came, x64dbg never settled at `running` for 1 s, or the
-  after-resume check read the game as something other than `running`, or the
-  instrument was not proven. The keeper keeps resuming every pause, and
-  makes the session `running` once all of it has been seen; an instrument
-  whose check before attach or at the attach break fell short cannot be
-  proven later, so that session stays unconfirmed. Until then every tool but
-  `detach` refuses the
-  session, `attach` exits 1 and says the game may be paused, and the thing to
-  do is `detach`.
+  `running`, with `ready: false` and an error naming which of the three was
+  not seen within the ready timeout (60 s): the plugin never answered a
+  debug-only call, x64dbg never settled at `running` for 1 s (with the number
+  of pauses resumed meanwhile), or the outside check read the game as
+  something other than `running`. The keeper keeps resuming every pause, and
+  makes the session `running` once all three hold. Until then every tool but
+  `detach` refuses the session, `attach` exits 1 and says the game may be
+  paused, and the thing to do is `detach`.
 - **The watchdog.** While the session is `running` or `attach-unconfirmed`,
   the keeper's loop reads x64dbg's settled state, and whenever it is
   `paused` sends `run` on stdin: one `run` per pause, and another for the
   same pause only when the first brought no new `[STATE]` line within 2 s.
-  Each resume counts in `breaks_resumed` (the attach break and a held
-  change's own pause are the keeper's and do not count), and `last_break`
+  Each resume counts in `breaks_resumed` (a hold's own pause, at a first hit
+  or in a held change, is the keeper's and does not count), and `last_break`
   keeps its break line and time. A break line is `paused!`,
   `INT3 breakpoint ...`, `Hardware breakpoint (...)` or
   `Breakpoint reached not in list!`, or failing those, the line just before
@@ -502,8 +547,8 @@ starts the detached keeper and returns once the keeper reports `running`,
   5. the outside check, leaving out the threads the baseline already found
      suspended or stopped. `running` ends the session `ended` with
      `detach_confirmed: true` and `game_released: true`, when the checks
-     before attach and at the attach break proved the instrument; when they
-     did not, it ends `ended` with `game_released: null`, `ok: false` and a
+     before attach, at the control hold and after its resume proved the
+     instrument; when they did not, it ends `ended` with `game_released: null`, `ok: false` and a
      note that the instrument was not proven, and the CLI exits 1. `gone`
      ends it `ended` with `game_released: null` and a note. Anything else is
      `game-not-released`.
@@ -595,14 +640,20 @@ before the tools used it:
   TitanEngine detach path was not measured. Live 2's suspended threads came
   from the synchronized step's explicit `SuspendThread` calls.
 
-The controls run in every session: before attach the game reads `running`,
-at x64dbg's attach break it reads `frozen` with `suspended` and `stopped`
-each naming every thread the check before attach saw (less the baseline's,
-the new break-in thread left out) and `unreadable_counts` empty, and after
-the resume `running` again (`instrument` in `status`). Only that sequence
-makes a later `running` mean anything: a `frozen` with empty lists could
-come from a check that read no thread at all. The live procedure runs the CLI itself too, after attach,
-after each `logpoint` and after `detach`.
+The controls run in every session: before attach the game reads `running`
+(`before_attach`); at the control hold, the first logpoint's first hit, it
+reads `frozen` with `suspended` and `stopped` each naming every thread the
+check before attach saw (less the baseline's, any thread new since left
+out) and `unreadable_counts` empty (`control_hold`); and after that hold is
+released it reads `running` again (`after_resume`). All three sit in
+`instrument` in `status`. Only that sequence makes a later `running` mean
+anything: a `frozen` with empty lists could come from a check that read no
+thread at all. Between attach and the first logpoint the session is
+`running` with `proven: false`, because there is no attach break to take a
+frozen reading at. Replan 3's probe measured the three readings on a
+throwaway process; on the game they are first taken live. The live
+procedure runs the CLI itself too, after attach, after each `logpoint` and
+after `detach`.
 
 ## Which agents reach it
 
@@ -649,14 +700,12 @@ breakpoints and no memory writes.
 - Teaching `planner.md` (and the `/workorder` skill) to write debugger steps
   into a `### Live procedure`. This doc and `live-operator`'s prompt describe
   how such steps run; the planner waits for the first real use.
-- Changing x64dbg's settings: its attach break (`[Events] SystemBreakpoint`)
-  and its TLS-callback breakpoints (`[Events] TlsCallbacks`) stay on. The
-  keeper resumes those pauses instead, and the attach break is where the
-  outside check proves it can see a held game.
-- No live session has run on the no-pause route yet. Until one has, the
-  held change, the
+- Changing x64dbg's settings: its TLS-callback breakpoints (`[Events]
+  TlsCallbacks`) stay on, and the keeper resumes those pauses instead.
+- No live session has run on the first-hit route yet. Until one has, the
+  first-hit hold and its control hold on the game, the held change, the
   watchdog on the game and the verified release are tested only against the
-  fakes and a throwaway child process.
+  fakes, a throwaway child process and Replan 3's throwaway probe.
 - Upstream pull requests for the two plugin edits.
 
 ## Tests
@@ -665,10 +714,15 @@ breakpoints and no memory writes.
 each acceptance with a negative control beside it: the git-tree refusal, the
 loopback bind and loopback-only client, the two edits (applied, already
 applied, CRLF and LF, refused), the build command line and install, the lease
-and attach refusals, the keeper's attach sequence and its instrument control,
-its `attach-unconfirmed` state and late promotion, the watchdog (a late
-break, the TLS storm, `break_storm`), held changes, the arming window, the
-verified release (`game-not-released`) and teardown order, `logpoint`'s
+and attach refusals, the keeper's attach with no attach break
+(`attach_no_break`: ready with the instrument unproven, and no `run` sent
+before the first logpoint), the stale breakpoint cleared at attach, its
+`attach-unconfirmed` state and late promotion, the watchdog (a late break,
+the TLS storm, `break_storm`), the first-hit hold and the instrument's
+control hold (`instrument_control`, with a cold address that holds nothing
+and proves nothing beside it), held changes, a breakpoint that keeps
+breaking after its first hit (`paused_first_run`), the verified release
+(`game-not-released`) and teardown order, `logpoint`'s
 read-back (a row listed but disabled fails) and its failure stages, the
 `expect_bytes` refusal, the `command` allowlist and its stdin and hold
 routes, the CLI `tool` route (the reply as JSON, exit by `ok`, exit 2 for a
@@ -693,36 +747,42 @@ break a few seconds later, the asynchronous pause, which the `never_pauses`
 control shows only the watchdog resumes.
 
 The fake headless, `tests/x64dbg_fake_headless.py`, prints what x64dbg
-prints, as measured or as read: `[STATE]` lines, the `log` markers, `bph`'s
-success line, nothing for a `Set*` that succeeds, `bplist` rows, `Detached!`,
-hit lines for each breakpoint a test marks hot, and a break on a hot
-breakpoint's hit while its condition is 1. Its modes stand in for each pause
-and failure: `tls_breaks` (the TLS storm), `late_break` (a pause landing
-late, as in Live 2), `window_break`, `condition_ignored`, `never_running`,
-`race` (a debug-register change that is not held silences a hot logpoint,
-the lost DR7 update, so the held-change test's control can fail),
-`leak_on_detach` (every game thread but one stays suspended after
-`detach`), `fail_condition`, `listed_as` and `false_success`.
+prints, as measured live, by Replan 3's probe, or as read: on `attach`,
+`[STATE] initialized`, `[STATE] running` twice and `Attached to process!`,
+and never `[STATE] paused`; the `log` markers, `bph`'s success line, nothing
+for a `Set*` that succeeds, `bplist` rows, `Detached!`, hit lines for each
+breakpoint a test marks hot, and a break on a hot breakpoint's hit while its
+condition is not 0, so a breaking `bph`'s first hit holds it as the real one
+does. Its modes stand in for each pause and failure: `tls_breaks` (the TLS
+storm after attach), `late_break` (a pause landing late, as in Live 2),
+`breaks` (a storm from now on), `break_after` (one break after a given
+verb), `stale_db` (a breakpoint restored from the database on attach),
+`condition_ignored`, `never_running`, `race` (a debug-register change that
+is not held silences a hot logpoint, the lost DR7 update, so the
+held-change test's control can fail), `leak_on_detach` (every game thread
+but one stays suspended after `detach`), `fail_condition`, `listed_as` and
+`false_success`.
 
 The outside check has a probe seam, `probe_cmd` in the session config: the
 logic tests point it at a fake probe whose verdict follows a file the fake
-headless writes (`frozen` at a break, at the attach break with its stand-in
-threads listed as suspended and stopped, `running` after a `run`,
-`threads-suspended` after a leaking detach). Two modes are the instrument's
-negative controls: `blind_probe` never reads `frozen`, and `empty_lists`
-reads `frozen` at the attach break with no thread listed. Each must leave
-`proven: false` with a `note` naming the gap, the session
-`attach-unconfirmed`, and a detach with `game_released: null`, `ok: false`
-and CLI exit 1. The `instrument_gaps` tests check each other shortfall on
-hand-built checks: a thread left out of either list, an unread suspend
-count, no `tids`. The `real_os` tests use the real reader instead, against a
-stand-in game the test starts (three threads sleeping 2 ms in a loop) whose
-threads the fake headless really suspends at the attach break and under
-`leak_on_detach`: the attach control end to end (`proven: true`, with every
-stand-in thread in `suspended` and `stopped` at the attach break and
-`unreadable_counts` empty), a leaking detach (`game-not-released`, CLI exit
-1) and a clean one (`game_released: true`, CLI exit 0). They run on Windows
-with a 64-bit Python only and skip elsewhere, naming the reason.
+headless writes (`frozen` at a break, the first-hit hold among them, with
+its stand-in threads listed as suspended and stopped, `running` after a
+`run`, `threads-suspended` after a leaking detach). Two modes are the
+instrument's negative controls: `blind_probe` never reads `frozen`, and
+`empty_lists` reads `frozen` at a break with no thread listed. Each must
+leave `proven: false` after the control logpoint, with a `note` naming the
+gap that `status` reports, and a detach with `game_released: null`,
+`ok: false` and CLI exit 1. The `instrument_gaps` tests check each other
+shortfall on hand-built checks: a thread left out of either list, an unread
+suspend count, no `tids`. The `real_os` tests use the real reader instead,
+against a stand-in game the test starts (three threads sleeping 2 ms in a
+loop) whose threads the fake headless really suspends at every break,
+the first-hit hold included, and under `leak_on_detach`: the control hold
+end to end (`proven: true`, with every stand-in thread in `suspended` and
+`stopped` at the first-hit hold and `unreadable_counts` empty), a leaking
+detach (`game-not-released`, CLI exit 1) and a clean one
+(`game_released: true`, CLI exit 0). They run on Windows with a 64-bit
+Python only and skip elsewhere, naming the reason.
 
 A guard fails any URL fetch that is not `127.0.0.1` and any subprocess the
 test did not expect, and a test proves the guard trips: no network, no
