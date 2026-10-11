@@ -6,10 +6,10 @@ each command.
 Measured 2026-09-25 over 124 verifiers: a median verifier took 7.6 minutes
 and 38 tool calls, and about a third of verifier wall time (346 of 1,042
 minutes) went on the model's turns between commands rather than on the
-commands themselves. The commands still run -- this does not cache, skip or
-share a result with the implementer (docs/agents/workorder-calibration.md
-explains why a shared result was rejected). It only runs them back to back,
-in the verifier's own call, and prints what they printed.
+commands themselves. The commands still run, back to back, in the
+verifier's own call, and it prints what they printed. The one exception is
+`--reuse` (below), which copies a prior run's result only where the runner
+can show nothing it depends on changed.
 
 It judges nothing. For each criterion it prints the commands it ran, each
 one's exit code and elapsed time, and the tail of its output; the full output
@@ -162,12 +162,30 @@ still judges nothing; it only shortens what the exit codes alone decide.
 It exits as `--status` does, and on an unfinished, stale or refused run
 prints what `--status` prints.
 
+Every run also records in `status.json`, per criterion, a `fingerprint` of
+the tree it ran against (2026-10-11, audit F10): the HEAD of the hub and of
+each submodule the criterion's `(reads ...)` can match or its commands `cd`
+into, whether each had uncommitted changes, a hash of the uncommitted and
+untracked files under its reads, and a hash of the content of every file its
+reads match (git-ignored files are not seen). `--reuse DIR` then copies, for
+a criterion whose text, HEADs and both hashes match DIR's finished run, that
+run's exit codes and logs (as `reused-cmd-<n>.log`) instead of running it,
+and prints `REUSED from <DIR>` on it; the report's `reuse:` line, the status
+(`reused_from`) and the digest say which. The owner, 2026-10-11:
+"implementer and verifier may share test results if it makes sense". It
+never reuses a criterion with no `(reads ...)` or a final-gate one (`(final)`
+or a whole suite), never a result DIR itself reused, and is refused (exit 2)
+on a full run: only a development run (`--dev`, `--item`, `--changed-since`,
+`--changed-from`) takes it, and one whose scope fell back to full reuses
+nothing. The final gate always runs every criterion.
+
 Usage:
     py -3 tools/run_criteria.py <slug>-plan.md [--out DIR] [--start K]
                                 [--timeout SECONDS] [--shell PATH] [--list]
                                 [--jobs N|auto] [--browser-jobs N] [--item ID]
                                 [--changed-since REF [--changed-since DIR=REF ...]
                                  | --changed-from FILE] [--failed K[,K...]] [--dev]
+                                [--reuse PRIOR_OUT_DIR]
     py -3 tools/run_criteria.py --status DIR [--wait S]
     py -3 tools/run_criteria.py --digest DIR
 
@@ -188,6 +206,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -486,6 +505,202 @@ def print_scope(source: str, changed, full: bool, why: str, scope: dict, start: 
         print(f"  {'run ' if selected else 'skip'} criterion {k}: {reason}")
 
 
+# ---------------------------------------------------------------- reuse
+#
+# `--reuse DIR` (2026-10-11, audit F10; the owner: "implementer and verifier
+# may share test results if it makes sense"). Every run records, per
+# criterion, a fingerprint of the tree it ran against (`fingerprint`); a later
+# development run may copy a prior run's result for a criterion whose
+# fingerprint still matches (`reusable`) instead of running it again.
+
+REUSE_LOG = "reused-cmd-{n}.log"
+
+
+def _git_out(cwd: Path, *args) -> bytes | None:
+    try:
+        result = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True)
+    except OSError:
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def repo_snapshot(repo: Path) -> dict | None:
+    """One repository's HEAD, its tracked files' blob ids, and every path
+    `git status` reports (modified, staged, deleted or untracked; ignored
+    files excluded); None when `repo` is not a git work tree."""
+    if not (repo / ".git").exists():
+        return None  # never let git walk up to an enclosing repository
+    head = _git_out(repo, "rev-parse", "HEAD")
+    listed = _git_out(repo, "ls-files", "-s", "-z")
+    status = _git_out(repo, "status", "--porcelain=v1", "-z", "-uall", "--no-renames")
+    if head is None or listed is None or status is None:
+        return None
+    blobs: dict = {}
+    for entry in listed.decode("utf-8", "replace").split("\0"):
+        meta, _, path = entry.partition("\t")
+        parts = meta.split()
+        if path and len(parts) == 3 and parts[0] != "160000":  # a gitlink is a submodule
+            blobs[path] = parts[1]
+    dirty = {}
+    for entry in status.decode("utf-8", "replace").split("\0"):
+        if len(entry) > 3:
+            dirty[entry[3:]] = entry[:2]
+    return {"head": head.decode().strip(), "blobs": blobs, "dirty": dirty}
+
+
+def _could_reach(glob: str, sub: str) -> bool:
+    """Whether a `(reads ...)` glob can match a path under submodule `sub`."""
+    literal = re.split(r"[*?\[]", glob.replace("\\", "/").removeprefix("./"))[0]
+    return (not literal or literal.rstrip("/") == sub or literal.startswith(sub + "/")
+            or (sub + "/").startswith(literal))
+
+
+def _cd_dirs(item: str) -> list:
+    """The directories a criterion's commands `cd` into, forward-slashed."""
+    out = []
+    for cmd in commands(item):
+        m = ANY_CD_RE.match(cmd.strip())
+        for d in re.findall(r"cd\s+(\"[^\"]+\"|'[^']+'|\S+?)\s*(?:;|&&)", m.group(0) if m else ""):
+            out.append(d.strip("\"'").replace("\\", "/").removeprefix("./"))
+    return out
+
+
+def _file_digest(path: Path) -> str:
+    try:
+        return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return "missing"
+
+
+def fingerprint(root: Path, item: str, subs: list, snaps: dict) -> dict:
+    """What a criterion's result depends on, as far as the runner can see:
+    the HEAD of every repository it reaches (the hub, plus a submodule its
+    `(reads ...)` can match or its commands `cd` into), whether each had
+    uncommitted changes (`dirty`), a hash of the uncommitted and untracked
+    files under its reads (`dirty_hash`), and a hash of the content of every
+    file its reads match (`reads_hash`: a clean file's blob id, a changed or
+    untracked file's bytes). `snaps` caches `repo_snapshot` per repository
+    for one run. A repository git cannot read records a None HEAD, and the
+    hashes are None then, and for a criterion with no `(reads ...)`: None
+    never matches."""
+    globs = plan_lint.reads(item)
+    cds = _cd_dirs(item)
+    keys = ["."] + [s for s in subs
+                    if any(_could_reach(g, s) for g in globs or [])
+                    or any(d == s or d.startswith(s + "/") for d in cds)]
+    heads, dirty, reads_lines, dirty_lines = {}, {}, [], []
+    for key in keys:
+        if key not in snaps:
+            snaps[key] = repo_snapshot(root if key == "." else root / key)
+        snap = snaps[key]
+        heads[key] = snap["head"] if snap else None
+        dirty[key] = bool(snap["dirty"]) if snap else None
+        if not snap or not globs:
+            continue
+        prefix = "" if key == "." else key + "/"
+        for path in sorted(set(snap["blobs"]) | set(snap["dirty"])):
+            if key == "." and path in subs:
+                continue
+            full = prefix + path
+            if not any(plan_lint.reads_path(g, full) for g in globs):
+                continue
+            if path in snap["dirty"]:
+                digest = _file_digest(root / full)
+                dirty_lines.append(f"{full} {snap['dirty'][path]} {digest}")
+            else:
+                digest = "blob:" + snap["blobs"][path]
+            reads_lines.append(f"{full} {digest}")
+
+    def digest_of(lines):
+        return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+
+    known = globs is not None and all(heads.values())
+    return {"heads": heads, "dirty": dirty,
+            "dirty_hash": digest_of(dirty_lines) if known else None,
+            "reads_hash": digest_of(reads_lines) if known else None}
+
+
+def reusable(prior: dict, k: int, item: str, item_id, fp: dict) -> tuple:
+    """`(prior entry, None)` when the prior run's result for criterion `k`
+    may stand for this run, else `(None, why)`. Never for a criterion with no
+    `(reads ...)`, a final-gate one (`final_only`), one whose text changed,
+    one the prior run did not finish with a numeric exit code on every
+    command, one the prior run itself reused, or one whose HEADs, dirty hash
+    or reads hash differ from this tree's."""
+    if plan_lint.reads(item) is None:
+        return None, "declares no (reads ...)"
+    if final_only(item):
+        return None, "final gate only"
+    if prior.get("item") != item_id:
+        return None, "the prior run checked another item, or the whole criteria"
+    entry = next((c for c in prior.get("criteria", []) if c.get("k") == k), None)
+    if entry is None or entry.get("text") != item:
+        return None, "the prior run has no criterion with this text at this number"
+    if entry.get("reused_from"):
+        return None, "the prior run reused it too"
+    cmds = entry.get("commands") or []
+    if entry.get("state") != "done" or not cmds or not all(isinstance(c.get("exit"), int) for c in cmds):
+        return None, "the prior run did not finish it with an exit code on every command"
+    old = entry.get("fingerprint") or {}
+    if not fp.get("reads_hash") or not all(fp["heads"].values()):
+        return None, "this tree's fingerprint is unknown"
+    if old.get("heads") != fp["heads"]:
+        return None, "a repository HEAD moved"
+    if old.get("dirty_hash") != fp["dirty_hash"] or old.get("reads_hash") != fp["reads_hash"]:
+        return None, "a file it reads changed"
+    return entry, None
+
+
+def load_prior(prior_dir: Path) -> tuple:
+    """`(status doc, None)` for a prior run that finished cleanly, else
+    `(None, why)`."""
+    doc, why = read_status(prior_dir)
+    if doc is None:
+        return None, why
+    if doc.get("refused") or not doc.get("finished") or doc.get("error"):
+        return None, f"{prior_dir} did not finish cleanly"
+    return doc, None
+
+
+def plan_reuse(prior_dir: Path, out: Path, items: list, item_id, fingerprints: dict, scope: dict | None,
+               full: bool) -> tuple:
+    """`(reused, report lines)` for `--reuse`: each criterion of this run
+    whose prior result `reusable` accepts, mapped to what `print_reused` and
+    `Status` need, with the prior logs copied into `out`. A prior run that
+    is missing or unfinished, or a scoped run that fell back to `scope:
+    full`, reuses nothing and says why; everything then runs as usual."""
+    if full:
+        return {}, ["reuse: none -- the scope fell back to full, so every criterion runs"]
+    prior, why = load_prior(prior_dir)
+    if prior is None:
+        return {}, [f"reuse: none -- {why}; every criterion runs"]
+    reused, kept = {}, []
+    for k, fp in fingerprints.items():
+        item = items[k - 1]
+        if (scope is not None and not scope[k][0]) or not commands(item):
+            continue
+        entry, why = reusable(prior, k, item, item_id, fp)
+        cmds = []
+        if entry is not None:
+            for c in entry["commands"]:
+                log = REUSE_LOG.format(n=c["n"])
+                try:
+                    shutil.copyfile(prior_dir / f"cmd-{c['n']}.log", out / log)
+                except OSError as exc:
+                    entry, why = None, f"its prior log cmd-{c['n']}.log is unreadable: {exc}"
+                    break
+                cmds.append({"n": c["n"], "cmd": c["cmd"], "class": c.get("class"), "exit": c["exit"],
+                             "seconds": c.get("seconds"), "log": log})
+        if entry is None:
+            kept.append(f"{k} ({why})")
+        else:
+            reused[k] = {"from": str(prior_dir.resolve()), "commands": cmds}
+    lines = [f"reuse: from {prior_dir.resolve()} -- reused {', '.join(str(k) for k in reused) or 'none'}"]
+    if kept:
+        lines.append(f"  runs: {'; '.join(kept)}")
+    return reused, lines
+
+
 def find_bash(explicit: str | None) -> str | None:
     if explicit:
         return explicit
@@ -532,12 +747,14 @@ def classify(cmd: str) -> str:
     return "exclusive"
 
 
-def build_jobs(items: list, start: int, gates, scope: dict | None = None) -> tuple:
+def build_jobs(items: list, start: int, gates, scope: dict | None = None, reused: dict | None = None) -> tuple:
     """(rows, jobs): one row per criterion from `start` on -- its number, the
     first line, and either a skip reason or its commands as job ids -- and
     one job per distinct command, numbered in plan order (the serial run's
     `cmd-<n>.log` numbers), with its class and the jobs it must follow.
-    `scope` is `select()`'s map; a criterion it did not select gets no job."""
+    `scope` is `select()`'s map; a criterion it did not select gets no job.
+    `reused` maps a criterion to the prior run's entry `--reuse` copies:
+    such a row carries it as `reused` and gets no job either."""
     rows, jobs, by_cmd = [], [], {}
     job_of_criterion: dict = {}
     for k, item in enumerate(items, 1):
@@ -557,6 +774,9 @@ def build_jobs(items: list, start: int, gates, scope: dict | None = None) -> tup
         cmds = commands(item)
         if not cmds:
             row["skip"] = "no command -- check by reading"
+            continue
+        if reused and k in reused:
+            row["reused"] = reused[k]
             continue
         declared = CLASS_DECL_RE.search(item)
         after_ks = {int(x) for m in AFTER_DECL_RE.finditer(item) for x in re.findall(r"\d+", m.group(1))}
@@ -758,7 +978,8 @@ class Status:
     another process never sees half a file. Worker threads call `running`
     once their lock is held, so every write takes `self.lock`."""
 
-    def __init__(self, out: Path, plan: Path, item, rows: list, jobs: list, start: int, texts: list | None = None):
+    def __init__(self, out: Path, plan: Path, item, rows: list, jobs: list, start: int, texts: list | None = None,
+                 fingerprints: dict | None = None):
         self.path = out / STATUS_FILE
         self.lock = threading.Lock()
         self.warned = False
@@ -769,10 +990,18 @@ class Status:
         for row in rows:
             skip = row["skip"]
             state = None if not skip else "not-selected" if skip.startswith("NOT SELECTED") else "skipped"
-            self.criteria.append({"k": row["k"], "state": state, "note": skip, "jobs": list(row["jobs"])})
+            entry = {"k": row["k"], "state": state, "note": skip, "jobs": list(row["jobs"])}
+            if row.get("reused"):
+                info = row["reused"]
+                entry.update(state="done", note=f"reused from {info['from']}", reused_from=info["from"],
+                             fixed=[dict(c, state="done", started_utc=None, reused_from=info["from"])
+                                    for c in info["commands"]])
+            self.criteria.append(entry)
         # Each criterion's whole text, so `--digest` can tell an exit-only
         # criterion from one whose output the verifier must read, with no plan.
         self.texts = {k: t for k, t in enumerate(texts or [], 1)}
+        # What each criterion ran against, so a later `--reuse` can match it.
+        self.fingerprints = fingerprints or {}
         now = _utc_now()
         self.doc = {"plan": str(plan), "item": item, "started_utc": now, "updated_utc": now,
                     "finished": False, "error": None}
@@ -789,8 +1018,12 @@ class Status:
     def _write(self) -> None:
         self.doc["updated_utc"] = _utc_now()
         doc = dict(self.doc, criteria=[{"k": c["k"], "state": self._criterion_state(c), "note": c["note"],
-                                        "commands": [dict(self.cmds[j]) for j in c["jobs"]],
-                                        **({"text": self.texts[c["k"]]} if c["k"] in self.texts else {})}
+                                        "commands": [dict(x) for x in c["fixed"]] if "fixed" in c
+                                        else [dict(self.cmds[j]) for j in c["jobs"]],
+                                        **({"reused_from": c["reused_from"]} if "reused_from" in c else {}),
+                                        **({"text": self.texts[c["k"]]} if c["k"] in self.texts else {}),
+                                        **({"fingerprint": self.fingerprints[c["k"]]}
+                                           if c["k"] in self.fingerprints else {})}
                                        for c in self.criteria])
         try:
             _replace_json(self.path, doc)
@@ -891,6 +1124,8 @@ def _status_line(c: dict) -> str:
             parts.append(f"cmd-{cmd['n']} {what} since {cmd['started_utc']}")
         else:
             parts.append(f"cmd-{cmd['n']} pending")
+    if c.get("reused_from"):
+        parts.append(f"reused from {c['reused_from']}")
     return f"{head} -- {'; '.join(parts)}" if parts else head
 
 
@@ -1010,8 +1245,10 @@ def _digest_line(c: dict) -> str | None:
     if any(cmd.get("exit") != want for cmd, want in zip(cmds, expected)):
         return None
     wants = str(codes[0]) if len(set(expected)) == 1 else ", ".join(str(w) for w in expected)
-    ran = "; ".join(f"cmd-{cmd['n']} exit {cmd['exit']} ({cmd['seconds']:.0f}s)" for cmd in cmds)
-    return f"criterion {c['k']}: exit-only, expects exit {wants}: {ran}"
+    ran = "; ".join(f"cmd-{cmd['n']} exit {cmd['exit']} ({cmd['seconds'] or 0:.0f}s)" for cmd in cmds)
+    reused = (f" (reused from {c['reused_from']}; logs as reused-cmd-<n>.log)"
+              if c.get("reused_from") else "")
+    return f"criterion {c['k']}: exit-only, expects exit {wants}: {ran}{reused}"
 
 
 def show_digest(out: Path) -> int:
@@ -1062,6 +1299,9 @@ def show_digest(out: Path) -> int:
     scope = _scope_block(preamble)
     if scope:
         print("\n".join(scope))
+    reuse = next((i for i, l in enumerate(preamble) if l.startswith("reuse:")), None)
+    if reuse is not None:
+        print("\n".join([preamble[reuse]] + [l for l in preamble[reuse + 1:reuse + 2] if l.startswith("  runs:")]))
     # A whole block stands apart, as in the report; one-line criteria do not.
     print(re.sub(r"\n{3,}", "\n\n", "\n".join(body)).strip("\n"))
     if doc.get("error"):
@@ -1112,6 +1352,8 @@ def run_parallel(rows: list, jobs: list, bash: str, root: Path, out: Path, expli
             print(f"\ncriterion {row['k']}: {row['first'][:150]}{' ...' if row['more'] else ''}")
             if row["skip"]:
                 print(f"  {row['skip']}")
+            if row.get("reused"):
+                print_reused(row["reused"], out)
             for jid in row["jobs"]:
                 job = by_id[jid]
                 code, secs, output = results[jid]
@@ -1151,6 +1393,24 @@ def run_parallel(rows: list, jobs: list, bash: str, root: Path, out: Path, expli
             status.done(jid, result)
         flush()
     flush()
+
+
+def print_reused(info: dict, out: Path) -> None:
+    """A reused criterion's report lines, in place of its commands' own:
+    the prior run's exit codes and the tail of its logs, copied into
+    `out` as `reused-cmd-<n>.log` (`n` the prior run's number)."""
+    print(f"  REUSED from {info['from']} (repository HEADs and the files it reads are unchanged)")
+    for cmd in info["commands"]:
+        shown = cmd["cmd"] if "\n" not in cmd["cmd"] else cmd["cmd"].splitlines()[0] + " ...(multi-line)"
+        print(f"  `{shown}` -> exit {cmd['exit']} ({cmd['seconds'] or 0:.0f}s), {cmd['log']}")
+        try:
+            text = (out / cmd["log"]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        head = f"$ {cmd['cmd']}\n"
+        output = text[len(head):] if text.startswith(head) else text
+        if output.strip():
+            print(_tail(output))
 
 
 def _tail(text: str, n: int = TAIL_LINES) -> str:
@@ -1212,9 +1472,13 @@ def _main(argv, starting) -> int:
     parser.add_argument("--failed", default=None)
     parser.add_argument("--dev", action="store_true")
     parser.add_argument("--digest", default=None)
+    parser.add_argument("--reuse", default=None)
     try:
         args = parser.parse_args(argv)
     except SystemExit:
+        return 2
+    if args.reuse is not None and (args.digest is not None or args.status is not None or args.list):
+        print("run_criteria: --reuse DIR goes with a run, not --status, --digest or --list", file=sys.stderr)
         return 2
     if args.digest is not None:
         if args.plan is not None or args.status is not None or args.out is not None or args.wait is not None:
@@ -1268,6 +1532,10 @@ def _main(argv, starting) -> int:
         return 2
     if args.failed is not None and not scoped:
         print("run_criteria: --failed needs --changed-since or --changed-from", file=sys.stderr)
+        return 2
+    if args.reuse is not None and not (args.dev or scoped or args.item is not None):
+        print("run_criteria: --reuse is for a development run (--dev, --item, --changed-since or "
+              "--changed-from); the full run is the final gate and always runs every criterion", file=sys.stderr)
         return 2
     failed: set = set()
     if args.failed is not None:
@@ -1341,10 +1609,17 @@ def _main(argv, starting) -> int:
 
     out = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="run_criteria_"))
     out.mkdir(parents=True, exist_ok=True)
-    rows, jobs = build_jobs(items, args.start, gates, scope)
+    snaps: dict = {}
+    subs = _submodule_dirs(root)
+    fingerprints = {k: fingerprint(root, item, subs, snaps) for k, item in enumerate(items, 1) if k >= args.start}
+    reused, reuse_lines = {}, []
+    if args.reuse is not None:
+        reused, reuse_lines = plan_reuse(Path(args.reuse), out, items, args.item, fingerprints, scope,
+                                         full if scoped else False)
+    rows, jobs = build_jobs(items, args.start, gates, scope, reused)
     if starting is not None:
         starting.handed_over = True
-    status = Status(out, plan, args.item, rows, jobs, args.start, items)
+    status = Status(out, plan, args.item, rows, jobs, args.start, items, fingerprints)
     tee = _Tee(sys.stdout, out / REPORT_FILE)
     error = None
     try:
@@ -1352,11 +1627,13 @@ def _main(argv, starting) -> int:
             print(f"checkout: {root}\nlogs: {out}\nshell: {bash}")
             if scoped:
                 print_scope(source, changed, full, full_why, scope, args.start)
+            for line in reuse_lines:
+                print(line)
             if jobs_cap is not None:
                 print(f"jobs: {jobs_cap} (browser suites at most {args.browser_jobs})")
                 run_parallel(rows, jobs, bash, root, out, args.timeout, jobs_cap, args.browser_jobs, status)
             else:
-                run_serial(items, args.start, gates, scope, bash, root, out, args.timeout, jobs, status)
+                run_serial(items, args.start, gates, scope, bash, root, out, args.timeout, jobs, status, reused)
     except BaseException as exc:
         error = f"{type(exc).__name__}: {exc}"
         raise
@@ -1405,10 +1682,11 @@ def list_only(items: list, start: int, gates, scope: dict | None, with_classes: 
 
 
 def run_serial(items: list, start: int, gates, scope: dict | None, bash: str, root: Path, out: Path,
-               explicit_timeout: int | None, jobs: list, status: Status) -> None:
+               explicit_timeout: int | None, jobs: list, status: Status, reused: dict | None = None) -> None:
     """Without `--jobs`: one command at a time, in plan order. `jobs` is
     `build_jobs`' list for the same selection, whose ids are the `cmd-<n>`
-    numbers this assigns, so the status file can name each command."""
+    numbers this assigns, so the status file can name each command.
+    A criterion in `reused` prints the prior run's result instead."""
     job_of = {j["cmd"]: j["id"] for j in jobs}
     ran: dict = {}  # command -> (n, exit, seconds, output)
     for k, item in enumerate(items, 1):
@@ -1427,6 +1705,9 @@ def run_serial(items: list, start: int, gates, scope: dict | None, bash: str, ro
             continue
         if not cmds:
             print("  no command -- check by reading")
+            continue
+        if reused and k in reused:
+            print_reused(reused[k], out)
             continue
         for cmd in cmds:
             shown = cmd if "\n" not in cmd else cmd.splitlines()[0] + " ...(multi-line)"

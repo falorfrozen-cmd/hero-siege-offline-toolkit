@@ -56,12 +56,40 @@ the plan itself (a legacy single-file plan, whose context is its own
 Exit codes: 0 printed; 2 usage, or the plan or context cannot be read; 3 the
 lane, item, join or criterion the selector names does not exist; 5 a code
 fence is never closed, so sections cannot be told apart.
+
+The driver's launch arguments, as JSON, in one call:
+
+    py -3 tools/workorder_brief.py --launch-args <slug> [--reviewers A,B]
+        [--submodules X,Y] [--implementer-model M] [--implementer-effort E]
+        [--research-headings H] [--answered ID,ID] [--first-implementation]
+        [--final-gate] [--checkout DIR]
+
+prints the `workorder-rounds.js` args the driver passes through unchanged
+(SKILL.md "Driver discipline"): slug, planPath, contextPath, checkoutRoot,
+goalExcerpt (`## Goal` and `## Out of scope`), state (`## State` as
+section.py prints it), round (State's `round:`), reviewers (State's
+`reviewers:` line, plus any `--reviewers` not in it yet, as `never`),
+priorFindings (each blocking reviewer's findings from the newest Log round
+that lists BLOCKING ones), baseHeads (the heads of the workorder's earliest
+`round_delta.py` snapshot), submodules (the plan's `module:` line), and
+`lanes`/`join` or `items`/`streaming` from plan_lint. Lanes go in only on a
+first implementation: round 0, or `--first-implementation` after a replan.
+`--final-gate` adds `finalGate: true` and `branchPaths`, every path changed
+since baseHeads. Measured (the 2026-10-11 /workorder audit, F04/F16): drivers
+made 1,171 shell reads of the plan and context files and 536 `section.py`
+calls, largely to copy these values through their own context by hand.
+
+Run `tools/workorder_record.py apply` on the previous launch first: State and
+the Log are read from the files. Exit 1 when the plan's lint has a finding
+(it goes back to the planner, as it always did), 2 when the plan is missing.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -436,10 +464,225 @@ def _selector(a) -> str:
     return " ".join(out)
 
 
+# -- the driver's launch args (--launch-args) ---------------------------------
+
+STATE_KEY = re.compile(r"^([a-z][a-z0-9 _-]*?):(\s|$)", re.IGNORECASE)
+TWO_KEYS = re.compile(r"\s{2,}(?=[a-z][a-z0-9 _-]*?:\s)", re.IGNORECASE)
+REVIEWER_STATES = ("never", "clean", "blocking")
+ROUND_HEADING = re.compile(r"^Round\s+(\d+)\b")
+FINDING_LINE = re.compile(r"^- \[([^\]]+)\] (.*)$")
+
+
+def state_values(text: str) -> dict:
+    """{key: value} from a `## State` block, split the way workorder-rounds.js
+    `stateEntries` splits it (two keys on one line, continuation lines)."""
+    out, last = {}, None
+    for raw in text.split("\n"):
+        line = raw.rstrip()
+        if not line.strip() or line.startswith("#"):
+            continue
+        if not STATE_KEY.match(line):
+            if last:
+                out[last] += "\n" + line
+            continue
+        for seg in TWO_KEYS.split(line):
+            m = STATE_KEY.match(seg)
+            last = m.group(1).lower()
+            out[last] = seg[m.end(1) + 1:].strip()
+    return out
+
+
+def reviewers_of(value: str) -> dict:
+    """`reviewers: a: clean; b: blocking, not re-run` -> {a: clean, b: blocking}.
+    A scoped instance (`a@panel`) is its reviewer; anything but the three
+    states (`no result`, a placeholder) re-runs as `never`."""
+    out = {}
+    for part in (value or "").split(";"):
+        name, sep, rest = part.strip().partition(":")
+        name = name.strip().split("@")[0]
+        if not sep or not re.fullmatch(r"[a-z0-9-]+", name):
+            continue
+        word = rest.strip().split(",")[0].strip()
+        state = word if word in REVIEWER_STATES else "never"
+        if out.get(name) != "blocking":
+            out[name] = state
+    return out
+
+
+def prior_findings(log: Doc | None, blocking: list) -> dict:
+    """Each blocking reviewer's findings, from the newest `### Round <n>` Log
+    entry that lists BLOCKING ones (an entry for an implementer's verdict has
+    no such list, so it is the round before that)."""
+    if log is None or not blocking:
+        return {}
+    entries = [k for k in log.log_entries() if ROUND_HEADING.match(log.found[k][2])]
+    for k in reversed(entries):
+        body = log.body(k).split("\n")
+        start = next((i for i, line in enumerate(body) if re.match(r"^BLOCKING \(\d+\)$", line.strip())), None)
+        if start is None:
+            continue
+        found: dict = {}
+        for line in body[start + 1:]:
+            if not line.strip():
+                break
+            m = FINDING_LINE.match(line.strip())
+            if not m:
+                continue
+            reviewer = m.group(1).split("@")[0]
+            text = re.split(r" — evidence: ", m.group(2), maxsplit=1)[0]
+            where, sep, problem = text.partition(": ")
+            found.setdefault(reviewer, []).append({"where": where, "problem": problem if sep else ""})
+        if found:
+            return {r: f for r, f in found.items() if r in blocking}
+    return {}
+
+
+def earliest_heads(rounds_dir: Path) -> dict | None:
+    """The heads of the workorder's first `round_delta.py` snapshot: its base."""
+    snaps = sorted((int(m.group(1)), p) for p in rounds_dir.glob("round-*.json")
+                   for m in [re.fullmatch(r"round-(\d+)\.json", p.name)] if m)
+    for _, path in snaps:
+        snapshot, error = round_delta._load_snapshot(path)
+        if error:
+            continue
+        heads = {("." if k == "" else k): sha for k, sha in snapshot["heads"].items() if sha}
+        if heads:
+            return heads
+    return None
+
+
+def _git_lines(args: list, cwd: Path) -> list | None:
+    out = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True)
+    if out.returncode != 0:
+        return None
+    return [line for line in out.stdout.decode("utf-8", "replace").split("\n") if line]
+
+
+def branch_paths(root: Path, heads: dict, submodules: list) -> list | None:
+    """Every path changed since `heads`, hub-relative, submodule paths prefixed;
+    None when git cannot say."""
+    paths: list = []
+    for key, sha in heads.items():
+        repo = root if key == "." else root / key
+        changed = _git_lines(["diff", "--name-only", "--no-renames", sha], repo)
+        untracked = _git_lines(["ls-files", "--others", "--exclude-standard"], repo)
+        if changed is None or untracked is None:
+            return None
+        for p in changed + untracked:
+            if key == "." and (p in heads or p in submodules):
+                continue  # a submodule's gitlink: its own entry lists its files
+            paths.append(p if key == "." else f"{key}/{p}")
+    return sorted(set(paths))
+
+
+def _csv(raw) -> list:
+    return [x.strip() for x in (raw or "").split(",") if x.strip()]
+
+
+def launch_args(a) -> dict:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", a.launch_args or ""):
+        raise Usage(f"--launch-args takes a workorder slug, not {a.launch_args!r}")
+    slug = a.launch_args
+    if a.checkout:
+        root = Path(a.checkout).resolve()
+    else:
+        top = _git_lines(["rev-parse", "--show-toplevel"], Path.cwd())
+        if not top:
+            raise Usage("not inside a git checkout; pass --checkout")
+        root = Path(top[0]).resolve()
+    wo = root / ".claude" / "workorders"
+    plan_path = wo / f"{slug}-plan.md"
+    if not plan_path.is_file():
+        raise Usage(f"no workorder plan {plan_path}")
+    ctx_path = wo / f"{slug}-context.md"
+    rel = lambda p: p.relative_to(root).as_posix()  # noqa: E731
+    plan = _read(plan_path, "plan")
+    ctx = _read(ctx_path, "context file") if ctx_path.is_file() else None
+    for doc in (plan, ctx):
+        if doc is not None and doc.open_fence is not None:
+            raise Fence(f"{doc.shown}: code fence opened at line {doc.open_fence} is never closed")
+    n, findings = plan_lint.lint(plan_path)
+    if n is None:
+        raise LintFailed(f"{plan_path} has no '## Acceptance criteria' heading")
+    if findings:
+        raise LintFailed("\n".join(f"{plan_path}: {where}: {rule}: {excerpt}" for where, rule, excerpt in findings))
+
+    def h2(name):
+        k = plan.h2(name)
+        return plan.body(k) if k is not None else ""
+
+    state_text = h2("State")
+    values = state_values(state_text)
+    try:
+        round_ = int(re.match(r"\d+", values.get("round", "0")).group(0))
+    except (AttributeError, ValueError):
+        round_ = 0
+    reviewers = reviewers_of(values.get("reviewers", ""))
+    for name in _csv(a.reviewers):
+        reviewers.setdefault(name, "never")
+    log = next((d for d in (ctx, plan) if d is not None and d.h2(section.LOG_HEADING) is not None), None)
+    out = {
+        "slug": slug,
+        "planPath": rel(plan_path),
+        "contextPath": rel(ctx_path) if ctx is not None else rel(plan_path),
+        "checkoutRoot": root.as_posix(),
+        "goalExcerpt": "\n\n".join(b for b in (h2("Goal"), h2("Out of scope")) if b),
+        "round": round_,
+        "state": state_text + "\n",
+        "reviewers": reviewers,
+        "priorFindings": prior_findings(log, [r for r, s in reviewers.items() if s == "blocking"]),
+    }
+    head = plan.text.split("\n## ", 1)[0]
+    modules = [m.strip() for line in re.findall(r"^module:\s*(.+)$", head, re.M) for m in line.split(",")]
+    submodules = [m for m in modules if m and m.lower() != "hub" and (root / m).is_dir()]
+    submodules += [s for s in _csv(a.submodules) if s not in submodules]
+    if submodules:
+        out["submodules"] = submodules
+    heads = earliest_heads(wo / ".rounds" / slug)
+    if heads:
+        out["baseHeads"] = heads
+    for flag, key in (("implementer_model", "implementerModel"), ("implementer_effort", "implementerEffort"),
+                      ("research_headings", "researchHeadings")):
+        if getattr(a, flag):
+            out[key] = getattr(a, flag)
+    items = json.loads(plan_lint._items_json(plan.text, set()))
+    if items.get("items"):
+        out["items"] = items["items"]
+        if not items.get("complete", True) or values.get("planning", "").startswith("streaming"):
+            out["streaming"] = True
+        if _csv(a.answered):
+            out["answered"] = _csv(a.answered)
+    declared, join = plan_lint.lanes(plan.text)
+    if declared and (round_ == 0 or a.first_implementation) and not a.final_gate:
+        out["lanes"] = [{"name": lane["name"], "files": lane["files"]} for lane in declared]
+        out["join"] = join
+    if a.final_gate:
+        out["finalGate"] = True
+        if heads:
+            paths = branch_paths(root, heads, submodules)
+            if paths is not None:
+                out["branchPaths"] = paths
+    return out
+
+
+class LintFailed(Exception):
+    pass
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="workorder_brief.py",
                                 description="Print one implementer's slice of a /workorder plan.")
-    p.add_argument("plan")
+    p.add_argument("plan", nargs="?")
+    p.add_argument("--launch-args", dest="launch_args", metavar="SLUG")
+    p.add_argument("--checkout")
+    p.add_argument("--reviewers")
+    p.add_argument("--submodules")
+    p.add_argument("--implementer-model", dest="implementer_model", choices=("opus", "sonnet"))
+    p.add_argument("--implementer-effort", dest="implementer_effort", choices=("high", "medium"))
+    p.add_argument("--research-headings", dest="research_headings")
+    p.add_argument("--answered")
+    p.add_argument("--first-implementation", dest="first_implementation", action="store_true")
+    p.add_argument("--final-gate", dest="final_gate", action="store_true")
     one = p.add_mutually_exclusive_group()
     one.add_argument("--round", type=int)
     one.add_argument("--lane")
@@ -456,6 +699,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if args.launch_args is not None:
+        try:
+            text = json.dumps(launch_args(args), ensure_ascii=False, indent=1) + "\n"
+        except Usage as exc:
+            print(f"workorder_brief: {exc}", file=sys.stderr)
+            return 2
+        except LintFailed as exc:
+            print(f"{exc}\nworkorder_brief: plan_lint has findings; send them back to the planner before launching",
+                  file=sys.stderr)
+            return 1
+        except Fence as exc:
+            print(f"workorder_brief: {exc}", file=sys.stderr)
+            return 5
+        sys.stdout.buffer.write(text.encode("utf-8"))
+        sys.stdout.buffer.flush()
+        return 0
+    if args.plan is None:
+        print("workorder_brief: name a plan, or --launch-args <slug>", file=sys.stderr)
+        return 2
     try:
         if (args.round is None and args.lane is None and not args.join and args.item is None
                 and args.paths is None and args.criteria is None):

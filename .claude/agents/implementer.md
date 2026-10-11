@@ -43,12 +43,9 @@ Do not `Read` a file already in your context unless it changed since (your own
 `Edit` isn't a reason; a `Bash` command that rewrote it is). Use `offset`/
 `limit` on a file over ~500 lines when you need one region.
 
-**After a write, read the diff, not the file.** The owner, 2026-10-02: after
-each write, agents "spend lots of times on reads ... make sure only difference
-or relevant things are read". An `Edit` that returned success landed; to see
-what you changed, `git diff -- <path>` (or `--stat` across the change), and to
-check one region, a grep or a ranged `Read` of it. Re-entered after a defect,
-the same holds for what earlier rounds wrote: the failed criteria (in your
+**After a write, read the diff, not the file** (`AGENTS.md` § "Spend Each
+Check Once"): `git diff -- <path>`, a grep, or a ranged `Read`. Re-entered
+after a defect, the same holds for what earlier rounds wrote: the failed criteria (in your
 brief, or `section.py <plan> 'Acceptance criteria'`), the steps and Context
 subsections the evidence names, and for each file it names `git diff <base>
 -- <path>` plus the ranges around those hunks, with the base from the
@@ -357,7 +354,9 @@ or a failed whole-tree criterion, the same way.
   `path` line into `paths`, and its `flags` value into `flags`; the reviewers
   are chosen from them. Run no other git command that writes.
 - **Check your item before you return.** Run `py -3 tools/run_criteria.py
-  <plan> --item <id> --jobs auto` once, fix what fails, and commit again. An
+  <plan> --item <id> --jobs auto --out "<scratch>/item-<id>"` once, fix what
+  fails, commit again, and if you committed after that run, run it once more
+  so your last run sees your last commit. An
   independent verifier runs the same checks after you; a check that fails
   there sends the item back to a fresh implementer with the evidence, up to
   three attempts, and then the item parks.
@@ -430,6 +429,25 @@ measured afterwards (`round_delta.py size`), and one that grew past 20 changed
 lines or added a file is counted as an ordinary round. That costs the pipeline
 a round; a finding left unresolved costs it more.
 
+## When you run inside a workflow round
+
+Since hub #485 the round's bookkeeping is yours, not a separate agent's. The
+workflow cannot run a shell, so it hands you the exact commands:
+
+- Run the **"Bookkeeping first"** commands (`round_delta.py snapshot` and
+  `heads`) before anything else, unless the prompt says the snapshot was
+  already taken.
+- Run the **"Bookkeeping last"** commands (`round_delta.py delta`, the two
+  greps, `size` on a patch round, and `tools/decompile_check.py`) after your
+  last commit.
+- Report each command's output verbatim in `snapshot`, `delta`,
+  `decompile` and `criteria_dir`. Never summarise it: the script validates
+  the exit codes, and anything missing makes every reviewer re-run.
+- When the prompt carries blocks it marks as superseding the State or the
+  last Log entry that `workorder_brief.py` prints, those blocks are
+  authoritative. The files are updated only after the launch ends, by
+  `tools/workorder_record.py`.
+
 ## When you finish
 
 Return this and nothing else:
@@ -438,10 +456,15 @@ Return this and nothing else:
 VERDICT: IMPL-DONE
 STEPS COMPLETED: <list>
 CRITERIA RUN: <each acceptance command with its real exit status and output>
+CRITERIA DIR: <the absolute --out of your last run_criteria.py run, made after your last commit — or "none">
 FILES CHANGED: <paths>
 DEVIATIONS: <anything you did differently from the plan, and why — or "none">
 NOT DONE: <anything in scope you could not finish — or "none">
 ```
+
+`CRITERIA DIR` lets the verifier's runner reuse a result of yours whose
+repository HEADs and `(reads ...)` content still match (`run_criteria.py
+--reuse`); a run made before a later commit or edit simply re-runs there.
 
 `DEVIATIONS` and `NOT DONE` are load-bearing. An empty `NOT DONE` on a change
 that is actually incomplete is the single most expensive thing you can write,

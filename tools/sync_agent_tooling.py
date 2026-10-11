@@ -231,7 +231,10 @@ def effort_variant_md(md_path: Path, level: str) -> str:
         elif key == "effort":
             line = f"effort: {level}"
         elif key == "description":
-            desc = f"`{base}` at {level} effort. Spawn it only where /workorder's tier tables name `{base}-{level}`. " + fields["description"]
+            # Short on purpose (audit F14): a variant is spawned by name from
+            # the tier tables, never chosen from the listing, and the listing
+            # already repeats each variant's whole tool list.
+            desc = f"`{base}` at {level} effort, same instructions. Spawn only where /workorder's tier tables name it."
             line = "description: " + json.dumps(desc, ensure_ascii=False)
         out.append(line)
     if "effort" not in fields:
@@ -270,6 +273,10 @@ def sync_effort_variants(check: bool) -> list[str]:
 # --------------------------------------------------------------------- agents
 
 def codex_agent_toml(md_path: Path) -> str:
+    """Codex's copy of one agent. Only the fields Codex understands are
+    emitted; Claude-only frontmatter (`color`, `omitClaudeMd`, the tool
+    allowlist) is dropped, and `omitClaudeMd` is noted in a comment because
+    Codex always loads `AGENTS.md`."""
     fields, body = parse_frontmatter(md_path.read_text(encoding="utf-8"))
     name = fields["name"]
     tools = {t.strip() for t in fields.get("tools", "").split(",") if t.strip()}
@@ -285,7 +292,9 @@ def codex_agent_toml(md_path: Path) -> str:
     )
     lines = [
         f"# {GENERATED.format(source=source)}",
-        f"# Claude Code tier: model={fields.get('model', '(inherit)')}, effort={fields.get('effort', '(none)')}.",
+        f"# Claude Code tier: model={fields.get('model', '(inherit)')}, effort={fields.get('effort', '(none)')}."
+        + (" omitClaudeMd: true has no Codex equivalent, so Codex still loads AGENTS.md here."
+           if fields.get("omitClaudeMd", "").lower() == "true" else ""),
         f"name = {toml_str(name)}",
         f"description = {toml_str(fields['description'])}",
     ]

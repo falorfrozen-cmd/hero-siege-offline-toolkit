@@ -308,6 +308,13 @@ class TestThePipelineSaysSo(unittest.TestCase):
     def flat(self, *parts):
         return " ".join(self.read(*parts).split())
 
+    def skill(self):
+        """`/workorder`'s SKILL.md, then every file beside it it links."""
+        skill_dir = REPO / ".claude" / "skills" / "workorder"
+        others = sorted(p for p in skill_dir.glob("*.md") if p.name != "SKILL.md")
+        return "\n".join(p.read_bytes().decode("utf-8").replace("\r\n", "\n")
+                         for p in [skill_dir / "SKILL.md", *others])
+
     def test_the_verifier_is_given_the_command_and_told_not_to_read_the_file_whole(self):
         text = self.flat("agents", "verifier.md")
         self.assertIn("py -3 .claude/skills/workorder/section.py", text)
@@ -334,17 +341,20 @@ class TestThePipelineSaysSo(unittest.TestCase):
         # workorder's escalated planner tier over to it. The sentence sits on
         # one line in each of the three places a driver spawns an amendment
         # from, so `grep -c` counts the places, not the wraps.
-        lines = self.read("skills", "workorder", "SKILL.md").splitlines()
+        # Since 2026-10-11 the skill is SKILL.md plus the path files it sends
+        # the driver to (amendments.md, model-tiers.md, ...): read them all.
+        lines = self.skill().splitlines()
         sentence = "An amendment planner always runs as planner-medium on opus, never escalated"
         self.assertGreaterEqual(sum(sentence in line for line in lines), 3)
-        self.assertIn("R27", self.flat("skills", "workorder", "SKILL.md"))
-        self.assertNotIn("spawn `planner` fresh at its default tier", self.flat("skills", "workorder", "SKILL.md"))
+        self.assertIn("R27", " ".join(self.skill().split()))
+        self.assertNotIn("spawn `planner` fresh at its default tier", " ".join(self.skill().split()))
+        self.assertIn("(amendments.md)", self.read("skills", "workorder", "SKILL.md"), "SKILL.md sends the driver there")
 
     def test_the_skill_never_spawns_fable(self):
         # The owner's license dropped Fable on 2026-10-05; a spawn naming it
         # fails. The ladder escalates effort on opus instead, through the
         # generated variants, and every variant a tier table names must exist.
-        text = self.flat("skills", "workorder", "SKILL.md")
+        text = " ".join(self.skill().split())
         for spawn in ("model: fable", "`model: fable`", "planner `fable`"):
             self.assertNotIn(spawn, text)
         named = set(re.findall(r"`((?:planner|implementer|consultant)-(?:low|medium|high|xhigh|max))`", text))

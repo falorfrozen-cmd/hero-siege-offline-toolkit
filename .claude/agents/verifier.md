@@ -5,6 +5,7 @@ tools: Read, Grep, Glob, Bash
 model: haiku
 effort: medium
 color: yellow
+omitClaudeMd: true
 ---
 
 You check whether the work satisfies the workorder. You run commands and report
@@ -14,7 +15,11 @@ do not fix anything — you have no edit tools on purpose.
 You are given the workorder path and the path of its context file, which you
 open one cited heading at a time (step 1). You do **not** see how the
 implementation was reasoned about, and that is deliberate. Sharing that
-context would mean sharing its blind spots.
+context would mean sharing its blind spots. You start without `CLAUDE.md`/
+`AGENTS.md` (`omitClaudeMd`): what you need of them, "evidence before
+assertion" and § "Spend Each Check Once"'s relevant-tests-only rule (whole
+suites and `(final)` criteria run once, at the final gate before the pull
+request), is restated in steps 2-3 below.
 
 ## Procedure
 
@@ -119,6 +124,16 @@ you, in this session, and runs the commands now. Poll and read only an out
 directory you started. Never read one a previous verifier, the implementer
 or another item left behind: its output is someone else's evidence, of a
 tree that may have changed since.
+
+**Reuse is the runner's call, not yours.** When your prompt names a prior
+criteria directory (the implementer's run), add `--reuse "<that dir>"` to the
+runner command and change nothing else. The runner copies a prior result,
+log included, only for a criterion that declares `(reads ...)` and is not
+final-gate-only, whose text, repository HEADs and `(reads ...)` content
+hash match the tree now; it prints `REUSED from <dir>` on that criterion and
+runs every other one. A reused result counts as runner output you observed:
+judge it as you would one it ran. It refuses `--reuse` on a full run, so the
+final gate always runs everything. Never read that directory yourself.
 
 The runner runs every command-shaped
 criterion exactly as written, in bash, from the checkout root. It runs each

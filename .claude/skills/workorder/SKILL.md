@@ -102,8 +102,9 @@ variants: `planner-xhigh` is `planner` at `xhigh` effort, generated from
 `planner.md`'s `effort-variants:` by `tools/sync_agent_tooling.py`, with the
 same instructions word for word. Spawn the variant as the `subagent_type`;
 the `Agent` tool takes a `model` per call but no effort, so the name is the
-only way to choose one. In workflow mode pass `implementerEffort`
-(`high` or `medium`) and `implementerModel`. Every variant runs on `opus`
+only way to choose one. In workflow mode the args carry `implementerEffort`
+(`high` or `medium`) and `implementerModel`, set with `--launch-args`'
+`--implementer-effort` and `--implementer-model`. Every variant runs on `opus`
 unless a row names another model. `fable` is not a tier: the owner's
 license dropped it on 2026-10-05, so the pipeline escalates effort on
 `opus` wherever it once escalated to `fable` (§ "Model tiers").
@@ -114,8 +115,9 @@ are cache reads, so the tier costs about the same per token while the Sonnet
 tail (p90 46.8M tokens, max 78.9M) was what hit the round caps. The docs row
 ran `sonnet` until 2026-10-06; it now runs `implementer-medium` on `opus`
 too, because at medium effort Opus 5.5 scores ahead of Sonnet 5.5 for about
-the same cost on cache-read work (§ "Model tiers", "Reviewers, live-operator
-and the docs row → `opus`/`medium`"). `implementerModel: 'sonnet'` still
+the same cost on cache-read work ([`model-tiers.md`](model-tiers.md),
+"Reviewers, live-operator and the docs row → `opus`/`medium`").
+`implementerModel: 'sonnet'` (`--implementer-model sonnet`) still
 works for a run the owner asks to put on it.
 
 Say which row you matched and why, in one line, before you spawn — a triage
@@ -227,10 +229,13 @@ then the join (Step 2); a plan without them prints `{"lanes": [], "join":
 false}` and runs exactly as it always has. The JSON is only printed when
 the lint is clean — overlapping file sets (`lane-overlap`), a lane without
 files, lanes without a join, a duplicate or bad name all exit 1 without it —
-so lanes a lint rejected can never be launched. Paste its `lanes` and `join`
-into the workflow's args unchanged (see "Driver discipline").
+so lanes a lint rejected can never be launched. `workorder_brief.py
+--launch-args` puts the same `lanes` and `join` into the workflow's args
+(see "Driver discipline"), and refuses to print args at all while the lint
+has a finding.
 
-**A plan of items streams instead** (Step 2, "Items"). Run `py -3
+**A plan of items streams instead** (Step 2, "Items", and
+[`items.md`](items.md)). Run `py -3
 tools/plan_lint.py <plan> --items-json` and keep its last line, `{"items":
 [...], "complete": true|false}`; like the lane table it is printed only when
 the lint is clean (`item-overlap` and the other item rules exit 1 without
@@ -273,9 +278,13 @@ did not write the plan and knows nothing it does not say:
    before resuming it. Measured 2026-09-22: the main checkout held two
    `READY` plans that had both run to completion on 2026-09-19 in worktrees
    since removed, and every new worktree was created with a copy of both.
-3. **Read the plan file in full, `## Needs human judgement` and all of `## Log`**
-   — the one point the driver reads the whole Log, to re-count replans and
-   consultations. Grep `## Context` for what step 2 needs rather than reading
+3. **Apply any launch the last session left unrecorded**, then **read the
+   plan file in full, `## Needs human judgement` and all of `## Log`** — the
+   one point the driver reads the whole Log, for consultations and what each
+   round found; replans and launches are counted in State (`replans:`,
+   `launches:`). `py -3 tools/workorder_record.py apply --latest --slug
+   <slug>` applies this workorder's newest saved run, and changes nothing
+   when State's `last run:` already names it. Grep `## Context` for what step 2 needs rather than reading
    it whole. Re-run the step 0.25 checkout check against the plan's
    `repoRoot:` and preconditions, then the step 0.5 triage — a task property,
    not a session one, though the repo may have moved under a week-old plan.
@@ -284,15 +293,20 @@ did not write the plan and knows nothing it does not say:
    that no longer exists, or says "as discussed" is a `PLAN-DEFECT` now — cheaper
    to route back before an implementer has spent a round discovering it.
 
-Snapshot before spawning: `py -3 .claude/skills/workorder/round_delta.py
-snapshot <slug> <round>`, recorded in `## State` › `round base:` — step 3
-diffs against it, and every later round repeats this before re-entering.
+Snapshot before each round: `py -3 .claude/skills/workorder/round_delta.py
+snapshot <slug> <round>` — step 3 diffs against it. In workflow mode the
+round's implementer runs it as its first command and `delta` as its last
+(the launch tells it how), so the driver runs neither; in driver mode you run
+it before spawning or re-entering the implementer. The workorder's base is
+its earliest snapshot, `.rounds/<slug>/round-<k>.json`, which
+`--launch-args` reads as `baseHeads`.
 
 **A laned plan** (Step 1's `--lanes-json` printed lanes) runs its lanes only
 on the first implementation of the plan's steps: round 0, or the relaunch
-after a replan. Pass `lanes` and `join` to the workflow then, and never when
-relaunching after an `IMPL-DEFECT` (a `continue` from `STATE-LOST`,
-`SCRIBE-FAILED` or `LOG-DAMAGED`, or a fresh `resume` past round 0): a defect round is a fix
+after a replan. `workorder_brief.py --launch-args` puts `lanes` and `join` in
+the args then (round 0, or `--first-implementation` after a replan), and
+never when relaunching after an `IMPL-DEFECT` or on a fresh `resume` past
+round 0: a defect round is a fix
 on a small delta, and no failed criterion or reviewer finding says which
 lane it belongs to, so it runs one implementer that owns every file set.
 Each lane implementer works only inside its `files:`, runs no git command
@@ -309,106 +323,13 @@ tree for the relaunch. Lanes run in workflow mode only; in driver mode a
 laned plan gets one implementer that owns every file set, as a defect round
 does.
 
-**Items: a plan that streams** (Step 1's `--items-json` printed items). Its
-steps 2-4 run as one workflow launch with no rounds inside it
-(`workorder-rounds.js` 3b; workflow mode only):
-
-- Each item's implementer starts the moment no running item holds its files,
-  up to `maxParallel` at once; items that share a file run one after another
-  in plan order. It commits only its own files through
-  `tools/item_commit.py`, under the checkout's commit lock. The default cap
-  is `DEFAULT_MAX_PARALLEL` in `workorder-rounds.js`, 4, and a `maxParallel`
-  that is not a whole number from 1 to 16 is refused with `BAD-ARGS` before
-  anything is spawned. Pass more only when `tools/workorder_speed.py` shows
-  `queued_behind_cap > 0` for your plans: in the first real plan of items no
-  start ever waited on the cap (docs/agents/workorder-calibration.md,
-  2026-09-27).
-- An unanswered `owner:` item that the plan marks `reversible: yes`, with a
-  default that is not `none`, is not parked. Its implementer is told the
-  question and proceeds on the default, and the result lists it under
-  `defaulted` with the question, the default, its commits and how to undo it.
-  Every other unanswered owner item parks.
-- The moment an implementer returns, an independent `verifier` runs that
-  item's `checks:` (`run_criteria.py --item <id>`). A failure sends the item
-  back to a fresh implementer with the evidence, up to three attempts.
-- Reviewers read the commits as they land, each pinned to the `HEAD` it
-  started from, never the working tree. A reviewer re-runs when new commits
-  match its trigger, and its `BLOCKING` findings become a fix item at once,
-  on the files the findings name (or, with no path, run alone once the rest
-  are done). A reviewer may be split by screen or dimension with
-  `reviewScopes`, and its scopes run as separate reviewers.
-- A build is never trusted past a later commit on what it reads. An item
-  whose `build`/`exclusive` checks declare `(reads ...)` (`plan_lint.py
-  --items-json` hands the workflow their globs as `build_reads`; a build
-  check with no `(reads ...)` reads everything) does not start while a fix
-  that may land on those globs is queued or running, or while another item
-  editing them runs. That wait never starves the queue: a pass it would
-  leave with nothing running and nothing started runs without it. If a commit by any other item or fix lands on them after
-  the build passed, the build goes back to pending and runs again once that
-  commit is in (a build still running when it lands runs again when it
-  finishes); its attempt budget starts over, and the result's row carries
-  `rebuilds`; a sixth re-run parks it instead (`REBUILD_CAP`), so two builds
-  that commit into what the other reads cannot loop. In
-  forgepact-124-pet-relics (2026-10-02) a reviewer's fix landed minutes after
-  `build-dev` passed, three times, and each launch came back `PARKED` with
-  `build-dev=done` and a DLL older than the fix. So give a build check its
-  `(reads ...)`: without one any commit re-runs it.
-- When nothing is left to run, the `## Acceptance criteria` run once, as a
-  development verify (`--dev`: whole suites and `(final)` criteria wait for
-  the final gate before the pull request). A failure becomes one fix that
-  runs alone, and the gate runs again, three times at most.
-- An item that stops parks alone. What depends on it is held, and
-  everything else keeps flowing. The launch returns `PARKED` once nothing
-  else can run, before the gate, with every item's status, reason and
-  evidence.
-- An item implementer's or a fixer's `PLAN-DEFECT` whose evidence carries a
-  `CORRECTION:` other than `none` is amended inside the launch, the way
-  "Amend, or replan" below does it: `amend_check.py save` through
-  `amend-save:<id>:r<n>`, a fresh `planner` labelled `amendment: <slug>
-  <id>:r<n>` with the correction verbatim, then `amend_check.py check`
-  through `amend-check:<id>:r<n>`. Only exit 0 with `AMENDMENT` re-runs the
-  item and releases what it held. One amendment runs at a time, since
-  `amend_check.py` keeps one saved copy per slug, and it counts only toward
-  `maxAgents`. `NOT AN AMENDMENT`, `REPLAN`, `SCOPE`, a `CORRECTION: none`,
-  or a second `PLAN-DEFECT` after the item's amendment parks the item for you
-  as a replan, with the reason. A reviewer's plan defect stays yours. No
-  item or fix starts while an amendment is queued or running, and every
-  outcome but a confirmed one first puts the plan and context back from the
-  saved copy (`amend_check.py restore`, `amend-restore:<id>:r<n>`), so no
-  item reads a rejected edit; if that restore fails, nothing else starts in
-  the launch and the pending items come back held, naming why.
-
-Route a `PARKED` result item by item, and relaunch once for all of them.
-Pass `state` as always: its `items:` line tells the relaunch which items are
-done (or `defaulted`), and they are not run again.
-
-- **Route `unblocked` first.** A result that waits on a person (`PARKED`
-  with an owner item, or `PASS-PENDING-HUMAN`) carries `unblocked`: every
-  parked or held item that waits on no owner question, each `{ id, reason,
-  route }` with `route` one of `amend-or-replan`, `replan`, `consult`,
-  `split` or `relaunch`. Start those routes in the same message as the
-  question (rule 8), so the answer lands on work already moving.
-- `owner: <question>`, or an item's question for the person → one
-  `AskUserQuestion` batch for every parked item. Record each answer under
-  `### Decisions`, then relaunch with those ids in `answered`. A
-  `defaulted` item the owner answers differently: revert its listed commits,
-  record the answer, and relaunch with its id in `answered`.
-- `ADVICE-NEEDED` → "Consultation" below, the answer under `### Decisions`,
-  then relaunch.
-- `PLAN-DEFECT` → "Amend, or replan" below, for that item only: tell the
-  planner which item it is. An item that carries `replan` (the launch tried
-  its amendment, or its `CORRECTION:` was `none`; the Log's `amendments`
-  list says why) is a replan, counted and escalated: do not amend it a
-  second time. Otherwise (no `CORRECTION:` line, or a reviewer's plan
-  defect) decide as below. The items held with it are relaunched with it.
-- `budget: ...` → the item failed its checks three times. Bring it to the
-  user with the evidence and offer to split it into its own workorder.
-
-The launch-wide ceiling is `maxAgents` (default 120) spawned agents and,
-when set, `tokenCeiling` output tokens. At the ceiling the launch finishes
-what is running and returns `CEILING`; relaunch, or stop and report. Pushing,
-installing and anything destructive stay gated on the owner's word exactly as
-before: nothing in items mode pushes.
+**Items: a plan that streams** (Step 1's `--items-json` printed items) runs
+steps 2-4 as one workflow launch with no rounds inside it: each item is
+implemented, checked and committed on its own, reviewers read commits as
+they land, and one whole-tree gate runs when the queue drains. **Read
+[`items.md`](items.md) before launching or routing a plan of items**: the
+scheduling, owner defaults, rebuilds, in-launch amendments, `PARKED`
+routing, budgets and the args and result shapes are there.
 
 Spawn `implementer` with the plan and context paths and its brief command:
 `py -3 tools/workorder_brief.py "<plan>" --round <n>`, plus `--since-round
@@ -426,65 +347,36 @@ plan and context files were the two most-read files of the pipeline: 915
 - **`ADVICE-NEEDED`** → see "Consultation" below — not a failure, doesn't count
   against any cap; the cheap path so one hard decision doesn't cost a whole
   escalated phase.
-- **`PLAN-DEFECT`** → append the evidence to the context file's `## Log` under
-  the round's `### Round <n>` heading, increment nothing, and spawn `planner`
-  fresh (a replan is always fresh — see "Re-entering a phase" below). This is
-  the loop working.
+- **`PLAN-DEFECT`** → the round's `### Round <n>` Log entry carries the
+  evidence (the launch's record writes it; in driver mode you append it), and
+  State's `replans:` counts it — the launch adds one for every `PLAN-DEFECT`
+  it returns, before a verify or after one. Then spawn `planner` fresh (a
+  replan is always fresh — see "Re-entering a phase" below). This is the loop
+  working.
 
   **Amend, or replan.** First decide whether this defect needs a replan at
-  all. It does not when the evidence already names what is wrong *and*
-  states the correction: the implementer's `CORRECTION:` line, or a
-  reviewer's `plan_defect` finding carrying a `fix`. Typical cases are a
-  criterion's command or anchor, a path that moved, or one wrong fact in
-  `## Context`. Then it is an **amendment**:
-
-  1. `py -3 tools/amend_check.py save <plan> <context>`;
-  2. spawn `planner-medium` fresh with `model: opus`, with the description
-     `amendment: <slug> <what>` and the correction verbatim (planner.md "When
-     you are spawned as an amendment").
-     An amendment planner always runs as planner-medium on opus, never escalated.
-     That holds whatever `planner-tier=` the State records and whatever tier
-     the last replan ran at: an amendment applies one stated correction, and
-     the escalation ladder below is for replans. `tools/workorder_audit.py`
-     R27 fails an `amendment:` planner whose transcript ran fable, or that
-     ran as `planner-xhigh` or `planner-max`;
-  3. `py -3 tools/amend_check.py check <plan> <context>` once it returns.
-
-  Exit 0 (`AMENDMENT`) means Goal, Out of scope and Needs human judgement are
-  untouched, no section came or went, and at most 20 lines changed outside
-  `## State` and `## Log`. The amendment is then not a replan: it does not
-  count toward the cap below and does not move the next replan up a tier.
-  Exit 1 (`REPLAN: <why>`), or a planner returning `NOT AN AMENDMENT`, makes it
-  a replan like any other, counted and escalated. Relaunch the rounds from
-  the same round number either way.
-
-  **In workflow mode the launch runs this route itself** for an
-  implementer's, a fixer's or an item implementer's `CORRECTION:` (never a
-  lane's, never a reviewer's), with the same three steps as agents of the
-  launch (`amend-save:<id>:r<n>`, `amendment: <slug> <id>:r<n>`,
-  `amend-check:<id>:r<n>`, where `<id>` is the item, or `implementer` in
-  rounds mode), and re-runs the work, uncounted, only on `AMENDMENT`. So a
-  rounds-mode `PLAN-DEFECT` whose result carries `amendment` has already had
-  its amendment tried: `amendment.why` says why it did not hold, and it is a
-  replan. In the ForgePact bug batch (2026-09-27), item `research-build` sat
-  parked for 41 minutes waiting for the driver's turn to make a 2.5-minute
-  amendment (docs/agents/workorder-calibration.md).
-
-  No two amendments run back to back: a second `PLAN-DEFECT` with no
-  implementer round between it and the first amendment is a replan. The
-  test is the files, never the planner's account of what it changed. Over
-  2026-09-19..24, labels such as "fix criterion 11 anchoring" and "fix M3 row
-  id collision" each counted as a full replan. `tools/workorder_audit.py` R24
-  fails an `amendment:` planner that has no `save` before it or no `check`
-  after it (the driver's, or for a planner a launch spawned, one from an
-  agent of that same launch), and R11 counts it as a replan unless its
-  `check` passed.
+  all: it does not when the evidence names what is wrong *and* states the
+  correction (the implementer's `CORRECTION:` line, or a reviewer's
+  `plan_defect` finding carrying a `fix`). Then it is an **amendment**:
+  `amend_check.py save`, a fresh `planner-medium` on opus labelled
+  `amendment: <slug> <what>`, `amend_check.py check`. An amendment planner
+  always runs as planner-medium on opus, never escalated. A confirmed
+  amendment is not a replan: take the one `replans:` the launch added back
+  off (`replans: <k-1>`). In workflow mode the launch runs this route itself
+  for an implementer's `CORRECTION:`, so a `PLAN-DEFECT` whose result carries
+  `amendment` already had its amendment tried, and is a replan. **Read
+  [`amendments.md`](amendments.md) before you amend**: the exact steps, what
+  `check` accepts, the R24/R27 audit rules, and when two amendments in a row
+  are a replan.
 
   **Escalate the planner's model as it fails, rather than only counting.** A
   `PLAN-DEFECT` is the pipeline telling you this problem is harder than the tier
-  you assigned it:
+  you assigned it. Count from State's `replans:`, not from memory: since
+  2026-10-11 a `PLAN-DEFECT` that came back before any verify counts too,
+  where before it kept `round: n` and was counted nowhere (the /workorder
+  audit, F13):
 
-  | Replan | Spawn `planner` with | Because |
+  | Replan (`replans:`) | Spawn `planner` with | Because |
   |---|---|---|
   | 1st | the first plan's tier (`planner`, or `planner-xhigh` on a hard triage row) | most wrong plans are wrong about one fact, not about the mechanism |
   | 2nd | `planner-max` | cheaper reasoning has now demonstrably failed twice on the same problem |
@@ -559,19 +451,42 @@ cap.
 
 ### Step 3 — verify, in parallel
 
-Run `py -3 .claude/skills/workorder/round_delta.py delta <slug> <round>`
-against step 2's snapshot to see what this round touched — it records each
+`py -3 .claude/skills/workorder/round_delta.py delta <slug> <round>`,
+against step 2's snapshot, says what this round touched — it records each
 repo's HEAD too, so work the implementer commits mid-round is in the delta,
 not only what it leaves dirty. Exit 3 means the snapshot is missing,
 unreadable, or a recorded head can no longer be trusted — treat everything as
-changed.
+changed. In workflow mode the implementer runs it last, with the two content
+greps and `py -3 tools/decompile_check.py <slug> <round>`, and reports all
+three; in driver mode you run them.
 
-- **Round 0:** spawn every applicable reviewer (table's first column) plus
-  `verifier` — when in doubt, run it, cheap even when clean.
-- **Round ≥ 1:** spawn `verifier` always, plus every applicable reviewer
-  `BLOCKING` last round or matching the delta (table's second column). Record
-  a skip as `<name>=clean@round<n>, not re-run` in `## State`, reported the
-  same way in step 5. Run everything if `delta` exited 3.
+**Reviewers run by measured yield** (the 2026-10-11 /workorder audit, F03:
+rounds with a BLOCKING finding, out of rounds the reviewer ran in —
+`instrument-blindness-reviewer` 30%, `sdk-contract-reviewer` 7%,
+`docs-sync-reviewer` 4%, `decompile-output-guard` 1%,
+`tauri-command-reviewer` 0%):
+
+- **Every round:** `verifier`, and `instrument-blindness-reviewer` when it
+  applies — on round 0, or when it was `BLOCKING` last round, or when the
+  delta matches its trigger (table's second column), or when `delta` exited 3.
+- **Every round, deterministically:** `tools/decompile_check.py`, the
+  PostToolUse hook's own signatures over the lines the round (or, with
+  `--base`, the workorder) added. A hit is a `BLOCKING` finding under
+  `decompile-check`, with no `fix`. When the check did not run (no report, or
+  an exit other than 0 and 1) `decompile-output-guard` reviews that round
+  instead: a legal check is never skipped.
+- **Once, at the final gate** (Step 5): `docs-sync-reviewer`,
+  `sdk-contract-reviewer` and `tauri-command-reviewer`, each when it applies
+  (table's first column), over the whole change since the workorder's base,
+  plus `decompile-output-guard` when the branch touches `docs/` or a `.md` —
+  a paraphrase that follows the decompiled original needs a reader, and it
+  lands in prose.
+- **A deferred reviewer that the final gate found `BLOCKING`** re-runs every
+  round of the fix launch, to confirm its own finding, until it is clean.
+
+Record each skip in `## State` › `reviewers:` (`<name>: clean, not re-run`,
+or `<name>: never, deferred` for one waiting for the final gate), reported
+the same way in step 5.
 
 **Reviewers get no workorder path** — paste `## Goal`, `## Out of scope`, the
 diff commands below, and this round's paths (whole change on round 0, delta
@@ -604,48 +519,17 @@ the verifier skips its step-3 root suite. A fix round runs by reach (Step 4,
 "Re-verify what the fix reaches"), which defers the same criteria. The full
 set runs once, as the final gate before the pull request (Step 5).
 `workorder-rounds.js` hands each verifier its scope; under `fullVerify: true`
-every verify of the launch is the full set. A criterion about a file the
+every verify of the launch is the full set, and a `finalGate: true` launch
+is that full verify alone, with no snapshot and no implementer. A criterion about a file the
 change forgot to touch still runs under `--dev`, which is why a first verify
 is not a reach selection.
 
-**The verifier starts with `tools/run_criteria.py <plan> --jobs auto`.** The
-script runs every command-shaped criterion in one call, exactly as written,
-once per distinct command, and skips gated ones. With `--jobs` it runs
-independent commands at the same time by resource class: builds first and
-alone, then at most one whole suite, two browser suites and any number of
-file checks side by side, while a timing benchmark (`e2e:perf`) and any
-command it does not recognise run alone in their place in the plan. It
-prints criteria in plan order with the serial run's `cmd-<n>.log` numbers,
-each exit code with the tail of the command's output, and judges nothing, so
-the verifier still decides every criterion and reads the prose ones.
-Verifiers spent about a third of their time on model turns between commands,
-so this cuts per-command turns and nothing the verifier observes. A root
-suite a criterion already ran is not run a second time for step 3 of
-`verifier.md`.
-
-**A whole-tree run goes to the background** (the rounds verifier, the reach
-re-verify, the items gate). The verifier starts `run_criteria.py <plan>
---jobs auto --out <its scratchpad>/criteria` with `run_in_background: true`,
-so no Bash limit can kill it, then re-issues `py -3 tools/run_criteria.py
---status <out> --wait 220` at a Bash timeout of 300000 while it exits 3, and
-once it exits 0 judges from `py -3 tools/run_criteria.py --digest <out>`,
-not from `report.txt` whole. The runner keeps
-`<out>/status.json` current (each criterion's state and each command's exit
-code and seconds) and writes everything it prints to `report.txt`. The
-digest prints an exit-only criterion whose commands all exited as expected
-as one line, and every other criterion's block exactly as `report.txt` has
-it; it judges nothing. The verifier opens `cmd-<n>.log`, or a ranged read of
-`report.txt`, only for a one-line criterion whose expectation needs output.
-After 2026-10-02 verifiers read `report.txt` whole, 100-217 KB a run, and it
-was the one figure of theirs that rose (docs/agents/workorder-calibration.md,
-2026-10-03). Exit 4
-means the run went stale (not finished, and not updated for 1,900 s): the
-verifier re-runs the criteria not yet done in the background, with
-`--start`. Exit 2 means there is no status file. `--wait` can never exceed
-220 s, so a poll stays under audit R5's 240-second limit. The verifier still
-runs every command itself and never reads an out directory it did not
-start. One item's checks (`--item`) stay in the foreground: none took more
-than 1.0 minute in the bug batch, so a poll would only add turns.
+**The verifier runs the criteria through `tools/run_criteria.py <plan> --jobs
+auto`**, in the background for a whole-tree run, polled with `--status` and
+judged from `--digest`; it runs every command itself and judges each
+criterion from what the runner printed. In workflow mode the launch hands it
+that procedure; in driver mode **read
+[`verify-mechanics.md`](verify-mechanics.md)** before you dispatch one.
 
 **Diff from the round base, never from `HEAD`** — implementers commit during
 the round, so `git diff HEAD` is empty afterwards. Take each repo's base sha
@@ -659,17 +543,16 @@ git -C <submodule> status --porcelain -uall
 git -C <submodule> diff <its base>   # the hub's diff shows only the pointer
 ```
 
-| Reviewer | Applicable when the change touches | Re-run on round ≥ 1 when the delta contains |
+| Reviewer | Applicable when the change touches | When it runs |
 |---|---|---|
-| `docs-sync-reviewer` | always | anything other than test files |
-| `decompile-output-guard` | `docs/`, research notes, decompiler-read comments | any `.md .cpp .hpp .py .rs .ts .js` file (tests included) — never skipped for any other reason; a legal finding is always blocking |
-| `sdk-contract-reviewer` | `hs-game-sdk/`, `tests/cpp/`, any relic/item/stat scanner, any live `CInstance` or decoded save tree | its own table's paths |
-| `tauri-command-reviewer` | `hub/src-tauri/src/`, the updater, anything the hub's interface reads | its own table's paths |
-| `instrument-blindness-reviewer` | `ForgePact/plugin`, a hook install, a resolved-pointer call, a `docs/` research finding | `ForgePact/plugin/**`, hook/installer code under `hs-game-sdk/**`, any `*-research.md`, any `docs/submodules/*/instructions.md`, any other doc recording a measured result, or delta text matching `Rva\|GetModuleHandle\|MmCreateHook\|HookOneScript\|InstallScriptHook` |
+| `instrument-blindness-reviewer` | `ForgePact/plugin`, a hook install, a resolved-pointer call, a `docs/` research finding | every round: round 0, then when `BLOCKING` or the delta contains `ForgePact/plugin/**`, hook/installer code under `hs-game-sdk/**`, any `*-research.md`, any `docs/submodules/*/instructions.md`, any other doc recording a measured result, or text matching `Rva\|GetModuleHandle\|MmCreateHook\|HookOneScript\|InstallScriptHook` |
+| `decompile-output-guard` | `docs/`, research notes, decompiler-read comments | `tools/decompile_check.py` every round; the agent in a round whose check did not run (its trigger: any `.md .cpp .hpp .py .rs .ts .js` file), and at the final gate when the branch touches `docs/` or a `.md`; a legal finding is always blocking |
+| `docs-sync-reviewer` | always | the final gate |
+| `sdk-contract-reviewer` | `hs-game-sdk/`, `tests/cpp/`, any relic/item/stat scanner, any live `CInstance` or decoded save tree | the final gate |
+| `tauri-command-reviewer` | `hub/src-tauri/src/`, the updater, anything the hub's interface reads | the final gate |
 
-A re-run reviewer reads the delta paths; round 0 reads the whole change.
-`decompile-output-guard` on round ≥ 1 reads every line added since it last
-passed, plus the whole contents of any file added since.
+A re-run reviewer reads the delta paths; round 0 and the final gate read the
+whole change since the workorder's base.
 
 **Require the severity label.** Every finding is `BLOCKING`, `NON-BLOCKING` or
 `PLAN-DEFECT`, leading with "no blocking findings" when true — restate this in
@@ -718,13 +601,21 @@ The line, when a reviewer's label looks wrong to you:
   **Do not spend a round on it** — the implementer cannot fix a criterion that
   is not broken — and do not quietly upgrade it to `PASS`. Set `status: PASS
   (pending <what)` in the workorder so the gap survives the session.
-- **Any `IMPL-DEFECT`, or any BLOCKING reviewer finding** → append it to the
-  context file's `## Log` under a new `### Round <n>` heading, bump `round:` in
-  `## State`, snapshot the new round (step 2), and re-enter the implementer per
-  "Re-entering a phase" — normally a resume, same tier, pointed at that
-  heading. Send the **evidence** in the Log entry, not the message: the failing
-  command and its real output, the reviewer's `path:line`. A defect report the
-  implementer has to re-derive wastes the round you spent finding it.
+- **Any `IMPL-DEFECT`, or any BLOCKING finding** → in workflow mode the launch
+  goes straight on to the next round itself, up to the cap: a fresh
+  implementer gets the round's Log block and the merged State inline, since
+  the files are written only once the launch returns. Such a round never
+  reaches you; only `PLAN-DEFECT`, `ADVICE-NEEDED`, `CAP`, `PASS`,
+  `PASS-PENDING-HUMAN` and `AGENT-FAILED` do (and, for items, `PARKED` and
+  `CEILING`). Until 2026-10-11 the scribe's bookkeeping stops made a launch
+  one round in practice (median 1; the /workorder audit, F08). In driver mode:
+  append it to the context file's `## Log` under a new `### Round <n>`
+  heading, bump `round:` in `## State`, snapshot the new round (step 2), and
+  re-enter the implementer per "Re-entering a phase" — normally a resume,
+  same tier, pointed at that heading. Send the **evidence** in the Log entry,
+  not the message: the failing command and its real output, the reviewer's
+  `path:line`. A defect report the implementer has to re-derive wastes the
+  round you spent finding it.
 
   Carry the round's non-blocking findings along **as context, not as work** —
   the implementer may fix one cheaply while it is already in that file, and
@@ -737,33 +628,13 @@ The line, when a reviewer's label looks wrong to you:
   verify — is one round. A patch round that held (below) is not counted.
 
   **Owner scope is not a failure.** A round or a plan change that exists only
-  because the owner added or changed the work is the owner deciding, not the
-  pipeline failing, and it spends neither the cap nor the tier ladder:
-
-  - **A plan change:** run `tools/amend_check.py save`, *then* record the
-    owner's answer under `### Decisions` as `owner, <YYYY-MM-DD>: "<their
-    words>"`, then spawn the planner (labelled `amendment: <slug> owner
-    scope ...`, as `planner-medium` with `model: opus`), then `check`.
-    An amendment planner always runs as planner-medium on opus, never escalated.
-    Never pass the workorder's escalated `planner-tier=` here: the one fable
-    amendment measured (forgepact-74, 2026-10-02) came by this route, and R27
-    now fails it, and an amendment run as `planner-xhigh` or `planner-max`. When the change would otherwise be a replan
-    (the Goal or scope moved, a section came or went, more than 20 lines
-    changed) and the context gained an owner line since `save`, `check`
-    prints `SCOPE: <k> new owner decision(s)` and exits 0. A change small
-    enough to be an amendment anyway prints plain `AMENDMENT`. Either way it
-    is not a replan and costs no tier step.
-  - **A round:** when a relaunch exists only to carry owner decisions (the
-    finish review's approved fixes, a rename, a new tab), add one to `scope
-    rounds: <k>` in `## State` before the launch. `workorder-rounds.js` adds
-    it to the cap, at most 3 in all.
-
-  The audit keeps this honest: R25 fails a `SCOPE:` verdict with no message
-  typed by the owner behind it, so the exemption cannot relabel a failed plan.
-  In the ForgePact UI redesign, restyle's Amendment 1 (the owner's own ask)
-  counted as its third replan, polish met the cap on owner items and split
-  into `sandbox-ports`, and ship's round 3 was refused although rounds 1-2
-  were owner scope.
+  because the owner added or changed the work spends neither the cap nor the
+  tier ladder: a plan change goes through `amend_check.py` (which prints
+  `SCOPE:` for it), and a relaunch that only carries owner decisions adds one
+  to State's `scope rounds:` (at most 3). An amendment planner always runs as
+  planner-medium on opus, never escalated, here too. The exact procedure and
+  the R25 audit are in [`amendments.md`](amendments.md) § "Owner scope is
+  not a failure".
 
   **The patch route.** When a round's only defects are `BLOCKING` reviewer
   findings and *every* one carries its reviewer's `fix`, the next round is a
@@ -779,8 +650,9 @@ The line, when a reviewer's label looks wrong to you:
   - `verifier`, fresh as always, re-verifies only the criteria the patch can
     reach (below, "Re-verify what the fix reaches"): the previous verify
     failed no criterion, so nothing else is owed;
-  - only the reviewers that raised the findings re-run, to confirm their own,
-    plus `decompile-output-guard` whenever its trigger matches.
+  - only the reviewers that raised the findings re-run, to confirm their own;
+    `decompile_check.py` runs as in every round, and `decompile-output-guard`
+    stands in when its trigger matches and that check did not run.
 
   Whether the round was a patch is decided afterwards, from the tree:
   `round_delta.py size <slug> <n>` must report at most 20 changed lines and
@@ -800,53 +672,16 @@ The line, when a reviewer's label looks wrong to you:
   out was not recorded; the `fix` field makes that countable. Details:
   [`docs/agents/workorder-calibration.md`](../../../docs/agents/workorder-calibration.md#the-cheap-routes-2026-09-25).
 
-  **Re-verify what the fix reaches.** The owner, 2026-09-27, as a one-file
-  panel fix in the ForgePact UI redesign's ship workorder was about to pay
-  another full verify behind a ~20-minute Python suite: *"run relevant tests
-  only if possible"*. A fix round, patch or ordinary, that follows a verify
-  which passed every criterion but the failed ones re-verifies only the
-  criteria the fix can reach, plus the failed ones. A criterion the earlier
-  verify deferred to the final gate counts as a known standing here, not an
-  unknown one (2026-10-02), and the runner defers it again unless `--failed`
-  names it:
-
-  ```bash
-  py -3 tools/run_criteria.py <plan> --jobs auto --changed-since <hub base> \
-      --changed-since <submodule>=<its base> --failed <k,...> --out <scratch>/criteria
-  ```
-
-  The bases are this round's, from `round_delta.py heads <slug> <round>`.
-  The runner selects each criterion whose `(reads ...)` (planner.md, "Spend
-  each check once") a changed path matches, each failed one, each one that
-  declares no `(reads ...)` and each one a selected criterion runs `(after
-  ...)`, and prints what it selected and skipped and why, so the report
-  shows the scope. The verifier reports a skipped criterion as
-  `not-selected`, never `pass`, and skips its step-3 root suite unless a
-  selected criterion runs it. `workorder-rounds.js` hands a round's verifier
-  this command itself (2j) and records `verify scope:` in the Log. The full
-  set still runs:
-
-  - **at the final gate before a push**, once: a PASS reached through a
-    scoped verify is `PASS (scoped)` in step 5 until a full verify covers
-    it, in this workorder or in the feature's final one;
-  - **when the delta is unknown**: `round_delta.py` exited 3, the base heads
-    are missing, or the runner itself prints `scope: full -- delta unknown`;
-  - **when the change touches a shared contract**: the runner falls back by
-    itself for `hs-game-sdk/`, `third_party/yytoolkit/`, `.gitmodules` and
-    its own selection code, and for any glob on the plan's `## State`
-    `shared contract:` line;
-  - **when a criterion's standing is not known**: it was unattempted for any
-    reason but an unset gate, or the last verify reported it without its
-    plan number;
-  - **when the verifier cannot tell** from the printed scope whether the
-    fix could reach a criterion the runner skipped. It then runs the full
-    set and says why.
-
-  Independence is unchanged: the verifier is still fresh, never sees the
-  implementer's reasoning, and runs every criterion it reports. The re-check
-  is smaller, not shared. In the ship workorder, run by hand, it saved about
-  40 minutes per fix round (evidence in
-  [`workorder-calibration.md`](../../../docs/agents/workorder-calibration.md#re-verifying-only-what-a-fix-reaches-2026-09-27)).
+  **Re-verify what the fix reaches.** A fix round, patch or ordinary, after a
+  verify that passed every criterion but the failed ones re-verifies only the
+  criteria the fix can reach plus the failed ones (`run_criteria.py
+  --changed-since <this round's base heads> --failed <k,...>`), and defers the
+  whole suites and `(final)` criteria; the full set still runs at the final
+  gate, when the delta is unknown, when the change touches a shared contract,
+  when a criterion's standing is unknown, or when the verifier cannot tell.
+  `workorder-rounds.js` hands a round's verifier this command itself (2j) and
+  records `verify scope:` in the Log. The rules and the evidence are in
+  [`verify-mechanics.md`](verify-mechanics.md).
 
   **At the cap, split — never close it by hand.** Three failed rounds mean the
   pipeline lost the thread, regardless of plan size or how close it looks to
@@ -873,133 +708,17 @@ The line, when a reviewer's label looks wrong to you:
 
 ### Step 4.5 — live gate: `live-operator` runs the session, you talk to the person
 
-A live session is a phase like the others, and the driver does not run it.
-Across 2026-09-19..22 every live session was run by the driver itself —
-`ipc.ps1` commands, log parsing, DLL installs, heredoc appends to the Log —
-and the sessions that did so were the most expensive drivers measured: up to
-325 turns, 99.5M tokens and $60 of list price, at 250-300K context a turn,
-against a median driver of $12.
+A live session is a phase like the others, and the driver does not run it:
+`live-operator` does, from the context file's `### Live procedure <n>`, and
+the driver checks the game lease, asks the owner before installing a build,
+relays each `NEEDS-HUMAN` verbatim, and routes `LIVE-DONE`,
+`INSTRUMENT-BLIND` and `LIVE-ABORTED`. **Read [`live-gate.md`](live-gate.md)
+before the first step of a live gate**: the lease states, the install
+question, the relay rules, how each operator verdict routes, the teardown
+restore, and the R17/R20 audit rules are there.
 
-0. **Look at the game lease first.** Call `hs_lease_status` yourself — the
-   one `hs_*` call item 3's rule allows, because it only reads. There is one
-   Hero Siege install and one machine-wide lease on it, and the lease cannot
-   stop an install (hs-drive never installs), so you are the one who has to
-   look before asking to change the DLL:
-   - `held` by another process → do not ask to install and do not launch.
-     Tell the user the holder's `label` and `taken_utc` (from `record`) and
-     stop, or wait for their word. A `force` takeover happens only when the
-     owner says so: you do it, through `hs_lease_acquire` with `force: true`,
-     and log it under `### Live <n>` as a takeover naming the previous
-     holder from `took_over_from`. Never pass `force` on anyone's say-so but
-     the owner's, and never ask the operator to.
-   - `stale` → say so (the holder's process is gone) and carry on; the
-     operator's acquire recovers it.
-   - `free`, `held_by_me` → carry on. A `warning` on a free lease means the
-     last session backed up and never restored, which a session's own
-     teardown restore (step 5) should now prevent: say so before the install
-     question, and restore that backup yourself (lease, restore, inspect,
-     release) when it is this workorder's; another workorder's goes to the
-     owner.
-   - `unavailable` → report its `detail` and stop.
-1. **Ask before anything changes on the owner's machine.** One question:
-   install this build now, and is a session convenient now? Never install on
-   your own — the owner decides when the DLL their game loads changes. On a
-   yes, install it yourself with the module's documented install command (one
-   call), and nothing else.
-2. **Spawn `live-operator`** with: the slug, the session number `<n>`, the
-   context file and the `### Live procedure <n>` heading, the character slot,
-   and which build is installed. Record its agent id in `## State` › `agents:`.
-3. **Relay, do not operate.** A `NEEDS-HUMAN` comes back with one `ASK` (it may number several actions): put
-   it to the user verbatim, then `SendMessage` the operator their answer
-   (ToolSearch `select:SendMessage` if deferred). Do not run `hs_*` tools
-   (item 0's lease calls aside), `ipc.ps1` or log reads yourself — you would be the operator at the most
-   expensive context in the pipeline.
-4. **Put the next decision to the owner first.** At `LIVE-DONE`, show the
-   operator's `CHECKS` lines verbatim and ask whatever the next phase needs
-   decided, before any record or docs work starts. The answer usually
-   depends only on the session's result. In forgepact-issue-14, Phase B's
-   four design questions depended only on Live 1i, known at 01:06, and went
-   out at 02:33, after a record round and a 64-minute docs workorder; the
-   owner answered them at 08:59.
-5. **Route what it returns.** Append at most a short summary and the capture
-   path — never the capture — under a `### Live <n>` Log heading, then:
-   - every check `pass` → the pending criteria are met. Move the session's
-     gate token (for example `live1: complete`) from `gates pending:` to
-     `gates:` in `## State`, so a later verifier treats that gate as set and
-     runs the criteria it guards. Then go to step 5, or, if criteria gated on
-     it still need a mechanical run, relaunch the rounds.
-   - a check `fail` with the mechanism as the plan described it → an
-     `IMPL-DEFECT` round (step 4), the capture path as its evidence.
-   - a `fail` or `not-observed` that contradicts the plan's model of the
-     mechanism → `PLAN-DEFECT`; the replan cites the capture.
-   - `INSTRUMENT-BLIND` → the instrument could not see its own positive
-     control. Nothing was measured, so nothing is concluded; it goes to the
-     planner as an instrument defect, never into a doc as "does not happen".
-   - `LIVE-ABORTED` → report its `WHY` to the user and stop. A `lease_held`
-     `WHY` is another session driving the game: the user decides whether to
-     wait or have you take the lease over (item 0).
-
-   The operator restores its own backup at teardown (the owner's standing
-   rule, 2026-09-26: a test changed the state, so the test puts it back), so
-   do not ask the owner about a restore. Report its `RESTORE:` line. A
-   `LEASE:` line still showing `restore_pending: true`, or a `RESTORE:` line
-   that is not clean or was skipped, means the saves still carry the session's
-   changes: say so, and restore that backup yourself (lease, restore, inspect,
-   release) unless the procedure deliberately kept the state.
-
-   A capture `tools/live_checks.py` cannot read — a renamed, missing or
-   unreadable check — is not repaired by anyone: report it, and re-run the
-   session or replan. The capture is the session's evidence.
-
-**Record this phase while the next one is planned.** When the owner's answer
-from 4 means another phase, launch this workorder's record round and, in the
-same message, spawn `planner` for the next phase's own slug (that
-workorder's Step 1, stopping at the plan), telling it the record is running.
-Record and plan share no files: the planner writes only its own workorder
-files and reads the result from the capture. The next implementer starts
-only after this record round has returned `PASS`, because both edit the
-research doc. Merge `origin/main` into the branch only between rounds —
-before the record launches or after it returns — never while one runs:
-`round_delta.py` and every reviewer diff from the round base, so a merge
-mid-round puts main's commits into this round's review. The overlap is up to
-about 2 h over forgepact-issue-14's nine research phases (`min(record,
-next plan)` summed). This is not folding the record into the next phase's
-first round: the record keeps its own rounds, review and commit, so the
-measurement is in a tracked file before anything else depends on it.
-
-**Same build, more to measure: a second session, not a new phase.** If the
-result raises a question the installed DLL can already answer, have the
-planner add `### Live procedure <n+1>` to this workorder (planner.md "A live
-session is a procedure") and run it as session `<n+1>`: its own capture, a
-fresh operator, a relaunch when the procedure needs one, with the
-`instrument-blindness-reviewer` reading only the new procedure first. Ask the
-owner once, as in 1. Twice in forgepact-issue-14 (1c→1d and 1e→1f) this was a
-new workorder instead, costing about 1.8 h between them. Since Ghidra came
-into use every phase has needed a new build, so expect this rarely.
-
-**One sitting, several sessions — never one launch.** When the owner has time
-for more than one ready procedure, run them back to back in that sitting, each
-with its own install question, launch, backup, operator and capture, and a
-stop and restore between any two that write saves. Do not merge procedures
-into one launch: nine forgepact-issue-14 sessions used seven different DLLs,
-each procedure pins the counts the previous restore left, and two of the nine
-crashed the game on stash close.
-
-**Offer a fresh session at the next phase boundary** when this session has
-already driven a live session, **or at any workorder boundary once the
-driver's context is past about 300K tokens**. The driver relays every
-hand-back at its own context size: in forgepact-issue-14, relays at 605-680K
-tokens a turn cost about $13 in one 22-hour session, where a fresh session
-starts near 90K. The ForgePact UI redesign drove all 14 workorders from one
-session: 504 of its 697 driver turns ran above 300K (peak 966K), and the
-driver alone cost $108. Say so in one line with the `resume` or `plan`
-command, and let the owner decide.
-
-`tools/workorder_audit.py` R17 fails a session whose operator wrote anything
-but its `<slug>-live-<n>.md`, installed a build, ran a writing git command,
-restored a backup it did not take itself, force-stopped the game, or took
-over another holder's lease.
-R20 fails any other agent's edit to a capture, the driver's included.
+A live gate waits on a person, so it is also where the driver session should
+end rather than idle (Driver discipline, "End the session at a gate").
 
 ### Step 5 — report
 
@@ -1011,15 +730,23 @@ Set `status: PASS` in the workorder and tell the user:
   skipped, as the runner printed them. Every PASS before the final gate is
   scoped (`verifyScope: 'dev'` or `'reach'`);
 - **the final gate, as the last step before the pull request** is opened or
-  pushed to: a fresh `verifier` on the whole plan with no `--dev`,
-  `--changed-since` or `--item` (or a launch with `fullVerify: true`), so
-  the whole suites, `(final)` criteria and the root suite run once. It is
-  the only full verify of the feature: a middle workorder whose result a
-  later one builds on does not run it, and says which workorder does. A
-  failure there is fixed and re-verified by reach plus `--failed`, which
-  re-runs the failed suite itself;
+  pushed to: a launch with the args of `py -3 tools/workorder_brief.py
+  --launch-args <slug> --final-gate` (`finalGate: true`). It spawns no
+  snapshot and no implementer: a fresh `verifier` on the whole plan with no
+  `--dev`, `--changed-since` or `--item`, so the whole suites, `(final)`
+  criteria and the root suite run once, beside the reviewers deferred to the
+  final gate (Step 3) over the whole change since the workorder's base, and
+  `decompile-output-guard` when `branchPaths` touches `docs/` or a `.md`. In
+  driver mode, spawn that verifier and those reviewers yourself. It is the
+  only full verify of the feature: a middle workorder whose result a later
+  one builds on does not run it, and says which workorder does. It returns
+  `PASS`, `PASS-PENDING-HUMAN`, `PLAN-DEFECT` or `IMPL-DEFECT`: a failure
+  there is fixed in a rounds launch (its State already says the next round,
+  and a deferred reviewer that found something enters it `blocking`), which
+  re-verifies by reach plus `--failed`, and then the final gate runs again;
 - every reviewer that ran and what it concluded, including the clean ones, and
-  every reviewer skipped this round as `clean@round<n>, not re-run`;
+  every reviewer skipped this round as `clean@round<n>, not re-run`, or
+  deferred to the final gate;
 - anything left under `NOT DONE` or `Needs human judgement`;
 - how many rounds it took, and what each round caught. That last line is how
   the pipeline earns its keep or shows it is not;
@@ -1058,183 +785,40 @@ forgepact-issue-14 the design moved under the owner's answers four times.
 ## Spend each check once, and overlap what does not wait
 
 The owner, 2026-09-26: *"If some checks can be done once for 2 things it's
-better than checking twice after each change"*, and *"Waiting for something
-to end completely before picking it up sounds like a waste of time."* In the
-ForgePact UI redesign (14 workorders over about 48 hours) a full panel verify
-cost 25-35 minutes and was paid at least 15 times. The evidence is in
-[`workorder-calibration.md`](../../../docs/agents/workorder-calibration.md#spending-each-check-once-the-forgepact-ui-redesign-2026-09-26).
-Independence stays as it is: the verifier and every reviewer still run fresh
-and never see the implementer's reasoning. A check is **shared** between
-changes, never skipped.
+better than checking twice after each change"*. Independence stays as it
+is: the verifier and every reviewer still run fresh; a check is **shared**
+between changes, never skipped. In short:
 
-**1. One round and one verify for everything that is ready together.**
-Pending changes that are ready at the same time go into one implementer
-round and one full verify: owner feedback, the findings a review produced,
-a conflict-free main merge that touches none of the plan's files. Do not give
-each its own implement-and-verify round. The patch route (Step 4) and the
-3-round cap are unchanged; this is about not starting a second round while
-the first one's input is still arriving.
+1. **One round and one verify for everything that is ready together** —
+   owner feedback, a review's findings, a clean main merge — not a round
+   each; and one verify's criteria run a shared suite once.
+2. **Start independent work as soon as its input is committed**, in the same
+   message as the launch or the verify.
+3. **Stream a review's findings into fixers** against a pinned snapshot, and
+   verify once after the stream drains.
+4. **Main moved: merge it** when it is clean and misses the plan's files.
+5. **Batch the owner's decisions** before the next plan.
+6. **A flaky test is fixed the round it is seen**, never re-run for a green.
+7. **During development run the relevant subset**; the full set runs once,
+   at the final gate. 7b. **After a write, read the diff, not the file.**
+8. **A question never idles the pipeline** (below).
+9. **Review the design before building it**, not at ship.
 
-The same goes for one verify's criteria: a check two criteria would both run
-is run by one of them. ForgePact's Python suite re-runs the panel's browser
-suites, so a plan whose criteria run those suites directly runs its full
-Python suite with `--exclude-module` for the modules that wrap them
-(`planner.md` § "Spend each check once", "Run each suite once per verify").
-
-**2. Start independent work as soon as its input is committed.** A read-only
-agent (`impeccable-finish-reviewer`, a design audit), a documenter writing
-only to a scratch path, or a Figma mirror does not wait behind the verifier.
-Launch it in the same message as the workflow or the verify, as a background
-`Agent` call, pointed at the commit it reads. Work that edits files runs
-alongside only when its files are disjoint from everything else in flight.
-
-**3. Stream review findings into fixes.** When a review is its own pass
-(a finish review, a design audit, owner feedback worked through by agents),
-do not wait for the whole review before fixing:
-
-- **Pin what the reviewer reads.** Fixers will be changing the tree, so the
-  reviewer reads a snapshot of one commit: `git worktree add --detach
-  <scratch>/review-<sha> <sha>`, or `git archive <sha> | tar -x -C <dir>`,
-  with the scratch path outside every repository tree. Remove the worktree
-  afterwards.
-- **Split the review, run the parts at once.** Several narrower reviewers,
-  one per dimension or per screen, in parallel, instead of one broad
-  reviewer. Each one appends every finding to its own file in one scratch
-  directory the moment it has it, as one JSON line: `{"id", "severity",
-  "files": [...], "where", "problem", "fix"}`. A reviewer whose contract says
-  it edits nothing writes only there, outside the repository trees; that is
-  its report, not an edit.
-- **Watch and dispatch.** The driver watches that directory with `Monitor`
-  and hands each new finding to a fixer (`implementer`, the finding as its
-  whole brief) at once. Fixers run one at a time, or in parallel only when
-  their `files` are disjoint from every fixer in flight; a file several
-  findings share (`app.css` and the like) serialises them. A fixer runs no
-  git write while another fixer is in flight; when one finishes with none
-  other running, it commits each finished finding's files as its own commit
-  (`git add -- <files>`), the way a lane join does. A finding that needs a
-  decision goes into the owner batch (5), never to a fixer.
-- **Verify once, after the stream drains.** A fixer runs at most a test
-  inside its own files. When every reviewer has returned and every fixer is
-  done, one full verify (plus the reviewers that raised blocking findings,
-  re-reading the fixed commit) covers every fix together, per rule 1.
-
-A plan of items (Step 2, "Items") gets this from `workorder-rounds.js`
-itself: reviewers read pinned commits, each finished reviewer's findings go
-to a fixer at once, and one gate runs after the queue drains. The streaming
-is per reviewer, not per finding, because `agent()` returns only when an
-agent ends, so split a big review into narrower reviewers (`reviewScopes`)
-to get findings sooner. The gate reads a tree nobody is editing, because it
-runs only when no implementer is left. A plan with no items still runs in
-rounds, where no fixer may touch the tree the round's verifier is reading;
-for it, and for a review that is not a workorder's own reviewer pass, this
-driver procedure is the way to stream.
-
-**4. Main moved: merge it when it is clean and misses the plan's files.** A
-plan's precondition is "main moved → merge it when `git merge-tree
---write-tree HEAD origin/main` shows no conflict and `git diff --name-only
-HEAD...origin/main` names none of the plan's files; stop only otherwise"
-(`planner.md`). The implementer does that merge and records it in `## Log`.
-A separate main-merge workorder cost 1-2.5 hours each time in the redesign.
-
-**5. Batch the owner's decisions.** After a round that changed what the owner
-sees, serve a snapshot for them to look at, and collect every question the
-next plan needs into one `AskUserQuestion` batch before that plan is
-written, so the answers are plan inputs rather than mid-round replans. The
-snapshot is built from `git archive <sha>` into a scratch directory, never
-the working tree, and served through the module's own sandbox server with
-its stdin held open (for example `tail -f /dev/null | <serve command>`, run
-in the background), so the server does not exit when its input closes.
-
-**6. A flaky test is fixed the round it is seen.** A test that fails once
-without a code cause (a port the browser refuses, a timing race) is a defect
-for this round's implementer, or a split right away; it is never re-run in
-the hope of a green. The redesign's polish workorder spent its cap on a
-Chromium `ERR_UNSAFE_PORT` flake.
-
-**7. During development run the relevant subset; the full set runs once,
-before the pull request.** A first verify and the items gate run `--dev`, a
-fix round after a verify that passed every other criterion runs the
-criteria the fix reaches plus the failed ones (`run_criteria.py
---changed-since`), and both defer the whole suites and `(final)` criteria.
-The full set runs once at the final gate before the push (Step 5). The
-conditions and fallbacks are in Step 3 and Step 4, "Re-verify what the fix
-reaches".
-
-**7b. After a write, read the diff, not the file.** The owner, 2026-10-02:
-after each write, agents *"spend lots of times on reads ... make sure only
-difference or relevant things are read after every write instead"*. An agent
-checks its own edit with `git diff -- <path>`, a grep or a ranged read, and
-every agent downstream of a write reads the diff since its base: reviewers
-already get `git diff <base> -- <paths>`, a re-entered implementer gets the
-failed criteria, the evidence and `git diff <base> -- <path>` for what
-earlier rounds changed, a replanning planner reads the Log since its last
-plan and the sections the defect names, and the scribe reads the `## State`
-range and the Log's tail. Measured over the 14 days before: scribes read
-both workorder files whole every round (about 13 MB over 228 runs), and
-fix-round implementers averaged 22 reads and 134 KB each, 105 of them the
-whole plan. `tools/workorder_audit.py` R26 fails an implementer or planner
-that reads a file it wrote whole more than twice.
-
-**8. A question never idles the pipeline.** In the ForgePact UI redesign 19
-of 60.75 hours passed with a question open and nothing running; the four
-longest waits were 380, 273, 256 and 111 minutes, mostly overnight. Two of
-those questions did not need the owner at all. So, before you ask:
-
-- **Start everything the answer cannot change**, in the same message as the
-  question: the other items or findings, a record round, the final gate on
-  what is already settled, the next plan when its decisions are made. The
-  answer then lands on finished work, not on an idle queue.
-- **An out-of-scope bug is a spin-off, not a question.** Flag it as a
-  separate task (the app's spawn-task chip, or a one-line note in the
-  report) and carry on; the redesign waited 256 minutes on a port-fallback
-  bug that was spun off anyway.
-- **A reversible choice gets its default, not a wait.** A P2 or nit, or a
-  choice where one option is plainly the plan's: apply it, say so in one line
-  with how to undo it, and let the owner overrule it. The redesign's longest
-  wait, 380 minutes, was a P2 icon question asked before the push.
-- **Only a decision that changes what gets built, and cannot be undone
-  cheaply, stops the work it gates** — and only that work, as an item's
-  `owner:` line parks only its item.
-- **Every owner question in a plan carries `default:` and `reversible:
-  yes|no`**, an item's `owner:` and each `## Needs human judgement` entry
-  alike, and `plan_lint.py` refuses one without them (`owner-no-default`,
-  `owner-no-reversible`, `owner-reversible-no-default`). A legal or
-  decompile-output question is `reversible: no` with a default of `none`
-  (`owner-legal-default`). So is a wait on a live capture or on data that does
-  not exist yet: the bug batch's three `owner:` items were of that kind. A
-  reversible one runs on its default inside the launch and comes back under
-  `defaulted`, with how to undo it; tell the owner in one line and move on.
-- **Route `unblocked` before you ask.** A result that waits on a person lists
-  under `unblocked` the parked work that does not wait on them, each with its
-  route. Start those routes in the same message as the question.
-- **Start what an `ASK` answer cannot change before relaying it.** A
-  `live-operator`'s `NEEDS-HUMAN` or a phase's question for the person goes
-  out with the independent work already started, not ahead of it. In the
-  bug batch the owner answered a question the driver asked while a launch
-  ran with *"Don't ask me, you can reserve live spot for hs drive mcp"*.
-
-**9. Review the design before building it, not at ship.** For a chain of
-UI workorders:
-
-- Run the design tools on the direction comps before anything is bundled or
-  downloaded: the impeccable detector (its overused-font check included) and
-  a critique. The redesign bundled Geist, then the owner moved to IBM Plex,
-  costing three replans across prep, buildout and restyle.
-- Run `impeccable-finish-reviewer` after the first restyle round, not after
-  the last workorder: the redesign's eight finish findings (F1-F8) arrived
-  in ship and reopened a component choice already built.
-- A design export gets a structure check against the current panel when it
-  is made (its texts present in the page, its selectors inside the component
-  they name, no runtime values such as a version baked in), not at restyle,
-  where seven mismatches cost two restyle rounds and two Figma rounds.
-- A design finding names its class and checks the class ("every text glyph
-  on every tab"), not only the instances listed: PR #100's review found an
-  icon the F6 fix had missed.
+**Read [`checks-and-overlap.md`](checks-and-overlap.md)** when several
+changes are ready at once, when a review runs as its own pass, when main
+moved, before a UI chain, or before you ask the owner anything: each rule's
+procedure and evidence is there. Rule 8 there, **"A question never idles the
+pipeline"**, applies to every owner question: start everything the answer
+cannot change in the same message as the question, apply the default to a
+reversible choice and say how to undo it, spin an out-of-scope bug off
+instead of asking about it, and route a result's `unblocked` list first.
 
 ## Driver discipline
 
 **The driver never implements.** Its tool use is limited to: reading the
-workorder, `round_delta.py`, `tools/amend_check.py save`/`check` around an
+workorder, `tools/workorder_brief.py --launch-args`, `tools/workorder_record.py
+apply` after each launch, `round_delta.py` (driver mode),
+`tools/amend_check.py save`/`check` around an
 amendment, `git status`/`git diff` for a dispatch, `Edit` on
 `## State`/`## Log`, `Agent`, `SendMessage`, `AskUserQuestion`, step
 4.5's one approved install, `plan_lint.py --items-json` while a streamed plan
@@ -1256,162 +840,178 @@ the Workflow tool requires, so don't ask again. It carried
 `prospect-idcheck-pin-hardening` through three rounds to `PASS` on
 2026-09-17.
 
-```
-Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js",
-           args: { slug, planPath, contextPath, checkoutRoot, goalExcerpt, implementerModel, implementerEffort, round,
-                   reviewers: { '<name>': 'never' | 'clean' | 'blocking', ... },
-                   submodules: ['<dir>', ...], researchHeadings, baseHeads, priorFindings, state,
-                   lanes: [{ name, files: [...] }, ...], join,
-                   items: [{ id, title, files, checks, after, shares, owner, default, reversible, build_reads }, ...], streaming, answered: ['<id>', ...],
-                   reviewScopes: { '<reviewer>': [{ label, paths: [...] }, ...] },
-                   maxParallel, maxAgents, tokenCeiling, itemAttempts, reviewPassCap } })
+**Build the args with one command, and pass them through.**
+
+```bash
+py -3 tools/workorder_brief.py --launch-args <slug> [--reviewers <name,...>] \
+    [--implementer-effort high|medium] [--implementer-model opus|sonnet] \
+    [--research-headings '<heading>'] [--first-implementation] [--answered <id,...>] [--final-gate]
 ```
 
-`items` is pasted from `py -3 tools/plan_lint.py <plan> --items-json`
-unchanged, on every launch of a plan of items (the relaunch reads which are
-done from `state`'s `items:` line). `streaming: true` while the plan's State
-says `planning: streaming`: the workflow then runs a `refill` agent that waits
-on `plan_lint.py --items-json --known <ids> --wait 480` and adds each item
-the planner releases, and it runs no gate before planning is complete.
-`answered` lists the items whose `owner:` question now has an answer under
-`### Decisions`; an unanswered item with `reversible: true` and a default
-runs on that default and comes back under `defaulted`. `reviewScopes` splits
-a reviewer into several that each read only their paths, run as separate
-reviewers. `maxParallel` (`DEFAULT_MAX_PARALLEL`, 4; a whole number from 1
-to 16, anything else is `BAD-ARGS`), `maxAgents` (120), `tokenCeiling`
-(none) and `itemAttempts` (3) are the
-budgets in Step 2, "Items"; `reviewPassCap` (4) is how many passes a
-reviewer makes as commits land before it waits for one final catch-up pass
-once nothing else is running. Items that could not have come from that output
-(a bad or duplicate id, no files, an `after:` naming no item, items beside
-lanes) are refused with `BAD-ARGS` before anything is spawned. A launch with
-no `items` runs in rounds exactly as below.
+```
+Workflow({ scriptPath: ".claude/workflows/workorder-rounds.js", args: <the JSON it printed> })
+```
 
-`lanes` and `join` are pasted from `py -3 tools/plan_lint.py <plan>
---lanes-json` (Step 1), and only for the first implementation of the plan's
-steps (Step 2); leave them out otherwise. Lanes that could not have come from
-that output (no `join: true`, a lane with no files, a bad or duplicate name)
-are refused with `BAD-ARGS` before anything is spawned.
+It prints `slug`, `planPath`, `contextPath`, `checkoutRoot`, `goalExcerpt`
+(`## Goal` and `## Out of scope`), `state` (`## State` as `section.py`
+prints it), `round`, `reviewers` (State's `reviewers:` line, plus each
+`--reviewers` name it lacks, entering as `never`), `priorFindings` (each
+blocking reviewer's findings, from the newest Log round that lists BLOCKING
+ones), `baseHeads` (the workorder's earliest snapshot), `submodules` (the
+plan's `module:` line, plus `--submodules`), `lanes`/`join` on a first
+implementation, and `items`/`streaming` for a plan of items, all from the
+files and from `plan_lint`. Do not read State, the Log or the lint JSON into
+your own context to assemble args: drivers made 1,171 shell reads of the
+workorder files and 536 `section.py` calls doing that by hand (the
+2026-10-11 /workorder audit, F04/F16). Add to the JSON only what no file
+holds: `reviewScopes` and the items budgets ([`items.md`](items.md)). Exit 1
+means `plan_lint` has a finding: it goes back to the planner, as in Step 1.
 
-`checkoutRoot` is this session's `git rev-parse --show-toplevel`; the script
-hands the scribe `planPath`/`contextPath` joined under it, and refuses with
-`BAD-ARGS` without it unless both paths are already absolute. On 2026-09-24
-(`hs-drive-game-lease`, run from a worktree) a scribe given relative paths
-resolved them against the main checkout, found neither file, and wrote
-nothing. `reviewers`/`submodules` are as in Step 3. `researchHeadings` names the
-context file's `###` heading(s) for `instrument-blindness-reviewer`.
-`baseHeads` is `{ '.': sha, '<submodule>': sha }`, copied from `## State` ›
-`round base:`, so a `never` reviewer reads the whole change from the
-workorder's own start rather than a later round's snapshot. `priorFindings`
-is `{ '<reviewer>': [{ where, problem }, ...] }` for each reviewer entering as
-`blocking`, copied from the most recent `### Round <n>` Log entry that carries
-a `BLOCKING (k)` list (an entry written for an implementer's `PLAN-DEFECT` or
-`ADVICE-NEEDED` has none, so that is the round before it) — a fresh launch
-has no memory of what that reviewer found, and a reviewer not told re-derives
-the whole change to find out (measured: 46 calls on a one-file delta). Rounds
-inside one launch carry it themselves. The script still accepts a `repoRoot`,
-and nothing here passes it: it re-points the git commands agents are handed,
-never where `Edit` lands, so it cannot make another checkout workable — Step
-0.25 stops that case before it gets here.
+`--reviewers` names the reviewers that apply to this change (Step 3 table,
+first column) and that State does not list yet; the Step 0.5 triage row
+gives `--implementer-effort`/`--implementer-model`; `--research-headings`
+names the context file's `###` heading(s) recording a research finding, for
+`instrument-blindness-reviewer`; `--answered` lists the items whose owner
+question now has an answer under `### Decisions`. Lanes, and args that could
+not have come from `plan_lint` (`join` not true, a lane with no files, a bad
+or duplicate name or item id), are refused with `BAD-ARGS` before anything
+is spawned. The script still accepts a `repoRoot`, and nothing passes it: it
+re-points the git commands agents are handed, never where `Edit` lands, so
+it cannot make another checkout workable — Step 0.25 stops that case.
 
-`state` is the plan's `## State` section exactly as `py -3
-.claude/skills/workorder/section.py <plan> 'State'` prints it. The script
-merges each round's `round:`/`phase:`/`reviewers:`/`open defects:` (and,
-once a patch round has held, `patch rounds:`) into it and hands the scribe the whole block, so the lines only the driver writes —
-`gates:`, `round base:`, `agents:`, `decisions in force:` and any other —
-are pasted back verbatim rather than left to the scribe to preserve. On
-2026-09-23 a scribe handed only the four computed lines replaced the whole
-block with them in several workorders, and the next verifier, reading no
-`gates:`, reported gated criteria pending instead of running them.
+**After every launch, apply its record before anything else.**
 
+```bash
+py -3 tools/workorder_record.py apply --run <runId>
+```
+
+The launch writes no file. Its result carries `record`: every round it
+finished, each with the State lines it changed and its Log block. The tool
+reads the run record Claude Code saved for the launch
+(`~/.claude/projects/<project>/<session>/workflows/wf_<runId>.json`; the run
+id is the one the Workflow tool reported), merges each round's State lines
+into `## State` by key, leaving every other line as it is, and appends each
+Log block under `## Log`, marked `<!-- workorder-record run=<runId>
+round=<n> -->`, so a second apply changes nothing. Run it before you read
+the result's routing, before any replan, consultation, relaunch or report,
+and before you end the session: everything after it reads the files. Until
+2026-10-11 a haiku `scribe` made this write inside the launch and reported
+it back, and 92 of 353 launches (26%) ended `STATE-LOST`, `LOG-DAMAGED` or
+`SCRIBE-FAILED` on that bookkeeping, several of them false alarms (F01);
+those outcomes no longer exist.
+
+If it exits nonzero it wrote nothing:
+
+- **3** — no run record by that id, or one without a `record` (a launch
+  started before 2026-10-11, one that never returned, or a `BAD-ARGS`
+  refusal, which ran nothing and has nothing to write). Check the run id
+  first (`--project-dir` points it at another project directory). For a
+  launch with no record, write that round's `### Round <n>` Log entry and its
+  `round:`/`phase:` State lines by hand with `Edit` from what its result shows,
+  as in driver mode, then go on.
+- **4** — the record is another workorder's, or a workorder file cannot be
+  read. You have the wrong run id or the wrong checkout; find the right one.
+  Never edit the files to make it fit.
+
+**What a launch returns.** A plan without items loops implement →
+verify + per-round reviewer → route as code, with the same 3-round cap, and
+returns `PASS`, `PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `ADVICE-NEEDED`,
+`AGENT-FAILED` or `CAP`; an `IMPL-DEFECT` or BLOCKING round goes on to the
+next round inside the launch. A `finalGate` launch returns `PASS`,
+`PASS-PENDING-HUMAN`, `PLAN-DEFECT`, `IMPL-DEFECT` or `AGENT-FAILED`. A plan
+of items: [`items.md`](items.md). A laned round that ends before its join
+returns `PLAN-DEFECT`, `ADVICE-NEEDED` or `AGENT-FAILED` with `lanes:` beside
+it — every lane's `name`, `verdict` (`IMPL-DONE`, `PLAN-DEFECT`,
+`ADVICE-NEEDED`, `STOPPED`, or null for a lane that returned nothing) and
+`progress_so_far`, the same list the round's Log block records. Hand the
+replan or the consultant every lane's progress, not only the lane that
+stopped the round: the lanes that finished left their work uncommitted in the
+tree. A rounds-mode result whose implementer's `CORRECTION:` was tried
+carries `amendment` (`amended`, `why`, `verdict`), and a
+`PASS-PENDING-HUMAN` carries `unblocked`, empty when nothing else is left.
+
+An amendment that `amend_check.py` confirms runs inside the launch (Step 2,
+"Amend, or replan"). Replans (including every amendment that did not hold),
+consultations, owner questions and the step 5 report stay with the driver: a
+workflow script cannot resume an implementer, and in 22 sessions there was
+one consultation. Every re-entry inside is a fresh spawn (no resume) —
+measured no worse than a resumed implementer. The round's snapshot,
+`round_delta.py delta`, its two content greps, `round_delta.py size` (patch
+rounds) and `tools/decompile_check.py` are the implementer's own first and
+last commands, reported in its result; only a laned first round still
+spends a haiku agent on the snapshot, because every lane would race to write
+it. The amendment's `amend_check.py save`/`check`/`restore` stay separate
+haiku agents of the launch: `workorder_audit.py` R24 wants a `save` before
+the amendment planner and a `check` after it, and a check the planner ran on
+its own edit would be the planner's account of what it changed, which the
+check exists to replace.
+
+**State the script reads and writes.** `state` is the plan's `## State` as
+`section.py` prints it. Each round's record carries only the keys it
+changes — `round:`, `phase:`, `reviewers:`, `open defects:`, `patch rounds:`
+once a patch held, `items:` for a plan of items, `launches:`, `replans:`
+after a `PLAN-DEFECT`, `final gate:` from a final gate — and
+`workorder_record.py` adds `last run:`; every line only the driver writes
+(`gates:`, `agents:`, `decisions in force:` and any other) stays as it is.
 The script also reads `gates:` itself. Only tokens literally on that line
 count as set. `gates pending:` and `route tokens:` set nothing, and a value
-with `|` or "or" alternatives, or a `<placeholder>`, is a template that sets nothing. A
-round with no BLOCKING finding and no verifier `other_defects` (a structural
-finding, or a non-empty NOT DONE or DEVIATIONS), whose every failed criterion
-names a gate that is not set, returns `PASS-PENDING-HUMAN` and does not spend another round. The
-Log entry records what the verifier said, and each such criterion appears as
-`- PENDING (gate <x> not set)`. With no `gates:` line in State, nothing is
-reclassified. On 2026-09-24, forgepact-issue-14-phase1j lost three rounds to a
-template `gates:` line, which the verifier read as every gate set, and ended at
-`CAP` with no real defect open after round 0.
+with `|` or "or" alternatives, or a `<placeholder>`, is a template that sets
+nothing. A round with no BLOCKING finding and no verifier `other_defects` (a
+structural finding, or a non-empty NOT DONE or DEVIATIONS), whose every
+failed criterion names a gate that is not set, returns `PASS-PENDING-HUMAN`
+and does not spend another round. The Log entry records what the verifier
+said, and each such criterion appears as `- PENDING (gate <x> not set)`. With
+no `gates:` line in State, nothing is reclassified. On 2026-09-24,
+forgepact-issue-14-phase1j lost three rounds to a template `gates:` line,
+which the verifier read as every gate set, and ended at `CAP` with no real
+defect open after round 0.
 
 It runs Step 4's patch route itself. It asks each reviewer for a `fix`,
 decides when the next round is a patch (the round's Log gets `next: patch
-round` and State `phase: patch`), runs `round_delta.py size` in that round,
-and writes `patch: held` or `patch: not held (<why>)` under its Log heading.
-It keeps `patch rounds: <k>` in State and reads it back on the next launch,
-so a patch that held stays uncounted across launches. A patch decided just
-before a launch ends is not carried over; the relaunch runs an ordinary round.
+round` and State `phase: patch`), has that round's implementer run
+`round_delta.py size`, and writes `patch: held` or `patch: not held (<why>)`
+under its Log heading. It keeps `patch rounds: <k>` in State and reads it
+back on the next launch, so a patch that held stays uncounted across
+launches. A patch decided just before a launch ends is not carried over; the
+relaunch runs an ordinary round.
 
-A plan of items returns `PASS`, `PASS-PENDING-HUMAN`, `PARKED`, `PLAN-DEFECT`
-(a reviewer's plan defect, the gate's unrunnable criterion, or a refill that
-`plan_lint` refused), `CEILING`, `CAP` (the gate failed three times),
-`AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED` or `LOG-DAMAGED`, always with `items:` beside
-it (each item's `id`, `status`, `reason`, `attempts`, `commits`, `evidence`
-and `progress`, and `replan` when an amendment was tried and did not hold)
-and `gate:` (each gate run). It also carries `defaulted` (each owner item
-that ran on its default: `id`, `question`, `default`, `status`, `commits`
-and `undo`), `amendments` (each amendment the launch tried, and whether it
-held), and, on a result that waits on a person (`PARKED` with an owner item,
-or `PASS-PENDING-HUMAN`), `unblocked` (Step 2, "Items"). Its Log entry is
-`### Round <n> (items)`, with `unblocked:`, `defaulted (k):` and
-`amendments (k):` lines when they apply, and State gains `items:
-<id>=<status>; ...`, where an item done on its default reads `defaulted`.
+**Count launches; stop at six.** Every launch's record sets `launches: <k>`
+in State, one past the last. Rounds are capped per workorder, but relaunches
+after `PARKED` or `CEILING`, after a replan or after a consultation were
+counted nowhere (F13). After the sixth launch of one workorder, stop and
+bring it to the owner before a seventh — go on, split it, or change the plan
+— with what each launch ended on. `replans:` is the replan ladder's count
+(Step 2): a launch adds one for every `PLAN-DEFECT` it returns, and a
+confirmed amendment takes it back off.
 
-A plan without items loops implement → verify+reviewers → route as code (same 3-round cap,
-scribe for Log/State, reviewer table), returning `PASS`, `PASS-PENDING-HUMAN`,
-`PLAN-DEFECT`, `ADVICE-NEEDED`, `AGENT-FAILED`, `STATE-LOST`, `SCRIBE-FAILED`, `LOG-DAMAGED` or `CAP`. One
-launch may cover several rounds; `PLAN-DEFECT` means relaunching after the
-replan. `STATE-LOST` means the scribe's own before/after report shows a
-State line gone that the round did not replace; the launch stops there, before
-a verifier can read the damaged block. Paste the result's `state` back under
-`## State` (its `lost` lists what went), then act on its `then` exactly as if
-that had been the outcome — `continue` means relaunch at the State's `round:`.
-A laned round that ends before its join returns `PLAN-DEFECT`,
-`ADVICE-NEEDED` or `AGENT-FAILED` with `lanes:` beside it — every lane's
-`name`, `verdict` (`IMPL-DONE`, `PLAN-DEFECT`, `ADVICE-NEEDED`, `STOPPED`, or
-null for a lane that returned nothing) and `progress_so_far`, the same list
-the scribe wrote under the round's Log heading. Hand the replan or the
-consultant every lane's progress, not only the lane that stopped the round:
-the lanes that finished left their work uncommitted in the tree.
-`SCRIBE-FAILED` means the scribe wrote nothing (`written: false`, or no
-result), so no State was lost and nothing is compared: append the result's
-`log` under `## Log` in the context file, replace `## State` with its `state`,
-then act on its `then` the same way. Before this outcome existed, the
-`hs-drive-game-lease` scribe's "N/A - files do not exist" report was read as a
-State with every driver-owned line gone and returned `STATE-LOST` for a round
-that had lost nothing.
-`LOG-DAMAGED` means the scribe's report of the context file's last lines
-(`log_tail`) does not end with the round's Log block: it pasted something
-after the block, or wrote the block before its anchor line (`anchor`) and so
-moved that line to the end. Make the end of `## Log` read the entry that
-ended with `anchor`, whole, then the result's `log` and nothing after it,
-then act on its `then`. A `STATE-LOST` whose Log was damaged too carries
-`log_damaged: true` and the same `log`; repair both. On 2026-10-03
-(`forgepact-16-jump-scenery-research`, a laned `PLAN-DEFECT`) a scribe pasted
-its own State instruction into the Log and cut the `### Plan` entry's last
-line off to after the round entry, and nothing noticed until the driver read
-the file.
-A rounds-mode result whose implementer's `CORRECTION:` was tried carries
-`amendment` (`amended`, `why`, `verdict`), and a `PASS-PENDING-HUMAN` carries
-`unblocked`, empty when nothing else is left.
-An amendment that `amend_check.py` confirms now runs inside the launch
-(Step 2, "Amend, or replan"). Replans (including every amendment that did
-not hold), consultations, owner questions and the step 5 report stay with
-the driver: a workflow script cannot resume an implementer, and in 22
-sessions there was one consultation. Every re-entry inside is a fresh spawn
-(no resume) — measured no worse than a resumed implementer. The scribe runs as the restricted `scribe` agent type
-(`Read`, `Edit` only), never the unrestricted `workflow-subagent` every other
-Record-phase agent here still is; `tools/workorder_audit.py` R16 fails a run
-whose scribe edited outside `.claude/workorders/`, ran `git add`/`git commit`,
-wrote a file through a shell command (a redirect/heredoc, `tee`, a
-PowerShell content cmdlet, ...) instead, or — for the restricted `scribe`
-type — ran any shell command at all.
+**End the session at a gate; resume rebuilds from the files.** An owner
+question, or a live gate waiting on the owner, leaves the driver idle for
+hours, and the next turn then re-caches its whole context: 48% of driver
+cache writes followed an idle gap over an hour, about 300K tokens each, and
+the median driver peaked at 294K (F04). So, at such a gate:
+
+1. Apply the last launch's record, and start everything the answer cannot
+   change, in the same message as the question (rule 8 above).
+2. Make the files say what is pending — the question under `## Needs human
+   judgement` or on the item's `owner:` line, `gates pending:` for a live
+   gate — and write nothing else new into your own context.
+3. Ask, print the exact `/workorder resume <slug>` command, and end the
+   session. Do not wait idle for the answer.
+
+`/workorder resume <slug>` rebuilds everything from the files (Step 2,
+"Entering here from `resume`?"), at about 56K tokens of known context
+against the ~300K it would re-cache; the answer goes under `### Decisions`
+there. The plan already has to survive a session split (§ "Modes"), so
+nothing is lost that is not lost already. A live session itself needs a
+session to relay the operator: end at the install question when the owner
+cannot play now, and run the session from a fresh `resume` when they can.
 
 **Fall back to driver turns** (steps 2–4 by hand, above) when the Workflow
 tool is unavailable, the launch fails, or the user says "driver mode" or "no
-workflow".
+workflow". In driver mode you run what the launch would: the snapshot before
+each round, `round_delta.py delta` and `tools/decompile_check.py` after it,
+the Step 3 reviewers by the same yield rule, State and Log with `Edit`, and
+the final gate as a fresh verifier beside the deferred reviewers.
 
 ## Two rules that make this work rather than just look like it works
 
@@ -1427,28 +1027,17 @@ backwards is cheap and correct. That is the whole design.
 
 ## Model tiers
 
-Set in each agent's frontmatter, with an `effort:` beside every tier that
-takes one: `planner` opus/high, `implementer` opus/high, `consultant`
-opus/xhigh, `instrument-blindness-reviewer` opus/high, the other reviewers and
-`live-operator` opus/medium, `verifier` haiku/medium, `scribe` haiku/low.
-Override the model for one run by passing `model` on the Agent call.
-Effort has no per-call override on the Agent tool, which is why it is pinned
-— an agent without one inherits whatever the session runs at.
-
-**Effort variants choose effort per spawn.** An agent's
-`effort-variants:` line lists the other levels /workorder runs it at, and
-`py -3 tools/sync_agent_tooling.py` writes one `<agent>-<level>.md` for each,
-same body, own `name:` and `effort:`; `tests/test_agent_tooling_sync.py`
-fails a variant that drifted from its source. Today: `planner-medium`,
-`planner-xhigh`, `planner-max`, `implementer-medium`, `consultant-max`.
-Spawn the variant by name, in a driver's `Agent` call and in
-`workorder-rounds.js` alike. A Workflow `agent()` call does accept an
-`effort` option, but whether it beats the agent's own pinned `effort:` is
-not documented, and a transcript records no effort level at all, so the
-name is the one spelling that both runs at that effort and lets
-`workorder_audit.py` see it (`split_effort_variant`; `--calibrate` reports
-per role, model *and* effort). To add a level, add it to the source's
-`effort-variants:`, re-run the sync, and name it in a table here.
+Each tier is pinned in its agent's frontmatter (`model:` and `effort:`), and
+an effort variant (`planner-xhigh`, `implementer-medium`, ...) is the same
+agent at another effort, generated by `tools/sync_agent_tooling.py` from the
+source's `effort-variants:` line. Spawn the variant by name, in a driver's
+`Agent` call and in `workorder-rounds.js` alike: the `Agent` tool takes no
+effort, and the name is the one spelling the audit can see. `fable` is not a
+tier (the owner's license dropped it on 2026-10-05). Fixed tiers:
+`verifier` haiku/medium, `instrument-blindness-reviewer` opus/high, the other
+reviewers and `live-operator` opus/medium. The driver is the session itself:
+run it on `opus` at `medium`, `high` for a session whose product is the
+driver's own judgement.
 
 | Spawn | Model / effort | When |
 |---|---|---|
@@ -1461,127 +1050,9 @@ per role, model *and* effort). To add a level, add it to the source's
 | `consultant` | opus / xhigh | the default consultation |
 | `consultant-max` | opus / max | a question from a `planner-xhigh` triage row |
 
-**The driver is the session itself**, so no frontmatter pins it: run the
-session that runs /workorder on `opus` at `medium` effort, and raise it to
-`high` for a session whose product is the driver's own judgement (triaging a
-bug batch into items, deciding how to split a plan). Drivers were 30% of the
-calibration set's spend over hundreds of turns, many above 300K tokens, and
-effort is paid on every one of them. Their job is routing by written rules;
-the hard calls already go to `consultant` and replans to the planner, and the
-driver failures the audit recorded (R10) were discipline, not reasoning,
-which more effort does not fix. Chosen 2026-10-06 (#436), not measured.
-
-**Fable left this pipeline on 2026-10-05**, when the owner's license
-stopped carrying it. Every place it held — the two hard triage rows, the
-second replan, the consultant on a hard row — now holds the `opus` variant
-one or two effort levels up, per the table above. Its price row below
-stays, because `workorder_audit.py` still prices older transcripts that
-ran it.
-
-**Where Opus 5.5 fits (2026-09-22).** `opus` resolves to Claude Opus 5.5; it
-did so already for the last sessions of the calibration set, with no file
-changed. What it changes is the price, and price is what the tiers were
-chosen by. List prices per million tokens (input / output / cache read):
-
-| Model | In | Out | Cache read |
-|---|---|---|---|
-| Fable 5.1 (`fable`) | $10 | $50 | $0.25 |
-| Opus 5.5 (`opus`) | $4 | $20 | $0.20 |
-| Opus 5 (was `opus`) | $5 | $25 | $0.50 |
-| Sonnet 5.5 (`sonnet`) | $2 | $10 | $0.20 |
-| Sonnet 5 (was `sonnet`) | $2 | $10 | $0.20 |
-| Haiku 5.5 (`haiku`), prompt ≤ 100K tokens | $0.10 | $0.50 | $0.01 |
-| Haiku 5.5 (`haiku`), prompt > 100K tokens | $0.50 | $2.50 | $0.05 |
-| Haiku 4.5 (was `haiku`) | $1 | $5 | $0.10 |
-
-92-99% of every role's tokens here are cache reads, so for this pipeline
-Opus 5.5 costs about what Sonnet 5 does, and 40-60% less than Opus 5 did:
-the 20 Opus 5 drivers and the Opus-5 planners of the calibration set would
-have cost about half as much. Hence:
-
-- **implementer → `opus`.** Measured on the 22 sessions: Sonnet 5
-  implementers averaged $4.65 a run with a tail to $18.90 (p90 46.8M tokens,
-  max 78.9M — the runs that hit round caps); Opus-tier ones used 36% fewer
-  tokens on average (11.2M against 17.4M) while carrying the hard triage
-  rows, and the four Opus 5.5 runs averaged $4.82. Same money, no tail.
-- **planner, consultant, instrument-blindness-reviewer stay `opus`**, now
-  cheaper. Until 2026-10-05 `fable` kept the two hard triage rows plus the
-  second replan; those are now `planner-xhigh` and `planner-max`.
-- **amendment planner → always `planner-medium`, with `model: opus` passed explicitly.**
-  An amendment planner always runs as planner-medium on opus, never escalated.
-  It applies one correction someone already stated, so the replan ladder
-  does not reach it: spawn it as `planner-medium` whatever `planner-tier=`
-  the State records. In the 18 sessions after 2026-10-02 one amendment ran
-  fable because the driver carried an escalated tier over; fable planners
-  averaged 8.49M input tokens a run there. `workorder_audit.py` R27
-  (`amendment-tier`) fails an `amendment:` planner whose transcript ran
-  fable or that ran as `planner-xhigh`/`planner-max`, and
-  `workorder-rounds.js` spawns its own amendments as `planner-medium` with
-  `model: 'opus'`.
-- **Reviewers, live-operator and the docs row → `opus`/`medium`
-  (2026-10-06, #436).** Until then `sdk-contract-reviewer`,
-  `tauri-command-reviewer`, `docs-sync-reviewer`, `decompile-output-guard`
-  and `live-operator` ran sonnet/high, and the docs triage row's implementer
-  ran `sonnet`. Artificial Analysis's Intelligence Index against cost per
-  task (read 2026-10-06) puts Opus 5.5 ahead of Sonnet 5.5 at every effort
-  level for about the same price: Opus medium about 51 at $1.40 a task,
-  Sonnet high about 47 at $1.10, Sonnet xhigh about 52 at $2.75 against Opus
-  high's 53.5 at $1.85. That benchmark prices mostly output and thinking;
-  here 92-99% of tokens are cache reads at $0.20 on both, so the model step
-  costs less still, and effort is what moves the bill, hence `medium`
-  rather than the `high` they had. On the calibration set's tokens Opus 5.5
-  costs the reviewers about 1.2× what Sonnet did. No reviewer finding was
-  ever measured as missed on `sonnet`, so this is a capability bet chosen
-  from a benchmark, not a measured fix; `--calibrate` will say whether it
-  holds.
-- **verifier and scribe stay `haiku`, now with an effort pinned
-  (2026-10-08).** They run commands and paste text. Haiku 5.5 (released
-  2026-10-07) honours `effort` where Haiku 4.5 ignored it, so an unpinned
-  one would run at the driver's level: `verifier` is pinned `medium`
-  (Haiku 5.5's own default; a false verdict costs a round, and at about
-  $0.02 a run the step down to `low` saves nothing worth that), `scribe`
-  `low` (it pastes precomputed text). Haiku 5.5 bills a turn whose prompt
-  is over 100K tokens at 5×, and both stay under it: on 87 sessions since
-  2026-09-22 the verifier's p90 prompt was 64K with no turn over 100K, the
-  scribe's 70K with 1%. Repriced on those tokens a verifier run costs
-  about $0.02 against $0.55 on Opus 5.5. Not moved to Haiku: the
-  reviewers, live-operator, planner and implementer. Artificial
-  Analysis (read 2026-10-08) puts Haiku 5.5's best Coding Agent Index (41,
-  at `xhigh`; `max` scores 36 at four times the cost) below Sonnet 5.5 at
-  `low` (42), and its Intelligence Index at `xhigh` (41) well below Opus
-  5.5 at `medium` (51); those roles' prompts also sit mostly over 100K
-  (implementer and planner 67% of turns). The `haiku` alias still
-  resolved to Haiku 4.5 on 2026-10-07; it moves by itself.
-- **Effort.** Opus 5.5 defaults to `medium` and thinks more per turn than
-  Opus 5 at the same level; `high` is pinned for the phases that carry long
-  agentic work and `xhigh` for the one narrow question `consultant` answers.
-  `medium` is used where the correction is already written (amendments,
-  patch rounds) or the change is docs only, and `max` only where cheaper
-  reasoning has failed twice. None of these levels is measured yet:
-  `tools/workorder_audit.py --calibrate` reports per role, model *and*
-  effort, so the next recalibration says whether they hold.
-
-`tools/workorder_audit.py` prices every transcript at these rates
-(`MODEL_PRICES`), so a report's cost line tracks a tier change without anyone
-redoing this arithmetic.
-
-**Tier aliases, not pinned version IDs.** `opus` names the tier, not a
-version. Pinning `claude-opus-5` across eight files buys reproducibility this
-pipeline doesn't need (a broken model fails a *test*, not a review) and costs
-a stale-ID sweep every generation — not the `*Rva*` case from `AGENTS.md`,
-since an alias is a documented moving pointer, not a silently-drifted
-constant.
-
-**When to reach for `planner-xhigh` or `consultant-max` yourself,** beyond the
-automatic escalation above (these were the reasons to reach for `fable`):
-
-- The plan must establish an **unknown** game mechanism, not verify a
-  suspected one — the "which of 34 candidates does X" shape, where a wrong
-  mechanism model has cost whole sessions rather than one round.
-- The change falls in the class `AGENTS.md` § "Don't Suspend the Game's Own
-  Runtime" warns about — the failure mode inverts, and the blast radius is the
-  player's session.
-
-Not on a routine change, or the implementer or a reviewer — those run at high
-volume, where more thinking per turn is real money for no measured gain —
-and not as the default planner, which is 22% of spend already.
+**Read [`model-tiers.md`](model-tiers.md)** before changing a tier, adding an
+effort level, or answering a cost question: the prices, the measurements
+behind each choice (implementer → opus, the amendment planner's pin and its
+R27 audit, reviewers at medium, verifier on haiku), and when to reach for
+`planner-xhigh` or `consultant-max` beyond the automatic escalation are
+there.
