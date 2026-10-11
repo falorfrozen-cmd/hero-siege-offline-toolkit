@@ -794,6 +794,19 @@ that logs nothing; breakpoints only through `logpoint`; `detach` before
 `hs_stop_game`; never `StopDebug`, never killing headless, no software
 breakpoints and no memory writes.
 
+Because the operator attaches only when the procedure says so, the planner is
+what decides whether the debugger runs. Every `### Live procedure` carries a
+**debugger** field (planner.md "Ask 'which code' of the debugger"): x64dbg
+steps whenever a check asks whether a function fires, which code does
+something, or with what arguments and how often, with the checks named
+`dbg-control` (session validity, on `--require-pass`) and `dbg-<candidate>`
+(research, never on it); otherwise `none — <reason>`. The live gate sends a
+procedure back to the planner when that field is missing or a "which code"
+check has no debugger step (`.claude/skills/workorder/live-gate.md` item 0b),
+and `instrument-blindness-reviewer` flags one that answers such a question
+with a research hook alone. `tests/test_live_procedure_debugger_rule.py` pins
+all three.
+
 - **The CLI route, for an operator without the tools loaded.** When a
   session has not loaded the `mcp__x64dbg__*` tools (the first live session's
   driver had most likely started before the server entered `.mcp.json`;

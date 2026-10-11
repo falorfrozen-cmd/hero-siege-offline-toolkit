@@ -164,6 +164,41 @@ When a criterion needs the running game, write the session as a
   research doc heading), or "not found in the shared references or research
   docs". A session built on an unchecked script can measure a path the game
   never takes: ForgePact #160's Live 1 (2026-10-04) did.
+- **debugger**: the x64dbg steps the session runs, or `none — <reason>`.
+  Every procedure carries this field, because the debugger runs only when
+  you write it in (below).
+
+**Ask "which code" of the debugger, not only of a hook.** When a check asks
+whether a function fires, which code does something, or with what arguments
+and how often, write x64dbg steps into the procedure's **debugger** field.
+`live-operator` alone carries the x64dbg tools, and it attaches only
+when the procedure names debugger steps, so a question you leave to a
+research hook alone is never put to the debugger. In ForgePact #197
+(2026-10-11) Live 1's stack hook logged `calls=0` while picked-up pieces
+merged into a real key stack. A logpoint would have shown which code did the
+merge, in the same session and with no rebuild. The steps follow
+`live-operator.md` § "When the procedure names debugger steps" and
+`docs/tools/x64dbg-mcp.md`:
+
+- attach under the session's lease, after the game's own positive control;
+- a **debugger control** first: a logpoint on an address already known to be
+  hit in the steps the session runs, named as the check `dbg-control`;
+- at most four non-breaking hardware logpoints at once (the control and
+  three candidates), each candidate given its address as
+  `Hero_Siege.exe+<offset>` mapped from the Ghidra project and its first
+  bytes from Ghidra as `expect_bytes`, and named as the check
+  `dbg-<candidate>`;
+- `detach` before `hs_stop_game`.
+
+`dbg-control` is a session-validity check and goes on `--require-pass`. A
+`dbg-<candidate>` check is a research check, so it never does: its zero
+counts only with the control logging in the same window. An address mapped
+from Ghidra is a research finding for the context file and `docs/`, never a
+constant in shipped code (`AGENTS.md` § "Never Call an Address You Resolved
+by Hand"). Write `none — <reason>` only when no check asks such a question,
+or when the debugger cannot see the answer (a value's content rather than a
+call, for example). The live gate sends a procedure back to you when a "which
+code" check has no debugger step and no reason.
 
 The session criterion reads the capture with the tool, never a hand-written
 grep: `py -3 tools/live_checks.py .claude/workorders/<slug>-live-<n>.md

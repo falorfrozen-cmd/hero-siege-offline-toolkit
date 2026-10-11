@@ -1,0 +1,33 @@
+# Run the hub's Python test suite on every pull request and on main.
+#
+# Until hub #492 the suite ran only inside catalog.yml, catalog-publish.yml and
+# hub-release.yml, so a pull request's one check was ai-review, whose shell
+# cannot run tests (on #491 it tried three times and was denied each time).
+# Same command and runner as hub-release.yml's `check` job; submodules are not
+# checked out, as there.
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Python test suite
+        run: python -m unittest discover -s tests
