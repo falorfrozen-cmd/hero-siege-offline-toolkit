@@ -2394,6 +2394,7 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   by `chances[13]` (0.7 natively), luck and argument 6, and places a hit with
   `LootGroundCreate`. It reads arguments 0, 1 and 3–7; an undefined argument 5
   makes the luck term fail. **Static reading.**
+- The 44 key names of repository category 12 are listed in § 21.3.
 
 [dungeon keys, the whole chain](../ForgePact/docs/dungeon-key-research.md#zincirin-tamamı-açıldıktan-sonra-hepsi-oyunun-kendi-kodu),
 [S10, dungeon keys solved](../ForgePact/docs/S10-special-content-notes.md#cozuldu---zindan-anahtarlari-dogal-olarak-dusuyor--27082026)
@@ -4202,8 +4203,12 @@ names are the stats' tooltip names (the Item Editor's game-verified stat table).
   negative). The Gem of Incarnation (`socketable_gem_of_incarnation`, class 15,
   `b` 136) carried info key `"31"` = 10,000 on every one in the local drop
   records (`bp_ipc\itemdrops.jsonl`, **measured**); with measured gem bases of
-  9,000 and 11,000 (§13.2), 10,000 is its plausible `droprate.base`,
-  **UNVERIFIED** until a live read.
+  9,000 and 11,000 (§13.2), 10,000 looked like its `droprate.base`; the live
+  read below says otherwise.
+- The Gem of Incarnation's `droprate.base` read 9,000, not the 10,000 its info
+  key `"31"` carries, and a built Gem of Incarnation's `itemSprite` read
+  undefined. **Measured** (ForgePact #197's Live procedure 1, 2026-10-11,
+  research build).
 - `LootGroundCreate(x, y, type, params, ...)` writes a fresh random seed into the
   params' `a`, creates the item instance and calls `CreateItemNew(instance,
   undefined)`. So a drop's seed is settled between that write and
@@ -4945,9 +4950,11 @@ What ForgePact's boss soul pieces work (ForgePact #197, hub #489) read about
 acts, act bosses and key items on 2026-10-11: through the `ghidra` MCP on build
 `498d588550d8`, and through local byte scans of `Hero_Siege.exe` and `data.win`
 whose positive controls were `PickupLoot`'s known callers and a known object
-event row. **Every claim here is a static reading** until a live session
-measures it; the mod's design, its live procedures and their results are in
-ForgePact's
+event row. Each claim carries its label: **static reading** (a local reading
+of the game, in our own words), **measured** (naming the live session that
+measured it; ForgePact #197's Live procedure 1 ran on 2026-10-11 on a research
+build, slot 14) or **not established**. The mod's design, its live procedures
+and their results are in ForgePact's
 [`docs/boss-soul-pieces-research.md`](../ForgePact/docs/boss-soul-pieces-research.md).
 The MCP's callers and xrefs answers were empty for every function read here,
 which is "not observed", not "has no callers": compiled GML calls scripts by a
@@ -4955,10 +4962,14 @@ direct `call rel32` that the import's reference table does not hold.
 
 ### 21.1 The act of a room (`RoomActIndex`)
 
-- `gml_Script_RoomActIndex` (3474) takes a room and answers its act minus one:
-  a switch over 175 room constants into nine cases, 0 to 8. Its result starts
+- `gml_Script_RoomActIndex` (3474) takes a room and answers its act itself, 1
+  to 9: it answered 1 in `Town_01_rm` and in `Act_01_01` and 2 in `Act_02_01`.
+  **Measured** (ForgePact #197's Live procedure 1, 2026-10-11). An earlier
+  static reading took the answer for the act less one; that reading was wrong.
+- It is a switch over 175 room constants into nine cases. Its result starts
   undefined and only a matching case sets it, so any room outside the 175
-  answers undefined. **Static reading** (2026-10-11).
+  answers undefined. **Static reading** (2026-10-11); that a room outside the
+  switch answers undefined was not measured.
 - A byte scan for direct call sites found two callers,
   `gml_Script_FetchActTexPages` (1574) and the texture manager's `Other_4`
   event, so the game itself uses the answer to pick an act's texture pages.
@@ -4990,9 +5001,18 @@ direct `call rel32` that the import's reference table does not hold.
 - The pentagram's Step event names every act boss room and calls
   `gml_Script_PlayMusic` (2434), `gml_Script_ScreenShake` (450) and
   `gml_Script_NetworkSendBoss` (2557), and the last of these only sends a
-  network message. So the act boss arrives at run time, and what creates it is
-  **not established**. **Static reading** (the pentagram's Create, Alarm_4 and
-  Step events).
+  network message. So the act boss arrives at run time. **Static reading** (the
+  pentagram's Create, Alarm_4 and Step events).
+- The pentagram makes the boss. Its Create reads the player's distance and the
+  instance variables `bossSpawned`, `bossesKilled`, `allPlayersIn` and
+  `instantSpawn`; its Alarm_0 creates the room's boss with
+  `instance_create_layer` on the game layer, at the pentagram, choosing the
+  object by room. The objects it can create include `Gurag_obj`, `Reaper_obj`,
+  `Anubis_obj`, `Damien_obj`, `Karp_King_obj`, `Satan_obj`, `Mevius_obj` and
+  `Odin_Cutscene_obj`, besides other rooms' bosses; `Cthulhu_obj` is not among
+  them (**not observed**). Which room maps to which object was not read, so the
+  table below stays the decor's evidence. **Static reading** (Alarm_0,
+  2026-10-11).
 - `Boss_Block_obj`'s collision with the player tests for eight boss objects:
   Uber Anubis, the Architect, Phantom Leviathan, Cthulhu, Uber Reaper, Kaelith,
   Captain Grimtide and the Blood Maiden. **Static reading.**
@@ -5030,11 +5050,21 @@ direct `call rel32` that the import's reference table does not hold.
   their drops. Setting a monster's HP to 0 kills it through its own death path,
   but Uber Endrixia, Uber Anubis and Uber Luna do not die that way, and a boss
   spawned in town removes itself (§ 13.1, measured; the spawn route is not
-  named there). Whether the nine act bosses above live, fight and die when
-  created outside their pentagram, by `instance_create_depth` or any other
-  route, is **not established**; ForgePact #197's live procedures measure acts
-  1 and 2 only. That a summoned act boss counts toward its act's quest or
-  completion is **not established**.
+  named there).
+- An act boss created outside its own room does not die safely. A
+  `Reaper_obj` created with `instance_create_depth` in `Act_02_01` and killed
+  by setting its `enemy_hp` record to 0 closed the game with an access
+  violation: `Enemy_Child_Boss_obj`'s Destroy event ran
+  `gml_Script_LoadBossDeath`, which found no `Pentagram_Boss_obj` in the room.
+  A Karp King created and killed the same way in `Act_01_01` died without a
+  crash; why the two differ is **not established**. **Measured** (ForgePact
+  #197's Live procedure 1, 2026-10-11). So an act boss should fight and die
+  safely in a room that has a pentagram, which is its own boss room:
+  **inference, not measured** until a boss is killed there. Whether the other
+  seven act bosses crash the same way outside it was not measured.
+- That an act boss killed in its own room after arriving there by any route
+  other than the game's own travel counts toward its act's quest or completion
+  is **not established**.
 
 ### 21.3 Key items: the repository, the Key tab and stacking
 
@@ -5067,7 +5097,8 @@ direct `call rel32` that the import's reference table does not hold.
   `stashKeyTab`- or `stashKeyGrid`-like name, so keys live in the bag's Key
   sub-tab and a stash tab for keys was **not observed**. The table also holds
   `itemSprite`, whose meaning is **not established**. **Static search**
-  (`tools/decomp_index.py find-name`).
+  (`tools/decomp_index.py find-name`). On a built Gem of Incarnation
+  `itemSprite` read undefined (§ 18.4, **measured**).
 - Stacking: `gml_Script_ItemsAreStackable` (1923) needs both items defined,
   consults the first item's `GetItemInfo` method (a closure, in `hs-game-sdk`
   as `gml_Script_GetItemInfo_anon_5277_s_ItemInstanceStruct_InventoryV2Funcs`
@@ -5075,14 +5106,38 @@ direct `call rel32` that the import's reference table does not hold.
   for reasons not read, and then answers true only when the two items'
   `itemType` match and their `itemDefinitionStruct`'s `b` and `c` match. The
   seed `a` and the count `o` are not compared by this predicate. **Static
-  reading.** Whether the bag or the Key tab stacks two items of one key
-  definition whatever their seeds (which would also merge a seed-marked item
-  into a stack of the real key) is **not observed**, and whether this
-  predicate is what decides stacking there is **not established**: the
-  `GetItemInfo` branch was not read, and this predicate's route from the bag
-  was not observed; ForgePact #197's Live procedure 1 measures it. A byte scan for its direct call sites found none (the same scan
+  reading.** A byte scan for its direct call sites found none (the same scan
   found `PickupLoot`'s four callers), so how the game reaches it is **not
   observed**.
+- The pickup route. `PickupLoot`'s general path ends in
+  `gml_Script_AddToInventory` (§ 10.7). Offline, `AddToInventory` reads the
+  item's class and info, asks `GetItemPreferredGrid`, and tries a stack first:
+  `gml_Script_InventoryGridAddToStack` for a class with a tab of its own (it
+  picks `inventoryKeyGrid`, `inventoryMaterialGrid` or `inventorySocketGrid`
+  by class), and `gml_Script_GridAddToStack` for the bag. Only when no stack
+  takes the item is it placed as a new one (`InventoryGridAddItem`,
+  `GridAddItem`). Online it goes through `OnlineAddToStack` instead. § 9.7
+  measured `InventoryGridCanAddToStack` then `InventoryGridAddToStack` for a
+  material. **Static reading** (Replan 1 of ForgePact #197, 2026-10-11).
+- What a stack compares. `InventoryGridAddToStack` and `GridAddToStack` walk
+  their grid and merge into an item whose class (`itemType`) matches and whose
+  definition's `b` and `c` match, comparing those fields themselves; neither
+  calls `ItemsAreStackable`. The seed `a` is never compared. `GridAddToStack`
+  first accepts only classes 12, 13, 14 and 15, the same classes
+  `gml_Script_IsItemTypeStackable` answers true for, so a class-11 consumable
+  never stacks in the bag. `c` is the repository flag (0 normal, 1 unique, § 2
+  and § 13.10), so changing it loads a different item: no field the
+  merge compares can mark an item apart from the real one. **Static reading**
+  (Replan 1).
+- The merge, measured. Two items built on the Bifröst Key's definition
+  (`keys_bifrost_key`) with seeds 777101 and 777102, and named "Piece of
+  Gurag's Soul", joined the owner's own Bifröst Key stack on pickup (its count
+  `o` went 39, 41, 43; the stack kept its own seed), and the merge survived a
+  reload. A both-route detour on `ItemsAreStackable` counted no call through
+  the merges, in logging and in veto mode. **Measured** (ForgePact #197's Live
+  procedure 1, 2026-10-11). So a seed cannot keep a key apart from the real
+  key of its definition in the Key tab, and the predicate is not on the pickup
+  route that merged them (it may be on another route; **not observed**).
 - Already in this reference: `LootGroundCreate` writes a fresh seed into `a`
   (§ 18.4); `InitItemFromJson` followed by `LootGroundCreateFromItem` keeps the
   definition it was handed (ForgePact #74's `sigdrop`; relics placed with the
@@ -5109,22 +5164,68 @@ soul piece is used by right-clicking it in the backpack, the way a PAS token is.
   stats, and the current room before it answers. Which of them decides what is
   **not established**. **Static reading.**
 - `PotionUse`'s own body is **not established**: the MCP's decompile of it
-  timed out.
+  timed out, and a second attempt in Replan 1 exceeded the MCP's response
+  buffer. That it is one large switch over consumables is an inference, so
+  whether a consumable's effect is applied inside it is **not established**.
+  `CanUsePotion` reads the item's stats 4 and 22 and the room; whether it
+  refuses the Edible PAS Logo in town or in any room is **not established**.
+  **Static reading** (Replan 1).
 - No script is named for a right-click. The dispatch from the click is inline,
   as the drag's is (§ 17), and a right-click on a class 7 item equips it
   (**measured**, ForgePact's
   [`stash-move-research.md`](../ForgePact/docs/stash-move-research.md)).
   Whether a right-click on a key (class 12) reaches the prompt or any of the
-  scripts above is **not established**; ForgePact's boss soul pieces Live
-  procedure 1 asks it.
+  scripts above is **not established**: Live procedure 1's pieces merged into
+  a real key stack (§ 21.3), so no piece key was ever right-clicked.
 - `ConsumeToken` (631) and `gml_Script_ConsumeBPToken` (632) are Blood Pact
   token bookkeeping, not the use of an item. **Static reading**; their callers
   were not observed.
-- The PAS token: no item of that name is found statically. `data.win` holds no
-  "PAS token" string and the game's `translations*.csv` files no such name. The
-  only PAS-named item is the consumable `consumable_edible_pas_logo` (sprites
-  `Edible_Pas_Logo_spr` and `Pickup_Edible_Pas_Logo_spr`, craft key
-  `craft_consumable_edible_pas_logo`). **Static search.** So the token's class,
-  its `b` and the script its right-click runs are **not established**, and so is
-  the right-click itself; Live procedure 1's control records them from the
-  owner's own token.
+- The owner's "PAS token" is the Edible PAS Logo,
+  `consumable_edible_pas_logo`: class 11, `b` 12, crafted in the session
+  (sprites `Edible_Pas_Logo_spr` and `Pickup_Edible_Pas_Logo_spr`, craft key
+  `craft_consumable_edible_pas_logo`, static search; `data.win` and the
+  `translations*.csv` files hold no item named "PAS token"). Right-clicking it
+  in the backpack and confirming reached these scripts, each call carrying the
+  item: `CanUsePotion` (self `UI_Inventory_Grid_obj`, one argument, answering
+  true), `PotionUse` (self `UI_Button_Small_obj`, three arguments, answering
+  true), `InvGridClearItemNode` (self the bag grid, two arguments, the item
+  through its fingerprint) and `UiAInventoryConsumeItemConfirm` (one array
+  argument; that the array holds the three values the first bullet reads is
+  **not established**), and the logo was used up. A potion drink reaches
+  `PotionUseFlask` and `PotionUse` with self `Profile_Manager_obj` and no
+  item. **Measured** (ForgePact #197's Live procedure 1, 2026-10-11).
+
+### 21.5 Portals and travel between rooms
+
+Read in Replan 1 of ForgePact #197 (2026-10-11, the same MCP and build), for
+the owner's choice that using a soul piece opens a portal to its act's boss
+room. Nothing in this subsection is measured yet.
+
+- A portal keeps its state in the protected store. `Portal_Parent_obj`'s Create
+  allocates protected records and keeps their keys in the instance variables
+  `isEligible`, `pSpwd`, `portalZone`, `portalUsable` and `portalActive`, so
+  reading `portalZone` gives a key, and the room is that record's value (the
+  way a monster's `enemy_hp` and `damage` hold keys, § 13.1 and § 13.7).
+  `Portal_obj` (3593), a child of `Portal_Parent_obj`, writes a room into its
+  `portalZone` record in its own Create (a room reference by default). The
+  collision with the player it inherits checks the portal's active, eligible
+  and entering state and the player's interact press, and sets an alarm;
+  `Portal_obj`'s Alarm_0 reads the room from the `portalZone` record and calls
+  `gml_Script_NetworkRoomGoto` with it. **Static reading.**
+- The other portal objects `hs-game-sdk` names: `Portal_Town_obj`,
+  `Portal_Dungeon_Exit_obj` and `Portal_Hell_obj` also descend from
+  `Portal_Parent_obj`; `Portal_Uber_Boss_obj` takes its target from uber
+  state, and `Portal_Waypoint_obj` (a `Slope_Parent_obj` child) opens the
+  waypoint menu. `Portal_obj` is the general one, whose target is only a room.
+  **Static reading** (and the SDK's parent table).
+- The game's travel scripts. `NetworkRoomGoto(room)` checks whether the room
+  is a town (`CheckTown`), sends network effects online, and offline ends in
+  `gml_Script_RoomGoto(room)`. `RoomGoto` sets the room's layers up once
+  (`SetupRoomLayers`, remembered in `roomSetupMap`) and then calls the
+  `room_goto` builtin. **Static reading.** A raw `room_goto` to
+  `Uber_Inoya_rm` closed the game (§ 13.1, **measured**); whether the setup
+  `RoomGoto` adds would have prevented that is **not established**.
+- Whether a `Portal_obj` created at run time with a boss room in its
+  `portalZone` record can be entered and takes the player there, and whether
+  the zone it was opened in still loads when revisited, is **not
+  established**; ForgePact #197's Live procedure 3 asks it.
