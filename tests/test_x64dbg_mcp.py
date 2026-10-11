@@ -1998,7 +1998,11 @@ class PausedFirstRunTests(ArmingMixin, unittest.TestCase):
                                                        fake={"condition_ignored": True, "hot": [A]})
         result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertFalse(result["ok"], result)
-        self.assertEqual(result["stage"], "running")
+        # It breaks on every hit. Whether the hold's settle saw 0.4 s of
+        # running between two breaks depends on how the stand-in is scheduled
+        # (on a loaded machine it can), and the outside check then reads the
+        # game held: either way the arming failed and is cleared.
+        self.assertIn(result["stage"], ("running", "game-not-running"), result)
         self.assertIn("Hardware breakpoint deleted!", result["cleared"])
         self.assertEqual(result["x64dbg_state"], "running")
         self.assertIsNone(xm.bplist_entry(xm.Tools(cfg).bplist()["lines"], A))
