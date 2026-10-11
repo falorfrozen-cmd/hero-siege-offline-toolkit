@@ -108,6 +108,14 @@ close a line of investigation, two things must be true:
   only table-routed calls; address-patching hooks see the call itself. A
   table-based hook reporting zero warrants the address-patching hook before any
   conclusion about the game.
+- **A pending live procedure asks "which code" of the debugger too.** When a
+  `### Live procedure` that has not run yet asks whether a function fires or
+  which code does something, and answers it only with a script-table or
+  inline research hook, flag that its **debugger** field names no logpoint
+  (planner.md "Ask 'which code' of the debugger"). A hardware logpoint sees
+  the call at the function's own address, whichever route reached it, in the
+  same session and without a rebuild. In ForgePact #197 (2026-10-11) a stack
+  hook logged `calls=0` while pieces merged into a real key stack.
 
 Also check **what was supplied** alongside a rejected call shape. Nine
 name-resolved invoke shapes were written off as measured negatives before a

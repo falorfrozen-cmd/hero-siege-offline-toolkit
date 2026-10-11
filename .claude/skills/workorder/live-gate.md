@@ -32,6 +32,18 @@ against a median driver of $12.
      release) when it is this workorder's; another workorder's goes to the
      owner.
    - `unavailable` → report its `detail` and stop.
+0b. **Check the procedure puts "which code" questions to the debugger.**
+   Read the procedure's **debugger** field and its checks (`py -3 .claude/skills/workorder/section.py
+   <context> "Live procedure <n>"`). Send it back to the planner as a
+   `PLAN-DEFECT`, before the install question, when the field is missing, or
+   when a check asks whether a function fires, which code does something, or
+   with what arguments or how often, and the field reads `none` with no
+   reason that rules the debugger out (planner.md "Ask 'which code' of the
+   debugger"). `live-operator` alone carries the x64dbg tools and attaches
+   only when the procedure names debugger steps, so nothing later in the
+   session adds them: ForgePact #197's Live 1 (2026-10-11) logged a research
+   hook's `calls=0` against an observed merge, with no logpoint to show which
+   code did it.
 1. **Ask before anything changes on the owner's machine.** One question:
    install this build now, and is a session convenient now? Never install on
    your own — the owner decides when the DLL their game loads changes. On a
@@ -39,7 +51,10 @@ against a median driver of $12.
    call), and nothing else.
 2. **Spawn `live-operator`** with: the slug, the session number `<n>`, the
    context file and the `### Live procedure <n>` heading, the character slot,
-   and which build is installed. Record its agent id in `## State` › `agents:`.
+   and which build is installed. When the procedure's **debugger** field
+   names steps, say so in the brief and name `live-operator.md` § "When the
+   procedure names debugger steps". Record its agent id in `## State` ›
+   `agents:`.
 3. **Relay, do not operate.** A `NEEDS-HUMAN` comes back with one `ASK` (it may number several actions): put
    it to the user verbatim, then `SendMessage` the operator their answer
    (ToolSearch `select:SendMessage` if deferred). Do not run `hs_*` tools
