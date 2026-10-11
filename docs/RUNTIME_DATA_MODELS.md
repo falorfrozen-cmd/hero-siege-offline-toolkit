@@ -5074,10 +5074,14 @@ direct `call rel32` that the import's reference table does not hold.
   (2035), a name that moves with every patch, §5.3), which can answer false
   for reasons not read, and then answers true only when the two items'
   `itemType` match and their `itemDefinitionStruct`'s `b` and `c` match. The
-  seed `a` and the count `o` are not compared, so two items of one key
-  definition stack whatever their seeds. **Static reading.** A byte scan for
-  its direct call sites found none (the same scan found `PickupLoot`'s four
-  callers), so how the game reaches it is **not observed**.
+  seed `a` and the count `o` are not compared. **Static reading.** Whether the
+  bag stacks two items of one key definition whatever their seeds (which would
+  also merge a seed-marked item into a stack of the real key) is **not
+  established**: the `GetItemInfo` branch was not read, and this predicate's
+  route from the bag was not observed; ForgePact #197's live procedures
+  measure it. A byte scan for its direct call sites found none (the same scan
+  found `PickupLoot`'s four callers), so how the game reaches it is **not
+  observed**.
 - Already in this reference: `LootGroundCreate` writes a fresh seed into `a`
   (§ 18.4); `InitItemFromJson` followed by `LootGroundCreateFromItem` keeps the
   definition it was handed (ForgePact #74's `sigdrop`; relics placed with the
