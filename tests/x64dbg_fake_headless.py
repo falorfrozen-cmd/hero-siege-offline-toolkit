@@ -51,6 +51,11 @@ Modes:
 - `fail_condition`: `SetHardwareBreakpointCondition` prints its failure;
 - `listed_as` [enabled, type]: the row's enabled flag and type;
 - `false_success`: `bph` prints success, and no row follows;
+- `exception_hold`: a breaking `bph` on a hot address hits at once and is
+  reported as a first-chance single-step exception, in the order Live 3
+  rerun 3 measured: x64dbg's `[TODO] Not implemented GUI_SET_LAST_EXCEPTION
+  (37)` notice, `[STATE] paused`, `First chance exception on <A> (80000004,
+  EXCEPTION_SINGLE_STEP)!`, and only then `bph`'s success line;
 - `hot` [addr, ...]: the armed breakpoints the game hits, every 50 ms;
 - `blind_probe`: the probe never reads `frozen` (an instrument that cannot
   see a held game);
@@ -235,13 +240,14 @@ class Fake:
             c = check("running", "blind: progress seen while held")
         write_atomic(self.verdict_file, json.dumps(c))
 
-    def brk(self, line: str) -> None:
-        """A break: its line, then the state change. Every game thread is
-        held, as the Replan 3 probe measured at a hardware breakpoint's hit,
-        before x64dbg reports the pause."""
+    def brk(self, line: str | None) -> None:
+        """A break: its line (None: none before the pause), then the state
+        change. Every game thread is held, as the Replan 3 probe measured at
+        a hardware breakpoint's hit, before x64dbg reports the pause."""
         if self.threads is not None:
             self.threads.suspend_all()
-        self.out(line)
+        if line is not None:
+            self.out(line)
         self.paused = True
         self.announce("paused")
         held = () if self.modes.get("empty_lists") else FAKE_TIDS
@@ -341,6 +347,12 @@ class Fake:
                     enabled, kind = self.modes.get("listed_as", [1, "HW"])
                     self.bps.append({"addr": a, "enabled": enabled, "type": kind})
                     self.counters[a] = 0
+                hot = {int(h) for h in self.modes.get("hot", [])}
+                if self.modes.get("exception_hold") and a in hot and not self.paused:
+                    # the hit lands before x64dbg reports the bph set
+                    self.out("[TODO] Not implemented GUI_SET_LAST_EXCEPTION (37)")
+                    self.brk(None)
+                    self.out(f"First chance exception on {a:016X} (80000004, EXCEPTION_SINGLE_STEP)!")
                 self.out(f"Hardware breakpoint at {a:016X} set!")
         elif low.startswith("sethardwarebreakpoint") and low != "sethardwarebreakpoint":
             b = self.find(first)

@@ -51,6 +51,9 @@ quietly break:
 - a keeper that never saw x64dbg settle at running leaves the session
   `attach-unconfirmed`, not ready;
 - the CLI `tool` route serves exactly the eight tools, through the same gates;
+- a server whose module changed on disk since import refuses every tool but
+  `status` (`stale_server`), and the keeper refuses a hold or send from other
+  code but still detaches;
 - `.mcp.json` and Codex start the stdio launcher, not the plugin's URL.
 Each acceptance has a negative control beside it.
 """
@@ -1122,6 +1125,83 @@ class GateTests(unittest.TestCase):
         self.assertEqual(page["lines"], [f"line {i}" for i in range(296, 301)])
 
 
+STALE_ID = "0" * 64  # a code id no file hashes to: the module as it was before an edit
+
+
+class StaleServerTests(unittest.TestCase):
+    """A long-lived stdio server keeps the module it imported. Once
+    tools/x64dbg_mcp.py changes on disk, its tools refuse with `stale_server`
+    (all but `status`, which says why), and the keeper refuses a hold or send
+    from a client whose code differs from its own (Live 3 rerun 3)."""
+
+    setUp = GateTests.setUp
+    calls = GateTests.calls
+
+    def all_calls(self):
+        return {**self.calls(), "log": self.tools.log}
+
+    def test_stale_server_refuses_every_tool_but_status(self):
+        _fake_live_session(self.cfg)
+        _hold_lease()
+        with mock.patch.object(xm, "CODE_ID", STALE_ID):
+            for name, call in self.all_calls().items():
+                with self.subTest(tool=name):
+                    with mock.patch.object(xm, "keeper_request") as asked:
+                        result = call()
+                    asked.assert_not_called()
+                    self.assertEqual(result["reason"], "stale_server", result)
+                    self.assertIn("py -3 -m tools.x64dbg_mcp tool", result["detail"])
+                    self.assertIn("py -3 -m tools.x64dbg_mcp detach", result["detail"])
+            status = self.tools.status()
+        self.assertTrue(status["ok"], status)
+        self.assertIs(status["code_current"], False, status)
+
+    def test_stale_server_control_current_code_passes_the_gate(self):
+        # the same module, unchanged on disk: status reads current and no tool says stale
+        self.assertIs(self.tools.status()["code_current"], True)
+        self.assertTrue(xm.code_current())
+        _hold_lease()
+        for name, call in self.calls().items():
+            with self.subTest(tool=name):
+                self.assertEqual(call()["reason"], "not_attached")
+        self.assertTrue(self.tools.log()["ok"])
+
+    def test_stale_server_keeper_request_carries_the_code_id(self):
+        _fake_live_session(self.cfg)
+        state = xm.read_state(self.cfg)
+        with mock.patch.object(xm, "read_state", return_value=state), \
+                mock.patch.object(xm, "write_json") as wrote, \
+                mock.patch.object(xm, "read_json", return_value={"ok": True}):
+            self.assertEqual(xm.keeper_request(self.cfg, "send", timeout=5, lines=["bplist"]), {"ok": True})
+        self.assertEqual(wrote.call_args.args[1], {"op": "send", "code_id": xm.CODE_ID, "lines": ["bplist"]})
+
+
+class StaleKeeperTests(SessionMixin, unittest.TestCase):
+    def test_stale_server_keeper_refuses_a_hold_or_send_from_other_code(self):
+        cfg, _, _, record, _ = self.start_session(fake={"hot": [A]})
+        before = self.stdin_lines(record)
+        with mock.patch.object(xm, "CODE_ID", STALE_ID):
+            for op, fields in (("hold", {"first_hit": f"bph 0x{A:X}, x, 1",
+                                         "lines": [f"SetHardwareBreakpointCondition 0x{A:X}, 0"]}),
+                               ("send", {"lines": [f"bph 0x{A:X}, x, 1"]})):
+                with self.subTest(op=op):
+                    with self.assertRaises(xm.Refused) as cm:
+                        xm.keeper_request(cfg, op, timeout=30, **fields)
+                    self.assertEqual(cm.exception.reason, "stale_server")
+                    self.assertIn("py -3 -m tools.x64dbg_mcp detach", cm.exception.detail)
+        time.sleep(0.3)
+        self.assertEqual(self.stdin_lines(record), before)  # nothing reached x64dbg
+        self.assertEqual(xm.read_state(cfg)["state"], "running")
+        # control: the keeper's own code is served, and the hold proves the instrument
+        self.prove(cfg)
+        # detach is served whatever code asks for it, so a stale client never strands the game
+        with mock.patch.object(xm, "CODE_ID", STALE_ID):
+            reply = xm.keeper_request(cfg, "detach", timeout=xm.detach_wait(cfg))
+        self.assertNotEqual(reply.get("reason"), "stale_server", reply)
+        state = xm.read_state(cfg)
+        self.assertEqual((state["state"], state["detach_confirmed"]), ("ended", True), reply)
+
+
 # --- the loopback client ----------------------------------------------------
 
 class LoopbackClientTests(unittest.TestCase):
@@ -1384,13 +1464,13 @@ class KeeperTests(SessionMixin, unittest.TestCase):
         self.assertEqual(self.stdin_lines(record).count("run"), 0)
 
     def test_keeper_hold_direct_batch_reports_x64dbgs_lines_between_markers(self):
+        # A batch with no `bph` in it, and nothing armed. A `bph` with nothing
+        # armed goes through the first-hit hold instead (BreakingBphInLinesTests).
         cfg, plugin, _, record, _ = self.start_session()
-        a = 0x7FF6A0427460
-        reply = xm.keeper_request(cfg, "hold", timeout=60, lines=[
-            f"bph 0x{a:X}, x, 1", f"SetHardwareBreakpointCondition 0x{a:X}, 0", f'SetHardwareBreakpointLog 0x{a:X}, "hot"'])
+        reply = xm.keeper_request(cfg, "hold", timeout=60, lines=[f'SetHardwareBreakpointName 0x{A:X}, "x"', "bphc"])
         self.assertTrue(reply["ok"], reply)
-        self.assertEqual(reply["lines"], [f"Hardware breakpoint at {a:016X} set!"])
-        self.assertIn(f"1:HW:{a:016X}", reply["after"])
+        self.assertEqual(reply["lines"], [f'No such breakpoint "0x{A:X}"', "No hardware breakpoints to delete!"])
+        self.assertEqual(reply["after"], [])
         self.assertIsNone(reply["held"])
         self.assertNotIn("window_break", reply)  # a first hit is now the expected hold, not an anomaly
         self.assertNotIn("held_note", reply)  # nothing was armed, so nothing to hold
@@ -1398,11 +1478,10 @@ class KeeperTests(SessionMixin, unittest.TestCase):
         self.assertEqual(reply["game"]["verdict"], "running")
         sent = self.stdin_lines(record)
         begin = next(i for i, ln in enumerate(sent) if ln.startswith('log "x64dbg_mcp ') and ln.endswith(' begin"'))
-        self.assertEqual(sent[begin + 1:begin + 4], [f"bph 0x{a:X}, x, 1", f"SetHardwareBreakpointCondition 0x{a:X}, 0",
-                                                     f'SetHardwareBreakpointLog 0x{a:X}, "hot"'])
-        self.assertTrue(sent[begin + 4].endswith(' mid"'), sent)
-        self.assertEqual(sent[begin + 5], "bplist")
-        self.assertTrue(sent[begin + 6].endswith(' end"'), sent)
+        self.assertEqual(sent[begin + 1:begin + 3], [f'SetHardwareBreakpointName 0x{A:X}, "x"', "bphc"])
+        self.assertTrue(sent[begin + 3].endswith(' mid"'), sent)
+        self.assertEqual(sent[begin + 4], "bplist")
+        self.assertTrue(sent[begin + 5].endswith(' end"'), sent)
         self.assertNotIn("run", sent[begin:])
         self.assertFalse([n for n in plugin.names() if n in PLUGIN_STATE_CALLS])
 
@@ -2148,6 +2227,109 @@ class HeldChangeTests(ArmingMixin, unittest.TestCase):
         self.assertNotIn("held", listed)
         self.assertEqual(self.stdin_lines(record)[before:], ["bplist"])
         self.assert_never_paused(plugin, record)
+
+
+class BreakingBphInLinesTests(ArmingMixin, unittest.TestCase):
+    """The shape a stale client sent in Live 3 rerun 3: the breaking `bph`
+    among a hold's lines, with no `first_hit`. With nothing armed it goes
+    through the first-hit hold anyway, so its first hit is the hold and not a
+    stray pause the watchdog resumes."""
+
+    def test_breaking_bph_in_lines_goes_through_the_first_hit_hold(self):
+        cfg, _, _, record, _ = self.start_session(fake={"hot": [A]})
+        steps = [f"SetHardwareBreakpointCondition 0x{A:X}, 0", f'SetHardwareBreakpointLog 0x{A:X}, "hot"']
+        reply = xm.keeper_request(cfg, "hold", timeout=60, lines=[f"bph 0x{A:X}, x, 1", *steps])
+        self.assertTrue(reply["ok"], reply)
+        self.assertIn(f"({A:016X})", reply["held"] or "", reply)  # held at its own first hit
+        self.assertEqual(reply["hold_game"]["verdict"], "frozen", reply)
+        self.assertEqual(reply["game"]["verdict"], "running", reply)
+        sent = _commands(self.stdin_lines(record))
+        bph = f"bph 0x{A:X}, x, 1"
+        self.assertEqual(sent[sent.index(bph):], [bph, *steps, "bplist", "run"])
+        state = xm.read_state(cfg)
+        self.assertEqual(state["breaks_resumed"], 0, state)  # the first hit was the hold's, not a stray pause
+        self.assertTrue(state["instrument"]["proven"], state["instrument"])
+        self.assertTrue(self.hits_grow(cfg), "the logpoint never logged after its hold")
+
+    def test_breaking_bph_in_lines_control_a_batch_without_bph_stays_direct(self):
+        cfg, _, _, record, _ = self.start_session(fake={"hot": [A]})
+        reply = xm.keeper_request(cfg, "hold", timeout=60, lines=["bphc"])
+        self.assertTrue(reply["ok"], reply)
+        self.assertIsNone(reply["held"], reply)
+        self.assertNotIn("held_note", reply)
+        self.assertNotIn("hold_game", reply)
+        self.assertNotIn("run", _commands(self.stdin_lines(record)))  # nothing held, nothing to resume
+
+
+EXCEPTION_LINE = f"First chance exception on {A:016X} (80000004, EXCEPTION_SINGLE_STEP)!"
+TODO_LINE = "[TODO] Not implemented GUI_SET_LAST_EXCEPTION (37)"
+
+
+class ExceptionHoldTests(ArmingMixin, unittest.TestCase):
+    """x64dbg can report a hardware execute hit as a first-chance single-step
+    exception (Live 3 rerun 3): its GUI_SET_LAST_EXCEPTION notice, the pause,
+    then `First chance exception on <A> ...` and only then `set!`. The
+    first-hit hold claims that pause, names the exception line as its break
+    line, and never the [TODO] notice."""
+
+    def test_exception_hold_claims_the_exception_shaped_first_hit(self):
+        cfg, plugin, _, record, _ = self.start_session(fake={"hot": [A], "exception_hold": True})
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hot")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["held"], EXCEPTION_LINE, result)
+        self.assertEqual(result["hold_game"]["verdict"], "frozen", result)
+        self.assertEqual(result["game"]["verdict"], "running", result)
+        log = self.log_lines(cfg)
+        self.assertLess(log.index(TODO_LINE), log.index("[STATE] paused"))  # the stand-in printed the shape
+        self.assertLess(log.index(EXCEPTION_LINE), log.index(f"Hardware breakpoint at {A:016X} set!"))
+        sent = _commands(self.stdin_lines(record))
+        bph = f"bph 0x{A:X}, x, 1"
+        self.assertEqual(sent[sent.index(bph):], [bph, f"SetHardwareBreakpointCondition 0x{A:X}, 0",
+                                                  f'SetHardwareBreakpointLog 0x{A:X}, "hot"', "bplist", "run"])
+        state = xm.read_state(cfg)
+        self.assertEqual(state["breaks_resumed"], 0, state)  # the hold claimed it: no stray pause
+        self.assertIsNone(state["last_break"], state)
+        self.assertTrue(state["instrument"]["proven"], state["instrument"])
+        self.assertTrue(self.hits_grow(cfg), "the logpoint never logged after its hold")
+        self.assert_never_paused(plugin, record)
+
+    def test_exception_hold_settles_a_stray_pause_before_the_bph(self):
+        # A pause already pending when the hold starts (here, right after its
+        # bplist) is resumed and counted before the `bph`, so it is not taken
+        # for the first hit.
+        cfg, _, _, record, _ = self.start_session(fake={"hot": [A]})
+        self.set_modes(break_after="bplist")
+        reply = self.first_hit(cfg, A)
+        self.assertTrue(reply["ok"], reply)
+        self.assertIn(f"({A:016X})", reply["held"] or "", reply)
+        state = xm.read_state(cfg)
+        self.assertEqual(state["breaks_resumed"], 1, state)
+        self.assertEqual(state["last_break"]["line"], "paused!", state)
+        sent = _commands(self.stdin_lines(record))
+        self.assertIn("run", sent[:sent.index(f"bph 0x{A:X}, x, 1")])
+
+    def test_exception_hold_session_log_never_takes_the_todo_line_as_a_break_line(self):
+        tmp = Path(tempfile.mkdtemp(prefix="x64dbg-mcp-log-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = tmp / "session.log"
+        log = xm.SessionLog(path)
+
+        def write(*lines):
+            with open(path, "a", encoding="utf-8") as f:
+                f.write("".join(f"{ln}\n" for ln in lines))
+            log.poll()
+
+        write("x64dbg_mcp 1234 begin", TODO_LINE, "[STATE] paused")
+        self.assertNotEqual((log.pause_line() or {}).get("line"), TODO_LINE)
+        write("[STATE] paused", "x64dbg_mcp 1234 begin", EXCEPTION_LINE, f"Hardware breakpoint at {A:016X} set!")
+        self.assertEqual(log.pause_line()["line"], EXCEPTION_LINE)  # filled in once x64dbg prints it
+        # control: a hardware breakpoint line before the pause is the break line, as before
+        write("[STATE] running", f"Hardware breakpoint (byte, execute) at x ({A:016X})!", "[STATE] paused")
+        self.assertEqual(log.pauses, 2)
+        self.assertEqual(log.pause_line()["line"], f"Hardware breakpoint (byte, execute) at x ({A:016X})!")
+        # a notice with no exception line after it leaves no break line rather than the notice
+        write("[STATE] running", "hot #1", TODO_LINE, "[STATE] paused")
+        self.assertIsNone(log.pause_line()["line"])
 
 
 class PausedFirstRunTests(ArmingMixin, unittest.TestCase):

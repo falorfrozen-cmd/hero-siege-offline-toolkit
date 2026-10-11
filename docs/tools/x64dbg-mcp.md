@@ -205,6 +205,25 @@ an argument the tool does not take (or a required one left out) exits 2,
 naming the problem, before anything is called. Never import the module
 through `py -3 -c` instead: that route is unsupported and skips the guard.
 
+**A stale server refuses.** A stdio MCP server lives as long as the session
+that started it and keeps the code it imported, so after `tools/x64dbg_mcp.py`
+changes on disk it speaks an older protocol than the keeper and the guide. In
+Live 3's rerun 3 (measured) the session's servers predated the arming commit:
+they sent the breaking `bph` as a direct batch, and the keeper, on current
+code, resumed the first hit as a stray pause, so the first-hit hold never ran.
+So the module records `CODE_ID`, its own file's sha256 at import. While the
+file on disk hashes differently, every tool but `status` refuses with reason
+`stale_server`, and `status` reports `code_current` false (true otherwise).
+The keeper checks the same id: `keeper_request` stamps each request with its
+`code_id`, and the keeper refuses a hold or send from other code with
+`stale_server` before anything reaches x64dbg; a `detach` request is served
+whatever code sends it (`status` and `log` read files and never ask the
+keeper). The remedy is to restart the MCP server, or to use the
+CLI route above, which imports the file fresh on every call; the CLI
+`py -3 -m tools.x64dbg_mcp detach` always gives the game back, so a stale
+server never strands an attached game. A keeper that is itself the older one
+refuses the fresh CLI too: detach and attach again.
+
 **Left out on purpose:** breaking breakpoints, stepping, registers and call
 stacks. Each one stops the game's loop (AGENTS.md § "Don't Suspend the Game's
 Own Runtime"). A logging breakpoint can log the return address and the argument
@@ -312,10 +331,23 @@ These come from the 2026-10-10 probes recorded on issue #484.
   A's own first hit, which comes within one frame for a function that runs
   every frame. Setting a hardware breakpoint on the running game works, and
   a `bph` with no condition yet breaks on its first hit (both measured in the
-  issue #484 probe). Held there, the keeper takes the outside check (the
+  issue #484 probe). Before the `bph` the keeper settles any pause already
+  pending (resuming it as the watchdog would), so an earlier stray pause is
+  not taken for the first hit; when x64dbg does not settle at running within
+  the hold timeout, nothing is sent. The hit can also come exception-shaped
+  (measured once, Live 3 rerun 3): x64dbg prints `[TODO] Not implemented
+  GUI_SET_LAST_EXCEPTION (37)`, then `[STATE] paused`, before the batch's
+  begin marker and before `set!`, then `First chance exception on <A>
+  (80000004, EXCEPTION_SINGLE_STEP)!`, then "set!" after it; the keeper
+  takes the pause as the hold all the same, names the first-chance line as
+  its break line (`held`), and never counts the `[TODO]` notice as a break
+  line or as `last_break`. Which of the two shapes appears when is not
+  established. Held there, the keeper takes the outside check (the
   control hold), then sets the never-break condition, the log text, the log
   condition and the name, reads `bplist`, and sends `run`. Nothing else is
-  armed, so nothing races the change. When A is not hit within the hold
+  armed, so nothing races the change. A hold that carries the breaking `bph`
+  among its lines with nothing armed (an older client's shape) goes through
+  the same first-hit hold. When A is not hit within the hold
   timeout (a cold address, not a control), the same lines go out on the
   running game, `held` is null with a `held_note`, and the instrument is not
   proven by it. After the hold, a 1.5 s verification window follows: a break
@@ -781,8 +813,16 @@ verb), `stale_db` (a breakpoint restored from the database on attach),
 `condition_ignored`, `never_running`, `race` (a debug-register change that
 is not held silences a hot logpoint, the lost DR7 update, so the
 held-change test's control can fail), `leak_on_detach` (every game thread
-but one stays suspended after `detach`), `fail_condition`, `listed_as` and
-`false_success`.
+but one stays suspended after `detach`), `fail_condition`, `listed_as`,
+`false_success` and `exception_hold` (a breaking `bph` on a hot address hits
+at once, reported in Live 3 rerun 3's exception shape: the
+`GUI_SET_LAST_EXCEPTION` notice, the pause, the first-chance single-step line,
+then `set!`). The `stale_server` tests patch `CODE_ID`: a `Tools` whose file
+no longer hashes to it refuses every tool but `status`, and the keeper
+refuses a hold or send stamped with another `code_id` and still detaches;
+`breaking_bph_in_lines` sends the older client's shape, and `exception_hold`
+pins the exception-shaped first hit, the settle before the `bph` and the
+session log's reading of the `[TODO]` notice.
 
 The outside check has a probe seam, `probe_cmd` in the session config: the
 logic tests point it at a fake probe whose verdict follows a file the fake

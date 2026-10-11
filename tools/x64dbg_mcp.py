@@ -103,6 +103,33 @@ from tools.decomp_index import git_tree_of  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 
+# This file's sha256 when it was imported. A stdio MCP server lives as long as
+# its session and keeps the code it started with, so once this file changes on
+# disk its tools no longer match a keeper started since, or the guide: Live 3
+# rerun 3 armed through such a server, which sent the old hold shape, and the
+# keeper resumed the first hit as a stray pause. `Tools._gate` refuses every
+# tool but `status` then (`stale_server`), and the keeper refuses a hold or
+# send whose `code_id` is not its own.
+CODE_FILE = Path(__file__).resolve()
+CODE_ID = hashlib.sha256(CODE_FILE.read_bytes()).hexdigest()
+
+
+def code_current() -> bool:
+    """Whether this file on disk still hashes to `CODE_ID`; False when it
+    cannot be read."""
+    try:
+        return hashlib.sha256(CODE_FILE.read_bytes()).hexdigest() == CODE_ID
+    except OSError:
+        return False
+
+
+def stale_detail(whose: str) -> str:
+    return (f"{whose} runs an older tools/x64dbg_mcp.py than the one on disk now (a long-lived stdio MCP server "
+            "keeps the code it started with), so it would not speak the current keeper's protocol and nothing "
+            "was sent to x64dbg. Restart the MCP server, or use the CLI route, which imports the file fresh on "
+            "each call: `py -3 -m tools.x64dbg_mcp tool <name> '<json>'`; to give the game back, "
+            "`py -3 -m tools.x64dbg_mcp detach`")
+
 # --- the pins ---------------------------------------------------------------
 
 X64DBG_TAG = "2026.05.27"
@@ -1255,7 +1282,26 @@ _STATE_LINE = re.compile(r"^\[STATE\]\s+(\w+)")
 # own TLS-callback ones among them), a hardware breakpoint that broke, and a
 # hit on a breakpoint x64dbg no longer lists.
 _BREAK_LINE = re.compile(r"^(?:paused!|INT3 breakpoint\b|Hardware breakpoint \(|Breakpoint reached not in list!)")
+# x64dbg can also report a hardware execute hit as a first-chance single-step
+# exception (measured once, Live 3 rerun 3): its GUI notice
+# `[TODO] Not implemented GUI_SET_LAST_EXCEPTION (37)`, then `[STATE] paused`,
+# and only then `First chance exception on <A> (80000004,
+# EXCEPTION_SINGLE_STEP)!`. A `[TODO]` notice is never a break line.
+_TODO_LINE = re.compile(r"^\[TODO\]\s")
+_LAST_EXCEPTION_NOTICE = re.compile(r"^\[TODO\] Not implemented GUI_SET_LAST_EXCEPTION\b")
+_SINGLE_STEP_LINE = re.compile(r"^First chance exception on ([0-9A-Fa-f]+) \(80000004, EXCEPTION_SINGLE_STEP\)!")
+# A `bph` on an address. A hardware breakpoint with no break condition breaks
+# on every hit, so with nothing armed its first hit holds the game, as the
+# control logpoint's `bph <A>, x, 1` does.
+_BREAKING_BPH = re.compile(r"^\s*(?:bph|bphws|SetHardwareBreakpoint)\s+(?:0x)?([0-9A-Fa-f]+)\s*(?:,.*)?$", re.I)
 MARKER_PREFIX = "x64dbg_mcp"
+
+
+def _single_step_on(line: str, addr: int | None) -> bool:
+    """Whether `line` is x64dbg's first-chance single-step line for `addr`
+    (for any address when `addr` is None)."""
+    m = _SINGLE_STEP_LINE.match(line)
+    return bool(m) and (addr is None or int(m.group(1), 16) == addr)
 
 
 def batch_marker(hid: str, name: str) -> str:
@@ -1277,7 +1323,10 @@ class SessionLog:
     `[STATE]` line, once `QUIET` seconds pass with no new one, is x64dbg's
     settled state. Each change into `paused` is one pause, numbered from 1,
     with its break line: the last of `_BREAK_LINE`'s lines since the last
-    `[STATE]` line, or failing those the line just before."""
+    `[STATE]` line, or failing those the line just before. A `[TODO]` notice
+    is never that line: after x64dbg's GUI_SET_LAST_EXCEPTION notice the
+    pause's line is the single-step exception line x64dbg prints after the
+    pause, filled in when it comes (None until then)."""
 
     QUIET = 0.4
     HISTORY = 64
@@ -1294,6 +1343,8 @@ class SessionLog:
         self.pause_lines: dict[int, dict[str, Any]] = {}
         self._break: str | None = None
         self._prev: str | None = None
+        self._notice = False  # a GUI_SET_LAST_EXCEPTION notice since the last [STATE] line
+        self._awaiting: int | None = None  # the pause whose exception line is still to come
 
     def poll(self) -> list[str]:
         """Read the complete lines written since the last poll."""
@@ -1317,7 +1368,17 @@ class SessionLog:
     def _take(self, text: str) -> None:
         m = _STATE_LINE.match(text)
         if not m:
-            if _BREAK_LINE.match(text):
+            if _TODO_LINE.match(text):
+                self._notice = self._notice or bool(_LAST_EXCEPTION_NOTICE.match(text))
+                return
+            if _SINGLE_STEP_LINE.match(text):
+                entry = self.pause_lines.get(self._awaiting) if self._awaiting is not None else None
+                if entry is not None and self.state == "paused":
+                    entry["line"] = text
+                    self._awaiting = None
+                else:
+                    self._break = text
+            elif _BREAK_LINE.match(text):
                 self._break = text
             if text:
                 self._prev = text
@@ -1325,10 +1386,17 @@ class SessionLog:
         name = m.group(1).lower()
         if name == "paused" and self.state != "paused":
             self.pauses += 1
-            self.pause_lines[self.pauses] = {"line": self._break or self._prev, "utc": _utc()}
+            if self._break is None and self._notice:
+                self.pause_lines[self.pauses] = {"line": None, "utc": _utc(), "exception": True}
+                self._awaiting = self.pauses
+            else:
+                self.pause_lines[self.pauses] = {"line": self._break or self._prev, "utc": _utc()}
             self.pause_lines.pop(self.pauses - self.HISTORY, None)
+        elif name != "paused":
+            self._awaiting = None
         self.state, self.state_at = name, time.monotonic()
         self._break = None
+        self._notice = False
 
     def settled(self) -> str | None:
         """x64dbg's settled state, or None while a change may still follow."""
@@ -1390,6 +1458,7 @@ class Keeper:
         self.proc: subprocess.Popen | None = None
         self.log = SessionLog(cfg.log_file)
         self.plugin_ok = False
+        self.code_id = CODE_ID  # a hold or send from other code is refused (`serve_requests`)
         # The pause the keeper's last `run` was for, and when it was sent.
         self.resumed_pause = 0
         self.resumed_at = 0.0
@@ -1677,7 +1746,9 @@ class Keeper:
         """Change hardware breakpoints without asking x64dbg to pause.
 
         Read bplist. With `first_hit` (a breaking `bph <A>, x, 1`) and
-        nothing armed, hold the game at A's own first hit (`first_hit_hold`).
+        nothing armed, hold the game at A's own first hit (`first_hit_hold`);
+        with nothing armed and no `first_hit`, a `bph` among the lines is
+        taken out and held the same way.
         With nothing armed otherwise, send the lines as a direct batch
         between markers, then settle at running, resuming any pause. With
         breakpoints armed (`first_hit` then goes first among the lines), set
@@ -1702,6 +1773,13 @@ class Keeper:
             m = _BPLIST_ROW.match(row)
             if m and m.group(1) != "0" and m.group(2).upper() == "HW":
                 armed.append(int(m.group(3), 16))
+        if not first_hit and not armed:
+            # The shape an older client sends (Live 3 rerun 3): the breaking
+            # `bph` among the lines. With nothing armed its first hit is
+            # still the hold, never a stray pause for the watchdog.
+            i = next((i for i, ln in enumerate(lines) if _BREAKING_BPH.match(ln)), None)
+            if i is not None:
+                first_hit, lines = lines[i], lines[:i] + lines[i + 1:]
         if first_hit and not armed:
             return self.first_hit_hold(hid, first_hit, lines)
         if first_hit:
@@ -1758,8 +1836,19 @@ class Keeper:
         `after_resume`. No hit within the window (a cold address): send the
         same lines on the running game, which nothing else is logging on, so
         no change races; `held` is null with a `held_note`, and the
-        instrument is not proven by it."""
+        instrument is not proven by it.
+
+        First, a pause already pending (a stray break that landed during the
+        bplist, say) is resumed the way the watchdog resumes one, and x64dbg
+        must settle at running, so it is not taken for the first hit. When it
+        does not settle within `hold_timeout`, nothing is sent."""
         t = self.cfg.hold_timeout
+        if not self.settle_running(SessionLog.QUIET, time.monotonic() + t):
+            return self.hold_reply(False, f"x64dbg's state never settled at running within {t:.0f}s before the "
+                                          f"bph (it reads {self.log.state}), so nothing was sent", {}, None, None,
+                                   end_seen=False)
+        m = _BREAKING_BPH.match(bph)
+        addr = int(m.group(1), 16) if m else None
         self.log.poll()
         mark, before = self.log.mark(), self.log.pauses
         self.send(f'log "{batch_marker(hid, "begin")}"')
@@ -1768,7 +1857,7 @@ class Keeper:
         proving = False
         if self.wait_new_pause(before, t):
             n = self.log.pauses
-            held = self.hold_break_line(mark, n)
+            held = self.hold_break_line(mark, n, addr)
             hold_game = self.check()
             if not self.state["instrument"].get("proven"):
                 self.set_instrument(control_hold=hold_game, after_resume=None)
@@ -1791,20 +1880,35 @@ class Keeper:
             self.set_instrument(after_resume=reply["game"])
         return reply
 
-    def hold_break_line(self, mark: int, n: int) -> str:
+    def hold_break_line(self, mark: int, n: int, addr: int | None = None) -> str:
         """The break line of pause `n`, which a hold caused: the one x64dbg
         printed before `[STATE] paused`, or, since that line can lag the
-        state line, the first one it prints within half a second after."""
-        line = (self.log.pause_line(n) or {}).get("line")
-        if line and _BREAK_LINE.match(line):
-            return line
+        state line, the first one it prints within half a second after. When
+        the pause followed x64dbg's GUI_SET_LAST_EXCEPTION notice (the
+        exception-shaped hit), the `First chance exception on <addr> ...`
+        line for the held address, which x64dbg prints after the pause; the
+        `[TODO]` notice itself is never returned."""
         deadline = time.monotonic() + 0.5
-        while time.monotonic() < deadline:
-            late = self.log.breaks_since(mark)
-            if late:
+        while True:
+            info = self.log.pause_line(n) or {}
+            line = info.get("line")
+            if line and (_BREAK_LINE.match(line) or _single_step_on(line, addr)):
+                return line
+            lines = [ln.strip() for ln in self.log.since(mark)]
+            steps = [ln for ln in lines if _single_step_on(ln, addr)]
+            if steps:
+                return steps[-1]
+            late = [ln for ln in lines if _BREAK_LINE.match(ln)]
+            if late and not info.get("exception"):
                 return late[-1]
+            if time.monotonic() >= deadline:
+                break
             time.sleep(0.02)
-        return line or "a pause with no break line"
+        if line:
+            return line
+        if info.get("exception"):
+            return "a pause after x64dbg's GUI_SET_LAST_EXCEPTION notice, with no exception line for it"
+        return "a pause with no break line"
 
     def hold_reply(self, ok: bool, detail: str | None, out: dict[str, list[str]], held: str | None,
                    held_note: str | None, end_seen: bool, hold_game: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1845,7 +1949,18 @@ class Keeper:
             except OSError:
                 continue
             try:
-                if data.get("op") == "send":
+                if data.get("op") in ("send", "hold") and data.get("code_id") != self.code_id:
+                    # Checked before anything reaches x64dbg: a client on other
+                    # code may send a shape this keeper reads differently.
+                    reply = {"ok": False, "refused": True, "reason": "stale_server",
+                             "detail": (f"this keeper runs tools/x64dbg_mcp.py {self.code_id[:12]}, and the "
+                                        f"request came from {str(data.get('code_id'))[:12]}: a client and the "
+                                        "keeper must run the same code, so nothing was sent to x64dbg. Restart "
+                                        "the MCP server, or use the CLI route, which imports the file fresh on "
+                                        "each call (`py -3 -m tools.x64dbg_mcp tool <name> '<json>'`); when "
+                                        "the keeper is the older one, detach (`py -3 -m tools.x64dbg_mcp "
+                                        "detach`, always served) and attach again")}
+                elif data.get("op") == "send":
                     for line in data.get("lines", []):
                         self.send(str(line))
                     reply = {"ok": True, "sent": len(data.get("lines", []))}
@@ -1974,7 +2089,9 @@ def keeper_main(session: Path, pid: int) -> int:
 
 
 def keeper_request(cfg: Config, op: str, timeout: float, **fields: Any) -> dict[str, Any]:
-    """Leave a request for the keeper and wait for its reply."""
+    """Leave a request for the keeper, stamped with this module's `CODE_ID`,
+    and wait for its reply. A keeper that refuses it as `stale_server` (it
+    runs other code) raises `Refused`, so every tool reports that refusal."""
     state = read_state(cfg)
     if not alive(state.get("keeper")):
         raise Refused("keeper_gone", f"no live keeper for the session in {cfg.session} "
@@ -1982,7 +2099,7 @@ def keeper_request(cfg: Config, op: str, timeout: float, **fields: Any) -> dict[
     cfg.requests.mkdir(parents=True, exist_ok=True)
     cfg.replies.mkdir(parents=True, exist_ok=True)
     name = f"{time.time_ns():020d}-{uuid.uuid4().hex}.json"
-    write_json(cfg.requests / name, {"op": op, **fields})
+    write_json(cfg.requests / name, {"op": op, "code_id": CODE_ID, **fields})
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         reply = read_json(cfg.replies / name)
@@ -1991,6 +2108,8 @@ def keeper_request(cfg: Config, op: str, timeout: float, **fields: Any) -> dict[
                 (cfg.replies / name).unlink()
             except OSError:
                 pass
+            if reply.get("reason") == "stale_server":
+                raise Refused("stale_server", str(reply.get("detail")))
             return reply
         time.sleep(0.05)
     raise Refused("keeper_timeout", f"the keeper did not answer {op!r} within {timeout:.0f}s")
@@ -2314,6 +2433,9 @@ class Tools:
 
     def _gate(self, tool: str, need_lease: bool = True,
               states: tuple[str, ...] = ("running",)) -> dict[str, Any] | None:
+        stale = self._stale(tool)
+        if stale:
+            return stale
         state = read_state(self.cfg)
         if state.get("state") == "attach-unconfirmed" and "attach-unconfirmed" not in states \
                 and alive(state.get("keeper")):
@@ -2331,6 +2453,15 @@ class Tools:
             if held != "held":
                 return _refusal(tool, "no_lease", f"the hs-drive lease is {held}: {detail}")
         return None
+
+    @staticmethod
+    def _stale(tool: str) -> dict[str, Any] | None:
+        """Every tool but `status` refuses once this file has changed on disk
+        since it was imported (`CODE_ID`): this process runs older code than
+        the guide, and maybe than the keeper."""
+        if code_current():
+            return None
+        return _refusal(tool, "stale_server", stale_detail("this x64dbg MCP server"), code_current=False)
 
     def _log_size(self) -> int:
         try:
@@ -2446,7 +2577,10 @@ class Tools:
         except PluginError:
             answers = False
         out = {"ok": True, **session_summary(self.cfg), "plugin_answers": answers,
-               "plugin_url": self.cfg.url, "lease": {"state": held, "detail": detail}}
+               "plugin_url": self.cfg.url, "lease": {"state": held, "detail": detail},
+               "code_current": code_current()}
+        if not out["code_current"]:
+            out["code_note"] = stale_detail("this x64dbg MCP server") + "; every tool but status refuses until then"
         game = self._game()  # a fresh outside check of the game, while the session may hold it
         if game is not None:
             out["game"] = game
@@ -2631,6 +2765,9 @@ class Tools:
                 "disabled": [ln for ln in rows if _BPLIST_ROW.match(ln).group(1) == "0"]}  # type: ignore[union-attr]
 
     def log(self, after: int | None = None, limit: int = 200) -> dict[str, Any]:
+        stale = self._stale("log")
+        if stale:
+            return stale
         limit = max(1, min(int(limit), 5000))
         try:
             lines = self.cfg.log_file.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -2779,7 +2916,8 @@ DESCRIPTIONS = {
               "state (x64dbg_state), the pauses the keeper resumed (breaks_resumed, last_break, break_storm), "
               "the outside check's control (instrument) and a fresh check of the game, whether the plugin "
               "answers on 127.0.0.1, and the hs-drive lease. attach-unconfirmed: the game may be paused; run "
-              "detach.",
+              "detach. code_current false: this server runs older code than tools/x64dbg_mcp.py on disk, and "
+              "every other tool refuses (stale_server); restart the MCP server or use the CLI route.",
     "logpoint": "Add one hardware logging breakpoint that logs without breaking (bph with a never-break "
                 "condition). address: 0x<hex> or "
                 "<module>+<hex>, e.g. Hero_Siege.exe+427460. log: an x64dbg log format string, braces allowed, "
