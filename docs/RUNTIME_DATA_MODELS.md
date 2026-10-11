@@ -5004,15 +5004,18 @@ direct `call rel32` that the import's reference table does not hold.
   | 1 | `Gurag_obj` (2014) | `Gurag_Dungeon_*`, `Gurag_Board_obj` |
   | 2 | `Reaper_obj` (4013) | `Winter_Reaper_*`, `Reaper_Flames_*` |
   | 3 | `Anubis_obj` (241) | `Pyramid_*`, `Pyramid_Anubis_Statue_Dark_obj` |
-  | 4 | `Damien_obj` (1115) | `Nightmare_Demon_*` and satanic props |
-  | 5 | `Karp_King_obj` (2368) | `Sea_*`, `Fuji_*` |
+  | 4 | `Damien_obj` (1115) (inferred) | `Nightmare_Demon_*` and satanic props |
+  | 5 | `Karp_King_obj` (2368) (inferred) | `Sea_*`, `Fuji_*` |
   | 6 | `Satan_obj` (4266) | `Satan_Light_obj`, `Satan_Pentagram_Trail_obj` |
   | 7 | `Mevius_obj` (2705), named by the owner, 2026-10-11 | `Bad_Trip_*`, which names no boss |
   | 8 | `Odin_Phase_1_obj` (3276) | `Odin_Cutscene_obj`, `Odin_Pillar_*` |
   | 9 | `Cthulhu_obj` (1043) | `Cthulhu_*` |
 
-  **Static reading (boss room decor)** for every row but act 7, whose boss the
-  decor does not name and the owner chose (2026-10-11). The SDK also names
+  **Static reading (boss room decor naming the boss)** for acts 1, 2, 3, 6, 8
+  and 9; acts 4 and 5 are an **inference** (their decor names no boss; Damien
+  and Karp King are what remains of the Key of Terror's six once acts 1-3 and 6
+  are placed, and the decor fits them); act 7's boss the decor does not name
+  and the owner chose (2026-10-11). The SDK also names
   `Bad_Trip_Mevius_Painting_obj`, `Mevius_Boss_mus` and a room
   `Act_08_Mevius_Intro`; whether `Act_07_Boss` places a Mevius painting was not
   read. All nine named objects descend from `Enemy_Child_Boss_obj` through
@@ -5023,10 +5026,15 @@ direct `call rel32` that the import's reference table does not hold.
   their order. **Static search.**
 - The game already has an item named "Gurag's Soul", one of the Key of
   Terror's parts, in repository category 13. **Static search.**
-- A boss created with `instance_create_depth` in a zone lives, fights and dies
-  through HP 0 with loot, and one created in town removes itself (§ 13.1).
-  That a summoned act boss counts toward its act's quest or completion is
-  **not established**.
+- Karp King and four uber bosses spawned in Act_01_01 were killed there with
+  their drops. Setting a monster's HP to 0 kills it through its own death path,
+  but Uber Endrixia, Uber Anubis and Uber Luna do not die that way, and a boss
+  spawned in town removes itself (§ 13.1, measured; the spawn route is not
+  named there). Whether the nine act bosses above live, fight and die when
+  created outside their pentagram, by `instance_create_depth` or any other
+  route, is **not established**; ForgePact #197's live procedures measure acts
+  1 and 2 only. That a summoned act boss counts toward its act's quest or
+  completion is **not established**.
 
 ### 21.3 Key items: the repository, the Key tab and stacking
 
