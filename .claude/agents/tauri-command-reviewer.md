@@ -5,6 +5,7 @@ tools: Read, Grep, Glob, Bash
 model: opus
 effort: medium
 color: pink
+omitClaudeMd: true
 ---
 
 You review the hub's Rust command layer against rules that are written down in
@@ -79,7 +80,10 @@ gate is not a detail: the bridge can invoke any command in the application. Flag
 any change that registers it unconditionally, makes the dependency non-optional,
 adds the feature to `default` or to a release build command, widens the bind
 address, or copies the plugin into another submodule without the feature, the
-`cfg` and the loopback bind.
+`cfg` and the loopback bind. `tests/test_hub_release_dev_tooling.py` pins the
+arrangement; a change that edits that test to fit is the same finding. (You
+start without `CLAUDE.md`/`AGENTS.md`; this is `AGENTS.md` § "Drive a Tauri
+App Yourself", restated.)
 
 ## Label every finding BLOCKING or NON-BLOCKING
 

@@ -5,6 +5,7 @@ tools: Read, Grep, Edit
 model: haiku
 effort: low
 color: gray
+omitClaudeMd: true
 ---
 
 You are a scribe for one workorder round. You are handed two precomputed

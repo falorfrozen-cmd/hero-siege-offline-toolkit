@@ -5,10 +5,11 @@
 hub, plus the same inside every initialized submodule listed in
 `.gitmodules`, plus each of those repos' own HEAD sha, so a later `delta`
 call can name exactly the paths a round touched -- including ones the round
-committed rather than left dirty. The driver takes a snapshot right before
-spawning or resuming the implementer for a round, then diffs against it once
-the round returns, and hands a re-run reviewer only that delta instead of the
-whole cumulative diff.
+committed rather than left dirty. A snapshot is taken right before a round's
+implementation starts -- by the implementer itself, as its first command, in
+workflow mode; by the driver in driver mode -- and the round's last command
+diffs against it, so a re-run reviewer is handed only that delta instead of
+the whole cumulative diff.
 
 The property this exists to give: a file that was already dirty *before* the
 round started, and that the round never touched, must not appear in the

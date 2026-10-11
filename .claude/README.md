@@ -102,7 +102,7 @@ next one a document rather than a conversation. They are driven by
 | `verifier` | haiku (medium) | runs the acceptance criteria (first through `tools/run_criteria.py --jobs auto`, which runs every command-shaped criterion in one call, independent ones at once; after a fix, only the criteria the fix reaches plus the failed ones), or one item's `checks:` in a streamed plan, and reports what they actually printed; read-only, and judges nothing it cannot execute |
 | `consultant` | opus | answers **one** narrow question from a phase that hit a decision above its tier, then stops; never implements, plans or reviews |
 | `live-operator` | opus | runs a workorder's written `### Live procedure <n>` against the real game through `hs-drive` — its own save backup, the positive control first, raw output to `<slug>-live-<n>.md` — and hands every in-game action a person must take back to the driver; never installs a build, never judges the mechanism |
-| `scribe` | haiku (low) | pastes a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Grep`/`Edit` only (no shell); spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
+| `scribe` | haiku (low) | **retired from the round loop by #485 (2026-10-11).** No path spawns it now: `tools/workorder_record.py` applies State/Log from the run record. The file stays until a follow-up removes it with its pinned-tier test and audit fixtures. It used to paste a precomputed round Log entry and replacement State lines into the workorder's own `-plan.md`/`-context.md`, with `Read`/`Grep`/`Edit` only (no shell); spawned only by `workorder-rounds.js`, and records the round's findings rather than acting on them |
 
 Why these tiers: planning carries the most judgement that is written down
 nowhere, so it gets the strongest model. Implementation is *not* the easy part —
@@ -552,6 +552,32 @@ workflow". This replaces "opt-in and unproven": it carried
 verifier 2–3M, nine haiku utility agents 1.8M total —
 `skills/workorder/SKILL.md` § "Driver discipline" has the matching cost for
 the same work done by hand).
+
+**Since hub #485 (2026-10-11),** the round loop spawns no bookkeeping agents.
+[The workorder audit](../docs/agents/workorder-audit-2026-10/README.md)
+measured that 26% of launches ended STATE-LOST, LOG-DAMAGED or SCRIBE-FAILED,
+and that per-round reviewers mostly found nothing.
+
+- **Bookkeeping:** the implementer runs `round_delta.py snapshot`/`heads`
+  first and `delta`, the greps and `tools/decompile_check.py` last, and
+  reports them in its schema. (Parallel lanes still take one haiku snapshot
+  first, because they would race on the file.)
+- **Recording:** the launch returns `record {rounds:[{stateLines, logBlock}]}`.
+  The driver applies it with `py -3 tools/workorder_record.py apply --run
+  <runId>`, which is idempotent per run and round. The STATE-LOST,
+  LOG-DAMAGED and SCRIBE-FAILED outcomes are gone.
+- **Reviewers:** only `instrument-blindness-reviewer` runs every round.
+  sdk-contract, docs-sync and tauri run once at the `finalGate: true` launch,
+  which is verifier plus deferred reviewers with no implementer.
+  `decompile-output-guard` runs there only when the branch touches docs or
+  `*.md`.
+- **Fix rounds** continue inside one launch up to the caps.
+- **Launch args:** the driver builds them with `py -3 tools/workorder_brief.py
+  --launch-args <slug>`.
+- **Criteria reuse:** a development verify passes `run_criteria.py --reuse
+  <implementer criteria dir>`.
+
+The paragraphs below describe the earlier design and are kept as history.
 
 Per round the script snapshots (`round_delta.py snapshot`), reads back that
 snapshot's recorded per-repo base commits (`round_delta.py heads`), spawns a
@@ -1296,6 +1322,13 @@ What does not carry over:
   `x64dbg` server is narrower by construction: its stdio proxy serves only its
   eight tools, so under Codex every agent sees those eight, and the plugin's
   own surface stays out of reach.
+- **`omitClaudeMd: true`** on the verifier, the scribe and the five reviewers
+  has no Codex equivalent. `tools/sync_agent_tooling.py` drops it from
+  `.codex/agents/*.toml` and notes this in the header comment, so under Codex
+  those agents still load `AGENTS.md`. Their bodies restate the AGENTS.md rules
+  they apply, so they behave the same either way. The audit's measurements of
+  what loading AGENTS.md costs per spawn are in
+  [docs/agents/workorder-audit-2026-10/](../docs/agents/workorder-audit-2026-10/README.md).
 
 ## A trap worth knowing: `#` in frontmatter
 
