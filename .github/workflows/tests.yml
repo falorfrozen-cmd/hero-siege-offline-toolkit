@@ -5,10 +5,29 @@
 # cannot run tests (on #491 it tried three times and was denied each time).
 # Same command and runner as hub-release.yml's `check` job; submodules are not
 # checked out, as there.
+#
+# Not on a submodule bump PR (#495). submodule-dispatch.yml opens those as
+# github-actions, where a pull_request run waits in `action_required` for an
+# approval; the PR then reads `unstable`, and merge_submodule_pointer.py, which
+# merges only on `clean`, leaves it for a person (#494). A bump changes one
+# gitlink and nothing the suite reads, so a PR that touches only submodule
+# paths starts no run. The list is every path in .gitmodules, kept equal by
+# tests/test_tests_workflow.py. The suite still runs on the push to main.
 name: Tests
 
 on:
   pull_request:
+    paths-ignore:
+      - ForgePact
+      - HS-Offline-Launcher
+      - HS-Offline-Tracker
+      - HS-ValueEditor
+      - HSCraftSim
+      - HSSaveEditor
+      - HSSaveEditor-SteamDeck-
+      - Hs-Offline-Loot-Forge
+      - hero-siege-item-editor
+      - hs-stat-forge
   push:
     branches: [main]
 

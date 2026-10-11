@@ -603,7 +603,7 @@ the screenshot alone.
 | `.github/workflows/catalog-publish.yml` | push to `main` touching `catalog/`, dispatch from `catalog.yml`, manual | Verifies the signature and uploads the catalog to the `catalog` release tag. |
 | `.github/workflows/hub-tag.yml` | manual, with the tag typed in | Checks the tag is one this repository can release, moves the version to match, tags it, then dispatches the release against the tag. Publishes nothing. |
 | `.github/workflows/hub-release.yml` | `hub-v*` tag, dispatch, manual dry run | Tests, builds, signs, and uploads the hub plus `latest.json` to a **draft** release. |
-| `.github/workflows/tests.yml` | every pull request, push to `main` | Runs the Python suite (`python -m unittest discover -s tests`) on Ubuntu, without submodules. The one check that runs tests on a pull request. |
+| `.github/workflows/tests.yml` | every pull request except one that changes only submodule gitlinks, push to `main` | Runs the Python suite (`python -m unittest discover -s tests`) on Ubuntu, without submodules. The one check that runs tests on a pull request. Its `pull_request.paths-ignore` lists every `.gitmodules` path (pinned by `tests/test_tests_workflow.py`), so a bump PR from `submodule-dispatch.yml` starts no run: on github-actions' PRs a run waits for approval, which left #494 `unstable` and unmerged (#495). |
 | `.github/workflows/ai-review.yml` | the `ai-review` label, or a `@claude review` comment | Reviews the pull request and posts findings as inline comments. Opt-in only. |
 | `.github/workflow-templates/notify-hub-release.example.yml` | — | The sending half, to copy into a tool repository. |
 
