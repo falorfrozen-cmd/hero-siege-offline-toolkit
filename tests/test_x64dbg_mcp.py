@@ -418,6 +418,12 @@ class SessionMixin:
         modes.update(changes)
         tmp = path.with_name("modes.json.tmp")
         tmp.write_text(json.dumps(modes), encoding="utf-8")
+        for _ in range(50):  # Windows refuses the replace while the fake headless reads the file
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                time.sleep(0.01)
         os.replace(tmp, path)
 
     def _stop_session(self, cfg):
