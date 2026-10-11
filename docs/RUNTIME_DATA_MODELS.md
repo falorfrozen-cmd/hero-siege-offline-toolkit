@@ -3019,6 +3019,178 @@ directions are a **static reading**. Also in
 [sCP](../ForgePact/docs/S10-special-content-notes.md#asil-cevap-gml_script_scp--2026-08-25-2010-statik),
 [Shadow Realm and Chaos Tower gates](../ForgePact/docs/S10-special-content-notes.md#shadow-realm-ve-chaos-tower-kapilari)
 
+### 14.4 Chaos Pillars: the tooltip and what shows it
+
+Everything below is a **static reading** of game build `pe-6aaa6779-0cad4fc8`,
+made 2026-10-11 for ForgePact #7 and written in our own words, except where a
+line says **measured** or **inferred**.
+
+- **Two objects, one tooltip per pillar.** `Chaos_Pillar_obj` (861; parent
+  chain `Quest_NPC_Parent_obj` → `Collision_Parent_obj` →
+  `Avoidable_Parent_obj`; no children) and `Chaos_Pillar_Tooltip_obj` (862; no
+  parent). **Static reading** for the hierarchy. A session counted 18 of each
+  in one map: equal counts, **measured** 2026-08-26 on an older build
+  ([S10, working recipe](../ForgePact/docs/S10-special-content-notes.md#-calisan-tarif---yytoolkit-2026-08-26)).
+  Equal counts alone do not pair them. The one-to-one pairing is the Alarm 0
+  reading below (one tooltip created per pillar and kept in that pillar's
+  `chaosPillarTooltip`), a **static reading**. Live 1 (below) found all 17
+  pillars of one zone each naming an existing tooltip in `chaosPillarTooltip`,
+  which fits it.
+- **Events.** The pillar has Create, Alarm 0, Step, Draw, Destroy, CleanUp and
+  the two mouse events `Mouse_10` (mouse enter) and `Mouse_11` (mouse leave);
+  the tooltip has only Create and Draw GUI (`Draw_64`). They are rows of the
+  compiled-code table (`gml_Object_Chaos_Pillar_obj_Mouse_10`, …), not named
+  scripts. **Static reading.**
+- **Create** sets `chaosPillarTooltip` to noone (-4), sets `device`,
+  `isHovered` and `isCoOp` to false, and arms alarm 0. **Static reading.**
+- **Alarm 0 rolls the pillar and builds its tooltip.** It draws the pillar's
+  affixes from `affixPool` (a ds_list) into `affixes`, works out `textHeight`,
+  `rarityColor` and seventeen `tooltip*` display values (`tooltipPackSize`,
+  `tooltipMF`, `tooltipXP`, `tooltipLootAmount`, `tooltipExtraGold`,
+  `tooltipRelic` and the rest), then creates one `Chaos_Pillar_Tooltip_obj` at
+  the pillar's own position on the UI layer named by the global `uiLayer`,
+  stores it in `chaosPillarTooltip` and copies those values onto it. The mods
+  therefore live on the pillar and are copied, once, onto its tooltip. It also
+  sets `device` true when the player's input device reads as a gamepad
+  (`GetPlayerDevice` answering 2), or, with `isCoOp`, when a protected global
+  flag read as local co-op is set (which flag that is was not established).
+  **Static reading.**
+- **The hover gate is the tooltip's built-in `visible`.** Mouse enter sets it
+  true and mouse leave sets it false, each only when `chaosPillarTooltip` is
+  not noone. The tooltip's own code never writes it. Its starting value is an
+  object property rather than code, inferred to be false because the box shows
+  only on hover. **Static reading.** The mouse half is **measured** in Live 1
+  (below): hovering a pillar turned its tooltip's `visible` to 1 and moving
+  away turned it back to 0.
+- **`activated` holds a key, not the state.** In Create the pillar asks the
+  anti-cheat extension's `InitNewVariableFast` for a new record in the native
+  protected-value store (§ 5.8), keeps the record's key in `activated`, and
+  stores the starting value under that key through the extension's
+  `SetVariable` (inferred to be false from the constant it passes). CleanUp
+  frees the record with `FreeVariable`. The pillar keeps the same kind of key
+  in `rarity`, `affix`, `activateTimer`, `magicFind01`..`06`,
+  `lootAmount01`..`06`, `xZe` and `zrmb`. The game reads the state through the
+  extension's `GetVariable(key)`: the pillar's interaction closure (the first
+  of its four Create closures, its `m_TalkToNPC`) does nothing once the record
+  is true, so a used pillar cannot be talked to again, and the Step takes its
+  own branch on it (below). `DialogChaosPillar` reads the pillar's `rarity`
+  record; at the lower rarities it calls the pillar's `m_Activate` (the third
+  closure) at once, at the higher ones it first runs an inventory-item
+  operation, a cost whose item was not established. `m_Activate` sets
+  `speakCooldown` and sends a client effect carrying the pillar's x and y; the
+  handler of that effect, which presumably sets the record true and starts the
+  fight, was **not read**. **Static reading.** So
+  `variable_instance_get(pillar, "activated")` returns a key, the same trap as
+  a creator's `spawnPack` (§ 11.2) and a monster's `damage` (§ 13.7), and the
+  state is the record, which ForgePact reads by calling the game's script
+  `PC_GetVariableGMLWrapper(key)` by name after checking the key is a finite
+  whole number in [0, 262144): the store holds 262,144 records and a -1 key
+  faulted the game (§ 5.8). That route is **measured** on creators and
+  monsters (§ 11.2, § 13.7); the extension's own `GetVariable` does not
+  resolve from the plugin (§ 20.5). Reading a pillar's record through it, and
+  the record turning true when a player activates the pillar, are now
+  **measured** (Live 2, below); which code writes it stays **not
+  established**.
+- **Step.** When the pillar's protected `activated` record reads true, the
+  Step takes its own branch (the tremble: `trembleTimer`, `angle`, `x2`) and
+  leaves the tooltip alone. Otherwise, and only while `device` is true, it
+  rewrites the tooltip's `visible` every step: true while the local player
+  (in co-op, either player) is within 180 px (`distance_to_object`), false
+  otherwise. With mouse input the Step never touches `visible`, so only the
+  mouse events do. **Static reading**; the gamepad branch has not been
+  measured.
+- **The tooltip's Draw GUI** draws nothing unless its own `visible` is true.
+  Then it maps its room x/y through view camera 0 into GUI space (offset from
+  the view's origin, scaled by GUI size over view size, floored) and draws the
+  box of mods there, so the box sits over its pillar wherever the camera is.
+  **Static reading.**
+- **Destroy** destroys the tooltip and sets `chaosPillarTooltip` to -1, not
+  -4, so a reader must treat both as "no tooltip". **Static reading.**
+- **Two negatives, "not observed".** A byte scan for code that uses the
+  `chaosPillarTooltip` variable found its uses only inside the pillar's own
+  Create, Alarm 0, Step, mouse enter, mouse leave and Destroy; a scan for code
+  building a reference to object 862 found only Alarm 0's creation. As the
+  second scan's positive control, the same scan run for the gamba machine
+  (4644) found four sites. That four is this research's own count, not a
+  figure § 20.2 states: § 20.2 names the machine's creation in
+  `gml_Script_ClientCreateEffect` and notes that `Zone_State_Buffer_obj`'s
+  Create closures also name it. A reference built another way, or a
+  `variable_instance_*` access by string, would not show in either scan.
+  `isHovered` is written in Create and read nowhere the scan sees. **Static
+  reading**, not a measured negative.
+- **Measured (Live 1, 2026-10-11)**, mouse play, the installed game, the
+  first zone (`Act_01_01`) with ForgePact's Chaos Pillar rate at ×10, read
+  through ForgePact's research probe and its event counter on
+  `gml_Object_Chaos_Pillar_Tooltip_obj_Draw_64`:
+  - 17 pillars, each with an existing tooltip, and `device` 0 on every one.
+  - The raw `activated` variable read as a bool true or a number above 0.5 on
+    all 17 untouched pillars (the probe printed only that, not the number).
+    That fits a store key and does not fit "this pillar was used".
+  - Hovering a pillar showed its box: the tooltip's `visible` read 1, the Draw
+    GUI count rose (106, then 706 on the next read), and a screenshot showed
+    the box of mods under the pillar's name.
+  - Moving the cursor away hid it: `visible` read 0 and the count stayed flat
+    (1311, then 1311). With the cursor parked away from every pillar the box
+    was not drawn: `visible` 0, the count flat at 0, and no box in a
+    screenshot. So while `visible` is false the tooltip's Draw GUI code does
+    not run at all.
+  - `Controller_obj`'s depth was -12998, and every tooltip's was -13001, on
+    layer `Layer_UI_Parent_1`.
+  - **Inferred** from those depths, not measured: GameMaker draws a lower
+    depth later, so the tooltips' Draw GUI runs after `Controller_obj`'s,
+    where ForgePact's HUD hook runs (§ 8.3), and a `visible` written from
+    that hook is drawn the same frame.
+- **Measured (Live 2, 2026-10-11)**, the same zone, rate and instruments,
+  mouse play, 35 pillars:
+  - **The raw `activated` is a key whose record reads false before any
+    interaction.** On all 35 untouched pillars `activated` held a distinct
+    whole number between 174773 and 175959, and the record behind it, read
+    through `PC_GetVariableGMLWrapper` by name, answered 0. The same pillar's
+    `rarity` and `activateTimer` keys sat two below and one above it. As the
+    read's positive control, the `rarity` records answered 1, 2, 3, 5 and 6
+    across the pillars, and one reading 3 was the pillar the game's own box
+    named "Rare"; `activateTimer`'s record read 216 on every untouched
+    pillar. The getter itself answered the same non-zero number as `GPV` for
+    `gDataProtected[177]` that session.
+  - **The player's activation turns the record true.** Clicking a pillar
+    (rarity 1) opened the game's dialog ("Activate the pillar?", asking for no
+    item at that rarity), and choosing its yes option made the record answer
+    1 within 2 s, under the same key; every other pillar's stayed 0. In the
+    same read the `activateTimer` record had fallen from 216 to about 122,
+    `trembleTimer` from 14.4 to 7.2 and `speakCooldown` from 0 to about
+    -0.29, while `rarity`, `questState`, `isDiscovered`, `image_index` and
+    `sprite_index` were unchanged.
+  - **The tooltip survived that read, then the pillar went.** Within 2 s of
+    the activation the pillar's tooltip still existed (with `visible` 0); a
+    few seconds later the pillar was gone from the room (35 pillars, then
+    34), its place taken by the fight's pentagram. One activation was
+    observed, so whether the game always removes an activated pillar this
+    way is not established.
+  - With `visible` written true from ForgePact's HUD hook and no hover, the
+    box was drawn (the Draw GUI count rising, the box in a screenshot), so a
+    write there is drawn. Whether it is drawn the same frame (the depth-order
+    inference above) is still **not measured**: with mouse input nothing
+    writes `visible` false between frames, so a write drawn one frame late
+    would look the same.
+
+ForgePact's **Always show Chaos Pillar mods** switch (`pillartips`, off by
+default, mouse play only) is built on this reading: once a frame, from its HUD
+hook, it sets `visible` on the tooltips of on-screen pillars whose protected
+`activated` record reads false, the way mouse enter would, and clears it again
+when they leave the screen or the switch goes off. What is live-measured: the
+mouse hover gate, mouse leave's clear, the depths, and that the raw
+`activated` variable is not the state (Live 1); the switch showing every
+on-screen, untouched pillar's box without hover, hiding it off screen and on
+activation, the record turning true when a player activates a pillar, and the
+game's own hover back once the switch is off (Live 2). What is not: which
+code writes the record, the draw order of `Controller_obj`'s Draw GUI and the
+tooltips' within a frame (inferred from the depths), the game's hover on an activated pillar with the
+switch on (the pillar was removed first), and gamepad play, where the Step
+rewrites `visible` every step and which ForgePact does not support or test
+(that branch stays a static reading).
+The argument, the instrument and the live results are in
+[the Chaos Pillar tips research](../ForgePact/docs/chaos-pillar-tips-research.md).
+
 ---
 
 ## 15. Calls That Crash or Hang the Game
