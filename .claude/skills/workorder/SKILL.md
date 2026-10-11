@@ -713,8 +713,8 @@ A live session is a phase like the others, and the driver does not run it:
 the driver checks the game lease, asks the owner before installing a build,
 relays each `NEEDS-HUMAN` verbatim, and routes `LIVE-DONE`,
 `INSTRUMENT-BLIND` and `LIVE-ABORTED`. **Read [`live-gate.md`](live-gate.md)
-before the first step of a live gate**: the lease states, the install
-question, the relay rules, how each operator verdict routes, the teardown
+before the first step of a live gate**: the lease states, the check that
+a "which code" question has debugger steps, the install question, the relay rules, how each operator verdict routes, the teardown
 restore, and the R17/R20 audit rules are there.
 
 A live gate waits on a person, so it is also where the driver session should
