@@ -2328,11 +2328,13 @@ class Tools:
                                                    f"{self.cfg.hold_timeout:.0f}s, so nothing was set")
             time.sleep(0.05)
 
-    def _hold(self, lines: list[str]) -> dict[str, Any]:
+    def _hold(self, lines: list[str], first_hit: str | None = None) -> dict[str, Any]:
         """Lines that change hardware breakpoints, through the keeper's hold
         (`Keeper.hold`): never a pause, and held at a hit of a logging
-        breakpoint when one is armed."""
-        return keeper_request(self.cfg, "hold", timeout=hold_wait(self.cfg), lines=lines)
+        breakpoint when one is armed. With `first_hit` (a breaking `bph`) and
+        nothing armed, held at that breakpoint's own first hit instead."""
+        extra = {"first_hit": first_hit} if first_hit else {}
+        return keeper_request(self.cfg, "hold", timeout=hold_wait(self.cfg), lines=lines, **extra)
 
     def _game(self) -> dict[str, Any] | None:
         """A fresh outside check of the session's game, or None with no live session."""
@@ -2451,9 +2453,15 @@ class Tools:
             return _refusal(tool, "already_armed",
                             f"bplist already lists {hexaddr} ({listed}); nothing was set. Delete it first with "
                             f"the command tool (bphc {hexaddr}) to arm it again", address=hexaddr, **checked)
-        # One hold, never a pause. The never-break condition comes straight
-        # after `bph`, so in a direct batch only `bph`'s own pass over the
-        # threads can break on a hit (reported as window_break, and resumed).
+        # One hold, never a pause. With nothing armed (the control), the
+        # breaking `bph` holds the game at A's own first hit, and the rest is
+        # set there: the never-break condition first, then the log text, log
+        # condition and name. A hardware breakpoint's hit releases cleanly on
+        # `run` and on detach, which the plugin's pause did not. A cold
+        # address that is not hit within the hold timeout is armed never-break
+        # on the running game (`held` null, with `held_note`). With a logpoint
+        # already logging (a candidate), the same lines go out as a held change
+        # at that logpoint's hit.
         steps = [f"bph {hexaddr}, x, 1", f"SetHardwareBreakpointCondition {hexaddr}, 0",
                  f'SetHardwareBreakpointLog {hexaddr}, "{log}"']
         if log_condition:
@@ -2462,7 +2470,7 @@ class Tools:
             steps.append(f'SetHardwareBreakpointName {hexaddr}, "{name}"')
         base = {"tool": tool, "address": hexaddr, "steps": steps, **checked}
         try:
-            reply = self._hold(steps)
+            reply = self._hold(steps[1:], first_hit=steps[0])
         except Refused as r:
             return self._arming_failed(base, addr, "set", f"the keeper did not answer the hold ({r.reason}): "
                                                           f"{r.detail}", {})
@@ -2475,7 +2483,8 @@ class Tools:
             return self._arming_failed(base, addr, "running", f"{hexaddr} was armed, but {reply.get('detail')}: "
                                                               "it may break on its hits", reply)
         # The verification window: a break on this breakpoint after the hold
-        # means its never-break condition did not take.
+        # (its first hit was the hold itself) means its never-break condition
+        # did not take.
         time.sleep(self.cfg.settle)
         brk = break_on(self._log_after(int(reply.get("log_offset") or 0)), addr, name or None)
         if brk is not None:
@@ -2489,9 +2498,8 @@ class Tools:
                                        f"{hexaddr} was armed: {game.get('detail')}", reply, game=game)
         rows = [ln.strip() for ln in reply.get("after") or [] if _BPLIST_ROW.match(ln)]
         return {"ok": True, **base, "bplist": rows, "held": reply.get("held"),
-                "window_break": reply.get("window_break") is not None,
-                **({"window_break_line": reply["window_break"]} if reply.get("window_break") else {}),
                 **({"held_note": reply["held_note"]} if reply.get("held_note") else {}),
+                **({"hold_game": reply["hold_game"]} if reply.get("hold_game") else {}),
                 "x64dbg_state": read_state(self.cfg).get("x64dbg_state") or reply.get("x64dbg_state"),
                 "game": game}
 
@@ -2514,8 +2522,8 @@ class Tools:
                               "every pause: read status, and detach if it stays so")
         return {"ok": False, **base, "stage": stage, "detail": detail,
                 "lines": reply.get("lines", []), "after": reply.get("after", []), "held": reply.get("held"),
-                "window_break": reply.get("window_break") is not None, "cleared": cleared,
-                "x64dbg_state": settled, **fields}
+                **({"hold_game": reply["hold_game"]} if reply.get("hold_game") else {}),
+                "cleared": cleared, "x64dbg_state": settled, **fields}
 
     def command(self, command: str) -> dict[str, Any]:
         tool = "command"
@@ -2534,7 +2542,7 @@ class Tools:
                 return _refusal(tool, r.reason, r.detail)
             out = {"ok": bool(reply.get("ok")), "tool": tool, "sent": text, "lines": reply.get("lines", []),
                    "after": reply.get("after", []), "held": reply.get("held"),
-                   "window_break": reply.get("window_break"), "x64dbg_state": reply.get("x64dbg_state"),
+                   "x64dbg_state": reply.get("x64dbg_state"),
                    "note": "sent through a hold on headless x64dbg's stdin (held at a hit of a logging breakpoint "
                            "when one is armed); `after` carries the bplist that followed it"}
             for key in ("held_note", "detail"):
@@ -2711,12 +2719,15 @@ DESCRIPTIONS = {
               "the outside check's control (instrument) and a fresh check of the game, whether the plugin "
               "answers on 127.0.0.1, and the hs-drive lease. attach-unconfirmed: the game may be paused; run "
               "detach.",
-    "logpoint": "Add one non-breaking hardware logging breakpoint (bph, never breaks). address: 0x<hex> or "
+    "logpoint": "Add one hardware logging breakpoint that logs without breaking (bph with a never-break "
+                "condition). address: 0x<hex> or "
                 "<module>+<hex>, e.g. Hero_Siege.exe+427460. log: an x64dbg log format string, braces allowed, "
                 "no double quote. expect_bytes: the function's first bytes from Ghidra (hex); a mismatch is "
                 "refused before anything is set, and without it a zero from this address is not evidence. "
-                "Never pauses the game: arms it on the running game (held at a hit of a logging breakpoint "
-                "when one is armed), reads bplist back (enabled hardware row required), watches for a break on "
+                "Never asks x64dbg or the plugin to pause: holds the game only at a hardware breakpoint's hit "
+                "(its own first hit when nothing is armed, held: that break, which also proves the outside "
+                "check; a hit of the logging breakpoint when one is armed), sets the never-break condition and "
+                "log there and resumes, reads bplist back (enabled hardware row required), watches for a break on "
                 "it, and checks from outside the debugger that the game runs; any failure clears it. Refused "
                 "while x64dbg is not running, during a break storm, or when bplist lists the address already. "
                 "Four hardware breakpoints at most: start with a positive control.",

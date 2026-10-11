@@ -1867,38 +1867,53 @@ class ArmingMixin(SessionMixin):
         self.assertNotIn("pause", verbs)
         self.assertFalse([n for n in plugin.names() if n in PLUGIN_STATE_CALLS], plugin.names())
 
-    def hot_after_hold(self, record, addr, delay=0.6):
-        """Mark `addr` hot `delay` seconds after the hold that armed it
-        printed its end marker: its first hit then lands in logpoint's
-        verification window, after the hold has returned."""
+    def modes_after_hold(self, record, addr, delay=1.5, **modes):
+        """Set the fake headless's `modes` `delay` seconds after the first-hit
+        hold that armed `addr` sent its `run` (the stdin line after its end
+        marker): whatever they cause then lands in logpoint's verification
+        window, after the hold has settled and returned."""
         bph = f"bph 0x{addr:X}, x, 1"
 
         def run():
             deadline = time.monotonic() + 60
             while time.monotonic() < deadline:
                 lines = self.stdin_lines(record)
-                if bph in lines and any(ln.endswith(' end"') for ln in lines[lines.index(bph):]):
-                    time.sleep(delay)
-                    self.set_modes(hot=[addr])
-                    return
+                if bph in lines:
+                    rest = lines[lines.index(bph):]
+                    ends = [i for i, ln in enumerate(rest) if ln.endswith(' end"')]
+                    if ends and "run" in rest[ends[0]:]:
+                        time.sleep(delay)
+                        self.set_modes(**modes)
+                        return
                 time.sleep(0.02)
 
         t = threading.Thread(target=run, daemon=True)
         t.start()
         self.addCleanup(t.join, 65)
 
+    def assert_first_hit_hold(self, result, record, addr, *steps):
+        """`result` armed `addr` held at its own first hit: `held` is A's
+        break, the outside check read the game frozen there and running
+        after, and stdin carried `bph <A>, x, 1`, then `steps` and the
+        bplist read-back, then `run`."""
+        self.assertIn(f"({addr:016X})", result["held"] or "", result)
+        self.assertEqual(result["hold_game"]["verdict"], "frozen", result)
+        self.assertEqual(result["game"]["verdict"], "running", result)
+        sent = _commands(self.stdin_lines(record))
+        bph = f"bph 0x{addr:X}, x, 1"
+        self.assertEqual(sent[sent.index(bph):], [bph, *steps, "bplist", "run"])
+
 
 class NeverPausesTests(ArmingMixin, unittest.TestCase):
     """`logpoint` arms on the running game and teardown clears it, and none
     of them asks x64dbg or the plugin to pause."""
 
-    def test_never_pauses_direct_and_held_logpoints_and_teardown(self):
-        cfg, plugin, _, record, _ = self.start_session()
+    def test_never_pauses_control_candidate_and_teardown(self):
+        cfg, plugin, _, record, _ = self.start_session(fake={"hot": [A]})
         tools = xm.Tools(cfg)
-        direct = tools.logpoint(f"0x{A:X}", "hot")
-        self.assertTrue(direct["ok"], direct)
-        self.assertIsNone(direct["held"])  # nothing was armed, so a direct batch
-        self.set_modes(hot=[A])
+        control = tools.logpoint(f"0x{A:X}", "hot")
+        self.assertTrue(control["ok"], control)
+        self.assertIn(f"({A:016X})", control["held"] or "", control)  # held at its own first hit
         self.assertTrue(self.hits_grow(cfg), "the hot logpoint never logged")
         held = tools.logpoint(f"0x{B:X}", "second")
         self.assertTrue(held["ok"], held)
@@ -1924,15 +1939,52 @@ class NeverPausesTests(ArmingMixin, unittest.TestCase):
         self.assertIn(xm.PLUGIN_PAUSE, plugin.names())
 
 
+class FirstHitHoldTests(ArmingMixin, unittest.TestCase):
+    """With nothing armed, `logpoint` arms its breakpoint breaking, holds the
+    game at its own first hit, and sets the rest there: the control's hold
+    is also the instrument's frozen reading."""
+
+    def test_first_hit_hold_arms_the_control_held_at_its_own_first_hit(self):
+        cfg, plugin, _, record, _ = self.start_session(fake={"hot": [A]})
+        self.assertFalse(xm.read_state(cfg)["instrument"]["proven"])  # attach holds nothing
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hot", name="control")
+        self.assertTrue(result["ok"], result)
+        self.assert_first_hit_hold(result, record, A, f"SetHardwareBreakpointCondition 0x{A:X}, 0",
+                                   f'SetHardwareBreakpointLog 0x{A:X}, "hot"',
+                                   f'SetHardwareBreakpointName 0x{A:X}, "control"')
+        self.assertNotIn("held_note", result)
+        self.assertEqual(result["x64dbg_state"], "running")
+        self.assertEqual(result["bplist"], [f'1:HW:{A:016X}:"control"'])
+        inst = xm.read_state(cfg)["instrument"]
+        self.assertTrue(inst["proven"], inst)  # the hold was the frozen control reading
+        self.assertEqual(inst["control_hold"]["verdict"], "frozen", inst)
+        self.assertTrue(self.hits_grow(cfg), "the control never logged after its hold")
+        self.assert_never_paused(plugin, record)
+        self.assertEqual(xm.read_state(cfg)["breaks_resumed"], 0)  # the hold's pause was its own
+
+    def test_first_hit_hold_control_a_cold_address_is_armed_never_break_and_proves_nothing(self):
+        cfg, plugin, _, record, _ = self.start_session(cfg_over={"hold_timeout": 2})
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "cold")
+        self.assertTrue(result["ok"], result)
+        self.assertIsNone(result["held"], result)
+        self.assertIn("no hit within", result["held_note"])
+        self.assertNotIn("hold_game", result)
+        sent = _commands(self.stdin_lines(record))
+        bph = f"bph 0x{A:X}, x, 1"
+        self.assertEqual(sent[sent.index(bph):], [bph, f"SetHardwareBreakpointCondition 0x{A:X}, 0",
+                                                  f'SetHardwareBreakpointLog 0x{A:X}, "cold"', "bplist"])  # no run
+        self.assertFalse(xm.read_state(cfg)["instrument"]["proven"])
+        self.assert_never_paused(plugin, record)
+
+
 class HeldChangeTests(ArmingMixin, unittest.TestCase):
     """With a logpoint logging, a change is made with the game held at one of
     its hits, so it cannot race the debug loop's re-arm."""
 
     def test_held_change_keeps_a_logging_logpoint_logging(self):
-        cfg, plugin, _, record, _ = self.start_session(fake={"race": True})
+        cfg, plugin, _, record, _ = self.start_session(fake={"race": True, "hot": [A]})
         tools = xm.Tools(cfg)
         self.assertTrue(tools.logpoint(f"0x{A:X}", "hot")["ok"])
-        self.set_modes(hot=[A])
         self.assertTrue(self.hits_grow(cfg), "the hot logpoint never logged")
         result = tools.logpoint(f"0x{B:X}", "second", name="second")
         self.assertTrue(result["ok"], result)
@@ -1952,11 +2004,10 @@ class HeldChangeTests(ArmingMixin, unittest.TestCase):
         self.assertFalse(self.hits_grow(cfg), "the stand-in cannot represent the lost DR7 update")
 
     def test_held_change_command_changes_debug_registers_through_a_hold(self):
-        cfg, plugin, _, record, _ = self.start_session(fake={"race": True})
+        cfg, plugin, _, record, _ = self.start_session(fake={"race": True, "hot": [A]})
         tools = xm.Tools(cfg)
         self.assertTrue(tools.logpoint(f"0x{A:X}", "hot")["ok"])
         self.assertTrue(tools.logpoint(f"0x{B:X}", "second")["ok"])
-        self.set_modes(hot=[A])
         self.assertTrue(self.hits_grow(cfg), "the hot logpoint never logged")
         reply = tools.command(f"bphc 0x{B:X}")
         self.assertTrue(reply["ok"], reply)
@@ -1975,13 +2026,15 @@ class HeldChangeTests(ArmingMixin, unittest.TestCase):
 
 
 class PausedFirstRunTests(ArmingMixin, unittest.TestCase):
-    """A never-break condition that did not take shows as a break on the
-    breakpoint: in the verification window after the hold, or during the
-    hold itself. Either way it is cleared and the game resumed."""
+    """The first hit is the expected hold. A never-break condition that did
+    not take shows as a break on a hit after it: in the verification window
+    after the hold returned, or while the hold settled. Either way it is
+    cleared and the game resumed."""
 
     def test_paused_first_run_a_break_in_the_verification_window_is_cleared(self):
-        cfg, plugin, _, record, _ = self.start_session(cfg_over={"settle": 1.5}, fake={"condition_ignored": True})
-        self.hot_after_hold(record, A)
+        cfg, plugin, _, record, _ = self.start_session(cfg_over={"settle": 3.0}, fake={"hot": [A]})
+        # the hold itself sets the condition; it stops taking only after the hold's run
+        self.modes_after_hold(record, A, condition_ignored=True)
         result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["stage"], "running")
@@ -1993,15 +2046,17 @@ class PausedFirstRunTests(ArmingMixin, unittest.TestCase):
         self.assertEqual(self.wait_for(cfg, lambda s: s.get("x64dbg_state") == "running")["x64dbg_state"], "running")
         self.assert_never_paused(plugin, record)
 
-    def test_paused_first_run_a_breakpoint_that_breaks_from_its_first_hit_is_cleared(self):
+    def test_paused_first_run_a_breakpoint_that_keeps_breaking_after_its_first_hit_is_cleared(self):
         cfg, plugin, _, record, _ = self.start_session(cfg_over={"hold_timeout": 2},
                                                        fake={"condition_ignored": True, "hot": [A]})
         result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertFalse(result["ok"], result)
-        # It breaks on every hit. Whether the hold's settle saw 0.4 s of
-        # running between two breaks depends on how the stand-in is scheduled
-        # (on a loaded machine it can), and the outside check then reads the
-        # game held: either way the arming failed and is cleared.
+        self.assertIn(f"({A:016X})", result["held"] or "", result)  # the first hit held it, as intended
+        # It then breaks on every hit after the hold's run. Whether the hold's
+        # settle saw 0.4 s of running between two breaks depends on how the
+        # stand-in is scheduled (on a loaded machine it can), and the outside
+        # check then reads the game held, or the verification window sees the
+        # next break: either way the arming failed and is cleared.
         self.assertIn(result["stage"], ("running", "game-not-running"), result)
         self.assertIn("Hardware breakpoint deleted!", result["cleared"])
         self.assertEqual(result["x64dbg_state"], "running")
@@ -2009,16 +2064,20 @@ class PausedFirstRunTests(ArmingMixin, unittest.TestCase):
         self.assert_never_paused(plugin, record)
 
     def test_paused_first_run_control_a_logging_breakpoint_passes_the_window(self):
-        cfg, _, _, record, _ = self.start_session(cfg_over={"settle": 1.5})
-        self.hot_after_hold(record, A)
+        cfg, _, _, record, _ = self.start_session(cfg_over={"settle": 1.5}, fake={"hot": [A]})
         result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertTrue(result["ok"], result)
+        self.assertIn(f"({A:016X})", result["held"] or "", result)
         self.assertTrue(self.hits_grow(cfg, prefix="hit"), "the logpoint never logged")
 
 
 class FalseSuccessTests(ArmingMixin, unittest.TestCase):
+    # The failure cases arm a breakpoint nothing hits: a cold address, armed
+    # after the first-hit wait, kept short here.
+    COLD = {"hold_timeout": 2}
+
     def test_false_success_control_a_breakpoint_x64dbg_lists_is_ok(self):
-        cfg, plugin, _, record, _ = self.start_session()
+        cfg, plugin, _, record, _ = self.start_session(fake={"hot": [A]})
         result = xm.Tools(cfg).logpoint("Hero_Siege.exe+427460", "hit rcx={rcx} rdx={rdx}", name="control",
                                         expect_bytes="48 89 54 24 10 53")
         self.assertTrue(result["ok"], result)
@@ -2030,18 +2089,16 @@ class FalseSuccessTests(ArmingMixin, unittest.TestCase):
                  f'SetHardwareBreakpointLog {addr}, "hit rcx={{rcx}} rdx={{rdx}}"',
                  f'SetHardwareBreakpointName {addr}, "control"']
         self.assertEqual(result["steps"], steps)
-        sent = _commands(self.stdin_lines(record))
-        self.assertEqual(sent[sent.index(steps[0]):], [*steps, "bplist"])  # the condition straight after bph
+        self.assert_first_hit_hold(result, record, A, *steps[1:])  # the condition first, while held
         self.assertEqual(result["bplist"], [f'1:HW:{A:016X}:"control"'])
-        self.assertIsNone(result["held"])
-        self.assertFalse(result["window_break"])
+        self.assertNotIn("window_break", result)  # the first hit is the expected hold, not an anomaly
         self.assertEqual((result["x64dbg_state"], result["game"]["verdict"]), ("running", "running"))
         names = plugin.names()
         self.assertLess(names.index(xm.PLUGIN_MODULES), names.index(xm.PLUGIN_DISASM))
         self.assert_never_paused(plugin, record)
 
     def test_false_success_without_expect_bytes_says_a_zero_is_not_evidence(self):
-        cfg, _, _, _, _ = self.start_session()
+        cfg, _, _, _, _ = self.start_session(cfg_over=self.COLD)
         result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertTrue(result["ok"], result)
         self.assertFalse(result["bytes_checked"])
@@ -2060,7 +2117,7 @@ class FalseSuccessTests(ArmingMixin, unittest.TestCase):
         self.assert_never_paused(plugin, record)
 
     def test_false_success_an_address_bplist_lists_already_is_refused(self):
-        cfg, _, _, record, _ = self.start_session()
+        cfg, _, _, record, _ = self.start_session(cfg_over=self.COLD)
         tools = xm.Tools(cfg)
         self.assertTrue(tools.logpoint(f"0x{A:X}", "hit")["ok"])
         again = tools.logpoint(f"0x{A:X}", "hit")
@@ -2069,7 +2126,7 @@ class FalseSuccessTests(ArmingMixin, unittest.TestCase):
         self.assertEqual(xm.bplist_entry(tools.bplist()["lines"], A), "armed")  # and nothing cleared
 
     def test_false_success_a_breakpoint_listed_but_disabled_is_not_ok(self):
-        cfg, plugin, _, record, _ = self.start_session(fake={"listed_as": [0, "HW"]})
+        cfg, plugin, _, record, _ = self.start_session(cfg_over=self.COLD, fake={"listed_as": [0, "HW"]})
         result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["stage"], "listed-but-disabled")
@@ -2080,7 +2137,7 @@ class FalseSuccessTests(ArmingMixin, unittest.TestCase):
         self.assert_never_paused(plugin, record)
 
     def test_false_success_a_rejected_never_break_condition_is_not_ok(self):
-        cfg, plugin, _, record, _ = self.start_session(fake={"fail_condition": True})
+        cfg, plugin, _, record, _ = self.start_session(cfg_over=self.COLD, fake={"fail_condition": True})
         result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["stage"], "set")
@@ -2091,7 +2148,7 @@ class FalseSuccessTests(ArmingMixin, unittest.TestCase):
         self.assert_never_paused(plugin, record)
 
     def test_false_success_a_breakpoint_x64dbg_reported_set_and_never_listed_is_not_ok(self):
-        cfg, plugin, _, record, _ = self.start_session(fake={"false_success": True})
+        cfg, plugin, _, record, _ = self.start_session(cfg_over=self.COLD, fake={"false_success": True})
         result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["stage"], "set")
@@ -2104,7 +2161,7 @@ class FalseSuccessTests(ArmingMixin, unittest.TestCase):
         self.assert_never_paused(plugin, record)
 
     def test_false_success_a_game_the_outside_check_reads_held_is_not_ok(self):
-        cfg, _, _, record, _ = self.start_session()
+        cfg, _, _, record, _ = self.start_session(cfg_over=self.COLD)
         held = {"verdict": "frozen", "detail": "stand-in: no thread made progress", "suspended": [], "stopped": []}
         with mock.patch.object(xm, "game_check", return_value=held):
             result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
