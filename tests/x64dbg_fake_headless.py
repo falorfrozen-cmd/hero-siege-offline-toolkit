@@ -5,13 +5,18 @@
 
 As headless, it reads commands on stdin, records each line in
 `<workdir>/stdin.txt`, and prints on stdout (the session log) what x64dbg
-prints, as measured live or as read from x64dbg's source
-(docs/tools/x64dbg-mcp.md): `[STATE] <name>` on every debug-state change,
-once at once and again shortly after, the `log` markers, `bph`'s success
-line, nothing for a `Set*` step that succeeds, `bplist` rows, the deletion
-lines, `Detached!`, a log line per hit of a hot logging breakpoint, and a
-break line plus `[STATE] paused` for every break. Synthetic text of our own,
-not x64dbg's source.
+prints, as measured live, by the Replan 3 probe against a throwaway process,
+or as read from x64dbg's source (docs/tools/x64dbg-mcp.md): `[STATE] <name>`
+on every debug-state change, once at once and again shortly after; on
+`attach`, `[STATE] initialized`, `[STATE] running` (twice) and `Attached to
+process!`, and never `[STATE] paused`, since headless x64dbg takes no attach
+break; the `log` markers, `bph`'s success line, nothing for a `Set*` step
+that succeeds, `bplist` rows, the deletion lines, `Detached!`, a log line
+per hit of a hot logging breakpoint, and a break line plus `[STATE] paused`
+for every break. A hot breakpoint whose condition is not 0 breaks on its
+next hit: a breaking `bph`'s first hit (how the control logpoint holds the
+game) and a held change's hold alike. Synthetic text of our own, not
+x64dbg's source.
 
 As the probe seam, it prints the outside check of the game it last wrote to
 `<workdir>/verdict.json` (`running` until it writes one), as
@@ -26,16 +31,19 @@ Files in `<workdir>`:
 - `pause_request`: left by the stand-in plugin's asynchronous PauseDebug.
 
 Modes:
-- `tls_breaks` N: N breaks right after the first run, each on an x64dbg
-  TLS-callback breakpoint;
+- `tls_breaks` N: N breaks right after attach, one after each run, each on an
+  x64dbg TLS-callback breakpoint (the pauses the keeper resumes after
+  attach; there is no attach break);
 - `late_break` S: one unprompted break S seconds after the last command (the
   asynchronous pause landing late, as Live 2 measured);
 - `breaks` N: N breaks in a row from now on, one after each run (a storm);
 - `break_after` <verb>: one break right after the first command with that verb;
-- `window_break`: a hit between `bph` and its condition breaks, when the game
-  is not held;
+- `stale_db` <addr>: on `attach`, restore one hardware breakpoint from x64dbg's
+  "database" before any command (`Set hardware breakpoint on <16 hex>!` and a
+  row), as x64dbg restores a module's saved breakpoints;
 - `condition_ignored`: an armed hot breakpoint breaks on every hit;
-- `never_running`: every run is followed by a new break;
+- `never_running`: a break right after attach, and another after every run
+  (x64dbg never settles at running);
 - `race`: a command that changes debug registers, arriving while the game is
   not held and a hot logpoint is armed, silences that logpoint (the lost DR7
   update);
@@ -46,11 +54,12 @@ Modes:
 - `hot` [addr, ...]: the armed breakpoints the game hits, every 50 ms;
 - `blind_probe`: the probe never reads `frozen` (an instrument that cannot
   see a held game);
-- `empty_lists`: the probe reads `frozen` at the attach break but names no
-  suspended or stopped thread (an instrument that read no thread at all);
-- `real_os`: suspend the stand-in game's threads for real at the attach break
-  and under `leak_on_detach`, and resume them on `run` (`spare_tid` is the
-  one left running).
+- `empty_lists`: the probe reads `frozen` at a break but names no suspended or
+  stopped thread (an instrument that read no thread at all);
+- `real_os`: suspend the stand-in game's threads for real at every break (a
+  breaking breakpoint's first-hit hold among them) and under
+  `leak_on_detach`, and resume them on `run` and on a clean `detach`, never
+  on `attach` (`spare_tid` is the one `leak_on_detach` leaves running).
 """
 from __future__ import annotations
 
@@ -66,8 +75,7 @@ HIT_EVERY = 0.05
 TICK = 0.02
 REPEAT_AFTER = 0.2       # x64dbg's rate-limited repeat of the latest state
 ASYNC_PAUSE_AFTER = 2.0  # how late the plugin's PauseDebug lands
-FAKE_TIDS = (9001, 9002)  # the probe seam's game threads, "suspended" under leak_on_detach
-BREAKIN_TID = 9003  # the debugger's break-in thread, first seen at the attach break
+FAKE_TIDS = (9001, 9002)  # the probe seam's game threads, "suspended" at a break and under leak_on_detach
 DR_VERBS = {"bph", "bphws", "sethardwarebreakpoint", "bphc", "bphwc", "deletehardwarebreakpoint",
             "bphe", "bphwe", "enablehardwarebreakpoint", "bphd", "bphwd", "disablehardwarebreakpoint"}
 DELETE_VERBS = {"bphc", "bphwc", "deletehardwarebreakpoint"}
@@ -225,11 +233,16 @@ class Fake:
         write_atomic(self.verdict_file, json.dumps(c))
 
     def brk(self, line: str) -> None:
-        """A break: its line, then the state change."""
+        """A break: its line, then the state change. Every game thread is
+        held, as the Replan 3 probe measured at a hardware breakpoint's hit,
+        before x64dbg reports the pause."""
+        if self.threads is not None:
+            self.threads.suspend_all()
         self.out(line)
         self.paused = True
         self.announce("paused")
-        self.verdict(check("frozen", "held at a break"))
+        held = () if self.modes.get("empty_lists") else FAKE_TIDS
+        self.verdict(check("frozen", "held at a break", held, held))
 
     def resume(self) -> None:
         self.paused = False
@@ -281,31 +294,28 @@ class Fake:
         value = value.strip()
         self.load_bps()
         if low == "attach":
+            # No attach break: the Replan 3 probe saw only these states after
+            # `attach`, four times out of four, and never `[STATE] paused`.
             self.attached = True
             pid = parse_addr(rest)
-            self.out("Attached to process!")
             if self.modes.get("real_os") and pid:
-                self.threads = Threads(pid)
-                self.threads.suspend_all()
-            self.paused = True
-            self.announce("paused")
-            # Every game thread held, as the child probe measured a pending debug
-            # event, and the break-in thread new and not suspended.
-            held = () if self.modes.get("empty_lists") else FAKE_TIDS
-            self.verdict(check("frozen", "held at the attach break", held, held, (*FAKE_TIDS, BREAKIN_TID)))
+                self.threads = Threads(pid)  # read only: nothing is suspended on attach
+            self.out("[STATE] initialized")
+            self.announce("running")
+            self.out("Attached to process!")
+            stale = self.modes.get("stale_db")
+            if stale:
+                a = int(stale) if not isinstance(stale, bool) else 0x7FF6A0427460
+                if not any(b["addr"] == a for b in self.bps):
+                    self.bps.append({"addr": a, "enabled": 1, "type": "HW"})
+                self.out(f"Set hardware breakpoint on {a:016X}!")
+            self.tls_left = int(self.modes.get("tls_breaks", 0))
+            self.verdict(check("running", "running after attach"))
         elif low == "run":
             if not self.paused:
                 return  # x64dbg ignores a run while the game runs
             self.resume()
             self.runs += 1
-            if self.runs == 1:
-                self.tls_left = int(self.modes.get("tls_breaks", 0))
-            if self.tls_left > 0:
-                n = int(self.modes.get("tls_breaks", 0)) - self.tls_left + 1
-                self.tls_left -= 1
-                self.brk(f'INT3 breakpoint "TLS Callback 1 (x{n}.dll)" at x{n}.dll+1000 (00007FFB2000{n:04X})!')
-            elif self.modes.get("never_running"):
-                self.brk("INT3 breakpoint at 00007FF6A0001000!")
         elif low == "pause":
             write_atomic(self.pause_file, str(time.time()))
         elif low == "log":
@@ -325,8 +335,6 @@ class Fake:
                     self.bps.append({"addr": a, "enabled": enabled, "type": kind})
                     self.counters[a] = 0
                 self.out(f"Hardware breakpoint at {a:016X} set!")
-                if self.modes.get("window_break") and not self.paused and not self.modes.get("false_success"):
-                    self.brk(self.hw_break_line(self.bps[-1]))
         elif low.startswith("sethardwarebreakpoint") and low != "sethardwarebreakpoint":
             b = self.find(first)
             field = {"sethardwarebreakpointcondition": "cond", "sethardwarebreakpointlog": "log",
@@ -408,6 +416,15 @@ class Fake:
             self.repeat_at = None
             self.out(f"[STATE] {self.state}")
         if not self.attached or self.paused:
+            return
+        settled = self.repeat_at is None  # the last state change has been repeated
+        if self.tls_left > 0 and settled:
+            n = int(self.modes.get("tls_breaks", 0)) - self.tls_left + 1
+            self.tls_left -= 1
+            self.brk(f'INT3 breakpoint "TLS Callback 1 (x{n}.dll)" at x{n}.dll+1000 (00007FFB2000{n:04X})!')
+            return
+        if self.modes.get("never_running") and settled:
+            self.brk("INT3 breakpoint at 00007FF6A0001000!")
             return
         if self.pause_file.exists():
             try:
