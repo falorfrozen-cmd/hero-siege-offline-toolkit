@@ -56,16 +56,23 @@ late break), counting each. Nothing here asks x64dbg to pause. The game is
 held only at a hardware breakpoint's hit: a new breakpoint's own first hit
 (the control logpoint's arming, a "first-hit hold"), or, while one of them
 logs, a breaking hit of that one around a change (a "held change"), each
-resumed at once (`Keeper.hold`). The outside check, `tools/thread_state.py`,
-reads the game's threads from the OS before attach, at the first such hold
-(the control hold, where it must read the game frozen: the instrument's
-control), after the resume and after detach; until that hold the instrument
-is not proven, and a detach is never reported as releasing the game without
-it. Teardown is a held `bphc`, a settle at running, `detach`, a confirmation
-that no session remains, `exit`, then that outside check: a detach that left
-game threads suspended ends `game-not-released`, naming them, and only a
-force-stop of the game releases them. Headless is never killed while it may
-still be attached. In a live session, detach before `hs_stop_game`.
+resumed at once (`Keeper.hold`). The instrument is proven by the game loop
+itself (#497): ForgePact's incident monitor frame counter, read through
+hs-drive's file IPC (`ping` plus `incident stat`, `game_frames`), must
+advance across two readings before the control logpoint is armed (the
+channel works), stall at the first such hold (the control hold: no answer
+within `Keeper.HOLD_FRAMES_WAIT`, or the same count read twice), and advance
+after the resume. Until it has, the instrument is not proven, and a detach is
+never reported as releasing the game without it. The outside thread check,
+`tools/thread_state.py`, still reads the game's threads before attach, at the
+control hold, after the resume and after detach, and is recorded, diagnostic
+only (attach's own refusals and ready check still read it). Teardown is a
+held `bphc`, a settle at running, `detach`, a confirmation that no session
+remains, `exit`, then one frames reading: a proven session whose counter
+advances with `ping` answering is released; a counter that does not advance
+ends `game-not-released`, and only a force-stop of the game releases it.
+Headless is never killed while it may still be attached. In a live session,
+detach before `hs_stop_game`.
 
 Anything x64dbg shows of the game's code is disassembly: it stays in the
 session log and the gitignored live capture, never in a tracked file
@@ -283,9 +290,13 @@ class Config:
     # Test seams, never set by `load_config`: what runs as headless x64dbg,
     # what answers the outside check of the game (run with the pid appended,
     # printing a `tools/thread_state.py` check as JSON; None reads the OS in
-    # this process), and how long the keeper waits for each thing.
+    # this process), what answers a reading of the game's frame counter (run
+    # with the pid and the timeout appended, printing a `game_frames` reading
+    # as JSON; None asks ForgePact through hs-drive's file IPC), and how long
+    # the keeper waits for each thing.
     headless_cmd: tuple[str, ...] | None = None
     probe_cmd: tuple[str, ...] | None = None
+    frames_cmd: tuple[str, ...] | None = None
     ready_timeout: float = 60.0
     detach_timeout: float = 30.0
     settle: float = 1.5
@@ -356,7 +367,7 @@ class Config:
         for k, v in out.items():
             if isinstance(v, Path):
                 out[k] = str(v)
-        for k in ("headless_cmd", "probe_cmd"):
+        for k in ("headless_cmd", "probe_cmd", "frames_cmd"):
             out[k] = list(getattr(self, k)) if getattr(self, k) else None
         return out
 
@@ -367,7 +378,7 @@ class Config:
         for k in paths:
             values[k] = Path(values[k])
         values["dotnet"] = Path(values["dotnet"]) if values.get("dotnet") else None
-        for k in ("headless_cmd", "probe_cmd"):
+        for k in ("headless_cmd", "probe_cmd", "frames_cmd"):
             values[k] = tuple(values[k]) if values.get(k) else None
         return cls(**values)
 
@@ -855,6 +866,12 @@ def lease_state() -> tuple[str, str]:
 
 def image_name(pid: int) -> str | None:
     """The executable's file name for `pid`, or None."""
+    path = image_path(pid)
+    return path.name if path is not None else None
+
+
+def image_path(pid: int) -> Path | None:
+    """The executable's full path for `pid`, or None."""
     if os.name == "nt":
         import ctypes
         from ctypes import wintypes
@@ -872,11 +889,11 @@ def image_name(pid: int) -> str | None:
             size = wintypes.DWORD(len(buf))
             if not k.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
                 return None
-            return Path(buf.value).name
+            return Path(buf.value)
         finally:
             k.CloseHandle(handle)
     try:
-        return Path(os.readlink(f"/proc/{int(pid)}/exe")).name
+        return Path(os.readlink(f"/proc/{int(pid)}/exe"))
     except OSError:
         return None
 
@@ -941,9 +958,10 @@ def session_summary(cfg: Config) -> dict[str, Any]:
     """The session at a glance: what `attach` prints and `status` carries.
     `x64dbg_state` is x64dbg's own settled state from its `[STATE]` lines;
     `breaks_resumed`, `last_break` and `break_storm` report the pauses the
-    keeper resumed; `instrument` is the outside check's control, its
-    `control_hold` taken at the first hold at a hardware-breakpoint hit and
-    `proven` false until then."""
+    keeper resumed; `instrument` is the frames proof (its `frames` readings,
+    the control hold's taken at the first hold at a hardware-breakpoint hit,
+    and `proven` false until they show the stall) with the thread checks
+    beside it, diagnostic only; `frames` is the reading after detach."""
     state = read_state(cfg)
     out = {
         "state": state.get("state", "none"),
@@ -960,7 +978,7 @@ def session_summary(cfg: Config) -> dict[str, Any]:
         "error": state.get("error"),
         "log": str(cfg.log_file),
     }
-    for k in ("paused_at_detach", "game_released"):
+    for k in ("paused_at_detach", "game_released", "frames"):
         if k in state:
             out[k] = state[k]
     return out
@@ -988,6 +1006,148 @@ def game_check(cfg: Config, pid: int, baseline: Iterable[int] = ()) -> dict[str,
             "detail": f"pid {pid}: the probe seam answered no check ({why})."}
 
 
+# --- the game's frame counter ----------------------------------------------
+#
+# The instrument is proven, and a detach shown to release the game, by the
+# game loop itself: ForgePact's incident monitor counts frames, and the
+# plugin answers its file IPC (`bp_ipc\cmd.txt`) only from its frame
+# callback, every 30 frames. So a command consumed means frames ran, and a
+# count read twice shows whether they ran in between.
+
+# Why a reading is what it is; `answered` only for the first.
+FRAMES_REASONS = ("answered", "not_consumed", "no_frame_counter", "ipc_unavailable", "ipc_other_copy", "gone")
+# The incident monitor's `incident stat` first line starts this way (ForgePact
+# 2.2.0+; #197 Live 2: `incident: frames 6898 | baseline 13.2 ms | ...`).
+_FRAMES_LINE = re.compile(r"^incident: frames (\d+)")
+# How far past its own timeout a reading may run: hs-drive's ipc settles
+# out.txt for up to its grace period after a pending command and after this
+# one (`ipc.SETTLE_GRACE_S`, 10 s each).
+FRAMES_READ_SLACK = 20.0
+
+
+def parse_frames_reply(lines: Iterable[str]) -> tuple[int | None, bool]:
+    """(the frame count after the first `incident: frames <n>` line, whether
+    any line starts `pong`). That the count only rises within a session is
+    not established (only seen rising); a count that does not rise reads as
+    no advance, which errs towards unproven."""
+    frames, pong = None, False
+    for line in lines:
+        text = str(line).strip()
+        m = _FRAMES_LINE.match(text)
+        if m and frames is None:
+            frames = int(m.group(1))
+        pong = pong or text.startswith("pong")
+    return frames, pong
+
+
+def _frames_reading(reason: str, detail: str, elapsed: float, frames: int | None = None,
+                    pong: bool = False) -> dict[str, Any]:
+    answered = reason == "answered"
+    return {"answered": answered, "frames": frames if answered else None, "pong": bool(pong) and answered,
+            "reason": reason, "elapsed_s": round(float(elapsed), 3), "utc": _utc(), "detail": detail}
+
+
+def _seam_frames(cfg: Config, pid: int, timeout: float, started: float) -> dict[str, Any]:
+    """The tests' `frames_cmd` seam: its JSON, when it is a reading."""
+    try:
+        r = subprocess.run([*cfg.frames_cmd, str(int(pid)), str(timeout)], capture_output=True, text=True,
+                           timeout=timeout + FRAMES_READ_SLACK, **_no_window())
+        data = json.loads(r.stdout)
+        if isinstance(data, dict) and data.get("reason") in FRAMES_REASONS:
+            reason = data["reason"]
+            count = data.get("frames")
+            if reason != "answered" or (isinstance(count, int) and not isinstance(count, bool)):
+                elapsed = data.get("elapsed_s")
+                elapsed = elapsed if isinstance(elapsed, (int, float)) else time.monotonic() - started
+                return _frames_reading(reason, str(data.get("detail") or ""), elapsed, count,
+                                       data.get("pong") is True)
+        why = f"no reading in {r.stdout[:200]!r}"
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
+        why = f"{type(e).__name__}: {e}"
+    return _frames_reading("ipc_unavailable", f"pid {pid}: the frames seam answered no reading ({why})",
+                           time.monotonic() - started)
+
+
+def game_frames(cfg: Config, pid: int, timeout: float, identity: Any = None) -> dict[str, Any]:
+    """One reading of the game's frame counter: `ping` and `incident stat`
+    in one `cmd.txt` write through hs-drive's file IPC, so the `pong` and the
+    count come from the same consumption. Or, when the tests set
+    `cfg.frames_cmd`, that command's JSON (anything else it prints is
+    `ipc_unavailable`, never `answered`).
+
+    The reading is `{answered, frames, pong, reason, elapsed_s, utc, detail}`,
+    `reason` one of FRAMES_REASONS. `identity` is the target's (pid and start
+    time), so a pid reused by another process reads `gone`. The channel must
+    be the target's own: ipc resolves `bp_ipc` from forgepact.json's
+    `game_exe`, and a second copy of the game has a channel of its own
+    (`ipc._not_observed`), so a configured directory that is not beside the
+    target's image is `ipc_other_copy`, with nothing sent. The send passes
+    `lease_checked=True`: `attach` refused without a live lease, and the
+    keeper is not the lease holder, so `lease.guard` would refuse it. Its gate
+    reads the target alive or not, so ForgePact's engine is never needed."""
+    started = time.monotonic()
+    identity = identity or identity_of(pid)
+    if not alive(identity):
+        return _frames_reading("gone", f"the game (pid {pid}) is gone", 0.0)
+    if cfg.frames_cmd:
+        return _seam_frames(cfg, pid, timeout, started)
+    try:
+        from tools.hs_drive_mcp import ipc, procs, results
+    except Exception as e:  # noqa: BLE001 - an unimportable channel is a reading
+        return _frames_reading("ipc_unavailable", f"hs-drive's ipc could not be imported ({type(e).__name__}: {e})",
+                               time.monotonic() - started)
+    directory = ipc.resolve_dir("x64dbg")
+    if results.is_refusal(directory):
+        return _frames_reading("ipc_unavailable", f"{directory.get('reason')}: {directory.get('detail')}",
+                               time.monotonic() - started)
+    exe = image_path(pid)
+    if exe is None:
+        return _frames_reading("ipc_unavailable", f"the image path of pid {pid} could not be read, so whether "
+                                                  f"{directory} is its channel is not known; nothing was sent",
+                               time.monotonic() - started)
+    try:
+        ours = os.path.normcase(str(Path(directory).resolve()))
+        theirs = os.path.normcase(str((exe.parent / ipc.DIR_NAME).resolve()))
+    except (OSError, RuntimeError) as e:
+        return _frames_reading("ipc_unavailable", f"a channel path could not be resolved ({type(e).__name__}: {e})",
+                               time.monotonic() - started)
+    if ours != theirs:
+        return _frames_reading("ipc_other_copy", f"forgepact.json's channel is {directory}, but pid {pid} runs "
+                                                 f"{exe}, whose channel is {exe.parent / ipc.DIR_NAME}: another "
+                                                 "copy of the game, so nothing was sent",
+                               time.monotonic() - started)
+
+    def gate() -> tuple[str, str]:
+        if alive(identity):
+            return procs.RUNNING, f"the game (pid {pid}) is running"
+        return procs.NOT_RUNNING, f"the game (pid {pid}) is gone"
+
+    def abort() -> str:
+        return "" if alive(identity) else f"the game (pid {pid}) is gone"
+
+    res = ipc.send(["ping", "incident stat"], timeout_s=timeout, gate=gate, abort=abort, lease_checked=True,
+                   tool="x64dbg")
+    elapsed = res.get("elapsed_s")
+    elapsed = elapsed if isinstance(elapsed, (int, float)) else time.monotonic() - started
+    if results.is_refusal(res):
+        reason = res.get("reason")
+        if not alive(identity):
+            return _frames_reading("gone", f"the game (pid {pid}) is gone ({reason}: {res.get('detail')})", elapsed)
+        if reason == "not_consumed":
+            return _frames_reading("not_consumed", str(res.get("detail")), elapsed)
+        return _frames_reading("ipc_unavailable", f"{reason}: {res.get('detail')}", elapsed)
+    lines = res.get("reply_lines")
+    if not isinstance(lines, list):
+        lines = str(res.get("reply") or "").splitlines()
+    count, pong = parse_frames_reply(lines)
+    if count is None:
+        return _frames_reading("no_frame_counter", f"the plugin answered with no `incident: frames` line, so this "
+                                                   f"build has no incident monitor (ForgePact 2.2.0+): "
+                                                   f"{' | '.join(str(x) for x in lines[:4])[:300]!r}", elapsed)
+    return _frames_reading("answered", f"incident: frames {count}" + ("" if pong else " (no pong)"), elapsed,
+                           count, pong)
+
+
 def check_tids(check: dict[str, Any] | None) -> list[int]:
     """The threads a check found suspended or stopped."""
     if not check:
@@ -997,134 +1157,139 @@ def check_tids(check: dict[str, Any] | None) -> list[int]:
 
 
 def instrument_gaps(inst: dict[str, Any]) -> list[tuple[str, str]]:
-    """What keeps the outside check's control from being proven, each as (the
-    check it concerns, why); empty when it is proven (`instrument_review`)."""
+    """What keeps the instrument from being proven, each as (the frames
+    reading it concerns: `frames.before_arm`, `frames.control_hold` or
+    `frames.after_resume`, and why); empty when it is proven
+    (`instrument_review`)."""
     return instrument_review(inst)[0]
 
 
-def _breaking_thread(brk: dict[str, Any], expected: set[int], held: set[int],
-                     missing: list[int]) -> tuple[int | None, str]:
-    """The one breaking thread the control hold may exempt from `stopped`, or
-    None and why not. It is the single missing thread, suspended in every
-    sample with no switch beyond a debugger's context reads (`touched` in
-    tools/thread_state.py), in the check's `executive_waits`, and the only
-    expected thread there."""
-    waits = brk.get("executive_waits")
-    if not isinstance(waits, list):
-        return None, "the check carried no executive_waits, so no breaking thread can be told apart"
-    executive = sorted({int(t) for t in waits} & expected)
-    named = f" (tid {', '.join(map(str, executive[:10]))})" if executive else ""
-    if len(missing) != 1:
-        return None, (f"only one breaking thread is exempt, and {len(executive)} expected thread(s) waited in "
-                      f"an Executive wait{named}")
-    t = missing[0]
-    if t not in held:
-        return None, (f"tid {t} was not suspended in every sample with no switch beyond a debugger's context "
-                      "reads, so it is not the breaking thread held at the hit")
-    if t not in executive:
-        return None, f"tid {t} did not wait in an Executive wait in every sample, so it is not the breaking thread"
-    if executive != [t]:
-        return None, (f"{len(executive)} expected thread(s) waited in an Executive wait{named}, and only one "
-                      "breaking thread is exempt")
-    return t, ""
+def _count(r: Any) -> int | None:
+    """An answered reading's frame count, else None."""
+    if isinstance(r, dict) and r.get("answered") and isinstance(r.get("frames"), int):
+        return int(r["frames"])
+    return None
 
 
-def instrument_review(inst: dict[str, Any]) -> tuple[list[tuple[str, str]], int | None]:
-    """The gaps that keep the outside check's control from being proven, each
-    as (the check it concerns, why), and the breaking thread the control hold
-    exempted (None when it exempted none). The verdicts must run `running`
-    before attach, `frozen` at the control hold (the first time the keeper
-    holds the game at a hardware breakpoint's hit: headless x64dbg takes no
-    attach break) and `running` after its resume. A `frozen` verdict alone is
-    not enough, since an instrument that read no thread would give it too, so
-    at the control hold `suspended` and `stopped` must each name every thread
-    seen before attach that is not in the baseline, as the Replan 3 probe
-    measured at a hardware breakpoint's hit (Waiting/Suspended, suspend count
-    1, the breaking thread aside), with no suspend count unread. A thread a
-    debugger's context reads switched once or twice while held (the check's
-    `touched`, measured on a throwaway, 2026-10-11) is in those lists like an
-    untouched one. A thread first seen at the hold (one the
-    game started since) is left out. One thread is exempt from `stopped`: the
-    breaking thread that raised the hit, which waits for the debugger's reply
-    in an Executive wait, suspended but not Waiting/Suspended (measured on the
-    probe's throwaway, 2026-10-10, not yet on the game); see
-    `_breaking_thread` for its signature."""
-    before, brk, after = (inst.get(k) for k in ("before_attach", "control_hold", "after_resume"))
-    breaking: int | None = None
+def _reading_why(r: Any) -> str:
+    if not isinstance(r, dict):
+        return "no reading"
+    return f"{r.get('reason')} after {float(r.get('elapsed_s') or 0):.1f} s ({str(r.get('detail') or '')[:160]})"
+
+
+def instrument_review(inst: dict[str, Any]) -> tuple[list[tuple[str, str]], str | None]:
+    """The gaps that keep the instrument from being proven, each as (the
+    frames reading it concerns, why), and the stall the control hold showed
+    (`no-answer`, `same-count`, `advanced` or None). The proof is the game's
+    frame counter (`game_frames`), in three parts:
+
+    - before arm (`frames.before_arm`, the positive control: the channel
+      answers and the game loop runs under the attached debugger): two
+      readings, both answered, the second count greater, and each within
+      Keeper.HOLD_FRAMES_WAIT, so that a no-answer at the hold is not just a
+      slow channel;
+    - at the control hold (`frames.control_hold`: the first time the keeper
+      holds the game at a hardware breakpoint's hit, since headless x64dbg
+      takes no attach break): a `not_consumed` reading is the stall
+      `no-answer`, counted only when before arm passed; two answered readings
+      with the same count are `same-count`, and a greater second count is
+      `advanced`, a gap (the game ran while x64dbg held it);
+    - after resume (`frames.after_resume`): answered, with a count greater
+      than every count before it.
+
+    A missing `frames` key is a gap. The thread checks (`before_attach`,
+    `control_hold`, `after_resume`, tools/thread_state.py) make no gap: they
+    are recorded as read, diagnostic only (#497: ForgePact #197's Live 2 read
+    `threads-suspended` at a hold the game was held at)."""
+    frames = inst.get("frames")
+    hold_note = ("the instrument is proven at the first hold at a hardware breakpoint's hit (the control "
+                 "logpoint's first hit, the control hold), and attach holds nothing")
+    if not isinstance(frames, dict):
+        return [("frames.control_hold", f"no frame-counter reading at a control hold was recorded yet: {hold_note}")], \
+            None
     gaps: list[tuple[str, str]] = []
-    if not before:
-        gaps.append(("before_attach", "no check before attach was recorded"))
-    elif before.get("verdict") != "running":
-        gaps.append(("before_attach", f"the outside check before attach read the game {before.get('verdict')}, "
-                                      "not running"))
-    if not brk:
-        gaps.append(("control_hold", "no check at a control hold was recorded yet: the instrument is proven at "
-                                     "the first hold at a hardware breakpoint's hit (the control logpoint's first "
-                                     "hit), and attach holds nothing"))
+    wait = Keeper.HOLD_FRAMES_WAIT
+    arm = [r for r in frames.get("before_arm") or [] if isinstance(r, dict)]
+    counts = [_count(r) for r in arm]
+    if len(arm) < 2:
+        gaps.append(("frames.before_arm", f"{len(arm)} frame-counter reading(s) before arm, not two"))
+    elif None in counts[:2]:
+        bad = next(r for r, c in zip(arm, counts) if c is None)
+        gaps.append(("frames.before_arm", f"a frame-counter reading before arm was not answered: {_reading_why(bad)}"))
+    elif counts[1] <= counts[0]:
+        gaps.append(("frames.before_arm", f"the counter did not advance before arm ({counts[0]}→{counts[1]}), so "
+                                          "the game loop was not shown running under the debugger"))
     else:
-        v = brk.get("verdict")
-        if v != "frozen":
-            gaps.append(("control_hold", f"the outside check read the game {v}, not frozen, at the control hold, "
-                                         "where x64dbg holds it at a hardware breakpoint's hit: it did not see a "
-                                         "held game, so its running verdicts in this session prove nothing"))
-        held = {int(s["tid"]) for s in brk.get("suspended") or [] if isinstance(s, dict) and "tid" in s}
-        stopped = {int(t) for t in brk.get("stopped") or []}
-        if not held or not stopped:
-            gaps.append(("control_hold", f"the check at the control hold named {len(held)} suspended and "
-                                         f"{len(stopped)} stopped thread(s), so it did not show the held "
-                                         "threads themselves"))
-        unread = brk.get("unreadable_counts")
-        if not isinstance(unread, list):
-            gaps.append(("control_hold", "the check at the control hold carried no unreadable_counts"))
-        elif unread:
-            gaps.append(("control_hold", f"the check at the control hold could not read the suspend count of "
-                                         f"{len(unread)} thread(s) (tid {', '.join(map(str, unread[:10]))})"))
-        seen_before, seen_at = (before or {}).get("tids"), brk.get("tids")
-        if not isinstance(seen_before, list) or not isinstance(seen_at, list):
-            gaps.append(("control_hold", "the checks list no tids, so whether suspended and stopped cover the "
-                                         "game's threads is not shown"))
+        slow = [float(r.get("elapsed_s") or 0) for r in arm[:2] if float(r.get("elapsed_s") or 0) > wait]
+        if slow:
+            gaps.append(("frames.before_arm", f"a frame-counter reading before arm took {max(slow):.1f} s, over "
+                                              f"HOLD_FRAMES_WAIT ({wait:.1f} s), so a no-answer at the hold could "
+                                              "be a slow channel"))
+    arm_ok = not gaps
+    hold = [r for r in frames.get("control_hold") or [] if isinstance(r, dict)]
+    stall: str | None = None
+    if not hold:
+        gaps.append(("frames.control_hold", f"no frame-counter reading at a control hold was recorded: {hold_note}"))
+    elif hold[0].get("reason") == "not_consumed":
+        stall = "no-answer"
+        if not arm_ok:
+            gaps.append(("frames.control_hold", "the control hold's no-answer counts only once the channel "
+                                                "answered and advanced before arm"))
+    elif _count(hold[0]) is not None:
+        second = _count(hold[1]) if len(hold) > 1 else None
+        if second is None:
+            gaps.append(("frames.control_hold", "the second frame-counter reading at the control hold was not "
+                                                f"answered: {_reading_why(hold[1] if len(hold) > 1 else None)}"))
+        elif second == _count(hold[0]):
+            stall = "same-count"
+        elif second > _count(hold[0]):
+            stall = "advanced"
+            gaps.append(("frames.control_hold", f"the counter advanced at the control hold ({_count(hold[0])}→"
+                                                f"{second}): the game ran while x64dbg held it at a hit, so this "
+                                                "hold showed no stall"))
         else:
-            expected = ({int(t) for t in seen_before} & {int(t) for t in seen_at}) - set(check_tids(before))
-            missing = sorted(expected - (held & stopped))
-            if not expected:
-                gaps.append(("control_hold", "no thread seen before attach was seen again at the control hold"))
-            elif missing:
-                breaking, why = _breaking_thread(brk, expected, held, missing)
-                if breaking is None:
-                    gaps.append(("control_hold", f"{len(missing)} of the {len(expected)} thread(s) seen before "
-                                                 "attach were not both suspended and stopped at the control hold "
-                                                 f"(tid {', '.join(map(str, missing[:10]))}), and {why}"))
-    if not after:
-        gaps.append(("after_resume", "no check after the control hold's resume was recorded yet"))
-    elif after.get("verdict") != "running":
-        gaps.append(("after_resume", f"the outside check after the control hold's resume read the game "
-                                     f"{after.get('verdict')}, not running"))
-    return gaps, breaking
+            gaps.append(("frames.control_hold", f"the counter went back at the control hold ({_count(hold[0])}→"
+                                                f"{second})"))
+    else:
+        gaps.append(("frames.control_hold", f"the frame-counter reading at the control hold was "
+                                            f"{_reading_why(hold[0])}, neither answered nor not consumed"))
+    after = frames.get("after_resume")
+    before = [c for c in [*counts, *(_count(r) for r in hold)] if c is not None]
+    if not isinstance(after, dict):
+        gaps.append(("frames.after_resume", "no frame-counter reading after the control hold's resume was "
+                                            "recorded yet"))
+    elif _count(after) is None:
+        gaps.append(("frames.after_resume", f"the frame-counter reading after the resume was {_reading_why(after)}"))
+    elif before and _count(after) <= max(before):
+        gaps.append(("frames.after_resume", f"the counter did not advance after the resume ({max(before)}→"
+                                            f"{_count(after)})"))
+    return gaps, stall
 
 
 def instrument_record(inst: dict[str, Any]) -> dict[str, Any]:
-    """`inst` with `proven`, `note` and `control_hold.breaking_tid` set from
-    `instrument_review`: `note` names each missing piece, and the breaking
-    thread when the control hold exempted one. The checks passed in are not
-    changed."""
-    gaps, breaking = instrument_review(inst)
+    """`inst` with `proven`, `note` and `frames.stall` set from
+    `instrument_review`. `note` names each gap, or, on a proven session, the
+    counts (before arm, the stall, after resume); either way it gives the
+    three thread verdicts, diagnostic only. The checks and readings passed in
+    are not changed."""
+    gaps, stall = instrument_review(inst)
     out = dict(inst)
-    hold = out.get("control_hold")
-    if isinstance(hold, dict):
-        hold = {k: v for k, v in hold.items() if k != "breaking_tid"}
-        if breaking is not None:
-            hold["breaking_tid"] = breaking
-        out["control_hold"] = hold
+    frames = out.get("frames")
+    if isinstance(frames, dict):
+        frames = {**frames, "stall": stall}
+        out["frames"] = frames
     out["proven"] = not gaps
     out.pop("note", None)
-    notes = []
+    verdicts = ", ".join(f"{label} {(inst.get(k) or {}).get('verdict') or 'not taken'}" for k, label in
+                         (("before_attach", "before attach"), ("control_hold", "control hold"),
+                          ("after_resume", "after resume")))
+    threads = f"thread checks (tools/thread_state.py), diagnostic only: {verdicts}"
     if gaps:
-        notes.append("not proven: " + "; ".join(why for _, why in gaps))
-    if breaking is not None:
-        notes.append(f"tid {breaking} waited in an Executive wait, not Suspended, at the control hold as the "
-                     "breaking thread that raised the hit: the one exemption from stopped")
-    if notes:
-        out["note"] = ". ".join(notes)
+        out["note"] = "not proven: " + "; ".join(why for _, why in gaps) + f". {threads}"
+    else:
+        arm = [_count(r) for r in frames["before_arm"][:2]]
+        out["note"] = (f"proven by the game's frame counter: {arm[0]}→{arm[1]} before arm, {stall} at the control "
+                       f"hold, {_count(frames['after_resume'])} after resume. {threads}")
     return out
 
 
@@ -1480,6 +1645,18 @@ class Keeper:
     # and its memory-map refresh can pass then too, so this puts both behind
     # the check's window, at ~40 times the measured margin.
     HOLD_SETTLE = 0.25
+    # The frame-counter readings at the control hold time out after this long:
+    # the plugin polls cmd.txt every 30 frames, about 0.4 s at the 13.2 ms
+    # baseline #197 Live 2 recorded and 1 s at 30 fps, and a reading of a
+    # running game adds about 0.6 s of out.txt settle. Each before-arm reading
+    # must also answer within it, or a no-answer at the hold could just be a
+    # slow channel.
+    HOLD_FRAMES_WAIT = 3.0
+    # The sleep between two answered readings at the control hold.
+    HOLD_FRAMES_GAP = 0.5
+    # Every reading of a running game times out after this long (hs-drive's
+    # ipc default).
+    FRAMES_TIMEOUT = 10.0
     # A hold looks this long after its pause for the line it held the game at.
     HOLD_LINE = 0.5
     # This many resumes within this many seconds are a storm.
@@ -1502,6 +1679,10 @@ class Keeper:
         # Each address's log text as the keeper last sent it: a held change
         # knows its held line by the held logpoint's own log text.
         self.log_texts: dict[int, str] = {}
+        # The frame counter as this session has read it: the greatest count
+        # answered, and whether any reading was answered at all (`released`).
+        self.last_frames: int | None = None
+        self.frames_answered = False
         self.state: dict[str, Any] = {
             "schema": SESSION_SCHEMA, "state": "attaching", "target_pid": target_pid,
             "target": identity_of(target_pid), "keeper": identity_of(os.getpid()), "headless": None,
@@ -1575,24 +1756,37 @@ class Keeper:
         return 0 if self.state.get("detach_confirmed") else 1
 
     def check(self) -> dict[str, Any]:
-        """The outside check of the game, leaving out the threads that were
-        already suspended or stopped before attach."""
+        """The outside check of the game's threads, leaving out the threads
+        that were already suspended or stopped before attach. Diagnostic
+        only: it is recorded, and decides neither `proven` nor
+        `game_released`."""
         return game_check(self.cfg, self.target_pid, baseline=check_tids(self.state["instrument"]["before_attach"]))
 
+    def frames(self, timeout: float) -> dict[str, Any]:
+        """One reading of the game's frame counter (`game_frames`), noted in
+        `last_frames` and `frames_answered`."""
+        r = game_frames(self.cfg, self.target_pid, timeout, identity=self.state["target"])
+        count = _count(r)
+        if r.get("answered"):
+            self.frames_answered = True
+        if count is not None and (self.last_frames is None or count > self.last_frames):
+            self.last_frames = count
+        return r
+
     def set_instrument(self, **checks: Any) -> None:
-        """Record checks in `instrument`. It is proven only for the sequence
-        running before attach, frozen at the control hold with the held
-        threads named, running after its resume (`instrument_gaps`): an
+        """Record checks and frames readings in `instrument`. It is proven
+        only when the frame counter advanced before arming, stalled at the
+        control hold and advanced after its resume (`instrument_gaps`): an
         instrument that cannot see the held game tells nothing by reading the
-        game running later. `note` names each missing piece, and the breaking
-        thread when the control hold exempted one (`instrument_record`)."""
+        game running later. `note` names each gap, or the counts, and the
+        thread verdicts, diagnostic only (`instrument_record`)."""
         self.save(instrument=instrument_record({**self.state["instrument"], **checks}))
 
     def instrument_fixed_gaps(self) -> list[str]:
-        """The gaps no later after-resume check can close: the one before
-        attach, taken once, and the ones at the control hold, taken at the
-        first hold at a hardware breakpoint's hit while unproven."""
-        return [why for k, why in instrument_gaps(self.state["instrument"]) if k != "after_resume"]
+        """The gaps no later after-resume reading can close: the ones before
+        arm and at the control hold, taken at the first hold at a hardware
+        breakpoint's hit while unproven."""
+        return [why for k, why in instrument_gaps(self.state["instrument"]) if k != "frames.after_resume"]
 
     def settled_running(self) -> bool:
         """Whether x64dbg has read running for ATTACH_STABLE seconds with no
@@ -1872,23 +2066,26 @@ class Keeper:
         ms after the command, every thread suspended, and `[STATE] paused` is
         the reliable signal while the break line can lag it).
 
-        Send the begin marker and `bph` (breaking), and wait up to
-        `hold_timeout` for a new pause. Held there: take the outside check
-        (`hold_game`, frozen expected) no sooner than HOLD_SETTLE after the
-        pause was seen, whatever finding its break line took, so that
-        x64dbg's context reads of the breaking thread at the pause, and a
-        memory-map refresh at the pause, fall before its window (the check
-        counts a debugger's later context reads as held, `touched`, within a
-        bound no running window met in the negative controls (before attach,
-        attached, logging at ~100 hits/s, after detach; measured on a
-        throwaway, 2026-10-11)); and while the instrument is not
-        proven record it as `instrument.control_hold`; then send the lines
-        (the never-break condition first), the mid marker, bplist and the end
-        marker, `run`, settle at running, and record the check after it as
-        `after_resume`. No hit within the window (a cold address): send the
-        same lines on the running game, which nothing else is logging on, so
-        no change races; `held` is null with a `held_note`, and the
-        instrument is not proven by it.
+        While the instrument is not proven, first read the game's frame
+        counter twice (`frames.before_arm`, FRAMES_TIMEOUT each): the channel
+        answers and the game loop runs under the debugger. Then send the
+        begin marker and `bph` (breaking), and wait up to `hold_timeout` for a
+        new pause. Held there: take the outside thread check (`hold_game`,
+        diagnostic) no sooner than HOLD_SETTLE after the pause was seen,
+        whatever finding its break line took, so that x64dbg's context reads
+        of the breaking thread at the pause, and a memory-map refresh at the
+        pause, fall before its window (measured on a throwaway, 2026-10-11);
+        and while the instrument is not proven record it as
+        `instrument.control_hold`, then read the counter at HOLD_FRAMES_WAIT
+        (`frames.control_hold`, `hold_frames` in the reply): `not_consumed`
+        is the stall, and an answer is read again after HOLD_FRAMES_GAP, the
+        same count the stall. Then send the lines (the never-break condition
+        first), the mid marker, bplist and the end marker, `run`, settle at
+        running, and record the counter (`frames.after_resume`) and the
+        thread check after it. No hit within the window (a cold address):
+        send the same lines on the running game, which nothing else is
+        logging on, so no change races; `held` is null with a `held_note`,
+        and the instrument is not proven by it.
 
         First, a pause already pending (a stray break that landed during the
         bplist, say) is resumed the way the watchdog resumes one, and x64dbg
@@ -1901,11 +2098,13 @@ class Keeper:
                                    end_seen=False)
         m = _BREAKING_BPH.match(bph)
         addr = int(m.group(1), 16) if m else None
+        unproven = not self.state["instrument"].get("proven")
+        before_arm = [self.frames(self.FRAMES_TIMEOUT), self.frames(self.FRAMES_TIMEOUT)] if unproven else []
         self.log.poll()
         mark, before = self.log.mark(), self.log.pauses
         self.send(f'log "{batch_marker(hid, "begin")}"')
         self.send(bph)
-        held = held_note = hold_game = None
+        held = held_note = hold_game = hold_frames = None
         proving = False
         if self.wait_new_pause(before, t):
             seen = time.monotonic()
@@ -1913,8 +2112,14 @@ class Keeper:
             held = self.hold_break_line(mark, n, addr)
             time.sleep(max(0.0, seen + self.HOLD_SETTLE - time.monotonic()))
             hold_game = self.check()
-            if not self.state["instrument"].get("proven"):
-                self.set_instrument(control_hold=hold_game, after_resume=None)
+            if unproven:
+                hold_frames = [self.frames(self.HOLD_FRAMES_WAIT)]
+                if hold_frames[0].get("answered"):
+                    time.sleep(self.HOLD_FRAMES_GAP)
+                    hold_frames.append(self.frames(self.HOLD_FRAMES_WAIT))
+                self.set_instrument(control_hold=hold_game, after_resume=None,
+                                    frames={"before_arm": before_arm, "control_hold": hold_frames,
+                                            "after_resume": None})
                 proving = True
             for c in [*lines, f'log "{batch_marker(hid, "mid")}"', "bplist", f'log "{batch_marker(hid, "end")}"']:
                 self.send(c)
@@ -1928,11 +2133,11 @@ class Keeper:
                 self.send(c)
             out, done = self.collect(mark, hid, ["begin", "mid"], "end")
         settled = self.settle_running(SessionLog.QUIET, time.monotonic() + t)
-        reply = self.hold_reply(done and settled, self.hold_detail(done, settled), out, held, held_note,
-                                end_seen=done, hold_game=hold_game)
         if proving:
-            self.set_instrument(after_resume=reply["game"])
-        return reply
+            self.set_instrument(frames={**self.state["instrument"]["frames"],
+                                        "after_resume": self.frames(self.FRAMES_TIMEOUT)})
+        return self.hold_reply(done and settled, self.hold_detail(done, settled), out, held, held_note,
+                               end_seen=done, hold_game=hold_game, hold_frames=hold_frames, proving=proving)
 
     def hold_break_line(self, mark: int, n: int, addr: int | None = None,
                         armed: dict[int, str] | None = None) -> str:
@@ -1996,14 +2201,19 @@ class Keeper:
         return "a pause with no break line"
 
     def hold_reply(self, ok: bool, detail: str | None, out: dict[str, list[str]], held: str | None,
-                   held_note: str | None, end_seen: bool, hold_game: dict[str, Any] | None = None) -> dict[str, Any]:
+                   held_note: str | None, end_seen: bool, hold_game: dict[str, Any] | None = None,
+                   hold_frames: list[dict[str, Any]] | None = None, proving: bool = False) -> dict[str, Any]:
         """The hold's reply. `end_seen` says whether x64dbg printed the
         batch's end marker (so its lines are complete), and `log_offset` is
         how far into the session log the hold read: what x64dbg printed after
         it is after the hold, where `logpoint`'s verification window looks.
-        `hold_game` is the outside check taken while held at a first hit.
-        Any hold's check after settling also stands as the instrument's
-        after-resume reading while that is the only gap left."""
+        `hold_game` is the outside thread check and `hold_frames` the
+        frame-counter readings taken while held at a first hit. The thread
+        check after settling is recorded as the instrument's `after_resume`
+        when this hold was the control hold (`proving`); on a later hold,
+        while the after-resume reading is the only gap left, the counter is
+        read again, with the thread check, and both stand as the after-resume
+        readings."""
         self.log.poll()
         game = self.check()
         reply: dict[str, Any] = {
@@ -2014,13 +2224,19 @@ class Keeper:
         }
         if hold_game is not None:
             reply["hold_game"] = hold_game
+        if hold_frames is not None:
+            reply["hold_frames"] = hold_frames
         if held_note:
             reply["held_note"] = held_note
         if detail:
             reply["detail"] = detail
         inst = self.state["instrument"]
-        if inst.get("control_hold") and not inst.get("proven") and not self.instrument_fixed_gaps():
+        if proving:
             self.set_instrument(after_resume=game)
+        elif (inst.get("frames") or {}).get("control_hold") and not inst.get("proven") \
+                and not self.instrument_fixed_gaps():
+            self.set_instrument(after_resume=game, frames={**inst["frames"],
+                                                           "after_resume": self.frames(self.FRAMES_TIMEOUT)})
         reply["proven"] = bool(self.state["instrument"].get("proven"))
         return reply
 
@@ -2066,14 +2282,16 @@ class Keeper:
 
     def teardown(self) -> dict[str, Any]:
         """A held `bphc`, a settle at running, `detach`, confirm, `exit`, then
-        the outside check of the game. Only a confirmed detach lets the keeper
-        end a headless that has not exited by itself, and only a game whose
-        threads all run again is `ended` with `game_released: true`."""
+        a frame-counter reading and the thread check (`released`). Only a
+        confirmed detach lets the keeper end a headless that has not exited by
+        itself, and only a proven session whose counter advances after the
+        detach, with `ping` answering, is `ended` with `game_released:
+        true`."""
         self.save(state="detaching")
         cleared = self.hold(["bphc"])
         cleared.pop("game", None)
         # No tool path plants a pause breakpoint any more, so a game x64dbg
-        # still holds here is detached anyway, and the outside check decides:
+        # still holds here is detached anyway, and the frame counter decides:
         # a detach while held at a hardware breakpoint's hit releases the game
         # (Replan 3 probe); Live 2's freeze came from the plugin's software
         # pause, which nothing here uses.
@@ -2105,51 +2323,91 @@ class Keeper:
         return self.released(cleared, not settled)
 
     def released(self, cleared: dict[str, Any], paused_at_detach: bool) -> dict[str, Any]:
-        """The post-detach check, the threads suspended before attach left
-        out: `running` ends the session released, `gone` ends it with a note,
-        and anything else is `game-not-released`. A `running` from an
-        instrument not proven on this game ends it with `game_released` null
-        and `ok` false: that reading is not evidence of a release. The
-        instrument is proven only at a control hold (the first hold at a
-        hardware breakpoint's hit), so a session that never armed a hot
-        control has nothing to show its release with."""
+        """After a confirmed detach: the thread check (`game`, diagnostic
+        only, the threads suspended before attach left out) and one
+        frame-counter reading at FRAMES_TIMEOUT (`frames`). The counter
+        decides. "Advanced" is answered, `ping` answering `pong`, with a count
+        greater than the last one this session read.
+
+        - the game gone: `ended`, `game_released` null, `ok` true;
+        - advanced, and the instrument proven: `ended`, `game_released` true;
+        - advanced, unproven: `ended`, `game_released` null, `ok` false, since
+          the counter never showed a stall at a control hold, so its advance
+          is no evidence that the debugger had any hold to release;
+        - not consumed, or answered with no advance: `game-not-released`,
+          `game_released` false when an earlier reading of this session was
+          answered (the channel worked, and now the loop does not run) and
+          null otherwise;
+        - the channel unreadable, another copy's, or no counter in the reply:
+          `game-not-released`, `game_released` null.
+
+        A thread check that reads anything but `running` adds `threads_note`,
+        naming its suspended and stopped threads; it never changes the
+        verdict (#497)."""
         game = self.check()
-        verdict = game.get("verdict")
-        common = {"detach_confirmed": True, "game": game, "paused_at_detach": paused_at_detach, "cleared": cleared}
-        unproven = [] if self.state["instrument"].get("proven") else \
-            [why for _, why in instrument_gaps(self.state["instrument"])]
-        if verdict == "running" and unproven:
-            note = (f"the outside check reads the game (pid {self.target_pid}) running after the detach, but the "
-                    f"instrument was not proven: {'; '.join(unproven)}. So whether the detach released its "
-                    "threads is not known: check the game by other means, such as hs_command ping")
-            self.save(state="ended", detach_confirmed=True, game_released=None, game=game, error=None, note=note)
+        before, any_answered = self.last_frames, self.frames_answered
+        fr = self.frames(self.FRAMES_TIMEOUT)
+        common: dict[str, Any] = {"detach_confirmed": True, "game": game, "frames": fr,
+                                  "paused_at_detach": paused_at_detach, "cleared": cleared}
+        if game.get("verdict") not in ("running", "gone"):
+            common["threads_note"] = self.threads_note(game)
+        count, reason = _count(fr), fr.get("reason")
+        if reason == "gone" or game.get("verdict") == "gone":
+            note = (f"the game (pid {self.target_pid}) was gone by the post-detach reading, so whether the detach "
+                    "released it is not known")
+            self.save(state="ended", detach_confirmed=True, game_released=None, game=game, frames=fr, error=None,
+                      note=note)
+            return {"ok": True, "state": "ended", "game_released": None, "note": note,
+                    "detail": "detached (confirmed), then headless x64dbg exited", **common}
+        advanced = count is not None and fr.get("pong") is True and (before is None or count > before)
+        proven = bool(self.state["instrument"].get("proven"))
+        if advanced and proven:
+            self.save(state="ended", detach_confirmed=True, game_released=True, game=game, frames=fr, error=None)
+            return {"ok": True, "state": "ended", "game_released": True,
+                    "detail": (f"detached (confirmed), headless x64dbg exited, and the game's frame counter advanced "
+                               f"({before}→{count}) with ping answering"), **common}
+        if advanced:
+            gaps = [why for _, why in instrument_gaps(self.state["instrument"])]
+            note = (f"the game's frame counter advanced after the detach ({before}→{count}), but the instrument was "
+                    f"not proven, so the stall at a control hold was never shown: {'; '.join(gaps)}. So this "
+                    "advance is no evidence that the detach released a hold: check the game by other means, such "
+                    "as hs_command ping")
+            self.save(state="ended", detach_confirmed=True, game_released=None, game=game, frames=fr, error=None,
+                      note=note)
             return {"ok": False, "state": "ended", "game_released": None, "note": note,
                     "detail": "detached (confirmed), then headless x64dbg exited; the instrument was not proven",
                     **common}
-        if verdict == "running":
-            self.save(state="ended", detach_confirmed=True, game_released=True, game=game, error=None)
-            return {"ok": True, "state": "ended", "game_released": True,
-                    "detail": "detached (confirmed), headless x64dbg exited, and every game thread runs again",
-                    **common}
-        if verdict == "gone":
-            note = (f"the game (pid {self.target_pid}) was gone by the post-detach check, so whether the detach "
-                    "released its threads is not known")
-            self.save(state="ended", detach_confirmed=True, game_released=None, game=game, error=None, note=note)
-            return {"ok": True, "state": "ended", "game_released": None, "note": note,
-                    "detail": "detached (confirmed), then headless x64dbg exited", **common}
-        released = None if verdict in ("unreadable", "unsupported") else False
+        if reason == "not_consumed" or count is not None:
+            released = False if any_answered else None
+            seen = (f"nothing consumed ping and incident stat within {fr.get('elapsed_s')} s (not_consumed)"
+                    if reason == "not_consumed" else
+                    f"the frame counter read {count} (the last before it {before}), pong "
+                    f"{'answered' if fr.get('pong') else 'missing'}, so it did not advance")
+            if not any_answered:
+                seen += "; no reading of this session was ever answered, so the channel itself is not shown working"
+        else:
+            released = None
+            seen = (f"the frame counter could not be read ({reason}: {fr.get('detail')}), so whether the game "
+                    "runs is not known")
+        error = (f"the detach was confirmed, but after it {seen}. "
+                 + (f"{common['threads_note'].rstrip('.')}. " if common.get("threads_note") else "")
+                 + "Nothing but a force-stop releases a held game, and these tools never resume a game thread: the "
+                   "driver runs hs_stop_game with force=true, then hs_saves_restore of this session's backup")
+        self.save(state="game-not-released", detach_confirmed=True, game_released=released, game=game, frames=fr,
+                  error=error)
+        return {"ok": False, "state": "game-not-released", "game_released": released, "detail": error, **common}
+
+    @staticmethod
+    def threads_note(game: dict[str, Any]) -> str:
+        """The thread check after detach, when it read anything but running:
+        its suspended and stopped threads, diagnostic only."""
         suspended = game.get("suspended") or []
         stopped = game.get("stopped") or []
-        error = (f"the detach was confirmed, but the outside check reads the game (pid {self.target_pid}) "
-                 f"{verdict}, not running: {len(suspended)} thread(s) suspended ("
-                 + (", ".join(f"tid {s.get('tid')} count {s.get('suspend_count')}" for s in suspended) or "none")
-                 + f"), {len(stopped)} stopped in Waiting/Suspended ("
-                 + (", ".join(f"tid {t}" for t in stopped) or "none")
-                 + f"). {game.get('detail')} Nothing but a force-stop releases them, and these tools never resume "
-                   "a game thread: the driver runs hs_stop_game with force=true, then hs_saves_restore of this "
-                   "session's backup")
-        self.save(state="game-not-released", detach_confirmed=True, game_released=released, game=game, error=error)
-        return {"ok": False, "state": "game-not-released", "game_released": released, "detail": error, **common}
+        return (f"the thread check after the detach (tools/thread_state.py, diagnostic only, not deciding the "
+                f"release) reads {game.get('verdict')}: {len(suspended)} thread(s) suspended ("
+                + (", ".join(f"tid {s.get('tid')} count {s.get('suspend_count')}" for s in suspended) or "none")
+                + f"), {len(stopped)} stopped in Waiting/Suspended ("
+                + (", ".join(f"tid {t}" for t in stopped) or "none") + f"). {game.get('detail') or ''}".rstrip())
 
     def target_gone(self) -> None:
         """The game exited under the debugger: nothing is attached any more."""
@@ -2167,9 +2425,9 @@ def keeper_main(session: Path, pid: int) -> int:
         print(f"x64dbg_mcp keeper: no keeper-config.json in {session}", file=sys.stderr)
         return 2
     cfg = Config.from_json(data)
-    # headless x64dbg, and the tests' probe seam when one is set
-    install_offline_guard(allowed_executables=(cfg.headless_argv[0], *cfg.probe_cmd[:1]) if cfg.probe_cmd
-                          else (cfg.headless_argv[0],))
+    # headless x64dbg, and the tests' probe and frames seams when they are set
+    install_offline_guard(allowed_executables=(cfg.headless_argv[0], *(cfg.probe_cmd or ())[:1],
+                                               *(cfg.frames_cmd or ())[:1]))
     return Keeper(cfg, pid).run()
 
 
@@ -2279,23 +2537,36 @@ def start_session(cfg: Config, pid: int | None, game: bool) -> dict[str, Any]:
     return state
 
 
+def frames_wait(timeouts: Iterable[float]) -> float:
+    """The worst case of frame-counter readings with these timeouts, each
+    allowed FRAMES_READ_SLACK past its own."""
+    return sum(t + FRAMES_READ_SLACK for t in timeouts)
+
+
 def detach_wait(cfg: Config) -> float:
     """How long a detach may take: the held `bphc` (its bplist, the hold, the
-    batch and the settle), the settle before detach, the detach itself, and
-    headless's exit."""
-    return 4 * cfg.hold_timeout + Keeper.HOLD_BREAK + cfg.detach_timeout + 30
+    batch, the settle and an after-resume frames reading it may retake), the
+    settle before detach, the detach itself, headless's exit, and the frames
+    reading after it."""
+    k = Keeper
+    return 4 * cfg.hold_timeout + k.HOLD_BREAK + cfg.detach_timeout + 30 + frames_wait([k.FRAMES_TIMEOUT] * 2)
 
 
 def hold_wait(cfg: Config) -> float:
     """How long a hold may take: its bplist, the wait for a logging
-    breakpoint to break or for a first hit, the batch, the settle and the
-    outside checks."""
-    return 4 * cfg.hold_timeout + Keeper.HOLD_BREAK + 30
+    breakpoint to break or for a first hit, the batch, the settle, the
+    outside checks, and, while the instrument is unproven, the frames
+    readings (two before arm, two at the hold with the gap between, one after
+    the resume)."""
+    k = Keeper
+    return 4 * cfg.hold_timeout + k.HOLD_BREAK + 30 + k.HOLD_FRAMES_GAP + \
+        frames_wait([k.FRAMES_TIMEOUT] * 3 + [k.HOLD_FRAMES_WAIT] * 2)
 
 
 def detach(cfg: Config) -> int:
-    """Exits 0 only for a session `ended` with every game thread running
-    again (`game_released` true), or with the game gone."""
+    """Exits 0 only for a session `ended` with the game shown released
+    (`game_released` true: a proven session whose frame counter advanced
+    after the detach), or with the game gone."""
     try:
         reply = keeper_request(cfg, "detach", timeout=detach_wait(cfg))
     except Refused as r:
@@ -2780,6 +3051,7 @@ class Tools:
         return {"ok": True, **base, "bplist": rows, "held": reply.get("held"),
                 **({"held_note": reply["held_note"]} if reply.get("held_note") else {}),
                 **({"hold_game": reply["hold_game"]} if reply.get("hold_game") else {}),
+                **({"hold_frames": reply["hold_frames"]} if reply.get("hold_frames") else {}),
                 "x64dbg_state": read_state(self.cfg).get("x64dbg_state") or reply.get("x64dbg_state"),
                 "game": game}
 
@@ -2803,6 +3075,7 @@ class Tools:
         return {"ok": False, **base, "stage": stage, "detail": detail,
                 "lines": reply.get("lines", []), "after": reply.get("after", []), "held": reply.get("held"),
                 **({"hold_game": reply["hold_game"]} if reply.get("hold_game") else {}),
+                **({"hold_frames": reply["hold_frames"]} if reply.get("hold_frames") else {}),
                 "cleared": cleared, "x64dbg_state": settled, **fields}
 
     def command(self, command: str) -> dict[str, Any]:
