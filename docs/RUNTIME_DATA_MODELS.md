@@ -3219,6 +3219,12 @@ All **measured** unless marked.
 | A creator acted on before `enemyCreatorTimer` is real | no crash — the pack never spawns | §11.2 |
 | Removing a stash item's map entry (`RemoveItemFromMap` on map 9) but leaving its cell in the tab | the game ends at its next stash save — measured twice, in two launches; `GridRemoveItem` on the cell in the same take avoids it | §17 |
 | A plugin DLL whose global `std::thread` is still joinable when the game exits | `std::terminate` while `ExitProcess` destroys that DLL's globals (the other threads are already gone): a WER report at close, `ucrtbase.dll` `0xc0000409`, fast-fail 7 (`abort`). HS-Offline-Tracker's producer does it; 9 of the 10 dumps Windows kept on 2026-09-25/26 show it, the game's own exit path under it, and a plain `CloseMainWindow` at the main menu does it too. A game started from a tool running under Git Bash inherits error mode `0x3` (`SEM_NOGPFAULTERRORBOX`) and aborts without a dump or an event: read the exit code | [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#the-crash-of-2026-09-26-013627) |
+| `RoomGoto` into `Act_01_06` from code | crash | §21.7 |
+| `PC_GetVariableGMLWrapper` on a far-out handle (id 999999), or on a gold amount mistaken for a handle | crash (the second in the anti-cheat module) | §21.8 |
+| `EnemyGiveExperience` with no argument | crash | §21.8 |
+| A parsed struct held only in C++ `RValue`s across frames | freed by the runner's GC; the next frame crashes | §21.8, §5.9 |
+| `WM_CLOSE` to YYToolkit's console window | the game ends with 0xC000013A, no normal save | §21.5 |
+| A ground monster's path search while the hero is sealed in | about 20 s at 3 fps for a 20-monster wave; `pathFailed = true` avoids it | §21.7 |
 
 ---
 
@@ -5090,3 +5096,163 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   with eight valid entries)`, so the by-name route stays blind
   (`byname-route: blind`) and whether the array holds same-named entries for
   the store scripts is still open. **Measured (Live 3).**
+
+---
+
+## 21. Adding our own content: art, drawing, input, spawning and blockers
+
+Folded 2026-10-12 (hub #498) from HS-AFK-Expedition, which built a whole
+in-game Stronghold: its own art in a repurposed room, a panel over the game's
+UI, its own input, spawned monsters and gates. Only what AFK **measured** is
+here. Its recipes, inferred claims, open questions and superseded attempts, each
+with the AFK commit it comes from, are in
+[docs/research/afk-expedition-adding-content.md](research/afk-expedition-adding-content.md);
+"AFK §n" below points there. Measured 2026-09-17..10-07; the runs that name a
+build name `exe-281751552-pe6aaa6779-111b8000`.
+
+### 21.1 Our own art
+
+- **`sprite_add(path, frames, false, false, 0, 0)` loads a PNG at runtime**, and
+  the result draws in the world as a layer sprite. A multi-frame PNG is one row
+  of equal frames. **Measured** (AFK §1.1). ForgePact's pack markers ship the
+  same call for their icons (`PackMarkers::LoadIcons`), and the index comes back
+  as an asset reference, like `asset_get_index` (§5.4).
+- **The automatic bounding box counts every pixel above alpha 0.** Generated
+  art carries a faint halo (alpha 1-8): one piece measured 527×998 visible but
+  1152×1144 with the halo. `sprite_collision_mask(spr, false, 0, 0,0,0,0, 1, 16)`
+  re-measures it at alpha tolerance 16, after which `sprite_get_bbox_*` give the
+  visible part. **Measured** (AFK §1.2).
+- **An atlas cell becomes its own sprite** by drawing it onto a surface
+  (`draw_sprite_part`) and calling `sprite_create_from_surface`. This worked
+  from a plugin's per-frame callback, outside any draw event. **Measured** (AFK
+  §1.4).
+- **`font_add(path, size, false, false, 32, 8230)` loads a TTF** that draws in
+  the GUI. **Measured** (AFK §1.7). Its texture-memory cost was not measured.
+
+### 21.2 Placing art in a room
+
+- **Layer sprites** (`layer_create`, `layer_sprite_create` and the
+  `layer_sprite_*` setters) draw art in a room without creating instances.
+  Layer sprites given depth −y/2 sorted correctly with the hero and monsters.
+  **Measured** (AFK §2.1, §2.2). That every game object uses −y/2 is not
+  established.
+- **Layers die with the room.** Leaving the room removes every layer and layer
+  sprite created in it. **Measured** (AFK §2.5).
+- **Two sprites on one layer have no set draw order.** A piece that must be in
+  front needs its own layer. **Measured** for the fix (AFK §2.3).
+
+### 21.3 Texture groups
+
+- **The game streams 254 dynamic texture groups by region. A sprite whose group
+  is not loaded draws nothing and raises no error**, although its layer element
+  exists. `Guild_Master_NPC_spr` (`act_2_tex`) drew nothing in Town_01 until
+  `sprite_prefetch`; `npc_tex` sprites (`Tristan_NPC_spr`) are loaded
+  everywhere. **Measured** 2026-09-26 (AFK §3.1, §9.2).
+- `texturegroup_get_names`, `texturegroup_get_sprites` and
+  `texturegroup_get_status` (0 unloaded, 1 loading, 2 loaded, 3 fetched) work at
+  runtime, as do `sprite_get_texture` with `texture_is_ready`. **Measured** (AFK
+  §3.2).
+- **Monsters spawned outside their own act draw only after their sprites are
+  prefetched**: `sprite_index`, the object's sprite, and every instance variable
+  named `enemy_*`, `enemy_corpse` or `shadow_sprite`. **Measured** (AFK §3.4).
+
+### 21.4 Drawing over the game's UI
+
+- **YYToolkit's object-event callback (`EVENT_OBJECT_CALL`) returns
+  `AURIE_UNAVAILABLE` on this YYC build.** An inline detour on a compiled event
+  function resolved by its name (`gml_Object_<obj>_<event>`) works instead.
+  **Measured** 2026-09-26 (AFK §4.1).
+- **Town GUI event order:** `Loot_Manager_obj` Draw GUI Begin,
+  `Controller_obj`, `UI_Inventory_Drag_obj`, `Menu_Controller_obj` Draw GUI,
+  then `objColorBlindShader` Draw GUI End
+  (`gml_Object_objColorBlindShader_Draw_75`) last. Drawing right after it puts
+  a window above the inventory, a dragged item and menus. `Draw_64` is Draw GUI,
+  `Draw_74` Draw GUI Begin and `Draw_75` Draw GUI End. **Measured** (AFK §4.2,
+  §4.3).
+- **GUI size equals the monitor resolution** (2560×1440 on the owner's PC).
+  **Measured** 2026-09-30 (AFK §4.5).
+- **The cursor.** The game hides the Windows cursor (`window_get_cursor()` is
+  `cr_none` in play) and puts back any `window_set_cursor`. It draws `Cursor_spr`
+  from `Menu_Controller_obj` in an earlier GUI step, scaled by
+  `global.mouse_gui_scalar` (default 2); `Screen_Cursor_obj` has no instance in
+  play. Anything drawn later covers the cursor unless `Cursor_spr` is drawn
+  again on top. **Measured** (AFK §5.7).
+- **`effect_create_depth` effects do not display.** 56 were created on
+  2026-09-27 without an error and none was visible. Why is not established.
+  **Measured** (AFK §9.1).
+
+### 21.5 Input and the game window
+
+- **`EVENT_WNDPROC` with `Override(0)` keeps a message from the game.** A
+  swallowed press or key never reaches `mouse_check_button` / `keyboard_check`,
+  while unswallowed ones do, in town and in combat. Posted `WM_*` messages
+  reach the game's input, also while it is minimized. **Measured** (AFK §5.1,
+  §5.4).
+- **Activating a menu node.** Calling the menu's `UiAMainMenuLocal`,
+  `UiAChooseSaveSlot` and `UiACharacterPlay` scripts directly entered the hero
+  but broke later mouse clicks on the inventory Extra tab and skill selection.
+  Running `event_perform(7, 25)` on the `UI_Node_Parent_obj` instance whose
+  `activationFunc` names the script, with that node as self and other, did not.
+  **Measured** 2026-10-07 (AFK §5.8). See §8.1 for UI nodes.
+- **The runner's window class is `YYGameMakerYY`.** `WM_CLOSE` to it exits with
+  code 0; `WM_CLOSE` to YYToolkit's console window ends the game with
+  0xC000013A and no normal save. **Measured** 2026-09-28 (AFK §5.11).
+
+### 21.6 Spawning monsters
+
+- **`instance_create_depth(x, y, depth, obj)` spawns a monster with the current
+  room's stats.** `enemyRarity` and the affixes (`affixList` plus the
+  `enemyAffix` flag array) set right after creation are applied when the stats
+  are built. `aggroRange` and `distance` are reset to 300 then, so they must be
+  set a frame later. **Measured** (AFK §6.1-§6.3).
+- **A monster spawned in a town removes itself within a second.** Answering the
+  room routines `CheckTown` false and `RoomIsZone` true, and answering
+  `GetAct`, `GetMonsterLevel` and `ReturnEnemyStats` for a reference zone, only
+  while the hero is in that room, makes an unused room behave like that zone,
+  with the game's own stats, loot and XP. **Measured** (AFK §6.4, §6.7).
+- **Far monsters get no step.** Deaths stopped at about 650-850 px from the
+  hero. Appending ids to `Controller_obj.monsterHandleArray` after
+  `ActivateDeactivateProps` returns kept far monsters stepping. **Measured** (AFK
+  §6.5). Compare the static reading of the enemy loop in §11.3, which names
+  `EnemyStepHandleNew` as what rebuilds that array.
+- **Kill parity.** Health written to 0 runs the death, but `DropItem` ran only
+  about half the time and no XP was given. `DropItem` with the player-kill
+  arguments plus `EnemyGiveExperience(self = monster, other = player,
+  killExperience)` matches a hero kill. A monster younger than 60 frames has no
+  drop table yet. **Measured** (AFK §6.11).
+
+### 21.7 Blockers, the path grid and rooms
+
+- **`Invisible_Wall_obj`**, created with `image_xscale`/`image_yscale` set to
+  size/32 and `addToMinimap = true`, is found by `collision_point` and drawn on
+  the minimap. **Measured** 2026-10-07 (AFK §7.1). **Whether it stops the hero's
+  own movement was not observed**: AFK never walked the hero into one (AFK
+  §7.2). For what blocks the player, see §19.
+- **The path grid.** `PathFindControllerCreate` (self and other = the hero)
+  rebuilds `global.pathGrid`, an mp_grid of `global.gridSize` 16 px cells sized
+  from the room, from the room's blockers. A monster's own cells count as taken,
+  so a search must start from the next free cell. **Measured** (AFK §7.3, §7.4).
+- **A sealed-in hero makes every outside ground monster's search flood the
+  whole field**: a 20-monster wave froze the game for about 20 s at 3 fps.
+  Setting the monster's `pathFailed = true` skips the search. **Measured**
+  2026-09-29 (AFK §7.7).
+- **The minimap** is refreshed with `MinimapRefresh` (self = hero) and the
+  `objMinimap` dirty flags. Its discovery grid can be replaced by a 256×256 town
+  grid after it reports ready. **Measured** (AFK §7.9).
+- **`RoomGoto(room)` with `Controller_obj` as self and other travels.**
+  `Dev_10_rm` is an unused 4000×4000 room that `room_set_width`/`height` widen
+  before entry (9600×9600 measured). The game never saves the hero there.
+  **Entering `Act_01_06` from code crashed the game.** **Measured** (AFK §8.1,
+  §8.2, §10.1).
+
+### 21.8 Crashes found on the way
+
+Also listed in §15. **Measured** (AFK §10.2-§10.6):
+- reading a protected handle far out of range (`PC_GetVariableGMLWrapper` on id
+  999999) crashes the game; a gold amount mistaken for a handle crashed the
+  anti-cheat module;
+- `EnemyGiveExperience` with no argument crashes; `ExperienceUpdate` called
+  directly reports a hash mismatch through `ReportClient`;
+- a struct held only in C++ `RValue`s is freed by the runner's GC between frames
+  (§5.9);
+- `instance_destroy` on a monster skips its death and `DropItem`.
