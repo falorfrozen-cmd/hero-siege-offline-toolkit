@@ -5347,14 +5347,37 @@ direct `call rel32` that the import's reference table does not hold.
   `gml_Script_IsItemTypeStackable` answers true for. A class-11 consumable has
   no preferred grid and never reaches `GridAddToStack` (the pickup route
   above), only `InventoryGridAddToStack`. That it does not stack in the bag is
-  measured (below); why `InventoryGridAddToStack` refuses it is **not
-  established**. `c` is the repository flag (0 normal, 1 unique, § 2
+  measured (below). `c` is the repository flag (0 normal, 1 unique, § 2
   and § 13.10), so changing it loads a different item: no whole-number value
   of a field the merge compares can mark an item apart from the real one (a
   fraction in `b` can in `GridAddToStack`, by the reading that follows; how
   `InventoryGridAddToStack`, which `AddToInventory` tries when
-  `GridAddToStack` takes nothing, compares `b` is **not established**).
-  **Static reading** (Replan 1).
+  `GridAddToStack` takes nothing, compares `b` for the classes it accepts is
+  **not established**). **Static reading** (Replan 1).
+- Why `InventoryGridAddToStack` refuses a consumable. The class rule:
+  `gml_Script_IsItemTypeStackable` (1921) answers true for classes 12, 13, 14
+  and 15 only, and `gml_Script_IsStackable` (1922) first asks the item's
+  `GetItemInfo` method for one value (which info key it asks for was not
+  resolved), answers false when that value is truthy, and otherwise applies
+  the same four-class rule. `InventoryGridAddToStack` takes the item as its
+  second argument and applies the `IsStackable` rule itself, before anything
+  else; when the rule fails it gives up at once, before it reads a grid or
+  compares any field. So a class-11 item is refused whatever its `b`, `c`,
+  seed or count. For a class that passes, it picks its grid by class (15 the
+  socket grid, 12 the Key grid, 13 and 14 the material grid), and a later
+  walk reads the bag's `inventoryTab` under a condition that was not read. A
+  merge goes ahead only while the two counts summed stay at most 999. Every
+  path, the early refusal included, ends by building the game's
+  `gml_Script_s_ItemOperation` (1959) struct and returning it, and
+  `AddToInventory` reads that result's `success` at each of its stack
+  attempts. § 9.7 measured a successful result's fields on the prospecting
+  grid (`tabNumber`, `x`, `y`, `tabType`, `success`); whether
+  `AddToInventory` reads any field but `success` was not read. **Static
+  reading** (2026-10-12, ForgePact #197's piece icon and stack follow-up).
+  So no consumable base or class stacks through the game's own stack code:
+  only classes 12 to 15 pass the rule, and each of those goes to its own tab
+  (the Key, material or socket grid), not the bag, while no value in a
+  class-11 item's own definition gets it past the rule.
 - How the compare is made. `GridAddToStack` compares `itemType`, then the two
   definitions' `b`, then their `c`, each through the runtime's general value
   compare, which takes two reals as equal when they differ by no more than the
@@ -5380,6 +5403,19 @@ direct `call rel32` that the import's reference table does not hold.
   behaviour, not read in this game. So a `b` carrying tenths would survive a
   save and reload, and one with a finer fraction would not: **inference, not
   measured**.
+- The bag's save writer. `gml_Script_SaveInventoryOrderNew` (3507) writes the
+  bag's tabs and the special tabs (key, material, socket, tarot, relic, vault
+  and charms) through `json_stringify`. When the game calls it was not read.
+  **Static reading** (2026-10-12). In the piece icon and stack follow-up's
+  Live procedure 1 (2026-10-12, research build, capture
+  `forgepact-197-piece-icon-stack-live-1`, local to the hub's workorder
+  folder), the bag file `inventory_order_13.hss` was not rewritten at the
+  graceful stop, while the Key tab held pieces with a fractional `b`.
+  **Measured.** That stop ended in the game's fail-fast exit
+  (`STATUS_STACK_BUFFER_OVERRUN`, C0000409), but every earlier #197 session's
+  stop ended the same way and still rewrote its bag file, so the exit code is
+  not the difference. Why the file was not
+  rewritten is **not established**.
 - Who else compares `b`. `gml_Script_CountInventoryItem` (1925), whose direct
   callers the byte scan found to be only the crafting scripts
   `GetCraftItemsAvailable` and `CraftFindRecipeItems`, compares `itemType`, an
