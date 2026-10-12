@@ -5549,8 +5549,9 @@ killed.
 - A revisited zone gets new instance ids at the same positions with its
   creators' protected state restored (§ 11.2, **measured**, ForgePact #181's
   Live 4), and Live procedure 3 measured the same for a zone's portals (§ 21.5).
-- A boss room is saved on leaving, and dropping its entry brings the boss
-  back. With the room value `asset_get_index` returns for a room's name (a
+- A boss room is saved on leaving, and after its entry was dropped the boss
+  came out again; whether it would come out without the drop is not
+  established (below). With the room value `asset_get_index` returns for a room's name (a
   reference) and the local player as `self`, `ZoneStateExists` answered true
   for `Act_01_01` and for the towns just after the player left them, false for
   `Act_01_Boss` and `Act_02_Boss` on the first entry of a launch, and true for
