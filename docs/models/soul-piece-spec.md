@@ -17,6 +17,15 @@ rolls a gem, and when a backpack use leaves the item gone), and exactly what the
 mod adds on top (which rooms and sources count, the piece's chance on the gem's
 roll, and which room its use takes the player to).
 
+The follow-up (2026-10-12, the owner: the Gem of Incarnation's icon on pieces,
+pieces stacking per act, pieces in the Key tab and never merged into a real
+key) adds the game's number rules a key piece rests on: how a stack compares
+two reals, how the repository lookup and the save treat a `b` with a fraction,
+and who else compares `b`. Its research session is Live procedure 1 of the
+follow-up, capture `forgepact-197-piece-icon-stack-live-1`, not yet run; until
+it is, everything this spec says about a key piece is a static reading or our
+code.
+
 Every claim carries one of four labels, and a source:
 
 - **Static reading**: read from the compiled game or from `hs-game-sdk`'s
@@ -38,7 +47,11 @@ zone state) and § 18.4 (how a gem drops).
 
 Read on 2026-10-11 through the `ghidra` MCP on build `498d588550d8`, plus local
 byte scans of the game's executable and `data.win` whose positive controls were
-`PickupLoot`'s known callers and a known object event row.
+`PickupLoot`'s known callers and a known object event row. The follow-up's
+readings (the stack route, the compare, the repository lookup, the save and
+who else compares `b`) were made on 2026-10-12, on the same build, through the
+`ghidra` MCP and a local call-site scan with a positive control; they are also
+in `RUNTIME_DATA_MODELS.md` § 21.3.
 
 - **The act of a room.** `RoomActIndex(room)` (`gml_Script_RoomActIndex`) is a
   switch over 175 room constants into nine cases. Its answer starts undefined
@@ -67,16 +80,60 @@ byte scans of the game's executable and `data.win` whose positive controls were
   descend from `Enemy_Child_Boss_obj` through `Enemy_Parent_obj` in
   `hs-game-sdk`'s parent table, and each act's boss room is `Act_0N_Boss`
   (`boss_soul_pieces.json` `acts`, with the SDK's room index).
-- **Pickup and stacking.** `PickupLoot`'s general path ends in
-  `AddToInventory`, which tries a stack before placing an item as a new one:
-  `InventoryGridAddToStack` for a class with a tab of its own (the Key,
-  Material and Socket tabs), `GridAddToStack` for the bag. Both walk their grid
-  and merge the item into one whose class matches and whose definition's `b`
-  and `c` match, comparing those three fields themselves; neither calls
-  `ItemsAreStackable`, and the seed `a` is never compared. The bag's attempt
-  first accepts only classes 12, 13, 14 and 15, as `IsItemTypeStackable`
-  answers, so a class-11 consumable never stacks there. `c` is the repository
-  flag (0 normal, 1 unique), so changing it loads a different item.
+- **Pickup and stacking** (corrected by the follow-up's reading, 2026-10-12;
+  the first reading had the two stack scripts the other way round).
+  `PickupLoot`'s general path ends in `AddToInventory`, which tries a stack
+  before placing an item as a new one. Offline it asks
+  `GetItemPreferredGrid`, which answers a grid of the item's own kind for keys,
+  materials, socketables, tarot cards and the vault class (the Key tab's
+  `inventoryKeyGrid` and its siblings, chosen by class) and none for a
+  consumable. With a preferred grid it tries `GridAddToStack` on that grid
+  first, and `InventoryGridAddToStack` only when that takes nothing; with
+  none, `InventoryGridAddToStack` alone. A byte scan for direct call sites
+  (positive control: the known `InvGridClearItemNode` call in
+  `UiAInventoryConsumeItemConfirm`) found one `GridAddToStack` site and two
+  `InventoryGridAddToStack` sites in `AddToInventory`. This fits both of Live
+  procedure 3's measurements: a consumable's pickup reached
+  `InventoryGridAddToStack`, and the key merge reached `AddToInventory` alone,
+  because `GridAddToStack`, not watched then, took it.
+- **What a stack compares.** The stack scripts merge the item into one whose
+  class matches and whose definition's `b` and `c` match, comparing those
+  fields themselves; neither calls `ItemsAreStackable`, and the seed `a` is
+  never compared. `GridAddToStack` first accepts only classes 12, 13, 14 and
+  15, as `IsItemTypeStackable` answers. It compares `itemType`, then the two
+  definitions' `b`, then their `c`, each through the runtime's general value
+  compare, which takes two reals as equal when they differ by no more than the
+  math epsilon (GameMaker's default is 0.00001). So a `b` of 2.1 differs from
+  2 and matches another 2.1, and a double's own rounding error is far inside
+  the epsilon. `c` is the repository flag (0 normal, 1 unique), so a whole
+  change of it loads a different item.
+- **The repository lookup truncates.** `GetNormalRepoStruct` turns its index
+  argument into an integer through the runtime's real-to-int conversion,
+  which truncates toward zero: a `b` of 2.1, or 2.9, looks up entry 2. The item
+  constructor takes `GetUniqueRepoStruct` when the definition's `c` is truthy,
+  which for a real means above 0.5, and `GetNormalRepoStruct` otherwise.
+- **The save writes reals as text.** `CreateItemSaveStruct` copies the item's
+  definition and `json_ordered_by_key` writes it, sending every real and
+  int64 through the `string` builtin. That GameMaker's `string()` of a real
+  keeps two decimals and writes a whole number whole is the runtime's
+  documented behaviour, not read in this game
+  (`string_keeps_two_decimals`). So a `b` carrying tenths would survive a save,
+  and a finer fraction would not.
+- **Who else compares `b`.** `CountInventoryItem` (its direct callers are only
+  the crafting scripts `GetCraftItemsAvailable` and `CraftFindRecipeItems`)
+  compares the class, an item-info value and the definition's `b`, not `c`.
+  `FindInventoryItem` (called from `PlayerMouseAction` and two unnamed sites)
+  compares `b` and `c`. Both use the same epsilon compare.
+- **The display sprite.** Item info key `"11"` is the sprite an item is drawn
+  with: ForgePact #158's Live 1 (2026-10-12, on its own branch) **measured** a
+  charm given another charm's sprite there drawn with it in the bag and on the
+  ground, a sprite added at run time drawn in the bag and as the game's error
+  sprite on the ground (the ground item looks up `Pickup_` followed by the
+  sprite's name, #158's static reading), no icon in the tooltip, and the value
+  not saved. `hs-game-sdk`'s sprite table holds both `Gem_Incarnation_spr` and
+  `Pickup_Gem_Incarnation_spr`, so the gem's sprite has a ground companion
+  (static reading of the SDK's tables). That a built Gem of Incarnation carries
+  `Gem_Incarnation_spr` under `"11"` is unverified.
 - **The backpack's use.** `UiAInventoryConsumeItemConfirm` answers a "use this
   item?" prompt: it asks `PotionUse` with the item, and only when that answers
   true does it clear the item's cells one by one (`InvGridClearItemNode`).
@@ -234,6 +291,36 @@ and `False`, its `act_of_room` reading a `false` answer as no act.
   per-place field (rifts, ubers, boss dungeons) was not read; where it does, the
   game's chance there differs from `droprate.base`.
 
+The follow-up's open questions (its Live procedure 1, capture
+`forgepact-197-piece-icon-stack-live-1`, answers the first four):
+
+- **`string_keeps_two_decimals`**: the exact rounding of the save's `string()`.
+  The model assumes two decimals, a whole number written whole, and a tie
+  rounded away from zero; `reload-frac-kept` and `tools/save_item_keys.py
+  --defs` measure what a key piece's `b` reads after a reload.
+- **The Key tab's right-click**: whether right-clicking a key in the Key tab
+  reaches `CanUsePotion` and the use prompt at all (`keyuse-prompt`). The bag's
+  right-click sits in `ProcessInventoryGridInput`; whether the Key tab's grid
+  takes the same path, and whether `CanUsePotion` answers true for a key, were
+  not read.
+- **The confirm on a stack**: whether the confirm, after `PotionUse` answers
+  true, takes one item from a stack of N or clears all N (`stackuse-all`). Every
+  use measured so far was of a single item.
+- **The icon on the ground**: whether a key piece dressed with
+  `Gem_Incarnation_spr` lies on the ground as `Pickup_Gem_Incarnation_spr`
+  (`icon-ground`), and whether a built gem carries that sprite (`gem-sprite`).
+- **The epsilon's value**: GameMaker's default math epsilon is 0.00001; whether
+  the game sets another was not read. Anything up to 0.05 keeps the 0.1 between
+  two acts apart.
+- **`InventoryGridAddToStack`'s compare**: how it compares `b` (the fallback
+  `AddToInventory` tries when `GridAddToStack` takes nothing) was not read, nor
+  why it refuses a class-11 item.
+- **Door and NPC key checks**: which code a door or an NPC uses to find the key
+  it wants (Heimdall's Bifröst Key and the rest) was not read, so whether one
+  of them would take a key piece for its key is not established.
+- **The tooltip**: whether it draws any icon for a key; #158 saw none for a
+  charm. The tooltip names the piece either way (`icon-tooltip`).
+
 ## Our code
 
 **ForgePact's Boss soul pieces** (`soulpiece 1|0|on|off|status|force on|force
@@ -265,12 +352,33 @@ name (category 15, `socketable_gem_of_incarnation`), never by index.
   `boss-kill`, `unnamed` (an act without a boss; no shipped act), `no-rate`,
   then `hit` (forced, or the roll below `1/D`) or `miss`. `soulpiece force on`
   replaces only the last three with `hit`.
-- **The piece** is the game's own Edible PAS Logo: class 11, `b` the
-  category-11 entry named `consumable_edible_pas_logo` (resolved by name at run
-  time), `c` 0, `j` 0, with its seed `a` set to 777100 + act. 777001 to 777003
-  are other ForgePact items' seeds. Class 11 never stacks in the bag, so each
-  piece takes its own cell; with ForgePact gone a piece is an Edible PAS Logo,
-  so a save holding pieces loads.
+- **The key piece** (the follow-up, 2026-10-12; the mod's lever). A piece is
+  built on a key: class 12, `b` = the key base's index + act/10, `c` 0, its
+  seed `a` 777100 + act. The key base is the category-12 entry named
+  `keys_bifrost_key` (resolved by name at run time; #197's Live procedure 3
+  read index 2, so `b` runs from 2.1 for Act 1 to 2.9 for Act 9), our default
+  until the owner names another key. Nothing of ours touches the pickup or the
+  stack: the game's own compare (above) stacks pieces of one act, keeps other
+  acts (0.1 apart) and the real key (a whole `b`) apart, and the repository
+  lookup's truncation loads a piece as the key base, with or without
+  ForgePact. Crafting's count and the inventory find compare `b`, so neither
+  takes a piece for the key. ForgePact recognises a key piece by what it is:
+  the key base's class, `c` 0, a `b` that truncates to the base's index, is not
+  whole, and sits at its seed's act's tenth, each within 0.01, wide enough for
+  what a two-decimal save returns. The candidate marked by `c` alone (`c` =
+  act/20, 0.05 to 0.45, still the normal repository) is research only:
+  crafting's count ignores `c`, so it would count such a piece as the key.
+- **The icon.** ForgePact's dress writes `Gem_Incarnation_spr`, resolved by
+  name, under item info key `"11"` on every piece, so the Key tab draws the gem
+  and the ground item looks up `Pickup_Gem_Incarnation_spr`. It is not saved:
+  without ForgePact a piece shows its base's icon.
+- **The legacy bag piece**: the first builds made a piece of the game's own
+  Edible PAS Logo, class 11, `b` the category-11 entry named
+  `consumable_edible_pas_logo` (resolved by name at run time), `c` 0, `j` 0,
+  with its seed `a` set to 777100 + act. Pieces already in a bag stay so and
+  are still recognised. 777001 to 777003 are other ForgePact items' seeds.
+  Class 11 never stacks in the bag, so each such piece takes its own cell; with
+  ForgePact gone it is an Edible PAS Logo, so a save holding one loads.
 - **The use.** A detour on `PotionUse`: for an item that is a piece, the
   original is never called. Verdicts, in order: `off`, `not-piece`, `no-act`
   (the player's room has no act), `boss-room` (the drop's name rule: a `_Boss`,
@@ -289,9 +397,13 @@ name (category 15, `socketable_gem_of_incarnation`), never by index.
   the piece stays. No portal is opened. The room's pentagram does the rest;
   nothing of ours creates, moves or kills a boss.
 
+How a use takes one piece from a Key-tab stack, and whether the Key tab's
+right-click reaches the use at all, wait on the follow-up's Live procedure 1.
+
 The test file expresses this as input transforms (`piece_denominator`,
 `piece_chance`, `room_refusal`, `decide_drop`, `decide_use`, `transfer_target`,
-the seed helpers), and `ParityTests` pins the constants, the base, the act
+the seed helpers, `key_piece_b`, `key_piece_item` and `key_piece_act`), and
+`ParityTests` pins the constants, the base, the key base, the icon, the act
 table with its boss rooms, the room rules and the verdict words to the header,
 so a change on either side fails there.
 
@@ -303,9 +415,20 @@ A pure function of whole numbers, booleans and exact fractions
 - `act_of_room(room_act_index)`: the act, `RoomActIndex`'s answer itself, 1 to
   9; `None` when the answer is `false` (measured outside the switch) or
   undefined. Any other answer is refused.
+- `same_value(x, y)`: the runtime's value compare on two numbers, equal
+  within `EPSILON` (1/100000).
 - `stacks(held, picked)`: whether the game merges a picked-up `Item` (class,
-  `b`, `c`, seed) into a held one: both of class 12 to 15, the same class, the
-  same `b` and `c`; the seed is not an input to the answer.
+  `b`, `c`, seed; `b` and `c` whole or real) into a held one: both of class 12
+  to 15, the same class, `b` and `c` the same value by `same_value`; the seed
+  is not an input to the answer.
+- `repository_index(b)`: the entry a definition loads, `b` truncated toward
+  zero. `uses_unique_repository(c)`: `c` above 0.5.
+- `saved_number(value)`: a definition's number after a save and reload, under
+  `string_keeps_two_decimals`: whole stays whole, a real is rounded to two
+  decimals.
+- `counted_by_crafting(item, item_type, b)`: crafting's count, class and `b`
+  (the item-info value it also compares is left out, which can only count
+  more). `find_matches(item, b, c)`: the inventory find, `b` and `c`.
 - `gem_chance(gem_rate)`: the gem's chance on one `DropGems` call, `1/G` under
   `gem_one_in_its_rate`; `None` for a rate that is unknown, zero or negative.
 - `expected_drops(rolls, chance)`: `rolls × chance`, linear in the rolls, 0 for
@@ -327,6 +450,16 @@ pieces; an unknown rate, a boss, a town, a boss room or a source that is not a
 monster gives no piece; and a use moves the player to its act's boss room in
 towns and zones, never from a boss room or a room with no act.
 
+For the key piece, the baseline adds the game's number rules on their own: the
+compare within the epsilon, the repository index truncating `b`, a truthy `c`
+(above 0.5) picking the unique repository, and the save keeping two decimals
+(a finer step comes back whole). The target: a key piece stays apart from the
+real key (a whole-`b` piece, the positive control, merges), pieces of one act
+stack and other acts stay apart, a saved piece still stacks with a fresh one
+and stays apart from the real key, crafting's count and the inventory find
+never take a piece for the key, and a piece loads as the key base before and
+after a save.
+
 ## What the model cannot catch
 
 - **Whether `DropGems` gives the gem exactly 1 in its rate** (it may pick by
@@ -345,5 +478,11 @@ towns and zones, never from a boss room or a room with no act.
   `on-boss-2`, all passed, 2026-10-12), for acts 1 and 2 only; the model says
   nothing about acts 3 to 9's rooms.
 - **What the Edible PAS Logo's own effect is** (Live procedure 3 saw it open a
-  portal to Sheeponia), and so what using a piece does with ForgePact removed,
-  and how the drop rate feels over a season of play.
+  portal to Sheeponia), and so what using a legacy piece does with ForgePact
+  removed, and how the drop rate feels over a season of play.
+- **Anything about the key piece the numbers do not decide**: whether the save
+  really keeps two decimals, whether `InventoryGridAddToStack` compares like
+  `GridAddToStack`, which icon the Key tab, the ground and the tooltip draw,
+  whether the Key tab's right-click reaches the use, what the confirm does to a
+  stack, and whether a door or an NPC takes a piece for its key. The follow-up's
+  Live procedure 1 measures the first five; the last is not read.

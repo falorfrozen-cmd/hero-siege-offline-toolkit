@@ -14,10 +14,16 @@ checks, against `hs-game-sdk/curated/boss_soul_pieces.json` and
   room outside it (Live procedure 3 read `bool:false` in `Act_01_Boss` and
   `Act_01_Pregame`; the static reading had said undefined).
 - The stack rule (static reading): the pickup's stack attempts merge an item
-  into one whose class, `b` and `c` match, and the bag's attempt takes only
+  into one whose class matches and whose definition's `b` and `c` are the same
+  value to the runtime (two reals within the math epsilon), and take only
   classes 12 to 15. The seed `a` is never compared. Live procedure 1 measured a
   class-12 item merging into a real key of the same definition, and Live
   procedure 3 five class-11 items (pieces and a plain logo) staying apart.
+- The numbers a definition carries (static reading): `b` and `c` may be reals.
+  The repository lookup truncates `b` toward zero, a `c` above 0.5 picks the
+  unique repository, the save writes a real with two decimals
+  (`HYPOTHESES['string_keeps_two_decimals']`), crafting counts an item by class
+  and `b` (not `c`), and the inventory find matches `b` and `c`.
 - The gem roll (static reading): `DropGems` runs once per dying source whose
   `LoadDrops` drop type 6 gate passed, and rolls the socketables of repository
   category 15 against their `GetDropRate` answer. Whether that gives the Gem
@@ -29,8 +35,9 @@ checks, against `hs-game-sdk/curated/boss_soul_pieces.json` and
 
 This module models the game only. ForgePact's boss soul pieces (ForgePact#197:
 the piece's denominator, five quarters of the gem's chance, its room rules,
-its transfer and its verdicts) are that mod's own code and live in the test as
-input transforms, pinned to `SoulPieceMod.hpp`.
+its transfer, its verdicts and the key piece's `b` of the key base's index plus
+act/10) are that mod's own code and live in the test as input transforms,
+pinned to `SoulPieceMod.hpp`.
 
 Every value is an int, a bool or an exact `Fraction`. Nothing here draws a
 random number.
@@ -47,8 +54,12 @@ from typing import Dict, NamedTuple, Optional, Union
 #: How many acts `RoomActIndex` answers for (1..9).
 ACT_COUNT = 9
 
-#: The item classes the bag's stack attempt accepts (static reading).
+#: The item classes the stack attempt accepts (static reading).
 STACKABLE_CLASSES = frozenset({12, 13, 14, 15})
+
+#: How far apart two reals may be and still compare equal: GameMaker's default
+#: math epsilon. Whether the game sets another is not established.
+EPSILON = Fraction(1, 100000)
 
 #: ForgePact#197's open questions about the game. Each stays `None` (not
 #: established) until a live check of the curated file's `open_questions`
@@ -70,6 +81,10 @@ HYPOTHESES: Dict[str, Optional[bool]] = {
     # `PotionUse` answering true makes the game clear the item's cells (Live
     # procedure 1's `use-control`, the Edible PAS Logo).
     "potion_use_true_clears_the_item": True,
+    # The save's `string()` keeps a real's two decimals and writes a whole number
+    # whole (the runtime's documented behaviour, not read in this game; the
+    # follow-up's Live procedure 1 `reload-frac-kept` measures it).
+    "string_keeps_two_decimals": None,
 }
 
 Number = Union[int, Fraction]
@@ -77,11 +92,11 @@ Number = Union[int, Fraction]
 
 class Item(NamedTuple):
     """The fields the stack rule reads: class (`itemType`), the definition's
-    `b` and `c`, and the seed `a`, which it never compares."""
+    `b` and `c` (whole or real), and the seed `a`, which it never compares."""
 
     item_type: int
-    b: int
-    c: int
+    b: Number
+    c: Number
     a: int = 0
 
 
@@ -90,6 +105,19 @@ def _whole(name: str, value: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{name} must be an int, got {type(value).__name__}")
     return value
+
+
+def _number(name: str, value: Number) -> Number:
+    """A whole number or an exact fraction (a real). `bool` and `float` are refused."""
+    if isinstance(value, bool) or not isinstance(value, (int, Fraction)):
+        raise TypeError(f"{name} must be an int or Fraction, got {type(value).__name__}")
+    return value
+
+
+def same_value(x: Number, y: Number) -> bool:
+    """The runtime's general value compare on two numbers: equal when they
+    differ by no more than `EPSILON`, so 2.1 and 2 differ and 2.1 and 2.1 match."""
+    return abs(_number("x", x) - _number("y", y)) <= EPSILON
 
 
 def act_of_room(room_act_index: Union[int, bool, None]) -> Optional[int]:
@@ -107,13 +135,49 @@ def act_of_room(room_act_index: Union[int, bool, None]) -> Optional[int]:
 
 def stacks(held: Item, picked: Item) -> bool:
     """Whether the game merges `picked` into `held` on pickup: both of a class
-    the bag stacks (12 to 15), the same class, and the same `b` and `c`."""
-    fields = (held.item_type, held.b, held.c, picked.item_type, picked.b, picked.c)
-    for value in fields:
-        _whole("item field", value)
-    if held.item_type not in STACKABLE_CLASSES:
+    that stacks (12 to 15), the same class, and `b` and `c` the same value to
+    the runtime (`same_value`). The seed is not compared."""
+    for item in (held, picked):
+        _whole("item_type", item.item_type)
+        _number("b", item.b)
+        _number("c", item.c)
+    if held.item_type not in STACKABLE_CLASSES or held.item_type != picked.item_type:
         return False
-    return (held.item_type, held.b, held.c) == (picked.item_type, picked.b, picked.c)
+    return same_value(held.b, picked.b) and same_value(held.c, picked.c)
+
+
+def repository_index(b: Number) -> int:
+    """The repository entry a definition's `b` loads: the runtime's real-to-int
+    conversion truncates toward zero, so 2.1 and 2.9 load entry 2."""
+    return int(_number("b", b))
+
+
+def uses_unique_repository(c: Number) -> bool:
+    """Whether the item constructor takes the unique repository: when `c` is
+    truthy, which for a real means above 0.5."""
+    return _number("c", c) > Fraction(1, 2)
+
+
+def saved_number(value: Number) -> Number:
+    """What a definition's number reads after a save and reload, under
+    `HYPOTHESES['string_keeps_two_decimals']`: a whole number whole, a real
+    rounded to two decimals (how a tie rounds is not established; the model
+    rounds it away from zero)."""
+    hundredths = abs(_number("value", value)) * 100
+    rounded = Fraction(int(hundredths + Fraction(1, 2)), 100) * (-1 if value < 0 else 1)
+    return int(rounded) if rounded.denominator == 1 else rounded
+
+
+def counted_by_crafting(item: Item, item_type: int, b: Number) -> bool:
+    """Whether `CountInventoryItem` counts `item` for a recipe asking `item_type`
+    and `b`: it compares the class and `b`, never `c`. The item-info value it
+    also compares is left out, which can only make the model count more."""
+    return _whole("item_type", item.item_type) == _whole("item_type", item_type) and same_value(item.b, b)
+
+
+def find_matches(item: Item, b: Number, c: Number) -> bool:
+    """Whether `FindInventoryItem` takes `item` for a definition `b`, `c`."""
+    return same_value(item.b, b) and same_value(item.c, c)
 
 
 def gem_chance(gem_rate: Optional[Number]) -> Optional[Fraction]:

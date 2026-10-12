@@ -47,8 +47,10 @@ LIVE_1 = "forgepact-197-boss-soul-pieces-live-1"
 LIVE_3 = "forgepact-197-boss-soul-pieces-live-3"
 LIVE_2 = "forgepact-197-boss-soul-pieces-live-2"
 LIVE_4 = "forgepact-197-boss-soul-pieces-live-4"
+#: The follow-up's research session (the key piece, its stack and its icon).
+ICON_LIVE_1 = "forgepact-197-piece-icon-stack-live-1"
 #: Every session's capture a measured entry may name.
-LIVE_CAPTURES = (LIVE_1, LIVE_2, LIVE_3, LIVE_4)
+LIVE_CAPTURES = (LIVE_1, LIVE_2, LIVE_3, LIVE_4, ICON_LIVE_1)
 #: The rooms a session read RoomActIndex in, with the act and the capture.
 MEASURED_ROOMS = {
     "Town_01_rm": (1, LIVE_1), "Act_01_01": (1, LIVE_1), "Act_02_01": (2, LIVE_1),
@@ -60,6 +62,7 @@ from hs_game_sdk import soul_piece_model as model  # noqa: E402
 from hs_game_sdk.objects import OBJECT_NAME_TO_INDEX, is_descendant_of  # noqa: E402
 from hs_game_sdk.rooms import ROOM_NAME_TO_INDEX  # noqa: E402
 from hs_game_sdk.scripts import GameScript  # noqa: E402
+from hs_game_sdk.sprites import SPRITE_NAME_TO_INDEX  # noqa: E402
 
 DATA = json.loads(CURATED.read_text(encoding="utf-8"))
 ROOMS = json.loads(ROOM_ACTS.read_text(encoding="utf-8"))
@@ -80,6 +83,16 @@ USE_VERDICTS = ("off", "not-piece", "no-act", "boss-room", "unnamed", "transfer"
 ACTS = {row["act"]: (row["boss_object"], row["named"]) for row in DATA["acts"]}
 #: act -> the boss room its piece takes the player to.
 BOSS_ROOMS = {row["act"]: row["boss_room"] for row in DATA["acts"]}
+#: A key piece's base: the Bifröst Key (class 12; index 2 measured in #197's
+#: Live procedure 3, resolved by name at run time).
+KEY_BASE_CLASS = 12
+KEY_BASE_INDEX = 2
+#: A key piece's `b` is the base's index + act / this.
+ACT_FRACTION_DIVISOR = 10
+#: How far a key piece's `b` (and its `c` from 0) may sit from the exact value.
+KEY_PIECE_TOLERANCE = Fraction(1, 100)
+#: The owner's own Bifröst Key, as the game holds it.
+REAL_KEY = model.Item(KEY_BASE_CLASS, KEY_BASE_INDEX, 0, 767593635)
 
 
 def piece_denominator(gem_rate):
@@ -149,6 +162,36 @@ def piece_item(act, base_b=BASE_B):
     return model.Item(BASE_CLASS, base_b, 0, seed_of_act(act))
 
 
+def key_piece_b(act, base_index=KEY_BASE_INDEX):
+    """A key piece's `b`: the key base's index + act/10 (2.1 .. 2.9 on index 2)."""
+    return base_index + Fraction(act, ACT_FRACTION_DIVISOR)
+
+
+def key_piece_item(act, base_index=KEY_BASE_INDEX):
+    """A key piece of `act` as the game holds it: the key base's class, a `b`
+    whose tenths are the act, `c` 0 and the act's seed."""
+    return model.Item(KEY_BASE_CLASS, key_piece_b(act, base_index), 0, seed_of_act(act))
+
+
+def key_piece_act(item, base_index=KEY_BASE_INDEX):
+    """The act of an item that is a key piece, 0 otherwise: the key base's
+    class, `c` within the tolerance of 0, a `b` that truncates to the base's
+    index, is not whole, and sits within the tolerance of its seed's act."""
+    if item.item_type != KEY_BASE_CLASS or abs(item.c) > KEY_PIECE_TOLERANCE:
+        return 0
+    if model.repository_index(item.b) != base_index or item.b - base_index <= KEY_PIECE_TOLERANCE:
+        return 0
+    act = act_of_seed(item.a)
+    if not act or abs(item.b - key_piece_b(act, base_index)) > KEY_PIECE_TOLERANCE:
+        return 0
+    return act
+
+
+def saved(item):
+    """`item` after a save and reload: its `b` and `c` as the save writes them."""
+    return item._replace(b=model.saved_number(item.b), c=model.saved_number(item.c))
+
+
 def decide_use(mod_on, room, room_act, piece_act):
     """A confirmed right-click on an item in the backpack. Every word but
     `transfer` is a refusal, and the detour then answers `PotionUse` false."""
@@ -185,8 +228,14 @@ def _drop(case, **override):
                        c["gem_rate"], _roll(c["roll"]))
 
 
+def _real(value):
+    """A JSON number as the model takes it: whole, or an exact fraction of its
+    written decimal."""
+    return value if isinstance(value, int) else Fraction(str(value))
+
+
 def _item(fields):
-    return model.Item(fields["t"], fields["b"], fields["c"], fields["a"])
+    return model.Item(fields["t"], _real(fields["b"]), _real(fields["c"]), fields["a"])
 
 
 def _table_rooms():
@@ -247,8 +296,61 @@ class BaselineTests(unittest.TestCase):
                 key_piece = model.Item(12, 30, 0, seed_of_act(act))
                 self.assertTrue(model.stacks(real_key, key_piece))
                 self.assertTrue(model.stacks(key_piece, model.Item(12, 30, 0, seed_of_act(act % ACT_COUNT + 1))))
-        # `c` picks the unique repository, so it cannot mark a piece either.
+        # A whole `c` of 1 picks the unique repository, so it cannot mark a piece either.
         self.assertFalse(model.stacks(real_key, model.Item(12, 30, 1, seed_of_act(1))))
+        self.assertTrue(model.uses_unique_repository(1))
+
+    def test_reals_compare_within_the_epsilon(self):
+        self.assertEqual(model.EPSILON, Fraction(1, 100000))
+        two_one = Fraction(21, 10)
+        # The double the runtime holds for 2.1 is the same value as 2.1.
+        self.assertTrue(model.same_value(Fraction(2.1), two_one))
+        self.assertTrue(model.same_value(two_one, two_one + model.EPSILON))
+        self.assertFalse(model.same_value(two_one, two_one + 2 * model.EPSILON))
+        self.assertFalse(model.same_value(two_one, 2))
+        for bad in (2.1, True, None):
+            with self.subTest(bad=bad):
+                with self.assertRaises(TypeError):
+                    model.same_value(bad, 2)
+
+    def test_the_repository_index_truncates_b(self):
+        for b, index in ((2, 2), (Fraction(21, 10), 2), (Fraction(29, 10), 2), (Fraction(2.9), 2),
+                         (Fraction(3), 3), (Fraction(-21, 10), -2)):
+            with self.subTest(b=b):
+                self.assertEqual(model.repository_index(b), index)
+        for bad in (2.1, True):
+            with self.subTest(bad=bad):
+                with self.assertRaises(TypeError):
+                    model.repository_index(bad)
+
+    def test_the_save_keeps_two_decimals(self):
+        # The assumption is open until the follow-up's Live procedure 1 reloads a piece.
+        self.assertIsNone(model.HYPOTHESES["string_keeps_two_decimals"])
+        self.assertEqual(model.saved_number(2), 2)
+        self.assertIsInstance(model.saved_number(2), int)
+        self.assertEqual(model.saved_number(767593635), 767593635)
+        for act in range(1, ACT_COUNT + 1):
+            exact = Fraction(20 + act, 10)
+            with self.subTest(act=act):
+                self.assertEqual(model.saved_number(exact), exact)
+                self.assertEqual(model.saved_number(Fraction(float(exact))), exact)
+        self.assertEqual(model.saved_number(Fraction(2123, 1000)), Fraction(212, 100))
+        self.assertEqual(model.saved_number(Fraction(2127, 1000)), Fraction(213, 100))
+        self.assertEqual(model.saved_number(Fraction(-2127, 1000)), Fraction(-213, 100))
+        # A finer step than hundredths does not survive: 2.001 comes back whole.
+        self.assertEqual(model.saved_number(Fraction(2001, 1000)), 2)
+        with self.assertRaises(TypeError):
+            model.saved_number(2.1)
+
+    def test_a_truthy_c_picks_the_unique_repository(self):
+        for c, unique in ((0, False), (1, True), (Fraction(1, 2), False), (Fraction(51, 100), True),
+                          (Fraction(45, 100), False), (Fraction(1, 20), False)):
+            with self.subTest(c=c):
+                self.assertIs(model.uses_unique_repository(c), unique)
+        # The `cfrac` candidate's c (act/20, 0.05 .. 0.45) stays in the normal repository.
+        for act in range(1, ACT_COUNT + 1):
+            with self.subTest(act=act):
+                self.assertFalse(model.uses_unique_repository(Fraction(act, 20)))
 
     def test_the_bag_stacks_only_classes_12_to_15(self):
         self.assertEqual(model.STACKABLE_CLASSES, frozenset({12, 13, 14, 15}))
@@ -260,6 +362,8 @@ class BaselineTests(unittest.TestCase):
         self.assertFalse(model.stacks(model.Item(12, 4, 0), model.Item(12, 5, 0)))
         with self.assertRaises(TypeError):
             model.stacks(model.Item(True, 4, 0), model.Item(12, 4, 0))
+        with self.assertRaises(TypeError):
+            model.stacks(model.Item(12, 4.0, 0), model.Item(12, 4, 0))
 
     def test_the_logo_is_used_up_only_when_potion_use_answers_true(self):
         self.assertTrue(model.HYPOTHESES["potion_use_true_clears_the_item"])
@@ -321,6 +425,80 @@ class TargetTests(unittest.TestCase):
         self.assertNotIn(DATA["base"]["item_type"], model.STACKABLE_CLASSES)
         # Negative control: the same rule does merge two items of a stackable class.
         self.assertTrue(model.stacks(model.Item(12, BASE_B, 0, 1), model.Item(12, BASE_B, 0, 2)))
+
+    def test_a_fractional_key_piece_stays_apart_from_the_real_key(self):
+        for act in range(1, ACT_COUNT + 1):
+            piece = key_piece_item(act)
+            with self.subTest(act=act):
+                for shape in (piece, piece._replace(b=Fraction(float(piece.b)))):
+                    self.assertFalse(model.stacks(REAL_KEY, shape))
+                    self.assertFalse(model.stacks(shape, REAL_KEY))
+                self.assertEqual(key_piece_act(piece), act)
+                self.assertEqual(key_piece_act(REAL_KEY), 0)
+        # Positive control: the same piece with a whole `b` (Live procedure 1's
+        # design) merges into the real key, seed or not.
+        self.assertTrue(model.stacks(REAL_KEY, key_piece_item(1)._replace(b=KEY_BASE_INDEX)))
+
+    def test_key_pieces_stack_per_act(self):
+        for act in range(1, ACT_COUNT + 1):
+            piece = key_piece_item(act)
+            with self.subTest(act=act):
+                self.assertTrue(model.stacks(piece, piece))
+                self.assertTrue(model.stacks(piece, piece._replace(b=Fraction(float(piece.b)))))
+                for other in range(1, ACT_COUNT + 1):
+                    if other != act:
+                        self.assertFalse(model.stacks(piece, key_piece_item(other)))
+        # Neither the legacy bag piece nor a piece on another key joins them.
+        self.assertFalse(model.stacks(key_piece_item(1), piece_item(1)))
+        self.assertFalse(model.stacks(key_piece_item(1), key_piece_item(1, KEY_BASE_INDEX + 1)))
+
+    def test_a_saved_key_piece_still_stacks_with_a_fresh_one(self):
+        for act in range(1, ACT_COUNT + 1):
+            fresh = key_piece_item(act)
+            reloaded = saved(fresh._replace(b=Fraction(float(fresh.b))))
+            with self.subTest(act=act):
+                self.assertTrue(model.stacks(reloaded, fresh))
+                self.assertTrue(model.stacks(fresh, reloaded))
+                self.assertFalse(model.stacks(reloaded, saved(REAL_KEY)))
+                self.assertEqual(key_piece_act(reloaded), act)
+                for other in range(1, ACT_COUNT + 1):
+                    if other != act:
+                        self.assertFalse(model.stacks(reloaded, saved(key_piece_item(other))))
+        # The real key reloads whole and still merges with a fresh real key.
+        self.assertTrue(model.stacks(saved(REAL_KEY), REAL_KEY._replace(a=1)))
+        # The tolerance takes what a two-decimal round trip returns (at most
+        # 0.005 off) and stays under half the 0.1 between two acts.
+        self.assertGreaterEqual(KEY_PIECE_TOLERANCE, Fraction(5, 1000))
+        self.assertLess(KEY_PIECE_TOLERANCE, Fraction(1, 2 * ACT_FRACTION_DIVISOR))
+        self.assertEqual(key_piece_act(key_piece_item(1)._replace(b=Fraction(2105, 1000))), 1)
+        self.assertEqual(key_piece_act(key_piece_item(1)._replace(b=Fraction(215, 100))), 0)
+
+    def test_crafting_never_counts_a_key_piece(self):
+        for act in range(1, ACT_COUNT + 1):
+            for piece in (key_piece_item(act), saved(key_piece_item(act))):
+                with self.subTest(act=act, b=piece.b):
+                    self.assertFalse(model.counted_by_crafting(piece, KEY_BASE_CLASS, KEY_BASE_INDEX))
+                    self.assertFalse(model.find_matches(piece, KEY_BASE_INDEX, 0))
+        # Control: the real key is counted and found.
+        self.assertTrue(model.counted_by_crafting(REAL_KEY, KEY_BASE_CLASS, KEY_BASE_INDEX))
+        self.assertTrue(model.find_matches(REAL_KEY, KEY_BASE_INDEX, 0))
+        # Why the `cfrac` candidate stays research: crafting ignores `c`, so it
+        # would count a piece marked only by `c` as the key, while the find does not.
+        cfrac = model.Item(KEY_BASE_CLASS, KEY_BASE_INDEX, Fraction(1, 20), seed_of_act(1))
+        self.assertFalse(model.stacks(REAL_KEY, cfrac))
+        self.assertTrue(model.counted_by_crafting(cfrac, KEY_BASE_CLASS, KEY_BASE_INDEX))
+        self.assertFalse(model.find_matches(cfrac, KEY_BASE_INDEX, 0))
+
+    def test_a_key_piece_loads_as_its_base(self):
+        # Without ForgePact the repository lookup still finds the key base, in the
+        # normal repository, before and after a save.
+        for act in range(1, ACT_COUNT + 1):
+            for piece in (key_piece_item(act), saved(key_piece_item(act))):
+                with self.subTest(act=act, b=piece.b):
+                    self.assertEqual(model.repository_index(piece.b), KEY_BASE_INDEX)
+                    self.assertFalse(model.uses_unique_repository(piece.c))
+        self.assertEqual(model.repository_index(key_piece_b(9)), KEY_BASE_INDEX)
+        self.assertEqual(model.repository_index(REAL_KEY.b), KEY_BASE_INDEX)
 
     def test_piece_is_a_quarter_more_common_than_the_gem(self):
         for rate in (9000, 10000, 11000, 9001, 10003, 2, 7):
@@ -635,6 +813,56 @@ class CuratedTests(unittest.TestCase):
             with self.subTest(gone=gone):
                 self.assertNotIn(gone, DATA)
 
+    def test_the_key_base_is_the_bifrost_key(self):
+        key = DATA["key_base"]
+        self.assertEqual(key["repository_name"], "keys_bifrost_key")
+        self.assertEqual((key["category"], key["item_type"], key["c"]), (12, KEY_BASE_CLASS, 0))
+        self.assertEqual((key["index"], key["index_status"], key["index_capture"]),
+                         (KEY_BASE_INDEX, "measured", LIVE_3))
+        self.assertEqual(Fraction(str(key["act_step"])), Fraction(1, ACT_FRACTION_DIVISOR))
+        self.assertEqual(Fraction(str(key["tolerance"])), KEY_PIECE_TOLERANCE)
+        # Static reading until the follow-up's Live procedure 1 measures the route.
+        self.assertEqual(key["status"], "static_reading")
+        self.assertEqual(key["choice_status"], "our_code")
+        self.assertTrue(set(key["live_checks"]) >= {"merge-control", "frac-apart-key", "frac-stack",
+                                                    "frac-apart-act", "reload-frac-kept"})
+        path, _, section = key["source"].partition(" § ")
+        self.assertIn(section, (ROOT / path).read_text(encoding="utf-8"))
+        # The legacy bag piece's base stays as it was.
+        self.assertEqual(DATA["base"]["repository_name"], "consumable_edible_pas_logo")
+
+    def test_the_piece_sprite_is_the_gems_and_has_a_pickup_companion(self):
+        icon = DATA["icon"]
+        self.assertEqual(icon["info_key"], "11")
+        self.assertEqual(icon["sprite"], "Gem_Incarnation_spr")
+        self.assertEqual(icon["ground_sprite"], "Pickup_" + icon["sprite"])
+        for name in (icon["sprite"], icon["ground_sprite"]):
+            with self.subTest(name=name):
+                self.assertIn(name, SPRITE_NAME_TO_INDEX)
+        # Negative control: a sprite with no ground companion is caught.
+        self.assertNotIn("Pickup_" + "Pickup_" + icon["sprite"], SPRITE_NAME_TO_INDEX)
+        self.assertIn(icon["status"], ("unverified", "measured"))
+        self.assertIn("gem-sprite", icon["live_checks"])
+        self.assertIn("icon-ground", icon["live_checks"])
+        path, _, section = icon["source"].partition(" § ")
+        self.assertIn(section, (ROOT / path).read_text(encoding="utf-8"))
+
+    def test_the_follow_up_s_questions_wait_for_its_session(self):
+        questions = {q["question"]: q for q in DATA["open_questions"]}
+        checks = {"key_piece_survives_a_save": "reload-frac-kept",
+                  "key_tab_right_click_reaches_the_use": "keyuse-prompt",
+                  "confirm_takes_one_from_a_stack": "stackuse-all",
+                  "ground_shows_the_gems_pickup_sprite": "icon-ground"}
+        for name, check in checks.items():
+            with self.subTest(name=name):
+                entry = questions[name]
+                self.assertEqual(entry["live_check"], check)
+                if entry["status"] == "measured":
+                    self.assertEqual(entry["capture"], ICON_LIVE_1)
+                else:
+                    self.assertEqual(entry["status"], "pending")
+        self.assertEqual(questions["key_piece_survives_a_save"]["hypothesis"], "string_keeps_two_decimals")
+
     def test_the_rules_and_words_are_the_transforms(self):
         self.assertEqual(tuple(DATA["drop_verdicts"]), DROP_VERDICTS)
         self.assertEqual(tuple(DATA["use_verdicts"]), USE_VERDICTS)
@@ -724,7 +952,7 @@ class SpecTests(unittest.TestCase):
 
     def test_the_model_stays_small_and_stdlib_only(self):
         source = MODEL_FILE.read_text(encoding="utf-8")
-        self.assertLess(len(source.splitlines()), 160)
+        self.assertLess(len(source.splitlines()), 240)
         imported = set()
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.Import):
@@ -817,6 +1045,30 @@ class ParityTests(unittest.TestCase):
         self.assertRegex(body, r"if\s*\(\s*!\(\s*gemRate\s*>\s*0\.0\s*\)\s*\)\s*return 0;")
         self.assertRegex(body, r"std::floor\(\s*gemRate\s*\*[^;]*kRatioNumerator[^;]*/[^;]*kRatioDenominator")
         self.assertRegex(body, r"d\s*<\s*1\.0\s*\?\s*1")
+
+    def test_key_piece_shape_matches_the_header(self):
+        key, icon = DATA["key_base"], DATA["icon"]
+        self.assertEqual(int(self._constant("kKeyBaseCategory")), key["category"])
+        self.assertEqual(int(self._constant("kKeyBaseItemType")), key["item_type"])
+        self.assertEqual(int(self._constant("kKeyBaseItemType")), KEY_BASE_CLASS)
+        self.assertEqual(self._constant("kKeyBaseRepoName"), '"%s"' % key["repository_name"])
+        self.assertEqual(Fraction(self._constant("kActFractionDivisor")), ACT_FRACTION_DIVISOR)
+        self.assertEqual(Fraction(self._constant("kKeyPieceTolerance")), KEY_PIECE_TOLERANCE)
+        self.assertEqual(self._constant("kIconInfoKey"), '"%s"' % icon["info_key"])
+        self.assertEqual(self._constant("kPieceSpriteName"), '"%s"' % icon["sprite"])
+        self.assertEqual(self._constant("kGroundSpritePrefix")[1:-1] + icon["sprite"], icon["ground_sprite"])
+        # KeyPieceB is the transform's index + act / divisor, and nothing for no act.
+        body = self._body("inline double KeyPieceB")
+        self.assertRegex(body, r"if\s*\(\s*baseIndex\s*<\s*0\s*\|\|\s*!IsAct\(act\)\s*\)\s*return -1\.0;")
+        self.assertRegex(body, r"static_cast<double>\(baseIndex\)\s*\+\s*static_cast<double>\(act\)\s*/\s*kActFractionDivisor")
+        # KeyPieceActOfItem truncates as the repository lookup does, refuses a
+        # whole `b` and checks the seed's act within the tolerance.
+        body = self._body("inline int KeyPieceActOfItem")
+        self.assertIn("kKeyBaseItemType", body)
+        self.assertRegex(body, r"std::trunc\(b\)\s*!=\s*static_cast<double>\(baseIndex\)")
+        self.assertRegex(body, r"b\s*-\s*std::trunc\(b\)\s*<=\s*kKeyPieceTolerance")
+        self.assertRegex(body, r"ActOfSeed\(seed\)")
+        self.assertRegex(body, r"KeyPieceB\(baseIndex,\s*act\)\)\s*>\s*kKeyPieceTolerance")
 
     def test_the_transfer_leads_to_the_boss_room(self):
         self.assertRegex(self._body("inline const char* TransferTarget"), r"boss->bossRoom")
