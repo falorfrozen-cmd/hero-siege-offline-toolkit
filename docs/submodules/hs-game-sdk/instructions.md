@@ -40,6 +40,7 @@ hs-game-sdk/
 │   ├── loot_announcement_measurements.json # ForgePact #17: the rare-drop announcement chain, the rarity codes its closure branches on and the route ForgePact ships (§16.10; data only, no model)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── flight_charms_measurements.json # ForgePact #158 phase 1: walk callers, charm size keys, sprite key, the Heroic roll (RDM §19.6, §22; data only)
+│   ├── unique_pick_measurements.json # UP1-UP8: #74's stand-in picks, the unique list's lengths and ForgePact's push and coin, for unique_pick_model.py (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
 ├── python/                     # Python SDK package
@@ -59,6 +60,7 @@ hs-game-sdk/
 │   │   ├── monster_rank_model.py # What a monster's rank does to health, damage, XP and drop values, stdlib only, not exported (hand-written)
 │   │   ├── dungeon_chest_model.py # When a key dungeon's end chest opens (no monster alive) and the kill tally's quantities, stdlib only, not exported (hand-written)
 │   │   ├── skill_sliders_model.py # Projectile count, AoE scale and projectile deltaSpeed from their stats, stdlib only, not exported (hand-written)
+│   │   ├── unique_pick_model.py # Which unique the Angelic roll and the ordinary unique roll yield (one entry's share), stdlib only, not exported (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
 │   ├── pyproject.toml
@@ -182,6 +184,25 @@ scale gains, and the `deltaSpeed` the projectile-speed stats leave. What is stil
 required keyword-only `order` stands for, the AoE factor callers pass, the outcome of the chance
 rolls) is a parameter, never a guessed constant. ForgePact's research levers (`projprobe amount`,
 `aoe`, `speed`) stay in the test as transforms, pinned to `plugin/ModuleMain.cpp` by
+`LeverParityTests`.
+
+`unique_pick_model.py` (2026-10-13, ForgePact issue #158, hub #500) is built the same way: spec
+`docs/models/unique-pick-spec.md` (written from `docs/RUNTIME_DATA_MODELS.md` § 13.4, § 22.4 and
+§ 22.8), fixture `curated/unique_pick_measurements.json` (UP1-UP5 #74's `standinPicks=` counts from
+its list-injection Lives 1 to 3 of 2026-10-02, with nothing pushed and with Headhunter at 200
+copies; UP6 the measured lengths of `lootListUnique[0..5]`; UP7-UP8 ForgePact's push and coin, as
+our-code contracts), checks `tests/test_unique_pick_model.py`. It gives an entry's share of the
+Angelic roll's drops (r / T: the roll draws again until it keeps a droppable entry), and the
+ordinary unique roll's chance of dropping a given entry or anything at all (r / L and D / L: one
+draw, nothing on a miss). What is still open is a parameter, never a guessed constant: T, the
+droppable entries on the Angelic list (the replays accept one T in 40..60 until the flight charms'
+Live 2 `pool` pins it), D, and whether the ordinary roll's index can reach the list's length
+(`index_can_reach_length`). The binomial helpers are `drop_roll_model`'s, imported and not copied.
+ForgePact's push (one stand-in per switched-on item per roll, onto list 5 for Headhunter, Tyrant's
+Crown, Gabriel Wings and Witch's Broomstick, onto lists 0..4 for Pocket Elf) and its coin
+c / (n + c) stay in the test as transforms, so each item takes c / (T + e) of the Angelic roll and
+Pocket Elf c / (L_k + c) of the ordinary one, one entry's share at the player build's c = 1; they
+are pinned to `plugin/ModuleMain.cpp` and `plugin/include/ForgePact/FlightCharms.hpp` by
 `LeverParityTests`.
 
 ---
@@ -518,6 +539,7 @@ contributor can be assumed to have:
 | `test_mining_reward_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `RollsLeverParityTests` | always runs; only `RollsLeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/MiningOreMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_monster_rank_model.py` | nothing (the model, its fixture, its spec and the tracked object bindings); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/BossRarityMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_dungeon_chest_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/DungeonChestMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths and local `.claude/workorders/` captures |
+| `test_unique_pick_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/ModuleMain.cpp` or `ForgePact/plugin/include/ForgePact/FlightCharms.hpp` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_sdk_lazy_import.py` | nothing (starts fresh interpreters of the Python running the suite) | always runs |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
@@ -848,7 +870,7 @@ re-run it; regeneration is idempotent, so a second run must produce no diff.
 
 "Every file" is broader than the code, though: `player.py`/`.hpp`/`.ts`, `hooks.hpp`,
 `mod_registry.py`, `item_type.py`/`.hpp`/`.ts`, `drop_roll_model.py`, `mining_reward_model.py`,
-`monster_rank_model.py` and `dungeon_chest_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
+`monster_rank_model.py`, `dungeon_chest_model.py` and `unique_pick_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
 models are not wired
 into any aggregate on purpose (import it by its module name), and it has no C++ or TypeScript
 counterpart. They still have to be wired into the aggregates
