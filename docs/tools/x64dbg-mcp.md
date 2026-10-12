@@ -1009,11 +1009,12 @@ all three.
 - Changing x64dbg's settings: its TLS-callback breakpoints (`[Events]
   TlsCallbacks`) stay on, and the keeper resumes those pauses instead.
 - Measuring the rest of the first-hit route on the game. Its control hold
-  and the verified release were measured on the game in ForgePact #197's
-  Live 2 and `tooling-497-x64dbg-proof-rule` live 1 (§ "The frame-counter
-  proof"). The held change and the watchdog on the game are still tested
-  only against the fakes, a throwaway child process and Replan 3's throwaway
-  probe, until a session measures them.
+  was reached on the game in ForgePact #197's Live 2 (thread roster only),
+  and the frame-counter stall and the verified release were measured in
+  `tooling-497-x64dbg-proof-rule` live 1 (§ "The frame-counter proof"). The
+  held change and the watchdog on the game are still tested only against
+  the fakes, a throwaway child process and Replan 3's throwaway probe, until
+  a session measures them.
 - Upstream pull requests for the two plugin edits.
 
 ## Tests

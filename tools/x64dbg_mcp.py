@@ -1250,7 +1250,8 @@ def instrument_review(inst: dict[str, Any]) -> tuple[list[tuple[str, str]], str 
         # answer here means the game loop ran during the hold, whatever the
         # counts say: the count is published by the incident monitor's own
         # thread, and an unchanged one only shows that thread did not publish
-        # (Amendment 3, owner after Live 1). The second reading describes it.
+        # (docs/tools/x64dbg-mcp.md § "The frame-counter proof"). The second
+        # reading describes it.
         first = _count(hold[0])
         second = _count(hold[1]) if len(hold) > 1 else None
         if second is None:
