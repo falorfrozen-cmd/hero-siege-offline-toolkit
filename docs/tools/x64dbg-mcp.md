@@ -887,12 +887,19 @@ cold control that is never hit holds nothing and proves nothing.
 `instrument.note` names each gap by its reading, or, on a proven session,
 the counts (A→B before arm, the stall, C after resume); either way it gives
 the three thread verdicts, "diagnostic only". Which stall a hardware
-breakpoint's hold shows on the game, a `not_consumed` or a frozen count, is
-not yet measured at a hardware breakpoint's hit on the game: the nearest
-measurements are debug-event holds (#484's Live 2: a plugin `PauseDebug`
-pause left `incident stat` unconsumed for 10 s, and after a detach that left
-69 of 71 threads suspended `ping` went unconsumed for 15 s). The rule reads
-either outcome.
+breakpoint's hold shows on the game was measured in
+`tooling-497-x64dbg-proof-rule` live 1 (2026-10-12, ForgePact v2.2.1, the
+`control` logpoint on `CheckTalentUse`): the stall was `no-answer`. Before
+arm the counter read 8818 then 8963, each answered in under 1 s; the one
+hold reading at `HOLD_FRAMES_WAIT` was `not_consumed` after 3.0 s while the
+thread check read `frozen` (70 of 70 threads suspended); after resume it read
+9147, so `proven` was true. `detach` then returned `game_released: true`
+(9147 to 12684, `ping` answering), and outside the debugger `incident stat`
+went on rising (10850 to 13442). The earlier debug-event holds agree (#484's
+Live 2: a plugin `PauseDebug` pause left `incident stat` unconsumed for 10 s,
+and after a detach that left 69 of 71 threads suspended `ping` went
+unconsumed for 15 s). A frozen count (`same-count`) is not observed live; the
+rule still reads either outcome.
 
 **The release verdict** (`Keeper.released`), after a confirmed detach:
 the thread check (`game`) and one reading at `FRAMES_TIMEOUT` (`frames`,
