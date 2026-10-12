@@ -4809,9 +4809,10 @@ reading.
   in § 19.2; § 19.2 also measured that a walk stays blocked when only the
   family's queries are answered, so something other than the family's queries
   holds the walk. Candidates include a query naming an object outside the
-  family, a query whose self is not the player, a builtin outside the hooked
-  set, GameMaker's own solid-collision handling, or a script outside
-  `PlayerMovement`. What holds it is **not established**.
+  family, a query whose self is not the player, a builtin the jump probe does
+  not hook (such as `instance_place_list` or `place_empty`), GameMaker's own
+  solid-collision restore, a direct callee the scan did not resolve, or a
+  script outside `PlayerMovement`. What holds it is **not established**.
 - `InstancePlaceTallest` (599) gathers the instances at a place through
   `instance_place_list` into a list it reuses, and returns the one with the
   largest `height`, or `noone` when there is none. Its direct callers are
