@@ -2516,10 +2516,10 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   `DoCraftResult` and several unnamed object events. An entry left in the list
   between rolls would be seen by all of them. Who builds the list, and whether
   it is rebuilt per zone or per load, is **not established**. **Static reading
-  (2026-10-02, issue #74).** Of the readers that roll a unique from it,
-  `DropUniqueItems` and this roll never keep a Heroic (9) entry and only
-  `DropItemHeroic` can, which § 21.4 sets out (**static reading**, 2026-10-11,
-  ForgePact #158).
+  (2026-10-02, issue #74).** Of the three rolls read for rarity
+  (`DropUniqueItems`, this roll and `DropItemHeroic`), only `DropItemHeroic`
+  can keep a Heroic (9) entry; the other readers above were not read for
+  rarity (§ 21.4, **static reading**, 2026-10-11, ForgePact #158).
 - **The unique repository.** `GetUniqueRepoStruct(type, sub, b)` indexes a
   `global` three-level array `repo[type][sub][b]` (its slot name is also
   unresolved; type 3 takes a separate branch) with GameMaker's own bounds
@@ -4801,15 +4801,18 @@ reading.
   and `object_is_ancestor`, and the variables `x`, `y`, `hSpeedFactor`,
   `vSpeedFactor`, `moving`, `mountId`, `inputState` and `pSt`. **Static
   reading** (2026-10-11).
-- It references none of `instance_place`, `tilemap_get_at_pixel`, the
-  `mp_grid_*` builtins or `move_and_collide`, and the scan found no direct
+- The scan found no reference to `instance_place`, `tilemap_get_at_pixel`,
+  the `mp_grid_*` builtins or `move_and_collide`, and it found no direct
   call from it to `CanMove` (467) or `InstancePlaceTallest` (599). **Static
   reading** (2026-10-11). The walk's own collision test is therefore most
   plausibly the three meeting builtins above, the ones answered for the jump
   in § 19.2; § 19.2 also measured that a walk stays blocked when only the
-  family's queries are answered, so either one of those queries names an
-  object outside `Collision_Parent_obj`'s family, or a script outside
-  `PlayerMovement` holds the walk. Which one is **not established**.
+  family's queries are answered. Candidates include a query naming an object
+  outside `Collision_Parent_obj`'s family and a script outside
+  `PlayerMovement` (such as `InstancePlaceTallest`); a query whose self is not
+  the player, a builtin the scan did not list, and the runtime's own
+  solid-object collision handling are not excluded. What holds the walk is
+  **not established**.
 - `InstancePlaceTallest` (599) gathers the instances at a place through
   `instance_place_list` into a list it reuses, and returns the one with the
   largest `height`, or `noone` when there is none. Its direct callers are
@@ -4821,8 +4824,9 @@ reading.
   "Movement Phasing" ("you walk through monsters", in the Item Editor's stat
   catalog), and the only caller found is `ReturnSpecificStat` (3344), the
   dispatcher Jump Power's getter is reached from too. So the game has a
-  native pass-through-monsters stat and no pass-through-terrain one. **Static
-  reading** (2026-10-11); what stat 26 does on a character is not measured.
+  native pass-through-monsters stat; a name search found no pass-through-terrain
+  one (not observed, not shown absent). **Static reading** (2026-10-11); what
+  stat 26 does on a character is not measured.
 - `playerWings` (the cosmetic wings, drawn through `GetWingSprite` (1797) and
   `ReturnWingsInfo` (3467)) and `floating` (the interface's floating state,
   set through `UiSetFloating` (4472)) are not flight mechanisms. **Static
