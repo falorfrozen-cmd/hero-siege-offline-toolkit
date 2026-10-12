@@ -343,7 +343,8 @@ our words (`RUNTIME_DATA_MODELS.md` § 9.5, § 21.3, § 21.4, § 21.7):
 Each of these is an open question. Where it decides a number or a rule the
 model uses, it is carried in the model's `HYPOTHESES`, `None` until the curated
 file's matching `open_questions` entry is `measured`; the measured ones above
-(`gem_roll_self_is_the_source`, `potion_use_true_clears_the_item`) are `True`.
+(`gem_roll_self_is_the_source`, `potion_use_true_clears_the_item`,
+`saved_count_is_kept`) are `True`.
 `class_11_never_stacks` and `room_outside_the_switch_is_undefined` are also
 measured above (Live procedure 3, capture
 `forgepact-197-boss-soul-pieces-live-3`: true, and false, since the answer
@@ -397,13 +398,9 @@ right-click, the confirm on a stack and the icon, § Measured):
   of them would take a key piece for its key is not established.
 The bag stack's open questions (the owner kept pieces in the bag after Live
 procedure 1; the follow-up's Live procedures 2 and 4 answered the merged
-pickup, the bag's count, the confirm on a bag stack and when the bag file is
-written, § Measured):
+pickup, the bag's count, the confirm on a bag stack, when the bag file is
+written and that a stack's count survives the save and a reload, § Measured):
 
-- **`saved_count_is_kept`**: whether a class-11 item's count `o` comes back
-  from a save and a relaunch as written (`reload-stack-kept`, read with
-  `tools/save_item_keys.py --defs`). The model assumes it, since the save
-  writes a whole number whole; Live procedure 4 read it kept (§ Measured).
 - **Which fields of the stack result `AddToInventory` reads** besides
   `success`: the merge writes the target's tab and cell too, and the pickup
   finished cleanly, but the fields were not separated.

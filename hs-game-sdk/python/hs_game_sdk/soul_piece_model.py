@@ -91,9 +91,10 @@ HYPOTHESES: Dict[str, Optional[bool]] = {
     # follow-up's Live procedure 1 `reload-frac-kept` measures it).
     "string_keeps_two_decimals": None,
     # A consumable's count `o` comes back from a save and reload as it was
-    # (`saved_number` keeps a whole number; the follow-up's Live procedure 2
-    # `reload-stack-kept` measures it on a piece stack).
-    "saved_count_is_kept": None,
+    # (`saved_number` keeps a whole number; the follow-up's Live procedure 4
+    # `reload-stack-kept`: piece stacks at `o` 3 and 2 saved at the stash's
+    # close and back at 3 and 2 after a relaunch).
+    "saved_count_is_kept": True,
 }
 
 Number = Union[int, Fraction]

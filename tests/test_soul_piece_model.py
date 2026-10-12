@@ -459,8 +459,9 @@ class TargetTests(unittest.TestCase):
         self.assertTrue(model.stacks(model.Item(12, BASE_B, 0, 1), model.Item(12, BASE_B, 0, 2)))
 
     def test_a_saved_consumable_keeps_its_count(self):
-        # The assumption is open until the follow-up's Live procedure 2 reloads a piece stack.
-        self.assertIsNone(model.HYPOTHESES["saved_count_is_kept"])
+        # Measured by the follow-up's Live procedure 4 (`reload-stack-kept`):
+        # piece stacks at o=3 and o=2 came back at the same counts after a relaunch.
+        self.assertIs(model.HYPOTHESES["saved_count_is_kept"], True)
         for count in (1, 2, 3, 998, model.BAG_STACK_CAP):
             with self.subTest(count=count):
                 self.assertEqual(model.saved_number(count), count)
