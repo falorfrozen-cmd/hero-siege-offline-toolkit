@@ -110,36 +110,50 @@ The tools never ask x64dbg to pause the game: `logpoint` arms on the running
 game, holding it only for a moment at a hardware breakpoint's own hit, and
 the keeper resumes every pause x64dbg takes on its own (`breaks_resumed` and
 `last_break` in `status`). Do not take a tool's word for it, though: whether
-the game's threads run is read from outside the debugger with
-`py -3 -m tools.thread_state <pid>`, a read-only check that prints one JSON
-object and exits 0 only for the verdict `running`. Quote its output into the
-capture each time the steps below run it.
+the game runs is read from the game loop itself. The keeper reads ForgePact's
+incident monitor frame counter (`ping` plus `incident stat`, through
+hs-drive's file IPC) and records each reading in `instrument.frames`. The
+instrument is `proven` only when that frame counter advanced across two
+readings before the control was armed (`before_arm`), stalled at the control
+hold (`stall` `no-answer` or `same-count`), and advanced again after the
+hold's resume (`after_resume`); a detach reports `game_released: true` only
+for a proven session whose counter advanced after it with `ping` answering.
+You still run `py -3 -m tools.thread_state <pid>`, a read-only check of the
+game's threads that prints one JSON object and exits 0 only for the verdict
+`running`, and quote its output into the capture each time the steps below
+run it, but as a diagnostic only: its verdict decides neither `proven` nor
+`game_released` (`docs/tools/x64dbg-mcp.md` § "The frame-counter proof").
 
 1. **Attach after the game's positive control**, under the lease you already
    hold; the attach refuses without it. Run `py -3 -m tools.x64dbg_mcp attach
    --game` (or `attach <pid>`), then the `status` tool, and copy the session
    state it reports into the capture, with its `instrument` field verbatim.
-   Then run `py -3 -m tools.thread_state <pid>` yourself. Attaching does not
-   pause the game (there is no attach break), so right after attach
-   `instrument` holds only the check before attach, with `control_hold`
-   null and `proven: false`: that is expected, not a failure, because the
-   frozen reading comes at the control logpoint's first hit (step 2). A
-   non-zero exit, `ready: false`, or the state `attach-unconfirmed` means the
+   Then run `py -3 -m tools.thread_state <pid>` yourself and quote it, a
+   diagnostic. Attaching does not pause the game (there is no attach break),
+   so right after attach `instrument` holds only the thread check before
+   attach, with `control_hold` null, no `frames` yet and `proven: false`:
+   that is expected, not a failure, because the frame counter is first read
+   when the control logpoint arms, and stalls only at its first hit (step
+   2). A non-zero exit, `ready: false`, or the state `attach-unconfirmed` means the
    attach was not seen through and the game may be paused: run `detach`
    (step 5) and return `LIVE-ABORTED`, quoting what `attach` printed.
 2. **Debugger positive control first.** A `logpoint` on the control address
    the procedure names, with a counter in its log string
    (`#{d:$breakpointcounter}`), then read its hits through `log` and quote
    them. No hits is `INSTRUMENT-BLIND`: tear down (step 5) before you return
-   it. The control arms by holding the game at its own first hit, where the
-   outside check must read the game frozen: that is the instrument's control
-   hold. After the control's `logpoint`, run `status` again and copy its
-   `instrument` field verbatim (the check before attach, at the control
-   hold, and after its resume, and whether that sequence is `proven`). When
-   `proven` is not true, the outside check could not be shown to see a held
-   game, so none of its `running` verdicts mean anything this session: tear
-   down (step 5) and return what the procedure says, `LIVE-ABORTED` unless it
-   names otherwise.
+   it. The control arms by holding the game at its own first hit, the
+   instrument's control hold: the keeper reads the frame counter twice
+   before it arms (`frames.before_arm`), reads it at the hold
+   (`frames.control_hold`, `hold_frames` in the reply), where it must stall,
+   and once more after the resume (`frames.after_resume`). After the
+   control's `logpoint`, run `status` again and copy its `instrument` field
+   verbatim, `instrument.frames` and `instrument.note` included (the thread
+   checks before attach, at the control hold and after its resume are in it
+   too, recorded as diagnostics). When `proven` is not true, the frame
+   counter was not shown to stall at a held game (its `note` names the
+   reading that fell short), so no later reading means the game was
+   released: tear down (step 5) and return what the procedure says,
+   `LIVE-ABORTED` unless it names otherwise.
    **After every `logpoint`**, the control's and each candidate's, take
    `hs_command` `incident stat` straight away and run
    `py -3 -m tools.thread_state <pid>` again, and quote both with the
@@ -162,13 +176,18 @@ capture each time the steps below run it.
    `disasm` shows is disassembled game code: it may go in the capture, which
    is gitignored, and nowhere else.
 5. **Tear down with `detach` before `hs_stop_game`**, and quote what it
-   returned, then run `py -3 -m tools.thread_state <pid>` once more and quote
-   it. Carry on to step 8 of the session only when the detach reply reads
-   `state: ended` with `game_released: true` (or the game was gone). Three
-   replies mean the game may be left frozen or attached instead:
-   `game-not-released` (the detach was confirmed, but game threads are still
-   suspended, and the reply names them), a reply whose `game_released` is not
-   true, and `detach-unconfirmed` (x64dbg may still be attached). On any of
+   returned, its `frames` reading verbatim and its `threads_note` when
+   present, then run `py -3 -m tools.thread_state <pid>` once more and quote
+   it as a diagnostic. Carry on to step 8 of the session only when the
+   detach reply reads `state: ended` with `game_released: true` (or the game
+   was gone). Three replies mean the game may be left frozen or attached
+   instead: `game-not-released` (the detach was confirmed, but the frame
+   counter did not advance after it, or could not be read, and the reply
+   names the reading), a reply whose `game_released` is not true, and
+   `detach-unconfirmed` (x64dbg may still be attached). A thread check or
+   `threads_note` that reads threads suspended does not by itself stop you,
+   and one that reads `running` does not by itself let you carry on: the
+   detach reply decides. On any of
    them: no `hs_stop_game` and no restore. Leave the game as it is, keep the
    lease, skip step 8, and return `LIVE-ABORTED`, quoting the reply and the
    outside check, and saying so on the `STATE:` and `LEASE:` lines. Only a

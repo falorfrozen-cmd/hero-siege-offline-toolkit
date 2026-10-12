@@ -40,10 +40,12 @@ teardown"). `logpoint` arms its hardware breakpoint on the running game,
 through the keeper and headless's stdin. The game is held only at a
 hardware breakpoint's own hit, for the moment a change takes, and resumed at
 once (§ "Breakpoint rules"). The keeper resumes every pause x64dbg takes on
-its own and reports each one. Whether the
-game's threads actually run is checked from outside the debugger, with
-`py -3 -m tools.thread_state <pid>` (§ "Checking the game from outside the
-debugger").
+its own and reports each one. Whether the game actually runs is read from
+outside the debugger, through the game loop itself: ForgePact's incident
+monitor frame counter, read over hs-drive's file IPC (§ "The frame-counter
+proof"). `py -3 -m tools.thread_state <pid>` still reads the game's threads
+at the same points, and decides neither the instrument's proof nor a
+release (§ "Checking the game from outside the debugger").
 
 ### Why a stdio proxy, and not the plugin's own HTTP endpoint in `.mcp.json`
 
@@ -175,13 +177,13 @@ the set, and each is named `mcp__x64dbg__<tool>` on an agent's `tools:` line:
 | Tool | What it does |
 |---|---|
 | `mcp__x64dbg__status` | session state (`none`, `attaching`, `attach-unconfirmed`, `running`, `detaching`, `ended`, `detach-unconfirmed`, `game-not-released`), the target pid, whether the keeper and headless are alive, whether the plugin answers on loopback, and the hs-drive lease state. Beside those, the keeper's own record: `x64dbg_state` (x64dbg's settled state, read from its `[STATE]` lines), `breaks_resumed`, `last_break`, `break_storm` and `instrument` (§ "Attach, the keeper, and teardown"), and `paused_at_detach` and `game_released` once a teardown has set them. While a session is live it also carries `game`, a fresh outside check of the game (§ "Checking the game from outside the debugger") |
-| `mcp__x64dbg__logpoint` | adds one non-breaking hardware logging breakpoint: an `address` (an x64dbg expression such as `Hero_Siege.exe+427460`), a `log` format string (`{` `}` allowed, `"` refused), an optional log condition, an optional name, and an optional `expect_bytes`: the function's first bytes as Ghidra's copy has them, in hex. It first reads the code at the address and returns its first bytes; with `expect_bytes` a mismatch is refused before anything is set. It refuses `break_storm` while the session has one, `not_running` unless x64dbg's settled state is `running`, and `already_armed` when `bplist` already lists the address. Then it arms through headless's stdin, with no plugin pause, in one keeper hold. With no hardware breakpoint armed yet (the control), it sends a breaking `bph <A>, x, 1` and holds the game at A's own first hit; there it takes the outside check (`hold_game`, which must read `frozen`, and which proves the instrument as its control hold), sets the never-break condition `SetHardwareBreakpointCondition <A>, 0`, the log text, the optional log condition and name, reads `bplist`, and sends `run`. A cold address that is not hit within the hold timeout (10 s) is armed never-break on the running game instead, with `held: null` and a `held_note`, and proves nothing. While another logpoint is logging (a candidate), the same lines go out as a held change at that logpoint's hit (§ "Breakpoint rules"). It fails at stage `set` (a failure line from x64dbg, no `Hardware breakpoint at <A> set!` line, no `bplist` row for A, or a row without the name given), `listed-but-disabled` (A's row starts `0:`), `running` (x64dbg broke on A again in the 1.5 s after the hold: its never-break condition did not take) or `game-not-running` (the outside check after arming reads anything but `running`). Every failure clears A with a hold of `bphc <A>` and returns `cleared` and `x64dbg_state`. Success returns `steps`, `bplist`, `held` (the break line the game was held at while the rest was set: A's own first hit for the control, the logging breakpoint's hit for a candidate, or null), `hold_game` (at a first hit), `x64dbg_state` and `game`, the outside check after the resume. It never calls the plugin's `PauseDebug`, `run` or `ExecuteDbgCommand` |
+| `mcp__x64dbg__logpoint` | adds one non-breaking hardware logging breakpoint: an `address` (an x64dbg expression such as `Hero_Siege.exe+427460`), a `log` format string (`{` `}` allowed, `"` refused), an optional log condition, an optional name, and an optional `expect_bytes`: the function's first bytes as Ghidra's copy has them, in hex. It first reads the code at the address and returns its first bytes; with `expect_bytes` a mismatch is refused before anything is set. It refuses `break_storm` while the session has one, `not_running` unless x64dbg's settled state is `running`, and `already_armed` when `bplist` already lists the address. Then it arms through headless's stdin, with no plugin pause, in one keeper hold. With no hardware breakpoint armed yet (the control), it sends a breaking `bph <A>, x, 1` and holds the game at A's own first hit; there it takes the outside thread check (`hold_game`, diagnostic only) and, while the instrument is unproven, the frame-counter readings of its control hold (`hold_frames`, § "The frame-counter proof"), sets the never-break condition `SetHardwareBreakpointCondition <A>, 0`, the log text, the optional log condition and name, reads `bplist`, and sends `run`. A cold address that is not hit within the hold timeout (10 s) is armed never-break on the running game instead, with `held: null` and a `held_note`, and proves nothing. While another logpoint is logging (a candidate), the same lines go out as a held change at that logpoint's hit (§ "Breakpoint rules"). It fails at stage `set` (a failure line from x64dbg, no `Hardware breakpoint at <A> set!` line, no `bplist` row for A, or a row without the name given), `listed-but-disabled` (A's row starts `0:`), `running` (x64dbg broke on A again in the 1.5 s after the hold: its never-break condition did not take) or `game-not-running` (the outside check after arming reads anything but `running`). Every failure clears A with a hold of `bphc <A>` and returns `cleared` and `x64dbg_state`. Success returns `steps`, `bplist`, `held` (the break line the game was held at while the rest was set: A's own first hit for the control, the logging breakpoint's hit for a candidate, or null), `hold_game` (at a first hit), `x64dbg_state` and `game`, the outside check after the resume. It never calls the plugin's `PauseDebug`, `run` or `ExecuteDbgCommand` |
 | `mcp__x64dbg__command` | one allowlisted x64dbg command, sent on headless's stdin (not through the plugin, § "Breakpoint rules"): delete, enable or disable a hardware breakpoint, name it, set its log condition, reset its hit count, or `bplist`. The verbs that change debug registers (`DeleteHardwareBreakpoint`/`bphc`/`bphwc`, `EnableHardwareBreakpoint`/`bphe`/`bphwe`, `DisableHardwareBreakpoint`/`bphd`/`bphwd`) go through a keeper hold, a held change while a logpoint is logging, and return its `lines`, `after` (with the `bplist` that followed), `held` and `x64dbg_state`. The others change only x64dbg's list and go straight to stdin, returning the log lines that followed. Everything else is refused, naming the allowlist: in particular a new hardware breakpoint (use `logpoint`), every software or memory breakpoint, setting a breakpoint command, `StopDebug`, `detach`, `exit`, memory writes, and any command with a `;` outside a double-quoted string. Reading a hit count is not on the list: x64dbg's `GetHardwareBreakpointHitCount` sets `$result` and, as far as is known, prints nothing, so it would answer ok with no number |
 | `mcp__x64dbg__bplist` | sends `bplist` and returns the log lines it produced |
 | `mcp__x64dbg__log` | the session log's lines after a given line number (by default the last 200), with the total line count, so logging-breakpoint hits can be paged |
 | `mcp__x64dbg__modules` | the loaded modules from the memory map; gives `Hero_Siege.exe`'s base. `bases` holds only rows in the pinned plugin's format (decimal behind `0x`, § "Breakpoint rules"); a row in any other format is listed under `unreadable`, with a note, and an address in that module is refused with `module_row_unreadable` |
 | `mcp__x64dbg__disasm` | disassembly at an address, for checking that an address maps to the function Ghidra names (it stays local; § "What stays local") |
-| `mcp__x64dbg__detach` | the teardown in § "Attach, the keeper, and teardown", through the keeper: a held `bphc`, a confirmed `detach`, `exit`, then the outside check that every game thread runs again, reported as `game_released`. A detach that left game threads suspended is the state `game-not-released`, with `ok: false`, naming the threads and the recovery |
+| `mcp__x64dbg__detach` | the teardown in § "Attach, the keeper, and teardown", through the keeper: a held `bphc`, a confirmed `detach`, `exit`, then one frame-counter reading that shows the game loop running again, reported as `game_released` (§ "The frame-counter proof"), beside the thread check (`game`, diagnostic only, and `threads_note` when it reads anything but `running`). A detach after which the counter does not advance is the state `game-not-released`, with `ok: false`, naming the reading and the recovery |
 
 The `command` allowlist's exact spellings are in `tools/x64dbg_mcp.py`, which
 is their source. Every tool that acts on the debuggee also refuses when no
@@ -311,10 +313,12 @@ These come from the 2026-10-10 probes recorded on issue #484.
   them.** Measured in Replan 3's probe, against a throwaway process and not
   the game: a breaking hardware execute breakpoint holds the target on its
   first hit about 10 to 15 ms after `bph`, synchronously, with every thread
-  at suspend count 1, so the outside check reads `frozen`: every thread in
-  the Suspended wait but the breaking thread that raised the hit, which
-  waits in an Executive wait ("When the instrument is proven" in § "Attach,
-  the keeper, and teardown"). `[STATE] paused` is the reliable sign of the hold; the
+  at suspend count 1, so the outside thread check reads `frozen`: every
+  thread in the Suspended wait but the breaking thread that raised the hit,
+  which waits in an Executive wait (on the throwaway; on the game, #197's
+  Live 2 read the hold `threads-suspended`, which is why the thread check no
+  longer decides anything, "When the instrument is proven" in § "Attach, the
+  keeper, and teardown"). `[STATE] paused` is the reliable sign of the hold; the
   descriptive `Hardware breakpoint (...)` line can come a beat later. And a
   detach while held at such a hit, with no clear and no `run` first, printed
   `Detached!` and `[STATE] stopped`, and left every thread running at
@@ -323,8 +327,10 @@ These come from the 2026-10-10 probes recorded on issue #484.
   is removed, and the detach clears the trap flag on every thread first. So
   the freeze risk belongs to the plugin's pause and its software breakpoint,
   which no tool path uses. The first such hold of a session is the **control
-  hold**: the outside check taken there is the instrument's frozen reading
-  (§ "Checking the game from outside the debugger"). A held thread still
+  hold**: the frame counter's stall read there is what proves the instrument
+  (§ "The frame-counter proof"), and the thread check taken there is
+  recorded beside it, diagnostic only (§ "Checking the game from outside the
+  debugger"). A held thread still
   switches once per memory-map refresh: x64dbg reads every thread's context
   about once a second while it holds the game, and each context read
   schedules a held thread once without running its code (measured on a
@@ -350,8 +356,10 @@ These come from the 2026-10-10 probes recorded on issue #484.
   takes the pause as the hold all the same, names the first-chance line as
   its break line (`held`), and never counts the `[TODO]` notice as a break
   line or as `last_break`. Which of the two shapes appears when is not
-  established. Held there, the keeper takes the outside check (the
-  control hold), then sets the never-break condition, the log text, the log
+  established. While the instrument is unproven, the keeper first reads the
+  frame counter twice on the running game, before the `bph` (`before_arm`).
+  Held there, it takes the outside thread check and then the frame-counter
+  readings (the control hold), then sets the never-break condition, the log text, the log
   condition and the name, reads `bplist`, and sends `run`. Nothing else is
   armed, so nothing races the change. A hold that carries the breaking `bph`
   among its lines with nothing armed (an older client's shape) goes through
@@ -521,49 +529,38 @@ starts the detached keeper and returns once the keeper reports `running`,
   before that last check, it sends the one defensive `bphc` that drops a
   stale breakpoint restored from the database (§ "Breakpoint rules"). Then
   the session is `running`, with `ready: true`. **The instrument is not yet
-  proven at this point**, because attach holds nothing, so there has been
-  no frozen reading: the session's `instrument` field holds
-  `before_attach` (the baseline), `control_hold: null`, `after_resume: null`
-  and `proven: false`, with a `note` saying what is still missing. The
-  frozen reading comes later, at the first logpoint's control hold.
-- **When the instrument is proven.** `proven` turns true only for the
-  sequence running before attach, `frozen` at the control hold with the held
-  threads named, and `running` after its resume. At the control hold
-  `suspended` and `stopped` must each list every thread the check before
-  attach saw (less the baseline's), and `unreadable_counts` must be empty; a
-  thread first seen at the hold is left out. There is one exemption, the
-  breaking thread: the thread that raised the hardware-breakpoint hit waits
-  for the debugger's reply in an Executive wait, not Waiting/Suspended, so
-  `stopped` rightly leaves it out (measured on the Replan 3 probe's
-  throwaway process, 2026-10-10, not yet on the game: suspend count 1, no
-  context switch across the samples, wait reason Executive, while the six
-  other threads read Waiting/Suspended). "No context switch" here, and for
-  every thread in `suspended` and `stopped`, allows a debugger's context
-  reads: 1 to `CONTEXT_READS` (2) switches with a suspend count of 1 or
-  more in every sample (the check's `touched`). It is exempt only on that
-  signature: it is the single thread missing from `stopped`, it is in
-  `suspended`, it is in the check's `executive_waits`, and no other expected
-  thread is in `executive_waits`. Two expected threads in an Executive wait,
-  a missing thread with suspend count 0 or that switched, a missing thread
-  not in an Executive wait, or a check that carries no `executive_waits`
-  field is the same gap as any other. The exempted thread is recorded as
-  `control_hold.breaking_tid`, and `instrument.note` names it; with no
-  exemption `breaking_tid` is absent. x64dbg's own output names no thread
-  on a hit line in the probe's log, so the signature is the only source of
-  the tid. The keeper takes every first-hit hold's check (the control
-  hold's among them) no sooner than `HOLD_SETTLE` (0.25 s) after it saw the pause: x64dbg reads the breaking
-  thread's context at the pause (measured within 6 ms of `[STATE] paused`
-  on a throwaway, 2026-10-11), and the settle puts those reads, and a
-  memory-map refresh at the pause, behind the check's window, for at most
-  0.25 s more hold. A `frozen` with empty lists
-  could come from a check that read no thread at all. A check that does not
-  read the held game as frozen, or does not name the held threads, saw
-  nothing: `proven` stays false, `instrument` carries a `note` naming each
-  missing piece, and its later `running` verdicts prove nothing (AGENTS.md
-  § "Prove the Instrument Before Trusting a Negative Result"). A detach of a
-  session whose instrument was never proven reports `game_released: null`
-  with `ok: false` rather than a release, so a live procedure arms its
-  control before it tears down.
+  proven at this point**, because attach holds nothing, so the frame counter
+  has had no hold to stall at: the session's `instrument` field holds
+  `before_attach` (the baseline thread check), `control_hold: null`,
+  `after_resume: null`, no `frames` yet, and `proven: false`, with a `note`
+  saying what is still missing. The frame-counter readings come later, at
+  the first logpoint's arming and its control hold.
+- **When the instrument is proven.** `proven` turns true only when the
+  game's frame counter advanced across two readings before the control
+  logpoint was armed, stalled at the control hold (no answer within
+  `HOLD_FRAMES_WAIT`, or the same count read twice), and advanced again
+  after the hold's resume: the rule, its readings and its constants are in
+  § "The frame-counter proof". The thread checks (`before_attach`,
+  `control_hold`, `after_resume`, from `tools/thread_state.py`) are still
+  taken at each of those points and recorded in `instrument` as they read,
+  diagnostic only: no thread verdict, list or exemption makes a gap or
+  closes one (#497). The roster rule they replaced refused ForgePact #197's
+  Live 2, whose control hold read `threads-suspended` with two game threads
+  (tid 5744 and the breaking thread 36732) missing from `stopped`, while
+  the game was plainly held and later plainly ran. The keeper takes every
+  first-hit hold's thread check (the control hold's among them) no sooner
+  than `HOLD_SETTLE` (0.25 s) after it saw the pause: x64dbg reads the
+  breaking thread's context at the pause (measured within 6 ms of `[STATE]
+  paused` on a throwaway, 2026-10-11), and the settle puts those reads, and
+  a memory-map refresh at the pause, behind the check's window, for at most
+  0.25 s more hold; the frame-counter readings follow it. A counter that
+  does not stall at the hold, or a channel that never answered before arm,
+  saw nothing: `proven` stays false, `instrument.note` names each gap by its
+  reading, and later readings prove nothing (AGENTS.md § "Prove the
+  Instrument Before Trusting a Negative Result"). A detach of a session
+  whose instrument was never proven reports `game_released: null` with
+  `ok: false` rather than a release, so a live procedure arms its control
+  before it tears down.
 - **An attach the keeper did not see through is `attach-unconfirmed`**, not
   `running`, with `ready: false` and an error naming which of the three was
   not seen within the ready timeout (60 s): the plugin never answered a
@@ -613,28 +610,38 @@ starts the detached keeper and returns once the keeper reports `running`,
   2. a settle at `running`, resuming any pause, for 10 s at most. If x64dbg
      never settles, the state records `paused_at_detach: true` and the
      detach goes ahead: no tool path plants a pause breakpoint any more, and
-     the outside check decides;
+     the frame-counter reading after it decides;
   3. `detach`, confirmed when the plugin reports no session and the log has
      `Detached!`;
   4. `exit`. Only after a confirmed detach may the keeper end a headless
      that has not exited;
-  5. the outside check, leaving out the threads the baseline already found
-     suspended or stopped. `running` ends the session `ended` with
-     `detach_confirmed: true` and `game_released: true`, when the checks
-     before attach, at the control hold and after its resume proved the
-     instrument; when they did not, it ends `ended` with `game_released: null`, `ok: false` and a
-     note that the instrument was not proven, and the CLI exits 1. `gone`
-     ends it `ended` with `game_released: null` and a note. Anything else is
-     `game-not-released`.
+  5. the thread check (`game`, leaving out the threads the baseline already
+     found suspended or stopped, diagnostic only) and one frame-counter
+     reading at `FRAMES_TIMEOUT` (`frames`). The counter decides, by the
+     release verdict in § "The frame-counter proof": a counter that advanced
+     past every count this session read, with `ping` answering `pong`, ends
+     the session `ended` with `detach_confirmed: true` and `game_released:
+     true` when the instrument was proven; when it was not, it ends `ended`
+     with `game_released: null`, `ok: false` and a note that the stall was
+     never shown, and the CLI exits 1. A game gone ends it `ended` with
+     `game_released: null` and a note. A counter that did not advance, or a
+     channel that could not be read, is `game-not-released`. A thread check
+     that reads anything but `running` adds `threads_note` and never changes
+     the verdict.
 
   An unconfirmed detach leaves headless alone, sets the state to
   `detach-unconfirmed`, and fails loudly: the game stays running and the lease
   stays held, and whoever is running the session says so.
-- **`game-not-released`: the detach was confirmed, and the game's threads
-  were not given back.** The reply has `ok: false`, `detach_confirmed: true`
-  and `game_released: false` (`null` when the check read `unreadable`), and
-  `game` holds the check. Its error names each suspended thread with its
-  suspend count and each stopped thread. Only a force-stop releases them:
+- **`game-not-released`: the detach was confirmed, and the game loop was
+  not shown running after it.** The reply has `ok: false`,
+  `detach_confirmed: true`, `frames` (the reading) and `game` (the thread
+  check). `game_released` is `false` when the reading was `not_consumed` or
+  answered with no advance and an earlier reading of this session was
+  answered (the channel worked, and now the loop does not run); it is `null`
+  when no reading of this session was ever answered, or the reading was
+  `ipc_unavailable`, `ipc_other_copy` or `no_frame_counter`. Its error names
+  the reading, and the threads from `threads_note` when the thread check
+  read anything but `running`. Only a force-stop releases a held game:
   these tools never resume a game thread (no `ResumeThread`, no x64dbg
   `resumeallthreads`). The driver runs `hs_stop_game` with `force=true`, then
   `hs_saves_restore` of this session's backup; `live-operator` returns
@@ -650,8 +657,13 @@ starts the detached keeper and returns once the keeper reports `running`,
 reads one process's threads from the OS and touches nothing: it opens
 threads with `THREAD_QUERY_LIMITED_INFORMATION` only, never suspends,
 resumes or signals anything, and answers `unsupported` anywhere but Windows.
-It is how the tools, and the live procedure independently of them, know
-whether the game runs, without asking the debugger.
+The tools, and the live procedure independently of them, read it at each
+point of a session without asking the debugger. Since #497 it decides
+neither proof nor release: whether the instrument is proven and whether a
+detach released the game is decided by the frame counter (§ "The
+frame-counter proof"), and the thread checks in `instrument` and after
+detach are diagnostic only. `attach`'s own refusals and ready check, and
+`logpoint`'s `game-not-running` stage, still act on its verdict.
 
 ```bash
 py -3 -m tools.thread_state <pid> [--samples N] [--interval S]
@@ -765,23 +777,145 @@ A debugger's context reads at a hold, and why `touched` exists:
   listed: consistent with one memory-map refresh in the window, not
   profiled on the game. Rerun 2 read `frozen` at the same step.
 
-The controls run in every session: before attach the game reads `running`
-(`before_attach`); at the control hold, the first logpoint's first hit, it
-reads `frozen` with `suspended` and `stopped` each naming every thread the
-check before attach saw (less the baseline's, any thread new since left
-out, and the one breaking thread in an Executive wait exempt from
-`stopped`, recorded as `breaking_tid`) and `unreadable_counts` empty
-(`control_hold`), and that reading may carry `touched`, naming the threads
-x64dbg's memory-map refresh read during the hold; and after that hold is
-released it reads `running` again (`after_resume`). All three sit in
-`instrument` in `status`. Only that sequence makes a later `running` mean
-anything: a `frozen` with empty lists could come from a check that read no
-thread at all. Between attach and the first logpoint the session is
-`running` with `proven: false`, because there is no attach break to take a
-frozen reading at. Replan 3's probe measured the three readings on a
-throwaway process; on the game they are first taken live. The live
-procedure runs the CLI itself too, after attach, after each `logpoint` and
-after `detach`.
+The thread check runs at the same points in every session, and is recorded
+as it reads, diagnostic only: before attach (`before_attach`), at the
+control hold, the first logpoint's first hit (`control_hold`, which may
+carry `touched`, naming the threads x64dbg's memory-map refresh read during
+the hold, and `executive_waits`), after that hold is released
+(`after_resume`), and after detach (`game`, and `threads_note` when it reads
+anything but `running`). All three of the session's readings sit in
+`instrument` in `status`, beside `instrument.frames`, and `instrument.note`
+quotes their verdicts. None of them makes `proven` true or false, and none
+changes `game_released`: the frame counter decides both (§ "The
+frame-counter proof"). On the throwaway of Replan 3's probe the hold read
+`frozen` with one breaking thread in an Executive wait; on the game, #197's
+Live 2 read it `threads-suspended`, with tid 5744 neither suspended nor
+stopped, and that is why the roster no longer decides. Between attach and
+the first logpoint the session is `running` with `proven: false`, because
+there is no attach break to hold the game at. The live procedure runs the
+CLI itself too, after attach, after each `logpoint` and after `detach`, and
+quotes it as a diagnostic.
+
+## The frame-counter proof
+
+Whether the instrument is proven, and whether a detach released the game, is
+read from the game loop itself (#497). Before, both came from the per-thread
+roster of § "Checking the game from outside the debugger", and that rule
+refused ForgePact #197's Live 2: its control hold read `threads-suspended`
+with two game threads missing from `stopped` (tid 5744, and 36732 in an
+Executive wait), so `detach` returned `ok: false, game_released: null`
+while the game was plainly running (outside the debugger, `incident stat`
+went from frames 6898 to 9749 and `ping` answered `pong`). The owner chose
+the game loop's own evidence instead, and kept the thread check as a
+diagnostic only.
+
+**The route.** `game_frames` in `tools/x64dbg_mcp.py` sends `ping` and
+`incident stat` in one `bp_ipc\cmd.txt` write through hs-drive's file IPC
+(`tools.hs_drive_mcp.ipc.send`, imported lazily, `lease_checked=True`
+because `attach` already refused without a live lease and the keeper is not
+the lease holder, with a gate that reads the target alive or gone, so
+ForgePact's engine is never loaded). ForgePact's plugin reads that file only
+from its frame callback, every 30 frames, so a command consumed means frames
+ran, and the `pong` and the count come from the same consumption. The count
+is the integer after the first reply line starting `incident: frames `
+(ForgePact 2.2.0's incident monitor; #197 Live 2 read `incident: frames 6898
+| baseline 13.2 ms | ...`). That the count only rises within a session is
+not established, only seen rising: a count that does not rise reads as no
+advance, which errs towards unproven. Before it sends, `game_frames` checks
+that the channel `ipc.resolve_dir` gives (from `forgepact.json`'s
+`game_exe`) is the `bp_ipc` beside the target's own image; a second copy of
+the game has a channel of its own, so a mismatch is `ipc_other_copy` with
+nothing sent.
+
+**The reading** is `{answered, frames, pong, reason, elapsed_s, utc,
+detail}`, and `reason` is one of:
+
+- `answered`: consumed, with a frame count (the only reason with
+  `answered: true`);
+- `not_consumed`: nothing consumed the command within the timeout;
+- `no_frame_counter`: consumed, with no `incident: frames` line, so the
+  build has no incident monitor;
+- `ipc_unavailable`: any other refusal from hs-drive's ipc
+  (`forgepact_config_missing`, `bp_ipc_missing`, ...), an unimportable ipc
+  or an unreadable path;
+- `ipc_other_copy`: the channel is another copy's, so nothing was sent;
+- `gone`: the target exited, or its pid now names another process.
+
+A `not_consumed` leaves `cmd.txt` pending; the plugin runs it once the game
+resumes, and the next send waits it out.
+
+**The constants** sit on `Keeper`: `HOLD_FRAMES_WAIT` (3.0 s), each control
+hold reading's timeout, from the plugin's 30-frame poll (about 0.4 s at #197
+Live 2's 13.2 ms baseline, 1 s at 30 fps) plus about 0.6 s of `out.txt`
+settle; `HOLD_FRAMES_GAP` (0.5 s), the sleep between two answered readings
+at the hold; and `FRAMES_TIMEOUT` (10.0 s, hs-drive's ipc default), every
+reading of a running game. So a control hold lasts about `HOLD_SETTLE`, the
+thread check's 0.8 s and up to 3 s more, which the incident monitor sees;
+live procedures already take `incident stat` after each logpoint.
+
+**The rule** (`instrument_review` and `instrument_record`).
+`instrument.frames` is `{"before_arm": [r, r], "control_hold": [r] or [r,
+r], "after_resume": r, "stall": ...}`, and `proven` is true only with no gap
+in any of its three parts:
+
+- **before arm** (`frames.before_arm`), the positive control that the
+  channel answers and the game loop runs under the attached debugger: while
+  the instrument is unproven, the first-hit hold reads the counter twice at
+  `FRAMES_TIMEOUT` before it sends the `bph`. Both must be answered, the
+  second count greater than the first, and each `elapsed_s` at most
+  `HOLD_FRAMES_WAIT`, or a no-answer at the hold could just be a slow
+  channel;
+- **at the control hold** (`frames.control_hold`, and `hold_frames` in the
+  logpoint's reply), after the thread check: one reading at
+  `HOLD_FRAMES_WAIT`. `not_consumed` is the stall `no-answer`, which counts
+  only when before arm passed. An answer is read again after
+  `HOLD_FRAMES_GAP`: the same count is the stall `same-count`, a greater one
+  is `advanced`, a gap (the game ran while x64dbg held it). Any other reason
+  is a gap that names it;
+- **after resume** (`frames.after_resume`), after the hold settles at
+  running: one reading at `FRAMES_TIMEOUT`, answered, with a count greater
+  than every count before it. While this is the only gap left, a later hold
+  reads it again (`hold_reply`), as it retakes the thread check.
+
+`frames.stall` records which stall the hold showed (`no-answer`,
+`same-count`, `advanced` or null). A missing `frames` key is a gap, and a
+cold control that is never hit holds nothing and proves nothing.
+`instrument.note` names each gap by its reading, or, on a proven session,
+the counts (A→B before arm, the stall, C after resume); either way it gives
+the three thread verdicts, "diagnostic only". Which stall a hardware
+breakpoint's hold shows on the game, a `not_consumed` or a frozen count, is
+not yet measured at a hardware breakpoint's hit on the game: the nearest
+measurements are debug-event holds (#484's Live 2: a plugin `PauseDebug`
+pause left `incident stat` unconsumed for 10 s, and after a detach that left
+69 of 71 threads suspended `ping` went unconsumed for 15 s). The rule reads
+either outcome.
+
+**The release verdict** (`Keeper.released`), after a confirmed detach:
+the thread check (`game`) and one reading at `FRAMES_TIMEOUT` (`frames`,
+in the reply and the session state). "Advanced" means answered, `pong`
+present, and a count greater than the last count this session read.
+
+| After the detach | `state` | `game_released` | `ok` |
+|---|---|---|---|
+| the target gone | `ended` | null | true |
+| advanced, instrument proven | `ended` | true | true |
+| advanced, instrument unproven | `ended` | null, with a note that the stall was never shown | false |
+| `not_consumed`, or answered with no advance | `game-not-released` | false when an earlier reading of this session was answered, else null | false |
+| `ipc_unavailable`, `ipc_other_copy` or `no_frame_counter` | `game-not-released` | null | false |
+
+When the thread check after detach reads anything but `running`, the reply
+carries `threads_note`, naming its suspended threads with their suspend
+counts and its stopped threads. It never changes `game_released`. The
+`game-not-released` error names the reading, and keeps the force-stop
+recovery (§ "Attach, the keeper, and teardown"). The CLI `detach` exit rule
+is unchanged: 0 only for `ended` with `game_released` true, or a game that
+was gone.
+
+The tests reach neither the real `bp_ipc` nor `forgepact.json`: the session
+config's `frames_cmd` seam runs a command with the pid and the timeout
+appended and takes its JSON as the reading (anything else it prints is
+`ipc_unavailable`), and the reader's own tests patch hs-drive's ipc
+(§ "Tests").
 
 ## Which agents reach it
 
@@ -901,7 +1035,9 @@ verb), `stale_db` (a breakpoint restored from the database on attach),
 `condition_ignored`, `never_running`, `race` (a debug-register change that
 is not held silences a hot logpoint, the lost DR7 update, so the
 held-change test's control can fail), `leak_on_detach` (every game thread
-but one stays suspended after `detach`), `fail_condition`, `listed_as`,
+but one stays suspended after `detach`, and the frame counter stops),
+`leak_threads_only` (the same threads leak, but the frame counter advances:
+the game loop runs), the frame counter's modes below, `fail_condition`, `listed_as`,
 `false_success` and `exception_hold` (a breaking `bph` on a hot address hits
 at once, reported in Live 3 rerun 3's exception shape: the
 `GUI_SET_LAST_EXCEPTION` notice, the pause, the first-chance single-step line,
@@ -912,41 +1048,72 @@ refuses a hold or send stamped with another `code_id` and still detaches;
 pins the exception-shaped first hit, the settle before the `bph` and the
 session log's reading of the `[TODO]` notice.
 
-The outside check has a probe seam, `probe_cmd` in the session config: the
-logic tests point it at a fake probe whose verdict follows a file the fake
-headless writes (`frozen` at a break, the first-hit hold among them, with
-its stand-in threads listed as suspended and stopped, `running` after a
-`run`, `threads-suspended` after a leaking detach). Two modes are the
-instrument's negative controls: `blind_probe` never reads `frozen`, and
-`empty_lists` reads `frozen` at a break with no thread listed. Each must
-leave `proven: false` after the control logpoint, with a `note` naming the
-gap that `status` reports, and a detach with `game_released: null`,
-`ok: false` and CLI exit 1. The `instrument_gaps` tests check each other
-shortfall on hand-built checks: a thread left out of either list, an unread
-suspend count, no `tids`. The `breaking_thread` tests replay the probe's
-run2 readings at the first-hit hold (seven threads, tid 6320 in an Executive
-wait): the replay is proven with `breaking_tid` 6320 named in the note, and
-each negative control is not: 6320 at suspend count 0, a second expected
-thread in an Executive wait, 6320 switching between samples, a missing
-thread not in `executive_waits`, and a check with no `executive_waits`
-field. The stand-in's `breaking_thread` N mode runs the same through the
-keeper: with 1 the session is proven and records the breaking thread, with
-2 it is not. `tests.test_thread_state`'s `executive` tests read the same
-run2 samples through `classify`. The `real_os` tests use the real reader instead,
-against a stand-in game the test starts (three threads sleeping 2 ms in a
-loop) whose threads the fake headless really suspends at every break,
-the first-hit hold included, and under `leak_on_detach`: the control hold
-end to end (`proven: true`, with every stand-in thread in `suspended` and
-`stopped` at the first-hit hold and `unreadable_counts` empty), a leaking
-detach (`game-not-released`, CLI exit 1) and a clean one
+The frame counter has a seam, `frames_cmd` in the session config, which
+the test helper sets on every session, so no keeper test reaches the real
+IPC: it runs `tests/x64dbg_fake_headless.py frames <work> <pid> <timeout>`,
+which prints one reading of a stand-in counter kept in `<work>/frames.json`.
+The counter advances (60 a second) while the stand-in runs and stops while
+it is paused, and every reading taken while it runs is above the last, so
+two quick readings never tie. While paused it prints `not_consumed` at
+once, with `elapsed_s` the timeout: it never sleeps the timeout. Its modes:
+`frames_never_stall` (the counter advances while paused),
+`frames_answer_held` (it answers while paused, with the frozen count),
+`frames_dead` (always `not_consumed`) and `frames_slow` S (running readings
+report `elapsed_s` S). The `frames_proof` tests replay hand-built
+`instrument` records through `instrument_record`: Live 2's shape
+(`threads-suspended`, two threads missing) with a stalled counter is proven,
+and so is `same-count`; a counter that advanced at the hold, no advance
+before arm, a slow before-arm reading with a no-answer hold, no advance after
+resume, `ipc_unavailable` at the hold and a record with no `frames` key are
+not, and a frozen roster does not save an advancing counter. The
+`instrument_gaps` tests name each frames shortfall by its reading. The
+`frames_keeper` tests run the same through the fake: the default mode is
+proven with `frames.stall` `no-answer`, `frames_answer_held` with
+`same-count`, and `frames_never_stall`, `frames_dead` and `frames_slow` 5
+each leave `proven: false` with a `note`, and a detach with
+`game_released: null`, `ok: false` and CLI exit 1. The `frames_release`
+tests pin the release verdict: a clean detach is `game_released: true` with
+exit 0, `leak_on_detach` is `game-not-released` with `game_released: false`
+and exit 1, `leak_threads_only` is released with a `threads_note`, and a
+channel that never answered gives null. The `frames_reader` tests call
+`game_frames` with no seam and `tools.hs_drive_mcp.ipc`'s `send` and
+`resolve_dir` patched: one send of `["ping", "incident stat"]` with
+`lease_checked=True` and a gate reading running, each refusal mapped to its
+reason, a reply with no counter mapped to `no_frame_counter`, another copy's
+channel refused as `ipc_other_copy` and an unreadable image path as
+`ipc_unavailable`, each without a send, a gone target as `gone`, and the
+seam's own output (a reading, or `ipc_unavailable`).
+
+The thread check has a probe seam too, `probe_cmd` in the session config:
+the logic tests point it at a fake probe whose verdict follows a file the
+fake headless writes (`frozen` at a break, the first-hit hold among them,
+with its stand-in threads listed as suspended and stopped, `running` after
+a `run`, `threads-suspended` after a leaking detach). The
+`roster_diagnostic` tests show the roster no longer decides: `blind_probe`
+(never reads `frozen`), `empty_lists` (reads `frozen` with no thread listed)
+and the stand-in's `breaking_thread` 2 mode (two expected threads in an
+Executive wait), each with the counter stalling, are proven, with the thread
+check still recorded in `instrument.control_hold`; the probe's run2 replay
+(seven threads, tid 6320 in an Executive wait) and the variants the old rule
+refused are proven by frames, and as negative controls the same roster with
+an advancing counter or a dead channel is not. `tests.test_thread_state`'s
+`executive` tests read the same run2 samples through `classify`. The
+`real_os` tests use the real reader instead, against a stand-in game the
+test starts (three threads sleeping 2 ms in a loop) whose threads the fake
+headless really suspends at every break, the first-hit hold included, and
+under `leak_on_detach`, with the stand-in counter deciding and the real
+threads read as a diagnostic: the control hold end to end (`proven: true`,
+with every stand-in thread in `suspended` and `stopped` at the first-hit
+hold), a leaking detach (`game-not-released`, CLI exit 1) and a clean one
 (`game_released: true`, CLI exit 0). The stand-in's `context_reads` S mode,
 with `real_os`, reads the context of each thread it suspended every S
 seconds from the break while paused, as x64dbg's memory-map refresh does:
 the `context_read` tests run the control hold with S 0.6 (one or two reads
 in the check's window: `frozen`, `control_hold.touched` covering the
-stand-in game's threads, progress above 0, proven) and, as the negative
-control, with S 0.15 (four or more reads: not `frozen`, nothing touched,
-not proven). The `control_settle` test reads the time of the break and of
+stand-in game's threads, progress above 0, proven) and, as the thread
+check's negative control, with S 0.15 (four or more reads: not `frozen`,
+nothing touched, recorded as read, and proven by the stalled counter all
+the same). The `control_settle` test reads the time of the break and of
 each probe-seam call, which the stand-in leaves in its work directory, and
 checks that the hold-time check came at least `HOLD_SETTLE` after the
 break. The `real_os` tests run on Windows with a 64-bit Python only and
