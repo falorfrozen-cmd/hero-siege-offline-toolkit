@@ -5205,8 +5205,9 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
 - **`instance_create_depth(x, y, depth, obj)` spawns a monster with the current
   room's stats.** `enemyRarity` and the affixes (`affixList` plus the
   `enemyAffix` flag array) set right after creation are applied when the stats
-  are built. `aggroRange` is reset to 300 then, so it (and `distance`, which AFK
-  also sets) must be set a frame later. **Measured** (AFK §6.1-§6.3).
+  are built. `aggroRange` is reset to 300 then, so it must be set a frame later.
+  **Measured** (AFK §6.1-§6.3). AFK also sets `distance` a frame later; that the
+  game resets `distance` was not observed.
 - **A monster spawned in a town removes itself within a second.** Answering the
   room routines `CheckTown` false and `RoomIsZone` true, and answering
   `GetAct`, `GetMonsterLevel` and `ReturnEnemyStats` for a reference zone, only
@@ -5220,8 +5221,9 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
 - **Kill parity.** Health written to 0 runs the death, but `DropItem` ran only
   about half the time and no XP was given. `DropItem` with the player-kill
   arguments plus `EnemyGiveExperience(self = monster, other = player,
-  killExperience)` matches a hero kill. A monster younger than 60 frames has no
-  drop table yet. **Measured** (AFK §6.11).
+  killExperience)` matches a hero kill. **Measured** (AFK §6.11). The drop table
+  is built a few frames after creation; AFK waits 60 frames before hitting a
+  spawned monster as a margin, and the exact delay was not measured.
 
 ### 21.7 Blockers, the path grid and rooms
 
