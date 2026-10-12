@@ -2519,7 +2519,9 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   (2026-10-02, issue #74).** Of the three rolls read on 2026-10-11
   (`DropUniqueItems`, this roll and `DropItemHeroic`), only `DropItemHeroic`
   keeps a Heroic (9) entry; the other readers listed here were not read for
-  rarity (§ 21.4, **static reading**, 2026-10-11, ForgePact #158).
+  rarity (§ 21.4, **static reading**, 2026-10-11, ForgePact #158). Called with
+  the player as `self`, `DropItemHeroic` placed seven Heroic and three Satanic
+  uniques in ten calls (§ 21.4, **measured**, 2026-10-12).
 - **The unique repository.** `GetUniqueRepoStruct(type, sub, b)` indexes a
   `global` three-level array `repo[type][sub][b]` (its slot name is also
   unresolved; type 3 takes a separate branch) with GameMaker's own bounds
@@ -4796,8 +4798,10 @@ player's walk on 2026-10-11, in the build Ghidra imported (the one
 local scan for the names a function's code references. A name scan lists
 candidate direct call sites; it is blind to calls through the script table or
 a method value, so a call it did not find is not observed, not absent. Live 1
-of that research measures the walk; until then every claim here is a static
-reading.
+of that research measured the walk on 2026-10-12 (research DLL sha256
+`ef6af41d4bd3ff478f3516a30dc46c4dd699caed8ab383ef5a5aeb7558ac323f`, slot 14
+"Sorak", `Town_01_rm`, x64dbg logpoints and the `jumpprobe` hooks together);
+each claim below says whether it is a static reading or measured.
 
 - `gml_Script_PlayerMovement` (2774) does not decompile within the tool's
   limit: it is roughly 200 KB of compiled code. Read as the names its code
@@ -4817,14 +4821,45 @@ reading.
   family, a query whose self is not the player, a builtin the jump probe does
   not hook (such as `instance_place_list` or `place_empty`), GameMaker's own
   solid-collision restore, a direct callee the scan did not resolve, or a
-  script outside `PlayerMovement`. What holds it is **not established**.
+  script outside `PlayerMovement`. Live 1 found it outside `PlayerMovement`,
+  in the player object's Step event (next bullet). **Measured** (2026-10-12).
 - `InstancePlaceTallest` (599) gathers the instances at a place through
   `instance_place_list` into a list it reuses, and returns the one with the
-  largest `height`, or `noone` when there is none. Its direct callers are
-  `CanMove` (467), `playerJumpGravity` (2764) and six sites in
-  `ClassStepEvent` (561). **Static reading** (2026-10-11). § 19.2 measured
-  1944 player-self calls to it during one walk; which caller made them, and
-  whether its answer holds the walk, is **not established**.
+  largest `height`, or `noone` when there is none. **Static reading**
+  (2026-10-11). Its direct callers are `CanMove` (467), `playerJumpGravity`
+  (2764) and six sites in `gml_Object_Player_obj_Step_0`, the player object's
+  Step event: a function the symbol dump does not name, whose entry the
+  runner's object-event registration table stores beside that name (the same
+  table read names `ClassStepEvent`'s entry correctly). The 2026-10-11
+  reading had put the six sites in `ClassStepEvent` (561), the nearest named
+  script, which the Step event follows in the image; that was wrong. **Static
+  reading** (2026-10-12, a byte scan of direct call sites and the
+  registration table).
+- During a walk, every player-self call to `InstancePlaceTallest` came from
+  the player object's Step event, three of its six sites at a time, equally
+  often (a different three at the ravine edge south of the town and at the
+  church's stone wall): 315 calls in a 3 s blocked walk at the edge, 303 at
+  the wall. Neither `CanMove` nor `PlayerMovement` called it. `CanMove` and
+  `TilePlaceMeeting` were not observed to be called during any walk (no
+  logpoint hit while the control logged, and no call through the hooked
+  row either). **Measured** (2026-10-12).
+- **What holds a walk is the answer `InstancePlaceTallest` gives the Step
+  event.** With the player's calls to it answered `noone` and the player's
+  builtin queries answered too (`jumpprobe pass ... all scripts hold` or
+  `any scripts hold`), the walk crossed both the ravine edge (about 700 px)
+  and the church wall (about 690 px), and only the first of the three sites
+  ran. With every hooked builtin query answered and the scripts left alone
+  (`any hold`), all three sites still ran and the walk stayed held. Whether
+  answering `InstancePlaceTallest` alone, with no builtin answered, frees the
+  walk was not run. **Measured** (2026-10-12).
+- A player left inside a prop by that lever (150 ms past the ravine edge,
+  where `Collision_Parent_obj`'s family reads blocked by
+  `Block_Dynamic_Sprite_obj`) stays stuck once the lever is off: 1 s walks
+  in all four directions left the position unchanged, and the game did not
+  push the player out. **Measured** (2026-10-12). The walk's blocked-walk
+  queries also name objects outside the family (`place_meeting` named
+  `Enemy_Parent_obj` most, then `Wall_Parent_obj`, `Enemy_Child_Boss_obj` and
+  `Enemy_Only_Passage_obj`). **Measured** (2026-10-12).
 - `gml_Script_StatPhasing` (3390) is the getter behind item stat 26,
   "Movement Phasing" ("you walk through monsters", in the Item Editor's stat
   catalog), and the only caller found is `ReturnSpecificStat` (3344), the
@@ -4838,7 +4873,8 @@ reading.
   set through `UiSetFloating` (4472)) are not flight mechanisms. **Static
   reading** (2026-10-11).
 
-[Static reading](../ForgePact/docs/flight-charms-research.md#static-reading)
+[Static reading](../ForgePact/docs/flight-charms-research.md#static-reading),
+[Live 1 results](../ForgePact/docs/flight-charms-research.md#live-1-results)
 
 ---
 
@@ -5158,10 +5194,15 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
 What ForgePact's flight-charms research (#158, phase 1) read about charms,
 item size and the unique rolls on 2026-10-11, in the build Ghidra imported
 (the one `py -3 tools/decomp_index.py build-hash` names), through the ghidra
-MCP and a local scan for the names a function's code references. Every claim
-here is a static reading until that research's Live 1 measures it; the
-procedure, its checks and the Decision keys they settle are in ForgePact's
-[`docs/flight-charms-research.md`](../ForgePact/docs/flight-charms-research.md).
+MCP and a local scan for the names a function's code references. That
+research's Live 1 measured part of it on 2026-10-12 (research DLL sha256
+`ef6af41d4bd3ff478f3516a30dc46c4dd699caed8ab383ef5a5aeb7558ac323f`, slot 14
+"Sorak", `Town_01_rm`), and each claim below says whether it is a static
+reading or measured. The procedure, its checks and the Decision keys they
+settle are in ForgePact's
+[`docs/flight-charms-research.md`](../ForgePact/docs/flight-charms-research.md),
+the measurements in its
+[Live 1 results](../ForgePact/docs/flight-charms-research.md#live-1-results).
 A caller list is the direct call sites the reading found. It is blind to calls
 through the script table or a method value, so a caller it does not list is
 not observed, not absent.
@@ -5181,8 +5222,13 @@ not observed, not absent.
   pushes the item onto the array. Its direct callers are `RunItemEquipped`
   (3483) and a `Client_obj` closure. **Static reading** (2026-10-11).
 - So the equipped charms are read from `localCharmItemArray`, not through a
-  worn slot's fingerprint as the Miner's Helmet's equipped read is. The array
-  has not been read live. **Static reading** (2026-10-11).
+  worn slot's fingerprint as the Miner's Helmet's equipped read is. **Static
+  reading** (2026-10-11).
+- Read live, `localCharmItemArray` lists the charms in the charm grid, each
+  once, each with type `t` 10: twelve worn charms of sizes 1x1 to 1x5, then three
+  charms dragged into the grid from the ground appeared in it, and charms
+  moved from the grid to the bag left it. A charm in the bag is not in it.
+  **Measured** (2026-10-12).
 
 ### 21.2 Item size
 
@@ -5196,30 +5242,51 @@ not observed, not absent.
   item's footprint is read off the built item's `itemInfoStruct`, the struct
   the Custom Forge already writes (`"27"`, `"28"`, `"29"`, `"32"`; § 16.1).
   **Static reading** (2026-10-11).
-- **Which two keys hold the footprint is not established**: the reading did
-  not render the two constants. ForgePact's `charmprobe` identifies them from
-  samples of known size in Live 1.
+- The footprint is held by the `itemInfoStruct` keys `"2"` (width in cells)
+  and `"3"` (height), so `GetItemSize` answers those two. Inferred from twelve
+  worn charms of six sizes and read back on a scratch struct (written 2x3
+  read 2x3, written 4x1 read 4x1); normal Small, Large and Grand charms read
+  1x1, 1x2 and 1x3. **Measured** (2026-10-12).
+- Writing `"2"` and `"3"` as 2 and 2 on a charm's built struct before it is
+  placed gives a ground item whose `GetItemSize` answers 2x2, and the bag
+  gives it 2x2 cells. **Measured** (2026-10-12).
 - `GetItemSize` has 38 direct callers across the grid scripts, among them
   `InventoryGridAddItem` (1964), `GridHasSpace` (1966),
   `InventoryGridHasSpace` (1967), `InventoryGridHasSpaceMulti` (1968),
   `GridAddItem` (1970), `InventorySortTab` (1983), `InvGridEquipV2` (1990),
   `InventorySwapItemsNew` (2047), `ProcessInventoryGridInput` (3000) and
   `CraftEditGrid` (757). Whether every reader of an item's size goes through
-  it is **not established**. **Static reading** (2026-10-11).
+  it is **not established**. **Static reading** (2026-10-11). The bag
+  honoured a written footprint; the charm grid, the stash and the crafting
+  grid were not tried.
 - A save keeps only an item's compact definition (§ 16.1, measured), so a
   footprint written into a built item's `itemInfoStruct` is not saved and
   would have to be written each time the item is built. What a saved grid does
-  when such a footprint appears or goes away is **not established**. **Static
-  reading** (2026-10-11) for the consequence.
+  when such a footprint appears or goes away was a **static reading**
+  (2026-10-11) for the consequence; Live 1 measured both directions:
+  - Gone: after a save and a reload of the character with no rule writing it
+    again, the 2x2 charm came back 1x1 with its base icon, and nothing was
+    lost, duplicated or overlapped. **Measured** (2026-10-12).
+  - Appearing: a 1x1 charm whose right and lower neighbours were occupied was
+    built 2x2 on the reload (the rule applied). The game did not crash and
+    did not overlap the neighbours, but the charm was no longer at its cell
+    or on the bag's Extra tabs 1 to 3. The Main tab and Extra tab 4 were not
+    checked, so where it went is **not established**. **Measured**
+    (2026-10-12).
 
 ### 21.3 Charm stats and the player stats
 
 - `GetPlayerCharmData`'s direct callers are `GetItemStats` (1682) and five
   sites in `LoadSpecificStat` (2296), so the player's stat aggregation reads
   the equipped charms. **Static reading** (2026-10-11).
-- Whether a stat the Custom Forge writes on a built charm counts toward the
-  player's stats is **not measured**: the Miner's Helmet's forged stats were
-  never read off the character.
+- A stat written on a charm's built struct counts toward the player's stats:
+  a charm spawned with stat 25 (Increased Movement Speed) at 100 kept
+  `25=100` after pickup and equip, and the character sheet's Movement Speed
+  rose from 151% to 251% (the owner's reading; the owner notes a soft cap at
+  228%). A 2 s walk covered the same distance before and after, with the
+  inventory open both times; why is **not established**. After a save and
+  reload the stat was gone from the charm, as § 16.1's compact save predicts.
+  **Measured** (2026-10-12).
 - The item stat ids a charm carries are the Item Editor's numbering: 25
   Increased Movement Speed (%), 159 Physical Damage Taken Reduced by (%), 160
   Magic Damage Taken Reduced by (%), and 162 a flat Damage Taken Reduced by,
@@ -5242,7 +5309,10 @@ not observed, not absent.
   is unflagged and is neither Angelic (7) nor Unholy (10), so it can give a
   Heroic or a Satanic unique, then calls `CreateDefaultParams` and the
   placement. Its direct callers are `VaultUse` (4597) and a Chaos Tower NPC
-  closure. ForgePact has never called it. **Static reading** (2026-10-11).
+  closure. **Static reading** (2026-10-11). Called by name with the local
+  player as `self` (not a shape the game's own callers use), ten calls placed
+  ten items: seven Heroic (9) and three Satanic (6), none Angelic or Unholy,
+  and no charm. **Measured** (2026-10-12).
 - The Angelic roll keeps only rarity 7 or 10 (§ 13.4).
 - So of these three rolls only `DropItemHeroic` can drop a Heroic (9) unique.
   **Static reading** (2026-10-11).
@@ -5252,5 +5322,28 @@ not observed, not absent.
   uniques include the Angelic melons (`b` 47-50) and Goburin's Head (Unholy,
   98); its only 1x5 is Soul Collector (Unholy, 91); its Heroic 1x1 charms are
   Torstein's Anvil (52), Wizard's Dice (82) and Gladiator's Dice (83). It lists
-  Aimbot.exe `{10, 0, 76}` as Satanic, not Heroic. Live 1's `charmprobe repo`
-  reads the repository's own rarity for these.
+  Aimbot.exe `{10, 0, 76}` as Satanic, not Heroic.
+- The game's own unique repository (`GetUniqueRepoStruct`, field 27) gives
+  Aimbot.exe `{10, 0, 76}` rarity 6 (Satanic), Torstein's Anvil (52) 9
+  (Heroic), the Water Melon (47) 7 (Angelic, 2x2), Soul Collector (91) 10
+  (Unholy, 1x5) and Goburin's Head (98) 10 (Unholy, 2x2, and the only one of
+  the five flagged). **Measured** (2026-10-12).
+
+### 21.5 An item's display sprite
+
+- The built item's `itemInfoStruct` key `"11"` holds the item's display
+  sprite (each charm's own `Charms_*_spr`). A charm whose key `"11"` was given
+  a Grand charm's sprite before it was placed drew the Grand icon on the
+  ground and in the bag. Seven keys hold a sprite on every charm sampled, so
+  the key was chosen by hand and proven by that control. **Measured**
+  (2026-10-12).
+- A sprite added at runtime with `sprite_add` (a PNG of our own) and written
+  under key `"11"` draws in the bag; the ground item draws the game's error
+  placeholder instead. The item tooltip draws no icon for any charm, the
+  game's own included. **Measured** (2026-10-12).
+- A save does not keep it: after a reload, and after a full restart that
+  never added the sprite, the charm drew its base icon and the game loaded
+  normally. The stored value itself was not read (the charm was in the bag,
+  which ForgePact's probe does not list). **Measured** (2026-10-12).
+
+[Live 1 results](../ForgePact/docs/flight-charms-research.md#live-1-results)

@@ -1,0 +1,139 @@
+{
+  "$schema_note": "Live measurements for the Flight charms (ForgePact#158 phase 1, Live 1, 2026-10-12): what holds the player's walk at a prop, where the worn charms are, which itemInfoStruct keys hold an item's footprint and display sprite, what a save does with them, and what DropItemHeroic places. Research build of ForgePact ac41a23 (DLL SHA-256 ef6af41d4bd3ff478f3516a30dc46c4dd699caed8ab383ef5a5aeb7558ac323f), the `jumpprobe` walk lever and object tally, the `charmprobe` instrument and four x64dbg hardware logpoints (CheckTalentUse as the control, InstancePlaceTallest, CanMove, TilePlaceMeeting); save slot 14, character Sorak, in Town_01_rm. The procedure, its 26 checks and the argument are in ForgePact docs/flight-charms-research.md (Live procedure 1, Live 1 results, Decision); the shared facts are docs/RUNTIME_DATA_MODELS.md sections 19.6 and 21; the session capture forgepact-158-flight-charms-live-1.md stays with the hub's workorder files and is not tracked. No model or generator reads this file: tests/test_sdk_all.py checks only that curated/ is tracked, and the #158 workorder's criterion 18 reads walk_lever, walk_callers, charm_read, size_keys, size_override, save_dress, heroic_route, repo_rarity, sprite and game_build. A status is one of: measured, not-observed (the check ran, its control passed, and it saw nothing), not-established (no session answered it) or static reading (read locally from the game, never measured). The decision value is the research doc's Decision key as recorded. Addresses and call-site offsets are never recorded here; the callers are named. Static readings are our own words, never the game's text.",
+  "game_build": {
+    "status": "measured",
+    "exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "what": "The game build Live 1 ran on: `py -3 tools/decomp_index.py build-hash` printed this value before the launch, the SHA-256 of the copy the Ghidra project imported, so the logpoints and the caller names below belong to this build. Plugin v2.2.1 banner, YYTK 4.0.1.",
+    "research_dll_sha256": "ef6af41d4bd3ff478f3516a30dc46c4dd699caed8ab383ef5a5aeb7558ac323f",
+    "forgepact_commit": "ac41a23",
+    "date": "2026-10-12"
+  },
+  "walk_lever": {
+    "status": "measured",
+    "decision": "all-scripts",
+    "date": "2026-10-12",
+    "checks": ["vanilla-walk-block", "walk-all-scripts", "walk-any"],
+    "walks": [
+      {"place": "ravine edge south of the town, beside the wooden bridge", "lever": "off", "crossed": false},
+      {"place": "ravine edge", "lever": "pass 1 90 all scripts hold", "crossed": true, "moved_px": 699.5},
+      {"place": "ravine edge", "lever": "pass 1 90 any scripts hold", "crossed": true, "moved_px": 678.6},
+      {"place": "ravine edge", "lever": "pass 1 90 any hold (no scripts)", "crossed": false},
+      {"place": "church stone wall", "lever": "off", "crossed": false},
+      {"place": "church stone wall", "lever": "pass 1 90 all scripts hold", "crossed": true, "moved_px": 687.6},
+      {"place": "church stone wall", "lever": "pass 1 90 any scripts hold", "crossed": true, "moved_px": 699.5}
+    ],
+    "what": "A walk held at a prop or a building wall crosses when the player's InstancePlaceTallest calls are answered noone together with the player's builtin queries (all or any rule, with scripts); answering every hooked builtin query without the scripts leaves it held. A lever answering only InstancePlaceTallest was not run (not-established).",
+    "source": "forgepact-158-flight-charms-live-1.md (S5, S7, S8, S8b, wall repeats)"
+  },
+  "walk_callers": {
+    "status": "measured",
+    "date": "2026-10-12",
+    "checks": ["dbg-control", "dbg-instance-place-tallest", "dbg-can-move", "dbg-tile-place-meeting"],
+    "caller": "gml_Object_Player_obj_Step_0",
+    "caller_how": "Every logged return location matched a direct call site that FindCallers.java lists for InstancePlaceTallest; the six sites lie in one function the symbol dump does not name, whose entry the runner's object-event registration table stores beside the name gml_Object_Player_obj_Step_0 (the same table read names ClassStepEvent's entry correctly, the control). The 2026-10-11 static reading had put the six sites in ClassStepEvent, the nearest named script; that was wrong.",
+    "per_walk": [
+      {"walk": "S5 ravine edge, lever off", "InstancePlaceTallest": 315, "sites": "three, 105 each", "CanMove": 0, "TilePlaceMeeting": 0},
+      {"walk": "S7 ravine edge, all scripts hold", "InstancePlaceTallest": 234, "sites": "one", "CanMove": 0, "TilePlaceMeeting": 0},
+      {"walk": "S8 ravine edge, any scripts hold", "InstancePlaceTallest": 227, "sites": "one", "CanMove": 0, "TilePlaceMeeting": 0},
+      {"walk": "S8b ravine edge, any hold", "InstancePlaceTallest": 306, "sites": "three, 102 each", "CanMove": 0, "TilePlaceMeeting": 0},
+      {"walk": "church wall, lever off", "InstancePlaceTallest": 303, "sites": "three others, 105, 99 and 99", "CanMove": 0, "TilePlaceMeeting": 0},
+      {"walk": "church wall, all scripts hold", "InstancePlaceTallest": 230, "sites": "one", "CanMove": 0, "TilePlaceMeeting": 0},
+      {"walk": "church wall, any scripts hold", "InstancePlaceTallest": 234, "sites": "one", "CanMove": 0, "TilePlaceMeeting": 0}
+    ],
+    "can_move": "not-observed: no logpoint hit in any walk while the control logged, the entry showed the detour, and the hooked row read calls=0 all session",
+    "tile_place_meeting": "not-observed: as for CanMove",
+    "what": "The control CheckTalentUse logged in every walk window, and the InstancePlaceTallest logpoint's hit count equalled the hooked row's calls= in every window. Neither CanMove nor PlayerMovement called InstancePlaceTallest during a walk.",
+    "source": "forgepact-158-flight-charms-live-1.md (debugger rows, S5 to S8b and the wall repeats)"
+  },
+  "stuck_inside": {
+    "status": "measured",
+    "decision": "stuck",
+    "date": "2026-10-12",
+    "what": "Left 150 ms past the ravine edge by the all-scripts lever, the family read blocked by Block_Dynamic_Sprite_obj; with the lever off, 1 s walks in all four directions left the position unchanged and the game did not push the player out.",
+    "source": "forgepact-158-flight-charms-live-1.md (S9)"
+  },
+  "charm_read": {
+    "status": "measured",
+    "decision": "localCharmItemArray",
+    "check_verdict": "fail (count rule only)",
+    "date": "2026-10-12",
+    "what": "Controller_obj.inventoryData[0].localCharmItemArray lists the charms in the charm grid once each, type t 10: twelve worn charms, then the three spawned charms once dragged into the grid. The count read 13, not 15, because the owner moved two worn charms to the bag, and those left the array. A charm in the bag is not in it.",
+    "source": "forgepact-158-flight-charms-live-1.md (S10)"
+  },
+  "size_keys": {
+    "status": "measured",
+    "decision": "found",
+    "width_key": "2",
+    "height_key": "3",
+    "how": "inferred from twelve worn charms of sizes 1x1, 1x2, 2x1, 2x2, 1x3 and 1x5, read back on a scratch struct (wrote 2x3 read 2x3, wrote 4x1 read 4x1); not set by hand",
+    "date": "2026-10-12",
+    "what": "An item's footprint is itemInfoStruct[\"2\"] cells wide and itemInfoStruct[\"3\"] cells high. Normal Small, Large and Grand charms read 1x1, 1x2 and 1x3.",
+    "source": "forgepact-158-flight-charms-live-1.md (S10, S11)"
+  },
+  "size_override": {
+    "status": "measured",
+    "decision": "works",
+    "date": "2026-10-12",
+    "what": "A Small charm whose built struct was written 2x2 before placement read getitemsize=2x2 from a new ground item and covered 2x2 cells in the bag. Whether every other grid reads the size the same way is not-established.",
+    "source": "forgepact-158-flight-charms-live-1.md (S15)"
+  },
+  "save_dress": {
+    "removed": {
+      "status": "measured",
+      "decision": "safe",
+      "what": "After a save and a reload of the character with no rule writing the footprint again, the 2x2 charm came back 1x1 with its base icon; nothing lost, duplicated or overlapped.",
+      "source": "forgepact-158-flight-charms-live-1.md (S16)"
+    },
+    "added": {
+      "status": "measured",
+      "decision": "pending",
+      "check_verdict": "fail (outcome item-missing is none of the check's values)",
+      "what": "A 1x1 charm whose right and lower neighbours were occupied was given a 2x2 rule over a save and reload: the rule applied (dressed=1), the game did not crash, and the neighbours were intact and not overlapped, but the charm was no longer at its cell or on the bag's Extra tabs 1 to 3. The Main tab and Extra tab 4 were not checked before the saves were restored, so where it went is not-established.",
+      "source": "forgepact-158-flight-charms-live-1.md (S17)"
+    },
+    "date": "2026-10-12"
+  },
+  "forged_stat": {
+    "status": "measured",
+    "decision": "yes",
+    "date": "2026-10-12",
+    "what": "A charm spawned with item stat 25 (Increased Movement Speed) at 100 kept 25=100 after pickup and equip, and the character sheet's Movement Speed rose from 151% to 251% (the owner's reading; soft cap noted at 228%). A 2 s walk covered 607.8 px before and 607.7 px after, with the inventory open both times; why it did not rise is not-established. After a save and reload the stat was gone from the charm.",
+    "source": "forgepact-158-flight-charms-live-1.md (S13, S16)"
+  },
+  "heroic_route": {
+    "status": "measured",
+    "decision": "heroic-and-satanic",
+    "date": "2026-10-12",
+    "calls": 10,
+    "placed": 10,
+    "rarity_histogram": {"6": 3, "9": 7},
+    "charms": 0,
+    "self": "the local player (not the vault or NPC the game's own callers use)",
+    "what": "DropItemHeroic, called by name, placed seven Heroic (9) and three Satanic (6) uniques and no Angelic, Unholy or charm. S10's three spawns through the same by-name call machinery are the control.",
+    "source": "forgepact-158-flight-charms-live-1.md (S14)"
+  },
+  "repo_rarity": {
+    "status": "measured",
+    "date": "2026-10-12",
+    "entries": [
+      {"name": "Aimbot.exe", "t": 10, "sub": 0, "b": 76, "rarity": 6, "size": "1x1", "flagged": false},
+      {"name": "Torstein's Anvil", "t": 10, "sub": 0, "b": 52, "rarity": 9, "size": "1x1", "flagged": false},
+      {"name": "Water Melon", "t": 10, "sub": 0, "b": 47, "rarity": 7, "size": "2x2", "flagged": false},
+      {"name": "Soul Collector", "t": 10, "sub": 0, "b": 91, "rarity": 10, "size": "1x5", "flagged": false},
+      {"name": "Goburin's Head", "t": 10, "sub": 0, "b": 98, "rarity": 10, "size": "2x2", "flagged": true}
+    ],
+    "aimbot_rarity": 6,
+    "what": "Field 27 of GetUniqueRepoStruct's entry; Goburin's Head is the control. Aimbot.exe is Satanic in the game's own repository, as the Item Editor's catalog lists it.",
+    "source": "forgepact-158-flight-charms-live-1.md (S12)"
+  },
+  "sprite": {
+    "status": "measured",
+    "date": "2026-10-12",
+    "key": "11",
+    "key_how": "set by hand (seven keys hold a sprite on every sample), proven by a donor control: a Grand charm's sprite written under 11 drew the Grand icon on the ground and in the bag",
+    "load": "sprite_add of our own placeholder PNG gave a new sprite",
+    "draw": {"decision": "partial", "bag": "our icon", "ground": "the game's error placeholder", "tooltip": "no icon, for any charm, the control included"},
+    "save": {"decision": "safe", "what": "after a reload and after a full restart that never added the sprite, the charm drew its base small-charm icon and the game loaded; the stored value was not read, because the charm was in the bag and charmprobe charms lists the charm grid only"},
+    "source": "forgepact-158-flight-charms-live-1.md (S18, S19, S16, S20)"
+  }
+}
