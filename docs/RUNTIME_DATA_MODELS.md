@@ -1362,10 +1362,42 @@ written by separate calls, so one can be rewritten while the other is not.
 - The bag files of the #197 sessions hold class-11 soul pieces with `o` 1 and
   Key-tab stacks with their counts (`o` 964 and the like); a class-11 item with
   no `o` is saved without one. **Measured.**
+- Closing the stash saves the bag. In the follow-up's Live procedure 4
+  (2026-10-12, research build, capture
+  `forgepact-197-piece-icon-stack-live-4`, x64dbg logpoints with a
+  `CheckTalentUse` control logging in the same window), six pickups made no
+  `SaveLocalFile`, `SaveInventoryOrderNew` or inventory-window Destroy call
+  and left the bag file as it was. Opening the stash (`hs_stash_open`) wrote
+  nothing either; closing it (`hs_stash_close`) hit the logpoint on
+  `UI_Inventory_Parent_obj`'s Destroy event once, `SaveLocalFile` seven times
+  and `SaveInventoryOrderNew` once, between the fifth and sixth
+  `SaveLocalFile`, and `inventory_order_13.hss`, `herosiege13.hss` and
+  `stash.hss` were rewritten within the same second. With the stash open,
+  `menulayout UI_Inventory_Parent_obj` listed the `UI_Stash_obj` instance, so
+  the stash window is one of that parent's children, which fits the parent's
+  Destroy running at its close; which of the seven `SaveLocalFile` calls asked
+  for which kind was not logged. **Measured.** The player build's Live
+  procedure 3 (capture `forgepact-197-piece-icon-stack-live-3`) wrote the bag
+  file the same way. So the static reading above (the inventory window's
+  Destroy asks for kind 9) is measured where the window closing is the
+  stash's; the bag window's own close was not measured, because neither I nor
+  B opened it (the owner opens it with C).
+- A stop after that save did not write the bag file. In the same session a
+  piece picked up after the stash's close took a stack from 3 to 4 with no
+  save; the graceful stop then rewrote `herosiege13.hss` but not
+  `inventory_order_13.hss`, which still held 3 (`stop-bag-write`, hub issue
+  #506). **Measured.** Nor did the stops of the follow-up's Live procedures 1
+  and 2 write it.
+- A consumable's count survives the bag save and a reload. Live procedure 4's
+  bag file held two class-11 stacks at `o` 3 and 2 (read with
+  `tools/save_item_keys.py --defs`), and after a relaunch the bag held both
+  with the same counts; Live procedure 3's held `o` 1 and 2 and reloaded the
+  same. **Measured.**
 
 So a stop is not a save of the bag file, and a check that reads the bag file
-after a stop has to make the game save the bag in play first. What decides
-whether a stop writes the bag file is **not established**.
+after a stop has to make the game save the bag in play first: closing the
+stash does (measured above), and so does saving to the main menu. What
+decides whether a stop writes the bag file is **not established**.
 
 ### 9.6 Prospecting
 
@@ -5186,7 +5218,11 @@ Live procedure 3, 2026-10-11, with the x64dbg debugger, both on a research
 build; Live procedure 2 (attempt 2, its capture's second check block) and
 Live procedure 4, 2026-10-12, on the player build, the latter with the
 debugger; captures `forgepact-197-boss-soul-pieces-live-<n>`, local to the
-hub's workorder folder) or **not established**. The mod's design, its live procedures
+hub's workorder folder; and the piece icon and stack follow-up's Live
+procedures 1, 2 and 4, 2026-10-12, on research builds with the debugger, and
+its Live procedure 3, the same day, on the player build, captures
+`forgepact-197-piece-icon-stack-live-1`, `-live-2`, `-live-4` and `-live-3`,
+in the same folder) or **not established**. The mod's design, its live procedures
 and their results are in ForgePact's
 [`docs/boss-soul-pieces-research.md`](../ForgePact/docs/boss-soul-pieces-research.md).
 The MCP's callers and xrefs answers were empty for every function read here,
@@ -5384,8 +5420,12 @@ direct `call rel32` that the import's reference table does not hold.
   reading fits both of Live procedure 3's measurements below: a consumable's
   pickup reached `InventoryGridAddToStack`, and the key merge reached
   `AddToInventory` and not `InventoryGridAddToStack`, because `GridAddToStack`,
-  not watched in that session, took the key. So that merge is now attributed
-  to `GridAddToStack` by reading, not by measurement. Separately, § 9.7
+  not watched in that session, took the key. The follow-up's Live procedure 1
+  (capture `forgepact-197-piece-icon-stack-live-1`) then watched it: a piece
+  on `keys_bifrost_key` with a whole `b` merged into the owner's Bifröst Key
+  stack (38 to 39) with a `GridAddToStack` logpoint logging the pickup and
+  the `InventoryGridAddToStack` one not, the control logging in the same
+  window. **Measured.** So that merge is `GridAddToStack`'s. Separately, § 9.7
   measured `InventoryGridCanAddToStack` then `InventoryGridAddToStack` for a
   material on the prospecting grid.
 - What a stack compares. `InventoryGridAddToStack` and `GridAddToStack` walk
@@ -5434,7 +5474,14 @@ direct `call rel32` that the import's reference table does not hold.
   is **not established**). So a `b` of 2.1 differs from 2 and matches 2.1.
   **Static reading** (2026-10-12). How `InventoryGridAddToStack`, which
   `AddToInventory` tries when `GridAddToStack` takes nothing, compares `b` is
-  **not established**.
+  **not established**. In session it held: key pieces with `b` 2.10 (seed
+  777101) and 2.20 (777102) on the Bifröst Key's definition stayed apart from
+  the real key (`b` 2) and from each other, and a second 2.10 piece joined the
+  first through `GridAddToStack` (`o` 2); pieces with `b` 2 and `c` 0.05 did
+  the same. **Measured** (the follow-up's Live procedure 1, `frac-apart-key`,
+  `frac-stack`, `frac-apart-act`, `cfrac-stack`, `cfrac-apart`). Whether such
+  a `b` or `c` survives a save was not observed: that session's stop did not
+  save the bag (§ 9.5).
 - The repository lookup truncates. `GetNormalRepoStruct` turns its index
   argument into an integer through the runtime's real-to-int conversion, which
   truncates toward zero, so a `b` of 2.1 looks up entry 2. The item
@@ -5464,6 +5511,10 @@ direct `call rel32` that the import's reference table does not hold.
   stop ended in the game's fail-fast exit (`STATUS_STACK_BUFFER_OVERRUN`,
   C0000409). **Measured.** Neither Live procedure 1 nor Live procedure 2 made
   the game save the bag, so neither session's bag file holds what it built.
+  Live procedure 4 (capture `forgepact-197-piece-icon-stack-live-4`) did, by
+  closing the stash: the bag file then held two class-11 piece stacks with
+  their counts (`o` 3 and 2) and a plain logo, and after a relaunch the bag
+  held all three with the same counts. **Measured** (§ 9.5).
 - Who else compares `b`. `gml_Script_CountInventoryItem` (1925), whose direct
   callers the byte scan found to be only the crafting scripts
   `GetCraftItemsAvailable` and `CraftFindRecipeItems`, compares `itemType`, an
@@ -5503,6 +5554,27 @@ direct `call rel32` that the import's reference table does not hold.
   stack whatever the seed. **Measured** (ForgePact #197's Live procedure 3,
   2026-10-11; the player build's pieces again in Live procedure 2, 2026-10-12,
   three pieces in three cells over two bag tabs).
+- A stack result written by a detour is taken as the game's own. In the
+  follow-up's Live procedure 2 (capture
+  `forgepact-197-piece-icon-stack-live-2`, research build, x64dbg logpoints
+  on `AddToInventory`, `InventoryGridAddToStack` and `SaveInventoryOrderNew`
+  with a `CheckTalentUse` control): with ForgePact's merge off, two class-11
+  pieces of one act took two cells, each pickup hitting `AddToInventory` and
+  `InventoryGridAddToStack` once. With it on, a both-route detour on
+  `InventoryGridAddToStack` called the game first (its result a struct with
+  `tabNumber`, `x`, `y`, `tabType` and `success`, `success` false), then
+  raised a same-act bag piece's `o` from 1 to 2, refreshed its hash and wrote
+  `success` true and that piece's tab and cell into the result; the game
+  then finished the pickup as for a stack it made itself: the picked-up
+  piece left the ground and took no cell, and the counts summed to the
+  pieces picked up. The logpoint and the detour's own call count rose by the
+  same three, so the detour saw every call the logpoint did. **Measured.**
+  Whether `AddToInventory` reads any field of the result but `success` was
+  not separated. The bag draws a class-11 item's count on its cell when `o`
+  is above 1 (a small "2"); the tooltip names the item and shows no count.
+  **Measured** (the same session, `stack-draw`, `stack-tooltip`). The player
+  build stacked two pieces per act the same way (Live procedure 3,
+  `on-bag-stack`, `on-apart-act`).
 - Already in this reference: `LootGroundCreate` writes a fresh seed into `a`
   (§ 18.4); `InitItemFromJson` followed by `LootGroundCreateFromItem` keeps the
   definition it was handed (ForgePact #74's `sigdrop`; relics placed with the
@@ -5517,7 +5589,8 @@ direct `call rel32` that the import's reference table does not hold.
 Read on 2026-10-11 through the same MCP and build, for the owner's choice that a
 soul piece is used by right-clicking it in the backpack, the way a PAS token is;
 the last two bullets are what ForgePact #197's Live procedures 1, 3 and 2
-measured.
+measured, and the parts of the right-click and confirm bullets labelled
+measured are the piece icon and stack follow-up's.
 
 - `gml_Script_UiAInventoryConsumeItemConfirm` (4087) is a UI action, the answer
   to the "use this item?" prompt, and takes three values: the item, a second
@@ -5541,9 +5614,15 @@ measured.
   as the drag's is (§ 17), and a right-click on a class 7 item equips it
   (**measured**, ForgePact's
   [`stash-move-research.md`](../ForgePact/docs/stash-move-research.md)).
-  Whether a right-click on a key (class 12) reaches the prompt or any of the
-  scripts above is **not established**: Live procedure 1's pieces merged into
-  a real key stack (§ 21.3), so no piece key was ever right-clicked.
+  A right-click on a key in the Key tab reaches the equip script, not the
+  use: in the follow-up's Live procedure 1 (capture
+  `forgepact-197-piece-icon-stack-live-1`) right-clicking a key piece (class
+  12, kept apart from the real key by its `b`) opened no prompt, and a
+  `CanUsePotion` logpoint stayed at its count with the control logging,
+  where the bag logo's right-click in the same session had hit it once; with
+  ForgePact's probe detouring the use scripts, the right-clicks reached
+  `InvGridEquipV2` twice and `CanUsePotion` and `PotionUse` not at all.
+  **Measured.**
 - The click's inline dispatch lives in the grid's input script,
   `gml_Script_ProcessInventoryGridInput` (3000). It is too large for the MCP to
   decompile; its calls, listed in address order with a local Ghidra script,
@@ -5560,15 +5639,24 @@ measured.
   throughout the input script, builds description strings (type and rarity
   names, the sprite's name, loot name data); no call that removes an item was
   seen in it. **Static reading** (ForgePact #197's piece icon and stack
-  follow-up, 2026-10-12). **Not established**: whether the Key tab's grid is
-  handled by the same path, and whether `CanUsePotion` answers true for a key
-  (class 12), so whether right-clicking a key opens the prompt at all.
+  follow-up, 2026-10-12). The Key tab's right-click does not take the use
+  path (measured, the bullet above); whether `CanUsePotion` would answer true
+  for a key is **not established**, since it was never reached.
 - The confirm and a stack. After `PotionUse` answers true,
   `UiAInventoryConsumeItemConfirm` compares an item-info value with 6 (what
   that value means was not read) and then clears the item's cells one by one.
-  **Static reading** (2026-10-12). Whether the confirm takes one item from a
-  stack of N or clears all N is **not established**: every item measured
-  below was a single, unstacked one.
+  **Static reading** (2026-10-12). The confirm clears the whole stack: in the
+  follow-up's Live procedure 2 (capture
+  `forgepact-197-piece-icon-stack-live-2`), a bag item of class 11 with `o` 2
+  right-clicked, its prompt confirmed and `PotionUse` answering true left no
+  item in the bag. When `PotionUse` instead answered false after ForgePact
+  lowered `o` by one, the prompt closed with no message, the stack stayed one
+  smaller and could still be dragged to another cell, and its last piece,
+  answered true, was cleared. **Measured** (`stackuse-all`, `stackuse-one`,
+  `stackuse-after-false`, `stackuse-move`, `stackuse-last`); the player build
+  took one piece from a stack of 2 the same way (Live procedure 3,
+  `on-takes-one`). What the item-info value compared with 6 means is **not
+  established**.
 - `ConsumeToken` (631) and `gml_Script_ConsumeBPToken` (632) are Blood Pact
   token bookkeeping, not the use of an item. **Static reading**; their callers
   were not observed.
@@ -5745,8 +5833,9 @@ killed.
 ### 21.7 An item's display sprite (`itemInfoStruct["11"]`)
 
 Collected for ForgePact #197's piece icon and stack follow-up (2026-10-12).
-The measurements are ForgePact #158's (its Live procedure 1, 2026-10-12, on
-that issue's own branch, not on #197's); § 16.3's info-key table does not list
+The first measurements are ForgePact #158's (its Live procedure 1, 2026-10-12,
+on that issue's own branch, not on #197's), the last three bullets the
+follow-up's own; § 16.3's info-key table does not list
 key `"11"` yet, and #158's hub branch adds it there.
 
 - `itemInfoStruct["11"]` is the sprite an item is drawn with. A charm given a
@@ -5767,9 +5856,30 @@ key `"11"` yet, and #158's hub branch adds it there.
   both `Gem_Incarnation_spr` (9644) and `Pickup_Gem_Incarnation_spr` (15659),
   so the gem's sprite has the ground companion the lookup above wants.
   **Static search** (`hs_game_sdk.sprites`; sprite indices move between
-  builds, so a consumer resolves them by name through `asset_get_index`). That
-  a built Gem of Incarnation carries `Gem_Incarnation_spr` under key `"11"` is
-  **not established**; its `itemSprite` read undefined (§ 18.4, measured).
+  builds, so a consumer resolves them by name through `asset_get_index`). A
+  built Gem of Incarnation carries `Gem_Incarnation_spr` under key `"11"`
+  (its `itemSprite` read undefined, § 18.4). **Measured** (the follow-up's
+  Live procedure 1, capture `forgepact-197-piece-icon-stack-live-1`,
+  `gem-sprite`).
+- What a soul piece given that sprite under key `"11"` shows (the same
+  session): the bag and the Key tab drew the gem's icon on it, a real key
+  beside it its own; on the ground the piece kept its base's own pickup
+  sprite (`Pickup_Bifrost_Key_spr` on a key base, `Pickup_Edible_Pas_Logo_spr`
+  on the logo), never `Pickup_Gem_Incarnation_spr` and never the error
+  sprite; neither the key's nor the consumable's tooltip drew an icon, and
+  both named the piece. **Measured** (`icon-keytab`, `icon-legacy-bag`,
+  `icon-ground`, `icon-tooltip`). Why the ground differs from #158's charm,
+  whose ground item drew the sprite under key `"11"`, is **not
+  established**.
+- After a save and a reload, a piece stack showed its piece's name, lore
+  line and the gem's icon even with ForgePact's research probe's dress and
+  icon off and `soulpiece` never on (the follow-up's Live procedure 4,
+  capture `forgepact-197-piece-icon-stack-live-4`, `reload-base`); the
+  plugin had registered its pieces' Custom Forge entries (name, lore and
+  sprite, matched by base and seed) at boot, as it does in every session, so
+  whether key `"11"` and the name were saved with the item or put back by that
+  registration was not separated. **Measured** for that load; what a piece
+  shows with the plugin removed is **not established**.
 
 ---
 

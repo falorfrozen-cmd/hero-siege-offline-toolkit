@@ -50,8 +50,14 @@ LIVE_2 = "forgepact-197-boss-soul-pieces-live-2"
 LIVE_4 = "forgepact-197-boss-soul-pieces-live-4"
 #: The follow-up's research session (the key piece, its stack and its icon).
 ICON_LIVE_1 = "forgepact-197-piece-icon-stack-live-1"
+#: The follow-up's bag-stack session (the merge, the count drawn, the confirm on a stack).
+ICON_LIVE_2 = "forgepact-197-piece-icon-stack-live-2"
+#: The follow-up's save round trip (the stash's close saves the bag; counts kept).
+ICON_LIVE_4 = "forgepact-197-piece-icon-stack-live-4"
+#: The follow-up's player-build session.
+ICON_LIVE_3 = "forgepact-197-piece-icon-stack-live-3"
 #: Every session's capture a measured entry may name.
-LIVE_CAPTURES = (LIVE_1, LIVE_2, LIVE_3, LIVE_4, ICON_LIVE_1)
+LIVE_CAPTURES = (LIVE_1, LIVE_2, LIVE_3, LIVE_4, ICON_LIVE_1, ICON_LIVE_2, ICON_LIVE_4, ICON_LIVE_3)
 #: The rooms a session read RoomActIndex in, with the act and the capture.
 MEASURED_ROOMS = {
     "Town_01_rm": (1, LIVE_1), "Act_01_01": (1, LIVE_1), "Act_02_01": (2, LIVE_1),
@@ -863,8 +869,10 @@ class CuratedTests(unittest.TestCase):
                          (KEY_BASE_INDEX, "measured", LIVE_3))
         self.assertEqual(Fraction(str(key["act_step"])), Fraction(1, ACT_FRACTION_DIVISOR))
         self.assertEqual(Fraction(str(key["tolerance"])), KEY_PIECE_TOLERANCE)
-        # Static reading until the follow-up's Live procedure 1 measures the route.
-        self.assertEqual(key["status"], "static_reading")
+        # Measured in session by the follow-up's Live procedure 1, and not shipped:
+        # the Key tab's right-click never reached the use (keyuse-route: not-reached).
+        self.assertEqual((key["status"], key["capture"], key["shipped"]),
+                         ("measured_in_session", ICON_LIVE_1, False))
         self.assertEqual(key["choice_status"], "our_code")
         self.assertTrue(set(key["live_checks"]) >= {"merge-control", "frac-apart-key", "frac-stack",
                                                     "frac-apart-act", "reload-frac-kept"})
@@ -883,7 +891,8 @@ class CuratedTests(unittest.TestCase):
                 self.assertIn(name, SPRITE_NAME_TO_INDEX)
         # Negative control: a sprite with no ground companion is caught.
         self.assertNotIn("Pickup_" + "Pickup_" + icon["sprite"], SPRITE_NAME_TO_INDEX)
-        self.assertIn(icon["status"], ("unverified", "measured"))
+        # Measured by the follow-up's Live procedure 1: the bag draws it, the ground does not.
+        self.assertEqual((icon["status"], icon["capture"], icon["route"]), ("measured", ICON_LIVE_1, "bag-only"))
         self.assertIn("gem-sprite", icon["live_checks"])
         self.assertIn("icon-ground", icon["live_checks"])
         path, _, section = icon["source"].partition(" § ")
@@ -891,18 +900,25 @@ class CuratedTests(unittest.TestCase):
 
     def test_the_follow_up_s_questions_wait_for_its_session(self):
         questions = {q["question"]: q for q in DATA["open_questions"]}
-        checks = {"key_piece_survives_a_save": "reload-frac-kept",
-                  "key_tab_right_click_reaches_the_use": "keyuse-prompt",
-                  "confirm_takes_one_from_a_stack": "stackuse-all",
-                  "ground_shows_the_gems_pickup_sprite": "icon-ground"}
-        for name, check in checks.items():
+        # question -> (its live check, the session that answered it, or None while open)
+        checks = {"key_piece_survives_a_save": ("reload-frac-kept", None),
+                  "key_tab_right_click_reaches_the_use": ("keyuse-prompt", ICON_LIVE_1),
+                  "confirm_takes_one_from_a_stack": ("stackuse-all", ICON_LIVE_2),
+                  "ground_shows_the_gems_pickup_sprite": ("icon-ground", ICON_LIVE_1)}
+        for name, (check, capture) in checks.items():
             with self.subTest(name=name):
                 entry = questions[name]
                 self.assertEqual(entry["live_check"], check)
-                if entry["status"] == "measured":
-                    self.assertEqual(entry["capture"], ICON_LIVE_1)
+                if capture:
+                    self.assertEqual((entry["status"], entry["capture"]), ("measured", capture))
                 else:
                     self.assertEqual(entry["status"], "pending")
+        # Each answered no: the Key tab's right-click is not a use, the confirm clears
+        # a whole stack, and the ground keeps the base's pickup sprite.
+        for name in ("key_tab_right_click_reaches_the_use", "confirm_takes_one_from_a_stack",
+                     "ground_shows_the_gems_pickup_sprite"):
+            with self.subTest(answer=name):
+                self.assertIs(questions[name]["answer"], False)
         self.assertEqual(questions["key_piece_survives_a_save"]["hypothesis"], "string_keeps_two_decimals")
 
     def test_the_bag_stack_is_the_game_s_own_script(self):
@@ -915,8 +931,12 @@ class CuratedTests(unittest.TestCase):
         self.assertEqual(sorted(stack["classes"]), sorted(model.STACKABLE_CLASSES))
         self.assertNotIn(BASE_CLASS, stack["classes"])
         self.assertEqual((stack["cap"], stack["result_field"]), (model.BAG_STACK_CAP, "success"))
-        # Static reading until the follow-up's Live procedure 2 measures it.
-        self.assertIn(stack["status"], ("static_reading", "measured"))
+        # Measured by the follow-up's Live procedures 2 and 4, and on the player build by 3.
+        self.assertEqual(stack["status"], "measured")
+        self.assertEqual(stack["captures"], [ICON_LIVE_2, ICON_LIVE_4, ICON_LIVE_3])
+        self.assertEqual(stack["routes"], {"merge-route": "detour", "bagstackuse-route": "take-one",
+                                           "stackdraw-route": "game", "save-route": "kept",
+                                           "save-trigger": "stash-close"})
         self.assertTrue(set(stack["live_checks"]) >= {"bag-no-stack-control", "merge-stack", "merge-no-duplicate",
                                                       "stack-draw", "stackuse-all", "reload-stack-kept"})
         path, _, section = stack["source"].partition(" § ")
@@ -924,18 +944,19 @@ class CuratedTests(unittest.TestCase):
 
     def test_the_bag_stack_s_questions_wait_for_live_procedure_2(self):
         questions = {q["question"]: q for q in DATA["open_questions"]}
-        checks = {"merged_pickup_leaves_no_copy": "merge-no-duplicate",
-                  "bag_draws_a_consumable_stack_count": "stack-draw",
-                  "confirm_on_a_bag_stack": "stackuse-all",
-                  "bag_file_written_during_play": "save-written",
-                  "consumable_count_survives_a_save": "reload-stack-kept"}
-        for name, check in checks.items():
+        # question -> (its live check, the session whose capture answers it)
+        checks = {"merged_pickup_leaves_no_copy": ("merge-no-duplicate", ICON_LIVE_2),
+                  "bag_draws_a_consumable_stack_count": ("stack-draw", ICON_LIVE_2),
+                  "confirm_on_a_bag_stack": ("stackuse-all", ICON_LIVE_2),
+                  "bag_file_written_during_play": ("save-written", ICON_LIVE_4),
+                  "consumable_count_survives_a_save": ("reload-stack-kept", ICON_LIVE_4)}
+        for name, (check, capture) in checks.items():
             with self.subTest(name=name):
                 entry = questions[name]
                 self.assertEqual(entry["live_check"], check)
                 self.assertIn(check, DATA["bag_stack"]["live_checks"])
                 if entry["status"] == "measured":
-                    self.assertEqual(entry["capture"], "forgepact-197-piece-icon-stack-live-2")
+                    self.assertEqual(entry["capture"], capture)
                 else:
                     self.assertEqual(entry["status"], "pending")
         self.assertEqual(questions["consumable_count_survives_a_save"]["hypothesis"], "saved_count_is_kept")

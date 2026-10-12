@@ -164,7 +164,9 @@ in `RUNTIME_DATA_MODELS.md` § 21.3.
   not saved. `hs-game-sdk`'s sprite table holds both `Gem_Incarnation_spr` and
   `Pickup_Gem_Incarnation_spr`, so the gem's sprite has a ground companion
   (static reading of the SDK's tables). That a built Gem of Incarnation carries
-  `Gem_Incarnation_spr` under `"11"` is unverified.
+  `Gem_Incarnation_spr` under `"11"` is measured (the follow-up's Live
+  procedure 1, § Measured), and a piece given it still lies on the ground with
+  its base's pickup sprite.
 - **The backpack's use.** `UiAInventoryConsumeItemConfirm` answers a "use this
   item?" prompt: it asks `PotionUse` with the item, and only when that answers
   true does it clear the item's cells one by one (`InvGridClearItemNode`).
@@ -291,6 +293,51 @@ debugger), in our words (`RUNTIME_DATA_MODELS.md` § 21.5, § 21.6):
   (Live procedure 4), and the game's own travel call `ZoneStateExists` but not
   `ZoneStateResetSingle`.
 
+By the piece icon and stack follow-up's sessions (2026-10-12): Live procedures
+1, 2 and 4 on research builds with the x64dbg debugger (captures
+`forgepact-197-piece-icon-stack-live-1`, `-live-2`, `-live-4`) and Live
+procedure 3 on the player build (`forgepact-197-piece-icon-stack-live-3`), in
+our words (`RUNTIME_DATA_MODELS.md` § 9.5, § 21.3, § 21.4, § 21.7):
+
+- **A key piece's fraction keeps it apart, in session.** A piece on the
+  Bifröst Key with a whole `b` merged into the real key through
+  `GridAddToStack` (the debugger saw that script take the pickup, not
+  `InventoryGridAddToStack`). With `b` 2.10 (Act 1) or 2.20 (Act 2), or with
+  `c` 0.05, pieces stayed apart from the real key and from the other act, and
+  two of one act stacked, as the compare above has it. Whether such a `b`
+  survives a save was not observed (`string_keeps_two_decimals` stays open):
+  the session's stop did not save the bag.
+- **The Key tab's right-click is not a use.** It opened no prompt and reached
+  `InvGridEquipV2`, never `CanUsePotion` or `PotionUse`, while the bag logo's
+  right-click reached `CanUsePotion` in the same session.
+- **The icon.** A built Gem of Incarnation carries `Gem_Incarnation_spr`
+  under item info key `"11"`; the bag and the Key tab draw a piece with it; on
+  the ground a piece keeps its base's own pickup sprite; no tooltip draws an
+  icon.
+- **A class-11 stack is the game's own once its result says so.** With
+  ForgePact's merge off, two pieces of one act took two cells (the class rule,
+  `class_11_never_stacks`, again). With the merge writing `success` and the
+  target's cell into `InventoryGridAddToStack`'s result, the game finished the
+  pickup with no copy left, and the bag drew the count on the cell. Pieces of
+  another act and a real logo stayed apart.
+- **The confirm clears a whole stack.** After `PotionUse` answered true for a
+  bag item with `o` 2, the confirm cleared the cell. When it answered false
+  after ForgePact lowered `o`, the prompt closed with no message and the stack
+  stayed, one smaller, still movable.
+- **The bag is saved when the stash closes, not by a pickup or a stop.** No
+  pickup, merge or use called `SaveInventoryOrderNew`; closing the stash did,
+  through the inventory window parent's Destroy event, and rewrote
+  `inventory_order_<N>.hss`; a stop after one more pickup did not rewrite it.
+- **A consumable's count survives the bag save and a reload**
+  (`saved_count_is_kept`): stacks at `o` 3 and 2 were in the file and back in
+  the bag after a relaunch (Live procedure 4, `save-defs`,
+  `reload-stack-kept`), and the player build's stacks at 1 and 2 the same
+  (Live procedure 3).
+- **On the player build** (Live procedure 3): two pieces per act made one
+  cell per act, drawn with the gem's icon and the count; a confirmed use from
+  the Act 1 stack moved the player into `Act_01_Boss` and left one piece;
+  with the switch off the use was refused and the stack kept its count.
+
 ## Not established
 
 Each of these is an open question. Where it decides a number or a rule the
@@ -322,24 +369,22 @@ and `False`, its `act_of_room` reading a `false` answer as no act.
   per-place field (rifts, ubers, boss dungeons) was not read; where it does, the
   game's chance there differs from `droprate.base`.
 
-The follow-up's open questions (its Live procedure 1, capture
-`forgepact-197-piece-icon-stack-live-1`, answers the first four):
+The follow-up's open questions (its sessions answered the Key tab's
+right-click, the confirm on a stack and the icon, § Measured):
 
 - **`string_keeps_two_decimals`**: the exact rounding of the save's `string()`.
   The model assumes two decimals, a whole number written whole, and a tie
   rounded away from zero; `reload-frac-kept` and `tools/save_item_keys.py
-  --defs` measure what a key piece's `b` reads after a reload.
-- **The Key tab's right-click**: whether right-clicking a key in the Key tab
-  reaches `CanUsePotion` and the use prompt at all (`keyuse-prompt`). The bag's
-  right-click sits in `ProcessInventoryGridInput`; whether the Key tab's grid
-  takes the same path, and whether `CanUsePotion` answers true for a key, were
-  not read.
-- **The confirm on a stack**: whether the confirm, after `PotionUse` answers
-  true, takes one item from a stack of N or clears all N (`stackuse-all`). Every
-  use measured so far was of a single item.
-- **The icon on the ground**: whether a key piece dressed with
-  `Gem_Incarnation_spr` lies on the ground as `Pickup_Gem_Incarnation_spr`
-  (`icon-ground`), and whether a built gem carries that sprite (`gem-sprite`).
+  --defs` would measure what a key piece's `b` reads after a reload. Not
+  observed: Live procedure 1's stop did not save the bag, and the Key tab
+  route was dropped.
+- **Why the ground ignores key `"11"` for a piece**, where #158's charm drew
+  it on the ground too.
+- **What a piece shows with the plugin removed**: Live procedure 4's reload
+  showed the piece's name and the gem's icon with the research probe's dress
+  and icon off, but the plugin's own registration of the pieces (name, lore,
+  sprite) was in place, so whether those are saved with the item was not
+  separated.
 - **The epsilon's value**: GameMaker's default math epsilon is 0.00001; whether
   the game sets another was not read. Anything up to 0.05 keeps the 0.1 between
   two acts apart.
@@ -350,29 +395,22 @@ The follow-up's open questions (its Live procedure 1, capture
 - **Door and NPC key checks**: which code a door or an NPC uses to find the key
   it wants (Heimdall's Bifröst Key and the rest) was not read, so whether one
   of them would take a key piece for its key is not established.
-- **The tooltip**: whether it draws any icon for a key; #158 saw none for a
-  charm. The tooltip names the piece either way (`icon-tooltip`).
-
 The bag stack's open questions (the owner kept pieces in the bag after Live
-procedure 1; the follow-up's Live procedure 2, capture
-`forgepact-197-piece-icon-stack-live-2`, answers them):
+procedure 1; the follow-up's Live procedures 2 and 4 answered the merged
+pickup, the bag's count, the confirm on a bag stack and when the bag file is
+written, § Measured):
 
-- **A merged pickup**: whether `AddToInventory`, handed a result whose
-  `success` ForgePact's merge branch set, finishes the pickup as for a stack
-  the game made itself, with the piece gone from the ground and no second copy
-  in the bag (`merge-no-duplicate`).
-- **The bag's count**: whether the bag draws the count of a class-11 item whose
-  `o` is above 1 on its cell (`stack-draw`). No consumable has stacked before.
-- **The confirm on a bag stack**: whether `UiAInventoryConsumeItemConfirm`,
-  after `PotionUse` answers true for a bag item whose `o` is above 1, takes one
-  from it or clears the whole cell (`stackuse-all`).
 - **`saved_count_is_kept`**: whether a class-11 item's count `o` comes back
   from a save and a relaunch as written (`reload-stack-kept`, read with
   `tools/save_item_keys.py --defs`). The model assumes it, since the save
-  writes a whole number whole.
-- **The bag file during play**: whether the bag's save file is rewritten over
-  a session holding a piece stack (`save-written`); Live procedure 1's was not
-  rewritten at its stop, for a reason not established.
+  writes a whole number whole; Live procedure 4 read it kept (§ Measured).
+- **Which fields of the stack result `AddToInventory` reads** besides
+  `success`: the merge writes the target's tab and cell too, and the pickup
+  finished cleanly, but the fields were not separated.
+- **The bag window's own close**: whether it saves the bag as its Destroy
+  event reads; only the stash's close was measured (the session never opened
+  the bag window), and what decides whether a stop writes the bag file.
+- **The cap**: a merge into a stack at 999 was not reached live.
 
 ## Our code
 
