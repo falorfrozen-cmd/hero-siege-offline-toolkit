@@ -115,9 +115,14 @@ incident monitor frame counter (`ping` plus `incident stat`, through
 hs-drive's file IPC) and records each reading in `instrument.frames`. The
 instrument is `proven` only when that frame counter advanced across two
 readings before the control was armed (`before_arm`), stalled at the control
-hold (`stall` `no-answer` or `same-count`), and advanced again after the
-hold's resume (`after_resume`); a detach reports `game_released: true` only
-for a proven session whose counter advanced after it with `ping` answering.
+hold (`stall` `no-answer`: nothing consumed the command while x64dbg held
+the game), and advanced again after the hold's resume (`after_resume`). Only
+`no-answer` proves: any answered reading at the hold, whatever its count, is
+a gap, because ForgePact reads its commands only from its frame callback, so
+an answer means the game loop ran during the hold (`stall` then reads
+`same-count` or `advanced`, a description, not a proof). A detach reports
+`game_released: true` only for a proven session whose counter advanced after
+it with `ping` answering.
 You still run `py -3 -m tools.thread_state <pid>`, a read-only check of the
 game's threads that prints one JSON object and exits 0 only for the verdict
 `running`, and quote its output into the capture each time the steps below
@@ -157,10 +162,15 @@ run it, but as a diagnostic only: its verdict decides neither `proven` nor
    **After every `logpoint`**, the control's and each candidate's, take
    `hs_command` `incident stat` straight away and run
    `py -3 -m tools.thread_state <pid>` again, and quote both with the
-   logpoint's reply (its `held`, `held_note` when present, `x64dbg_state`
-   and `game`). An arming that holds the game shows in ForgePact's incident
-   monitor, so a slowdown check over a later window must start from the
-   `incident stat` taken after it, not before.
+   logpoint's reply (its `held`, `held_note` when present, `x64dbg_state`,
+   `game`, and `game_note` when present). The `game` reading after arming is
+   a diagnostic: a `game` that reads anything but `running` (`frozen`,
+   `threads-suspended`, even a pid-only `gone`) does not stop the session;
+   only a refused arm does (`ok: false`, for instance stage
+   `game-not-running`, which means no live session or a target whose pid and
+   start time no longer match a live process). An arming that holds the game
+   shows in ForgePact's incident monitor, so a slowdown check over a later
+   window must start from the `incident stat` taken after it, not before.
 3. **Breakpoints only through `logpoint`**: a hardware breakpoint that logs
    and never stops the game, at most four at once (the control and three
    candidates; clear a candidate with `command` `bphc <address>` to arm the
@@ -179,8 +189,9 @@ run it, but as a diagnostic only: its verdict decides neither `proven` nor
    returned, its `frames` reading verbatim and its `threads_note` when
    present, then run `py -3 -m tools.thread_state <pid>` once more and quote
    it as a diagnostic. Carry on to step 8 of the session only when the
-   detach reply reads `state: ended` with `game_released: true` (or the game
-   was gone). Three replies mean the game may be left frozen or attached
+   detach reply reads `state: ended` with `game_released: true` (or its
+   `frames` reading is `gone`: the game exited; a thread check reading `gone`
+   is not that). Three replies mean the game may be left frozen or attached
    instead: `game-not-released` (the detach was confirmed, but the frame
    counter did not advance after it, or could not be read, and the reply
    names the reading), a reply whose `game_released` is not true, and
