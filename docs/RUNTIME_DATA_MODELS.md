@@ -3383,6 +3383,22 @@ content, never by the hash alone. **Measured.**
   the information view, which adds each rolled line's range (` [45-75]`) and
   skill descriptions.
 - An unidentified item draws `Unidentified` and no stat lines.
+- All 344 direct call sites of `DrawInventoryStatsNew` in the build Ghidra
+  imported (§ 19.7 names its hash) lie inside `DrawInventoryItemV2`, one after
+  another. A fixed run of calls that long is the tooltip's list of known stat
+  lines, not a loop over the item's own stats. **Static reading** (2026-10-13,
+  byte scan of the imported executable; blind to calls through the script
+  table or a method value).
+- Before that run, one conditional branch jumps past all of it. The code
+  just before it reads the tooltip surface fields (`inventorySurfaceData`,
+  `inventorySurfaceWidth`, `usedThisFrame`) and the item's identity fields
+  (`itemRegion`, `itemAccount`, `itemTimeStamp`, `itemType`,
+  `itemDataHash`). So the tooltip most likely keeps a drawn surface per item:
+  the stat calls run on a frame where that item's tooltip is not cached, and
+  later frames draw the cached surface and may make no stat call at all.
+  **Inference** from the slot names around the branch (2026-10-13), not a
+  reading of its logic and not measured. If it holds, the unidentified
+  item's missing lines are decided inside the run, not by a branch around it.
 
 **Measured 2026-09-24.** The stat call's arguments and return value were
 live-traced on 2026-09-04 (ForgePact's forged tooltip rows).
@@ -4898,7 +4914,8 @@ the one `py -3 tools/decomp_index.py build-hash` names), through the ghidra
 MCP and existing local decompiles. Direct call sites come from a local byte
 scan for calls to the function's entry, each mapped to its function by the
 image's exception table; like the name scan in § 19.6, it is blind to calls
-through the script table or a method value. Nothing here is measured.
+through the script table or a method value. The bullets that say
+**measured** come from a later live session; the rest is not measured.
 
 - `gml_Script_UpdateDepth` (4576) takes a y, the instance's own y when none
   is given, and a second argument that defaults to −1. It stores the y in the
@@ -4913,9 +4930,104 @@ through the script table or a method value. Nothing here is measured.
 - So the game rewrites the player's draw layer from the player's y during the
   player's own Step, and a draw order a mod sets before that call would not
   last past it. **Inference** from the two readings above, not measured.
-- Which end of the room's `global.gameLayer` layers draws in front is **not
-  established**. In GameMaker a layer with a lower depth draws on top; this
-  reading did not settle which of these layers carry the lower depths.
+- Which end of the room's `global.gameLayer` layers draws in front:
+  **measured** in ForgePact's Mod live 1 (2026-10-12, research DLL from
+  ForgePact `26eecd2`, slot 14 "Sorak", `Town_01_rm`). The research probe read
+  the last entry of the room's list at depth −5500 and entry 0 at depth 0, so
+  the last entry, the one the largest y lands on, draws in front, as a lower
+  depth draws on top in GameMaker. With flight off at (1180, 1650) the
+  player's layer read depth −830.
+- Both of `UpdateDepth`'s routes, the y route and the render-group route, end
+  at an entry of `global.gameLayer` for the current room. **Static reading**
+  (2026-10-13).
+
+**Room layers in front of the game layers.** Replan 2 of the same work read
+more on 2026-10-13, in the same build: object events through the ghidra MCP
+(found by their name records, with slots named through `decomp_index`), and
+room layers, room instances, object parents and events, and sprite sizes and
+origins from the game's data file (`data.win`). Each bullet is labelled.
+
+- `Town_01_rm` (room 235, 2800×2400) defines 21 layers. **Static reading
+  from the data file** (2026-10-13). From the front:
+  - `Effect_1`, an effect layer carrying `_filter_lut_colour`, at −10300;
+    `Wind_Leaves`, an effect layer, hidden, at −10200;
+    `Xmas_Event_Assets_1`, an asset layer, hidden, at −10100;
+    `Invisible_walls`, 77 `Invisible_Wall_Not_Minimap_obj`, at −10000;
+    `Windmill_Propels` at −9900; `Raven_Creators` at −9800;
+  - `Tree_Leaves`, an instance layer at −9700 carrying the layer effect
+    `_filter_underwater`, which is the canopies' sway;
+  - behind them, `Flames` (0), `Christmas_Event` (1), `Halloween` (hidden, 2),
+    `ZoneLight` (3), `Spawners` (4) and `Objects` (5, 430 instances: trees,
+    bushes, hay, fences and rocks), then the tile layers from `Darkness` (6)
+    to `Background_Tiles` (608).
+- The room places 42 `Fall_Dead_Tree_Leaves_01_obj`, 34 on `Tree_Leaves` and
+  8 on `Objects`. Their sprite, `Fall_Dead_Tree_Leaves_01_spr`, is 220×278
+  with its origin at (115, 264). The canopy over Mod live 1's spot
+  (1180, 1650) is the
+  mirrored instance at (1158, 1869), covering x 1053..1273 and y 1605..1883.
+  **Static reading from the data file** (2026-10-13).
+- `Fall_Dead_Tree_Leaves_01_obj` is a child of `Visual_Parent_obj` and is
+  invisible as an object. Its Create event runs its parent's Create and then
+  moves the instance's `layer` to the room layer named `Tree_Leaves`; that
+  name is a string the runner's start-up code fills in. `Visual_Parent_obj`'s
+  own Create makes the instance visible, sets its `renderGroup` to 0, and
+  sets sound and light fields. **Static reading** (2026-10-13).
+- So every canopy of that object draws on the room's `Tree_Leaves` layer,
+  whichever layer the room placed it on. **Inference** from the two readings
+  above.
+- Fifteen more `*_Leaves_*` objects are `Visual_Parent_obj` children with a
+  Create of their own, in the Abyss, Aztec, Boreal, Desert, Fallen Realm,
+  Fuji, Miner Village, Mist and Valhalla sets. Their Creates were **not
+  read**.
+- `Zone_Light_obj`'s Create sets its `renderGroup` to 2 and places the
+  instance through `UpdateDepth`'s render-group route. **Static reading**
+  (2026-10-13). So its room layer (often `ZoneLight`, at −9800 or −9900)
+  empties at runtime. **Inference**.
+- Measured in the same Mod live 1: with the player's layer at −5500, the
+  front entry of `global.gameLayer`, a canopy still covered him at
+  (1180, 1650) (S9, two screenshots) and at (929.9, 2031.1) (S11). With
+  flight on near the stash (S16) he was visible on open ground, so the game
+  layer at −5500 is drawn. **Measured** (2026-10-12).
+- So no layer of `global.gameLayer` draws in front of a room's `Tree_Leaves`
+  layer. **Inference** from the measurements and the readings above.
+- Of the data file's 306 rooms with layers, 120 put a visible layer in front
+  of −5500. `Tree_Leaves` sits between −9700 and −10100 in about 40 rooms.
+  **Static reading from the data file** (2026-10-13).
+
+**Colour-filter layers.** Read from the data file on 2026-10-13 (amendment 2
+of the same replan). The script that read it is kept outside every
+repository.
+
+- A filter layer, in the data file, is a visible layer of the effect type
+  (type 6) that lies in front of the game layers' front end at −5500,
+  whatever its effect: a colour lookup, tint, contrast, colourise, vignette,
+  or windblown particles. Full-screen filters sit mostly between −10000 and
+  −10300. **Static reading from the data file** (2026-10-13).
+- At runtime, such a layer would read as a visible layer that holds no
+  element and for which the `layer_get_fx` builtin answers a struct. That
+  reading is **not established** until ForgePact's Mod live 2 runs it; the
+  builtin's name appears in this build's executable (byte search,
+  2026-10-13), and what it answers on this runner has not been seen. An
+  instance or asset layer that carries a layer effect but holds no element
+  yet reads the same way until it fills: a zone's `Tree_Leaves` (with its
+  `_filter_underwater`) before its canopies exist, or `Act_09_04`'s `Flame`.
+- 101 of the 306 rooms have such a filter. In 8 of them a filter lies behind
+  the room's frontmost visible drawn layer: `Act_01_Pregame`, `Act_09_01`,
+  `Act_09_04`, `Act_09_05`, `Town_09_rm`, `Unstable_Rift_09_01`,
+  `Unstable_Rift_09_04` and `Unstable_Rift_09_05`. In those rooms a layer the
+  game draws sits in front of a tint. **Static reading from the data file**
+  (2026-10-13).
+- In `Act_09_05` and `Unstable_Rift_09_05`, a drawn layer, `Smoke` at −11200,
+  sits between filters: `Sparks` at −11300 in front of it, `Effect_2` at
+  −11100 and `Effect_1` at −11000 behind it. An instance drawn in front of
+  every drawn layer behind the frontmost filter would sit at −11201, in front
+  of both rear filters; only a place behind the rearmost filter, the one
+  nearest the game layers, keeps it behind every filter of the room. **Static
+  reading from the data file** (2026-10-13).
+
+What ForgePact's flight charms do with these facts is in the module guide;
+the research is in
+[Why the canopy covered the flying player](../ForgePact/docs/flight-charms-research.md#why-the-canopy-covered-the-flying-player).
 
 [Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading)
 
@@ -5528,6 +5640,27 @@ not observed, not absent.
   charms dragged into the grid from the ground appeared in it, and charms
   moved from the grid to the bag left it. A charm in the bag is not in it.
   **Measured** (2026-10-12).
+- **One charm per definition `b` above a rarity line, so one flight charm at
+  a time.**
+  - The game lists only one charm with flight at a time. **Owner-stated**
+    (2026-10-12): "Only one charm with flight can be enabled at one point.
+    This is how game works".
+  - `UpdateCharmData` enters every ordinary charm, but when an item-info
+    value it reads for the charm is 6 or more, it enters that charm only if
+    no charm with the same definition `b` was entered before, keeping a map
+    keyed by `b` for the purpose. **Static reading** (2026-10-13). That the
+    value is the rarity (`"27"`, 6 being Satanic and above, § 16.4) is
+    **inferred**, not read.
+  - ForgePact's three flight charms all carry `b` 0, so they count as one;
+    the one listed is the first the walk meets, and the walk's order is **not
+    established**. A game unique charm with `b` 0 would pair with them too;
+    whether one exists is not established.
+  - With Gabriel Wings and Witch's Broomstick both in the charm grid,
+    `localCharmItemArray` listed the Wings only, while two normal Small
+    Charms of Bastion were both listed. **Measured** (2026-10-12, ForgePact's
+    Mod live 1, S14 and S17).
+  - So a worn charm the game does not list adds nothing, its stats included.
+    **Inference** from the game reading this array, not measured.
 
 ### 22.2 Item size
 
