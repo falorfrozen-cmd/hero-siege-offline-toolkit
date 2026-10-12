@@ -1318,6 +1318,55 @@ moves. Saving to the main menu rewrites `herosiege<N>.hss` and
 [prospect window, Results](../ForgePact/docs/prospect-window-research.md#results),
 [Stage B results](../ForgePact/docs/prospect-window-research.md#stage-b-results)
 
+**When the game writes the bag file.** The character file and the bag file are
+written by separate calls, so one can be rewritten while the other is not.
+
+- `gml_Script_SaveLocalFile` takes a file kind first and a local player number
+  second (the inventory window passes its own `uiLocalPlayer`). Kind 0 writes
+  the character file `herosiege<N>.hss` through `SaveSlot`, kind 4 the stash
+  through `SaveStash`, and kind 9 the bag file `inventory_order_<N>.hss`
+  through `SaveInventoryOrderNew`; each is wrapped in `SaveStart` and
+  `SaveCommit`, the shape § 17 measured for the stash. `SaveInventoryOrderFunc`
+  also keeps the bag writer as a method value, which a scan for direct call
+  sites cannot see. **Static reading** (2026-10-12).
+- Kind 9 is asked for by the inventory window's Destroy event
+  (`UI_Inventory_Parent_obj`; offline, kind 0 and then kind 9) and by
+  `Controller_obj`'s Game End event (offline, kinds 0 and 9 for the first
+  player, the same again for the second under a condition not read, then the
+  game's `Sleep` for 2000). The stash window's Destroy (`UI_Stash_obj`) saves
+  kinds 0 and 4, not the bag; `Player_obj`'s Room End saves kind 0,
+  `Controller_obj`'s Room End kind 2, and `RoomGoto` saves nothing. A headless
+  byte scan (positive control: `SaveLocalFile`'s own call to
+  `SaveInventoryOrderNew`, found) lists 104 direct `SaveLocalFile` call sites
+  in about 57 functions; the rest, `UiAIngameExit`'s six among them, were not
+  read. **Static reading** (2026-10-12).
+- The bag writer passes every bag item through `CreateItemSaveStruct`, which
+  copies the item's definition (§ 21.3), so a definition's `o` reaches the file
+  with it. **Static reading** (2026-10-12).
+- Over the 132 pre-restore snapshots hs-drive kept from 2026-09-20 to
+  2026-10-12 (file times compared with each session's own backup): of the 66
+  stops before 2026-10-04 17:00 UTC that rewrote the character file, 31 also
+  rewrote the bag file in the same second; of the 43 such stops since, none
+  did. In 35 sessions the bag file changed minutes before the stop.
+  **Measured** (read-only, 2026-10-12).
+- In the piece icon and stack follow-up's Live procedure 2 (2026-10-12,
+  capture `forgepact-197-piece-icon-stack-live-2`, local to the hub's workorder
+  folder), the pre-restore snapshot's bag file was still the 2026-10-10 file
+  and no slot file held a soul piece. The character file rewritten at the stop
+  holds no bag (the `inventory_tab_*` keys live only in the bag file) and,
+  decoded, differed from the session's backup only in `playtime` and the order
+  of its keys. A debugger logpoint on `SaveInventoryOrderNew` read 0 hits, its
+  control still logging, until the detach just before the stop; the capture
+  records no close of the bag window after the stacks were built.
+  **Measured.**
+- The bag files of the #197 sessions hold class-11 soul pieces with `o` 1 and
+  Key-tab stacks with their counts (`o` 964 and the like); a class-11 item with
+  no `o` is saved without one. **Measured.**
+
+So a stop is not a save of the bag file, and a check that reads the bag file
+after a stop has to make the game save the bag in play first. What decides
+whether a stop writes the bag file is **not established**.
+
 ### 9.6 Prospecting
 
 - The Prospect button (`UI_Button_Small_obj`) stores its handler in
@@ -5405,17 +5454,16 @@ direct `call rel32` that the import's reference table does not hold.
   measured**.
 - The bag's save writer. `gml_Script_SaveInventoryOrderNew` (3507) writes the
   bag's tabs and the special tabs (key, material, socket, tarot, relic, vault
-  and charms) through `json_stringify`. When the game calls it was not read.
-  **Static reading** (2026-10-12). In the piece icon and stack follow-up's
-  Live procedure 1 (2026-10-12, research build, capture
+  and charms) through `json_stringify`. **Static reading** (2026-10-12). The
+  game writes the bag file as § 9.5 says (the inventory window's Destroy and
+  the Game End event), not at every stop. In the piece icon and stack
+  follow-up's Live procedure 1 (2026-10-12, research build, capture
   `forgepact-197-piece-icon-stack-live-1`, local to the hub's workorder
   folder), the bag file `inventory_order_13.hss` was not rewritten at the
-  graceful stop, while the Key tab held pieces with a fractional `b`.
-  **Measured.** That stop ended in the game's fail-fast exit
-  (`STATUS_STACK_BUFFER_OVERRUN`, C0000409), but every earlier #197 session's
-  stop ended the same way and still rewrote its bag file, so the exit code is
-  not the difference. Why the file was not
-  rewritten is **not established**.
+  graceful stop, while the Key tab held pieces with a fractional `b`; that
+  stop ended in the game's fail-fast exit (`STATUS_STACK_BUFFER_OVERRUN`,
+  C0000409). **Measured.** Neither Live procedure 1 nor Live procedure 2 made
+  the game save the bag, so neither session's bag file holds what it built.
 - Who else compares `b`. `gml_Script_CountInventoryItem` (1925), whose direct
   callers the byte scan found to be only the crafting scripts
   `GetCraftItemsAvailable` and `CraftFindRecipeItems`, compares `itemType`, an
