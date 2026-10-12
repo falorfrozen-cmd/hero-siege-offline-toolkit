@@ -5271,3 +5271,43 @@ no build:
 - a struct held only in C++ `RValue`s is freed by the runner's GC between frames
   (§5.9);
 - `instance_destroy` on a monster skips its death and `DropItem`.
+
+### 21.9 Replacing a draw and drawing above the actors (Seraph)
+
+Folded 2026-10-12 from the owner's local Seraph prototype, which drew one
+White Mage character as an original custom character. It was measured
+2026-09-23..24; its notes name no game build. The recipes, labels and source
+pointers are in
+[docs/research/seraph-custom-sprites.md](research/seraph-custom-sprites.md)
+("Seraph §n" below).
+
+- **The player's body is one `draw_surface_ext` call.** `Player_obj`'s Draw
+  composes the body into a 300×300 surface, `playerSequenceData.sequenceSurface`,
+  with the ground point at its centre. It draws that surface once, at the
+  anchor minus 150 × scale, with the jump and slope offsets applied. A
+  name-resolved inline detour of `draw_surface_ext`, filtered to that one
+  surface handle, replaced the body in 10,582 frames with 0 errors and
+  followed a camera zoom. **Measured** (Seraph §1.1–1.3).
+- **White Mage geometry.** The body is 46–47 px tall, and its **feet are
+  16 px below the player's position**. Running speed is 205–217 px/s (211 on
+  average) in all four directions. **Measured** from 40 read-backs of the
+  body surface (Seraph §2.6).
+- **`buffer_get_surface` reads a surface's RGBA into memory** without
+  changing it. Use `buffer_create(w*h*4, 0, 1)`, then `buffer_get_address`.
+  **Measured** (Seraph §2.5).
+- **Baked sprites draw crisp.** Cells drawn onto a surface with
+  `gpu_set_blendenable(false)` and `gpu_set_texfilter(false)`, then passed to
+  `sprite_create_from_surface`, drew on the game's pixel grid. This extends
+  §21.1's atlas-cell recipe. **Measured**. That alpha survives byte for byte
+  is inferred.
+- **A `DrawHud` pre-pass draws above every actor and under the HUD.** A
+  detour of `gml_Script_DrawHud` (installed with `InstallScriptHook`) drew
+  world art first and then called the original. World coordinates were
+  mapped through `view_camera[0]`:
+  `(wx - camera_get_view_x) * display_get_gui_width / camera_get_view_width`.
+  It cost about 0.1 ms per frame. **Measured** (Seraph §3.1).
+- **A damage object created this frame hits from the next step.** The game
+  loads the player's stats into it after that frame's collision pass. Seraph
+  damage objects (`Player_Damage_Parent_obj`) therefore lived exactly two
+  steps. **Measured**: 14 of 14 contacts lowered health, read through
+  `gml_Script_PC_GetVariableGMLWrapper` (Seraph package `HOW_IT_WORKS.md` §6).

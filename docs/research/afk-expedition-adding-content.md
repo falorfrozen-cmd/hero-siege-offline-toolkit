@@ -15,6 +15,8 @@ The facts about the game itself that were **measured** are also in
 the shared record every module reads. This page keeps the rest: AFK's own
 recipes, the inferred and open claims, and what was superseded.
 
+**See also** [seraph-custom-sprites.md](seraph-custom-sprites.md), the Seraph prototype's notes on replacing the player's body draw with our own art, baking atlases, and drawing above every actor in the `DrawHud` pre-pass.
+
 Everything here is in our own words. No game script text is quoted, and AFK's
 own C++ is described rather than copied (`AGENTS.md` § Legal).
 
