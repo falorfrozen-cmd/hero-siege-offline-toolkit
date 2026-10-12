@@ -4635,7 +4635,12 @@ the numbers are also in `hs-game-sdk/curated/jump_measurements.json`.
   start even with those five builtins answered: the player stays within 4 px
   of the take-off point. What refuses it was not identified. **Measured.**
 - Walking into a prop stays blocked with those five builtins answered.
-  **Measured.**
+  **Measured.** During that blocked walk, 6252 `place_meeting` calls naming
+  an object outside the collision family ran unanswered, beside
+  `InstancePlaceTallest`'s 1944 (jump research Live 1,
+  [the "Walking stayed blocked" result](../ForgePact/docs/jump-scenery-research.md#live-1-results)).
+  **Measured** for the count; which of them, if either, holds the walk is
+  **not established**.
 
 [Live 1 results](../ForgePact/docs/jump-scenery-research.md#live-1-results);
 [Decision](../ForgePact/docs/jump-scenery-research.md#decision)
@@ -5227,8 +5232,9 @@ not observed, not absent.
 - `gml_Script_DropUniqueItems` (1424), called from `LoadDrops` (2171), picks
   one entry of `Controller_obj.lootListUnique[k]`, with k from 0 to 4 taken
   from a protected zone value that has a random chance of stepping up. It
-  keeps the entry only when the entry's rarity in `GetUniqueRepoStruct` (819)
-  is below Angelic (7) and the entry is not flagged hidden, then calls
+  keeps the entry only when the entry's rarity, field 27 of its
+  `GetUniqueRepoStruct` (819) entry (§ 13.4), is below Angelic (7) and the
+  entry is not flagged hidden, then calls
   `CreateDefaultParams` (2349) and the placement. **Static reading**
   (2026-10-11).
 - `gml_Script_DropItemHeroic` (1374) takes a position and a list index that
