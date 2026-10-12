@@ -5171,11 +5171,13 @@ direct `call rel32` that the import's reference table does not hold.
   `Unstable_Rift_*` rooms, `Uber_Inoya_rm` (act 1), `Multiplayer_Highscores_rm`
   (act 6) and five `Dev_5_Mika_Test_*_rm` rooms (act 9). A room's name does not
   always give its act: `Act_08_Orres_Lair_rm` is act 4. **Static reading.**
-- Rooms not in the switch, so answering undefined: `Act_01_Boss`,
-  `Act_03_Boss`, `Act_04_Boss`, `Act_05_Boss` and `Act_07_Boss` (while
-  `Act_02_Boss`, `Act_06_Boss`, `Act_08_Boss` and `Act_09_Boss` are in it), and
-  the fourth act 8 rift: rifts `Unstable_Rift_08_01..03` and `_05` are rows,
-  and `hs-game-sdk` has no room named `Unstable_Rift_08_04`. **Static reading.**
+- Rooms not in the switch: `Act_01_Boss`, `Act_03_Boss`, `Act_04_Boss`,
+  `Act_05_Boss` and `Act_07_Boss` (while `Act_02_Boss`, `Act_06_Boss`,
+  `Act_08_Boss` and `Act_09_Boss` are in it), and the fourth act 8 rift: rifts
+  `Unstable_Rift_08_01..03` and `_05` are rows, and `hs-game-sdk` has no room
+  named `Unstable_Rift_08_04`. **Static reading** (the list). Such a room
+  answers the boolean `false`: **measured** in `Act_01_Boss` and
+  `Act_01_Pregame` (Live procedure 3, 2026-10-11), not read in the others.
 - The full table, room by room with its `hs-game-sdk` room index, is
   `hs-game-sdk/curated/room_acts.json`. Room indices move between builds; a
   consumer that needs a room's act at run time asks `RoomActIndex` by name
@@ -5244,7 +5246,7 @@ direct `call rel32` that the import's reference table does not hold.
   spawned in town removes itself (§ 13.1, measured; the spawn route is not
   named there).
 - The act 2 boss created outside its own room crashed the game when killed;
-  the act 5 boss did not. A `Reaper_obj` created with `instance_create_depth` in `Act_02_01` and killed
+  the Karp King did not. A `Reaper_obj` created with `instance_create_depth` in `Act_02_01` and killed
   by setting its `enemy_hp` record to 0 closed the game with an access
   violation: `Enemy_Child_Boss_obj`'s Destroy event ran
   `gml_Script_LoadBossDeath`, which found no `Pentagram_Boss_obj` in the room.

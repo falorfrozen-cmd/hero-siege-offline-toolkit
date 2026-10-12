@@ -249,8 +249,9 @@ name (category 15, `socketable_gem_of_incarnation`), never by index.
   or spawner levers reach the piece exactly as they reach the gem. The piece adds
   no gate, no magic-find term and no slider.
 - **The chance per `DropGems` call** is 1 in `D`, `D = max(1, floor(G × 4 / 5))`:
-  five quarters of the gem's chance on the same roll (the owner, 2026-10-11:
-  "a little more common than gem of incarnation"). With the measured `G` =
+  five quarters of the gem's chance on the same roll only if `DropGems` gives
+  the gem exactly 1 in `G` (`gem_one_in_its_rate`, pending; the owner,
+  2026-10-11: "a little more common than gem of incarnation"). With the measured `G` =
   9,000, `D` = 7,200. `G` unknown, zero or negative gives `D` = 0 and no piece
   (`no-rate`), unless forced.
 - **Which rooms drop.** A room whose `RoomActIndex` answer is an act, except a
