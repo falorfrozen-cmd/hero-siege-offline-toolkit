@@ -4843,8 +4843,9 @@ each claim below says whether it is a static reading or measured.
   `TilePlaceMeeting` were not observed to be called during any walk (no
   logpoint hit while the control logged, and no call through the hooked
   row either). **Measured** (2026-10-12).
-- **What holds a walk is the answer `InstancePlaceTallest` gives the Step
-  event.** With the player's calls to it answered `noone` and the player's
+- **The builtin queries alone do not free a walk; answering
+  `InstancePlaceTallest`'s Step-event calls `noone` together with them
+  does.** With the player's calls to it answered `noone` and the player's
   builtin queries answered too (`jumpprobe pass ... all scripts hold` or
   `any scripts hold`), the walk crossed both the ravine edge (about 700 px)
   and the church wall (about 690 px), and only the first of the three sites
