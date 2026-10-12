@@ -5346,8 +5346,9 @@ direct `call rel32` that the import's reference table does not hold.
   first accepts only classes 12, 13, 14 and 15, the same classes
   `gml_Script_IsItemTypeStackable` answers true for. A class-11 consumable has
   no preferred grid and never reaches `GridAddToStack` (the pickup route
-  above); it does not stack in the bag (measured below), but why
-  `InventoryGridAddToStack` refuses it was not read. `c` is the repository flag (0 normal, 1 unique, § 2
+  above), only `InventoryGridAddToStack`. That it does not stack in the bag is
+  measured (below); why `InventoryGridAddToStack` refuses it is **not
+  established**. `c` is the repository flag (0 normal, 1 unique, § 2
   and § 13.10), so changing it loads a different item: no whole-number value
   of a field the merge compares can mark an item apart from the real one (a
   fraction in `b` can in `GridAddToStack`, by the reading that follows; how
