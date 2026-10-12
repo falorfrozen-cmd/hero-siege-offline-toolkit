@@ -5179,9 +5179,11 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
   `global.mouse_gui_scalar` (default 2); `Screen_Cursor_obj` has no instance in
   play. Anything drawn later covers the cursor unless `Cursor_spr` is drawn
   again on top. **Measured** (AFK §5.7).
-- **`effect_create_depth` effects do not display.** 56 were created on
-  2026-09-27 without an error and none was visible. Why is not established.
-  **Measured** (AFK §9.1).
+- **`effect_create_depth` effects: not observed to display.** None of 56
+  `ef_spark` effects created by `effect_create_depth` (2026-09-27, `Act_02_01`,
+  monster depth − 1) was visible, and the calls raised no error. There was no
+  positive control, so whether effects can display on this build, and why these
+  did not, is not established (AFK §9.1).
 
 ### 21.5 Input and the game window
 
@@ -5221,9 +5223,10 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
 - **Kill parity.** Health written to 0 runs the death, but `DropItem` ran only
   about half the time and no XP was given. `DropItem` with the player-kill
   arguments plus `EnemyGiveExperience(self = monster, other = player,
-  killExperience)` matches a hero kill. **Measured** (AFK §6.11). The drop table
-  is built a few frames after creation; AFK waits 60 frames before hitting a
-  spawned monster as a margin, and the exact delay was not measured.
+  killExperience)` matches a hero kill. **Measured** (AFK §6.11). AFK waits 60
+  frames before hitting a spawned monster, on the assumption that its drop table
+  is built shortly after creation; that the table is built late is **not
+  established**.
 
 ### 21.7 Blockers, the path grid and rooms
 

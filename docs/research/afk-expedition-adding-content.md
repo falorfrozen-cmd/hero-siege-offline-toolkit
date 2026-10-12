@@ -314,8 +314,8 @@ Monsters there then have the zone's exact stats, and loot and XP stay the game's
 6.11 **Monster XP and loot when not killed by the hero.**
 - Writing health to 0 through `PC_SetVariableGMLWrapper(handle, 0)` runs the game's own death, but `DropItem` ran on only about 50%, or 25% of tower kills, and gave no XP.
 - Parity needs two things. First, call `gml_Script_DropItem(self=monster, other=player)` with the player-kill arguments (the last argument true) and suppress the death's own roll. Second, call `EnemyGiveExperience(self=monster, other=player, killExperience)`.
-- Never hit a monster younger than 60 frames: its drop table is built a few frames after creation.
-- **measured** R2/R2b/R2c (`5fafbea`, `57b4ad5`). Included because it is the "spawned thing interacts with the game" boundary.
+- AFK never hits a monster younger than 60 frames, on the assumption that its drop table is built a few frames after creation. That assumption is **not established**: no run recorded a fresh monster without a drop table, and 60 frames is AFK's margin.
+- The death, `DropItem` and XP results above are **measured** R2/R2b/R2c (`5fafbea`, `57b4ad5`). Included because it is the "spawned thing interacts with the game" boundary.
 
 ---
 
@@ -384,14 +384,14 @@ Monsters there then have the zone's exact stats, and loot and XP stay the game's
 
 ---
 
-## 9. Effects that do not display
+## 9. Effects not observed to display
 
-9.1 **`effect_create_depth` effects are invisible.**
+9.1 **`effect_create_depth` effects were not observed to display.**
 - The call was `effect_create_depth(depth, 7 /*ef_spark*/, x, y, 1, 16769024)`, at monster depth − 1 in `Act_02_01`. It threw no error: R2b "made 400 sparks with no failures".
 - In a visual check on 2026-09-27, none of 56 created effects was visible.
-- **measured**. The R2b "no failures" result (`57b4ad5`) is **superseded** as evidence of display: it only meant no exception.
+- **measured** as "not observed": there was no positive control in that session, so this does not show that effects cannot display. The R2b "no failures" result (`57b4ad5`) is **superseded** as evidence of display: it only meant no exception.
 - AFK replaced effects with layer sprites plus texture prefetch.
-- Why they are invisible is **not established**. Candidates include draw order, depth, and the effect system being off on this build.
+- Whether they can display at all, and why these did not, is **not established**. Candidates include draw order, depth, and the effect system being off on this build.
 - Source: `57b4ad5`; STRONGHOLD_DESIGN §6 B2 "R2c", recorded in commit `48c0ba0`; r2-defense-lab `DefenseLab.inl` `Effect` l.309-313.
 
 9.2 **A game sprite from an unloaded texture group draws nothing, silently.** The layer element exists (`layer_sprite_exists` returns true), but nothing is drawn until prefetch. **measured** R1. See 3.1.
@@ -453,7 +453,7 @@ Monsters there then have the zone's exact stats, and loot and XP stay the game's
 - Which collision test the player's movement actually uses (`Invisible_Wall_obj`, a parent such as a wall/solid parent, the `solid` flag, the path grid, or tile masks). AFK never walked the hero into a blocker (7.2).
 - Whether the player's movement reads `global.pathGrid` at all, or only monsters do.
 - Whether `x` / `y` writes on the player each frame survive the game's own movement step, and what happens when the hero ends inside a blocker.
-- Why `effect_create_*` is invisible, and whether particle systems (`part_*`) display. Neither was tried.
+- Whether `effect_create_*` effects can display at all (and why the 56 did not), and whether particle systems (`part_*`) display. Neither was tried.
 - Whether an item's inventory icon can be swapped for a `sprite_add` sprite. AFK never drew item icons. The panel brief only says game item sprites can be drawn by name.
 - Whether a `sprite_add` sprite survives a room change and texture-group flushes indefinitely. AFK keeps "kept" sprites for a session without reported trouble, but there is no explicit test.
 - The real GPU cost of `font_add` and `sprite_add` (texture pages). It was never measured.
@@ -472,7 +472,7 @@ The measured ones are folded into [`RUNTIME_DATA_MODELS.md` §21](../RUNTIME_DAT
 5. GUI size equals the monitor resolution (4.5). **measured**.
 6. The game hides the Windows cursor (`cr_none`) and resets `window_set_cursor`. The cursor is `Cursor_spr`, drawn by `Menu_Controller_obj` at `global.mouse_gui_scalar`. `Screen_Cursor_obj` has no instance in play (5.7). **measured**.
 7. Menu activation goes through `UI_Node_Parent_obj.activationFunc`. `event_perform(7, 25)` activates a node safely; calling the `UiA*` scripts directly broke later mouse input (5.8). **measured**.
-8. `effect_create_depth` effects do not display (9.1). **measured**.
+8. `effect_create_depth` effects: none of 56 was observed to display, with no positive control (9.1). **measured** as "not observed"; the cause is **not established**.
 9. Monster spawn: `enemyRarity`, `affixList` plus `enemyAffix` are set before stats build; `aggroRange` is reset to 300 at stats build (so it must be set a frame later; AFK also sets `distance` then, but a reset of `distance` was not observed); monsters self-delete in towns; the active box is about 650-850 px; appending ids to `Controller_obj.monsterHandleArray` / `monsterHandleArrayCount` after `ActivateDeactivateProps` keeps far monsters stepping (6.2-6.5). **measured**. Which routine rebuilds that array, and how often, is **inferred** (see 6.5 and the runtime reference's §11.3).
 10. The monster sprite variables `enemy_*`, `enemy_corpse` and `shadow_sprite` (3.4). **measured** that prefetching them fixes drawing.
 11. Room routines that decide town or zone behaviour: `CheckTown`, `RoomIsZone`, `GetAct`, `GetMonsterLevel`, `ReturnEnemyStats`, `GetRoomName` (6.7). **measured**.
