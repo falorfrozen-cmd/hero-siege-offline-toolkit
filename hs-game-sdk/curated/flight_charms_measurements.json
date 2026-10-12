@@ -86,8 +86,8 @@
     },
     "added": {
       "status": "measured",
-      "decision": "pending",
-      "check_verdict": "fail (outcome item-missing is none of the check's values)",
+      "decision": "item-missing",
+      "check_verdict": "fail (the check line knows only safe, overlap and crash; the Decision key's item-missing value records this outcome)",
       "what": "A 1x1 charm whose right and lower neighbours were occupied was given a 2x2 rule over a save and reload: the rule applied (dressed=1), the game did not crash, and the neighbours were intact and not overlapped, but the charm was no longer at its cell or on the bag's Extra tabs 1 to 3. The Main tab and Extra tab 4 were not checked before the saves were restored, so where it went is not-established.",
       "source": "forgepact-158-flight-charms-live-1.md (S17)"
     },
