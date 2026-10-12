@@ -177,7 +177,7 @@ the set, and each is named `mcp__x64dbg__<tool>` on an agent's `tools:` line:
 | Tool | What it does |
 |---|---|
 | `mcp__x64dbg__status` | session state (`none`, `attaching`, `attach-unconfirmed`, `running`, `detaching`, `ended`, `detach-unconfirmed`, `game-not-released`), the target pid, whether the keeper and headless are alive, whether the plugin answers on loopback, and the hs-drive lease state. Beside those, the keeper's own record: `x64dbg_state` (x64dbg's settled state, read from its `[STATE]` lines), `breaks_resumed`, `last_break`, `break_storm` and `instrument` (§ "Attach, the keeper, and teardown"), and `paused_at_detach` and `game_released` once a teardown has set them. While a session is live it also carries `game`, a fresh outside check of the game (§ "Checking the game from outside the debugger") |
-| `mcp__x64dbg__logpoint` | adds one non-breaking hardware logging breakpoint: an `address` (an x64dbg expression such as `Hero_Siege.exe+427460`), a `log` format string (`{` `}` allowed, `"` refused), an optional log condition, an optional name, and an optional `expect_bytes`: the function's first bytes as Ghidra's copy has them, in hex. It first reads the code at the address and returns its first bytes; with `expect_bytes` a mismatch is refused before anything is set. It refuses `break_storm` while the session has one, `not_running` unless x64dbg's settled state is `running`, and `already_armed` when `bplist` already lists the address. Then it arms through headless's stdin, with no plugin pause, in one keeper hold. With no hardware breakpoint armed yet (the control), it sends a breaking `bph <A>, x, 1` and holds the game at A's own first hit; there it takes the outside thread check (`hold_game`, diagnostic only) and, while the instrument is unproven, the frame-counter readings of its control hold (`hold_frames`, § "The frame-counter proof"), sets the never-break condition `SetHardwareBreakpointCondition <A>, 0`, the log text, the optional log condition and name, reads `bplist`, and sends `run`. A cold address that is not hit within the hold timeout (10 s) is armed never-break on the running game instead, with `held: null` and a `held_note`, and proves nothing. While another logpoint is logging (a candidate), the same lines go out as a held change at that logpoint's hit (§ "Breakpoint rules"). It fails at stage `set` (a failure line from x64dbg, no `Hardware breakpoint at <A> set!` line, no `bplist` row for A, or a row without the name given), `listed-but-disabled` (A's row starts `0:`), `running` (x64dbg broke on A again in the 1.5 s after the hold: its never-break condition did not take) or `game-not-running` (the outside check after arming reads anything but `running`). Every failure clears A with a hold of `bphc <A>` and returns `cleared` and `x64dbg_state`. Success returns `steps`, `bplist`, `held` (the break line the game was held at while the rest was set: A's own first hit for the control, the logging breakpoint's hit for a candidate, or null), `hold_game` (at a first hit), `x64dbg_state` and `game`, the outside check after the resume. It never calls the plugin's `PauseDebug`, `run` or `ExecuteDbgCommand` |
+| `mcp__x64dbg__logpoint` | adds one non-breaking hardware logging breakpoint: an `address` (an x64dbg expression such as `Hero_Siege.exe+427460`), a `log` format string (`{` `}` allowed, `"` refused), an optional log condition, an optional name, and an optional `expect_bytes`: the function's first bytes as Ghidra's copy has them, in hex. It first reads the code at the address and returns its first bytes; with `expect_bytes` a mismatch is refused before anything is set. It refuses `break_storm` while the session has one, `not_running` unless x64dbg's settled state is `running`, and `already_armed` when `bplist` already lists the address. Then it arms through headless's stdin, with no plugin pause, in one keeper hold. With no hardware breakpoint armed yet (the control), it sends a breaking `bph <A>, x, 1` and holds the game at A's own first hit; there it takes the outside thread check (`hold_game`, diagnostic only) and, while the instrument is unproven, the frame-counter readings of its control hold (`hold_frames`, § "The frame-counter proof"), sets the never-break condition `SetHardwareBreakpointCondition <A>, 0`, the log text, the optional log condition and name, reads `bplist`, and sends `run`. A cold address that is not hit within the hold timeout (10 s) is armed never-break on the running game instead, with `held: null` and a `held_note`, and proves nothing. While another logpoint is logging (a candidate), the same lines go out as a held change at that logpoint's hit (§ "Breakpoint rules"). It fails at stage `set` (a failure line from x64dbg, no `Hardware breakpoint at <A> set!` line, no `bplist` row for A, or a row without the name given), `listed-but-disabled` (A's row starts `0:`), `running` (x64dbg broke on A again in the 1.5 s after the hold: its never-break condition did not take) or `game-not-running` (the outside check after arming finds the game `gone`, or there is no live session to check; any other reading is diagnostic and does not fail the arm). Every failure clears A with a hold of `bphc <A>` and returns `cleared` and `x64dbg_state`. Success returns `steps`, `bplist`, `held` (the break line the game was held at while the rest was set: A's own first hit for the control, the logging breakpoint's hit for a candidate, or null), `hold_game` (at a first hit), `x64dbg_state` and `game`, the outside check after the resume, kept as a diagnostic: when it reads anything but `running` (`frozen`, `threads-suspended`, `unreadable`, `unsupported`), a `game_note` names the verdict and says it decided nothing. It never calls the plugin's `PauseDebug`, `run` or `ExecuteDbgCommand` |
 | `mcp__x64dbg__command` | one allowlisted x64dbg command, sent on headless's stdin (not through the plugin, § "Breakpoint rules"): delete, enable or disable a hardware breakpoint, name it, set its log condition, reset its hit count, or `bplist`. The verbs that change debug registers (`DeleteHardwareBreakpoint`/`bphc`/`bphwc`, `EnableHardwareBreakpoint`/`bphe`/`bphwe`, `DisableHardwareBreakpoint`/`bphd`/`bphwd`) go through a keeper hold, a held change while a logpoint is logging, and return its `lines`, `after` (with the `bplist` that followed), `held` and `x64dbg_state`. The others change only x64dbg's list and go straight to stdin, returning the log lines that followed. Everything else is refused, naming the allowlist: in particular a new hardware breakpoint (use `logpoint`), every software or memory breakpoint, setting a breakpoint command, `StopDebug`, `detach`, `exit`, memory writes, and any command with a `;` outside a double-quoted string. Reading a hit count is not on the list: x64dbg's `GetHardwareBreakpointHitCount` sets `$result` and, as far as is known, prints nothing, so it would answer ok with no number |
 | `mcp__x64dbg__bplist` | sends `bplist` and returns the log lines it produced |
 | `mcp__x64dbg__log` | the session log's lines after a given line number (by default the last 200), with the total line count, so logging-breakpoint hits can be paged |
@@ -370,7 +370,10 @@ These come from the 2026-10-10 probes recorded on issue #484.
   line naming the address (its 16 hex digits or its name) and then `[STATE]
   paused` means the never-break condition did not take, and `logpoint`
   clears the breakpoint and fails at stage `running`. The outside check of
-  the game comes last: anything but `running` is stage `game-not-running`.
+  the game comes last and is diagnostic (#497): its reading is returned in
+  `game`, with a `game_note` when it is not `running`, and only a `gone`
+  game (or no live session to check) fails the arm, at stage
+  `game-not-running`.
 - **A change while another breakpoint logs is a held change.** Static
   reading, not measured: TitanEngine's `SetHardwareBreakPoint` and
   `DeleteHardwareBreakPoint` each read DR7 once, from the thread of the last
@@ -662,8 +665,9 @@ point of a session without asking the debugger. Since #497 it decides
 neither proof nor release: whether the instrument is proven and whether a
 detach released the game is decided by the frame counter (§ "The
 frame-counter proof"), and the thread checks in `instrument` and after
-detach are diagnostic only. `attach`'s own refusals and ready check, and
-`logpoint`'s `game-not-running` stage, still act on its verdict.
+detach are diagnostic only. `attach`'s own refusals and ready check still
+act on its verdict; `logpoint`'s reading after arming is diagnostic too
+(`game`, `game_note`), and only a `gone` game fails the arm there.
 
 ```bash
 py -3 -m tools.thread_state <pid> [--samples N] [--interval S]
@@ -996,7 +1000,12 @@ before the first logpoint), the stale breakpoint cleared at attach, its
 the TLS storm, `break_storm`), the first-hit hold and the instrument's
 control hold (`instrument_control`, with a cold address that holds nothing
 and proves nothing beside it), held changes, a breakpoint that keeps
-breaking after its first hit (`paused_first_run`), the verified release
+breaking after its first hit (`paused_first_run`), `logpoint`'s after-arm
+thread reading recorded and deciding nothing (`logpoint_roster_diagnostic`:
+`frozen`, `threads-suspended` and `unreadable` still arm, with a
+`game_note`) beside its negative control (`logpoint_gone_refuses`: a `gone`
+game, or no live session, fails at `game-not-running` and is cleared), the
+verified release
 (`game-not-released`) and teardown order, `logpoint`'s
 read-back (a row listed but disabled fails) and its failure stages, the
 `expect_bytes` refusal, the `command` allowlist and its stdin and hold
@@ -1032,7 +1041,9 @@ does. Its modes stand in for each pause and failure: `tls_breaks` (the TLS
 storm after attach), `late_break` (a pause landing late, as in Live 2),
 `breaks` (a storm from now on), `break_after` (one break after a given
 verb), `stale_db` (a breakpoint restored from the database on attach),
-`condition_ignored`, `never_running`, `race` (a debug-register change that
+`condition_ignored` (a break on every hit, and on the hit right after every
+`run`, so x64dbg never settles at running while it is armed),
+`never_running`, `race` (a debug-register change that
 is not held silences a hot logpoint, the lost DR7 update, so the
 held-change test's control can fail), `leak_on_detach` (every game thread
 but one stays suspended after `detach`, and the frame counter stops),

@@ -3042,13 +3042,23 @@ class Tools:
             return self._arming_failed(base, addr, "running",
                                        f"x64dbg broke on {hexaddr} within {self.cfg.settle:.1f}s of arming it "
                                        f"({brk}): its never-break condition did not take", reply)
-        game = self._game() or {"verdict": "unreadable", "detail": "no live session to check"}
-        if game.get("verdict") != "running":
+        # The outside check after the window is diagnostic (#497): the thread
+        # roster does not say whether the game runs (the frame counter does,
+        # in the instrument record), so only a game that is not there, or no
+        # live session to check it, fails the arm. Any other reading is kept
+        # in `game`, with a `game_note` when it is not running.
+        game = self._game() or {"verdict": "no-session", "detail": "no live session to check"}
+        verdict = game.get("verdict")
+        if verdict in ("gone", "no-session"):
             return self._arming_failed(base, addr, "game-not-running",
-                                       f"the outside check reads the game {game.get('verdict')}, not running, after "
-                                       f"{hexaddr} was armed: {game.get('detail')}", reply, game=game)
+                                       f"the outside check reads the game {verdict} after {hexaddr} was armed: "
+                                       f"{game.get('detail')}", reply, game=game)
+        note = {} if verdict == "running" else {
+            "game_note": f"the outside check read the game {verdict} after {hexaddr} was armed "
+                         f"({game.get('detail')}); that thread reading is diagnostic and decided nothing: "
+                         "only a gone game fails the arm"}
         rows = [ln.strip() for ln in reply.get("after") or [] if _BPLIST_ROW.match(ln)]
-        return {"ok": True, **base, "bplist": rows, "held": reply.get("held"),
+        return {"ok": True, **base, **note, "bplist": rows, "held": reply.get("held"),
                 **({"held_note": reply["held_note"]} if reply.get("held_note") else {}),
                 **({"hold_game": reply["hold_game"]} if reply.get("hold_game") else {}),
                 **({"hold_frames": reply["hold_frames"]} if reply.get("hold_frames") else {}),

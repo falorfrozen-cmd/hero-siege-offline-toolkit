@@ -2717,12 +2717,12 @@ class PausedFirstRunTests(ArmingMixin, unittest.TestCase):
         result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertFalse(result["ok"], result)
         self.assertIn(f"({A:016X})", result["held"] or "", result)  # the first hit held it, as intended
-        # It then breaks on every hit after the hold's run. Whether the hold's
-        # settle saw 0.4 s of running between two breaks depends on how the
-        # stand-in is scheduled (on a loaded machine it can), and the outside
-        # check then reads the game held, or the verification window sees the
-        # next break: either way the arming failed and is cleared.
-        self.assertIn(result["stage"], ("running", "game-not-running"), result)
+        # It then breaks right after every run, the hold's own included (the
+        # stand-in breaks in its `run` handler, not on its ticker), so the
+        # hold's settle never sees x64dbg at running. The after-arm thread
+        # reading is diagnostic (#497) and can no longer be the stage.
+        self.assertEqual(result["stage"], "running", result)
+        self.assertIn("never settled at running", result["detail"])
         self.assertIn("Hardware breakpoint deleted!", result["cleared"])
         self.assertEqual(result["x64dbg_state"], "running")
         self.assertIsNone(xm.bplist_entry(xm.Tools(cfg).bplist()["lines"], A))
@@ -2825,16 +2825,64 @@ class FalseSuccessTests(ArmingMixin, unittest.TestCase):
         self.assertEqual(result["x64dbg_state"], "running")
         self.assert_never_paused(plugin, record)
 
-    def test_false_success_a_game_the_outside_check_reads_held_is_not_ok(self):
+    # The outside check after the verification window is diagnostic (#497):
+    # a reading other than running is recorded in the reply and decides
+    # nothing. Only a game that is not there fails the arm (the gone tests,
+    # the negative control).
+
+    def assert_roster_reading_is_diagnostic(self, reading):
         cfg, _, _, record, _ = self.start_session(cfg_over=self.COLD)
-        held = {"verdict": "frozen", "detail": "stand-in: no thread made progress", "suspended": [], "stopped": []}
-        with mock.patch.object(xm, "game_check", return_value=held):
+        with mock.patch.object(xm, "game_check", return_value=reading):
             result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn("stage", result)
+        self.assertEqual(result["game"], reading)
+        self.assertIn(reading["verdict"], result["game_note"])
+        self.assertIn("decided nothing", result["game_note"])
+        self.assertNotIn(f"bphc 0x{A:X}", self.stdin_lines(record))  # nothing was cleared
+        self.assertEqual(xm.bplist_entry(xm.Tools(cfg).bplist()["lines"], A), "armed")
+
+    def test_logpoint_roster_diagnostic_a_frozen_reading_still_arms(self):
+        self.assert_roster_reading_is_diagnostic(
+            {"verdict": "frozen", "detail": "stand-in: no thread made progress", "suspended": [], "stopped": []})
+
+    def test_logpoint_roster_diagnostic_a_threads_suspended_reading_still_arms(self):
+        # #197 Live 2's shape: two threads missing from `stopped`
+        self.assert_roster_reading_is_diagnostic(
+            {"verdict": "threads-suspended", "detail": "stand-in: 2 of 4 threads suspended",
+             "suspended": [5744, 36732], "stopped": []})
+
+    def test_logpoint_roster_diagnostic_an_unreadable_reading_still_arms(self):
+        self.assert_roster_reading_is_diagnostic(
+            {"verdict": "unreadable", "detail": "stand-in: access denied", "suspended": [], "stopped": []})
+
+    def test_logpoint_roster_diagnostic_control_a_running_reading_carries_no_note(self):
+        cfg, _, _, _, _ = self.start_session(cfg_over=self.COLD)
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["game"]["verdict"], "running")
+        self.assertNotIn("game_note", result)
+
+    def assert_gone_refuses(self, result, record, cfg, verdict):
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["stage"], "game-not-running")
-        self.assertEqual(result["game"]["verdict"], "frozen")
+        self.assertEqual(result["game"]["verdict"], verdict)
         self.assertIn("Hardware breakpoint deleted!", result["cleared"])
         self.assertIn(f"bphc 0x{A:X}", self.stdin_lines(record))
+        self.assertIsNone(xm.bplist_entry(xm.Tools(cfg).bplist()["lines"], A))
+
+    def test_logpoint_gone_refuses_a_game_the_outside_check_reads_gone(self):
+        cfg, _, _, record, _ = self.start_session(cfg_over=self.COLD)
+        gone = {"verdict": "gone", "detail": "stand-in: no such process", "suspended": [], "stopped": []}
+        with mock.patch.object(xm, "game_check", return_value=gone):
+            result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assert_gone_refuses(result, record, cfg, "gone")
+
+    def test_logpoint_gone_refuses_with_no_live_session_to_check(self):
+        cfg, _, _, record, _ = self.start_session(cfg_over=self.COLD)
+        with mock.patch.object(xm.Tools, "_game", return_value=None):
+            result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assert_gone_refuses(result, record, cfg, "no-session")
 
     def test_false_success_arming_failure_reads_the_hold_reply(self):
         set_line, row = f"Hardware breakpoint at {A:016X} set!", f"1:HW:{A:016X}"

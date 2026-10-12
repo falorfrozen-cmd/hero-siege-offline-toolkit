@@ -56,7 +56,9 @@ Modes:
 - `stale_db` <addr>: on `attach`, restore one hardware breakpoint from x64dbg's
   "database" before any command (`Set hardware breakpoint on <16 hex>!` and a
   row), as x64dbg restores a module's saved breakpoints;
-- `condition_ignored`: an armed hot breakpoint breaks on every hit;
+- `condition_ignored`: an armed hot breakpoint breaks on every hit, and on
+  the hit right after every `run` (in the same handler, so x64dbg never
+  settles at running while it is armed, however the stand-in is scheduled);
 - `never_running`: a break right after attach, and another after every run
   (x64dbg never settles at running);
 - `race`: a command that changes debug registers, arriving while the game is
@@ -427,6 +429,15 @@ class Fake:
                 return  # x64dbg ignores a run while the game runs
             self.resume()
             self.runs += 1
+            if self.modes.get("condition_ignored"):
+                # The next hit follows the run at once, in this handler rather
+                # than on the ticker, so no scheduling delay can show x64dbg
+                # settled at running while the condition is ignored.
+                hot = {int(h) for h in self.modes.get("hot", [])}
+                for b in self.bps:
+                    if b["addr"] in hot and self.armed(b) and b["addr"] not in self.silenced:
+                        self.brk(self.hw_break_line(b))
+                        break
         elif low == "pause":
             write_atomic(self.pause_file, str(time.time()))
         elif low == "log":
