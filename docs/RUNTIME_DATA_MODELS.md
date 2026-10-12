@@ -2520,9 +2520,9 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   (2026-10-02, issue #74).** Of the three rolls read on 2026-10-11
   (`DropUniqueItems`, this roll and `DropItemHeroic`), only `DropItemHeroic`
   keeps a Heroic (9) entry; the other readers listed here were not read for
-  rarity (§ 21.4, **static reading**, 2026-10-11, ForgePact #158). Called with
+  rarity (§ 22.4, **static reading**, 2026-10-11, ForgePact #158). Called with
   the player as `self`, `DropItemHeroic` placed seven Heroic and three Satanic
-  uniques in ten calls (§ 21.4, **measured**, 2026-10-12).
+  uniques in ten calls (§ 22.4, **measured**, 2026-10-12).
 - **The unique repository.** `GetUniqueRepoStruct(type, sub, b)` indexes a
   `global` three-level array `repo[type][sub][b]` (its slot name is also
   unresolved; type 3 takes a separate branch) with GameMaker's own bounds
