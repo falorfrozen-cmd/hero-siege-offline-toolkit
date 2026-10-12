@@ -13,12 +13,13 @@ checks, against `hs-game-sdk/curated/boss_soul_pieces.json` and
   read 2 in `Town_02_rm`, `Act_02_Boss` and `Act_02_02`), and `false` for a
   room outside it (Live procedure 3 read `bool:false` in `Act_01_Boss` and
   `Act_01_Pregame`; the static reading had said undefined).
-- The stack rule (static reading): the pickup's stack attempts merge an item
-  into one whose class matches and whose definition's `b` and `c` are the same
-  value to the runtime (two reals within the math epsilon), and take only
-  classes 12 to 15. The seed `a` is never compared. Live procedure 1 measured a
-  class-12 item merging into a real key of the same definition, and Live
-  procedure 3 five class-11 items (pieces and a plain logo) staying apart.
+- The stack rule (static reading): the pickup's stack attempts refuse an
+  incoming item outside classes 12 to 15 before comparing anything, then merge
+  it into one whose class matches and whose definition's `b` and `c` are the
+  same value to the runtime (two reals within the math epsilon), while the two
+  counts summed stay at most 999. The seed `a` is never compared. Live
+  procedure 1 measured a class-12 item merging into a real key of the same
+  definition, and Live procedure 3 five class-11 items staying apart.
 - The numbers a definition carries (static reading): `b` and `c` may be reals.
   The repository lookup truncates `b` toward zero, a `c` above 0.5 picks the
   unique repository, the save writes a real with two decimals
@@ -57,6 +58,10 @@ ACT_COUNT = 9
 #: The item classes the stack attempt accepts (static reading).
 STACKABLE_CLASSES = frozenset({12, 13, 14, 15})
 
+#: The most one stack holds: a merge goes ahead only while the summed count
+#: stays at most this (static reading of `InventoryGridAddToStack`).
+BAG_STACK_CAP = 999
+
 #: How far apart two reals may be and still compare equal: GameMaker's default
 #: math epsilon. Whether the game sets another is not established.
 EPSILON = Fraction(1, 100000)
@@ -85,6 +90,10 @@ HYPOTHESES: Dict[str, Optional[bool]] = {
     # whole (the runtime's documented behaviour, not read in this game; the
     # follow-up's Live procedure 1 `reload-frac-kept` measures it).
     "string_keeps_two_decimals": None,
+    # A consumable's count `o` comes back from a save and reload as it was
+    # (`saved_number` keeps a whole number; the follow-up's Live procedure 2
+    # `reload-stack-kept` measures it on a piece stack).
+    "saved_count_is_kept": None,
 }
 
 Number = Union[int, Fraction]
@@ -92,12 +101,14 @@ Number = Union[int, Fraction]
 
 class Item(NamedTuple):
     """The fields the stack rule reads: class (`itemType`), the definition's
-    `b` and `c` (whole or real), and the seed `a`, which it never compares."""
+    `b` and `c` (whole or real), the seed `a`, which it never compares, and
+    the count `o`, which the cap reads."""
 
     item_type: int
     b: Number
     c: Number
     a: int = 0
+    o: int = 1
 
 
 def _whole(name: str, value: int) -> int:
@@ -134,16 +145,23 @@ def act_of_room(room_act_index: Union[int, bool, None]) -> Optional[int]:
 
 
 def stacks(held: Item, picked: Item) -> bool:
-    """Whether the game merges `picked` into `held` on pickup: both of a class
-    that stacks (12 to 15), the same class, and `b` and `c` the same value to
-    the runtime (`same_value`). The seed is not compared."""
+    """Whether the game merges `picked` into `held` on pickup. A `picked` class
+    outside 12 to 15 is refused before anything else is read; then the same
+    class, `b` and `c` the same value to the runtime (`same_value`), and the
+    two counts summed at most `BAG_STACK_CAP`. The seed is not compared. The
+    item-info flag `IsStackable` also asks is left out (it can only refuse)."""
+    if _whole("item_type", picked.item_type) not in STACKABLE_CLASSES:
+        return False
     for item in (held, picked):
         _whole("item_type", item.item_type)
         _number("b", item.b)
         _number("c", item.c)
-    if held.item_type not in STACKABLE_CLASSES or held.item_type != picked.item_type:
+        _whole("o", item.o)
+    if held.item_type != picked.item_type:
         return False
-    return same_value(held.b, picked.b) and same_value(held.c, picked.c)
+    if not (same_value(held.b, picked.b) and same_value(held.c, picked.c)):
+        return False
+    return held.o + picked.o <= BAG_STACK_CAP
 
 
 def repository_index(b: Number) -> int:
@@ -160,9 +178,9 @@ def uses_unique_repository(c: Number) -> bool:
 
 def saved_number(value: Number) -> Number:
     """What a definition's number reads after a save and reload, under
-    `HYPOTHESES['string_keeps_two_decimals']`: a whole number whole, a real
-    rounded to two decimals (how a tie rounds is not established; the model
-    rounds it away from zero)."""
+    `HYPOTHESES['string_keeps_two_decimals']`: a whole number whole (so a
+    count `o` comes back as it was, `saved_count_is_kept`), a real rounded to
+    two decimals (a tie rounds away from zero here; the game's is not known)."""
     hundredths = abs(_number("value", value)) * 100
     rounded = Fraction(int(hundredths + Fraction(1, 2)), 100) * (-1 if value < 0 else 1)
     return int(rounded) if rounded.denominator == 1 else rounded

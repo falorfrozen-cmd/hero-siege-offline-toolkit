@@ -38,7 +38,7 @@ hs-game-sdk/
 │   ├── dungeon_chest_measurements.json # DC1-DC23: the dungeon chest's static reading, the kill path (§13.5), and ForgePact #31's Live 1, Live 1b, Live 2 and Live 3 measurements (the estimate's mean, the player build's census, latch and head label), for dungeon_chest_model.py (data only)
 │   ├── skill_sliders_measurements.json # ForgePact #160's live values for skill_sliders_model.py (data only)
 │   ├── room_acts.json          # RoomActIndex's act per room (its answer is the act): 175 rows (SDK room name, index, act), static reading, three rows measured, for soul_piece_model.py's tests (data only; nothing ships it)
-│   ├── boss_soul_pieces.json   # ForgePact #197: the key piece's base (`keys_bifrost_key`, class 12, `b` + act/10) and its icon (`Gem_Incarnation_spr` under info key "11", ground `Pickup_Gem_Incarnation_spr`), the legacy piece's base (Edible PAS Logo), act bosses and boss rooms, piece seeds, the Gem of Incarnation's measured rate (9,000), the 4/5 ratio, the travel route (`NetworkRoomGoto` after `ZoneStateResetSingle`), room and use rules, verdict words, shared cases (key pieces included) and the open questions of Live procedure 3 and the follow-up's Live procedure 1 (data only)
+│   ├── boss_soul_pieces.json   # ForgePact #197: the key piece's base (`keys_bifrost_key`, class 12, `b` + act/10) and its icon (`Gem_Incarnation_spr` under info key "11", ground `Pickup_Gem_Incarnation_spr`), `bag_stack` (the game's `InventoryGridAddToStack`: classes 12 to 15 only, asked before any compare, a cap of 999, the `s_ItemOperation` result's `success`), the legacy piece's base (Edible PAS Logo), act bosses and boss rooms, piece seeds, the Gem of Incarnation's measured rate (9,000), the 4/5 ratio, the travel route (`NetworkRoomGoto` after `ZoneStateResetSingle`), room and use rules, verdict words, shared cases (key pieces and stack counts included) and the open questions of Live procedure 3 and the follow-up's Live procedures 1 and 2 (data only)
 │   ├── loot_announcement_measurements.json # ForgePact #17: the rare-drop announcement chain, the rarity codes its closure branches on and the route ForgePact ships (§16.10; data only, no model)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
@@ -179,16 +179,21 @@ Live procedure 1; `CuratedTests` checks every name and index against `GameRoom`)
 `curated/boss_soul_pieces.json` (the key piece's base, `keys_bifrost_key`, class 12 at index 2
 measured, whose `b` a piece carries plus act/10, a static reading until the follow-up's Live
 procedure 1; the piece's icon, `Gem_Incarnation_spr` under item info key `"11"` with its ground
-companion `Pickup_Gem_Incarnation_spr`, both checked against `hs_game_sdk.sprites`; the legacy
+companion `Pickup_Gem_Incarnation_spr`, both checked against `hs_game_sdk.sprites`; `bag_stack`,
+the game's stack attempt a consumable's pickup reaches (`InventoryGridAddToStack`, classes 12 to
+15 only, a cap of 999 pinned to `SoulPieceMod.hpp`'s `kBagStackCap`), a static reading until the
+follow-up's Live procedure 2; the legacy
 piece's base, the Edible PAS Logo, class 11 with `b` 12
 measured; the nine act bosses, each checked to descend from `Enemy_Child_Boss_obj`, and their boss
 rooms, each checked against `GameRoom`; the piece seeds; the Gem of Incarnation's rate of 9,000,
 measured by Live procedure 1; the 4/5 ratio; the travel route (`NetworkRoomGoto` after `ZoneStateResetSingle`); the room and use rules; the verdict words;
-shared cases; and the open questions ForgePact #197's Live procedure 3 answers), checks
+shared cases; and the open questions of ForgePact #197's Live procedure 3 and the follow-up's Live
+procedures 1 and 2), checks
 `tests/test_soul_piece_model.py`. It models the game only: a room's act (`RoomActIndex`'s answer,
-which is the act itself, measured; none outside its switch), the pickup's stack rule (class 12 to
-15, same class, `b` and `c` equal within the runtime's epsilon; the seed is never compared, so a
-class-11 piece never stacks), the number rules a key piece rests on (the repository lookup
+which is the act itself, measured; none outside its switch), the pickup's stack rule (an incoming
+class outside 12 to 15 refused before any field is compared, then the same class, `b` and `c`
+equal within the runtime's epsilon and at most 999 in a stack; the seed is never compared, so a
+class-11 piece never stacks by the game's own code), the number rules a key piece rests on (the repository lookup
 truncates `b`, a `c` above 0.5 picks the unique repository, the save keeps two decimals, crafting
 counts by class and `b`, the inventory find matches `b` and `c`), the
 gem's chance on one `DropGems` call (1 in its rate) and the backpack's use (the item is cleared only

@@ -2,7 +2,8 @@
 
 The model is written from `docs/models/soul-piece-spec.md` and covers the game
 only: `RoomActIndex` gives a room its act, the pickup merges an item into a
-stack by class, `b` and `c` (classes 12 to 15 only), `DropGems` rolls the Gem of
+stack by class, `b` and `c` (an incoming class outside 12 to 15 refused before
+anything is compared, a stack capped at 999), `DropGems` rolls the Gem of
 Incarnation against its rate once per dying source whose drop type 6 gate
 passed, and a backpack use clears the item only when `PotionUse` answers true.
 ForgePact's boss soul pieces are our code, so they live here as input
@@ -235,7 +236,7 @@ def _real(value):
 
 
 def _item(fields):
-    return model.Item(fields["t"], _real(fields["b"]), _real(fields["c"]), fields["a"])
+    return model.Item(fields["t"], _real(fields["b"]), _real(fields["c"]), fields["a"], fields.get("o", 1))
 
 
 def _table_rooms():
@@ -352,18 +353,41 @@ class BaselineTests(unittest.TestCase):
             with self.subTest(act=act):
                 self.assertFalse(model.uses_unique_repository(Fraction(act, 20)))
 
-    def test_the_bag_stacks_only_classes_12_to_15(self):
+    def test_only_classes_12_to_15_stack(self):
         self.assertEqual(model.STACKABLE_CLASSES, frozenset({12, 13, 14, 15}))
+        self.assertEqual(model.STACKABLE_CLASSES, frozenset(DATA["bag_stack"]["classes"]))
         for item_type in range(0, 20):
             with self.subTest(item_type=item_type):
                 same = model.Item(item_type, 4, 0, 1)
                 self.assertEqual(model.stacks(same, same._replace(a=2)), item_type in model.STACKABLE_CLASSES)
         self.assertFalse(model.stacks(model.Item(12, 4, 0), model.Item(13, 4, 0)))
         self.assertFalse(model.stacks(model.Item(12, 4, 0), model.Item(12, 5, 0)))
+        # The incoming item's class is refused before anything else is read: a
+        # field the compare could not take is never reached for class 11.
+        unread = object()
+        self.assertFalse(model.stacks(model.Item(11, unread, unread, 1, unread),
+                                      model.Item(11, unread, unread, 2, unread)))
+        self.assertFalse(model.stacks(model.Item(12, unread, 0), model.Item(11, 4, 0)))
+        # Positive control: the same unreadable field on a class that passes is read, and refused.
+        with self.assertRaises(TypeError):
+            model.stacks(model.Item(12, unread, 0), model.Item(12, 4, 0))
         with self.assertRaises(TypeError):
             model.stacks(model.Item(True, 4, 0), model.Item(12, 4, 0))
         with self.assertRaises(TypeError):
             model.stacks(model.Item(12, 4.0, 0), model.Item(12, 4, 0))
+        with self.assertRaises(TypeError):
+            model.stacks(model.Item(12, 4, 0), model.Item(True, 4, 0))
+
+    def test_a_stack_holds_at_most_999(self):
+        self.assertEqual(model.BAG_STACK_CAP, 999)
+        self.assertEqual(DATA["bag_stack"]["cap"], model.BAG_STACK_CAP)
+        held = model.Item(13, 4, 0, 1)
+        for have, adding, merges in ((1, 1, True), (998, 1, True), (990, 9, True), (999, 1, False),
+                                     (990, 10, False), (1, 999, False)):
+            with self.subTest(have=have, adding=adding):
+                self.assertIs(model.stacks(held._replace(o=have), held._replace(a=2, o=adding)), merges)
+        with self.assertRaises(TypeError):
+            model.stacks(held._replace(o=1.0), held)
 
     def test_the_logo_is_used_up_only_when_potion_use_answers_true(self):
         self.assertTrue(model.HYPOTHESES["potion_use_true_clears_the_item"])
@@ -422,9 +446,27 @@ class TargetTests(unittest.TestCase):
                 self.assertFalse(model.stacks(piece, piece))
                 for other in range(1, ACT_COUNT + 1):
                     self.assertFalse(model.stacks(piece, piece_item(other)))
+                # Nor does a count of its own, far under the cap, get it past the class rule.
+                self.assertFalse(model.stacks(piece._replace(o=2), piece._replace(o=1)))
         self.assertNotIn(DATA["base"]["item_type"], model.STACKABLE_CLASSES)
         # Negative control: the same rule does merge two items of a stackable class.
         self.assertTrue(model.stacks(model.Item(12, BASE_B, 0, 1), model.Item(12, BASE_B, 0, 2)))
+
+    def test_a_saved_consumable_keeps_its_count(self):
+        # The assumption is open until the follow-up's Live procedure 2 reloads a piece stack.
+        self.assertIsNone(model.HYPOTHESES["saved_count_is_kept"])
+        for count in (1, 2, 3, 998, model.BAG_STACK_CAP):
+            with self.subTest(count=count):
+                self.assertEqual(model.saved_number(count), count)
+                self.assertIsInstance(model.saved_number(count), int)
+                # A reloaded piece stack is still its act's piece, and still stacks with nothing.
+                stack = piece_item(1)._replace(o=count)
+                reloaded = saved(stack)._replace(o=model.saved_number(stack.o))
+                self.assertEqual(reloaded, stack)
+                self.assertEqual(act_of_seed(reloaded.a), 1)
+                self.assertFalse(model.stacks(reloaded, piece_item(1)))
+        # Negative control: a count that were not whole would not come back as written.
+        self.assertNotEqual(model.saved_number(Fraction(10001, 10000)), Fraction(10001, 10000))
 
     def test_a_fractional_key_piece_stays_apart_from_the_real_key(self):
         for act in range(1, ACT_COUNT + 1):
@@ -863,6 +905,41 @@ class CuratedTests(unittest.TestCase):
                     self.assertEqual(entry["status"], "pending")
         self.assertEqual(questions["key_piece_survives_a_save"]["hypothesis"], "string_keeps_two_decimals")
 
+    def test_the_bag_stack_is_the_game_s_own_script(self):
+        stack = DATA["bag_stack"]
+        for key in ("script", "class_script", "result_script"):
+            with self.subTest(key=key):
+                self.assertTrue(hasattr(GameScript, stack[key]), stack[key])
+        self.assertEqual(stack["script"], "gml_Script_InventoryGridAddToStack")
+        self.assertEqual(stack["item_argument"], 2)
+        self.assertEqual(sorted(stack["classes"]), sorted(model.STACKABLE_CLASSES))
+        self.assertNotIn(BASE_CLASS, stack["classes"])
+        self.assertEqual((stack["cap"], stack["result_field"]), (model.BAG_STACK_CAP, "success"))
+        # Static reading until the follow-up's Live procedure 2 measures it.
+        self.assertIn(stack["status"], ("static_reading", "measured"))
+        self.assertTrue(set(stack["live_checks"]) >= {"bag-no-stack-control", "merge-stack", "merge-no-duplicate",
+                                                      "stack-draw", "stackuse-all", "reload-stack-kept"})
+        path, _, section = stack["source"].partition(" § ")
+        self.assertIn(section, (ROOT / path).read_text(encoding="utf-8"))
+
+    def test_the_bag_stack_s_questions_wait_for_live_procedure_2(self):
+        questions = {q["question"]: q for q in DATA["open_questions"]}
+        checks = {"merged_pickup_leaves_no_copy": "merge-no-duplicate",
+                  "bag_draws_a_consumable_stack_count": "stack-draw",
+                  "confirm_on_a_bag_stack": "stackuse-all",
+                  "bag_file_written_during_play": "save-written",
+                  "consumable_count_survives_a_save": "reload-stack-kept"}
+        for name, check in checks.items():
+            with self.subTest(name=name):
+                entry = questions[name]
+                self.assertEqual(entry["live_check"], check)
+                self.assertIn(check, DATA["bag_stack"]["live_checks"])
+                if entry["status"] == "measured":
+                    self.assertEqual(entry["capture"], "forgepact-197-piece-icon-stack-live-2")
+                else:
+                    self.assertEqual(entry["status"], "pending")
+        self.assertEqual(questions["consumable_count_survives_a_save"]["hypothesis"], "saved_count_is_kept")
+
     def test_the_rules_and_words_are_the_transforms(self):
         self.assertEqual(tuple(DATA["drop_verdicts"]), DROP_VERDICTS)
         self.assertEqual(tuple(DATA["use_verdicts"]), USE_VERDICTS)
@@ -939,6 +1016,7 @@ class SpecTests(unittest.TestCase):
         for name in ("RoomActIndex", "DropGems", "GetDropRate", "LoadDrops",
                      "socketable_gem_of_incarnation", "Enemy_Child_Boss_obj", "Enemy_Parent_obj",
                      "Mevius_obj", "Pentagram_Boss_obj", "InventoryGridAddToStack", "GridAddToStack",
+                     "IsItemTypeStackable", "IsStackable", "s_ItemOperation", "BAG_STACK_CAP", "999",
                      "consumable_edible_pas_logo", "PotionUse", "Portal_obj", "NetworkRoomGoto",
                      LIVE_1, "soul_piece_model", "boss_soul_pieces.json", "room_acts.json",
                      "max(1, floor(G × 4 / 5))", *model.HYPOTHESES):
@@ -1069,6 +1147,14 @@ class ParityTests(unittest.TestCase):
         self.assertRegex(body, r"b\s*-\s*std::trunc\(b\)\s*<=\s*kKeyPieceTolerance")
         self.assertRegex(body, r"ActOfSeed\(seed\)")
         self.assertRegex(body, r"KeyPieceB\(baseIndex,\s*act\)\)\s*>\s*kKeyPieceTolerance")
+
+    def test_stack_cap_matches_the_header(self):
+        self.assertEqual(int(self._constant("kBagStackCap")), DATA["bag_stack"]["cap"])
+        self.assertEqual(int(self._constant("kBagStackCap")), model.BAG_STACK_CAP)
+        # DecideMerge holds the summed count within that cap, and only for a bag piece.
+        body = self._body("inline MergeDecision DecideMerge")
+        self.assertRegex(body, r"have\s*>\s*kBagStackCap\s*-\s*adding")
+        self.assertIn("BagPieceActOfItem(incoming", body)
 
     def test_the_transfer_leads_to_the_boss_room(self):
         self.assertRegex(self._body("inline const char* TransferTarget"), r"boss->bossRoom")

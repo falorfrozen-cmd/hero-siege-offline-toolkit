@@ -107,6 +107,37 @@ in `RUNTIME_DATA_MODELS.md` § 21.3.
   2 and matches another 2.1, and a double's own rounding error is far inside
   the epsilon. `c` is the repository flag (0 normal, 1 unique), so a whole
   change of it loads a different item.
+- **The bag's stack attempt refuses a consumable first** (read 2026-10-12,
+  after Live procedure 1, through the `ghidra` MCP and local annotated
+  decompiles on the same build; also in `RUNTIME_DATA_MODELS.md` § 21.3).
+  1. *The class rule.* `IsItemTypeStackable` answers true for classes 12, 13,
+     14 and 15 and for nothing else. `IsStackable` first asks the item's
+     `GetItemInfo` method for one value (which info key was not resolved) and
+     answers false when that value is truthy; otherwise it applies the same
+     four-class rule. So the flag can only refuse an item the class rule
+     would take.
+  2. *`InventoryGridAddToStack` asks the rule before anything else.* The item
+     being picked up is its second argument. It applies the `IsStackable` rule
+     to that item itself, at the start, and when the rule fails it gives up
+     there, before it reads a grid or compares any field. A class-11 piece is
+     therefore refused whatever its `b`, `c`, seed or count, which fits Live
+     procedure 3's measured `class_11_never_stacks` (below). For a class
+     that passes, it picks its grid by class (15 the socket grid, 12 the Key
+     grid, 13 and 14 the material grid); a later walk reads the bag's
+     `inventoryTab` under a condition that was not read.
+  3. *The cap.* A merge goes ahead only while the two counts summed stay at
+     most 999.
+  4. *The result.* Every path, the early refusal included, ends by building
+     the game's `s_ItemOperation` struct (`gml_Script_s_ItemOperation`) and
+     returning it, and `AddToInventory` reads that result's `success` at each
+     of its stack attempts. A successful result's fields were measured on the
+     prospecting grid (`RUNTIME_DATA_MODELS.md` § 9.7: `tabNumber`, `x`, `y`,
+     `tabType`, `success`); whether `AddToInventory` reads any field but
+     `success` was not read.
+
+  So no consumable class or base stacks through the game's own stack code,
+  and no value in a piece's own definition can change that: each class that
+  does stack goes to its own tab (Key, material or socket), not the bag.
 - **The repository lookup truncates.** `GetNormalRepoStruct` turns its index
   argument into an integer through the runtime's real-to-int conversion,
   which truncates toward zero: a `b` of 2.1, or 2.9, looks up entry 2. The item
@@ -312,14 +343,36 @@ The follow-up's open questions (its Live procedure 1, capture
 - **The epsilon's value**: GameMaker's default math epsilon is 0.00001; whether
   the game sets another was not read. Anything up to 0.05 keeps the 0.1 between
   two acts apart.
-- **`InventoryGridAddToStack`'s compare**: how it compares `b` (the fallback
-  `AddToInventory` tries when `GridAddToStack` takes nothing) was not read, nor
-  why it refuses a class-11 item.
+- **`InventoryGridAddToStack`'s compare**: how it compares `b` for a class that
+  passes its class rule (it is the fallback `AddToInventory` tries when
+  `GridAddToStack` takes nothing) was not read. Why it refuses a class-11 item
+  is now read (above: the class rule comes first).
 - **Door and NPC key checks**: which code a door or an NPC uses to find the key
   it wants (Heimdall's Bifröst Key and the rest) was not read, so whether one
   of them would take a key piece for its key is not established.
 - **The tooltip**: whether it draws any icon for a key; #158 saw none for a
   charm. The tooltip names the piece either way (`icon-tooltip`).
+
+The bag stack's open questions (the owner kept pieces in the bag after Live
+procedure 1; the follow-up's Live procedure 2, capture
+`forgepact-197-piece-icon-stack-live-2`, answers them):
+
+- **A merged pickup**: whether `AddToInventory`, handed a result whose
+  `success` ForgePact's merge branch set, finishes the pickup as for a stack
+  the game made itself, with the piece gone from the ground and no second copy
+  in the bag (`merge-no-duplicate`).
+- **The bag's count**: whether the bag draws the count of a class-11 item whose
+  `o` is above 1 on its cell (`stack-draw`). No consumable has stacked before.
+- **The confirm on a bag stack**: whether `UiAInventoryConsumeItemConfirm`,
+  after `PotionUse` answers true for a bag item whose `o` is above 1, takes one
+  from it or clears the whole cell (`stackuse-all`).
+- **`saved_count_is_kept`**: whether a class-11 item's count `o` comes back
+  from a save and a relaunch as written (`reload-stack-kept`, read with
+  `tools/save_item_keys.py --defs`). The model assumes it, since the save
+  writes a whole number whole.
+- **The bag file during play**: whether the bag's save file is rewritten over
+  a session holding a piece stack (`save-written`); Live procedure 1's was not
+  rewritten at its stop, for a reason not established.
 
 ## Our code
 
@@ -377,8 +430,24 @@ name (category 15, `socketable_gem_of_incarnation`), never by index.
   `consumable_edible_pas_logo` (resolved by name at run time), `c` 0, `j` 0,
   with its seed `a` set to 777100 + act. Pieces already in a bag stay so and
   are still recognised. 777001 to 777003 are other ForgePact items' seeds.
-  Class 11 never stacks in the bag, so each such piece takes its own cell; with
-  ForgePact gone it is an Edible PAS Logo, so a save holding one loads.
+  Class 11 never stacks through the game's own code, so each such piece takes
+  its own cell unless the merge below joins it; with ForgePact gone it is an
+  Edible PAS Logo, so a save holding one loads.
+- **The bag merge** (the owner, after Live procedure 1: pieces stay bag
+  consumables and pieces of one act stack in the bag; the mod's lever, outside
+  the model). One detour on `InventoryGridAddToStack`, installed on both
+  routes, always runs the game's own call first with the call's own arguments
+  and keeps its result. Only when the merge is armed, that result's `success`
+  is not true, the incoming item is a legacy bag piece (the class-11 rule above)
+  and `DecideMerge` names the first bag piece of the same act whose count plus
+  the incoming count stays within the game's cap of 999 (`kBagStackCap`), does
+  it change anything: that piece's `o` rises by the incoming count, its hash is
+  refreshed as the dress refreshes it, and the game's own result gets `success`
+  true with the target's tab and cell. A real item is never a target and never
+  merged, and a key-shape piece is not a bag piece. Any other call, a failed
+  read included, returns the game's result untouched. Its verdicts, in order:
+  `off`, `not-piece`, `no-target`, `cap`, `merge`. The model leaves this out:
+  `stacks` stays the game's rule, under which a class-11 piece never merges.
 - **The use.** A detour on `PotionUse`: for an item that is a piece, the
   original is never called. Verdicts, in order: `off`, `not-piece`, `no-act`
   (the player's room has no act), `boss-room` (the drop's name rule: a `_Boss`,
@@ -404,8 +473,9 @@ The test file expresses this as input transforms (`piece_denominator`,
 `piece_chance`, `room_refusal`, `decide_drop`, `decide_use`, `transfer_target`,
 the seed helpers, `key_piece_b`, `key_piece_item` and `key_piece_act`), and
 `ParityTests` pins the constants, the base, the key base, the icon, the act
-table with its boss rooms, the room rules and the verdict words to the header,
-so a change on either side fails there.
+table with its boss rooms, the room rules, the verdict words and the stack cap
+(`kBagStackCap` against the curated `bag_stack` and the model's
+`BAG_STACK_CAP`) to the header, so a change on either side fails there.
 
 ## The model
 
@@ -418,14 +488,18 @@ A pure function of whole numbers, booleans and exact fractions
 - `same_value(x, y)`: the runtime's value compare on two numbers, equal
   within `EPSILON` (1/100000).
 - `stacks(held, picked)`: whether the game merges a picked-up `Item` (class,
-  `b`, `c`, seed; `b` and `c` whole or real) into a held one: both of class 12
-  to 15, the same class, `b` and `c` the same value by `same_value`; the seed
-  is not an input to the answer.
+  `b`, `c`, seed, count `o`; `b` and `c` whole or real) into a held one. A
+  picked class outside 12 to 15 is refused before any other field is read;
+  then the same class, `b` and `c` the same value by `same_value`, and the two
+  counts summed at most `BAG_STACK_CAP` (999). The seed is not an input to the
+  answer, and the item-info flag `IsStackable` also asks is left out (it can
+  only refuse).
 - `repository_index(b)`: the entry a definition loads, `b` truncated toward
   zero. `uses_unique_repository(c)`: `c` above 0.5.
 - `saved_number(value)`: a definition's number after a save and reload, under
   `string_keeps_two_decimals`: whole stays whole, a real is rounded to two
-  decimals.
+  decimals. A count is whole, so a stack's `o` comes back as it was
+  (`saved_count_is_kept`).
 - `counted_by_crafting(item, item_type, b)`: crafting's count, class and `b`
   (the item-info value it also compares is left out, which can only count
   more). `find_matches(item, b, c)`: the inventory find, `b` and `c`.
@@ -459,6 +533,14 @@ stack and other acts stay apart, a saved piece still stacks with a fresh one
 and stays apart from the real key, crafting's count and the inventory find
 never take a piece for the key, and a piece loads as the key base before and
 after a save.
+
+For the bag stack, the baseline is the game's rule on its own: only classes 12
+to 15 stack, an incoming class-11 item is refused before any other field is
+read (an unreadable field on it is never reached, while the same field on a
+class that passes is), and a stack holds at most 999 (998 + 1 merges, 999 + 1
+does not). The target: a consumable piece never stacks by the game's rule,
+whatever its count, so every bag stack is the merge's doing; and a saved piece
+stack comes back with its count, still its act's piece.
 
 ## What the model cannot catch
 
