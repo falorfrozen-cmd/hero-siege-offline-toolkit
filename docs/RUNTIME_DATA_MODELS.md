@@ -5315,15 +5315,30 @@ direct `call rel32` that the import's reference table does not hold.
   found `PickupLoot`'s four callers), so how the game reaches it is **not
   observed**.
 - The pickup route. `PickupLoot`'s general path ends in
-  `gml_Script_AddToInventory` (§ 10.7). Offline, `AddToInventory` reads the
-  item's class and info, asks `GetItemPreferredGrid`, and tries a stack first:
-  `gml_Script_InventoryGridAddToStack` for a class with a tab of its own (it
-  picks `inventoryKeyGrid`, `inventoryMaterialGrid` or `inventorySocketGrid`
-  by class), and `gml_Script_GridAddToStack` for the bag. Only when no stack
-  takes the item is it placed as a new one (`InventoryGridAddItem`,
-  `GridAddItem`). Online it goes through `OnlineAddToStack` instead. § 9.7
+  `gml_Script_AddToInventory` (109, § 10.7). Offline, `AddToInventory` reads
+  the item's class and info and asks `gml_Script_GetItemPreferredGrid` (1986),
+  which answers a grid of the item's own kind for keys, materials,
+  socketables, tarot cards and the vault class (it picks `inventoryKeyGrid` and
+  its sibling grids by `itemType`) and none for a consumable. With a preferred
+  grid, `AddToInventory` first tries `gml_Script_GridAddToStack` (1963) on that
+  grid, and only if that takes nothing `gml_Script_InventoryGridAddToStack`
+  (1962); with none, it tries `InventoryGridAddToStack` alone. Only when no
+  stack takes the item is it placed as a new one (`InventoryGridAddItem`,
+  `GridAddItem`). Online it goes through `OnlineAddToStack` instead. A byte
+  scan for direct call sites, whose positive control found the known
+  `InvGridClearItemNode` call in `UiAInventoryConsumeItemConfirm`, found one
+  `GridAddToStack` site and two `InventoryGridAddToStack` sites in
+  `AddToInventory`. **Static reading** (ForgePact #197's piece icon and stack
+  follow-up, 2026-10-12). This corrects Replan 1's reading (2026-10-11), which
+  had the two stack scripts the other way round: the tab classes through
+  `InventoryGridAddToStack` and the bag through `GridAddToStack`. The corrected
+  reading fits both of Live procedure 3's measurements below: a consumable's
+  pickup reached `InventoryGridAddToStack`, and the key merge reached
+  `AddToInventory` and not `InventoryGridAddToStack`, because `GridAddToStack`,
+  not watched in that session, took the key. So that merge is now attributed
+  to `GridAddToStack` by reading, not by measurement. Separately, § 9.7
   measured `InventoryGridCanAddToStack` then `InventoryGridAddToStack` for a
-  material. **Static reading** (Replan 1 of ForgePact #197, 2026-10-11).
+  material on the prospecting grid.
 - What a stack compares. `InventoryGridAddToStack` and `GridAddToStack` walk
   their grid and merge into an item whose class (`itemType`) matches and whose
   definition's `b` and `c` match, comparing those fields themselves; neither
@@ -5331,9 +5346,43 @@ direct `call rel32` that the import's reference table does not hold.
   first accepts only classes 12, 13, 14 and 15, the same classes
   `gml_Script_IsItemTypeStackable` answers true for, so a class-11 consumable
   never stacks in the bag (measured below). `c` is the repository flag (0 normal, 1 unique, § 2
-  and § 13.10), so changing it loads a different item: no field the
-  merge compares can mark an item apart from the real one. **Static reading**
+  and § 13.10), so changing it loads a different item: no whole-number value
+  of a field the merge compares can mark an item apart from the real one (a
+  fraction in `b` can, by the readings that follow). **Static reading**
   (Replan 1).
+- How the compare is made. `GridAddToStack` compares `itemType`, then the two
+  definitions' `b`, then their `c`, each through the runtime's general value
+  compare, which takes two reals as equal when they differ by no more than the
+  math epsilon (GameMaker's default is 0.00001; whether the game sets another
+  is **not established**). So a `b` of 2.1 differs from 2 and matches 2.1.
+  **Static reading** (2026-10-12).
+- The repository lookup truncates. `GetNormalRepoStruct` turns its index
+  argument into an integer through the runtime's real-to-int conversion, which
+  truncates toward zero, so a `b` of 2.1 looks up entry 2. The item
+  constructor takes `gml_Script_GetUniqueRepoStruct` (819) when the
+  definition's `c` is truthy (to the runtime, a real above 0.5) and
+  `GetNormalRepoStruct` otherwise. **Static reading** (2026-10-12). The MCP's
+  reference table holds no caller of `GetUniqueRepoStruct`, which is **not
+  observed**, not "has none".
+- How the save writes a definition. `gml_Script_CreateItemSaveStruct` (693)
+  copies the item's definition, and `gml_Script_json_ordered_by_key` (691)
+  writes it, sending every real and int64 value through the `string` builtin.
+  **Static reading** (2026-10-12; variable slots named with
+  `tools/decomp_index.py slot-name`). GameMaker's `string()` of a real keeps two
+  decimals and prints a whole number whole; that is the runtime's documented
+  behaviour, not read in this game. So a `b` carrying tenths would survive a
+  save and reload, and one with a finer fraction would not: **inference, not
+  measured**.
+- Who else compares `b`. `gml_Script_CountInventoryItem` (1925), whose direct
+  callers the byte scan found to be only the crafting scripts
+  `GetCraftItemsAvailable` and `CraftFindRecipeItems`, compares `itemType`, an
+  item-info value and the definition's `b`, not `c`.
+  `gml_Script_FindInventoryItem` (1920), called from `PlayerMouseAction` and two
+  unnamed sites, compares `b` and `c`. Both go through the same epsilon
+  compare. **Static reading** (2026-10-12). Which code a door or an NPC uses to
+  find the key it wants (Heimdall's Bifröst Key and the rest) was not read, so
+  whether a key with a fractional `b` would open anything is **not
+  established**.
 - The merge, measured. Two items built on the Bifröst Key's definition
   (`keys_bifrost_key`) with seeds 777101 and 777102, and named "Piece of
   Gurag's Soul", joined the owner's own Bifröst Key stack on pickup (its count
@@ -5353,12 +5402,13 @@ direct `call rel32` that the import's reference table does not hold.
   `keys_bifrost_key`, the owner's Bifröst Key stack going from 38 to 39, the
   piece taken by the game's own pickup) hit `AddToInventory` once and neither
   `InventoryGridAddToStack` nor `ItemsAreStackable`, so which code merged the
-  key is **not established**. Five class-11 items on the Edible PAS Logo's
+  key was **not established** by measurement (the corrected pickup reading
+  above attributes it to `GridAddToStack`, which was not watched). Five class-11 items on the Edible PAS Logo's
   definition (three seeded 777101, one 777102, one plain logo) picked up one
   by one each hit `AddToInventory` and then `InventoryGridAddToStack` with the
   same `self`, and never `GridAddToStack`: a consumable's stack attempt goes
-  through `InventoryGridAddToStack`, not the bag's script the reading above
-  names. All five stayed separate bag items with count 1, so class 11 does not
+  through `InventoryGridAddToStack`, as the corrected reading above has it
+  for an item with no preferred grid. All five stayed separate bag items with count 1, so class 11 does not
   stack whatever the seed. **Measured** (ForgePact #197's Live procedure 3,
   2026-10-11; the player build's pieces again in Live procedure 2, 2026-10-12,
   three pieces in three cells over two bag tabs).
@@ -5403,6 +5453,31 @@ measured.
   Whether a right-click on a key (class 12) reaches the prompt or any of the
   scripts above is **not established**: Live procedure 1's pieces merged into
   a real key stack (§ 21.3), so no piece key was ever right-clicked.
+- The click's inline dispatch lives in the grid's input script,
+  `gml_Script_ProcessInventoryGridInput` (3000). It is too large for the MCP to
+  decompile; its calls, listed in address order with a local Ghidra script,
+  hold the bag's right-click as `gml_Script_ValidateItem` (1128),
+  `gml_Script_VaultUse` (4597), `CanUsePotion`, `gml_Script_MessagePrompt`
+  (2393, the "use this item?" prompt), `PotionUse` and `InvGridClearItemNode`,
+  then the equip scripts. A byte scan for direct call sites (with the
+  `InvGridClearItemNode` call in `UiAInventoryConsumeItemConfirm` as its
+  positive control) found `CanUsePotion` called from
+  `ProcessInventoryGridInput` alone, and `PotionUse` from it twice and from
+  `UiAInventoryConsumeItemConfirm`, `ControllerCheckInput`,
+  `DrawMobilePotionIcon` and one unnamed site; the MCP's reference table holds
+  no caller of `CanUsePotion` (**not observed**). `ValidateItem`, called
+  throughout the input script, builds description strings (type and rarity
+  names, the sprite's name, loot name data); no call that removes an item was
+  seen in it. **Static reading** (ForgePact #197's piece icon and stack
+  follow-up, 2026-10-12). **Not established**: whether the Key tab's grid is
+  handled by the same path, and whether `CanUsePotion` answers true for a key
+  (class 12), so whether right-clicking a key opens the prompt at all.
+- The confirm and a stack. After `PotionUse` answers true,
+  `UiAInventoryConsumeItemConfirm` compares an item-info value with 6 (what
+  that value means was not read) and then clears the item's cells one by one.
+  **Static reading** (2026-10-12). Whether the confirm takes one item from a
+  stack of N or clears all N is **not established**: every item measured
+  below was a single, unstacked one.
 - `ConsumeToken` (631) and `gml_Script_ConsumeBPToken` (632) are Blood Pact
   token bookkeeping, not the use of an item. **Static reading**; their callers
   were not observed.
@@ -5575,6 +5650,35 @@ killed.
   on its floor, the portal a kill leaves), since nothing was left on the floor
   before a reset; and whether a boss killed again after its room's state was
   dropped credits its act's quest a second time.
+
+### 21.7 An item's display sprite (`itemInfoStruct["11"]`)
+
+Collected for ForgePact #197's piece icon and stack follow-up (2026-10-12).
+The measurements are ForgePact #158's (its Live procedure 1, 2026-10-12, on
+that issue's own branch, not on #197's); § 16.3's info-key table does not list
+key `"11"` yet, and #158's hub branch adds it there.
+
+- `itemInfoStruct["11"]` is the sprite an item is drawn with. A charm given a
+  Grand charm's sprite under key `"11"` drew the Grand charm's icon both in
+  the bag and lying on the ground. **Measured** (ForgePact #158's Live
+  procedure 1).
+- The ground item draws a sprite of its own, which it looks up by name as
+  `Pickup_` followed by the item sprite's name. **Static reading** (ForgePact
+  #158). A sprite added at run time with `sprite_add` under key `"11"` drew in
+  the bag and the game's error sprite on the ground, which fits: no `Pickup_`
+  sprite of that name exists. **Measured** (ForgePact #158's Live procedure 1).
+- The tooltip drew no icon for any charm, whatever key `"11"` held.
+  **Measured** (ForgePact #158's Live procedure 1). Whether the tooltip draws
+  an icon for any other item class is **not established**.
+- Key `"11"` is not saved: an item whose value was changed showed its base
+  icon again after a reload. **Measured** (ForgePact #158's Live procedure 1).
+- The Gem of Incarnation's two sprites: `hs-game-sdk`'s sprite table holds
+  both `Gem_Incarnation_spr` (9644) and `Pickup_Gem_Incarnation_spr` (15659),
+  so the gem's sprite has the ground companion the lookup above wants.
+  **Static search** (`hs_game_sdk.sprites`; sprite indices move between
+  builds, so a consumer resolves them by name through `asset_get_index`). That
+  a built Gem of Incarnation carries `Gem_Incarnation_spr` under key `"11"` is
+  **not established**; its `itemSprite` read undefined (§ 18.4, measured).
 
 ---
 
