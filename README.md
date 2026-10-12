@@ -402,7 +402,10 @@ Why something went the way it did is recorded next to the thing it describes —
 [`docs/hub/design.md`](docs/hub/design.md) for the hub,
 [`docs/adr/`](docs/adr) for decisions that outlived the discussion,
 [`docs/RUNTIME_DATA_MODELS.md`](docs/RUNTIME_DATA_MODELS.md) for the runtime
-item and stat structs, the patch headers in
+item and stat structs,
+[`docs/research/`](docs/research) for findings collected from work outside
+this repository (what HS-AFK-Expedition learned about adding our own art,
+GUI, input, spawns and blockers to the running game), the patch headers in
 [`third_party/yytoolkit/patches/`](third_party/yytoolkit/patches) for each
 change to YYToolkit, and each submodule's `instructions.md` for the tool
 itself.

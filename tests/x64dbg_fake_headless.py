@@ -2,6 +2,7 @@
 
     python x64dbg_fake_headless.py <workdir>            # headless x64dbg
     python x64dbg_fake_headless.py probe <workdir> <pid>  # the keeper's probe seam
+    python x64dbg_fake_headless.py frames <workdir> <pid> <timeout>  # the keeper's frames seam
 
 As headless, it reads commands on stdin, records each line in
 `<workdir>/stdin.txt`, and prints on stdout (the session log) what x64dbg
@@ -22,6 +23,14 @@ As the probe seam, it prints the outside check of the game it last wrote to
 `<workdir>/verdict.json` (`running` until it writes one), as
 `py -3 -m tools.thread_state <pid>` would.
 
+As the frames seam, it prints one reading of the stand-in game's frame
+counter in `tools/x64dbg_mcp.py`'s `game_frames` shape, as ForgePact's
+`ping` plus `incident stat` would answer it. The counter advances
+(`FRAMES_PER_SECOND`) while the stand-in runs and stops while it is paused,
+and every reading taken while it runs is above the last one, so two quick
+readings never tie. While paused it prints `not_consumed` at once, with
+`elapsed_s` the timeout it was given: it never sleeps the timeout.
+
 Files in `<workdir>`:
 - `stdin.txt`: every line read on stdin, in order;
 - `bps.json`: the breakpoint list, shared with the stand-in plugin;
@@ -31,7 +40,12 @@ Files in `<workdir>`:
 - `pause_request`: left by the stand-in plugin's asynchronous PauseDebug;
 - `breaks.txt` and `probes.txt`: the wall-clock time of each break (written
   before its `[STATE] paused`) and of each probe-seam call, one per line, so
-  a test can tell how long after a break the keeper's check came.
+  a test can tell how long after a break the keeper's check came;
+- `frames.json`: the frame counter (`paused`, and the count `base` it had at
+  `since`), written by the stand-in at every break, resume and detach;
+- `frames_last.json`: the last count the frames seam printed;
+- `frames_gone`: left at `detach` under `frames_gone_after_detach`, after
+  which the frames seam reads `gone`.
 
 Modes:
 - `tls_breaks` N: N breaks right after attach, one after each run, each on an
@@ -44,13 +58,32 @@ Modes:
 - `stale_db` <addr>: on `attach`, restore one hardware breakpoint from x64dbg's
   "database" before any command (`Set hardware breakpoint on <16 hex>!` and a
   row), as x64dbg restores a module's saved breakpoints;
-- `condition_ignored`: an armed hot breakpoint breaks on every hit;
+- `condition_ignored`: an armed hot breakpoint breaks on every hit, and on
+  the hit right after every `run` (in the same handler, so x64dbg never
+  settles at running while it is armed, however the stand-in is scheduled);
 - `never_running`: a break right after attach, and another after every run
   (x64dbg never settles at running);
 - `race`: a command that changes debug registers, arriving while the game is
   not held and a hot logpoint is armed, silences that logpoint (the lost DR7
   update);
-- `leak_on_detach`: after `detach`, every game thread but one stays suspended;
+- `leak_on_detach`: after `detach`, every game thread but one stays suspended,
+  and the frame counter stops;
+- `leak_threads_only`: the threads leak after `detach` as `leak_on_detach`
+  leaves them, but the frame counter advances (the game loop runs);
+- `frames_never_stall`: the frame counter advances while paused (a hold the
+  game loop does not notice);
+- `frames_answer_held`: the frames seam answers while paused, with the
+  frozen count;
+- `frames_dead`: the frames seam always prints `not_consumed` (a channel
+  nothing reads);
+- `frames_slow` S: the frames seam's readings while running report
+  `elapsed_s` S;
+- `threads_gone_after_detach`: after a clean `detach` the probe reads `gone`
+  (thread_state's pid-only verdict) while the game runs on, frame counter
+  and all;
+- `frames_gone_after_detach`: after `detach` the frames seam reads `gone`
+  (the identity-checked verdict of a game that exited), while the probe
+  still reads `running`;
 - `fail_condition`: `SetHardwareBreakpointCondition` prints its failure;
 - `listed_as` [enabled, type]: the row's enabled flag and type;
 - `false_success`: `bph` prints success, and no row follows;
@@ -130,6 +163,26 @@ def read_json(path: Path, default):
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return default
+
+
+FRAMES_PER_SECOND = 60
+FRAMES_START = 1000
+
+
+def frame_count(work: Path) -> int:
+    """The stand-in game's frame counter now: frozen at `base` while paused,
+    running on from it otherwise, and never below the last count printed."""
+    st = read_json(work / "frames.json", None) or {}
+    base = int(st.get("base", FRAMES_START))
+    if not st.get("paused"):
+        base += int(FRAMES_PER_SECOND * max(0.0, time.time() - float(st.get("since", time.time()))))
+    return max(base, int((read_json(work / "frames_last.json", None) or {}).get("last", 0)))
+
+
+def set_counter(work: Path, paused: bool) -> None:
+    """Freeze (`paused`) or run the counter on from where it is now."""
+    write_atomic(work / "frames.json", json.dumps({"paused": paused, "since": time.time(),
+                                                   "base": frame_count(work)}))
 
 
 def parse_addr(text: str) -> int | None:
@@ -282,6 +335,7 @@ class Fake:
         a hardware breakpoint's hit, before x64dbg reports the pause."""
         if self.threads is not None:
             self.threads.suspend_all()
+        set_counter(self.work, True)
         reads = self.modes.get("context_reads")
         self.next_read = time.monotonic() + float(reads) if reads and self.threads is not None else None
         with (self.work / "breaks.txt").open("a", encoding="utf-8") as f:
@@ -303,6 +357,7 @@ class Fake:
         self.announce("running")
         if self.threads is not None:
             self.threads.resume()
+        set_counter(self.work, False)
         self.verdict(check("running", "running"))
 
     # breakpoints
@@ -382,6 +437,15 @@ class Fake:
                 return  # x64dbg ignores a run while the game runs
             self.resume()
             self.runs += 1
+            if self.modes.get("condition_ignored"):
+                # The next hit follows the run at once, in this handler rather
+                # than on the ticker, so no scheduling delay can show x64dbg
+                # settled at running while the condition is ignored.
+                hot = {int(h) for h in self.modes.get("hot", [])}
+                for b in self.bps:
+                    if b["addr"] in hot and self.armed(b) and b["addr"] not in self.silenced:
+                        self.brk(self.hw_break_line(b))
+                        break
         elif low == "pause":
             write_atomic(self.pause_file, str(time.time()))
         elif low == "log":
@@ -459,7 +523,10 @@ class Fake:
             self.out("Detached!")
             self.attached = False
             self.paused = False
-            if self.modes.get("leak_on_detach"):
+            # leak_on_detach: the game stays held, so its counter stops;
+            # leak_threads_only: the same threads leak, and the game loop runs
+            set_counter(self.work, bool(self.modes.get("leak_on_detach")))
+            if self.modes.get("leak_on_detach") or self.modes.get("leak_threads_only"):
                 if self.threads is not None:
                     spare = self.modes.get("spare_tid")
                     self.threads.suspend_all(spare)
@@ -471,7 +538,12 @@ class Fake:
             else:
                 if self.threads is not None:
                     self.threads.resume()
-                self.verdict(check("running", "running after detach"))
+                if self.modes.get("threads_gone_after_detach"):
+                    self.verdict(check("gone", "stand-in: no process with this pid (pid only)", tids=()))
+                else:
+                    self.verdict(check("running", "running after detach"))
+            if self.modes.get("frames_gone_after_detach"):
+                write_atomic(self.work / "frames_gone", "detach")
         elif low == "exit":
             self.done = True
         else:
@@ -568,7 +640,34 @@ def probe(work: Path) -> int:
     return 0 if c.get("verdict") == "running" else 1
 
 
+def frames(work: Path, timeout: float) -> int:
+    """One reading of the stand-in's frame counter, as the frames seam."""
+    modes = read_json(work / "modes.json", None) or {}
+    paused = bool((read_json(work / "frames.json", None) or {}).get("paused"))
+    held = paused and not modes.get("frames_never_stall")
+    if (work / "frames_gone").exists():  # frames_gone_after_detach
+        print(json.dumps({"answered": False, "frames": None, "pong": False, "reason": "gone", "elapsed_s": 0.0,
+                          "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                          "detail": "stand-in counter: the game exited"}))
+        return 0
+    reading = {"answered": False, "frames": None, "pong": False, "reason": "not_consumed", "elapsed_s": timeout,
+               "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+               "detail": "stand-in counter: nothing consumed the command"}
+    if not modes.get("frames_dead") and (not held or modes.get("frames_answer_held")):
+        last = int((read_json(work / "frames_last.json", None) or {}).get("last", 0))
+        now = frame_count(work)
+        n = now if held else (now if now > last else last + 1)
+        write_atomic(work / "frames_last.json", json.dumps({"last": n}))
+        reading.update(answered=True, frames=n, pong=True, reason="answered",
+                       elapsed_s=0.4 if held else float(modes.get("frames_slow") or 0.4),
+                       detail=f"stand-in counter: incident: frames {n}")
+    print(json.dumps(reading))
+    return 0
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "probe":
         sys.exit(probe(Path(sys.argv[2])))
+    if sys.argv[1] == "frames":
+        sys.exit(frames(Path(sys.argv[2]), float(sys.argv[4])))
     Fake(Path(sys.argv[1])).run()

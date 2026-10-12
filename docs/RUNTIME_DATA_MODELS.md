@@ -369,6 +369,7 @@ this runner:
 | `object_index` on a struct `self` | undefined |
 | the `room` builtin | a room `VALUE_REF`, not a number; `variable_global_exists("room")` is false, so `variable_global_get("room")` answers undefined and converting that to a number raises the runner error `REAL argument incorrect type undefined` (one per call, measured 2026-10-02, ForgePact#144). Read it with `GetBuiltin("room", ...)`, name it with `room_get_name`; `room_width`/`room_height` are built-ins too |
 | an array, string, struct, undefined or null converted to a number (`RValue::ToDouble`) | no number: the runner raises its own error and the call then fails, and a C++ `catch` that swallows the failure does not take back the runner's report. An array raises `REAL argument incorrect type array` (**measured**, #74 Live 3's capture, 2026-10-02); undefined raises `REAL argument incorrect type undefined` (**measured**, ForgePact#144, the `room` row above). For a string, a struct and null it is a **source reading**, not a measurement: the reading (which is also all that identifies the two) is that `ToDouble` is the runner's own `REAL_RValue`, which raises for every kind it cannot turn into a number; their error text has not been captured. That ForgePact's research scan over `Controller_obj`'s array variables raised one error per array or string element it converted (18 per scan) is an arithmetic fit on Live 2's and Live 3's counts, and the string elements' share of it rests on the fit alone. Live 4 cannot settle that share: ForgePact's gate (§13.4) refuses strings before converting them, so it can show only that the total stops rising, not that a string conversion raises. Live 4 (2026-10-02, **measured**) showed that it does stop: with the 15 arrays and 3 strings refused before any conversion, two scans left the total at 1 where each had added 18 before, so the scan's conversions are measured as the cause of the rise, and the strings' share of it is still the fit. Refuse a kind that can never be a number before converting it (ForgePact's `SigNeverAHandle`, ForgePact#74) |
+| `asset_get_index(name)` | `VALUE_REF`, not a number; a kind check for a number rejects every object. Validate with `object_exists` / `sprite_exists` / `room_exists`, or convert with `real()` (**measured** 2026-09-17 on the pre-2026-09-18 build `pe6a9ed3ee`, HS-AFK-Expedition, [AFK §10.5](research/afk-expedition-adding-content.md)) |
 | a ds container | "ref ds_map" / "ref ds_list" |
 | an item | `VALUE_OBJECT` struct (§2) |
 | a bound `m_*` method value | `VALUE_OBJECT` with object kind 0, not a script ref (§10) |
@@ -3224,6 +3225,13 @@ All **measured** unless marked.
 | A creator acted on before `enemyCreatorTimer` is real | no crash — the pack never spawns | §11.2 |
 | Removing a stash item's map entry (`RemoveItemFromMap` on map 9) but leaving its cell in the tab | the game ends at its next stash save — measured twice, in two launches; `GridRemoveItem` on the cell in the same take avoids it | §17 |
 | A plugin DLL whose global `std::thread` is still joinable when the game exits | `std::terminate` while `ExitProcess` destroys that DLL's globals (the other threads are already gone): a WER report at close, `ucrtbase.dll` `0xc0000409`, fast-fail 7 (`abort`). HS-Offline-Tracker's producer does it; 9 of the 10 dumps Windows kept on 2026-09-25/26 show it, the game's own exit path under it, and a plain `CloseMainWindow` at the main menu does it too. A game started from a tool running under Git Bash inherits error mode `0x3` (`SEM_NOGPFAULTERRORBOX`) and aborts without a dump or an event: read the exit code | [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#the-crash-of-2026-09-26-013627) |
+| `RoomGoto` into `Act_01_06` from code | crash | §21.7 |
+| `PC_GetVariableGMLWrapper` on a far-out handle (id 999999) | crash | §21.8 |
+| A gold amount mistaken for a handle (call not recorded) | crash in the anti-cheat module | §21.8 |
+| `EnemyGiveExperience` with no argument | crash | §21.8 |
+| A parsed struct held only in C++ `RValue`s across frames | freed by the runner's GC; the next frame crashes | §21.8, §5.9 |
+| `WM_CLOSE` to YYToolkit's console window | the game ends with 0xC000013A, no normal save | §21.5 |
+| A ground monster's path search while the hero is sealed in | about 20 s at 3 fps for a 20-monster wave; `pathFailed = true` avoids it | §21.7 |
 
 ---
 
@@ -5189,7 +5197,180 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
 
 ---
 
-## 21. Charms
+## 21. Adding our own content: art, drawing, input, spawning and blockers
+
+Folded 2026-10-12 (hub #498) from HS-AFK-Expedition, which built a whole
+in-game Stronghold: its own art in a repurposed room, a panel over the game's
+UI, its own input, spawned monsters and gates. Only what AFK **measured** is
+here. Its recipes, inferred claims, open questions and superseded attempts, each
+with the AFK commit it comes from, are in
+[docs/research/afk-expedition-adding-content.md](research/afk-expedition-adding-content.md);
+"AFK §n" below points there. Measured 2026-09-17..10-07. The 2026-09-17 PHASE0 runs
+behind §21.8 and its §15 rows were on the earlier build,
+`exe-281798144-pe6a9ed3ee-111c3000`, from before the 2026-09-18 update; the
+later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
+
+### 21.1 Our own art
+
+- **`sprite_add(path, frames, false, false, 0, 0)` loads a PNG at runtime**, and
+  the result draws in the world as a layer sprite. A multi-frame PNG is one row
+  of equal frames. **Measured** (AFK §1.1). What kind of value `sprite_add`
+  returns on this runner is **not established**.
+- **The automatic bounding box counts every pixel above alpha 0.** Generated
+  art carries a faint halo (alpha 1-8): one piece measured 527×998 visible but
+  1152×1144 with the halo. `sprite_collision_mask(spr, false, 0, 0,0,0,0, 1, 16)`
+  re-measures it at alpha tolerance 16, after which `sprite_get_bbox_*` give the
+  visible part. **Measured** (AFK §1.2).
+- **An atlas cell becomes its own sprite** by drawing it onto a surface
+  (`draw_sprite_part`) and calling `sprite_create_from_surface`. This worked
+  from a plugin's per-frame callback, outside any draw event. **Measured** (AFK
+  §1.4).
+- **`font_add(path, size, false, false, 32, 8230)` loads a TTF** that draws in
+  the GUI. **Measured** (AFK §1.7). Its texture-memory cost was not measured.
+
+### 21.2 Placing art in a room
+
+- **Layer sprites** (`layer_create`, `layer_sprite_create` and the
+  `layer_sprite_*` setters) draw art in a room without creating instances.
+  Layer sprites given depth −y/2 sorted correctly with the hero and monsters.
+  **Measured** (AFK §2.1, §2.2). That every game object uses −y/2 is not
+  established.
+- **Layers die with the room.** Leaving the room removes every layer and layer
+  sprite created in it. **Measured** (AFK §2.5).
+- **Two sprites on one layer have no set draw order.** A piece that must be in
+  front needs its own layer. **Measured** for the fix (AFK §2.3).
+
+### 21.3 Texture groups
+
+- **The game streams 254 dynamic texture groups by region. A sprite whose group
+  is not loaded draws nothing and raises no error**, although its layer element
+  exists. `Guild_Master_NPC_spr` (`act_2_tex`) drew nothing in Town_01 until
+  `sprite_prefetch`; `npc_tex` sprites (`Tristan_NPC_spr`) are loaded
+  everywhere. **Measured** 2026-09-26 (AFK §3.1, §9.2).
+- `texturegroup_get_names`, `texturegroup_get_sprites` and
+  `texturegroup_get_status` (0 unloaded, 1 loading, 2 loaded, 3 fetched) work at
+  runtime, as do `sprite_get_texture` with `texture_is_ready`. **Measured** (AFK
+  §3.2).
+- **Monsters spawned outside their own act drew once their sprites were
+  prefetched**: `sprite_index`, the object's sprite, and every instance variable
+  named `enemy_*`, `enemy_corpse` or `shadow_sprite`. **Measured** (AFK §3.4).
+  That they do not draw without the prefetch is inferred from the NPC case
+  above, not observed.
+
+### 21.4 Drawing over the game's UI
+
+- **YYToolkit's object-event callback (`EVENT_OBJECT_CALL`) returns
+  `AURIE_UNAVAILABLE` on this YYC build.** An inline detour on a compiled event
+  function resolved by its name (`gml_Object_<obj>_<event>`) works instead.
+  **Measured** 2026-09-26 (AFK §4.1).
+- **Town GUI event order:** `Loot_Manager_obj` Draw GUI Begin,
+  `Controller_obj`, `UI_Inventory_Drag_obj`, `Menu_Controller_obj` Draw GUI,
+  then `objColorBlindShader` Draw GUI End
+  (`gml_Object_objColorBlindShader_Draw_75`) last. Drawing right after it puts
+  a window above the inventory, a dragged item and menus. `Draw_64` is Draw GUI,
+  `Draw_74` Draw GUI Begin and `Draw_75` Draw GUI End. **Measured** (AFK §4.2,
+  §4.3).
+- **GUI size equals the monitor resolution** (2560×1440 on the owner's PC).
+  **Measured** 2026-09-30 (AFK §4.5).
+- **The cursor.** The game hides the Windows cursor (`window_get_cursor()` is
+  `cr_none` in play) and puts back any `window_set_cursor`. It draws `Cursor_spr`
+  from `Menu_Controller_obj` in an earlier GUI step, scaled by
+  `global.mouse_gui_scalar` (default 2); `Screen_Cursor_obj` has no instance in
+  play. Anything drawn later covers the cursor unless `Cursor_spr` is drawn
+  again on top. **Measured** (AFK §5.7).
+- **`effect_create_depth` effects: not observed to display.** None of 56
+  `ef_spark` effects created by `effect_create_depth` (2026-09-27, `Act_02_01`,
+  monster depth − 1) was visible, and the calls raised no error. There was no
+  positive control, so whether effects can display on this build, and why these
+  did not, is not established (AFK §9.1).
+
+### 21.5 Input and the game window
+
+- **`EVENT_WNDPROC` with `Override(0)` keeps a message from the game.** A
+  swallowed press or key never reaches `mouse_check_button` / `keyboard_check`,
+  while unswallowed ones do, in town and in combat. Posted `WM_*` messages
+  reach the game's input, also while it is minimized. **Measured** (AFK §5.1,
+  §5.4).
+- **Activating a menu node.** Calling the menu's `UiAMainMenuLocal`,
+  `UiAChooseSaveSlot` and `UiACharacterPlay` scripts directly entered the hero
+  but broke later mouse clicks on the inventory Extra tab and skill selection.
+  Running `event_perform(7, 25)` on the `UI_Node_Parent_obj` instance whose
+  `activationFunc` names the script, with that node as self and other, did not.
+  **Measured** 2026-10-07 (AFK §5.8). See §8.1 for UI nodes.
+- **The runner's window class is `YYGameMakerYY`.** `WM_CLOSE` to it exits with
+  code 0; `WM_CLOSE` to YYToolkit's console window ends the game with
+  0xC000013A and no normal save. **Measured** 2026-09-28 (AFK §5.11).
+
+### 21.6 Spawning monsters
+
+- **`instance_create_depth(x, y, depth, obj)` spawns a monster with the current
+  room's stats.** `enemyRarity` and the affixes (`affixList` plus the
+  `enemyAffix` flag array) set right after creation are applied when the stats
+  are built. `aggroRange` is reset to 300 then, so it must be set a frame later.
+  **Measured** (AFK §6.1-§6.3). AFK also sets `distance` a frame later; that the
+  game resets `distance` was not observed.
+- **A monster spawned in a town removes itself within a second.** Answering the
+  room routines `CheckTown` false and `RoomIsZone` true, and answering
+  `GetAct`, `GetMonsterLevel` and `ReturnEnemyStats` for a reference zone, only
+  while the hero is in that room, makes an unused room behave like that zone,
+  with the game's own stats, loot and XP. **Measured** (AFK §6.4, §6.7).
+- **Monsters were moved and killed only within about one screen of the hero**,
+  with deaths at 650 px and 8 of 12 at 750 and 850 px. Appending ids to
+  `Controller_obj.monsterHandleArray` after `ActivateDeactivateProps` returns
+  kept far monsters stepping. **Measured** (AFK §6.5, R2/R8). That the game
+  steps only that array's members is inferred, and the result fits either
+  rebuild routine: compare the static reading of the enemy loop in §11.3, which
+  names `EnemyStepHandleNew` as what rebuilds that array.
+- **Kill parity.** Health written to 0 runs the death, but `DropItem` ran only
+  about half the time and no XP was given. `DropItem` with the player-kill
+  arguments plus `EnemyGiveExperience(self = monster, other = player,
+  killExperience)` matches a hero kill. **Measured** (AFK §6.11). AFK waits 60
+  frames before hitting a spawned monster, on the assumption that its drop table
+  is built shortly after creation; that the table is built late is **not
+  established**.
+
+### 21.7 Blockers, the path grid and rooms
+
+- **`Invisible_Wall_obj`**, created with `image_xscale`/`image_yscale` set to
+  size/32 and `addToMinimap = true`, is found by `collision_point` and drawn on
+  the minimap. **Measured** 2026-10-07 (AFK §7.1). **Whether it stops the hero's
+  own movement was not observed**: AFK never walked the hero into one (AFK
+  §7.2). For what blocks the player, see §19.
+- **The path grid.** `PathFindControllerCreate` (self and other = the hero)
+  rebuilds `global.pathGrid`, an mp_grid of `global.gridSize` 16 px cells sized
+  from the room, from the room's blockers. A monster's own cells count as taken,
+  so a search must start from the next free cell. **Measured** (AFK §7.3, §7.4).
+- **A sealed-in hero makes every outside ground monster's search flood the
+  whole field**: a 20-monster wave froze the game for about 20 s at 3 fps.
+  Setting the monster's `pathFailed = true` skips the search. **Measured**
+  2026-09-29 (AFK §7.7).
+- **The minimap** is refreshed with `MinimapRefresh` (self = hero) and the
+  `objMinimap` dirty flags. Its discovery grid can be replaced by a 256×256 town
+  grid after it reports ready. **Measured** (AFK §7.9).
+- **`RoomGoto(room)` with `Controller_obj` as self and other travels.**
+  `Dev_10_rm` is an unused 4000×4000 room that `room_set_width`/`height` widen
+  before entry (9600×9600 measured). The game never saves the hero there.
+  **Entering `Act_01_06` from code crashed the game.** **Measured** (AFK §8.1,
+  §8.2, §10.1).
+
+### 21.8 Crashes found on the way
+
+Also listed in §15. **Measured** (AFK §10.2-§10.6), on the earlier build
+`exe-281798144-pe6a9ed3ee-111c3000` (2026-09-17, PHASE0_NOTES), except one of
+the protected-handle crashes, which recurred on 2026-09-24 in a run that names
+no build:
+- reading a protected handle far out of range (`PC_GetVariableGMLWrapper` on id
+  999999) crashes the game; a gold amount mistaken for a handle crashed the
+  anti-cheat module;
+- `EnemyGiveExperience` with no argument crashes; `ExperienceUpdate` called
+  directly reports a hash mismatch through `ReportClient`;
+- a struct held only in C++ `RValue`s is freed by the runner's GC between frames
+  (§5.9);
+- `instance_destroy` on a monster skips its death and `DropItem`.
+
+---
+
+## 22. Charms
 
 What ForgePact's flight-charms research (#158, phase 1) read about charms,
 item size and the unique rolls on 2026-10-11, in the build Ghidra imported
@@ -5207,7 +5388,7 @@ A caller list is the direct call sites the reading found. It is blind to calls
 through the script table or a method value, so a caller it does not list is
 not observed, not absent.
 
-### 21.1 Equipped charms
+### 22.1 Equipped charms
 
 - Offline, `gml_Script_GetPlayerCharmData` (493) answers, for player number
   p, `Controller_obj.inventoryData[p - 1].localCharmItemArray`: the same
@@ -5230,7 +5411,7 @@ not observed, not absent.
   moved from the grid to the bag left it. A charm in the bag is not in it.
   **Measured** (2026-10-12).
 
-### 21.2 Item size
+### 22.2 Item size
 
 - `gml_Script_GetItemSize` (1976) calls the item's own `GetItemInfo` method
   (2035, `GetItemInfo@anon@5277@s_ItemInstanceStruct@InventoryV2Funcs`)
@@ -5274,7 +5455,7 @@ not observed, not absent.
     checked, so where it went is **not established**. **Measured**
     (2026-10-12).
 
-### 21.3 Charm stats and the player stats
+### 22.3 Charm stats and the player stats
 
 - `GetPlayerCharmData`'s direct callers are `GetItemStats` (1682) and five
   sites in `LoadSpecificStat` (2296), so the player's stat aggregation reads
@@ -5294,7 +5475,7 @@ not observed, not absent.
   gives 19 for movement speed), so it is not the item stat id. Not a static
   reading of the game: the Item Editor's stat catalog, not measured.
 
-### 21.4 Which roll drops a unique of which rarity
+### 22.4 Which roll drops a unique of which rarity
 
 - `gml_Script_DropUniqueItems` (1424), called from `LoadDrops` (2171), picks
   one entry of `Controller_obj.lootListUnique[k]`, with k from 0 to 4 taken
@@ -5329,7 +5510,7 @@ not observed, not absent.
   (Unholy, 1x5) and Goburin's Head (98) 10 (Unholy, 2x2, and the only one of
   the five flagged). **Measured** (2026-10-12).
 
-### 21.5 An item's display sprite
+### 22.5 An item's display sprite
 
 - The built item's `itemInfoStruct` key `"11"` holds the item's display
   sprite (each charm's own `Charms_*_spr`). A charm whose key `"11"` was given
