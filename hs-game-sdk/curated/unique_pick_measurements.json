@@ -1,0 +1,122 @@
+{
+  "$schema_note": "Hand-curated record of the counts the unique picks are checked against, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/unique_pick_model.py never reads it; tests/test_unique_pick_model.py reads both and checks that the model reproduces each entry. The mechanism, in our own words, is docs/models/unique-pick-spec.md, whose notation (T, L_k, D_k, c, e, n, m) the `model` fields use. Every entry has `id`, `kind` (`baseline` = vanilla, nothing pushed; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`measured` or `our_code`), `date` (the measurement date; for `our_code` entries, the date the code was read), `source` (a list of {path, section} or {repo, commit}; paths are relative to the hub root, `section` is text that appears in that file), `scripts` (every `gml_Script_*` the entry involves, all bound in hs_game_sdk.scripts.GameScript), `what` (the observation), `values`, `model` (what the model must show) and, once the model's tests exist, exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). Every #74 count below was made with the Angelic roll's chance raised by a research lever, never at the natural chance; `standinPicks=` is keyed on a stand-in's sub and b (the pair, not the triple), so its vanilla share is m / T. The flight charms' own live counts are added when ForgePact/docs/flight-charms-research.md records them; the live captures are gitignored and never cited here.",
+  "measurements": [
+    {
+      "id": "UP1",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "`standinPicks=1`"},
+        {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "`standinPicks=1`, so the baseline share p0 is 1/57"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct"],
+      "what": "#74 Live 1 (list injection, research dll f7560e80...), both switches off and nothing pushed: 59 Angelic rolls gave 57 hits, and 1 of them carried a validated stand-in's sub and b (standinPicks=1).",
+      "values": {"hits": 57, "standin_picks": 1, "rolls": 59, "pushed": 0, "copies": 0},
+      "model": "With nothing pushed, standinPicks= grows at m / T per hit, m being 2 or 3: 1 of 57 lies within the 3-sigma binomial band for some T in 40..60."
+    },
+    {
+      "id": "UP2",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "(`standinPicks=2`, p0 = 0.043)"},
+        {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "`standinPicks=2`, so the baseline share p0 is 2/46 (0.043)."}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct"],
+      "what": "#74 Live 2 (list injection, research dll e30981d5...), both switches off and nothing pushed: 2 of 46 typed vanilla hits carried a validated stand-in's sub and b (p0 = 0.043).",
+      "values": {"hits": 46, "standin_picks": 2, "pushed": 0, "copies": 0},
+      "model": "With nothing pushed, standinPicks= grows at m / T per hit, m being 2 or 3: 2 of 46 lies within the 3-sigma binomial band for some T in 40..60."
+    },
+    {
+      "id": "UP3",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "`typeDisagree=0`; p0 = 2/47)"},
+        {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "against p0 = 2/47"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct", "gml_Script_CreateItemNew"],
+      "what": "#74 Live 3 (list injection, research dll e0749368...), both switches off and nothing pushed: 2 of 47 typed vanilla hits carried a validated stand-in's sub and b (p0 = 2/47).",
+      "values": {"hits": 47, "standin_picks": 2, "pushed": 0, "copies": 0},
+      "model": "With nothing pushed, standinPicks= grows at m / T per hit, m being 2 or 3: 2 of 47 lies within the 3-sigma binomial band for some T in 40..60."
+    },
+    {
+      "id": "UP4",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "80 hits fell on it (p1 = 0.81)"},
+        {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "so p1 = 65/80 = 0.81"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct"],
+      "what": "#74 Live 2, Headhunter's switch forced on and the research build pushing 200 copies of Liquor Holster's entry {8, 0, 51} onto lootListUnique[5] per roll (injected=22800 over 114 rolls, heldMiss=0): 65 of the next 80 hits carried a validated stand-in's sub and b (p1 = 0.81).",
+      "values": {"hits": 80, "standin_picks": 65, "copies": 200, "items_pushed": 1, "injected": 22800, "rolls": 114, "held_miss": 0},
+      "model": "With Headhunter alone pushed at c = 200, standinPicks= grows at (m + 200) / (T + 200) per hit: 65 of 80 lies within the 3-sigma binomial band for the same T as the baselines; a push the roll did not draw (m / T, about 0.05) is rejected."
+    },
+    {
+      "id": "UP5",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "per roll, 46 of the next 62 hits fell on Liquor Holster's entry (p1 = 0.742,"},
+        {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "so p1 = 46/62 = 0.742"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct", "gml_Script_CreateItemNew"],
+      "what": "#74 Live 3, Headhunter forced and 200 copies of Liquor Holster's entry pushed per roll (injected=18000 over 90 rolls, heldMiss=0): 46 of the next 62 hits carried a validated stand-in's sub and b (p1 = 0.742), and each of those 46 was built as a Headhunter.",
+      "values": {"hits": 62, "standin_picks": 46, "copies": 200, "items_pushed": 1, "injected": 18000, "rolls": 90, "held_miss": 0},
+      "model": "With Headhunter alone pushed at c = 200, standinPicks= grows at (m + 200) / (T + 200) per hit: 46 of 62 lies within the 3-sigma binomial band for the same T as the baselines; a push the roll did not draw is rejected."
+    },
+    {
+      "id": "UP6",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "`[4]` 221 and `[5]` 380"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 22.8 The ordinary unique roll makes one draw"},
+        {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "## Session 4: the list layout (issue #74)"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_DropUniqueItems"],
+      "what": "#74 Live 2's list dump: Controller_obj.lootListUnique is an array of 6 ds_lists of 50, 61, 79, 152, 221 and 380 entries, every entry a triple; the sizes were the same after a zone change and at the end of the session. Only [5] holds Liquor Holster's {8, 0, 51}, once.",
+      "values": {"sub_list_lengths": [50, 61, 79, 152, 221, 380], "unique_roll_sub_lists": [0, 1, 2, 3, 4], "angelic_sub_list": 5, "liquor_holster_count_on_5": 1},
+      "model": "The ordinary roll's chance of dropping one entry pushed once onto sub-list k is 1 / (L_k + 1), between 1/51 and 1/222 over these lengths; with c copies it is c / (L_k + c)."
+    },
+    {
+      "id": "UP7",
+      "kind": "our_code",
+      "status": "our_code",
+      "date": "2026-10-13",
+      "source": [
+        {"path": "ForgePact/plugin/ModuleMain.cpp", "section": "static constexpr int g_SigCopies = 1;"},
+        {"path": "ForgePact/plugin/ModuleMain.cpp", "section": "static constexpr int g_FlightDropCopies = 1;"},
+        {"path": "ForgePact/plugin/ModuleMain.cpp", "section": "static const int kAngelicListIndex = 5;"},
+        {"path": "ForgePact/plugin/ModuleMain.cpp", "section": "const int indices[FcNs::kUniqueSubLists] = { 0, 1, 2, 3, 4 };"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "How #74 uses the list: a stand-in entry for the length of the roll."}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_DropUniqueItems"],
+      "what": "The push: for the length of one roll ForgePact adds c copies of each switched-on item's stand-in entry to the list that roll reads, and takes them off its tail afterwards. Headhunter, Tyrant's Crown, Gabriel Wings and Witch's Broomstick push onto lootListUnique[5] (the Angelic roll); Pocket Elf pushes onto each of lootListUnique[0..4] (the ordinary unique roll) and adds nothing inside the Angelic roll. c is a constexpr 1 in the player build for both #74 (g_SigCopies) and the flight charms (g_FlightDropCopies); only the research build's copies levers change it, 1 to 400.",
+      "values": {"player_copies": 1, "research_copies_min": 1, "research_copies_max": 400, "angelic_list_index": 5, "unique_sub_lists": [0, 1, 2, 3, 4],
+                 "stand_ins": {"gabriel_wings": [10, 0, 47], "witchs_broomstick": [10, 0, 91], "headhunter": [8, 0, 51]}},
+      "model": "As an input transform: an Angelic roll with these items on sees T + e droppable entries, e the sum of c over the items switched on; an ordinary roll with Pocket Elf on sees L_k + c entries on sub-list k. Switched off, nothing is added and the baseline shares are unchanged."
+    },
+    {
+      "id": "UP8",
+      "kind": "our_code",
+      "status": "our_code",
+      "date": "2026-10-13",
+      "source": [
+        {"path": "ForgePact/plugin/include/ForgePact/FlightCharms.hpp", "section": "// The share of a stand-in hit that becomes the charm: c / (n + c)."},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "a candidate is the mod item's with"}
+      ],
+      "scripts": ["gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct", "gml_Script_CreateItemNew"],
+      "what": "The coin: a typed hit whose whole triple is a pushed stand-in's goes to the item with probability c / (n + c), n being how many vanilla entries of that list carry the same triple, and otherwise stays the game's own. Pocket Elf's stand-in is chosen so that n is the same on all five sub-lists.",
+      "values": {"share": "c / (n + c)", "examples": {"n1_c1": 0.5, "n1_c200": 0.9950248756218906, "n0_c1": 1.0}},
+      "model": "As an input transform: the stand-in triple is kept with (n + c) / (T + e) and the coin gives the item c / (n + c) of that, so each item takes c / (T + e) of the Angelic roll's drops and the stand-in keeps n / (T + e); on the ordinary roll Pocket Elf takes c / (L_k + c). At c = 1 every item takes exactly one entry's share."
+    }
+  ]
+}
