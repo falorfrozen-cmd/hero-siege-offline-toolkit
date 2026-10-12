@@ -50,14 +50,25 @@ are skipped. Missing, duplicated, renamed and unreadable checks, and
 list and a table is read from the list alone; a table under any other heading
 is not read.
 
+A capture may hold more than one `## Checks` list: when a session is run again,
+`live-operator` appends the second attempt, with its own `## Checks`, below the
+first, because the first attempt's evidence is never edited (R20 again). So
+`--block` picks which `## Checks` heading's list is read: a 1-based number, or
+`last`. It defaults to `1`, the first block, which is what every call read
+before the option existed. A number past the last block is a usage error that
+names how many blocks the capture has. The table fallback is unchanged: it
+reads the first checks table, whatever `--block` says.
+
 Usage:
     py -3 tools/live_checks.py <capture> [--expect a,b,c] [--require-pass a,b]
+                               [--block N|last]
 
 Prints one `<name> <verdict>` line per check, then a summary line.
 Exit code: 0 every expected check present once with a verdict (and every
 --require-pass check `pass`); 1 otherwise, naming what is missing, renamed,
-duplicated, unreadable or not passed; 2 usage error, no file, or neither a
-`## Checks` heading nor a checks table under `## Checks summary`.
+duplicated, unreadable or not passed; 2 usage error, no file, a `--block` past
+the capture's last `## Checks` block, or neither a `## Checks` heading nor a
+checks table under `## Checks summary`.
 """
 
 from __future__ import annotations
@@ -85,10 +96,11 @@ def _split_names(value: str | None) -> list:
     return [n.strip().strip("`") for n in value.split(",") if n.strip()]
 
 
-def check_lines(text: str) -> list | None:
-    """The `- ` lines under the capture's `## Checks` heading, or None if it
-    has no such heading."""
+def check_blocks(text: str) -> list:
+    """The `- ` lines under each of the capture's `## Checks` headings, one
+    list per heading, in the order they appear."""
     lines = text.splitlines()
+    blocks = []
     for i, line in enumerate(lines):
         if CHECKS_HEADING_RE.match(line):
             out = []
@@ -97,8 +109,21 @@ def check_lines(text: str) -> list | None:
                     break
                 if body.startswith("- "):
                     out.append(body)
-            return out
-    return None
+            blocks.append(out)
+    return blocks
+
+
+def check_lines(text: str, block=1) -> list | None:
+    """The `- ` lines under the capture's `block`-th `## Checks` heading
+    (1-based, or "last"), or None if it has no such heading."""
+    blocks = check_blocks(text)
+    if not blocks:
+        return None
+    if block == "last":
+        return blocks[-1]
+    if not 1 <= block <= len(blocks):
+        return None
+    return blocks[block - 1]
 
 
 def _cells(row: str) -> list:
@@ -177,14 +202,31 @@ def main(argv=None) -> int:
     ap.add_argument("capture", help="the <slug>-live-<n>.md file")
     ap.add_argument("--expect", help="comma-separated check names the procedure lists, verbatim")
     ap.add_argument("--require-pass", help="comma-separated checks that must read pass")
+    ap.add_argument("--block", default="1",
+                    help="which '## Checks' block to read: a 1-based number or 'last' (default 1)")
     args = ap.parse_args(argv)
+
+    block = args.block.strip().lower()
+    if block != "last":
+        if not block.isdigit() or int(block) < 1:
+            print(f"live_checks: --block takes a 1-based number or 'last', not {args.block!r}",
+                  file=sys.stderr)
+            return 2
+        block = int(block)
 
     path = Path(args.capture)
     if not path.is_file():
         print(f"live_checks: no such file: {path}", file=sys.stderr)
         return 2
     text = path.read_text(encoding="utf-8", errors="replace")
-    lines = check_lines(text)
+    count = len(check_blocks(text))
+    # With no `## Checks` heading at all, block 1 and `last` keep the table
+    # fallback below; asking for any later block is still past the end.
+    if block != "last" and block > count and (count or block > 1):
+        print(f"live_checks: --block {block} is past the last block: {path} has "
+              f"{count} '## Checks' block{'' if count == 1 else 's'}", file=sys.stderr)
+        return 2
+    lines = check_lines(text, block)
     parse, where = parse_line, "after the last '|'"
     if not lines:
         # The list wins whenever it has a line; the table is only a fallback.

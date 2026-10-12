@@ -147,6 +147,56 @@ class LiveChecksTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(run(live_checks.main, [str(self.tmp_path / "missing.md")])[0], 2)
         self.assertEqual(run(live_checks.main, [self.write("c-live-1.md", "## Step 1\n- a | pass\n")])[0], 2)
 
+    # forgepact-197-boss-soul-pieces Live 2: attempt 2 was appended below
+    # attempt 1 with its own `## Checks`, since a capture is never edited (R20).
+    TWO_BLOCKS = CAPTURE.replace("| pass\n- marker", "| fail\n- marker", 1) + """
+## Attempt 2
+
+### A2 step 0
+re-ran
+
+## Checks
+
+- dll-hash | expected: ee896d9f | observed: EE896D9F (match) | pass
+- marker | expected: craftprobe: phase1h rows=254 | observed: same | pass
+- control | expected: calls=<n> n>0 | observed: calls=402 | pass
+- holders | expected: <M> named | observed: 12 named | pass
+- close-after-take | expected: game running | observed: same pid | pass
+"""
+
+    def test_block_defaults_to_the_first_checks_block(self):
+        path = self.write("c-live-2.md", self.TWO_BLOCKS)
+        rc, out = run(live_checks.main, [path, "--expect", self.EXPECT, "--require-pass", "dll-hash"])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("dll-hash fail", out)
+        self.assertIn("dll-hash must be pass, read fail", out)
+        self.assertIn("checks: 5 (pass 2, fail 2, not-observed 1, not-run 0)", out)
+        self.assertEqual(run(live_checks.main, [path, "--block", "1", "--expect", self.EXPECT])[1], out.split("PROBLEM")[0])
+
+    def test_block_last_and_2_read_the_appended_attempt(self):
+        path = self.write("c-live-2.md", self.TWO_BLOCKS)
+        for block in ("last", "2"):
+            rc, out = run(live_checks.main, [path, "--block", block, "--expect", self.EXPECT,
+                                             "--require-pass", "dll-hash,holders,close-after-take"])
+            self.assertEqual(rc, 0, out)
+            self.assertIn("holders pass", out)
+            self.assertIn("checks: 5 (pass 5, fail 0, not-observed 0, not-run 0)", out)
+            self.assertNotIn("PROBLEM", out)
+
+    def test_block_past_the_last_is_a_usage_error(self):
+        path = self.write("c-live-2.md", self.TWO_BLOCKS)
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            rc = live_checks.main([path, "--block", "3"])
+        self.assertEqual(rc, 2)
+        self.assertIn("has 2 '## Checks' blocks", err.getvalue())
+        # Negative controls: a non-number is refused too, and one block is block 1 and last.
+        self.assertEqual(run(live_checks.main, [path, "--block", "0"])[0], 2)
+        self.assertEqual(run(live_checks.main, [path, "--block", "first"])[0], 2)
+        one = self.write("c-live-1.md", CAPTURE)
+        self.assertEqual(run(live_checks.main, [one, "--block", "last", "--expect", self.EXPECT])[0], 0)
+        self.assertEqual(run(live_checks.main, [one, "--block", "2"])[0], 2)
+
 
 TABLE_CAPTURE = """# forgepact-x live 1
 
