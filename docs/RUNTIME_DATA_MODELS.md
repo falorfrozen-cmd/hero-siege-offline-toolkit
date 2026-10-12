@@ -5243,7 +5243,7 @@ direct `call rel32` that the import's reference table does not hold.
   but Uber Endrixia, Uber Anubis and Uber Luna do not die that way, and a boss
   spawned in town removes itself (§ 13.1, measured; the spawn route is not
   named there).
-- An act boss created outside its own room does not die safely. A
+- An act boss created outside its own room can crash the game when it dies. A
   `Reaper_obj` created with `instance_create_depth` in `Act_02_01` and killed
   by setting its `enemy_hp` record to 0 closed the game with an access
   violation: `Enemy_Child_Boss_obj`'s Destroy event ran
