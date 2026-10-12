@@ -982,7 +982,12 @@ inside `hs_select_character` go through `ipc.send` / `input.inject` with
 `lease_checked=True`, so they are not refused by a guard their caller already
 passed (or, for `hs_wait_ready`, deliberately skips); and `hs_selfcheck`'s
 backup round trip passes its own temporary `source`, which `saves.restore`
-does not gate, because no other session can see that directory.
+does not gate, because no other session can see that directory. One caller
+sits outside this server: `tools/x64dbg_mcp.py`'s `game_frames`, which the
+x64dbg keeper uses to read the game's frame counter, sends `ping` and
+`incident stat` through `ipc.send` with `lease_checked=True` too, because
+the keeper is not the lease holder and its `attach` already refused without
+a live lease ([x64dbg-mcp.md](x64dbg-mcp.md) § "The frame-counter proof").
 
 The five skill tools are gated the same way: `hs_skills_status`,
 `hs_skill_cast`, `hs_skill_bind`, `hs_talent_allocate` and `hs_talent_reset`
