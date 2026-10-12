@@ -62,6 +62,39 @@ A key named twice is saved twice, which is what a duplicate check looks for.
 [keys]}}, "keys": {<key>: [{"file", "container"}]}}` (the `keys` part only
 with `--key`).
 
+### Each key's definition: `--defs`
+
+`--defs` prints, beside each listed key, four fields of the saved entry's
+definition (its `data` object): `a` (the seed), `b` (the base), `c` (the
+repository: `0.0` normal, `1.0` unique) and `o` (the stack count, or a relic's
+level). Each is spelled **exactly as the decoded file writes it**: numbers are
+kept as their own text and never parsed, so a `b` saved as `2.10` prints `2.10`
+(a parsed float would print `2.1`) and a `c` saved as `0.0` prints `0.0`. A
+field the entry does not carry prints `-`. It works with `--key`, and in every
+file layout, the character file's base64 fields included.
+
+```text
+PS> py -3 tools/save_item_keys.py "$env:LOCALAPPDATA\Hero_Siege\hs2saves\inventory_order_13.hss" --defs
+save_item_keys: C:\...\hs2saves\inventory_order_13.hss (read-only; the last saved state - run it with the game closed)
+inventory_key_tab: keys=35
+  0-0-197573647678-12  a=352809214 b=0 c=0.0 o=964
+  0-0-200921386013-12  a=3020021 b=30 c=0.0 o=84
+  ...
+```
+
+With `--json` the same fields come as strings under `"defs": {<path>:
+{<container>: {<key>: {"a", "b", "c", "o"}}}}`, beside the unchanged `files`
+(and `keys`) parts. Without `--defs` the output, text or JSON, is byte for byte
+what it was before the flag existed.
+
+**Why it exists.** ForgePact #197 builds a boss soul piece on a key whose
+definition `b` carries a fraction (for example the key's base plus a tenth),
+so that the game's own stack check, which compares `b`, keeps pieces apart from
+the real key and from each other. The game writes a saved real through its
+`string()` conversion, which keeps two decimals, so whether the fraction
+survives a save is a question about what the save file says. `--defs` answers
+it from the file, after the session, without the game running.
+
 ## What it never does
 
 - **It never writes.** The files are opened for reading only, by the editor's
@@ -81,7 +114,11 @@ with `--key`).
    the character file included, and `--key` naming each place a key is saved
    (a key saved in the stash and in the bag is named twice). The baseline, a
    negative control: a key held only as a string value, the character file's
-   plain fields and its one base64 field that is not JSON are never listed. Two
+   plain fields and its one base64 field that is not JSON are never listed. A
+   fourth fixture, a bag file's Key tab written as raw text with a `b` of `2.10`,
+   covers `--defs`: the baseline pins the plain text and JSON output line for
+   line, unchanged by the flag's existence, and the target reads `b=2.10`,
+   `c=0.0` and `-` for a missing field, in text and in JSON. Two
    more cases pin that it never writes: a corrupt or missing file exits
    non-zero and is left as it was, and every open of a save is read-only,
    checked by a recorder first shown to catch a write-mode open.
