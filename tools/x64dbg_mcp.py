@@ -61,7 +61,8 @@ itself (#497): ForgePact's incident monitor frame counter, read through
 hs-drive's file IPC (`ping` plus `incident stat`, `game_frames`), must
 advance across two readings before the control logpoint is armed (the
 channel works), stall at the first such hold (the control hold: no answer
-within `Keeper.HOLD_FRAMES_WAIT`, or the same count read twice), and advance
+within `Keeper.HOLD_FRAMES_WAIT`; any answer there, whatever its count, is a
+gap, since the plugin answered while x64dbg held the game), and advance
 after the resume. Until it has, the instrument is not proven, and a detach is
 never reported as releasing the game without it. The outside thread check,
 `tools/thread_state.py`, still reads the game's threads before attach, at the
@@ -1012,7 +1013,11 @@ def game_check(cfg: Config, pid: int, baseline: Iterable[int] = ()) -> dict[str,
 # game loop itself: ForgePact's incident monitor counts frames, and the
 # plugin answers its file IPC (`bp_ipc\cmd.txt`) only from its frame
 # callback, every 30 frames. So a command consumed means frames ran, and a
-# count read twice shows whether they ran in between.
+# count read twice on a running game shows that they ran in between. While
+# x64dbg holds the game, only no answer is a stall: the count is published by
+# the incident monitor's own thread, so an unchanged count read twice shows
+# only that this thread did not publish, while the answer itself shows the
+# frame callback ran.
 
 # Why a reading is what it is; `answered` only for the first.
 FRAMES_REASONS = ("answered", "not_consumed", "no_frame_counter", "ipc_unavailable", "ipc_other_copy", "gone")
@@ -1180,7 +1185,8 @@ def _reading_why(r: Any) -> str:
 def instrument_review(inst: dict[str, Any]) -> tuple[list[tuple[str, str]], str | None]:
     """The gaps that keep the instrument from being proven, each as (the
     frames reading it concerns, why), and the stall the control hold showed
-    (`no-answer`, `same-count`, `advanced` or None). The proof is the game's
+    (`no-answer`, which proves, or `same-count` and `advanced`, which only
+    describe an answered hold, a gap, or None). The proof is the game's
     frame counter (`game_frames`), in three parts:
 
     - before arm (`frames.before_arm`, the positive control: the channel
@@ -1191,9 +1197,13 @@ def instrument_review(inst: dict[str, Any]) -> tuple[list[tuple[str, str]], str 
     - at the control hold (`frames.control_hold`: the first time the keeper
       holds the game at a hardware breakpoint's hit, since headless x64dbg
       takes no attach break): a `not_consumed` reading is the stall
-      `no-answer`, counted only when before arm passed; two answered readings
-      with the same count are `same-count`, and a greater second count is
-      `advanced`, a gap (the game ran while x64dbg held it);
+      `no-answer`, the only stall that proves, counted only when before arm
+      passed. Any answered reading there is a gap ("answered while x64dbg
+      held the game"): the plugin consumes cmd.txt only from its frame
+      callback, so an answer means the game loop ran during the hold. The
+      second reading only describes it, as the stall `same-count` (equal
+      counts: the incident monitor's thread did not publish, which says
+      nothing about the loop) or `advanced` (a greater count);
     - after resume (`frames.after_resume`): answered, with a count greater
       than every count before it.
 
@@ -1236,20 +1246,28 @@ def instrument_review(inst: dict[str, Any]) -> tuple[list[tuple[str, str]], str 
             gaps.append(("frames.control_hold", "the control hold's no-answer counts only once the channel "
                                                 "answered and advanced before arm"))
     elif _count(hold[0]) is not None:
+        # The plugin consumes cmd.txt only from its frame callback, so any
+        # answer here means the game loop ran during the hold, whatever the
+        # counts say: the count is published by the incident monitor's own
+        # thread, and an unchanged one only shows that thread did not publish
+        # (Amendment 3, owner after Live 1). The second reading describes it.
+        first = _count(hold[0])
         second = _count(hold[1]) if len(hold) > 1 else None
         if second is None:
-            gaps.append(("frames.control_hold", "the second frame-counter reading at the control hold was not "
-                                                f"answered: {_reading_why(hold[1] if len(hold) > 1 else None)}"))
-        elif second == _count(hold[0]):
+            seen = (f"it read {first}; the second reading at the control hold was "
+                    + (_reading_why(hold[1]) if len(hold) > 1 else "not taken"))
+        elif second == first:
             stall = "same-count"
-        elif second > _count(hold[0]):
+            seen = (f"the count read {first} twice at the control hold, which only shows the incident monitor's "
+                    "thread did not publish")
+        elif second > first:
             stall = "advanced"
-            gaps.append(("frames.control_hold", f"the counter advanced at the control hold ({_count(hold[0])}→"
-                                                f"{second}): the game ran while x64dbg held it at a hit, so this "
-                                                "hold showed no stall"))
+            seen = f"the counter advanced at the control hold, {first}→{second}"
         else:
-            gaps.append(("frames.control_hold", f"the counter went back at the control hold ({_count(hold[0])}→"
-                                                f"{second})"))
+            seen = f"the counter went back at the control hold, {first}→{second}"
+        gaps.append(("frames.control_hold", f"the plugin answered while x64dbg held the game ({seen}): it reads "
+                                            "cmd.txt only from its frame callback, so the game loop ran during "
+                                            "the hold, and this hold showed no stall"))
     else:
         gaps.append(("frames.control_hold", f"the frame-counter reading at the control hold was "
                                             f"{_reading_why(hold[0])}, neither answered nor not consumed"))
@@ -2078,8 +2096,9 @@ class Keeper:
         and while the instrument is not proven record it as
         `instrument.control_hold`, then read the counter at HOLD_FRAMES_WAIT
         (`frames.control_hold`, `hold_frames` in the reply): `not_consumed`
-        is the stall, and an answer is read again after HOLD_FRAMES_GAP, the
-        same count the stall. Then send the lines (the never-break condition
+        is the stall, and an answer, a gap whatever its count, is read again
+        after HOLD_FRAMES_GAP so the record says what the counter did
+        (`same-count` or `advanced`). Then send the lines (the never-break condition
         first), the mid marker, bplist and the end marker, `run`, settle at
         running, and record the counter (`frames.after_resume`) and the
         thread check after it. No hit within the window (a cold address):
@@ -2329,7 +2348,8 @@ class Keeper:
         decides. "Advanced" is answered, `ping` answering `pong`, with a count
         greater than the last one this session read.
 
-        - the game gone: `ended`, `game_released` null, `ok` true;
+        - the game gone, by the frame reading's own identity check (pid and
+          start time): `ended`, `game_released` null, `ok` true;
         - advanced, and the instrument proven: `ended`, `game_released` true;
         - advanced, unproven: `ended`, `game_released` null, `ok` false, since
           the counter never showed a stall at a control hold, so its advance
@@ -2343,16 +2363,17 @@ class Keeper:
 
         A thread check that reads anything but `running` adds `threads_note`,
         naming its suspended and stopped threads; it never changes the
-        verdict (#497)."""
+        verdict (#497). That includes a thread check reading `gone` while the
+        frame reading is not: thread_state reads the pid alone."""
         game = self.check()
         before, any_answered = self.last_frames, self.frames_answered
         fr = self.frames(self.FRAMES_TIMEOUT)
         common: dict[str, Any] = {"detach_confirmed": True, "game": game, "frames": fr,
                                   "paused_at_detach": paused_at_detach, "cleared": cleared}
-        if game.get("verdict") not in ("running", "gone"):
-            common["threads_note"] = self.threads_note(game)
         count, reason = _count(fr), fr.get("reason")
-        if reason == "gone" or game.get("verdict") == "gone":
+        if game.get("verdict") != "running" and not (game.get("verdict") == "gone" and reason == "gone"):
+            common["threads_note"] = self.threads_note(game, reason)
+        if reason == "gone":
             note = (f"the game (pid {self.target_pid}) was gone by the post-detach reading, so whether the detach "
                     "released it is not known")
             self.save(state="ended", detach_confirmed=True, game_released=None, game=game, frames=fr, error=None,
@@ -2398,13 +2419,18 @@ class Keeper:
         return {"ok": False, "state": "game-not-released", "game_released": released, "detail": error, **common}
 
     @staticmethod
-    def threads_note(game: dict[str, Any]) -> str:
+    def threads_note(game: dict[str, Any], frames_reason: str | None = None) -> str:
         """The thread check after detach, when it read anything but running:
-        its suspended and stopped threads, diagnostic only."""
+        its suspended and stopped threads, diagnostic only. A `gone` it reads
+        while the frame reading is not gone says so: thread_state reads the
+        pid alone, the frame reading the pid and start time."""
         suspended = game.get("suspended") or []
         stopped = game.get("stopped") or []
+        gone = ("" if game.get("verdict") != "gone" else
+                f" (thread_state reads the pid alone; the frame reading checks the pid and start time and read "
+                f"{frames_reason}, so the game is not taken as gone)")
         return (f"the thread check after the detach (tools/thread_state.py, diagnostic only, not deciding the "
-                f"release) reads {game.get('verdict')}: {len(suspended)} thread(s) suspended ("
+                f"release) reads {game.get('verdict')}{gone}: {len(suspended)} thread(s) suspended ("
                 + (", ".join(f"tid {s.get('tid')} count {s.get('suspend_count')}" for s in suspended) or "none")
                 + f"), {len(stopped)} stopped in Waiting/Suspended ("
                 + (", ".join(f"tid {t}" for t in stopped) or "none") + f"). {game.get('detail') or ''}".rstrip())
@@ -2566,7 +2592,9 @@ def hold_wait(cfg: Config) -> float:
 def detach(cfg: Config) -> int:
     """Exits 0 only for a session `ended` with the game shown released
     (`game_released` true: a proven session whose frame counter advanced
-    after the detach), or with the game gone."""
+    after the detach), or with the game gone. Gone is the saved frame
+    reading's own verdict, which checks the target's pid and start time;
+    the thread check's `gone` (pid alone) is diagnostic and decides nothing."""
     try:
         reply = keeper_request(cfg, "detach", timeout=detach_wait(cfg))
     except Refused as r:
@@ -2574,7 +2602,7 @@ def detach(cfg: Config) -> int:
         return 1
     print(json.dumps(reply))
     state = read_state(cfg)
-    gone = (state.get("game") or {}).get("verdict") == "gone"
+    gone = (state.get("frames") or {}).get("reason") == "gone"
     return 0 if state.get("state") == "ended" and state.get("detach_confirmed") \
         and (state.get("game_released") is True or gone) else 1
 
@@ -3044,19 +3072,30 @@ class Tools:
                                        f"({brk}): its never-break condition did not take", reply)
         # The outside check after the window is diagnostic (#497): the thread
         # roster does not say whether the game runs (the frame counter does,
-        # in the instrument record), so only a game that is not there, or no
-        # live session to check it, fails the arm. Any other reading is kept
-        # in `game`, with a `game_note` when it is not running.
-        game = self._game() or {"verdict": "no-session", "detail": "no live session to check"}
-        verdict = game.get("verdict")
-        if verdict in ("gone", "no-session"):
+        # in the instrument record), and its `gone` reads the pid alone. So
+        # only no live session, or a session whose target identity (pid and
+        # start time, saved by the keeper at start) is no longer alive, fails
+        # the arm. Every thread reading, `gone` included, is kept in `game`,
+        # with a `game_note` when it is not running.
+        live = live_session(self.cfg)
+        game: dict[str, Any] | None = None
+        if live is not None and not alive(live.get("target")):
+            refused = {"verdict": "gone",
+                       "detail": f"the session's target (pid {live.get('target_pid')}) is not alive by its "
+                                 "identity check (pid and start time)"}
+        else:
+            game = self._game() if live is not None else None
+            refused = None if game else {"verdict": "no-session", "detail": "no live session to check"}
+        if refused is not None:
             return self._arming_failed(base, addr, "game-not-running",
-                                       f"the outside check reads the game {verdict} after {hexaddr} was armed: "
-                                       f"{game.get('detail')}", reply, game=game)
+                                       f"the game is {refused['verdict']} after {hexaddr} was armed: "
+                                       f"{refused['detail']}", reply, game=refused)
+        assert game is not None
+        verdict = game.get("verdict")
         note = {} if verdict == "running" else {
             "game_note": f"the outside check read the game {verdict} after {hexaddr} was armed "
                          f"({game.get('detail')}); that thread reading is diagnostic and decided nothing: "
-                         "only a gone game fails the arm"}
+                         "only a target whose identity (pid and start time) is not alive fails the arm"}
         rows = [ln.strip() for ln in reply.get("after") or [] if _BPLIST_ROW.match(ln)]
         return {"ok": True, **base, **note, "bplist": rows, "held": reply.get("held"),
                 **({"held_note": reply["held_note"]} if reply.get("held_note") else {}),

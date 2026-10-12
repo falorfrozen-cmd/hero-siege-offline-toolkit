@@ -43,7 +43,9 @@ Files in `<workdir>`:
   a test can tell how long after a break the keeper's check came;
 - `frames.json`: the frame counter (`paused`, and the count `base` it had at
   `since`), written by the stand-in at every break, resume and detach;
-- `frames_last.json`: the last count the frames seam printed.
+- `frames_last.json`: the last count the frames seam printed;
+- `frames_gone`: left at `detach` under `frames_gone_after_detach`, after
+  which the frames seam reads `gone`.
 
 Modes:
 - `tls_breaks` N: N breaks right after attach, one after each run, each on an
@@ -76,6 +78,12 @@ Modes:
   nothing reads);
 - `frames_slow` S: the frames seam's readings while running report
   `elapsed_s` S;
+- `threads_gone_after_detach`: after a clean `detach` the probe reads `gone`
+  (thread_state's pid-only verdict) while the game runs on, frame counter
+  and all;
+- `frames_gone_after_detach`: after `detach` the frames seam reads `gone`
+  (the identity-checked verdict of a game that exited), while the probe
+  still reads `running`;
 - `fail_condition`: `SetHardwareBreakpointCondition` prints its failure;
 - `listed_as` [enabled, type]: the row's enabled flag and type;
 - `false_success`: `bph` prints success, and no row follows;
@@ -530,7 +538,12 @@ class Fake:
             else:
                 if self.threads is not None:
                     self.threads.resume()
-                self.verdict(check("running", "running after detach"))
+                if self.modes.get("threads_gone_after_detach"):
+                    self.verdict(check("gone", "stand-in: no process with this pid (pid only)", tids=()))
+                else:
+                    self.verdict(check("running", "running after detach"))
+            if self.modes.get("frames_gone_after_detach"):
+                write_atomic(self.work / "frames_gone", "detach")
         elif low == "exit":
             self.done = True
         else:
@@ -632,6 +645,11 @@ def frames(work: Path, timeout: float) -> int:
     modes = read_json(work / "modes.json", None) or {}
     paused = bool((read_json(work / "frames.json", None) or {}).get("paused"))
     held = paused and not modes.get("frames_never_stall")
+    if (work / "frames_gone").exists():  # frames_gone_after_detach
+        print(json.dumps({"answered": False, "frames": None, "pong": False, "reason": "gone", "elapsed_s": 0.0,
+                          "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                          "detail": "stand-in counter: the game exited"}))
+        return 0
     reading = {"answered": False, "frames": None, "pong": False, "reason": "not_consumed", "elapsed_s": timeout,
                "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                "detail": "stand-in counter: nothing consumed the command"}

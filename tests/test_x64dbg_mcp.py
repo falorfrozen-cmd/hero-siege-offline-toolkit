@@ -1891,10 +1891,34 @@ class FramesProofTests(unittest.TestCase):
         self.assertEqual(rec["control_hold"], LIVE2_THREADS["control_hold"])  # recorded as read
         self.assertNotIn("stall", STALLED)  # the readings passed in are not changed
 
-    def test_frames_proof_same_count_is_proven(self):
+    def test_frames_proof_answered_hold_same_count_is_a_gap(self):
+        # ForgePact consumes cmd.txt only from its frame callback, so an
+        # answer at the control hold means the game loop ran during it; an
+        # unchanged count only shows the publishing thread did not publish.
         rec = self.record(control_hold=[_reading(6900), _reading(6900)])
-        self.assertTrue(rec["proven"], rec)
+        self.assertFalse(rec["proven"], rec)
         self.assertEqual(rec["frames"]["stall"], "same-count", rec)
+        self.assertIn("not proven", rec["note"])
+        self.assertIn("answered while x64dbg held the game", rec["note"])
+        self.assertIn("6900", rec["note"])
+
+    def test_frames_proof_answered_hold_any_answer_is_a_gap(self):
+        # an answered first reading is a gap whatever the second shows
+        cases = [([_reading(6900), _reading(6930)], "advanced"),
+                 ([_reading(6900), _reading(None, "not_consumed", 3.0)], None),
+                 ([_reading(6900)], None),
+                 ([_reading(6900), _reading(6890)], None)]
+        for hold, stall in cases:
+            with self.subTest(hold=[r["reason"] for r in hold], stall=stall):
+                rec = self.record(control_hold=hold)
+                self.assertFalse(rec["proven"], rec)
+                self.assertEqual(rec["frames"]["stall"], stall, rec)
+                self.assertIn("answered while x64dbg held the game", rec["note"])
+
+    def test_frames_proof_answered_hold_control_a_no_answer_hold_is_proven(self):
+        rec = self.record(control_hold=[_reading(None, "not_consumed", 3.0)])
+        self.assertTrue(rec["proven"], rec)
+        self.assertNotIn("answered while x64dbg held the game", rec["note"])
 
     def test_frames_proof_each_shortfall_is_not_proven(self):
         cases = [
@@ -1943,10 +1967,7 @@ class InstrumentGapsTests(unittest.TestCase):
 
     def test_instrument_gaps_name_each_frames_shortfall_by_its_reading(self):
         cases = [
-            # a same-count stall does not lean on before arm, so only it is named
-            ({"before_arm": [_reading(6890)], "control_hold": [_reading(6900), _reading(6900)]},
-             "frames.before_arm"),
-            # a no-answer does: the hold is named with it
+            # a no-answer leans on before arm: the hold is named with it
             ({"before_arm": [_reading(6890)]}, ("frames.before_arm", "frames.control_hold")),
             ({"control_hold": [_reading(6900), _reading(6930)]}, "frames.control_hold"),
             ({"after_resume": _reading(6898)}, "frames.after_resume"),
@@ -1955,6 +1976,19 @@ class InstrumentGapsTests(unittest.TestCase):
             with self.subTest(key=key):
                 gaps = xm.instrument_gaps({**LIVE2_THREADS, "frames": {**STALLED, **frames}})
                 self.assertEqual({k for k, _ in gaps}, {key} if isinstance(key, str) else set(key), gaps)
+
+    def test_instrument_gaps_answered_hold_is_a_control_hold_gap(self):
+        # A same-count hold no longer stands in for a stall: it is a gap at
+        # the control hold, beside a before-arm shortfall and without one.
+        held = [_reading(6900), _reading(6900)]
+        for frames, keys in (({"control_hold": held}, {"frames.control_hold"}),
+                             ({"before_arm": [_reading(6890)], "control_hold": held},
+                              {"frames.before_arm", "frames.control_hold"})):
+            with self.subTest(keys=sorted(keys)):
+                gaps = xm.instrument_gaps({**LIVE2_THREADS, "frames": {**STALLED, **frames}})
+                self.assertEqual({k for k, _ in gaps}, keys, gaps)
+                hold_why = [why for k, why in gaps if k == "frames.control_hold"]
+                self.assertIn("answered while x64dbg held the game", hold_why[0])
 
 
 # The Replan 3 probe's run2 (measured 2026-10-10 on a throwaway process, not the
@@ -2066,10 +2100,13 @@ class FramesKeeperTests(SessionMixin, unittest.TestCase):
         self.assertEqual(reply["hold_frames"][0]["reason"], "not_consumed", reply)
         self.assertTrue(reply["proven"], reply)
 
-    def test_frames_keeper_answer_held_is_proven_by_the_same_count(self):
-        cfg, _, _, _, _ = self.start_session(fake={"frames_answer_held": True})
-        self.prove(cfg)
-        fr = xm.read_state(cfg)["instrument"]["frames"]
+    def test_frames_keeper_answered_hold_same_count_is_not_proven(self):
+        # The plugin answered while the game was held, so the frame callback
+        # ran: the frozen count is recorded as `same-count`, and it is a gap.
+        detached = self.assert_frames_unproven("answered while x64dbg held the game", frames_answer_held=True)
+        self.assertEqual(detached["state"], "ended", detached)  # the advanced-but-unproven row
+        self.assertIn("never shown", detached["note"])
+        fr = xm.read_state(self.cfg)["instrument"]["frames"]
         self.assertEqual(fr["stall"], "same-count", fr)
         self.assertEqual(len(fr["control_hold"]), 2, fr)
         self.assertEqual(fr["control_hold"][0]["frames"], fr["control_hold"][1]["frames"], fr)
@@ -2078,6 +2115,7 @@ class FramesKeeperTests(SessionMixin, unittest.TestCase):
         """Not proven: the session still runs, status names the gap, and the
         detach reports no release: `game_released` null, `ok` false, exit 1."""
         cfg, _, _, _, _ = self.start_session(fake={"hot": [A], **fake})
+        self.cfg = cfg
         reply = self.first_hit(cfg, A)
         self.assertTrue(reply["ok"], reply)
         self.assertIsNotNone(reply["held"], reply)
@@ -2184,6 +2222,48 @@ class FramesReleaseTests(SessionMixin, unittest.TestCase):
         self.assertEqual(code, 1, reply)
         self.assertEqual((reply["state"], reply["game_released"], reply["ok"]),
                          ("game-not-released", None, False), reply)
+
+    # Whether the game is gone is the frame reading's own verdict, which
+    # checks the target's identity (pid and start time); thread_state's
+    # `gone` reads the pid alone, and decides nothing.
+
+    def test_frames_release_gone_by_frames_a_thread_gone_with_a_live_game_is_released(self):
+        cfg, _, _, _, _ = self.start_session(fake={"threads_gone_after_detach": True})
+        self.prove(cfg)
+        code, reply = self.detach_cli(cfg)
+        self.assertEqual(code, 0, reply)
+        self.assertEqual((reply["state"], reply["game_released"], reply["ok"]), ("ended", True, True), reply)
+        self.assertEqual(reply["game"]["verdict"], "gone", reply)  # recorded, diagnostic
+        self.assertEqual(reply["frames"]["reason"], "answered", reply)
+        for word in ("gone", "diagnostic", "pid and start time"):
+            self.assertIn(word, reply["threads_note"])
+        state = xm.read_state(cfg)
+        self.assertEqual((state["state"], state["game_released"]), ("ended", True), state)
+
+    def test_frames_release_gone_by_frames_a_gone_frame_reading_ends_unreleased_and_ok(self):
+        # The thread check still reads running: the frame reading decides alone.
+        cfg, _, _, _, _ = self.start_session(fake={"frames_gone_after_detach": True})
+        self.prove(cfg)
+        code, reply = self.detach_cli(cfg)
+        self.assertEqual(code, 0, reply)
+        self.assertEqual((reply["state"], reply["game_released"], reply["ok"]), ("ended", None, True), reply)
+        self.assertEqual(reply["frames"]["reason"], "gone", reply)
+        self.assertEqual(reply["game"]["verdict"], "running", reply)
+        self.assertNotIn("threads_note", reply)
+        state = xm.read_state(cfg)
+        self.assertEqual((state["state"], state["game_released"], state["frames"]["reason"]),
+                         ("ended", None, "gone"), state)
+
+    def test_frames_release_gone_by_frames_control_the_cli_exit_reads_the_saved_frame_reading(self):
+        # Negative control on the CLI exit rule: a thread check reading
+        # `gone` saved beside a frame reading that is not gone, on a session
+        # that was not released, exits 1.
+        cfg, _, _, _, _ = self.start_session(fake={"frames_dead": True, "threads_gone_after_detach": True})
+        code, reply = self.detach_cli(cfg)
+        self.assertEqual(code, 1, reply)
+        self.assertEqual(reply["game"]["verdict"], "gone", reply)
+        self.assertEqual(reply["frames"]["reason"], "not_consumed", reply)
+        self.assertEqual((reply["state"], reply["game_released"]), ("game-not-released", None), reply)
 
 
 class FramesReaderTests(unittest.TestCase):
@@ -2863,26 +2943,39 @@ class FalseSuccessTests(ArmingMixin, unittest.TestCase):
         self.assertEqual(result["game"]["verdict"], "running")
         self.assertNotIn("game_note", result)
 
-    def assert_gone_refuses(self, result, record, cfg, verdict):
+    def test_logpoint_roster_diagnostic_gone_by_frames_a_thread_gone_with_a_live_identity_arms(self):
+        # thread_state's `gone` reads the pid alone; the session's target
+        # identity (pid and start time) is alive, so the arm stands.
+        self.assert_roster_reading_is_diagnostic(
+            {"verdict": "gone", "detail": "stand-in: no such process", "suspended": [], "stopped": []})
+
+    def assert_gone_refuses(self, result, record, cfg, verdict, says):
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["stage"], "game-not-running")
         self.assertEqual(result["game"]["verdict"], verdict)
+        self.assertIn(says, result["game"]["detail"])
+        self.assertIn(says, result["detail"])
         self.assertIn("Hardware breakpoint deleted!", result["cleared"])
         self.assertIn(f"bphc 0x{A:X}", self.stdin_lines(record))
         self.assertIsNone(xm.bplist_entry(xm.Tools(cfg).bplist()["lines"], A))
 
-    def test_logpoint_gone_refuses_a_game_the_outside_check_reads_gone(self):
-        cfg, _, _, record, _ = self.start_session(cfg_over=self.COLD)
-        gone = {"verdict": "gone", "detail": "stand-in: no such process", "suspended": [], "stopped": []}
-        with mock.patch.object(xm, "game_check", return_value=gone):
+    def test_logpoint_gone_refuses_a_game_whose_target_identity_is_not_alive(self):
+        # Only the target's identity reads dead: the keeper's and headless's
+        # stay alive, so the session is still live, and the thread check
+        # (here reading running) is not what refuses.
+        cfg, _, state, record, _ = self.start_session(cfg_over=self.COLD)
+        target, real_alive = state["target"], xm.alive
+        running = {"verdict": "running", "detail": "stand-in: running", "suspended": [], "stopped": []}
+        with mock.patch.object(xm, "alive", side_effect=lambda i: False if i == target else real_alive(i)), \
+                mock.patch.object(xm, "game_check", return_value=running):
             result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
-        self.assert_gone_refuses(result, record, cfg, "gone")
+        self.assert_gone_refuses(result, record, cfg, "gone", "pid and start time")
 
     def test_logpoint_gone_refuses_with_no_live_session_to_check(self):
         cfg, _, _, record, _ = self.start_session(cfg_over=self.COLD)
         with mock.patch.object(xm.Tools, "_game", return_value=None):
             result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
-        self.assert_gone_refuses(result, record, cfg, "no-session")
+        self.assert_gone_refuses(result, record, cfg, "no-session", "no live session")
 
     def test_false_success_arming_failure_reads_the_hold_reply(self):
         set_line, row = f"Hardware breakpoint at {A:016X} set!", f"1:HW:{A:016X}"
