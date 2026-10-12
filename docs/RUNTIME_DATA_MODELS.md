@@ -5590,6 +5590,8 @@ with the AFK commit it comes from, are in
 behind §22.8 and its §15 rows were on the earlier build,
 `exe-281798144-pe6a9ed3ee-111c3000`, from before the 2026-09-18 update; the
 later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
+§21.9 has a second source, the owner's local Seraph prototype (measured
+2026-09-23..24, no build named); AFK's builds above do not apply to it.
 
 ### 22.1 Our own art
 
@@ -5748,3 +5750,53 @@ no build:
 - a struct held only in C++ `RValue`s is freed by the runner's GC between frames
   (§5.9);
 - `instance_destroy` on a monster skips its death and `DropItem`.
+
+### 21.9 Replacing a draw and drawing above the actors (Seraph)
+
+Folded 2026-10-12 from the owner's local Seraph prototype, which drew one
+White Mage character as an original custom character. It was measured
+2026-09-23..24; its notes name no game build. The recipes, labels and source
+pointers are in
+[docs/research/seraph-custom-sprites.md](research/seraph-custom-sprites.md)
+("Seraph §n" below).
+
+- **The player's body is one `draw_surface_ext` call.** `Player_obj`'s Draw
+  composes the body into a 300×300 surface, `playerSequenceData.sequenceSurface`,
+  with the ground point at its centre. It draws that surface once, at the
+  anchor minus 150 × scale, with the jump and slope offsets applied. A
+  name-resolved inline detour of `draw_surface_ext`, filtered to that one
+  surface handle, replaced the body in 10,582 frames with 0 errors and
+  followed a camera zoom. **Measured** (Seraph §1.1–1.3).
+- **White Mage geometry.** The body is 46–47 px tall, and its **feet are
+  16 px below the player's position**, measured from 40 read-backs of the
+  body surface. Running speed is 205–217 px/s (211 on average) in all four
+  directions, measured from the player's `x`/`y` change per frame.
+  **Measured** (Seraph §2.6).
+- **`buffer_get_surface` reads a surface's RGBA into memory.** Use
+  `buffer_create(w*h*4, 0, 1)`, then `buffer_get_address`. **Measured**: it
+  returned the body's opaque bounds (Seraph §2.5). That the surface is left
+  unchanged is GameMaker's documented behaviour, inferred.
+- **Baked sprites draw crisp.** Cells drawn onto a surface with
+  `gpu_set_blendenable(false)` and `gpu_set_texfilter(false)`, then passed to
+  `sprite_create_from_surface`, drew on the game's pixel grid. This extends
+  §21.1's atlas-cell recipe. **Measured**. That alpha survives byte for byte
+  is inferred.
+- **A `DrawHud` pre-pass draws above every actor and under the HUD.** A
+  detour of `gml_Script_DrawHud` (installed with `InstallScriptHook`) drew
+  world art first and then called the original. World coordinates were
+  mapped through `view_camera[0]`:
+  `(wx - camera_get_view_x) * display_get_gui_width / camera_get_view_width`.
+  One factor was used for both axes, which assumes the GUI and the view share
+  an aspect ratio. **Measured**: the art was seen above the actors and below
+  the HUD. All of Seraph's skill-effect drawing, in the body draw and in this
+  pre-pass while a cast was active, averaged about 0.1 ms per draw call
+  (Seraph §3.1).
+- **A `Player_Damage_Parent_obj` the mod creates does damage when it is kept
+  alive for two steps.** Seraph spawned one per contact, with the carrier's
+  captured payload and an ellipse mask, kept it for exactly two steps and then
+  removed it. **Measured**: 14 of 14 contacts lowered enemy health, read
+  before and after through `gml_Script_PC_GetVariableGMLWrapper` (Seraph
+  §2.8). Why one step is not enough is the package's reading of the game, not
+  established live: the stats load into the object after that frame's
+  collision pass. No recorded control shows a one-step object failing after
+  the transport fix.
