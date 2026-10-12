@@ -3221,7 +3221,8 @@ All **measured** unless marked.
 | Removing a stash item's map entry (`RemoveItemFromMap` on map 9) but leaving its cell in the tab | the game ends at its next stash save — measured twice, in two launches; `GridRemoveItem` on the cell in the same take avoids it | §17 |
 | A plugin DLL whose global `std::thread` is still joinable when the game exits | `std::terminate` while `ExitProcess` destroys that DLL's globals (the other threads are already gone): a WER report at close, `ucrtbase.dll` `0xc0000409`, fast-fail 7 (`abort`). HS-Offline-Tracker's producer does it; 9 of the 10 dumps Windows kept on 2026-09-25/26 show it, the game's own exit path under it, and a plain `CloseMainWindow` at the main menu does it too. A game started from a tool running under Git Bash inherits error mode `0x3` (`SEM_NOGPFAULTERRORBOX`) and aborts without a dump or an event: read the exit code | [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#the-crash-of-2026-09-26-013627) |
 | `RoomGoto` into `Act_01_06` from code | crash | §21.7 |
-| `PC_GetVariableGMLWrapper` on a far-out handle (id 999999), or on a gold amount mistaken for a handle | crash (the second in the anti-cheat module) | §21.8 |
+| `PC_GetVariableGMLWrapper` on a far-out handle (id 999999) | crash | §21.8 |
+| A gold amount mistaken for a handle (call not recorded) | crash in the anti-cheat module | §21.8 |
 | `EnemyGiveExperience` with no argument | crash | §21.8 |
 | A parsed struct held only in C++ `RValue`s across frames | freed by the runner's GC; the next frame crashes | §21.8, §5.9 |
 | `WM_CLOSE` to YYToolkit's console window | the game ends with 0xC000013A, no normal save | §21.5 |
@@ -5154,9 +5155,11 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
   `texturegroup_get_status` (0 unloaded, 1 loading, 2 loaded, 3 fetched) work at
   runtime, as do `sprite_get_texture` with `texture_is_ready`. **Measured** (AFK
   §3.2).
-- **Monsters spawned outside their own act draw only after their sprites are
+- **Monsters spawned outside their own act drew once their sprites were
   prefetched**: `sprite_index`, the object's sprite, and every instance variable
   named `enemy_*`, `enemy_corpse` or `shadow_sprite`. **Measured** (AFK §3.4).
+  That they do not draw without the prefetch is inferred from the NPC case
+  above, not observed.
 
 ### 21.4 Drawing over the game's UI
 
@@ -5215,11 +5218,13 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
   `GetAct`, `GetMonsterLevel` and `ReturnEnemyStats` for a reference zone, only
   while the hero is in that room, makes an unused room behave like that zone,
   with the game's own stats, loot and XP. **Measured** (AFK §6.4, §6.7).
-- **Far monsters get no step.** Deaths stopped at about 650-850 px from the
-  hero. Appending ids to `Controller_obj.monsterHandleArray` after
-  `ActivateDeactivateProps` returns kept far monsters stepping. **Measured** (AFK
-  §6.5). Compare the static reading of the enemy loop in §11.3, which names
-  `EnemyStepHandleNew` as what rebuilds that array.
+- **Monsters were moved and killed only within about one screen of the hero**,
+  with deaths at 650 px and 8 of 12 at 750 and 850 px. Appending ids to
+  `Controller_obj.monsterHandleArray` after `ActivateDeactivateProps` returns
+  kept far monsters stepping. **Measured** (AFK §6.5, R2/R8). That the game
+  steps only that array's members is inferred, and the result fits either
+  rebuild routine: compare the static reading of the enemy loop in §11.3, which
+  names `EnemyStepHandleNew` as what rebuilds that array.
 - **Kill parity.** Health written to 0 runs the death, but `DropItem` ran only
   about half the time and no XP was given. `DropItem` with the player-kill
   arguments plus `EnemyGiveExperience(self = monster, other = player,

@@ -151,11 +151,12 @@ This avoids `sprite_set_offset` on a shared game sprite, which would change it e
 
 3.3 **Tilesets prefetch through their texture.** Call `texture_prefetch(tileset_get_texture(tileset))` before entering a room, and check `texture_is_ready`. The Miner Village tileset is in Act 4's group, so it is fetched when the hero sets off and again at build; the build log says if it is still loading. **inferred** from the code, part of measured builds. Source: `46f48ae`, CRS `StrongholdMap.inl` `Enter` l.1125, `Ground` l.497-503.
 
-3.4 **Monsters spawned in an unused room need their sprites prefetched.**
+3.4 **Monsters spawned in an unused room are drawn once their sprites are prefetched.**
 - Dev_10_rm does not load an Act's monster texture groups.
 - After Create, AFK prefetches `sprite_index`, `object_get_sprite(obj)` (before creation), and every instance variable named `enemy_up/down/left/right`, `enemy_idle_*`, `enemy_attack_*`, `enemy_melee_attack_*`, `enemy_cast_*`, `enemy_hurt_*`, `enemy_death_*`, `enemy_corpse` or `shadow_sprite`. It enumerates them with `variable_instance_get_names`.
 - The objects' own Create, Draw and animation code is kept.
 - **measured**: "recorded Chilling Head sprites were visibly drawn with their health bars and affix effects" (CITY_VERIFICATION_20261006).
+- That they do not draw *without* the prefetch is **inferred** from the NPC case in 3.1; no run recorded an un-prefetched monster failing to draw.
 - Source: CRS `plugin/LiveDefense.inl` `PrefetchSprite` and `PrefetchMonster` l.217-241; docs/STRONGHOLD_CITY.md.
 
 3.5 **Fallback game sprites are prefetched when chosen.** Every game sprite used as a fallback for missing own art is `sprite_prefetch`ed the first time it is resolved (`ArtFor`). **inferred**. Source: CRS `StrongholdMap.inl` l.287-303.
@@ -474,7 +475,7 @@ The measured ones are folded into [`RUNTIME_DATA_MODELS.md` §21](../RUNTIME_DAT
 7. Menu activation goes through `UI_Node_Parent_obj.activationFunc`. `event_perform(7, 25)` activates a node safely; calling the `UiA*` scripts directly broke later mouse input (5.8). **measured**.
 8. `effect_create_depth` effects: none of 56 was observed to display, with no positive control (9.1). **measured** as "not observed"; the cause is **not established**.
 9. Monster spawn: `enemyRarity`, `affixList` plus `enemyAffix` are set before stats build; `aggroRange` is reset to 300 at stats build (so it must be set a frame later; AFK also sets `distance` then, but a reset of `distance` was not observed); monsters self-delete in towns; the active box is about 650-850 px; appending ids to `Controller_obj.monsterHandleArray` / `monsterHandleArrayCount` after `ActivateDeactivateProps` keeps far monsters stepping (6.2-6.5). **measured**. Which routine rebuilds that array, and how often, is **inferred** (see 6.5 and the runtime reference's §11.3).
-10. The monster sprite variables `enemy_*`, `enemy_corpse` and `shadow_sprite` (3.4). **measured** that prefetching them fixes drawing.
+10. The monster sprite variables `enemy_*`, `enemy_corpse` and `shadow_sprite` (3.4). **measured** that prefetched monsters draw; that they fail without it is **inferred** from 3.1.
 11. Room routines that decide town or zone behaviour: `CheckTown`, `RoomIsZone`, `GetAct`, `GetMonsterLevel`, `ReturnEnemyStats`, `GetRoomName` (6.7). **measured**.
 12. `Invisible_Wall_obj`: scale per 32 px, `addToMinimap`, found by `collision_point` (7.1). **measured**. Whether it blocks the hero is not established.
 13. Path grid: `PathFindControllerCreate` builds `global.pathGrid` with `global.gridSize` 16 from the room size; a monster's own cells count as taken; the per-monster `pathFailed` flag skips the search (7.3, 7.4, 7.7). **measured**.
