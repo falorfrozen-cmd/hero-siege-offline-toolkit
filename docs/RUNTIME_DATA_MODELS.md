@@ -5005,9 +5005,20 @@ repository.
   −10300. **Static reading from the data file** (2026-10-13).
 - At runtime, such a layer would read as a visible layer that holds no
   element and for which the `layer_get_fx` builtin answers a struct. That
-  reading is **not established** until ForgePact's Mod live 2 runs it; the
-  builtin's name appears in this build's executable (byte search,
-  2026-10-13), and what it answers on this runner has not been seen. An
+  reading is **not established**, and ForgePact's Mod live 2 as planned
+  does not establish it: the builtin's name appears in this build's
+  executable (byte search, 2026-10-13), but nothing that session prints
+  says which layer, if any, was classed as a filter. In the two rooms it
+  visits, `Town_01_rm` and `Act_01_01`, the only filter (`Effect_1`, at
+  −10300 and −10100) is empty and lies behind every drawn layer the flight
+  depth is measured against, so a `layer_get_fx` that throws, answers −1 or
+  answers undefined gives the same flight depth (−10001, or −5501 before
+  the canopies) as one that answers a struct. A depth that matches is
+  therefore not evidence for this reading. Establishing it needs a reading
+  that names the classed filter, with `Effect_1` in those two rooms as the
+  positive control and no filter found as the "does not answer a struct on
+  this runner" outcome. Until then, a player's flight could be drawn past
+  the tint in the 8 rooms below without any line showing it. An
   instance or asset layer that carries a layer effect but holds no element
   yet reads the same way until it fills: a zone's `Tree_Leaves` (with its
   `_filter_underwater`) before its canopies exist, or `Act_09_04`'s `Flame`.
