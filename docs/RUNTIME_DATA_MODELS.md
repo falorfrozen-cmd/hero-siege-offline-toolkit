@@ -2516,7 +2516,10 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   `DoCraftResult` and several unnamed object events. An entry left in the list
   between rolls would be seen by all of them. Who builds the list, and whether
   it is rebuilt per zone or per load, is **not established**. **Static reading
-  (2026-10-02, issue #74).**
+  (2026-10-02, issue #74).** Of the readers that roll a unique from it,
+  `DropUniqueItems` and this roll never keep a Heroic (9) entry and only
+  `DropItemHeroic` can, which § 21.4 sets out (**static reading**, 2026-10-11,
+  ForgePact #158).
 - **The unique repository.** `GetUniqueRepoStruct(type, sub, b)` indexes a
   `global` three-level array `repo[type][sub][b]` (its slot name is also
   unresolved; type 3 takes a separate branch) with GameMaker's own bounds
@@ -4780,6 +4783,53 @@ the room as room = view origin + screen ÷ 2 (`menulayout`'s `view=`, a
 [Hotfix live 1 results](../ForgePact/docs/jump-scenery-research.md#hotfix-live-1-results);
 [Hotfix live 2 results](../ForgePact/docs/jump-scenery-research.md#hotfix-live-2-results)
 
+### 19.6 Walking: what the movement step calls
+
+What ForgePact's flight-charms research (#158, phase 1) read about the
+player's walk on 2026-10-11, in the build Ghidra imported (the one
+`py -3 tools/decomp_index.py build-hash` names), through the ghidra MCP and a
+local scan for the names a function's code references. A name scan lists
+candidate direct call sites; it is blind to calls through the script table or
+a method value, so a call it did not find is not observed, not absent. Live 1
+of that research measures the walk; until then every claim here is a static
+reading.
+
+- `gml_Script_PlayerMovement` (2774) does not decompile within the tool's
+  limit: it is roughly 200 KB of compiled code. Read as the names its code
+  references, it uses the builtins `place_meeting`, `position_meeting` and
+  `collision_circle`, the path builtins, `point_distance`, `instance_nearest`
+  and `object_is_ancestor`, and the variables `x`, `y`, `hSpeedFactor`,
+  `vSpeedFactor`, `moving`, `mountId`, `inputState` and `pSt`. **Static
+  reading** (2026-10-11).
+- It references none of `instance_place`, `tilemap_get_at_pixel`, the
+  `mp_grid_*` builtins or `move_and_collide`, and the scan found no direct
+  call from it to `CanMove` (467) or `InstancePlaceTallest` (599). **Static
+  reading** (2026-10-11). The walk's own collision test is therefore most
+  plausibly the three meeting builtins above, the ones answered for the jump
+  in § 19.2; § 19.2 also measured that a walk stays blocked when only the
+  family's queries are answered, so either one of those queries names an
+  object outside `Collision_Parent_obj`'s family, or a script outside
+  `PlayerMovement` holds the walk. Which one is **not established**.
+- `InstancePlaceTallest` (599) gathers the instances at a place through
+  `instance_place_list` into a list it reuses, and returns the one with the
+  largest `height`, or `noone` when there is none. Its direct callers are
+  `CanMove` (467), `playerJumpGravity` (2764) and six sites in
+  `ClassStepEvent` (561). **Static reading** (2026-10-11). § 19.2 measured
+  1944 player-self calls to it during one walk; which caller made them, and
+  whether its answer holds the walk, is **not established**.
+- `gml_Script_StatPhasing` (3390) is the getter behind item stat 26,
+  "Movement Phasing" ("you walk through monsters", in the Item Editor's stat
+  catalog), and the only caller found is `ReturnSpecificStat` (3344), the
+  dispatcher Jump Power's getter is reached from too. So the game has a
+  native pass-through-monsters stat and no pass-through-terrain one. **Static
+  reading** (2026-10-11); what stat 26 does on a character is not measured.
+- `playerWings` (the cosmetic wings, drawn through `GetWingSprite` (1797) and
+  `ReturnWingsInfo` (3467)) and `floating` (the interface's floating state,
+  set through `UiSetFloating` (4472)) are not flight mechanisms. **Static
+  reading** (2026-10-11).
+
+[Static reading](../ForgePact/docs/flight-charms-research.md#static-reading)
+
 ---
 
 ## 20. Gamba machines
@@ -5090,3 +5140,106 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   with eight valid entries)`, so the by-name route stays blind
   (`byname-route: blind`) and whether the array holds same-named entries for
   the store scripts is still open. **Measured (Live 3).**
+
+---
+
+## 21. Charms
+
+What ForgePact's flight-charms research (#158, phase 1) read about charms,
+item size and the unique rolls on 2026-10-11, in the build Ghidra imported
+(the one `py -3 tools/decomp_index.py build-hash` names), through the ghidra
+MCP and a local scan for the names a function's code references. Every claim
+here is a static reading until that research's Live 1 measures it; the
+procedure, its checks and the Decision keys they settle are in ForgePact's
+[`docs/flight-charms-research.md`](../ForgePact/docs/flight-charms-research.md).
+A caller list is the direct call sites the reading found. It is blind to calls
+through the script table or a method value, so a caller it does not list is
+not observed, not absent.
+
+### 21.1 Equipped charms
+
+- Offline, `gml_Script_GetPlayerCharmData` (493) answers, for player number
+  p, `Controller_obj.inventoryData[p - 1].localCharmItemArray`: the same
+  `inventoryData` entry the relic tab lives in (§ 2, where its key rule is
+  measured). Online it answers `Client_obj.players[p].charmItemArray`.
+  **Static reading** (2026-10-11).
+- `gml_Script_UpdateCharmData` (491) rebuilds that array. It walks the
+  entry's `inventoryCharmGrid` nodes and takes each distinct
+  `nodeFingerprint` once, so a charm covering several cells is counted once.
+  It resolves each fingerprint to its item through `GetOnlinePlayerItemOwner`
+  (2031) and `GetItemFromFingerprint` (2046), as § 2 does for a relic, and
+  pushes the item onto the array. Its direct callers are `RunItemEquipped`
+  (3483) and a `Client_obj` closure. **Static reading** (2026-10-11).
+- So the equipped charms are read from `localCharmItemArray`, not through a
+  worn slot's fingerprint as the Miner's Helmet's equipped read is. The array
+  has not been read live. **Static reading** (2026-10-11).
+
+### 21.2 Item size
+
+- `gml_Script_GetItemSize` (1976) calls the item's own `GetItemInfo` method
+  (2035, `GetItemInfo@anon@5277@s_ItemInstanceStruct@InventoryV2Funcs`)
+  twice, each time with a constant key and one shared default, and returns
+  the two answers as a pair: the item's footprint in grid cells. **Static
+  reading** (2026-10-11).
+- `GetItemInfo` takes a key and a default and answers that item's
+  `itemInfoStruct[key]`, or the default when the key is undefined. So an
+  item's footprint is read off the built item's `itemInfoStruct`, the struct
+  the Custom Forge already writes (`"27"`, `"28"`, `"29"`, `"32"`; § 16.1).
+  **Static reading** (2026-10-11).
+- **Which two keys hold the footprint is not established**: the reading did
+  not render the two constants. ForgePact's `charmprobe` identifies them from
+  samples of known size in Live 1.
+- `GetItemSize` has 38 direct callers across the grid scripts, among them
+  `InventoryGridAddItem` (1964), `GridHasSpace` (1966),
+  `InventoryGridHasSpace` (1967), `InventoryGridHasSpaceMulti` (1968),
+  `GridAddItem` (1970), `InventorySortTab` (1983), `InvGridEquipV2` (1990),
+  `InventorySwapItemsNew` (2047), `ProcessInventoryGridInput` (3000) and
+  `CraftEditGrid` (757). Whether every reader of an item's size goes through
+  it is **not established**. **Static reading** (2026-10-11).
+- A save keeps only an item's compact definition (§ 16.1, measured), so a
+  footprint written into a built item's `itemInfoStruct` is not saved and
+  would have to be written each time the item is built. What a saved grid does
+  when such a footprint appears or goes away is **not established**. **Static
+  reading** (2026-10-11) for the consequence.
+
+### 21.3 Charm stats and the player stats
+
+- `GetPlayerCharmData`'s direct callers are `GetItemStats` (1682) and five
+  sites in `LoadSpecificStat` (2296), so the player's stat aggregation reads
+  the equipped charms. **Static reading** (2026-10-11).
+- Whether a stat the Custom Forge writes on a built charm counts toward the
+  player's stats is **not measured**: the Miner's Helmet's forged stats were
+  never read off the character.
+- The item stat ids a charm carries are the Item Editor's numbering: 25
+  Increased Movement Speed (%), 159 Physical Damage Taken Reduced by (%), 160
+  Magic Damage Taken Reduced by (%), and 162 a flat Damage Taken Reduced by,
+  from all sources. `hs_game_sdk.stats.StatId` numbers stats another way (it
+  gives 19 for movement speed), so it is not the item stat id. Not a static
+  reading of the game: the Item Editor's stat catalog, not measured.
+
+### 21.4 Which roll drops a unique of which rarity
+
+- `gml_Script_DropUniqueItems` (1424), called from `LoadDrops` (2171), picks
+  one entry of `Controller_obj.lootListUnique[k]`, with k from 0 to 4 taken
+  from a protected zone value that has a random chance of stepping up. It
+  keeps the entry only when the entry's rarity in `GetUniqueRepoStruct` (819)
+  is below Angelic (7) and the entry is not flagged hidden, then calls
+  `CreateDefaultParams` (2349) and the placement. **Static reading**
+  (2026-10-11).
+- `gml_Script_DropItemHeroic` (1374) takes a position and a list index that
+  defaults to 5. It draws from `lootListUnique` at that index until an entry
+  is unflagged and is neither Angelic (7) nor Unholy (10), so it can give a
+  Heroic or a Satanic unique, then calls `CreateDefaultParams` and the
+  placement. Its direct callers are `VaultUse` (4597) and a Chaos Tower NPC
+  closure. ForgePact has never called it. **Static reading** (2026-10-11).
+- The Angelic roll keeps only rarity 7 or 10 (§ 13.4).
+- So of these three rolls only `DropItemHeroic` can drop a Heroic (9) unique.
+  **Static reading** (2026-10-11).
+- The Item Editor's catalog (`hs_full_catalog.json`, not a reading of the
+  game and not measured) lists normal charms as Small (`b` 0-19, 1x1), Large
+  (20-39, 1x2) and Grand (40-59, 1x3), with no normal 2x2 or 1x5 charm. Its 2x2
+  uniques include the Angelic melons (`b` 47-50) and Goburin's Head (Unholy,
+  98); its only 1x5 is Soul Collector (Unholy, 91); its Heroic 1x1 charms are
+  Torstein's Anvil (52), Wizard's Dice (82) and Gladiator's Dice (83). It lists
+  Aimbot.exe `{10, 0, 76}` as Satanic, not Heroic. Live 1's `charmprobe repo`
+  reads the repository's own rarity for these.
