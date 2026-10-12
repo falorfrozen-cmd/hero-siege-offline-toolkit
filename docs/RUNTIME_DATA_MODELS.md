@@ -5344,18 +5344,24 @@ direct `call rel32` that the import's reference table does not hold.
   definition's `b` and `c` match, comparing those fields themselves; neither
   calls `ItemsAreStackable`. The seed `a` is never compared. `GridAddToStack`
   first accepts only classes 12, 13, 14 and 15, the same classes
-  `gml_Script_IsItemTypeStackable` answers true for, so a class-11 consumable
-  never stacks in the bag (measured below). `c` is the repository flag (0 normal, 1 unique, § 2
+  `gml_Script_IsItemTypeStackable` answers true for. A class-11 consumable has
+  no preferred grid and never reaches `GridAddToStack` (the pickup route
+  above); it does not stack in the bag (measured below), but why
+  `InventoryGridAddToStack` refuses it was not read. `c` is the repository flag (0 normal, 1 unique, § 2
   and § 13.10), so changing it loads a different item: no whole-number value
   of a field the merge compares can mark an item apart from the real one (a
-  fraction in `b` can, by the readings that follow). **Static reading**
-  (Replan 1).
+  fraction in `b` can in `GridAddToStack`, by the reading that follows; how
+  `InventoryGridAddToStack`, which `AddToInventory` tries when
+  `GridAddToStack` takes nothing, compares `b` is **not established**).
+  **Static reading** (Replan 1).
 - How the compare is made. `GridAddToStack` compares `itemType`, then the two
   definitions' `b`, then their `c`, each through the runtime's general value
   compare, which takes two reals as equal when they differ by no more than the
   math epsilon (GameMaker's default is 0.00001; whether the game sets another
   is **not established**). So a `b` of 2.1 differs from 2 and matches 2.1.
-  **Static reading** (2026-10-12).
+  **Static reading** (2026-10-12). How `InventoryGridAddToStack`, which
+  `AddToInventory` tries when `GridAddToStack` takes nothing, compares `b` is
+  **not established**.
 - The repository lookup truncates. `GetNormalRepoStruct` turns its index
   argument into an integer through the runtime's real-to-int conversion, which
   truncates toward zero, so a `b` of 2.1 looks up entry 2. The item
