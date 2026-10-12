@@ -4868,8 +4868,11 @@ each claim below says whether it is a static reading or measured.
   in all four directions left the position unchanged, and the game did not
   push the player out. **Measured** (2026-10-12). The walk's blocked-walk
   queries also name objects outside the family (`place_meeting` named
-  `Enemy_Parent_obj` most, then `Wall_Parent_obj`, `Enemy_Child_Boss_obj` and
-  `Enemy_Only_Passage_obj`). **Measured** (2026-10-12).
+  `Enemy_Parent_obj` most, then `Enemy_Child_Boss_obj` and
+  `Enemy_Only_Passage_obj`), and `Wall_Parent_obj`, which the tally labelled
+  a member of the family. **Measured** (2026-10-12). An earlier version of
+  this line counted `Wall_Parent_obj` outside the family; the data file puts
+  it inside (§ 19.8).
 - `gml_Script_StatPhasing` (3390) is the getter behind item stat 26,
   "Movement Phasing" ("you walk through monsters", in the Item Editor's stat
   catalog), and the only caller found is `ReturnSpecificStat` (3344), the
@@ -4885,6 +4888,67 @@ each claim below says whether it is a static reading or measured.
 
 [Static reading](../ForgePact/docs/flight-charms-research.md#static-reading),
 [Live 1 results](../ForgePact/docs/flight-charms-research.md#live-1-results)
+
+### 19.7 Draw order: the game layers sorted by y
+
+What ForgePact's flight charms (#158, phase 2) read on 2026-10-12 about how an
+instance's draw order follows its y, in the same build as § 19.6 (executable
+sha256 `498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0`,
+the one `py -3 tools/decomp_index.py build-hash` names), through the ghidra
+MCP and existing local decompiles. Direct call sites come from a local byte
+scan for calls to the function's entry, each mapped to its function by the
+image's exception table; like the name scan in § 19.6, it is blind to calls
+through the script table or a method value. Nothing here is measured.
+
+- `gml_Script_UpdateDepth` (4576) takes a y, the instance's own y when none
+  is given, and a second argument that defaults to −1. It stores the y in the
+  instance's `yDepthSet`. **Static reading** (2026-10-12).
+- With the default second argument it sets the instance's `layer` to the
+  layer `global.gameLayer` holds for the current room at that y, with the y
+  clamped to 0..5500. Any other second argument takes a render-group route,
+  which also ends by setting `layer`. **Static reading** (2026-10-12).
+- It has 2746 direct call sites. Two of them are in the player object's Step
+  event, the function that holds the six `InstancePlaceTallest` sites
+  (§ 19.6). **Static reading** (2026-10-12, byte scan).
+- So the game rewrites the player's draw layer from the player's y during the
+  player's own Step, and a draw order a mod sets before that call would not
+  last past it. **Inference** from the two readings above, not measured.
+- Which end of the room's `global.gameLayer` layers draws in front is **not
+  established**. In GameMaker a layer with a lower depth draws on top; this
+  reading did not settle which of these layers carry the lower depths.
+
+[Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading)
+
+### 19.8 The collision family in the game data
+
+What the game's data file (`data.win`) says about `Collision_Parent_obj`'s
+family, read from its object table (each object's name and parent) on
+2026-10-12 for ForgePact's flight charms (#158, phase 2). This is the data
+file's parent chain: not a decompile, and not measured unless a bullet says
+so.
+
+- `Collision_Parent_obj` (957) has 1824 objects in its family. Its direct
+  children are `Angelic_Room_Platform_Mask_obj`, `Block_obj`,
+  `Chaos_Tower_Collision_obj`, `Collision_Prop_obj`,
+  `Cult_Dungeon_Bridge_Block_obj`, `Lever_Parent_obj`, `Lock_obj`,
+  `Quest_NPC_Parent_obj`, `Rock_Pillar_obj`, `Valve_Platform_obj` and
+  `Wall_Parent_obj`. Read from the data file (2026-10-12).
+- `Wall_Parent_obj` (5701) is one of those children. Its descendants are
+  `Wall_obj`, `Wall_Wooden_obj` and `Wall_Boss_obj`, the eight
+  `Invisible_Wall_*` objects, `Gate_Parent_obj` (1881) and through it the zone
+  gates, `Coffee_Club_obj` and `Puzzle_Pillar_obj`. So a zone gate is a wall,
+  and walls are in the family. Read from the data file (2026-10-12).
+- `Lock_obj` (2509) is a direct child of `Collision_Parent_obj` and has no
+  descendants. Read from the data file (2026-10-12).
+- `Block_Dynamic_Sprite_obj` (608), the object that blocked the ravine edge
+  south of the town in Live 1 (§ 19.6), is a child of `Block_obj` (609), a
+  direct child of `Collision_Parent_obj`. So it is in the family but is not a
+  wall. Read from the data file (2026-10-12).
+- Live 1's tally of a blocked walk labelled `Wall_Parent_obj` a member of the
+  family (capture step S6). **Measured** (2026-10-12), and it agrees with the
+  data file.
+
+[Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading)
 
 ---
 
@@ -5575,10 +5639,99 @@ not observed, not absent.
 - A sprite added at runtime with `sprite_add` (a PNG of our own) and written
   under key `"11"` draws in the bag; the ground item draws the game's error
   placeholder instead. The item tooltip draws no icon for any charm, the
-  game's own included. **Measured** (2026-10-12).
+  game's own included. **Measured** (2026-10-12). Why the ground cannot draw
+  it is the static reading in § 22.7.
 - A save does not keep it: after a reload, and after a full restart that
   never added the sprite, the charm drew its base icon and the game loaded
   normally. The stored value itself was not read (the charm was in the bag,
   which ForgePact's probe does not list). **Measured** (2026-10-12).
 
 [Live 1 results](../ForgePact/docs/flight-charms-research.md#live-1-results)
+
+### 22.6 Placing a rebuilt item in its grid
+
+Read on 2026-10-12 for ForgePact's flight charms (#158, phase 2), in the same
+build and by the same means as § 19.7: the ghidra MCP, existing local
+decompiles, and a byte scan for direct call sites. Nothing here is measured
+unless a bullet says so.
+
+- `gml_Script_ParseItemToGrid` (1984) walks a saved grid's entries. For each
+  one it reads the item's data and its saved position, rebuilds the item
+  through `InitItemFromJson` (1883), enters it in a ds_map under its key, and
+  then places it at the saved cell through `InventoryGridAddItemPos` (1969).
+  **Static reading** (2026-10-12).
+- `gml_Script_InventoryGridAddItemPos` (1969) checks the anchor cell first,
+  then every cell of the item's footprint as `GetItemSize` answers it
+  (§ 22.2). If any of those cells is taken or lies outside the grid, it
+  answers false and writes nothing. Otherwise it writes one `s_InvNode` per
+  covered cell and answers true. **Static reading** (2026-10-12).
+- `ParseItemToGrid` does not look at that answer. So a rebuilt item whose
+  footprint no longer fits at its saved cell is left off the grid, though it
+  was already entered in the map. That is the reading behind Live 1's
+  `dress-added: item-missing` (§ 22.2, "Appearing"). **Static reading**
+  (2026-10-12); what the game later does with such an item is not
+  established.
+- Direct call sites: 31 for `InventoryGridAddItemPos` and 11 for
+  `ParseItemToGrid`. **Static reading** (2026-10-12, byte scan). Which grids
+  load through `ParseItemToGrid`, and whether another grid places its saved
+  items another way, is not established.
+
+### 22.7 How a ground item picks its sprite
+
+Read on 2026-10-12 for ForgePact's flight charms (#158, phase 2), by the same
+means as § 22.6, together with the game's data file (`data.win`), whose
+sprite table gives each sprite's name and size.
+
+- `gml_Script_LootGroundInit` (2353) is handed the new ground instance as
+  argument 0 and the item as argument 1. That argument 0 is the new ground
+  instance is **measured** (hidden loot's Live 3, all 1,473 calls, § 16.11);
+  that argument 1 is the item stays a reading.
+- It sets the new instance's `sprite_index`. It builds a sprite name from a
+  constant prefix followed by the name (`sprite_get_name`) of the item's
+  display sprite, its `itemInfoStruct` key `"11"` (§ 22.5), and looks that
+  name up with `asset_get_index`. When `sprite_exists` accepts the result,
+  that becomes `sprite_index`; otherwise `sprite_index` becomes the fixed
+  sprite 8223, `Error_spr`. **Static reading** (2026-10-12).
+- The prefix is `Pickup_`. The constant's own text did not render in the
+  decompile, but the data file names a `Pickup_` ground sprite beside each
+  charm icon, sized for the ground: `Pickup_Charms_Aimbot_Exe_spr` 13x13,
+  `Pickup_Charms_Normal_Small_Charm_01_spr` 17x11 and
+  `Pickup_Charms_Soul_Collector_spr` 34x17. Read from the data file
+  (2026-10-12).
+- A sprite added at runtime with `sprite_add` carries a name GameMaker
+  generates, which has no `Pickup_` companion, so the lookup fails and the
+  ground item draws `Error_spr`. That is the reading behind Live 1's
+  `sprite-draw: partial` (§ 22.5: our sprite drawn in the bag, the error
+  placeholder on the ground). **Static reading** (2026-10-12); the generated
+  name itself was not read live.
+- `gml_Script_LootGroundDraw` (2355) draws the ground item's `sprite_index`,
+  after a glow drawn from its `img`. **Static reading** (2026-10-12).
+- `LootGroundInit` has 10 direct call sites. **Static reading** (2026-10-12,
+  byte scan).
+
+### 22.8 The ordinary unique roll makes one draw
+
+Read on 2026-10-12 for ForgePact's flight charms (#158, phase 2), by the same
+means as § 22.6. It extends § 22.4's reading of the same roll.
+
+- `gml_Script_DropUniqueItems` (1424) is given a position. It takes
+  `lootListUnique[k]` of the first `Controller_obj` (k as in § 22.4) and
+  reads one random index of that sub-list. **Static reading** (2026-10-12).
+- Only when the entry there is an array does it read the entry's three
+  numbers (type, sub-type and base) and look them up in
+  `GetUniqueRepoStruct` (819). It keeps the entry when the rarity is below 7
+  (Angelic) and the entry is not flagged hidden. It then builds the drop's
+  parameters with `CreateDefaultParams` (2349), from the sub-type, the base
+  and a constant, and places the item at the position through
+  `LootGroundCreate` (2351), with the entry's type. **Static reading**
+  (2026-10-12).
+- A pick that fails any of those tests drops nothing: there is no second draw
+  and no die per entry. So one entry added to a sub-list of n entries is
+  picked on 1 call in n + 1, whatever the other entries are. **Static
+  reading** (2026-10-12) for the mechanism; the share is arithmetic on it,
+  not measured.
+- The sub-lists `[0]` to `[4]` this roll reads hold 50, 61, 79, 152 and 221
+  entries (**measured**, § 13.4, 2026-10-02), so an added entry is picked on
+  between 1 call in 51 and 1 in 222, depending on k.
+
+[Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading)
