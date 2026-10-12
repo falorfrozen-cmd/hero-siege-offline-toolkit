@@ -97,9 +97,10 @@ byte scans of the game's executable and `data.win` whose positive controls were
   room's entry, writing no quest, act or save-file value, and
   `ZoneStateExists(room)` answers whether the room has a visited entry. The
   pentagram sets its `bossSpawned` afresh on every creation and reads no
-  boss-killed flag, so a boss room built without a saved state brings its boss
-  out as on a first visit. What a revisit restores for a boss room was not
-  read (`RUNTIME_DATA_MODELS.md` § 21.6).
+  boss-killed flag in its own events; whether the boss object or the room's
+  creation code reads one was not read, nor what a revisit restores for a boss
+  room (`RUNTIME_DATA_MODELS.md` § 21.6). That the boss comes out again once
+  the entry is dropped is measured (below), not read.
 - **The gem roll.** `LoadDrops` asks, per drop type, an outer gate for the
   dying source: the monster's own `chances[6]` (45 on the sampled monster)
   against a die whose ceiling lives in `gDataProtected`. Only when it passes
@@ -153,13 +154,52 @@ research build with the x64dbg debugger attached), in our words
 - **A portal does not reach the boss room; the game's travel does.** A
   `Portal_obj` created at run time with a boss room written into its
   `portalZone` record took the player, through its alarm and `NetworkRoomGoto`,
-  to `Act_01_Pregame` both times (opened in `Act_01_01` for `Act_01_Boss`, and
-  in `Town_01_rm` for `Act_02_Boss`; why it ignored the record's room is not
+  to `Act_01_Pregame` both times (both opened in `Town_01_rm`, one for
+  `Act_01_Boss` and one for `Act_02_Boss`; one opened in `Act_01_01` read back
+  `Act_01_02` and was not entered; why the record lost the boss room is not
   established). `NetworkRoomGoto` called directly with `Act_01_Boss` or
   `Act_02_Boss`, the player as `self`, reached that room, whose pentagram
   brought out Gurag or the Reaper, who died there without a crash (the Reaper
   included, Live procedure 1's crash case). The owner chose the direct transfer
   (2026-10-11), so the shipped use opens no portal.
+- **The base and the bag.** Category 11's entry named
+  `consumable_edible_pas_logo` is index 12. Five class-11 items on it (three
+  seeded 777101, one 777102, one plain) picked up into five bag items with
+  count 1 each (`class_11_never_stacks`), each pickup reaching `AddToInventory`
+  and then `InventoryGridAddToStack`, never `GridAddToStack`, under the
+  debugger. A save holding a piece loaded after a relaunch with ForgePact's
+  dress off, the piece reading as an Edible PAS Logo with its seed kept.
+- **A piece's use.** Its right-click and confirm reached `CanUsePotion` and
+  `PotionUse` carrying the piece, and a true `PotionUse` answer that did not
+  run the logo's own use made the game clear its cell; the logo's own effect
+  (a portal to Sheeponia) did not show.
+- **`RoomActIndex` outside its switch** answered the boolean `false`, not
+  undefined, in `Act_01_Boss` and `Act_01_Pregame`
+  (`room_outside_the_switch_is_undefined`: the room has no act either way, but
+  the answer is not undefined); 2 in `Town_02_rm` and `Act_02_Boss`.
+
+By Live procedure 2 (`forgepact-197-boss-soul-pieces-live-2`, attempt 2, its
+second check block, 2026-10-12, the player build) and Live procedure 4
+(`forgepact-197-boss-soul-pieces-live-4`, 2026-10-12, the same build with the
+debugger), in our words (`RUNTIME_DATA_MODELS.md` § 21.5, § 21.6):
+
+- **Our drop, forced, gives named pieces in Acts 1 and 2**: with `force on`
+  every eligible gem roll dropped a piece (`drops=` 0 to 42 in `Act_01_01`, 42
+  to 49 in `Act_02_01`), each a Piece of Gurag's or of the Grim Reaper's Soul;
+  with the switch off, kills dropped none. The unforced rate is our code's
+  arithmetic on the measured `G`, not measured (a gem is too rare).
+- **Our transfer moves the player into the boss room**: a confirmed piece in
+  `Act_01_01`, `Town_01_rm` or `Town_02_rm` put the player in `Act_01_Boss` or
+  `Act_02_Boss` within seconds, with no portal, and used one piece; with the
+  switch off the use was refused and the piece kept.
+- **The zone-state reset brings the boss back.** `ZoneStateExists` answered
+  true for an ordinary zone and a town just left, false for a boss room on its
+  first entry of a launch, and true for `Act_01_Boss` after Gurag was killed
+  there and the room left. The next piece's transfer asked `ZoneStateExists`
+  (true), called `ZoneStateResetSingle`, asked again (false), and Gurag came
+  out of the pentagram again. The debugger saw the transfer reach both scripts
+  (Live procedure 4), and the game's own travel call `ZoneStateExists` but not
+  `ZoneStateResetSingle`.
 
 ## Not established
 
@@ -167,28 +207,23 @@ Each of these is an open question. Where it decides a number or a rule the
 model uses, it is carried in the model's `HYPOTHESES`, `None` until the curated
 file's matching `open_questions` entry is `measured`; the measured ones above
 (`gem_roll_self_is_the_source`, `potion_use_true_clears_the_item`) are `True`.
-Most are ForgePact#197's Live procedure 3 checks, named in the curated file.
+`class_11_never_stacks` and `room_outside_the_switch_is_undefined` are also
+measured above (Live procedure 3: true, and false, since the answer outside
+the switch is `false`, not undefined); their curated entries still read
+`pending`, so the model keeps them `None` until those entries are folded in.
 
 - **`gem_one_in_its_rate`**: whether `DropGems` gives each socketable exactly 1
   in its `GetDropRate` answer, or picks one by weight among them. The model
   assumes 1 in the rate. Not measured live: a gem is too rare for one session.
-- **`room_outside_the_switch_is_undefined`**: that a room outside the switch
-  answers undefined is a reading, not measured: Live procedure 3's
-  `portal-travel`, which was to read it in `Act_01_Boss`, never reached that
-  room.
-- **`class_11_never_stacks`**: that a class-11 piece takes its own bag cell,
-  apart from a real Edible PAS Logo and from other pieces (`piece-apart`).
-- **The base's name**: that category 11's entry 12 is named
-  `consumable_edible_pas_logo` (`base-consumable`).
-- **The use and the transfer**: the route itself is measured above
-  (`NetworkRoomGoto` reaches the boss room, whose boss arrives and dies there:
-  Live procedure 3's `goto-travel`, `boss-arrives`, `boss-dies`,
-  `boss-dies-2`). Still open: whether dropping the boss room's
-  zone state with `ZoneStateResetSingle` brings its boss out again after a kill
-  (Live procedure 2's `on-reentry-reset` and `on-reentry-boss`), and what a
-  revisit restores for a boss room without it; whether `CanUsePotion` refuses
-  the logo in town or any room; and whether a kill reached through a piece
-  counts toward the act's quest or completion again.
+- **The boss room's state**: what a revisit restores for a boss room without
+  the reset (that the boss stays away after a kill is the owner's account; no
+  session re-entered that way), whether `zoneStates` survives a relaunch, and
+  what else the dropped entry held (loot on the floor, the portal a kill
+  leaves).
+- **The use**: whether `CanUsePotion` refuses the logo in some room other than
+  the towns and `Act_01_01` where it was seen to accept, and whether a kill
+  reached through a piece counts toward the act's quest or completion again
+  (no quest or act message showed in any session).
 - **Magic find.** No magic-find stat name appears in `DropGems`' or
   `GetDropRate`'s body. That is "not observed", not a negative.
 - **Per-place overrides on the gem.** Whether the Gem of Incarnation carries a
@@ -238,10 +273,14 @@ name (category 15, `socketable_gem_of_incarnation`), never by index.
   `transfer` the detour checks that there is a player and that the act's boss
   room (`Act_0N_Boss`, by SDK room name through `asset_get_index`) resolves,
   records the transfer and answers `PotionUse` true, so the game clears the
-  piece's cell itself. On the next frame tick it calls
-  `ZoneStateResetSingle(Act_0N_Boss)`, dropping the room's saved zone state so
-  the boss comes out again, then `NetworkRoomGoto(Act_0N_Boss)` with the player
-  as `self`, both by SDK script constant. Every other verdict answers false and
+  piece's cell itself. On the next frame tick it asks
+  `ZoneStateExists(Act_0N_Boss)` (counted `fresh` when true), calls
+  `ZoneStateResetSingle(Act_0N_Boss)` whatever it answered, dropping the
+  room's saved zone state so the boss comes out again, asks `ZoneStateExists`
+  again (counted `cleared` when the first was true and this is false), then
+  calls `NetworkRoomGoto(Act_0N_Boss)` with the player as `self`, all by SDK
+  script constant (measured: Live procedure 2's `on-reentry-reset` and
+  `on-reentry-boss`, Live procedure 4's debugger hits). Every other verdict answers false and
   the piece stays. No portal is opened. The room's pentagram does the rest;
   nothing of ours creates, moves or kills a boss.
 
@@ -293,8 +332,11 @@ towns and zones, never from a boss room or a room with no act.
   time, whether a piece's right-click reaches `PotionUse`, whether the
   transfer reaches the boss room from a confirmed use, and whether the room's
   boss arrives and dies cleanly: Gurag twice, the second time after he was
-  killed and his room's zone state dropped, and the Grim Reaper. Those are
-  Live procedure 2's checks (`on-transfer`, `on-boss`, `on-boss-dies`,
-  `on-reentry-reset`, `on-reentry-boss`, `on-use-town`, `on-boss-2`).
-- **What the Edible PAS Logo's own effect is**, and so what using a piece does
-  with ForgePact removed, and how the drop rate feels over a season of play.
+  killed and his room's zone state dropped, and the Grim Reaper. Live
+  procedure 2 measured those on the player build (`on-transfer`, `on-boss`,
+  `on-boss-dies`, `on-reentry-reset`, `on-reentry-boss`, `on-use-town`,
+  `on-boss-2`, all passed, 2026-10-12), for acts 1 and 2 only; the model says
+  nothing about acts 3 to 9's rooms.
+- **What the Edible PAS Logo's own effect is** (Live procedure 3 saw it open a
+  portal to Sheeponia), and so what using a piece does with ForgePact removed,
+  and how the drop rate feels over a season of play.

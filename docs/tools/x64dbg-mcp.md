@@ -402,11 +402,21 @@ These come from the 2026-10-10 probes recorded on issue #484.
   `[PLUGIN, ...]` line, which the line just before the pause can be; with
   none of these within 0.5 s it reads `a pause with no break line`. When
   no armed breakpoint is hit within 2 s, the conditions go back to 0, the lines go out as a direct
-  batch, and the reply has `held: null` and a `held_note` saying so. A live
-  check that the control keeps logging across a candidate's arm measures this
-  guard; until one has run, the guard is a reading. How long a held change holds the game
-  is not yet measured; take `hs_command` `incident stat` right after each
-  `logpoint` so a later slowdown window does not count it.
+  batch, and the reply has `held: null` and a `held_note` saying so.
+  Measured on the game in ForgePact #197's Live procedure 3 (2026-10-11,
+  research DLL) and Live procedure 4 (2026-10-12, player DLL): every
+  candidate's arm (ten in Live 3, two in Live 4) came back with `held` naming
+  a `CheckTalentUse` control hit (for example `#1227`, `#2347`, `#3419` for
+  three arms in a row), the control kept logging with rising counter values
+  after each arm, through to the detach, and candidates armed this way logged
+  their own hits (`AddToInventory`, `InventoryGridAddToStack`,
+  `NetworkRoomGoto`, `LoadBossDeath`, `ZoneStateExists`,
+  `ZoneStateResetSingle` among them). How long a held change holds the game
+  is still not measured directly: around those arms `incident stat`'s count
+  of judged slow frames did not rise in Live 3's first three arms or Live 4's
+  second, so a hold stayed under the monitor's judged threshold there, but
+  the monitor skips some windows. Take `hs_command` `incident stat` right
+  after each `logpoint` so a later slowdown window does not count it.
 - **x64dbg pauses the game on its own, and the keeper resumes every one.**
   x64dbg's `[Events] TlsCallbacks=1`, its default and this headless install's
   `headless.ini` value, makes it set a single-shot breakpoint on each
@@ -450,8 +460,14 @@ These come from the 2026-10-10 probes recorded on issue #484.
 - **Counting hits.** Count from the log, not from x64dbg's hit counter, which
   `command` cannot read. Put a counter field in the `log` string, such as
   `hit #{d:$breakpointcounter} rcx={rcx}`, or count the lines in `log`. The
-  `$breakpointcounter` field comes from x64dbg's documentation and is **not
-  yet measured live**.
+  `$breakpointcounter` field comes from x64dbg's documentation; **measured
+  live** in ForgePact #197's Live procedure 3 (2026-10-11) and Live procedure
+  4 (2026-10-12): each logpoint's lines carried its own count, starting at 1
+  for a candidate (`ZoneStateResetSingle #1`, `ZoneStateExists #2` ... `#20`)
+  and rising past 49,000 for the control. Read the hits from the session log
+  file when a `log` page looks short: in Live procedure 4 one `log` read
+  returned none of three zone-state lines that the session log file held
+  (why is not established; the operator suspected the page window).
 - **The session log has no gap.** Static reading: commands on headless's
   stdin and the plugin's `DbgCmdExec` go to the same x64dbg command thread,
   first in, first out, and headless prints every log message on stdout (the
@@ -459,14 +475,20 @@ These come from the 2026-10-10 probes recorded on issue #484.
   in addition. So hits during a plugin call reach the session log, and no
   arming goes through the plugin any more anyway. A held change holds the
   game at one hit, so the control's counter (`#{d:$breakpointcounter}`,
-  above) should run on across a `logpoint` with no jump. That is expected,
-  not yet measured: no live session has yet checked that the counter runs on
-  with no jump across a candidate's arm, or that the control still logs
-  after it.
+  above) should run on across a `logpoint` with no jump. Measured in ForgePact
+  #197's Live procedure 3 (2026-10-11) and Live procedure 4 (2026-10-12): the
+  control still logged after every candidate's arm, its counter rising
+  through each, so no arm stopped the control. That no single hit went
+  missing across an arm was not checked line by line.
 - **Health under load.** The game stayed healthy under about 50 s of logging:
   ForgePact's `ping` answered and no slowdown episode was seen. The game's
   exit `0xC0000409` on close matched the known `HSOfflineTrackerProducer.dll`
   abort. That the debugger caused it is "not observed", not "ruled out".
+  In ForgePact #197's Live procedure 2 attempt 2 (2026-10-12), a game
+  launched after the debugger's session had ended, and never attached,
+  exited `0xC0000409` on its stop after the plugin's clean-shutdown line, the
+  same as the stops after a detach in that workorder's Live procedures 3 and
+  4: so the exit code was also seen with no debugger in the game's life.
 
 ### Addresses: research use only
 
@@ -1012,9 +1034,12 @@ all three.
   was reached on the game in ForgePact #197's Live 2 (thread roster only),
   and the frame-counter stall and the verified release were measured in
   `tooling-497-x64dbg-proof-rule` live 1 (§ "The frame-counter proof"). The
-  held change and the watchdog on the game are still tested only against
-  the fakes, a throwaway child process and Replan 3's throwaway probe, until
-  a session measures them.
+  held change ran on the game in ForgePact #197's Live procedures 3 and 4
+  (§ "Breakpoint rules": each candidate's arm held at a control hit, and the
+  control logged on), and the watchdog resumed the game's own pauses there
+  (`breaks_resumed` 5 and 6, TLS-callback breaks of loading modules). What
+  is still tested only against the fakes is the rest: a held change with no
+  hit within 2 s, and a break storm.
 - Upstream pull requests for the two plugin edits.
 
 ## Tests

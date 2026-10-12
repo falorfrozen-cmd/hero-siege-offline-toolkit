@@ -5132,8 +5132,12 @@ acts, act bosses and key items on 2026-10-11: through the `ghidra` MCP on build
 whose positive controls were `PickupLoot`'s known callers and a known object
 event row. Each claim carries its label: **static reading** (a local reading
 of the game, in our own words), **measured** (naming the live session that
-measured it; ForgePact #197's Live procedure 1 ran on 2026-10-11 on a research
-build, slot 14) or **not established**. The mod's design, its live procedures
+measured it; all slot 14: ForgePact #197's Live procedure 1, 2026-10-11, and
+Live procedure 3, 2026-10-11, with the x64dbg debugger, both on a research
+build; Live procedure 2 (attempt 2, its capture's second check block) and
+Live procedure 4, 2026-10-12, on the player build, the latter with the
+debugger; captures `forgepact-197-boss-soul-pieces-live-<n>`, local to the
+hub's workorder folder) or **not established**. The mod's design, its live procedures
 and their results are in ForgePact's
 [`docs/boss-soul-pieces-research.md`](../ForgePact/docs/boss-soul-pieces-research.md).
 The MCP's callers and xrefs answers were empty for every function read here,
@@ -5148,8 +5152,14 @@ direct `call rel32` that the import's reference table does not hold.
   static reading took the answer for the act less one; that reading was wrong.
 - It is a switch over 175 room constants into nine cases. Its result starts
   undefined and only a matching case sets it, so any room outside the 175
-  answers undefined. **Static reading** (2026-10-11); that a room outside the
-  switch answers undefined was not measured.
+  answers undefined. **Static reading** (2026-10-11). **Measured** otherwise:
+  in `Act_01_Boss` and `Act_01_Pregame`, two rooms outside the switch, it
+  answered the boolean `false`, not undefined (Live procedure 3, 2026-10-11).
+  A reader that takes only a whole number 1 to 9 as an act handles both.
+- More rooms measured: 2 in `Town_02_rm` and in `Act_02_Boss` (Live procedure
+  3), and the act the player build's `soulpiece status` took from the answer
+  was 2 in `Act_02_02` and none in `Act_01_Boss` (Live procedure 2, 2026-10-12).
+  All agree with the table.
 - A byte scan for direct call sites found two callers,
   `gml_Script_FetchActTexPages` (1574) and the texture manager's `Other_4`
   event, so the game itself uses the answer to pick an act's texture pages.
@@ -5211,7 +5221,9 @@ direct `call rel32` that the import's reference table does not hold.
   | 8 | `Odin_Phase_1_obj` (3276) | `Odin_Cutscene_obj`, `Odin_Pillar_*` |
   | 9 | `Cthulhu_obj` (1043) | `Cthulhu_*` |
 
-  **Static reading (boss room decor naming the boss)** for acts 1, 2, 3, 6, 8
+  **Measured** for acts 1 and 2: their rooms' pentagrams brought out
+  `Gurag_obj` and `Reaper_obj` (ForgePact #197's Live procedures 3 and 2).
+  **Static reading (boss room decor naming the boss)** for acts 3, 6, 8
   and 9; acts 4 and 5 are an **inference** (their decor names no boss; Damien
   and Karp King are what remains of the Key of Terror's six once acts 1-3 and 6
   are placed, and the decor fits them); act 7's boss the decor does not name
@@ -5238,13 +5250,24 @@ direct `call rel32` that the import's reference table does not hold.
   `gml_Script_LoadBossDeath`, which found no `Pentagram_Boss_obj` in the room.
   A Karp King created and killed the same way in `Act_01_01` died without a
   crash; why the two differ is **not established**. **Measured** (ForgePact
-  #197's Live procedure 1, 2026-10-11). So an act boss should fight and die
-  safely in a room that has a pentagram, which is its own boss room:
-  **inference, not measured** until a boss is killed there. Whether the other
-  seven act bosses crash the same way outside it was not measured.
-- That an act boss killed in its own room after arriving there by any route
-  other than the game's own travel counts toward its act's quest or completion
-  is **not established**.
+  #197's Live procedure 1, 2026-10-11). Whether the other seven act bosses
+  crash the same way outside it was not measured.
+- In its own room an act boss comes out of the pentagram and dies safely, for
+  acts 1 and 2. `Act_01_Boss`'s pentagram brought out `Gurag_obj` and
+  `Act_02_Boss`'s `Reaper_obj`; the pentagram's Alarm_0 ran before Gurag
+  appeared; each, set to HP 0 through its `enemy_hp` record, died with
+  `gml_Script_LoadBossDeath` running and the game running on, the Reaper
+  (Live procedure 1's crash case) included; right after each death a portal
+  stood in the room (labelled "Danethorpe" and "Village of Mos'Arathim" on
+  screen; that the kill made it was not established). **Measured**
+  (Live procedure 3, 2026-10-11, debugger logpoints on the alarm and the death
+  script). Gurag killed in an ordinary fight, the room then left by the town
+  portal key, did not crash either (Live procedure 2, 2026-10-12). Acts 3 to 9
+  were not visited.
+- That an act boss killed in its own room counts toward its act's quest or
+  completion, after arriving there by a route other than the game's own
+  travel or after its room's state was dropped, is **not established**; no
+  quest or act message showed in either session.
 
 ### 21.3 Key items: the repository, the Key tab and stacking
 
@@ -5305,7 +5328,7 @@ direct `call rel32` that the import's reference table does not hold.
   calls `ItemsAreStackable`. The seed `a` is never compared. `GridAddToStack`
   first accepts only classes 12, 13, 14 and 15, the same classes
   `gml_Script_IsItemTypeStackable` answers true for, so a class-11 consumable
-  never stacks in the bag. `c` is the repository flag (0 normal, 1 unique, § 2
+  never stacks in the bag (measured below). `c` is the repository flag (0 normal, 1 unique, § 2
   and § 13.10), so changing it loads a different item: no field the
   merge compares can mark an item apart from the real one. **Static reading**
   (Replan 1).
@@ -5322,6 +5345,21 @@ direct `call rel32` that the import's reference table does not hold.
   inline and do not call it), the predicate was not seen on the pickup route
   that merged them; whether any other script on that route reaches it is **not
   established**.
+- The pickup route and the stack rule under the debugger. Non-breaking
+  logpoints on the scripts' first bytes, with a `CheckTalentUse` control
+  logging in the same windows: replaying the key merge (a piece on
+  `keys_bifrost_key`, the owner's Bifröst Key stack going from 38 to 39, the
+  piece taken by the game's own pickup) hit `AddToInventory` once and neither
+  `InventoryGridAddToStack` nor `ItemsAreStackable`, so which code merged the
+  key is **not established**. Five class-11 items on the Edible PAS Logo's
+  definition (three seeded 777101, one 777102, one plain logo) picked up one
+  by one each hit `AddToInventory` and then `InventoryGridAddToStack` with the
+  same `self`, and never `GridAddToStack`: a consumable's stack attempt goes
+  through `InventoryGridAddToStack`, not the bag's script the reading above
+  names. All five stayed separate bag items with count 1, so class 11 does not
+  stack whatever the seed. **Measured** (ForgePact #197's Live procedure 3,
+  2026-10-11; the player build's pieces again in Live procedure 2, 2026-10-12,
+  three pieces in three cells over two bag tabs).
 - Already in this reference: `LootGroundCreate` writes a fresh seed into `a`
   (§ 18.4); `InitItemFromJson` followed by `LootGroundCreateFromItem` keeps the
   definition it was handed (ForgePact #74's `sigdrop`; relics placed with the
@@ -5334,7 +5372,9 @@ direct `call rel32` that the import's reference table does not hold.
 ### 21.4 Using an item from the backpack
 
 Read on 2026-10-11 through the same MCP and build, for the owner's choice that a
-soul piece is used by right-clicking it in the backpack, the way a PAS token is.
+soul piece is used by right-clicking it in the backpack, the way a PAS token is;
+the last two bullets are what ForgePact #197's Live procedures 1, 3 and 2
+measured.
 
 - `gml_Script_UiAInventoryConsumeItemConfirm` (4087) is a UI action, the answer
   to the "use this item?" prompt, and takes three values: the item, a second
@@ -5378,13 +5418,28 @@ soul piece is used by right-clicking it in the backpack, the way a PAS token is.
   **not established**), and the logo was used up. A potion drink reaches
   `PotionUseFlask` and `PotionUse` with self `Profile_Manager_obj` and no
   item. **Measured** (ForgePact #197's Live procedure 1, 2026-10-11).
+- The logo's repository name is `consumable_edible_pas_logo`, category 11,
+  index 12, and its own use opens a portal to Sheeponia (a
+  `Portal_Sheeponia_obj` to `Sheep_rm`). A logo built with a reserved seed
+  (777101, 777102) and another name goes through the same right-click and
+  confirm: `CanUsePotion` and `PotionUse` were called carrying it, and when
+  `PotionUse` answered true without running the logo's own use, the game
+  cleared its cell (`InvGridClearItemNode`, then the confirm action) and no
+  Sheeponia portal opened. `CanUsePotion` answered true for it in
+  `Town_01_rm` and `Act_01_01`. **Measured** (Live procedure 3, 2026-10-11,
+  research build). The player build's use went through the same way from
+  `Act_01_01`, `Town_01_rm` and `Town_02_rm` (Live procedure 2, 2026-10-12).
+  Whether
+  `CanUsePotion` refuses the logo in some other room is **not established**.
 
 ### 21.5 Portals and travel between rooms
 
-Read in Replan 1 of ForgePact #197 (2026-10-11, the same MCP and build), for
-the owner's choice that using a soul piece opens a portal to its act's boss
-room. The last bullet is ForgePact #197's Live procedure 3 (2026-10-11), which
-measured the portal and the direct travel; the rest is static reading.
+Read in Replan 1 of ForgePact #197 (2026-10-11, the same MCP and build), when
+the design was a portal from a soul piece to its act's boss room. Live
+procedure 3 (2026-10-11) measured that portal failing and the game's own
+`NetworkRoomGoto` reaching the room, so the owner chose a direct transfer and
+no portal ships; Live procedure 2 (2026-10-12) measured the shipped transfer.
+The last three bullets are those measurements; the rest is static reading.
 
 - A portal keeps its state in the protected store. `Portal_Parent_obj`'s Create
   allocates protected records and keeps their keys in the instance variables
@@ -5427,7 +5482,24 @@ measured the portal and the direct travel; the rest is static reading.
   **Measured** (ForgePact #197's Live procedure 3, 2026-10-11, capture
   `forgepact-197-boss-soul-pieces-live-3`). What rewrites the record after
   creation, and whether a write that persists would route the portal to a boss
-  room, is **not established**.
+  room, is **not established**. The owner's reading (2026-10-12), not
+  measured: the run-time `Portal_obj` is probably the kind of portal that is a
+  door to the neighbouring zone, not one that honours a boss room.
+- Which travel scripts run. Logpoints on the scripts' first bytes, with a
+  control logging: entering a `Portal_obj` ran its Alarm_0 and then
+  `NetworkRoomGoto` with the same `self`; the town portal key (V) and the
+  waypoints ran `NetworkRoomGoto` and no `Portal_obj` Alarm_0. `RoomGoto` was
+  not watched: on that research build its entry began with a jump where the
+  game's copy has its first instruction (some hook's detour, which one is not
+  established), so the byte check refused the breakpoint. **Measured** (Live
+  procedure 3, 2026-10-11).
+- The shipped transfer: `NetworkRoomGoto` with an act boss room's index
+  (resolved from its name through `asset_get_index`) and the local player as
+  `self`, called from ForgePact's frame callback on the tick after the piece's
+  use, moved the player into `Act_01_Boss` (from `Act_01_01` and from
+  `Town_01_rm`) and into `Act_02_Boss` (from `Town_02_rm`) within seconds, with
+  no portal on screen, three times out of three. **Measured** (Live procedure
+  2, 2026-10-12, player build; once more from `Act_01_01` in Live procedure 4).
 
 ### 21.6 Zone state and a boss room's return
 
@@ -5459,8 +5531,10 @@ killed.
   room entry's `zoneVisited` value, and false when there is no entry. **Static
   reading** (Amendment 2, 2026-10-11). The MCP's reference table holds no
   caller of `ZoneStateResetSingle`, which is **not observed**, not "has none"
-  (the controller's call above is one). ForgePact's density mod already
-  detours it, so any call to it runs that detour too.
+  (the controller's call above is one). ForgePact's density code has a detour
+  for it (`fp_density_window_single`), but the installer that holds it,
+  `InstallDensityLifecycleHooks`, has no caller, and Live procedure 4
+  (2026-10-12, player build) read the script's first bytes as the game's own.
 - `Pentagram_Boss_obj`'s Create sets `bossSpawned` and `bossesKilled` afresh
   every time the pentagram is created, and its Create, Step and Alarm_0 read no
   quest, act-completion or boss-killed flag: Alarm_0 checks `bossSpawned` and
@@ -5473,15 +5547,31 @@ killed.
 - A revisited zone gets new instance ids at the same positions with its
   creators' protected state restored (§ 11.2, **measured**, ForgePact #181's
   Live 4), and Live procedure 3 measured the same for a zone's portals (§ 21.5).
+- A boss room is saved on leaving, and dropping its entry brings the boss
+  back. With the room value `asset_get_index` returns for a room's name (a
+  reference) and the local player as `self`, `ZoneStateExists` answered true
+  for `Act_01_01` and for the towns just after the player left them, false for
+  `Act_01_Boss` and `Act_02_Boss` on the first entry of a launch, and true for
+  `Act_01_Boss` after Gurag was killed there and the room left by the town
+  portal key (V). The next entry from a soul piece asked `ZoneStateExists`
+  (true), called `ZoneStateResetSingle`, asked again (false), and then
+  travelled: Gurag came out of the pentagram again. **Measured** (ForgePact
+  #197's Live procedure 2, 2026-10-12, player build, the mod's own
+  `saved=`/`after=` answers and boss bars on screen). The same three calls,
+  in that order, one argument each and one `self`, hit debugger logpoints on
+  the scripts' entries for one transfer, while the game's own travel (town
+  portal, waypoint) hit `ZoneStateExists` several times and
+  `ZoneStateResetSingle` not at all (Live procedure 4, 2026-10-12). So the
+  game calls `ZoneStateExists` itself, which the MCP's reference table had
+  left unobserved.
 - **Not established**: what `gml_Script_ZoneStateLoad` (4625) restores for a
-  boss room (the pentagram's `bossSpawned`, the boss's absence, the exit a kill
-  leaves), so that re-entering a boss room after a kill does not bring the boss
-  back is the owner's account, not a measurement here; whether `zoneStates`
-  reaches the save file and survives a relaunch; what else a boss room's state
-  holds (loot on its floor, the exit portal); and whether a boss killed again
-  after its room's state was dropped credits its act's quest a second time.
-  ForgePact #197's Live procedure 2 checks that Gurag comes out again after a
-  kill once his room's entry is dropped with `ZoneStateResetSingle`.
+  boss room (that a re-entry after a kill, without the reset, finds no boss is
+  the owner's account; no session re-entered that way); whether `zoneStates` reaches the save file and survives a relaunch
+  (the first entry of a launch read no entry, but no saved boss room was
+  carried across a relaunch); what else a boss room's state holds (loot left
+  on its floor, the portal a kill leaves), since nothing was left on the floor
+  before a reset; and whether a boss killed again after its room's state was
+  dropped credits its act's quest a second time.
 
 ---
 
