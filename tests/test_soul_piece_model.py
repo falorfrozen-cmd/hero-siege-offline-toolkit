@@ -6,13 +6,15 @@ stack by class, `b` and `c` (classes 12 to 15 only), `DropGems` rolls the Gem of
 Incarnation against its rate once per dying source whose drop type 6 gate
 passed, and a backpack use clears the item only when `PotionUse` answers true.
 ForgePact's boss soul pieces are our code, so they live here as input
-transforms (`piece_denominator`, `decide_drop`, `decide_use`, `portal_target`,
-`portal_x` and the seed helpers): a piece is an Edible PAS Logo marked by its
-seed, rolls inside that same gem roll at five quarters of the gem's chance, in
-an act's ordinary rooms, from an ordinary monster, and its use opens a portal
-to the act's boss room. `ParityTests` pins those transforms' constants, the act
-table, the room rules and the verdict words to `SoulPieceMod.hpp` through the
-curated file, when ForgePact carries the mod.
+transforms (`piece_denominator`, `decide_drop`, `decide_use`,
+`transfer_target` and the seed helpers): a piece is an Edible PAS Logo marked
+by its seed, rolls inside that same gem roll at five quarters of the gem's
+chance, in an act's ordinary rooms, from an ordinary monster, and its use moves
+the player straight into the act's boss room (no portal: Live procedure 3's
+portal failed and its direct `NetworkRoomGoto` passed). `ParityTests` pins
+those transforms' constants, the act table, the room rules and the verdict
+words to `SoulPieceMod.hpp` through the curated file, when ForgePact carries
+the mod.
 
 Baseline: what the game does with the mod off, including Live procedure 1's
 measured merge of a key-base piece into the real key. Target: what the mod must
@@ -42,6 +44,7 @@ RUNTIME_DOC = ROOT / "docs" / "RUNTIME_DATA_MODELS.md"
 HOOKS_DIR = ROOT / ".claude" / "hooks"
 FORGEPACT_HEADER = ROOT / "ForgePact" / "plugin" / "include" / "ForgePact" / "SoulPieceMod.hpp"
 LIVE_1 = "forgepact-197-boss-soul-pieces-live-1"
+LIVE_3 = "forgepact-197-boss-soul-pieces-live-3"
 
 sys.path.insert(0, str(SDK_PY))
 from hs_game_sdk import soul_piece_model as model  # noqa: E402
@@ -58,16 +61,15 @@ RATIO_NUMERATOR = 4
 RATIO_DENOMINATOR = 5
 SEED_BASE = 777100
 ACT_COUNT = 9
-PORTAL_OFFSET_PX = 96
 #: A piece's base: the Edible PAS Logo (class 11; `b` 12 measured in Live procedure 1).
 BASE_CLASS = 11
 BASE_B = 12
 DROP_VERDICTS = ("off", "no-act", "town", "boss-room", "not-monster", "boss-kill",
                  "unnamed", "no-rate", "hit", "miss")
-USE_VERDICTS = ("off", "not-piece", "no-act", "boss-room", "unnamed", "portal")
+USE_VERDICTS = ("off", "not-piece", "no-act", "boss-room", "unnamed", "transfer")
 #: act -> (boss object, named); every shipped act is named.
 ACTS = {row["act"]: (row["boss_object"], row["named"]) for row in DATA["acts"]}
-#: act -> the boss room its piece's portal leads to.
+#: act -> the boss room its piece takes the player to.
 BOSS_ROOMS = {row["act"]: row["boss_room"] for row in DATA["acts"]}
 
 
@@ -140,7 +142,7 @@ def piece_item(act, base_b=BASE_B):
 
 def decide_use(mod_on, room, room_act, piece_act):
     """A confirmed right-click on an item in the backpack. Every word but
-    `portal` is a refusal, and the detour then answers `PotionUse` false."""
+    `transfer` is a refusal, and the detour then answers `PotionUse` false."""
     if not mod_on:
         return "off"
     if not 1 <= piece_act <= ACT_COUNT:
@@ -151,18 +153,12 @@ def decide_use(mod_on, room, room_act, piece_act):
         return "boss-room"
     if not ACTS.get(piece_act, (None, False))[1]:
         return "unnamed"
-    return "portal"
+    return "transfer"
 
 
-def portal_target(piece_act):
-    """The room a piece's portal leads to: its act's boss room."""
+def transfer_target(piece_act):
+    """The room a piece takes the player to: its act's boss room."""
     return BOSS_ROOMS.get(piece_act)
-
-
-def portal_x(player_x, room_width):
-    """96 px to the player's right, to the left past the room's width."""
-    right = player_x + PORTAL_OFFSET_PX
-    return player_x - PORTAL_OFFSET_PX if room_width > 0 and right > room_width else right
 
 
 def _roll(value):
@@ -202,7 +198,7 @@ class BaselineTests(unittest.TestCase):
             with self.subTest(case=case["id"]):
                 self.assertEqual(_drop(case, mod_on=False), "off")
 
-    def test_mod_off_never_opens_a_portal(self):
+    def test_mod_off_never_transfers(self):
         for room, room_act in _table_rooms().items():
             for act in range(1, ACT_COUNT + 1):
                 with self.subTest(room=room, act=act):
@@ -294,7 +290,7 @@ class BaselineTests(unittest.TestCase):
 
 class TargetTests(unittest.TestCase):
     """What the mod turns it into: a piece rolled inside the gem roll, kept in
-    its own bag cell, whose use opens a portal to its act's boss room."""
+    its own bag cell, whose use moves the player into its act's boss room."""
 
     def test_a_consumable_piece_never_stacks(self):
         logo = model.Item(BASE_CLASS, BASE_B, 0, 542155217)
@@ -390,7 +386,7 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(decide_drop(True, False, "Act_01_01", 1, True, False, 9000, Fraction(1, d) - Fraction(1, 10 ** 12)), "hit")
         self.assertEqual(decide_drop(True, False, "Act_01_01", 1, True, False, 9000, Fraction(1, d)), "miss")
 
-    def test_use_opens_a_portal_in_towns_and_zones(self):
+    def test_use_transfers_from_towns_and_zones(self):
         rooms = _table_rooms()
         towns = [r for r in rooms if is_town(r)]
         self.assertEqual(len(towns), 8)
@@ -400,30 +396,45 @@ class TargetTests(unittest.TestCase):
                     verdict = decide_use(True, room, room_act, act)
                     if is_boss_room(room):
                         self.assertEqual(verdict, "boss-room")
+                        # A refusal answers PotionUse false: the piece is kept.
+                        self.assertFalse(model.item_used_up(verdict == "transfer"))
                     else:
-                        self.assertEqual(verdict, "portal")
-                        self.assertEqual(portal_target(act), "Act_%02d_Boss" % act)
-                        # The game clears the piece only on the portal's true answer.
-                        self.assertTrue(model.item_used_up(verdict == "portal"))
+                        self.assertEqual(verdict, "transfer")
+                        self.assertEqual(transfer_target(act), "Act_%02d_Boss" % act)
+                        # The game clears the piece only on the transfer's true answer.
+                        self.assertTrue(model.item_used_up(verdict == "transfer"))
         for room in (r["room"] for r in ROOMS["not_in_table"]):
             with self.subTest(room=room):
                 self.assertEqual(decide_use(True, room, 0, 1), "no-act")
         self.assertEqual(decide_use(True, "Act_01_01", 1, 0), "not-piece")
-        self.assertIsNone(portal_target(0))
+        self.assertIsNone(transfer_target(0))
 
-    def test_every_act_drops_and_opens_its_portal(self):
+    def test_every_act_drops_and_transfers(self):
         rooms = _table_rooms()
         for act in range(1, ACT_COUNT + 1):
             eligible = [r for r, a in rooms.items() if a == act and room_refusal(r, a) is None]
             with self.subTest(act=act):
                 self.assertTrue(eligible)
-                self.assertEqual(decide_use(True, eligible[0], act, act), "portal")
+                self.assertEqual(decide_use(True, eligible[0], act, act), "transfer")
 
-    def test_the_portal_stands_beside_the_player(self):
-        self.assertEqual(portal_x(100, 2000), 196)
-        self.assertEqual(portal_x(1950, 2000), 1854)
-        self.assertEqual(portal_x(1950, 0), 2046)
-        self.assertEqual(DATA["portal"]["offset_px"], PORTAL_OFFSET_PX)
+    def test_a_transfer_never_targets_the_room_it_starts_from(self):
+        # The transfer drops its target's saved zone state, so it must never be
+        # the room the player stands in: every room a use is allowed from is
+        # not a boss room, and every target is one.
+        rooms = _table_rooms()
+        transfers = 0
+        for room, room_act in rooms.items():
+            for act in range(1, ACT_COUNT + 1):
+                if decide_use(True, room, room_act, act) == "transfer":
+                    transfers += 1
+                    with self.subTest(room=room, act=act):
+                        self.assertNotEqual(transfer_target(act), room)
+                        self.assertFalse(is_boss_room(room))
+                        self.assertTrue(is_boss_room(transfer_target(act)))
+        self.assertGreater(transfers, 0)
+        # Inside a boss room, with an act or not, the use is refused.
+        self.assertEqual(decide_use(True, "Act_02_Boss", 2, 2), "boss-room")
+        self.assertEqual(decide_use(True, "Act_01_Boss", 0, 1), "no-act")
 
     def test_seeds_round_trip_and_stay_clear_of_other_items(self):
         for act in range(1, ACT_COUNT + 1):
@@ -447,8 +458,8 @@ class TargetTests(unittest.TestCase):
                     piece_act = act_of_seed(case["seed"])
                     self.assertEqual(decide_use(case["mod_on"], case["room"], case["act"], piece_act),
                                      case["verdict"])
-                    if case["verdict"] == "portal":
-                        self.assertEqual(portal_target(piece_act), case["boss_room"])
+                    if case["verdict"] == "transfer":
+                        self.assertEqual(transfer_target(piece_act), case["boss_room"])
                     if "boss_object" in case:
                         self.assertEqual(ACTS[piece_act][0], case["boss_object"])
                 else:
@@ -518,7 +529,7 @@ class CuratedTests(unittest.TestCase):
             with self.subTest(act=row["act"], room=room):
                 self.assertEqual(room, "Act_%02d_Boss" % row["act"])
                 self.assertEqual(ROOM_NAME_TO_INDEX.get(room), row["boss_room_index"])
-                # No piece drops there and no piece's portal opens from there.
+                # No piece drops there and no piece is used there.
                 self.assertTrue(is_boss_room(room))
                 # The room is either outside RoomActIndex's switch or in its own act.
                 if room in outside:
@@ -527,9 +538,40 @@ class CuratedTests(unittest.TestCase):
                     self.assertEqual(rooms[room], row["act"])
         self.assertEqual(outside, {"Act_01_Boss", "Act_03_Boss", "Act_04_Boss", "Act_05_Boss", "Act_07_Boss"})
         self.assertIn(DATA["boss_room_object"], OBJECT_NAME_TO_INDEX)
-        portal = DATA["portal"]
-        self.assertEqual(OBJECT_NAME_TO_INDEX.get(portal["object"]), portal["object_index"])
-        self.assertTrue(is_descendant_of(portal["object_index"], OBJECT_NAME_TO_INDEX["Portal_Parent_obj"]))
+
+    def test_the_transfer_is_the_game_s_own_scripts(self):
+        # Live procedure 3: the portal failed and NetworkRoomGoto passed, and the
+        # owner chose the direct transfer; the portal block and its offset are gone.
+        self.assertNotIn("portal", DATA)
+        transfer = DATA["transfer"]
+        self.assertEqual(transfer["scripts"], ["gml_Script_ZoneStateExists", "gml_Script_ZoneStateResetSingle",
+                                               "gml_Script_NetworkRoomGoto"])
+        for name in transfer["scripts"]:
+            with self.subTest(name=name):
+                self.assertTrue(hasattr(GameScript, name))
+        self.assertNotIn("offset_px", transfer)
+        self.assertEqual((transfer["status"], transfer["capture"], transfer["live_check"]),
+                         ("measured", LIVE_3, "goto-travel"))
+        self.assertEqual(transfer["reset_status"], "static_reading")
+        for key in ("travel_source", "reset_source"):
+            path, _, section = transfer[key].partition(" § ")
+            with self.subTest(source=key):
+                self.assertIn(section, (ROOT / path).read_text(encoding="utf-8"))
+
+    def test_live_3_answered_its_questions(self):
+        questions = {q["question"]: q for q in DATA["open_questions"]}
+        answered = {name: q["answer"] for name, q in questions.items() if q.get("capture") == LIVE_3}
+        self.assertEqual(answered, {
+            "base_repository_name": "passed", "use_reaches_potion_use_with_the_piece": "passed",
+            "portal_obj_travels_to_its_room": "failed", "pentagram_brings_out_the_boss": "passed",
+            "boss_dies_in_its_own_room": "passed", "zone_revisit_after_a_portal": "passed",
+        })
+        for name in answered:
+            with self.subTest(name=name):
+                self.assertEqual(questions[name]["status"], "measured")
+        # The fresh boss is Live procedure 2's to measure.
+        reentry = questions["boss_returns_on_reentry"]
+        self.assertEqual((reentry["live_check"], reentry["status"]), ("on-reentry-boss", "pending"))
 
     def test_each_act_says_what_its_boss_rests_on(self):
         statuses = {row["act"]: row["status"] for row in DATA["acts"]}
@@ -564,7 +606,8 @@ class CuratedTests(unittest.TestCase):
         self.assertEqual((base["category"], base["item_type"], base["b"], base["c"], base["j"]),
                          (11, BASE_CLASS, BASE_B, 0, 0))
         self.assertEqual((base["b_status"], base["capture"]), ("measured", LIVE_1))
-        self.assertEqual((base["name_status"], base["name_live_check"]), ("unverified", "base-consumable"))
+        self.assertEqual((base["name_status"], base["name_live_check"], base["name_capture"]),
+                         ("measured", "base-consumable", LIVE_3))
         path, _, section = base["source"].partition(" § ")
         self.assertIn(section, (ROOT / path).read_text(encoding="utf-8"))
         for gone in ("key_category", "spawn_offset_px"):
@@ -591,6 +634,7 @@ class CuratedTests(unittest.TestCase):
                      "gml_Script_UiAInventoryConsumeItemConfirm", "gml_Script_CanUsePotion",
                      "gml_Script_PotionUse", "gml_Script_InvGridClearItemNode",
                      "gml_Script_NetworkRoomGoto", "gml_Script_RoomGoto",
+                     "gml_Script_ZoneStateExists", "gml_Script_ZoneStateResetSingle",
                      "gml_Script_GetDropRate_anon_55737_s_ItemBaseDefinition_DefineStructs"):
             with self.subTest(name=name):
                 self.assertTrue(hasattr(GameScript, name))
@@ -709,10 +753,11 @@ class ParityTests(unittest.TestCase):
         self.assertEqual(int(self._constant("kBaseCategory")), DATA["base"]["category"])
         self.assertEqual(int(self._constant("kBaseItemType")), DATA["base"]["item_type"])
         self.assertEqual(self._constant("kBaseRepoName"), '"%s"' % DATA["base"]["repository_name"])
-        self.assertEqual(float(self._constant("kPortalOffsetPx")), DATA["portal"]["offset_px"])
         self.assertEqual(self._constant("kMechanicTag"), '"%s"' % DATA["mechanic_tag"])
-        # The first design's key base, spawn and stack veto are gone.
-        for gone in ("kKeyCategory", "kSpawnOffsetPx", "VetoStack", "Summon"):
+        # The first design's key base, spawn and stack veto are gone, and so is
+        # Replan 1's portal (Amendment 2: a direct transfer).
+        for gone in ("kKeyCategory", "kSpawnOffsetPx", "VetoStack", "Summon", "kPortalOffsetPx", "PortalX",
+                     "PortalTarget", "UseVerdict::Portal"):
             with self.subTest(gone=gone):
                 self.assertNotIn(gone, self.code)
 
@@ -752,8 +797,6 @@ class ParityTests(unittest.TestCase):
         self.assertRegex(body, r"std::floor\(\s*gemRate\s*\*[^;]*kRatioNumerator[^;]*/[^;]*kRatioDenominator")
         self.assertRegex(body, r"d\s*<\s*1\.0\s*\?\s*1")
 
-    def test_the_portal_leads_to_the_boss_room(self):
-        self.assertRegex(self._body("inline const char* PortalTarget"), r"boss->bossRoom")
-        body = self._body("inline double PortalX")
-        self.assertRegex(body, r"playerX\s*\+\s*kPortalOffsetPx")
-        self.assertRegex(body, r"playerX\s*-\s*kPortalOffsetPx")
+    def test_the_transfer_leads_to_the_boss_room(self):
+        self.assertRegex(self._body("inline const char* TransferTarget"), r"boss->bossRoom")
+        self.assertRegex(self._body("inline UseVerdict DecideUse"), r"return UseVerdict::Transfer;")
