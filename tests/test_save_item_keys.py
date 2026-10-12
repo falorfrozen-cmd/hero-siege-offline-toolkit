@@ -121,7 +121,7 @@ class SaveItemKeysTests(unittest.TestCase):
         # Object keys that are not item keys (containers, members) are never listed.
         self.assertFalse([k for k in listed if not k.startswith("0-0-")], listed)
 
-    def test_baseline_character_fields_that_are_not_base64_json_are_skipped(self):
+    def test_baseline_character_fields_that_are_not_base64_json_are_ignored(self):
         containers = self.keys(self.char)[str(self.char)]
         self.assertFalse([c for c in containers if c.startswith(("level", "name", "loot_filter_new"))], containers)
 
