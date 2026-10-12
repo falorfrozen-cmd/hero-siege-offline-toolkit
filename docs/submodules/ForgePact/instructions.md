@@ -5522,8 +5522,8 @@ inserted before `mod_jump_scenery`). Record: `docs/flight-charms-research.md`
   charm is then placed at its full footprint or, refused, written 1x1, its
   hash refreshed, tagged `fp_flight_guarded` and placed at its own cell
   (`kept=`, `failed=`). Between two held charms the yield rule decides: a
-  charm whose full footprint, tested both ways round (w by h and h by w, since
-  which argument the game reads as the column is a static reading), would
+  charm whose full footprint, tested in both orientations (w by h and h by w,
+  since which argument the game reads as the column is a static reading), would
   cover another held charm's cell goes straight to 1x1 the same way
   (`yielded=`), and so does every held charm when one of their cells is
   unknown; a charm alone in its load is never shrunk for that. So no save
