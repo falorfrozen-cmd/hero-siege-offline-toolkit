@@ -21,7 +21,7 @@ after the 2026-09-18 update (`exe-281751552-pe6aaa6779-111b8000`), but that it
 ran on that build is **not established**.
 
 The measured facts about the game are also in
-[`RUNTIME_DATA_MODELS.md` §21.9](../RUNTIME_DATA_MODELS.md#219-replacing-a-draw-and-drawing-above-the-actors-seraph).
+[`RUNTIME_DATA_MODELS.md` §22.9](../RUNTIME_DATA_MODELS.md#229-replacing-a-draw-and-drawing-above-the-actors-seraph).
 That section is the shared record every module reads. This page keeps the
 recipes, what was inferred, and how each applies to #158. Its sibling,
 [afk-expedition-adding-content.md](afk-expedition-adding-content.md), covers

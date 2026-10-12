@@ -5590,7 +5590,7 @@ with the AFK commit it comes from, are in
 behind §22.8 and its §15 rows were on the earlier build,
 `exe-281798144-pe6a9ed3ee-111c3000`, from before the 2026-09-18 update; the
 later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
-§21.9 has a second source, the owner's local Seraph prototype (measured
+§22.9 has a second source, the owner's local Seraph prototype (measured
 2026-09-23..24, no build named); AFK's builds above do not apply to it.
 
 ### 22.1 Our own art
@@ -5751,7 +5751,7 @@ no build:
   (§5.9);
 - `instance_destroy` on a monster skips its death and `DropItem`.
 
-### 21.9 Replacing a draw and drawing above the actors (Seraph)
+### 22.9 Replacing a draw and drawing above the actors (Seraph)
 
 Folded 2026-10-12 from the owner's local Seraph prototype, which drew one
 White Mage character as an original custom character. It was measured
@@ -5779,7 +5779,7 @@ pointers are in
 - **Baked sprites draw crisp.** Cells drawn onto a surface with
   `gpu_set_blendenable(false)` and `gpu_set_texfilter(false)`, then passed to
   `sprite_create_from_surface`, drew on the game's pixel grid. This extends
-  §21.1's atlas-cell recipe. **Measured**. That alpha survives byte for byte
+  §22.1's atlas-cell recipe. **Measured**. That alpha survives byte for byte
   is inferred.
 - **A `DrawHud` pre-pass draws above every actor and under the HUD.** A
   detour of `gml_Script_DrawHud` (installed with `InstallScriptHook`) drew
