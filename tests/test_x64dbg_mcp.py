@@ -27,17 +27,21 @@ quietly break:
   ready once the plugin answers, x64dbg has settled at running and the
   outside check reads the game running, after one defensive `bphc` for a
   breakpoint restored from x64dbg's database; it resumes every pause x64dbg
-  takes on its own (counted, with a storm flag); the outside check must read
-  the game frozen at the first hold at a hardware-breakpoint hit (the control
-  hold), naming every thread seen before attach as suspended and stopped
-  there, for the instrument to count as proven, and an unproven one never
-  reports a detach as releasing the game; an attach it never saw settle is
+  takes on its own (counted, with a storm flag); the game's frame counter
+  (the stand-in's, through the `frames_cmd` seam, or hs_drive's ipc patched)
+  must advance before arming, stall at the first hold at a
+  hardware-breakpoint hit (the control hold) and advance after its resume for
+  the instrument to count as proven, the thread checks only recorded beside
+  it, and an unproven one never reports a detach as releasing the game, nor a
+  proven one unless the counter advances after the detach; an attach it never
+  saw settle is
   `attach-unconfirmed` (refused by every tool but `detach`) until it does; a
   `hold` changes breakpoints between markers, held at a hit of a logging
   breakpoint when one is armed, or at a new breakpoint's own first hit;
   teardown is a held `bphc`, a settle at running, `detach`, confirm, `exit`
-  and the outside check, which ends `game-not-released` when game threads
-  stay suspended, never killing an unconfirmed headless;
+  and a frames reading, which ends `game-not-released` when the counter does
+  not advance (the thread check after it is a `threads_note`), never killing
+  an unconfirmed headless;
 - `logpoint` and `command` never pause the game: no `pause` on stdin and no
   plugin `PauseDebug`, `run` or `ExecuteDbgCommand`. They arm and change
   hardware breakpoints through a hold, held at a hit of a logging breakpoint
@@ -391,8 +395,11 @@ class SessionMixin:
         plugin = StandInPlugin(record, bps, **plugin_kw)
         self.addCleanup(plugin.close)
         probe_cmd = (sys.executable, str(FAKE_HEADLESS), "probe", str(self.work)) if probe else None
+        # Every session reads the stand-in's frame counter, never ForgePact's
+        # real bp_ipc channel.
+        frames_cmd = (sys.executable, str(FAKE_HEADLESS), "frames", str(self.work))
         cfg = _cfg(base, port=plugin.port, headless_cmd=(sys.executable, str(FAKE_HEADLESS), str(self.work)),
-                   probe_cmd=probe_cmd, **(cfg_over or {}))
+                   probe_cmd=probe_cmd, frames_cmd=frames_cmd, **(cfg_over or {}))
         _install_fixture(cfg)
         target = subprocess.Popen([sys.executable, "-I", "-c", STAND_IN_GAME], stdout=subprocess.PIPE, text=True,
                                   **NO_WINDOW)
@@ -462,8 +469,8 @@ class SessionMixin:
                                         f'SetHardwareBreakpointLog 0x{addr:X}, "{log}"'])
 
     def prove(self, cfg, addr=A) -> dict:
-        """Prove the instrument: a hot control's first-hit hold, which the
-        outside check must read frozen."""
+        """Prove the instrument: a hot control's first-hit hold, at which the
+        game's frame counter must stall."""
         self.set_modes(hot=[addr])
         reply = self.first_hit(cfg, addr)
         self.assertTrue(reply["ok"], reply)
@@ -1720,11 +1727,13 @@ class WatchdogTests(SessionMixin, unittest.TestCase):
 
 
 class InstrumentTests(SessionMixin, unittest.TestCase):
-    """The outside check must read the game frozen at the control's first-hit
-    hold, the first time the keeper holds the game at a hardware-breakpoint
-    hit: that is what makes its later `running` verdicts mean anything."""
+    """The game's frame counter must advance before arming, stall at the
+    control's first-hit hold (the first time the keeper holds the game at a
+    hardware-breakpoint hit) and advance after its resume: that is what makes
+    a later advance mean the game runs. The thread checks are recorded beside
+    it, diagnostic only."""
 
-    def test_instrument_control_frozen_at_the_first_hit_hold_is_proven(self):
+    def test_instrument_control_a_stalled_counter_at_the_first_hit_hold_is_proven(self):
         cfg, _, state, record, _ = self.start_session()
         self.assertFalse(state["instrument"]["proven"], state["instrument"])  # attach holds nothing
         self.set_modes(hot=[A])
@@ -1742,7 +1751,15 @@ class InstrumentTests(SessionMixin, unittest.TestCase):
         self.assertEqual(xm.check_tids(inst["control_hold"]), [9001, 9002], inst)
         self.assertEqual(inst["control_hold"]["unreadable_counts"], [], inst)
         self.assertTrue(inst["proven"], inst)
-        self.assertNotIn("note", inst)
+        fr = inst["frames"]
+        a, b = (r["frames"] for r in fr["before_arm"])
+        self.assertLess(a, b, fr)
+        self.assertEqual(([r["reason"] for r in fr["control_hold"]], fr["stall"]), (["not_consumed"], "no-answer"),
+                         fr)
+        self.assertGreater(fr["after_resume"]["frames"], b, fr)
+        self.assertEqual(reply["hold_frames"], fr["control_hold"], reply)
+        self.assertIn("diagnostic only", inst["note"])
+        self.assertIn(f"{a}", inst["note"])
         # bph (breaking), then held at its first hit the rest, then run
         sent = _commands(self.stdin_lines(record))
         bph = sent.index(f"bph 0x{A:X}, x, 1")
@@ -1768,47 +1785,52 @@ class InstrumentTests(SessionMixin, unittest.TestCase):
         self.assertIn(f"1:HW:{A:016X}", reply["after"])
         inst = xm.read_state(cfg)["instrument"]
         self.assertEqual((inst["control_hold"], inst["proven"]), (None, False), inst)
+        self.assertIsNone(reply.get("hold_frames"), reply)
+        self.assertIsNone((inst.get("frames") or {}).get("control_hold"), inst)
         sent = _commands(self.stdin_lines(record))
         self.assertEqual(sent[sent.index(f"bph 0x{A:X}, x, 1"):],
                          [f"bph 0x{A:X}, x, 1", f"SetHardwareBreakpointCondition 0x{A:X}, 0",
                           f'SetHardwareBreakpointLog 0x{A:X}, "hot"', "bplist"])
 
-    def assert_unproven_session(self, cfg, says):
-        """Not proven: the session still runs (attach does not depend on the
-        instrument), status names the gap, and a clean `running` after the
-        detach is not reported as a release."""
-        state = xm.read_state(cfg)
-        self.assertEqual((state["state"], state["ready"]), ("running", True), state)
-        inst = state["instrument"]
-        self.assertFalse(inst["proven"], inst)
-        status = xm.Tools(cfg).status()
-        self.assertFalse(status["instrument"]["proven"])
-        self.assertIn(says, status["instrument"]["note"])
-        code, reply = self.detach_cli(cfg)
-        self.assertEqual(code, 1, reply)
-        self.assertFalse(reply["ok"], reply)
-        self.assertIsNone(reply["game_released"], reply)
-        self.assertEqual(reply["game"]["verdict"], "running", reply)
-        self.assertIn("not proven", reply["note"])
-        state = xm.read_state(cfg)
-        self.assertEqual((state["state"], state["detach_confirmed"], state["game_released"]),
-                         ("ended", True, None), state)
+    def assert_roster_recorded_and_proven(self, cfg, reply):
+        """The thread check at the control hold is recorded as it read, and
+        the frame counter, which stalled, decides: proven."""
+        inst = xm.read_state(cfg)["instrument"]
+        self.assertEqual(inst["control_hold"], reply["hold_game"], inst)
+        self.assertNotIn("breaking_tid", inst["control_hold"])
+        self.assertEqual(inst["frames"]["stall"], "no-answer", inst)
+        self.assertTrue(inst["proven"], inst)
+        self.assertIn("diagnostic only", inst["note"])
+        return inst
 
-    def test_instrument_control_a_blind_probe_is_not_proven_and_status_says_so(self):
+    def test_instrument_control_roster_diagnostic_a_blind_probe_is_recorded_and_frames_prove(self):
+        # The thread check never reads `frozen` (an instrument blind to the
+        # held game): recorded, and it no longer decides.
         cfg, _, _, _, _ = self.start_session(fake={"blind_probe": True, "hot": [A]})
         reply = self.first_hit(cfg, A)
         self.assertTrue(reply["ok"], reply)
-        self.assertIsNotNone(reply["held"], reply)  # x64dbg held the game; the probe did not see it
-        self.assertEqual(xm.read_state(cfg)["instrument"]["control_hold"]["verdict"], "running")
-        self.assert_unproven_session(cfg, "not frozen")
+        self.assertIsNotNone(reply["held"], reply)  # x64dbg held the game; the thread check did not see it
+        inst = self.assert_roster_recorded_and_proven(cfg, reply)
+        self.assertEqual(inst["control_hold"]["verdict"], "running", inst)
+        self.assertIn("control hold running", inst["note"])
 
-    def test_instrument_control_frozen_with_no_thread_named_is_not_proven(self):
-        # Negative control: `frozen` alone, from a check that named no held thread.
+    def test_instrument_control_roster_diagnostic_frozen_with_no_thread_named_is_recorded_and_frames_prove(self):
+        # `frozen` from a check that named no held thread: recorded, not deciding.
         cfg, _, _, _, _ = self.start_session(fake={"empty_lists": True, "hot": [A]})
-        self.assertTrue(self.first_hit(cfg, A)["ok"])
-        brk = xm.read_state(cfg)["instrument"]["control_hold"]
+        reply = self.first_hit(cfg, A)
+        self.assertTrue(reply["ok"], reply)
+        brk = self.assert_roster_recorded_and_proven(cfg, reply)["control_hold"]
         self.assertEqual((brk["verdict"], brk["suspended"], brk["stopped"]), ("frozen", [], []), brk)
-        self.assert_unproven_session(cfg, "0 suspended and 0 stopped")
+
+    def test_instrument_control_roster_diagnostic_control_an_advancing_counter_is_not_proven(self):
+        # Negative control: the same roster that read `frozen`, with a counter
+        # that advanced at the hold, is not proven: the frames decide.
+        cfg, _, _, _, _ = self.start_session(fake={"frames_never_stall": True, "hot": [A]})
+        reply = self.first_hit(cfg, A)
+        self.assertEqual(reply["hold_game"]["verdict"], "frozen", reply)
+        inst = xm.read_state(cfg)["instrument"]
+        self.assertEqual(inst["frames"]["stall"], "advanced", inst)
+        self.assertFalse(inst["proven"], inst)
 
 
 class ControlSettleTests(SessionMixin, unittest.TestCase):
@@ -1827,45 +1849,146 @@ class ControlSettleTests(SessionMixin, unittest.TestCase):
         self.assertEqual(xm.Keeper.HOLD_SETTLE, 0.25)
 
 
-class InstrumentGapsTests(unittest.TestCase):
-    """`instrument_gaps` on hand-built checks: what the control hold's lists
-    must cover, and each way they can fall short."""
+def _reading(frames, why="answered", elapsed=0.8):
+    """One frame-counter reading in `game_frames`' shape."""
+    return {"answered": why == "answered", "frames": frames, "pong": why == "answered", "reason": why,
+            "elapsed_s": elapsed, "utc": "2026-10-12T00:00:00Z", "detail": "hand-built"}
 
-    @staticmethod
-    def chk(verdict, held=(), tids=(1, 2, 3), unread=(), stopped=None):
-        return {"verdict": verdict, "suspended": [{"tid": t, "suspend_count": 2} for t in held],
-                "stopped": list(held if stopped is None else stopped), "unreadable_counts": list(unread),
-                "tids": list(tids)}
 
-    def inst(self, brk, before=None):
-        return {"before_attach": before or self.chk("running"), "control_hold": brk,
-                "after_resume": self.chk("running")}
+def _thread_check(verdict, held=(), stopped=None, tids=(1, 2, 3), executive=()):
+    return {"verdict": verdict, "threads": len(tids), "progress": 0,
+            "suspended": [{"tid": t, "suspend_count": 1} for t in held],
+            "stopped": list(held if stopped is None else stopped), "unreadable_counts": [], "tids": list(tids),
+            "executive_waits": list(executive), "touched": []}
 
-    def test_instrument_gaps_control_every_thread_held_and_a_new_break_in_thread_is_proven(self):
-        self.assertEqual(xm.instrument_gaps(self.inst(self.chk("frozen", (1, 2, 3), tids=(1, 2, 3, 99)))), [])
 
-    def test_instrument_gaps_a_baseline_thread_need_not_be_listed(self):
-        before = self.chk("running", held=(3,))
-        self.assertEqual(xm.instrument_gaps(self.inst(self.chk("frozen", (1, 2)), before)), [])
+# ForgePact #197's Live 2 at the control hold: the outside check read
+# `threads-suspended` with two game threads (5744, 36732) missing from
+# `stopped`, while the game was held at the control's first hit.
+LIVE2_TIDS = (5744, 11000, 12000, 36732)
+LIVE2_THREADS = {"before_attach": _thread_check("running", tids=LIVE2_TIDS),
+                 "control_hold": _thread_check("threads-suspended", held=LIVE2_TIDS, stopped=(11000, 12000),
+                                               tids=LIVE2_TIDS, executive=(5744,)),
+                 "after_resume": _thread_check("running", tids=LIVE2_TIDS)}
+STALLED = {"before_arm": [_reading(6890), _reading(6898)], "control_hold": [_reading(None, "not_consumed", 3.0)],
+           "after_resume": _reading(6950)}
 
-    def test_instrument_gaps_name_each_shortfall(self):
+
+class FramesProofTests(unittest.TestCase):
+    """`instrument_record` on hand-built readings: the frame counter decides,
+    the thread checks are recorded beside it."""
+
+    def record(self, threads=None, **frames):
+        return xm.instrument_record({**(threads or LIVE2_THREADS), "frames": {**STALLED, **frames}})
+
+    def test_frames_proof_live2_roster_with_a_stalled_counter_is_proven(self):
+        rec = self.record()
+        self.assertTrue(rec["proven"], rec)
+        self.assertEqual(rec["frames"]["stall"], "no-answer", rec)
+        for word in ("6890", "6898", "6950", "no-answer", "diagnostic only", "threads-suspended"):
+            self.assertIn(word, rec["note"])
+        self.assertNotIn("not proven", rec["note"])
+        self.assertEqual(rec["control_hold"], LIVE2_THREADS["control_hold"])  # recorded as read
+        self.assertNotIn("stall", STALLED)  # the readings passed in are not changed
+
+    def test_frames_proof_answered_hold_same_count_is_a_gap(self):
+        # ForgePact consumes cmd.txt only from its frame callback, so an
+        # answer at the control hold means the game loop ran during it; an
+        # unchanged count only shows the publishing thread did not publish.
+        rec = self.record(control_hold=[_reading(6900), _reading(6900)])
+        self.assertFalse(rec["proven"], rec)
+        self.assertEqual(rec["frames"]["stall"], "same-count", rec)
+        self.assertIn("not proven", rec["note"])
+        self.assertIn("answered while x64dbg held the game", rec["note"])
+        self.assertIn("6900", rec["note"])
+
+    def test_frames_proof_answered_hold_any_answer_is_a_gap(self):
+        # an answered first reading is a gap whatever the second shows
+        cases = [([_reading(6900), _reading(6930)], "advanced"),
+                 ([_reading(6900), _reading(None, "not_consumed", 3.0)], None),
+                 ([_reading(6900)], None),
+                 ([_reading(6900), _reading(6890)], None)]
+        for hold, stall in cases:
+            with self.subTest(hold=[r["reason"] for r in hold], stall=stall):
+                rec = self.record(control_hold=hold)
+                self.assertFalse(rec["proven"], rec)
+                self.assertEqual(rec["frames"]["stall"], stall, rec)
+                self.assertIn("answered while x64dbg held the game", rec["note"])
+
+    def test_frames_proof_answered_hold_control_a_no_answer_hold_is_proven(self):
+        rec = self.record(control_hold=[_reading(None, "not_consumed", 3.0)])
+        self.assertTrue(rec["proven"], rec)
+        self.assertNotIn("answered while x64dbg held the game", rec["note"])
+
+    def test_frames_proof_each_shortfall_is_not_proven(self):
         cases = [
-            (self.chk("frozen", (1, 2)), "1 of the 3 thread(s)"),
-            (self.chk("frozen", (1, 2, 3), stopped=(1, 2)), "tid 3"),
-            (self.chk("frozen", (1, 2, 3), unread=(2,)), "could not read the suspend count"),
-            (self.chk("frozen"), "0 suspended and 0 stopped"),
-            (self.chk("frozen", (1, 2, 3), tids=(7, 8)), "no thread seen before attach"),
-            ({**self.chk("frozen", (1, 2, 3)), "tids": None}, "list no tids"),
-            ({k: v for k, v in self.chk("frozen", (1, 2, 3)).items() if k != "unreadable_counts"},
-             "carried no unreadable_counts"),
-            (None, "no check at a control hold"),
+            ({"control_hold": [_reading(6900), _reading(6930)]}, "advanced", "advanced at the control hold"),
+            ({"before_arm": [_reading(6890), _reading(6890)]}, "no-answer", "did not advance before"),
+            ({"before_arm": [_reading(6890), _reading(6898, elapsed=5.0)]}, "no-answer", "5.0 s"),
+            ({"after_resume": _reading(6898)}, "no-answer", "after the resume"),
+            ({"control_hold": [_reading(None, "ipc_unavailable", 0.0)]}, None, "ipc_unavailable"),
+            ({"before_arm": [_reading(None, "not_consumed", 10.0), _reading(6898)]}, "no-answer", "not_consumed"),
+            ({"after_resume": None}, "no-answer", "no frame-counter reading after"),
+            ({"control_hold": []}, None, "no frame-counter reading at a control hold"),
         ]
-        for brk, says in cases:
+        for frames, stall, says in cases:
             with self.subTest(says=says):
-                gaps = xm.instrument_gaps(self.inst(brk))
-                self.assertTrue(gaps, brk)
-                self.assertEqual({k for k, _ in gaps}, {"control_hold"}, gaps)
-                self.assertIn(says, "; ".join(why for _, why in gaps))
+                rec = self.record(**frames)
+                self.assertFalse(rec["proven"], rec)
+                self.assertEqual(rec["frames"]["stall"], stall, rec)
+                self.assertIn("not proven", rec["note"])
+                self.assertIn(says, rec["note"])
+                self.assertIn("diagnostic only", rec["note"])
+
+    def test_frames_proof_no_frames_key_is_not_proven(self):
+        rec = xm.instrument_record(dict(LIVE2_THREADS))
+        self.assertFalse(rec["proven"], rec)
+        self.assertIn("control hold", rec["note"])
+        self.assertNotIn("frames", rec)
+
+    def test_frames_proof_a_frozen_roster_does_not_save_an_advancing_counter(self):
+        # Negative control: the roster the old rule wanted, every thread held,
+        # with a counter that advanced at the hold, is not proven.
+        threads = {**LIVE2_THREADS, "control_hold": _thread_check("frozen", held=LIVE2_TIDS, tids=LIVE2_TIDS)}
+        rec = self.record(threads, control_hold=[_reading(6900), _reading(6930)])
+        self.assertFalse(rec["proven"], rec)
+        self.assertEqual(rec["frames"]["stall"], "advanced")
+
+
+class InstrumentGapsTests(unittest.TestCase):
+    """`instrument_gaps` names the frames gaps by the reading they concern,
+    and only those: the thread checks never make one."""
+
+    def test_instrument_gaps_control_a_stalled_counter_has_no_gap_whatever_the_roster(self):
+        for hold in (_thread_check("frozen", (1, 2, 3)), _thread_check("running"), _thread_check("frozen"), None):
+            with self.subTest(hold=hold and hold["verdict"]):
+                inst = {**LIVE2_THREADS, "control_hold": hold, "frames": STALLED}
+                self.assertEqual(xm.instrument_gaps(inst), [])
+
+    def test_instrument_gaps_name_each_frames_shortfall_by_its_reading(self):
+        cases = [
+            # a no-answer leans on before arm: the hold is named with it
+            ({"before_arm": [_reading(6890)]}, ("frames.before_arm", "frames.control_hold")),
+            ({"control_hold": [_reading(6900), _reading(6930)]}, "frames.control_hold"),
+            ({"after_resume": _reading(6898)}, "frames.after_resume"),
+        ]
+        for frames, key in cases:
+            with self.subTest(key=key):
+                gaps = xm.instrument_gaps({**LIVE2_THREADS, "frames": {**STALLED, **frames}})
+                self.assertEqual({k for k, _ in gaps}, {key} if isinstance(key, str) else set(key), gaps)
+
+    def test_instrument_gaps_answered_hold_is_a_control_hold_gap(self):
+        # A same-count hold no longer stands in for a stall: it is a gap at
+        # the control hold, beside a before-arm shortfall and without one.
+        held = [_reading(6900), _reading(6900)]
+        for frames, keys in (({"control_hold": held}, {"frames.control_hold"}),
+                             ({"before_arm": [_reading(6890)], "control_hold": held},
+                              {"frames.before_arm", "frames.control_hold"})):
+            with self.subTest(keys=sorted(keys)):
+                gaps = xm.instrument_gaps({**LIVE2_THREADS, "frames": {**STALLED, **frames}})
+                self.assertEqual({k for k, _ in gaps}, keys, gaps)
+                hold_why = [why for k, why in gaps if k == "frames.control_hold"]
+                self.assertIn("answered while x64dbg held the game", hold_why[0])
 
 
 # The Replan 3 probe's run2 (measured 2026-10-10 on a throwaway process, not the
@@ -1884,11 +2007,11 @@ RUN2_HELD_AT_FIRST_HIT = {
     "stopped": [t for t in RUN2_TIDS if t != 6320], "unreadable_counts": [], "tids": RUN2_TIDS}
 
 
-class BreakingThreadTests(unittest.TestCase):
+class RosterDiagnosticTests(unittest.TestCase):
     """At the control hold the thread that raised the hit waits in an Executive
-    wait, not Suspended, so `stopped` leaves it out: it is the one exemption,
-    on its signature (suspended, the only expected Executive wait), recorded as
-    `control_hold.breaking_tid`."""
+    wait, not Suspended, so `stopped` leaves it out. That roster, and every
+    variant of it the old rule refused, is recorded as read and decides
+    nothing: the frame counter does (#497)."""
 
     @staticmethod
     def hold(**second):
@@ -1908,106 +2031,142 @@ class BreakingThreadTests(unittest.TestCase):
     def inst(hold):
         return {"before_attach": RUN2_AFTER_ATTACH, "control_hold": hold, "after_resume": RUN2_AFTER_ATTACH}
 
-    def coverage_gap(self, inst):
-        return "; ".join(why for k, why in xm.instrument_gaps(inst) if k == "control_hold" and "tid " in why)
-
-    def test_breaking_thread_run2_replay_is_proven_and_recorded(self):
+    def test_roster_diagnostic_run2_replay_is_recorded_and_frames_decide(self):
         hold = {**RUN2_HELD_AT_FIRST_HIT, "executive_waits": [6320]}
         # thread_state's reading of the measured samples is the probe's recorded check
         read = self.hold()
         self.assertEqual({k: read[k] for k in hold}, hold)
-        self.assertEqual(xm.instrument_gaps(self.inst(hold)), [])
-        rec = xm.instrument_record(self.inst(hold))
+        rec = xm.instrument_record({**self.inst(hold), "frames": STALLED})
         self.assertTrue(rec["proven"], rec)
-        self.assertEqual(rec["control_hold"]["breaking_tid"], 6320)
-        self.assertIn("6320", rec["note"])
-        self.assertIn("breaking thread", rec["note"])
-        self.assertNotIn("breaking_tid", hold)  # the check passed in is not changed
-
-    def test_breaking_thread_at_suspend_count_0_is_not_proven(self):
-        hold = self.hold(t6320=((1717, 5, 0, 0), (1717, 5, 0, 0)))
-        self.assertEqual(hold["verdict"], "frozen", hold)
-        self.assertIn("6320", self.coverage_gap(self.inst(hold)))
-        rec = xm.instrument_record(self.inst(hold))
-        self.assertFalse(rec["proven"], rec)
-        self.assertIsNone(rec["control_hold"].get("breaking_tid"), rec)
-
-    def test_breaking_thread_a_second_expected_executive_wait_is_not_proven(self):
-        hold = self.hold(t31564=((39, 5, 0, 1), (39, 5, 0, 1)))
-        self.assertEqual(hold["executive_waits"], [6320, 31564], hold)
-        gap = self.coverage_gap(self.inst(hold))
-        self.assertIn("6320", gap)
-        self.assertIn("31564", gap)
-        self.assertFalse(xm.instrument_record(self.inst(hold))["proven"])
-        # The same on a hand-built check: 31564 stopped, yet a second expected
-        # Executive wait still leaves the one exemption unclaimed.
-        hand = {**RUN2_HELD_AT_FIRST_HIT, "executive_waits": [6320, 31564]}
-        self.assertIn("2 expected thread(s)", self.coverage_gap(self.inst(hand)))
-
-    def test_breaking_thread_switching_between_samples_is_not_proven(self):
-        hold = self.hold(t6320=(1720, 5, 0, 1))
-        self.assertIn("6320", self.coverage_gap(self.inst(hold)))
+        self.assertEqual(rec["control_hold"], hold)  # recorded as read, no exemption field
+        self.assertIn("diagnostic only", rec["note"])
+        # Negative control: the same roster without the frames is not proven.
         self.assertFalse(xm.instrument_record(self.inst(hold))["proven"])
 
-    def test_breaking_thread_needs_the_executive_waits_field(self):
-        # A check with no executive_waits (an older or stand-in shape) gets no exemption.
-        gap = self.coverage_gap(self.inst(RUN2_HELD_AT_FIRST_HIT))
-        self.assertIn("executive_waits", gap)
-        self.assertIn("6320", gap)
+    def test_roster_diagnostic_variants_the_old_rule_refused_are_proven_by_frames(self):
+        variants = {
+            "suspend count 0": self.hold(t6320=((1717, 5, 0, 0), (1717, 5, 0, 0))),
+            "a second Executive wait": self.hold(t31564=((39, 5, 0, 1), (39, 5, 0, 1))),
+            "switching between samples": self.hold(t6320=(1720, 5, 0, 1)),
+            "no executive_waits field": RUN2_HELD_AT_FIRST_HIT,
+            "every thread stopped": {**RUN2_HELD_AT_FIRST_HIT, "stopped": RUN2_TIDS, "executive_waits": []},
+        }
+        for name, hold in variants.items():
+            with self.subTest(name):
+                rec = xm.instrument_record({**self.inst(hold), "frames": STALLED})
+                self.assertTrue(rec["proven"], rec)
+                self.assertEqual(rec["control_hold"], hold)
+                stalled_not = xm.instrument_record({**self.inst(hold), "frames": {
+                    **STALLED, "control_hold": [_reading(6900), _reading(6930)]}})
+                self.assertFalse(stalled_not["proven"], stalled_not)
 
-    def test_breaking_thread_not_in_an_executive_wait_is_not_exempt(self):
-        # A missing thread that is suspended but not in the check's executive_waits.
-        hold = {**RUN2_HELD_AT_FIRST_HIT, "executive_waits": []}
-        self.assertIn("Executive", self.coverage_gap(self.inst(hold)))
 
-    def test_breaking_thread_control_every_thread_stopped_needs_no_exemption(self):
-        hold = {**RUN2_HELD_AT_FIRST_HIT, "stopped": RUN2_TIDS, "executive_waits": []}
-        rec = xm.instrument_record(self.inst(hold))
-        self.assertTrue(rec["proven"], rec)
-        self.assertIsNone(rec["control_hold"].get("breaking_tid"))
-        self.assertNotIn("note", rec)
+class RosterDiagnosticKeeperTests(SessionMixin, unittest.TestCase):
+    """The same through the keeper, on the stand-in's thread-check route:
+    `breaking_thread` N makes the first N game threads wait in an Executive
+    wait at a break. The counter stalls at the hold, so the session is proven
+    and the roster is only recorded."""
 
-
-class BreakingThreadKeeperTests(SessionMixin, unittest.TestCase):
-    """The same exemption through the keeper, on the stand-in's thread-check
-    route: `breaking_thread` N makes the first N game threads wait in an
-    Executive wait at a break."""
-
-    def test_breaking_thread_keeper_records_the_one_exemption(self):
-        cfg, _, _, _, _ = self.start_session(fake={"breaking_thread": 1, "hot": [A]})
+    def test_roster_diagnostic_breaking_thread_two_executive_waits_are_recorded_and_frames_prove(self):
+        cfg, _, _, _, _ = self.start_session(fake={"breaking_thread": 2, "hot": [A]})
         reply = self.first_hit(cfg, A)
         self.assertTrue(reply["ok"], reply)
-        self.assertEqual(reply["hold_game"]["executive_waits"], [9001], reply)
+        self.assertEqual(reply["hold_game"]["executive_waits"], [9001, 9002], reply)
         inst = xm.read_state(cfg)["instrument"]
+        self.assertEqual(inst["control_hold"], reply["hold_game"], inst)
+        self.assertNotIn("breaking_tid", inst["control_hold"])
         self.assertTrue(inst["proven"], inst)
-        self.assertEqual(inst["control_hold"]["breaking_tid"], 9001, inst)
-        self.assertIn("9001", inst["note"])
-        self.assertIn("9001", xm.Tools(cfg).status()["instrument"]["note"])
+        self.assertIn("diagnostic only", xm.Tools(cfg).status()["instrument"]["note"])
 
-    def test_breaking_thread_keeper_two_executive_waits_are_not_proven(self):
-        cfg, _, _, _, _ = self.start_session(fake={"breaking_thread": 2, "hot": [A]})
+    def test_roster_diagnostic_control_the_same_roster_with_a_dead_channel_is_not_proven(self):
+        cfg, _, _, _, _ = self.start_session(fake={"breaking_thread": 2, "hot": [A], "frames_dead": True})
         self.assertTrue(self.first_hit(cfg, A)["ok"])
         inst = xm.read_state(cfg)["instrument"]
+        self.assertEqual(inst["control_hold"]["executive_waits"], [9001, 9002], inst)
         self.assertFalse(inst["proven"], inst)
-        self.assertIsNone(inst["control_hold"].get("breaking_tid"), inst)
         self.assertIn("not proven", inst["note"])
 
 
-class ReleaseTests(SessionMixin, unittest.TestCase):
-    """A detach is checked from outside the debugger: every game thread
-    running again, or a loud `game-not-released` naming the threads."""
+class FramesKeeperTests(SessionMixin, unittest.TestCase):
+    """The frames proof through the keeper and the stand-in's counter."""
 
-    def test_game_not_released_names_the_threads_and_the_recovery(self):
+    def test_frames_keeper_default_is_proven_by_a_no_answer_stall(self):
+        cfg, _, _, _, _ = self.start_session()
+        reply = self.prove(cfg)
+        fr = xm.read_state(cfg)["instrument"]["frames"]
+        self.assertEqual(fr["stall"], "no-answer", fr)
+        self.assertEqual(len(fr["before_arm"]), 2, fr)
+        self.assertTrue(all(r["answered"] and r["pong"] for r in fr["before_arm"]), fr)
+        self.assertEqual(reply["hold_frames"][0]["reason"], "not_consumed", reply)
+        self.assertTrue(reply["proven"], reply)
+
+    def test_frames_keeper_answered_hold_same_count_is_not_proven(self):
+        # The plugin answered while the game was held, so the frame callback
+        # ran: the frozen count is recorded as `same-count`, and it is a gap.
+        detached = self.assert_frames_unproven("answered while x64dbg held the game", frames_answer_held=True)
+        self.assertEqual(detached["state"], "ended", detached)  # the advanced-but-unproven row
+        self.assertIn("never shown", detached["note"])
+        fr = xm.read_state(self.cfg)["instrument"]["frames"]
+        self.assertEqual(fr["stall"], "same-count", fr)
+        self.assertEqual(len(fr["control_hold"]), 2, fr)
+        self.assertEqual(fr["control_hold"][0]["frames"], fr["control_hold"][1]["frames"], fr)
+
+    def assert_frames_unproven(self, says, **fake):
+        """Not proven: the session still runs, status names the gap, and the
+        detach reports no release: `game_released` null, `ok` false, exit 1."""
+        cfg, _, _, _, _ = self.start_session(fake={"hot": [A], **fake})
+        self.cfg = cfg
+        reply = self.first_hit(cfg, A)
+        self.assertTrue(reply["ok"], reply)
+        self.assertIsNotNone(reply["held"], reply)
+        self.assertFalse(reply["proven"], reply)
+        state = xm.read_state(cfg)
+        self.assertEqual((state["state"], state["ready"]), ("running", True), state)
+        status = xm.Tools(cfg).status()
+        self.assertFalse(status["instrument"]["proven"])
+        self.assertIn("not proven", status["instrument"]["note"])
+        self.assertIn(says, status["instrument"]["note"])
+        code, detached = self.detach_cli(cfg)
+        self.assertEqual(code, 1, detached)
+        self.assertFalse(detached["ok"], detached)
+        self.assertIsNone(detached["game_released"], detached)
+        self.assertTrue(xm.read_state(cfg)["detach_confirmed"])
+        return detached
+
+    def test_frames_keeper_never_stall_is_not_proven(self):
+        detached = self.assert_frames_unproven("advanced at the control hold", frames_never_stall=True)
+        self.assertEqual(detached["state"], "ended", detached)
+        self.assertIn("never shown", detached["note"])
+
+    def test_frames_keeper_dead_channel_is_not_proven(self):
+        detached = self.assert_frames_unproven("not_consumed", frames_dead=True)
+        self.assertEqual(detached["state"], "game-not-released", detached)
+
+    def test_frames_keeper_slow_channel_is_not_proven(self):
+        detached = self.assert_frames_unproven("5.0 s", frames_slow=5)
+        self.assertEqual(detached["state"], "ended", detached)
+
+
+class ReleaseTests(SessionMixin, unittest.TestCase):
+    """A detach is checked by the game's frame counter: it must advance, with
+    `ping` answering, after the detach of a proven session. The thread check
+    after it is recorded, diagnostic only."""
+
+    def test_game_not_released_names_the_reading_and_the_recovery(self):
         cfg, _, _, _, _ = self.start_session(fake={"leak_on_detach": True})
+        self.prove(cfg)
         code, reply = self.detach_cli(cfg)
         self.assertEqual(code, 1, reply)
         self.assertFalse(reply["ok"], reply)
         state = xm.read_state(cfg)
         self.assertEqual((state["state"], state["detach_confirmed"], state["game_released"]),
                          ("game-not-released", True, False), state)
-        self.assertEqual(state["game"]["verdict"], "threads-suspended")
-        for word in ("9001", "9002", "hs_stop_game", "force=true", "hs_saves_restore"):
+        self.assertEqual(state["game"]["verdict"], "threads-suspended")  # recorded, diagnostic
+        self.assertEqual(reply["frames"]["reason"], "not_consumed", reply)
+        for word in ("not_consumed", "hs_stop_game", "force=true", "hs_saves_restore"):
             self.assertIn(word, state["error"])
+        for word in ("9001", "9002"):
+            self.assertIn(word, reply["threads_note"])
         self.assertNotIn(state["state"], xm.LIVE_STATES)
         self.assertEqual(xm.Tools(cfg).detach()["reason"], "not_attached")
 
@@ -2022,12 +2181,191 @@ class ReleaseTests(SessionMixin, unittest.TestCase):
         self.assertEqual(xm.session_summary(cfg)["game_released"], True)
 
 
+class FramesReleaseTests(SessionMixin, unittest.TestCase):
+    """The release verdict after detach, one case per kind of frames reading."""
+
+    def test_frames_release_a_clean_detach_is_released(self):
+        cfg, _, _, _, _ = self.start_session()
+        self.prove(cfg)
+        last = xm.read_state(cfg)["instrument"]["frames"]["after_resume"]["frames"]
+        code, reply = self.detach_cli(cfg)
+        self.assertEqual(code, 0, reply)
+        self.assertEqual((reply["state"], reply["game_released"], reply["ok"]), ("ended", True, True), reply)
+        self.assertTrue(reply["frames"]["pong"], reply)
+        self.assertGreater(reply["frames"]["frames"], last, reply)
+        self.assertNotIn("threads_note", reply)
+        self.assertEqual(xm.read_state(cfg)["frames"], reply["frames"])
+
+    def test_frames_release_leak_on_detach_is_game_not_released(self):
+        cfg, _, _, _, _ = self.start_session(fake={"leak_on_detach": True})
+        self.prove(cfg)
+        code, reply = self.detach_cli(cfg)
+        self.assertEqual(code, 1, reply)
+        self.assertEqual((reply["state"], reply["game_released"], reply["ok"]),
+                         ("game-not-released", False, False), reply)
+
+    def test_frames_release_leak_threads_only_is_released_with_a_threads_note(self):
+        # The thread check reads threads left suspended, but the game loop
+        # runs: the frames decide, and the threads are a note.
+        cfg, _, _, _, _ = self.start_session(fake={"leak_threads_only": True})
+        self.prove(cfg)
+        code, reply = self.detach_cli(cfg)
+        self.assertEqual(code, 0, reply)
+        self.assertEqual((reply["state"], reply["game_released"], reply["ok"]), ("ended", True, True), reply)
+        self.assertEqual(reply["game"]["verdict"], "threads-suspended", reply)
+        for word in ("threads-suspended", "9001", "9002", "diagnostic"):
+            self.assertIn(word, reply["threads_note"])
+
+    def test_frames_release_a_channel_that_never_answered_gives_null(self):
+        cfg, _, _, _, _ = self.start_session(fake={"frames_dead": True})
+        code, reply = self.detach_cli(cfg)
+        self.assertEqual(code, 1, reply)
+        self.assertEqual((reply["state"], reply["game_released"], reply["ok"]),
+                         ("game-not-released", None, False), reply)
+
+    # Whether the game is gone is the frame reading's own verdict, which
+    # checks the target's identity (pid and start time); thread_state's
+    # `gone` reads the pid alone, and decides nothing.
+
+    def test_frames_release_gone_by_frames_a_thread_gone_with_a_live_game_is_released(self):
+        cfg, _, _, _, _ = self.start_session(fake={"threads_gone_after_detach": True})
+        self.prove(cfg)
+        code, reply = self.detach_cli(cfg)
+        self.assertEqual(code, 0, reply)
+        self.assertEqual((reply["state"], reply["game_released"], reply["ok"]), ("ended", True, True), reply)
+        self.assertEqual(reply["game"]["verdict"], "gone", reply)  # recorded, diagnostic
+        self.assertEqual(reply["frames"]["reason"], "answered", reply)
+        for word in ("gone", "diagnostic", "pid and start time"):
+            self.assertIn(word, reply["threads_note"])
+        state = xm.read_state(cfg)
+        self.assertEqual((state["state"], state["game_released"]), ("ended", True), state)
+
+    def test_frames_release_gone_by_frames_a_gone_frame_reading_ends_unreleased_and_ok(self):
+        # The thread check still reads running: the frame reading decides alone.
+        cfg, _, _, _, _ = self.start_session(fake={"frames_gone_after_detach": True})
+        self.prove(cfg)
+        code, reply = self.detach_cli(cfg)
+        self.assertEqual(code, 0, reply)
+        self.assertEqual((reply["state"], reply["game_released"], reply["ok"]), ("ended", None, True), reply)
+        self.assertEqual(reply["frames"]["reason"], "gone", reply)
+        self.assertEqual(reply["game"]["verdict"], "running", reply)
+        self.assertNotIn("threads_note", reply)
+        state = xm.read_state(cfg)
+        self.assertEqual((state["state"], state["game_released"], state["frames"]["reason"]),
+                         ("ended", None, "gone"), state)
+
+    def test_frames_release_gone_by_frames_control_the_cli_exit_reads_the_saved_frame_reading(self):
+        # Negative control on the CLI exit rule: a thread check reading
+        # `gone` saved beside a frame reading that is not gone, on a session
+        # that was not released, exits 1.
+        cfg, _, _, _, _ = self.start_session(fake={"frames_dead": True, "threads_gone_after_detach": True})
+        code, reply = self.detach_cli(cfg)
+        self.assertEqual(code, 1, reply)
+        self.assertEqual(reply["game"]["verdict"], "gone", reply)
+        self.assertEqual(reply["frames"]["reason"], "not_consumed", reply)
+        self.assertEqual((reply["state"], reply["game_released"]), ("game-not-released", None), reply)
+
+
+class FramesReaderTests(unittest.TestCase):
+    """`game_frames` with no seam: one `ipc.send` of `ping` and `incident
+    stat` on the game's own channel, with hs_drive's ipc patched so nothing
+    reaches the real bp_ipc directory."""
+
+    LIVE2_LINES = ["pong (YYTK 4.0.1)",
+                   "incident: frames 6898 | baseline 13.2 ms | worst 4897.2 ms (not judged) | watching yes",
+                   "incident: episodes 1, held back 1, ignored near a room change or unfocused 3"]
+
+    def setUp(self):
+        from tools.hs_drive_mcp import ipc, procs, results
+        self.ipc, self.procs, self.results = ipc, procs, results
+        d = Path(tempfile.mkdtemp(prefix="x64dbg-frames-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        self.game = d / "game" / xm.GAME_IMAGE
+        self.cfg = _cfg(d)
+        patcher = mock.patch.object(xm, "image_path", return_value=self.game)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def read(self, send=None, resolve=None, pid=None, identity=None):
+        resolve = resolve if resolve is not None else self.game.parent / "bp_ipc"
+        sender = mock.Mock(return_value=send) if not callable(send) else mock.Mock(side_effect=send)
+        with mock.patch.object(self.ipc, "send", sender), \
+                mock.patch.object(self.ipc, "resolve_dir", mock.Mock(return_value=resolve)):
+            r = xm.game_frames(self.cfg, pid or os.getpid(), 7.0, identity=identity)
+        return r, sender
+
+    def ok(self, lines):
+        return self.results.ok("x64dbg", consumed=True, reply="\n".join(lines), reply_lines=lines, elapsed_s=0.6)
+
+    def test_frames_reader_sends_ping_and_incident_stat_once_with_a_running_gate(self):
+        r, sender = self.read(self.ok(self.LIVE2_LINES))
+        self.assertEqual((r["answered"], r["frames"], r["pong"], r["reason"]), (True, 6898, True, "answered"), r)
+        self.assertEqual(r["elapsed_s"], 0.6)
+        self.assertTrue(r["utc"])
+        sender.assert_called_once()
+        args, kw = sender.call_args
+        self.assertEqual(args[0], ["ping", "incident stat"])
+        self.assertEqual((kw["timeout_s"], kw["lease_checked"], kw["tool"]), (7.0, True, "x64dbg"), kw)
+        self.assertEqual(kw["gate"]()[0], self.procs.RUNNING)
+        self.assertEqual(kw["abort"](), "")
+
+    def test_frames_reader_maps_refusals_and_a_reply_without_the_counter(self):
+        cases = [
+            (self.results.refuse("x64dbg", "not_consumed", "nothing consumed it", elapsed_s=7.0), "not_consumed"),
+            (self.results.refuse("x64dbg", "bp_ipc_missing", "no bp_ipc"), "ipc_unavailable"),
+            (self.results.refuse("x64dbg", "forgepact_config_missing", "no game_exe"), "ipc_unavailable"),
+            (self.ok(["pong (YYTK 4.0.1)", "unknown command"]), "no_frame_counter"),
+        ]
+        for send, reason in cases:
+            with self.subTest(reason=reason, sent=send.get("reason")):
+                r, _ = self.read(send)
+                self.assertEqual((r["reason"], r["answered"], r["frames"]), (reason, False, None), r)
+                self.assertTrue(r["detail"])
+
+    def test_frames_reader_another_copy_is_refused_before_sending(self):
+        r, sender = self.read(self.ok(self.LIVE2_LINES), resolve=self.game.parent.parent / "other" / "bp_ipc")
+        self.assertEqual((r["reason"], r["answered"]), ("ipc_other_copy", False), r)
+        sender.assert_not_called()
+        if os.name != "nt":
+            return
+        # the same directory spelled in another case is the same copy (Windows)
+        r, sender = self.read(self.ok(self.LIVE2_LINES), resolve=Path(str(self.game.parent / "BP_IPC").upper()))
+        self.assertEqual(r["reason"], "answered", r)
+
+    def test_frames_reader_an_unreadable_path_is_ipc_unavailable_without_sending(self):
+        refusal = self.results.refuse("x64dbg", "forgepact_config_missing", "no game_exe")
+        r, sender = self.read(self.ok(self.LIVE2_LINES), resolve=refusal)
+        self.assertEqual(r["reason"], "ipc_unavailable", r)
+        sender.assert_not_called()
+        with mock.patch.object(xm, "image_path", return_value=None):
+            r, sender = self.read(self.ok(self.LIVE2_LINES))
+        self.assertEqual(r["reason"], "ipc_unavailable", r)
+        sender.assert_not_called()
+
+    def test_frames_reader_a_gone_target_is_gone_without_sending(self):
+        r, sender = self.read(self.ok(self.LIVE2_LINES), pid=DEAD["pid"], identity=DEAD)
+        self.assertEqual((r["reason"], r["answered"]), ("gone", False), r)
+        sender.assert_not_called()
+
+    def test_frames_reader_seam_prints_a_reading_or_is_ipc_unavailable(self):
+        good = json.dumps(_reading(42))
+        for out, reason in ((good, "answered"), ("hello", "ipc_unavailable"),
+                            (json.dumps({**_reading(None), "reason": "answered"}), "ipc_unavailable"),
+                            (json.dumps({"reason": "made_up"}), "ipc_unavailable")):
+            with self.subTest(out=out[:40]):
+                cfg = _cfg(Path(tempfile.gettempdir()), frames_cmd=(sys.executable, "-c", f"print({out!r})"))
+                r = xm.game_frames(cfg, os.getpid(), 1.0)
+                self.assertEqual(r["reason"], reason, r)
+                self.assertEqual(r["answered"], reason == "answered", r)
+
+
 @unittest.skipIf(REAL_OS_SKIP is not None, REAL_OS_SKIP or "")
 class RealOsTests(SessionMixin, unittest.TestCase):
     """End to end on the stand-in game's real threads: the fake headless
     suspends them for real at a breaking breakpoint's first-hit hold and
     under `leak_on_detach` (never on attach), and the keeper reads them
-    through tools/thread_state.py."""
+    through tools/thread_state.py, diagnostic only. The stand-in's frame
+    counter decides."""
 
     def test_real_os_instrument_control_reads_the_first_hit_hold_frozen(self):
         cfg, _, state, _, _ = self.start_session(fake={"real_os": True}, probe=False)
@@ -2051,6 +2389,7 @@ class RealOsTests(SessionMixin, unittest.TestCase):
 
     def test_real_os_leak_on_detach_is_game_not_released(self):
         cfg, _, _, _, _ = self.start_session(fake={"real_os": True, "leak_on_detach": True}, probe=False)
+        self.prove(cfg)
         code, reply = self.detach_cli(cfg)
         self.assertEqual(code, 1, reply)
         state = xm.read_state(cfg)
@@ -2060,7 +2399,7 @@ class RealOsTests(SessionMixin, unittest.TestCase):
         self.assertTrue(set(self.workers[1:]) <= named, (self.workers, state["game"]))
         self.assertNotIn(self.workers[0], named)  # the one left running
         for tid in self.workers[1:]:
-            self.assertIn(str(tid), state["error"])
+            self.assertIn(str(tid), reply["threads_note"])
 
     def test_real_os_context_read_at_the_control_hold_is_held_and_proves(self):
         # x64dbg's memory-map refresh reads every held thread's context about once
@@ -2077,16 +2416,20 @@ class RealOsTests(SessionMixin, unittest.TestCase):
         self.assertTrue(set(self.workers) <= set(brk["stopped"]), brk)
         self.assertTrue(inst["proven"], inst)
 
-    def test_real_os_context_read_control_four_reads_a_window_is_not_proven(self):
-        # Negative control: reads every 0.15 s put four or more in the window,
-        # beyond the allowance, so the hold does not read frozen.
+    def test_real_os_context_read_control_four_reads_a_window_is_not_frozen_and_frames_prove(self):
+        # Reads every 0.15 s put four or more in the window, beyond the
+        # allowance, so the thread check does not read the hold frozen. It is
+        # recorded as it read, and the stalled counter proves the instrument.
         cfg, _, _, _, _ = self.start_session(fake={"real_os": True, "context_reads": 0.15}, probe=False)
         self.set_modes(hot=[A])
         reply = self.first_hit(cfg, A)
         self.assertIsNotNone(reply["held"], reply)
         self.assertNotEqual(reply["hold_game"]["verdict"], "frozen", reply)
         self.assertEqual(reply["hold_game"]["touched"], [], reply)
-        self.assertFalse(xm.read_state(cfg)["instrument"]["proven"])
+        inst = xm.read_state(cfg)["instrument"]
+        self.assertEqual(inst["control_hold"], reply["hold_game"], inst)
+        self.assertEqual(inst["frames"]["stall"], "no-answer", inst)
+        self.assertTrue(inst["proven"], inst)
 
     def test_real_os_clean_detach_releases_the_game(self):
         cfg, _, _, _, _ = self.start_session(fake={"real_os": True}, probe=False)
@@ -2454,12 +2797,12 @@ class PausedFirstRunTests(ArmingMixin, unittest.TestCase):
         result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
         self.assertFalse(result["ok"], result)
         self.assertIn(f"({A:016X})", result["held"] or "", result)  # the first hit held it, as intended
-        # It then breaks on every hit after the hold's run. Whether the hold's
-        # settle saw 0.4 s of running between two breaks depends on how the
-        # stand-in is scheduled (on a loaded machine it can), and the outside
-        # check then reads the game held, or the verification window sees the
-        # next break: either way the arming failed and is cleared.
-        self.assertIn(result["stage"], ("running", "game-not-running"), result)
+        # It then breaks right after every run, the hold's own included (the
+        # stand-in breaks in its `run` handler, not on its ticker), so the
+        # hold's settle never sees x64dbg at running. The after-arm thread
+        # reading is diagnostic (#497) and can no longer be the stage.
+        self.assertEqual(result["stage"], "running", result)
+        self.assertIn("never settled at running", result["detail"])
         self.assertIn("Hardware breakpoint deleted!", result["cleared"])
         self.assertEqual(result["x64dbg_state"], "running")
         self.assertIsNone(xm.bplist_entry(xm.Tools(cfg).bplist()["lines"], A))
@@ -2562,16 +2905,77 @@ class FalseSuccessTests(ArmingMixin, unittest.TestCase):
         self.assertEqual(result["x64dbg_state"], "running")
         self.assert_never_paused(plugin, record)
 
-    def test_false_success_a_game_the_outside_check_reads_held_is_not_ok(self):
+    # The outside check after the verification window is diagnostic (#497):
+    # a reading other than running is recorded in the reply and decides
+    # nothing. Only a game that is not there fails the arm (the gone tests,
+    # the negative control).
+
+    def assert_roster_reading_is_diagnostic(self, reading):
         cfg, _, _, record, _ = self.start_session(cfg_over=self.COLD)
-        held = {"verdict": "frozen", "detail": "stand-in: no thread made progress", "suspended": [], "stopped": []}
-        with mock.patch.object(xm, "game_check", return_value=held):
+        with mock.patch.object(xm, "game_check", return_value=reading):
             result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn("stage", result)
+        self.assertEqual(result["game"], reading)
+        self.assertIn(reading["verdict"], result["game_note"])
+        self.assertIn("decided nothing", result["game_note"])
+        self.assertNotIn(f"bphc 0x{A:X}", self.stdin_lines(record))  # nothing was cleared
+        self.assertEqual(xm.bplist_entry(xm.Tools(cfg).bplist()["lines"], A), "armed")
+
+    def test_logpoint_roster_diagnostic_a_frozen_reading_still_arms(self):
+        self.assert_roster_reading_is_diagnostic(
+            {"verdict": "frozen", "detail": "stand-in: no thread made progress", "suspended": [], "stopped": []})
+
+    def test_logpoint_roster_diagnostic_a_threads_suspended_reading_still_arms(self):
+        # #197 Live 2's shape: two threads missing from `stopped`
+        self.assert_roster_reading_is_diagnostic(
+            {"verdict": "threads-suspended", "detail": "stand-in: 2 of 4 threads suspended",
+             "suspended": [5744, 36732], "stopped": []})
+
+    def test_logpoint_roster_diagnostic_an_unreadable_reading_still_arms(self):
+        self.assert_roster_reading_is_diagnostic(
+            {"verdict": "unreadable", "detail": "stand-in: access denied", "suspended": [], "stopped": []})
+
+    def test_logpoint_roster_diagnostic_control_a_running_reading_carries_no_note(self):
+        cfg, _, _, _, _ = self.start_session(cfg_over=self.COLD)
+        result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["game"]["verdict"], "running")
+        self.assertNotIn("game_note", result)
+
+    def test_logpoint_roster_diagnostic_gone_by_frames_a_thread_gone_with_a_live_identity_arms(self):
+        # thread_state's `gone` reads the pid alone; the session's target
+        # identity (pid and start time) is alive, so the arm stands.
+        self.assert_roster_reading_is_diagnostic(
+            {"verdict": "gone", "detail": "stand-in: no such process", "suspended": [], "stopped": []})
+
+    def assert_gone_refuses(self, result, record, cfg, verdict, says):
         self.assertFalse(result["ok"], result)
         self.assertEqual(result["stage"], "game-not-running")
-        self.assertEqual(result["game"]["verdict"], "frozen")
+        self.assertEqual(result["game"]["verdict"], verdict)
+        self.assertIn(says, result["game"]["detail"])
+        self.assertIn(says, result["detail"])
         self.assertIn("Hardware breakpoint deleted!", result["cleared"])
         self.assertIn(f"bphc 0x{A:X}", self.stdin_lines(record))
+        self.assertIsNone(xm.bplist_entry(xm.Tools(cfg).bplist()["lines"], A))
+
+    def test_logpoint_gone_refuses_a_game_whose_target_identity_is_not_alive(self):
+        # Only the target's identity reads dead: the keeper's and headless's
+        # stay alive, so the session is still live, and the thread check
+        # (here reading running) is not what refuses.
+        cfg, _, state, record, _ = self.start_session(cfg_over=self.COLD)
+        target, real_alive = state["target"], xm.alive
+        running = {"verdict": "running", "detail": "stand-in: running", "suspended": [], "stopped": []}
+        with mock.patch.object(xm, "alive", side_effect=lambda i: False if i == target else real_alive(i)), \
+                mock.patch.object(xm, "game_check", return_value=running):
+            result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assert_gone_refuses(result, record, cfg, "gone", "pid and start time")
+
+    def test_logpoint_gone_refuses_with_no_live_session_to_check(self):
+        cfg, _, _, record, _ = self.start_session(cfg_over=self.COLD)
+        with mock.patch.object(xm.Tools, "_game", return_value=None):
+            result = xm.Tools(cfg).logpoint(f"0x{A:X}", "hit")
+        self.assert_gone_refuses(result, record, cfg, "no-session", "no live session")
 
     def test_false_success_arming_failure_reads_the_hold_reply(self):
         set_line, row = f"Hardware breakpoint at {A:016X} set!", f"1:HW:{A:016X}"
