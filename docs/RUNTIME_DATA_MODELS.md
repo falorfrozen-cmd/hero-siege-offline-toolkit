@@ -3306,6 +3306,8 @@ The argument and the numbers are in the Item Editor's
 | `"28"` | the display name |
 | `"5"` / `"4"` | the magic prefix / suffix (`" of Recovery"`), empty when there is none |
 | `"32"` | the tier letter: 1 C, 2 B, 3 A, 4 S, 5 SS |
+| `"2"` / `"3"` | the footprint in grid cells, width / height; `GetItemSize` reads them (§ 22.2) |
+| `"11"` | the display sprite (§ 22.5) |
 | `"1"` | the level requirement |
 
 - `itemStatStruct` keys `"10"`–`"14"` each hold one generated affix as
