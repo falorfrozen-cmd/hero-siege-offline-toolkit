@@ -128,23 +128,28 @@ Source: `SpriteRuntime.cpp` `Bake`, `GpuState`, `SurfaceTarget`.
 2.4 **Scale from a measured target, not a constant.** The world scale comes
 from the target body height (`body_height`, 46 px). A new skin therefore
 lands at the measured in-game size whatever its source resolution. A config
-change re-bakes the art. **measured** (2.6). Source: `SpriteRuntime.cpp`
+reload that changes the scale re-bakes the art. **measured** (2.6). Source: `SpriteRuntime.cpp`
 `Scale`, `Import`.
 
 2.5 **Read pixels back to measure, never to guess.** `buffer_create`,
 `buffer_get_surface` and `buffer_get_address` copy a surface's RGBA into
-memory without changing it. The prototype used this two ways: to find each
+memory. That the surface is left unchanged is GameMaker's documented
+behaviour, **inferred**: the sampled surface was replaced anyway, so it could
+not be observed. The prototype used this two ways: to find each
 baked cell's head centre, and to sample the *vanilla* body's opaque bounds
 from the game's own surface. **measured**: 40 read-back samples. Source:
 `SpriteRuntime.cpp` `ReadSurface`, `MeasureCells`, `SampleVanilla`.
 
-2.6 **What the read-back measured** (White Mage carrier, all **measured**):
+2.6 **What was measured on the carrier** (White Mage, all **measured**; the
+height and feet come from the read-back, the speed from position changes):
 - The body is 46–47 px tall.
 - **The feet are 16 px below the player position.** The first build put the
   feet on the position, and the art floated 16 px above the shadow until this
   was measured. The defaults are now `foot_offset = 16` and
   `body_height = 46`.
-- Running speed is 205–217 px/s in all four directions (211 on average). At
+- Running speed is 205–217 px/s in all four directions (211 on average),
+  measured from the player's `x`/`y` change per frame, not from the
+  read-back. At
   7 fps each walk frame slid about 30 px; 12 fps, scaled with the measured
   speed, looks right.
 
@@ -152,9 +157,28 @@ from the game's own surface. **measured**: 40 read-back samples. Source:
 circle onto a surface, turning it into a sprite with
 `sprite_create_from_surface` (origin at the centre), and calling
 `sprite_collision_mask(spr, false, 1, 0, 0, d-1, d-1, 2, 0)`. That gives an
-ellipse covering the full image. The game's damage objects used it as their
-mask. **measured**: 14 of 14 contacts lowered enemy health. Source:
-`SkillVfxDraw.cpp` import.
+ellipse covering the full image: bbox mode 1 is the full image, so the
+rectangle arguments are ignored, and kind 2 makes it an ellipse. The game's
+damage objects used it as their mask. **measured**: 14 of 14 contacts lowered
+enemy health. Source: `SkillVfxDraw.cpp` import.
+
+2.8 **Damage objects of our own: two steps.** Seraph does damage through the
+game's own hit code, never by writing health:
+- It spawns one `Player_Damage_Parent_obj` per visible contact.
+- The object carries the payload captured from the carrier's own cast, and
+  the mask from 2.7.
+- It keeps the object for exactly two steps, then removes it.
+
+**measured**: 14 of 14 contacts lowered enemy health. Health was read before
+and after each hit through `gml_Script_PC_GetVariableGMLWrapper` (package
+`HOW_IT_WORKS.md` §6).
+
+Why one step is not enough is **not established** live. The package's reading
+of the game is that the stats load into the object after that frame's
+collision pass. No recorded control shows a one-step object failing once the
+hit transport was fixed. The earlier zero-damage run failed for transport
+reasons, before any hit was submitted. Source: `SkillRuntime.cpp`
+(`arming`, `pending`).
 
 ## 3. Drawing above every actor, under the HUD
 
@@ -172,8 +196,12 @@ gy = (wy - camera_get_view_y(cam)) * k
 k  = display_get_gui_width() / camera_get_view_width(cam)
 ```
 
-Here `cam` is `view_camera[0]`. **measured**: the effects were seen above the
-actors and below the HUD. Cost was about 0.1 ms per frame. Source:
+Here `cam` is `view_camera[0]`. The prototype used one factor for both axes.
+That assumes the GUI and the camera view share an aspect ratio; otherwise use
+`display_get_gui_height() / camera_get_view_height(cam)` for y. **measured**: the effects were seen above the
+actors and below the HUD. All of Seraph's skill-effect drawing, in the body
+draw and in this pre-pass while a cast was active, averaged about 0.1 ms per
+draw call. Source:
 `SkillRuntime.cpp` `DrawForeground`, `DrawHook`.
 
 3.2 **Body-depth layers stay in the body's draw.** The wing rig is drawn
@@ -198,7 +226,8 @@ The walk/idle state is plain C++ with no game calls (`SpriteAnimator.hpp`).
 
 - `tests/sprite_test.cpp` covers the real manifest: frame counts, the
   non-256-px rectangles, foot-origin placement, the walk/idle state, and
-  reading an older manifest. It has 11 scenarios. It proves frame selection
+  reading an older manifest. It has 12 scenarios at the package's current
+  revision. It proves frame selection
   and alignment arithmetic, not in-game appearance.
 - `art/*/index.html` previews each atlas in a browser, with both palettes and
   every direction, before the game sees it.
@@ -222,21 +251,23 @@ The tooltip draws no icon for any charm. Phase 2 must also make the flying
 player draw in front of scenery. The Seraph answers neither question
 directly, because it never handed a sprite to the game to draw. It always
 drew our art itself. Phase 2's planning (2026-10-12) then read both
-mechanisms statically; RDM §§ 19.7 and 22.7 carry those readings once phase
-2's `refs` item lands. This section says where the Seraph's techniques fit
+mechanisms statically. The #158 research doc
+(`ForgePact/docs/flight-charms-research.md`) and its hub PR will fold those
+readings into RDM §19 and §22. This section says where the Seraph's techniques fit
 next to them.
 
 6.1 **Ground icon: the cause was a name lookup.** By static reading, the
 ground item's init builds a sprite name, `Pickup_` plus the name of the bag
 icon under key `11`, and looks it up with `asset_get_index`. When nothing
 answers, it falls back to `Error_spr`. A runtime sprite has a generated name
-with no `Pickup_` companion. Phase 2 therefore writes our own ground icon onto
-the ground item right after its init, through the init detour ForgePact
+with no `Pickup_` companion. Phase 2's plan is to write our own ground icon
+onto the ground item right after its init, through the init detour ForgePact
 already shares.
 
 Two Seraph practices still apply here:
 - Size the ground icon to the game's own ground sprites, which are much
-  smaller than the bag icons (13x13 to 34x17 for charms), and bake it with
+  smaller than the bag icons (13x13 to 34x17 for charms, from the game's sprite
+  table, a static reading made for #158 phase 2), and bake it with
   nearest sampling (2.3).
 - The Seraph's draw-replacement route (1.2) remains the fallback if writing
   `sprite_index` does not hold. That route detours the one draw built-in,
@@ -246,8 +277,9 @@ Two Seraph practices still apply here:
 6.2 **Drawing the flying player in front of scenery.** By static reading,
 the player's Step calls `UpdateDepth` twice, and each call resets the
 player's draw `layer` from its y. So a `depth` or `layer` write made earlier
-in the frame does not last. Phase 2 sets the room's front game layer right
-after each of those calls, and its live check `flight-depth` confirms which
+in the frame does not last. Phase 2's plan is to set the room's front game
+layer right after each of those calls, with the live check `flight-depth`
+confirming which
 end of the layer list is in front.
 
 If that check fails, the Seraph's route is the fallback, and it does not
@@ -255,7 +287,9 @@ depend on the game's layers at all:
 1. While flying, keep the player's own `draw_surface_ext` arguments from the
    body draw (1.2), and suppress that call.
 2. Replay the call in the `DrawHud` pre-pass (3.1), through the camera
-   transform.
+   transform, and multiply its xscale and yscale by k. Whether
+   `sequenceSurface` still holds this frame's body when `DrawHud` runs is
+   **not established**.
 
 The player then draws above every actor and scenery piece, and under the HUD.
 It has costs:
