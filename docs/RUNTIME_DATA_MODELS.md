@@ -369,6 +369,7 @@ this runner:
 | `object_index` on a struct `self` | undefined |
 | the `room` builtin | a room `VALUE_REF`, not a number; `variable_global_exists("room")` is false, so `variable_global_get("room")` answers undefined and converting that to a number raises the runner error `REAL argument incorrect type undefined` (one per call, measured 2026-10-02, ForgePact#144). Read it with `GetBuiltin("room", ...)`, name it with `room_get_name`; `room_width`/`room_height` are built-ins too |
 | an array, string, struct, undefined or null converted to a number (`RValue::ToDouble`) | no number: the runner raises its own error and the call then fails, and a C++ `catch` that swallows the failure does not take back the runner's report. An array raises `REAL argument incorrect type array` (**measured**, #74 Live 3's capture, 2026-10-02); undefined raises `REAL argument incorrect type undefined` (**measured**, ForgePact#144, the `room` row above). For a string, a struct and null it is a **source reading**, not a measurement: the reading (which is also all that identifies the two) is that `ToDouble` is the runner's own `REAL_RValue`, which raises for every kind it cannot turn into a number; their error text has not been captured. That ForgePact's research scan over `Controller_obj`'s array variables raised one error per array or string element it converted (18 per scan) is an arithmetic fit on Live 2's and Live 3's counts, and the string elements' share of it rests on the fit alone. Live 4 cannot settle that share: ForgePact's gate (§13.4) refuses strings before converting them, so it can show only that the total stops rising, not that a string conversion raises. Live 4 (2026-10-02, **measured**) showed that it does stop: with the 15 arrays and 3 strings refused before any conversion, two scans left the total at 1 where each had added 18 before, so the scan's conversions are measured as the cause of the rise, and the strings' share of it is still the fit. Refuse a kind that can never be a number before converting it (ForgePact's `SigNeverAHandle`, ForgePact#74) |
+| `asset_get_index(name)` | `VALUE_REF`, not a number; a kind check for a number rejects every object. Validate with `object_exists` / `sprite_exists` / `room_exists`, or convert with `real()` (**measured** 2026-09-17 on the pre-2026-09-18 build `pe6a9ed3ee`, HS-AFK-Expedition, [AFK §10.5](research/afk-expedition-adding-content.md)) |
 | a ds container | "ref ds_map" / "ref ds_list" |
 | an item | `VALUE_OBJECT` struct (§2) |
 | a bound `m_*` method value | `VALUE_OBJECT` with object kind 0, not a script ref (§10) |
@@ -5107,16 +5108,17 @@ UI, its own input, spawned monsters and gates. Only what AFK **measured** is
 here. Its recipes, inferred claims, open questions and superseded attempts, each
 with the AFK commit it comes from, are in
 [docs/research/afk-expedition-adding-content.md](research/afk-expedition-adding-content.md);
-"AFK §n" below points there. Measured 2026-09-17..10-07; the runs that name a
-build name `exe-281751552-pe6aaa6779-111b8000`.
+"AFK §n" below points there. Measured 2026-09-17..10-07. The 2026-09-17 PHASE0 runs
+behind §21.8 and its §15 rows were on the earlier build,
+`exe-281798144-pe6a9ed3ee-111c3000`, from before the 2026-09-18 update; the
+later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
 
 ### 21.1 Our own art
 
 - **`sprite_add(path, frames, false, false, 0, 0)` loads a PNG at runtime**, and
   the result draws in the world as a layer sprite. A multi-frame PNG is one row
-  of equal frames. **Measured** (AFK §1.1). ForgePact's pack markers ship the
-  same call for their icons (`PackMarkers::LoadIcons`), and the index comes back
-  as an asset reference, like `asset_get_index` (§5.4).
+  of equal frames. **Measured** (AFK §1.1). What kind of value `sprite_add`
+  returns on this runner is **not established**.
 - **The automatic bounding box counts every pixel above alpha 0.** Generated
   art carries a faint halo (alpha 1-8): one piece measured 527×998 visible but
   1152×1144 with the halo. `sprite_collision_mask(spr, false, 0, 0,0,0,0, 1, 16)`
@@ -5203,8 +5205,8 @@ build name `exe-281751552-pe6aaa6779-111b8000`.
 - **`instance_create_depth(x, y, depth, obj)` spawns a monster with the current
   room's stats.** `enemyRarity` and the affixes (`affixList` plus the
   `enemyAffix` flag array) set right after creation are applied when the stats
-  are built. `aggroRange` and `distance` are reset to 300 then, so they must be
-  set a frame later. **Measured** (AFK §6.1-§6.3).
+  are built. `aggroRange` is reset to 300 then, so it (and `distance`, which AFK
+  also sets) must be set a frame later. **Measured** (AFK §6.1-§6.3).
 - **A monster spawned in a town removes itself within a second.** Answering the
   room routines `CheckTown` false and `RoomIsZone` true, and answering
   `GetAct`, `GetMonsterLevel` and `ReturnEnemyStats` for a reference zone, only
@@ -5247,7 +5249,10 @@ build name `exe-281751552-pe6aaa6779-111b8000`.
 
 ### 21.8 Crashes found on the way
 
-Also listed in §15. **Measured** (AFK §10.2-§10.6):
+Also listed in §15. **Measured** (AFK §10.2-§10.6), on the earlier build
+`exe-281798144-pe6a9ed3ee-111c3000` (2026-09-17, PHASE0_NOTES), except one of
+the protected-handle crashes, which recurred on 2026-09-24 in a run that names
+no build:
 - reading a protected handle far out of range (`PC_GetVariableGMLWrapper` on id
   999999) crashes the game; a gold amount mistaken for a handle crashed the
   anti-cheat module;

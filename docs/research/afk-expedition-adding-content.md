@@ -48,7 +48,7 @@ folders are git-ignored and were never pushed.
 
 1.2 **The automatic bounding box counts every pixel above alpha 0.** Generated art (ChatGPT) often carries a faint halo of alpha 1-8 far wider than the object. The ballista tower measured 527×998 visible but 1152×1144 with its halo. Fitting by the raw box drew pieces at about half size and lifted them off the ground. AFK fixes this by re-measuring with `sprite_collision_mask(spr, false, 0, 0,0,0,0, 1, 16)`: separate-masks false, bbox mode 0, kind 1, tolerance 16. After that, `sprite_get_bbox_left/right/top/bottom` give the visible part. **measured** (values read in game). Source: commit `3be2c96` (origin/claude/stronghold-art-fit), CRS `StrongholdMap.inl` l.263-269 (`HALO = 16`). Diagnostic: `stronghold map art`.
 
-1.3 **Origin and scale are set from the measured visible box.** For a piece that stands on the ground, `sprite_set_offset(spr, (bl+br)/2, bb)` puts the origin at bottom-centre. Other origins are centre or left-middle. Scale is the box size divided by the visible size; wall and gate pieces use "span_x" or "span_y" so neighbours join exactly. This is a **inferred** of the recipe. It was used in every live build: `b1ccba5` reports a live check with placeholder art. Source: CRS `StrongholdMap.inl` l.271-277.
+1.3 **Origin and scale are set from the measured visible box.** For a piece that stands on the ground, `sprite_set_offset(spr, (bl+br)/2, bb)` puts the origin at bottom-centre. Other origins are centre or left-middle. Scale is the box size divided by the visible size; wall and gate pieces use "span_x" or "span_y" so neighbours join exactly. This is AFK's recipe, so it is **inferred**. It was used in every live build: `b1ccba5` reports a live check with placeholder art. Source: CRS `StrongholdMap.inl` l.271-277.
 
 1.4 **Cropping a cell out of a PNG atlas into its own sprite.**
 - Steps:
@@ -60,7 +60,7 @@ folders are git-ignored and were never pushed.
 - AFK first checks the crop against `sprite_get_width/height` (`City::CropFits`).
 - It runs from AFK's per-frame callback (Present time), not inside a draw event, and it worked there.
 - **measured**: cropped level-5 workshop, temple, market, keep and homes were seen in Dev_10_rm. Recorded in CITY_VERIFICATION_20261006.md.
-- Whether alpha survives byte-exactly through the surface is a **inferred**; nobody measured pixel values.
+- Whether alpha survives byte-exactly through the surface is **inferred**; nobody measured pixel values.
 - Source: commit `fb58b27`, CRS `StrongholdMap.inl` l.232-262. The atlas is 1536×1024 with six 512-wide cells; measured row gutters are in `tools/stronghold_art.py` `CITY_CUTS`.
 
 1.5 **Free what you load.** Every own sprite is `sprite_delete`d before a rebuild (`ForgetArt`), so a changed PNG shows on the next build. Sprites meant to persist across rooms, such as the Steward's art, are loaded once per session and never deleted (`KeptArt`). This is AFK's own recipe: **inferred**. Source: CRS `StrongholdMap.inl` l.305-315, l.537-543.
@@ -69,7 +69,7 @@ folders are git-ignored and were never pushed.
 
 1.7 **`font_add` loads a TTF at runtime.** The call is `font_add(path, size_pt, false, false, 32, 8230)`. AFK converts design pixels to points as px × 0.75 ("points at 96 dpi"). It works: the panel was drawn with the package's TTFs at 2560×1440, which is **measured** (INGAME_PANEL_VERIFICATION, 33 GameMaker panel images). The claim that each added font takes its own texture page of "about 16 MB", and that bucketing sizes to 22/27/32/38/56 cut memory from 330 to 250 MB, is **not established**: the verification doc says texture figures "are asset calculations, not measured GPU memory". Source: `f17f840` (origin/claude/ingame-panel-2), CRS `StrongholdPanel.inl` l.505-528.
 
-1.8 **Art-file checks done offline before the game ever sees a file.** This is an AFK recipe, a **inferred** of its tool.
+1.8 **Art-file checks done offline before the game ever sees a file.** This is an AFK recipe, **inferred** from its tool's code.
 - PNG signature and chunk CRCs are checked.
 - Limits: at most 32 MB and 8192 px per side.
 - Object art must have an alpha channel (colour type 4 or 6). A ground texture saved as RGBA with every alpha byte at 255 is accepted. The check decompresses the rows and compares each row's filtered alpha bytes to the all-opaque pattern for its filter, without decoding pixels: about 40 ms for 1254².
@@ -97,7 +97,7 @@ folders are git-ignored and were never pushed.
 
 2.5 **Layers die with the room.** Layers and layer sprites created in a room disappear when the hero leaves it ("the old room took the map's pieces with it"). AFK drops its handles on a room change and rebuilds on return. It removes its own layers by name prefix (`layer_get_all`, `layer_get_name`, `layer_destroy`). This is **measured**, implicitly, by every enter, leave and re-enter cycle (STRONGHOLD_DESIGN product check). Source: CRS `StrongholdMap.inl` `Frame` l.1157-1162, `Clear` l.546-565.
 
-2.6 **Hiding a room's own layer.** `layer_set_visible(layer_get_id("Background"), false)` hides the unused room's background so AFK's ground shows. **inferred** of the code; it was part of the measured builds. Source: CRS `StrongholdMap.inl` `Ground` l.486.
+2.6 **Hiding a room's own layer.** `layer_set_visible(layer_get_id("Background"), false)` hides the unused room's background so AFK's ground shows. **inferred** from the code; it was part of the measured builds. Source: CRS `StrongholdMap.inl` `Ground` l.486.
 
 2.7 **Ground.**
 - With an own texture: `layer_background_create(layer, sprite)` plus `layer_background_htiled` / `vtiled(true)` and `layer_background_xscale` / `yscale`, on a depth-1000 layer.
@@ -131,7 +131,7 @@ folders are git-ignored and were never pushed.
 - read `sprite_get_bbox_left`, `_right`, `_bottom` and `sprite_get_xoffset` / `yoffset`;
 - create the layer sprite at x − ((left+right)/2 − xoff), y − (bottom − yoff).
 
-This avoids `sprite_set_offset` on a shared game sprite, which would change it everywhere it is drawn; that side effect is a **inferred** of GameMaker semantics. The placement is **measured** (city services: "All three sprites present"; CITY_SERVICES_VERIFICATION_20261007). Source: CRS `StrongholdServices.inl` `Place`, `StrongholdSmith.inl` l.66-80.
+This avoids `sprite_set_offset` on a shared game sprite, which would change it everywhere it is drawn; that side effect is **inferred** from GameMaker semantics. The placement is **measured** (city services: "All three sprites present"; CITY_SERVICES_VERIFICATION_20261007). Source: CRS `StrongholdServices.inl` `Place`, `StrongholdSmith.inl` l.66-80.
 
 ---
 
@@ -149,7 +149,7 @@ This avoids `sprite_set_offset` on a shared game sprite, which would change it e
 - `sprite_get_texture(spr, 0)` with `texture_is_ready(tex)` tells whether a sprite can draw.
 - **measured** (the R1 `ui tex` tool reported 254 groups). Source: r2-defense-lab `InGameUI.inl` `TextureInfo` l.326-349.
 
-3.3 **Tilesets prefetch through their texture.** Call `texture_prefetch(tileset_get_texture(tileset))` before entering a room, and check `texture_is_ready`. The Miner Village tileset is in Act 4's group, so it is fetched when the hero sets off and again at build; the build log says if it is still loading. **inferred** of the code, part of measured builds. Source: `46f48ae`, CRS `StrongholdMap.inl` `Enter` l.1125, `Ground` l.497-503.
+3.3 **Tilesets prefetch through their texture.** Call `texture_prefetch(tileset_get_texture(tileset))` before entering a room, and check `texture_is_ready`. The Miner Village tileset is in Act 4's group, so it is fetched when the hero sets off and again at build; the build log says if it is still loading. **inferred** from the code, part of measured builds. Source: `46f48ae`, CRS `StrongholdMap.inl` `Enter` l.1125, `Ground` l.497-503.
 
 3.4 **Monsters spawned in an unused room need their sprites prefetched.**
 - Dev_10_rm does not load an Act's monster texture groups.
@@ -253,7 +253,7 @@ This avoids `sprite_set_offset` on a shared game sprite, which would change it e
 - With the fix, Extra and skill selection worked after automatic entry. **measured** (AUTO_ENTRY_VERIFICATION_20261007).
 - Source: commit `e380504`; CRS `plugin/TestSession.inl` `UiActions` and `Activate` l.29-102.
 
-5.9 **Mouse-routing diagnostics.** The window status counts mouse-button messages received and those AFK consumed. When the player reported broken clicks, AFK had consumed 0, and a physical hold reached `mouse_check_button(1)`. `input passthrough` bypasses all AFK interception. The local YYToolkit dispatcher forwards unhandled messages by itself, so do not call the original again (**inferred** of YYToolkit). Source: `09c8e96`; DEFENSE_INPUT_VERIFICATION_20261007.
+5.9 **Mouse-routing diagnostics.** The window status counts mouse-button messages received and those AFK consumed. When the player reported broken clicks, AFK had consumed 0, and a physical hold reached `mouse_check_button(1)`. `input passthrough` bypasses all AFK interception. The local YYToolkit dispatcher forwards unhandled messages by itself, so do not call the original again (**inferred** from YYToolkit's code). Source: `09c8e96`; DEFENSE_INPUT_VERIFICATION_20261007.
 
 5.10 **Bringing the game window back to front.**
 - A plain `SetForegroundWindow` was refused on the owner's PC: Windows' foreground lock. **measured** 2026-10-02.
@@ -278,11 +278,11 @@ This avoids `sprite_set_offset` on a shared game sprite, which would change it e
 - **measured** R2/R2b. The code comment names the stat-building step as the monster's Alarm 4: **inferred**.
 - Source: `57b4ad5`; CRS `LiveDefense.inl` `ApplyAffixes`, `SpawnSome`.
 
-6.3 **Movement range must be set one frame later.** `aggroRange`, set at spawn, is reset to 300 when stats are built. AFK sets `aggroRange` and `distance` one frame after creation. A monster beyond `aggroRange` stays idle; raising both makes it walk to the hero. **measured** R2/R2b. Source: `57b4ad5`; CRS `LiveDefense.inl` l.459-465.
+6.3 **Movement range must be set one frame later.** `aggroRange`, set at spawn, is reset to 300 when stats are built. AFK therefore sets `aggroRange` (and `distance`, which it also sets) one frame after creation; that the game resets `distance` too was not observed. A monster beyond `aggroRange` stays idle; raising both makes it walk to the hero. **measured** R2/R2b. Source: `57b4ad5`; CRS `LiveDefense.inl` l.459-465.
 
 6.4 **Monsters delete themselves in a town.** A monster spawned in `Town_02_rm` removes itself within a second. **measured** R2. The cause is lifted by answering `CheckTown` false; see 6.7.
 
-6.5 **The active box.** The game moves and kills monsters only within about one screen of the hero. Deaths happened at 650 px; 8 of 12 happened at 750 and 850. The game steps only instances in `Controller_obj.monsterHandleArray` (count in `monsterHandleArrayCount`), which `ActivateDeactivateProps` rebuilds every frame. AFK appends its own ids after the original call returns, and far monsters then keep stepping. **measured** R2 and R8. Source: `fb7bae5`; CRS `StrongholdMap.inl` `HookAdp` l.676-697.
+6.5 **The active box.** The game moves and kills monsters only within about one screen of the hero. Deaths happened at 650 px; 8 of 12 happened at 750 and 850. AFK appends its own ids to `Controller_obj.monsterHandleArray` (count in `monsterHandleArrayCount`) after `ActivateDeactivateProps` returns, and far monsters then keep stepping. The box distances and the append effect are **measured** R2 and R8. That the game steps only instances in that array, and that `ActivateDeactivateProps` is what rebuilds it every frame, is **inferred** from AFK's hook placement; the runtime reference's static reading ([§11.3](../RUNTIME_DATA_MODELS.md#113-the-enemy-loop)) has `EnemyStepHandleNew` rebuilding it every 30 frames, and the R2/R8 result fits either. Source: `fb7bae5`; CRS `StrongholdMap.inl` `HookAdp` l.676-697.
 
 6.6 **Spawn cost.**
 - 60 and 120 live monsters held 60 fps: mean 16.67 ms, peak 17.2 ms.
@@ -303,7 +303,7 @@ Monsters there then have the zone's exact stats, and loot and XP stay the game's
 - Jeweler, Alchemist and Trader: `Broker_NPC_spr`, `Witch_NPC_spr` and `Traveling_Merchant_NPC_spr`.
 - Blacksmith: `Orre_Npc_spr`, switching to `Orre_Npc_Hammering_Up_spr`, with an anvil sprite and `Hell_Spark_Particle_spr` toggled by `layer_sprite_alpha`.
 - Sounds: `audio_play_sound(Interacting_snd, 0, false)` and `Blacksmiths_Mallet_snd`.
-- AFK's rule is never to create a vanilla vendor or NPC object, because its Create event could start the game's own purchase flow. That consequence is a **inferred**: it was never tried.
+- AFK's rule is never to create a vanilla vendor or NPC object, because its Create event could start the game's own purchase flow. That consequence is **inferred**: it was never tried.
 - Placement and talking are **measured** (CITY_SERVICES and BLACKSMITH_NPC verification docs). Whether the sound is audible is **not established**.
 - Source: CRS `StrongholdServices.inl`, `StrongholdSmith.inl`, `StrongholdWindow.inl` l.39.
 
@@ -322,7 +322,7 @@ Monsters there then have the zone's exact stats, and loot and XP stay the game's
 ## 7. Collision and movement
 
 7.1 **Blocking with the game's invisible wall object.**
-- AFK calls `instance_create_depth(x0, y0, -y1/2, Invisible_Wall_obj)` and sets `image_xscale = (x1-x0)/32` and `image_yscale = (y1-y0)/32`. This implies a 32×32 mask, which is a **inferred**.
+- AFK calls `instance_create_depth(x0, y0, -y1/2, Invisible_Wall_obj)` and sets `image_xscale = (x1-x0)/32` and `image_yscale = (y1-y0)/32`. This implies a 32×32 mask, which is **inferred**.
 - It also sets `addToMinimap = true`, so the native minimap draws the outline.
 - The blocker shows up in collision: `collision_point` finds it at the gate centre when closed and returns no instance when open. **measured** 2026-10-07 (DEFENSE_INPUT_VERIFICATION_20261007).
 - Blockers appear on the minimap: **measured** (CITY_VERIFICATION).
@@ -343,9 +343,9 @@ Monsters there then have the zone's exact stats, and loot and XP stay the game's
 
 7.4 **The grid counts a monster's own cells as taken.** `mp_grid_path` from a monster's own position never finds a way; from the next free cell (`mp_grid_get_cell == 0`) it does. **measured** R8b. Source: CRS `StrongholdMap.inl` `FreeNear` l.928-943.
 
-7.5 **The game's own chase starts only near the hero.** For a monster further than about 1000 px, AFK walks it along an `mp_grid_path` (`path_add`, then `path_get_number` / `path_get_point_x` / `y`, re-searched every second) by writing `x` / `y` each frame. It moves a "flying" monster straight at the hero, writing `x` / `y` with no grid. **measured** for ground walks (R8, R8b). The straight flyer path is a **inferred**: no flyer run was recorded, and "flying" is a flag in AFK's wave plan, not a game variable. Source: CRS `StrongholdMap.inl` `Approach`, `MoveToward` l.910-970.
+7.5 **The game's own chase starts only near the hero.** For a monster further than about 1000 px, AFK walks it along an `mp_grid_path` (`path_add`, then `path_get_number` / `path_get_point_x` / `y`, re-searched every second) by writing `x` / `y` each frame. It moves a "flying" monster straight at the hero, writing `x` / `y` with no grid. **measured** for ground walks (R8, R8b). The straight flyer path is **inferred**: no flyer run was recorded, and "flying" is a flag in AFK's wave plan, not a game variable. Source: CRS `StrongholdMap.inl` `Approach`, `MoveToward` l.910-970.
 
-7.6 **Writing `x` / `y` moves an instance with no collision test of its own.** AFK's steering and teleports rely on this. This is a **inferred** of GameMaker semantics. AFK never tested a write into or through a blocker.
+7.6 **Writing `x` / `y` moves an instance with no collision test of its own.** AFK's steering and teleports rely on this. This is **inferred** from GameMaker semantics. AFK never tested a write into or through a blocker.
 
 7.7 **A sealed hero makes the path search very expensive.**
 - With the hero inside closed walls, every outside monster's search fails only after flooding the whole outside field.
@@ -442,7 +442,7 @@ Monsters there then have the zone's exact stats, and loot and XP stay the game's
 | Click answered in 13-15 s | 125-187 ms (IPC thread) | `7cea1ee` |
 
 **Build and date bound.**
-- Everything above is tied to the 2026-09-26..10-08 window. Builds are named only in the 10-06 and 10-07 docs (`exe-281751552-pe6aaa6779-111b8000`).
+- Everything above is tied to the 2026-09-17..10-08 window. Builds are named in PHASE0_NOTES (`exe-281798144-pe6a9ed3ee-111c3000`, the pre-2026-09-18 build, which §10.2-10.6's 09-17 runs used) and in the 10-06 and 10-07 docs (`exe-281751552-pe6aaa6779-111b8000`).
 - Event names are resolved by string from the executable (`gml_Object_objColorBlindShader_Draw_75`, `Screen_Cursor_obj`, `Menu_Controller_obj`). So are script names and object/variable names (`monsterHandleArray`, `minimap*`, `mouse_gui_scalar`, `zoneGenFound`, `pathFailed`). Any of them can move or change with a game update.
 - The castle-share README (`f581067`) says explicitly that it does not claim compatibility with every build.
 
@@ -473,7 +473,7 @@ The measured ones are folded into [`RUNTIME_DATA_MODELS.md` §21](../RUNTIME_DAT
 6. The game hides the Windows cursor (`cr_none`) and resets `window_set_cursor`. The cursor is `Cursor_spr`, drawn by `Menu_Controller_obj` at `global.mouse_gui_scalar`. `Screen_Cursor_obj` has no instance in play (5.7). **measured**.
 7. Menu activation goes through `UI_Node_Parent_obj.activationFunc`. `event_perform(7, 25)` activates a node safely; calling the `UiA*` scripts directly broke later mouse input (5.8). **measured**.
 8. `effect_create_depth` effects do not display (9.1). **measured**.
-9. Monster spawn: `enemyRarity`, `affixList` plus `enemyAffix` are set before stats build; `aggroRange` and `distance` are reset to 300 at stats build; monsters self-delete in towns; the active box is about 650-850 px; the active list is `Controller_obj.monsterHandleArray` / `monsterHandleArrayCount`, rebuilt by `ActivateDeactivateProps` (6.2-6.5). **measured**.
+9. Monster spawn: `enemyRarity`, `affixList` plus `enemyAffix` are set before stats build; `aggroRange` is reset to 300 at stats build (so it, and `distance`, which AFK also sets, must be set a frame later); monsters self-delete in towns; the active box is about 650-850 px; appending ids to `Controller_obj.monsterHandleArray` / `monsterHandleArrayCount` after `ActivateDeactivateProps` keeps far monsters stepping (6.2-6.5). **measured**. Which routine rebuilds that array, and how often, is **inferred** (see 6.5 and the runtime reference's §11.3).
 10. The monster sprite variables `enemy_*`, `enemy_corpse` and `shadow_sprite` (3.4). **measured** that prefetching them fixes drawing.
 11. Room routines that decide town or zone behaviour: `CheckTown`, `RoomIsZone`, `GetAct`, `GetMonsterLevel`, `ReturnEnemyStats`, `GetRoomName` (6.7). **measured**.
 12. `Invisible_Wall_obj`: scale per 32 px, `addToMinimap`, found by `collision_point` (7.1). **measured**. Whether it blocks the hero is not established.
