@@ -188,6 +188,8 @@ debugger), in our words (`RUNTIME_DATA_MODELS.md` § 21.5, § 21.6):
   to 49 in `Act_02_01`), each a Piece of Gurag's or of the Grim Reaper's Soul;
   with the switch off, kills dropped none. The unforced rate is our code's
   arithmetic on the measured `G`, not measured (a gem is too rare).
+- **`RoomActIndex` answered 2 in `Act_02_02`** (Live procedure 2 attempt 2,
+  through the status line's `act=2`), the act `room_acts.json` gives it.
 - **Our transfer moves the player into the boss room**: a confirmed piece in
   `Act_01_01`, `Town_01_rm` or `Town_02_rm` put the player in `Act_01_Boss` or
   `Act_02_Boss` within seconds, with no portal, and used one piece; with the
@@ -208,9 +210,11 @@ model uses, it is carried in the model's `HYPOTHESES`, `None` until the curated
 file's matching `open_questions` entry is `measured`; the measured ones above
 (`gem_roll_self_is_the_source`, `potion_use_true_clears_the_item`) are `True`.
 `class_11_never_stacks` and `room_outside_the_switch_is_undefined` are also
-measured above (Live procedure 3: true, and false, since the answer outside
-the switch is `false`, not undefined); their curated entries still read
-`pending`, so the model keeps them `None` until those entries are folded in.
+measured above (Live procedure 3, capture
+`forgepact-197-boss-soul-pieces-live-3`: true, and false, since the answer
+outside the switch is `false`, not undefined); their curated entries read
+`measured` with that capture and answer, and the model carries them as `True`
+and `False`, its `act_of_room` reading a `false` answer as no act.
 
 - **`gem_one_in_its_rate`**: whether `DropGems` gives each socketable exactly 1
   in its `GetDropRate` answer, or picks one by weight among them. The model
@@ -296,7 +300,8 @@ A pure function of whole numbers, booleans and exact fractions
 ([`soul_piece_model.py`](../../hs-game-sdk/python/hs_game_sdk/soul_piece_model.py)):
 
 - `act_of_room(room_act_index)`: the act, `RoomActIndex`'s answer itself, 1 to
-  9; `None` when the answer is undefined. Any other answer is refused.
+  9; `None` when the answer is `false` (measured outside the switch) or
+  undefined. Any other answer is refused.
 - `stacks(held, picked)`: whether the game merges a picked-up `Item` (class,
   `b`, `c`, seed) into a held one: both of class 12 to 15, the same class, the
   same `b` and `c`; the seed is not an input to the answer.
@@ -306,7 +311,8 @@ A pure function of whole numbers, booleans and exact fractions
   an unknown chance.
 - `item_used_up(potion_use_answer)`: a confirmed backpack use leaves the item
   gone only when `PotionUse` answered true.
-- `HYPOTHESES`: the questions above, `None` until measured.
+- `HYPOTHESES`: the questions above, `None` until measured, then the measured
+  answer.
 
 With the transforms of "Our code", the test checks the baseline and the target.
 Baseline: the measured merge of a key-base piece into the real key (the seed

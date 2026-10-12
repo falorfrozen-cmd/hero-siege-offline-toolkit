@@ -45,6 +45,15 @@ HOOKS_DIR = ROOT / ".claude" / "hooks"
 FORGEPACT_HEADER = ROOT / "ForgePact" / "plugin" / "include" / "ForgePact" / "SoulPieceMod.hpp"
 LIVE_1 = "forgepact-197-boss-soul-pieces-live-1"
 LIVE_3 = "forgepact-197-boss-soul-pieces-live-3"
+LIVE_2 = "forgepact-197-boss-soul-pieces-live-2"
+LIVE_4 = "forgepact-197-boss-soul-pieces-live-4"
+#: Every session's capture a measured entry may name.
+LIVE_CAPTURES = (LIVE_1, LIVE_2, LIVE_3, LIVE_4)
+#: The rooms a session read RoomActIndex in, with the act and the capture.
+MEASURED_ROOMS = {
+    "Town_01_rm": (1, LIVE_1), "Act_01_01": (1, LIVE_1), "Act_02_01": (2, LIVE_1),
+    "Town_02_rm": (2, LIVE_3), "Act_02_Boss": (2, LIVE_3), "Act_02_02": (2, LIVE_2),
+}
 
 sys.path.insert(0, str(SDK_PY))
 from hs_game_sdk import soul_piece_model as model  # noqa: E402
@@ -209,13 +218,17 @@ class BaselineTests(unittest.TestCase):
     def test_room_act_index_answers_the_act(self):
         self.assertEqual([model.act_of_room(i) for i in range(1, ACT_COUNT + 1)], list(range(1, 10)))
         self.assertIsNone(model.act_of_room(None))
+        # Live procedure 3 read `bool:false` outside the switch (Act_01_Boss,
+        # Act_01_Pregame): no act, the same as undefined.
+        self.assertIsNone(model.act_of_room(False))
+        self.assertIs(model.HYPOTHESES["room_outside_the_switch_is_undefined"], False)
         for bad in (0, -1, 10, True):
             with self.subTest(bad=bad):
                 with self.assertRaises((ValueError, TypeError)):
                     model.act_of_room(bad)
-        # Live procedure 1's three readings: the answer is the room's act itself.
+        # The sessions' readings: the answer is the room's act itself.
         measured = {r["room"]: r["act"] for r in ROOMS["rooms"] if r["status"] == "measured"}
-        self.assertEqual(measured, {"Town_01_rm": 1, "Act_01_01": 1, "Act_02_01": 2})
+        self.assertEqual(measured, {room: act for room, (act, _) in MEASURED_ROOMS.items()})
         for room, answer in measured.items():
             with self.subTest(room=room):
                 self.assertEqual(model.act_of_room(answer), _table_rooms()[room])
@@ -283,7 +296,10 @@ class BaselineTests(unittest.TestCase):
             with self.subTest(key=key):
                 if keyed[key]["status"] == "measured":
                     self.assertIsNotNone(value)
-                    self.assertEqual(keyed[key]["capture"], LIVE_1)
+                    self.assertIn(keyed[key]["capture"], LIVE_CAPTURES)
+                    # Where the entry records its answer, the model carries it.
+                    if isinstance(keyed[key].get("answer"), bool):
+                        self.assertIs(value, keyed[key]["answer"])
                 else:
                     self.assertIsNone(value)
 
@@ -489,9 +505,9 @@ class CuratedTests(unittest.TestCase):
                 self.assertIn(row["act"], range(1, ACT_COUNT + 1))
                 self.assertIn(row["status"], ("static_reading", "measured"))
                 if row["status"] == "measured":
-                    self.assertEqual(row["capture"], LIVE_1)
+                    self.assertEqual(row["capture"], MEASURED_ROOMS[row["room"]][1])
         self.assertEqual(sorted(r["room"] for r in rows if r["status"] == "measured"),
-                         ["Act_01_01", "Act_02_01", "Town_01_rm"])
+                         sorted(MEASURED_ROOMS))
         # § 21.1's rows per act, 1 to 9.
         per_act = [sum(1 for r in rows if r["act"] == act) for act in range(1, ACT_COUNT + 1)]
         self.assertEqual(per_act, [21, 24, 16, 15, 14, 20, 17, 19, 29])
@@ -552,7 +568,10 @@ class CuratedTests(unittest.TestCase):
         self.assertNotIn("offset_px", transfer)
         self.assertEqual((transfer["status"], transfer["capture"], transfer["live_check"]),
                          ("measured", LIVE_3, "goto-travel"))
-        self.assertEqual(transfer["reset_status"], "static_reading")
+        # Live procedure 2 attempt 2: the second transfer after a kill read
+        # fresh=1 cleared=1, and Gurag came out again.
+        self.assertEqual((transfer["reset_status"], transfer["reset_capture"], transfer["reset_live_check"]),
+                         ("measured", LIVE_2, "on-reentry-reset"))
         for key in ("travel_source", "reset_source"):
             path, _, section = transfer[key].partition(" § ")
             with self.subTest(source=key):
@@ -565,13 +584,15 @@ class CuratedTests(unittest.TestCase):
             "base_repository_name": "passed", "use_reaches_potion_use_with_the_piece": "passed",
             "portal_obj_travels_to_its_room": "failed", "pentagram_brings_out_the_boss": "passed",
             "boss_dies_in_its_own_room": "passed", "zone_revisit_after_a_portal": "passed",
+            "class_11_never_stacks": True, "room_outside_the_switch_is_undefined": False,
         })
         for name in answered:
             with self.subTest(name=name):
                 self.assertEqual(questions[name]["status"], "measured")
-        # The fresh boss is Live procedure 2's to measure.
+        # The fresh boss was Live procedure 2's to measure (attempt 2, on-reentry-boss).
         reentry = questions["boss_returns_on_reentry"]
-        self.assertEqual((reentry["live_check"], reentry["status"]), ("on-reentry-boss", "pending"))
+        self.assertEqual((reentry["live_check"], reentry["status"], reentry["capture"], reentry["answer"]),
+                         ("on-reentry-boss", "measured", LIVE_2, "passed"))
 
     def test_each_act_says_what_its_boss_rests_on(self):
         statuses = {row["act"]: row["status"] for row in DATA["acts"]}

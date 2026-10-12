@@ -9,12 +9,15 @@ checks, against `hs-game-sdk/curated/boss_soul_pieces.json` and
 
 - The act of a room (measured): `RoomActIndex(room)` answers the act itself,
   1 to 9, for the 175 rooms of its switch (Live procedure 1 read 1 in
-  `Town_01_rm` and `Act_01_01`, 2 in `Act_02_01`), and undefined for every
-  other room (static reading).
+  `Town_01_rm` and `Act_01_01`, 2 in `Act_02_01`; Live procedures 3 and 2
+  read 2 in `Town_02_rm`, `Act_02_Boss` and `Act_02_02`), and `false` for a
+  room outside it (Live procedure 3 read `bool:false` in `Act_01_Boss` and
+  `Act_01_Pregame`; the static reading had said undefined).
 - The stack rule (static reading): the pickup's stack attempts merge an item
   into one whose class, `b` and `c` match, and the bag's attempt takes only
   classes 12 to 15. The seed `a` is never compared. Live procedure 1 measured a
-  class-12 item merging into a real key of the same definition.
+  class-12 item merging into a real key of the same definition, and Live
+  procedure 3 five class-11 items (pieces and a plain logo) staying apart.
 - The gem roll (static reading): `DropGems` runs once per dying source whose
   `LoadDrops` drop type 6 gate passed, and rolls the socketables of repository
   category 15 against their `GetDropRate` answer. Whether that gives the Gem
@@ -26,7 +29,7 @@ checks, against `hs-game-sdk/curated/boss_soul_pieces.json` and
 
 This module models the game only. ForgePact's boss soul pieces (ForgePact#197:
 the piece's denominator, five quarters of the gem's chance, its room rules,
-its portal and its verdicts) are that mod's own code and live in the test as
+its transfer and its verdicts) are that mod's own code and live in the test as
 input transforms, pinned to `SoulPieceMod.hpp`.
 
 Every value is an int, a bool or an exact `Fraction`. Nothing here draws a
@@ -58,11 +61,12 @@ HYPOTHESES: Dict[str, Optional[bool]] = {
     # `DropGems`' self is the dying monster (Live procedure 1: 29 rolls, self a
     # descendant of `Enemy_Parent_obj` every time).
     "gem_roll_self_is_the_source": True,
-    # A room outside the switch answers undefined (Live procedure 3's
-    # `portal-travel` reads the answer in `Act_01_Boss`, which is not in it).
-    "room_outside_the_switch_is_undefined": None,
-    # A class-11 item never stacks in the bag (Live procedure 3's `piece-apart`).
-    "class_11_never_stacks": None,
+    # A room outside the switch answers undefined: no, it answers `false`
+    # (Live procedure 3 read `bool:false` in `Act_01_Boss` and `Act_01_Pregame`).
+    "room_outside_the_switch_is_undefined": False,
+    # A class-11 item never stacks in the bag (Live procedure 3's `piece-apart`:
+    # five class-11 items picked up, each in its own cell).
+    "class_11_never_stacks": True,
     # `PotionUse` answering true makes the game clear the item's cells (Live
     # procedure 1's `use-control`, the Edible PAS Logo).
     "potion_use_true_clears_the_item": True,
@@ -88,10 +92,12 @@ def _whole(name: str, value: int) -> int:
     return value
 
 
-def act_of_room(room_act_index: Optional[int]) -> Optional[int]:
-    """The act (1..9): `RoomActIndex`'s answer itself, `None` (undefined) for a
-    room outside its switch. An answer outside 1..9 is refused."""
-    if room_act_index is None:
+def act_of_room(room_act_index: Union[int, bool, None]) -> Optional[int]:
+    """The act (1..9): `RoomActIndex`'s answer itself, `None` (no act) for a
+    room outside its switch, which answers `false` (measured, Live procedure 3)
+    or undefined (`None`, the static reading). `True` and an answer outside
+    1..9 are refused."""
+    if room_act_index is None or room_act_index is False:
         return None
     answer = _whole("room_act_index", room_act_index)
     if not 1 <= answer <= ACT_COUNT:
