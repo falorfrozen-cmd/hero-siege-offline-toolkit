@@ -1380,8 +1380,8 @@ written by separate calls, so one can be rewritten while the other is not.
   procedure 3 (capture `forgepact-197-piece-icon-stack-live-3`) wrote the bag
   file the same way. So the static reading above (the inventory window's
   Destroy asks for kind 9) is measured where the window closing is the
-  stash's; the bag window's own close was not measured, because neither I nor
-  B opened it (the owner opens it with C).
+  stash's; the bag window's own close was not measured, because neither the I
+  key nor the B key opened it (the owner opens it with C).
 - A stop after that save did not write the bag file. In the same session a
   piece picked up after the stash's close took a stack from 3 to 4 with no
   save; the graceful stop then rewrote `herosiege13.hss` but not

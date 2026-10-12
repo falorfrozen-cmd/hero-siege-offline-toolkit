@@ -19,7 +19,7 @@
     "name_status": "measured",
     "name_live_check": "base-consumable",
     "name_capture": "forgepact-197-boss-soul-pieces-live-3",
-    "note": "Live procedure 1 read class 11, b 12 on the owner's own Edible PAS Logo (crafted in the session); Live procedure 3's base-consumable read category 11's entry named consumable_edible_pas_logo at index 12. ForgePact resolves b by the name at run time, never by the index. Class 11 is outside the bag's stack classes, so a piece never stacks (Live procedure 3's piece-apart: five items, each o=1)."
+    "note": "Live procedure 1 read class 11, b 12 on the owner's own Edible PAS Logo (crafted in the session); Live procedure 3's base-consumable read category 11's entry named consumable_edible_pas_logo at index 12. ForgePact resolves b by the name at run time, never by the index. Class 11 is outside the bag's stack classes, so the game's own stack code never stacks a piece (Live procedure 3's piece-apart: five items, each o=1); ForgePact's bag merge joins pieces of one act (see the InventoryGridAddToStack entry)."
   },
   "key_base": {
     "repository_name": "keys_bifrost_key",

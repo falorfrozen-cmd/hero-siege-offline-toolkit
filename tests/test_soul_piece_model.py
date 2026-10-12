@@ -1178,6 +1178,26 @@ class ParityTests(unittest.TestCase):
         self.assertRegex(body, r"have\s*>\s*kBagStackCap\s*-\s*adding")
         self.assertIn("BagPieceActOfItem(incoming", body)
 
+    def test_a_zero_count_is_one_piece_to_the_merge_but_not_to_the_model(self):
+        # The documented difference (spec § Our code, "The bag merge"): the
+        # merge's StackCount takes a count under 1 as one piece, while the
+        # model's `stacks` sums the raw `o`. What the game does with 0 is not read.
+        self.assertRegex(self.code, r"inline long long StackCount\(long long count\)\s*\{\s*"
+                                    r"return count < 1 \? 1 : count;\s*\}")
+        self.assertIn("StackCount(incoming.count)", self._body("inline MergeDecision DecideMerge"))
+        held = model.Item(13, 4, 0, 1)
+        cap = model.BAG_STACK_CAP
+        # The model: a held count of 0 adds nothing, so a full incoming stack still fits.
+        self.assertTrue(model.stacks(held._replace(o=0), held._replace(a=2, o=cap)))
+        # The merge's count (StackCount, as pinned above) of the same pair is
+        # one over the cap, so DecideMerge's `have > kBagStackCap - adding` refuses it.
+        def stack_count(count):
+            return 1 if count < 1 else count
+        self.assertEqual(stack_count(0), 1)
+        self.assertTrue(stack_count(0) > cap - stack_count(cap))
+        # Negative control: from a count of 1 the two agree, and both refuse.
+        self.assertFalse(model.stacks(held._replace(o=1), held._replace(a=2, o=cap)))
+
     def test_the_transfer_leads_to_the_boss_room(self):
         self.assertRegex(self._body("inline const char* TransferTarget"), r"boss->bossRoom")
         self.assertRegex(self._body("inline UseVerdict DecideUse"), r"return UseVerdict::Transfer;")

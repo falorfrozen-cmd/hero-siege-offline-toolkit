@@ -257,8 +257,11 @@ research build with the x64dbg debugger attached), in our words
   seeded 777101, one 777102, one plain) picked up into five bag items with
   count 1 each (`class_11_never_stacks`), each pickup reaching `AddToInventory`
   and then `InventoryGridAddToStack`, never `GridAddToStack`, under the
-  debugger. A save holding a piece loaded after a relaunch with ForgePact's
-  dress off, the piece reading as an Edible PAS Logo with its seed kept.
+  debugger. A save holding a piece loaded after a relaunch with the research
+  probe's dress (piece names) off, and in that first build's load the piece
+  read as an Edible PAS Logo with its seed kept. The follow-up's Live
+  procedure 4 reload showed the piece's name and the gem's icon instead
+  (§ Not established, "What a piece shows with the plugin removed").
 - **A piece's use.** Its right-click and confirm reached `CanUsePotion` and
   `PotionUse` carrying the piece, and a true `PotionUse` answer that did not
   run the logo's own use made the game clear its cell; the logo's own effect
@@ -483,6 +486,9 @@ name (category 15, `socketable_gem_of_incarnation`), never by index.
   read included, returns the game's result untouched. Its verdicts, in order:
   `off`, `not-piece`, `no-target`, `cap`, `merge`. The model leaves this out:
   `stacks` stays the game's rule, under which a class-11 piece never merges.
+  The two also count differently: ForgePact's merge counts a missing or zero
+  `o` as one piece (`StackCount`), while the model's `stacks` sums the raw
+  value; what the game itself does with an `o` of 0 was not read.
 - **The use.** A detour on `PotionUse`: for an item that is a piece, the
   original is never called. Verdicts, in order: `off`, `not-piece`, `no-act`
   (the player's room has no act), `boss-room` (the drop's name rule: a `_Boss`,
