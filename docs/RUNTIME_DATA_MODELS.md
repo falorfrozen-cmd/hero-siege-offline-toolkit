@@ -1168,6 +1168,20 @@ All **measured 2026-09-22.**
 [restart research, Results](../ForgePact/docs/restart-always-available-research.md#results),
 [Decision](../ForgePact/docs/restart-always-available-research.md#decision)
 
+**The pause menu's Exit (Static reading, 2026-10-13, ForgePact #201; not
+measured).** `UiAIngameExit` is named beside `UiAIngameRestart` among the
+pause menu's activations, so it is read as the Exit button's. It saves the
+character through `SaveLocalFile` (six call sites; which file kinds they ask
+for was not read), calls `DisableEnemyStep`, and then goes to room 150, which
+`hs-game-sdk` names `Chose_rm` (the character select). It does not end the
+game. So Escape, Exit, then closing the window is: the game's own save, a
+room change to the character select, and the same window close from a menu
+room. Not established: the button's text and `uiNodeCallstack`, whether a
+confirmation follows, and that an injected Escape opens the menu (on
+2026-09-22 it was opened by hand). #201's Live procedure 1 measures them, with
+hs-drive's `hs_exit_to_menu`.
+[graceful stop research](../ForgePact/docs/graceful-stop-exit-research.md#static-evidence)
+
 ### 8.5 Structure worth knowing before designing a UI feature
 
 From the SDK hierarchy and names (**static**): the game has no time-scale, delta
@@ -3302,7 +3316,7 @@ All **measured** unless marked.
 | Special content at 20× | dies at about 13.4k instances | §5.8 |
 | A creator acted on before `enemyCreatorTimer` is real | no crash — the pack never spawns | §11.2 |
 | Removing a stash item's map entry (`RemoveItemFromMap` on map 9) but leaving its cell in the tab | the game ends at its next stash save — measured twice, in two launches; `GridRemoveItem` on the cell in the same take avoids it | §17 |
-| A plugin DLL whose global `std::thread` is still joinable when the game exits | `std::terminate` while `ExitProcess` destroys that DLL's globals (the other threads are already gone): a WER report at close, `ucrtbase.dll` `0xc0000409`, fast-fail 7 (`abort`). HS-Offline-Tracker's producer does it; 9 of the 10 dumps Windows kept on 2026-09-25/26 show it, the game's own exit path under it, and a plain `CloseMainWindow` at the main menu does it too. A game started from a tool running under Git Bash inherits error mode `0x3` (`SEM_NOGPFAULTERRORBOX`) and aborts without a dump or an event: read the exit code | [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#the-crash-of-2026-09-26-013627) |
+| A plugin DLL whose global `std::thread` is still joinable when the game exits | `std::terminate` while `ExitProcess` destroys that DLL's globals (the other threads are already gone): a WER report at close, `ucrtbase.dll` `0xc0000409`, fast-fail 7 (`abort`). HS-Offline-Tracker's producer does it; 9 of the 10 dumps Windows kept on 2026-09-25/26 show it, the game's own exit path under it, and a plain `CloseMainWindow` at the main menu does it too. A game started from a tool running under Git Bash inherits error mode `0x3` (`SEM_NOGPFAULTERRORBOX`) and aborts without a dump or an event: read the exit code. In-world graceful stops too (ForgePact #201, measured from dumps and WER reports, 2026-10-13): all ten dumps Windows kept on 2026-10-12/13, nine of them `hs_stop_game` stops (most with a character in the world), raise fast fail 7 at `ucrtbase!abort` from `terminate`, called from `HSOfflineTrackerProducer.dll`'s exit-time destructor under `LdrShutdownProcess`; the two 2026-10-08 batch closes left WER reports with the same bucket and the producer loaded. Not established until #201's Live procedure 2: that an in-world close, a close after Escape -> Exit, or a close with mods on exits `0x00000000` with the producer held aside, since while it is loaded its abort runs before ForgePact's own exit-time code and would mask a fault there | [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#the-crash-of-2026-09-26-013627), [graceful stop research](../ForgePact/docs/graceful-stop-exit-research.md#static-evidence) |
 | `RoomGoto` into `Act_01_06` from code | crash | §22.7 |
 | `PC_GetVariableGMLWrapper` on a far-out handle (id 999999) | crash | §22.8 |
 | A gold amount mistaken for a handle (call not recorded) | crash in the anti-cheat module | §22.8 |
