@@ -16,8 +16,8 @@ covers the gates that come before a roll, and
 differently.
 
 It was written from the shared references only:
-[`docs/RUNTIME_DATA_MODELS.md`](../RUNTIME_DATA_MODELS.md) (RDM) § 13.4, § 22.4
-and § 22.8, and ForgePact's own source for the Our code section.
+[`docs/RUNTIME_DATA_MODELS.md`](../RUNTIME_DATA_MODELS.md) (RDM) § 13.4, § 23.4
+and § 23.8, and ForgePact's own source for the Our code section.
 
 Every claim carries one of four labels, and a source:
 
@@ -73,11 +73,11 @@ Every claim carries one of four labels, and a source:
   The roll calls `CreateDefaultParams` with the entry's sub-type and base, and
   the placement takes the item's type from the entry itself. One hit is one
   ground item.
-- **The ordinary unique roll makes one draw** (RDM § 22.4 and § 22.8, static
+- **The ordinary unique roll makes one draw** (RDM § 23.4 and § 23.8, static
   reading of 2026-10-11 and 2026-10-12 for ForgePact#158).
   - `DropUniqueItems` is reached from `LoadDrops`. It chooses a sub-list
     `lootListUnique[k]`, k from 0 to 4, from a protected zone value that has a
-    random chance of stepping up (§ 22.4).
+    random chance of stepping up (§ 23.4).
   - It reads one random index of that sub-list. Only when the entry there is a
     triple does it look it up through `GetUniqueRepoStruct`.
   - It keeps the entry when the rarity is below 7 and the entry is not flagged
@@ -117,7 +117,7 @@ Every claim carries one of four labels, and a source:
   - Liquor Holster's 0/51, which a type 10 unique also carries (RDM § 13.4);
   - the crown's stand-in, Mask of the Celestial, 0/86.
 - **The sub-list lengths** (RDM § 13.4, Live 2 of the list injection,
-  2026-10-02; repeated in § 22.8). `lootListUnique[0]` to `[5]` held 50, 61,
+  2026-10-02; repeated in § 23.8). `lootListUnique[0]` to `[5]` held 50, 61,
   79, 152, 221 and 380 entries, every one a triple. The sizes were the same
   after a zone change and at the end of the session. Liquor Holster's triple
   appears on `[5]` once, so its n there is 1.
@@ -204,7 +204,7 @@ input transforms, and pins them to ForgePact's source.
 - **Whether the ordinary roll's random index can equal the sub-list's length.**
   If it can, that index reads no triple and the call drops nothing, so every
   share above becomes r / (L_k + 1) instead of r / L_k.
-- **How k is chosen for each ordinary unique-roll call.** RDM § 22.4 names a
+- **How k is chosen for each ordinary unique-roll call.** RDM § 23.4 names a
   protected zone value with a random chance of stepping up; its distribution is
   not measured.
 - **D_k**, how many entries of each sub-list the ordinary roll keeps.

@@ -83,7 +83,7 @@
       "date": "2026-10-02",
       "source": [
         {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "`[4]` 221 and `[5]` 380"},
-        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 22.8 The ordinary unique roll makes one draw"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 23.8 The ordinary unique roll makes one draw"},
         {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "## Session 4: the list layout (issue #74)"}
       ],
       "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_DropUniqueItems"],

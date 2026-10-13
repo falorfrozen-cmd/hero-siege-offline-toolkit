@@ -156,7 +156,7 @@
     "findings": {
       "flight-depth": "the player's layer read -5500, the front end of the game layers, and a canopy still covered him: canopies sit on the room layer Tree_Leaves, in front of every game layer (RDM 19.7)",
       "bag-icon": "Pocket Elf's tooltip had no Flight row: the gold rows anchored at the first stat row the item has, and it has none",
-      "charm-grid-size, rolls, guard-control": "with Gabriel Wings and Witch's Broomstick both worn, localCharmItemArray listed the Wings only; the game counts one flight charm (owner-stated, RDM 22.1). The guard's own counters passed (deferred +5, full +4, kept 1)",
+      "charm-grid-size, rolls, guard-control": "with Gabriel Wings and Witch's Broomstick both worn, localCharmItemArray listed the Wings only; the game counts one flight charm (owner-stated, RDM 23.1). The guard's own counters passed (deferred +5, full +4, kept 1)",
       "flight-excluded": "neither probed spot met a Wall_Parent_obj while the family read blocked at both (the control)"
     },
     "debugger": {

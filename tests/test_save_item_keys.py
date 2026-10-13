@@ -60,6 +60,17 @@ CHARACTER_INVENTORY = {
 }
 
 
+# A bag file's Key tab written as raw text, the way the game spells it, since
+# json.dumps cannot: a fractional `b` saved with two decimals (`2.10`, what a
+# ForgePact #197 key piece's definition is meant to survive a save as), `c` as
+# `0.0`, and one entry with no `a` and no `o` (printed as `-`).
+KEY_TAB_RAW = ('{"inventory_key_tab":{'
+               '"0-0-121212-12":{"data":{"w":1,"o":3,"b":2.10,"a":774179614,"j":0,"c":0.0},"pos":[1,3.0]},'
+               '"0-0-131313-12":{"data":{"w":1,"o":79,"b":2,"a":7248068,"c":0.0},"pos":[3,4.0]},'
+               '"0-0-141414-12":{"data":{"b":2.20,"c":1.0},"pos":[0,0]}},'
+               '"inventory_tab_0":{}}')
+
+
 def character_text(inventory: dict) -> str:
     encoded = base64.b64encode(json.dumps(inventory).encode("utf-8")).decode("ascii")
     return ('[0]\r\nlevel="100.000000"\r\nname="Sorak"\r\n'
@@ -79,6 +90,8 @@ class SaveItemKeysTests(unittest.TestCase):
         self.stash.write_text(editor.encode_hss(json.dumps(STASH)), encoding="ascii")
         self.bag.write_text(editor.encode_hss(json.dumps(BAG)), encoding="ascii")
         self.char.write_text(editor.encode_hss(character_text(CHARACTER_INVENTORY)), encoding="ascii")
+        self.keytab = self.dir / "inventory_order_14.hss"
+        self.keytab.write_text(editor.encode_hss(KEY_TAB_RAW), encoding="ascii")
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -108,7 +121,7 @@ class SaveItemKeysTests(unittest.TestCase):
         # Object keys that are not item keys (containers, members) are never listed.
         self.assertFalse([k for k in listed if not k.startswith("0-0-")], listed)
 
-    def test_baseline_character_fields_that_are_not_base64_json_are_skipped(self):
+    def test_baseline_character_fields_that_are_not_base64_json_are_ignored(self):
         containers = self.keys(self.char)[str(self.char)]
         self.assertFalse([c for c in containers if c.startswith(("level", "name", "loot_filter_new"))], containers)
 
@@ -150,6 +163,88 @@ class SaveItemKeysTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("stash_tab_1: keys=2", out)
         self.assertIn("  0-0-222222-10", out)
+
+    # ---- --defs: each key's saved definition, as written --------------------
+
+    def test_baseline_without_defs_output_is_unchanged(self):
+        # The plain output, pinned line for line as the tool printed it before
+        # --defs existed, over every fixture, the fractional Key tab included.
+        files = (self.stash, self.bag, self.char, self.keytab)
+        code, out, err = self.run_tool(*files)
+        self.assertEqual(code, 0, err)
+        header = "save_item_keys: {} (read-only; the last saved state - run it with the game closed)"
+        expected = [
+            header.format(self.stash), "material_tab: keys=1", "  0-0-333333-14",
+            "stash_tab_1: keys=2", "  0-0-111111-3", "  0-0-222222-10",
+            header.format(self.bag), "inventory_material_tab: keys=1", "  0-0-555555-14",
+            "inventory_tab_0: keys=1", "  0-0-444444-7",
+            header.format(self.char), "inventory.equipped_items: keys=1", "  0-0-777777-7",
+            "inventory.personal_stash: keys=1", "  0-0-666666-3",
+            header.format(self.keytab), "inventory_key_tab: keys=3",
+            "  0-0-121212-12", "  0-0-131313-12", "  0-0-141414-12",
+        ]
+        self.assertEqual(out, "\n".join(expected) + "\n")
+        # The definition fields never reach the plain output.
+        self.assertNotIn("2.10", out)
+        self.assertNotIn("b=", out)
+
+        code, out, err = self.run_tool(self.keytab, self.char, "--key", "0-0-121212-12")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "\n".join([
+            header.format(self.keytab), "inventory_key_tab: keys=3", "  0-0-121212-12",
+            header.format(self.char),
+            "key 0-0-121212-12: inventory_order_14.hss:inventory_key_tab"]) + "\n")
+
+        code, out, err = self.run_tool(self.keytab, self.char, "--json")
+        self.assertEqual(code, 0, err)
+        payload = {"files": {
+            str(self.keytab): {"inventory_key_tab": ["0-0-121212-12", "0-0-131313-12", "0-0-141414-12"]},
+            str(self.char): {"inventory.equipped_items": ["0-0-777777-7"],
+                             "inventory.personal_stash": ["0-0-666666-3"]}}}
+        self.assertEqual(out, json.dumps(payload, indent=1, sort_keys=True) + "\n")
+
+    def test_target_defs_print_each_keys_definition_as_written(self):
+        code, out, err = self.run_tool(self.keytab, self.char, "--defs")
+        self.assertEqual(code, 0, err)
+        lines = out.splitlines()
+        # `2.10` stays `2.10` (a parsed float would print 2.1), `0.0` stays `0.0`.
+        self.assertIn("  0-0-121212-12  a=774179614 b=2.10 c=0.0 o=3", lines)
+        self.assertIn("  0-0-131313-12  a=7248068 b=2 c=0.0 o=79", lines)
+        # A field the entry does not carry is `-`.
+        self.assertIn("  0-0-141414-12  a=- b=2.20 c=1.0 o=-", lines)
+        # A character file's base64 field is read the same way.
+        self.assertIn("  0-0-666666-3  a=- b=1 c=- o=-", lines)
+        self.assertIn("inventory_key_tab: keys=3", lines)
+        self.assertNotIn("b=2.1 ", out)
+
+        # --key still narrows the listing, and the closing lines are unchanged.
+        code, out, err = self.run_tool(self.keytab, "--defs", "--key", "0-0-141414-12")
+        self.assertEqual(code, 0, err)
+        self.assertIn("  0-0-141414-12  a=- b=2.20 c=1.0 o=-", out.splitlines())
+        self.assertNotIn("0-0-121212-12", out)
+        self.assertIn("key 0-0-141414-12: inventory_order_14.hss:inventory_key_tab", out)
+
+        code, out, err = self.run_tool(self.keytab, self.char, "--defs", "--json")
+        self.assertEqual(code, 0, err)
+        payload = json.loads(out)
+        # The listing itself is what it is without --defs.
+        self.assertEqual(payload["files"][str(self.keytab)]["inventory_key_tab"],
+                         ["0-0-121212-12", "0-0-131313-12", "0-0-141414-12"])
+        defs = payload["defs"][str(self.keytab)]["inventory_key_tab"]
+        self.assertEqual(defs["0-0-121212-12"], {"a": "774179614", "b": "2.10", "c": "0.0", "o": "3"})
+        self.assertEqual(defs["0-0-141414-12"], {"a": "-", "b": "2.20", "c": "1.0", "o": "-"})
+        self.assertEqual(payload["defs"][str(self.char)]["inventory.personal_stash"]["0-0-666666-3"],
+                         {"a": "-", "b": "1", "c": "-", "o": "-"})
+        # Negative control: the JSON spells the fixture's b exactly, so a
+        # tool that parsed it to a float would have been caught above.
+        self.assertIn('"b":2.10', KEY_TAB_RAW)
+        # --key narrows the JSON defs as it narrows the text.
+        code, out, err = self.run_tool(self.keytab, "--defs", "--key", "0-0-141414-12", "--json")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["defs"][str(self.keytab)].keys(), {"inventory_key_tab"})
+        self.assertEqual(list(json.loads(out)["defs"][str(self.keytab)]["inventory_key_tab"]),
+                         ["0-0-141414-12"])
+        self.assertEqual(json.loads(KEY_TAB_RAW)["inventory_key_tab"]["0-0-121212-12"]["data"]["b"], 2.1)
 
     # ---- it never writes ---------------------------------------------------
 

@@ -1318,6 +1318,87 @@ moves. Saving to the main menu rewrites `herosiege<N>.hss` and
 [prospect window, Results](../ForgePact/docs/prospect-window-research.md#results),
 [Stage B results](../ForgePact/docs/prospect-window-research.md#stage-b-results)
 
+**When the game writes the bag file.** The character file and the bag file are
+written by separate calls, so one can be rewritten while the other is not.
+
+- `gml_Script_SaveLocalFile` takes a file kind first and a local player number
+  second (the inventory window passes its own `uiLocalPlayer`). Kind 0 writes
+  the character file `herosiege<N>.hss` through `SaveSlot`, kind 4 the stash
+  through `SaveStash`, and kind 9 the bag file `inventory_order_<N>.hss`
+  through `SaveInventoryOrderNew`; each is wrapped in `SaveStart` and
+  `SaveCommit`, the shape § 17 measured for the stash. `SaveInventoryOrderFunc`
+  also keeps the bag writer as a method value, which a scan for direct call
+  sites cannot see. **Static reading** (2026-10-12).
+- Kind 9 is asked for by the inventory window's Destroy event
+  (`UI_Inventory_Parent_obj`; offline, kind 0 and then kind 9) and by
+  `Controller_obj`'s Game End event (offline, kinds 0 and 9 for the first
+  player, the same again for the second under a condition not read, then the
+  game's `Sleep` for 2000). The stash window's Destroy (`UI_Stash_obj`) saves
+  kinds 0 and 4, not the bag; `Player_obj`'s Room End saves kind 0,
+  `Controller_obj`'s Room End kind 2, and `RoomGoto` saves nothing. A headless
+  byte scan (positive control: `SaveLocalFile`'s own call to
+  `SaveInventoryOrderNew`, found) lists 104 direct `SaveLocalFile` call sites
+  in about 57 functions; the rest, `UiAIngameExit`'s six among them, were not
+  read. **Static reading** (2026-10-12).
+- The bag writer passes every bag item through `CreateItemSaveStruct`, which
+  copies the item's definition (§ 21.3), so a definition's `o` reaches the file
+  with it. **Static reading** (2026-10-12).
+- Over the 132 pre-restore snapshots hs-drive kept from 2026-09-20 to
+  2026-10-12 (file times compared with each session's own backup): of the 66
+  stops before 2026-10-04 17:00 UTC that rewrote the character file, 31 also
+  rewrote the bag file in the same second; of the 43 such stops since, none
+  did. In 35 sessions the bag file changed minutes before the stop.
+  **Measured** (read-only, 2026-10-12).
+- In the piece icon and stack follow-up's Live procedure 2 (2026-10-12,
+  capture `forgepact-197-piece-icon-stack-live-2`, local to the hub's workorder
+  folder), the pre-restore snapshot's bag file was still the 2026-10-10 file
+  and no slot file held a soul piece. The character file rewritten at the stop
+  holds no bag (the `inventory_tab_*` keys live only in the bag file) and,
+  decoded, differed from the session's backup only in `playtime` and the order
+  of its keys. A debugger logpoint on `SaveInventoryOrderNew` read 0 hits, its
+  control still logging, until the detach just before the stop; the capture
+  records no close of the bag window after the stacks were built.
+  **Measured.**
+- The bag files of the #197 sessions hold class-11 soul pieces with `o` 1 and
+  Key-tab stacks with their counts (`o` 964 and the like); a class-11 item with
+  no `o` is saved without one. **Measured.**
+- Closing the stash saves the bag. In the follow-up's Live procedure 4
+  (2026-10-12, research build, capture
+  `forgepact-197-piece-icon-stack-live-4`, x64dbg logpoints with a
+  `CheckTalentUse` control logging in the same window), six pickups made no
+  `SaveLocalFile`, `SaveInventoryOrderNew` or inventory-window Destroy call
+  and left the bag file as it was. Opening the stash (`hs_stash_open`) wrote
+  nothing either; closing it (`hs_stash_close`) hit the logpoint on
+  `UI_Inventory_Parent_obj`'s Destroy event once, `SaveLocalFile` seven times
+  and `SaveInventoryOrderNew` once, between the fifth and sixth
+  `SaveLocalFile`, and `inventory_order_13.hss`, `herosiege13.hss` and
+  `stash.hss` were rewritten within the same second. With the stash open,
+  `menulayout UI_Inventory_Parent_obj` listed the `UI_Stash_obj` instance, so
+  the stash window is one of that parent's children, which fits the parent's
+  Destroy running at its close; which of the seven `SaveLocalFile` calls asked
+  for which kind was not logged. **Measured.** The player build's Live
+  procedure 3 (capture `forgepact-197-piece-icon-stack-live-3`) wrote the bag
+  file the same way. So the static reading above (the inventory window's
+  Destroy asks for kind 9) is measured where the window closing is the
+  stash's; the bag window's own close was not measured, because neither the I
+  key nor the B key opened it (the owner opens it with C).
+- A stop after that save did not write the bag file. In the same session a
+  piece picked up after the stash's close took a stack from 3 to 4 with no
+  save; the graceful stop then rewrote `herosiege13.hss` but not
+  `inventory_order_13.hss`, which still held 3 (`stop-bag-write`, hub issue
+  #506). **Measured.** Nor did the stops of the follow-up's Live procedures 1
+  and 2 write it.
+- A consumable's count survives the bag save and a reload. Live procedure 4's
+  bag file held two class-11 stacks at `o` 3 and 2 (read with
+  `tools/save_item_keys.py --defs`), and after a relaunch the bag held both
+  with the same counts; Live procedure 3's held `o` 1 and 2 and reloaded the
+  same. **Measured.**
+
+So a stop is not a save of the bag file, and a check that reads the bag file
+after a stop has to make the game save the bag in play first: closing the
+stash does (measured above), and so does saving to the main menu. What
+decides whether a stop writes the bag file is **not established**.
+
 ### 9.6 Prospecting
 
 - The Prospect button (`UI_Button_Small_obj`) stores its handler in
@@ -2360,6 +2441,7 @@ The data tables in this section are also in
 | 19 | vault | 7 |
 
 Categories 3, 9, 17 and 20–25 are empty (weapons come some other way).
+What the lookup does with an index past its category's end is in § 21.3.
 These numbers coincide with `hs-game-sdk`'s `ItemType` (the value an item instance
 carries in `itemType`) for 0–2, 4–8, 10–12 and 14–16; 13 is "collectibles" here and
 `TAROT` there, and 3 (`WEAPON`) is empty here. That the two are the same field is
@@ -2394,6 +2476,7 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   by `chances[13]` (0.7 natively), luck and argument 6, and places a hit with
   `LootGroundCreate`. It reads arguments 0, 1 and 3–7; an undefined argument 5
   makes the luck term fail. **Static reading.**
+- The 44 key names of repository category 12 are listed in § 21.3.
 
 [dungeon keys, the whole chain](../ForgePact/docs/dungeon-key-research.md#zincirin-tamamı-açıldıktan-sonra-hepsi-oyunun-kendi-kodu),
 [S10, dungeon keys solved](../ForgePact/docs/S10-special-content-notes.md#cozuldu---zindan-anahtarlari-dogal-olarak-dusuyor--27082026)
@@ -2531,9 +2614,9 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   (2026-10-02, issue #74).** Of the three rolls read on 2026-10-11
   (`DropUniqueItems`, this roll and `DropItemHeroic`), only `DropItemHeroic`
   keeps a Heroic (9) entry; the other readers listed here were not read for
-  rarity (§ 22.4, **static reading**, 2026-10-11, ForgePact #158). Called with
+  rarity (§ 23.4, **static reading**, 2026-10-11, ForgePact #158). Called with
   the player as `self`, `DropItemHeroic` placed seven Heroic and three Satanic
-  uniques in ten calls (§ 22.4, **measured**, 2026-10-12).
+  uniques in ten calls (§ 23.4, **measured**, 2026-10-12).
 - **The unique repository.** `GetUniqueRepoStruct(type, sub, b)` indexes a
   `global` three-level array `repo[type][sub][b]` (its slot name is also
   unresolved; type 3 takes a separate branch) with GameMaker's own bounds
@@ -3236,13 +3319,13 @@ All **measured** unless marked.
 | A creator acted on before `enemyCreatorTimer` is real | no crash — the pack never spawns | §11.2 |
 | Removing a stash item's map entry (`RemoveItemFromMap` on map 9) but leaving its cell in the tab | the game ends at its next stash save — measured twice, in two launches; `GridRemoveItem` on the cell in the same take avoids it | §17 |
 | A plugin DLL whose global `std::thread` is still joinable when the game exits | `std::terminate` while `ExitProcess` destroys that DLL's globals (the other threads are already gone): a WER report at close, `ucrtbase.dll` `0xc0000409`, fast-fail 7 (`abort`). HS-Offline-Tracker's producer does it; 9 of the 10 dumps Windows kept on 2026-09-25/26 show it, the game's own exit path under it, and a plain `CloseMainWindow` at the main menu does it too. A game started from a tool running under Git Bash inherits error mode `0x3` (`SEM_NOGPFAULTERRORBOX`) and aborts without a dump or an event: read the exit code | [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#the-crash-of-2026-09-26-013627) |
-| `RoomGoto` into `Act_01_06` from code | crash | §21.7 |
-| `PC_GetVariableGMLWrapper` on a far-out handle (id 999999) | crash | §21.8 |
-| A gold amount mistaken for a handle (call not recorded) | crash in the anti-cheat module | §21.8 |
-| `EnemyGiveExperience` with no argument | crash | §21.8 |
-| A parsed struct held only in C++ `RValue`s across frames | freed by the runner's GC; the next frame crashes | §21.8, §5.9 |
-| `WM_CLOSE` to YYToolkit's console window | the game ends with 0xC000013A, no normal save | §21.5 |
-| A ground monster's path search while the hero is sealed in | about 20 s at 3 fps for a 20-monster wave; `pathFailed = true` avoids it | §21.7 |
+| `RoomGoto` into `Act_01_06` from code | crash | §22.7 |
+| `PC_GetVariableGMLWrapper` on a far-out handle (id 999999) | crash | §22.8 |
+| A gold amount mistaken for a handle (call not recorded) | crash in the anti-cheat module | §22.8 |
+| `EnemyGiveExperience` with no argument | crash | §22.8 |
+| A parsed struct held only in C++ `RValue`s across frames | freed by the runner's GC; the next frame crashes | §22.8, §5.9 |
+| `WM_CLOSE` to YYToolkit's console window | the game ends with 0xC000013A, no normal save | §22.5 |
+| A ground monster's path search while the hero is sealed in | about 20 s at 3 fps for a 20-monster wave; `pathFailed = true` avoids it | §22.7 |
 
 ---
 
@@ -3317,8 +3400,8 @@ The argument and the numbers are in the Item Editor's
 | `"28"` | the display name |
 | `"5"` / `"4"` | the magic prefix / suffix (`" of Recovery"`), empty when there is none |
 | `"32"` | the tier letter: 1 C, 2 B, 3 A, 4 S, 5 SS |
-| `"2"` / `"3"` | the footprint in grid cells, width / height; `GetItemSize` reads them (§ 22.2) |
-| `"11"` | the display sprite (§ 22.5) |
+| `"2"` / `"3"` | the footprint in grid cells, width / height; `GetItemSize` reads them (§ 23.2) |
+| `"11"` | the display sprite (§ 23.5) |
 | `"1"` | the level requirement |
 
 - `itemStatStruct` keys `"10"`–`"14"` each hold one generated affix as
@@ -4409,6 +4492,29 @@ names are the stats' tooltip names (the Item Editor's game-verified stat table).
 
 - `DropGems` (drop type 6, §13.1) picks a socketable from repository category 15
   (§13.2) by drop rate and hands it to `LootGroundCreate`. **Static reading.**
+- How the rate reaches that roll (read 2026-10-11, build `498d588550d8`, for
+  ForgePact #197, § 21). `DropGems` runs only after `LoadDrops`' outer gate
+  passed for the dying source: the monster's `chances[6]` (45 on the sampled
+  monster, `hs-game-sdk/curated/drop_types.json`) against a die whose ceiling
+  lives in `gDataProtected`. Inside, it reads category 15's repository entries,
+  `GetDropRate` and a `gDataProtected` member, floors a value and rolls.
+  `GetDropRate`, a method of the item base definition
+  (`gml_Script_GetDropRate_anon_55737_s_ItemBaseDefinition_DefineStructs`
+  (1058), a closure name that moves with every patch, §5.3), answers
+  `droprate.base`, replaced by a per-place field where the entry carries one and
+  the room matches: boss dungeons, Chaos Tower, Niflheim, rifts, Ruby, Sheep,
+  specials and ubers. **Static reading.** Whether `DropGems` gives each
+  socketable exactly 1 in its rate or picks by weight is **not established**,
+  and no magic-find stat name appears in either body (**not observed**, not a
+  negative). The Gem of Incarnation (`socketable_gem_of_incarnation`, class 15,
+  `b` 136) carried info key `"31"` = 10,000 on every one in the local drop
+  records (`bp_ipc\itemdrops.jsonl`, **measured**); with measured gem bases of
+  9,000 and 11,000 (§13.2), 10,000 looked like its `droprate.base`; the live
+  read below says otherwise.
+- The Gem of Incarnation's `droprate.base` read 9,000, not the 10,000 its info
+  key `"31"` carries, and a built Gem of Incarnation's `itemSprite` read
+  undefined. **Measured** (ForgePact #197's Live procedure 1, 2026-10-11,
+  research build).
 - `LootGroundCreate(x, y, type, params, ...)` writes a fresh random seed into the
   params' `a`, creates the item instance and calls `CreateItemNew(instance,
   undefined)`. So a drop's seed is settled between that write and
@@ -5527,9 +5633,685 @@ was first measured in Live 3, on a machine the game placed itself (§ 20.4).
   (`byname-route: blind`) and whether the array holds same-named entries for
   the store scripts is still open. **Measured (Live 3).**
 
+## 21. Acts, act bosses and boss soul pieces
+
+What ForgePact's boss soul pieces work (ForgePact #197, hub #489) read about
+acts, act bosses and key items on 2026-10-11: through the `ghidra` MCP on build
+`498d588550d8`, and through local byte scans of `Hero_Siege.exe` and `data.win`
+whose positive controls were `PickupLoot`'s known callers and a known object
+event row. Each claim carries its label: **static reading** (a local reading
+of the game, in our own words), **measured** (naming the live session that
+measured it; all slot 14: ForgePact #197's Live procedure 1, 2026-10-11, and
+Live procedure 3, 2026-10-11, with the x64dbg debugger, both on a research
+build; Live procedure 2 (attempt 2, its capture's second check block) and
+Live procedure 4, 2026-10-12, on the player build, the latter with the
+debugger; captures `forgepact-197-boss-soul-pieces-live-<n>`, local to the
+hub's workorder folder; and the piece icon and stack follow-up's Live
+procedures 1, 2 and 4, 2026-10-12, on research builds with the debugger, and
+its Live procedure 3, the same day, on the player build, captures
+`forgepact-197-piece-icon-stack-live-1`, `-live-2`, `-live-4` and `-live-3`,
+in the same folder) or **not established**. The mod's design, its live procedures
+and their results are in ForgePact's
+[`docs/boss-soul-pieces-research.md`](../ForgePact/docs/boss-soul-pieces-research.md).
+The MCP's callers and xrefs answers were empty for every function read here,
+which is "not observed", not "has no callers": compiled GML calls scripts by a
+direct `call rel32` that the import's reference table does not hold.
+
+### 21.1 The act of a room (`RoomActIndex`)
+
+- `gml_Script_RoomActIndex` (3474) takes a room and answers its act itself, 1
+  to 9: it answered 1 in `Town_01_rm` and in `Act_01_01` and 2 in `Act_02_01`.
+  **Measured** (ForgePact #197's Live procedure 1, 2026-10-11). An earlier
+  static reading took the answer for the act less one; that reading was wrong.
+- It is a switch over 175 room constants into nine cases. Its result starts
+  undefined and only a matching case sets it, so any room outside the 175
+  answers undefined. **Static reading** (2026-10-11). **Measured** otherwise:
+  in `Act_01_Boss` and `Act_01_Pregame`, two rooms outside the switch, it
+  answered the boolean `false`, not undefined (Live procedure 3, 2026-10-11).
+  A reader that takes only a whole number 1 to 9 as an act handles both.
+- More rooms measured: 2 in `Town_02_rm` and in `Act_02_Boss` (Live procedure
+  3), and the act the player build's `soulpiece status` took from the answer
+  was 2 in `Act_02_02` and none in `Act_01_Boss` (Live procedure 2, 2026-10-12).
+  All agree with the table.
+- A byte scan for direct call sites found two callers,
+  `gml_Script_FetchActTexPages` (1574) and the texture manager's `Other_4`
+  event, so the game itself uses the answer to pick an act's texture pages.
+  **Static reading** (byte scan, with `PickupLoot`'s callers as its positive
+  control).
+- Rows per act, 1 to 9: 21, 24, 16, 15, 14, 20, 17, 19 and 29. Besides the
+  act's zones, the switch holds the act's town where it has one (no
+  `Town_08_rm` row), boss dungeons, side dungeons and cellars, the act's
+  `Unstable_Rift_*` rooms, `Uber_Inoya_rm` (act 1), `Multiplayer_Highscores_rm`
+  (act 6) and five `Dev_5_Mika_Test_*_rm` rooms (act 9). A room's name does not
+  always give its act: `Act_08_Orres_Lair_rm` is act 4. **Static reading.**
+- Rooms not in the switch: `Act_01_Boss`, `Act_03_Boss`, `Act_04_Boss`,
+  `Act_05_Boss` and `Act_07_Boss` (while `Act_02_Boss`, `Act_06_Boss`,
+  `Act_08_Boss` and `Act_09_Boss` are in it), and the fourth act 8 rift: rifts
+  `Unstable_Rift_08_01..03` and `_05` are rows, and `hs-game-sdk` has no room
+  named `Unstable_Rift_08_04`. **Static reading** (the list). Such a room
+  answers the boolean `false`: **measured** in `Act_01_Boss` and
+  `Act_01_Pregame` (Live procedure 3, 2026-10-11), not read in the others.
+- The full table, room by room with its `hs-game-sdk` room index, is
+  `hs-game-sdk/curated/room_acts.json`. Room indices move between builds; a
+  consumer that needs a room's act at run time asks `RoomActIndex` by name
+  rather than shipping the table.
+
+### 21.2 Act boss rooms and their bosses
+
+- `Act_01_Boss` (room 12) to `Act_09_Boss` (room 109) place no instance of any
+  descendant of `Enemy_Child_Boss_obj` (1407) in their room instance lists.
+  Each places a `Pentagram_Boss_obj` (3409), beside a `Boss_Block_obj` (682),
+  an `Enemy_Creator_obj` (1415) and an `Enemy_Creator_Ancient_obj` (1410).
+  **Static reading** (`data.win` room lists, read locally).
+- The pentagram's Step event names every act boss room and calls
+  `gml_Script_PlayMusic` (2434), `gml_Script_ScreenShake` (450) and
+  `gml_Script_NetworkSendBoss` (2557), and the last of these only sends a
+  network message. So the act boss arrives at run time. **Static reading** (the
+  pentagram's Create, Alarm_4 and Step events).
+- The pentagram makes the boss. Its Create reads the player's distance and the
+  instance variables `bossSpawned`, `bossesKilled`, `allPlayersIn` and
+  `instantSpawn`; its Alarm_0 creates the room's boss with
+  `instance_create_layer` on the game layer, at the pentagram, choosing the
+  object by room. The objects it can create include `Gurag_obj`, `Reaper_obj`,
+  `Anubis_obj`, `Damien_obj`, `Karp_King_obj`, `Satan_obj`, `Mevius_obj` and
+  `Odin_Cutscene_obj`, besides other rooms' bosses; `Cthulhu_obj` is not among
+  them (**not observed**). Which room maps to which object was not read, so the
+  table below stays the decor's evidence. **Static reading** (Alarm_0,
+  2026-10-11).
+- `Boss_Block_obj`'s collision with the player tests for eight boss objects:
+  Uber Anubis, the Architect, Phantom Leviathan, Cthulhu, Uber Reaper, Kaelith,
+  Captain Grimtide and the Blood Maiden. **Static reading.**
+- Which boss belongs to which act, read from the decor each act's boss room
+  places (no room names its boss outright):
+
+  | Act | Boss object | Decor in the act's boss room |
+  |---|---|---|
+  | 1 | `Gurag_obj` (2014) | `Gurag_Dungeon_*`, `Gurag_Board_obj` |
+  | 2 | `Reaper_obj` (4013) | `Winter_Reaper_*`, `Reaper_Flames_*` |
+  | 3 | `Anubis_obj` (241) | `Pyramid_*`, `Pyramid_Anubis_Statue_Dark_obj` |
+  | 4 | `Damien_obj` (1115) (inferred) | `Nightmare_Demon_*` and satanic props |
+  | 5 | `Karp_King_obj` (2368) (inferred) | `Sea_*`, `Fuji_*` |
+  | 6 | `Satan_obj` (4266) | `Satan_Light_obj`, `Satan_Pentagram_Trail_obj` |
+  | 7 | `Mevius_obj` (2705), named by the owner, 2026-10-11 | `Bad_Trip_*`, which names no boss |
+  | 8 | `Odin_Phase_1_obj` (3276) | `Odin_Cutscene_obj`, `Odin_Pillar_*` |
+  | 9 | `Cthulhu_obj` (1043) | `Cthulhu_*` |
+
+  **Measured** for acts 1 and 2: their rooms' pentagrams brought out
+  `Gurag_obj` and `Reaper_obj` (ForgePact #197's Live procedures 3 and 2).
+  **Static reading (boss room decor naming the boss)** for acts 3, 6, 8
+  and 9; acts 4 and 5 are an **inference** (their decor names no boss; Damien
+  and Karp King are what remains of the Key of Terror's six once acts 1-3 and 6
+  are placed, and the decor fits them); act 7's boss the decor does not name
+  and the owner chose (2026-10-11). The SDK also names
+  `Bad_Trip_Mevius_Painting_obj`, `Mevius_Boss_mus` and a room
+  `Act_08_Mevius_Intro`; whether `Act_07_Boss` places a Mevius painting was not
+  read. All nine named objects descend from `Enemy_Child_Boss_obj` through
+  `Enemy_Parent_obj` (`hs-game-sdk`'s parent table, `Mevius_obj` checked
+  2026-10-11 the same way as `Gurag_obj` and `Reaper_obj`). The Key
+  of Terror's parts name six bosses (Gurag, Death, Damien, Anubis, Karp King
+  and Satan), which agrees with acts 1 to 6 as a set and says nothing about
+  their order. **Static search.**
+- The game already has an item named "Gurag's Soul", one of the Key of
+  Terror's parts, in repository category 13. **Static search.**
+- Karp King and four uber bosses spawned in Act_01_01 were killed there with
+  their drops. Setting a monster's HP to 0 kills it through its own death path,
+  but Uber Endrixia, Uber Anubis and Uber Luna do not die that way, and a boss
+  spawned in town removes itself (§ 13.1, measured; the spawn route is not
+  named there).
+- The act 2 boss created outside its own room crashed the game when killed;
+  the Karp King did not. A `Reaper_obj` created with `instance_create_depth` in `Act_02_01` and killed
+  by setting its `enemy_hp` record to 0 closed the game with an access
+  violation: `Enemy_Child_Boss_obj`'s Destroy event ran
+  `gml_Script_LoadBossDeath`, which found no `Pentagram_Boss_obj` in the room.
+  A Karp King created and killed the same way in `Act_01_01` died without a
+  crash; why the two differ is **not established**. **Measured** (ForgePact
+  #197's Live procedure 1, 2026-10-11). Whether the other seven act bosses
+  crash the same way outside it was not measured.
+- In its own room an act boss comes out of the pentagram and dies safely, for
+  acts 1 and 2. `Act_01_Boss`'s pentagram brought out `Gurag_obj` and
+  `Act_02_Boss`'s `Reaper_obj`; the pentagram's Alarm_0 ran before Gurag
+  appeared; each, set to HP 0 through its `enemy_hp` record, died with
+  `gml_Script_LoadBossDeath` running and the game running on, the Reaper
+  (Live procedure 1's crash case) included; right after each death a portal
+  stood in the room (labelled "Danethorpe" and "Village of Mos'Arathim" on
+  screen; that the kill made it was not established). **Measured**
+  (Live procedure 3, 2026-10-11, debugger logpoints on the alarm and the death
+  script). Gurag killed in an ordinary fight, the room then left by the town
+  portal key, did not crash either (Live procedure 2, 2026-10-12). Acts 3 to 9
+  were not visited.
+- That an act boss killed in its own room counts toward its act's quest or
+  completion, after arriving there by a route other than the game's own
+  travel or after its room's state was dropped, is **not established**; no
+  quest or act message showed in either session.
+
+### 21.3 Key items: the repository, the Key tab and stacking
+
+- `gml_Script_GetNormalRepoStruct` (818) reads the global `itemRepoNormal` by
+  category and index (weapons by a sub-index as well), and raises the runtime's
+  array-index error for an index past its category's end. **Static reading.**
+  So a saved item whose `b` lies past its category's end cannot load unless
+  something added that entry first: **inference, not measured**. This is why a
+  mod item that must survive the mod's removal reuses an existing repository
+  entry rather than adding one.
+- Category 12 (keys) holds 44 entries (§ 13.2), and `data.win` names 44
+  `keys_*` strings: `ancient`, `angelic`, `ankh_eternal_death`,
+  `ankh_infernal_death`, `axe`, `aztec`, `battle`, `bifrost`, `boreal`,
+  `cellar`, `chaos`, `cloud`, `copper`, `crystal`, `curacan`, `devils`,
+  `frosted`, `garden`, `golden`, `hellflame_torch`, `hive`, `key`,
+  `key_of_infernal_terror`, `key_of_terror`, `magma`, `mysterious`, `mystic`,
+  `naga_scale`, `parasitic`, `pickaxe`, `ruby`, `rusted`, `shovel`,
+  `smelly_cheese`, `storage`, `tablet_of_armada`, `tablet_of_leviathan`,
+  `tablet_of_parasite`, `tomb`, `tower`, `treasure`, `valhalla`, `valor` and
+  `warp` (each `keys_<word>`, most ending `_key`). **Static search.** Which
+  index holds which name is **not established** statically; ForgePact's
+  `droprate list 12` prints the runtime's order.
+- `gml_Script_GetDungeonKeys` (1638) builds the 26-entry pool `DropDungeonKeys`
+  picks from (§ 13.3) out of global constants whose values are not visible
+  statically, so which 26 keys it holds is **not established**. **Static
+  reading.**
+- The bag's Key sub-tab (`InventoryTabKey`, § 17): the slot-name table holds
+  `inventoryKeyGrid`, by analogy with `inventoryMaterialGrid` the Key tab's
+  grid; the object that owns it is **not established**. It holds no
+  `stashKeyTab`- or `stashKeyGrid`-like name, so keys live in the bag's Key
+  sub-tab and a stash tab for keys was **not observed**. The table also holds
+  `itemSprite`, whose meaning is **not established**. **Static search**
+  (`tools/decomp_index.py find-name`). On a built Gem of Incarnation
+  `itemSprite` read undefined (§ 18.4, **measured**).
+- Stacking: `gml_Script_ItemsAreStackable` (1923) needs both items defined,
+  consults the first item's `GetItemInfo` method (a closure, in `hs-game-sdk`
+  as `gml_Script_GetItemInfo_anon_5277_s_ItemInstanceStruct_InventoryV2Funcs`
+  (2035), a name that moves with every patch, §5.3), which can answer false
+  for reasons not read, and then answers true only when the two items'
+  `itemType` match and their `itemDefinitionStruct`'s `b` and `c` match. The
+  seed `a` and the count `o` are not compared by this predicate. **Static
+  reading.** A byte scan for its direct call sites found none (the same scan
+  found `PickupLoot`'s four callers), so how the game reaches it is **not
+  observed**.
+- The pickup route. `PickupLoot`'s general path ends in
+  `gml_Script_AddToInventory` (109, § 10.7). Offline, `AddToInventory` reads
+  the item's class and info and asks `gml_Script_GetItemPreferredGrid` (1986),
+  which answers a grid of the item's own kind for keys, materials,
+  socketables, tarot cards and the vault class (it picks `inventoryKeyGrid` and
+  its sibling grids by `itemType`) and none for a consumable. With a preferred
+  grid, `AddToInventory` first tries `gml_Script_GridAddToStack` (1963) on that
+  grid, and only if that takes nothing `gml_Script_InventoryGridAddToStack`
+  (1962); with none, it tries `InventoryGridAddToStack` alone. Only when no
+  stack takes the item is it placed as a new one (`InventoryGridAddItem`,
+  `GridAddItem`). Online it goes through `OnlineAddToStack` instead. A byte
+  scan for direct call sites, whose positive control found the known
+  `InvGridClearItemNode` call in `UiAInventoryConsumeItemConfirm`, found one
+  `GridAddToStack` site and two `InventoryGridAddToStack` sites in
+  `AddToInventory`. **Static reading** (ForgePact #197's piece icon and stack
+  follow-up, 2026-10-12). This corrects Replan 1's reading (2026-10-11), which
+  had the two stack scripts the other way round: the tab classes through
+  `InventoryGridAddToStack` and the bag through `GridAddToStack`. The corrected
+  reading fits both of Live procedure 3's measurements below: a consumable's
+  pickup reached `InventoryGridAddToStack`, and the key merge reached
+  `AddToInventory` and not `InventoryGridAddToStack`, because `GridAddToStack`,
+  not watched in that session, took the key. The follow-up's Live procedure 1
+  (capture `forgepact-197-piece-icon-stack-live-1`) then watched it: a piece
+  on `keys_bifrost_key` with a whole `b` merged into the owner's Bifröst Key
+  stack (38 to 39) with a `GridAddToStack` logpoint logging the pickup and
+  the `InventoryGridAddToStack` one not, the control logging in the same
+  window. **Measured.** So that merge is `GridAddToStack`'s. Separately, § 9.7
+  measured `InventoryGridCanAddToStack` then `InventoryGridAddToStack` for a
+  material on the prospecting grid.
+- What a stack compares. `InventoryGridAddToStack` and `GridAddToStack` walk
+  their grid and merge into an item whose class (`itemType`) matches and whose
+  definition's `b` and `c` match, comparing those fields themselves; neither
+  calls `ItemsAreStackable`. The seed `a` is never compared. `GridAddToStack`
+  first accepts only classes 12, 13, 14 and 15, the same classes
+  `gml_Script_IsItemTypeStackable` answers true for. A class-11 consumable has
+  no preferred grid and never reaches `GridAddToStack` (the pickup route
+  above), only `InventoryGridAddToStack`. That it does not stack in the bag is
+  measured (below). `c` is the repository flag (0 normal, 1 unique, § 2
+  and § 13.10), so changing it loads a different item: no whole-number value
+  of a field the merge compares can mark an item apart from the real one (a
+  fraction in `b` can in `GridAddToStack`, by the reading that follows; how
+  `InventoryGridAddToStack`, which `AddToInventory` tries when
+  `GridAddToStack` takes nothing, compares `b` for the classes it accepts is
+  **not established**). **Static reading** (Replan 1).
+- Why `InventoryGridAddToStack` refuses a consumable. The class rule:
+  `gml_Script_IsItemTypeStackable` (1921) answers true for classes 12, 13, 14
+  and 15 only, and `gml_Script_IsStackable` (1922) first asks the item's
+  `GetItemInfo` method for one value (which info key it asks for was not
+  resolved), answers false when that value is truthy, and otherwise applies
+  the same four-class rule. `InventoryGridAddToStack` takes the item as its
+  second argument and applies the `IsStackable` rule itself, before anything
+  else; when the rule fails it gives up at once, before it reads a grid or
+  compares any field. So a class-11 item is refused whatever its `b`, `c`,
+  seed or count. For a class that passes, it picks its grid by class (15 the
+  socket grid, 12 the Key grid, 13 and 14 the material grid), and a later
+  walk reads the bag's `inventoryTab` under a condition that was not read. A
+  merge goes ahead only while the two counts summed stay at most 999. Every
+  path, the early refusal included, ends by building the game's
+  `gml_Script_s_ItemOperation` (1959) struct and returning it, and
+  `AddToInventory` reads that result's `success` at each of its stack
+  attempts. § 9.7 measured a successful result's fields on the prospecting
+  grid (`tabNumber`, `x`, `y`, `tabType`, `success`); whether
+  `AddToInventory` reads any field but `success` was not read. **Static
+  reading** (2026-10-12, ForgePact #197's piece icon and stack follow-up).
+  So no consumable base or class stacks through the game's own stack code:
+  only classes 12 to 15 pass the rule, and each of those goes to its own tab
+  (the Key, material or socket grid), not the bag, while no value in a
+  class-11 item's own definition gets it past the rule.
+- How the compare is made. `GridAddToStack` compares `itemType`, then the two
+  definitions' `b`, then their `c`, each through the runtime's general value
+  compare, which takes two reals as equal when they differ by no more than the
+  math epsilon (GameMaker's default is 0.00001; whether the game sets another
+  is **not established**). So a `b` of 2.1 differs from 2 and matches 2.1.
+  **Static reading** (2026-10-12). How `InventoryGridAddToStack`, which
+  `AddToInventory` tries when `GridAddToStack` takes nothing, compares `b` is
+  **not established**. In session it held: key pieces with `b` 2.10 (seed
+  777101) and 2.20 (777102) on the Bifröst Key's definition stayed apart from
+  the real key (`b` 2) and from each other, and a second 2.10 piece joined the
+  first through `GridAddToStack` (`o` 2); pieces with `b` 2 and `c` 0.05 did
+  the same. **Measured** (the follow-up's Live procedure 1, `frac-apart-key`,
+  `frac-stack`, `frac-apart-act`, `cfrac-stack`, `cfrac-apart`). Whether such
+  a `b` or `c` survives a save was not observed: that session's stop did not
+  save the bag (§ 9.5).
+- The repository lookup truncates. `GetNormalRepoStruct` turns its index
+  argument into an integer through the runtime's real-to-int conversion, which
+  truncates toward zero, so a `b` of 2.1 looks up entry 2. The item
+  constructor takes `gml_Script_GetUniqueRepoStruct` (819) when the
+  definition's `c` is truthy (to the runtime, a real above 0.5) and
+  `GetNormalRepoStruct` otherwise. **Static reading** (2026-10-12). The MCP's
+  reference table holds no caller of `GetUniqueRepoStruct`, which is **not
+  observed**, not "has none".
+- How the save writes a definition. `gml_Script_CreateItemSaveStruct` (693)
+  copies the item's definition, and `gml_Script_json_ordered_by_key` (691)
+  writes it, sending every real and int64 value through the `string` builtin.
+  **Static reading** (2026-10-12; variable slots named with
+  `tools/decomp_index.py slot-name`). GameMaker's `string()` of a real keeps two
+  decimals and prints a whole number whole; that is the runtime's documented
+  behaviour, not read in this game. So a `b` carrying tenths would survive a
+  save and reload, and one with a finer fraction would not: **inference, not
+  measured**.
+- The bag's save writer. `gml_Script_SaveInventoryOrderNew` (3507) writes the
+  bag's tabs and the special tabs (key, material, socket, tarot, relic, vault
+  and charms) through `json_stringify`. **Static reading** (2026-10-12). The
+  game writes the bag file as § 9.5 says (the inventory window's Destroy and
+  the Game End event), not at every stop. In the piece icon and stack
+  follow-up's Live procedure 1 (2026-10-12, research build, capture
+  `forgepact-197-piece-icon-stack-live-1`, local to the hub's workorder
+  folder), the bag file `inventory_order_13.hss` was not rewritten at the
+  graceful stop, while the Key tab held pieces with a fractional `b`; that
+  stop ended in the game's fail-fast exit (`STATUS_STACK_BUFFER_OVERRUN`,
+  C0000409). **Measured.** Neither Live procedure 1 nor Live procedure 2 made
+  the game save the bag, so neither session's bag file holds what it built.
+  Live procedure 4 (capture `forgepact-197-piece-icon-stack-live-4`) did, by
+  closing the stash: the bag file then held two class-11 piece stacks with
+  their counts (`o` 3 and 2) and a plain logo, and after a relaunch the bag
+  held all three with the same counts. **Measured** (§ 9.5).
+- Who else compares `b`. `gml_Script_CountInventoryItem` (1925), whose direct
+  callers the byte scan found to be only the crafting scripts
+  `GetCraftItemsAvailable` and `CraftFindRecipeItems`, compares `itemType`, an
+  item-info value and the definition's `b`, not `c`.
+  `gml_Script_FindInventoryItem` (1920), called from `PlayerMouseAction` and two
+  unnamed sites, compares `b` and `c`. Both go through the same epsilon
+  compare. **Static reading** (2026-10-12). Which code a door or an NPC uses to
+  find the key it wants (Heimdall's Bifröst Key and the rest) was not read, so
+  whether a key with a fractional `b` would open anything is **not
+  established**.
+- The merge, measured. Two items built on the Bifröst Key's definition
+  (`keys_bifrost_key`) with seeds 777101 and 777102, and named "Piece of
+  Gurag's Soul", joined the owner's own Bifröst Key stack on pickup (its count
+  `o` went 39, 41, 43; the stack kept its own seed), and the merge survived a
+  reload. **Measured** (ForgePact #197's Live procedure 1, 2026-10-11). So a
+  seed cannot keep a key apart from the real key of its definition in the Key
+  tab. A both-route detour on `ItemsAreStackable` counted no call through the
+  merges (log and veto mode); no call to it was seen anywhere in the session,
+  so the hook has no positive control and the zero is **not observed**, not a
+  negative. With the static reading above (the two stack scripts compare
+  inline and do not call it), the predicate was not seen on the pickup route
+  that merged them; whether any other script on that route reaches it is **not
+  established**.
+- The pickup route and the stack rule under the debugger. Non-breaking
+  logpoints on the scripts' first bytes, with a `CheckTalentUse` control
+  logging in the same windows: replaying the key merge (a piece on
+  `keys_bifrost_key`, the owner's Bifröst Key stack going from 38 to 39, the
+  piece taken by the game's own pickup) hit `AddToInventory` once and neither
+  `InventoryGridAddToStack` nor `ItemsAreStackable`, so which code merged the
+  key was **not established** by measurement (the corrected pickup reading
+  above attributes it to `GridAddToStack`, which was not watched). Five class-11 items on the Edible PAS Logo's
+  definition (three seeded 777101, one 777102, one plain logo) picked up one
+  by one each hit `AddToInventory` and then `InventoryGridAddToStack` with the
+  same `self`, and never `GridAddToStack`: a consumable's stack attempt goes
+  through `InventoryGridAddToStack`, as the corrected reading above has it
+  for an item with no preferred grid. All five stayed separate bag items with count 1, so class 11 does not
+  stack whatever the seed. **Measured** (ForgePact #197's Live procedure 3,
+  2026-10-11; the player build's pieces again in Live procedure 2, 2026-10-12,
+  three pieces in three cells over two bag tabs).
+- A stack result written by a detour is taken as the game's own. In the
+  follow-up's Live procedure 2 (capture
+  `forgepact-197-piece-icon-stack-live-2`, research build, x64dbg logpoints
+  on `AddToInventory`, `InventoryGridAddToStack` and `SaveInventoryOrderNew`
+  with a `CheckTalentUse` control): with ForgePact's merge off, two class-11
+  pieces of one act took two cells, each pickup hitting `AddToInventory` and
+  `InventoryGridAddToStack` once. With it on, a both-route detour on
+  `InventoryGridAddToStack` called the game first (its result a struct with
+  `tabNumber`, `x`, `y`, `tabType` and `success`, `success` false), then
+  raised a same-act bag piece's `o` from 1 to 2, refreshed its hash and wrote
+  `success` true and that piece's tab and cell into the result; the game
+  then finished the pickup as for a stack it made itself: the picked-up
+  piece left the ground and took no cell, and the counts summed to the
+  pieces picked up. The logpoint and the detour's own call count rose by the
+  same three, so the detour saw every call the logpoint did. **Measured.**
+  Whether `AddToInventory` reads any field of the result but `success` was
+  not separated. The bag draws a class-11 item's count on its cell when `o`
+  is above 1 (a small "2"); the tooltip names the item and shows no count.
+  **Measured** (the same session, `stack-draw`, `stack-tooltip`). The player
+  build stacked two pieces per act the same way (Live procedure 3,
+  `on-bag-stack`, `on-apart-act`).
+- Already in this reference: `LootGroundCreate` writes a fresh seed into `a`
+  (§ 18.4); `InitItemFromJson` followed by `LootGroundCreateFromItem` keeps the
+  definition it was handed (ForgePact #74's `sigdrop`; relics placed with the
+  player as `self`, § 10.7); a bag drop reaches `LootGroundInit`, and the loot
+  announcement's creation guard tells it from a fresh build (§ 16.11); `sCP` is
+  the game's own spawner that stamps the spawned flag (§ 20.5); and the gem
+  roll a soul piece rides, `DropGems` with `GetDropRate`'s per-place
+  overrides (§ 18.4).
+
+### 21.4 Using an item from the backpack
+
+Read on 2026-10-11 through the same MCP and build, for the owner's choice that a
+soul piece is used by right-clicking it in the backpack, the way a PAS token is;
+the last two bullets are what ForgePact #197's Live procedures 1, 3 and 2
+measured, and the parts of the right-click and confirm bullets labelled
+measured are the piece icon and stack follow-up's.
+
+- `gml_Script_UiAInventoryConsumeItemConfirm` (4087) is a UI action, the answer
+  to the "use this item?" prompt, and takes three values: the item, a second
+  value whose meaning was not read, and the cells the item occupies. It first
+  asks `gml_Script_PotionUse` (2813) about the item, and only when that answers
+  true does it look the item up, clear the item's cells one at a time with
+  `gml_Script_InvGridClearItemNode` (1988), and close the prompt. So the item
+  leaves the bag through the cells, after the use itself said yes. **Static
+  reading.**
+- `gml_Script_CanUsePotion` (2812) reads the item's definition, its info and
+  stats, and the current room before it answers. Which of them decides what is
+  **not established**. **Static reading.**
+- `PotionUse`'s own body is **not established**: the MCP's decompile of it
+  timed out, and a second attempt in Replan 1 exceeded the MCP's response
+  buffer. That it is one large switch over consumables is an inference, so
+  whether a consumable's effect is applied inside it is **not established**.
+  `CanUsePotion` reads the item's stats 4 and 22 and the room; whether it
+  refuses the Edible PAS Logo in town or in any room is **not established**.
+  **Static reading** (Replan 1).
+- No script is named for a right-click. The dispatch from the click is inline,
+  as the drag's is (§ 17), and a right-click on a class 7 item equips it
+  (**measured**, ForgePact's
+  [`stash-move-research.md`](../ForgePact/docs/stash-move-research.md)).
+  A right-click on a key in the Key tab reaches the equip script, not the
+  use: in the follow-up's Live procedure 1 (capture
+  `forgepact-197-piece-icon-stack-live-1`) right-clicking a key piece (class
+  12, kept apart from the real key by its `b`) opened no prompt, and a
+  `CanUsePotion` logpoint stayed at its count with the control logging,
+  where the bag logo's right-click in the same session had hit it once; with
+  ForgePact's probe detouring the use scripts, the right-clicks reached
+  `InvGridEquipV2` twice and `CanUsePotion` and `PotionUse` not at all.
+  **Measured.**
+- The click's inline dispatch lives in the grid's input script,
+  `gml_Script_ProcessInventoryGridInput` (3000). It is too large for the MCP to
+  decompile; its calls, listed in address order with a local Ghidra script,
+  hold the bag's right-click as `gml_Script_ValidateItem` (1128),
+  `gml_Script_VaultUse` (4597), `CanUsePotion`, `gml_Script_MessagePrompt`
+  (2393, the "use this item?" prompt), `PotionUse` and `InvGridClearItemNode`,
+  then the equip scripts. A byte scan for direct call sites (with the
+  `InvGridClearItemNode` call in `UiAInventoryConsumeItemConfirm` as its
+  positive control) found `CanUsePotion` called from
+  `ProcessInventoryGridInput` alone, and `PotionUse` from it twice and from
+  `UiAInventoryConsumeItemConfirm`, `ControllerCheckInput`,
+  `DrawMobilePotionIcon` and one unnamed site; the MCP's reference table holds
+  no caller of `CanUsePotion` (**not observed**). `ValidateItem`, called
+  throughout the input script, builds description strings (type and rarity
+  names, the sprite's name, loot name data); no call that removes an item was
+  seen in it. **Static reading** (ForgePact #197's piece icon and stack
+  follow-up, 2026-10-12). The Key tab's right-click does not take the use
+  path (measured, the bullet above); whether `CanUsePotion` would answer true
+  for a key is **not established**, since it was never reached.
+- The confirm and a stack. After `PotionUse` answers true,
+  `UiAInventoryConsumeItemConfirm` compares an item-info value with 6 (what
+  that value means was not read) and then clears the item's cells one by one.
+  **Static reading** (2026-10-12). The confirm clears the whole stack: in the
+  follow-up's Live procedure 2 (capture
+  `forgepact-197-piece-icon-stack-live-2`), a bag item of class 11 with `o` 2
+  right-clicked, its prompt confirmed and `PotionUse` answering true left no
+  item in the bag. When `PotionUse` instead answered false after ForgePact
+  lowered `o` by one, the prompt closed with no message, the stack stayed one
+  smaller and could still be dragged to another cell, and its last piece,
+  answered true, was cleared. **Measured** (`stackuse-all`, `stackuse-one`,
+  `stackuse-after-false`, `stackuse-move`, `stackuse-last`); the player build
+  took one piece from a stack of 2 the same way (Live procedure 3,
+  `on-takes-one`). What the item-info value compared with 6 means is **not
+  established**.
+- `ConsumeToken` (631) and `gml_Script_ConsumeBPToken` (632) are Blood Pact
+  token bookkeeping, not the use of an item. **Static reading**; their callers
+  were not observed.
+- The owner's "PAS token" is the Edible PAS Logo,
+  `consumable_edible_pas_logo`: class 11, `b` 12, crafted in the session
+  (sprites `Edible_Pas_Logo_spr` and `Pickup_Edible_Pas_Logo_spr`, craft key
+  `craft_consumable_edible_pas_logo`, static search; `data.win` and the
+  `translations*.csv` files hold no item named "PAS token"). Right-clicking it
+  in the backpack and confirming reached these scripts, each call carrying the
+  item: `CanUsePotion` (self `UI_Inventory_Grid_obj`, one argument, answering
+  true), `PotionUse` (self `UI_Button_Small_obj`, three arguments, answering
+  true), `InvGridClearItemNode` (self the bag grid, two arguments, the item
+  through its fingerprint) and `UiAInventoryConsumeItemConfirm` (one array
+  argument; that the array holds the three values the first bullet reads is
+  **not established**), and the logo was used up. A potion drink reaches
+  `PotionUseFlask` and `PotionUse` with self `Profile_Manager_obj` and no
+  item. **Measured** (ForgePact #197's Live procedure 1, 2026-10-11).
+- The logo's repository name is `consumable_edible_pas_logo`, category 11,
+  index 12, and its own use opens a portal to Sheeponia (a
+  `Portal_Sheeponia_obj` to `Sheep_rm`). A logo built with a reserved seed
+  (777101, 777102) and another name goes through the same right-click and
+  confirm: `CanUsePotion` and `PotionUse` were called carrying it, and when
+  `PotionUse` answered true without running the logo's own use, the game
+  cleared its cell (`InvGridClearItemNode`, then the confirm action) and no
+  Sheeponia portal opened. `CanUsePotion` answered true for it in
+  `Town_01_rm` and `Act_01_01`. **Measured** (Live procedure 3, 2026-10-11,
+  research build). The player build's use went through the same way from
+  `Act_01_01`, `Town_01_rm` and `Town_02_rm` (Live procedure 2, 2026-10-12).
+  Whether
+  `CanUsePotion` refuses the logo in some other room is **not established**.
+
+### 21.5 Portals and travel between rooms
+
+Read in Replan 1 of ForgePact #197 (2026-10-11, the same MCP and build), when
+the design was a portal from a soul piece to its act's boss room. Live
+procedure 3 (2026-10-11) measured that portal failing and the game's own
+`NetworkRoomGoto` reaching the room, so the owner chose a direct transfer and
+no portal ships; Live procedure 2 (2026-10-12) measured the shipped transfer.
+The last three bullets are those measurements; the rest is static reading.
+
+- A portal keeps its state in the protected store. `Portal_Parent_obj`'s Create
+  allocates protected records and keeps their keys in the instance variables
+  `isEligible`, `pSpwd`, `portalZone`, `portalUsable` and `portalActive`, so
+  reading `portalZone` gives a key, and the room is that record's value (the
+  way a monster's `enemy_hp` and `damage` hold keys, § 13.1 and § 13.7).
+  `Portal_obj` (3593), a child of `Portal_Parent_obj`, writes a room into its
+  `portalZone` record in its own Create (a room reference by default). The
+  collision with the player it inherits checks the portal's active, eligible
+  and entering state and the player's interact press, and sets an alarm;
+  `Portal_obj`'s Alarm_0 reads the room from the `portalZone` record and calls
+  `gml_Script_NetworkRoomGoto` with it. **Static reading.**
+- The other portal objects `hs-game-sdk` names: `Portal_Town_obj`,
+  `Portal_Dungeon_Exit_obj` and `Portal_Hell_obj` also descend from
+  `Portal_Parent_obj`; `Portal_Uber_Boss_obj` takes its target from uber
+  state, and `Portal_Waypoint_obj` (a `Slope_Parent_obj` child) opens the
+  waypoint menu. `Portal_obj` is the general one, whose target is only a room.
+  **Static reading** (and the SDK's parent table).
+- The game's travel scripts. `NetworkRoomGoto(room)` checks whether the room
+  is a town (`CheckTown`), sends network effects online, and offline ends in
+  `gml_Script_RoomGoto(room)`. `RoomGoto` sets the room's layers up once
+  (`SetupRoomLayers`, remembered in `roomSetupMap`) and then calls the
+  `room_goto` builtin. **Static reading.** A raw `room_goto` to
+  `Uber_Inoya_rm` closed the game (§ 13.1, **measured**); whether the setup
+  `RoomGoto` adds would have prevented that is **not established**.
+- A `portalZone` record of a `Portal_obj` created at run time, written with a
+  boss room through `PC_SetVariableGMLWrapper`, read that room back at once
+  (`after=12` for `Act_01_Boss`, `after=26` for `Act_02_Boss`). Read again
+  before entry, the same key resolved to another room: `Act_01_Pregame` (13)
+  for the portal opened in `Town_01_rm`, `Act_01_02` (3) for the one opened in
+  `Act_01_01`, matching the labels on screen ("River of Inoya", "Fields of
+  Battle"). Both portals opened in town and entered took the player through
+  their Alarm_0 and `NetworkRoomGoto` to `Act_01_Pregame` (the second, for
+  `Act_02_Boss`, was not read again before entry, but its label also read
+  "River of Inoya"); the one opened in `Act_01_01` was not entered.
+  `NetworkRoomGoto` called
+  with `Act_01_Boss` or `Act_02_Boss` reached that room, whose pentagram then
+  brought out Gurag or the Reaper, who died there without a crash; the zone a
+  portal was opened in still loaded on a revisit, the portal with it.
+  **Measured** (ForgePact #197's Live procedure 3, 2026-10-11, capture
+  `forgepact-197-boss-soul-pieces-live-3`). What rewrites the record after
+  creation, and whether a write that persists would route the portal to a boss
+  room, is **not established**. The owner's reading (2026-10-12), not
+  measured: the run-time `Portal_obj` is probably the kind of portal that is a
+  door to the neighbouring zone, not one that honours a boss room.
+- Which travel scripts run. Logpoints on the scripts' first bytes, with a
+  control logging: entering a `Portal_obj` ran its Alarm_0 and then
+  `NetworkRoomGoto` with the same `self`; the town portal key (V) and the
+  waypoints ran `NetworkRoomGoto` and no `Portal_obj` Alarm_0. `RoomGoto` was
+  not watched: on that research build its entry began with a jump where the
+  game's copy has its first instruction (some hook's detour, which one is not
+  established), so the byte check refused the breakpoint. **Measured** (Live
+  procedure 3, 2026-10-11).
+- The shipped transfer: `NetworkRoomGoto` with an act boss room's index
+  (resolved from its name through `asset_get_index`) and the local player as
+  `self`, called from ForgePact's frame callback on the tick after the piece's
+  use, moved the player into `Act_01_Boss` (from `Act_01_01` and from
+  `Town_01_rm`) and into `Act_02_Boss` (from `Town_02_rm`) within seconds, with
+  no portal on screen, three times out of three. **Measured** (Live procedure
+  2, 2026-10-12, player build; once more from `Act_01_01` in Live procedure 4).
+
+### 21.6 Zone state and a boss room's return
+
+Read in Amendment 2 of ForgePact #197 (2026-10-11, the same MCP and build, with
+variable slots named by `tools/decomp_index.py slot-name`), for the owner's
+choice that every soul piece brings a fresh boss fight, even after the boss was
+killed.
+
+- A room's contents outlive the player's leaving it through the game's zone
+  state, a global map `zoneStates` keyed by room.
+  `gml_Script_ZoneStateSaveController` (4636), run as the player leaves a room,
+  stores the room in it with `gml_Script_ZoneStateSave` (4634) unless one of
+  these holds: the controller's `skipZoneStateSave` flag is set (it clears the
+  flag and saves nothing; `gml_Script_ZoneGenRestart` (3611) sets that flag
+  before `room_restart`); the room's name starts with `Unstable_Rift_` or
+  `Chaos_Tower_` (two prefixes found by a byte scan of the string table; which
+  test reads which is not settled); the room is `The_Labyrinth_01_rm` (230) or
+  `The_Labyrinth_02_rm` (231); or the controller's `zoneStateReset` flag is
+  set. In the last three cases it calls `ZoneStateResetSingle` on the room
+  instead and clears that flag. **Static reading** (Amendment 2, 2026-10-11).
+  Further conditions on the save branch (a pass over the players' rooms, an
+  `endAction` value) were not fully read, so that an act boss room, which none
+  of the exclusions names, is saved on leaving is a reading, not a
+  measurement.
+- `gml_Script_ZoneStateResetSingle` (4632) takes a room index, the same value
+  the controller passes, and, when `zoneStates` holds a state for it, frees
+  that state and deletes the room's entry; its body writes no quest, act,
+  waypoint or save-file value. `gml_Script_ZoneStateExists` (4621) answers the
+  room entry's `zoneVisited` value, and false when there is no entry. **Static
+  reading** (Amendment 2, 2026-10-11). The MCP's reference table holds no
+  caller of `ZoneStateResetSingle`, which is **not observed**, not "has none"
+  (the controller's call above is one). ForgePact's density code has a detour
+  for it (`fp_density_window_single`), but the installer that holds it,
+  `InstallDensityLifecycleHooks`, has no caller, and Live procedure 4
+  (2026-10-12, player build) read the script's first bytes as the game's own.
+- `Pentagram_Boss_obj`'s Create sets `bossSpawned` and `bossesKilled` afresh
+  every time the pentagram is created, and its Create, Step and Alarm_0 read no
+  quest, act-completion or boss-killed flag: Alarm_0 checks `bossSpawned` and
+  whether the boss object exists, and one other event reads a protected value
+  in `Niflhel_01_rm` (204) only. So, as far as the pentagram's own events go,
+  nothing but its instance state decides whether the boss comes out; whether a
+  revisit restores that state from the zone state, and whether the boss object
+  or the room's creation code reads a kill flag, was not read. **Static
+  reading** (Amendment 2, 2026-10-11).
+- A revisited zone gets new instance ids at the same positions with its
+  creators' protected state restored (§ 11.2, **measured**, ForgePact #181's
+  Live 4), and Live procedure 3 measured the same for a zone's portals (§ 21.5).
+- A boss room is saved on leaving, and after its entry was dropped the boss
+  came out again; whether it would come out without the drop is not
+  established (below). With the room value `asset_get_index` returns for a room's name (a
+  reference) and the local player as `self`, `ZoneStateExists` answered true
+  for `Act_01_01` and for the towns just after the player left them, false for
+  `Act_01_Boss` and `Act_02_Boss` on the first entry of a launch, and true for
+  `Act_01_Boss` after Gurag was killed there and the room left by the town
+  portal key (V). The next entry from a soul piece asked `ZoneStateExists`
+  (true), called `ZoneStateResetSingle`, asked again (false), and then
+  travelled: Gurag came out of the pentagram again. **Measured** (ForgePact
+  #197's Live procedure 2, 2026-10-12, player build, the mod's own
+  `saved=`/`after=` answers and boss bars on screen). The same three calls,
+  in that order, one argument each and one `self`, hit debugger logpoints on
+  the scripts' entries for one transfer, while the game's own travel (town
+  portal, waypoint) hit `ZoneStateExists` several times and
+  `ZoneStateResetSingle` not at all (Live procedure 4, 2026-10-12). So the
+  game calls `ZoneStateExists` itself, which the MCP's reference table had
+  left unobserved.
+- **Not established**: what `gml_Script_ZoneStateLoad` (4625) restores for a
+  boss room (that a re-entry after a kill, without the reset, finds no boss is
+  the owner's account; no session re-entered that way); whether `zoneStates` reaches the save file and survives a relaunch
+  (the first entry of a launch read no entry, but no saved boss room was
+  carried across a relaunch); what else a boss room's state holds (loot left
+  on its floor, the portal a kill leaves), since nothing was left on the floor
+  before a reset; and whether a boss killed again after its room's state was
+  dropped credits its act's quest a second time.
+
+### 21.7 An item's display sprite (`itemInfoStruct["11"]`)
+
+Collected for ForgePact #197's piece icon and stack follow-up (2026-10-12).
+The first measurements are ForgePact #158's (its Live procedure 1, 2026-10-12,
+on that issue's own branch, not on #197's), the last three bullets the
+follow-up's own; § 16.3's info-key table does not list
+key `"11"` yet, and #158's hub branch adds it there.
+
+- `itemInfoStruct["11"]` is the sprite an item is drawn with. A charm given a
+  Grand charm's sprite under key `"11"` drew the Grand charm's icon both in
+  the bag and lying on the ground. **Measured** (ForgePact #158's Live
+  procedure 1).
+- The ground item draws a sprite of its own, which it looks up by name as
+  `Pickup_` followed by the item sprite's name. **Static reading** (ForgePact
+  #158). A sprite added at run time with `sprite_add` under key `"11"` drew in
+  the bag and the game's error sprite on the ground, which fits: no `Pickup_`
+  sprite of that name exists. **Measured** (ForgePact #158's Live procedure 1).
+- The tooltip drew no icon for any charm, whatever key `"11"` held.
+  **Measured** (ForgePact #158's Live procedure 1). Whether the tooltip draws
+  an icon for any other item class is **not established**.
+- Key `"11"` is not saved: an item whose value was changed showed its base
+  icon again after a reload. **Measured** (ForgePact #158's Live procedure 1).
+- The Gem of Incarnation's two sprites: `hs-game-sdk`'s sprite table holds
+  both `Gem_Incarnation_spr` (9644) and `Pickup_Gem_Incarnation_spr` (15659),
+  so the gem's sprite has the ground companion the lookup above wants.
+  **Static search** (`hs_game_sdk.sprites`; sprite indices move between
+  builds, so a consumer resolves them by name through `asset_get_index`). A
+  built Gem of Incarnation carries `Gem_Incarnation_spr` under key `"11"`
+  (its `itemSprite` read undefined, § 18.4). **Measured** (the follow-up's
+  Live procedure 1, capture `forgepact-197-piece-icon-stack-live-1`,
+  `gem-sprite`).
+- What a soul piece given that sprite under key `"11"` shows (the same
+  session): the bag and the Key tab drew the gem's icon on it, a real key
+  beside it its own; on the ground the piece kept its base's own pickup
+  sprite (`Pickup_Bifrost_Key_spr` on a key base, `Pickup_Edible_Pas_Logo_spr`
+  on the logo), never `Pickup_Gem_Incarnation_spr` and never the error
+  sprite; neither the key's nor the consumable's tooltip drew an icon, and
+  both named the piece. **Measured** (`icon-keytab`, `icon-legacy-bag`,
+  `icon-ground`, `icon-tooltip`). Why the ground differs from #158's charm,
+  whose ground item drew the sprite under key `"11"`, is **not
+  established**.
+- After a save and a reload, a piece stack showed its piece's name, lore
+  line and the gem's icon even with ForgePact's research probe's dress and
+  icon off and `soulpiece` never on (the follow-up's Live procedure 4,
+  capture `forgepact-197-piece-icon-stack-live-4`, `reload-base`); the
+  plugin had registered its pieces' Custom Forge entries (name, lore and
+  sprite, matched by base and seed) at boot, as it does in every session, so
+  whether key `"11"` and the name were saved with the item or put back by that
+  registration was not separated. **Measured** for that load; what a piece
+  shows with the plugin removed is **not established**.
+
 ---
 
-## 21. Adding our own content: art, drawing, input, spawning and blockers
+## 22. Adding our own content: art, drawing, input, spawning and blockers
 
 Folded 2026-10-12 (hub #498) from HS-AFK-Expedition, which built a whole
 in-game Stronghold: its own art in a repurposed room, a panel over the game's
@@ -5538,13 +6320,13 @@ here. Its recipes, inferred claims, open questions and superseded attempts, each
 with the AFK commit it comes from, are in
 [docs/research/afk-expedition-adding-content.md](research/afk-expedition-adding-content.md);
 "AFK §n" below points there. Measured 2026-09-17..10-07. The 2026-09-17 PHASE0 runs
-behind §21.8 and its §15 rows were on the earlier build,
+behind §22.8 and its §15 rows were on the earlier build,
 `exe-281798144-pe6a9ed3ee-111c3000`, from before the 2026-09-18 update; the
 later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
-§21.9 has a second source, the owner's local Seraph prototype (measured
+§22.9 has a second source, the owner's local Seraph prototype (measured
 2026-09-23..24, no build named); AFK's builds above do not apply to it.
 
-### 21.1 Our own art
+### 22.1 Our own art
 
 - **`sprite_add(path, frames, false, false, 0, 0)` loads a PNG at runtime**, and
   the result draws in the world as a layer sprite. A multi-frame PNG is one row
@@ -5562,7 +6344,7 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
 - **`font_add(path, size, false, false, 32, 8230)` loads a TTF** that draws in
   the GUI. **Measured** (AFK §1.7). Its texture-memory cost was not measured.
 
-### 21.2 Placing art in a room
+### 22.2 Placing art in a room
 
 - **Layer sprites** (`layer_create`, `layer_sprite_create` and the
   `layer_sprite_*` setters) draw art in a room without creating instances.
@@ -5574,7 +6356,7 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
 - **Two sprites on one layer have no set draw order.** A piece that must be in
   front needs its own layer. **Measured** for the fix (AFK §2.3).
 
-### 21.3 Texture groups
+### 22.3 Texture groups
 
 - **The game streams 254 dynamic texture groups by region. A sprite whose group
   is not loaded draws nothing and raises no error**, although its layer element
@@ -5591,7 +6373,7 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
   That they do not draw without the prefetch is inferred from the NPC case
   above, not observed.
 
-### 21.4 Drawing over the game's UI
+### 22.4 Drawing over the game's UI
 
 - **YYToolkit's object-event callback (`EVENT_OBJECT_CALL`) returns
   `AURIE_UNAVAILABLE` on this YYC build.** An inline detour on a compiled event
@@ -5618,7 +6400,7 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
   positive control, so whether effects can display on this build, and why these
   did not, is not established (AFK §9.1).
 
-### 21.5 Input and the game window
+### 22.5 Input and the game window
 
 - **`EVENT_WNDPROC` with `Override(0)` keeps a message from the game.** A
   swallowed press or key never reaches `mouse_check_button` / `keyboard_check`,
@@ -5635,7 +6417,7 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
   code 0; `WM_CLOSE` to YYToolkit's console window ends the game with
   0xC000013A and no normal save. **Measured** 2026-09-28 (AFK §5.11).
 
-### 21.6 Spawning monsters
+### 22.6 Spawning monsters
 
 - **`instance_create_depth(x, y, depth, obj)` spawns a monster with the current
   room's stats.** `enemyRarity` and the affixes (`affixList` plus the
@@ -5663,7 +6445,7 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
   is built shortly after creation; that the table is built late is **not
   established**.
 
-### 21.7 Blockers, the path grid and rooms
+### 22.7 Blockers, the path grid and rooms
 
 - **`Invisible_Wall_obj`**, created with `image_xscale`/`image_yscale` set to
   size/32 and `addToMinimap = true`, is found by `collision_point` and drawn on
@@ -5687,7 +6469,7 @@ later runs that name a build name `exe-281751552-pe6aaa6779-111b8000`.
   **Entering `Act_01_06` from code crashed the game.** **Measured** (AFK §8.1,
   §8.2, §10.1).
 
-### 21.8 Crashes found on the way
+### 22.8 Crashes found on the way
 
 Also listed in §15. **Measured** (AFK §10.2-§10.6), on the earlier build
 `exe-281798144-pe6a9ed3ee-111c3000` (2026-09-17, PHASE0_NOTES), except one of
@@ -5702,7 +6484,7 @@ no build:
   (§5.9);
 - `instance_destroy` on a monster skips its death and `DropItem`.
 
-### 21.9 Replacing a draw and drawing above the actors (Seraph)
+### 22.9 Replacing a draw and drawing above the actors (Seraph)
 
 Folded 2026-10-12 from the owner's local Seraph prototype, which drew one
 White Mage character as an original custom character. It was measured
@@ -5730,7 +6512,7 @@ pointers are in
 - **Baked sprites draw crisp.** Cells drawn onto a surface with
   `gpu_set_blendenable(false)` and `gpu_set_texfilter(false)`, then passed to
   `sprite_create_from_surface`, drew on the game's pixel grid. This extends
-  §21.1's atlas-cell recipe. **Measured**. That alpha survives byte for byte
+  §22.1's atlas-cell recipe. **Measured**. That alpha survives byte for byte
   is inferred.
 - **A `DrawHud` pre-pass draws above every actor and under the HUD.** A
   detour of `gml_Script_DrawHud` (installed with `InstallScriptHook`) drew
@@ -5754,7 +6536,7 @@ pointers are in
 
 ---
 
-## 22. Charms
+## 23. Charms
 
 What ForgePact's flight-charms research (#158, phase 1) read about charms,
 item size and the unique rolls on 2026-10-11, in the build Ghidra imported
@@ -5772,7 +6554,7 @@ A caller list is the direct call sites the reading found. It is blind to calls
 through the script table or a method value, so a caller it does not list is
 not observed, not absent.
 
-### 22.1 Equipped charms
+### 23.1 Equipped charms
 
 - Offline, `gml_Script_GetPlayerCharmData` (493) answers, for player number
   p, `Controller_obj.inventoryData[p - 1].localCharmItemArray`: the same
@@ -5827,7 +6609,7 @@ not observed, not absent.
 [Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results),
 [Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
 
-### 22.2 Item size
+### 23.2 Item size
 
 - `gml_Script_GetItemSize` (1976) calls the item's own `GetItemInfo` method
   (2035, `GetItemInfo@anon@5277@s_ItemInstanceStruct@InventoryV2Funcs`)
@@ -5873,7 +6655,7 @@ not observed, not absent.
     checked, so where it went is **not established**. **Measured**
     (2026-10-12).
 
-### 22.3 Charm stats and the player stats
+### 23.3 Charm stats and the player stats
 
 - `GetPlayerCharmData`'s direct callers are `GetItemStats` (1682) and five
   sites in `LoadSpecificStat` (2296), so the player's stat aggregation reads
@@ -5893,7 +6675,7 @@ not observed, not absent.
   gives 19 for movement speed), so it is not the item stat id. Not a static
   reading of the game: the Item Editor's stat catalog, not measured.
 
-### 22.4 Which roll drops a unique of which rarity
+### 23.4 Which roll drops a unique of which rarity
 
 - `gml_Script_DropUniqueItems` (1424), called from `LoadDrops` (2171), picks
   one entry of `Controller_obj.lootListUnique[k]`, with k from 0 to 4 taken
@@ -5928,7 +6710,7 @@ not observed, not absent.
   (Unholy, 1x5) and Goburin's Head (98) 10 (Unholy, 2x2, and the only one of
   the five flagged). **Measured** (2026-10-12).
 
-### 22.5 An item's display sprite
+### 23.5 An item's display sprite
 
 - The built item's `itemInfoStruct` key `"11"` holds the item's display
   sprite (each charm's own `Charms_*_spr`). A charm whose key `"11"` was given
@@ -5940,7 +6722,7 @@ not observed, not absent.
   under key `"11"` draws in the bag; the ground item draws the game's error
   placeholder instead. The item tooltip draws no icon for any charm, the
   game's own included. **Measured** (2026-10-12). Why the ground cannot draw
-  it is the static reading in § 22.7.
+  it is the static reading in § 23.7.
 - A save does not keep it: after a reload, and after a full restart that
   never added the sprite, the charm drew its base icon and the game loaded
   normally. The stored value itself was not read (the charm was in the bag,
@@ -5948,7 +6730,7 @@ not observed, not absent.
 
 [Live 1 results](../ForgePact/docs/flight-charms-research.md#live-1-results)
 
-### 22.6 Placing a rebuilt item in its grid
+### 23.6 Placing a rebuilt item in its grid
 
 Read on 2026-10-12 for ForgePact's flight charms (#158, phase 2), in the same
 build and by the same means as § 19.7: the ghidra MCP, existing local
@@ -5962,13 +6744,13 @@ unless a bullet says so.
   **Static reading** (2026-10-12).
 - `gml_Script_InventoryGridAddItemPos` (1969) checks the anchor cell first,
   then every cell of the item's footprint as `GetItemSize` answers it
-  (§ 22.2). If any of those cells is taken or lies outside the grid, it
+  (§ 23.2). If any of those cells is taken or lies outside the grid, it
   answers false and writes nothing. Otherwise it writes one `s_InvNode` per
   covered cell and answers true. **Static reading** (2026-10-12).
 - `ParseItemToGrid` does not look at that answer. So a rebuilt item whose
   footprint no longer fits at its saved cell is left off the grid, though it
   was already entered in the map. That is the reading behind Live 1's
-  `dress-added: item-missing` (§ 22.2, "Appearing"). **Static reading**
+  `dress-added: item-missing` (§ 23.2, "Appearing"). **Static reading**
   (2026-10-12); what the game later does with such an item is not
   established.
 - Direct call sites: 31 for `InventoryGridAddItemPos` and 11 for
@@ -5993,10 +6775,10 @@ unless a bullet says so.
 [Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results),
 [Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
 
-### 22.7 How a ground item picks its sprite
+### 23.7 How a ground item picks its sprite
 
 Read on 2026-10-12 for ForgePact's flight charms (#158, phase 2), by the same
-means as § 22.6, together with the game's data file (`data.win`), whose
+means as § 23.6, together with the game's data file (`data.win`), whose
 sprite table gives each sprite's name and size.
 
 - `gml_Script_LootGroundInit` (2353) is handed the new ground instance as
@@ -6005,7 +6787,7 @@ sprite table gives each sprite's name and size.
   that argument 1 is the item stays a reading.
 - It sets the new instance's `sprite_index`. It builds a sprite name from a
   constant prefix followed by the name (`sprite_get_name`) of the item's
-  display sprite, its `itemInfoStruct` key `"11"` (§ 22.5), and looks that
+  display sprite, its `itemInfoStruct` key `"11"` (§ 23.5), and looks that
   name up with `asset_get_index`. When `sprite_exists` accepts the result,
   that becomes `sprite_index`; otherwise `sprite_index` becomes the fixed
   sprite 8223, `Error_spr`. **Static reading** (2026-10-12).
@@ -6018,7 +6800,7 @@ sprite table gives each sprite's name and size.
 - A sprite added at runtime with `sprite_add` carries a name GameMaker
   generates, which has no `Pickup_` companion, so the lookup fails and the
   ground item draws `Error_spr`. That is the reading behind Live 1's
-  `sprite-draw: partial` (§ 22.5: our sprite drawn in the bag, the error
+  `sprite-draw: partial` (§ 23.5: our sprite drawn in the bag, the error
   placeholder on the ground). **Static reading** (2026-10-12); the generated
   name itself was not read live.
 - `gml_Script_LootGroundDraw` (2355) draws the ground item's `sprite_index`,
@@ -6034,13 +6816,13 @@ sprite table gives each sprite's name and size.
   name stays the reading above.
   [Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results)
 
-### 22.8 The ordinary unique roll makes one draw
+### 23.8 The ordinary unique roll makes one draw
 
 Read on 2026-10-12 for ForgePact's flight charms (#158, phase 2), by the same
-means as § 22.6. It extends § 22.4's reading of the same roll.
+means as § 23.6. It extends § 23.4's reading of the same roll.
 
 - `gml_Script_DropUniqueItems` (1424) is given a position. It takes
-  `lootListUnique[k]` of the first `Controller_obj` (k as in § 22.4) and
+  `lootListUnique[k]` of the first `Controller_obj` (k as in § 23.4) and
   reads one random index of that sub-list. **Static reading** (2026-10-12).
 - Only when the entry there is an array does it read the entry's three
   numbers (type, sub-type and base) and look them up in

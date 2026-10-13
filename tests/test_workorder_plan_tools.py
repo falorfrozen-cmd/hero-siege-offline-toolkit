@@ -147,6 +147,56 @@ class LiveChecksTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(run(live_checks.main, [str(self.tmp_path / "missing.md")])[0], 2)
         self.assertEqual(run(live_checks.main, [self.write("c-live-1.md", "## Step 1\n- a | pass\n")])[0], 2)
 
+    # forgepact-197-boss-soul-pieces Live 2: attempt 2 was appended below
+    # attempt 1 with its own `## Checks`, since a capture is never edited (R20).
+    TWO_BLOCKS = CAPTURE.replace("| pass\n- marker", "| fail\n- marker", 1) + """
+## Attempt 2
+
+### A2 step 0
+re-ran
+
+## Checks
+
+- dll-hash | expected: ee896d9f | observed: EE896D9F (match) | pass
+- marker | expected: craftprobe: phase1h rows=254 | observed: same | pass
+- control | expected: calls=<n> n>0 | observed: calls=402 | pass
+- holders | expected: <M> named | observed: 12 named | pass
+- close-after-take | expected: game running | observed: same pid | pass
+"""
+
+    def test_block_defaults_to_the_first_checks_block(self):
+        path = self.write("c-live-2.md", self.TWO_BLOCKS)
+        rc, out = run(live_checks.main, [path, "--expect", self.EXPECT, "--require-pass", "dll-hash"])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("dll-hash fail", out)
+        self.assertIn("dll-hash must be pass, read fail", out)
+        self.assertIn("checks: 5 (pass 2, fail 2, not-observed 1, not-run 0)", out)
+        self.assertEqual(run(live_checks.main, [path, "--block", "1", "--expect", self.EXPECT])[1], out.split("PROBLEM")[0])
+
+    def test_block_last_and_2_read_the_appended_attempt(self):
+        path = self.write("c-live-2.md", self.TWO_BLOCKS)
+        for block in ("last", "2"):
+            rc, out = run(live_checks.main, [path, "--block", block, "--expect", self.EXPECT,
+                                             "--require-pass", "dll-hash,holders,close-after-take"])
+            self.assertEqual(rc, 0, out)
+            self.assertIn("holders pass", out)
+            self.assertIn("checks: 5 (pass 5, fail 0, not-observed 0, not-run 0)", out)
+            self.assertNotIn("PROBLEM", out)
+
+    def test_block_past_the_last_is_a_usage_error(self):
+        path = self.write("c-live-2.md", self.TWO_BLOCKS)
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            rc = live_checks.main([path, "--block", "3"])
+        self.assertEqual(rc, 2)
+        self.assertIn("has 2 '## Checks' blocks", err.getvalue())
+        # Negative controls: a non-number is refused too, and one block is block 1 and last.
+        self.assertEqual(run(live_checks.main, [path, "--block", "0"])[0], 2)
+        self.assertEqual(run(live_checks.main, [path, "--block", "first"])[0], 2)
+        one = self.write("c-live-1.md", CAPTURE)
+        self.assertEqual(run(live_checks.main, [one, "--block", "last", "--expect", self.EXPECT])[0], 0)
+        self.assertEqual(run(live_checks.main, [one, "--block", "2"])[0], 2)
+
 
 TABLE_CAPTURE = """# forgepact-x live 1
 
@@ -225,6 +275,105 @@ class LiveChecksTableTests(TempDirMixin, unittest.TestCase):
         rc, out = run(live_checks.main, [self.write("c-live-1.md", text), "--expect", self.EXPECT])
         self.assertEqual(rc, 2)
         self.assertEqual(out, "")
+
+    def test_block_reads_its_own_table_not_another_attempts(self):
+        # hub #507 review: attempt 1 wrote a failing table, attempt 2 a passing
+        # one, each under its own `## Checks`; --block 2 must not read attempt 1.
+        first = TABLE_CAPTURE.replace("## Checks summary", "## Checks").replace(
+            "| dll-hash | pass", "| dll-hash | fail", 1)
+        second = TABLE_CAPTURE.replace("## Checks summary", "## Checks").split("## Step 1", 1)[1]
+        path = self.write("c-live-2.md", first + "\n## Attempt 2\n" + second)
+        for block in ("2", "last"):
+            rc, out = run(live_checks.main, [path, "--block", block, "--expect", self.EXPECT,
+                                             "--require-pass", "dll-hash"])
+            self.assertEqual(rc, 0, out)
+            self.assertIn("dll-hash pass", out)
+        rc, out = run(live_checks.main, [path, "--expect", self.EXPECT, "--require-pass", "dll-hash"])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("dll-hash fail", out)
+        # An appended attempt that aborted before any check is a usage error, not attempt 1's verdicts.
+        aborted = self.write("c-live-3.md", first + "\n## Attempt 2\n\n## Checks\n\naborted\n")
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(live_checks.main([aborted, "--block", "2", "--require-pass", "dll-hash"]), 2)
+        self.assertIn("block 2", err.getvalue())
+
+    def test_block_beside_a_checks_summary_is_refused_not_guessed(self):
+        # hub #507 re-review: attempts under `## Checks summary` are not
+        # `## Checks` blocks, so --block last must not read attempt 1's table.
+        failing = TABLE_CAPTURE.replace("| dll-hash | pass", "| dll-hash | fail", 1)
+        attempt_2 = "\n## Attempt 2\n" + TABLE_CAPTURE.split("## Step 1", 1)[1]
+        two_tables = self.write("c-live-2.md", failing + attempt_2)
+        list_then_table = self.write("c-live-3.md", CAPTURE + attempt_2)
+        for path in (two_tables, list_then_table):
+            for block in ("last", "2"):
+                err = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                    self.assertEqual(live_checks.main([path, "--block", block, "--require-pass", "dll-hash"]), 2)
+                # Block 2 of a capture with one `## Checks` is simply past its end.
+                self.assertRegex(err.getvalue(), "cannot tell which attempt|past the last block")
+                if block == "last" or path == two_tables:
+                    self.assertIn("cannot tell which attempt", err.getvalue())
+        # Without --block the first section is read, and stderr says so.
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(live_checks.main([two_tables, "--require-pass", "dll-hash"]), 1)
+        self.assertIn("reading the first", err.getvalue())
+        # Negative control: one section, no note.
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(live_checks.main([self.write("c-live-1.md", TABLE_CAPTURE)]), 0)
+        self.assertEqual(err.getvalue(), "")
+
+    def test_block_last_reads_a_list_appended_after_a_summary(self):
+        # Attempt 1 wrote a list and a summary table; attempt 2 an appended
+        # list. The summary sits before the chosen block, so `last` is clear.
+        first = CAPTURE + "\n" + TABLE_CAPTURE.split("## Step 1", 1)[1]
+        attempt_2 = "\n## Attempt 2" + LiveChecksTests.TWO_BLOCKS.split("## Attempt 2", 1)[1]
+        path = self.write("c-live-2.md", first + attempt_2)
+        rc, out = run(live_checks.main, [path, "--block", "last", "--expect", LiveChecksTests.EXPECT,
+                                         "--require-pass", "dll-hash,holders"])
+        self.assertEqual(rc, 0, out)
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            live_checks.main([path])
+        self.assertIn("pass --block last", err.getvalue())
+        # The single-attempt shape gets no advice that --block last would refuse.
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            live_checks.main([self.write("c-live-1.md", first)])
+        self.assertIn("reading the first", err.getvalue())
+        self.assertNotIn("--block last", err.getvalue())
+
+    def test_a_chosen_block_never_reads_an_earlier_summary_table(self):
+        # hub #507 re-review 3: attempt 1 a table under `## Checks summary`,
+        # the re-run a table under `## Checks`; --block last reads the re-run.
+        text = ("## Checks summary\n\n| Check | Result |\n|---|---|\n| a | fail |\n\n"
+                "## Attempt 2\n\n## Checks\n\n| Check | Result |\n|---|---|\n| a | pass |\n")
+        path = self.write("c-live-2.md", text)
+        for block in ("last", "1"):
+            rc, out = run(live_checks.main, [path, "--block", block, "--require-pass", "a"])
+            self.assertEqual(rc, 0, out)
+            self.assertIn("a pass", out)
+        # A chosen block with no table of its own is a usage error, not attempt 1's.
+        bare = self.write("c-live-3.md", text.replace("| a | pass |", "aborted").replace(
+            "| Check | Result |\n|---|---|\naborted", "aborted"))
+        self.assertEqual(run(live_checks.main, [bare, "--block", "last"])[0], 2)
+        # The same attempt's summary after its empty `## Checks` is still read.
+        same = self.write("c-live-1.md", "## Checks\n\n## Checks summary\n\n| Check | Result |\n|---|---|\n| a | pass |\n")
+        self.assertEqual(run(live_checks.main, [same, "--block", "1", "--require-pass", "a"])[0], 0)
+
+    def test_an_empty_default_block_is_named_block_1(self):
+        path = self.write("c-live-2.md", "## Checks\n\naborted\n\n## Attempt 2\n\n## Checks\n\n- a | x | pass\n")
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(live_checks.main([path]), 2)
+        self.assertIn("block 1 of", err.getvalue())
+
+    def test_block_takes_only_ascii_digits(self):
+        path = self.write("c-live-1.md", TABLE_CAPTURE)
+        for bad in ("\u00b2", "\u0662"):
+            self.assertEqual(run(live_checks.main, [path, "--block", bad])[0], 2)
 
     def test_the_list_wins_over_a_table(self):
         # A capture carrying both keeps the list form's reading; the table is

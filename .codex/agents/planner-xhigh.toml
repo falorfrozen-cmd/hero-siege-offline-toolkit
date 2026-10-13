@@ -202,7 +202,10 @@ code" check has no debugger step and no reason.
 The session criterion reads the capture with the tool, never a hand-written
 grep: `py -3 tools/live_checks.py .claude/workorders/<slug>-live-<n>.md
 --expect <every check name, comma-separated> --require-pass <checks>` exits
-0, gated on the session's gate token. What goes on `--require-pass` depends on
+0, gated on the session's gate token. A session run again appends its attempt
+with its own `## Checks` below the first (the capture is never edited), so a
+re-run's criterion adds `--block last`; without it the tool reads the first
+attempt and says so on stderr. What goes on `--require-pass` depends on
 what a `fail` would mean:
 
 - **session-validity checks** — `dll-hash`, `marker`, `control` — always:

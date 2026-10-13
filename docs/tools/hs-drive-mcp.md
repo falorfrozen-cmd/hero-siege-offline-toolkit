@@ -785,6 +785,16 @@ that the game rewrites these files on exit, so a backup taken mid-session is
 superseded before it could ever be restored. HS-Offline-Tracker's watcher
 needs two identical reads to trust a changed file for the same reason.
 
+That rewrite covers the character file, not the bag. An `hs_stop_game` stop
+rewrites `herosiege<N>.hss` but is not a save of the bag file
+(`inventory_order_<N>.hss`): over the pre-restore snapshots this server kept,
+31 of the 66 stops before 2026-10-04 also rewrote the bag file and none of the
+43 since did (measured). A check that reads the bag file after a stop first
+makes the game save the bag in play, by one of the routes
+[`docs/RUNTIME_DATA_MODELS.md` § 9.5](../RUNTIME_DATA_MODELS.md#95-persistence)
+lists. A session's own saves can still be read after the restore, in its
+`pre-restore` backup.
+
 A backup directory looks like this:
 
 ```
@@ -1711,6 +1721,25 @@ move from the stash into the bag are still not measured.
   one talent allocation through the game's own handlers
   (`hs_talent_allocate`); nothing moves, fights or plays on. See "Character
   select", "Skills and talents" and "Known limitations".
+  ForgePact #197's live sessions (Boss soul pieces) show what that leaves to
+  the owner. Live procedure 3 (2026-10-11, 51 minutes from lease to release):
+  eight owner blocks, all by hand because no tool travels (town portal key,
+  waypoints), enters a portal, walks to a boss room's pentagram or
+  right-clicks a bag item and confirms the prompt: two backpack uses in town,
+  one portal entry, the walk to Gurag, the town portal back, a waypoint trip
+  and a use in `Act_01_01`, a waypoint round trip, and a use, a portal entry
+  and the walk to the Grim Reaper (per-step times were not measured). Live
+  procedure 2 attempt 2 (2026-10-12; its lease, shared with the aborted
+  attempt 1, ran an hour): eight blocks, by hand
+  for the same reasons plus fighting and picking up loot: travel to an Act 1
+  zone, kill and pick up pieces, count the bag's tabs, kill and right-click
+  with the mod off, a right-click transfer, the walk to Gurag, the fight and
+  leaving by V, a second right-click and walk, the Act 2 trip with kills and
+  a pick-up, a use in town and the walk to the Reaper, and the bag count
+  after a relaunch. Live procedure 4 (2026-10-12, 17 minutes): four, the
+  Act 1 kills and pick-up, the trip back to a zone, one right-click
+  transfer, and the Act 2 trip with kills and a pick-up. Each capture lists
+  them with the reason no tool could take them.
 - **Synthetic input anywhere but the game's own window.** Both tools refuse
   unless the target window belongs to a running `hero_siege.exe`, and on the
   `send_input` route both re-prove that the game holds the foreground

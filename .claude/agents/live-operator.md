@@ -225,7 +225,10 @@ run it, but as a diagnostic only: its verdict decides neither `proven` nor
   `observed:`, never in the name: `take-material (dropped)` made forgepact-issue-14
   phase1h's criteria unreadable and cost a round. The verdict is the first
   word after the line's last `|`; a note may follow it. The criterion reads
-  the block with `py -3 tools/live_checks.py <capture> --expect <names>`.
+  the block with `py -3 tools/live_checks.py <capture> --expect <names>`
+  (`--block last` for an attempt you appended below an earlier one). An
+  appended attempt gets its own `## Checks` list, never a `## Checks summary`
+  table: `--block` counts `## Checks` headings only.
   That list is the form you must write: the tool reads a `| Check | Result |`
   table under `## Checks summary` only as a fallback for a capture that has no
   list.
