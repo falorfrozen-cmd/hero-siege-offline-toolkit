@@ -1365,12 +1365,22 @@ rather than by falling back to another launcher:
   earlier run of the server launched, never has an exit code here. Reconnecting
   the MCP server between a launch and its crash loses that code; read
   `hs_status` before reconnecting.
-- **A normal close can read `0xC0000409`.** The shipped HS-Offline-Tracker
-  producer aborts at process exit, after the game's own clean shutdown
-  (`docs/submodules/ForgePact/instructions.md`, Known Limitations item 25). So
-  `0xC0000409` on a close that `hs_stop_game` requested is not by itself a
-  crash: check for the incident monitor's clean-shutdown line, and the dump's
-  stack, before blaming ForgePact or the game. Measured 2026-10-07: both
+- **A normal close can read `0xC0000409`, depending on the installed
+  HS-Offline-Tracker producer.** The producer ForgePact shipped through 2.2.x
+  (`HSOfflineTrackerProducer.dll` sha256 `36608aa0…`), and every Tracker
+  producer before v0.1.4, aborts at process exit, after the game's own clean
+  shutdown (`docs/submodules/ForgePact/instructions.md`, Known Limitations
+  item 25). With one of those installed, `0xC0000409` on a close that
+  `hs_stop_game` requested is not by itself a crash: check for the incident
+  monitor's clean-shutdown line, and the dump's stack, before blaming
+  ForgePact or the game. With HS-Offline-Tracker v0.1.4's producer
+  (`5f83e542…`, pinned from ForgePact #185, shipped from 2.3.0) a graceful
+  close was measured at `0x00000000` with no dump (capture
+  `forgepact-185-tracker-mod-live-1`, 2026-10-13: an in-world close, a close
+  after Save & Exit and an in-world close with `lootann` on), so there
+  `0xC0000409` is a real signal to investigate. Hash the installed
+  `mods\aurie\HSOfflineTrackerProducer.dll` before deciding which case
+  applies. Measured 2026-10-07: both
   graceful closes of ForgePact #173's sessions read `0xC0000409` after
   `==== clean shutdown ====` (Verification, "Exit codes (ForgePact #173)").
   Attributed 2026-10-13 (ForgePact #201, Verification, "Graceful stops
@@ -1379,9 +1389,9 @@ rather than by falling back to another launcher:
   with a dump whose `raised-in` is `HSOfflineTrackerProducer`; with it held
   aside, the same three closes and an in-world close with three mods on read
   `0x00000000` and left no dump. So on this machine the code comes from the
-  producer alone, and taking Save & Exit first does not avoid it. Until
-  ForgePact re-pins the producer to HS-Offline-Tracker v0.1.4's fixed build,
-  expect `0xC0000409` from every graceful stop: read
+  producer alone, and taking Save & Exit first does not avoid it. With an
+  aborting producer installed, expect `0xC0000409` from every graceful stop:
+  read
   `py -3 tools/crash_dump_stack.py --pid <pid> --expect-module
   HSOfflineTrackerProducer` (exit 0 when the producer raised it) rather than
   treating the code as a crash.
