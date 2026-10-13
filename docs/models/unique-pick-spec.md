@@ -124,6 +124,33 @@ Every claim carries one of four labels, and a source:
 - **ForgePact's validated Angelic pool** read 47 candidates (RDM § 13.4,
   Live 1 of 2026-10-02). These are distinct triples that pass the Angelic
   roll's two tests, not a count of list entries.
+- **T and the stand-ins' n** (RDM § 13.4, the flight charms' Mod live 2 of
+  2026-10-13, `flightprobe pool`, read in `Town_01_rm` and again in
+  `Act_01_01`, the same both times, nothing pushed; ForgePact's
+  `flight-charms-research.md`, "Mod live 2 results").
+  - `lootListUnique[5]` held 380 entries, 48 of them droppable, counted with
+    repeats: **T = 48**.
+  - Water Melon `{10, 0, 47}` and Soul Collector `{10, 0, 91}`, the Wings'
+    and the Broomstick's stand-ins, are each listed once there: n = 1.
+  - `[0]` to `[4]` held 50, 61, 79, 152 and 221 entries again, and Pocket
+    Elf's stand-in, Aimbot.exe, is on none of them: n = 0, so the coin hands
+    every pick of its pushed entry to Pocket Elf.
+- **The flight charms at 200 copies** (Mod live 1, 2026-10-12, ForgePact's
+  "Mod live 1 results"; the Angelic roll's chance raised by a research lever,
+  the ordinary roll called by name with the player as `self`).
+  - Pocket Elf, 200 copies on each of `[0]` to `[4]`: 11 of 20 calls, 19 of
+    them placing an item.
+  - Gabriel Wings and Witch's Broomstick, 200 copies each on `[5]`: 21 and 22
+    of 44 hits (13 and 13 of the first 26).
+- **The flight charms at one copy, the player build's** (Mod live 2,
+  2026-10-13, ForgePact's "Mod live 2 results"; the same levers).
+  - Pocket Elf (`rate-elf`): 1 of 100 calls, 97 of them placing an item.
+  - Gabriel Wings and Witch's Broomstick (`rate-angelic`): 0 and 2 of 102
+    hits, over 114 rolls.
+  - Every count, in both sessions, lies within the 3-sigma band of the share
+    the model gives with the push and the coin (The model, below). Counts
+    this small cannot tell one entry's share from one a few times larger or
+    smaller.
 
 ## Our code
 
@@ -165,11 +192,12 @@ input transforms, and pins them to ForgePact's source.
 
 ## Not established
 
-- **T**, the number of droppable entries on `lootListUnique[5]`. The 47
-  validated candidates, every stand-in count measured so far being 1, and the
-  "about one in eight" of 380 all point to about 47. Until a live count pins it
-  (the flight charms' Live 2 `pool`), the model takes T as a parameter and the
-  replays accept any T from 40 to 60.
+- **T at the time of #74's counts, and T elsewhere.** The flight charms'
+  Mod live 2 measured T = 48 on 2026-10-13 (Measured). #74's counts of
+  2026-10-02 came before that reading, so their replays still accept any T
+  from 40 to 60, and 48 is among the values that fit them all; the flight
+  charms' replays use 48. Whether T differs by difficulty, season or a game
+  patch is not measured, so the model keeps T a parameter.
 - **m**, the exact number of droppable vanilla entries sharing either stand-in's
   pair. It is 2 or 3: Liquor Holster's own entry, Mask of the Celestial's, and
   the type 10 unique that shares 0/51 if that one is droppable.
@@ -205,9 +233,13 @@ It is not exported from `hs_game_sdk/__init__.py`, which the SDK generator owns.
 
 The baseline (switches off) is the stand-in's own share n / T and no mod item.
 The target applies the push and the coin: each item takes c / (T + e), the
-stand-in keeps n / (T + e), and Pocket Elf takes c / (L_k + c). Each measured
-entry in the fixture is replayed within the 3-sigma band for one T in 40..60,
-with `standinPicks=` read as m / T and (m + c) / (T + c).
+stand-in keeps n / (T + e), and Pocket Elf takes c / (L_k + c). Each of #74's
+measured entries in the fixture is replayed within the 3-sigma band for one T
+in 40..60, with `standinPicks=` read as m / T and (m + c) / (T + c). The flight
+charms' entries are replayed at the measured T = 48 and their measured n, with
+Pocket Elf's band taken over the five lengths L_k, since which sub-list a call
+reads is not established; each keeps a negative control (the other copies
+setting, or no push).
 
 ## What the model cannot catch
 

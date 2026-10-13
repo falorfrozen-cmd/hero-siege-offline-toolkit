@@ -41,9 +41,10 @@ sys.path.insert(0, str(SDK_PY))
 from hs_game_sdk import drop_roll_model  # noqa: E402
 from hs_game_sdk import unique_pick_model as model  # noqa: E402
 
-# T, the droppable entries on the Angelic list, is not established (spec "Not
-# established"). Until the flight charms' Live 2 `pool` pins it, a claim has to
-# hold across this range, and a replay has to fit one T in it.
+# T, the droppable entries on the Angelic list, was not established when #74's
+# counts were made. A claim about those has to hold across this range, and a
+# replay has to fit one T in it. The flight charms' Mod live 2 `pool` (UP11)
+# measured T at 48; the flight charms' own replays use that value.
 T_RANGE = range(40, 61)
 # m, the droppable vanilla entries sharing either #74 stand-in's sub and b, is
 # 2 or 3 (spec "Not established"): a replay accepts any share between the two.
@@ -58,6 +59,11 @@ def _fixture():
 
 def _entries():
     return {entry["id"]: entry for entry in _fixture()["measurements"]}
+
+
+def _measured_t():
+    """T as Mod live 2's `flightprobe pool` read it (UP11)."""
+    return _entries()["UP11"]["values"]["droppable"]
 
 
 # ---- ForgePact's levers, as input transforms (our code, not the game's) ----
@@ -353,6 +359,113 @@ class MeasuredTests(unittest.TestCase):
         for length in ordinary:
             self.assertEqual(model.ordinary_pick_chance(200, length + 200), Fraction(200, length + 200))
 
+    # ---- #158's own counts (Mod live 1 and Mod live 2) ----
+
+    def _ordinary_lengths(self):
+        return self.entries["UP6"]["values"]["sub_list_lengths"][:5]
+
+    def _elf_band(self, copies, n):
+        """Pocket Elf's chance per call, over the five lists the roll may read."""
+        chances = [elf_ordinary_chance(length, n, copies) for length in self._ordinary_lengths()]
+        return float(min(chances)), float(max(chances))
+
+    def _elf_within(self, values, band):
+        return model.observation_within(values["elf"], values["calls"], *band)
+
+    def _angelic_within(self, count, hits, share):
+        return model.observation_within(count, hits, float(share), float(share))
+
+    def test_up11_mod_live2_pool_pins_t(self):
+        values = self.entries["UP11"]["values"]
+        droppable = _measured_t()
+        self.assertEqual(droppable, 48)
+        self.assertIn(droppable, T_RANGE)
+        self.assertLessEqual(droppable, values["angelic_list_size"])
+        # The list layout is #74's, unchanged.
+        lengths = self.entries["UP6"]["values"]["sub_list_lengths"]
+        self.assertEqual(values["angelic_list_size"], lengths[model.ANGELIC_LIST_INDEX])
+        self.assertEqual(values["unique_sizes"], lengths[:5])
+        # Every #74 count still fits at the measured T.
+        self.assertIn(droppable, self._fitting_ts("UP1", "UP2", "UP3", "UP4", "UP5"))
+        # n: once each for the Angelic stand-ins, nowhere for Pocket Elf's.
+        self.assertEqual((values["water_melon"], values["soul_collector"]), (1, 1))
+        self.assertEqual(values["aimbot_counts"], [0] * len(model.UNIQUE_SUB_LISTS))
+        self.assertEqual(coin(1, PLAYER_COPIES), Fraction(1, 2))
+        self.assertEqual(coin(0, PLAYER_COPIES), 1)
+        # So each flight charm takes one entry's share: 1 in 50 with both on.
+        e = pushed(model.ANGELIC_LIST_INDEX, ("gabriel_wings", "witchs_broomstick"))
+        self.assertEqual(item_angelic_share(droppable, 1, PLAYER_COPIES, e), Fraction(1, 50))
+
+    def test_up9_mod_live1_elf_at_200_copies(self):
+        values = self.entries["UP9"]["values"]
+        c, n = values["copies"], values["standin_n"]
+        self.assertEqual((c, n), (200, 0))
+        self.assertEqual(values["injected"], values["calls"] * pushed(0, ORDINARY_ITEMS, copies=c) * values["sub_lists_pushed"])
+        self.assertEqual(values["elf_ours"], values["elf_built"])
+        self.assertEqual((values["refused"], values["anomalies"]), (0, 0))
+        self.assertLessEqual(values["elf"], values["placed"])
+        band = self._elf_band(c, n)
+        self.assertEqual(band, (200 / 421, 200 / 250))
+        self.assertTrue(self._elf_within(values, band))
+        # Negative controls: the player build's one copy, and no push at all.
+        self.assertFalse(self._elf_within(values, self._elf_band(PLAYER_COPIES, n)))
+        self.assertFalse(self._elf_within(values, (0.0, 0.0)))
+
+    def test_up10_mod_live1_angelic_at_200_copies(self):
+        values = self.entries["UP10"]["values"]
+        c, n = values["copies"], values["standin_n"]
+        e = pushed(model.ANGELIC_LIST_INDEX, ("gabriel_wings", "witchs_broomstick", "pocket_elf"), copies=c)
+        self.assertEqual(e, 400)   # Pocket Elf's switch was on too, and adds nothing here
+        self.assertEqual(values["injected"], values["rolls"] * e)
+        share = item_angelic_share(_measured_t(), n, c, e)
+        self.assertEqual(share, Fraction(200, 448))
+        for key in ("wings", "broom"):
+            with self.subTest(item=key):
+                self.assertTrue(self._angelic_within(values[key], values["hits"], share))
+                self.assertTrue(self._angelic_within(values["first_read"][key], values["first_read"]["hits"], share))
+                # Negative control: the player build's one copy each.
+                one = item_angelic_share(_measured_t(), n, PLAYER_COPIES, 2)
+                self.assertFalse(self._angelic_within(values[key], values["hits"], one))
+        self.assertEqual((values["refused"], values["anomalies"]), (0, 0))
+
+    def test_up12_mod_live2_rate_elf(self):
+        values = self.entries["UP12"]["values"]
+        c, n = values["copies"], values["standin_n"]
+        self.assertEqual((c, n), (PLAYER_COPIES, 0))
+        self.assertEqual(values["injected"], values["calls"] * pushed(0, ORDINARY_ITEMS) * values["sub_lists_pushed"])
+        self.assertEqual(values["elf_ours"], values["elf_built"])
+        self.assertEqual((values["refused"], values["anomalies"]), (0, 0))
+        self.assertGreaterEqual(values["placed"], 50)
+        self.assertEqual(values["control_elf"], 0)
+        band = self._elf_band(c, n)
+        self.assertEqual(band, (1 / 222, 1 / 51))
+        self.assertTrue(self._elf_within(values, band))
+        # Negative controls: Mod live 1's 200 copies, and no push at all.
+        self.assertFalse(self._elf_within(values, self._elf_band(200, n)))
+        self.assertFalse(self._elf_within(values, (0.0, 0.0)))
+
+    def test_up13_mod_live2_rate_angelic(self):
+        values = self.entries["UP13"]["values"]
+        c, n = values["copies"], values["standin_n"]
+        self.assertEqual(values["droppable"], _measured_t())
+        e = pushed(model.ANGELIC_LIST_INDEX, ("gabriel_wings", "witchs_broomstick"), copies=c)
+        self.assertEqual(e, values["items_pushed"] * c)
+        self.assertEqual(values["injected"], values["rolls"] * e)
+        share = item_angelic_share(values["droppable"], n, c, e)
+        self.assertEqual(share, Fraction(1, 50))
+        low, high = model.binomial_band(values["hits"], float(share))
+        self.assertAlmostEqual(low, -2.2018, places=3)
+        self.assertAlmostEqual(high, 6.2818, places=3)
+        for key in ("wings", "broom"):
+            with self.subTest(item=key):
+                self.assertTrue(self._angelic_within(values[key], values["hits"], share))
+                # Negative control: Mod live 1's 200 copies each.
+                flood = item_angelic_share(values["droppable"], n, 200, 400)
+                self.assertFalse(self._angelic_within(values[key], values["hits"], flood))
+        # And a push the roll never drew could not give the 2 Broomsticks.
+        self.assertFalse(self._angelic_within(values["broom"], values["hits"], 0))
+        self.assertEqual((values["refused"], values["anomalies"]), (0, 0))
+
 
 class OurCodeTests(unittest.TestCase):
     """The fixture's two our-code contracts, through the transforms above."""
@@ -408,7 +521,7 @@ class FixtureShapeTests(unittest.TestCase):
         self.assertIn("$schema_note", self.data)
         ids = [e["id"] for e in self.entries]
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertTrue({f"UP{i}" for i in range(1, 9)} <= set(ids))
+        self.assertTrue({f"UP{i}" for i in range(1, 14)} <= set(ids))
         for entry in self.entries:
             for field in self.REQUIRED:
                 self.assertIn(field, entry, entry.get("id"))

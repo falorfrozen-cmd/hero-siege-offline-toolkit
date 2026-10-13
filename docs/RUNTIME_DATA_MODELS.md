@@ -2419,6 +2419,17 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   still not been observed. ForgePact's validated pool read 47 candidates and 11
   rejected once the two signature items were out of it. **Measured (Live 1,
   2026-10-02, research dll 4534c0ff…).**
+- **The droppable entries.** Of `lootListUnique[5]`'s 380 entries, 48 pass
+  the roll's two tests (rarity 7 or 10, not flagged hidden), counted with
+  repeats; Water Melon `{10, 0, 47}` and Soul Collector `{10, 0, 91}` are
+  each listed once. The same in `Town_01_rm` and `Act_01_01`. **Measured**
+  (2026-10-13, ForgePact's flight charms Mod live 2, `flightprobe pool`,
+  research DLL sha256 `dd87086c…`). So an entry listed once is 1 in 48 of the
+  roll's drops, and each item #74's or #158's route adds takes 1 in 48 + e,
+  e being the entries pushed (hub `docs/models/unique-pick-spec.md`). At one
+  pushed entry each for Gabriel Wings and Witch's Broomstick, 102 hits gave
+  2 Broomsticks and no Wings, both within that share's band (`rate-angelic`).
+  [Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
 - Unique definition records have the shape `{w, j, b, a, c}` (`c` = 1 marks the
   unique repository, `j` the weapon subtype); there is no Angelic flag, and base
   items with flag 40 set are skipped. **Headhunter and Tyrant's Crown have no
@@ -3399,6 +3410,17 @@ content, never by the hash alone. **Measured.**
   **Inference** from the slot names around the branch (2026-10-13), not a
   reading of its logic and not measured. If it holds, the unidentified
   item's missing lines are decided inside the run, not by a branch around it.
+- Hovering an item, the first tooltip pass made the stat calls (ForgePact's
+  stats hook counted 333) and every later pass of the same hover made none,
+  for an item with stats (Gabriel Wings) and for one with none (Pocket Elf)
+  alike. A debugger logpoint on a middle one of the 344 sites logged once
+  per hover, while a control logpoint logged throughout, and stayed flat with
+  the pointer on an empty cell; the first and the last site never logged.
+  **Measured** (2026-10-13, ForgePact's flight charms Mod live 2, `tip-calls`,
+  `dbg-stat-wings` and `dbg-stat-elf`). So the run is made once per hover,
+  also for an item without stats, which agrees with the cache inference
+  above; the branch's logic itself is still not read.
+  [Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
 
 **Measured 2026-09-24.** The stat call's arguments and return value were
 live-traced on 2026-09-04 (ForgePact's forged tooltip rows).
@@ -4926,10 +4948,16 @@ through the script table or a method value. The bullets that say
   which also ends by setting `layer`. **Static reading** (2026-10-12).
 - It has 2746 direct call sites. Two of them are in the player object's Step
   event, the function that holds the six `InstancePlaceTallest` sites
-  (§ 19.6). **Static reading** (2026-10-12, byte scan).
+  (§ 19.6). **Static reading** (2026-10-12, byte scan). Both of those calls
+  run all the time in town: debugger logpoints on them rose by 3704 and 3703
+  over a window in which a control logpoint on `CheckTalentUse` rose by 3707.
+  **Measured** (2026-10-12, ForgePact's Mod live 1, `dbg-step-depth`,
+  research DLL sha256
+  `c15f85e1a79ccd7acfd3ad8d271605a4061182f6364a1d23c5c6096c1b2cd442`).
 - So the game rewrites the player's draw layer from the player's y during the
   player's own Step, and a draw order a mod sets before that call would not
-  last past it. **Inference** from the two readings above, not measured.
+  last past it. **Inference** from the readings above; that the calls run is
+  measured, that a draw order set before them is lost is not.
 - Which end of the room's `global.gameLayer` layers draws in front:
   **measured** in ForgePact's Mod live 1 (2026-10-12, research DLL from
   ForgePact `26eecd2`, slot 14 "Sorak", `Town_01_rm`). The research probe read
@@ -4974,7 +5002,22 @@ origins from the game's data file (`data.win`). Each bullet is labelled.
   sets sound and light fields. **Static reading** (2026-10-13).
 - So every canopy of that object draws on the room's `Tree_Leaves` layer,
   whichever layer the room placed it on. **Inference** from the two readings
-  above.
+  above, and **measured** in ForgePact's Mod live 2 (2026-10-13, research DLL
+  sha256 `dd87086cab7ba1b27d4742a68b063a85c593a7d97597412fd7f1714d08f2dc11`
+  from ForgePact `7dfea36`, slot 14 "Sorak"): ForgePact's `zonecensus` found
+  all 42 of `Town_01_rm`'s canopies on `Tree_Leaves` at −9700, the 8 the room
+  places on `Objects` included, and all 187 of `Act_01_01`'s on its
+  `Tree_Leaves` at −10000.
+- At runtime a room holds far more layers than the data file defines: 5598 in
+  `Town_01_rm` and 5620 in `Act_01_01`, most of them behind the game layers'
+  front at −5500. In front of it are the runner's own `Layer_*` layers (the
+  UI, the camera, the vignette, particles and the like, between −11001 and
+  −14003) and the room's own; in town `Effect_1` read visible at −10300 and
+  `Wind_Leaves` hidden at −10200, as the data file says, and two visible
+  layers the data file's list for the room lacks, `FilterLayer1` at −10501
+  and `Raven` at −10300, were there too, in both rooms. In `Act_01_01`,
+  `Effect_1` read visible at −10100. **Measured** (2026-10-13, Mod live 2,
+  `layers-town` and `layers-zone`).
 - Fifteen more `*_Leaves_*` objects are `Visual_Parent_obj` children with a
   Create of their own, in the Abyss, Aztec, Boreal, Desert, Fallen Realm,
   Fuji, Miner Village, Mist and Valhalla sets. Their Creates were **not
@@ -4990,6 +5033,13 @@ origins from the game's data file (`data.win`). Each bullet is labelled.
   layer at −5500 is drawn. **Measured** (2026-10-12).
 - So no layer of `global.gameLayer` draws in front of a room's `Tree_Leaves`
   layer. **Inference** from the measurements and the readings above.
+- A room layer of ForgePact's own at −10001, in front of `Tree_Leaves` and
+  `Invisible_walls` (both −10000 or behind) and behind `Effect_1`, draws the
+  player over the canopy that hid him without it: at (1180, 1650) and
+  (1158, 1720) in town and at a canopy in `Act_01_01` (screenshots). With the
+  player there his colours looked like the scene around him (the operator's
+  note, not judged). **Measured** (2026-10-13, Mod live 2, `flight-depth`
+  and `flight-depth-zone`).
 - Of the data file's 306 rooms with layers, 120 put a visible layer in front
   of −5500. `Tree_Leaves` sits between −9700 and −10100 in about 40 rooms.
   **Static reading from the data file** (2026-10-13).
@@ -5003,17 +5053,21 @@ repository.
   whatever its effect: a colour lookup, tint, contrast, colourise, vignette,
   or windblown particles. Full-screen filters sit mostly between −10000 and
   −10300. **Static reading from the data file** (2026-10-13).
-- At runtime, such a layer would read as a visible layer that holds no
-  element and for which the `layer_get_fx` builtin answers a struct. The
-  builtin's name appears in this build's executable (byte search,
-  2026-10-13). That `layer_get_fx` answers a struct for such a layer is
-  **not established**. It is **established only by** a reading that names
-  the layer classed as the filter (ForgePact's `flightprobe depth`
-  `filter=`, with its `fx=` struct count of 1 or more), with `Effect_1` in
-  `Town_01_rm` as the positive control. A matching flight depth is not
-  evidence: in `Town_01_rm` and `Act_01_01` the only filter, `Effect_1`
-  (−10300 and −10100), lies in front of every drawn layer, so a filter
-  read and no filter read give the same depth there. The argument is in
+- At runtime, such a layer reads as a visible layer that holds no element
+  and for which the `layer_get_fx` builtin answers a struct. The builtin's
+  name appears in this build's executable (byte search, 2026-10-13). That
+  `layer_get_fx`, handed the layer's id as `layer_get_all` lists it, answers
+  a struct for such a layer is **measured** (2026-10-13, ForgePact's Mod
+  live 2, `flight-depth` and `flight-depth-zone`): ForgePact's `flightprobe
+  depth` named `Effect_1` as the filter, `filter=Effect_1@-10300` in
+  `Town_01_rm` (the positive control) and `filter=Effect_1@-10100` in
+  `Act_01_01`, each with an `fx=` struct count of 2. That reading, not the
+  flight depth, is the evidence: in both rooms `Effect_1` lies in front of
+  every drawn layer, so a filter read and no filter read give the same
+  depth there. What the builtin answered for the layers that were not a
+  struct is recorded, with the argument supplied, in the research doc only
+  ([Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results));
+  the argument is in
   [Drawing in front](../ForgePact/docs/flight-charms-research.md#drawing-in-front).
   An instance or asset layer that carries a layer effect but holds no element
   yet reads the same way until it fills: a zone's `Tree_Leaves` (with its
@@ -5034,7 +5088,11 @@ repository.
 
 What ForgePact's flight charms do with these facts is in the module guide;
 the research is in
-[Why the canopy covered the flying player](../ForgePact/docs/flight-charms-research.md#why-the-canopy-covered-the-flying-player).
+[Why the canopy covered the flying player](../ForgePact/docs/flight-charms-research.md#why-the-canopy-covered-the-flying-player),
+and the sessions' records in
+[Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results)
+and
+[Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results).
 
 [Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading)
 
@@ -5066,6 +5124,14 @@ so.
 - Live 1's tally of a blocked walk labelled `Wall_Parent_obj` a member of the
   family (capture step S6). **Measured** (2026-10-12), and it agrees with the
   data file.
+- In `Town_01_rm`, a step down from the ravine edge at (928.9, 1590.7) and a
+  step right from the church's stone wall at (1035.7, 1253.7) each met the
+  family but no `Wall_Parent_obj`: the blockers there are scenery, not walls.
+  A step south of (929.9, 2031.1), where the data file puts the
+  `Invisible_Wall_Not_Minimap_obj` columns, met a `Wall_Parent_obj`.
+  **Measured** with ForgePact's `flightprobe free` (Mod live 1, 2026-10-12,
+  S10; Mod live 2, 2026-10-13, `flight-excluded`).
+  [Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
 
 [Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading)
 
@@ -5660,14 +5726,25 @@ not observed, not absent.
     **inferred**, not read.
   - ForgePact's three flight charms all carry `b` 0, so they count as one;
     the one listed is the first the walk meets, and the walk's order is **not
-    established**. A game unique charm with `b` 0 would pair with them too;
-    whether one exists is not established.
+    established**.
+  - A game unique charm does carry `b` 0: the unique repository answers
+    `{10, 0, 0}` with `charms_raiders_torch`, rarity 6 (Satanic), 1x2, not
+    flagged hidden. **Measured** (2026-10-13, ForgePact's Mod live 2,
+    `unique-b0`, through `charmprobe repo`). So by the reading above it would
+    pair with the flight charms; that is an **inference**, and wearing the
+    two together was not tried.
   - With Gabriel Wings and Witch's Broomstick both in the charm grid,
     `localCharmItemArray` listed the Wings only, while two normal Small
     Charms of Bastion were both listed. **Measured** (2026-10-12, ForgePact's
-    Mod live 1, S14 and S17).
+    Mod live 1, S14 and S17). Measured again on 2026-10-13 (Mod live 2,
+    `broom-alone` and `one-flight`): the Broomstick worn alone was listed;
+    with the Wings added beside it, only the Wings were. Both times the grid
+    still drew the unlisted charm, and its tooltip showed.
   - So a worn charm the game does not list adds nothing, its stats included.
     **Inference** from the game reading this array, not measured.
+
+[Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results),
+[Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
 
 ### 22.2 Item size
 
@@ -5696,8 +5773,10 @@ not observed, not absent.
   `InventorySwapItemsNew` (2047), `ProcessInventoryGridInput` (3000) and
   `CraftEditGrid` (757). Whether every reader of an item's size goes through
   it is **not established**. **Static reading** (2026-10-11). The bag
-  honoured a written footprint; the charm grid, the stash and the crafting
-  grid were not tried.
+  honoured a written footprint. So did the charm grid (2x2 and 1x5 charms
+  drawn on 2x2 and 1x5 cells) and the stash's Personal tab (a 1x5 charm
+  dragged in took 1x5 cells). **Measured** (2026-10-12, ForgePact's Mod
+  live 1, S14 and `stash-size`). The crafting grid was not tried.
 - A save keeps only an item's compact definition (§ 16.1, measured), so a
   footprint written into a built item's `itemInfoStruct` is not saved and
   would have to be written each time the item is built. What a saved grid does
@@ -5812,9 +5891,26 @@ unless a bullet says so.
   (2026-10-12); what the game later does with such an item is not
   established.
 - Direct call sites: 31 for `InventoryGridAddItemPos` and 11 for
-  `ParseItemToGrid`. **Static reading** (2026-10-12, byte scan). Which grids
-  load through `ParseItemToGrid`, and whether another grid places its saved
-  items another way, is not established.
+  `ParseItemToGrid`. **Static reading** (2026-10-12, byte scan).
+- A character load places through that call: a debugger logpoint on
+  `ParseItemToGrid`'s call to `InventoryGridAddItemPos` logged nothing
+  before a save-and-reload and 1114 times during it, while a control
+  logpoint kept logging. **Measured** (2026-10-12, ForgePact's Mod live 1,
+  `dbg-parse-place`).
+- The outcome the reading predicts was measured through ForgePact's size
+  guard, which holds a flight charm's placement back until the load returns
+  (`guard-kept`): a 2x2 charm saved 1x1 at a bag cell whose right and lower
+  neighbours were taken was refused at full size and loaded at that cell at
+  1x1, with both neighbours intact. **Measured** (2026-10-12, Mod live 1).
+- The bag loads through `ParseItemToGrid` (above). The charm grid most
+  likely does too: in both sessions the guard held back as many charms as
+  the bag and the charm grid held between them (five, three in the bag and
+  two worn, on 2026-10-12; three, two in the bag and one worn, on
+  2026-10-13). **Inference** from those counts. Whether the stash and the
+  other grids load the same way is not established.
+
+[Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results),
+[Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
 
 ### 22.7 How a ground item picks its sprite
 
@@ -5848,6 +5944,14 @@ sprite table gives each sprite's name and size.
   after a glow drawn from its `img`. **Static reading** (2026-10-12).
 - `LootGroundInit` has 10 direct call sites. **Static reading** (2026-10-12,
   byte scan).
+- A normal Small Charm dropped on the ground got
+  `Pickup_Charms_Normal_Small_Charm_01_spr` as its `sprite_index`, the
+  `Pickup_` companion of its display sprite. And a flight charm whose ground
+  instance ForgePact gave its own ground sprite after the game's call drew
+  that sprite, with no `Error_spr`. **Measured** (2026-10-12, ForgePact's
+  Mod live 1, `ground-control` and `ground-icon`). That the lookup goes by
+  name stays the reading above.
+  [Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results)
 
 ### 22.8 The ordinary unique roll makes one draw
 
@@ -5873,5 +5977,23 @@ means as § 22.6. It extends § 22.4's reading of the same roll.
 - The sub-lists `[0]` to `[4]` this roll reads hold 50, 61, 79, 152 and 221
   entries (**measured**, § 13.4, 2026-10-02), so an added entry is picked on
   between 1 call in 51 and 1 in 222, depending on k.
+- Measured with ForgePact's flight charms (Mod live 1, 2026-10-12, and Mod
+  live 2, 2026-10-13), calling `DropUniqueItems` by name with the player as
+  `self` in `Town_01_rm` (not how the game calls it; `unique-control` is the
+  control). **Measured** for each of these:
+  - With nothing added, ten calls placed ten Satanic (6) uniques, in each
+    session.
+  - The lengths were again 50, 61, 79, 152 and 221, in town and in
+    `Act_01_01` (Mod live 2, `pool`).
+  - With one entry added to each sub-list per call, 100 calls placed 97
+    items, one of them the added entry's: within the band one entry's share
+    gives, 1 in 222 to 1 in 51 (`rate-elf`). Three calls placed nothing.
+  - With 200 copies added, 20 calls placed 19 items, 11 of them the added
+    entry's, inside 200 / (L + 200) (Mod live 1, `drop-elf`).
+  - These counts are too few to tell one entry's share from a share a few
+    times larger or smaller, and k's distribution was not read.
+
+[Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results),
+[Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
 
 [Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading)

@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Live measurements for the Flight charms (ForgePact#158 phase 1, Live 1, 2026-10-12): what holds the player's walk at a prop, where the worn charms are, which itemInfoStruct keys hold an item's footprint and display sprite, what a save does with them, and what DropItemHeroic places. Research build of ForgePact ac41a23 (DLL SHA-256 ef6af41d4bd3ff478f3516a30dc46c4dd699caed8ab383ef5a5aeb7558ac323f), the `jumpprobe` walk lever and object tally, the `charmprobe` instrument and four x64dbg hardware logpoints (CheckTalentUse as the control, InstancePlaceTallest, CanMove, TilePlaceMeeting); save slot 14, character Sorak, in Town_01_rm. The procedure, its 26 checks and the argument are in ForgePact docs/flight-charms-research.md (Live procedure 1, Live 1 results, Decision); the shared facts are docs/RUNTIME_DATA_MODELS.md sections 19.6 and 22; the session capture forgepact-158-flight-charms-live-1.md stays with the hub's workorder files and is not tracked. No model or generator reads this file: tests/test_sdk_all.py checks only that curated/ is tracked, and the #158 workorder's criterion 18 reads walk_lever, walk_callers, charm_read, size_keys, size_override, save_dress, heroic_route, repo_rarity, sprite and game_build. A status is one of: measured, not-observed (the check ran, its control passed, and it saw nothing), not-established (no session answered it) or static reading (read locally from the game, never measured). The decision value is the research doc's Decision key as recorded. Addresses and call-site offsets are never recorded here; the callers are named. Static readings are our own words, never the game's text.",
+  "$schema_note": "Live measurements for the Flight charms (ForgePact#158 phase 1, Live 1, 2026-10-12): what holds the player's walk at a prop, where the worn charms are, which itemInfoStruct keys hold an item's footprint and display sprite, what a save does with them, and what DropItemHeroic places. Research build of ForgePact ac41a23 (DLL SHA-256 ef6af41d4bd3ff478f3516a30dc46c4dd699caed8ab383ef5a5aeb7558ac323f), the `jumpprobe` walk lever and object tally, the `charmprobe` instrument and four x64dbg hardware logpoints (CheckTalentUse as the control, InstancePlaceTallest, CanMove, TilePlaceMeeting); save slot 14, character Sorak, in Town_01_rm. The procedure, its 26 checks and the argument are in ForgePact docs/flight-charms-research.md (Live procedure 1, Live 1 results, Decision); the shared facts are docs/RUNTIME_DATA_MODELS.md sections 19.6 and 22; the session capture forgepact-158-flight-charms-live-1.md stays with the hub's workorder files and is not tracked. No model or generator reads this file: tests/test_sdk_all.py checks only that curated/ is tracked, and the #158 workorder's criterion 18 reads walk_lever, walk_callers, charm_read, size_keys, size_override, save_dress, heroic_route, repo_rarity, sprite and game_build. A status is one of: measured, not-observed (the check ran, its control passed, and it saw nothing), not-established (no session answered it) or static reading (read locally from the game, never measured). The decision value is the research doc's Decision key as recorded. Phase 2 (the mod) added mod_live_1 (2026-10-12) and mod_live_2 (2026-10-13), each with status, date, research_dll_sha256 and checks (every check name with its live_checks.py verdict) and the numbers ForgePact docs/flight-charms-research.md records under Mod live 1 results and Mod live 2 results; their captures, forgepact-158-flight-charms-mod-live-1.md and -2.md, are not tracked either. The mod workorder's record item reads mod_live_1 and mod_live_2. Addresses and call-site offsets are never recorded here; the callers are named. Static readings are our own words, never the game's text.",
   "game_build": {
     "status": "measured",
     "exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
@@ -135,5 +135,71 @@
     "draw": {"decision": "partial", "bag": "our icon", "ground": "the game's error placeholder", "tooltip": "no icon, for any charm, the control included"},
     "save": {"decision": "safe", "what": "after a reload and after a full restart that never added the sprite, the charm drew its base small-charm icon and the game loaded; the stored value was not read, because the charm was in the bag and charmprobe charms lists the charm grid only"},
     "source": "forgepact-158-flight-charms-live-1.md (S18, S19, S16, S20)"
+  },
+  "mod_live_1": {
+    "status": "measured",
+    "date": "2026-10-12",
+    "research_dll_sha256": "c15f85e1a79ccd7acfd3ad8d271605a4061182f6364a1d23c5c6096c1b2cd442",
+    "forgepact_commit": "26eecd2",
+    "exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "rooms": ["Town_01_rm", "Act_01_01"],
+    "summary": {"checks": 27, "pass": 21, "fail": 5, "not_observed": 1, "not_run": 0},
+    "checks": {
+      "dll-hash": "pass", "marker": "pass", "control": "pass", "fresh-off": "pass",
+      "ground-control": "pass", "ground-icon": "pass", "bag-icon": "fail", "walk-baseline": "pass",
+      "dbg-control": "pass", "depth-control": "pass", "equip-detect": "pass", "flight-depth": "fail",
+      "dbg-step-depth": "pass", "flight-prop": "pass", "flight-excluded": "not-observed",
+      "flight-ends-inside": "pass", "charm-grid-size": "fail", "rolls": "fail", "stash-size": "pass",
+      "guard-kept": "pass", "guard-control": "fail", "reload-identity": "pass", "dbg-parse-place": "pass",
+      "unique-control": "pass", "drop-elf": "pass", "drop-angelic": "pass", "drop-off": "pass"
+    },
+    "findings": {
+      "flight-depth": "the player's layer read -5500, the front end of the game layers, and a canopy still covered him: canopies sit on the room layer Tree_Leaves, in front of every game layer (RDM 19.7)",
+      "bag-icon": "Pocket Elf's tooltip had no Flight row: the gold rows anchored at the first stat row the item has, and it has none",
+      "charm-grid-size, rolls, guard-control": "with Gabriel Wings and Witch's Broomstick both worn, localCharmItemArray listed the Wings only; the game counts one flight charm (owner-stated, RDM 22.1). The guard's own counters passed (deferred +5, full +4, kept 1)",
+      "flight-excluded": "neither probed spot met a Wall_Parent_obj while the family read blocked at both (the control)"
+    },
+    "debugger": {
+      "control": "CheckTalentUse",
+      "step_depth_window": {"ctu": 3707, "sda": 3704, "sdb": 3703, "what": "S7 to S9; sda and sdb are the player Step's two UpdateDepth calls"},
+      "parse_place": {"before_reload": 0, "during_reload": 1114, "ctu_during": 970, "what": "ParseItemToGrid's call to InventoryGridAddItemPos"}
+    },
+    "drops": {
+      "elf_at_200_copies": {"calls": 20, "placed": 19, "elf": 11},
+      "angelic_at_200_copies": {"hits": 44, "wings": 21, "broom": 22},
+      "off": {"unique_calls": 10, "angelic_rolls": 47, "angelic_hits": 43, "added": 0}
+    },
+    "source": "ForgePact docs/flight-charms-research.md (Mod live 1 results); forgepact-158-flight-charms-mod-live-1.md, not tracked"
+  },
+  "mod_live_2": {
+    "status": "measured",
+    "date": "2026-10-13",
+    "research_dll_sha256": "dd87086cab7ba1b27d4742a68b063a85c593a7d97597412fd7f1714d08f2dc11",
+    "forgepact_commit": "7dfea36",
+    "exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "rooms": ["Town_01_rm", "Act_01_01"],
+    "summary": {"checks": 24, "pass": 24, "fail": 0, "not_observed": 0, "not_run": 0},
+    "checks": {
+      "dll-hash": "pass", "marker": "pass", "control": "pass", "dbg-control": "pass",
+      "bag-icon-control": "pass", "tip-calls": "pass", "dbg-stat-wings": "pass", "bag-icon-elf": "pass",
+      "dbg-stat-elf": "pass", "depth-control": "pass", "layers-town": "pass", "flight-depth": "pass",
+      "flight-excluded": "pass", "broom-alone": "pass", "one-flight": "pass", "unique-b0": "pass",
+      "guard-control": "pass", "reload-broom": "pass", "unique-control": "pass", "pool": "pass",
+      "rate-elf": "pass", "layers-zone": "pass", "flight-depth-zone": "pass", "rate-angelic": "pass"
+    },
+    "flight_layer": {
+      "town": {"flight_depth": -10001, "front": "Invisible_walls@-10000", "filter": "Effect_1@-10300", "fx": "2/50/0", "fx_kind": 0, "layers": 5598, "census_ms": 9.34},
+      "zone": {"flight_depth": -10001, "front": "Tree_Leaves@-10000", "filter": "Effect_1@-10100", "fx": "2/55/0", "fx_kind": 0, "layers": 5620, "census_ms": 8.60},
+      "canopies": {"town": {"count": 42, "on_tree_leaves": 42, "depth": -9700}, "zone": {"count": 187, "on_tree_leaves": 187, "depth": -10000}},
+      "what": "Drawn over the canopy that hid him without flight, at two town spots and one zone spot (screenshots). layer_get_fx, handed a layer id as layer_get_all lists it, answered a struct for Effect_1 in both rooms; the non-struct answers (kind 0) stay in the research doc"
+    },
+    "tooltip": {"stat_lines_first_pass": {"gabriel_wings": 333, "pocket_elf": 333}, "stat_lines_later_passes": 0, "debugger": {"ds1": [0, 0, 0], "ds2": [1, 1, 0], "ds3": [0, 0, 0], "what": "rise per window: Wings hover, Pocket Elf hover, empty cell; ds1 to ds3 are the first, a middle and the last of the 344 DrawInventoryStatsNew calls"}},
+    "one_flight": {"broom_alone_listed": true, "with_wings_added": "wings only", "unlisted_still_drawn": true},
+    "unique_b0": {"t": 10, "sub": 0, "b": 0, "name": "charms_raiders_torch", "rarity": 6, "size": "1x2", "hidden_flag": false},
+    "guard_reload": {"deferred": 3, "full": 3, "kept": 0, "yielded": 0, "failed": 0},
+    "pool": {"angelic_list_size": 380, "droppable": 48, "water_melon": 1, "soul_collector": 1, "unique_sizes": [50, 61, 79, 152, 221], "aimbot_counts": [0, 0, 0, 0, 0]},
+    "rate_elf": {"copies": 1, "calls": 100, "placed": 97, "elf": 1, "injected": 500, "band": "1/222 to 1/51 per call", "within": true},
+    "rate_angelic": {"copies": 1, "hits": 102, "rolls": 114, "droppable": 48, "wings": 0, "broom": 2, "band": [-2.2, 6.28], "within": true},
+    "source": "ForgePact docs/flight-charms-research.md (Mod live 2 results); forgepact-158-flight-charms-mod-live-2.md, not tracked"
   }
 }
