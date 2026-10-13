@@ -5140,6 +5140,64 @@ so.
 
 [Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading)
 
+### 19.9 The monster family in the game data
+
+What the game says about the objects a walk can meet besides the collision
+family (§ 19.8), read on 2026-10-13 for ForgePact's flight charms (#158,
+phase 2), after the owner asked for a flying player to walk through monsters.
+Most of it comes from the data file's object table (each object's name and
+parent) and room table (each room's placed instances). That is neither a
+decompile nor a measurement; each bullet says which kind of reading it is.
+
+- `Enemy_Parent_obj` (1429) is a child of `Avoidable_Parent_obj` and has 336
+  descendants. Its four direct children are `Enemy_Child_Basic_obj`,
+  `Enemy_Child_Boss_obj`, `Enemy_Child_Destructible_obj` and
+  `Demon_Lightning_obj`. The six children of `Enemy_Child_Destructible_obj`
+  are boss parts: `Akora_Wrapping_obj`, `Blackstone_Defender_obj`,
+  `Damien_Mask_obj`, `Damiens_Chain_obj`, `Mevius_Chain_obj` and
+  `Odin_Pillar_Enemy_obj`. So a destructible boss part counts as a monster
+  under the "descends from `Enemy_Parent_obj`" test. Read from the data file
+  (2026-10-13).
+- `Player_obj` (3553), `Mercenary_obj` and `Summon_Parent_obj` are children of
+  `Enemy_Aggroable_obj` (1401), which has no parent. Despite its name, that
+  object is not in the monster family, and neither are the player, a
+  mercenary or a summon. Read from the data file (2026-10-13).
+- `Enemy_Only_Passage_obj` (1428) has no parent: it is neither a monster nor
+  a member of `Collision_Parent_obj`'s family. The blocked walk's tally named
+  it on `place_meeting` (§ 19.6). Read from the data file (2026-10-13); the
+  tally is **measured** (2026-10-12).
+- The training dummies, `Attack_Dummy_obj` (364) and `Attack_Dummy_Boss_obj`
+  (363), descend from `Enemy_Child_Basic_obj`, so they are monsters under the
+  same test. `Town_01_rm` places seven `Attack_Dummy_obj` and one
+  `Attack_Dummy_Boss_obj` on its `Spawners` layer. The plain dummies stand at
+  (1592, 688), (1664, 688), (1629, 654), (1592, 616), (1664, 616),
+  (1816, 704) and (1736, 544), and the boss dummy at (1616, 416); the ones at
+  (1816, 704) and (1736, 544) stand apart from the rest. Read from the data
+  file (2026-10-13). That the dummies neither move nor attack is how the town
+  is played, not a reading of their code.
+- `StatPhasing` (3390), the getter of item stat 26 "Movement Phasing" (walk
+  through monsters), has exactly one direct call site in the imported
+  executable, inside `ReturnSpecificStat` (3344), the stat dispatcher.
+  **Static reading** (2026-10-13), from a local byte scan for calls to its
+  entry, each mapped to its function through the image's exception table; it
+  agrees with § 19.6's earlier caller search. How the movement uses stat 26,
+  and whether anything reads it on every step rather than from a value cached
+  when the stats are rebuilt, is **not established**: the decompile of
+  `StatPhasing` and of the movement did not complete through the ghidra MCP,
+  and no headless decompile was run.
+- The walk's `place_meeting` names `Enemy_Parent_obj` more often than any
+  other object outside the collision family: 3015 queries in the blocked-walk
+  tally (§ 19.6). **Measured** (2026-10-12). During a jump, `position_meeting`
+  also names it with the player as `self`
+  ([jump research, Live 1 results](../ForgePact/docs/jump-scenery-research.md#live-1-results));
+  **measured** for jumps, not for walks. That a monster standing
+  in the path makes those queries answer "blocked", and that this answer is
+  what holds the walk, is **not established**: no session has walked the
+  player into a monster yet. ForgePact's mod live procedure 3 measures it
+  against a training dummy.
+
+[Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading)
+
 ---
 
 ## 20. Gamba machines
