@@ -298,6 +298,34 @@ class LiveChecksTableTests(TempDirMixin, unittest.TestCase):
             self.assertEqual(live_checks.main([aborted, "--block", "2", "--require-pass", "dll-hash"]), 2)
         self.assertIn("block 2", err.getvalue())
 
+    def test_block_beside_a_checks_summary_is_refused_not_guessed(self):
+        # hub #507 re-review: attempts under `## Checks summary` are not
+        # `## Checks` blocks, so --block last must not read attempt 1's table.
+        failing = TABLE_CAPTURE.replace("| dll-hash | pass", "| dll-hash | fail", 1)
+        attempt_2 = "\n## Attempt 2\n" + TABLE_CAPTURE.split("## Step 1", 1)[1]
+        two_tables = self.write("c-live-2.md", failing + attempt_2)
+        list_then_table = self.write("c-live-3.md", CAPTURE + attempt_2)
+        for path in (two_tables, list_then_table):
+            for block in ("last", "2"):
+                err = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                    self.assertEqual(live_checks.main([path, "--block", block, "--require-pass", "dll-hash"]), 2)
+                self.assertIn("cannot tell which attempt", err.getvalue())
+        # Without --block the first section is read, and stderr says so.
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(live_checks.main([two_tables, "--require-pass", "dll-hash"]), 1)
+        self.assertIn("reading the first", err.getvalue())
+        # Negative control: one section, no note.
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(live_checks.main([self.write("c-live-1.md", TABLE_CAPTURE)]), 0)
+        self.assertEqual(err.getvalue(), "")
+
+    def test_block_takes_only_ascii_digits(self):
+        path = self.write("c-live-1.md", TABLE_CAPTURE)
+        self.assertEqual(run(live_checks.main, [path, "--block", "\u00b2"])[0], 2)
+
     def test_the_list_wins_over_a_table(self):
         # A capture carrying both keeps the list form's reading; the table is
         # only a fallback for a capture with no list.

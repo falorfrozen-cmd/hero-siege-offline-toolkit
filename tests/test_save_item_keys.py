@@ -238,6 +238,11 @@ class SaveItemKeysTests(unittest.TestCase):
         # Negative control: the JSON spells the fixture's b exactly, so a
         # tool that parsed it to a float would have been caught above.
         self.assertIn('"b":2.10', KEY_TAB_RAW)
+        # --key narrows the JSON defs as it narrows the text.
+        code, out, err = self.run_tool(self.keytab, "--defs", "--key", "0-0-141414-12", "--json")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(list(json.loads(out)["defs"][str(self.keytab)]["inventory_key_tab"]),
+                         ["0-0-141414-12"])
         self.assertEqual(json.loads(KEY_TAB_RAW)["inventory_key_tab"]["0-0-121212-12"]["data"]["b"], 2.1)
 
     # ---- it never writes ---------------------------------------------------

@@ -181,7 +181,10 @@ def saved_number(value: Number) -> Number:
     """What a definition's number reads after a save and reload, under
     `HYPOTHESES['string_keeps_two_decimals']`: a whole number whole (so a
     count `o` comes back as it was, `saved_count_is_kept`), a real rounded to
-    two decimals (a tie rounds away from zero here; the game's is not known)."""
+    two decimals (a tie rounds away from zero here; the game's is not known).
+    A real save writes a whole `c` as `0.0` (docs/tools/save-item-keys.md),
+    neither `0` nor `0.00`: evidence that the number's text is not simply
+    `string()`'s, left open with the hypothesis."""
     hundredths = abs(_number("value", value)) * 100
     rounded = Fraction(int(hundredths + Fraction(1, 2)), 100) * (-1 if value < 0 else 1)
     return int(rounded) if rounded.denominator == 1 else rounded
@@ -202,14 +205,15 @@ def find_matches(item: Item, b: Number, c: Number) -> bool:
 def gem_chance(gem_rate: Optional[Number]) -> Optional[Fraction]:
     """The gem's chance on one `DropGems` call: 1 in its rate, under
     `HYPOTHESES['gem_one_in_its_rate']`. `None` when the rate is unknown, zero
-    or negative (the game has no answer the model can give then)."""
+    or negative (the game has no answer the model can give then); a rate
+    between 0 and 1 is a certain drop, 1, since a chance cannot exceed it."""
     if gem_rate is None:
         return None
     if isinstance(gem_rate, bool) or not isinstance(gem_rate, (int, Fraction)):
         raise TypeError(f"gem_rate must be an int or Fraction, got {type(gem_rate).__name__}")
     if gem_rate <= 0:
         return None
-    return 1 / Fraction(gem_rate)
+    return min(Fraction(1), 1 / Fraction(gem_rate))
 
 
 def expected_drops(rolls: int, chance: Optional[Fraction]) -> Fraction:

@@ -83,8 +83,8 @@ inventory_key_tab: keys=35
 ```
 
 With `--json` the same fields come as strings under `"defs": {<path>:
-{<container>: {<key>: {"a", "b", "c", "o"}}}}`, beside the unchanged `files`
-(and `keys`) parts. Without `--defs` the output, text or JSON, is byte for byte
+{<container>: {<key>: {"a", "b", "c", "o"}}}}`, narrowed by `--key` as the
+text is, beside the unchanged `files` (and `keys`) parts. Without `--defs` the output, text or JSON, is byte for byte
 what it was before the flag existed.
 
 **Why it exists.** ForgePact #197 builds a boss soul piece on a key whose

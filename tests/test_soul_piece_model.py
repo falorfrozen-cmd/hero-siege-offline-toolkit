@@ -411,6 +411,9 @@ class BaselineTests(unittest.TestCase):
                 self.assertIsNone(model.gem_chance(unknown))
         with self.assertRaises(TypeError):
             model.gem_chance(9000.0)
+        # A rate under 1 is a certain drop, never a chance above 1.
+        self.assertEqual(model.gem_chance(Fraction(1, 2)), 1)
+        self.assertEqual(model.expected_drops(4, model.gem_chance(Fraction(1, 2))), 4)
 
     def test_expected_gems_are_linear_in_the_rolls(self):
         chance = model.gem_chance(9000)

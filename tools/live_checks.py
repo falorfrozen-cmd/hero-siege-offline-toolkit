@@ -60,6 +60,10 @@ names how many blocks the capture has. With one `## Checks` block or none,
 the table fallback reads the first checks table, as before. With more than one,
 a block that has no `- ` lines is read from the table under its own heading,
 never from another attempt's, and a block with neither is a usage error.
+`--block` counts `## Checks` headings only, so beside a `## Checks summary`
+section asking for a block other than 1 is a usage error rather than a guess,
+and a capture with more than one checks section read without `--block` says on
+stderr that it read the first.
 
 Usage:
     py -3 tools/live_checks.py <capture> [--expect a,b,c] [--require-pass a,b]
@@ -88,6 +92,7 @@ CRASH_RE = re.compile(r"[*_`]*crash\b(?![-'])", re.IGNORECASE)
 CHECKS_HEADING_RE = re.compile(r"^##\s+Checks\s*$")
 # The fallback table may sit under `## Checks` or `## Checks summary`.
 TABLE_HEADING_RE = re.compile(r"^##\s+Checks(?:\s+[Ss]ummary)?\s*$")
+SUMMARY_HEADING_RE = re.compile(r"^##\s+Checks\s+[Ss]ummary\s*$", re.MULTILINE)
 NEXT_H2_RE = re.compile(r"^##\s")
 CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 SEPARATOR_CELL_RE = re.compile(r"^\s*:?-+:?\s*$")
@@ -227,13 +232,13 @@ def main(argv=None) -> int:
     ap.add_argument("capture", help="the <slug>-live-<n>.md file")
     ap.add_argument("--expect", help="comma-separated check names the procedure lists, verbatim")
     ap.add_argument("--require-pass", help="comma-separated checks that must read pass")
-    ap.add_argument("--block", default="1",
+    ap.add_argument("--block",
                     help="which '## Checks' block to read: a 1-based number or 'last' (default 1)")
     args = ap.parse_args(argv)
 
-    block = args.block.strip().lower()
+    block = (args.block or "1").strip().lower()
     if block != "last":
-        if not block.isdigit() or int(block) < 1:
+        if not block.isdecimal() or int(block) < 1:
             print(f"live_checks: --block takes a 1-based number or 'last', not {args.block!r}",
                   file=sys.stderr)
             return 2
@@ -245,6 +250,19 @@ def main(argv=None) -> int:
         return 2
     text = path.read_text(encoding="utf-8", errors="replace")
     count = len(check_blocks(text))
+    summaries = len(SUMMARY_HEADING_RE.findall(text))
+    sections = count + summaries
+    # `--block` counts `## Checks` headings only. Beside a `## Checks summary`
+    # section, a later block could be that section's attempt or the same
+    # attempt's second form, so asking for one is refused rather than guessed.
+    if summaries and sections > 1 and (block == "last" or block > 1):
+        print(f"live_checks: {path} has {sections} checks sections, "
+              f"{summaries} of them '## Checks summary'; --block counts only '## Checks' "
+              f"headings and cannot tell which attempt {args.block!r} means", file=sys.stderr)
+        return 2
+    if sections > 1 and args.block is None:
+        print(f"live_checks: note: {path} has {sections} checks sections; reading the first "
+              f"(pass --block last for an appended attempt)", file=sys.stderr)
     # With no `## Checks` heading at all, block 1 and `last` keep the table
     # fallback below; asking for any later block is still past the end.
     if block != "last" and block > count and (count or block > 1):
