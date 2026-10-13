@@ -71,7 +71,10 @@ TWENTY_TWO_TOOLS = SEVENTEEN_TOOLS | SKILL_TOOLS
 #: Plus the five stash and bag tools, from `hs-drive-stash-bag-actions`.
 STASH_TOOLS = {"hs_give_item", "hs_stash_open", "hs_stash_close",
                "hs_stash_tab", "hs_bag_tab"}
-EXPECTED_TOOLS = TWENTY_TWO_TOOLS | STASH_TOOLS
+TWENTY_SEVEN_TOOLS = TWENTY_TWO_TOOLS | STASH_TOOLS
+
+#: Plus `hs_exit_to_menu`, from `forgepact-201-exit-c0000409`.
+EXPECTED_TOOLS = TWENTY_SEVEN_TOOLS | {"hs_exit_to_menu"}
 
 #: Three tools can take away something that was not theirs: a restore
 #: overwrites the live save directory, a forced stop terminates a process, and
@@ -97,14 +100,15 @@ EXPECTED_READ_ONLY = {"hs_status", "hs_selfcheck", "hs_saves_list",
 #: registered again under a different name.
 EXPECTED_CHECKS = [
     "engine_import", "process_snapshot", "eac_service", "save_dir",
-    "backup_roundtrip", "screenshot_screen",
+    "backup_roundtrip", "screenshot_screen", "exit_code_readback",
 ]
 
 #: `save_dir` is left out on purpose: it reports on whatever directory the
 #: environment points at, which is a fixture here, so it is asserted by name
 #: below rather than by its status.
 MUST_PASS_ON_WINDOWS = ["engine_import", "process_snapshot", "eac_service",
-                        "backup_roundtrip", "screenshot_screen"]
+                        "backup_roundtrip", "screenshot_screen",
+                        "exit_code_readback"]
 
 SKIP_REASON = None
 if os.name != "nt":
@@ -216,12 +220,33 @@ class StdioSurfaceTests(unittest.TestCase):
         self.assertLessEqual(SKILL_TOOLS, {tool.name for tool in self.tools})
         self.assertEqual(len(TWENTY_TWO_TOOLS), 22)
 
-    def test_all_twenty_seven_tools_are_registered(self):
-        # The total it asserted before this change (22), plus five.
-        self.assertEqual({tool.name for tool in self.tools}, EXPECTED_TOOLS)
+    def test_the_twenty_seven_earlier_tools_are_still_registered(self):
+        # The total it asserted before `hs_exit_to_menu` (22), plus five.
+        self.assertLessEqual(TWENTY_SEVEN_TOOLS, {tool.name for tool in self.tools})
         self.assertLessEqual(STASH_TOOLS, {tool.name for tool in self.tools})
-        self.assertEqual(len(self.tools), 22 + 5)
-        self.assertEqual(len(self.tools), 27)
+        self.assertEqual(len(TWENTY_SEVEN_TOOLS), 22 + 5)
+
+    def test_all_twenty_eight_tools_are_registered(self):
+        # The total it asserted before this change (27), plus one.
+        self.assertEqual({tool.name for tool in self.tools}, EXPECTED_TOOLS)
+        self.assertIn("hs_exit_to_menu", {tool.name for tool in self.tools})
+        self.assertEqual(len(self.tools), 27 + 1)
+        self.assertEqual(len(self.tools), 28)
+
+    def test_hs_exit_to_menu_writes_destroys_nothing_and_takes_no_backup(self):
+        """Not read-only: it presses Escape and clicks Exit, and the game
+        saves itself. Not destructive: the save is the game's own, the one a
+        player's Exit makes. Not idempotent: a second call finds no character
+        in the world. Both inputs are optional and there is no `backup_id`."""
+        tool = next(tool for tool in self.tools if tool.name == "hs_exit_to_menu")
+        hints = tool.annotations.model_dump(by_alias=True)
+        self.assertFalse(hints["readOnlyHint"])
+        self.assertFalse(hints["destructiveHint"])
+        self.assertFalse(hints["idempotentHint"])
+        schema = tool.model_dump(by_alias=True)["inputSchema"]
+        self.assertEqual(schema.get("required", []), [], schema)
+        self.assertEqual(set(schema["properties"]), {"timeout_s", "label"})
+        self.assertIn("menulayout", tool.description)
 
     def test_the_stash_tools_hints_and_required_inputs(self):
         """All five act, destroy nothing and are not idempotent (a second give
@@ -612,10 +637,61 @@ class SelfCheckSummaryTests(unittest.TestCase):
         from tools.hs_drive_mcp import checks
         self.assertEqual(checks.positive_controls(),
                          ["process_snapshot", "backup_roundtrip",
-                          "screenshot_screen"])
+                          "screenshot_screen", "exit_code_readback"])
         self.assertTrue(set(checks.positive_controls()) <= set(EXPECTED_CHECKS),
                         "a control that is not a registered check cannot have "
                         "run, so `healthy` would rest on nothing")
+
+
+@unittest.skipIf(os.name != "nt",
+                 f"exit codes are read through Win32; os.name is {os.name!r}")
+class ExitCodeReadbackTests(unittest.TestCase):
+    """`exit_code_readback` is what makes a `0xC0000409` from `hs_stop_game`
+    mean the game's code (ForgePact #201): it reads back two codes it chose,
+    through the open and read `procs.exits()` uses. Real children, real Win32;
+    only the MCP SDK is not needed."""
+
+    def setUp(self):
+        from tools.hs_drive_mcp import checks, procs
+        self.checks, self.procs = checks, procs
+        self.enterContext(patch.object(procs, "_EXITS", []))
+
+    def test_exit_code_readback_reads_zero_and_the_fast_fail_code(self):
+        status, detail = self.checks.check_exit_code_readback()
+        self.assertEqual(status, "pass", detail)
+        self.assertIn("read as 0x00000000", detail)
+        self.assertIn("read as 0xC0000409", detail)
+
+    def test_negative_control_exit_code_readback_fails_on_a_wrong_reading(self):
+        """A reader that answers 0 for everything would pass a clean-exit-only
+        check; this one must fail, and name what was read. A reader that never
+        sees the child end must fail too, rather than hang or pass."""
+        real = self.procs._ended_code
+
+        def always_zero(api, handle, wait_ms=0):
+            code = real(api, handle, wait_ms)
+            return None if code is None else 0
+
+        with patch.object(self.procs, "_ended_code", always_zero):
+            status, detail = self.checks.check_exit_code_readback()
+        self.assertEqual(status, "fail", detail)
+        self.assertIn("read back as 0x00000000", detail)
+        self.assertIn("should be 0xC0000409", detail)
+
+        with patch.object(self.checks, "EXIT_READBACK_WAIT_MS", 200), \
+                patch.object(self.procs, "_ended_code",
+                             lambda api, handle, wait_ms=0: None):
+            status, detail = self.checks.check_exit_code_readback()
+        self.assertEqual(status, "fail", detail)
+        self.assertIn("no exit code read", detail)
+
+    def test_exit_code_readback_leaves_exits_empty(self):
+        """The check's children are not launched games: hs_status and
+        hs_stop_game must never report them."""
+        status, detail = self.checks.check_exit_code_readback()
+        self.assertEqual(status, "pass", detail)
+        self.assertEqual(self.procs.exits(), [])
+        self.assertEqual(self.procs._EXITS, [])
 
 
 @unittest.skipIf(SKIP_REASON is not None, SKIP_REASON or "")

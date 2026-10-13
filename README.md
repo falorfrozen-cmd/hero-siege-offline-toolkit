@@ -144,7 +144,8 @@ commands over `bp_ipc` and reads the plugin's reply back, screenshots the game
 window, injects keyboard and mouse input into that window (`hs_input`, by
 either of two routes), clicks from the title screen into a loaded character
 (`hs_select_character`, proving the load through the plugin rather than a
-screenshot), and closes the game gracefully — every tool refusing
+screenshot), taking a loaded character back to the character select through
+the pause menu's Save & Exit (`hs_exit_to_menu`), and closes the game gracefully — every tool refusing
 with a named reason rather than guessing, the save tools refusing unless the
 game is provably closed, and the injection refusing unless the target window
 belongs to a running game process. A machine-wide game lease
@@ -316,6 +317,18 @@ judge the label from the picture. See [its page](docs/tools/button-label-check.m
 
 ```powershell
 py -3 tools/button_label_check.py <png> --gui 2560x1440 --box <l,t,r,b> --ref <l,t,r,b>
+```
+
+`tools/crash_dump_stack.py` names the module that raised a crash. It reads one
+Windows Error Reporting minidump (`%LOCALAPPDATA%\CrashDumps\Hero_Siege.exe.<pid>.dmp`)
+through `cdb.exe`, with an empty local symbol path and so no network, and prints
+the exception code, the fast-fail subcode, `raised-in=<module>` and the faulting
+thread's frames as module-relative offsets. ForgePact issue #201 uses it to
+attribute the `0xC0000409` that `hs_stop_game` reports. It needs the Windows
+SDK's Debugging Tools. See [its page](docs/tools/crash-dump-stack.md):
+
+```powershell
+py -3 tools/crash_dump_stack.py --latest      # or --pid <n> --wait 30, --dump <path>, --expect-module <dll>
 ```
 
 ## Modified YYToolkit

@@ -63,6 +63,21 @@ PLAY_LOCAL_TEXT = "Play local"
 #: The room the save-slot cards and the character panel are both in.
 SLOT_ROOM = "Chose_rm"
 
+#: The room the game starts in, where `Play local` is listed.
+MAIN_MENU_ROOM = "Main_Menu_rm"
+
+#: The two rooms with no character in the world: `hs_exit_to_menu` refuses
+#: to start in either and stops once the game reaches one (the pause menu's
+#: Save & Exit goes to `Chose_rm`, measured 2026-10-13 in #201 Live 1 and 2).
+MENU_ROOMS = (MAIN_MENU_ROOM, SLOT_ROOM)
+
+#: The in-game pause menu (`hs_exit_to_menu`): listed while it is open. Its
+#: buttons are `UI_Button_obj` rows, built anew on every open
+#: (`docs/RUNTIME_DATA_MODELS.md` § 8.4, measured 2026-09-22), so a button of
+#: this open is told apart by an id that was not listed before Escape.
+PAUSE_OBJECT = "UI_Pause_obj"
+MENU_BUTTON_OBJECT = "UI_Button_obj"
+
 #: Phase 0's Decision (ForgePact `docs/menu-layout-research.md`, 2026-09-21,
 #: recorded in `1553fbd`): `slotObject: Choose_Parent_obj`, `playObject: UI_Button_obj`,
 #: both clicked at their listed origin (`point:origin`).

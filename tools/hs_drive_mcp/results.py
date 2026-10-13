@@ -188,8 +188,28 @@ STASH_REASONS = (
     "give_not_confirmed",
 )
 
+#: Added by `forgepact-201-exit-c0000409` for `hs_exit_to_menu`
+#: (`menuexit.py`), and only these five; the listing, window and click tokens
+#: it shares with `hs_select_character` are reused, never spelled again.
+#: `not_in_world`: the listing's room is already a menu room (`Main_Menu_rm`
+#: or `Chose_rm`), so there is no character to take back and nothing is sent.
+#: `pause_menu_not_open`: Escape was delivered and no `UI_Pause_obj` was
+#: listed within the poll budget. `exit_button_not_found`: no new pause-menu
+#: button matched (or a listing was capped, so its id set may be incomplete);
+#: `exit_button_ambiguous`: more than one did. `menu_not_reached`: the Exit
+#: click landed and no menu room without a pause menu was listed within
+#: `timeout_s`.
+EXIT_MENU_REASONS = (
+    "not_in_world",
+    "pause_menu_not_open",
+    "exit_button_not_found",
+    "exit_button_ambiguous",
+    "menu_not_reached",
+)
+
 REASONS = (CORE_REASONS + GAME_REASONS + INPUT_REASONS + SELECT_CHARACTER_REASONS
-           + LEASE_REASONS + SKILL_REASONS + ACTION_REASONS + STASH_REASONS)
+           + LEASE_REASONS + SKILL_REASONS + ACTION_REASONS + STASH_REASONS
+           + EXIT_MENU_REASONS)
 
 
 def ok(tool: str, **fields: Any) -> dict[str, Any]:

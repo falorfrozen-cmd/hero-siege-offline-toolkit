@@ -42,7 +42,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tools.hs_drive_mcp import (  # noqa: E402
-    charselect, checks, ipc, launch, launcher_bridge, lease, procs, saves, skills, stash)
+    charselect, checks, ipc, launch, launcher_bridge, lease, menuexit, procs, saves, skills,
+    stash)
 from tools.hs_drive_mcp import input as input_module  # noqa: E402
 
 #: How long any one child may take to answer before the test gives up on it.
@@ -184,8 +185,9 @@ class LeaseBase(unittest.TestCase):
 
     def gated_calls(self, touched: dict[str, Recorder]):
         """The gated domain functions - the six the lease shipped with, the
-        five skill tools and the five stash and bag tools - each wired so the first thing it would touch after
-        the lease is a `Recorder` in `touched`."""
+        five skill tools, the five stash and bag tools and `hs_exit_to_menu` -
+        each wired so the first thing it would touch after the lease is a
+        `Recorder` in `touched`."""
         def launch_call():
             with patch.object(procs, "load_engine", touched["hs_launch"]):
                 return launch.hs_launch(timeout_s=1)
@@ -240,6 +242,13 @@ class LeaseBase(unittest.TestCase):
                     return call(touched[tool])
             return wrapped
 
+        # `hs_exit_to_menu` reaches the process gate first; its listing send
+        # and its key share the recorder, so a send before the gate counts.
+        def exit_call():
+            with patch.object(menuexit.ipc, "send", touched["hs_exit_to_menu"]), \
+                 patch.object(menuexit.input_module, "inject", touched["hs_exit_to_menu"]):
+                return menuexit.hs_exit_to_menu(timeout_s=1, gate=touched["hs_exit_to_menu"])
+
         return {"hs_launch": launch_call, "hs_stop_game": stop_call,
                 "hs_command": command_call, "hs_input": input_call,
                 "hs_select_character": select_call,
@@ -259,7 +268,8 @@ class LeaseBase(unittest.TestCase):
                 "hs_stash_tab": stashed("hs_stash_tab", lambda gate: stash.hs_stash_tab(
                     "materials", "no-such-backup", gate=gate)),
                 "hs_bag_tab": stashed("hs_bag_tab", lambda gate: stash.hs_bag_tab(
-                    "materials", "no-such-backup", gate=gate))}
+                    "materials", "no-such-backup", gate=gate)),
+                "hs_exit_to_menu": exit_call}
 
     #: The two tools whose first touch is nothing at all: they refuse
     #: `route_not_measured` whoever holds the lease, and never send.
@@ -285,6 +295,7 @@ class LeaseBase(unittest.TestCase):
             "hs_stash_close": Recorder(not_running_gate()),
             "hs_stash_tab": Recorder(not_running_gate()),
             "hs_bag_tab": Recorder(not_running_gate()),
+            "hs_exit_to_menu": Recorder(not_running_gate()),
         }
 
 
@@ -397,7 +408,8 @@ class GateTests(LeaseBase):
                     "hs_stash_open": "game_not_running",
                     "hs_stash_close": "game_not_running",
                     "hs_stash_tab": "game_not_running",
-                    "hs_bag_tab": "game_not_running"}
+                    "hs_bag_tab": "game_not_running",
+                    "hs_exit_to_menu": "game_not_running"}
         for tool, call in self.gated_calls(touched).items():
             with self.subTest(tool=tool):
                 result = call()
