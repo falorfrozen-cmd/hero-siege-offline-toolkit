@@ -95,7 +95,9 @@ against a median driver of $12.
 
    A capture `tools/live_checks.py` cannot read — a renamed, missing or
    unreadable check — is not repaired by anyone: report it, and re-run the
-   session or replan. The capture is the session's evidence.
+   session or replan. The capture is the session's evidence. A re-run is
+   appended below the first attempt, so its criterion reads it with
+   `--block last`.
 
 **Record this phase while the next one is planned.** When the owner's answer
 from 4 means another phase, launch this workorder's record round and, in the

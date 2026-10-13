@@ -11,7 +11,7 @@ Collected 2026-10-12 for hub #498 from all 52 remote branches of
 (private). Its first consumer is ForgePact#158, flight charms with custom icons.
 
 The facts about the game itself that were **measured** are also in
-[`RUNTIME_DATA_MODELS.md` §21](../RUNTIME_DATA_MODELS.md#21-adding-our-own-content-art-drawing-input-spawning-and-blockers),
+[`RUNTIME_DATA_MODELS.md` §22](../RUNTIME_DATA_MODELS.md#22-adding-our-own-content-art-drawing-input-spawning-and-blockers),
 the shared record every module reads. This page keeps the rest: AFK's own
 recipes, the inferred and open claims, and what was superseded.
 
@@ -466,7 +466,7 @@ Monsters there then have the zone's exact stats, and loot and XP stay the game's
 
 ## (a) Facts about the game itself
 
-The measured ones are folded into [`RUNTIME_DATA_MODELS.md` §21](../RUNTIME_DATA_MODELS.md#21-adding-our-own-content-art-drawing-input-spawning-and-blockers).
+The measured ones are folded into [`RUNTIME_DATA_MODELS.md` §22](../RUNTIME_DATA_MODELS.md#22-adding-our-own-content-art-drawing-input-spawning-and-blockers).
 
 1. `asset_get_index` returns `VALUE_REF`, not a number; validate with `*_exists` (10.5). **measured**.
 2. 254 dynamic texture groups are streamed by region. A sprite from an unloaded group draws nothing until `sprite_prefetch`; `npc_tex` is always loaded; `Guild_Master_NPC_spr` is in `act_2_tex`. `texturegroup_get_status` uses 0-3 (3.1, 3.2). **measured**.
