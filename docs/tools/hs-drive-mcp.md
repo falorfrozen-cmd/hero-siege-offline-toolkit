@@ -1378,9 +1378,12 @@ rather than by falling back to another launcher:
   close was measured at `0x00000000` with no dump (capture
   `forgepact-185-tracker-mod-live-1`, 2026-10-13: an in-world close, a close
   after Save & Exit and an in-world close with `lootann` on), so there
-  `0xC0000409` is a real signal to investigate. Hash the installed
-  `mods\aurie\HSOfflineTrackerProducer.dll` before deciding which case
-  applies. Measured 2026-10-07: both
+  `0xC0000409` is a real signal to investigate. Which case applies is
+  decided by ForgePact's own lists, `TRACKER_SENSOR_ABORTING` and
+  `TRACKER_SENSOR_CLEAN` in `ForgePact/src/forgepact.py`; from the hub root,
+  `py -3 -c "import hashlib,sys; sys.path.insert(0,'ForgePact/src'); import forgepact as f; h=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest(); print(h, 'aborting' if h in f.TRACKER_SENSOR_ABORTING else 'clean' if h in f.TRACKER_SENSOR_CLEAN else 'unknown')" "<game>\mods\aurie\HSOfflineTrackerProducer.dll"`
+  prints the installed producer's hash and its class. `unknown` means
+  neither was measured: treat the code as unexplained. Measured 2026-10-07: both
   graceful closes of ForgePact #173's sessions read `0xC0000409` after
   `==== clean shutdown ====` (Verification, "Exit codes (ForgePact #173)").
   Attributed 2026-10-13 (ForgePact #201, Verification, "Graceful stops
