@@ -27,7 +27,8 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
-from . import capture, charselect, checks, ipc, launch, lease, procs, saves, skills, stash
+from . import (capture, charselect, checks, ipc, launch, lease, menuexit, procs, saves,
+               skills, stash)
 # `input` shadows nothing at module scope here, but a bare `input` in this file
 # would read as the builtin to every later reader of it.
 from . import input as input_module
@@ -561,6 +562,50 @@ def hs_select_character(
     """
     return charselect.hs_select_character(slot=slot, timeout_s=timeout_s,
                                           tool="hs_select_character")
+
+
+@server.tool(
+    name="hs_exit_to_menu",
+    title="Take a loaded character back to the menu through Escape -> Exit",
+    description=(
+        "Leave the world the way a player does: press Escape, then click the "
+        "pause menu's Exit button at the point ForgePact's read-only "
+        "menulayout listing reports for it, and poll until the game lists "
+        "Chose_rm or Main_Menu_rm with no pause menu. The game's own Exit "
+        "saves the character. The Exit row is a button new to this open, "
+        "picked by its text or uiNodeCallstack, never guessed; none or "
+        "several is refused. Unverified until #201's Live procedure 1."),
+    annotations=_acts("Take a loaded character back to the menu"),
+)
+def hs_exit_to_menu(
+    timeout_s: Annotated[float, Field(
+        description="How long to poll for a menu room after the Exit click.",
+        ge=1, le=600)] = 60,
+    label: Annotated[str | None, Field(
+        description="The Exit row's exact text, when the default match (exit "
+                    "in its uiNodeCallstack or text, join in neither) finds "
+                    "none or several.", max_length=80)] = None,
+) -> dict[str, Any]:
+    """`ok` with `phase: "menu_reached"`, `room`, `exit_row` (`obj`, `id`,
+    `text`, `uiNodeCallstack`, `win`), `pause_opened_by` (`key`, or
+    `already_open` when the pause menu was listed before any key and Escape
+    was skipped), `layout_trail` (the key and the click), `focus_trail` (the
+    focus step that took, per input), `proof` (each listing header that
+    decided a step) and `elapsed_s`.
+
+    Refusals: the lease and process gates' (`lease_held`,
+    `lease_unavailable`, `game_not_running`, `game_state_unknown`,
+    `engine_source_missing`, `engine_import_failed`),
+    `no_visible_window_for_pid`, `window_minimized`, `foreground_not_game`,
+    `not_consumed`, `layout_command_missing`, `window_size_mismatch` (before
+    any input, or at any read the click would be picked from),
+    `not_in_world` (already in `Main_Menu_rm` or `Chose_rm`),
+    `click_not_delivered` (Escape or the click not delivered whole),
+    `pause_menu_not_open`, `exit_button_not_found` (none matched, or a
+    listing said `capped=1`), `exit_button_ambiguous` (`candidates` lists
+    them), `menu_not_reached`. A refusal carries `last_listing`.
+    """
+    return menuexit.hs_exit_to_menu(timeout_s=timeout_s, label=label)
 
 
 @server.tool(

@@ -71,7 +71,10 @@ TWENTY_TWO_TOOLS = SEVENTEEN_TOOLS | SKILL_TOOLS
 #: Plus the five stash and bag tools, from `hs-drive-stash-bag-actions`.
 STASH_TOOLS = {"hs_give_item", "hs_stash_open", "hs_stash_close",
                "hs_stash_tab", "hs_bag_tab"}
-EXPECTED_TOOLS = TWENTY_TWO_TOOLS | STASH_TOOLS
+TWENTY_SEVEN_TOOLS = TWENTY_TWO_TOOLS | STASH_TOOLS
+
+#: Plus `hs_exit_to_menu`, from `forgepact-201-exit-c0000409`.
+EXPECTED_TOOLS = TWENTY_SEVEN_TOOLS | {"hs_exit_to_menu"}
 
 #: Three tools can take away something that was not theirs: a restore
 #: overwrites the live save directory, a forced stop terminates a process, and
@@ -217,12 +220,33 @@ class StdioSurfaceTests(unittest.TestCase):
         self.assertLessEqual(SKILL_TOOLS, {tool.name for tool in self.tools})
         self.assertEqual(len(TWENTY_TWO_TOOLS), 22)
 
-    def test_all_twenty_seven_tools_are_registered(self):
-        # The total it asserted before this change (22), plus five.
-        self.assertEqual({tool.name for tool in self.tools}, EXPECTED_TOOLS)
+    def test_the_twenty_seven_earlier_tools_are_still_registered(self):
+        # The total it asserted before `hs_exit_to_menu` (22), plus five.
+        self.assertLessEqual(TWENTY_SEVEN_TOOLS, {tool.name for tool in self.tools})
         self.assertLessEqual(STASH_TOOLS, {tool.name for tool in self.tools})
-        self.assertEqual(len(self.tools), 22 + 5)
-        self.assertEqual(len(self.tools), 27)
+        self.assertEqual(len(TWENTY_SEVEN_TOOLS), 22 + 5)
+
+    def test_all_twenty_eight_tools_are_registered(self):
+        # The total it asserted before this change (27), plus one.
+        self.assertEqual({tool.name for tool in self.tools}, EXPECTED_TOOLS)
+        self.assertIn("hs_exit_to_menu", {tool.name for tool in self.tools})
+        self.assertEqual(len(self.tools), 27 + 1)
+        self.assertEqual(len(self.tools), 28)
+
+    def test_hs_exit_to_menu_writes_destroys_nothing_and_takes_no_backup(self):
+        """Not read-only: it presses Escape and clicks Exit, and the game
+        saves itself. Not destructive: the save is the game's own, the one a
+        player's Exit makes. Not idempotent: a second call finds no character
+        in the world. Both inputs are optional and there is no `backup_id`."""
+        tool = next(tool for tool in self.tools if tool.name == "hs_exit_to_menu")
+        hints = tool.annotations.model_dump(by_alias=True)
+        self.assertFalse(hints["readOnlyHint"])
+        self.assertFalse(hints["destructiveHint"])
+        self.assertFalse(hints["idempotentHint"])
+        schema = tool.model_dump(by_alias=True)["inputSchema"]
+        self.assertEqual(schema.get("required", []), [], schema)
+        self.assertEqual(set(schema["properties"]), {"timeout_s", "label"})
+        self.assertIn("menulayout", tool.description)
 
     def test_the_stash_tools_hints_and_required_inputs(self):
         """All five act, destroy nothing and are not idempotent (a second give

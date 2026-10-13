@@ -1,0 +1,84 @@
+"""Pause-menu `menulayout` listings for `hs_exit_to_menu`'s tests -- SYNTHETIC.
+
+**No pause-menu listing has been captured from a running game yet.** Every
+row here is written by hand in the plugin's reply format (the same framing,
+CRLF and field order as the captured listings in
+`hs_drive_mcp_menulayout_fixtures.py` and `hs_drive_mcp_stashlayout_fixtures.py`),
+so these tests pin the tool's rules, not the game's pause menu. What is known:
+`UI_Pause_obj` exists only while the menu is open, each open builds new
+`UI_Button_obj` rows, and Restart's `uiNodeCallstack` is `PauseRestart`
+(`docs/RUNTIME_DATA_MODELS.md` § 8.4, measured 2026-09-22). The Exit row's
+text (`Exit`), its `uiNodeCallstack` (`PauseExit`), the other rows and every
+id and point below are invented. ForgePact #201's Live procedure 1 is the first
+session that lists the real menu; replace these with its capture then.
+"""
+
+TOWN_ROOM = "Town_01_rm"
+WINDOW = "1920x1080"
+
+#: The Exit row's listed point, written here by hand so the tests assert the
+#: number in the fixture rather than agree with the matcher.
+EXIT_POINT = (960, 772)
+EXIT_ID = 300108
+
+
+def header(room: str = TOWN_ROOM, window: str = WINDOW) -> str:
+    return (f"menulayout: room={room} gui=2560x1368 window={window} "
+            "fullscreen=0 view=244.0,268.0,1280.0,720.0")
+
+
+def footer(listed: int, capped: int = 0) -> str:
+    return f"menulayout: listed={listed} absent=none capped={capped}"
+
+
+def button(id_: int, win: tuple[int, int], text: str, callstack: str,
+           visible: int = 1) -> str:
+    x, y = win
+    gx, gy = x * 4 / 3, y * 4 / 3
+    return (f"  obj=UI_Button_obj id={id_} gui={gx:.1f},{gy:.1f} win={x},{y} "
+            f"bbox={gx - 150:.1f},{gy - 40:.1f},{gx + 150:.1f},{gy + 40:.1f} "
+            f"visible={visible} sprite=Menu_Button_Kaelith_spr "
+            f"uiNodeCallstack={callstack} activationArgs=[] enabled=1 "
+            f"text={text}")
+
+
+def pause_row(id_: int = 300100) -> str:
+    return (f"  obj=UI_Pause_obj id={id_} gui=0.0,0.0 win=0,0 "
+            "bbox=0.0,0.0,0.0,0.0 visible=1 sprite=none text=")
+
+
+def listing(rows: list[str], *, room: str = TOWN_ROOM, window: str = WINDOW,
+            capped: int = 0) -> list[str]:
+    """One `menulayout <Obj>` listing: header, rows, footer."""
+    return [header(room, window), *rows, footer(len(rows), capped)]
+
+
+def framed(*listings: list[str]) -> str:
+    """One reply carrying the given listings, framed as every reply is."""
+    lines = ["---- running command file ----"]
+    for one in listings:
+        lines.extend(one)
+    lines.append("---- done ----")
+    return "".join(line + "\r\n" for line in lines)
+
+
+#: In the world, before Escape: two HUD buttons that stay listed whatever
+#: menu opens. The second one's text contains "exit" on purpose: it is the
+#: negative control, a row listed before the key, which must never be
+#: clicked.
+HUD_BUTTONS = [
+    button(299001, (1800, 40), "Menu", "HudMenu"),
+    button(299002, (1860, 40), "Exit Portal", "HudPortalExit"),
+]
+
+#: The pause menu's own buttons once it is open (new ids, the open's own).
+PAUSE_BUTTONS = [
+    button(300101, (960, 380), "Resume", "PauseResume"),
+    button(300102, (960, 478), "Options", "PauseOptions"),
+    button(300103, (960, 576), "Restart", "PauseRestart"),
+    button(300104, (960, 674), "Join Discord", "PauseJoinDiscordExitLink"),
+    button(EXIT_ID, EXIT_POINT, "Exit", "PauseExit"),
+]
+
+#: A second row that also reads as an Exit row, for the ambiguity rule.
+SECOND_EXIT = button(300109, (960, 870), "Exit Game", "PauseExitGame")
