@@ -41,6 +41,8 @@ hs-game-sdk/
 │   ├── boss_soul_pieces.json   # ForgePact #197: the key piece's base (`keys_bifrost_key`, class 12, `b` + act/10) and its icon (`Gem_Incarnation_spr` under info key "11", ground `Pickup_Gem_Incarnation_spr`), `bag_stack` (the game's `InventoryGridAddToStack`: classes 12 to 15 only, asked before any compare, a cap of 999, the `s_ItemOperation` result's `success`), the legacy piece's base (Edible PAS Logo), act bosses and boss rooms, piece seeds, the Gem of Incarnation's measured rate (9,000), the 4/5 ratio, the travel route (`NetworkRoomGoto` after `ZoneStateResetSingle`), room and use rules, verdict words, shared cases (key pieces and stack counts included) and the open questions of Live procedure 3 and the follow-up's Live procedures 1, 2 and 4, with their answers (Live procedure 4: the bag file is written at stash close, and a saved stack count comes back as written) (data only)
 │   ├── loot_announcement_measurements.json # ForgePact #17: the rare-drop announcement chain, the rarity codes its closure branches on and the route ForgePact ships (§16.10; data only, no model)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
+│   ├── flight_charms_measurements.json # ForgePact #158 phase 1: walk callers, charm size keys, sprite key, the Heroic roll (RDM §19.6, §23), and the mod's Mod live 1-3 records (data only)
+│   ├── unique_pick_measurements.json # UP1-UP13: #74's stand-in picks, the unique list's lengths, ForgePact's push and coin, and the flight charms' Mod live 1 and 2 counts, for unique_pick_model.py (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
 ├── python/                     # Python SDK package
@@ -60,6 +62,7 @@ hs-game-sdk/
 │   │   ├── monster_rank_model.py # What a monster's rank does to health, damage, XP and drop values, stdlib only, not exported (hand-written)
 │   │   ├── dungeon_chest_model.py # When a key dungeon's end chest opens (no monster alive) and the kill tally's quantities, stdlib only, not exported (hand-written)
 │   │   ├── skill_sliders_model.py # Projectile count, AoE scale and projectile deltaSpeed from their stats, stdlib only, not exported (hand-written)
+│   │   ├── unique_pick_model.py # Which unique the Angelic roll and the ordinary unique roll yield (one entry's share), stdlib only, not exported (hand-written)
 │   │   ├── soul_piece_model.py # A room's act (RoomActIndex's answer), the pickup's stack rule (reals within the epsilon), the number rules a key piece rests on (repository truncation, unique `c`, the save's two decimals, crafting's count, the find), the gem roll a boss soul piece rides and the backpack's use, stdlib only, not exported (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
@@ -219,6 +222,26 @@ scale gains, and the `deltaSpeed` the projectile-speed stats leave. What is stil
 required keyword-only `order` stands for, the AoE factor callers pass, the outcome of the chance
 rolls) is a parameter, never a guessed constant. ForgePact's research levers (`projprobe amount`,
 `aoe`, `speed`) stay in the test as transforms, pinned to `plugin/ModuleMain.cpp` by
+`LeverParityTests`.
+
+`unique_pick_model.py` (2026-10-13, ForgePact issue #158, hub #500) is built the same way: spec
+`docs/models/unique-pick-spec.md` (written from `docs/RUNTIME_DATA_MODELS.md` § 13.4, § 23.4 and
+§ 23.8), fixture `curated/unique_pick_measurements.json` (UP1-UP5 #74's `standinPicks=` counts from
+its list-injection Lives 1 to 3 of 2026-10-02, with nothing pushed and with Headhunter at 200
+copies; UP6 the measured lengths of `lootListUnique[0..5]`; UP7-UP8 ForgePact's push and coin, as
+our-code contracts; UP9-UP13 the flight charms' Mod live 1 and 2 counts, replayed at the measured
+T = 48), checks `tests/test_unique_pick_model.py`. It gives an entry's share of the
+Angelic roll's drops (r / T: the roll draws again until it keeps a droppable entry), and the
+ordinary unique roll's chance of dropping a given entry or anything at all (r / L and D / L: one
+draw, nothing on a miss). T, the droppable entries on the Angelic list, was measured as 48 by the flight charms' Mod live 2
+`flightprobe pool` (RDM § 13.4); #74's replays, made before that, still accept one T in 40..60.
+What is still open is a parameter, never a guessed constant: D, and whether the ordinary roll's index can reach the list's length
+(`index_can_reach_length`). The binomial helpers are `drop_roll_model`'s, imported and not copied.
+ForgePact's push (one stand-in per switched-on item per roll, onto list 5 for Headhunter, Tyrant's
+Crown, Gabriel Wings and Witch's Broomstick, onto lists 0..4 for Pocket Elf) and its coin
+c / (n + c) stay in the test as transforms, so each item takes c / (T + e) of the Angelic roll and
+Pocket Elf c / (L_k + c) of the ordinary one, one entry's share at the player build's c = 1; they
+are pinned to `plugin/ModuleMain.cpp` and `plugin/include/ForgePact/FlightCharms.hpp` by
 `LeverParityTests`.
 
 ---
@@ -555,6 +578,7 @@ contributor can be assumed to have:
 | `test_mining_reward_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `RollsLeverParityTests` | always runs; only `RollsLeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/MiningOreMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_monster_rank_model.py` | nothing (the model, its fixture, its spec and the tracked object bindings); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/BossRarityMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths |
 | `test_dungeon_chest_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/DungeonChestMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths and local `.claude/workorders/` captures |
+| `test_unique_pick_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/ModuleMain.cpp` or `ForgePact/plugin/include/ForgePact/FlightCharms.hpp` is absent (hub CI checks out without submodules), while `FixtureShapeTests` skips checking `ForgePact/...` source paths only when `ForgePact/docs` is absent, so a ForgePact checkout that predates the paths the fixture cites fails it rather than skipping |
 | `test_soul_piece_model.py` | nothing (the model, its two curated files, its spec and the tracked room and object bindings); `ForgePact/` checked out for `ParityTests` | always runs; only `ParityTests` skips, when `ForgePact/plugin/include/ForgePact/SoulPieceMod.hpp` is absent (hub CI checks out without submodules) |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_sdk_lazy_import.py` | nothing (starts fresh interpreters of the Python running the suite) | always runs |
@@ -886,7 +910,7 @@ re-run it; regeneration is idempotent, so a second run must produce no diff.
 
 "Every file" is broader than the code, though: `player.py`/`.hpp`/`.ts`, `hooks.hpp`,
 `mod_registry.py`, `item_type.py`/`.hpp`/`.ts`, `drop_roll_model.py`, `mining_reward_model.py`,
-`monster_rank_model.py`, `dungeon_chest_model.py` and `soul_piece_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
+`monster_rank_model.py`, `dungeon_chest_model.py`, `unique_pick_model.py` and `soul_piece_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
 models are not wired
 into any aggregate on purpose (import it by its module name), and it has no C++ or TypeScript
 counterpart. They still have to be wired into the aggregates
