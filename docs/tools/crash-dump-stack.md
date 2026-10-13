@@ -25,14 +25,18 @@ Windows keeps the newest ten crash dumps per user in
 `--exe-name` changes the `Hero_Siege.exe` prefix. `--wait <s>` (default 0)
 polls with `--pid` (or `--dump`) until the file exists and its size has stopped
 changing. WER writes the dump a moment after the process has gone, so a live
-procedure that has just read the exit code passes `--wait`.
+procedure that has just read the exit code passes `--wait`. A dump that is
+still growing when the wait runs out is refused with exit 6
+(`dump at <path> still growing after <n>s`), never handed to cdb half-written;
+run it again with a longer `--wait`. `--latest` skips a dump that WER rotated
+out between listing the folder and reading its time.
 
 ## Where cdb comes from
 
 cdb is part of the Windows SDK's Debugging Tools. The tool looks, in order, at
 `--cdb <path>`, the `CDB_PATH` environment variable,
 `%ProgramFiles(x86)%\Windows Kits\10\Debuggers\x64\cdb.exe` and `PATH`. With
-none of them present it exits 2 and lists every place it looked.
+none of them present it exits 5 and lists every place it looked.
 
 The symbol path is an empty directory under the system temp directory
 (`hs_crash_dump_stack_symbols`), passed with `-y`. `-sins` makes cdb ignore
@@ -48,6 +52,15 @@ was written on.
 cdb runs `.exr -1` (the exception record), `.ecxr` then `kn` (the faulting
 thread's stack from the stored exception context), and `lm` (module bases, to
 turn each address into a module and an offset).
+
+If the dump has no usable exception context, `.ecxr` fails and `kn` walks
+cdb's current thread instead, which need not be the exception's stack. The
+tool checks for that: cdb's `.ecxr` refusal in the transcript, or a frame 0
+whose call site names another module than the one holding the exception
+address. Either way the header ends ` context=unverified`, a `context:` line
+under it says which, frame 0 is named from its call site rather than pinned to
+the exception address, and `--expect-module` exits 1 whatever `raised-in`
+reads, since a match on another stack is no evidence.
 
 ## What it prints
 
@@ -72,7 +85,9 @@ dump: C:\Users\...\CrashDumps\Hero_Siege.exe.9364.dmp pid=9364 code=0xc0000409 s
   own: `ucrtbase` (and the debug `ucrtbased`), `ntdll`, `kernel32`,
   `kernelbase`, `vcruntime140*` and `msvcp140*`. Those only carry a fault raised
   elsewhere: the C runtime's `abort` and `terminate`, the loader's teardown,
-  the exit call. It is `none` when every frame is the runtime's.
+  the exit call. It is `none` when every frame is the runtime's. It is judged
+  over every frame cdb listed (at least 16), not only the ones printed, so
+  `--frames 1` still names the producer at frame `#02`.
 - One line per frame follows, `--frames` of them (default 12), as
   `<module>+0x<offset in that module>` with cdb's name in brackets when it
   differs. A frame outside every loaded module prints `<no module> 0x<addr>`.
@@ -99,10 +114,12 @@ py -3 tools/crash_dump_stack.py --dump <path.dmp> --frames 20
 | Code | Meaning |
 |---|---|
 | 0 | parsed, and `--expect-module` (if given) matched |
-| 1 | `--expect-module` did not match. The output still prints, and stderr names both |
-| 2 | no cdb. The message lists every place looked |
+| 1 | `--expect-module` did not match, or the stack was `context=unverified`. The output still prints, and stderr names both |
+| 2 | usage error, from argparse: two of `--dump`/`--pid`/`--latest`, none of them, or a bad value |
 | 3 | no dump: the `--pid` file is absent (after `--wait`), or `--latest` found none |
 | 4 | cdb ran and no exception record was parsed. stderr carries cdb's last lines |
+| 5 | no cdb. The message lists every place looked |
+| 6 | the dump was still growing when `--wait` ran out; cdb was not run |
 
 ## What it never does
 
@@ -123,9 +140,13 @@ py -3 tools/crash_dump_stack.py --dump <path.dmp> --frames 20
 `tests/test_crash_dump_stack.py` stubs cdb with a transcript shaped like the
 2026-10-12 dumps, so it needs no debugger and no dump. The game frames in it
 carry made-up offsets below `0x10000`. It covers parsing, `--expect-module`
-with a negative control where another module raised the crash, missing cdb,
-`--pid`/`--latest`/`--wait`, no dump, an unparsed transcript, and that the
-symbol path is local and offline:
+with a negative control where another module raised the crash, `--frames 1`
+and `2` still attributing the producer, a failed `.ecxr` and a frame 0 outside
+the exception's module (each against the verified producer stack as control),
+missing cdb and a usage error on different codes, `--pid`/`--latest`/`--wait`,
+a dump still growing at the end of the wait, a `--latest` match that vanished
+before its stat, no dump, an unparsed transcript, and that the symbol path is
+local and offline:
 
 ```powershell
 py -3 -m unittest tests.test_crash_dump_stack -v

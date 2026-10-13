@@ -13,8 +13,12 @@ the game.
 The baseline is the negative control - the same shape with `BloodPactPlugin`
 as the first non-runtime frame must fail `--expect-module
 HSOfflineTrackerProducer` - and the target is the producer named on the
-producer's stack. The rest pin the refusals (no cdb, no dump) and that the
-symbol path is an empty local directory, so the tool never asks a symbol server.
+producer's stack. The rest pin the refusals (no cdb, no dump, a dump still
+being written), that `--frames` cuts only what is printed and never what
+`raised-in` is judged over, that a stack which is not the exception's (`.ecxr`
+failed, or frame 0 in another module than the exception address) is said so
+rather than mixed in, and that the symbol path is an empty local directory, so
+the tool never asks a symbol server.
 """
 import contextlib
 import io
@@ -91,6 +95,24 @@ quit:
 """
 
 
+# Another thread's stack, as `kn` walks it when `.ecxr` could not set the
+# exception's context: frame 0 is not at the exception address.
+OTHER_THREAD_ROWS = """\
+ # Child-SP          RetAddr           Call Site
+00 00000054`fe700000 00007ff8`20001234 ntdll!NtWaitForSingleObject+0x14
+01 00000054`fe700030 00007ff8`71c7147b BloodPactPlugin!SomeExport+0x10
+02 00000054`fe700060 00000000`00000000 kernel32!BaseThreadInitThunk+0x1d
+"""
+
+
+def with_stack(stack_block: str) -> str:
+    """The producer transcript with its stack section replaced."""
+    whole = transcript()
+    head, rest = whole.split(cds.MARK_STACK + "\n", 1)
+    _, tail = rest.split(cds.MARK_LM + "\n", 1)
+    return f"{head}{cds.MARK_STACK}\n{stack_block}{cds.MARK_LM}\n{tail}"
+
+
 def run(argv, cdb_output=None, captured=None):
     """main() with run_cdb stubbed; returns (exit code, stdout, stderr)."""
     def fake_run(command, env, timeout):
@@ -145,6 +167,23 @@ class CrashDumpStackTest(unittest.TestCase):
         self.assertEqual(len(out.splitlines()), 1 + 3)
         self.assertIn("raised-in=HSOfflineTrackerProducer", out)
 
+    def test_frames_never_changes_raised_in(self):
+        # The producer is frame #02. Printing one or two frames must not hide
+        # it from the attribution, nor from --expect-module.
+        path = self.dump()
+        for frames in ("1", "2"):
+            with self.subTest(frames=frames):
+                code, out, err = run(["--dump", str(path), "--cdb", str(self.cdb), "--frames", frames,
+                                      "--expect-module", "HSOfflineTrackerProducer"])
+                self.assertEqual(code, 0, err)
+                lines = out.splitlines()
+                self.assertTrue(lines[0].endswith("raised-in=HSOfflineTrackerProducer"), lines[0])
+                self.assertEqual(len(lines), 1 + int(frames))
+                self.assertNotIn("HSOfflineTrackerProducer+", out)
+        report = cds.parse_transcript(transcript())
+        self.assertEqual(report.raised_in, "HSOfflineTrackerProducer")
+        self.assertEqual(len(report.frames), 10)
+
     def test_expect_module_passes_on_the_producer_stack(self):
         path = self.dump()
         for spelling in ("HSOfflineTrackerProducer", "hsofflinetrackerproducer.dll", "HSOfflineTrackerProducer.DLL"):
@@ -167,18 +206,32 @@ class CrashDumpStackTest(unittest.TestCase):
         for name in ("HSOfflineTrackerProducer", "BloodPactPlugin", "YYToolkit", "Hero_Siege"):
             self.assertFalse(cds.is_runtime_module(name), name)
 
-    def test_missing_cdb_exits_2_and_says_where_it_looked(self):
+    def test_missing_cdb_exits_5_and_says_where_it_looked(self):
         path = self.dump()
         nowhere = self.root / "nowhere"
         with patch.dict(os.environ, {"CDB_PATH": str(nowhere / "cdb.exe"), "ProgramFiles(x86)": str(nowhere)}), \
                 patch.object(cds.shutil, "which", return_value=None):
             code, out, err = run(["--dump", str(path), "--cdb", str(nowhere / "explicit-cdb.exe")])
-        self.assertEqual(code, 2)
+        self.assertEqual(code, cds.EXIT_NO_CDB)
+        self.assertEqual(code, 5)
         self.assertEqual(out, "")
         self.assertIn(str(nowhere / "explicit-cdb.exe"), err)
         self.assertIn(f"CDB_PATH: {nowhere / 'cdb.exe'}", err)
         self.assertIn(str(nowhere / "Windows Kits" / "10" / "Debuggers" / "x64" / "cdb.exe"), err)
         self.assertIn("PATH: cdb not found", err)
+
+    def test_a_usage_error_is_not_the_no_cdb_code(self):
+        # argparse exits 2 on a usage error; "no cdb" must not share it.
+        path = self.dump()
+        for argv in (["--dump", str(path), "--pid", "1"], ["--cdb", str(self.cdb)]):
+            with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as caught:
+                    cds.main(argv)
+                self.assertEqual(caught.exception.code, 2)
+        codes = (cds.EXIT_OK, cds.EXIT_MODULE_MISMATCH, cds.EXIT_NO_DUMP, cds.EXIT_NOT_PARSED,
+                 cds.EXIT_NO_CDB, cds.EXIT_DUMP_GROWING)
+        self.assertEqual(len(set(codes)), len(codes))
+        self.assertNotIn(2, codes)
 
     def test_pid_finds_the_crashdumps_file(self):
         path = self.dump("Hero_Siege.exe.20644.dmp")
@@ -203,6 +256,22 @@ class CrashDumpStackTest(unittest.TestCase):
         code, out, _ = run(["--latest", "--cdb", str(self.cdb)])
         self.assertEqual(code, 0)
         self.assertTrue(out.startswith(f"dump: {new} "))
+
+    def test_latest_skips_a_dump_rotated_out_after_the_glob(self):
+        # WER can delete the oldest dump between the glob and the stat: that
+        # file is skipped, not a traceback.
+        folder = self.local / "CrashDumps"
+        present = self.dump("Hero_Siege.exe.2.dmp")
+        vanished = folder / "Hero_Siege.exe.1.dmp"
+        with patch.object(cds.Path, "glob", lambda self, pattern: iter([vanished, present])):
+            code, out, err = run(["--latest", "--cdb", str(self.cdb)])
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith(f"dump: {present} "))
+        # Every match gone by the stat: no dump, exit 3.
+        with patch.object(cds.Path, "glob", lambda self, pattern: iter([vanished])):
+            code, out, err = run(["--latest", "--cdb", str(self.cdb)])
+        self.assertEqual(code, cds.EXIT_NO_DUMP)
+        self.assertEqual(out, "")
 
     def test_no_dump_for_the_pid_exits_3(self):
         self.dump("Hero_Siege.exe.111.dmp")
@@ -233,8 +302,37 @@ class CrashDumpStackTest(unittest.TestCase):
                     fh.write(b"\0" * 32)
 
         with patch.object(cds.time, "sleep", fake_sleep):
-            self.assertTrue(cds._wait_stable(path, 30))
+            self.assertEqual(cds._wait_stable(path, 30), (cds.DUMP_STABLE, 68 + 32))
         self.assertEqual(len(sleeps), 2)
+
+    def test_a_dump_still_growing_when_the_wait_ends_is_refused(self):
+        # WER is still writing at every poll: the tool refuses with its own
+        # code and never hands the half-written file to cdb.
+        path = self.dump()
+        clock = [0.0]
+
+        def growing_sleep(seconds):
+            clock[0] += seconds
+            with open(path, "ab") as fh:
+                fh.write(b"\0" * 16)
+
+        captured = []
+        with patch.object(cds.time, "sleep", growing_sleep), \
+                patch.object(cds.time, "monotonic", lambda: clock[0]):
+            self.assertEqual(cds._wait_stable(path, 2)[0], cds.DUMP_GROWING)
+            code, out, err = run(["--pid", "20644", "--wait", "2", "--cdb", str(self.cdb)], captured=captured)
+        self.assertEqual(code, cds.EXIT_DUMP_GROWING)
+        self.assertEqual(code, 6)
+        self.assertEqual(out, "")
+        self.assertIn("still growing after 2s", err)
+        self.assertEqual(captured, [], "cdb must not run on a dump still being written")
+        # Positive control: the same wait on a dump that holds still reads it.
+        clock[0] = 0.0
+        with patch.object(cds.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s)), \
+                patch.object(cds.time, "monotonic", lambda: clock[0]):
+            code, out, err = run(["--pid", "20644", "--wait", "2", "--cdb", str(self.cdb)])
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith(f"dump: {path} "))
 
     def test_unparsed_transcript_exits_4(self):
         path = self.dump()
@@ -242,6 +340,41 @@ class CrashDumpStackTest(unittest.TestCase):
         self.assertEqual(code, 4)
         self.assertEqual(out, "")
         self.assertIn("no exception record", err)
+
+    def test_a_failed_ecxr_is_said_and_never_mixed_into_the_attribution(self):
+        # `.ecxr` failed, so `kn` walked another thread: frame 0 must not be
+        # pinned to the exception address, and the header says so.
+        path = self.dump()
+        failed = with_stack("Unable to get exception context, HRESULT 0x80004002\n" + OTHER_THREAD_ROWS)
+        code, out, err = run(["--dump", str(path), "--cdb", str(self.cdb)], failed)
+        self.assertEqual(code, 0, err)
+        lines = out.splitlines()
+        self.assertTrue(lines[0].endswith("raised-in=BloodPactPlugin context=unverified"), lines[0])
+        self.assertTrue(lines[1].startswith("  context: .ecxr failed (Unable to get exception context"), lines[1])
+        self.assertEqual(lines[2], "  #00 ntdll  (ntdll!NtWaitForSingleObject+0x14)")
+        self.assertNotIn("ucrtbase+0xa527e", out)
+        self.assertIn("  #01 BloodPactPlugin+0x1234  (BloodPactPlugin!SomeExport+0x10)", lines)
+        # --expect-module never matches an unverified stack, even its own raiser.
+        code, _, err = run(["--dump", str(path), "--cdb", str(self.cdb), "--expect-module", "BloodPactPlugin"],
+                           failed)
+        self.assertEqual(code, cds.EXIT_MODULE_MISMATCH)
+        self.assertIn("not verified", err)
+
+    def test_frame_zero_outside_the_exception_module_is_unverified(self):
+        # No failure text, but frame 0 is in ntdll while the exception
+        # address is in ucrtbase: the same verdict.
+        path = self.dump()
+        code, out, err = run(["--dump", str(path), "--cdb", str(self.cdb)], with_stack(OTHER_THREAD_ROWS))
+        self.assertEqual(code, 0, err)
+        lines = out.splitlines()
+        self.assertTrue(lines[0].endswith(" context=unverified"), lines[0])
+        self.assertIn("frame 0 is in ntdll", lines[1])
+        self.assertIn("is in ucrtbase", lines[1])
+        # Negative control: the producer's own stack, frame 0 in ucrtbase at
+        # the exception address, is verified and carries no context field.
+        self.assertIsNone(cds.parse_transcript(transcript()).context_problem)
+        code, out, _ = run(["--dump", str(path), "--cdb", str(self.cdb)])
+        self.assertNotIn("context", out)
 
     def test_symbol_path_is_local_and_offline(self):
         path = self.dump()

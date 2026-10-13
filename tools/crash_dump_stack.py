@@ -23,7 +23,14 @@ Which dump (exactly one):
     --latest           the newest <exe-name>.*.dmp there
 `--exe-name` (default Hero_Siege.exe) changes the prefix. `--wait <s>` polls,
 with `--pid` (or `--dump`), until the file exists and its size has stopped
-changing, since WER writes the dump a moment after the process is gone.
+changing, since WER writes the dump a moment after the process is gone; a dump
+still growing when the wait runs out is refused, never read half-written.
+
+`raised-in` is judged over every frame cdb listed; `--frames` limits only what
+is printed. When `.ecxr` fails, or frame 0's module is not the exception
+address's module, `kn` walked some other stack than the exception's: the header
+then ends `context=unverified`, a `context:` line says why, frame 0 is not
+attributed to the exception address, and `--expect-module` never matches.
 
 cdb is found at `--cdb`, then `CDB_PATH`, then
 `%ProgramFiles(x86)%\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe`, then `PATH`.
@@ -32,8 +39,9 @@ Its symbol path is an empty directory under the system temp directory and the
 never touches the network); frames are named from each DLL's exports only.
 
 Exit codes: 0 parsed (and `--expect-module` matched), 1 `--expect-module` did
-not match, 2 no cdb (the message lists every place looked), 3 no dump, 4 cdb
-ran and no exception record was parsed.
+not match (or the context was unverified), 2 usage error (argparse's own),
+3 no dump, 4 cdb ran and no exception record was parsed, 5 no cdb (the message
+lists every place looked), 6 the dump was still growing when `--wait` ran out.
 
 It writes only its temp symbol directory. It never moves, deletes or opens a
 process, and never edits a dump. The frames it prints name our DLLs, third-party
@@ -72,9 +80,17 @@ RUNTIME_PREFIXES = ("vcruntime140", "msvcp140")
 
 EXIT_OK = 0
 EXIT_MODULE_MISMATCH = 1
-EXIT_NO_CDB = 2
+# 2 is left to argparse, which exits 2 on a usage error (two of --dump/--pid/
+# --latest, or none), so a caller can tell a typo from a missing debugger.
 EXIT_NO_DUMP = 3
 EXIT_NOT_PARSED = 4
+EXIT_NO_CDB = 5
+EXIT_DUMP_GROWING = 6
+
+# What `_wait_stable` saw when it stopped.
+DUMP_STABLE = "stable"
+DUMP_MISSING = "missing"
+DUMP_GROWING = "growing"
 
 MARK_EXR = "CDS_EXR_BEGIN"
 MARK_STACK = "CDS_STACK_BEGIN"
@@ -88,6 +104,11 @@ RE_ADDRESS = re.compile(r"^\s*ExceptionAddress:\s*(" + _HEX + r")")
 RE_SUBCODE = re.compile(r"^\s*Subcode:\s*0x([0-9a-fA-F]+)(?:\s+(\S+))?")
 RE_FRAME = re.compile(r"^\s*([0-9a-fA-F]{2,})\s+(" + _HEX + r")\s+(" + _HEX + r")\s+(\S.*?)\s*$")
 RE_MODULE = re.compile(r"^\s*(" + _HEX + r")\s+(" + _HEX + r")\s+(\S+)")
+# cdb's refusals of `.ecxr` when the dump holds no usable exception context;
+# `kn` then walks the current thread instead of the exception's stack.
+RE_ECXR_FAILED = re.compile(
+    r"unable to get exception context|doesn't have an exception context|no exception context",
+    re.IGNORECASE)
 
 
 class DumpStackError(Exception):
@@ -126,9 +147,14 @@ class Report:
     subcode_name: str | None = None
     exception_address: int | None = None
     frames: list[Frame] = field(default_factory=list)
+    # Why the stack cannot be trusted to be the exception's, or None when it
+    # can: `.ecxr` failed, or frame 0 sits in another module than the
+    # exception address.
+    context_problem: str | None = None
 
     @property
     def raised_in(self) -> str | None:
+        """Over every parsed frame, not only the ones printed."""
         for frame in self.frames:
             if frame.module and not is_runtime_module(frame.module):
                 return frame.module
@@ -196,7 +222,27 @@ def _module_of(address: int | None, call_site: str, modules: list[tuple[int, int
     return None, None
 
 
-def parse_transcript(transcript: str, frames_wanted: int) -> Report:
+def _context_problem(stack_lines: list[str], rows: list[tuple[int, int, str]],
+                     exception_address: int | None,
+                     modules: list[tuple[int, int, str]]) -> str | None:
+    for line in stack_lines:
+        if RE_FRAME.match(line):
+            break
+        if RE_ECXR_FAILED.search(line):
+            return f".ecxr failed ({line.strip()})"
+    if not rows or exception_address is None:
+        return None
+    named, _ = _module_of(None, rows[0][2], [])
+    at, _ = _module_of(exception_address, "", modules)
+    if named and at and normalize_module(named) != normalize_module(at):
+        return (f"frame 0 is in {named} ({rows[0][2]}) but the exception address "
+                f"0x{exception_address:x} is in {at}")
+    return None
+
+
+def parse_transcript(transcript: str) -> Report:
+    """Every frame cdb listed; callers cut what they print, never what
+    `raised_in` is judged over."""
     report = Report()
     for line in transcript.splitlines():
         m = RE_PROCESS.match(line.strip())
@@ -215,17 +261,21 @@ def parse_transcript(transcript: str, frames_wanted: int) -> Report:
 
     modules = parse_modules(_section(transcript, MARK_LM, MARK_END))
 
+    stack_lines = _section(transcript, MARK_STACK, MARK_LM)
     rows = []
-    for line in _section(transcript, MARK_STACK, MARK_LM):
+    for line in stack_lines:
         m = RE_FRAME.match(line)
         if m:
             rows.append((int(m.group(1), 16), _int(m.group(3)), m.group(4)))
 
+    report.context_problem = _context_problem(stack_lines, rows, report.exception_address, modules)
+
     # A row's RetAddr is where the frame below it returns to, so it is the
     # address the next row's frame is executing at; frame 0 is at the
-    # exception address.
-    previous_return = report.exception_address
-    for index, return_address, call_site in rows[:frames_wanted]:
+    # exception address -- unless the stack is not the exception's, when
+    # frame 0 is named from its call site alone.
+    previous_return = None if report.context_problem else report.exception_address
+    for index, return_address, call_site in rows:
         module, offset = _module_of(previous_return, call_site, modules)
         report.frames.append(Frame(index, previous_return, call_site, module, offset))
         previous_return = return_address
@@ -261,21 +311,46 @@ def crash_dumps_dir() -> Path:
     return Path(local) / "CrashDumps"
 
 
-def _wait_stable(path: Path, wait_s: float, poll_s: float = 0.5) -> bool:
-    """Until the file exists and its size has held still for one poll."""
+def _size(path: Path) -> int | None:
+    try:
+        return path.stat().st_size if path.is_file() else None
+    except FileNotFoundError:
+        return None
+
+
+def _wait_stable(path: Path, wait_s: float, poll_s: float = 0.5) -> tuple[str, int | None]:
+    """Until the file exists and its size has held still for one poll.
+
+    Returns `(DUMP_STABLE, size)`, `(DUMP_MISSING, None)` when it never
+    appeared within `wait_s`, or `(DUMP_GROWING, size)` when it exists but its
+    size had not held still by then (WER still writing it). A file first seen
+    at the deadline gets one more poll, so it is compared at least once."""
     deadline = time.monotonic() + max(0.0, wait_s)
-    last_size = -1
+    last_size: int | None = None
     while True:
-        if path.is_file():
-            size = path.stat().st_size
+        size = _size(path)
+        first_sighting = size is not None and last_size is None
+        if size is not None:
             if size == last_size and size > 0:
-                return True
+                return DUMP_STABLE, size
             last_size = size
         elif wait_s <= 0:
-            return False
-        if time.monotonic() >= deadline:
-            return path.is_file()
+            return DUMP_MISSING, None
+        if time.monotonic() >= deadline and not first_sighting:
+            return (DUMP_MISSING, None) if size is None else (DUMP_GROWING, size)
         time.sleep(poll_s)
+
+
+def _newest(paths) -> Path | None:
+    """The newest of `paths` by mtime, skipping any that vanished between the
+    glob and the stat (WER rotates the oldest dump out as it writes a new one)."""
+    dated = []
+    for p in paths:
+        try:
+            dated.append((p.stat().st_mtime, p))
+        except FileNotFoundError:
+            continue
+    return max(dated, key=lambda pair: pair[0])[1] if dated else None
 
 
 def resolve_dump(args: argparse.Namespace) -> Path:
@@ -287,13 +362,18 @@ def resolve_dump(args: argparse.Namespace) -> Path:
         path = folder / f"{args.exe_name}.{args.pid}.dmp"
         where = str(path)
     else:
-        found = sorted(folder.glob(f"{args.exe_name}.*.dmp"), key=lambda p: p.stat().st_mtime) if folder.is_dir() else []
-        if not found:
+        newest = _newest(folder.glob(f"{args.exe_name}.*.dmp")) if folder.is_dir() else None
+        if newest is None:
             raise DumpStackError(EXIT_NO_DUMP, f"no {args.exe_name}.*.dmp in {folder}")
-        return found[-1]
+        return newest
     if args.wait > 0:
-        if not _wait_stable(path, args.wait):
+        state, size = _wait_stable(path, args.wait)
+        if state == DUMP_MISSING:
             raise DumpStackError(EXIT_NO_DUMP, f"no dump at {where} after waiting {args.wait:g}s")
+        if state == DUMP_GROWING:
+            raise DumpStackError(EXIT_DUMP_GROWING,
+                                 f"dump at {where} still growing after {args.wait:g}s ({size} bytes at the last poll); "
+                                 "not read half-written, run again with a longer --wait")
     if not path.is_file():
         raise DumpStackError(EXIT_NO_DUMP, f"no dump at {where}")
     return path
@@ -348,8 +428,9 @@ def build_parser() -> argparse.ArgumentParser:
     which.add_argument("--latest", action="store_true", help="read the newest <exe-name>.*.dmp")
     p.add_argument("--exe-name", default=DEFAULT_EXE, help=f"dump file prefix (default {DEFAULT_EXE})")
     p.add_argument("--wait", type=float, default=0.0,
-                   help="seconds to poll, with --pid or --dump, until the file exists and stops growing (default 0)")
-    p.add_argument("--frames", type=int, default=DEFAULT_FRAMES, help=f"frames to print (default {DEFAULT_FRAMES})")
+                   help="seconds to poll, with --pid or --dump, until the file exists and stops growing "
+                        "(default 0); still growing at the end exits 6")
+    p.add_argument("--frames", type=int, default=DEFAULT_FRAMES, help=f"frames to print (default {DEFAULT_FRAMES}); raised-in is judged over every frame cdb lists")
     p.add_argument("--expect-module", help="exit 1 unless raised-in is this module (case-insensitive, .dll optional)")
     p.add_argument("--cdb", help="path to cdb.exe")
     p.add_argument("--timeout", type=float, default=CDB_TIMEOUT_S, help=f"cdb timeout in seconds (default {CDB_TIMEOUT_S})")
@@ -380,7 +461,7 @@ def _main(args: argparse.Namespace) -> int:
     except OSError as exc:
         raise DumpStackError(EXIT_NO_CDB, f"cdb at {cdb} could not be started: {exc}")
 
-    report = parse_transcript(transcript, frames)
+    report = parse_transcript(transcript)
     if report.code is None:
         tail = "\n".join(transcript.strip().splitlines()[-15:])
         raise DumpStackError(EXIT_NOT_PARSED, f"cdb ran on {dump} and printed no exception record; its last lines:\n{tail}")
@@ -388,12 +469,20 @@ def _main(args: argparse.Namespace) -> int:
     pid = report.pid if report.pid is not None else _pid_from_name(dump)
     subcode = "none" if report.subcode is None else str(report.subcode)
     raised = report.raised_in or "none"
+    unverified = " context=unverified" if report.context_problem else ""
     print(f"dump: {dump} pid={pid if pid is not None else '?'} code=0x{report.code:08x} "
-          f"subcode={subcode} raised-in={raised}")
-    for frame in report.frames:
+          f"subcode={subcode} raised-in={raised}{unverified}")
+    if report.context_problem:
+        print(f"  context: {report.context_problem}; the frames below are the stack cdb walked, "
+              "which may not be the exception's")
+    for frame in report.frames[:frames]:
         print(frame.render())
 
     if args.expect_module:
+        if report.context_problem:
+            print(f"crash_dump_stack: expected raised-in={args.expect_module}, but the stack is not verified "
+                  f"to be the exception's ({report.context_problem})", file=sys.stderr)
+            return EXIT_MODULE_MISMATCH
         if report.raised_in is None or normalize_module(report.raised_in) != normalize_module(args.expect_module):
             print(f"crash_dump_stack: expected raised-in={args.expect_module}, got {raised}", file=sys.stderr)
             return EXIT_MODULE_MISMATCH
