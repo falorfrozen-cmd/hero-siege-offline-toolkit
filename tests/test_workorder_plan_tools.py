@@ -345,6 +345,24 @@ class LiveChecksTableTests(TempDirMixin, unittest.TestCase):
         self.assertIn("reading the first", err.getvalue())
         self.assertNotIn("--block last", err.getvalue())
 
+    def test_a_chosen_block_never_reads_an_earlier_summary_table(self):
+        # hub #507 re-review 3: attempt 1 a table under `## Checks summary`,
+        # the re-run a table under `## Checks`; --block last reads the re-run.
+        text = ("## Checks summary\n\n| Check | Result |\n|---|---|\n| a | fail |\n\n"
+                "## Attempt 2\n\n## Checks\n\n| Check | Result |\n|---|---|\n| a | pass |\n")
+        path = self.write("c-live-2.md", text)
+        for block in ("last", "1"):
+            rc, out = run(live_checks.main, [path, "--block", block, "--require-pass", "a"])
+            self.assertEqual(rc, 0, out)
+            self.assertIn("a pass", out)
+        # A chosen block with no table of its own is a usage error, not attempt 1's.
+        bare = self.write("c-live-3.md", text.replace("| a | pass |", "aborted").replace(
+            "| Check | Result |\n|---|---|\naborted", "aborted"))
+        self.assertEqual(run(live_checks.main, [bare, "--block", "last"])[0], 2)
+        # The same attempt's summary after its empty `## Checks` is still read.
+        same = self.write("c-live-1.md", "## Checks\n\n## Checks summary\n\n| Check | Result |\n|---|---|\n| a | pass |\n")
+        self.assertEqual(run(live_checks.main, [same, "--block", "1", "--require-pass", "a"])[0], 0)
+
     def test_an_empty_default_block_is_named_block_1(self):
         path = self.write("c-live-2.md", "## Checks\n\naborted\n\n## Attempt 2\n\n## Checks\n\n- a | x | pass\n")
         err = io.StringIO()

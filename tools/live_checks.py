@@ -56,10 +56,12 @@ first, because the first attempt's evidence is never edited (R20 again). So
 `--block` picks which `## Checks` heading's list is read: a 1-based number, or
 `last`. It defaults to `1`, the first block, which is what every call read
 before the option existed. A number past the last block is a usage error that
-names how many blocks the capture has. With one `## Checks` block or none,
-the table fallback reads the first checks table, as before. With more than one,
-a block that has no `- ` lines is read from the table under its own heading,
-never from another attempt's, and a block with neither is a usage error.
+names how many blocks the capture has. Read without `--block`, a capture with
+one `## Checks` block or none keeps the old fallback: the first checks table.
+Otherwise a block that has no `- ` lines is read from the table under its own
+heading, or under a `## Checks summary` between it and the next `## Checks`,
+never from a table before it (another attempt's), and a block with neither is a
+usage error.
 `--block` counts `## Checks` headings only, so asking for a block other than 1
 when a `## Checks summary` section follows that block (it could be a later
 attempt) is a usage error rather than a guess, and a capture with more than one
@@ -189,13 +191,22 @@ def table_rows(text: str) -> list | None:
 
 def block_table_rows(text: str, block) -> list:
     """The data rows of the table under the capture's `block`-th `## Checks`
-    heading itself (1-based, or "last"); empty if that section has none."""
+    heading itself (1-based, or "last"), or else under a `## Checks summary`
+    after it and before the next `## Checks` (the same attempt's table); empty
+    if neither has one. A table before the block is another attempt's."""
     lines = text.splitlines()
     heads = [i for i, line in enumerate(lines) if CHECKS_HEADING_RE.match(line)]
     if not heads:
         return []
-    i = heads[-1] if block == "last" else heads[block - 1]
-    return _table_in(_section(lines, i))
+    k = len(heads) - 1 if block == "last" else block - 1
+    end = heads[k + 1] if k + 1 < len(heads) else len(lines)
+    rows = _table_in(_section(lines, heads[k]))
+    for i in range(heads[k] + 1, end):
+        if rows:
+            break
+        if SUMMARY_HEADING_RE.match(lines[i]):
+            rows = _table_in(_section(lines, i))
+    return rows
 
 
 def summary_after(text: str, block) -> bool:
@@ -292,10 +303,13 @@ def main(argv=None) -> int:
         # With more than one `## Checks` block, the table must sit under the
         # chosen block's own heading: the first table in the capture would be
         # another attempt's verdicts.
-        rows = table_rows(text) if count <= 1 else block_table_rows(text, block)
+        # Only the default read of a capture with at most one `## Checks`
+        # keeps the first-table fallback; a chosen block reads its own.
+        legacy = count == 0 or (count == 1 and args.block is None)
+        rows = table_rows(text) if legacy else block_table_rows(text, block)
         if rows:
             lines, parse, where = rows, parse_row, "in the last cell"
-        elif count > 1:
+        elif not legacy:
             print(f"live_checks: '## Checks' block {block} of {path} has no checks "
                   f"list and no checks table", file=sys.stderr)
             return 2
