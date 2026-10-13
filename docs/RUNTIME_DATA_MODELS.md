@@ -5487,8 +5487,9 @@ one touches and whether it reads or writes them, not the arithmetic.
   direct caller found is the dispatcher (3344). The scripts found asking the
   dispatcher for id 64 are the player object's Step event (once),
   `StatTotalDamage`, `StatAttackDamage`, `StatMagicSkillDamage`,
-  `TalentsSamurai` and `Mercenary_obj`'s Alarm 5. `PlayerMovement` does not
-  ask for it: it asks for id 336, which has no case in the dispatcher's table
+  `TalentsSamurai` and `Mercenary_obj`'s Alarm 5. No request for id 64 was
+  found in `PlayerMovement` (not observed; the scan sees only constant ids at
+  direct call sites); it asks for id 336, which has no case in the dispatcher's table
   ([skill sliders' reading](../ForgePact/docs/skill-sliders-research.md#returnspecificstat-the-dispatchers-case-table)).
 - **What `StatMovementSpeed` reads.** The player's `playerBuff` (about 380
   reads) through the `GetBuffValue` and `GetBuffStack` methods, `buffArray`,
@@ -5527,10 +5528,12 @@ one touches and whether it reads or writes them, not the arithmetic.
   case) and for damage stat ids. It references no mouse coordinate, so the
   jump's target is plausibly decided before it runs (the Step event reads
   `mouse_x`, `mouse_y`, `xMouse` and `yMouse`).
-- **`jumpDirection` belongs to the scenery, not the player.** The Create
+- **`jumpDirection` is set up by the scenery.** The Create
   events of `Collision_Parent_obj`, `Collision_Prop_obj` and about thirty
   cliff objects reference it, so it is plausibly the direction a cliff lets a
-  leap go down, read from the prop a leap meets.
+  leap go down, read from the prop a leap meets. Whether the player also
+  carries it was not read: `skillsLeap` reads it on an instance this reading
+  did not identify.
 - **`gml_Script_playerJumpGravity` (2764)** has one direct caller found, the
   player object's Step event. It reads `x` and `y` (no write site found),
   `height`, `pSt` and `playerEffect`, sets `stickHost`, references `unstuck`,
