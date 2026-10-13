@@ -318,6 +318,18 @@ judge the label from the picture. See [its page](docs/tools/button-label-check.m
 py -3 tools/button_label_check.py <png> --gui 2560x1440 --box <l,t,r,b> --ref <l,t,r,b>
 ```
 
+`tools/crash_dump_stack.py` names the module that raised a crash. It reads one
+Windows Error Reporting minidump (`%LOCALAPPDATA%\CrashDumps\Hero_Siege.exe.<pid>.dmp`)
+through `cdb.exe`, with an empty local symbol path and so no network, and prints
+the exception code, the fast-fail subcode, `raised-in=<module>` and the faulting
+thread's frames as module-relative offsets. ForgePact issue #201 uses it to
+attribute the `0xC0000409` that `hs_stop_game` reports. It needs the Windows
+SDK's Debugging Tools. See [its page](docs/tools/crash-dump-stack.md):
+
+```powershell
+py -3 tools/crash_dump_stack.py --latest      # or --pid <n> --wait 30, --dump <path>, --expect-module <dll>
+```
+
 ## Modified YYToolkit
 
 ForgePact and HS Offline Tracker load their plugins through a modified
