@@ -220,7 +220,7 @@
     "dummy_walk": {
       "flight_off": {"walk_ms": 1500, "end_y": 503.24, "crossed": true, "idle": 52, "monster": 0, "monster_kept": 0},
       "flight_on": {"walk_ms": 1500, "end_y": 474.554, "crossed": true, "monster": 19, "monster_kept": 0},
-      "what": "With flight off the walk crossed the dummy's row (y 503.24 < 664), so Attack_Dummy_obj does not stop a vanilla player walk; the flying walk's pass therefore shows nothing about flight. The monster pass-through is not observed live, pending the owner's play check in a zone"
+      "what": "With flight off the walk crossed the dummy's row (y 503.24 < 664), so Attack_Dummy_obj does not stop a vanilla player walk; the flying walk's pass therefore shows nothing about flight. The monster pass-through is not observed live by this session; see owner_play_check"
     },
     "debugger": {
       "ctu": {"a": [3229, 3647], "b": [16339, 16725]},
@@ -232,6 +232,13 @@
     "residual_on_dummy": {"monster_before": 19, "monster_after": 1819, "monster_kept_before": 0, "monster_kept_after": 703, "first_walk_y": [704, 910.538], "state_after": "off"},
     "wall_still": {"x": 929.9, "y": 2031.1, "walk_ms": 3000, "moved_px": 0, "excluded": [0, 3920]},
     "attacks": {"damage_numbers_seen": false, "q_moved_px": {"flight_off": 0, "flight_on": 0}, "left_hold_flight_off_moved_px": 334},
+    "owner_play_check": {
+      "status": "owner-confirmed in play, 2026-10-13",
+      "date": "2026-10-13",
+      "research_dll_sha256": "8a16a38edd8325dd288e7d77538b2a34ff4390d5ba783d6276ba17851874bc92",
+      "covers": ["a flying player walks through monsters", "monsters still damage the flying player", "the flying player's own hits still land"],
+      "what": "The owner's report after playing with a Pocket Elf the driver spawned on the research build: the mod, monster pass-through included, works as intended, and monster hits damaged him while flying. An owner report, not an instrumented measurement: no trace, counter or debugger read backs it, and the per-step place_meeting consumer that holds a vanilla walk at a monster stays unidentified."
+    },
     "source": "ForgePact docs/flight-charms-research.md (Mod live 3 results); forgepact-158-flight-charms-mod-live-3.md, not tracked"
   }
 }

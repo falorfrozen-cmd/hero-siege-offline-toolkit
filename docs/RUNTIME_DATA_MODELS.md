@@ -5207,8 +5207,11 @@ decompile nor a measurement; each bullet says which kind of reading it is.
   what holds the walk, is **not established**. ForgePact's mod live 3 walked
   the player into a training dummy, but a dummy does not hold a vanilla walk
   (above), so whether a live monster holds one, and through which row, is
-  still not observed; under ForgePact's flight the monster pass-through is
-  not observed live, pending the owner's play check in a zone.
+  still not observed by any instrument. Under ForgePact's flight the monster
+  pass-through, with monsters still damaging the flying player and his own
+  hits still landing, is **owner-confirmed in play, 2026-10-13**: the
+  owner's report after playing on the research build, not an instrumented
+  measurement. The game facts above keep their own labels.
 
 [Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading),
 [Mod live 3 results](../ForgePact/docs/flight-charms-research.md#mod-live-3-results)
