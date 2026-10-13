@@ -106,6 +106,26 @@ Note the contrast with the next section: *items* really are structs
 (`VALUE_OBJECT`), and struct accessors do require that kind. The rule is
 per-surface — an instance handle and an item struct are not interchangeable.
 
+**A room with no `Player_obj` has no local player, for every reader.**
+`GetMyPlayer` walks the `Player_obj` instances and answers `noone` (-4) when
+none matches (**static reading**, the decompiler copy of this build through
+the Ghidra MCP, 2026-10-13, in our own words). So wherever there is no
+`Player_obj`, every read that goes through the local player answers "no
+player": the player's `name`, `GPV` with the player as `self`, a scan of the
+player's buffs. Measured cases: while the world map is open there is no
+`Player_obj` and every player read answers "no player"
+([satanic zone, Live 4](../ForgePact/docs/satanic-zone-mods-research.md#live-4-2026-10-04-what-loadsataniczone-really-answers-and-the-map-marker));
+and `Player_obj` gets a new instance id on a room change (§ 19.5), so a
+handle kept across one is stale. A room's setup spans frames
+(`NetworkRoomSetupDone` asks `EnemyCreatorPending` before its "room is set
+up" work, static reading), and in Live procedure 1 of
+`forgepact-185-tracker-move` the tracker's one read of the name and the zone
+on a room change's own tick answered neither (measured; that the player was
+the missing piece is consistent with the record but was not measured). How
+many ticks a new room runs without a player is not established. So a reader
+that must answer once per room reads until it answers, not once on the room
+change's tick.
+
 ---
 
 ## 2. Item Definition & Runtime Struct (`itemDefinitionStruct`)
@@ -1065,6 +1085,16 @@ All **measured** (2026-09-21/22).
 - Loading a character and leaving from town changed at most `shop.ini` in the save
   folder, which holds `herosiege<N>.hss`, `inventory_order_<N>.hss` and
   `shop.ini`.
+- **The save files count from 0: card `slot` N loads `herosiege<N-1>.hss`**
+  (and `inventory_order_<N-1>.hss`), so `hs_select_character` slot 14 is
+  `herosiege13.hss`. **Measured** by hs-drive's rows M-L2 and M-L2b on
+  2026-09-21 (slot 1 changed `herosiege0.hss`, slot 2 `herosiege1.hss`;
+  `docs/tools/hs-drive-mcp.md`, Verification), and again by Live procedure 1
+  of `forgepact-185-tracker-move` (2026-10-13): slot 14 loaded Sorak, file 13
+  reads Sorak and file 14 another character, and after the session
+  `herosiege13.hss` and `inventory_order_13.hss` had changed. A tool that
+  takes a save file's number (ForgePact's `tools/tracker_replay.py --save`)
+  takes N-1, not the card's slot.
 
 All **measured** (2026-09-21).
 [character select, Results](../ForgePact/docs/character-select-research.md#results),
@@ -3069,10 +3099,23 @@ yet known to be every credit. In our own words, with labels:
   character's saved `statisticTotalMonsterKills` rose 45,516 to 45,572 (+56)
   over the same save interval. **Measured by the Tracker.**
 
-Not established yet on ForgePact's own instrument: that the sensor's call
-counts equal debugger hit counts on these three scripts, and that its sums
-equal the save's experience and kill differences. Live procedure 1 of the
-toolkit workorder `forgepact-185-tracker-move` measures both.
+**Measured on ForgePact's own instrument** (Live procedure 1 of the toolkit
+workorder `forgepact-185-tracker-move`, capture
+`forgepact-185-tracker-move-live-1`, 2026-10-13, this build, the owner's
+play in `Act_01_01`):
+- each script's debugger logpoint hits equal the sensor's matching `*-calls=`
+  rise, beside a rising control logpoint: 17 `GoldLogAdd`, 588
+  `ExperienceUpdate` and 588 `EnemyAddStatistics` calls;
+- every hit logged 2, 2 and 1 arguments respectively, so each script's
+  argument count is now measured. Gold's amount index stays the reviewed
+  profile above, and whether every gold credit passes through `GoldLogAdd`
+  stays not established;
+- Sorak's save file 13 moved by exactly the sensor's sums, experience
+  +501,483 and kills +588 (the operator's reads of file 13 in the capture's
+  steps 1 and 12);
+- the procedure's own `kills-vs-save` and `xp-vs-save` checks read file 14,
+  another character's (the save files count from 0, § 8.2), and stay `fail`
+  as written.
 
 ---
 
@@ -3127,6 +3170,30 @@ toolkit workorder `forgepact-185-tracker-move` measures both.
 [Live 3](../ForgePact/docs/satanic-zone-mods-research.md#live-3-2026-10-03-issue-155-the-re-probe-and-the-zone-value-is-writable),
 [Live 4](../ForgePact/docs/satanic-zone-mods-research.md#live-4-2026-10-04-what-loadsataniczone-really-answers-and-the-map-marker),
 [The mechanism that shipped](../ForgePact/docs/satanic-zone-mods-research.md#the-mechanism-that-shipped-poll-and-correct-not-a-routine-hook)
+
+**How the game rolls the zone: static reading** (the decompiler copy of this
+build through the Ghidra MCP, 2026-10-13, for ForgePact #185's tracker; in
+our own words, not run):
+- `GetSatanicZoneOffline` rolls only when `GetSatanicZoneEligible` says yes.
+- `GetSatanicZoneEligible` answers through `IsDifficultyUnlocked`, for a
+  value it reads, in one of three cases. Which value it reads was not read.
+- When eligible, `GetSatanicZoneOffline` picks one room, by a random index,
+  from a fixed list of 40: zones 01-05 of acts 1-8, `Act_01_01` to
+  `Act_08_05`, with no act 9, no `_06` zone and no boss or sub-area room. So
+  every rolled zone has the `Act_<a>_<z>` shape, which the tracker and HS
+  Offline Tracker's producer name `Satanic_<1-8>_<1-5>`.
+- `GPV` picks one of two implementations by a global mode value and hands
+  each its caller's `self` and `other`. Whether either implementation reads
+  `self` was not read, so ForgePact's readers keep the measured shape: the
+  local player as `self`.
+- **Not established:** what triggers a roll. Callers of
+  `GetSatanicZoneOffline` and `GetSatanicZoneEligible` were not observed (a
+  `-noanalysis` import leaves the reference table mostly empty, so that is
+  not a negative). Live procedure 2 of the toolkit workorder
+  `forgepact-185-tracker-move` puts debugger logpoints on both beside its room
+  changes. How many ticks a newly generated act zone runs without a
+  `Player_obj`, so without an answer from the zone's readers, is not
+  established either (§ 1, "How the local player arrives").
 
 ### 14.2 `global.eSt`: the special-content parameters
 

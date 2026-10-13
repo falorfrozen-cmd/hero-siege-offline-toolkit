@@ -782,6 +782,16 @@ screen, and the whole call took 17.5 s from the main menu to
 `character_loaded`. The fixed wait is gone. Each screen now takes as long as
 the game needs to list its next button.
 
+**`slot` N loads the save files numbered N-1.** The save files count from 0,
+so slot 1 is `herosiege0.hss` and slot 14 (Sorak, the live procedures'
+character) is `herosiege13.hss` and `inventory_order_13.hss`. Measured by
+rows M-L2 and M-L2b (2026-09-21: slot 1 changed `herosiege0.hss`, slot 2
+`herosiege1.hss`) and by ForgePact #185's Live procedure 1
+(`forgepact-185-tracker-move-live-1`, 2026-10-13), which read file 14 for
+slot 14 and found another character there; RDM § 8.2. A procedure that
+reads a save after `hs_select_character` names the file's number, not the
+slot.
+
 ## Exit to the menu
 
 `hs_exit_to_menu(timeout_s=60, label=None)` (`tools/hs_drive_mcp/menuexit.py`,
@@ -1890,6 +1900,12 @@ move from the stash into the bag are still not measured.
   Act 1 kills and pick-up, the trip back to a zone, one right-click
   transfer, and the Act 2 trip with kills and a pick-up. Each capture lists
   them with the reason no tool could take them.
+  ForgePact #185's Live procedure 1 (`forgepact-185-tracker-move-live-1`,
+  2026-10-13, 13 minutes from lease to release) had one owner block, by hand
+  for two reasons. The pick-up of a placed item and its drop from the bag:
+  no verb gives an item's or the player's screen position, so `hs_input`
+  had no point to click. The travel to a combat zone and about three minutes
+  of fighting and gold pick-ups: no tool travels or fights.
 - **Synthetic input anywhere but the game's own window.** Both tools refuse
   unless the target window belongs to a running `hero_siege.exe`, and on the
   `send_input` route both re-prove that the game holds the foreground
