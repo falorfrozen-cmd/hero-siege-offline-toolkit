@@ -1161,7 +1161,7 @@ audit`) on the changed UI instead. `.impeccable/config.json` is shared by both.
 | Server | For |
 |---|---|
 | `tauri-hub` | driving a running debug hub through its bridge on `127.0.0.1:9223` |
-| `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, graceful close), under one machine-wide game lease (`hs_lease_acquire` / `hs_lease_status` / `hs_lease_release`) that stops a second session driving the same install — a local stdio server in `tools/hs_drive_mcp/` |
+| `hs-drive` | reporting whether Hero Siege is running, backing up / restoring `hs2saves\`, and driving the modded game (launch, `bp_ipc` command + reply, screenshot, keyboard/mouse injection, selecting a character from the title screen with `hs_select_character`, taking a loaded character back to the character select through the pause menu's Save & Exit (`hs_exit_to_menu`), graceful close), under one machine-wide game lease (`hs_lease_acquire` / `hs_lease_status` / `hs_lease_release`) that stops a second session driving the same install — a local stdio server in `tools/hs_drive_mcp/` |
 | `ghidra` | the local Ghidra project as tools (search functions, decompile by address, callers, callees, xrefs, strings), from [bethington/ghidra-mcp](https://github.com/bethington/ghidra-mcp) v6.0.0 pinned by sha256: one shared headless server on `127.0.0.1:8089` over a *copy* of the research project, plus a stdio bridge per session, started by `tools/ghidra_mcp.py` |
 | `x64dbg` | a live debugger on the running game, for `live-operator` only: headless x64dbg with the [AgentSmithers/x64DbgMCPServer](https://github.com/AgentSmithers/x64DbgMCPServer) plugin, both pinned, attached under the hs-drive lease, and eight tools of our own (non-breaking hardware logging breakpoints, `bplist`, the session log, modules, disassembly, detach) served over stdio by `tools/x64dbg_mcp.py`, which forwards to the plugin on `127.0.0.1:50300` — see [`docs/tools/x64dbg-mcp.md`](../docs/tools/x64dbg-mcp.md) |
 | `context7` | live library documentation; `AGENTS.md` § "YYToolkit Integration" already assumes it |
@@ -1381,6 +1381,8 @@ py -3 -m unittest tests.test_hs_drive_mcp_ipc -v               # the bp_ipc comm
 py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v        # window resolution, both capture methods, the flat-image warning
 py -3 -m unittest tests.test_hs_drive_mcp_input -v             # what hs_input actually injects, and the foreground it refuses without
 py -3 -m unittest tests.test_hs_drive_mcp_charselect -v        # hs_select_character's click sequence, its proof and every refusal
+py -3 -m unittest tests.test_hs_drive_mcp_menuexit -v        # hs_exit_to_menu's Escape, Exit-row match, click and every refusal
+py -3 -m unittest tests.test_crash_dump_stack -v              # crash_dump_stack.py's cdb parsing and raised-in attribution
 py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # parsing ForgePact's menulayout listing, and the refusals it decides
 py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the machine-wide game lease, across real processes
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # no release input mentions hs-drive
@@ -1392,7 +1394,7 @@ py -3 -m unittest tests.test_thread_state -v                    # the read-only 
 node --test .claude/workflows/workorder-rounds.test.mjs   # workflow mode's routing
 ```
 
-The eleven `test_hs_drive_mcp_*` suites stay green on CI's `ubuntu-latest`
+The fourteen `test_hs_drive_mcp_*` suites stay green on CI's `ubuntu-latest`
 runner, where neither Windows, the SDK, nor any submodule is present — but only the parts that need one skip.
 The engine-bridge, launch and screenshot suites skip wholesale (launching a
 process, enumerating windows and grabbing the screen are Windows-only); the

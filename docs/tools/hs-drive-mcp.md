@@ -114,16 +114,16 @@ bug report nobody can undo.
 
 ## Tools
 
-Twenty-seven. One tool per action, `hs_` prefixed, with annotations on every one.
-The sixteen that drive or overwrite the game — `hs_launch`, `hs_stop_game`,
+Twenty-eight. One tool per action, `hs_` prefixed, with annotations on every one.
+The seventeen that drive or overwrite the game — `hs_launch`, `hs_stop_game`,
 `hs_command`, `hs_input`, `hs_select_character`, `hs_saves_restore`, the
 five skill tools `hs_skills_status`, `hs_skill_cast`, `hs_skill_bind`,
-`hs_talent_allocate` and `hs_talent_reset`, and the five stash and bag tools
+`hs_talent_allocate` and `hs_talent_reset`, the five stash and bag tools
 `hs_give_item`, `hs_stash_open`, `hs_stash_close`, `hs_stash_tab` and
-`hs_bag_tab` — ask the machine-wide game lease first and carry
-`lease: "held" | "none"` on every other answer; see "The game lease". The
-skill tools are described in "Skills and talents", the stash and bag tools in
-"Stash and bag".
+`hs_bag_tab`, and `hs_exit_to_menu` — ask the machine-wide game lease first
+and carry `lease: "held" | "none"` on every other answer; see "The game
+lease". The skill tools are described in "Skills and talents", the stash and
+bag tools in "Stash and bag", `hs_exit_to_menu` in "Exit to the menu".
 
 | Tool | Hints | Inputs | Returns |
 | --- | --- | --- | --- |
@@ -141,6 +141,7 @@ skill tools are described in "Skills and talents", the stash and bag tools in
 | `hs_screenshot` | writes | `target` `game`\|`screen` = `game`, `method` `grab_bbox`\|`grab_window` = `grab_bbox`, `label` | `path`, `width`, `height`, `bbox`, `capture_method`, `hwnd`, `pid`, `flat`, `warning`, `bytes_written`, `transport_width`, `transport_height` — **plus** a JSON text block and a PNG image block |
 | `hs_input` | writes | `actions[]` (≤ 64), `route` `send_input`\|`post_message` = `send_input`, `require_foreground=true` | `route`, `pid`, `hwnd`, `window_rect`, `client_rect`, `client_size`, `dpi`, `foreground_before`, `foreground_after`, `focus_via`, `actions_done`, `actions_total`, `records_sent`, `records_rejected`, `complete`, `elapsed_s` |
 | `hs_select_character` | writes | `slot` ≥ 1 = 1, `timeout_s` 1–600 = 60 | `phase`, `proof`, `proof_trail`, `layout_trail`, `focus_trail`, `screenshots`, `orbpickup`, `actions_sent`, `elapsed_s` (a refusal after the arm also carries `last_listing`) |
+| `hs_exit_to_menu` | writes (a key, a click; the game saves itself) | `timeout_s` 1–600 = 60, `label` (the Exit row's exact text) = null | `phase` `menu_reached`, `room`, `exit_row` (`obj`, `id`, `text`, `uiNodeCallstack`, `win`), `pause_opened_by` `key`\|`already_open`, `layout_trail[]`, `focus_trail[]`, `proof[]` (each header), `elapsed_s` (a refusal also carries `last_listing`, and an Exit-row refusal `candidates[]`) |
 | `hs_lease_acquire` | **destructive** (with `force`) | `label` (1–80 of `A-Z a-z 0-9 . _ -`), `slot` ≥ 1 = null, `force=false` | `state`, `already_held`, `recovered_stale`, `took_over_from`, `lease_id`, `label`, `slot`, `holder`, `taken_utc`, `dll_path`, `dll_sha256`, `dll_status`, `backup_id`, `restore_pending`, `previous`, `lease_path`, and `warning` when the last holder still owed a restore |
 | `hs_lease_status` | read-only | — | `state` `free`\|`held`\|`held_by_me`\|`stale`\|`unavailable`, `detail`, `record`, `last`, `dll_sha256_now`, `dll_status_now`, `dll_path_now`, `dll_changed_since_taken`, `lease_path`, and `warning` when a released record still owes a restore |
 | `hs_lease_release` | writes, idempotent | — | `released`, the record's fields (`label`, `taken_utc`, `released_utc`, `backup_id`, `restore_pending`, …), and `warning` naming the backup when `restore_pending` is true |
@@ -270,13 +271,13 @@ Tokens this server can return today:
 | `foreground_not_game` | `route="send_input"` found some other window in front and could not raise the game. `SendInput` goes to whatever is in front, so the keystrokes would have landed somewhere that never asked for them. `hs_input` gets one `SetForegroundWindow` attempt (`require_foreground: false` skips even that); `hs_select_character` escalates through the bounded chain in `focus_attempts` — `set_foreground`, then, only if that did not take, `attach_thread_input` and `input_unlock` — and the refusal's `detail` names every step tried. The same comparison runs again immediately before **every** injection, so a sequence that loses the foreground half way through stops there and reports `actions_done` — `AGENTS.md` § "Check a Permission Where It Is Used". |
 | `invalid_input` | `hs_input`'s own arguments: more than 64 actions, an empty list, an unknown `type`, `button` or `space`, a `vk` outside 1–254, a `hold_ms` or `ms` outside 0–10000, or a point outside the client rectangle (or the virtual screen, with `space: "screen"`). Nothing was sent. Deliberately separate from `invalid_command`, which means "the plugin would not accept that" and sends a reader to the wrong place. |
 | `layout_command_missing` | `hs_select_character` asked ForgePact's `menulayout` where the main-menu buttons are and got no listing: the installed plugin answered `command unavailable in player build: menulayout` (it predates the command), or replied with no `menulayout: room=` header at all. There is nothing to click from, so nothing is clicked. |
-| `window_size_mismatch` | A `menulayout` listing's `window=` disagreed with the client size this server re-measures at that same read, on every read within the poll budget (30 reads 0.5 s apart) — the window never settled to the listing's size. A single disagreeing read is not this refusal by itself: `hs_launch`'s `plugin_ready` can precede the window reaching its configured size, so one mismatch just keeps the poll going. Its `win` points were computed for a different window, so none of them is clicked. Checked on the main menu's listing, before the first click, and on every listing read after. |
+| `window_size_mismatch` | A `menulayout` listing's `window=` disagreed with the client size this server re-measures at that same read, on every read within the poll budget (30 reads 0.5 s apart) — the window never settled to the listing's size. A single disagreeing read is not this refusal by itself: `hs_launch`'s `plugin_ready` can precede the window reaching its configured size, so one mismatch just keeps the poll going. Its `win` points were computed for a different window, so none of them is clicked. Checked on the main menu's listing, before the first click, and on every listing read after. `hs_exit_to_menu` refuses it on the first disagreeing read instead (an in-world window has settled): before Escape, with nothing pressed, or on a read the Exit row would be picked from, with nothing clicked. |
 | `button_not_found` | The button `hs_select_character` needed on a screen was not listed within the poll budget (30 reads 0.5 s apart): no single visible `UI_Button_obj` reading exactly `Play local` on the main menu, or save slot `slot` / the character panel's `Play` after the previous click. The detail quotes the last listing's header and the visible rows it did offer; the refusal's `last_listing` holds that listing whole. No click is sent for that screen. |
 | `slot_not_listed` | `Chose_rm` listed fewer visible save-slot cards than `slot` on two reads in a row. Only page 1 of the save-slot screen is reachable; no card is guessed. |
-| `click_not_delivered` | `hs_select_character`'s click went through `hs_input`'s injection without a refusal but was not delivered whole: `complete` was not true or `records_rejected` was above zero — `SendInput` accepted the call and UIPI dropped its records, or the foreground moved part way through. The click is not counted in `actions_sent` or `layout_trail`, and nothing further is clicked; the detail quotes the injection's own account. Without it, an undelivered click surfaced one screen later as `button_not_found`, which points at the listing rather than the input. `hs_stash_open` applies the same check to its interact key F: an undelivered F is this refusal, and nothing is polled. |
+| `click_not_delivered` | `hs_select_character`'s click went through `hs_input`'s injection without a refusal but was not delivered whole: `complete` was not true or `records_rejected` was above zero — `SendInput` accepted the call and UIPI dropped its records, or the foreground moved part way through. The click is not counted in `actions_sent` or `layout_trail`, and nothing further is clicked; the detail quotes the injection's own account. Without it, an undelivered click surfaced one screen later as `button_not_found`, which points at the listing rather than the input. `hs_stash_open` applies the same check to its interact key F, and `hs_exit_to_menu` to its Escape and its Exit click: an undelivered input is this refusal, and nothing is polled. |
 | `proof_not_armed` | `hs_select_character` armed `orbpickup` (`orbpickup 1`) and either got no acknowledgement, or `orbpickup stat` still read `player via (not tried)` on two reads at least a second apart. The resolver never ran; the instrument is blind, not the game — the same trap an earlier revision of this doc's own "`orbpickup stat` does not prove a character is loaded" section fell into. No click is sent. |
 | `character_already_loaded` | `hs_select_character`'s menu-time read of `orbpickup stat` already named a resolver route before any click was sent. |
-| `lease_held` | Another live hs-drive process holds the machine-wide game lease. Returned by the sixteen gated tools (the six in "Who is gated", the five skill tools and the five stash and bag tools) before they touch anything — engine, process gate, save directory, `cmd.txt` or window — and by `hs_lease_acquire` without `force` and `hs_lease_release` by a non-holder. The detail reads "held by `<label>` (pid `<pid>`) since `<taken_utc>`", and `holder_label`, `holder_pid` and `taken_utc` carry the same. |
+| `lease_held` | Another live hs-drive process holds the machine-wide game lease. Returned by the seventeen gated tools (the six in "Who is gated", the five skill tools, the five stash and bag tools and `hs_exit_to_menu`) before they touch anything — engine, process gate, save directory, `cmd.txt` or window — and by `hs_lease_acquire` without `force` and `hs_lease_release` by a non-holder. The detail reads "held by `<label>` (pid `<pid>`) since `<taken_utc>`", and `holder_label`, `holder_pid` and `taken_utc` carry the same. |
 | `lease_not_held` | `hs_lease_release` with nothing to release: no record, a record already released, or a stale one (its holder is gone — the detail says so, and that `hs_lease_acquire` recovers it). |
 | `lease_unavailable` | `lease.json` is present and cannot be read as a lease record, or the lock / the replace did not succeed within 5 s. **Never read as "free"**: the gated tools refuse on it, `hs_lease_status` reports the state `unavailable` naming the path, and `hs_lease_acquire(force=true)` replaces an unreadable record. A bad lease label reuses `invalid_label`. |
 | `skill_not_on_bar` | `hs_skill_cast`: no row-0 bar slot holds the `slot` or `ability` asked for, or that slot's talent is 0 (empty). Row 1 is the owned-skills list, not the bar. Returned after the `skillstate` read, before any key. |
@@ -303,6 +304,11 @@ Tokens this server can return today:
 | `template_not_found` | `hs_give_item`: `giveitem` found no item under `template` in map 0 (the character's own map). Nothing is made. |
 | `give_refused` | `hs_give_item`: any other `giveitem: refused - …`, quoted — a step of the loader's order that answered false or undefined, named; a unit no grid took is taken out of map 0 again. |
 | `give_not_confirmed` | `hs_give_item`: the reply carried no `giveitem: confirmed` line with one more item after than before in the destination cells (a `not confirmed` line, or none). |
+| `not_in_world` | `hs_exit_to_menu`: the first listing's room is `Main_Menu_rm` or `Chose_rm`, so there is no character in the world to take back. Nothing is pressed or clicked. |
+| `pause_menu_not_open` | `hs_exit_to_menu`: Escape was delivered and no `UI_Pause_obj` was listed within the poll budget (30 reads 0.5 s apart). Nothing is clicked; `last_listing` holds the last read. |
+| `exit_button_not_found` | `hs_exit_to_menu`: with the pause menu listed, no new visible `UI_Button_obj` row matched (exactly `label`, or `exit` in its `uiNodeCallstack` or text and `join` in neither) within the poll budget, the one match had no readable `win`, or a `UI_Button_obj` listing said `capped=1` before or after the key (its id set may be incomplete, so it is never used to pick a row; before the key that refuses with nothing pressed). `candidates` lists the new rows that were judged. Nothing is clicked. |
+| `exit_button_ambiguous` | `hs_exit_to_menu`: more than one new row matched; `candidates` lists them (`obj`, `id`, `text`, `uiNodeCallstack`, `win`). Nothing is clicked; pass `label` with one row's exact text. |
+| `menu_not_reached` | `hs_exit_to_menu`: the Exit click landed and no listing named `Chose_rm` or `Main_Menu_rm` without a `UI_Pause_obj` within `timeout_s`. The detail quotes the last header; `last_listing` holds the listing. |
 
 One shape does **not** come back as a refusal: a `route` that is neither
 `send_input` nor `post_message` is rejected by the SDK's own `Literal`
@@ -487,6 +493,9 @@ line, so there was no answer to "what ended it". Now:
 - **A launched game still running is not listed**, and neither is any PID this
   server did not launch, nor one whose `exit_watch` was `unavailable`. Off
   Windows `exits` is an empty list and nothing raises.
+- **`hs_selfcheck`'s `exit_code_readback` proves this open and this read**
+  on two children of its own that exit `0x00000000` and `0xC0000409`
+  (ForgePact #201, § "`hs_selfcheck` — proving the instrument").
 
 Reading a code: `0x00000000` is a normal exit, `0xC0000005` an access violation,
 `0xC0000409` a fast-fail abort (`STATUS_STACK_BUFFER_OVERRUN`), and `0x00000001`
@@ -773,6 +782,74 @@ screen, and the whole call took 17.5 s from the main menu to
 `character_loaded`. The fixed wait is gone. Each screen now takes as long as
 the game needs to list its next button.
 
+## Exit to the menu
+
+`hs_exit_to_menu(timeout_s=60, label=None)` (`tools/hs_drive_mcp/menuexit.py`,
+ForgePact #201) takes a loaded character back to a menu the way a player
+does: Escape, then the pause menu's Exit. It exists so a live session can
+close the game after the game's own Exit path and compare the exit code with
+a close straight from the world (`ForgePact/docs/graceful-stop-exit-research.md`).
+By a static reading (`docs/RUNTIME_DATA_MODELS.md` § 8.4, "The pause menu's
+Exit"), Exit saves the character through the game's own `SaveLocalFile` and
+changes room to `Chose_rm`; it does not end the game. So the tool is
+annotated as writing (the game saves itself), not destructive, and it takes no
+`backup_id`: the save is the one a player's Exit makes. It is lease-gated like
+the stash tools and sends only `menulayout` over IPC.
+
+What it does, in order:
+
+1. One send lists `menulayout UI_Pause_obj` and `menulayout UI_Button_obj`.
+   A header naming `Main_Menu_rm` or `Chose_rm` refuses `not_in_world`; a
+   listing whose `window=` is not the client size measured at that read
+   refuses `window_size_mismatch`; a `capped=1` footer refuses
+   `exit_button_not_found` — all before any input. The ids of the
+   `UI_Button_obj` rows listed now are kept. If a `UI_Pause_obj` is already
+   listed, Escape is skipped and `pause_opened_by` says `already_open`.
+2. Escape (VK 27, held 60 ms) goes through `input.inject(...,
+   route="send_input", force_focus=True)` — `hs_select_character`'s focus
+   chain — and must be delivered whole (`click_not_delivered` otherwise).
+3. Both objects are re-read every 0.5 s, up to 30 reads, until a
+   `UI_Pause_obj` is listed (`pause_menu_not_open` if it never is) and one
+   new row names the Exit button.
+4. The candidates are the visible `UI_Button_obj` rows whose id was **not**
+   listed before the key: the pause menu builds new buttons on every open
+   (§ 8.4), so a row that was already there — a HUD button that also reads
+   "exit" — is never clicked. With `label`, the candidate whose text equals
+   it exactly; without one, the candidates whose `uiNodeCallstack` or text
+   contains `exit`, case-insensitive, and neither contains `join`. Several
+   is `exit_button_ambiguous` at once; none, when the budget ends, is
+   `exit_button_not_found`; both quote the candidates (`obj`, `id`, `text`,
+   `uiNodeCallstack`, `win`) in `candidates`. A `capped=1` listing after the
+   key is never used to pick a row either. With the menu already open there
+   is no "before the key", so every listed row is judged, and another
+   exit-like row beside it makes the call ambiguous rather than a guess.
+5. One click at the row's `win` point, verbatim, held 120 ms, through the
+   same chain. Then `menulayout UI_Pause_obj` is read every 0.5 s within
+   `timeout_s` until the header names `Chose_rm` or `Main_Menu_rm` and no
+   `UI_Pause_obj` is listed; otherwise `menu_not_reached`, quoting the last
+   header.
+
+It returns `phase: "menu_reached"`, `room`, `exit_row`, `pause_opened_by`,
+`layout_trail` (the key and the click), `focus_trail` (the focus step that
+took, per input), `proof` (each listing header that decided a step) and
+`elapsed_s`. A refusal carries `last_listing` and the phase it stopped in
+(`in_world`, `escape`, `pause_menu`, `exit_click`).
+
+**Measured 2026-10-13 (#201's Live procedures 1 and 2, two calls (Live 1
+cell C, Live 2 cell G), each `menu_reached` on the first call, no `label`).** The injected Escape opens the
+pause menu (`pause_opened_by: key`, from `Town_01_rm`); the one new exit-like
+row is a `UI_Button_obj` reading "Save & Exit" with `uiNodeCallstack`
+`PauseSaveExit`, at `win=1280,856` on a 2560x1440 fullscreen client; the click
+there activates it with no confirmation in between; and the game reaches
+`Chose_rm`, with `herosiege13.hss` and `inventory_order_13.hss` both rewritten
+(file times read by the operator, not by the tool). `menu_reached` itself
+proves the room, not the save. `tests/test_hs_drive_mcp_menuexit.py` runs on
+synthetic listings (`tests/hs_drive_mcp_pausemenu_fixtures.py`): they pin the
+tool's rules, not the game's menu. Were a confirmation dialog ever to appear,
+it would surface as `menu_not_reached` with the in-world room in its header
+(the last poll reads only `UI_Pause_obj`, so the dialog's own rows are not in
+`last_listing`; list `UI_Button_obj` with `hs_command` to see them).
+
 ## Saves: what the tools guarantee
 
 The live directory is a snapshot target, not a guessed subset: **every regular
@@ -1015,16 +1092,18 @@ The five stash and bag tools are gated the same way: `hs_give_item`,
 `menulayout`, verb send or key, and their sends and the interact key pass
 `lease_checked=True`. `hs_give_item(to="stash")` and `hs_bag_tab` with a
 sub-tab other than `materials`/`socket` refuse `route_not_measured` right
-after the guard, with nothing sent.
-`tests.test_hs_drive_mcp_lease`'s `gated_calls` covers all sixteen.
+after the guard, with nothing sent. `hs_exit_to_menu` asks `lease.guard`
+first too, before the process gate and its first `menulayout`, and its reads,
+Escape and Exit click pass `lease_checked=True`.
+`tests.test_hs_drive_mcp_lease`'s `gated_calls` covers all seventeen.
 
-A lease record that cannot be parsed refuses all sixteen `lease_unavailable` — a
+A lease record that cannot be parsed refuses all seventeen `lease_unavailable` — a
 record nobody can read must not compare equal to "free" (`AGENTS.md` § "Check
 a Permission Where It Is Used") — and `hs_lease_acquire(force=true)` replaces
 it.
 
 **A caller with no lease while nobody holds one is allowed, and labelled.** The
-sixteen proceed and report `lease: "none"`; nothing is acquired implicitly. The
+seventeen proceed and report `lease: "none"`; nothing is acquired implicitly. The
 reasons, so the strict option is not proposed again: every recorded clash was
 two *sessions*, and a lone caller harms nobody; refusing would break every
 existing direct use of hs-drive — the owner's own ad-hoc calls, the suites'
@@ -1114,6 +1193,24 @@ This server has since produced that shape twice in its own Python — `hs_selfch
 | `save_dir` | The live directory exists and holds ≥ 1 `herosiege*.hss` (count in `detail`) | never |
 | `backup_roundtrip` | A temp fixture backs up, is damaged, and restores byte-identical through the real `saves` functions | never |
 | `screenshot_screen` | A capture of the primary screen holds more than one distinct pixel value | non-Windows, or Pillow not importable |
+| `exit_code_readback` | Two children of its own, exiting `0x00000000` and `0xC0000409`, read back as exactly those codes, each matching the child's own return code | non-Windows |
+
+`exit_code_readback` (ForgePact #201) proves the reading `hs_stop_game` and
+`hs_status` report as `exits`. #201 asks what raised the `0xC0000409` a stop
+reports, and that question is only worth asking if the reader can tell a clean
+exit from a fast fail: one that answered every exit with the same code would
+look identical from outside. So the check starts two short-lived Python
+children with no window and none of this server's stdio, one ending
+`sys.exit(0)` and one `sys.exit(-1073740791)` (the signed form of
+`0xC0000409`), opens each by PID while it still runs through
+`procs.open_exit_handle`, the open `hs_launch`'s `watch_exit` makes, confirms
+the read says "still running", then lets it exit and reads it through
+`procs.read_exit_code`, the read `exits()` makes, with a bounded wait. `pass`
+names both readings; `fail` names what was read and what the child itself
+returned. Its children are not launched games: nothing is added to `exits`, and
+nothing is written. `tests/test_hs_drive_mcp_server.py::ExitCodeReadbackTests`
+runs it for real and carries the negative control, a reader that answers
+`0x00000000` for everything, which must fail.
 
 A check whose code raised is `fail` with the exception name, never `skipped`.
 `skipped` always carries its reason in `detail`, because "we did not look" and
@@ -1141,7 +1238,7 @@ and nothing may appear in that install's `bp_ipc\` afterwards.
 
 `summary.healthy` is **not** "nothing failed". It requires every check
 registered with `positive_control=True` — `process_snapshot`,
-`backup_roundtrip` and `screenshot_screen` — to have *passed*. A run where everything was
+`backup_roundtrip`, `screenshot_screen` and `exit_code_readback` — to have *passed*. A run where everything was
 skipped has zero failures and has proved nothing, and `healthy` is the field a
 caller branches on; a self-check that reports itself armed while blind is the
 one failure this tool cannot delegate. `summary` also carries
@@ -1194,7 +1291,7 @@ rather than by falling back to another launcher:
   pydantic's default `extra='ignore'` applies; `validate_arguments` drops the
   unknown key at `model_validate`, and `model_dump_one_level` enumerates
   declared fields only. Every tool here registers through `@server.tool(...)`
-  → `Tool.from_function` → `func_metadata`, so all twenty-seven behave identically
+  → `Tool.from_function` → `func_metadata`, so all twenty-eight behave identically
   and **no code in `tools/hs_drive_mcp/` can see the dropped key** — by the
   time a tool body runs, the evidence is gone. Reproduced on a toy signature
   mirroring `hs_ipc_tail`: `{"lines": 5}` → `lines=5`, `{"n": 5}` → `lines=40`,
@@ -1213,7 +1310,7 @@ rather than by falling back to another launcher:
   before any handler sees it — but the SDK's own docstring calls it
   "Provisional - the signature may change in a 2.x minor release", and it
   would mean wrapping the whole request path to catch a typo. If this is ever
-  enforced, that middleware is the single place to do it; **not** twenty-seven tool
+  enforced, that middleware is the single place to do it; **not** twenty-eight tool
   bodies, none of which can. Until then: check the parameter names in
   `## Tools` above, and treat a suspiciously default-looking answer as a
   possible misspelling.
@@ -1276,6 +1373,18 @@ rather than by falling back to another launcher:
   stack, before blaming ForgePact or the game. Measured 2026-10-07: both
   graceful closes of ForgePact #173's sessions read `0xC0000409` after
   `==== clean shutdown ====` (Verification, "Exit codes (ForgePact #173)").
+  Attributed 2026-10-13 (ForgePact #201, Verification, "Graceful stops
+  (ForgePact #201)"): with the producer installed, an in-world close, a
+  close after `hs_exit_to_menu` and a main-menu close all read `0xC0000409`
+  with a dump whose `raised-in` is `HSOfflineTrackerProducer`; with it held
+  aside, the same three closes and an in-world close with three mods on read
+  `0x00000000` and left no dump. So on this machine the code comes from the
+  producer alone, and taking Save & Exit first does not avoid it. Until
+  ForgePact re-pins the producer to HS-Offline-Tracker v0.1.4's fixed build,
+  expect `0xC0000409` from every graceful stop: read
+  `py -3 tools/crash_dump_stack.py --pid <pid> --expect-module
+  HSOfflineTrackerProducer` (exit 0 when the producer raised it) rather than
+  treating the code as a crash.
 - **Backups accumulate and nothing prunes them.** Removal is deliberately out
   of scope — no tool in this server has removal as its effect. Each backup is
   about 1.5 MB, and a restore writes two (the pre-restore one, plus whatever
@@ -1490,6 +1599,26 @@ by this server.
 | X3 | A crash's code (positive control) | `crashwatch crash confirm` on the research build, then `hs_status` | **pass — 2026-10-07.** `"game_state":"not_running"`, `"exits":[{"pid":28660,"exit_code":"0xC0000005"}]`; Windows wrote `Hero_Siege.exe.28660.dmp` and an Application Error record with the same code and PID. An `hs_status` taken while the process was still going listed it running with `exits` empty. |
 | X4 | A running game is not listed | `hs_status` during play | **pass — 2026-10-07.** Throughout Live 1's play, `exits` carried only the crashed PID 28660, never the running 14736. |
 | X5 | A graceful close's code, in `hs_stop_game`'s own answer | `hs_stop_game` (`force=false`) | **pass — 2026-10-07.** Live 1: `{"pid":14736,"exit_code":"0xC0000409"}`, `forced:false`, 6.6 s; Live 2: `{"pid":34868,"exit_code":"0xC0000409"}`, 7.2 s, with the earlier PIDs still listed oldest first. Both after `==== clean shutdown ====`; the Live 2 close logged `ucrtbase.dll`, `0xc0000409` and left a dump (ForgePact guide, Known Limitations item 25). |
+
+### Graceful stops (ForgePact #201)
+
+The rows below belong to `forgepact-201-exit-c0000409`, which added
+`exit_code_readback`, `hs_exit_to_menu` and `tools/crash_dump_stack.py`. They
+come from its Live procedure 1 (producer present) and Live procedure 2
+(producer held aside) of 2026-10-13, captures
+`forgepact-201-exit-c0000409-live-1` and `forgepact-201-exit-c0000409-live-2`
+(local to the hub's workorder folder), on the installed ForgePact v2.2.1
+(`8a16a38e…4bc92`), slot 14, recorded in
+`ForgePact/docs/graceful-stop-exit-research.md` § "Results".
+
+| # | Check | Command | Result |
+| --- | --- | --- | --- |
+| G201-1 | `exit_code_readback` passes on this machine before a session | `hs_selfcheck`, after `hs_lease_acquire` | **pass — 2026-10-13, both sessions.** 7 of 7 `pass`, none skipped; detail "sys.exit(0) read as 0x00000000 and sys.exit(-1073740791) read as 0xC0000409, each matching the child's own return code". |
+| G201-2 | The reader reads a clean code from the game itself (positive control for `0x00000000`) | `hs_stop_game` (`force=false`) after a main-menu launch, the producer held aside | **pass — 2026-10-13.** Live 2 cell E: `{"pid":41756,"exit_code":"0x00000000"}`, `forced:false`, the first clean code hs-drive has read; `crash_dump_stack.py --pid 41756 --wait 30` exited 3 (no dump). |
+| G201-3 | The reader and the dump agree on a fast fail in the same session (positive control for "no dump") | `hs_stop_game`, then `crash_dump_stack.py --pid <pid> --wait 30 --expect-module HSOfflineTrackerProducer` | **pass — 2026-10-13.** Live 1 cells B and C and Live 2 cell H (producer put back): `0xC0000409`, each with a dump `code=0xc0000409 subcode=7 raised-in=HSOfflineTrackerProducer`, exit 0. |
+| G201-4 | `hs_exit_to_menu` takes a loaded character to the menu | `hs_exit_to_menu()` after `hs_select_character(14)` | **pass — 2026-10-13, Live 1 cell C and Live 2 cell G, first call each.** `phase: menu_reached`, `room: Chose_rm`, `pause_opened_by: key`, `exit_row` `{"obj":"UI_Button_obj","text":"Save & Exit","uiNodeCallstack":"PauseSaveExit","win":[1280,856]}` (ids 261941 and 261923), `proof` two `Town_01_rm` headers then `Chose_rm`. `herosiege13.hss` and `inventory_order_13.hss` were rewritten by it (operator's `stat`). |
+| G201-5 | Producer-absent closes | `hs_stop_game` in Live 2 cells D (in world, mods off), G (after `hs_exit_to_menu`) and F (in world, `lootann 1`, `stashmoveall 1`, `frameprof start 600`) | **pass — 2026-10-13.** pids 44796, 51892 and 23392 all `0x00000000`, each after `==== clean shutdown ====`, no dump within 30 s. |
+| G201-6 | Holding a mod aside | the driver, by hand, with the owner's go-ahead ("What is deliberately not here") | **done — 2026-10-13.** `HSOfflineTrackerProducer.dll` moved to `%LOCALAPPDATA%\HSDriveMcp\held-mods\forgepact-201\` and back, sha256 `36608aa0…b14e` on both sides each way; Live 2's `test ! -e` and its resumed `sha256sum` confirmed each state. |
 
 ## Skills and talents
 
@@ -1767,6 +1896,19 @@ move from the stash into the bag are still not measured.
 - **Installing, removing or building the plugin, or patching the exe.** The
   server assumes an installed modded copy and refuses `mod_chain_incomplete`
   otherwise. Those are the ForgePact panel's job.
+- **Holding a mod DLL aside for a session.** No tool moves a file in or out of
+  the game's `mods\` folder, and the live-operator never does. When a live
+  procedure needs a DLL absent, the workorder driver moves it by hand, with
+  the owner's go-ahead, to a folder outside the game
+  (`%LOCALAPPDATA%\HSDriveMcp\held-mods\<workorder>\`), never deleting it,
+  checks its sha256 on both sides, and puts it back the same way when the
+  operator returns NEEDS-HUMAN; the procedure confirms each state itself
+  (`test ! -e`, then `sha256sum`). ForgePact #201 held the tracker producer
+  aside this way (2026-10-13): the move out fell between Live procedure 1's
+  lease release (10:59:57Z) and Live procedure 2's lease (11:01:49Z), under
+  two minutes including the operator's dispatch, and the move back sat inside
+  one NEEDS-HUMAN pause of Live procedure 2, whose whole session ran 7
+  minutes from lease to release (the move's own duration was not timed).
 - **Reading game memory, `itemstats.json`, or hooking anything.**
 - **Video capture, multi-monitor stitching, OCR of screenshots.**
 
@@ -1782,9 +1924,10 @@ py -3 -m unittest tests.test_hs_drive_mcp_screenshot -v        # window resoluti
 py -3 -m unittest tests.test_hs_drive_mcp_input -v             # what actually leaves the process
 py -3 -m unittest tests.test_hs_drive_mcp_charselect -v        # hs_select_character: clicks, proof, refusals
 py -3 -m unittest tests.test_hs_drive_mcp_layout -v            # ForgePact's menulayout listing, its matchers and the verbs' lines
-py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the game lease: race, stale, PID reuse, the sixteen gates
+py -3 -m unittest tests.test_hs_drive_mcp_lease -v             # the game lease: race, stale, PID reuse, the seventeen gates
 py -3 -m unittest tests.test_hs_drive_mcp_skills -v            # the skill tools: skillstate parser, cast, allocate, the refusals
 py -3 -m unittest tests.test_hs_drive_mcp_stash -v             # the stash and bag tools: open, close, tabs, give, the refusals
+py -3 -m unittest tests.test_hs_drive_mcp_menuexit -v          # hs_exit_to_menu: Escape, the Exit row, the refusals
 py -3 -m unittest tests.test_hs_drive_mcp_release_boundary -v  # nothing shipped knows it exists
 py -3 -m unittest discover -s tests                            # all of the above, plus the rest
 ```

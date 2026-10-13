@@ -204,6 +204,23 @@ class ReadTests(unittest.TestCase):
         self.assertEqual(reason, "window_size_mismatch")
 
 
+class MenuRoomTests(unittest.TestCase):
+    """`hs_exit_to_menu`'s two menu rooms are the rooms the captured main-menu
+    and save-slot listings name, and the in-world stash listing names
+    neither (the negative control)."""
+
+    def test_the_menu_rooms_are_the_captured_ones(self):
+        rooms = [layout.parse(reply(text)).room
+                 for text in (MAIN_MENU_REPLY, CHOSE_RM_REPLY)]
+        self.assertEqual(tuple(rooms), layout.MENU_ROOMS)
+        self.assertEqual(rooms[0], layout.MAIN_MENU_ROOM)
+
+    def test_a_town_listing_is_in_the_world(self):
+        town = layout.parse(reply(stash_fixtures.STASH_WINDOW_REPLY))
+        self.assertEqual(town.room, "Town_01_rm")
+        self.assertNotIn(town.room, layout.MENU_ROOMS)
+
+
 class SlotMatcherTests(unittest.TestCase):
     """Phase 0's `slotObject: Choose_Parent_obj`, `slotRule: order:y,x over
     the visible=1 rows`, against the `Chose_rm` listing it captured."""
