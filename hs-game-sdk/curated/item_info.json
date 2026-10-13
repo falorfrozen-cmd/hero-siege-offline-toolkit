@@ -22,7 +22,10 @@
     { "key": "5", "holds": "magic prefix, empty when there is none", "status": "measured" },
     { "key": "4", "holds": "magic suffix, empty when there is none", "status": "measured" },
     { "key": "32", "holds": "tier letter code (see tiers)", "status": "measured" },
-    { "key": "1", "holds": "level requirement", "status": "measured" }
+    { "key": "1", "holds": "level requirement", "status": "measured" },
+    { "key": "2", "holds": "footprint width in grid cells; GetItemSize reads it", "status": "measured", "source": "2026-10-12, ForgePact #158 Live 1" },
+    { "key": "3", "holds": "footprint height in grid cells; GetItemSize reads it", "status": "measured", "source": "2026-10-12, ForgePact #158 Live 1" },
+    { "key": "11", "holds": "display sprite", "status": "measured", "source": "2026-10-12, ForgePact #158 Live 1" }
   ],
   "rarities": [
     { "code": 1, "name": "Common" },

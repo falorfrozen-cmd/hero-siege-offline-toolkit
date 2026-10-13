@@ -1,0 +1,212 @@
+{
+  "$schema_note": "Hand-curated record of the counts the unique picks are checked against, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/unique_pick_model.py never reads it; tests/test_unique_pick_model.py reads both and checks that the model reproduces each entry. The mechanism, in our own words, is docs/models/unique-pick-spec.md, whose notation (T, L_k, D_k, c, e, n, m) the `model` fields use. Every entry has `id`, `kind` (`baseline` = vanilla, nothing pushed; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`measured` or `our_code`), `date` (the measurement date; for `our_code` entries, the date the code was read), `source` (a list of {path, section} or {repo, commit}; paths are relative to the hub root, `section` is text that appears in that file), `scripts` (every `gml_Script_*` the entry involves, all bound in hs_game_sdk.scripts.GameScript), `what` (the observation), `values`, `model` (what the model must show) and, once the model's tests exist, exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). Every #74 count below was made with the Angelic roll's chance raised by a research lever, never at the natural chance; `standinPicks=` is keyed on a stand-in's sub and b (the pair, not the triple), so its vanilla share is m / T. The flight charms' own live counts (UP9 to UP13, #158's Mod live 1 and Mod live 2) cite ForgePact/docs/flight-charms-research.md's Mod live 1 results and Mod live 2 results, where they are recorded; like #74's, they were made with the Angelic roll's chance raised by a research lever, the ordinary unique roll is called by name, and UP11's `flightprobe pool` pins T at 48. The live captures are gitignored and never cited here.",
+  "measurements": [
+    {
+      "id": "UP1",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "`standinPicks=1`"},
+        {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "`standinPicks=1`, so the baseline share p0 is 1/57"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct"],
+      "what": "#74 Live 1 (list injection, research dll f7560e80...), both switches off and nothing pushed: 59 Angelic rolls gave 57 hits, and 1 of them carried a validated stand-in's sub and b (standinPicks=1).",
+      "values": {"hits": 57, "standin_picks": 1, "rolls": 59, "pushed": 0, "copies": 0},
+      "model": "With nothing pushed, standinPicks= grows at m / T per hit, m being 2 or 3: 1 of 57 lies within the 3-sigma binomial band for some T in 40..60.",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up1_live1_nothing_pushed"
+    },
+    {
+      "id": "UP2",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "(`standinPicks=2`, p0 = 0.043)"},
+        {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "`standinPicks=2`, so the baseline share p0 is 2/46 (0.043)."}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct"],
+      "what": "#74 Live 2 (list injection, research dll e30981d5...), both switches off and nothing pushed: 2 of 46 typed vanilla hits carried a validated stand-in's sub and b (p0 = 0.043).",
+      "values": {"hits": 46, "standin_picks": 2, "pushed": 0, "copies": 0},
+      "model": "With nothing pushed, standinPicks= grows at m / T per hit, m being 2 or 3: 2 of 46 lies within the 3-sigma binomial band for some T in 40..60.",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up2_live2_nothing_pushed"
+    },
+    {
+      "id": "UP3",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "`typeDisagree=0`; p0 = 2/47)"},
+        {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "against p0 = 2/47"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct", "gml_Script_CreateItemNew"],
+      "what": "#74 Live 3 (list injection, research dll e0749368...), both switches off and nothing pushed: 2 of 47 typed vanilla hits carried a validated stand-in's sub and b (p0 = 2/47).",
+      "values": {"hits": 47, "standin_picks": 2, "pushed": 0, "copies": 0},
+      "model": "With nothing pushed, standinPicks= grows at m / T per hit, m being 2 or 3: 2 of 47 lies within the 3-sigma binomial band for some T in 40..60.",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up3_live3_nothing_pushed"
+    },
+    {
+      "id": "UP4",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "80 hits fell on it (p1 = 0.81)"},
+        {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "so p1 = 65/80 = 0.81"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct"],
+      "what": "#74 Live 2, Headhunter's switch forced on and the research build pushing 200 copies of Liquor Holster's entry {8, 0, 51} onto lootListUnique[5] per roll (injected=22800 over 114 rolls, heldMiss=0): 65 of the next 80 hits carried a validated stand-in's sub and b (p1 = 0.81).",
+      "values": {"hits": 80, "standin_picks": 65, "copies": 200, "items_pushed": 1, "injected": 22800, "rolls": 114, "held_miss": 0},
+      "model": "With Headhunter alone pushed at c = 200, standinPicks= grows at (m + 200) / (T + 200) per hit: 65 of 80 lies within the 3-sigma binomial band for the same T as the baselines; a push the roll did not draw (m / T, about 0.05) is rejected.",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up4_live2_headhunter_at_200_copies"
+    },
+    {
+      "id": "UP5",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "per roll, 46 of the next 62 hits fell on Liquor Holster's entry (p1 = 0.742,"},
+        {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "so p1 = 46/62 = 0.742"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct", "gml_Script_CreateItemNew"],
+      "what": "#74 Live 3, Headhunter forced and 200 copies of Liquor Holster's entry pushed per roll (injected=18000 over 90 rolls, heldMiss=0): 46 of the next 62 hits carried a validated stand-in's sub and b (p1 = 0.742), and each of those 46 was built as a Headhunter.",
+      "values": {"hits": 62, "standin_picks": 46, "copies": 200, "items_pushed": 1, "injected": 18000, "rolls": 90, "held_miss": 0},
+      "model": "With Headhunter alone pushed at c = 200, standinPicks= grows at (m + 200) / (T + 200) per hit: 46 of 62 lies within the 3-sigma binomial band for the same T as the baselines; a push the roll did not draw is rejected.",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up5_live3_headhunter_at_200_copies"
+    },
+    {
+      "id": "UP6",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-02",
+      "source": [
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "`[4]` 221 and `[5]` 380"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "### 23.8 The ordinary unique roll makes one draw"},
+        {"path": "ForgePact/docs/angelic-roll-hook-research.md", "section": "## Session 4: the list layout (issue #74)"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_DropUniqueItems"],
+      "what": "#74 Live 2's list dump: Controller_obj.lootListUnique is an array of 6 ds_lists of 50, 61, 79, 152, 221 and 380 entries, every entry a triple; the sizes were the same after a zone change and at the end of the session. Only [5] holds Liquor Holster's {8, 0, 51}, once.",
+      "values": {"sub_list_lengths": [50, 61, 79, 152, 221, 380], "unique_roll_sub_lists": [0, 1, 2, 3, 4], "angelic_sub_list": 5, "liquor_holster_count_on_5": 1},
+      "model": "The ordinary roll's chance of dropping one entry pushed once onto sub-list k is 1 / (L_k + 1), between 1/51 and 1/222 over these lengths; with c copies it is c / (L_k + c). That holds if the roll's random index cannot equal the list's length (not established; if it can, the share is 1 in L_k + 2; the model keeps it open as `index_can_reach_length`, docs/models/unique-pick-spec.md § Not established).",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up6_the_sub_list_lengths"
+    },
+    {
+      "id": "UP7",
+      "kind": "our_code",
+      "status": "our_code",
+      "date": "2026-10-13",
+      "source": [
+        {"path": "ForgePact/plugin/ModuleMain.cpp", "section": "static constexpr int g_SigCopies = 1;"},
+        {"path": "ForgePact/plugin/ModuleMain.cpp", "section": "static constexpr int g_FlightDropCopies = 1;"},
+        {"path": "ForgePact/plugin/ModuleMain.cpp", "section": "static const int kAngelicListIndex = 5;"},
+        {"path": "ForgePact/plugin/ModuleMain.cpp", "section": "const int indices[FcNs::kUniqueSubLists] = { 0, 1, 2, 3, 4 };"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "How #74 uses the list: a stand-in entry for the length of the roll."},
+        {"path": "ForgePact/plugin/include/ForgePact/FlightCharms.hpp", "section": "inline constexpr StandIn kElfCandidates[kElfCandidateCount] = {"},
+        {"path": "ForgePact/plugin/ModuleMain.cpp", "section": "{ 0, 0, 86, \"helmet_mask_of_celestial\", \"Mask of the Celestial\", true },"},
+        {"path": "docs/models/unique-pick-spec.md", "section": "Elf's stand-in, Aimbot.exe, is on none of them"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_DropUniqueItems"],
+      "what": "The push: for the length of one roll ForgePact adds c copies of each switched-on item's stand-in entry to the list that roll reads, and takes them off its tail afterwards. Headhunter, Tyrant's Crown, Gabriel Wings and Witch's Broomstick push onto lootListUnique[5] (the Angelic roll); Pocket Elf pushes onto each of lootListUnique[0..4] (the ordinary unique roll) and adds nothing inside the Angelic roll. c is a constexpr 1 in the player build for both #74 (g_SigCopies) and the flight charms (g_FlightDropCopies); only the research build's copies levers change it, 1 to 400. stand_ins lists one triple per item: the Wings' Water Melon and the Broomstick's Soul Collector are fixed in the code (kWingsStandIn, kBroomStandIn) and Headhunter's Liquor Holster is named in it and looked up in the validated Angelic pool; Tyrant's Crown's Mask of the Celestial and Pocket Elf's Aimbot.exe are chosen at runtime (the crown's as a helmet of the validated pool, the Elf's as the first of five candidates in kElfCandidates with an even count across lootListUnique[0..4]), so those two triples are the ones the live sessions recorded (#74's `stand-ins` lines; Mod live 2's `pool`).",
+      "values": {"player_copies": 1, "research_copies_min": 1, "research_copies_max": 400, "angelic_list_index": 5, "unique_sub_lists": [0, 1, 2, 3, 4],
+                 "stand_ins": {"gabriel_wings": [10, 0, 47], "witchs_broomstick": [10, 0, 91], "headhunter": [8, 0, 51], "tyrants_crown": [0, 0, 86], "pocket_elf": [10, 0, 76]}},
+      "model": "As an input transform: an Angelic roll with these items on sees T + e droppable entries, e the sum of c over the items switched on; an ordinary roll with Pocket Elf on sees L_k + c entries on sub-list k. Switched off, nothing is added and the baseline shares are unchanged.",
+      "reproduced_by": "tests.test_unique_pick_model.OurCodeTests.test_up7_the_push"
+    },
+    {
+      "id": "UP8",
+      "kind": "our_code",
+      "status": "our_code",
+      "date": "2026-10-13",
+      "source": [
+        {"path": "ForgePact/plugin/include/ForgePact/FlightCharms.hpp", "section": "// The share of a stand-in hit that becomes the charm: c / (n + c)."},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "a candidate is the mod item's with"}
+      ],
+      "scripts": ["gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct", "gml_Script_CreateItemNew"],
+      "what": "The coin: a typed hit whose whole triple is a pushed stand-in's goes to the item with probability c / (n + c), n being how many vanilla entries of that list carry the same triple, and otherwise stays the game's own. Pocket Elf's stand-in is chosen so that n is the same on all five sub-lists.",
+      "values": {"share": "c / (n + c)", "examples": {"n1_c1": 0.5, "n1_c200": 0.9950248756218906, "n0_c1": 1.0}},
+      "model": "As an input transform: the stand-in triple is kept with (n + c) / (T + e) and the coin gives the item c / (n + c) of that, so each item takes c / (T + e) of the Angelic roll's drops and the stand-in keeps n / (T + e); on the ordinary roll Pocket Elf takes c / (L_k + c). At c = 1 every item takes exactly one entry's share.",
+      "reproduced_by": "tests.test_unique_pick_model.OurCodeTests.test_up8_the_coin"
+    },
+    {
+      "id": "UP9",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-12",
+      "source": [
+        {"path": "ForgePact/docs/flight-charms-research.md", "section": "### Mod live 1 results"},
+        {"path": "ForgePact/docs/flight-charms-research.md", "section": "At the research lever's 200 copies, 20 unique-roll calls placed 19 items, 11 of them Pocket Elf"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "With 200 copies added, 20 calls placed 19 items, 11 of them the added"}
+      ],
+      "scripts": ["gml_Script_DropUniqueItems", "gml_Script_GetUniqueRepoStruct", "gml_Script_CreateDefaultParams"],
+      "what": "#158 Mod live 1 (S19, research dll c15f85e1..., Town_01_rm), Pocket Elf's switch on with Aimbot.exe as its stand-in and the research lever pushing 200 copies onto each of lootListUnique[0..4] per call (injected=20000 over 20 calls): 20 by-name calls of the ordinary unique roll placed 19 items, 11 of them Pocket Elf, ours equal to built (elf=11/11), refused=0, anomalies=0. Every hit line read the coin as 200 in 200, so the stand-in's n on the ordinary lists is 0.",
+      "values": {"calls": 20, "placed": 19, "elf": 11, "copies": 200, "standin_n": 0, "sub_lists_pushed": 5, "injected": 20000, "elf_ours": 11, "elf_built": 11, "refused": 0, "anomalies": 0},
+      "model": "With Pocket Elf pushed at c = 200 and n = 0, one call drops it with c / (L_k + c), between 200/421 and 200/250 over the five lengths, whichever list the roll chooses: 11 of 20 lies within the 3-sigma band over that range; the player build's one copy (1/222 to 1/51) and no push (0) are rejected.",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up9_mod_live1_elf_at_200_copies"
+    },
+    {
+      "id": "UP10",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-12",
+      "source": [
+        {"path": "ForgePact/docs/flight-charms-research.md", "section": "### Mod live 1 results"},
+        {"path": "ForgePact/docs/flight-charms-research.md", "section": "and 21 Wings and 22 Broomsticks of 44, ours equal to built each time"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct", "gml_Script_CreateItemNew"],
+      "what": "#158 Mod live 1 (S20, research dll c15f85e1..., Act_01_01), Gabriel Wings' and Witch's Broomstick's switches on and 200 copies of each stand-in (Water Melon {10, 0, 47} and Soul Collector {10, 0, 91}) pushed onto lootListUnique[5] per roll, the Angelic roll's chance raised by a research lever: 44 rolls gave 44 hits, 21 of them Gabriel Wings and 22 Witch's Broomstick, ours equal to built, refused=0, anomalies=0 (after 26 hits, 13 of each). The hit lines read the coin as 200 in 201 (n = 1).",
+      "values": {"hits": 44, "rolls": 44, "wings": 21, "broom": 22, "copies": 200, "items_pushed": 2, "standin_n": 1, "injected": 17600, "first_read": {"hits": 26, "wings": 13, "broom": 13}, "refused": 0, "anomalies": 0},
+      "model": "With both charms pushed at c = 200 (e = 400) and n = 1, each takes c / (T + e) of the Angelic roll's drops, 200/448 at the measured T of 48: 21 and 22 of 44 each lie within the 3-sigma band; the player build's one copy each (1/50) is rejected.",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up10_mod_live1_angelic_at_200_copies"
+    },
+    {
+      "id": "UP11",
+      "kind": "baseline",
+      "status": "measured",
+      "date": "2026-10-13",
+      "source": [
+        {"path": "ForgePact/docs/flight-charms-research.md", "section": "### Mod live 2 results"},
+        {"path": "ForgePact/docs/flight-charms-research.md", "section": "The Angelic roll's list held 380 entries, 48 of them"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "Of `lootListUnique[5]`'s 380 entries, 48 pass"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_DropUniqueItems", "gml_Script_GetUniqueRepoStruct"],
+      "what": "#158 Mod live 2 (`flightprobe pool`, research dll dd87086c..., read in Town_01_rm and again in Act_01_01 before the kills, both readings the same, nothing pushed): lootListUnique[5] held 380 entries, 48 of them droppable by the Angelic roll's tests (counted with repeats), with Water Melon and Soul Collector once each; the ordinary lists [0..4] held 50, 61, 79, 152 and 221 entries, and Pocket Elf's stand-in Aimbot.exe none of them.",
+      "values": {"angelic_list_size": 380, "droppable": 48, "water_melon": 1, "soul_collector": 1, "unique_sizes": [50, 61, 79, 152, 221], "aimbot_counts": [0, 0, 0, 0, 0], "readings": 2},
+      "model": "T is 48: inside the 40..60 the #74 replays accepted, and every #74 count still fits the band at T = 48; n is 1 for both Angelic stand-ins and 0 for Pocket Elf's on every ordinary list, so the coin hands the flight charms 1 / 2 and 1 of a stand-in hit at c = 1, and each charm takes 1 / (48 + e) of the Angelic roll's drops.",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up11_mod_live2_pool_pins_t"
+    },
+    {
+      "id": "UP12",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-13",
+      "source": [
+        {"path": "ForgePact/docs/flight-charms-research.md", "section": "### Mod live 2 results"},
+        {"path": "ForgePact/docs/flight-charms-research.md", "section": "At one copy, 100 unique-roll calls placed 97 items, one of them Pocket Elf"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "With one entry added to each sub-list per call, 100 calls placed 97"}
+      ],
+      "scripts": ["gml_Script_DropUniqueItems", "gml_Script_GetUniqueRepoStruct", "gml_Script_CreateDefaultParams"],
+      "what": "#158 Mod live 2 (`rate-elf`, research dll dd87086c..., Town_01_rm), Pocket Elf's switch on with Aimbot.exe as its stand-in and the player build's one copy pushed onto each of lootListUnique[0..4] per call (injected=500 over 100 calls): 100 by-name calls of the ordinary unique roll placed 97 items, one of them Pocket Elf, ours equal to built (elf=1/1), refused=0, anomalies=0. Before the switch went on, ten calls placed ten uniques and no Pocket Elf (unique-control).",
+      "values": {"calls": 100, "placed": 97, "elf": 1, "copies": 1, "standin_n": 0, "sub_lists_pushed": 5, "injected": 500, "elf_ours": 1, "elf_built": 1, "refused": 0, "anomalies": 0, "control_calls": 10, "control_elf": 0},
+      "model": "With Pocket Elf pushed at c = 1 and n = 0, one call drops it with 1 / (L_k + 1), between 1/222 and 1/51: 1 of 100 lies within the 3-sigma band over that range (one entry's share); Mod live 1's 200 copies (200/421 to 200/250) and no push are rejected. At one copy the band is wide: one Pocket Elf in 100 calls cannot tell one entry's share from a share a few times larger or smaller, so this entry rules out only the 200-copy flood and no push at all; it does not pin the rate, and it does not settle whether the index can equal the length (1 / (L_k + 2)).",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up12_mod_live2_rate_elf"
+    },
+    {
+      "id": "UP13",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-13",
+      "source": [
+        {"path": "ForgePact/docs/flight-charms-research.md", "section": "### Mod live 2 results"},
+        {"path": "ForgePact/docs/flight-charms-research.md", "section": "102 Angelic drops (114 rolls), 2 Witch's Broomsticks and no Gabriel Wings"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "102 hits gave"}
+      ],
+      "scripts": ["gml_Script_DropItemAngelicChance", "gml_Script_CreateDefaultParams", "gml_Script_GetUniqueRepoStruct", "gml_Script_CreateItemNew"],
+      "what": "#158 Mod live 2 (`rate-angelic`, research dll dd87086c..., Act_01_01), Gabriel Wings' and Witch's Broomstick's switches on at the player build's one copy each (injected rose by 228 over 114 rolls), Pocket Elf off, the Angelic roll's chance raised by a research lever: 114 rolls gave 102 hits, 2 of them Witch's Broomstick and none Gabriel Wings, ours equal to built (broom=2/2, wings=0/0), refused=0, anomalies=0. The hit lines read the coin as 1 in 2 (n = 1).",
+      "values": {"hits": 102, "rolls": 114, "droppable": 48, "wings": 0, "broom": 2, "copies": 1, "items_pushed": 2, "standin_n": 1, "injected": 228, "refused": 0, "anomalies": 0},
+      "model": "With both charms pushed at c = 1 (e = 2), n = 1 and T = 48, each takes 1 / 50 of the Angelic roll's drops (one entry's share): 0 and 2 of 102 both lie within the 3-sigma band, about -2.2 to 6.3; Mod live 1's 200 copies (200/448) are rejected, and a switch that pushed nothing cannot give the 2 Broomsticks. At one copy the band is wide (about -2.2 to 6.3 hits): these counts cannot tell one entry's share from a share a few times larger or smaller, so this entry rules out only the 200-copy flood, and, for the Broomstick alone, no push; 0 Wings is equally consistent with a Wings push that did nothing, so the Wings push at one copy is not observed (shown only at 200 copies, Mod live 1, UP10). It does not pin the rate.",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up13_mod_live2_rate_angelic"
+    }
+  ]
+}
