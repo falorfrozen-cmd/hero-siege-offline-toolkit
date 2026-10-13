@@ -5004,22 +5004,18 @@ repository.
   or windblown particles. Full-screen filters sit mostly between −10000 and
   −10300. **Static reading from the data file** (2026-10-13).
 - At runtime, such a layer would read as a visible layer that holds no
-  element and for which the `layer_get_fx` builtin answers a struct. That
-  reading is **not established**, and ForgePact's Mod live 2 as planned
-  does not establish it: the builtin's name appears in this build's
-  executable (byte search, 2026-10-13), but nothing that session prints
-  says which layer, if any, was classed as a filter. In the two rooms it
-  visits, `Town_01_rm` and `Act_01_01`, the only filter (`Effect_1`, at
-  −10300 and −10100) is empty and lies behind every drawn layer the flight
-  depth is measured against, so a `layer_get_fx` that throws, answers −1 or
-  answers undefined gives the same flight depth (−10001, or −5501 before
-  the canopies) as one that answers a struct. A depth that matches is
-  therefore not evidence for this reading. Establishing it needs a reading
-  that names the classed filter, with `Effect_1` in those two rooms as the
-  positive control and no filter found as the "does not answer a struct on
-  this runner" outcome. Until then, a player's flight could be drawn past
-  the tint in the 8 rooms below without any line showing it. An
-  instance or asset layer that carries a layer effect but holds no element
+  element and for which the `layer_get_fx` builtin answers a struct. The
+  builtin's name appears in this build's executable (byte search,
+  2026-10-13). That `layer_get_fx` answers a struct for such a layer is
+  **not established**. It is **established only by** a reading that names
+  the layer classed as the filter (ForgePact's `flightprobe depth`
+  `filter=`, with its `fx=` struct count of 1 or more), with `Effect_1` in
+  `Town_01_rm` as the positive control. A matching flight depth is not
+  evidence: in `Town_01_rm` and `Act_01_01` the only filter, `Effect_1`
+  (−10300 and −10100), lies in front of every drawn layer, so a filter
+  read and no filter read give the same depth there. The argument is in
+  [Drawing in front](../ForgePact/docs/flight-charms-research.md#drawing-in-front).
+  An instance or asset layer that carries a layer effect but holds no element
   yet reads the same way until it fills: a zone's `Tree_Leaves` (with its
   `_filter_underwater`) before its canopies exist, or `Act_09_04`'s `Flame`.
 - 101 of the 306 rooms have such a filter. In 8 of them a filter lies behind
