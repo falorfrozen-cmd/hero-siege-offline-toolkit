@@ -1378,8 +1378,10 @@ rather than by falling back to another launcher:
   (`5f83e542…`, pinned from ForgePact #185, shipped from 2.3.0) a graceful
   close was measured at `0x00000000` with no dump (capture
   `forgepact-185-tracker-mod-live-1`, 2026-10-13: an in-world close, a close
-  after Save & Exit and an in-world close with `lootann` on), so there
-  `0xC0000409` is a real signal to investigate. Which case applies is
+  after Save & Exit and an in-world close with `lootann` on), so on those
+  three close paths `0xC0000409` is a real signal to investigate. A main-menu
+  close with the released build is not measured (Tracker PR #8's three ran on
+  its test build `061fe033…`). Which case applies is
   decided by ForgePact's own lists, `TRACKER_SENSOR_ABORTING` and
   `TRACKER_SENSOR_CLEAN` in `ForgePact/src/forgepact.py`; from the hub root,
   `py -3 -c "import hashlib,sys; sys.path.insert(0,'ForgePact/src'); import forgepact as f; h=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest(); print(h, 'aborting' if h in f.TRACKER_SENSOR_ABORTING else 'clean' if h in f.TRACKER_SENSOR_CLEAN else 'unknown')" "<game>\mods\aurie\HSOfflineTrackerProducer.dll"`
