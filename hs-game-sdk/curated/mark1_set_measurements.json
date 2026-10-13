@@ -142,7 +142,7 @@
     "effect_after": 1,
     "applied_by_first_show": 210,
     "casts": 1,
-    "what": "With no key pressed, writing the press value 4 into the slot's inputState entry just before each local CheckTalentUse call, and restoring it after, cast the slot's skill. During two key presses with one cast, no entry of abilityQueue, mobileTalentPressed or the player's stackSkillList changed from frame to frame. The queue and mobile levers were not tried, because the input lever cast first.",
+    "what": "With no key pressed, writing the press value 4 into the slot's inputState entry just before each local CheckTalentUse call, and restoring it after, cast the slot's skill. During two key presses with one cast, none of the first four entries (0-3) of abilityQueue, mobileTalentPressed or the player's stackSkillList changed between end-of-frame samples; later slots and an entry set and cleared within one gate call were not visible, so whether a key cast uses the queue is not established. The queue and mobile levers were not tried, because the input lever cast first.",
     "source": "ForgePact docs/mark1-set-research.md (Live 1 results, Decision); forgepact-166-mark1-set-live-1.md (S5, S8, S9), not tracked"
   },
   "cast_gate": {
@@ -156,7 +156,7 @@
     "forced_frames": 480,
     "casts_in_forced_frames": 1,
     "empty_slot_talent_use_calls": 0,
-    "what": "The cooldown half held: with the press value forced on every gate call for more than 480 frames, Mana Orb was cast once, and the lever on an empty column called no TalentUse at all. The mana half was not seen: in a 120-frame watch of the player no member named for mana fell (manaArrayPos moved upwards). Its control, key-cast-control, passed in the same session.",
+    "what": "With the press value forced on every gate call for more than 480 frames (about 5.6 s at ~85 fps), Mana Orb was cast once; what refused the repeats (cooldown, mana, the orb still alive, or how the forced press is seen) and Mana Orb's cooldown were not read, so whether the cooldown applies to a forced press is not established. The lever on an empty column called no TalentUse at all. The mana half was not seen: in a 120-frame watch of the player no member named for mana fell (manaArrayPos moved upwards). Its control, key-cast-control, passed in the same session.",
     "source": "ForgePact docs/mark1-set-research.md (Live 1 results, Decision); forgepact-166-mark1-set-live-1.md (S10, S13), not tracked"
   },
   "toggle_under_automation": {
@@ -352,7 +352,7 @@
       "past_room": "room=out, grid blocked and wall-line crossed, but family free again past the invisible walls",
       "other_blockers": "water (Block_Dynamic_Sprite_obj), Fall_Rock_01_obj and Fall_Dead_Tree_02_obj block both grid and family, wall-line clear"
     },
-    "tile": "no tile layer's cell marks the edge; values vary across open floor, Water is non-zero only on water, every layer reads -1 outside the room",
+    "tile": "none of the four tile layers read (Darkness, Hay_Ground, Leaves_Ground, Water) marks the edge; Town_01_rm's later tile layers were not read; values vary across open floor, Water is non-zero only on water, every layer reads -1 outside the room",
     "live_2": "walkable-control failed: that build's probe counted any number of 0 or more from place_meeting as a meeting, so its real 0 printed blocked everywhere; corrected in ForgePact 61243b2",
     "what": "In Town_01_rm a walkable landing point is one inside the room where the player would meet nothing of Collision_Parent_obj. family alone saw the prop, which the path grid and the wall line missed, and turned blocked at the edge 16 px before them, but read free past the room's bottom, where only room and the grid still said no. Not measured: a generated zone, why the path grid's cells under the Bounty Board read free, whether pockets between blockers are reachable on foot, and the test at a jump's landing.",
     "source": "ForgePact docs/mark1-set-research.md (Live 3 results, Decision, Not established); forgepact-166-mark1-set-live-3.md (W2 to W4), not tracked"
