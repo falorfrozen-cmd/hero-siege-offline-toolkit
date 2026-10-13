@@ -5065,7 +5065,8 @@ are not, and are written "Live 1 run Jn" here.
   too and put the player in the dark margin at the west of the view, not
   judged standable. **Measured.** So a room
   edge is not a map edge, and what the game does with a jump at the
-  walkable map's edge is **not observed**.
+  walkable map's edge is **not observed**. What marks that edge in this room
+  (invisible wall instances, on its south side) is measured in § 19.11.
 
 [Mod live 1 results](../ForgePact/docs/jump-scenery-research.md#mod-live-1-results)
 
@@ -5644,24 +5645,39 @@ slot 14, in `Town_01_rm`, on the same build): see
 
 From the same reading as § 19.10 (2026-10-13). Static unless marked.
 
-- **The research's walkable read did not pass its control (measured,
-  2026-10-13).** In the Mark 1 research's Live 2 session
-  (`walkable-control`, [Live 2 results](../ForgePact/docs/mark1-set-research.md#live-2-results)),
-  four points of open floor in `Town_01_rm`, one of them the player's own
-  position, read inside the room, a free `global.pathGrid` cell and a clear
-  line against `Wall_Parent_obj`, but the probe's reading of the player's
-  `place_meeting` against `Collision_Parent_obj` printed blocked at every one
-  of them. That is the probe's interpretation, not `place_meeting`'s answer:
-  the session DLL's adapter counted any numeric answer of 0 or more as a
-  meeting, so a real 0 (no meeting) also printed blocked. ForgePact 61243b2
-  corrected the adapter to read the answer as a boolean, and the probe now
-  prints each field's raw answer and what a blocked family met. Live 2
-  recorded no raw answer, so its reading says nothing about what
-  `place_meeting` against `Collision_Parent_obj` answers on open floor, and
-  which cause produced it is not established. With the control failed, a
-  point inside a prop and the town's edge were never read, so none of the
-  bullets below has been checked live, and nothing here yet tells a walkable
-  landing point from one past the edge.
+- **What tells a walkable point in town (measured, 2026-10-13).** In the
+  Mark 1 research's Live 3 session
+  ([Live 3 results](../ForgePact/docs/mark1-set-research.md#live-3-results)),
+  the probe called, with the player as `self`, `place_meeting` against
+  `Collision_Parent_obj` (957) at a point, `collision_line` from the player
+  to it against `Wall_Parent_obj`, and `mp_grid_get_cell` on
+  `global.pathGrid`, in `Town_01_rm`:
+  - On open floor, the player's own position included, `place_meeting`
+    answered a `real` 0, `collision_line` a `ref` -4 (`noone`) and the grid
+    cell 0. Called this way, `place_meeting`'s answer is a number, 0 or 1,
+    not a `bool` (§ 19.3 measured a `bool` inside the game's own calls).
+  - Inside a prop, the Bounty Board (`Bounty_Board_obj`), only
+    `place_meeting` met anything (`real` 1, `instance_place` on the family
+    naming the board); the grid cell read free and the line clear.
+  - The town's south edge is an invisible wall: `Invisible_Wall_Not_Minimap_obj`
+    instances, which `place_meeting` meets as `Collision_Parent_obj` and
+    `collision_line` returns as `Wall_Parent_obj`. Scanning toward it in
+    16 px steps, `place_meeting` met it one step before the grid cell read -1
+    and the line crossed it. Nothing on screen draws it. Water
+    (`Block_Dynamic_Sprite_obj`) and fallen rocks and trees
+    (`Fall_Rock_01_obj`, `Fall_Dead_Tree_02_obj`) blocked both the grid and
+    `place_meeting`.
+  - Past the room's bottom the grid cell read -1, but `place_meeting` met
+    nothing once the points were past the invisible walls.
+  - No tile layer's cell marks the edge.
+
+  So in a town a landing point is walkable when it lies inside the room and
+  the player placed there meets nothing of `Collision_Parent_obj`; the
+  research records `walkable-test: combined`. Live 2's control had failed
+  (`walkable-control`, [Live 2 results](../ForgePact/docs/mark1-set-research.md#live-2-results))
+  because that build's probe counted any number of 0 or more as a meeting,
+  so `place_meeting`'s 0 printed as blocked; ForgePact 61243b2 corrected it.
+  A generated zone was not measured.
 
 - **The path grid marks blockers, not the map's edge.**
   `gml_Script_PathFindControllerCreate` (2714) destroys any earlier
@@ -5674,16 +5690,22 @@ From the same reading as § 19.10 (2026-10-13). Static unless marked.
   `global.pathStaticRects` (four numbers each) is added too. Neither function
   marks a cell because it lies beyond the floor: a cell is blocked only where
   one of those instances or rectangles covers it. Read from the MCP decompile
-  of both functions. § 22.7 measured the grid itself.
+  of both functions. § 22.7 measured the grid itself. **Measured in part
+  (Live 3, above):** at the town's south edge the blocked cells are where
+  the invisible wall instances stand, and a point past the room reads -1;
+  but the cells under the Bounty Board, which `place_meeting` meets as a
+  `Collision_Parent_obj` instance, read free, so not every instance of the
+  family blocks a cell in that room. Why is not established.
 - **In a generated zone the rectangles are the outside.** The rectangles come
   from `gml_Script_PathFindBuildStaticBlockers` (2717), whose one direct caller found
   is an anonymous function of `objZoneGenV2` (3259)'s Create event. It reads
   the generator's `outsideBlockList`, `zoneOuterScale` and `global.gridSize`
   and the room size, and writes `global.pathStaticRects` and
   `global.pathStaticRoom`. So in a generated zone the area outside the zone
-  is plausibly blocked in the path grid through those rectangles; in a room
-  the generator did not build (a town), nothing found marks the outside.
-  Name scan; the arithmetic was not read.
+  is plausibly blocked in the path grid through those rectangles. Name scan;
+  the arithmetic was not read. In a room the generator did not build, no
+  script was found that marks the outside; in `Town_01_rm` the edge measured
+  is placed instances, the invisible walls above (Live 3).
 - **The game's own "can something stand here" test.**
   `gml_Script_IsObtainablePlace` (2076) takes a point. When no
   `objZoneGenV2` (3259) exists it answers yes, for any point. Otherwise it

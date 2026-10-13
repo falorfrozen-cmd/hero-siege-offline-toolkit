@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Live measurements for the Mark 1 set (ForgePact#166 phase 1, research only, Live 1 and Live 2, both 2026-10-13): how a bar slot can be cast through the game's own gate without a key press, which input entry each of Q, E, R and Y uses, what a toggle does under that lever, what a cast does to the walk, which script moves the player on a walk and during a jump, where a x0.5 on walking speed and a x3 on the jump land, and whether the walkable test passed its control. Research build of ForgePact 2feb9b4 (DLL SHA-256 0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f; the plugin/ tree is unchanged at the head of the 166-mark1-set branch), the `mark1probe` instrument (nine script rows through HookOneScript, its levers and its pos sampler) and x64dbg hardware logpoints (CheckTalentUse as the control; TalentUseSetSpeed, StatMovementSpeed and StatJumpPower as candidates); save slot 14, character Sorak (White Mage), in Town_01_rm, every shipped mod off. The procedures, their checks and the argument are in ForgePact docs/mark1-set-research.md (Live procedure 1, Live procedure 2, Results, Decision, Not established); the shared facts are docs/RUNTIME_DATA_MODELS.md sections 7.7, 7.8, 19.10 and 19.11; the session captures forgepact-166-mark1-set-live-1.md and -live-2.md stay with the hub's workorder files and are not tracked. No model or generator reads this file: tests/test_sdk_all.py checks only that curated/ is tracked, and the #166 workorder's criterion 24 reads game_build, cast_route, slot_keys, cast_penalty, walk_mover, speed_lever, jump_mover, jump_lever and walkable. A status is one of: measured, not-observed (the check ran, its control passed, and it saw nothing), not-run (the check did not run, or its control failed, so it says nothing) or static reading (read locally from the game, never measured). The decision value is the research doc's Decision key as recorded; each entry's checks carry their tools/live_checks.py verdicts. Addresses and call-site offsets are never recorded here; the callers are named. Static readings are our own words, never the game's text.",
+  "$schema_note": "Live measurements for the Mark 1 set (ForgePact#166 phase 1, research only, Live 1, Live 2 and Live 3, all 2026-10-13): how a bar slot can be cast through the game's own gate without a key press, which input entry each of Q, E, R and Y uses, what a toggle does under that lever, what a cast does to the walk, which script moves the player on a walk and during a jump, where a x0.5 on walking speed and a x3 on the jump land, and which reading tells a walkable landing point from one past the walkable map's edge. Research build of ForgePact 2feb9b4 (DLL SHA-256 0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f; the plugin/ tree is unchanged at the head of the 166-mark1-set branch), the `mark1probe` instrument (nine script rows through HookOneScript, its levers and its pos sampler) and x64dbg hardware logpoints (CheckTalentUse as the control; TalentUseSetSpeed, StatMovementSpeed and StatJumpPower as candidates); save slot 14, character Sorak (White Mage), in Town_01_rm, every shipped mod off. Live 3 (walkability only) ran on a rebuilt research DLL, ForgePact 61243b2 (SHA-256 8c47459b15dd0691336efd65e5c9ded6ebd1a46b23e578e9688f71d023ad516e), with the same character, room and starting save and no debugger. The procedures, their checks and the argument are in ForgePact docs/mark1-set-research.md (Live procedure 1, Live procedure 2, Results with Live 3 results, Decision, Not established); the shared facts are docs/RUNTIME_DATA_MODELS.md sections 7.7, 7.8, 19.10 and 19.11; the session captures forgepact-166-mark1-set-live-1.md, -live-2.md and -live-3.md stay with the hub's workorder files and are not tracked. No model or generator reads this file: tests/test_sdk_all.py checks only that curated/ is tracked, and the #166 workorder's criterion 24 reads game_build, cast_route, slot_keys, cast_penalty, walk_mover, speed_lever, jump_mover, jump_lever and walkable. A status is one of: measured, not-observed (the check ran, its control passed, and it saw nothing), not-run (the check did not run, or its control failed, so it says nothing) or static reading (read locally from the game, never measured). The decision value is the research doc's Decision key as recorded; each entry's checks carry their tools/live_checks.py verdicts. Addresses and call-site offsets are never recorded here; the callers are named. Static readings are our own words, never the game's text.",
   "game_build": {
     "status": "measured",
     "exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
@@ -64,6 +64,23 @@
       "walkable-edge": "not-run"
     },
     "source": "ForgePact docs/mark1-set-research.md (Live 2 results); forgepact-166-mark1-set-live-2.md, not tracked"
+  },
+  "live_3": {
+    "status": "measured",
+    "date": "2026-10-13",
+    "procedure": "Live procedure 3 (walkability only, after Live 2's walkable-control failed and the probe's place_meeting read was corrected)",
+    "research_dll_sha256": "8c47459b15dd0691336efd65e5c9ded6ebd1a46b23e578e9688f71d023ad516e",
+    "forgepact_commit": "61243b2",
+    "summary": "6 checks: 6 pass (walkable-prop and walkable-edge as research: recorded)",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "walkable-control": "pass",
+      "walkable-prop": "pass",
+      "walkable-edge": "pass"
+    },
+    "source": "ForgePact docs/mark1-set-research.md (Live 3 results); forgepact-166-mark1-set-live-3.md, not tracked"
   },
   "gate_args": {
     "status": "measured",
@@ -294,22 +311,50 @@
     "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision); forgepact-166-mark1-set-live-2.md (T10, T11), not tracked"
   },
   "walkable": {
-    "status": "not-run",
-    "decision": "not-observed",
+    "status": "measured",
+    "decision": "combined",
     "date": "2026-10-13",
     "checks": {
-      "walkable-control": "fail",
-      "walkable-prop": "not-run",
-      "walkable-edge": "not-run"
+      "walkable-control": "pass",
+      "walkable-prop": "pass",
+      "walkable-edge": "pass"
     },
-    "control_points": 4,
+    "room": "Town_01_rm",
+    "test": "room=in and family=free: the point lies inside the room, and the player placed there meets nothing of Collision_Parent_obj (place_meeting)",
+    "raw_kinds": {
+      "place_meeting": "real 0 (no meeting) or 1 (a meeting), not bool, when called through CallBuiltinEx with the player as self and other",
+      "collision_line": "ref: an instance, or -4 (noone)",
+      "mp_grid_get_cell": "real: 0 free, -1 blocked or outside the grid"
+    },
     "control_reading": {
       "room": "in",
       "grid": "free",
-      "family": "blocked",
-      "wall-line": "clear"
+      "family": "free",
+      "wall-line": "clear",
+      "grid-raw": "real:0",
+      "family-raw": "real:0",
+      "wall-line-raw": "ref:-4",
+      "points": "the player's own position and 32 px to either side, open floor"
     },
-    "what": "On open floor in Town_01_rm, at four points including the player's own position, the probe's family field (the player's place_meeting against Collision_Parent_obj) read blocked, for a reason not established, so the control failed and the prop and edge readings never ran. The Decision records not-observed because the key has no not-run value; it closes nothing.",
-    "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision, Not established); forgepact-166-mark1-set-live-2.md (T12 to T14), not tracked"
+    "prop": {
+      "object": "Bounty_Board_obj",
+      "grid": "free",
+      "family": "blocked",
+      "wall-line": "clear",
+      "footprint_px_on_line": 64,
+      "note": "only family saw the prop; points on its drawn sprite above its base read free on every field"
+    },
+    "edge": {
+      "side": "south of the town",
+      "marked_by": "Invisible_Wall_Not_Minimap_obj instances, met by place_meeting as Collision_Parent_obj and returned by collision_line as Wall_Parent_obj; nothing on screen draws them",
+      "family_leads_px": 16,
+      "order": "family blocked first, then grid (-1) and wall-line (crossed) one 16 px step later; all stayed blocked to the room's bottom",
+      "past_room": "room=out, grid blocked and wall-line crossed, but family free again past the invisible walls",
+      "other_blockers": "water (Block_Dynamic_Sprite_obj), Fall_Rock_01_obj and Fall_Dead_Tree_02_obj block both grid and family, wall-line clear"
+    },
+    "tile": "no tile layer's cell marks the edge; values vary across open floor, Water is non-zero only on water, every layer reads -1 outside the room",
+    "live_2": "walkable-control failed: that build's probe counted any number of 0 or more from place_meeting as a meeting, so its real 0 printed blocked everywhere; corrected in ForgePact 61243b2",
+    "what": "In Town_01_rm a walkable landing point is one inside the room where the player would meet nothing of Collision_Parent_obj. family alone saw the prop, which the path grid and the wall line missed, and turned blocked at the edge 16 px before them, but read free past the room's bottom, where only room and the grid still said no. Not measured: a generated zone, why the path grid's cells under the Bounty Board read free, whether pockets between blockers are reachable on foot, and the test at a jump's landing.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 3 results, Decision, Not established); forgepact-166-mark1-set-live-3.md (W2 to W4), not tracked"
   }
 }
