@@ -5544,9 +5544,18 @@ slot 14, in `Town_01_rm`, on the same build): see
 - **Halving movement speed at the dispatcher does not halve the walk
   (measured).** In Live 2 (`speed-stat`), multiplying id 64's result by 0.5
   on every dispatcher call for 240 frames cut the walk's step from 5.979 px a
-  frame to 4.693 px: 0.785 of itself, not 0.5. So the step is not
-  proportional to that stat; what it is computed from (a base the stat adds
-  to, a cap, a floor) is **not established**.
+  frame to 4.693 px: 0.785 of itself, not 0.5. The lever scaled the
+  dispatcher's answer (`changed-dispatch=240`) and never the getter's
+  (`changed-getter=0`, `skip=240`): every local `StatMovementSpeed` call
+  inside the dispatcher returned something the probe could not read as a
+  number, so the getter route never scaled, against the probe core's tested
+  model, which scales such a nested call at the getter. Halving the
+  dispatcher's id-64 answer gave 0.785 of the step. Whether the step is not
+  proportional to it (base, cap, floor), whether the walk also reads
+  movement speed by a route the dispatcher lever does not reach (e.g. the
+  cached `pSt` values `PlayerMovement` reads), and why the getter's own
+  result was not a number to the probe (`skip=240`) are **not established**;
+  the last is an open instrument question for the choice of speed lever.
 - **What `StatMovementSpeed` reads.** The player's `playerBuff` (about 380
   reads) through the `GetBuffValue` and `GetBuffStack` methods, `buffArray`,
   `debuffArray`, `buffMult` and `skpDb`; it asks the dispatcher for ids 106,

@@ -225,6 +225,7 @@
     "lever": "mark1probe stat 64 0.5 240",
     "changed_dispatch": 240,
     "changed_getter": 0,
+    "skip": 240,
     "walk_px": {
       "with_lever": 696.9,
       "controls_mean": 893.9,
@@ -235,7 +236,7 @@
       "with_lever": 4.693
     },
     "step_ratio": 0.785,
-    "what": "x0.5 on id 64's result at the dispatcher, on every call for 240 frames, slowed the walk's step to 0.785 of itself, not 0.5: the stat route reaches the walk but does not halve it, and what the step is computed from is not established. The move lever did not run (instrument: no row moves the walk).",
+    "what": "x0.5 on id 64's result at the dispatcher, on every call for 240 frames, slowed the walk's step to 0.785 of itself, not 0.5. The lever scaled only the dispatcher's answer: skip=240 means every local StatMovementSpeed call inside the dispatcher returned a non-number to the probe, so the getter route never scaled (changed_getter 0), against the probe core's tested model. Halving the dispatcher's id-64 answer gave 0.785 of the step. Whether the step is not proportional to it (base, cap, floor), whether the walk also reads movement speed by a route the dispatcher lever does not reach (e.g. the cached pSt values PlayerMovement reads), and why the getter's own result was not a number to the probe (skip=240) are not established. The move lever did not run (instrument: no row moves the walk).",
     "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision); forgepact-166-mark1-set-live-2.md (T6, T7), not tracked"
   },
   "jump_mover": {
@@ -289,7 +290,7 @@
     "stat_lever": "mark1probe stat 66 3 300",
     "stat_changed_dispatch": 0,
     "stat_changed_getter": 0,
-    "what": "x3 on each skillsLeap call's own displacement tripled the jump, near and far, well past the jump's usual reach of about 246 px. x3 on Jump Power never engaged: a jump does not read it. Whether the game's own landing checks still hold at a scaled landing point was not measured.",
+    "what": "x3 on each skillsLeap call's own displacement tripled the jump, near and far, well past the jump's usual reach of about 246 px. x3 on Jump Power never engaged: a jump neither entered StatJumpPower nor asked the dispatcher for id 66; whether it reads a cached Jump Power value (e.g. in pSt, refreshed by the player's Alarm 8) is not established. Whether the game's own landing checks still hold at a scaled landing point was not measured.",
     "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision); forgepact-166-mark1-set-live-2.md (T10, T11), not tracked"
   },
   "walkable": {
