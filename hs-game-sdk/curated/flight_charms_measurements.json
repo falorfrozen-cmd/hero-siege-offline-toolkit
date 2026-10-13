@@ -201,5 +201,37 @@
     "rate_elf": {"copies": 1, "calls": 100, "placed": 97, "elf": 1, "injected": 500, "band": "1/222 to 1/51 per call", "within": true},
     "rate_angelic": {"copies": 1, "hits": 102, "rolls": 114, "droppable": 48, "wings": 0, "broom": 2, "band": [-2.2, 6.28], "within": true},
     "source": "ForgePact docs/flight-charms-research.md (Mod live 2 results); forgepact-158-flight-charms-mod-live-2.md, not tracked"
+  },
+  "mod_live_3": {
+    "status": "measured",
+    "date": "2026-10-13",
+    "research_dll_sha256": "8a16a38edd8325dd288e7d77538b2a34ff4390d5ba783d6276ba17851874bc92",
+    "forgepact_commit": "c879f69",
+    "exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "rooms": ["Town_01_rm"],
+    "summary": {"checks": 14, "pass": 11, "fail": 1, "not_observed": 2, "not_run": 0},
+    "checks": {
+      "dll-hash": "pass", "marker": "pass", "control": "pass", "dummy-control": "pass",
+      "monster-baseline": "fail", "dbg-control": "pass", "dbg-phasing": "pass", "dbg-ipt": "pass",
+      "flight-monster": "pass", "monster-rows": "pass", "attack-control": "not-observed", "flight-attack": "not-observed",
+      "monster-ends-inside": "pass", "wall-still": "pass"
+    },
+    "dummy": {"object": "Attack_Dummy_obj", "x": 1816, "y": 704, "start": [1816, 800]},
+    "dummy_walk": {
+      "flight_off": {"walk_ms": 1500, "end_y": 503.24, "crossed": true, "idle": 52, "monster": 0, "monster_kept": 0},
+      "flight_on": {"walk_ms": 1500, "end_y": 474.554, "crossed": true, "monster": 19, "monster_kept": 0},
+      "what": "With flight off the walk crossed the dummy's row (y 503.24 < 664), so Attack_Dummy_obj does not stop a vanilla player walk; the flying walk's pass therefore shows nothing about flight. The monster pass-through is not observed live, pending the owner's play check in a zone"
+    },
+    "debugger": {
+      "ctu": {"a": [3229, 3647], "b": [16339, 16725]},
+      "phasing": {"a": [1573, 1992], "b": [14685, 15070]},
+      "ipt": {"a": [0, 111], "b": [111, 214]},
+      "standing": {"ctu_rise": [317, 12692], "phasing_rise": [317, 12693], "ipt_rise": [0, 0]},
+      "what": "start and end count per window; A is the flight-off walk at the dummy, B the flying walk. ctu is the CheckTalentUse control, phasing StatPhasing (item stat 26's getter), ipt InstancePlaceTallest. StatPhasing is entered once per CheckTalentUse hit, walking or standing; InstancePlaceTallest only during the walks"
+    },
+    "residual_on_dummy": {"monster_before": 19, "monster_after": 1819, "monster_kept_before": 0, "monster_kept_after": 703, "first_walk_y": [704, 910.538], "state_after": "off"},
+    "wall_still": {"x": 929.9, "y": 2031.1, "walk_ms": 3000, "moved_px": 0, "excluded": [0, 3920]},
+    "attacks": {"damage_numbers_seen": false, "q_moved_px": {"flight_off": 0, "flight_on": 0}, "left_hold_flight_off_moved_px": 334},
+    "source": "ForgePact docs/flight-charms-research.md (Mod live 3 results); forgepact-158-flight-charms-mod-live-3.md, not tracked"
   }
 }

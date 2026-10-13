@@ -5174,17 +5174,29 @@ decompile nor a measurement; each bullet says which kind of reading it is.
   (1816, 704) and (1736, 544), and the boss dummy at (1616, 416); the ones at
   (1816, 704) and (1736, 544) stand apart from the rest. Read from the data
   file (2026-10-13). That the dummies neither move nor attack is how the town
-  is played, not a reading of their code.
+  is played, not a reading of their code. **Measured** (ForgePact's mod live
+  3, 2026-10-13): `Attack_Dummy_obj` does not stop a vanilla player walk.
+  With no flight charm worn, a 1.5 s walk north from 96 px south of the dummy
+  at (1816, 704) ended at y 503, past it. The saved original `place_meeting`
+  did name the dummy at its own spot (`by=Attack_Dummy_obj`), so a dummy is
+  met by the query but does not hold the walk.
 - `StatPhasing` (3390), the getter of item stat 26 "Movement Phasing" (walk
   through monsters), has exactly one direct call site in the imported
   executable, inside `ReturnSpecificStat` (3344), the stat dispatcher.
   **Static reading** (2026-10-13), from a local byte scan for calls to its
   entry, each mapped to its function through the image's exception table; it
-  agrees with § 19.6's earlier caller search. How the movement uses stat 26,
-  and whether anything reads it on every step rather than from a value cached
-  when the stats are rebuilt, is **not established**: the decompile of
+  agrees with § 19.6's earlier caller search. **Measured** (ForgePact's mod
+  live 3, 2026-10-13, a non-breaking debugger logpoint on its entry beside a
+  `CheckTalentUse` control): `StatPhasing` runs on every step, once per
+  `CheckTalentUse` hit, whether the player walks or stands still (419 against
+  418 during one walk, 12693 against 12692 over a stretch standing in town).
+  So something reads stat 26 every step, not only when the stats are rebuilt.
+  What calls it each step, and whether the movement uses its answer to let a
+  player through monsters, is **not established**: the decompile of
   `StatPhasing` and of the movement did not complete through the ghidra MCP,
-  and no headless decompile was run.
+  and no headless decompile was run. The same session measured
+  `InstancePlaceTallest` entered during walks only (111 and 103 times in two
+  1.5 s walks, none while standing).
 - The walk's `place_meeting` names `Enemy_Parent_obj` more often than any
   other object outside the collision family: 3015 queries in the blocked-walk
   tally (§ 19.6). **Measured** (2026-10-12). During a jump, `position_meeting`
@@ -5192,11 +5204,14 @@ decompile nor a measurement; each bullet says which kind of reading it is.
   ([jump research, Live 1 results](../ForgePact/docs/jump-scenery-research.md#live-1-results));
   **measured** for jumps, not for walks. That a monster standing
   in the path makes those queries answer "blocked", and that this answer is
-  what holds the walk, is **not established**: no session has walked the
-  player into a monster yet. ForgePact's mod live procedure 3 measures it
-  against a training dummy.
+  what holds the walk, is **not established**. ForgePact's mod live 3 walked
+  the player into a training dummy, but a dummy does not hold a vanilla walk
+  (above), so whether a live monster holds one, and through which row, is
+  still not observed; under ForgePact's flight the monster pass-through is
+  not observed live, pending the owner's play check in a zone.
 
-[Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading)
+[Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading),
+[Mod live 3 results](../ForgePact/docs/flight-charms-research.md#mod-live-3-results)
 
 ---
 
