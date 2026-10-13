@@ -1399,8 +1399,8 @@ rather than by falling back to another launcher:
   `0x00000000` and left no dump. So on this machine the code comes from the
   producer alone, and taking Save & Exit first does not avoid it. With the
   0.1.2 build (`36608aa0…`) installed, expect `0xC0000409` from every
-  graceful stop; with 0.1.1's or 0.1.3's (not measured) expect it may read
-  `0xC0000409`. Either way, read
+  graceful stop; with 0.1.1's or 0.1.3's, not measured, `0xC0000409` is
+  likely (the same source shape) but unconfirmed. Either way, read
   `py -3 tools/crash_dump_stack.py --pid <pid> --expect-module
   HSOfflineTrackerProducer` (exit 0 when the producer raised it) rather than
   treating the code as a crash.

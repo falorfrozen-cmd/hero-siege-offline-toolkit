@@ -288,11 +288,12 @@ Added or narrowed by this patch:
   the build machine, about 7,300 threads on the system. The cost in the game is
   the launch gate's, measured on one machine in one session (2026-10-06,
   about 6,660 threads on the system, 77 in the game).
-- **HS-Offline-Tracker ships this build from its next release (0.1.4).**
+- **HS-Offline-Tracker ships this build since 0.1.4.**
   falorfrozen-cmd/HS-Offline-Tracker#14 bundles it in `aurie-loader/`, with the
   notice and BUILD-INFO in `aurie-loader/aurie-modified/`, and lists
-  upstream's v2.0.2 DLL as superseded. Until that release, a player with only
-  the Tracker keeps upstream's freeze cost.
+  upstream's v2.0.2 DLL as superseded; the v0.1.4 portable zip's
+  `aurie-loader/AurieCore.dll` hashes to `3cf98af9…` (ForgePact #185). A
+  player with only an older Tracker keeps upstream's freeze cost.
 
 ## Where the binary is published
 
@@ -312,5 +313,5 @@ source zip is `aurie-source-daa28744eef0.zip` (its id differs from earlier
 builds' because this README and `NOTICE.md`, which the zip carries, changed;
 the DLL's bytes did not). ForgePact's `aurie-modified/AurieCore-BUILD-INFO.json` is that
 release's copy, and the pin's provenance names the same commit. Players
-receive the DLL only with ForgePact's next release, or HS-Offline-Tracker's
-(0.1.4, falorfrozen-cmd/HS-Offline-Tracker#14), whichever they install.
+receive the DLL only with ForgePact's next release, or with HS-Offline-Tracker
+since 0.1.4 (falorfrozen-cmd/HS-Offline-Tracker#14), whichever they install.
