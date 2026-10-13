@@ -1,0 +1,314 @@
+{
+  "$schema_note": "Live measurements for the Mark 1 set (ForgePact#166 phase 1, research only, Live 1 and Live 2, both 2026-10-13): how a bar slot can be cast through the game's own gate without a key press, which input entry each of Q, E, R and Y uses, what a toggle does under that lever, what a cast does to the walk, which script moves the player on a walk and during a jump, where a x0.5 on walking speed and a x3 on the jump land, and whether the walkable test passed its control. Research build of ForgePact 2feb9b4 (DLL SHA-256 0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f; the plugin/ tree is unchanged at the head of the 166-mark1-set branch), the `mark1probe` instrument (nine script rows through HookOneScript, its levers and its pos sampler) and x64dbg hardware logpoints (CheckTalentUse as the control; TalentUseSetSpeed, StatMovementSpeed and StatJumpPower as candidates); save slot 14, character Sorak (White Mage), in Town_01_rm, every shipped mod off. The procedures, their checks and the argument are in ForgePact docs/mark1-set-research.md (Live procedure 1, Live procedure 2, Results, Decision, Not established); the shared facts are docs/RUNTIME_DATA_MODELS.md sections 7.7, 7.8, 19.10 and 19.11; the session captures forgepact-166-mark1-set-live-1.md and -live-2.md stay with the hub's workorder files and are not tracked. No model or generator reads this file: tests/test_sdk_all.py checks only that curated/ is tracked, and the #166 workorder's criterion 24 reads game_build, cast_route, slot_keys, cast_penalty, walk_mover, speed_lever, jump_mover, jump_lever and walkable. A status is one of: measured, not-observed (the check ran, its control passed, and it saw nothing), not-run (the check did not run, or its control failed, so it says nothing) or static reading (read locally from the game, never measured). The decision value is the research doc's Decision key as recorded; each entry's checks carry their tools/live_checks.py verdicts. Addresses and call-site offsets are never recorded here; the callers are named. Static readings are our own words, never the game's text.",
+  "game_build": {
+    "status": "measured",
+    "exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "what": "The game build both sessions ran on: `py -3 tools/decomp_index.py build-hash` printed this value before each launch, the SHA-256 of the copy the Ghidra project imported, so the logpoints and the caller names below belong to this build. Plugin v2.2.1 banner, YYTK 4.0.1.",
+    "research_dll_sha256": "0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f",
+    "forgepact_commit": "2feb9b4",
+    "date": "2026-10-13"
+  },
+  "live_1": {
+    "status": "measured",
+    "date": "2026-10-13",
+    "procedure": "Live procedure 1 (the cast, the slot keys, the toggle and the cast's movement penalty)",
+    "summary": "20 checks: 15 pass, 0 fail, 3 not-observed, 2 not-run",
+    "checks": {
+      "dll-hash": "pass",
+      "marker": "pass",
+      "control": "pass",
+      "hook-native": "pass",
+      "dbg-control": "pass",
+      "bar-read": "pass",
+      "key-cast-control": "pass",
+      "ctu-args": "not-observed",
+      "slot-keys": "pass",
+      "queue-observed": "pass",
+      "cast-input": "pass",
+      "cast-gate": "not-observed",
+      "cast-other": "not-run",
+      "toggle-flips": "pass",
+      "empty-slot": "pass",
+      "walk-control": "pass",
+      "penalty-baseline": "pass",
+      "dbg-cast-speed": "pass",
+      "penalty-vars": "not-observed",
+      "penalty-lever": "not-run"
+    },
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results); forgepact-166-mark1-set-live-1.md, not tracked"
+  },
+  "live_2": {
+    "status": "measured",
+    "date": "2026-10-13",
+    "procedure": "Live procedure 2 (walking speed, the jump and walkability)",
+    "summary": "19 checks: 13 pass, 1 fail, 1 not-observed, 4 not-run",
+    "checks": {
+      "dll-hash": "pass",
+      "marker": "pass",
+      "control": "pass",
+      "hook-native": "pass",
+      "dbg-control": "pass",
+      "walk-control": "pass",
+      "walk-mover": "pass",
+      "dbg-stat-movement": "pass",
+      "speed-move": "not-run",
+      "speed-stat": "pass",
+      "jump-control": "pass",
+      "jump-mover": "pass",
+      "dbg-stat-jump": "not-observed",
+      "jump-vars": "not-run",
+      "jump-move": "pass",
+      "jump-stat": "pass",
+      "walkable-control": "fail",
+      "walkable-prop": "not-run",
+      "walkable-edge": "not-run"
+    },
+    "source": "ForgePact docs/mark1-set-research.md (Live 2 results); forgepact-166-mark1-set-live-2.md, not tracked"
+  },
+  "gate_args": {
+    "status": "measured",
+    "date": "2026-10-13",
+    "checks": {
+      "ctu-args": "not-observed"
+    },
+    "calls_read": 300,
+    "per_frame": 1,
+    "args": [
+      "the local player, as a VALUE_REF",
+      1,
+      1
+    ],
+    "what": "Every local CheckTalentUse call read, 100 idle and 100 twice with Q held down, carried the same three arguments, one call per frame, and every call the probe counted was the local player's. No argument names a bar slot. Holding Q down cast nothing in either window, so the value for a pressed slot was not seen (hence not-observed); the cast is driven by the input entry instead (slot_keys, cast_route).",
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results); forgepact-166-mark1-set-live-1.md (S6), not tracked"
+  },
+  "slot_keys": {
+    "status": "measured",
+    "decision": "measured",
+    "date": "2026-10-13",
+    "checks": {
+      "slot-keys": "pass"
+    },
+    "profile_slot": "Input_Device_Manager_obj instance 0, playerProfileSlot entry 1 (the index CheckTalentUse's third argument names)",
+    "input_entries": {
+      "Q": 3,
+      "E": 4,
+      "R": 5,
+      "Y": 6
+    },
+    "also_moving": {
+      "Q": 26,
+      "E": 25
+    },
+    "states": {
+      "resting": 1,
+      "press_frame": 4,
+      "held": 3,
+      "release_frame": 2
+    },
+    "what": "Each bar key moved one inputState entry of the profile slot, the bar column its slot sits on (Q on column 3 to Y on column 6). Entries 26 and 25 moved together with Q and E, for a reason not read. The other bar columns were not measured.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results); forgepact-166-mark1-set-live-1.md (S7), not tracked"
+  },
+  "cast_route": {
+    "status": "measured",
+    "decision": "input",
+    "date": "2026-10-13",
+    "checks": {
+      "key-cast-control": "pass",
+      "queue-observed": "pass",
+      "cast-input": "pass",
+      "cast-other": "not-run"
+    },
+    "lever": "mark1probe set profile.inputState[<column>] 4 during CheckTalentUse <frames>",
+    "talent": 253,
+    "skill": "Mana Orb, bar slot 0,3",
+    "effect_before": 0,
+    "effect_after": 1,
+    "applied_by_first_show": 210,
+    "casts": 1,
+    "what": "With no key pressed, writing the press value 4 into the slot's inputState entry just before each local CheckTalentUse call, and restoring it after, cast the slot's skill. During two key presses with one cast, no entry of abilityQueue, mobileTalentPressed or the player's stackSkillList changed from frame to frame. The queue and mobile levers were not tried, because the input lever cast first.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results, Decision); forgepact-166-mark1-set-live-1.md (S5, S8, S9), not tracked"
+  },
+  "cast_gate": {
+    "status": "not-observed",
+    "decision": "not-observed",
+    "date": "2026-10-13",
+    "checks": {
+      "cast-gate": "not-observed",
+      "empty-slot": "pass"
+    },
+    "forced_frames": 480,
+    "casts_in_forced_frames": 1,
+    "empty_slot_talent_use_calls": 0,
+    "what": "The cooldown half held: with the press value forced on every gate call for more than 480 frames, Mana Orb was cast once, and the lever on an empty column called no TalentUse at all. The mana half was not seen: in a 120-frame watch of the player no member named for mana fell (manaArrayPos moved upwards). Its control, key-cast-control, passed in the same session.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results, Decision); forgepact-166-mark1-set-live-1.md (S10, S13), not tracked"
+  },
+  "toggle_under_automation": {
+    "status": "measured",
+    "decision": "flips",
+    "date": "2026-10-13",
+    "checks": {
+      "toggle-flips": "pass"
+    },
+    "talent": 240,
+    "skill": "Soul Spurn, bar slot 0,5",
+    "counted_object": "White_Mage_Soul_Spurn_AOE_obj",
+    "frames": 600,
+    "on_flips": 13,
+    "off_flips": 13,
+    "casts": 22,
+    "ends": "off",
+    "what": "The input lever held on the toggle's column switched it on and off again every 10 to 30 frames; it does not stay on.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results); forgepact-166-mark1-set-live-1.md (S12), not tracked"
+  },
+  "cast_penalty": {
+    "status": "not-observed",
+    "decision": "not-observed",
+    "date": "2026-10-13",
+    "checks": {
+      "walk-control": "pass",
+      "penalty-baseline": "pass",
+      "dbg-cast-speed": "pass",
+      "penalty-vars": "not-observed",
+      "penalty-lever": "not-run"
+    },
+    "walks_px": {
+      "control_1": 1049.3,
+      "control_2": 980.5,
+      "with_cast": 949
+    },
+    "step_px": {
+      "normal": 5.979,
+      "after_cast": 3.886,
+      "after_cast_frames": 21
+    },
+    "cast_speed_caller": "TalentUse",
+    "cast_speed_hits": 17,
+    "members_changed_not_settling": [
+      "playerSequenceTopPrev",
+      "playerSequenceBottomPrev",
+      "playerSequenceDirection",
+      "manaArrayPos"
+    ],
+    "pst": "an array of 54 entries, neither a struct nor an instance; the probe's pst watch reads no members of it",
+    "what": "The penalty itself is measured: Healing Zone cast one second into a three-second walk cut the step to about 0.65 of itself for about 21 frames, then it climbed back; the walk covered 6.5% less than the controls' mean. Every TalentUseSetSpeed logpoint hit returned to its one direct call site in TalentUse (CA_playerTalentActive not observed). No player member that changes at the cast and settles back was found, and pSt could not be watched, so the member holding the penalty is not observed and no lever was tried.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 1 results, Decision); forgepact-166-mark1-set-live-1.md (S14 to S17), not tracked"
+  },
+  "walk_mover": {
+    "status": "measured",
+    "decision": "outside-rows",
+    "date": "2026-10-13",
+    "checks": {
+      "walk-control": "pass",
+      "walk-mover": "pass",
+      "dbg-stat-movement": "pass"
+    },
+    "walks_px": {
+      "control_1": 932.7,
+      "control_2": 855
+    },
+    "PlayerMovement_calls_in_walk": 810,
+    "moving_calls_in_rows": 0,
+    "stat_movement_caller": "ReturnSpecificStat",
+    "stat_movement_hits": 2008,
+    "stat_movement_per_frame": 1,
+    "what": "During a walk PlayerMovement runs once a frame, but none of the nine rows' calls changes the player's position: the walk's displacement is applied outside all of them. StatMovementSpeed runs once a frame standing or walking, every call returning to the dispatcher's direct call site in ReturnSpecificStat, and nothing called it directly.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision); forgepact-166-mark1-set-live-2.md (T4, T5), not tracked"
+  },
+  "speed_lever": {
+    "status": "measured",
+    "decision": "stat",
+    "date": "2026-10-13",
+    "checks": {
+      "speed-move": "not-run",
+      "speed-stat": "pass"
+    },
+    "lever": "mark1probe stat 64 0.5 240",
+    "changed_dispatch": 240,
+    "changed_getter": 0,
+    "walk_px": {
+      "with_lever": 696.9,
+      "controls_mean": 893.9,
+      "recheck_without_lever": 878.9
+    },
+    "step_px": {
+      "normal": 5.979,
+      "with_lever": 4.693
+    },
+    "step_ratio": 0.785,
+    "what": "x0.5 on id 64's result at the dispatcher, on every call for 240 frames, slowed the walk's step to 0.785 of itself, not 0.5: the stat route reaches the walk but does not halve it, and what the step is computed from is not established. The move lever did not run (instrument: no row moves the walk).",
+    "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision); forgepact-166-mark1-set-live-2.md (T6, T7), not tracked"
+  },
+  "jump_mover": {
+    "status": "measured",
+    "decision": "skillsLeap",
+    "date": "2026-10-13",
+    "checks": {
+      "jump-control": "pass",
+      "jump-mover": "pass",
+      "dbg-stat-jump": "not-observed",
+      "jump-vars": "not-run"
+    },
+    "jumps_px": {
+      "control_1": 96.9,
+      "control_2": 96.9
+    },
+    "cursor_px": [
+      100.95,
+      100.31
+    ],
+    "skillsLeap_moving_calls_per_jump": 102,
+    "playerJumpGravity_calls_per_jump": 101,
+    "playerJumpGravity_moving_calls": 0,
+    "StatJumpPower_calls": 0,
+    "what": "The jump is moved by skillsLeap alone; playerJumpGravity runs alongside and never moves the player. StatJumpPower logged no hit over six jumps while the control logpoint kept logging. The jump's state members were not read (pSt unreadable by the probe's watch).",
+    "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision); forgepact-166-mark1-set-live-2.md (T8, T9), not tracked"
+  },
+  "jump_lever": {
+    "status": "measured",
+    "decision": "move",
+    "date": "2026-10-13",
+    "checks": {
+      "jump-move": "pass",
+      "jump-stat": "pass"
+    },
+    "move_lever": "mark1probe move skillsLeap 3 300",
+    "near": {
+      "cursor_px": 100,
+      "baseline_px": 96.9,
+      "with_move_px": 290.7,
+      "ratio": 3.0,
+      "with_stat_px": 96.9
+    },
+    "far": {
+      "cursor_px": 300,
+      "baseline_px": 250.3,
+      "with_move_px": 738.8,
+      "ratio": 2.95,
+      "with_stat_px": 246.3
+    },
+    "stat_lever": "mark1probe stat 66 3 300",
+    "stat_changed_dispatch": 0,
+    "stat_changed_getter": 0,
+    "what": "x3 on each skillsLeap call's own displacement tripled the jump, near and far, well past the jump's usual reach of about 246 px. x3 on Jump Power never engaged: a jump does not read it. Whether the game's own landing checks still hold at a scaled landing point was not measured.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision); forgepact-166-mark1-set-live-2.md (T10, T11), not tracked"
+  },
+  "walkable": {
+    "status": "not-run",
+    "decision": "not-observed",
+    "date": "2026-10-13",
+    "checks": {
+      "walkable-control": "fail",
+      "walkable-prop": "not-run",
+      "walkable-edge": "not-run"
+    },
+    "control_points": 4,
+    "control_reading": {
+      "room": "in",
+      "grid": "free",
+      "family": "blocked",
+      "wall-line": "clear"
+    },
+    "what": "On open floor in Town_01_rm, at four points including the player's own position, the probe's family field (the player's place_meeting against Collision_Parent_obj) read blocked, for a reason not established, so the control failed and the prop and edge readings never ran. The Decision records not-observed because the key has no not-run value; it closes nothing.",
+    "source": "ForgePact docs/mark1-set-research.md (Live 2 results, Decision, Not established); forgepact-166-mark1-set-live-2.md (T12 to T14), not tracked"
+  }
+}

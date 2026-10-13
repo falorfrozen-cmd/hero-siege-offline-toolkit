@@ -975,14 +975,21 @@ and the constant ids it passes (its positive control: on
 that function shows); and the ghidra MCP for the small functions. A byte scan
 of direct call sites is blind to calls through the script table or a method
 value, so a caller it did not find is not observed, not absent. Every bullet
-is a **static reading** (2026-10-13) unless it says measured.
+is a **static reading** (2026-10-13) unless it says measured. The **measured**
+parts come from the research's Live 1 session on 2026-10-13 (the
+`mark1probe` instrument and x64dbg logpoints, save slot 14, White Mage, in
+`Town_01_rm`, on the build above): see
+[Mark 1 research, Live 1 results](../ForgePact/docs/mark1-set-research.md#live-1-results).
 
 - **The gate runs inside the movement step.** The only direct call site of
   `gml_Script_CheckTalentUse` (539) found is in `gml_Script_PlayerMovement`
   (2774), which the player object's Step event calls. Its entry was measured
   at about 85 calls a second in town with `self` equal to `other` and three
-  arguments ([x64dbg-mcp.md](tools/x64dbg-mcp.md), "Breakpoint rules");
-  why that is more than one call per frame is not read.
+  arguments ([x64dbg-mcp.md](tools/x64dbg-mcp.md), "Breakpoint rules").
+  **Measured** in Live 1: the local player's calls come once a frame
+  (consecutive frame numbers), and every call the probe saw was the local
+  player's (local and total counts equal), so the 85 a second is one call per
+  frame at the frame rate of that session, not several per frame.
 - **None of its three arguments names a bar slot.** All three are optional.
   The first is the player instance (when it is undefined the gate takes a
   value from the game's protected global data). The second is the player
@@ -990,8 +997,9 @@ is a **static reading** (2026-10-13) unless it says measured.
   talent-info and talent-requirement lookups. The third (default 1) is the
   index into `Input_Device_Manager_obj` (2259)'s `playerProfileSlot`, and is
   handed on unchanged as `TalentUse`'s third argument, which § 7.2 measured
-  as 1 on a key cast. Which values the game passes here is measured by
-  ForgePact's `mark1probe args` (Live 1, `ctu-args`).
+  as 1 on a key cast. **Measured** in Live 1 (`ctu-args`): over 300 local
+  calls, idle and with Q held down, the three arguments were always the
+  player (as a `VALUE_REF`), 1 and 1. No argument names a slot.
 - **The bar slots are a loop inside the gate**, over a counter from 0 to 11.
   For each value it looks the slot's talent id up (through a ds_map lookup
   and two further lookups keyed by the counter), then decides whether the
@@ -1004,7 +1012,23 @@ is a **static reading** (2026-10-13) unless it says measured.
   does this on 15 paths. § 10.4 measured `inputState` on `Profile_Manager_obj`
   (3673), 78 entries resting at 1. The profile slot's entry is plausibly a
   `Profile_Manager_obj` instance: it also carries the `inputSimMap` that
-  object's Create event makes (next bullet).
+  object's Create event makes (next bullet). **Measured** in Live 1
+  (`slot-keys`): the entry read was `playerProfileSlot` entry 1 of
+  `Input_Device_Manager_obj` instance 0, and each bar key moved one
+  `inputState` entry of it, the bar column the slot sits on: Q entry 3, E
+  entry 4, R entry 5, Y entry 6 (entries 26 and 25 moved together with Q and
+  E, for a reason not read). An entry rests at 1, reads 4 on the press frame,
+  3 while the key is held and 2 on the release frame, then 1 again. The
+  entries of the other bar columns were not measured.
+- **Writing the press value inside the gate casts the slot (measured).** In
+  Live 1 (`cast-input`), writing 4 into a slot's `inputState` entry just
+  before each local `CheckTalentUse` call, and restoring it after, cast that
+  slot's skill with no key pressed (Mana Orb on column 3). The game kept its
+  cooldown: with the value forced on every call for more than 480 frames,
+  Mana Orb was cast once (`cast-gate`); whether it still charged mana was not
+  observed. The same write on Soul Spurn's column switched the toggle on and
+  off 13 times in 600 frames (`toggle-flips`), and on an empty column it
+  called no `TalentUse` at all (`empty-slot`).
 - **The game has its own input simulation.** `gml_Script_InputSimulate`
   (1903) takes a profile slot index, a key and a value, and stores the value under
   the key in that profile slot entry's `inputSimMap` (a ds_map). That map is
@@ -1028,7 +1052,10 @@ is a **static reading** (2026-10-13) unless it says measured.
   sites (values not read); nothing else found references it. `autoAim` is a
   global array read the same way, per slot. Whether setting a slot's
   `abilityQueue` entry makes the gate cast that slot is **not established**:
-  ForgePact's `mark1probe set` measures it (Live 1).
+  Live 1 did not try it, because the input write cast first. **Measured** in
+  Live 1 (`queue-observed`): over two key presses with one cast, no entry of
+  `abilityQueue`, `mobileTalentPressed` or the player's `stackSkillList`
+  changed from one frame to the next.
 - **`stackSkillList` is a variable of the gate's own `self`**, read at five
   sites and taken for writing at two.
 - **The cast itself.** Per slot that asks, the gate calls `GetTalentInfo`
@@ -1042,13 +1069,15 @@ is a **static reading** (2026-10-13) unless it says measured.
   writing `inputState` from the frame callback did nothing for the interact
   key, whose check reads the keyboard directly, and that write landed at
   `EVENT_FRAME`, after the frame's readers ran. A write inside the gate's own
-  call, just before it reads, is untested: not refuted.
+  call, just before it reads, does cast (**measured**, Live 1, above).
 
 [Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
 
 ### 7.8 What a cast does to movement
 
-From the same reading as § 7.7 (2026-10-13, static unless marked).
+From the same reading as § 7.7 (2026-10-13, static unless marked). The
+**measured** parts are from the same Live 1 session
+([Mark 1 research, Live 1 results](../ForgePact/docs/mark1-set-research.md#live-1-results)).
 
 - **`gml_Script_TalentUseSetSpeed` (3830)** has two direct callers found,
   `TalentUse` (3829) and `gml_Script_CA_playerTalentActive` (368), one site
@@ -1062,14 +1091,27 @@ From the same reading as § 7.7 (2026-10-13, static unless marked).
   references no movement-speed name (`hSpeedFactor`, `vSpeedFactor`,
   `mobileSpeedFactor`, `moveSpeed`). So if a cast slows the caster, it is
   plausibly through a `playerEffect` entry or the movement step's own state,
-  not a movement variable this script names.
+  not a movement variable this script names. **Measured** in Live 1
+  (`dbg-cast-speed`): an x64dbg logpoint on its entry logged 17 hits over the
+  session's key casts, every one returning to the one direct call site in
+  `TalentUse`; `CA_playerTalentActive` was not observed calling it.
+- **A cast slows the walk briefly (measured).** In Live 1
+  (`penalty-baseline`), Healing Zone cast one second into a three-second walk
+  cut the walk's step from about 6.0 px a frame to about 3.9 px (about 0.65)
+  for about 21 frames, after which it climbed back to 6.0 px; the walk
+  covered 6.5% less than without the cast. The player members that changed
+  after the cast (`playerSequenceTopPrev`, `playerSequenceBottomPrev`,
+  `playerSequenceDirection`, `manaArrayPos`) did not settle back within 90
+  frames, so none of them follows the penalty's course; the member that
+  holds the penalty was not observed (`penalty-vars`).
 - **`PlayerMovement` (2774)** calls `TalentUseClass` (3833) once and
   `CheckTalentUse` once, reads its own `playerEffect` at 21 sites and takes it
   for writing at 19, and reads `pSt` (the player's stat values) at 32 sites.
   The player object's Step event calls `TalentUseClass` at five more sites.
   Which of these holds the caster still while a skill is cast is **not
-  established**; ForgePact's `mark1probe watch` diffs them across a cast
-  (Live 1).
+  established**. **Measured** in Live 1: the player's `pSt` is an array of
+  54 entries, not a struct or an instance, so a watch of named members reads
+  nothing from it, and it was not read across a cast.
 
 [Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
 
@@ -5480,7 +5522,11 @@ ids it passes, plus the ghidra MCP for the small functions). Every bullet is a
 **static reading** (2026-10-13) unless it says measured. The large bodies
 (`StatMovementSpeed`, `PlayerMovement`, `skillsLeap`, `playerJumpGravity`) did
 not decompile within the tools' limits, so what is below is which names each
-one touches and whether it reads or writes them, not the arithmetic.
+one touches and whether it reads or writes them, not the arithmetic. The
+**measured** parts come from the research's Live 2 session on 2026-10-13
+(the `mark1probe` rows, levers and `pos` sampler plus x64dbg logpoints, save
+slot 14, in `Town_01_rm`, on the same build): see
+[Mark 1 research, Live 2 results](../ForgePact/docs/mark1-set-research.md#live-2-results).
 
 - **The movement speed stat is read in the player's Step event.** The stat
   dispatcher sends id 64 to `gml_Script_StatMovementSpeed` (3389), whose only
@@ -5491,6 +5537,16 @@ one touches and whether it reads or writes them, not the arithmetic.
   found in `PlayerMovement` (not observed; the scan sees only constant ids at
   direct call sites); it asks for id 336, which has no case in the dispatcher's table
   ([skill sliders' reading](../ForgePact/docs/skill-sliders-research.md#returnspecificstat-the-dispatchers-case-table)).
+  **Measured** in Live 2 (`dbg-stat-movement`): `StatMovementSpeed` runs once
+  a frame, standing or walking, every call returning to the dispatcher's
+  direct call site in `ReturnSpecificStat` (2008 logpoint hits, one return
+  location), and nothing called it directly during a walk.
+- **Halving movement speed at the dispatcher does not halve the walk
+  (measured).** In Live 2 (`speed-stat`), multiplying id 64's result by 0.5
+  on every dispatcher call for 240 frames cut the walk's step from 5.979 px a
+  frame to 4.693 px: 0.785 of itself, not 0.5. So the step is not
+  proportional to that stat; what it is computed from (a base the stat adds
+  to, a cap, a floor) is **not established**.
 - **What `StatMovementSpeed` reads.** The player's `playerBuff` (about 380
   reads) through the `GetBuffValue` and `GetBuffStack` methods, `buffArray`,
   `debuffArray`, `buffMult` and `skpDb`; it asks the dispatcher for ids 106,
@@ -5505,14 +5561,22 @@ one touches and whether it reads or writes them, not the arithmetic.
   Step event reads `move_dist`, `new_x`, `new_y`, `hSpeedFactor`,
   `vSpeedFactor`, and `mountSpeed` from another instance, writes `moveOverrideHor` and
   `moveOverrideVer`, and uses `mp_linear_step`. Which of these the step's
-  final distance is computed from is **not established**; ForgePact's
-  `mark1probe move` and `stat` levers measure where a x0.5 lands (Live 2).
+  final distance is computed from is **not established**. **Measured** in
+  Live 2 (`walk-mover`): during a walk `PlayerMovement` runs once a frame, but
+  none of its calls, nor any call of `CheckTalentUse`, `TalentUse`,
+  `TalentUseSetSpeed`, `ReturnSpecificStat`, `StatMovementSpeed`,
+  `skillsLeap`, `playerJumpGravity` or `StatJumpPower`, changes the player's
+  position: the walk's displacement is applied somewhere outside all of them.
 - **Jump Power is read by the player's Alarm 8 event**, the only script found
   asking the dispatcher for id 66 (`gml_Script_StatJumpPower`, 3391). That
   event asks the dispatcher about 350 times, so it is plausibly the routine
   that refreshes the player's stat values; that fits § 19.1's measurement
   that `StatJumpPower` logged no call during a jump. `StatJumpPower` reads
-  only `playerBuff`, through `GetBuffValue`.
+  only `playerBuff`, through `GetBuffValue`. **Measured** again in Live 2
+  (`dbg-stat-jump`, `jump-stat`): an x64dbg logpoint on its entry logged no
+  hit over six jumps while the control logpoint kept logging, and a x3 on id
+  66 at the dispatcher found no call to scale; the jumps' lengths did not
+  change.
 - **`gml_Script_skillsLeap` (3664)** has three direct callers found: the
   player object's Step event, `ClassStepEvent` (560) and `Mercenary_obj`'s
   Step event. It sets `x` and `y` at three sites each (on which instance is
@@ -5542,8 +5606,18 @@ one touches and whether it reads or writes them, not the arithmetic.
   the dispatcher for id 337 too. So by this reading `skillsLeap` (or
   `PlayerMoveSkill` inside it) moves the player during a jump and
   `playerJumpGravity` handles the landing side. Both run every frame of a
-  jump (§ 19.1, **measured**); which one moves the player is measured by
-  `mark1probe pos` (Live 2).
+  jump (§ 19.1, **measured**). **Measured** in Live 2 (`jump-mover`): the
+  jump is moved by `skillsLeap` alone, 102 moving calls in a jump with the
+  cursor about 100 px away (96.9 px covered) and no movement outside it;
+  `playerJumpGravity` ran 101 times in the same jump and never moved the
+  player.
+- **Scaling `skillsLeap`'s displacement scales the jump (measured).** In
+  Live 2 (`jump-move`), multiplying the position change of each local
+  `skillsLeap` call by 3 tripled the jump: 290.7 px against 96.9 px with the
+  cursor about 100 px away (3.00 times), and 738.8 px against an unscaled
+  250.3 px with it about 300 px away (2.95 times), well past the jump's usual
+  reach of about 246 px (§ 19.5). Whether the game's own landing checks still
+  hold at the scaled landing point was not measured.
 - **The game has its own collision skip.** `playerSkipCollisions` is
   initialised in the player's Create event and read in its Step event, and is
   referenced through another scope by `playerJumpGravity`, the player's
@@ -5560,6 +5634,17 @@ one touches and whether it reads or writes them, not the arithmetic.
 ### 19.11 The walkable map and its edge
 
 From the same reading as § 19.10 (2026-10-13). Static unless marked.
+
+- **The research's walkable read did not pass its control (measured,
+  2026-10-13).** In the Mark 1 research's Live 2 session
+  (`walkable-control`, [Live 2 results](../ForgePact/docs/mark1-set-research.md#live-2-results)),
+  four points of open floor in `Town_01_rm`, one of them the player's own
+  position, read inside the room, a free `global.pathGrid` cell and a clear
+  line against `Wall_Parent_obj`, but the player's `place_meeting` against
+  `Collision_Parent_obj` read blocked at every one of them, for a reason not
+  established. With the control failed, a point inside a prop and the town's
+  edge were never read, so none of the bullets below has been checked live,
+  and nothing here yet tells a walkable landing point from one past the edge.
 
 - **The path grid marks blockers, not the map's edge.**
   `gml_Script_PathFindControllerCreate` (2714) destroys any earlier
