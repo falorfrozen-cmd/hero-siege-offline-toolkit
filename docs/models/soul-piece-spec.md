@@ -507,8 +507,11 @@ name (category 15, `socketable_gem_of_incarnation`), never by index.
   the piece stays. No portal is opened. The room's pentagram does the rest;
   nothing of ours creates, moves or kills a boss.
 
-How a use takes one piece from a Key-tab stack, and whether the Key tab's
-right-click reaches the use at all, wait on the follow-up's Live procedure 1.
+The Key tab's right-click never reaches the use (measured, the follow-up's
+Live procedure 1: no prompt, and neither `CanUsePotion` nor `PotionUse` is
+asked), and on a bag stack the game's confirm clears the whole cell once
+`PotionUse` answers true (measured, the follow-up's Live procedure 2), so a
+use takes one piece from a stack only through ForgePact's own take-one.
 
 The test file expresses this as input transforms (`piece_denominator`,
 `piece_chance`, `room_refusal`, `decide_drop`, `decide_use`, `transfer_target`,

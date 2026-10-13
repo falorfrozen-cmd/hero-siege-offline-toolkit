@@ -56,8 +56,10 @@ first, because the first attempt's evidence is never edited (R20 again). So
 `--block` picks which `## Checks` heading's list is read: a 1-based number, or
 `last`. It defaults to `1`, the first block, which is what every call read
 before the option existed. A number past the last block is a usage error that
-names how many blocks the capture has. The table fallback is unchanged: it
-reads the first checks table, whatever `--block` says.
+names how many blocks the capture has. With one `## Checks` block or none,
+the table fallback reads the first checks table, as before. With more than one,
+a block that has no `- ` lines is read from the table under its own heading,
+never from another attempt's, and a block with neither is a usage error.
 
 Usage:
     py -3 tools/live_checks.py <capture> [--expect a,b,c] [--require-pass a,b]
@@ -67,8 +69,9 @@ Prints one `<name> <verdict>` line per check, then a summary line.
 Exit code: 0 every expected check present once with a verdict (and every
 --require-pass check `pass`); 1 otherwise, naming what is missing, renamed,
 duplicated, unreadable or not passed; 2 usage error, no file, a `--block` past
-the capture's last `## Checks` block, or neither a `## Checks` heading nor a
-checks table under `## Checks summary`.
+the capture's last `## Checks` block, a chosen block of several with neither a
+list nor a table, or neither a `## Checks` heading nor a checks table under
+`## Checks summary`.
 """
 
 from __future__ import annotations
@@ -140,32 +143,54 @@ def _is_separator(row: str) -> bool:
     return all(SEPARATOR_CELL_RE.match(c) for c in _cells(row))
 
 
+def _section(lines: list, i: int) -> list:
+    """The lines under the heading at `i`, up to the next `## ` heading."""
+    out = []
+    for body in lines[i + 1:]:
+        if NEXT_H2_RE.match(body):
+            break
+        out.append(body)
+    return out
+
+
+def _table_in(section: list) -> list:
+    """The data rows of the table in one section (header and `|---|` rows
+    skipped)."""
+    out = []
+    for j, body in enumerate(section):
+        if not body.lstrip().startswith("|"):
+            continue
+        if _is_separator(body):
+            continue
+        nxt = section[j + 1] if j + 1 < len(section) else ""
+        if nxt.lstrip().startswith("|") and _is_separator(nxt):
+            continue  # the header row
+        out.append(body)
+    return out
+
+
 def table_rows(text: str) -> list | None:
     """The data rows of the first checks table under a `## Checks` or
     `## Checks summary` heading (header and `|---|` rows skipped), or None if
     no such heading carries a table."""
     lines = text.splitlines()
     for i, line in enumerate(lines):
-        if not TABLE_HEADING_RE.match(line):
-            continue
-        section = []
-        for body in lines[i + 1:]:
-            if NEXT_H2_RE.match(body):
-                break
-            section.append(body)
-        out = []
-        for j, body in enumerate(section):
-            if not body.lstrip().startswith("|"):
-                continue
-            if _is_separator(body):
-                continue
-            nxt = section[j + 1] if j + 1 < len(section) else ""
-            if nxt.lstrip().startswith("|") and _is_separator(nxt):
-                continue  # the header row
-            out.append(body)
-        if out:
-            return out
+        if TABLE_HEADING_RE.match(line):
+            out = _table_in(_section(lines, i))
+            if out:
+                return out
     return None
+
+
+def block_table_rows(text: str, block) -> list:
+    """The data rows of the table under the capture's `block`-th `## Checks`
+    heading itself (1-based, or "last"); empty if that section has none."""
+    lines = text.splitlines()
+    heads = [i for i, line in enumerate(lines) if CHECKS_HEADING_RE.match(line)]
+    if not heads:
+        return []
+    i = heads[-1] if block == "last" else heads[block - 1]
+    return _table_in(_section(lines, i))
 
 
 def _verdict(tail: str) -> tuple:
@@ -230,9 +255,16 @@ def main(argv=None) -> int:
     parse, where = parse_line, "after the last '|'"
     if not lines:
         # The list wins whenever it has a line; the table is only a fallback.
-        rows = table_rows(text)
+        # With more than one `## Checks` block, the table must sit under the
+        # chosen block's own heading: the first table in the capture would be
+        # another attempt's verdicts.
+        rows = table_rows(text) if count <= 1 else block_table_rows(text, block)
         if rows:
             lines, parse, where = rows, parse_row, "in the last cell"
+        elif count > 1:
+            print(f"live_checks: '## Checks' block {args.block} of {path} has no checks "
+                  f"list and no checks table", file=sys.stderr)
+            return 2
     if lines is None:
         print(f"live_checks: {path} has no '## Checks' heading and no checks table "
               f"under '## Checks summary'", file=sys.stderr)

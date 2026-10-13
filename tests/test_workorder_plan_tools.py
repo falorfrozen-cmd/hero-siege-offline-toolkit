@@ -276,6 +276,28 @@ class LiveChecksTableTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertEqual(out, "")
 
+    def test_block_reads_its_own_table_not_another_attempts(self):
+        # hub #507 review: attempt 1 wrote a failing table, attempt 2 a passing
+        # one, each under its own `## Checks`; --block 2 must not read attempt 1.
+        first = TABLE_CAPTURE.replace("## Checks summary", "## Checks").replace(
+            "| dll-hash | pass", "| dll-hash | fail", 1)
+        second = TABLE_CAPTURE.replace("## Checks summary", "## Checks").split("## Step 1", 1)[1]
+        path = self.write("c-live-2.md", first + "\n## Attempt 2\n" + second)
+        for block in ("2", "last"):
+            rc, out = run(live_checks.main, [path, "--block", block, "--expect", self.EXPECT,
+                                             "--require-pass", "dll-hash"])
+            self.assertEqual(rc, 0, out)
+            self.assertIn("dll-hash pass", out)
+        rc, out = run(live_checks.main, [path, "--expect", self.EXPECT, "--require-pass", "dll-hash"])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("dll-hash fail", out)
+        # An appended attempt that aborted before any check is a usage error, not attempt 1's verdicts.
+        aborted = self.write("c-live-3.md", first + "\n## Attempt 2\n\n## Checks\n\naborted\n")
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(live_checks.main([aborted, "--block", "2", "--require-pass", "dll-hash"]), 2)
+        self.assertIn("block 2", err.getvalue())
+
     def test_the_list_wins_over_a_table(self):
         # A capture carrying both keeps the list form's reading; the table is
         # only a fallback for a capture with no list.
