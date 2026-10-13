@@ -5053,15 +5053,20 @@ repository.
   whatever its effect: a colour lookup, tint, contrast, colourise, vignette,
   or windblown particles. Full-screen filters sit mostly between −10000 and
   −10300. **Static reading from the data file** (2026-10-13).
-- At runtime, such a layer reads as a visible layer that holds no element
-  and for which the `layer_get_fx` builtin answers a struct. The builtin's
-  name appears in this build's executable (byte search, 2026-10-13). That
-  `layer_get_fx`, handed the layer's id as `layer_get_all` lists it, answers
-  a struct for such a layer is **measured** (2026-10-13, ForgePact's Mod
-  live 2, `flight-depth` and `flight-depth-zone`): ForgePact's `flightprobe
+- At runtime, a `_filter_lut_colour` filter layer reads as a visible layer
+  that holds no element and for which the `layer_get_fx` builtin answers a
+  struct. The builtin's name appears in this build's executable (byte
+  search, 2026-10-13). That `layer_get_fx`, handed the layer's id as
+  `layer_get_all` lists it, answers a struct for `Effect_1`
+  (`_filter_lut_colour`) is **measured** (2026-10-13, ForgePact's Mod live
+  2, `flight-depth` and `flight-depth-zone`): ForgePact's `flightprobe
   depth` named `Effect_1` as the filter, `filter=Effect_1@-10300` in
   `Town_01_rm` (the positive control) and `filter=Effect_1@-10100` in
-  `Act_01_01`, each with an `fx=` struct count of 2. That reading, not the
+  `Act_01_01`, each with an `fx=` struct count of 2 (the second
+  struct-answering layer in each room was not named). For the other effect
+  kinds (tint, contrast, colourise, vignette, particles) and in the 8 rooms
+  below, where the rule changes the answer, it is **not established**. That
+  reading, not the
   flight depth, is the evidence: in both rooms `Effect_1` lies in front of
   every drawn layer, so a filter read and no filter read give the same
   depth there. What the builtin answered for the layers that were not a
