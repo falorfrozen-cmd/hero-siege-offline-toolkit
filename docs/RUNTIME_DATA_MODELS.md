@@ -2508,7 +2508,8 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   each listed once. The same in `Town_01_rm` and `Act_01_01`. **Measured**
   (2026-10-13, ForgePact's flight charms Mod live 2, `flightprobe pool`,
   research DLL sha256 `dd87086c…`). So an entry listed once is 1 in 48 of the
-  roll's drops, and each item #74's or #158's route adds takes 1 in 48 + e,
+  roll's drops, and each item pushed onto the Angelic list (Headhunter,
+  Tyrant's Crown, Gabriel Wings, Witch's Broomstick) takes 1 in (48 + e),
   e being the entries pushed (hub `docs/models/unique-pick-spec.md`). At one
   pushed entry each for Gabriel Wings and Witch's Broomstick, 102 hits gave
   2 Broomsticks and no Wings, both within that share's band (`rate-angelic`).
@@ -3401,7 +3402,7 @@ The argument and the numbers are in the Item Editor's
 | `"5"` / `"4"` | the magic prefix / suffix (`" of Recovery"`), empty when there is none |
 | `"32"` | the tier letter: 1 C, 2 B, 3 A, 4 S, 5 SS |
 | `"2"` / `"3"` | the footprint in grid cells, width / height; `GetItemSize` reads them (§ 23.2) |
-| `"11"` | the display sprite (§ 23.5) |
+| `"11"` | the display sprite (§ 21.7, § 23.5) |
 | `"1"` | the level requirement |
 
 - `itemStatStruct` keys `"10"`–`"14"` each hold one generated affix as
@@ -5140,8 +5141,9 @@ origins from the game's data file (`data.win`). Each bullet is labelled.
 - So no layer of `global.gameLayer` draws in front of a room's `Tree_Leaves`
   layer. **Inference** from the measurements and the readings above.
 - A room layer of ForgePact's own at −10001, in front of `Tree_Leaves` and
-  `Invisible_walls` (both −10000 or behind) and behind `Effect_1`, draws the
-  player over the canopy that hid him without it: at (1180, 1650) and
+  `Invisible_walls` (at −9700 and −10000 in these two rooms; elsewhere
+  `Tree_Leaves` can sit as far forward as −10100, see below) and behind
+  `Effect_1`, draws the player over the canopy that hid him without it: at (1180, 1650) and
   (1158, 1720) in town and at a canopy in `Act_01_01` (screenshots). With the
   player there his colours looked like the scene around him (the operator's
   note, not judged). **Measured** (2026-10-13, Mod live 2, `flight-depth`
@@ -6263,8 +6265,8 @@ killed.
 Collected for ForgePact #197's piece icon and stack follow-up (2026-10-12).
 The first measurements are ForgePact #158's (its Live procedure 1, 2026-10-12,
 on that issue's own branch, not on #197's), the last three bullets the
-follow-up's own; § 16.3's info-key table does not list
-key `"11"` yet, and #158's hub branch adds it there.
+follow-up's own; § 16.3's info-key table lists key `"11"`, and ForgePact
+#158's own measurements of it are § 23.5.
 
 - `itemInfoStruct["11"]` is the sprite an item is drawn with. A charm given a
   Grand charm's sprite under key `"11"` drew the Grand charm's icon both in
@@ -6727,6 +6729,7 @@ not observed, not absent.
   never added the sprite, the charm drew its base icon and the game loaded
   normally. The stored value itself was not read (the charm was in the bag,
   which ForgePact's probe does not list). **Measured** (2026-10-12).
+- The soul piece's measurements of the same key are § 21.7.
 
 [Live 1 results](../ForgePact/docs/flight-charms-research.md#live-1-results)
 
@@ -6833,13 +6836,17 @@ means as § 23.6. It extends § 23.4's reading of the same roll.
   `LootGroundCreate` (2351), with the entry's type. **Static reading**
   (2026-10-12).
 - A pick that fails any of those tests drops nothing: there is no second draw
-  and no die per entry. So one entry added to a sub-list of n entries is
-  picked on 1 call in n + 1, whatever the other entries are. **Static
-  reading** (2026-10-12) for the mechanism; the share is arithmetic on it,
-  not measured.
+  and no die per entry. So one entry added to a sub-list of L entries is
+  picked on 1 call in L + 1, whatever the other entries are, if the roll's
+  random index cannot equal the list's length (**not established**; if it
+  can, that index drops nothing and the share is 1 in L + 2; the model keeps
+  it open as `index_can_reach_length`, `docs/models/unique-pick-spec.md`
+  § Not established). **Static reading** (2026-10-12) for the mechanism; the
+  share is arithmetic on it, not measured.
 - The sub-lists `[0]` to `[4]` this roll reads hold 50, 61, 79, 152 and 221
   entries (**measured**, § 13.4, 2026-10-02), so an added entry is picked on
-  between 1 call in 51 and 1 in 222, depending on k.
+  between 1 call in 51 and 1 in 222, depending on k, on the same open
+  assumption (1 in 52 to 1 in 223 if the index can equal the length).
 - Measured with ForgePact's flight charms (Mod live 1, 2026-10-12, and Mod
   live 2, 2026-10-13), calling `DropUniqueItems` by name with the player as
   `self` in `Town_01_rm` (not how the game calls it; `unique-control` is the

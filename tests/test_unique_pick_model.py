@@ -20,6 +20,7 @@ test that reproduces it (`reproduced_by`), or says why it cannot be reproduced
 Run from the hub root: `py -3 -m unittest tests.test_unique_pick_model -v`.
 """
 
+import functools
 import json
 import re
 import sys
@@ -30,6 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SDK_PY = ROOT / "hs-game-sdk" / "python"
 FIXTURE = ROOT / "hs-game-sdk" / "curated" / "unique_pick_measurements.json"
+ANGELIC_LIST_FIXTURE = ROOT / "hs-game-sdk" / "curated" / "angelic_list_measurements.json"
 MODEL_FILE = SDK_PY / "hs_game_sdk" / "unique_pick_model.py"
 SPEC_DOC = ROOT / "docs" / "models" / "unique-pick-spec.md"
 HOOKS_DIR = ROOT / ".claude" / "hooks"
@@ -53,10 +55,13 @@ M_LOW, M_HIGH = 2, 3
 LIQUOR_HOLSTER_N = 1
 
 
+@functools.lru_cache(maxsize=None)
 def _fixture():
+    # Parsed once per run; no test writes to it.
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
+@functools.lru_cache(maxsize=None)
 def _entries():
     return {entry["id"]: entry for entry in _fixture()["measurements"]}
 
@@ -207,8 +212,8 @@ class TargetTests(unittest.TestCase):
                     self.assertEqual(share, Fraction(1, droppable + 2))
                     # The same share as a vanilla unique listed once.
                     self.assertEqual(share, model.angelic_share(1, droppable + e))
-        # At the inferred T of 47, about one drop in 49.
-        self.assertEqual(item_angelic_share(47, 1, 1, 2), Fraction(1, 49))
+        # At the measured T of 48 (UP11), one drop in 50.
+        self.assertEqual(item_angelic_share(_measured_t(), 1, 1, 2), Fraction(1, 50))
 
     def test_the_stand_in_keeps_its_own_entries_share(self):
         for droppable in T_RANGE:
@@ -301,7 +306,9 @@ class MeasuredTests(unittest.TestCase):
     def test_one_t_in_40_to_60_fits_every_measured_count(self):
         fitting = self._fitting_ts("UP1", "UP2", "UP3", "UP4", "UP5")
         self.assertTrue(fitting)
-        self.assertIn(47, fitting)   # the inference the spec gives for T
+        # T as Mod live 2's `flightprobe pool` measured it (UP11).
+        self.assertIn(_measured_t(), fitting)
+        self.assertEqual(_measured_t(), 48)
 
     def test_up1_live1_nothing_pushed(self):
         self.assertEqual(self.entries["UP1"]["values"]["pushed"], 0)
@@ -531,6 +538,17 @@ class FixtureShapeTests(unittest.TestCase):
             self.assertRegex(entry["date"], r"^\d{4}-\d{2}-\d{2}$", entry["id"])
             self.assertEqual(("reproduced_by" in entry) + ("not_reproduced" in entry), 1,
                              f"{entry['id']} needs exactly one of reproduced_by / not_reproduced")
+
+    def test_sub_list_lengths_agree_with_the_angelic_list_fixture(self):
+        # UP6 and UP11 retype the lengths angelic_list_measurements.json
+        # recorded first (#74 Live 2); the two copies must not drift apart.
+        layout = json.loads(ANGELIC_LIST_FIXTURE.read_text(encoding="utf-8"))["list_layout"]
+        sizes = layout["other_elements"]["sizes"]
+        ordinary = [sizes[str(k)] for k in model.UNIQUE_SUB_LISTS]
+        by_id = {e["id"]: e for e in self.entries}
+        self.assertEqual(by_id["UP6"]["values"]["sub_list_lengths"], ordinary + [layout["sub_list_size"]])
+        self.assertEqual(by_id["UP11"]["values"]["unique_sizes"], ordinary)
+        self.assertEqual(by_id["UP11"]["values"]["angelic_list_size"], layout["sub_list_size"])
 
     def test_every_named_test_exists_in_this_module(self):
         prefix = "tests.test_unique_pick_model."
