@@ -71,6 +71,11 @@ def _measured_t():
     return _entries()["UP11"]["values"]["droppable"]
 
 
+def _ordinary_lengths():
+    """L_k for the ordinary roll's sub-lists [0] to [4], as #74 Live 2 read them (UP6)."""
+    return _entries()["UP6"]["values"]["sub_list_lengths"][:5]
+
+
 # ---- ForgePact's levers, as input transforms (our code, not the game's) ----
 
 # Which list each switched-on item pushes its stand-in onto: #74's two
@@ -266,7 +271,7 @@ class TargetTests(unittest.TestCase):
             share = item_angelic_share(droppable, 1, c, e)
             self.assertEqual(share, Fraction(c, droppable + 2 * c))
             self.assertTrue(0.43 < share < 0.46, (droppable, float(share)))
-        for length in (50, 61, 79, 152, 221):
+        for length in _ordinary_lengths():
             share = elf_ordinary_chance(length, 1, c)
             self.assertEqual(share, Fraction(c, length + c))
             self.assertTrue(0.47 < share <= 0.8, (length, float(share)))
@@ -368,12 +373,9 @@ class MeasuredTests(unittest.TestCase):
 
     # ---- #158's own counts (Mod live 1 and Mod live 2) ----
 
-    def _ordinary_lengths(self):
-        return self.entries["UP6"]["values"]["sub_list_lengths"][:5]
-
     def _elf_band(self, copies, n):
         """Pocket Elf's chance per call, over the five lists the roll may read."""
-        chances = [elf_ordinary_chance(length, n, copies) for length in self._ordinary_lengths()]
+        chances = [elf_ordinary_chance(length, n, copies) for length in _ordinary_lengths()]
         return float(min(chances)), float(max(chances))
 
     def _elf_within(self, values, band):
@@ -447,8 +449,10 @@ class MeasuredTests(unittest.TestCase):
         band = self._elf_band(c, n)
         self.assertEqual(band, (1 / 222, 1 / 51))
         self.assertTrue(self._elf_within(values, band))
-        # Negative controls: Mod live 1's 200 copies, and no push at all.
+        # Negative control: Mod live 1's 200 copies.
         self.assertFalse(self._elf_within(values, self._elf_band(200, n)))
+        # The "appeared at all" check, not a share control: without the push
+        # Pocket Elf's share is 0, a zero-width band any non-zero count fails.
         self.assertFalse(self._elf_within(values, (0.0, 0.0)))
 
     def test_up13_mod_live2_rate_angelic(self):
@@ -469,7 +473,11 @@ class MeasuredTests(unittest.TestCase):
                 # Negative control: Mod live 1's 200 copies each.
                 flood = item_angelic_share(values["droppable"], n, 200, 400)
                 self.assertFalse(self._angelic_within(values[key], values["hits"], flood))
-        # And a push the roll never drew could not give the 2 Broomsticks.
+        # The "appeared at all" check, not a share control: without the push
+        # the Broomstick's share is 0, a zero-width band that any non-zero
+        # count fails, so this shows only that the Broomstick push reached a
+        # drop. It runs for the Broomstick alone; 0 Wings cannot tell a Wings
+        # push from none (UP13's `model`).
         self.assertFalse(self._angelic_within(values["broom"], values["hits"], 0))
         self.assertEqual((values["refused"], values["anomalies"]), (0, 0))
 
@@ -487,7 +495,8 @@ class OurCodeTests(unittest.TestCase):
         self.assertEqual((values["research_copies_min"], values["research_copies_max"]), (1, 400))
         self.assertEqual(values["angelic_list_index"], model.ANGELIC_LIST_INDEX)
         self.assertEqual(tuple(values["unique_sub_lists"]), model.UNIQUE_SUB_LISTS)
-        self.assertEqual(set(values["stand_ins"]) - set(ANGELIC_ITEMS), set())
+        # One stand-in per item that pushes, on either roll.
+        self.assertEqual(set(values["stand_ins"]), set(ANGELIC_ITEMS + ORDINARY_ITEMS))
         for c in (values["player_copies"], values["research_copies_max"]):
             with self.subTest(c=c):
                 self.assertEqual(pushed(model.ANGELIC_LIST_INDEX, ANGELIC_ITEMS, copies=c), 4 * c)

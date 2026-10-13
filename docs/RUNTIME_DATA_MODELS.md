@@ -2512,7 +2512,9 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   Tyrant's Crown, Gabriel Wings, Witch's Broomstick) takes 1 in (48 + e),
   e being the entries pushed (hub `docs/models/unique-pick-spec.md`). At one
   pushed entry each for Gabriel Wings and Witch's Broomstick, 102 hits gave
-  2 Broomsticks and no Wings, both within that share's band (`rate-angelic`).
+  2 Broomsticks and no Wings, both within that share's band (`rate-angelic`);
+  0 Wings fits a Wings push that did nothing just as well, so the Wings push
+  at one copy is not observed (it is shown only at 200 copies, Mod live 1).
   [Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
 - Unique definition records have the shape `{w, j, b, a, c}` (`c` = 1 marks the
   unique repository, `j` the weapon subtype); there is no Angelic flag, and base
