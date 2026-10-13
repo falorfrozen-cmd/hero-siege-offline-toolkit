@@ -35,11 +35,12 @@ The rules are `hs_select_character`'s (`charselect.py`):
   listed, within `timeout_s`; otherwise `menu_not_reached` quoting the last
   listing. `proof` is every header that decided a step.
 
-UNVERIFIED until #201's Live procedure 1: that an injected Escape opens the
-pause menu (on 2026-09-22 it was opened by hand), the Exit row's text and
-`uiNodeCallstack`, that a click at its point activates it, whether a
-confirmation follows, and which room it reaches. The tests' listings are
-synthetic for that reason.
+Measured 2026-10-13 in #201's Live 1 cell C and Live 2 cell G: the injected
+Escape opened the pause menu, the Exit row is a `UI_Button_obj` reading
+"Save & Exit" with `uiNodeCallstack` `PauseSaveExit`, a click at its point
+activates it with no confirmation, and the game reaches `Chose_rm`;
+`menu_reached` on the first call each time. The tests' listings are still
+synthetic, built to that shape.
 
 Only `menulayout` is sent over IPC. Nothing here suspends the game: it presses
 one key and clicks one button a player would. No MCP import: `server.py`

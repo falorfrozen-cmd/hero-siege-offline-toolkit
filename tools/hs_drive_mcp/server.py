@@ -571,10 +571,13 @@ def hs_select_character(
         "Leave the world the way a player does: press Escape, then click the "
         "pause menu's Exit button at the point ForgePact's read-only "
         "menulayout listing reports for it, and poll until the game lists "
-        "Chose_rm or Main_Menu_rm with no pause menu. The game's own Exit "
-        "saves the character. The Exit row is a button new to this open, "
-        "picked by its text or uiNodeCallstack, never guessed; none or "
-        "several is refused. Unverified until #201's Live procedure 1."),
+        "Chose_rm or Main_Menu_rm with no pause menu. The character's bag "
+        "file was observed rewritten after the Exit in both measured "
+        "sessions. The Exit row is a button new to this open, picked by its "
+        "text or uiNodeCallstack, never guessed; none or several is refused. "
+        "Measured 2026-10-13 (#201 Live 1 cell C, Live 2 cell G): the row "
+        "is \"Save & Exit\" / PauseSaveExit, no confirmation follows, it "
+        "reaches Chose_rm, menu_reached on the first call."),
     annotations=_acts("Take a loaded character back to the menu"),
 )
 def hs_exit_to_menu(

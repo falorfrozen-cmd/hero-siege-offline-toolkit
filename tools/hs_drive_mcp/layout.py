@@ -68,7 +68,7 @@ MAIN_MENU_ROOM = "Main_Menu_rm"
 
 #: The two rooms with no character in the world: `hs_exit_to_menu` refuses
 #: to start in either and stops once the game reaches one (the pause menu's
-#: Exit goes to `Chose_rm` by a static reading, not yet measured).
+#: Save & Exit goes to `Chose_rm`, measured 2026-10-13 in #201 Live 1 and 2).
 MENU_ROOMS = (MAIN_MENU_ROOM, SLOT_ROOM)
 
 #: The in-game pause menu (`hs_exit_to_menu`): listed while it is open. Its
