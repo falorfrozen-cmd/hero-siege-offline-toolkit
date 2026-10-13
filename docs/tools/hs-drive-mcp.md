@@ -835,14 +835,18 @@ took, per input), `proof` (each listing header that decided a step) and
 `elapsed_s`. A refusal carries `last_listing` and the phase it stopped in
 (`in_world`, `escape`, `pause_menu`, `exit_click`).
 
-**UNVERIFIED until #201's Live procedure 1.** That an injected Escape opens
-the pause menu (on 2026-09-22 it was opened by hand), the Exit row's text and
-`uiNodeCallstack`, that a click at its `win` point activates it, whether a
-confirmation follows, and the room it reaches (the static reading says
-`Chose_rm`) are not measured. `tests/test_hs_drive_mcp_menuexit.py` runs on
-synthetic listings (`tests/hs_drive_mcp_pausemenu_fixtures.py`) for that
-reason: they pin the tool's rules, not the game's menu. A confirmation dialog
-would surface as `menu_not_reached` with the in-world room in its header
+**Measured 2026-10-13 (#201's Live procedures 1 and 2, four calls, each
+`menu_reached` on the first call, no `label`).** The injected Escape opens the
+pause menu (`pause_opened_by: key`, from `Town_01_rm`); the one new exit-like
+row is a `UI_Button_obj` reading "Save & Exit" with `uiNodeCallstack`
+`PauseSaveExit`, at `win=1280,856` on a 2560x1440 fullscreen client; the click
+there activates it with no confirmation in between; and the game reaches
+`Chose_rm`, with `herosiege13.hss` and `inventory_order_13.hss` both rewritten
+(file times read by the operator, not by the tool). `menu_reached` itself
+proves the room, not the save. `tests/test_hs_drive_mcp_menuexit.py` runs on
+synthetic listings (`tests/hs_drive_mcp_pausemenu_fixtures.py`): they pin the
+tool's rules, not the game's menu. Were a confirmation dialog ever to appear,
+it would surface as `menu_not_reached` with the in-world room in its header
 (the last poll reads only `UI_Pause_obj`, so the dialog's own rows are not in
 `last_listing`; list `UI_Button_obj` with `hs_command` to see them).
 
@@ -1369,6 +1373,18 @@ rather than by falling back to another launcher:
   stack, before blaming ForgePact or the game. Measured 2026-10-07: both
   graceful closes of ForgePact #173's sessions read `0xC0000409` after
   `==== clean shutdown ====` (Verification, "Exit codes (ForgePact #173)").
+  Attributed 2026-10-13 (ForgePact #201, Verification, "Graceful stops
+  (ForgePact #201)"): with the producer installed, an in-world close, a
+  close after `hs_exit_to_menu` and a main-menu close all read `0xC0000409`
+  with a dump whose `raised-in` is `HSOfflineTrackerProducer`; with it held
+  aside, the same three closes and an in-world close with three mods on read
+  `0x00000000` and left no dump. So on this machine the code comes from the
+  producer alone, and taking Save & Exit first does not avoid it. Until
+  ForgePact re-pins the producer to HS-Offline-Tracker v0.1.4's fixed build,
+  expect `0xC0000409` from every graceful stop: read
+  `py -3 tools/crash_dump_stack.py --pid <pid> --expect-module
+  HSOfflineTrackerProducer` (exit 0 when the producer raised it) rather than
+  treating the code as a crash.
 - **Backups accumulate and nothing prunes them.** Removal is deliberately out
   of scope — no tool in this server has removal as its effect. Each backup is
   about 1.5 MB, and a restore writes two (the pre-restore one, plus whatever
@@ -1583,6 +1599,26 @@ by this server.
 | X3 | A crash's code (positive control) | `crashwatch crash confirm` on the research build, then `hs_status` | **pass — 2026-10-07.** `"game_state":"not_running"`, `"exits":[{"pid":28660,"exit_code":"0xC0000005"}]`; Windows wrote `Hero_Siege.exe.28660.dmp` and an Application Error record with the same code and PID. An `hs_status` taken while the process was still going listed it running with `exits` empty. |
 | X4 | A running game is not listed | `hs_status` during play | **pass — 2026-10-07.** Throughout Live 1's play, `exits` carried only the crashed PID 28660, never the running 14736. |
 | X5 | A graceful close's code, in `hs_stop_game`'s own answer | `hs_stop_game` (`force=false`) | **pass — 2026-10-07.** Live 1: `{"pid":14736,"exit_code":"0xC0000409"}`, `forced:false`, 6.6 s; Live 2: `{"pid":34868,"exit_code":"0xC0000409"}`, 7.2 s, with the earlier PIDs still listed oldest first. Both after `==== clean shutdown ====`; the Live 2 close logged `ucrtbase.dll`, `0xc0000409` and left a dump (ForgePact guide, Known Limitations item 25). |
+
+### Graceful stops (ForgePact #201)
+
+The rows below belong to `forgepact-201-exit-c0000409`, which added
+`exit_code_readback`, `hs_exit_to_menu` and `tools/crash_dump_stack.py`. They
+come from its Live procedure 1 (producer present) and Live procedure 2
+(producer held aside) of 2026-10-13, captures
+`forgepact-201-exit-c0000409-live-1` and `forgepact-201-exit-c0000409-live-2`
+(local to the hub's workorder folder), on the installed ForgePact v2.2.1
+(`8a16a38e…4bc92`), slot 14, recorded in
+`ForgePact/docs/graceful-stop-exit-research.md` § "Results".
+
+| # | Check | Command | Result |
+| --- | --- | --- | --- |
+| G201-1 | `exit_code_readback` passes on this machine before a session | `hs_selfcheck`, after `hs_lease_acquire` | **pass — 2026-10-13, both sessions.** 7 of 7 `pass`, none skipped; detail "sys.exit(0) read as 0x00000000 and sys.exit(-1073740791) read as 0xC0000409, each matching the child's own return code". |
+| G201-2 | The reader reads a clean code from the game itself (positive control for `0x00000000`) | `hs_stop_game` (`force=false`) after a main-menu launch, the producer held aside | **pass — 2026-10-13.** Live 2 cell E: `{"pid":41756,"exit_code":"0x00000000"}`, `forced:false`, the first clean code hs-drive has read; `crash_dump_stack.py --pid 41756 --wait 30` exited 3 (no dump). |
+| G201-3 | The reader and the dump agree on a fast fail in the same session (positive control for "no dump") | `hs_stop_game`, then `crash_dump_stack.py --pid <pid> --wait 30 --expect-module HSOfflineTrackerProducer` | **pass — 2026-10-13.** Live 1 cells B and C and Live 2 cell H (producer put back): `0xC0000409`, each with a dump `code=0xc0000409 subcode=7 raised-in=HSOfflineTrackerProducer`, exit 0. |
+| G201-4 | `hs_exit_to_menu` takes a loaded character to the menu | `hs_exit_to_menu()` after `hs_select_character(14)` | **pass — 2026-10-13, Live 1 cell C and Live 2 cell G, first call each.** `phase: menu_reached`, `room: Chose_rm`, `pause_opened_by: key`, `exit_row` `{"obj":"UI_Button_obj","text":"Save & Exit","uiNodeCallstack":"PauseSaveExit","win":[1280,856]}` (ids 261941 and 261923), `proof` two `Town_01_rm` headers then `Chose_rm`. `herosiege13.hss` and `inventory_order_13.hss` were rewritten by it (operator's `stat`). |
+| G201-5 | Producer-absent closes | `hs_stop_game` in Live 2 cells D (in world, mods off), G (after `hs_exit_to_menu`) and F (in world, `lootann 1`, `stashmoveall 1`, `frameprof start 600`) | **pass — 2026-10-13.** pids 44796, 51892 and 23392 all `0x00000000`, each after `==== clean shutdown ====`, no dump within 30 s. |
+| G201-6 | Holding a mod aside | the driver, by hand, with the owner's go-ahead ("What is deliberately not here") | **done — 2026-10-13.** `HSOfflineTrackerProducer.dll` moved to `%LOCALAPPDATA%\HSDriveMcp\held-mods\forgepact-201\` and back, sha256 `36608aa0…b14e` on both sides each way; Live 2's `test ! -e` and its resumed `sha256sum` confirmed each state. |
 
 ## Skills and talents
 
@@ -1860,6 +1896,19 @@ move from the stash into the bag are still not measured.
 - **Installing, removing or building the plugin, or patching the exe.** The
   server assumes an installed modded copy and refuses `mod_chain_incomplete`
   otherwise. Those are the ForgePact panel's job.
+- **Holding a mod DLL aside for a session.** No tool moves a file in or out of
+  the game's `mods\` folder, and the live-operator never does. When a live
+  procedure needs a DLL absent, the workorder driver moves it by hand, with
+  the owner's go-ahead, to a folder outside the game
+  (`%LOCALAPPDATA%\HSDriveMcp\held-mods\<workorder>\`), never deleting it,
+  checks its sha256 on both sides, and puts it back the same way when the
+  operator returns NEEDS-HUMAN; the procedure confirms each state itself
+  (`test ! -e`, then `sha256sum`). ForgePact #201 held the tracker producer
+  aside this way (2026-10-13): the move out fell between Live procedure 1's
+  lease release (10:59:57Z) and Live procedure 2's lease (11:01:49Z), under
+  two minutes including the operator's dispatch, and the move back sat inside
+  one NEEDS-HUMAN pause of Live procedure 2, whose whole session ran 7
+  minutes from lease to release (the move's own duration was not timed).
 - **Reading game memory, `itemstats.json`, or hooking anything.**
 - **Video capture, multi-monitor stitching, OCR of screenshots.**
 

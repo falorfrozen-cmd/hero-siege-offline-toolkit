@@ -1168,19 +1168,26 @@ All **measured 2026-09-22.**
 [restart research, Results](../ForgePact/docs/restart-always-available-research.md#results),
 [Decision](../ForgePact/docs/restart-always-available-research.md#decision)
 
-**The pause menu's Exit (Static reading, 2026-10-13, ForgePact #201; not
-measured).** `UiAIngameExit` is named beside `UiAIngameRestart` among the
-pause menu's activations, so it is read as the Exit button's. It saves the
-character through `SaveLocalFile` (six call sites; which file kinds they ask
-for was not read), calls `DisableEnemyStep`, and then goes to room 150, which
-`hs-game-sdk` names `Chose_rm` (the character select). It does not end the
-game. So Escape, Exit, then closing the window is: the game's own save, a
-room change to the character select, and the same window close from a menu
-room. Not established: the button's text and `uiNodeCallstack`, whether a
-confirmation follows, and that an injected Escape opens the menu (on
-2026-09-22 it was opened by hand). #201's Live procedure 1 measures them, with
-hs-drive's `hs_exit_to_menu`.
-[graceful stop research](../ForgePact/docs/graceful-stop-exit-research.md#static-evidence)
+**The pause menu's Exit (measured 2026-10-13, ForgePact #201, where the
+sessions reached; the script behind it is a static reading).** An injected
+Escape (hs-drive's `hs_exit_to_menu`, VK 27 through `SendInput`) opens the
+pause menu in `Town_01_rm`. Its Exit is a `UI_Button_obj` whose text reads
+"Save & Exit" and whose `uiNodeCallstack` is `"PauseSaveExit"`, listed by
+`menulayout` at `win=1280,856` on a 2560x1440 fullscreen client. One click
+there takes the game to `Chose_rm` (the character select) with no
+confirmation in between; it does not end the game. Both the character file
+`herosiege13.hss` and the bag file `inventory_order_13.hss` are rewritten by
+it, within a second of each other. Measured four times over two sessions,
+each on the first call (#201's Live procedure 1, capture
+`forgepact-201-exit-c0000409-live-1`, and Live procedure 2, capture
+`forgepact-201-exit-c0000409-live-2`, local to the hub's workorder folder).
+**Static reading** (2026-10-13): `UiAIngameExit` is named beside
+`UiAIngameRestart` among the pause menu's activations and is read as this
+button's. It saves through `SaveLocalFile` (six call sites; which file kinds
+they ask for was not read), calls `DisableEnemyStep`, and then goes to room
+150, which `hs-game-sdk` names `Chose_rm`. That the click runs
+`UiAIngameExit` was not measured; the room and the two rewritten files fit it.
+[graceful stop research, Results](../ForgePact/docs/graceful-stop-exit-research.md#results)
 
 ### 8.5 Structure worth knowing before designing a UI feature
 
@@ -1402,6 +1409,18 @@ written by separate calls, so one can be rewritten while the other is not.
   `inventory_order_13.hss`, which still held 3 (`stop-bag-write`, hub issue
   #506). **Measured.** Nor did the stops of the follow-up's Live procedures 1
   and 2 write it.
+- Per close, in ForgePact #201's two sessions (2026-10-13, slot 14, file
+  times read with `stat` before and after; captures
+  `forgepact-201-exit-c0000409-live-1` and `-live-2`). The in-world stop
+  (`hs_stop_game`, `WM_CLOSE`) rewrote `herosiege13.hss` and left
+  `inventory_order_13.hss` as it was, both with the HS-Offline-Tracker
+  producer loaded (Live 1 cell B) and with it held aside and every mod off
+  (Live 2 cell D), so the producer is not why a stop skips the bag. The pause
+  menu's Save & Exit (§ 8.4) rewrote both files within a second, with the
+  producer present (Live 1 cell C) and absent (Live 2 cell G), and the close
+  from `Chose_rm` after it rewrote neither (Live 1 cell C). **Measured.** The
+  mods-on in-world stop (Live 2 cell F) and the main-menu closes did not
+  record file times.
 - A consumable's count survives the bag save and a reload. Live procedure 4's
   bag file held two class-11 stacks at `o` 3 and 2 (read with
   `tools/save_item_keys.py --defs`), and after a relaunch the bag held both
@@ -1410,8 +1429,9 @@ written by separate calls, so one can be rewritten while the other is not.
 
 So a stop is not a save of the bag file, and a check that reads the bag file
 after a stop has to make the game save the bag in play first: closing the
-stash does (measured above), and so does saving to the main menu. What
-decides whether a stop writes the bag file is **not established**.
+stash does (measured above), and so does saving to the main menu or the pause
+menu's Save & Exit (measured, #201). What decides whether a stop writes the
+bag file is **not established**; the tracker producer is ruled out (#201).
 
 ### 9.6 Prospecting
 
@@ -3316,7 +3336,7 @@ All **measured** unless marked.
 | Special content at 20× | dies at about 13.4k instances | §5.8 |
 | A creator acted on before `enemyCreatorTimer` is real | no crash — the pack never spawns | §11.2 |
 | Removing a stash item's map entry (`RemoveItemFromMap` on map 9) but leaving its cell in the tab | the game ends at its next stash save — measured twice, in two launches; `GridRemoveItem` on the cell in the same take avoids it | §17 |
-| A plugin DLL whose global `std::thread` is still joinable when the game exits | `std::terminate` while `ExitProcess` destroys that DLL's globals (the other threads are already gone): a WER report at close, `ucrtbase.dll` `0xc0000409`, fast-fail 7 (`abort`). HS-Offline-Tracker's producer does it; 9 of the 10 dumps Windows kept on 2026-09-25/26 show it, the game's own exit path under it, and a plain `CloseMainWindow` at the main menu does it too. A game started from a tool running under Git Bash inherits error mode `0x3` (`SEM_NOGPFAULTERRORBOX`) and aborts without a dump or an event: read the exit code. In-world graceful stops too (ForgePact #201, measured from dumps and WER reports, 2026-10-13): all ten dumps Windows kept on 2026-10-12/13, nine of them `hs_stop_game` stops (most with a character in the world), raise fast fail 7 at `ucrtbase!abort` from `terminate`, called from `HSOfflineTrackerProducer.dll`'s exit-time destructor under `LdrShutdownProcess`; the two 2026-10-08 batch closes left WER reports with the same bucket and the producer loaded. Not established until #201's Live procedure 2: that an in-world close, a close after Escape -> Exit, or a close with mods on exits `0x00000000` with the producer held aside, since while it is loaded its abort runs before ForgePact's own exit-time code and would mask a fault there | [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#the-crash-of-2026-09-26-013627), [graceful stop research](../ForgePact/docs/graceful-stop-exit-research.md#static-evidence) |
+| A plugin DLL whose global `std::thread` is still joinable when the game exits | `std::terminate` while `ExitProcess` destroys that DLL's globals (the other threads are already gone): a WER report at close, `ucrtbase.dll` `0xc0000409`, fast-fail 7 (`abort`). HS-Offline-Tracker's producer does it; 9 of the 10 dumps Windows kept on 2026-09-25/26 show it, the game's own exit path under it, and a plain `CloseMainWindow` at the main menu does it too. A game started from a tool running under Git Bash inherits error mode `0x3` (`SEM_NOGPFAULTERRORBOX`) and aborts without a dump or an event: read the exit code. In-world graceful stops too (ForgePact #201, measured from dumps and WER reports, 2026-10-13): all ten dumps Windows kept on 2026-10-12/13, nine of them `hs_stop_game` stops (most with a character in the world), raise fast fail 7 at `ucrtbase!abort` from `terminate`, called from `HSOfflineTrackerProducer.dll`'s exit-time destructor under `LdrShutdownProcess`; the two 2026-10-08 batch closes left WER reports with the same bucket and the producer loaded. Measured live (#201, 2026-10-13, captures `forgepact-201-exit-c0000409-live-1` and `-live-2`): with the producer loaded, an in-world close and a close after the pause menu's Save & Exit both read `0xC0000409` with a dump naming the producer, and so did a main-menu close; with it held aside, a main-menu close, an in-world close with every mod off, a close after Save & Exit and an in-world close with `lootann`, `stashmoveall` and `frameprof` on (its worker thread still running) all read `0x00000000` and left no dump. So the producer is the only module seen aborting a graceful close; a vanilla or ForgePact-free game was not run | [Item Truth memory research](../ForgePact/docs/item-truth-memory-research.md#the-crash-of-2026-09-26-013627), [graceful stop research](../ForgePact/docs/graceful-stop-exit-research.md#results) |
 | `RoomGoto` into `Act_01_06` from code | crash | §22.7 |
 | `PC_GetVariableGMLWrapper` on a far-out handle (id 999999) | crash | §22.8 |
 | A gold amount mistaken for a handle (call not recorded) | crash in the anti-cheat module | §22.8 |
