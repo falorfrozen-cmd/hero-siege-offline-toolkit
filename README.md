@@ -385,7 +385,7 @@ of taking two thread snapshots of the whole system, which ForgePact #151
 measured at about 69 ms per hook. Hooks attach exactly as before. The build
 travels as the hub library release `aurie-v2.0.2-hs.1` (`--latest=false`),
 which ForgePact's toolchain pin names; HS-Offline-Tracker ships the same
-build from its next release (0.1.4, falorfrozen-cmd/HS-Offline-Tracker#14).
+build since 0.1.4 (falorfrozen-cmd/HS-Offline-Tracker#14).
 The directory's
 [README](third_party/aurie/README.md) holds the patch table and the launch
 gate, and [ADR 0006](docs/adr/0006-modified-auriecore-is-a-patch-series-in-the-hub.md)

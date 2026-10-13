@@ -1367,10 +1367,11 @@ rather than by falling back to another launcher:
   `hs_status` before reconnecting.
 - **A normal close can read `0xC0000409`, depending on the installed
   HS-Offline-Tracker producer.** The producer ForgePact shipped through 2.2.x
-  (`HSOfflineTrackerProducer.dll` sha256 `36608aa0…`), and every Tracker
-  producer before v0.1.4, aborts at process exit, after the game's own clean
-  shutdown (`docs/submodules/ForgePact/instructions.md`, Known Limitations
-  item 25). With one of those installed, `0xC0000409` on a close that
+  (`HSOfflineTrackerProducer.dll` sha256 `36608aa0…`, Tracker 0.1.2's build)
+  was measured aborting at process exit, after the game's own clean shutdown
+  (`docs/submodules/ForgePact/instructions.md`, Known Limitations item 25);
+  Tracker 0.1.1's and 0.1.3's producers keep the same global `std::thread`
+  (static reading, not measured). With one of those installed, `0xC0000409` on a close that
   `hs_stop_game` requested is not by itself a crash: check for the incident
   monitor's clean-shutdown line, and the dump's stack, before blaming
   ForgePact or the game. With HS-Offline-Tracker v0.1.4's producer
@@ -1383,7 +1384,11 @@ rather than by falling back to another launcher:
   `TRACKER_SENSOR_CLEAN` in `ForgePact/src/forgepact.py`; from the hub root,
   `py -3 -c "import hashlib,sys; sys.path.insert(0,'ForgePact/src'); import forgepact as f; h=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest(); print(h, 'aborting' if h in f.TRACKER_SENSOR_ABORTING else 'clean' if h in f.TRACKER_SENSOR_CLEAN else 'unknown')" "<game>\mods\aurie\HSOfflineTrackerProducer.dll"`
   prints the installed producer's hash and its class. `unknown` means
-  neither was measured: treat the code as unexplained. Measured 2026-10-07: both
+  neither set lists it: treat the code as unexplained. `aborting` covers the
+  measured build and the builds read from source alike, so it is a lead, not
+  a verdict: `crash_dump_stack.py --expect-module HSOfflineTrackerProducer`
+  exiting 0 is what confirms the producer raised it. The command imports the
+  whole panel module and has no test of its own. Measured 2026-10-07: both
   graceful closes of ForgePact #173's sessions read `0xC0000409` after
   `==== clean shutdown ====` (Verification, "Exit codes (ForgePact #173)").
   Attributed 2026-10-13 (ForgePact #201, Verification, "Graceful stops
