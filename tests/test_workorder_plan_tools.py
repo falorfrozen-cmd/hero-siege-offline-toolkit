@@ -310,7 +310,10 @@ class LiveChecksTableTests(TempDirMixin, unittest.TestCase):
                 err = io.StringIO()
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
                     self.assertEqual(live_checks.main([path, "--block", block, "--require-pass", "dll-hash"]), 2)
-                self.assertIn("cannot tell which attempt", err.getvalue())
+                # Block 2 of a capture with one `## Checks` is simply past its end.
+                self.assertRegex(err.getvalue(), "cannot tell which attempt|past the last block")
+                if block == "last" or path == two_tables:
+                    self.assertIn("cannot tell which attempt", err.getvalue())
         # Without --block the first section is read, and stderr says so.
         err = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
@@ -322,9 +325,37 @@ class LiveChecksTableTests(TempDirMixin, unittest.TestCase):
             self.assertEqual(live_checks.main([self.write("c-live-1.md", TABLE_CAPTURE)]), 0)
         self.assertEqual(err.getvalue(), "")
 
+    def test_block_last_reads_a_list_appended_after_a_summary(self):
+        # Attempt 1 wrote a list and a summary table; attempt 2 an appended
+        # list. The summary sits before the chosen block, so `last` is clear.
+        first = CAPTURE + "\n" + TABLE_CAPTURE.split("## Step 1", 1)[1]
+        attempt_2 = "\n## Attempt 2" + LiveChecksTests.TWO_BLOCKS.split("## Attempt 2", 1)[1]
+        path = self.write("c-live-2.md", first + attempt_2)
+        rc, out = run(live_checks.main, [path, "--block", "last", "--expect", LiveChecksTests.EXPECT,
+                                         "--require-pass", "dll-hash,holders"])
+        self.assertEqual(rc, 0, out)
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            live_checks.main([path])
+        self.assertIn("pass --block last", err.getvalue())
+        # The single-attempt shape gets no advice that --block last would refuse.
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            live_checks.main([self.write("c-live-1.md", first)])
+        self.assertIn("reading the first", err.getvalue())
+        self.assertNotIn("--block last", err.getvalue())
+
+    def test_an_empty_default_block_is_named_block_1(self):
+        path = self.write("c-live-2.md", "## Checks\n\naborted\n\n## Attempt 2\n\n## Checks\n\n- a | x | pass\n")
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(live_checks.main([path]), 2)
+        self.assertIn("block 1 of", err.getvalue())
+
     def test_block_takes_only_ascii_digits(self):
         path = self.write("c-live-1.md", TABLE_CAPTURE)
-        self.assertEqual(run(live_checks.main, [path, "--block", "\u00b2"])[0], 2)
+        for bad in ("\u00b2", "\u0662"):
+            self.assertEqual(run(live_checks.main, [path, "--block", bad])[0], 2)
 
     def test_the_list_wins_over_a_table(self):
         # A capture carrying both keeps the list form's reading; the table is

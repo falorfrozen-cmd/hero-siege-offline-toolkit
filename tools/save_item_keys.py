@@ -250,9 +250,10 @@ def main(argv=None) -> int:
                                      for name, keys in containers.items() if key in keys]
                                for key in sorted(wanted)}
         if defs is not None:
-            payload["defs"] = {str(path): {container: {k: v for k, v in entries.items()
-                                                       if not wanted or k in wanted}
-                                           for container, entries in file_defs.items()}
+            payload["defs"] = {str(path): {container: shown for container, entries in file_defs.items()
+                                           if (shown := {k: v for k, v in entries.items()
+                                                         if not wanted or k in wanted})
+                                           or not wanted}
                                for path, file_defs in defs.items()}
         print(json.dumps(payload, indent=1, sort_keys=True))
     else:

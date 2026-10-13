@@ -60,10 +60,10 @@ names how many blocks the capture has. With one `## Checks` block or none,
 the table fallback reads the first checks table, as before. With more than one,
 a block that has no `- ` lines is read from the table under its own heading,
 never from another attempt's, and a block with neither is a usage error.
-`--block` counts `## Checks` headings only, so beside a `## Checks summary`
-section asking for a block other than 1 is a usage error rather than a guess,
-and a capture with more than one checks section read without `--block` says on
-stderr that it read the first.
+`--block` counts `## Checks` headings only, so asking for a block other than 1
+when a `## Checks summary` section follows that block (it could be a later
+attempt) is a usage error rather than a guess, and a capture with more than one
+checks section read without `--block` says on stderr that it read the first.
 
 Usage:
     py -3 tools/live_checks.py <capture> [--expect a,b,c] [--require-pass a,b]
@@ -198,6 +198,22 @@ def block_table_rows(text: str, block) -> list:
     return _table_in(_section(lines, i))
 
 
+def summary_after(text: str, block) -> bool:
+    """Whether a `## Checks summary` heading follows the `block`-th `## Checks`
+    heading (1-based, or "last"), where it could be a later attempt that
+    `--block` does not count. With no `## Checks` heading, whether there is
+    more than one summary. A block past the last is not this question."""
+    lines = text.splitlines()
+    heads = [i for i, line in enumerate(lines) if CHECKS_HEADING_RE.match(line)]
+    sums = [i for i, line in enumerate(lines) if SUMMARY_HEADING_RE.match(line)]
+    if not heads:
+        return len(sums) > 1
+    if block != "last" and block > len(heads):
+        return False
+    chosen = heads[-1] if block == "last" else heads[block - 1]
+    return any(i > chosen for i in sums)
+
+
 def _verdict(tail: str) -> tuple:
     """(verdict or None, note) for the text after a check's last `|`."""
     if CRASH_RE.match(tail):
@@ -238,7 +254,7 @@ def main(argv=None) -> int:
 
     block = (args.block or "1").strip().lower()
     if block != "last":
-        if not block.isdecimal() or int(block) < 1:
+        if not (block.isascii() and block.isdigit()) or int(block) < 1:
             print(f"live_checks: --block takes a 1-based number or 'last', not {args.block!r}",
                   file=sys.stderr)
             return 2
@@ -252,17 +268,17 @@ def main(argv=None) -> int:
     count = len(check_blocks(text))
     summaries = len(SUMMARY_HEADING_RE.findall(text))
     sections = count + summaries
-    # `--block` counts `## Checks` headings only. Beside a `## Checks summary`
-    # section, a later block could be that section's attempt or the same
-    # attempt's second form, so asking for one is refused rather than guessed.
-    if summaries and sections > 1 and (block == "last" or block > 1):
-        print(f"live_checks: {path} has {sections} checks sections, "
-              f"{summaries} of them '## Checks summary'; --block counts only '## Checks' "
-              f"headings and cannot tell which attempt {args.block!r} means", file=sys.stderr)
+    if (block == "last" or block > 1) and summary_after(text, block):
+        print(f"live_checks: {path} has a '## Checks summary' section after the block "
+              f"asked for; --block counts only '## Checks' headings and cannot tell whether "
+              f"it is a later attempt, so it cannot tell which attempt {block!r} means",
+              file=sys.stderr)
         return 2
     if sections > 1 and args.block is None:
-        print(f"live_checks: note: {path} has {sections} checks sections; reading the first "
-              f"(pass --block last for an appended attempt)", file=sys.stderr)
+        hint = (" (pass --block last for an appended attempt)"
+                if count > 1 and not summary_after(text, "last") else "")
+        print(f"live_checks: note: {path} has {sections} checks sections; reading the "
+              f"first{hint}", file=sys.stderr)
     # With no `## Checks` heading at all, block 1 and `last` keep the table
     # fallback below; asking for any later block is still past the end.
     if block != "last" and block > count and (count or block > 1):
@@ -280,7 +296,7 @@ def main(argv=None) -> int:
         if rows:
             lines, parse, where = rows, parse_row, "in the last cell"
         elif count > 1:
-            print(f"live_checks: '## Checks' block {args.block} of {path} has no checks "
+            print(f"live_checks: '## Checks' block {block} of {path} has no checks "
                   f"list and no checks table", file=sys.stderr)
             return 2
     if lines is None:

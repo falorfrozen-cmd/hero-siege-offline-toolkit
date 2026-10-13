@@ -90,9 +90,11 @@ what it was before the flag existed.
 **Why it exists.** ForgePact #197 builds a boss soul piece on a key whose
 definition `b` carries a fraction (for example the key's base plus a tenth),
 so that the game's own stack check, which compares `b`, keeps pieces apart from
-the real key and from each other. The game writes a saved real through its
-`string()` conversion, which keeps two decimals, so whether the fraction
-survives a save is a question about what the save file says. `--defs` answers
+the real key and from each other. Whether the game writes a saved real through
+its `string()` conversion, keeping two decimals, is an open hypothesis
+(`soul_piece_model.HYPOTHESES['string_keeps_two_decimals']`; a saved whole `c`
+reads `0.0`, neither `0` nor `0.00`), so whether the fraction survives a save
+is a question about what the save file says. `--defs` answers
 it from the file, after the session, without the game running.
 
 ## What it never does

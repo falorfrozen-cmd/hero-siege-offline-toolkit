@@ -932,8 +932,8 @@ session run again has its attempt appended with its own `## Checks` (a capture
 is never edited), so `--block` picks which block is read, 1-based or `last`,
 defaulting to the first (with a note on stderr when there are several); a
 criterion about a re-run names `--block last`. `--block` counts `## Checks`
-headings only, so beside a `## Checks summary` section any block but the first
-is refused rather than guessed. It replaces the
+headings only, so asking for a block other than 1 when a `## Checks summary`
+section follows it (it could be a later attempt) is refused rather than guessed. It replaces the
 `| (pass|fail|not-observed)$` greps that cost forgepact-issue-14 three rounds
 and a split workorder on the operator's punctuation. `plan_lint.py <plan>`
 checks `## Acceptance criteria` for four defects that each cost a round there

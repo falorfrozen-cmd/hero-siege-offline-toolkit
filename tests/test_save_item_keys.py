@@ -241,6 +241,7 @@ class SaveItemKeysTests(unittest.TestCase):
         # --key narrows the JSON defs as it narrows the text.
         code, out, err = self.run_tool(self.keytab, "--defs", "--key", "0-0-141414-12", "--json")
         self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["defs"][str(self.keytab)].keys(), {"inventory_key_tab"})
         self.assertEqual(list(json.loads(out)["defs"][str(self.keytab)]["inventory_key_tab"]),
                          ["0-0-141414-12"])
         self.assertEqual(json.loads(KEY_TAB_RAW)["inventory_key_tab"]["0-0-121212-12"]["data"]["b"], 2.1)
