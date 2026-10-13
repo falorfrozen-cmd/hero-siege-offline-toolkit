@@ -3033,27 +3033,32 @@ AFK FARM design, 0.9 (a private repository)
 
 ### 13.11 Gold, XP and kill counters (HS Offline Tracker's routes)
 
-Three scripts are called once per credit the game gives a character, which is
-what an offline session counter needs. HS-Offline-Tracker's producer DLL found
-and measured them (its `aurie-producer/README.md` § "Current counter
-contract"), and ForgePact's `tracker` sensor (ForgePact #185,
+Three scripts the game calls on a gold pickup's UI log, an experience gain
+and a monster kill; one call per kill is measured, and whether every gold or
+experience credit (vendor sales, quest rewards, a mod's `PickUpGoldCheck`
+credit) passes through `GoldLogAdd`/`ExperienceUpdate` is not established.
+HS-Offline-Tracker's producer DLL counts through them (its
+`aurie-producer/README.md` § "Current counter contract", a reviewed code
+profile bound to the build's fingerprint; only the kill count cites a live
+run), and ForgePact's `tracker` sensor (ForgePact #185,
 `ForgePact/docs/tracker-research.md`) counts through the same three, by name.
-In our own words, with labels:
+So a gold or experience total built on them is what these scripts saw, not
+yet known to be every credit. In our own words, with labels:
 
 - **`GoldLogAdd`** is the gold credit's UI-log writer (§ 13.10: it does not
   change the balance; `PickUpGoldCheck` does). It takes **two arguments**, and
   on the 2026-08-29 build the earned amount is **argument 1** (argument 0 on
-  the older Season 10 build the Tracker reviewed first). **Measured by the
-  Tracker** (its producer validates the amount as a finite, positive whole
-  number). A local reading of the current build's function agrees that it is a
+  the older Season 10 build the Tracker reviewed first). **The Tracker's
+  reviewed code profile (static reading)**; its producer validates the amount
+  as a finite, positive whole number. A local reading of the current build's function agrees that it is a
   two-argument UI-log writer (**static reading**, 2026-10-13). ForgePact's
   sensor accepts 1 to 4 arguments and counts the last one that decodes as a
   positive whole number (the producer's adaptive rule), so the amount at
   index 1 is what it counts.
 - **`ExperienceUpdate`** takes **two arguments**; **argument 0** is the
   experience credited. A call the game refuses returns an explicit boolean
-  `false`, and that call is not a gain. **Measured by the Tracker** (its
-  reviewed rejection exit). It is reached by direct calls, so only a native
+  `false`, and that call is not a gain. **The Tracker's reviewed code profile
+  (static reading)**, its reviewed rejection exit. It is reached by direct calls, so only a native
   detour sees it: mining's completion run calls it once per run (§ 12,
   measured 2026-09-28), and calling it directly from a mod reports a hash
   mismatch (§ 22), so the sensor only observes it.
