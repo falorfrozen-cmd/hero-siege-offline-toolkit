@@ -962,6 +962,117 @@ Measured on 2026-10-04 on Sorak, a White Mage, in town and in Outskirts of Inoya
     any other object in that window. The enemies died within seconds, so an enemy's
     call to these scripts was not observed.
 
+### 7.7 The cast gate and its input
+
+What ForgePact's Mark 1 research (#166, phase 1) read on 2026-10-13 about how
+a key press on the skill bar becomes a cast, in the build Ghidra imported (the
+one `py -3 tools/decomp_index.py build-hash` names). Sources: a local headless
+decompile of `CheckTalentUse` (2026-09-25, this build) read with the decompile
+index's slot names; a local scan of each script's compiled code for the
+variable, builtin and script names it references, the direct calls it makes
+and the constant ids it passes (its positive control: on
+`PathFindControllerCreate` the scan listed exactly what the MCP decompile of
+that function shows); and the ghidra MCP for the small functions. A byte scan
+of direct call sites is blind to calls through the script table or a method
+value, so a caller it did not find is not observed, not absent. Every bullet
+is a **static reading** (2026-10-13) unless it says measured.
+
+- **The gate runs inside the movement step.** The only direct call site of
+  `gml_Script_CheckTalentUse` (539) found is in `gml_Script_PlayerMovement`
+  (2774), which the player object's Step event calls. Its entry was measured
+  at about 85 calls a second in town with `self` equal to `other` and three
+  arguments ([x64dbg-mcp.md](tools/x64dbg-mcp.md), "Breakpoint rules");
+  why that is more than one call per frame is not read.
+- **None of its three arguments names a bar slot.** All three are optional.
+  The first is the player instance (when it is undefined the gate takes a
+  value from the game's protected global data). The second is the player
+  number (default: the global `mplr`), and goes with the player into the
+  talent-info and talent-requirement lookups. The third (default 1) is the
+  index into `Input_Device_Manager_obj` (2259)'s `playerProfileSlot`, and is
+  handed on unchanged as `TalentUse`'s third argument, which § 7.2 measured
+  as 1 on a key cast. Which values the game passes here is measured by
+  ForgePact's `mark1probe args` (Live 1, `ctu-args`).
+- **The bar slots are a loop inside the gate**, over a counter from 0 to 11.
+  For each value it looks the slot's talent id up (through a ds_map lookup
+  and two further lookups keyed by the counter), then decides whether the
+  slot is asking to cast.
+- **The key state comes from the profile slot.** For each bar slot the gate
+  reads `Input_Device_Manager_obj.playerProfileSlot[<third argument>]`, and
+  from that entry the `inputState` array, at an index an unnamed helper
+  derives from the slot counter (the derivation was not read), and compares
+  it against one state value (which value means "pressed" was not read). It
+  does this on 15 paths. § 10.4 measured `inputState` on `Profile_Manager_obj`
+  (3673), 78 entries resting at 1. The profile slot's entry is plausibly a
+  `Profile_Manager_obj` instance: it also carries the `inputSimMap` that
+  object's Create event makes (next bullet).
+- **The game has its own input simulation.** `gml_Script_InputSimulate`
+  (1903) takes a profile slot index, a key and a value, and stores the value under
+  the key in that profile slot entry's `inputSimMap` (a ds_map). That map is
+  read by `Profile_Manager_obj`'s Begin Step event (eight references) and
+  `Controller_obj`'s Begin Step event (four), both of which run before the
+  Step event that reaches the gate. `InputCheck` and `InputPressed` read
+  `playerProfileSlot` and `inputState` the same way the gate does. No direct
+  caller of `InputSimulate` was found (not observed), what its keys are and
+  how the Begin Step folds the map into `inputState` were not read. It is a
+  candidate cast route that leaves the game's own gate in charge, and unlike
+  posting a key to the window it does not depend on which key is bound.
+- **The queue is a second way into the same slot.** `abilityQueue` and
+  `mobileTalentPressed` are global arrays (both are created in
+  `gml_GlobalScript_DefineGlobals`), indexed by the bar slot counter. When the
+  slot's key state does not ask for a cast, the gate reads the slot's
+  `abilityQueue` entry, and when that is not set either, its
+  `mobileTalentPressed` entry; only when all three are unset does it move on
+  to the next slot. Later it writes both entries of the slot back with 0, and
+  one other path writes 1 into `abilityQueue`'s entry 0. So an entry is a
+  0-or-1 flag per bar slot. `PlayerMovement` writes `abilityQueue` at five
+  sites (values not read); nothing else found references it. `autoAim` is a
+  global array read the same way, per slot. Whether setting a slot's
+  `abilityQueue` entry makes the gate cast that slot is **not established**:
+  ForgePact's `mark1probe set` measures it (Live 1).
+- **`stackSkillList` is a variable of the gate's own `self`**, read at five
+  sites and taken for writing at two.
+- **The cast itself.** Per slot that asks, the gate calls `GetTalentInfo`
+  (1788) and `TalentRequirement` (3769), and then, at its one `TalentUse`
+  (3829) site, calls it with the player, the slot's talent id, its own third
+  argument and false (the arguments § 7.2 measured on a key cast). It also
+  asks the stat dispatcher for id 199 (no case in the dispatcher's table as
+  [skill sliders' reading](../ForgePact/docs/skill-sliders-research.md#returnspecificstat-the-dispatchers-case-table)
+  lists it) and calls `PlayerManaUpdate` and `PlayerHpUpdate`.
+- **An earlier negative does not cover this reader.** § 10.4 measured that
+  writing `inputState` from the frame callback did nothing for the interact
+  key, whose check reads the keyboard directly, and that write landed at
+  `EVENT_FRAME`, after the frame's readers ran. A write inside the gate's own
+  call, just before it reads, is untested: not refuted.
+
+[Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
+
+### 7.8 What a cast does to movement
+
+From the same reading as § 7.7 (2026-10-13, static unless marked).
+
+- **`gml_Script_TalentUseSetSpeed` (3830)** has two direct callers found,
+  `TalentUse` (3829) and `gml_Script_CA_playerTalentActive` (368), one site
+  each. It asks the stat dispatcher for ids 68 and 69 (the two attack speeds)
+  and 106 (faster cast rate), and calls `GetTalentCooldown`, `GetTalentInfo`,
+  `ReturnSubTalentLevel`, `LoadSubTalentDamage`, `SetCooldown`,
+  `RefreshMouseMove`, `GetPlayerDevice` and `IsMyPlayer`. Besides the cast
+  speed it writes six entries of the player's `playerEffect` array (entries
+  40, 46, 79, 182, 231 and 282; what each entry means is not read) and sets
+  `image_speed` on an instance or object it names (which one is not read). It
+  references no movement-speed name (`hSpeedFactor`, `vSpeedFactor`,
+  `mobileSpeedFactor`, `moveSpeed`). So if a cast slows the caster, it is
+  plausibly through a `playerEffect` entry or the movement step's own state,
+  not a movement variable this script names.
+- **`PlayerMovement` (2774)** calls `TalentUseClass` (3833) once and
+  `CheckTalentUse` once, reads its own `playerEffect` at 21 sites and takes it
+  for writing at 19, and reads `pSt` (the player's stat values) at 32 sites.
+  The player object's Step event calls `TalentUseClass` at five more sites.
+  Which of these holds the caster still while a skill is cast is **not
+  established**; ForgePact's `mark1probe watch` diffs them across a cast
+  (Live 1).
+
+[Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
+
 ---
 
 ## 8. HUD, Menus and UI Nodes
@@ -5359,6 +5470,132 @@ decompile nor a measurement; each bullet says which kind of reading it is.
 
 [Phase 2 static reading](../ForgePact/docs/flight-charms-research.md#phase-2-static-reading),
 [Mod live 3 results](../ForgePact/docs/flight-charms-research.md#mod-live-3-results)
+
+### 19.10 Walking speed and jump length
+
+What ForgePact's Mark 1 research (#166, phase 1) read on 2026-10-13, by the
+sources and with the caveats § 7.7 gives (a local scan of each script's
+compiled code for the names it references, its direct calls and the constant
+ids it passes, plus the ghidra MCP for the small functions). Every bullet is a
+**static reading** (2026-10-13) unless it says measured. The large bodies
+(`StatMovementSpeed`, `PlayerMovement`, `skillsLeap`, `playerJumpGravity`) did
+not decompile within the tools' limits, so what is below is which names each
+one touches and whether it reads or writes them, not the arithmetic.
+
+- **The movement speed stat is read in the player's Step event.** The stat
+  dispatcher sends id 64 to `gml_Script_StatMovementSpeed` (3389), whose only
+  direct caller found is the dispatcher (3344). The scripts found asking the
+  dispatcher for id 64 are the player object's Step event (once),
+  `StatTotalDamage`, `StatAttackDamage`, `StatMagicSkillDamage`,
+  `TalentsSamurai` and `Mercenary_obj`'s Alarm 5. `PlayerMovement` does not
+  ask for it: it asks for id 336, which has no case in the dispatcher's table
+  ([skill sliders' reading](../ForgePact/docs/skill-sliders-research.md#returnspecificstat-the-dispatchers-case-table)).
+- **What `StatMovementSpeed` reads.** The player's `playerBuff` (about 380
+  reads) through the `GetBuffValue` and `GetBuffStack` methods, `buffArray`,
+  `debuffArray`, `buffMult` and `skpDb`; it asks the dispatcher for ids 106,
+  531, 532 and 598 (106 is faster cast rate; the other three have no case),
+  calls `ReturnSubTalentLevel` and `LoadSubTalentDamage`, and uses `floor`
+  and `power`. **Whether it caps is not established**: this build compiles
+  `min`, `max` and `clamp` inline (the scan finds no named builtin for them),
+  so a cap would not show as a name.
+- **The speed names the walk touches.** `PlayerMovement` (2774) reads
+  `hSpeedFactor` and `vSpeedFactor` (five sites each, no write found),
+  `mobileSpeedFactor` and `roomSpd`, and its stat values `pSt`. The player's
+  Step event reads `move_dist`, `new_x`, `new_y`, `hSpeedFactor`,
+  `vSpeedFactor`, and `mountSpeed` from another instance, writes `moveOverrideHor` and
+  `moveOverrideVer`, and uses `mp_linear_step`. Which of these the step's
+  final distance is computed from is **not established**; ForgePact's
+  `mark1probe move` and `stat` levers measure where a x0.5 lands (Live 2).
+- **Jump Power is read by the player's Alarm 8 event**, the only script found
+  asking the dispatcher for id 66 (`gml_Script_StatJumpPower`, 3391). That
+  event asks the dispatcher about 350 times, so it is plausibly the routine
+  that refreshes the player's stat values; that fits § 19.1's measurement
+  that `StatJumpPower` logged no call during a jump. `StatJumpPower` reads
+  only `playerBuff`, through `GetBuffValue`.
+- **`gml_Script_skillsLeap` (3664)** has three direct callers found: the
+  player object's Step event, `ClassStepEvent` (560) and `Mercenary_obj`'s
+  Step event. It sets `x` and `y` at three sites each (on which instance is
+  not read: the script also creates instances of many kinds and handles leap
+  skills' damage), sets `direction` (four sites), `deltaSpeed` (two) and
+  `max_range` (one), reads `height` and `jumpDirection`, and calls
+  `gml_Script_PlayerMoveSkill` (2776, which reads `pSt` and sets `x` and
+  `y`), `gml_Script_IsObtainablePlace` (2076, five sites, § 19.11),
+  `InheritModifiers` and the collision builtins `collision_circle`,
+  `collision_circle_list`, `instance_place`, `instance_position`,
+  `place_meeting` and `position_meeting`, naming `Collision_Parent_obj`,
+  `Wall_Parent_obj` and `Block_obj`. It asks the dispatcher for id 337 (no
+  case) and for damage stat ids. It references no mouse coordinate, so the
+  jump's target is plausibly decided before it runs (the Step event reads
+  `mouse_x`, `mouse_y`, `xMouse` and `yMouse`).
+- **`jumpDirection` belongs to the scenery, not the player.** The Create
+  events of `Collision_Parent_obj`, `Collision_Prop_obj` and about thirty
+  cliff objects reference it, so it is plausibly the direction a cliff lets a
+  leap go down, read from the prop a leap meets.
+- **`gml_Script_playerJumpGravity` (2764)** has one direct caller found, the
+  player object's Step event. It reads `x` and `y` (no write site found),
+  `height`, `pSt` and `playerEffect`, sets `stickHost`, references `unstuck`,
+  `unstuckDir`, `myShadow`, `groundDepth` and `playerSkipCollisions`, and
+  calls `InstancePlaceTallest` (599), `IsInWater` and `UpdateDepth`; it asks
+  the dispatcher for id 337 too. So by this reading `skillsLeap` (or
+  `PlayerMoveSkill` inside it) moves the player during a jump and
+  `playerJumpGravity` handles the landing side. Both run every frame of a
+  jump (§ 19.1, **measured**); which one moves the player is measured by
+  `mark1probe pos` (Live 2).
+- **The game has its own collision skip.** `playerSkipCollisions` is
+  initialised in the player's Create event and read in its Step event, and is
+  referenced through another scope by `playerJumpGravity`, the player's
+  collision event with `Collision_Parent_obj`, `Krampus_obj` (2426) and
+  `Prison_Catapult_Bottom_obj` (3629)'s Alarm 0, which also references
+  `launchPlayer`, `forceMovePlayer`, `jump` and `zSpeed`. The player's
+  collision event with `Collision_Parent_obj` references `x`, `y`,
+  `xprevious`, `yprevious`, `speed` and `height`: the shape of an event that
+  puts the player back where it was. Whether `playerSkipCollisions` gates
+  that event, and who sets it when, is **not read**.
+
+[Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
+
+### 19.11 The walkable map and its edge
+
+From the same reading as § 19.10 (2026-10-13). Static unless marked.
+
+- **The path grid marks blockers, not the map's edge.**
+  `gml_Script_PathFindControllerCreate` (2714) destroys any earlier
+  `global.pathGrid`, sets `global.gridSize` to 16, creates an mp_grid of
+  `room_width` / 16 by `room_height` / 16 cells, clears it, and adds every
+  instance of `Collision_Parent_obj` (957) with precise masks, then those of
+  `Player_Only_Passage_obj` (3554) and `Projectile_Only_Passage_obj` (3675)
+  when any exist. It ends with `gml_Script_PathFindApplyStaticBlockers`
+  (2718): when `global.pathStaticRoom` is the current room, every rectangle in
+  `global.pathStaticRects` (four numbers each) is added too. Neither function
+  marks a cell because it lies beyond the floor: a cell is blocked only where
+  one of those instances or rectangles covers it. Read from the MCP decompile
+  of both functions. § 22.7 measured the grid itself.
+- **In a generated zone the rectangles are the outside.** The rectangles come
+  from `gml_Script_PathFindBuildStaticBlockers` (2717), whose one direct caller found
+  is an anonymous function of `objZoneGenV2` (3259)'s Create event. It reads
+  the generator's `outsideBlockList`, `zoneOuterScale` and `global.gridSize`
+  and the room size, and writes `global.pathStaticRects` and
+  `global.pathStaticRoom`. So in a generated zone the area outside the zone
+  is plausibly blocked in the path grid through those rectangles; in a room
+  the generator did not build (a town), nothing found marks the outside.
+  Name scan; the arithmetic was not read.
+- **The game's own "can something stand here" test.**
+  `gml_Script_IsObtainablePlace` (2076) takes a point. When no
+  `objZoneGenV2` (3259) exists it answers yes, for any point. Otherwise it
+  answers no for a point outside the room, no when the generator's
+  `heatGridL` is negative, and yes only when the point's 32 px cell and its
+  four diagonal neighbours all hold something other than 30000. Read from the
+  MCP decompile.
+- **The heat grid is the generated zone's wall map.** `heatGridL` is written
+  by `objZoneGenV2`'s Create event and by `gml_Script_ZoneGenMakeZoneWalls`
+  (3601), so 30000 plausibly marks a wall or void cell of a generated zone.
+  `IsObtainablePlace` has callers across the game: `skillsLeap` (five sites),
+  `skillsBlink` (3660), the player's Step event, `PlayerUpdateTimers` (2794),
+  `TalentsUniversal`, the enemy creators, `Quest_Manager_obj` and the platform
+  objects. Whether `objZoneGenV2` exists in a town, and so whether the test
+  says anything there, is **not established**.
+
+[Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
 
 ---
 
