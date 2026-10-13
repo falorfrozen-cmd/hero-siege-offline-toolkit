@@ -1023,12 +1023,19 @@ parts come from the research's Live 1 session on 2026-10-13 (the
 - **Writing the press value inside the gate casts the slot (measured).** In
   Live 1 (`cast-input`), writing 4 into a slot's `inputState` entry just
   before each local `CheckTalentUse` call, and restoring it after, cast that
-  slot's skill with no key pressed (Mana Orb on column 3). The game kept its
-  cooldown: with the value forced on every call for more than 480 frames,
-  Mana Orb was cast once (`cast-gate`); whether it still charged mana was not
-  observed. The same write on Soul Spurn's column switched the toggle on and
-  off 13 times in 600 frames (`toggle-flips`), and on an empty column it
-  called no `TalentUse` at all (`empty-slot`).
+  slot's skill with no key pressed (Mana Orb on column 3). With the value
+  forced on every call for more than 480 frames (about 5.6 s at the session's
+  ~85 fps), Mana Orb was cast once (`cast-gate`). What refused the repeats
+  (its cooldown, mana, the orb still being alive, or how the forced press is
+  seen) was not read, and Mana Orb's cooldown was not read in that session:
+  that the game's cooldown still applies to a forced press is **not
+  established**, and neither is whether the forced cast still charged mana.
+  An immediate key recast of Mana Orb has been measured to work (§ 7.3, the
+  `effect=` count reading 2 right after a recast), so the window may well be
+  longer than the cooldown; talent 253's cooldown is the next read. The same
+  write on Soul Spurn's column switched the toggle on and off 13 times in 600
+  frames (`toggle-flips`), and on an empty column it called no `TalentUse` at
+  all (`empty-slot`).
 - **The game has its own input simulation.** `gml_Script_InputSimulate`
   (1903) takes a profile slot index, a key and a value, and stores the value under
   the key in that profile slot entry's `inputSimMap` (a ds_map). That map is
@@ -1053,9 +1060,12 @@ parts come from the research's Live 1 session on 2026-10-13 (the
   global array read the same way, per slot. Whether setting a slot's
   `abilityQueue` entry makes the gate cast that slot is **not established**:
   Live 1 did not try it, because the input write cast first. **Measured** in
-  Live 1 (`queue-observed`): over two key presses with one cast, no entry of
-  `abilityQueue`, `mobileTalentPressed` or the player's `stackSkillList`
-  changed from one frame to the next.
+  Live 1 (`queue-observed`): over two key presses with one cast, none of the
+  first four entries of `abilityQueue`, `mobileTalentPressed` or the player's
+  `stackSkillList` changed from one frame to the next. The watch reads entries
+  0-3 of each array only, once a frame at the frame's end, so an entry of a
+  later slot, or one set and cleared inside one gate call, would not show;
+  whether a key cast goes through the queue is therefore **not established**.
 - **`stackSkillList` is a variable of the gate's own `self`**, read at five
   sites and taken for writing at two.
 - **The cast itself.** Per slot that asks, the gate calls `GetTalentInfo`
@@ -5669,7 +5679,11 @@ From the same reading as § 19.10 (2026-10-13). Static unless marked.
     `place_meeting`.
   - Past the room's bottom the grid cell read -1, but `place_meeting` met
     nothing once the points were past the invisible walls.
-  - No tile layer's cell marks the edge.
+  - None of the four tile layers the probe read (`Darkness`, `Hay_Ground`,
+    `Leaves_Ground` and `Water`) marks the edge. The probe keeps at most four
+    tile layers, and `Town_01_rm` has more (its tile layers run from
+    `Darkness` to `Background_Tiles`, § 19.7), so whether a later tile layer
+    marks the edge was not read.
 
   So in a town a landing point is walkable when it lies inside the room and
   the player placed there meets nothing of `Collision_Parent_obj`; the
