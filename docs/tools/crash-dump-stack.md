@@ -114,7 +114,7 @@ py -3 tools/crash_dump_stack.py --dump <path.dmp> --frames 20
 | Code | Meaning |
 |---|---|
 | 0 | parsed, and `--expect-module` (if given) matched |
-| 1 | `--expect-module` did not match, or the stack was `context=unverified`. The output still prints, and stderr names both |
+| 1 | `--expect-module` did not match, or was given and the stack was `context=unverified` (without `--expect-module`, an unverified stack exits 0 and is flagged only in the header). The output still prints, and stderr names both |
 | 2 | usage error, from argparse: two of `--dump`/`--pid`/`--latest`, none of them, or a bad value |
 | 3 | no dump: the `--pid` file is absent (after `--wait`), or `--latest` found none |
 | 4 | cdb ran and no exception record was parsed. stderr carries cdb's last lines |
