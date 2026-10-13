@@ -5649,11 +5649,19 @@ From the same reading as § 19.10 (2026-10-13). Static unless marked.
   (`walkable-control`, [Live 2 results](../ForgePact/docs/mark1-set-research.md#live-2-results)),
   four points of open floor in `Town_01_rm`, one of them the player's own
   position, read inside the room, a free `global.pathGrid` cell and a clear
-  line against `Wall_Parent_obj`, but the player's `place_meeting` against
-  `Collision_Parent_obj` read blocked at every one of them, for a reason not
-  established. With the control failed, a point inside a prop and the town's
-  edge were never read, so none of the bullets below has been checked live,
-  and nothing here yet tells a walkable landing point from one past the edge.
+  line against `Wall_Parent_obj`, but the probe's reading of the player's
+  `place_meeting` against `Collision_Parent_obj` printed blocked at every one
+  of them. That is the probe's interpretation, not `place_meeting`'s answer:
+  the session DLL's adapter counted any numeric answer of 0 or more as a
+  meeting, so a real 0 (no meeting) also printed blocked. ForgePact 61243b2
+  corrected the adapter to read the answer as a boolean, and the probe now
+  prints each field's raw answer and what a blocked family met. Live 2
+  recorded no raw answer, so its reading says nothing about what
+  `place_meeting` against `Collision_Parent_obj` answers on open floor, and
+  which cause produced it is not established. With the control failed, a
+  point inside a prop and the town's edge were never read, so none of the
+  bullets below has been checked live, and nothing here yet tells a walkable
+  landing point from one past the edge.
 
 - **The path grid marks blockers, not the map's edge.**
   `gml_Script_PathFindControllerCreate` (2714) destroys any earlier
