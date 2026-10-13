@@ -8,10 +8,12 @@ next, the way the game would. `_sleep` is a no-op that advances `_now`, so
 the poll budgets and `timeout_s` cost nothing. Nothing here starts a game or
 calls Win32.
 
-The listings are synthetic (`hs_drive_mcp_pausemenu_fixtures`): no
-pause-menu listing has been captured yet. These tests pin the tool's rules --
-the row it clicks is a new row of this open, picked by its text or
-`uiNodeCallstack`, at its listed point -- not what the game's menu says.
+The listings (`hs_drive_mcp_pausemenu_fixtures`) are written by hand around
+one measured row: the Exit row's text `Save & Exit` and `uiNodeCallstack`
+`PauseSaveExit`, as #201's Live 1 and Live 2 listed them (2026-10-13). Every
+other row, id and point is invented. These tests pin the tool's rules -- the
+row it clicks is a new row of this open, picked by its text or
+`uiNodeCallstack`, at its listed point -- not the rest of the game's menu.
 
 Baseline (`AGENTS.md` § "Mod Development Workflow"): outside the world, with
 a disagreeing window or with a menu that never lists, nothing is clicked.
@@ -27,7 +29,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.hs_drive_mcp import menuexit, results  # noqa: E402
+from tools.hs_drive_mcp import layout, menuexit, results  # noqa: E402
 from tests.hs_drive_mcp_lease_fixtures import isolate_lease_dir  # noqa: E402
 from tests.hs_drive_mcp_pausemenu_fixtures import (  # noqa: E402
     EXIT_ID, EXIT_POINT, HUD_BUTTONS, PAUSE_BUTTONS, SECOND_EXIT, TOWN_ROOM,
@@ -227,7 +229,8 @@ class ExitRowTests(MenuExitTestCase):
             self.assertEqual(call["route"], "send_input")
             self.assertTrue(call["force_focus"])
         self.assertEqual(result["exit_row"]["id"], EXIT_ID)
-        self.assertEqual(result["exit_row"]["uiNodeCallstack"], "PauseExit")
+        self.assertEqual(result["exit_row"]["uiNodeCallstack"], "PauseSaveExit")
+        self.assertEqual(result["exit_row"]["text"], "Save & Exit")
         self.assertEqual([step["step"] for step in result["layout_trail"]],
                          ["escape", "exit"])
         self.assertEqual(len(result["focus_trail"]), 2)
@@ -242,11 +245,30 @@ class ExitRowTests(MenuExitTestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(game.clicks(), [(960, 870)])
         self.assertEqual(result["exit_row"]["text"], "Exit Game")
+        # The measured row's own text, `&` and spaces included, as a caller
+        # would pass it: the listing parse keeps it whole, so it matches.
+        result, game = self.run_tool([IN_WORLD, two, CHARACTER_SELECT],
+                                     label="Save & Exit")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(game.clicks(), [EXIT_POINT])
+        self.assertEqual(result["exit_row"]["id"], EXIT_ID)
+        self.assertEqual(result["exit_row"]["text"], "Save & Exit")
+        self.assertEqual(result["exit_row"]["uiNodeCallstack"], "PauseSaveExit")
         # Exact text, not a substring and not the callstack.
         result, game = self.run_tool([IN_WORLD, two, CHARACTER_SELECT],
                                      label="exit")
         self.assertEqual(result["reason"], "exit_button_not_found", result)
         self.assertEqual(game.clicks(), [])
+
+    def test_the_measured_exit_text_survives_the_listing_parse(self):
+        # The game's row text carries `&` and spaces; the parse must keep it
+        # whole, or neither the exit rule nor a `label` could match it.
+        row = layout.parse_row(PAUSE_BUTTONS[-1])
+        self.assertEqual(row.text, "Save & Exit")
+        self.assertEqual(menuexit._callstack(row), "PauseSaveExit")
+        self.assertEqual((row.id, row.win), (EXIT_ID, EXIT_POINT))
+        self.assertEqual([r.id for r in menuexit.exit_candidates([row], None)],
+                         [EXIT_ID])
 
     def test_reports_the_menu_room_it_reached(self):
         for room in ("Chose_rm", "Main_Menu_rm"):

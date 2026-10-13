@@ -835,8 +835,8 @@ took, per input), `proof` (each listing header that decided a step) and
 `elapsed_s`. A refusal carries `last_listing` and the phase it stopped in
 (`in_world`, `escape`, `pause_menu`, `exit_click`).
 
-**Measured 2026-10-13 (#201's Live procedures 1 and 2, four calls, each
-`menu_reached` on the first call, no `label`).** The injected Escape opens the
+**Measured 2026-10-13 (#201's Live procedures 1 and 2, two calls (Live 1
+cell C, Live 2 cell G), each `menu_reached` on the first call, no `label`).** The injected Escape opens the
 pause menu (`pause_opened_by: key`, from `Town_01_rm`); the one new exit-like
 row is a `UI_Button_obj` reading "Save & Exit" with `uiNodeCallstack`
 `PauseSaveExit`, at `win=1280,856` on a 2560x1440 fullscreen client; the click

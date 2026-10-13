@@ -39,8 +39,9 @@ Measured 2026-10-13 in #201's Live 1 cell C and Live 2 cell G: the injected
 Escape opened the pause menu, the Exit row is a `UI_Button_obj` reading
 "Save & Exit" with `uiNodeCallstack` `PauseSaveExit`, a click at its point
 activates it with no confirmation, and the game reaches `Chose_rm`;
-`menu_reached` on the first call each time. The tests' listings are still
-synthetic, built to that shape.
+`menu_reached` on the first call each time. The tests' listings are written
+by hand around that measured row (its text and callstack); their other rows,
+ids and points are invented.
 
 Only `menulayout` is sent over IPC. Nothing here suspends the game: it presses
 one key and clicks one button a player would. No MCP import: `server.py`

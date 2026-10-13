@@ -1,16 +1,19 @@
-"""Pause-menu `menulayout` listings for `hs_exit_to_menu`'s tests -- SYNTHETIC.
+"""Pause-menu `menulayout` listings for `hs_exit_to_menu`'s tests.
 
-**No pause-menu listing has been captured from a running game yet.** Every
-row here is written by hand in the plugin's reply format (the same framing,
-CRLF and field order as the captured listings in
-`hs_drive_mcp_menulayout_fixtures.py` and `hs_drive_mcp_stashlayout_fixtures.py`),
-so these tests pin the tool's rules, not the game's pause menu. What is known:
-`UI_Pause_obj` exists only while the menu is open, each open builds new
-`UI_Button_obj` rows, and Restart's `uiNodeCallstack` is `PauseRestart`
-(`docs/RUNTIME_DATA_MODELS.md` § 8.4, measured 2026-09-22). The Exit row's
-text (`Exit`), its `uiNodeCallstack` (`PauseExit`), the other rows and every
-id and point below are invented. ForgePact #201's Live procedure 1 is the first
-session that lists the real menu; replace these with its capture then.
+**One row is measured; the rest is written by hand.** ForgePact #201's Live
+procedures 1 and 2 (2026-10-13, Live 1 cell C and Live 2 cell G) listed the
+real pause menu: its Exit row is a `UI_Button_obj` whose text reads
+`Save & Exit` and whose `uiNodeCallstack` is `PauseSaveExit`, at `win=1280,856`
+on a 2560x1440 fullscreen client (`docs/RUNTIME_DATA_MODELS.md` § 8.4). The
+`EXIT_ID` row below carries that measured text and callstack, so a text with
+`&` and spaces goes through `layout.parse` the way the game's does. Its id and
+point are invented (this fixture's window is 1920x1080), as are every other
+row, id and point here. The rows are written in the plugin's reply
+format (the same framing, CRLF and field order as the captured listings in
+`hs_drive_mcp_menulayout_fixtures.py` and `hs_drive_mcp_stashlayout_fixtures.py`).
+Also known: `UI_Pause_obj` exists only while the menu is open, each open builds
+new `UI_Button_obj` rows, and Restart's `uiNodeCallstack` is `PauseRestart`
+(§ 8.4, measured 2026-09-22).
 """
 
 TOWN_ROOM = "Town_01_rm"
@@ -77,7 +80,9 @@ PAUSE_BUTTONS = [
     button(300102, (960, 478), "Options", "PauseOptions"),
     button(300103, (960, 576), "Restart", "PauseRestart"),
     button(300104, (960, 674), "Join Discord", "PauseJoinDiscordExitLink"),
-    button(EXIT_ID, EXIT_POINT, "Exit", "PauseExit"),
+    # The measured row (2026-10-13, #201 Live 1 cell C and Live 2 cell G):
+    # text and callstack as the game lists them; id and point invented.
+    button(EXIT_ID, EXIT_POINT, "Save & Exit", "PauseSaveExit"),
 ]
 
 #: A second row that also reads as an Exit row, for the ambiguity rule.

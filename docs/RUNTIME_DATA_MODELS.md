@@ -1177,8 +1177,8 @@ pause menu in `Town_01_rm`. Its Exit is a `UI_Button_obj` whose text reads
 there takes the game to `Chose_rm` (the character select) with no
 confirmation in between; it does not end the game. Both the character file
 `herosiege13.hss` and the bag file `inventory_order_13.hss` are rewritten by
-it, within a second of each other. Measured four times over two sessions,
-each on the first call (#201's Live procedure 1, capture
+it, within a second of each other. Measured twice, once per session (Live 1
+cell C, Live 2 cell G), each on the first call (#201's Live procedure 1, capture
 `forgepact-201-exit-c0000409-live-1`, and Live procedure 2, capture
 `forgepact-201-exit-c0000409-live-2`, local to the hub's workorder folder).
 **Static reading** (2026-10-13): `UiAIngameExit` is named beside

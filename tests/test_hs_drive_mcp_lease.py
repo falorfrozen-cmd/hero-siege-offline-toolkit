@@ -245,7 +245,8 @@ class LeaseBase(unittest.TestCase):
         # `hs_exit_to_menu` reaches the process gate first; its listing send
         # and its key share the recorder, so a send before the gate counts.
         def exit_call():
-            with patch.object(menuexit.ipc, "send", touched["hs_exit_to_menu"]),                  patch.object(menuexit.input_module, "inject", touched["hs_exit_to_menu"]):
+            with patch.object(menuexit.ipc, "send", touched["hs_exit_to_menu"]), \
+                 patch.object(menuexit.input_module, "inject", touched["hs_exit_to_menu"]):
                 return menuexit.hs_exit_to_menu(timeout_s=1, gate=touched["hs_exit_to_menu"])
 
         return {"hs_launch": launch_call, "hs_stop_game": stop_call,
