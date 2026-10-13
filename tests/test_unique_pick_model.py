@@ -242,8 +242,7 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(vanilla_elsewhere + stand_ins + items, 1)
 
     def test_pocket_elf_takes_one_call_in_l_plus_one(self):
-        lengths = _entries()["UP6"]["values"]["sub_list_lengths"][:5]
-        for length in lengths:
+        for length in _ordinary_lengths():
             for n in (0, 1, 3):
                 with self.subTest(L=length, n=n):
                     self.assertEqual(elf_ordinary_chance(length, n, PLAYER_COPIES), Fraction(1, length + 1))
