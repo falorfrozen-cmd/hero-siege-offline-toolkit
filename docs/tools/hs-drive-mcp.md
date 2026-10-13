@@ -487,6 +487,9 @@ line, so there was no answer to "what ended it". Now:
 - **A launched game still running is not listed**, and neither is any PID this
   server did not launch, nor one whose `exit_watch` was `unavailable`. Off
   Windows `exits` is an empty list and nothing raises.
+- **`hs_selfcheck`'s `exit_code_readback` proves this open and this read**
+  on two children of its own that exit `0x00000000` and `0xC0000409`
+  (ForgePact #201, § "`hs_selfcheck` — proving the instrument").
 
 Reading a code: `0x00000000` is a normal exit, `0xC0000005` an access violation,
 `0xC0000409` a fast-fail abort (`STATUS_STACK_BUFFER_OVERRUN`), and `0x00000001`
@@ -1114,6 +1117,24 @@ This server has since produced that shape twice in its own Python — `hs_selfch
 | `save_dir` | The live directory exists and holds ≥ 1 `herosiege*.hss` (count in `detail`) | never |
 | `backup_roundtrip` | A temp fixture backs up, is damaged, and restores byte-identical through the real `saves` functions | never |
 | `screenshot_screen` | A capture of the primary screen holds more than one distinct pixel value | non-Windows, or Pillow not importable |
+| `exit_code_readback` | Two children of its own, exiting `0x00000000` and `0xC0000409`, read back as exactly those codes, each matching the child's own return code | non-Windows |
+
+`exit_code_readback` (ForgePact #201) proves the reading `hs_stop_game` and
+`hs_status` report as `exits`. #201 asks what raised the `0xC0000409` a stop
+reports, and that question is only worth asking if the reader can tell a clean
+exit from a fast fail: one that answered every exit with the same code would
+look identical from outside. So the check starts two short-lived Python
+children with no window and none of this server's stdio, one ending
+`sys.exit(0)` and one `sys.exit(-1073740791)` (the signed form of
+`0xC0000409`), opens each by PID while it still runs through
+`procs.open_exit_handle`, the open `hs_launch`'s `watch_exit` makes, confirms
+the read says "still running", then lets it exit and reads it through
+`procs.read_exit_code`, the read `exits()` makes, with a bounded wait. `pass`
+names both readings; `fail` names what was read and what the child itself
+returned. Its children are not launched games: nothing is added to `exits`, and
+nothing is written. `tests/test_hs_drive_mcp_server.py::ExitCodeReadbackTests`
+runs it for real and carries the negative control, a reader that answers
+`0x00000000` for everything, which must fail.
 
 A check whose code raised is `fail` with the exception name, never `skipped`.
 `skipped` always carries its reason in `detail`, because "we did not look" and
@@ -1141,7 +1162,7 @@ and nothing may appear in that install's `bp_ipc\` afterwards.
 
 `summary.healthy` is **not** "nothing failed". It requires every check
 registered with `positive_control=True` — `process_snapshot`,
-`backup_roundtrip` and `screenshot_screen` — to have *passed*. A run where everything was
+`backup_roundtrip`, `screenshot_screen` and `exit_code_readback` — to have *passed*. A run where everything was
 skipped has zero failures and has proved nothing, and `healthy` is the field a
 caller branches on; a self-check that reports itself armed while blind is the
 one failure this tool cannot delegate. `summary` also carries

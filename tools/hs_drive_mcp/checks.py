@@ -38,7 +38,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-from . import capture, launcher_bridge, results, saves
+from . import capture, launcher_bridge, procs, results, saves
 
 #: A check returns (status, detail). status is one of these three.
 STATUSES = ("pass", "fail", "skipped")
@@ -224,6 +224,98 @@ def check_screenshot_screen() -> tuple[str, str]:
         "about the game's window rather than about this instrument.")
 
 
+#: The two codes `check_exit_code_readback` makes its children exit with, and
+#: the text each must read back as. -1073740791 is the signed form of
+#: 0xC0000409, the fast-fail code `hs_stop_game` reports for the tracker
+#: producer's exit-time abort (ForgePact #201).
+EXIT_READBACK_CASES = ((0, "0x00000000"), (-1073740791, "0xC0000409"))
+
+#: How long the check waits for a child to signal once told to exit. A Python
+#: child that only reads stdin and exits takes well under a second.
+EXIT_READBACK_WAIT_MS = 15000
+
+
+def _read_child_exit(code: int) -> tuple[str | None, str]:
+    """Start a child that exits with `code`, read it the way `exits()` does.
+
+    Returns `(text read, return code text)`, or `(None, why)` when there was
+    nothing to read. The child waits on its stdin, so the open happens while it
+    runs -- as `watch_exit` opens a launched game -- and the read before it is
+    told to exit must say "still running"; `Popen`'s own handle keeps the PID
+    from being reused meanwhile. It inherits no console window and none of
+    this server's stdio, which is the MCP channel.
+    """
+    import subprocess
+    import sys
+
+    child = subprocess.Popen(
+        [sys.executable, "-I", "-c",
+         f"import sys; sys.stdin.read(); sys.exit({code})"],
+        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    handle = None
+    try:
+        handle, why = procs.open_exit_handle(child.pid)
+        if handle is None:
+            return None, f"sys.exit({code}): {why}"
+        early = procs.read_exit_code(handle)
+        if early is not None:
+            return None, (f"sys.exit({code}): the child was still waiting on "
+                          f"its stdin, yet the read reported it ended with "
+                          f"{procs.exit_code_text(early)}")
+        child.stdin.close()
+        read = procs.read_exit_code(handle, EXIT_READBACK_WAIT_MS)
+        if read is None:
+            return None, (f"sys.exit({code}): no exit code read within "
+                          f"{EXIT_READBACK_WAIT_MS} ms of the child being told "
+                          "to exit")
+        returned = child.wait(timeout=EXIT_READBACK_WAIT_MS / 1000)
+        return procs.exit_code_text(read), procs.exit_code_text(returned)
+    finally:
+        if handle is not None:
+            procs.close_exit_handle(handle)
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        if child.stdin and not child.stdin.closed:
+            child.stdin.close()
+
+
+def check_exit_code_readback() -> tuple[str, str]:
+    """Positive control: read back two exit codes this check chose itself.
+
+    `hs_stop_game` and `hs_status` report a launched game's exit code, and
+    ForgePact #201 rests on that reading telling a clean exit (`0x00000000`)
+    from the fast fail (`0xC0000409`). An instrument that read every exit as
+    one of them would look identical from the outside, so this starts one
+    child per code, opens and reads it through `procs.open_exit_handle` and
+    `procs.read_exit_code` -- the path `exits()` uses -- and compares each with
+    the expected text and with the child's own return code. Nothing is added to
+    the launched-game record, and nothing is written.
+    """
+    if not procs.on_windows():
+        return "skipped", (f"exit codes are read through Win32; os.name is "
+                           f"{os.name!r}, so it was not run")
+    readings: list[str] = []
+    for code, expected in EXIT_READBACK_CASES:
+        read, returned = _read_child_exit(code)
+        if read is None:
+            return "fail", returned
+        if read != expected or returned != expected:
+            return "fail", (
+                f"a child that ran sys.exit({code}) read back as {read}, its "
+                f"own return code as {returned}; both should be {expected}. "
+                "An exit code hs_stop_game or hs_status reports is not to be "
+                "trusted until this passes.")
+        readings.append(f"sys.exit({code}) read as {read}")
+    return "pass", (
+        f"{' and '.join(readings)}, each matching the child's own return code, "
+        "through the open and read that report a launched game's exit, so a "
+        "reported 0xC0000409 or 0x00000000 is the game's code, not the "
+        "instrument's.")
+
+
 register("engine_import", check_engine_import)
 # Both of these point the instrument at something certainly present -- this
 # server's own process, and a fixture it just wrote. They are what `healthy`
@@ -236,6 +328,9 @@ register("backup_roundtrip", check_backup_roundtrip, positive_control=True)
 # fixture, so a screenshot tool that cannot capture it is blind rather than
 # unlucky.
 register("screenshot_screen", check_screenshot_screen, positive_control=True)
+# The fourth: two exit codes this check chose, read back through the launched
+# game's own open and read (ForgePact #201).
+register("exit_code_readback", check_exit_code_readback, positive_control=True)
 
 
 def run_checks(tool: str = "hs_selfcheck") -> dict[str, Any]:

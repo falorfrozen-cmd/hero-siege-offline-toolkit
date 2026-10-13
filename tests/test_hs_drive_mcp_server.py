@@ -97,14 +97,15 @@ EXPECTED_READ_ONLY = {"hs_status", "hs_selfcheck", "hs_saves_list",
 #: registered again under a different name.
 EXPECTED_CHECKS = [
     "engine_import", "process_snapshot", "eac_service", "save_dir",
-    "backup_roundtrip", "screenshot_screen",
+    "backup_roundtrip", "screenshot_screen", "exit_code_readback",
 ]
 
 #: `save_dir` is left out on purpose: it reports on whatever directory the
 #: environment points at, which is a fixture here, so it is asserted by name
 #: below rather than by its status.
 MUST_PASS_ON_WINDOWS = ["engine_import", "process_snapshot", "eac_service",
-                        "backup_roundtrip", "screenshot_screen"]
+                        "backup_roundtrip", "screenshot_screen",
+                        "exit_code_readback"]
 
 SKIP_REASON = None
 if os.name != "nt":
@@ -612,10 +613,61 @@ class SelfCheckSummaryTests(unittest.TestCase):
         from tools.hs_drive_mcp import checks
         self.assertEqual(checks.positive_controls(),
                          ["process_snapshot", "backup_roundtrip",
-                          "screenshot_screen"])
+                          "screenshot_screen", "exit_code_readback"])
         self.assertTrue(set(checks.positive_controls()) <= set(EXPECTED_CHECKS),
                         "a control that is not a registered check cannot have "
                         "run, so `healthy` would rest on nothing")
+
+
+@unittest.skipIf(os.name != "nt",
+                 f"exit codes are read through Win32; os.name is {os.name!r}")
+class ExitCodeReadbackTests(unittest.TestCase):
+    """`exit_code_readback` is what makes a `0xC0000409` from `hs_stop_game`
+    mean the game's code (ForgePact #201): it reads back two codes it chose,
+    through the open and read `procs.exits()` uses. Real children, real Win32;
+    only the MCP SDK is not needed."""
+
+    def setUp(self):
+        from tools.hs_drive_mcp import checks, procs
+        self.checks, self.procs = checks, procs
+        self.enterContext(patch.object(procs, "_EXITS", []))
+
+    def test_exit_code_readback_reads_zero_and_the_fast_fail_code(self):
+        status, detail = self.checks.check_exit_code_readback()
+        self.assertEqual(status, "pass", detail)
+        self.assertIn("read as 0x00000000", detail)
+        self.assertIn("read as 0xC0000409", detail)
+
+    def test_negative_control_exit_code_readback_fails_on_a_wrong_reading(self):
+        """A reader that answers 0 for everything would pass a clean-exit-only
+        check; this one must fail, and name what was read. A reader that never
+        sees the child end must fail too, rather than hang or pass."""
+        real = self.procs._ended_code
+
+        def always_zero(api, handle, wait_ms=0):
+            code = real(api, handle, wait_ms)
+            return None if code is None else 0
+
+        with patch.object(self.procs, "_ended_code", always_zero):
+            status, detail = self.checks.check_exit_code_readback()
+        self.assertEqual(status, "fail", detail)
+        self.assertIn("read back as 0x00000000", detail)
+        self.assertIn("should be 0xC0000409", detail)
+
+        with patch.object(self.checks, "EXIT_READBACK_WAIT_MS", 200), \
+                patch.object(self.procs, "_ended_code",
+                             lambda api, handle, wait_ms=0: None):
+            status, detail = self.checks.check_exit_code_readback()
+        self.assertEqual(status, "fail", detail)
+        self.assertIn("no exit code read", detail)
+
+    def test_exit_code_readback_leaves_exits_empty(self):
+        """The check's children are not launched games: hs_status and
+        hs_stop_game must never report them."""
+        status, detail = self.checks.check_exit_code_readback()
+        self.assertEqual(status, "pass", detail)
+        self.assertEqual(self.procs.exits(), [])
+        self.assertEqual(self.procs._EXITS, [])
 
 
 @unittest.skipIf(SKIP_REASON is not None, SKIP_REASON or "")

@@ -42,6 +42,9 @@ handle closed. The registry is this server process's memory only: a PID from an
 earlier run of the server has no handle here, so it is never reported, and a
 PID somebody else started is never watched at all (ForgePact #173: a crash that
 left neither a dump nor a clean-shutdown line, and an exit code nobody read).
+`open_exit_handle` and `read_exit_code` are that open and that read, shared
+with `hs_selfcheck`'s `exit_code_readback`, which runs them on two children of
+its own that exit `0x00000000` and `0xC0000409` (ForgePact #201).
 """
 from __future__ import annotations
 
@@ -209,41 +212,70 @@ def exit_code_text(code: int) -> str:
     return f"0x{int(code) & 0xFFFFFFFF:08X}"
 
 
+def open_exit_handle(pid: int) -> tuple[Any, str]:
+    """Open a PID for its exit code: `(handle, "held")` or `(None, "unavailable (why)")`.
+
+    The one open both readers share: `watch_exit` for a launched game, and
+    `checks.check_exit_code_readback`, which proves this open and
+    `read_exit_code` on children whose codes it chose (#201). The caller owns
+    the handle and closes it with `close_exit_handle`.
+    """
+    pid = int(pid or 0)
+    if not pid:
+        return None, "unavailable (the launch engine reported no pid)"
+    if not on_windows():
+        return None, (f"unavailable (exit codes are read through Win32, and "
+                      f"os.name is {os.name!r})")
+    try:
+        api = kernel32()
+        handle = api.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+                                 False, pid)
+    except (OSError, AttributeError, ValueError) as exc:
+        return None, f"unavailable ({type(exc).__name__}: {exc})"
+    if not handle:
+        return None, (f"unavailable (OpenProcess(QUERY_LIMITED_INFORMATION | "
+                      f"SYNCHRONIZE, {pid}) failed, GetLastError "
+                      f"{ctypes.get_last_error()})")
+    return handle, "held"
+
+
+def read_exit_code(handle: Any, wait_ms: int = 0) -> int | None:
+    """The exit code behind a handle from `open_exit_handle`, through the read
+    `exits()` makes; None while the process still runs after `wait_ms`."""
+    return _ended_code(kernel32(), handle, wait_ms)
+
+
+def close_exit_handle(handle: Any) -> None:
+    """Close a handle from `open_exit_handle`; never raises."""
+    try:
+        kernel32().CloseHandle(handle)
+    except (OSError, AttributeError, ValueError):
+        pass
+
+
 def watch_exit(pid: int) -> str:
     """Hold a handle on a PID this server launched. `held` or `unavailable (why)`.
 
     The reason travels with the answer: an `exits` list that does not name a
     PID means "it has not ended" only when this said `held`.
     """
-    pid = int(pid or 0)
-    if not pid:
-        return "unavailable (the launch engine reported no pid)"
-    if not on_windows():
-        return (f"unavailable (exit codes are read through Win32, and os.name "
-                f"is {os.name!r})")
-    try:
-        api = kernel32()
-        handle = api.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
-                                 False, pid)
-    except (OSError, AttributeError, ValueError) as exc:
-        return f"unavailable ({type(exc).__name__}: {exc})"
-    if not handle:
-        return (f"unavailable (OpenProcess(QUERY_LIMITED_INFORMATION | "
-                f"SYNCHRONIZE, {pid}) failed, GetLastError "
-                f"{ctypes.get_last_error()})")
+    handle, answer = open_exit_handle(pid)
+    if handle is None:
+        return answer
     with _EXITS_LOCK:
-        _EXITS.append({"pid": pid, "handle": handle, "code": None})
+        _EXITS.append({"pid": int(pid), "handle": handle, "code": None})
     return "held"
 
 
-def _ended_code(api: Any, handle: Any) -> int | None:
+def _ended_code(api: Any, handle: Any, wait_ms: int = 0) -> int | None:
     """The exit code once the handle is signalled; None while the process runs.
 
     Ended is the wait's answer, not the code's: 259 is a real exit code and
     `STILL_ACTIVE` both, so reading the code first would report a live process
-    as exited, or a process that exited with 259 as live.
+    as exited, or a process that exited with 259 as live. `exits()` never
+    waits (`wait_ms` 0); the self-check waits a bounded time for its child.
     """
-    if api.WaitForSingleObject(handle, 0) != WAIT_OBJECT_0:
+    if api.WaitForSingleObject(handle, int(wait_ms)) != WAIT_OBJECT_0:
         return None
     from ctypes import wintypes
     code = wintypes.DWORD()
