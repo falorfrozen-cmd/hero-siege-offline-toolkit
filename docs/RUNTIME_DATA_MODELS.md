@@ -3190,7 +3190,7 @@ our own words, not run):
   `GetSatanicZoneOffline` and `GetSatanicZoneEligible` were not observed (a
   `-noanalysis` import leaves the reference table mostly empty, so that is
   not a negative). Live procedure 2 of the toolkit workorder
-  `forgepact-185-tracker-move` puts debugger logpoints on both beside its room
+  `forgepact-185-tracker-zone-fix` puts debugger logpoints on both beside its room
   changes. How many ticks a newly generated act zone runs without a
   `Player_obj`, so without an answer from the zone's readers, is not
   established either (§ 1, "How the local player arrives").
