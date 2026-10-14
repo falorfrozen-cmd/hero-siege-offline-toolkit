@@ -172,5 +172,5 @@ HS-Offline-Tracker follow-up is falorfrozen-cmd/HS-Offline-Tracker#13
 falorfrozen-cmd/HS-Offline-Tracker#14: the Tracker bundles the same DLL, lists
 upstream's v2.0.2 hash as superseded, and its installer now applies its
 leave-an-unknown-copy-alone rule to `AurieCore.dll` as well as `YYToolkit.dll`.
-The consequence above that the Tracker keeps upstream's build holds only until
-its 0.1.4 release.
+The consequence above that the Tracker keeps upstream's build held only until
+its 0.1.4 release, which ships this build.

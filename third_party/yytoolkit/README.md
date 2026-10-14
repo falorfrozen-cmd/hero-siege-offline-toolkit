@@ -545,7 +545,7 @@ sha256 pins in `ForgePact/tools/toolchain-pins.json` - i.e. the unmodified
 v4.0.1 plugin ABI headers), and `HSOfflineTrackerProducer.dll` (150,016
 bytes, sha256
 `36608aa041b31e23f35fbf010554715657d14269c61c541e717fde76a481b14e`, the build
-ForgePact's pins name). Launched through ForgePact's offline launcher module;
+ForgePact's pins named then). Launched through ForgePact's offline launcher module;
 its safety blocker returned empty. One idle session: menu only, five IPC
 commands, no gameplay.
 
