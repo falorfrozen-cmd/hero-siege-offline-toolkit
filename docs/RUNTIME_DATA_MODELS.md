@@ -122,7 +122,11 @@ up" work, static reading), and in Live procedure 1 of
 `forgepact-185-tracker-move` the tracker's one read of the name and the zone
 on a room change's own tick answered neither (measured; that the player was
 the missing piece is consistent with the record but was not measured). How
-many ticks a new room runs without a player is not established. So a reader
+many ticks a new room runs without a player is not measured. Live procedure 2
+of `forgepact-185-tracker-zone-fix` (2026-10-14) bounds it for one travel into
+`Act_01_01`: the zone readers, polled every 15 ticks, failed twice, the last
+time with `no-player`, then answered, so 15 to 30 ticks (§ 14.1). That is a
+bound, not a duration. So a reader
 that must answer once per room reads until it answers, not once on the room
 change's tick.
 
@@ -3214,11 +3218,14 @@ travels by `NetworkRoomGoto` called by name with the player as `self`):
   which keeps only the last failure's reason; `zone-unresolved=` 0 to 2).
   Read every 15 ticks, that bounds the player's arrival between 15 and 30
   ticks after the room change; it is a bound, not a measured duration
-  (2,482 ms between the two records, an upper bound set by the poll period).
-  Between the stat after the fighting and the one after the travel back to
-  `Town_01_rm`, three more reads failed, the last for want of a local player
-  (633 ms between the travel's records); which of the three fell on the
-  travel is not established. The player's `name` read empty as often
+  (2,482 ms between the two records: an upper bound on when the readers
+  answered, which depends on how long the ticks ran during the load, not on
+  the poll period alone; at 2,482 ms for at most 30 ticks they ran far
+  slower than 60 a second). Between the stat after the fighting and the one
+  after the travel back to `Town_01_rm`, three more reads failed, the last
+  for want of a local player (633 ms between the travel's records); all 3
+  fell after the travel's room change: `name-unresolved=` rose with them,
+  and the name is read only while it is owed after a room change. The player's `name` read empty as often
   (`name-unresolved=` in step) and answered with the zone.
 - **These two travels did not roll the zone.** Debugger logpoints on
   `GetSatanicZoneOffline` and `GetSatanicZoneEligible` had no hit over about
