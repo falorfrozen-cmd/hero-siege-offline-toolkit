@@ -1384,9 +1384,11 @@ rather than by falling back to another launcher:
   (static reading, not measured). With one of those installed, `0xC0000409` on a close that
   `hs_stop_game` requested is not by itself a crash: check for the incident
   monitor's clean-shutdown line, and the dump's stack, before blaming
-  ForgePact or the game. With HS-Offline-Tracker v0.1.4's producer
-  (`5f83e542…`, pinned from ForgePact #185, shipped from 2.3.0) a graceful
-  close was measured at `0x00000000` with no dump (capture
+  ForgePact or the game. ForgePact 2.3.0 ships no producer and pins none
+  (#185); its Install Mod Plugin moves a producer with an aborting hash out of
+  the game's mods folder and leaves any other one alone. With
+  HS-Offline-Tracker v0.1.4's producer (`5f83e542…`, the build HS Offline
+  Tracker 0.1.4 installs itself) a graceful close was measured at `0x00000000` with no dump (capture
   `forgepact-185-tracker-mod-live-1`, 2026-10-13: an in-world close, a close
   after Save & Exit and an in-world close with `lootann` on), so on those
   three close paths `0xC0000409` is a real signal to investigate. A main-menu
