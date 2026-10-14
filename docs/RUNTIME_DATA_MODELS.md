@@ -3117,6 +3117,15 @@ play in `Act_01_01`):
   another character's (the save files count from 0, § 8.2), and stay `fail`
   as written.
 
+Live procedure 2 of the toolkit workorder `forgepact-185-tracker-zone-fix`
+(capture `forgepact-185-tracker-zone-fix-live-2`, 2026-10-14, the same
+character in `Act_01_01`, fought through `hs_input`) read file 13 itself,
+before and after: experience 16,441,857 to 16,511,032 (+69,175) and kills
+797,474 to 797,532 (+58), exactly the sensor's `xp-sum=69175` and
+`kills-sum=58` (`kills-vs-save` and `xp-vs-save` `pass`, **measured**). Its
+gold sum (201, from 3 `GoldLogAdd` calls) has no save counterpart in that
+check.
+
 ---
 
 ## 14. Satanic Zone and Special Content
@@ -3194,6 +3203,32 @@ our own words, not run):
   changes. How many ticks a newly generated act zone runs without a
   `Player_obj`, so without an answer from the zone's readers, is not
   established either (§ 1, "How the local player arrives").
+
+**Measured on a room change and a pin** (Live procedure 2 of the toolkit
+workorder `forgepact-185-tracker-zone-fix`, capture
+`forgepact-185-tracker-zone-fix-live-2`, 2026-10-14, this build, Sorak, two
+travels by `NetworkRoomGoto` called by name with the player as `self`):
+- **The act zone's first ticks have no local player.** After the travel from
+  `Town_01_rm` to `Act_01_01`, the tracker's zone readers failed twice before
+  answering, both times for want of a local player (`zone-why=no-player`,
+  `zone-unresolved=` 0 to 2). Read every 15 ticks, that bounds the player's
+  arrival between 15 and 30 ticks after the room change; it is a bound, not
+  a measured duration (2,482 ms between the two records, an upper bound set
+  by the poll period). The travel back to `Town_01_rm` failed three more
+  reads the same way (633 ms between the records). The player's `name`
+  read empty on the same polls and answered with the zone.
+- **A travel did not roll the zone.** Debugger logpoints on
+  `GetSatanicZoneOffline` and `GetSatanicZoneEligible` had no hit over about
+  4.5 minutes that held both travels, beside a control that kept rising and
+  a `NetworkRoomGoto` logpoint that hit once per travel; the store kept the
+  pinned `Act_01_01` across both travels and after the pin was released. Not
+  observed: a roll beside a room change. What does trigger a roll stays
+  **not established**, because no natural re-roll came in the session's
+  337 s, so the logpoints had none to catch.
+- **A pin with no room change re-points the store and leaves the arrays.**
+  `SPV` of the key to `Act_01_01` from town (ForgePact's `satzone pin 1`)
+  was read back within 3 s, with the buff and debuff arrays unchanged
+  (`[3,21,10]` / `[19,17]`).
 
 ### 14.2 `global.eSt`: the special-content parameters
 

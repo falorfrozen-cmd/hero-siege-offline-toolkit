@@ -1906,6 +1906,16 @@ move from the stash into the bag are still not measured.
   no verb gives an item's or the player's screen position, so `hs_input`
   had no point to click. The travel to a combat zone and about three minutes
   of fighting and gold pick-ups: no tool travels or fights.
+  ForgePact #185's Live procedure 2 (`forgepact-185-tracker-zone-fix-live-2`,
+  2026-10-14, 8 minutes from lease to release) had no owner steps. Both
+  travels went through the research build's `pcall NetworkRoomGoto <room>`
+  over `hs_command`, which did travel: `Town_01_rm` to `Act_01_01` and back,
+  each answering `st=0`, with a `room` record at the first poll and one
+  debugger hit on `NetworkRoomGoto` per travel. The fighting (58 kills) was
+  raw `hs_input`: a held S to walk into a pack, then left clicks and the Q,
+  E and R skills at points the operator chose from screenshots. That is
+  still no verb that fights; it worked for one pack-dense zone, and the
+  player build has no `pcall`.
 - **Synthetic input anywhere but the game's own window.** Both tools refuse
   unless the target window belongs to a running `hero_siege.exe`, and on the
   `send_input` route both re-prove that the game holds the foreground
