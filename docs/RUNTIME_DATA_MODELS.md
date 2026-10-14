@@ -3210,19 +3210,25 @@ workorder `forgepact-185-tracker-zone-fix`, capture
 travels by `NetworkRoomGoto` called by name with the player as `self`):
 - **The act zone's first ticks have no local player.** After the travel from
   `Town_01_rm` to `Act_01_01`, the tracker's zone readers failed twice before
-  answering, both times for want of a local player (`zone-why=no-player`,
-  `zone-unresolved=` 0 to 2). Read every 15 ticks, that bounds the player's
-  arrival between 15 and 30 ticks after the room change; it is a bound, not
-  a measured duration (2,482 ms between the two records, an upper bound set
-  by the poll period). The travel back to `Town_01_rm` failed three more
-  reads the same way (633 ms between the records). The player's `name`
-  read empty on the same polls and answered with the zone.
-- **A travel did not roll the zone.** Debugger logpoints on
+  answering, the last time for want of a local player (`zone-why=no-player`,
+  which keeps only the last failure's reason; `zone-unresolved=` 0 to 2).
+  Read every 15 ticks, that bounds the player's arrival between 15 and 30
+  ticks after the room change; it is a bound, not a measured duration
+  (2,482 ms between the two records, an upper bound set by the poll period).
+  Between the stat after the fighting and the one after the travel back to
+  `Town_01_rm`, three more reads failed, the last for want of a local player
+  (633 ms between the travel's records); which of the three fell on the
+  travel is not established. The player's `name` read empty as often
+  (`name-unresolved=` in step) and answered with the zone.
+- **These two travels did not roll the zone.** Debugger logpoints on
   `GetSatanicZoneOffline` and `GetSatanicZoneEligible` had no hit over about
   4.5 minutes that held both travels, beside a control that kept rising and
   a `NetworkRoomGoto` logpoint that hit once per travel; the store kept the
   pinned `Act_01_01` across both travels and after the pin was released. Not
-  observed: a roll beside a room change. What does trigger a roll stays
+  observed: a roll beside a `NetworkRoomGoto` travel called by name (n=2,
+  the pin on for the first). The game's own travel routes (waypoint menu,
+  portal, death, a new game) did not run, so whether one of them rolls is
+  not established. What does trigger a roll stays
   **not established**, because no natural re-roll came in the session's
   337 s, so the logpoints had none to catch.
 - **A pin with no room change re-points the store and leaves the arrays.**
