@@ -138,7 +138,8 @@ The entries below are Live procedure 1, all dated 2026-09-28. Source for each:
 - **Mining experience under extra rolls is once per dig** (measured 2026-10-19,
   ForgePact #223 Live 2): a dig with no re-run gained 7 mining XP and one text
   "mining +7"; the next, with two re-runs, gained 6 and one text "mining +6".
-  None of the silenced rewards repeats per roll.
+  Of the silenced rewards, mining, character and guild XP were measured not to
+  repeat per roll.
 - **Not measured:** bonus finds and non-ore rewards under any lever, and the Miner's Helmet with rolls above 1 (not
   run in Live procedure 1). The records above say nothing about them.
 
@@ -189,13 +190,15 @@ pinned by the test's `RollsLeverParityTests` where ForgePact is checked out.
 - **Each run is scaled as today.** Inside every run the quantity multiplier M
   scales each stack, or, when the Miner's Helmet applies, x4 replaces M. Rolls and
   multiplier multiply: N runs, each stack x M.
-- **Experience, quests and floating text happen once.** Character and guild
+- **Experience and floating text happen once; quests are meant to.** Character and guild
   experience were measured once per dig (MR7), and mining experience and the
   floating text on 2026-10-19 ("Measured" above); quests are not observed from a
   dig. The plugin passes `MiningAdd`, `ExperienceUpdate`, `GuildExperienceAdd`
   and `update_quest` through during the original run and skips them during the
-  extra runs. `CombatText` is never silenced (since 2.3.1): skipping it crashed
-  the game (#222), because the dig sets `font` on the instance it returns. Its
+  extra runs. `CombatText` is never silenced (since 2.3.1): 2.3.0, which skipped it,
+  crashed twice (#222); the cause is inferred, not reproduced in play, to be that
+  the dig sets `font` on the instance it returns (static reading,
+  [RUNTIME_DATA_MODELS § 12](../RUNTIME_DATA_MODELS.md)). Its
   one shared detour (`ForgePact/plugin/include/ForgePact/CombatTextHook.hpp`, the
   same detour the Experience slider uses to rescale its "N XP" text, since a
   second detour on one script would come up table-only) calls the game during an

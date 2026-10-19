@@ -2437,8 +2437,8 @@ polling `instance_exists(Enemy_Parent_obj)` (measured, below).
   `GuildExperienceAdd` calls are skipped adds no mining XP: on the same
   character a dig with no re-run gained 7 (one text, "mining +7") and the next
   dig, with two such re-runs, gained 6 (one text, "mining +6"), the detours
-  reading 2 skipped calls of each script for the two re-runs. None of the silenced
-  rewards repeats per roll. **Measured 2026-10-19** (ForgePact #223 Live 2, x1 +7, x3 +6).
+  reading 2 skipped calls of each script for the two re-runs. Of the silenced
+  rewards, mining, character and guild XP were measured not to repeat per roll. **Measured 2026-10-19** (ForgePact #223 Live 2, x1 +7, x3 +6).
   **The dig reads one side effect's result: the `CombatText` instance.**
   `CombatText` creates one `Combat_Text_obj` (973) instance, sets its variables
   from its arguments and returns that instance. Of the step's six `CombatText`
