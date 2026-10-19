@@ -5737,21 +5737,25 @@ slot 14, in `Town_01_rm`, on the same build): see
   result was not a number to the probe (`skip=240`) are **not established**;
   the last is an open instrument question for the choice of speed lever.
 - **The walk's per-frame step comes in multiples of half its modal step
-  (measured), so compare walks by their modal step.** In the same Live 2
-  (`forgepact-166-mark1-set-live-2.md`, T7 and its recheck), the per-frame
-  steps of a 240-frame walk were not one value: unscaled, 138 frames moved
-  5.979 px, 6 moved 2.989 and 4 moved 8.968; with the id-64 answer halved, 128
-  frames moved 4.693 px, 13 moved 7.039 and 2 moved 2.346. Every step is 0.5,
-  1 or 1.5 times that walk's most common step, and in T5, where a per-frame
-  logpoint lengthened the frame, the steps rose to 8.968 and 11.958 px, 1.5
-  and 2 times the unscaled 5.979. So the step is plausibly multiplied by a
-  frame-time factor in steps of 0.5 (per-frame frame time was not recorded).
-  A walk's total distance moves with the frame time. The **modal step** holds
-  up against occasional slow frames within a window, but a sustained change
-  in frame time moves it too (T5's mode was 8.968), so modal steps compare
-  only between windows at the same mean frame time (the probe's `ms=`,
-  within about 10%). The 0.785 above is a ratio of modal steps taken at
-  comparable frame time (T4 and T7, neither with the per-frame logpoint).
+  (measured). The modal step is robust to occasional slow frames within one
+  window, and compares across windows only at the same mean frame time.** In
+  the same Live 2 (`forgepact-166-mark1-set-live-2.md`, T7 and its recheck),
+  the per-frame steps of a 240-frame walk were not one value: unscaled, 138
+  frames moved 5.979 px, 6 moved 2.989 and 4 moved 8.968; with the id-64
+  answer halved, 128 frames moved 4.693 px, 13 moved 7.039 and 2 moved 2.346.
+  Every step is 0.5, 1 or 1.5 times that walk's most common step. Plausibly a
+  frame-time factor in steps of 0.5 multiplies the step (inferred from the
+  quantization and T5; per-frame frame time was not recorded). A walk's total
+  distance moves with the frame time, and a sustained change in frame time
+  moves the modal step too: in T5 a per-frame logpoint took the frame from
+  13.4 to 23.2 ms, and the walk's modal step went from 5.979 to 8.968 px (its
+  steps were 8.968 and 11.958 px, 1.5 and 2 times the unscaled 5.979). So
+  comparing modal steps across windows is valid only when their mean frame
+  time (the probe's `ms=`) agrees within 10%, which is Live procedure 1's
+  rule; a window run under different instrumentation load can show a 1.5x or
+  2x frame-time artefact that is not a speed effect. The 0.785 above is a
+  ratio of modal steps taken at comparable frame time (T4 and T7, neither with
+  the per-frame logpoint).
   What the 0.785 leaves open is **not established**: a step affine in
   the answer (a base plus a part proportional to the stat, such as a "+N%"
   stat over a base speed, which with these two points puts this character
