@@ -239,13 +239,21 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   reading 2026-10-19, `docs/RUNTIME_DATA_MODELS.md` § 12). Character and guild
   XP were measured once per dig (2026-09-28: `ExperienceUpdate` and
   `GuildExperienceAdd` let one call through per dig and silenced the extra runs').
-  Mining XP and quest progress are **not established**: no dig in the 2026-09-28
-  session was seen calling `MiningAdd` or `update_quest`, so the dig may pay them
-  by a route these detours do not hold, and then once per roll. (On 2026-10-02
-  `silencedCalls` read 4 after two extra runs, which fits the two XP calls alone,
-  but the player build does not break the count down.) The 2026-10-02 check
-  (`mining-xp-per-dig`) could not read mining XP, because the character's mining
-  level was at the 5000 cap, and the owner chose to ship without measuring it.
+  Mining XP was **measured once per dig** on 2026-10-19 (Live 2, capture
+  `forgepact-222-223-extra-rolls-crash-trap-live-2.md`, research build, mining XP
+  set to 225 in `shop.ini`'s `[mining]` section, which `GetMiningLevel` reads
+  back as the raw XP value, not a level): a dig at rolls 1 went 225 -> 232
+  (+7, one text "mining +7") and a dig at rolls 3 went 232 -> 238 (+6, one text
+  "mining +6"), with the counters at rolls 3 reading `MiningAdd` 2/2,
+  `xpSilenced` 6, `extraRuns` 2 and `removedTexts` 2. So extra rolls pay no
+  mining XP: the dig calls `MiningAdd` once, the extra runs' calls are
+  silenced, and only ore repeats. (Live 1, capture
+  `forgepact-222-223-extra-rolls-crash-trap-live-1.md`, saw `MiningAdd` 1/2 on
+  its rolls-3 dig too.) Quest progress is still **not observed**: no dig in
+  either session, nor on 2026-09-28, called `update_quest` (0/0), so whether a
+  dig pays it by a route these detours do not hold is not established. (The
+  2026-10-02 check, `mining-xp-per-dig`, could not read mining XP, because the
+  character's mining level was at the 5000 cap.)
 - **The floating text runs, and is removed (ForgePact #222, 2.3.1).** Through
   2.3.0 the shared `CombatText` detour was silenced too, and that crashed the game
   (2026-10-19, two player reports): at two of its six `CombatText` sites the dig
@@ -266,9 +274,14 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   not resolve logs one `miningrolls: <name> did not resolve - extra-roll texts are
   not removed` line. The original run's text is never touched, so one text rises
   per node. `CombatTextHook.hpp` stays portable C++ with no `<windows.h>`; the
-  removal (builtin calls) lives in `MiningOreMod.hpp`. Whether a removed text is
-  ever drawn for a frame is not established: no dig with the rolls on has been
-  watched live since the change.
+  removal (builtin calls) lives in `MiningOreMod.hpp`. Measured in play on
+  2026-10-19 (Live 1, `forgepact-222-223-extra-rolls-crash-trap-live-1.md`, and
+  Live 2, `forgepact-222-223-extra-rolls-crash-trap-live-2.md`): on a rolls-3 dig
+  `CombatText` ran in both extra runs (`CombatText` 0/0 -> 1/2), `removedTexts`
+  went 0 -> 2, and the owner saw one XP text per dig, carrying the dig's real
+  total (+7 at rolls 1, +6 at rolls 3). Only whether a removed text is drawn for
+  a single frame before it goes stays not established: by eye a one-frame flash
+  cannot be ruled out.
 - **An extra roll that throws never rethrows (ForgePact #222, 2.3.1).**
   `ExtraRolls` catches it, stops rolling, still removes that run's texts, leaves
   the node's `hp` at 0 (`EnsureDepleted`), and `RollsFailed` turns the rolls off
@@ -380,7 +393,24 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   `miningrolls: x1 (vanilla)` and the next Copper Vein dropped 1 stack (14 -> 17),
   with `extraRuns` unchanged. The stack count was exactly 3x; the ore per stack
   varied between the two digs and why was not measured. Bonus finds and the Miner's
-  Helmet case were not observed live.
+  Helmet case were not observed live. The #222 fix (2.3.1) was played twice on
+  2026-10-19, hero Sorak, slot 14, mining XP set to 225 in the save and the saves
+  restored afterwards. Live 1 (capture
+  `forgepact-222-223-extra-rolls-crash-trap-live-1.md`, research DLL sha256
+  `c5526fe2a305e8a825bab5955355fc96093f4f293e03b15481ee77fa32bc4786` at ForgePact
+  `a4db66c`, x64dbg attached for the dig): a rolls-3 dig gained mining XP, the
+  debugger's logpoints saw three `CombatText` calls back to back inside
+  `MiningNodeStepMain`, `CombatText` went 0/0 -> 1/2 and `removedTexts` 0 -> 2,
+  the first extra roll paid, no `an extra roll failed` line, no crash, one XP
+  text on screen. Live 2 (capture
+  `forgepact-222-223-extra-rolls-crash-trap-live-2.md`, research DLL sha256
+  `d2b1d37737bba17419ad8dc52e4653f4678a7101123d89538578f75ace620a05` at ForgePact
+  `38acede` code, no debugger): mining XP +7 at rolls 1 and +6 at rolls 3, one
+  text each, extra rolls paying no XP (bullet "Silenced side effects" above). The
+  research command `miningrolls dig` stalled three times across the two sessions
+  (`dig node <id> did not complete; released`, node left at `hp=1`, finished by
+  the game itself or by the owner pressing F); why is not observed. That is a gap
+  in the research tool, not a player-build defect.
 
 ## Module Overview & Metadata
 - **Module Name:** ForgePact (Hero Siege Season 10 Offline Mod Panel & BloodPactPlugin)
@@ -3383,8 +3413,8 @@ with a hash manifest.
     - Research doc: `ForgePact/docs/angelic-roll-hook-research.md`, § "Session 3: list injection (issue #74)" (this design's static reading and live procedure), after § "Session 2: the substitution (issue #74)" (the beside design's session).
 
 43. **Mining Ore Extra Rolls re-runs the game's own dig completion, so what it repeats and what it cannot give are the game's (issue #36, `miningrolls`, off by default, notes 2.2.0, 2026-09-28; verified in play on the shipped build 2026-10-02):**
-    - **Repeats per roll, by design.** Only mining XP, character and guild XP and quest progress are silenced during an extra run (§ "Mining Ore Amount and the Miner's Helmet"), and of those only character and guild XP were measured once per dig. No dig was seen calling `MiningAdd` or `update_quest`, so mining XP and quest progress may still repeat per roll: not established, and not measured on 2026-10-02 because the test character's mining level was at the 5000 cap (the owner chose to ship without it). The dig sound (`PlaySound3D`), the `Mining_Effect_obj` hit effect, and any other floating text the completion draws other than through `CombatText` run once per roll; `NetworkSendClient` also runs per roll and does nothing offline.
-    - **The floating XP text runs in every roll and the extra rolls' texts are removed (ForgePact #222, 2.3.1).** Through 2.3.0 the `CombatText` detour was silenced in an extra roll, and on 2026-10-19 that crashed a player's game twice (`exit 0xC0000005`, the last `out.txt` line `miningrolls: node left diggable, hp reset to 0`): the dig sets fields on the instance `CombatText` returns, the silenced call returned none, the step threw, and `ExtraRolls` rethrew into the game. **Established:** the static reading that two of the dig's six `CombatText` sites use the return (project build `498d5885`, game code byte-identical on the installed `dab03f13`, `docs/RUNTIME_DATA_MODELS.md` § 12), and the harness reproduction (`target/extra_roll_combattext_return_used`, `target/extra_roll_texts_removed`, `target/extra_run_exception_stops_rolls_no_rethrow`). **Inferred, not measured in the game:** that this is the chain behind the two crashes (from the logs and the reading). **Not established:** the condition that leads the dig to those two sites (the 2026-10-02 character at the 5000 cap never met it); why the game ended with an access violation rather than an abort (the crash trap is how the next report would say); and whether a removed text is ever drawn for a frame, since no dig with the rolls on has been watched live since the change. An extra roll that still fails now stops the rolls for the session, leaves the node depleted and logs `miningrolls: an extra roll failed (<type>) - ...` once, instead of passing the exception to the game; the player then gets one payout per dig until the next launch.
+    - **Repeats per roll, by design.** Only mining XP, character and guild XP and quest progress are silenced during an extra run (§ "Mining Ore Amount and the Miner's Helmet"), and of those character and guild XP (2026-09-28) and mining XP (2026-10-19) were measured once per dig: in Live 2 (capture `forgepact-222-223-extra-rolls-crash-trap-live-2.md`) a dig at rolls 1 paid mining XP +7 and a dig at rolls 3 paid +6, with `MiningAdd` 2/2 and `xpSilenced` 6, so extra rolls pay no mining XP and only ore repeats. Quest progress is not observed: no dig in either 2026-10-19 session called `update_quest`, so whether it repeats per roll is not established. The dig sound (`PlaySound3D`), the `Mining_Effect_obj` hit effect, and any other floating text the completion draws other than through `CombatText` run once per roll; `NetworkSendClient` also runs per roll and does nothing offline.
+    - **The floating XP text runs in every roll and the extra rolls' texts are removed (ForgePact #222, 2.3.1).** Through 2.3.0 the `CombatText` detour was silenced in an extra roll, and on 2026-10-19 that crashed a player's game twice (`exit 0xC0000005`, the last `out.txt` line `miningrolls: node left diggable, hp reset to 0`): the dig sets fields on the instance `CombatText` returns, the silenced call returned none, the step threw, and `ExtraRolls` rethrew into the game. **Established:** the static reading that two of the dig's six `CombatText` sites use the return (project build `498d5885`, game code byte-identical on the installed `dab03f13`, `docs/RUNTIME_DATA_MODELS.md` § 12), and the harness reproduction (`target/extra_roll_combattext_return_used`, `target/extra_roll_texts_removed`, `target/extra_run_exception_stops_rolls_no_rethrow`); and the fix in play on 2026-10-19, at mining XP 225 with rolls 3: in Live 1 (capture `forgepact-222-223-extra-rolls-crash-trap-live-1.md`, x64dbg attached) `CombatText` ran in both extra runs (0/0 -> 1/2, three calls back to back inside `MiningNodeStepMain` by the debugger's logpoints), `removedTexts` went 0 -> 2, the first extra roll paid, no `an extra roll failed` line and no crash; in Live 2 (capture `forgepact-222-223-extra-rolls-crash-trap-live-2.md`, no debugger) one XP text per dig carrying the dig's real total (mining XP +7 at rolls 1, +6 at rolls 3), `removedTexts` 2. **Inferred, not reproduced in play:** that the pre-fix chain above is the one behind the two crashes (from the logs and the reading; no session ran the 2.3.0 build into it). **Not established:** the condition that leads the dig to those two sites (the 2026-10-02 character at the 5000 cap never met it); why the game ended with an access violation rather than an abort (the crash trap is how the next report would say); and whether a removed text is drawn for a single frame before it goes, which the owner's eye cannot rule out. An extra roll that still fails now stops the rolls for the session, leaves the node depleted and logs `miningrolls: an extra roll failed (<type>) - ...` once, instead of passing the exception to the game; the player then gets one payout per dig until the next launch.
     - **Bonus finds need the character's own stats.** An extra roll draws the dig's stat-gated bonus finds again (query ids 693-700), but a character whose stats are all 0 never passes one, however many rolls: the rolls then give only more ore. Which gear or talents raise those stats is not established (`docs/RUNTIME_DATA_MODELS.md` § 12).
     - **A node whose re-run does not pay is left depleted.** An extra run that pays no ore stops the loop, logs `miningrolls: extra roll paid nothing - stopped after <k> of <n> extra rolls` once, and the node's `hp` is forced to 0 whatever happened; that node's remaining rolls are lost. The completion did pay again in the same frame in every measured case (13 of 13 extra runs on 2026-09-28, 2 of 2 on 2026-10-02), so this is a guard, not an observed outcome; `ForgePact/docs/mining-ore-research.md` § "Extra rolls".
     - **The rolls refuse to arm if any of their seven detours is table-only** (the step/loot pair, the four pass-through detours, the shared `CombatText` one), and name it in `miningrolls: unavailable - <script> came up table-only`. For example, after `citrace nativetrace` detoured `update_quest` directly in a research session. The multiplier is not affected.
@@ -5259,10 +5289,22 @@ and by the incident harness's `trap-fold` (against
 nothing folded), `crash-keeps-staging` (a crash whose staged line matches
 the folded record: the bundle carries `crash.dmp` and both tails, `trap.dump`
 true) and `crash-staged-dump-mismatch` (no `crash.dmp`, `trap.dump` false)
-scenarios. In the game, Live 1 (2026-10-19) measured the record line and the
-fold (code, module and offset, game thread, `inMod ipc`) and found the dump
-missing from a crash that ended after first chance, which is what the
-staging answers; the staging itself has not been run in the game yet.
+scenarios. In the game, Live 1 (2026-10-19, capture
+`forgepact-222-223-extra-rolls-crash-trap-live-1.md`) measured the record line
+and the fold (code, module and offset, game thread, `inMod ipc`) and found the
+dump missing from a crash that ended after first chance, which is what the
+staging answers. Live 2 (2026-10-19, capture
+`forgepact-222-223-extra-rolls-crash-trap-live-2.md`, research build, no
+debugger attached at any point) ran the staging in the game: `incident
+trapprobe` staged one set (`crash.dmp` starting `MDMP`, both log copies, the
+line files) and the game kept answering; a clean quit (exit 0x0) was followed
+at the next load by `incident: the previous session shut down cleanly`, no
+report, and the staged copies deleted; the crash control (`0xC0000005`, raised
+in `BloodPactPlugin.dll`) left report `20261019-141837_crash` keeping
+`crash.dmp` (361777 bytes) and the `YYToolkit.log` and `aurie.log` tails of the
+crashed session. Both crashes, Live 1's (x64dbg detached before it) and Live
+2's, recorded `route=first-chance` only; the top-level filter was not observed
+to run in either, and why is not established.
 
 ## Jump through scenery (`jumpscenery`, 2026-10-03)
 
