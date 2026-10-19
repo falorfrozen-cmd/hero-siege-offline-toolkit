@@ -231,21 +231,72 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   Vein Resonance) runs for the original run only; a vein it queues completes through
   its own later step call and so gets the rolls too.
 - **Silenced side effects.** While an extra run is in progress a thread-local flag is
-  set, and five pass-through detours return without calling the game: `MiningAdd`,
+  set, and four pass-through detours return without calling the game: `MiningAdd`,
   `ExperienceUpdate`, `GuildExperienceAdd` and `update_quest` (hook ids
-  `fp_mining_rolls_add`, `_xp`, `_guild`, `_quest`, by SDK constant) and the shared
-  `CombatText` detour below; ore, bonus finds, sound and hit effect come once per
-  roll. Outside an extra run every one calls straight through. Character and guild
+  `fp_mining_rolls_add`, `_xp`, `_guild`, `_quest`, by SDK constant); ore, bonus
+  finds, sound and hit effect come once per roll. Outside an extra run every one
+  calls straight through. Nothing in the dig reads what those four return (static
+  reading 2026-10-19, `docs/RUNTIME_DATA_MODELS.md` § 12). Character and guild
   XP were measured once per dig (2026-09-28: `ExperienceUpdate` and
   `GuildExperienceAdd` let one call through per dig and silenced the extra runs').
-  Mining XP, quest progress and the floating text are **not established**: no dig
-  in the 2026-09-28 session was seen calling `MiningAdd`, `CombatText` or
-  `update_quest`, so the dig may pay them by a route these detours do not hold, and
-  then once per roll. (On 2026-10-02 `silencedCalls` read 4 after two extra runs,
-  which fits the two XP calls alone, but the player build does not break the count
-  down.) The 2026-10-02 check (`mining-xp-per-dig`) could not read
-  mining XP, because the character's mining level was at the 5000 cap, and the
-  owner chose to ship without measuring it.
+  Mining XP was **measured once per dig** on 2026-10-19 (Live 2, capture
+  `forgepact-222-223-extra-rolls-crash-trap-live-2.md`, research build, mining XP
+  set to 225 in `shop.ini`'s `[mining]` section, which `GetMiningLevel` reads
+  back as the raw XP value, not a level): a dig at rolls 1 went 225 -> 232
+  (+7, one text "mining +7") and a dig at rolls 3 went 232 -> 238 (+6, one text
+  "mining +6"), with the counters at rolls 3 reading `MiningAdd` 2/2,
+  `xpSilenced` 6, `extraRuns` 2 and `removedTexts` 2. So extra rolls pay no
+  mining XP: the dig calls `MiningAdd` once, the extra runs' calls are
+  silenced; of the silenced rewards, mining, character and guild XP were measured not to repeat per roll. (Live 1, capture
+  `forgepact-222-223-extra-rolls-crash-trap-live-1.md`, saw `MiningAdd` 1/2 on
+  its rolls-3 dig too.) Quest progress is still **not observed**: no dig in
+  either session, nor on 2026-09-28, called `update_quest` (0/0), so whether a
+  dig pays it by a route these detours do not hold is not established. (The
+  2026-10-02 check, `mining-xp-per-dig`, could not read mining XP, because the
+  character's mining level was at the 5000 cap.)
+- **The floating text runs, and is removed (ForgePact #222, 2.3.1).** Through
+  2.3.0 the shared `CombatText` detour was silenced too, and that is inferred to
+  have crashed the game (2026-10-19, two player reports; inferred from the logs
+  and the static reading, not reproduced in play): at two of its six `CombatText` sites the dig
+  sets `font`, `vspeed` and `hspeed` on the instance `CombatText` returns (static
+  reading, project build `498d5885`, game code identical on the installed
+  `dab03f13`), so a silenced call handed it nothing, and the step is inferred to have thrown
+  a C++ exception that `ExtraRolls`' `catch (...)` rethrew into the game. The
+  2026-10-02 character was not observed reaching those sites, which is the likely
+  reason the shipped check passed; the condition that leads a dig there is not
+  established. Now, during an extra run, the detour
+  calls the game as usual (the Experience slider's "N XP" rescale included), so the
+  dig gets a real text instance, and remembers each value the game returned, up to
+  `CombatText::kMaxRemembered` (16) a run. Once the run returns or throws,
+  `RemoveTexts` destroys with `instance_destroy` (through `g_Yytk->CallBuiltin`)
+  each remembered value that is a live instance of `Combat_Text_obj`, identified by
+  its `object_index` against the index `asset_get_index` returns for the SDK's name
+  (`HeroSiege::Objects::GetObjectName`, never a literal 973). Anything else is left
+  alone and counted (`textsLeft`, with the route that refused it); a name that does
+  not resolve logs one `miningrolls: <name> did not resolve - extra-roll texts are
+  not removed` line. The original run's text is never touched, so one text rises
+  per node. `CombatTextHook.hpp` stays portable C++ with no `<windows.h>`; the
+  removal (builtin calls) lives in `MiningOreMod.hpp`. Measured in play on
+  2026-10-19 (Live 1, `forgepact-222-223-extra-rolls-crash-trap-live-1.md`, and
+  Live 2, `forgepact-222-223-extra-rolls-crash-trap-live-2.md`): on a rolls-3 dig
+  `CombatText` ran in both extra runs (`CombatText` 0/0 -> 1/2), `removedTexts`
+  went 0 -> 2, and the owner saw one XP text per dig, carrying the dig's real
+  total (+7 at rolls 1, +6 at rolls 3). Only whether a removed text is drawn for
+  a single frame before it goes stays not established: by eye a one-frame flash
+  cannot be ruled out.
+- **An extra roll that throws never rethrows (ForgePact #222, 2.3.1).**
+  `ExtraRolls` catches it, stops rolling, still removes that run's texts, leaves
+  the node's `hp` at 0 (`EnsureDepleted`), and `RollsFailed` turns the rolls off
+  for the session (`rolls` 1, `rollsReady` false, `rollsUnavailable` true,
+  `rollsFailure` = `an extra roll failed earlier this session (<type>)`), so a
+  later `miningrolls N` answers `miningrolls: unavailable - an extra roll failed
+  earlier this session (<type>); ...` as an install failure does. One line a
+  session: `miningrolls: an extra roll failed (<type>) - extra rolls are off for
+  this session; the node was left depleted and each dig pays out once`. The type
+  comes from the function pointer `MiningOre::exceptionType`, which
+  `ModuleMain.cpp` sets to the crash trap's per-thread last C++ type
+  (`ForgePact::CrashTrap::LastCppType`, § "Incident reports"); null, or an empty
+  answer, reads `unknown type`.
 - **One `CombatText` detour, shared with the Experience slider.**
   `plugin/include/ForgePact/CombatTextHook.hpp` (hook id `fp_ctext`) holds the only
   `HookOneScript` call on `CombatText` in the plugin. StatsManager.hpp includes it
@@ -255,7 +306,11 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   Experience slider (`stat EnemyCalculateExperience` set to anything but 1) or the
   rolls. A second
   install would come up table-only, blinding either the rolls or the XP text fix.
-  `ScopedSilence` is a thread-local depth, so silence nests.
+  Since 2.3.1 the detour is never silenced: inside a `ScopedRemember` (a
+  thread-local pointer to the extra run's list, the previous one restored on exit,
+  so it nests) it also appends what the game returned, past `kMaxRemembered`
+  counting `rememberOverflow`; `passedCalls` counts calls outside an extra run and
+  `extraRunCalls` those inside one.
 - **Install and readiness.** `miningrolls 1` is vanilla and installs nothing.
   Above 1, `InstallRolls()` installs the step/loot pair, the four pass-through
   detours and the shared `CombatText` detour, once a session; all seven must be
@@ -273,7 +328,10 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
 - **Research-only forms** (`#ifndef FORGEPACT_RELEASE`; refused by the number parser
   in the player build): `miningrolls stat` (rolls, readiness, `steps`, `extraRuns`,
   `extraRunsUnpaid`, `xpPassed`/`xpSilenced`, each silenced script's passed/silenced
-  counts, `CombatText`'s, `combatTextFirst=experience|rolls|none` (which caller
+  counts, `CombatText`'s as `passed/extraRun`, ` removedTexts=<n> textsLeft=<n>`
+  and the refusal routes `textsUnresolved`, `textsNotInstance`, `textsWrongObject`,
+  `textsDestroyFailed` (2.3.1; Live procedure 1 of the #222 workorder reads
+  `removedTexts`), `combatTextFirst=experience|rolls|none` (which caller
   installed the shared detour first, read from the plugin rather than assumed from
   command order), `snapshots=<k>`, then the node snapshots of `hp`, `miningQue`,
   `miningActive`, `stop`, `range`, `miningPlayer`, `sprite_index` before and after
@@ -290,18 +348,28 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   still be the first to install the shared detour afterwards.
 - **Mod state and log lines.** `modstate.json`'s `miningOre` object gains `rolls`,
   `rollsReady`, `rollsUnavailable`, `extraRuns`, `extraRunsUnpaid` and
-  `silencedCalls` (the four pass-through detours' plus `CombatText`'s). Once a
+  `silencedCalls` (side effects held back in extra runs: the four pass-through
+  detours' silenced calls plus, since 2.3.1, the extra runs' texts removed,
+  `SilencedCalls()`). Once a
   session each: `miningrolls: x<N> (each dig rolled <N> times)` (or `x1 (vanilla)`),
   `miningrolls: first extra roll paid <k> ore stacks`, `miningrolls: extra roll paid
   nothing - stopped after <k> of <n> extra rolls`, `miningrolls: node left diggable,
   hp reset to 0`, `miningrolls: could not re-arm the node - extra rolls stopped for
-  this dig`.
+  this dig`, and (2.3.1) `miningrolls: an extra roll failed (<type>) - ...`.
 - **Tests.** `tests/mining_ore_harness.cpp` via `test_mining_ore_behavior.py` (the
   rolls scenarios `baseline/rolls1_single_step_no_extra_hooks`,
   `target/rolls3_three_payouts_hp_ends_0`, `target/rolls3_with_multiplier_x5_each_stack`,
   `target/helmet_x4_each_run_dispatch_once`, `target/unpaid_rerun_stops_and_restores_hp0`,
   `target/no_first_reward_no_extra_run`, `target/xp_silenced_only_inside_extra_runs`,
-  `target/extra_run_exception_no_retry_hp0`,
+  and for #222 (2.3.1; the fake `CombatText` now creates and returns a fake text
+  instance and the fake step sets a field on it and throws `std::runtime_error`
+  when it is not a live text, which is the crash the old harness could not see)
+  `baseline/rolls1_step_uses_combattext_return`,
+  `target/extra_roll_combattext_return_used`, `target/extra_roll_texts_removed`,
+  `target/extra_roll_other_object_left_alone`,
+  `target/extra_roll_text_object_unknown_destroys_nothing` and
+  `target/extra_run_exception_stops_rolls_no_rethrow` (which replaced
+  `target/extra_run_exception_no_retry_hp0` and its asserted rethrow),
   `target/table_only_silence_hook_refuses_rolls_keeps_multiplier`,
   `target/rolls_cap_10_and_bad_values`, `baseline/rolls_reset_is_vanilla`,
   `target/nested_reward_not_scaled_twice` and both install orders of the shared
@@ -327,7 +395,24 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   `miningrolls: x1 (vanilla)` and the next Copper Vein dropped 1 stack (14 -> 17),
   with `extraRuns` unchanged. The stack count was exactly 3x; the ore per stack
   varied between the two digs and why was not measured. Bonus finds and the Miner's
-  Helmet case were not observed live.
+  Helmet case were not observed live. The #222 fix (2.3.1) was played twice on
+  2026-10-19, hero Sorak, slot 14, mining XP set to 225 in the save and the saves
+  restored afterwards. Live 1 (capture
+  `forgepact-222-223-extra-rolls-crash-trap-live-1.md`, research DLL sha256
+  `c5526fe2a305e8a825bab5955355fc96093f4f293e03b15481ee77fa32bc4786` at ForgePact
+  `a4db66c`, x64dbg attached for the dig): a rolls-3 dig gained mining XP, the
+  debugger's logpoints saw three `CombatText` calls back to back inside
+  `MiningNodeStepMain`, `CombatText` went 0/0 -> 1/2 and `removedTexts` 0 -> 2,
+  the first extra roll paid, no `an extra roll failed` line, no crash, one XP
+  text on screen. Live 2 (capture
+  `forgepact-222-223-extra-rolls-crash-trap-live-2.md`, research DLL sha256
+  `d2b1d37737bba17419ad8dc52e4653f4678a7101123d89538578f75ace620a05` at ForgePact
+  `38acede` code, no debugger): mining XP +7 at rolls 1 and +6 at rolls 3, one
+  text each, extra rolls paying no XP (bullet "Silenced side effects" above). The
+  research command `miningrolls dig` stalled three times across the two sessions
+  (`dig node <id> did not complete; released`, node left at `hp=1`, finished by
+  the game itself or by the owner pressing F); why is not observed. That is a gap
+  in the research tool, not a player-build defect.
 
 ## Module Overview & Metadata
 - **Module Name:** ForgePact (Hero Siege Season 10 Offline Mod Panel & BloodPactPlugin)
@@ -384,7 +469,8 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   - `include/ForgePact/PetRelicCollectorMod.hpp`: The "Pet collects relics" decision core (issue #124, `petrelic`, off by default; `docs/pet-relic-collector-research.md`). Game-independent - relic ids, a maxed set, squared distances and frame numbers, never an instance - so `tests/pet_relic_collector_harness.cpp` compiles it whole. It shares the Pet Quest Collector's targeting instead of copying it: the relic tick owns its own `PetQuestSelector` (from `PetQuestCollectorMod.hpp`, which it includes), and `FilterRelicCandidates` drops every candidate whose relic id is in the maxed set before `Pick` sees it, so a screen of maxed relics hands `Pick` an empty list and the pet stays idle by construction. `PetRelicMaxedCache` holds the maxed set between reads (`kPetRelicMaxedRefreshTicks` = 60, and stale straight after a collect that returned true). `PetFetchArbiter` (`PetFetcher { None, Quest, Relic }`) is one pet, one fetch: a collector claims the travel when it picks and releases it when the travel ends, and a tick whose collector does not hold it picks nothing, so the two ticks never write the pet's x/y against each other. `PetRelicRoute { PickupLoot, PickupRelic }` names the collect's script (B selectable only in the research build). `PetRelicCollectorMod` holds the switch, the route and the counters `petrelic 0` prints (`StatLine()`). The game side - the tick, the shared `PetTravelStep` both ticks call, the collect (`PetRelicCollectOne`, `CallGameScriptEx` on `gml_Script_PickupLoot` with the companion's call shape, then the before/after owned-level check that decides whether it destroys the relic), the owned-level read through `hs-game-sdk` (`HeroSiege::Player::GetOwnedRelicLevels` with both scan reports, counted only when both scans ran to the end; never `RelicFilterMod`'s own scan, which answers nothing while that switch is off; plus `RelicFilterMod::TestMaxed()`) and the ground-relic read through `HeroSiege::Player::ReadGroundRelic` - is in `ModuleMain.cpp`.
   - `include/ForgePact/ExitSafeThread.hpp`: `ForgePact::ExitSafeThread`, how a module global owns a background thread. The `std::thread` is heap-held and freed only after `JoinFor` has joined it, and the holder has no destructor, so the game's `ExitProcess` never destroys a joinable thread (Known Limitations item 26). It owns the coop receive thread. Game-independent: `tests/coop_thread_exit_probe.cpp` compiles it whole into a probe DLL.
   - `include/ForgePact/FrameProfiler.hpp`: `ForgePact::FrameProfiler`, the `frameprof` sampling profiler (2026-09-28, see "Frame profiler (`frameprof`)" below). A background thread (an `ExitSafeThread` held by a never-freed singleton) pauses the frame thread `rate` times a second in `CaptureOnce` - `SuspendThread`, `GetThreadContext`, a guarded `memcpy` of the live stack into a buffer allocated beforehand, `ResumeThread`, and nothing else - then, after the resume, `WalkCopy` moves every pointer into the old stack range into the copy and unwinds it with `RtlVirtualUnwind`, finding unwind entries by binary search in each module's own `.pdata` (`ModuleMap`, never `RtlLookupFunctionEntry`). `Symbolizer` names frames from the game's compiled-code table (`GmlEntry` = `YYGMLFuncs`, walked both ways from one row), the built-ins the adapter resolved and each system DLL's exports; `Classify` buckets a stack from the innermost frame out. `Profiler::BuildReport` writes `bp_ipc\perf\<stem>.json`, `.stacks.txt` and `.txt`. Game-independent (Win32 and the standard library, no `RValue`), so `tests/frame_profiler_harness.cpp` compiles it whole. Its companion `FrameProfilerBuiltins.hpp` holds `kBuiltinNames`, the 429 built-in names the adapter resolves. Avoids `std::min`/`std::max` for the `NOMINMAX` reason above.
-  - `include/ForgePact/IncidentMonitor.hpp`: `ForgePact::Incident`, the incident monitor (issue #76, 2.2.0, always on in both builds; see "Incident reports (issue #76, 2.2.0)" below). Game-independent - Win32 and the standard library only - so `tests/incident_monitor_harness.cpp` compiles it whole: the 600-frame ring (single writer: the frame thread), the per-mod accounting and `IncidentScope` (the in-mod channel; every row self time) with the game-original guard that pauses the running clock around a wrapped original and marks the in-mod channel `(game original)`, the in-hook id channel with `TaggedThunks<Fn>` (the installer's per-slot thunks, `kHookSlots = 128`) and `IncidentHookTag`, `Analyze` (hitch / sustained / freeze / none from the ring, the last frame's clock reading and the grace, focus and menu-room inputs passed in as plain values; a freeze is held until it ends or `kFreezeHoldMs`, and one that began in a menu room is a load), the rate limits, the report text builders (pure functions over structs), the `JsonStringField`/`JsonNumberField` readers of the panel's `exit.json`/`panel.json`, the `%USERPROFILE%` scrub, the thresholds as named constants, and `ShutdownMarker` (`Write(route)`, once-only, Win32 file calls only: `==== clean shutdown ====` from the adapter's `ExitProcess` hook, `==== clean shutdown (detach) ====` from its static destructor), and the install-cost accounting (ForgePact #151: `InstallTimer`, which `HookOneScript` and `HookBuiltin` open for each install, `g_InstallCost` with its setup window, setup line and session line, frame thread only, constant-initialised and trivially destructible) with the read-only `ThreadSnapshot()` probe `incident setup` runs. The adapter in `ModuleMain.cpp` sits under `// ===== Incident monitor (issue #76) =====`.
+  - `include/ForgePact/IncidentMonitor.hpp`: `ForgePact::Incident`, the incident monitor (issue #76, 2.2.0, always on in both builds; see "Incident reports (issue #76, 2.2.0)" below). Game-independent - Win32 and the standard library only - so `tests/incident_monitor_harness.cpp` compiles it whole: the 600-frame ring (single writer: the frame thread), the per-mod accounting and `IncidentScope` (the in-mod channel; every row self time) with the game-original guard that pauses the running clock around a wrapped original and marks the in-mod channel `(game original)`, the in-hook id channel with `TaggedThunks<Fn>` (the installer's per-slot thunks, `kHookSlots = 128`) and `IncidentHookTag`, `Analyze` (hitch / sustained / freeze / none from the ring, the last frame's clock reading and the grace, focus and menu-room inputs passed in as plain values; a freeze is held until it ends or `kFreezeHoldMs`, and one that began in a menu room is a load), the rate limits, the report text builders (pure functions over structs), the `JsonStringField`/`JsonNumberField` readers of the panel's `exit.json`/`panel.json`, the `%USERPROFILE%` scrub, the thresholds as named constants, and `ShutdownMarker` (`Write(route)`, once-only, Win32 file calls only: `==== clean shutdown ====` from the adapter's `ExitProcess` hook, `==== clean shutdown (detach) ====` from its static destructor), and the install-cost accounting (ForgePact #151: `InstallTimer`, which `HookOneScript` and `HookBuiltin` open for each install, `g_InstallCost` with its setup window, setup line and session line, frame thread only, constant-initialised and trivially destructible) with the read-only `ThreadSnapshot()` probe `incident setup` runs. The adapter in `ModuleMain.cpp` sits under `// ===== Incident monitor (issue #76) =====`. Since 2.3.1 (issue #223) the header also holds `ParseTrapRecord` and `SettleTrapPrev` (the crash trap's record read back and its `crashtrap.prev\` folder settled at the next load), the report's `trap` object and the log-tail files of every bundle.
+  - `include/ForgePact/CrashTrap.hpp`: `ForgePact::CrashTrap`, the crash trap (issue #223, 2.3.1, in both builds, installed by `IncidentMonitorStart()` before the monitor thread; see "Incident reports (issue #76, 2.2.0)" below). Win32 and the standard library only, no YYToolkit and no `RValue`, so `tests/crash_trap_harness.cpp` compiles it whole: the first-registered vectored handler (one `route=first-chance` line for a fatal code, `kMaxFirstChanceLines` a session, and, outside the per-thread guarded-read depth `GuardedReadScope` that every `IsBadReadPtr` probe and the frame profiler's `__try` reads raise, the staging: the helper thread's log copies, `MiniDumpNormal` dump and `dumpline.txt`, waited for at most `kDumpWaitMs`, at most one every `kStageMinIntervalMs` and `kMaxStagedDumps` a session; an MSVC C++ throw only remembered per thread, `LastCppType()`, and never staged), the top-level unhandled filter (a `route=unhandled` line, then, as the second trigger, the log copies and dump unless the staged dump is for the same exception, then the previous filter), the module list kept outside the handlers (`RefreshModules()`, which also runs `CheckUnhandled()`, the top-level filter re-arm, from the monitor thread), `NoteGameThread`, the `bp_ipc\crashtrap\` to `crashtrap.prev\` rotation, `dbghelp.dll` loaded from system32 with `MiniDumpWriteDump` by name, and `StatusLine()` (the `incident: trap ` line, with its `staged <n>` and `guarded reads <n>` fields). The next load keeps a staged dump only for a crash whose folded record it was taken for (`IncidentMonitor.hpp`'s `SettleStagedDump`) and deletes it otherwise. No identifier, file or string in it contains `crashwatch`; crashwatch stays the research build's instrument.
   - `include/ForgePact/FarSleep.hpp`: `ForgePact::FarSleep`, far scenery sleep (2026-09-28, `farsleep`, see "Far scenery sleep (`farsleep`)" below). Classifies the object table once a session (leaf descendants of `Visual_Parent_obj`, `Destructible_NoCollision_Parent_obj`, `Collision_Prop_obj`, minus denied parents, `Trap_*` and objects owning per-frame events), scans a settled zone a slice a frame, then every 10 frames sleeps props beyond the sleep radius of every player (`instance_deactivate_object`) and wakes those inside a wake radius (`instance_activate_object`); a player jump starts an urgent pass. Reaches the game only through `CallBuiltin`, every call counted against a per-frame budget, so `tests/far_sleep_harness.cpp` compiles the real class against a controlled runner.
   - `include/ForgePact/HiddenLootMod.hpp`: `ForgePact::HiddenLootMod`, hidden loot sleep (2026-09-28, `hiddenloot`, #95 part 2b, see "Hidden loot sleep (`hiddenloot`)" below). `OnInit` takes what a `LootGroundInit` call carried (argument 0, argument 1, `self`) from the adapter's hook and, still inside the call, reduces each to a durable handle (`Durable`: a number or a reference kept as it is; an instance pointer asked `instance_exists` and replaced by its own `id`, read with `variable_instance_get`; anything else undefined), with those two reads only, no write and no deactivation, so no raw pointer outlives the call; `OnFrame`, at the end of the frame, identifies the handle that is a live `Loot_Ground_obj` by `object_index` (any value kind), reads `lootFilterVisible` after `variable_instance_exists` and puts a hidden one to sleep (`instance_deactivate_object`); polls the show key (starts at 164, Left Alt) through an injected key-state and foreground test, waking and writing visible on the key-down edge and writing hidden and re-sleeping on release; `Enable` walks the ground once (capped at 8,192), `Disable` wakes everything it slept; a room change forgets without a call, a persistent room sleeps nothing; a pass every 18 frames stands in when the route is not `Both`. Reaches the game only through `CallBuiltin`, so `tests/hidden_loot_harness.cpp` compiles the real class against a controlled runner.
   - `include/ForgePact/JumpSceneryProbe.hpp`: The `jumpprobe` decision core (ForgePact #16, research phase, **research build only**; see `docs/jump-scenery-research.md` § Instrument). Game-independent: the `pass` lever's window arithmetic (opened by a `CA_playerJump` or `PlayerForceJump` entry with the local player as `self`, counted in frames, or held open by `hold` with no jump script; a lever on without `hold` that no window ever opened for is `Inert()`), the family rule through a callback (`props` = `Collision_Prop_obj` or a descendant, `all` = `Collision_Parent_obj` or a descendant; the adapter answers it with `object_is_ancestor` by name), the answer kind per builtin row (`noone` for `instance_place`, `instance_position` and the four `collision_*` rows; `false` for `position_meeting` and `place_meeting`; `place_free` `true` and `tilemap_get_at_pixel` `0` under `all` only, since they carry no object argument), the `scripts` flag's three script returns, and the counters (`passed=`, `passthrough=`, `outside-window=`, `other-self=`, `other-family=`). `ModuleMain.cpp` supplies the frame number, the ancestor test, the detours and the printing. ForgePact #158's walk lever (phase 1, `docs/flight-charms-research.md` § Instrument) adds the third rule `any` (every local-player query on a hooked builtin row, whatever object it names, the two object-less rows included, with no object argument read) and the object tally (per builtin row, the local player's own calls by object index, `-1` for no object, at most 64 distinct objects a row and the rest under `other`, counted from `hook` on whatever the lever does and cleared only by `objects reset`; the rows sorted most-called first and a summary of rows, distinct objects and objects outside `Collision_Parent_obj`'s family). The shipped `JumpScenery.hpp` is untouched.
@@ -898,6 +984,7 @@ To add or modify a gameplay modifier or runtime command:
 | `.\tools\ipc.ps1 incident stat` | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree (player or research build) | Prints the incident monitor's view. The first line starts `incident: frames ` (the live marker): frames seen, the baseline median, the worst frame this session and whether it was judged, the worst judged frame, the slow judged frames (`kHitchMs` or more) and `window yes|no`. Then whether the room-change grace is active, focus, the in-hook id and in-mod tag, episodes and report folders written, `hooks tagged N, untagged M | report write errors W`, and the per-mod table (each mod's own time, average and worst ms a frame over the last minute; the in-mod tag reads `<mod> (game original)` inside a wrapped original). The live control that the monitor is counting. The superproject's `tools/x64dbg_mcp.py` parses the integer on the first `incident: frames <n>` line (sent with `ping`, which must answer `pong`) to prove debugger sessions and report `game_released` (`docs/tools/x64dbg-mcp.md` § "The frame-counter proof"), so renaming or reordering that line leaves every debugger session `no_frame_counter`, unproven: change both in the same feature. | Read-only | Added 2026-10-02 (issue #76); observed live in Live 1 |
 | `.\tools\ipc.ps1 incident setup` | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree (player or research build) | Prints three lines (ForgePact #151): the start-up setup's install cost line, `incident: setup installs <n>, detours <d>: resolve <ms> ms, detour <ms> ms (worst <ms> ms <hook id>), log <ms> ms, rest <ms> ms, outside installers <ms> ms` (or `incident: setup installs not measured yet` before the setup ran); the session's totals, `incident: installs since load <n>, detours <d>, detour <ms> ms total, worst <ms> ms <hook id>`, which also count installs made after the setup (an on-demand `dropmult`, for example); and one thread snapshot timed on the spot, `incident: thread snapshot <ms> ms, <t> threads system-wide, <p> in this process`, the positive control for the detour part (`ForgePact/docs/setup-stall-research.md`). | Read-only; the snapshot holds the frame for its own time (tens of ms) | Verified 2026-10-06 (ForgePact #151 Live 1, player build): at the main menu with item truth on it printed `incident: setup installs 18, detours 18: resolve 0.1 ms, detour 1237.0 ms (worst 80.0 ms fp_customforge_new), log 4.9 ms, rest 20.9 ms, outside installers 5.4 ms`, `incident: installs since load 19, detours 19, detour 1324.9 ms total, worst 87.9 ms fp_hh_hudlabels` and `incident: thread snapshot 33.5 ms, 6012 threads system-wide, 76 in this process`; after `dropmult relic 2` in town, `installs since load 39, detours 39` with the setup line unchanged |
 | `py -3 -m unittest tests.test_incident_monitor_behavior tests.test_incident_monitor_contract tests.test_incident_panel -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the behaviour harness and its probe | The incident monitor's harness scenarios (including `freeze-load-room-change`, `freeze-never-ends`, `freeze-menu-room`, `freeze-menu-room-never-ends`, `worst-judged-vs-overall`, `hook-tag-thunk`, `stat-line-prefix`, `exit-json-fixture` against `tests/fixtures/incident/`, `marker-once`, and, for the accounting's controlled clock, `descheduled-not-charged` (the target) and `real-clock-control` (the baseline, lower bounds only)) and shutdown probe, its wiring contract, then the panel's half (exit code, event log, every report recorded and listed with no notice of any kind, the `exitWatch` counters, the shared fixture). `test_incident_monitor_behavior` must print `OK` with no `skipped` on a machine with MSVC. | Writes `build/incident-monitor-behavior/` and temp files only | Added 2026-10-02 (issue #76) |
+| `py -3 -m unittest tests.test_crash_trap_behavior tests.test_crash_trap_contract -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the behaviour harness (skips with a message without it) | The crash trap (`CrashTrap.hpp`): `tests/crash_trap_harness.cpp` compiled against the real header (`install`, `cpp-type-remembered`, `first-chance-av-line`, `non-fatal-quiet`, `continue-search-only`, the first-chance staging's `first-chance-stages-dump`, `stage-rate-limited` and `guarded-read-stages-nothing`, `filter-replaced`, `filter-chain-walk`, `filter-left-on-top`, two child processes that die unhandled, `unhandled-av-child` and `unhandled-cpp-child`, each leaving its record line, both log copies and an `MDMP` dump, `first-chance-child-terminated`, a child ended by its own `__except` after first chance (Live 1's outcome, first-chance line only and no `route=unhandled`; Live 1's cause is open, RUNTIME_DATA_MODELS § 5.11) that leaves the staged dump and log copies and no `route=unhandled` line, and `rotation`), then the contract: Win32 calls and fixed buffers inside the routes, `MiniDumpNormal` only, the two named staging limits, the staging written only on the helper thread with a bounded wait, every `IsBadReadPtr` call and reading `__try` in the player build inside the guarded-read depth, `incident trapprobe` outside the player build, dbghelp from system32 with `build.bat`'s `cl` line unchanged, rotation before arming, the installer in the player build before the monitor thread, the next-load fold, the `incident: trap ` line, no crashwatch name and no notice, and every `catch (...)` that rethrows into the game writing its `rethrow: ` line first (with a negative control). Run it beside the incident row above, whose `trap-fold` and `trap-prev-settled` scenarios cover the fold and whose `clean-exit-deletes-staging`, `crash-keeps-staging` and `crash-staged-dump-mismatch` cover the next load's decision about a staged dump. | Writes `build/crash-trap-behavior/` and temp files only | Added 2026-10-19 (issue #223) |
 | `py -3 -m unittest tests.test_forgepact_release_workflow tests.test_release_pdb_symbols tests.test_build_bat_contract tests.test_ci_history_pins -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for `test_release_pdb_symbols` (skips without it) | The release workflow's shape, including the PDB artifact and the compile step's `CL`/`_LINK_`; the probe compiled plain and under those values; `build.bat`'s verbatim `cl ` line. | Writes `build/release-pdb-symbols/` | Added 2026-10-02 (issue #76) |
 | `.\tools\ipc.ps1 farsleep 1` (also `farsleep 0`, `farsleep stat`) | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree | Turns far scenery sleep on or off (the panel's Mods → Quality of Life switch sends the same) and prints its state: zone state, props known and asleep, the radii, sleeps/wakes/scans/passes, rooms skipped, errors and the first player's position |
 | `py -3 -m unittest discover -s tests -p test_plugin_build_check.py -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | 38 tests: reading a plugin DLL's version and hash, the state table, the launch-time refresh, Install's second game check, `/api/state`'s `pluginBuild` and the boot-line contract (issue #123), and the launch beside HS Offline Tracker's sensor (ForgePact #185, 2.3.0): an aborting sensor is only named in the launch message and the game starts on it, the fixed one changes nothing, the Install sentence is said once and the loader compared once per launch (the sensor's own Install, Remove and Launch rules are `tests/test_tracker_sensor_retire.py`'s, below). One test, the positive control on a built DLL, skips unless `plugin_build\BloodPactPlugin_ship.dll` or `modfiles_shipped\BloodPactPlugin.dll` exists. `py -m unittest tests.test_plugin_build_check` cannot import the module's `test_mod_backup` sibling from `ForgePact/`, hence `discover -s tests`. | Temp directories only | Verified 2026-10-14 on Windows with this command (38 tests, OK, with a built DLL in `modfiles_shipped`, so no skip); 2026-10-13, before the retirement, 51 tests, OK, skipped=1. Earlier, 2026-09-29 on Linux with `python3 -m unittest discover -s tests -p test_plugin_build_check.py` (31 tests, OK, skipped=1; with the published v2.0.1 release's DLL at `modfiles_shipped\BloodPactPlugin.dll`, 31 tests, OK, no skip) |
@@ -1317,7 +1404,7 @@ UTF-8 / ASCII plain-text command queue. The panel appends lines to `cmd.txt`; th
     - `gemmaxroll 1` dresses every finished gem at the outermost `CreateItemNew` return, before Item Truth records it: each affix takes its stat's tier-4 range and top value, identifier stats 462 and 21 untouched, then `RefreshItemHash`.
     - The tables build in `FrameCallback` while either switch is on, 4 ms a frame at the menu and 1 ms in play (0.3 ms a candidate), kept in `%LOCALAPPDATA%\Hero_Siege\forgepact_gem_tables.json` per game build; `n` 4, 3 and none first, any other `n` once a drop needs it.
     - Log lines, once a session each: `incarnation gems: first Mythic drop - n=<n> seed <a> -> <b>`, `first gem at its best rolls (<k> affixes)`, `a gem dropped at n=<n> before its Mythic seeds were ready - it keeps the game's roll` and `no Mythic gem at n=<n> carries a ticked mod yet - this one takes any Mythic roll`; per table, `Mythic seeds ready for n=<n> (<k> gems built)`. `modstate.json` carries `incarnationGems`: `mythic`, `maxRoll`, `dropHook`, `mythicDrops`, `vanillaDrops`, `filter` (0 = every mod), `filterMisses`, `build`, `seeds`, `bestRanges`, `ready`, `error`.
-  - `miningore N` / `miningrolls N` (both player commands in `kPlayerCommands`, standalone early returns into `MiningOreMod.hpp`; + `miningore stat` and `miningrolls stat|stats|dig` in the research build only): the Loot tab's Mining Ore Multiplier (`drops.mining_ore`, x1-x10, each ore stack's `o` scaled) and Mining Ore Extra Rolls (`drops.mining_ore_rolls`, issue #36, 1-10, default 1, off by default: the game's own dig completion re-run on the same node up to N - 1 more times, with mining, character and guild XP, quest progress and the floating text silenced during the extra runs). Both refuse anything but one whole number in range (`miningrolls: use a whole-number roll count from 1 to 10`); 1 is vanilla and installs nothing. The two multiply. `miningrolls` above 1 arms only when all seven detours it needs are native, otherwise it stays at 1 with one `miningrolls: unavailable - ...` line and the multiplier is untouched. Mechanism, log lines, `modstate.json` fields and tests: "Mining Ore Amount and the Miner's Helmet" above.
+  - `miningore N` / `miningrolls N` (both player commands in `kPlayerCommands`, standalone early returns into `MiningOreMod.hpp`; + `miningore stat` and `miningrolls stat|stats|dig` in the research build only): the Loot tab's Mining Ore Multiplier (`drops.mining_ore`, x1-x10, each ore stack's `o` scaled) and Mining Ore Extra Rolls (`drops.mining_ore_rolls`, issue #36, 1-10, default 1, off by default: the game's own dig completion re-run on the same node up to N - 1 more times, with mining, character and guild XP and quest progress silenced during the extra runs, and the extra runs' floating text removed (2.3.1)). Both refuse anything but one whole number in range (`miningrolls: use a whole-number roll count from 1 to 10`); 1 is vanilla and installs nothing. The two multiply. `miningrolls` above 1 arms only when all seven detours it needs are native, otherwise it stays at 1 with one `miningrolls: unavailable - ...` line and the multiplier is untouched. Mechanism, log lines, `modstate.json` fields and tests: "Mining Ore Amount and the Miner's Helmet" above.
   - `bossrarity <mode>` with `<mode>` `off` (or `0`) / `rare` / `ancient`, and `bossrarity status` (or bare `bossrarity`) (a player command in `kPlayerCommands`, both builds, a standalone early return into `BossRarityCommand`; issue #44, notes 2.2.0, off by default): the Mods → Gameplay **Bosses** select, config key `boss_rarity` (`off` / `rare` / `ancient`, default `off`; `/api/set` answers 400 `invalid boss rarity` to anything else). `build_cmds` carries `bossrarity <mode>` only when the mode is not `off`, so the all-off startup list stays empty; a live change always sends it, `off` included. In the shared `EnemyRaritySettings` hook, before the sliders' own boss check, an instance `RarInstanceIsBoss` accepts (`Enemy_Child_Boss_obj` ancestry), not created by a monster and at `enemyRarity` exactly 1 gets `enemyRarity` 3 or 4 and the sliders' affix top-up (up to 2 / 3 from `kTyAffixPool`); the decision and counters are `plugin/include/ForgePact/BossRarityMod.hpp`. `rare`/`ancient` call `InstallTyrantHook()` (the creation hooks the enemy-born tracking needs come with it), `off` only clears the mode, and the mode joins every enemy-born guard (`EnemyBornScope`, the hook's two reads) while it is on. Every form answers `bossrarity: <mode> raised=<n> (rare <r>, ancient <a>) seen=<s> enemyBorn=<e> notRank1=<k> writeFailed=<w> hook=ok|table-only|failed|none`: `seen` counts bosses judged while the mode was on, `notRank1` bosses the game had already made champion/rare/ancient (or whose rarity did not read as a number), `raised` writes that did not throw (nothing reads the value back), and `hook` is the shared hook's state (`table-only` is `HookOneScript`'s TABLE-ONLY fallback). Known Limitations item 45; research: `ForgePact/docs/boss-rarity-research.md`.
   - `dungeonchest <pct>` with `<pct>` a whole number from 50 to 95, `dungeonchest off` (or `0`), `dungeonchest status` (or bare `dungeonchest`), and `dungeonchest countdown head|chat|both|none` (a player command in `kPlayerCommands`, both builds, a standalone early return parsed like `bossrarity`'s; issue #31, notes 2.2.0, off by default): the Mods → Gameplay **Dungeon chest opens early** switch and slider, config keys `mod_dungeon_chest` (bool, default `false`) and `dungeon_chest_pct` (integer 50..95, default 75; the slider steps by 5 and the value beside it is typable, so any whole number in range can be set; `/api/set` answers 400 to a value that does not round to an integer in 50..95). `build_cmds` carries `dungeonchest <pct>` only while the switch is on, so the all-off startup list stays empty. Live, turning the switch on sends `dungeonchest <pct>`, turning it off sends `dungeonchest off` (the chest is back on the game's own rule), and a new pct is sent only while the switch is on (while it is off the value is stored and nothing is sent). Its child row, **Where the countdown shows** (the owner's choice of 2026-10-04, `countdown-form: choice`: "we can ship both with an option to choose, like we can chose skill counter style"), is a `<select>` with config key `dungeon_chest_countdown` (`head`, `chat` or `both`, default `head`, validated by `dungeon_chest_countdown_valid` against `DUNGEON_CHEST_COUNTDOWN_FORMS` beside `SKILL_TIMER_STYLES`; `/api/set` answers 400 `invalid dungeon chest countdown` to anything else, so the plugin's `none` is a command only), disabled while the switch is off (`syncDungeonChestCountdown` in `panel/src/mods-sync.js`). `build_cmds` sends `dungeonchest countdown <form>` right after `dungeonchest <pct>` while the switch is on and the saved form is valid (a hand-edited invalid form sends no form line); live, turning the switch on sends both lines, and a form picked while the switch is on is sent at once (while it is off it is stored and sent when the switch turns on). Any other `<pct>` (`49`, `96`, `abc`) is refused and the mode stays as it was; `off` only clears the mode. A share in range is stored only with the kill hook on both routes (`hook=ok`), the `instance_exists` unlock detour installed (`unlock=ok`) and a source for the dungeon's planned total present; otherwise it is refused with the reason (`hook=`/`unlock=` `table-only`/`failed`, or `total=unavailable`) and the mode stays as it was. Both builds carry the planned-total source Live procedure 1b selected (`total-route: estimate`, below), so `total=unavailable` is the refusal for a build with no source set and `total=unavailable(<why>)` for a failed creator census (the family unresolved, a creator object that could not be counted, no creators, or any creator unreadable; below).
     - **What a non-off mode installs**, lazily and once: a second consumer in Headhunter's `EnemyDestroyKillProc` detour (`InstallHeadhunterHook`, by name through `HookOneScript`, both routes), after `SignatureDropOnKill` / `AngelicDropOnKill`, that counts an enemy-`self` call once per instance id with its own 256-id recent set (never Headhunter's `g_HhHandledIds`) and counts a refused one (`self` not an enemy) as `notEnemy=`. Its enemy check is the shared `IsEnemyObject`, which no longer depends on another mod: it uses `g_EnemyParentIdx` when `InstallCreateHooks` has resolved it (the research build at load, the player build only for Monster Density, Headhunter, Tyrant, pack markers or necro balance) and otherwise resolves `Enemy_Parent_obj` by name on demand (`IsEnemyParentIndex`), never writing the global and never caching an answer computed while the index is unknown. The check's other consumers (Headhunter's steal, Monster Density's enemy multiplier, the pack markers, the reveal's birth observation, the monster-born guard and the research-only `dungeonprobe`'s creator births) run only once `InstallCreateHooks` has set the global (Headhunter's steal is gated on `g_HhEnabled`, which `EnableHeadhunter` sets after calling it; the rest run inside the create hooks it installs), so their behaviour is unchanged; the Angelic and signature kill drops do not use it (they test `enemyRarity`). Before that fix (Live 2, 2026-10-04) the player build with none of those mods on refused every kill call, `kills=0`; the unlock action, one `HookBuiltin` detour on `instance_exists` (by name, patched at the builtin, both builds; the only `instance_exists` detour in the plugin, so the research probe's counters run inside it as a second consumer rather than as a second hook, which would come up table-only), whose first test is the room's latched flag: while that is false every call goes to the original untouched, and while it is true a call whose `self` is the room's `Dungeon_Chest_obj` (a pointer compare against the instance captured at first sight with `instance_find` + `HhResolveInstance`, cleared on a room change) and whose first argument is `Enemy_Parent_obj` or a descendant is answered `false` and counted in `answered=`, so the chest's own poll (measured in Live procedure 1, about once a frame) sees no monster and the game's own Step and open run; and a once-a-second poll in the frame-boundary housekeeping, under its own throttle, asking `instance_number` of `Dungeon_Chest_obj` (does this room hold a dungeon chest) and of `Enemy_Parent_obj` (alive now, for `status` and the clamp), and asking the total source once per room at the chest's first sight (again each second only while it answered 0). The total source (`DungeonChestEstimateTotal`, `total-route: estimate`, both builds) counts the creator family (`kKnownDensityCreatorObjects` resolved by name, a child object never counted twice) with `instance_number`/`instance_find`, reads each creator's `enemyArray` by name and `is_array` it: not an array means not spawned yet (Live procedure 1b's `creator-state`); it answers the header's `EstimatedTotal(alive, pending)`, alive plus ceil(pending × 614 / 117), the constants `kEstimateKills` / `kEstimatePendingCreators` with their inputs in their comment and in the hub's curated DC19. A creator whose read fails is counted (`unreadable=`), and a failed census (the family unresolved, a creator object whose `instance_number` failed, no creators at first sight, or any creator unreadable, the header's `TotalFromCensus`; owner, 2026-10-04) answers 0, so `total=unavailable(<why>)` and the game's own rule stays, never an estimate that would count an unread or uncounted creator as spawned and shrink T. The word names the cause: `family-unresolved` (a build or SDK problem), `count-failed`, `no-creators` (a fact about the room), or `unreadable=<u>/<c>`, whose counts are printed only for that cause; a bare `total=unavailable` means no census was taken. The room's first refused census prints one `dungeonchest: no planned total in this room (<why>): <cause>; the share is not applied here and the game's own rule stays …` line, never one per poll (the source is asked again each second while it answers 0). The tally resets on a `room` change or when the chest count drops to 0. The head label is one more call in `Hook_DrawHudBuffs`, after the Miner's Helmet's draw, through the player resolution (`HhResolveLocalPlayer`), camera-to-GUI conversion and `HhDrawOutlinedWorld` the Headhunter labels use; that hook is installed at init (`InstallHeadLabelHook`), so the label adds none. It draws the header's head label state and never formats the count (D12, after the owner saw it blink and jerk in Live procedure 1b): `UpdateHeadLabel` rewrites its text only when the remaining count changes, `PlaceHeadLabel` takes its height above the player's origin once when it appears and holds it (the box top follows the sprite's animation frame) and places it on whole GUI pixels, it sits in a fixed line just under the Headhunter labels' base (they stack upward from it, so neither moves the other), and a frame whose reads fail draws it at its last spot. It draws in its own font, set by name on every draw (`__newfont6`, or the `hhlabelfont` override, which the Headhunter labels share) with its line height measured in it and the inherited font put back afterwards when its read worked (D14, after Live procedure 2 caught single frames at about 72 % size while the label drew in whatever font the game had left current; that the font differed on those frames is a static reading Live procedure 3's `font-cause` tests). The draw and the poll run inside an `IncidentScope` tagged `dungeonchest`. All mods off leaves no hook installed.
@@ -3328,7 +3415,8 @@ with a hash manifest.
     - Research doc: `ForgePact/docs/angelic-roll-hook-research.md`, § "Session 3: list injection (issue #74)" (this design's static reading and live procedure), after § "Session 2: the substitution (issue #74)" (the beside design's session).
 
 43. **Mining Ore Extra Rolls re-runs the game's own dig completion, so what it repeats and what it cannot give are the game's (issue #36, `miningrolls`, off by default, notes 2.2.0, 2026-09-28; verified in play on the shipped build 2026-10-02):**
-    - **Repeats per roll, by design.** Only mining XP, character and guild XP, quest progress and the floating text are silenced during an extra run (§ "Mining Ore Amount and the Miner's Helmet"), and of those only character and guild XP were measured once per dig. No dig was seen calling `MiningAdd`, `CombatText` or `update_quest`, so mining XP, quest progress and the floating text may still repeat per roll: not established, and not measured on 2026-10-02 because the test character's mining level was at the 5000 cap (the owner chose to ship without it). The dig sound (`PlaySound3D`), the `Mining_Effect_obj` hit effect, and any other floating text the completion draws other than through `CombatText` run once per roll; `NetworkSendClient` also runs per roll and does nothing offline.
+    - **Repeats per roll, by design.** Only mining XP, character and guild XP and quest progress are silenced during an extra run (§ "Mining Ore Amount and the Miner's Helmet"), and of those character and guild XP (2026-09-28) and mining XP (2026-10-19) were measured once per dig: in Live 2 (capture `forgepact-222-223-extra-rolls-crash-trap-live-2.md`) a dig at rolls 1 paid mining XP +7 and a dig at rolls 3 paid +6, with `MiningAdd` 2/2 and `xpSilenced` 6, so extra rolls pay no mining XP; of the silenced rewards, mining, character and guild XP were measured not to repeat per roll. Quest progress is not observed: no dig in either 2026-10-19 session called `update_quest`, so whether it repeats per roll is not established. The dig sound (`PlaySound3D`), the `Mining_Effect_obj` hit effect, and any other floating text the completion draws other than through `CombatText` run once per roll; `NetworkSendClient` also runs per roll and does nothing offline.
+    - **The floating XP text runs in every roll and the extra rolls' texts are removed (ForgePact #222, 2.3.1).** Through 2.3.0 the `CombatText` detour was silenced in an extra roll, and on 2026-10-19 a player's game crashed twice (`exit 0xC0000005`, the last `out.txt` line `miningrolls: node left diggable, hp reset to 0`); the inferred chain (below) is that the dig sets fields on the instance `CombatText` returns, the silenced call returned none, the step threw, and `ExtraRolls` rethrew into the game. **Established:** the static reading that two of the dig's six `CombatText` sites use the return (project build `498d5885`, game code byte-identical on the installed `dab03f13`, `docs/RUNTIME_DATA_MODELS.md` § 12), and the harness reproduction (`target/extra_roll_combattext_return_used`, `target/extra_roll_texts_removed`, `target/extra_run_exception_stops_rolls_no_rethrow`); and the fix in play on 2026-10-19, at mining XP 225 with rolls 3: in Live 1 (capture `forgepact-222-223-extra-rolls-crash-trap-live-1.md`, x64dbg attached) `CombatText` ran in both extra runs (0/0 -> 1/2, three calls back to back inside `MiningNodeStepMain` by the debugger's logpoints), `removedTexts` went 0 -> 2, the first extra roll paid, no `an extra roll failed` line and no crash; in Live 2 (capture `forgepact-222-223-extra-rolls-crash-trap-live-2.md`, no debugger) one XP text per dig carrying the dig's real total (mining XP +7 at rolls 1, +6 at rolls 3), `removedTexts` 2. **Inferred, not reproduced in play:** that the pre-fix chain above is the one behind the two crashes (from the logs and the reading; no session ran the 2.3.0 build into it). **Not established:** the condition that leads the dig to those two sites (the 2026-10-02 character, at the 5000 cap, was not observed reaching them); why the game ended with an access violation rather than an abort (the crash trap is how the next report would say); and whether a removed text is drawn for a single frame before it goes, which the owner's eye cannot rule out. An extra roll that still fails now stops the rolls for the session, leaves the node depleted and logs `miningrolls: an extra roll failed (<type>) - ...` once, instead of passing the exception to the game; the player then gets one payout per dig until the next launch.
     - **Bonus finds need the character's own stats.** An extra roll draws the dig's stat-gated bonus finds again (query ids 693-700), but a character whose stats are all 0 never passes one, however many rolls: the rolls then give only more ore. Which gear or talents raise those stats is not established (`docs/RUNTIME_DATA_MODELS.md` § 12).
     - **A node whose re-run does not pay is left depleted.** An extra run that pays no ore stops the loop, logs `miningrolls: extra roll paid nothing - stopped after <k> of <n> extra rolls` once, and the node's `hp` is forced to 0 whatever happened; that node's remaining rolls are lost. The completion did pay again in the same frame in every measured case (13 of 13 extra runs on 2026-09-28, 2 of 2 on 2026-10-02), so this is a guard, not an observed outcome; `ForgePact/docs/mining-ore-research.md` § "Extra rolls".
     - **The rolls refuse to arm if any of their seven detours is table-only** (the step/loot pair, the four pass-through detours, the shared `CombatText` one), and name it in `miningrolls: unavailable - <script> came up table-only`. For example, after `citrace nativetrace` detoured `update_quest` directly in a research session. The multiplier is not affected.
@@ -4660,10 +4748,12 @@ the median for 2 s) and, without a notification of any kind, writes
 that answers: which of our hooks the game was inside, which mod was on or
 busy, and how much frame time our own code took, never the game original a
 hook wraps (`none` is not an exoneration,
-and a crash cannot know the first; see "Known limits" below). The design,
+and a crash knows the first only from the crash trap's record, since 2.3.1;
+see "Known limits" below). The design,
 every decision and the limits are in
 `ForgePact/docs/incident-report.md`; the player text is the README's
-"Incident reports" section and `release-notes-v2.2.0.md`.
+"Incident reports" section and `release-notes-v2.2.0.md` (the crash trap's,
+`release-notes-v2.3.1.md`).
 
 **Shape.** `plugin/include/ForgePact/IncidentMonitor.hpp` (game-independent)
 plus the adapter under `// ===== Incident monitor (issue #76) =====` in
@@ -4695,9 +4785,15 @@ it did (`/api/state`'s `incidents` holds `reports`, `lastExit` and
 - `reports\<yyyymmdd-HHMMSS>_<perf|freeze|crash>\`: written by the plugin
   only (built under a dot-name and renamed whole), the ten newest kept; the
   panel only lists it.
+- `crashtrap\` and `crashtrap.prev\` (issue #223, 2.3.1): the crash trap's
+  folder for this session (`trap.txt`, and once a fatal exception has been
+  staged, or after a crash, `crash.dmp`, `dumpline.txt` and the
+  `YYToolkit.log` and `aurie.log` copies) and the previous session's, which
+  the next load reads and then deletes; written by the plugin only (below).
 
 `tests/fixtures/incident/exit.json` and `panel.json` are the one fixture both
-bindings are tested against for the first two.
+bindings are tested against for the first two; `tests/fixtures/incident/trap.txt`
+is the trap record the fold's harness scenarios read.
 
 **The installer tag: two channels.** The in-hook id is set by the
 installer, not by the bodies (owner decision 2026-10-02, "Tag in the
@@ -4872,6 +4968,185 @@ is always on, with no command to arm it and no panel switch:
 scenarios and the shutdown probe; `test_incident_panel.py` covers the panel's
 half.
 
+**The crash trap (issue #223, 2.3.1).** The two crash reports of 2026-10-19
+(Mining Ore Extra Rolls, ForgePact #222) said `exit 0xC0000005` and nothing
+else: the Application log held no record, so `faulting_module` was null, and
+`inHook`/`inMod` were `"unknown"`. `plugin/include/ForgePact/CrashTrap.hpp`
+(`ForgePact::CrashTrap`; Win32 and the standard library, no YYToolkit, no
+`RValue`, in both builds) now records the crash from inside the dying process,
+and the next load folds the record into the report. It is the player build's
+own code, apart from the research build's crashwatch instrument: no
+identifier, file or string of it may contain `crashwatch`
+(`test_crash_watch_contract.py`'s `test_nothing_reaches_the_player_build`,
+whose `AddVectoredExceptionHandler(` count is scoped to crashwatch's region).
+Like the rest of the monitor it hooks no game script and has no switch.
+
+- **Install.** `IncidentMonitorStart()` calls
+  `ForgePact::CrashTrap::Install(IPC_DIR, IncidentExeDir())` before the
+  monitor thread starts and logs the line it returns. Once a process it
+  renames `bp_ipc\crashtrap\` to `bp_ipc\crashtrap.prev\` (an older `.prev`
+  removed) before anything is written, starts a fresh `crashtrap\trap.txt`
+  with a `session <utc> pid=<n>` line, lists the loaded modules (the handlers
+  never ask the loader, whose lock a dying thread may hold; the monitor
+  thread re-lists them every `kModuleRefreshMs`, 10 s, through
+  `RefreshModules()`), loads `dbghelp.dll` from the system directory
+  (`LoadLibraryExW` with `LOAD_LIBRARY_SEARCH_SYSTEM32`) and takes
+  `MiniDumpWriteDump` by `GetProcAddress`, because `build.bat`'s `cl` line is
+  pinned verbatim (`tests/test_build_bat_contract.py`) and links
+  `user32.lib` only, starts the dump helper thread, and arms both routes. A
+  dbghelp that will not load turns off the dump alone and says why. The frame
+  tick hands the trap the game thread's id (`NoteGameThread`).
+- **The record line**, one per event in `trap.txt`: `exception 0x<code> at
+  <module>+0x<offset> thread=<game|other> tid=<n> in-hook=<id|none>
+  in-mod=<mod> game-original=<yes|no> cpp=<type|none>
+  route=<first-chance|unhandled>`. The tags are the incident monitor's own
+  (`g_Accounting.InHookId()`/`InModNow()`); a module missing from the trap's
+  list is written `unlisted` with the address; `cpp` is a C++ exception's
+  decorated type name (for example `.?AVruntime_error@std@@`, cut to
+  `kTypeChars`).
+- **Route 1, first chance:** a first-registered vectored handler, which sees
+  every exception before any frame handles it. For a fatal code
+  (`IsFatal`: access violation, stack overflow, illegal or privileged
+  instruction, integer divide by zero, array bounds, in-page error, heap
+  corruption `0xC0000374`) it appends one `route=first-chance` line,
+  `kMaxFirstChanceLines` (32) a session, counted on past the cap, and stages
+  the dump (below) unless the thread is inside one of ForgePact's own
+  guarded reads. For an MSVC C++ throw (`0xE06D7363`) it writes nothing and
+  only remembers the thrown type for its thread (`LastCppType()`), read from
+  the exception record's throw information under `__try`/`__except` in a
+  function holding no C++ object; a C++ throw never stages, since the game
+  and our code throw and catch them routinely. It always returns
+  `EXCEPTION_CONTINUE_SEARCH`.
+- **The guarded-read depth.** ForgePact raises and handles access violations
+  of its own: `IsBadReadPtr` probes a pointer by faulting on it, and the frame
+  profiler reads under `__try`. Each such read runs inside
+  `CrashTrap::GuardedReadScope` (or `GuardedRead(...)`), which raises a
+  per-thread depth for the read's duration. A fatal exception raised while
+  that depth is above zero is ours and handled: it writes no line, stages
+  nothing and is only counted (`guarded reads <n>` on the stat line). The
+  handler reads the depth from a thread-local, never from the loader.
+  `test_crash_trap_contract.py` fails any `IsBadReadPtr` call or reading
+  `__try` in the player build outside the depth (research blocks are exempt).
+  Faults that other modules (the game, drivers, overlays) raise and handle
+  themselves cannot be told apart at first chance and stage like a crash;
+  the rate limit and the next-load decision are what keep that harmless.
+- **Route 2, unhandled:** the top-level filter
+  (`SetUnhandledExceptionFilter`, the previous filter kept). It sees only
+  what nothing handled: it appends a `route=unhandled` line (a C++
+  exception's with its type) and, once a session, has the log copies and
+  the dump made the same way as a staging, unless the dump already staged at
+  first chance was taken for this same exception (same code, address and
+  thread; it then writes a `dump already staged at first chance for this
+  exception` line instead). It is the second trigger, and the only route
+  that dumps a C++ exception. It then calls the filter it replaced and
+  returns that one's answer; whether it is still on top is re-checked (see
+  Known limits).
+- **Neither route handles or resumes anything.** Inside both: Win32 calls and
+  fixed buffers, no allocation, no stream, no lock of ours, nothing from the
+  game's runtime, and each line opened, appended and closed. The game dies
+  exactly as before and Windows Error Reporting still sees it. No notice.
+- **The dump is `MiniDumpNormal` only** (every thread's stack and the module
+  list, no heap), staged at first chance. The first design took it from the
+  unhandled route only, because ForgePact raises handled first-chance access
+  violations itself. Live 1 (2026-10-19) then measured a real crash (the
+  crash control's `0xC0000005` in `BloodPactPlugin.dll`, game thread) that
+  left only a `route=first-chance` line and no dump or log copy, although
+  `incident stat` had read `unhandled armed (top-level)` just before: the
+  process ended after first chance and the top-level filter was not
+  observed to run (no `route=unhandled` line; why is not established,
+  [RUNTIME_DATA_MODELS § 5.11](../../RUNTIME_DATA_MODELS.md)). So, by the owner's decision, the dump is now staged
+  at first chance and the next load decides whether to keep it.
+- **What a staging does.** For a fatal exception outside a guarded read, the
+  vectored handler writes its record line, claims the helper thread created
+  at install and waits for it at most `kDumpWaitMs` (15 s), so a hung dump
+  cannot keep a dead game alive; it waits at all because the process can end
+  as soon as the search goes on. The helper copies the last `kLogCopyBytes`
+  (1 MB) of the game's `bin\YYToolkit.log` and `bin\aurie.log` into
+  `crashtrap\` (both are rewritten at every launch, so at the next load they
+  already describe the new session), writes `crash.dmp` with the faulting
+  thread's exception pointers, and then `dumpline.txt`, the record line the
+  dump was taken for. Each file is written under a `.tmp` name and moved
+  over the previous one, so a later staging replaces an earlier one and a
+  half-written file never replaces a whole one. The dump is written on the
+  helper thread, never on the faulting one (which may be out of stack), and
+  the handler then continues the search as always.
+- **The rate limit.** At most one staging every `kStageMinIntervalMs` (60 s)
+  and `kMaxStagedDumps` (4) a session. A fatal exception the limit refuses
+  still writes its record line and is counted, and the session's first
+  refusal writes one `staging limit reached: ...` line to `trap.txt` (not an
+  `exception ` line, so the fold never takes it for a record), so a report
+  whose dump is older than its crash says why.
+- **Rejected:** a dump from a watcher process (a second program to ship) or
+  of a type with heap memory (game state, hundreds of MB in a report folder).
+- **The fold at the next load.** `IncidentCrashCheck` reads
+  `crashtrap.prev\trap.txt`; `IncidentMonitor.hpp`'s pure parser
+  (`ParseTrapRecord`) picks the last `route=unhandled` line, else the last
+  line. `report.json` gains a top-level `trap` (`exceptionCode`, `module`,
+  `offset`, `thread`, `threadId`, `inHook`, `inMod`, `gameOriginal`,
+  `cppType`, `route`, `dump`), `null` without a record; the schema stays
+  `forgepact-incident/1`, since the field is additive. A crash's
+  `frames.inHook`/`frames.inMod` come from the record (an `inMod` of `<mod>
+  (game original)` when the thread was inside a wrapped original), else stay
+  `"unknown"`, and the `CRASH ...` line's module falls back to the record's
+  `<module>+0x<offset>` when `exit.json` has none. After a clean previous
+  session the `.prev` folder is deleted; after a crash, once it is folded.
+- **The next load decides about the staging.** The decision is the existing
+  one: the previous session crashed when `IncidentCrashCheck` finds no
+  clean-shutdown line for it (`SessionEndedCleanly` false; `exit.json` only
+  adds the exit code). On a crash, `IncidentMonitor.hpp`'s pure
+  `SettleStagedDump` keeps the staged `crash.dmp` only when the line in
+  `dumpline.txt` names the same exception (code, address, thread) as the
+  record the fold picked; otherwise it deletes the dump, the report's
+  `trap.dump` is false, and one `out.txt` line says the staged crash dump was
+  taken for an earlier exception. The log copies go into the crash bundle
+  either way. On a clean end, and on every other path that writes no crash
+  bundle (no previous session, a session without the monitor, the
+  crash-bundle limit, a bundle that could not be written), the staged dump,
+  its line and the log copies are deleted, so no stale staging reaches a
+  later report. Rotation at the next install still removes an older
+  `.prev`.
+- **The bundle.** Every bundle, PERF, FREEZE or CRASH, gains
+  `yytoolkit-tail.txt` and `aurie-tail.txt` (the last 500 lines, through
+  `TailLines` and the `%USERPROFILE%` scrub): PERF and FREEZE from the live
+  logs, a crash from the copies in `crashtrap.prev\`, or one line saying the
+  crashed session's log was not captured. A crash bundle also gets the
+  record as `trap.txt` and, when the next load kept it (above), `crash.dmp`,
+  moved (not copied) from `crashtrap.prev\`, binary and not scrubbed, so the
+  ten folders kept bound the dumps too.
+- **`incident stat`** prints a line starting `incident: trap `: `first-chance
+  armed|not armed`, `unhandled armed (top-level)` (with `, re-armed <n>x,
+  last over <filter>` once ours was re-armed), `unhandled replaced by
+  <filter>, left on top (ours re-armed <n> times already)` or `unhandled not
+  armed`, measured when the line is printed, `dump ready`, `dump
+  written`, `dump failed` or `dump off - <why>`, `lines <n> of 32` (and how
+  many after the cap), `staged <n> of 4` (first-chance stagings this
+  session, with `(<n> refused by the limit)` once one was), `guarded reads
+  <n>` (fatal faults inside the guarded-read depth, counted only),
+  `modules <n>`, and the folder.
+- **`incident trapprobe`** (research build only, behind `#ifndef
+  FORGEPACT_RELEASE` and outside `kPlayerCommands`) raises one access
+  violation in our DLL on the game thread, outside the guarded-read depth,
+  under its own `__try`, so the trap stages a dump and the game carries on.
+  It answers one line, `incident: trapprobe access violation raised and
+  handled here | staged <n> (was <m>)`. It is how a live session stages in a
+  session that then ends cleanly, to check that a clean end deletes the
+  staging.
+
+**Rethrow lines (issue #223, 2.3.1).** A `catch (...)` that cleans up and
+then `throw;`s the game's own exception back into the game is correct, but
+the crash that may follow then names the game, not us: the 2026-10-19 crashes
+are inferred to have gone through such a block (`ExtraRolls`, removed by #222). So every
+such block first writes one `out.txt` line, `rethrow: <mod> type=<type> - an
+exception from the game's own call, passed back to the game`, where the type
+is the crash trap's `LastCppType()` for that thread or `unknown`, at most
+`kRethrowLinesPerSite` (5) a session per site. Today one site does this, the
+flight charms' load scope (`Hook_FlightParseItemToGrid`).
+`SkillTimerDrawNumber`'s rethrow goes to our own caller, which counts it, and
+is the one allowlisted exception: `tests/test_crash_trap_contract.py`'s
+`test_every_rethrow_into_the_game_writes_a_line_first` finds every `catch
+(...)` block ending in `throw;` and fails one without the line, with a
+negative control.
+
 **The PDB.** A report names a crash by module and offset, and only that tag's
 PDB maps an offset inside `BloodPactPlugin.dll` to our function. The release
 workflow's compile step sets `CL=/Zi` and `_LINK_=/DEBUG:FULL /OPT:REF
@@ -4898,7 +5173,53 @@ UNVERIFIED for the whole plugin until a dry-run release build.
 **Known limits.** `none` is not an exoneration: it means "not inside a
 tagged hook", and the ten `fp_population_*` detours (and any install past a
 table's 128 slots) are untagged, shown as `untagged` in `incident stat`. A
-crash report's `inHook`/`inMod` are `"unknown"`. An exit-time abort (item 25)
+crash report's `inHook`/`inMod` name what was running only when the crash trap
+saw the crash; its room and counts stay empty. What still reads `"unknown"`
+(and `trap: null`): a process ended by `TerminateProcess` or a fast fail
+(`__fastfail`, which the CRT's invalid-parameter and abort paths use), since
+no exception is raised; and a session whose `crashtrap\` could not be written.
+A late crash after the 32 first-chance lines that never reached the filter
+writes no line of its own, so the report folds the last first-chance exception
+recorded before the cap, an earlier and possibly unrelated one, and its
+`inHook`/`inMod` name that one. A
+process that ends after first chance without reaching the filter (Live 1's
+crash control left that outcome: a first-chance line only, no
+`route=unhandled`; the cause is open, RUNTIME_DATA_MODELS § 5.11) leaves a
+`route=first-chance` line and, within the rate limit, its staged dump and log
+copies, and the fold reports that. A
+first-chance line is not proof of a crash: ForgePact's own guarded reads
+write none, but a fault another module raises and handles itself writes one
+and stages like a crash, which is why the fold prefers the `route=unhandled`
+line and the next load deletes a staging after a clean end. Whether such a
+fault happens in a normal session is not established. The rate limit means
+a crash within 60 s of a staging, or after the session's fourth, has its
+record line but no dump of its own: the staged dump then names an earlier
+exception, the next load deletes it (`trap.dump` false, one `out.txt` line
+says so), and the `staging limit reached` line in `trap.txt` says why. The
+guarded-read depth covers what the contract test can find
+(`IsBadReadPtr` and reading `__try` blocks); a handled fault our code raises
+any other way would stage. The unhandled route works
+only while its filter is the top one: a module that calls
+`SetUnhandledExceptionFilter` later replaces it. `CheckUnhandled()` measures
+that each time the monitor thread refreshes the module list
+(`kModuleRefreshMs`) and each time `incident stat` runs. It names the other
+filter in a `filter replaced by <module>+0x<offset>, ours re-armed over it
+(<n>)` line in `trap.txt` (the fold reads `exception ` lines only) and puts
+ours back on top, calling that filter after its own work. A filter that hands
+the same exception back to ours walks one step down the chain each time and
+never loops. After seven re-arms (`kMaxFilterChain` 8) the other filter is
+left on top, said once. A filter set over ours after the last check that does
+not call the one it replaced (the MSVC runtime's ends a C++ exception that
+way) still wins: then there is no `route=unhandled` line, and the dump and
+log copies are only the first-chance staging's, if one was made (never for a
+C++ exception, which does not stage). Which module, if any, does so in the
+game is not observed. The
+dump has stacks, not data; a dump that needs a lock the crashed thread holds
+is abandoned after 15 s; without a system `dbghelp.dll` no dump is taken. A
+stack overflow leaves the filter very little stack for its own line. A
+crash's log tails miss whatever YYToolkit or Aurie had not yet written to the
+file. Why the 2026-10-19 crashes ended as `0xC0000005` rather than an abort
+is not established; the trap is how the next report would say. An exit-time abort (item 25)
 after our marker is recorded as an exit after a clean shutdown; one before
 any marker would make every exit read as a crash, which the `ExitProcess`
 route exists to prevent; Live 1 observed the first order, the second is not
@@ -4926,8 +5247,9 @@ must be renamed to `BloodPactPlugin.pdb`, the name `/PDBALTPATH` embeds,
 before a debugger will load it. FPS drops are not reported for 5 s after a
 room change, while the game is unfocused or minimised, or more than once per
 30 s (50 episodes and 10 folders a session, one folder per 5 minutes, 10
-kept). Without the panel, a crash report has no exit code or faulting
-module.
+kept). Without the panel, a crash report has no exit code, only what the
+crash trap recorded (its `trap` object names the exception code and the
+faulting module).
 
 **Verification.** Harness, probe and contract tests as above, and
 `tests/fixtures/incident/` shared by the C++ harness and the panel tests.
@@ -4943,7 +5265,55 @@ at the relaunch), nearly all of it `InstallCustomForgeItemHooks+InstallItemTruth
 at 2486.2 ms, so the `setup` row and its line are observed live; the
 menu-room load rule was not exercised live (the session's largest gap,
 2838.7 ms, was under 3 s) and rests on the harness scenarios. Bounding the
-setup is tracked in falorfrozen-cmd/ForgePact#151.
+setup is tracked in falorfrozen-cmd/ForgePact#151. The crash trap (2.3.1) is
+covered by `tests/test_crash_trap_behavior.py`, which compiles
+`tests/crash_trap_harness.cpp` against the real header (`install`,
+`cpp-type-remembered`, `first-chance-av-line`, `non-fatal-quiet`,
+`continue-search-only`, `first-chance-stages-dump` (a handled access
+violation outside a guarded read leaves an `MDMP` dump, both log copies and
+its line in the staging folder, and the process carries on),
+`stage-rate-limited` (a second fault inside 60 s keeps its line, stages
+nothing, and the limit line is written once), `guarded-read-stages-nothing`
+(the same fault inside the guarded-read depth writes no line and is
+counted), `filter-replaced`, `filter-chain-walk`, `filter-left-on-top`,
+`rotation`, two child processes that die unhandled, one by an access
+violation and one by a C++ throw, writing the record line, the log copies
+and the dump (`unhandled-av-child` takes no second dump when the staged one
+is for the same exception), and `first-chance-child-terminated`, a child
+ended by its own `__except` with the exception code (Live 1's outcome; its
+cause is open, RUNTIME_DATA_MODELS § 5.11), that
+leaves the `route=first-chance` line, the staged dump and both log copies
+and no `route=unhandled` line), by `tests/test_crash_trap_contract.py`
+(Win32 calls and fixed buffers inside the routes, `MiniDumpNormal` only, the
+two named staging limits, the staging written only on the helper thread with
+a bounded wait, every `IsBadReadPtr` call and reading `__try` in the player
+build inside the guarded-read depth, `incident trapprobe` outside the player
+build, dbghelp from system32 with the `cl` line unchanged, rotation before
+arming, the installer before the monitor thread, the fold, the `incident:
+trap ` line, whether ours is still the top filter measured by the status line
+and the module refresh, no crashwatch name and no notice, the rethrow lines),
+and by the incident harness's `trap-fold` (against
+`tests/fixtures/incident/trap.txt`), `trap-prev-settled`,
+`clean-exit-deletes-staging` (a clean previous session's staging is deleted,
+nothing folded), `crash-keeps-staging` (a crash whose staged line matches
+the folded record: the bundle carries `crash.dmp` and both tails, `trap.dump`
+true) and `crash-staged-dump-mismatch` (no `crash.dmp`, `trap.dump` false)
+scenarios. In the game, Live 1 (2026-10-19, capture
+`forgepact-222-223-extra-rolls-crash-trap-live-1.md`) measured the record line
+and the fold (code, module and offset, game thread, `inMod ipc`) and found the
+dump missing from a crash that ended after first chance, which is what the
+staging answers. Live 2 (2026-10-19, capture
+`forgepact-222-223-extra-rolls-crash-trap-live-2.md`, research build, no
+debugger attached at any point) ran the staging in the game: `incident
+trapprobe` staged one set (`crash.dmp` starting `MDMP`, both log copies, the
+line files) and the game kept answering; a clean quit (exit 0x0) was followed
+at the next load by `incident: the previous session shut down cleanly`, no
+report, and the staged copies deleted; the crash control (`0xC0000005`, raised
+in `BloodPactPlugin.dll`) left report `20261019-141837_crash` keeping
+`crash.dmp` (361777 bytes) and the `YYToolkit.log` and `aurie.log` tails of the
+crashed session. Both crashes, Live 1's (x64dbg detached before it) and Live
+2's, recorded `route=first-chance` only; the top-level filter was not observed
+to run in either, and why is not established.
 
 ## Jump through scenery (`jumpscenery`, 2026-10-03)
 

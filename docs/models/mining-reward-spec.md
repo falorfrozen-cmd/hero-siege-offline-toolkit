@@ -123,14 +123,24 @@ The entries below are Live procedure 1, all dated 2026-09-28. Source for each:
   completion runs; `CombatText` counted none across a whole dig while the same
   detour counted kill XP text elsewhere, which is its positive control; and
   `update_quest` counted none, probably because no quest was active. That is not
-  "not called": which branch of the step skips them is not established.
+  "not called": which branch of the step skips them is not established. On
+  2026-10-19 (ForgePact #223 Live 1 and Live 2, at mining XP 225) digs were
+  **measured** calling both `MiningAdd` (one call per dig) and `CombatText` (one
+  call from the dig and one from each completion re-run), so MR8's zeros do not
+  hold for every dig; the condition that skips them is still not established
+  ([RUNTIME_DATA_MODELS](../RUNTIME_DATA_MODELS.md)). `update_quest` stays not
+  observed.
 - **Every bonus-find stat read 0, and no bonus find was seen.** The ten stat
   queries the node and the dig use (ids 692–700 and 703) all read 0 on the
   session's character, and no bonus find was seen over 17 paid completion runs
   (MR9, measured stats; the bonus find itself is not observed live). That agrees
   with the static reading and does not test it.
-- **Not measured:** mining experience (the skill's own XP), bonus finds and
-  non-ore rewards under any lever, and the Miner's Helmet with rolls above 1 (not
+- **Mining experience under extra rolls is once per dig** (measured 2026-10-19,
+  ForgePact #223 Live 2): a dig with no re-run gained 7 mining XP and one text
+  "mining +7"; the next, with two re-runs, gained 6 and one text "mining +6".
+  Of the silenced rewards, mining, character and guild XP were measured not to
+  repeat per roll.
+- **Not measured:** bonus finds and non-ore rewards under any lever, and the Miner's Helmet with rolls above 1 (not
   run in Live procedure 1). The records above say nothing about them.
 
 ## Not established
@@ -144,13 +154,11 @@ The entries below are Live procedure 1, all dated 2026-09-28. Source for each:
 - **What raises stats 692 to 703.** `hs_game_sdk.stats` does not name them, and
   which gear or talents feed them was not read. So whether a given character can
   see a bonus find at all is open.
-- **Mining experience and the floating text under extra rolls: once per dig, or
-  once per roll.** ForgePact silences `MiningAdd` and `CombatText` during an extra
-  run, but Live procedure 1 never saw either detour reached from a dig (MR8), and
-  Live procedure 2 (the shipped build, 2026-10-02) had no way to read it: the
-  character's mining level was at its cap, the player build has no back-end read
-  of mining XP, and no floating-text count was taken. The owner chose to ship with
-  this left not observed (2026-10-02).
+- **Quest progress under extra rolls: once per dig, or once per roll.** The
+  plugin skips `update_quest` during an extra run, but no dig has been seen
+  calling it (MR8; probably no quest was active). Mining experience and the
+  floating text, open here until 2026-10-19, are now measured once per dig
+  ("Measured" above).
 - **A bonus find under extra rolls.** No character with a bonus-find stat above 0
   was available (MR9), so no bonus site could pass.
 - **The Miner's Helmet with rolls above 1** (x4 per stack in every run, one pulse
@@ -182,16 +190,21 @@ pinned by the test's `RollsLeverParityTests` where ForgePact is checked out.
 - **Each run is scaled as today.** Inside every run the quantity multiplier M
   scales each stack, or, when the Miner's Helmet applies, x4 replaces M. Rolls and
   multiplier multiply: N runs, each stack x M.
-- **Experience, quests and floating text are meant to happen once.** That is the
-  plugin's design; of these only character and guild experience were measured
-  once per dig (MR7), and mining experience, quests and the floating text were
-  not observed from a dig at all (MR8, "Not established" above). The plugin passes
-  `MiningAdd`, `ExperienceUpdate`, `GuildExperienceAdd`, `update_quest` and
-  `CombatText` through during the original run and skips them during the extra
-  runs. `CombatText` is silenced inside the plugin's one shared detour on it
-  (`ForgePact/plugin/include/ForgePact/CombatTextHook.hpp`), the same detour the
-  Experience slider uses to rescale its "N XP" text, because a second detour on
-  one script would come up table-only. Ore, bonus finds, sound
+- **Experience and floating text happen once; quests are meant to.** Character and guild
+  experience were measured once per dig (MR7), and mining experience and the
+  floating text on 2026-10-19 ("Measured" above); quests are not observed from a
+  dig. The plugin passes `MiningAdd`, `ExperienceUpdate`, `GuildExperienceAdd`
+  and `update_quest` through during the original run and skips them during the
+  extra runs. `CombatText` is never silenced (since 2.3.1): 2.3.0, which skipped it,
+  crashed twice (#222); the cause is inferred, not reproduced in play, to be that
+  the dig sets `font` on the instance it returns (static reading,
+  [RUNTIME_DATA_MODELS § 12](../RUNTIME_DATA_MODELS.md)). Its
+  one shared detour (`ForgePact/plugin/include/ForgePact/CombatTextHook.hpp`, the
+  same detour the Experience slider uses to rescale its "N XP" text, since a
+  second detour on one script would come up table-only) calls the game during an
+  extra run too and remembers the instances it returned, and once the run ends
+  the plugin destroys those that are live `Combat_Text_obj` instances, so one
+  text rises per dig. Ore, bonus finds, sound
   and the hit effect happen once per run. The helmet's own dispatch (the pulse,
   Vein Resonance) runs for the original dig only.
 - **No re-run without a first ore reward.** A dig that paid no ore starts no extra
