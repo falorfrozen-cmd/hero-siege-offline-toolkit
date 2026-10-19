@@ -5744,11 +5744,15 @@ slot 14, in `Town_01_rm`, on the same build): see
   frames moved 4.693 px, 13 moved 7.039 and 2 moved 2.346. Every step is 0.5,
   1 or 1.5 times that walk's most common step, and in T5, where a per-frame
   logpoint lengthened the frame, the steps rose to 8.968 and 11.958 px, 1.5
-  and 2 times the unscaled 5.979. So a
-  frame-time factor in steps of 0.5 multiplies the step, and a walk's total
-  distance moves with the frame time; the **modal step** is the comparison
-  that frame timing does not move, and the 0.785 above is a ratio of modal
-  steps. What the 0.785 leaves open is **not established**: a step affine in
+  and 2 times the unscaled 5.979. So the step is plausibly multiplied by a
+  frame-time factor in steps of 0.5 (per-frame frame time was not recorded).
+  A walk's total distance moves with the frame time. The **modal step** holds
+  up against occasional slow frames within a window, but a sustained change
+  in frame time moves it too (T5's mode was 8.968), so modal steps compare
+  only between windows at the same mean frame time (the probe's `ms=`,
+  within about 10%). The 0.785 above is a ratio of modal steps taken at
+  comparable frame time (T4 and T7, neither with the per-frame logpoint).
+  What the 0.785 leaves open is **not established**: a step affine in
   the answer (a base plus a part proportional to the stat, such as a "+N%"
   stat over a base speed, which with these two points puts this character
   near +75%); a step capped at a maximum the unscaled answer already exceeds;
