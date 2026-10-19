@@ -251,11 +251,11 @@ are pinned to `plugin/ModuleMain.cpp` and `plugin/include/ForgePact/FlightCharms
 § Mod live 1 results and its Phase 2 decision), fixture `curated/movement_speed_measurements.json`
 (MS1-MS2 the unlevered walk and the id-64 answer, 151 every frame; MS3-MS8 the `speed-sweep`
 windows at multipliers 1.5 to -0.5; MS9 `speed-half`; MS10 phase 1's Live 2 point at 13.4 ms a
-frame; MS11 the frame clock), checks `tests/test_movement_speed_model.py`. It gives the walk's
+frame; MS11 the step halving between two sessions, cause not established), checks `tests/test_movement_speed_model.py`. It gives the walk's
 modal step as proportional to the dispatcher's id-64 answer plus `STEP_OFFSET` (200, measured;
-no cap reached, `STEP_CAP` is `None`), the ratio between two answers at one frame time, and the
-answer that makes the step a given fraction of another's. The window's scale (px per point) moves
-with the frame time and is a parameter, never a constant. The model records which speed lever
+no cap reached, `STEP_CAP` is `None`), the ratio between two answers in one window, and the
+answer that makes the step a given fraction of another's. The window's scale (px per point)
+differed between sessions, for a cause not established, and is a parameter, never a constant. The model records which speed lever
 Mark 1 ships and why (`SPEED_ROUTE`, `"stat-model"`, and `SPEED_ROUTE_REASON`): the step is
 affine, so halving the answer gives 0.785, and the lever answers (x - 200) / 2 instead. That
 lever stays in the test as a transform; the `movement` item's `LeverParity` tests pin
