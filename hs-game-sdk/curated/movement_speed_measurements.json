@@ -138,12 +138,12 @@
     },
     {
       "id": "MS11",
-      "kind": "frame-clock",
+      "kind": "step-between-sessions",
       "status": "measured",
       "date": "2026-10-19",
       "check": "walk-control",
       "source": [{"path": "ForgePact/docs/mark1-set-research.md", "section": "Mod live 1 results"}],
-      "what": "The same unlevered walk had a modal step of 5.979 px at 13.4 ms a frame (phase 1) and 2.989 px at 6.94 ms (Mod live 1): the step tracks the frame clock. The exact law between frame time and step (the per-frame steps come in multiples of half the mode) is not established, so the model takes each window's scale as a parameter.",
+      "what": "The same unlevered walk had a modal step of 5.979 px at 13.4 ms a frame (phase 1) and 2.989 px at 6.94 ms (Mod live 1): a step ratio of 0.500 at a frame-time ratio of 0.518; a step proportional to frame time would be about 3.10 px. The cause (the frame clock, a target-rate setting or a per-frame constant) is not established, so the model takes each window's scale as a parameter.",
       "values": {"steps": ["5.979", "2.989"], "ms": ["13.4", "6.94"]},
       "model": "step_per_point_from(step, 151) for each window; not a constant of the model"
     }
