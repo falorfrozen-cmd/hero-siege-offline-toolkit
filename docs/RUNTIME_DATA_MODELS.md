@@ -1074,9 +1074,10 @@ parts come from the research's Live 1 session on 2026-10-13 (the
   (`toggle-settle`). A second write switched it off 20 frames after the
   press, and it was on again 57 frames after it with no further write; what
   switched it back on was not read. Whether a forced cast costs mana is still
-  **not established** (`cast-mana`, not-observed): no element of the
-  player's `pSt` changed on a key cast or a forced one, and none changed in
-  any `pSt` watch of that session, so nothing shows mana is held there.
+  **not established** (`cast-mana`, not-observed): no number or bool element
+  of the player's `pSt` changed on a key cast or a forced one, and none
+  changed in any `pSt` watch of that session (which reads only those kinds),
+  so nothing shows mana is held there.
 - **The game has its own input simulation.** `gml_Script_InputSimulate`
   (1903) takes a profile slot index, a key and a value, and stores the value under
   the key in that profile slot entry's `inputSimMap` (a ds_map). That map is
@@ -1173,8 +1174,11 @@ From the same reading as § 7.7 (2026-10-13, static unless marked). The
   false and changed `playerEffect[196]` and `playerEffect[250]` 18 frames
   after it; `playerEffect[54]`, `[56]` and `[192]` count down by one a
   frame. The movement speed stat's answer did not move through the slowdown
-  (151 on every frame, `penalty-stat`), no `pSt` element changed in the 90
-  frames after a cast, and of the player's builtin variables only
+  (151 on every frame, `penalty-stat`), no number or bool element of `pSt`
+  changed at a frame boundary in the 90 frames after a cast (the watch reads
+  only those kinds, and has no positive control within `pSt`, so this does
+  not rule `pSt` out as the holder of the flat part: **not established**,
+  see the `pSt` bullet in § 7), and of the player's builtin variables only
   `image_index` did. The slowdown lasted more frames than Live 1's 21 at
   about half this frame rate; whether it is timed in frames or in time is
   **not established**. **Measured** too (`dbg-cast-active`): an x64dbg
@@ -1200,8 +1204,13 @@ From the same reading as § 7.7 (2026-10-13, static unless marked). The
   established**. **Measured** in Live 1: the player's `pSt` is an array of
   54 entries, not a struct or an instance, so a watch of named members reads
   nothing from it. **Measured** in Mod live 1 (2026-10-19, above): watched
-  element by element, none of the 54 entries changed in the 90 frames after
-  a cast, nor in the 60 after a key cast or a forced one.
+  element by element, no number or bool element of `pSt` changed at a frame
+  boundary in the 90 frames after a cast, nor in the 60 after a key cast or a
+  forced one. The watch reads only number and bool elements (an array,
+  struct or reference entry is left out without a word) and did not record
+  how many of the 54 those were, and no `pSt` element changed in any watch of
+  the session, so this has no positive control and does not rule `pSt` out as
+  what holds the slowdown's flat part (**not established**).
 
 [Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
 
@@ -5834,9 +5843,11 @@ in `Town_01_rm` and the Outskirts of Inoya): see
   `StatMovementSpeed` was never called outside the dispatcher. Where in the
   Step event the answer is turned into the step is not read, so the constant
   200 is measured for this game build, not read.
-- **The walk's step tracks the frame clock (measured, 2026-10-19).** Mod live
-  1 ran at 6.94 ms a frame, and the walk's modal step was 2.989 px, exactly
-  half the 5.979 px Live 2 measured at 13.4 ms.
+- **The walk's step halved between two sessions (measured, 2026-10-19).**
+  Mod live 1, at 6.94 ms a frame, measured a modal step of 2.989 px, half of
+  Live 2's 5.979 px at 13.4 ms. The frame time ratio was 0.518, not 0.5, so
+  the step is not simply proportional to frame time; what sets the per-frame
+  step is **not established**.
 - **What `StatMovementSpeed` reads.** The player's `playerBuff` (about 380
   reads) through the `GetBuffValue` and `GetBuffStack` methods, `buffArray`,
   `debuffArray`, `buffMult` and `skpDb`; it asks the dispatcher for ids 106,
