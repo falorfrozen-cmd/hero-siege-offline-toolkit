@@ -438,7 +438,7 @@ the same `MiningOreMod.hpp`, because it needs the same step/loot pair and the sa
   - `include/ForgePact/ExitSafeThread.hpp`: `ForgePact::ExitSafeThread`, how a module global owns a background thread. The `std::thread` is heap-held and freed only after `JoinFor` has joined it, and the holder has no destructor, so the game's `ExitProcess` never destroys a joinable thread (Known Limitations item 26). It owns the coop receive thread. Game-independent: `tests/coop_thread_exit_probe.cpp` compiles it whole into a probe DLL.
   - `include/ForgePact/FrameProfiler.hpp`: `ForgePact::FrameProfiler`, the `frameprof` sampling profiler (2026-09-28, see "Frame profiler (`frameprof`)" below). A background thread (an `ExitSafeThread` held by a never-freed singleton) pauses the frame thread `rate` times a second in `CaptureOnce` - `SuspendThread`, `GetThreadContext`, a guarded `memcpy` of the live stack into a buffer allocated beforehand, `ResumeThread`, and nothing else - then, after the resume, `WalkCopy` moves every pointer into the old stack range into the copy and unwinds it with `RtlVirtualUnwind`, finding unwind entries by binary search in each module's own `.pdata` (`ModuleMap`, never `RtlLookupFunctionEntry`). `Symbolizer` names frames from the game's compiled-code table (`GmlEntry` = `YYGMLFuncs`, walked both ways from one row), the built-ins the adapter resolved and each system DLL's exports; `Classify` buckets a stack from the innermost frame out. `Profiler::BuildReport` writes `bp_ipc\perf\<stem>.json`, `.stacks.txt` and `.txt`. Game-independent (Win32 and the standard library, no `RValue`), so `tests/frame_profiler_harness.cpp` compiles it whole. Its companion `FrameProfilerBuiltins.hpp` holds `kBuiltinNames`, the 429 built-in names the adapter resolves. Avoids `std::min`/`std::max` for the `NOMINMAX` reason above.
   - `include/ForgePact/IncidentMonitor.hpp`: `ForgePact::Incident`, the incident monitor (issue #76, 2.2.0, always on in both builds; see "Incident reports (issue #76, 2.2.0)" below). Game-independent - Win32 and the standard library only - so `tests/incident_monitor_harness.cpp` compiles it whole: the 600-frame ring (single writer: the frame thread), the per-mod accounting and `IncidentScope` (the in-mod channel; every row self time) with the game-original guard that pauses the running clock around a wrapped original and marks the in-mod channel `(game original)`, the in-hook id channel with `TaggedThunks<Fn>` (the installer's per-slot thunks, `kHookSlots = 128`) and `IncidentHookTag`, `Analyze` (hitch / sustained / freeze / none from the ring, the last frame's clock reading and the grace, focus and menu-room inputs passed in as plain values; a freeze is held until it ends or `kFreezeHoldMs`, and one that began in a menu room is a load), the rate limits, the report text builders (pure functions over structs), the `JsonStringField`/`JsonNumberField` readers of the panel's `exit.json`/`panel.json`, the `%USERPROFILE%` scrub, the thresholds as named constants, and `ShutdownMarker` (`Write(route)`, once-only, Win32 file calls only: `==== clean shutdown ====` from the adapter's `ExitProcess` hook, `==== clean shutdown (detach) ====` from its static destructor), and the install-cost accounting (ForgePact #151: `InstallTimer`, which `HookOneScript` and `HookBuiltin` open for each install, `g_InstallCost` with its setup window, setup line and session line, frame thread only, constant-initialised and trivially destructible) with the read-only `ThreadSnapshot()` probe `incident setup` runs. The adapter in `ModuleMain.cpp` sits under `// ===== Incident monitor (issue #76) =====`. Since 2.3.1 (issue #223) the header also holds `ParseTrapRecord` and `SettleTrapPrev` (the crash trap's record read back and its `crashtrap.prev\` folder settled at the next load), the report's `trap` object and the log-tail files of every bundle.
-  - `include/ForgePact/CrashTrap.hpp`: `ForgePact::CrashTrap`, the crash trap (issue #223, 2.3.1, in both builds, installed by `IncidentMonitorStart()` before the monitor thread; see "Incident reports (issue #76, 2.2.0)" below). Win32 and the standard library only, no YYToolkit and no `RValue`, so `tests/crash_trap_harness.cpp` compiles it whole: the first-registered vectored handler (one `route=first-chance` line for a fatal code, `kMaxFirstChanceLines` a session; an MSVC C++ throw only remembered per thread, `LastCppType()`), the top-level unhandled filter (a `route=unhandled` line, then the helper thread's log copies and `MiniDumpNormal` dump, waited for at most `kDumpWaitMs`, then the previous filter), the module list kept outside the handlers (`RefreshModules()`, which also runs `CheckUnhandled()`, the top-level filter re-arm, from the monitor thread), `NoteGameThread`, the `bp_ipc\crashtrap\` to `crashtrap.prev\` rotation, `dbghelp.dll` loaded from system32 with `MiniDumpWriteDump` by name, and `StatusLine()` (the `incident: trap ` line). No identifier, file or string in it contains `crashwatch`; crashwatch stays the research build's instrument.
+  - `include/ForgePact/CrashTrap.hpp`: `ForgePact::CrashTrap`, the crash trap (issue #223, 2.3.1, in both builds, installed by `IncidentMonitorStart()` before the monitor thread; see "Incident reports (issue #76, 2.2.0)" below). Win32 and the standard library only, no YYToolkit and no `RValue`, so `tests/crash_trap_harness.cpp` compiles it whole: the first-registered vectored handler (one `route=first-chance` line for a fatal code, `kMaxFirstChanceLines` a session, and, outside the per-thread guarded-read depth `GuardedReadScope` that every `IsBadReadPtr` probe and the frame profiler's `__try` reads raise, the staging: the helper thread's log copies, `MiniDumpNormal` dump and `dumpline.txt`, waited for at most `kDumpWaitMs`, at most one every `kStageMinIntervalMs` and `kMaxStagedDumps` a session; an MSVC C++ throw only remembered per thread, `LastCppType()`, and never staged), the top-level unhandled filter (a `route=unhandled` line, then, as the second trigger, the log copies and dump unless the staged dump is for the same exception, then the previous filter), the module list kept outside the handlers (`RefreshModules()`, which also runs `CheckUnhandled()`, the top-level filter re-arm, from the monitor thread), `NoteGameThread`, the `bp_ipc\crashtrap\` to `crashtrap.prev\` rotation, `dbghelp.dll` loaded from system32 with `MiniDumpWriteDump` by name, and `StatusLine()` (the `incident: trap ` line, with its `staged <n>` and `guarded reads <n>` fields). The next load keeps a staged dump only for a crash whose folded record it was taken for (`IncidentMonitor.hpp`'s `SettleStagedDump`) and deletes it otherwise. No identifier, file or string in it contains `crashwatch`; crashwatch stays the research build's instrument.
   - `include/ForgePact/FarSleep.hpp`: `ForgePact::FarSleep`, far scenery sleep (2026-09-28, `farsleep`, see "Far scenery sleep (`farsleep`)" below). Classifies the object table once a session (leaf descendants of `Visual_Parent_obj`, `Destructible_NoCollision_Parent_obj`, `Collision_Prop_obj`, minus denied parents, `Trap_*` and objects owning per-frame events), scans a settled zone a slice a frame, then every 10 frames sleeps props beyond the sleep radius of every player (`instance_deactivate_object`) and wakes those inside a wake radius (`instance_activate_object`); a player jump starts an urgent pass. Reaches the game only through `CallBuiltin`, every call counted against a per-frame budget, so `tests/far_sleep_harness.cpp` compiles the real class against a controlled runner.
   - `include/ForgePact/HiddenLootMod.hpp`: `ForgePact::HiddenLootMod`, hidden loot sleep (2026-09-28, `hiddenloot`, #95 part 2b, see "Hidden loot sleep (`hiddenloot`)" below). `OnInit` takes what a `LootGroundInit` call carried (argument 0, argument 1, `self`) from the adapter's hook and, still inside the call, reduces each to a durable handle (`Durable`: a number or a reference kept as it is; an instance pointer asked `instance_exists` and replaced by its own `id`, read with `variable_instance_get`; anything else undefined), with those two reads only, no write and no deactivation, so no raw pointer outlives the call; `OnFrame`, at the end of the frame, identifies the handle that is a live `Loot_Ground_obj` by `object_index` (any value kind), reads `lootFilterVisible` after `variable_instance_exists` and puts a hidden one to sleep (`instance_deactivate_object`); polls the show key (starts at 164, Left Alt) through an injected key-state and foreground test, waking and writing visible on the key-down edge and writing hidden and re-sleeping on release; `Enable` walks the ground once (capped at 8,192), `Disable` wakes everything it slept; a room change forgets without a call, a persistent room sleeps nothing; a pass every 18 frames stands in when the route is not `Both`. Reaches the game only through `CallBuiltin`, so `tests/hidden_loot_harness.cpp` compiles the real class against a controlled runner.
   - `include/ForgePact/JumpSceneryProbe.hpp`: The `jumpprobe` decision core (ForgePact #16, research phase, **research build only**; see `docs/jump-scenery-research.md` § Instrument). Game-independent: the `pass` lever's window arithmetic (opened by a `CA_playerJump` or `PlayerForceJump` entry with the local player as `self`, counted in frames, or held open by `hold` with no jump script; a lever on without `hold` that no window ever opened for is `Inert()`), the family rule through a callback (`props` = `Collision_Prop_obj` or a descendant, `all` = `Collision_Parent_obj` or a descendant; the adapter answers it with `object_is_ancestor` by name), the answer kind per builtin row (`noone` for `instance_place`, `instance_position` and the four `collision_*` rows; `false` for `position_meeting` and `place_meeting`; `place_free` `true` and `tilemap_get_at_pixel` `0` under `all` only, since they carry no object argument), the `scripts` flag's three script returns, and the counters (`passed=`, `passthrough=`, `outside-window=`, `other-self=`, `other-family=`). `ModuleMain.cpp` supplies the frame number, the ancestor test, the detours and the printing. ForgePact #158's walk lever (phase 1, `docs/flight-charms-research.md` § Instrument) adds the third rule `any` (every local-player query on a hooked builtin row, whatever object it names, the two object-less rows included, with no object argument read) and the object tally (per builtin row, the local player's own calls by object index, `-1` for no object, at most 64 distinct objects a row and the rest under `other`, counted from `hook` on whatever the lever does and cleared only by `objects reset`; the rows sorted most-called first and a summary of rows, distinct objects and objects outside `Collision_Parent_obj`'s family). The shipped `JumpScenery.hpp` is untouched.
@@ -952,7 +952,7 @@ To add or modify a gameplay modifier or runtime command:
 | `.\tools\ipc.ps1 incident stat` | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree (player or research build) | Prints the incident monitor's view. The first line starts `incident: frames ` (the live marker): frames seen, the baseline median, the worst frame this session and whether it was judged, the worst judged frame, the slow judged frames (`kHitchMs` or more) and `window yes|no`. Then whether the room-change grace is active, focus, the in-hook id and in-mod tag, episodes and report folders written, `hooks tagged N, untagged M | report write errors W`, and the per-mod table (each mod's own time, average and worst ms a frame over the last minute; the in-mod tag reads `<mod> (game original)` inside a wrapped original). The live control that the monitor is counting. The superproject's `tools/x64dbg_mcp.py` parses the integer on the first `incident: frames <n>` line (sent with `ping`, which must answer `pong`) to prove debugger sessions and report `game_released` (`docs/tools/x64dbg-mcp.md` § "The frame-counter proof"), so renaming or reordering that line leaves every debugger session `no_frame_counter`, unproven: change both in the same feature. | Read-only | Added 2026-10-02 (issue #76); observed live in Live 1 |
 | `.\tools\ipc.ps1 incident setup` | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree (player or research build) | Prints three lines (ForgePact #151): the start-up setup's install cost line, `incident: setup installs <n>, detours <d>: resolve <ms> ms, detour <ms> ms (worst <ms> ms <hook id>), log <ms> ms, rest <ms> ms, outside installers <ms> ms` (or `incident: setup installs not measured yet` before the setup ran); the session's totals, `incident: installs since load <n>, detours <d>, detour <ms> ms total, worst <ms> ms <hook id>`, which also count installs made after the setup (an on-demand `dropmult`, for example); and one thread snapshot timed on the spot, `incident: thread snapshot <ms> ms, <t> threads system-wide, <p> in this process`, the positive control for the detour part (`ForgePact/docs/setup-stall-research.md`). | Read-only; the snapshot holds the frame for its own time (tens of ms) | Verified 2026-10-06 (ForgePact #151 Live 1, player build): at the main menu with item truth on it printed `incident: setup installs 18, detours 18: resolve 0.1 ms, detour 1237.0 ms (worst 80.0 ms fp_customforge_new), log 4.9 ms, rest 20.9 ms, outside installers 5.4 ms`, `incident: installs since load 19, detours 19, detour 1324.9 ms total, worst 87.9 ms fp_hh_hudlabels` and `incident: thread snapshot 33.5 ms, 6012 threads system-wide, 76 in this process`; after `dropmult relic 2` in town, `installs since load 39, detours 39` with the setup line unchanged |
 | `py -3 -m unittest tests.test_incident_monitor_behavior tests.test_incident_monitor_contract tests.test_incident_panel -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the behaviour harness and its probe | The incident monitor's harness scenarios (including `freeze-load-room-change`, `freeze-never-ends`, `freeze-menu-room`, `freeze-menu-room-never-ends`, `worst-judged-vs-overall`, `hook-tag-thunk`, `stat-line-prefix`, `exit-json-fixture` against `tests/fixtures/incident/`, `marker-once`, and, for the accounting's controlled clock, `descheduled-not-charged` (the target) and `real-clock-control` (the baseline, lower bounds only)) and shutdown probe, its wiring contract, then the panel's half (exit code, event log, every report recorded and listed with no notice of any kind, the `exitWatch` counters, the shared fixture). `test_incident_monitor_behavior` must print `OK` with no `skipped` on a machine with MSVC. | Writes `build/incident-monitor-behavior/` and temp files only | Added 2026-10-02 (issue #76) |
-| `py -3 -m unittest tests.test_crash_trap_behavior tests.test_crash_trap_contract -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the behaviour harness (skips with a message without it) | The crash trap (`CrashTrap.hpp`): `tests/crash_trap_harness.cpp` compiled against the real header (`install`, `cpp-type-remembered`, `first-chance-av-line`, `non-fatal-quiet`, `continue-search-only`, `filter-replaced`, `filter-chain-walk`, `filter-left-on-top`, two child processes that die unhandled, `unhandled-av-child` and `unhandled-cpp-child`, each leaving its record line, both log copies and an `MDMP` dump, and `rotation`), then the contract: Win32 calls and fixed buffers inside the routes, `MiniDumpNormal` only, the dump from the unhandled route with a bounded wait, dbghelp from system32 with `build.bat`'s `cl` line unchanged, rotation before arming, the installer in the player build before the monitor thread, the next-load fold, the `incident: trap ` line, no crashwatch name and no notice, and every `catch (...)` that rethrows into the game writing its `rethrow: ` line first (with a negative control). Run it beside the incident row above, whose `trap-fold` and `trap-prev-settled` scenarios cover the fold. | Writes `build/crash-trap-behavior/` and temp files only | Added 2026-10-19 (issue #223) |
+| `py -3 -m unittest tests.test_crash_trap_behavior tests.test_crash_trap_contract -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for the behaviour harness (skips with a message without it) | The crash trap (`CrashTrap.hpp`): `tests/crash_trap_harness.cpp` compiled against the real header (`install`, `cpp-type-remembered`, `first-chance-av-line`, `non-fatal-quiet`, `continue-search-only`, the first-chance staging's `first-chance-stages-dump`, `stage-rate-limited` and `guarded-read-stages-nothing`, `filter-replaced`, `filter-chain-walk`, `filter-left-on-top`, two child processes that die unhandled, `unhandled-av-child` and `unhandled-cpp-child`, each leaving its record line, both log copies and an `MDMP` dump, `first-chance-child-terminated`, a child ended by its own `__except` after first chance (Live 1's shape) that leaves the staged dump and log copies and no `route=unhandled` line, and `rotation`), then the contract: Win32 calls and fixed buffers inside the routes, `MiniDumpNormal` only, the two named staging limits, the staging written only on the helper thread with a bounded wait, every `IsBadReadPtr` call and reading `__try` in the player build inside the guarded-read depth, `incident trapprobe` outside the player build, dbghelp from system32 with `build.bat`'s `cl` line unchanged, rotation before arming, the installer in the player build before the monitor thread, the next-load fold, the `incident: trap ` line, no crashwatch name and no notice, and every `catch (...)` that rethrows into the game writing its `rethrow: ` line first (with a negative control). Run it beside the incident row above, whose `trap-fold` and `trap-prev-settled` scenarios cover the fold and whose `clean-exit-deletes-staging`, `crash-keeps-staging` and `crash-staged-dump-mismatch` cover the next load's decision about a staged dump. | Writes `build/crash-trap-behavior/` and temp files only | Added 2026-10-19 (issue #223) |
 | `py -3 -m unittest tests.test_forgepact_release_workflow tests.test_release_pdb_symbols tests.test_build_bat_contract tests.test_ci_history_pins -v` | `ForgePact/` | PowerShell / CMD (Windows) | Python 3.10+; MSVC for `test_release_pdb_symbols` (skips without it) | The release workflow's shape, including the PDB artifact and the compile step's `CL`/`_LINK_`; the probe compiled plain and under those values; `build.bat`'s verbatim `cl ` line. | Writes `build/release-pdb-symbols/` | Added 2026-10-02 (issue #76) |
 | `.\tools\ipc.ps1 farsleep 1` (also `farsleep 0`, `farsleep stat`) | `ForgePact/` | PowerShell (Windows) | The game running with a plugin built from this tree | Turns far scenery sleep on or off (the panel's Mods → Quality of Life switch sends the same) and prints its state: zone state, props known and asleep, the radii, sleeps/wakes/scans/passes, rooms skipped, errors and the first player's position |
 | `py -3 -m unittest discover -s tests -p test_plugin_build_check.py -v` | `ForgePact/` | PowerShell / CMD | Python 3.10+ | 38 tests: reading a plugin DLL's version and hash, the state table, the launch-time refresh, Install's second game check, `/api/state`'s `pluginBuild` and the boot-line contract (issue #123), and the launch beside HS Offline Tracker's sensor (ForgePact #185, 2.3.0): an aborting sensor is only named in the launch message and the game starts on it, the fixed one changes nothing, the Install sentence is said once and the loader compared once per launch (the sensor's own Install, Remove and Launch rules are `tests/test_tracker_sensor_retire.py`'s, below). One test, the positive control on a built DLL, skips unless `plugin_build\BloodPactPlugin_ship.dll` or `modfiles_shipped\BloodPactPlugin.dll` exists. `py -m unittest tests.test_plugin_build_check` cannot import the module's `test_mod_backup` sibling from `ForgePact/`, hence `discover -s tests`. | Temp directories only | Verified 2026-10-14 on Windows with this command (38 tests, OK, with a built DLL in `modfiles_shipped`, so no skip); 2026-10-13, before the retirement, 51 tests, OK, skipped=1. Earlier, 2026-09-29 on Linux with `python3 -m unittest discover -s tests -p test_plugin_build_check.py` (31 tests, OK, skipped=1; with the published v2.0.1 release's DLL at `modfiles_shipped\BloodPactPlugin.dll`, 31 tests, OK, no skip) |
@@ -4754,7 +4754,8 @@ it did (`/api/state`'s `incidents` holds `reports`, `lastExit` and
   only (built under a dot-name and renamed whole), the ten newest kept; the
   panel only lists it.
 - `crashtrap\` and `crashtrap.prev\` (issue #223, 2.3.1): the crash trap's
-  folder for this session (`trap.txt`, and after a crash `crash.dmp`,
+  folder for this session (`trap.txt`, and once a fatal exception has been
+  staged, or after a crash, `crash.dmp`, `dumpline.txt` and the
   `YYToolkit.log` and `aurie.log` copies) and the previous session's, which
   the next load reads and then deletes; written by the plugin only (below).
 
@@ -4976,32 +4977,74 @@ Like the rest of the monitor it hooks no game script and has no switch.
   (`IsFatal`: access violation, stack overflow, illegal or privileged
   instruction, integer divide by zero, array bounds, in-page error, heap
   corruption `0xC0000374`) it appends one `route=first-chance` line,
-  `kMaxFirstChanceLines` (32) a session, counted on past the cap. For an
-  MSVC C++ throw (`0xE06D7363`) it writes nothing and only remembers the
-  thrown type for its thread (`LastCppType()`), read from the exception
-  record's throw information under `__try`/`__except` in a function holding
-  no C++ object. It always returns `EXCEPTION_CONTINUE_SEARCH`.
+  `kMaxFirstChanceLines` (32) a session, counted on past the cap, and stages
+  the dump (below) unless the thread is inside one of ForgePact's own
+  guarded reads. For an MSVC C++ throw (`0xE06D7363`) it writes nothing and
+  only remembers the thrown type for its thread (`LastCppType()`), read from
+  the exception record's throw information under `__try`/`__except` in a
+  function holding no C++ object; a C++ throw never stages, since the game
+  and our code throw and catch them routinely. It always returns
+  `EXCEPTION_CONTINUE_SEARCH`.
+- **The guarded-read depth.** ForgePact raises and handles access violations
+  of its own: `IsBadReadPtr` probes a pointer by faulting on it, and the frame
+  profiler reads under `__try`. Each such read runs inside
+  `CrashTrap::GuardedReadScope` (or `GuardedRead(...)`), which raises a
+  per-thread depth for the read's duration. A fatal exception raised while
+  that depth is above zero is ours and handled: it writes no line, stages
+  nothing and is only counted (`guarded reads <n>` on the stat line). The
+  handler reads the depth from a thread-local, never from the loader.
+  `test_crash_trap_contract.py` fails any `IsBadReadPtr` call or reading
+  `__try` in the player build outside the depth (research blocks are exempt).
+  Faults that other modules (the game, drivers, overlays) raise and handle
+  themselves cannot be told apart at first chance and stage like a crash;
+  the rate limit and the next-load decision are what keep that harmless.
 - **Route 2, unhandled:** the top-level filter
   (`SetUnhandledExceptionFilter`, the previous filter kept). It sees only
   what nothing handled: it appends a `route=unhandled` line (a C++
-  exception's with its type), signals the helper thread to copy the last
-  `kLogCopyBytes` (1 MB) of the game's `bin\YYToolkit.log` and `bin\aurie.log`
-  into `crashtrap\` (both are rewritten at every launch, so at the next load
-  they already describe the new session) and then write `crash.dmp`, waits
-  for it at most `kDumpWaitMs` (15 s) so a hung dump cannot keep a dead game
-  alive, then calls the filter it replaced and returns that one's answer;
-  whether it is still on top is re-checked (see Known limits).
+  exception's with its type) and, once a session, has the log copies and
+  the dump made the same way as a staging, unless the dump already staged at
+  first chance was taken for this same exception (same code, address and
+  thread; it then writes a `dump already staged at first chance for this
+  exception` line instead). It is the second trigger, and the only route
+  that dumps a C++ exception. It then calls the filter it replaced and
+  returns that one's answer; whether it is still on top is re-checked (see
+  Known limits).
 - **Neither route handles or resumes anything.** Inside both: Win32 calls and
   fixed buffers, no allocation, no stream, no lock of ours, nothing from the
   game's runtime, and each line opened, appended and closed. The game dies
   exactly as before and Windows Error Reporting still sees it. No notice.
 - **The dump is `MiniDumpNormal` only** (every thread's stack and the module
-  list, no heap), once a session, from the unhandled route only. A dump at
-  first chance was rejected: ForgePact itself raises first-chance access
-  violations it handles (`IsBadReadPtr` in `ReadablePtr`, the frame
-  profiler's `__try`), so it would dump sessions that never crashed. A dump
-  from a watcher process (a second program to ship) or of a type with heap
-  memory (game state, hundreds of MB in a report folder) was rejected too.
+  list, no heap), staged at first chance. The first design took it from the
+  unhandled route only, because ForgePact raises handled first-chance access
+  violations itself. Live 1 (2026-10-19) then measured a real crash (the
+  crash control's `0xC0000005` in `BloodPactPlugin.dll`, game thread) that
+  left only a `route=first-chance` line and no dump or log copy, although
+  `incident stat` had read `unhandled armed (top-level)` just before: the
+  process ended after first chance and the top-level filter never ran (why
+  is not established). So, by the owner's decision, the dump is now staged
+  at first chance and the next load decides whether to keep it.
+- **What a staging does.** For a fatal exception outside a guarded read, the
+  vectored handler writes its record line, claims the helper thread created
+  at install and waits for it at most `kDumpWaitMs` (15 s), so a hung dump
+  cannot keep a dead game alive; it waits at all because the process can end
+  as soon as the search goes on. The helper copies the last `kLogCopyBytes`
+  (1 MB) of the game's `bin\YYToolkit.log` and `bin\aurie.log` into
+  `crashtrap\` (both are rewritten at every launch, so at the next load they
+  already describe the new session), writes `crash.dmp` with the faulting
+  thread's exception pointers, and then `dumpline.txt`, the record line the
+  dump was taken for. Each file is written under a `.tmp` name and moved
+  over the previous one, so a later staging replaces an earlier one and a
+  half-written file never replaces a whole one. The dump is written on the
+  helper thread, never on the faulting one (which may be out of stack), and
+  the handler then continues the search as always.
+- **The rate limit.** At most one staging every `kStageMinIntervalMs` (60 s)
+  and `kMaxStagedDumps` (4) a session. A fatal exception the limit refuses
+  still writes its record line and is counted, and the session's first
+  refusal writes one `staging limit reached: ...` line to `trap.txt` (not an
+  `exception ` line, so the fold never takes it for a record), so a report
+  whose dump is older than its crash says why.
+- **Rejected:** a dump from a watcher process (a second program to ship) or
+  of a type with heap memory (game state, hundreds of MB in a report folder).
 - **The fold at the next load.** `IncidentCrashCheck` reads
   `crashtrap.prev\trap.txt`; `IncidentMonitor.hpp`'s pure parser
   (`ParseTrapRecord`) picks the last `route=unhandled` line, else the last
@@ -5014,21 +5057,47 @@ Like the rest of the monitor it hooks no game script and has no switch.
   `"unknown"`, and the `CRASH ...` line's module falls back to the record's
   `<module>+0x<offset>` when `exit.json` has none. After a clean previous
   session the `.prev` folder is deleted; after a crash, once it is folded.
+- **The next load decides about the staging.** The decision is the existing
+  one: the previous session crashed when `IncidentCrashCheck` finds no
+  clean-shutdown line for it (`SessionEndedCleanly` false; `exit.json` only
+  adds the exit code). On a crash, `IncidentMonitor.hpp`'s pure
+  `SettleStagedDump` keeps the staged `crash.dmp` only when the line in
+  `dumpline.txt` names the same exception (code, address, thread) as the
+  record the fold picked; otherwise it deletes the dump, the report's
+  `trap.dump` is false, and one `out.txt` line says the staged crash dump was
+  taken for an earlier exception. The log copies go into the crash bundle
+  either way. On a clean end, and on every other path that writes no crash
+  bundle (no previous session, a session without the monitor, the
+  crash-bundle limit, a bundle that could not be written), the staged dump,
+  its line and the log copies are deleted, so no stale staging reaches a
+  later report. Rotation at the next install still removes an older
+  `.prev`.
 - **The bundle.** Every bundle, PERF, FREEZE or CRASH, gains
   `yytoolkit-tail.txt` and `aurie-tail.txt` (the last 500 lines, through
   `TailLines` and the `%USERPROFILE%` scrub): PERF and FREEZE from the live
   logs, a crash from the copies in `crashtrap.prev\`, or one line saying the
   crashed session's log was not captured. A crash bundle also gets the
-  record as `trap.txt` and `crash.dmp`, moved (not copied) from
-  `crashtrap.prev\`, binary and not scrubbed, so the ten folders kept bound
-  the dumps too.
+  record as `trap.txt` and, when the next load kept it (above), `crash.dmp`,
+  moved (not copied) from `crashtrap.prev\`, binary and not scrubbed, so the
+  ten folders kept bound the dumps too.
 - **`incident stat`** prints a line starting `incident: trap `: `first-chance
   armed|not armed`, `unhandled armed (top-level)` (with `, re-armed <n>x,
   last over <filter>` once ours was re-armed), `unhandled replaced by
   <filter>, left on top (ours re-armed <n> times already)` or `unhandled not
   armed`, measured when the line is printed, `dump ready`, `dump
   written`, `dump failed` or `dump off - <why>`, `lines <n> of 32` (and how
-  many after the cap), `modules <n>`, and the folder.
+  many after the cap), `staged <n> of 4` (first-chance stagings this
+  session, with `(<n> refused by the limit)` once one was), `guarded reads
+  <n>` (fatal faults inside the guarded-read depth, counted only),
+  `modules <n>`, and the folder.
+- **`incident trapprobe`** (research build only, behind `#ifndef
+  FORGEPACT_RELEASE` and outside `kPlayerCommands`) raises one access
+  violation in our DLL on the game thread, outside the guarded-read depth,
+  under its own `__try`, so the trap stages a dump and the game carries on.
+  It answers one line, `incident: trapprobe access violation raised and
+  handled here | staged <n> (was <m>)`. It is how a live session stages in a
+  session that then ends cleanly, to check that a clean end deletes the
+  staging.
 
 **Rethrow lines (issue #223, 2.3.1).** A `catch (...)` that cleans up and
 then `throw;`s the game's own exception back into the game is correct, but
@@ -5077,10 +5146,21 @@ saw the crash; its room and counts stay empty. What still reads `"unknown"`
 (`__fastfail`, which the CRT's invalid-parameter and abort paths use), since
 no exception is raised; a session whose `crashtrap\` could not be written; and
 a late crash after the 32 first-chance lines that never reached the filter. A
-game whose own handler takes an exception and then exits leaves at most a
-`route=first-chance` line, and the fold reports that. A first-chance line is
-not proof of a crash: ForgePact's own handled probes write one too, which is
-why the fold prefers the `route=unhandled` line. The unhandled route works
+game whose own handler takes an exception and then exits (Live 1's crash
+control ended that way) leaves a `route=first-chance` line and, within the
+rate limit, its staged dump and log copies, and the fold reports that. A
+first-chance line is not proof of a crash: ForgePact's own guarded reads
+write none, but a fault another module raises and handles itself writes one
+and stages like a crash, which is why the fold prefers the `route=unhandled`
+line and the next load deletes a staging after a clean end. Whether such a
+fault happens in a normal session is not established. The rate limit means
+a crash within 60 s of a staging, or after the session's fourth, has its
+record line but no dump of its own: the staged dump then names an earlier
+exception, the next load deletes it (`trap.dump` false, one `out.txt` line
+says so), and the `staging limit reached` line in `trap.txt` says why. The
+guarded-read depth covers what the contract test can find
+(`IsBadReadPtr` and reading `__try` blocks); a handled fault our code raises
+any other way would stage. The unhandled route works
 only while its filter is the top one: a module that calls
 `SetUnhandledExceptionFilter` later replaces it. `CheckUnhandled()` measures
 that each time the monitor thread refreshes the module list
@@ -5092,8 +5172,10 @@ the same exception back to ours walks one step down the chain each time and
 never loops. After seven re-arms (`kMaxFilterChain` 8) the other filter is
 left on top, said once. A filter set over ours after the last check that does
 not call the one it replaced (the MSVC runtime's ends a C++ exception that
-way) still wins: then there is no `route=unhandled` line, dump or log copy.
-Which module, if any, does so in the game is not observed. The
+way) still wins: then there is no `route=unhandled` line, and the dump and
+log copies are only the first-chance staging's, if one was made (never for a
+C++ exception, which does not stage). Which module, if any, does so in the
+game is not observed. The
 dump has stacks, not data; a dump that needs a lock the crashed thread holds
 is abandoned after 15 s; without a system `dbghelp.dll` no dump is taken. A
 stack overflow leaves the filter very little stack for its own line. A
@@ -5149,18 +5231,38 @@ setup is tracked in falorfrozen-cmd/ForgePact#151. The crash trap (2.3.1) is
 covered by `tests/test_crash_trap_behavior.py`, which compiles
 `tests/crash_trap_harness.cpp` against the real header (`install`,
 `cpp-type-remembered`, `first-chance-av-line`, `non-fatal-quiet`,
-`continue-search-only`, `filter-replaced`, `filter-chain-walk`,
-`filter-left-on-top`, `rotation`, and two child processes that die
-unhandled, one by an access violation and one by a C++ throw, writing the
-record line, the log copies and the dump), by
-`tests/test_crash_trap_contract.py` (Win32 calls and fixed buffers inside the
-routes, `MiniDumpNormal` only, the dump from the unhandled route with a
-bounded wait, dbghelp from system32 with the `cl` line unchanged, rotation
-before arming, the installer before the monitor thread, the fold, the `incident:
+`continue-search-only`, `first-chance-stages-dump` (a handled access
+violation outside a guarded read leaves an `MDMP` dump, both log copies and
+its line in the staging folder, and the process carries on),
+`stage-rate-limited` (a second fault inside 60 s keeps its line, stages
+nothing, and the limit line is written once), `guarded-read-stages-nothing`
+(the same fault inside the guarded-read depth writes no line and is
+counted), `filter-replaced`, `filter-chain-walk`, `filter-left-on-top`,
+`rotation`, two child processes that die unhandled, one by an access
+violation and one by a C++ throw, writing the record line, the log copies
+and the dump (`unhandled-av-child` takes no second dump when the staged one
+is for the same exception), and `first-chance-child-terminated`, a child
+ended by its own `__except` with the exception code, Live 1's shape, that
+leaves the `route=first-chance` line, the staged dump and both log copies
+and no `route=unhandled` line), by `tests/test_crash_trap_contract.py`
+(Win32 calls and fixed buffers inside the routes, `MiniDumpNormal` only, the
+two named staging limits, the staging written only on the helper thread with
+a bounded wait, every `IsBadReadPtr` call and reading `__try` in the player
+build inside the guarded-read depth, `incident trapprobe` outside the player
+build, dbghelp from system32 with the `cl` line unchanged, rotation before
+arming, the installer before the monitor thread, the fold, the `incident:
 trap ` line, whether ours is still the top filter measured by the status line
-and the module refresh, no crashwatch name and no notice, the rethrow lines), and by the
-incident harness's `trap-fold` (against `tests/fixtures/incident/trap.txt`)
-and `trap-prev-settled` scenarios. It has not been run in the game yet.
+and the module refresh, no crashwatch name and no notice, the rethrow lines),
+and by the incident harness's `trap-fold` (against
+`tests/fixtures/incident/trap.txt`), `trap-prev-settled`,
+`clean-exit-deletes-staging` (a clean previous session's staging is deleted,
+nothing folded), `crash-keeps-staging` (a crash whose staged line matches
+the folded record: the bundle carries `crash.dmp` and both tails, `trap.dump`
+true) and `crash-staged-dump-mismatch` (no `crash.dmp`, `trap.dump` false)
+scenarios. In the game, Live 1 (2026-10-19) measured the record line and the
+fold (code, module and offset, game thread, `inMod ipc`) and found the dump
+missing from a crash that ended after first chance, which is what the
+staging answers; the staging itself has not been run in the game yet.
 
 ## Jump through scenery (`jumpscenery`, 2026-10-03)
 
