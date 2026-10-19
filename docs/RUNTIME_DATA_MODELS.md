@@ -532,6 +532,33 @@ main menu on 2026-09-26 (`pe-6aaa6779-0cad4fc8`). All **measured**.
 [Decompile index and slot-name helpers](tools/decomp-index.md),
 [skill sliders research](../ForgePact/docs/skill-sliders-research.md)
 
+### 5.11 What a plugin's exception handlers see at a crash
+
+**Measured**, once: 2026-10-19, ForgePact #223 Live 1, game 7.0.13.0 with the
+ForgePact research DLL built at `a4db66c`.
+
+- The crash was crashwatch's positive control, run in-mod `ipc`: an access
+  violation (`0xC0000005`) raised on the game thread inside
+  `BloodPactPlugin.dll` (at `+0x1BC12A`). The process ended with exit code
+  `0xC0000005`.
+- The plugin had installed two routes: a vectored handler registered first
+  (it sees the exception at first chance), and a top-level
+  unhandled-exception filter (`SetUnhandledExceptionFilter`). Just before the
+  crash, `incident stat` read the filter as installed and still top-level
+  (`unhandled armed (top-level)`).
+- The vectored handler ran: it wrote its `route=first-chance` record line.
+  The top-level filter was **not observed** to run: no `route=unhandled`
+  line, and none of the work it starts (the dump, the log copies) happened.
+- Why it did not run is **not established**. Another handler ending the
+  process, a frame that catches the fault and terminates, or something else
+  are all open; one crash says nothing about which.
+
+So a crash trap on this build must not rely on the top-level filter alone:
+whatever has to be captured at a crash has to be started from first chance,
+which is what ForgePact's crash trap does since that session. The trap's
+design, its staging rules and the Live 1 result are in
+[ForgePact/docs/incident-report.md](../ForgePact/docs/incident-report.md).
+
 ---
 
 ## 6. Player and Global State
