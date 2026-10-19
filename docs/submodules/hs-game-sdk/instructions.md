@@ -43,6 +43,7 @@ hs-game-sdk/
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── flight_charms_measurements.json # ForgePact #158 phase 1: walk callers, charm size keys, sprite key, the Heroic roll (RDM §19.6, §23), and the mod's Mod live 1-3 records (data only)
 │   ├── unique_pick_measurements.json # UP1-UP13: #74's stand-in picks, the unique list's lengths, ForgePact's push and coin, and the flight charms' Mod live 1 and 2 counts, for unique_pick_model.py (data only)
+│   ├── movement_speed_measurements.json # MS1-MS11: ForgePact #166's Mod live 1 sweep of the walk's modal step against the id-64 answer, its half point and phase 1's point, for movement_speed_model.py (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
 ├── python/                     # Python SDK package
@@ -63,6 +64,7 @@ hs-game-sdk/
 │   │   ├── dungeon_chest_model.py # When a key dungeon's end chest opens (no monster alive) and the kill tally's quantities, stdlib only, not exported (hand-written)
 │   │   ├── skill_sliders_model.py # Projectile count, AoE scale and projectile deltaSpeed from their stats, stdlib only, not exported (hand-written)
 │   │   ├── unique_pick_model.py # Which unique the Angelic roll and the ordinary unique roll yield (one entry's share), stdlib only, not exported (hand-written)
+│   │   ├── movement_speed_model.py # The walk's modal step against the movement speed stat (affine: answer + 200) and the answer that halves it, stdlib only, not exported (hand-written)
 │   │   ├── soul_piece_model.py # A room's act (RoomActIndex's answer), the pickup's stack rule (reals within the epsilon), the number rules a key piece rests on (repository truncation, unique `c`, the save's two decimals, crafting's count, the find), the gem roll a boss soul piece rides and the backpack's use, stdlib only, not exported (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
@@ -243,6 +245,21 @@ c / (n + c) stay in the test as transforms, so each item takes c / (T + e) of th
 Pocket Elf c / (L_k + c) of the ordinary one, one entry's share at the player build's c = 1; they
 are pinned to `plugin/ModuleMain.cpp` and `plugin/include/ForgePact/FlightCharms.hpp` by
 `LeverParityTests`.
+
+`movement_speed_model.py` (2026-10-19, ForgePact issue #166, hub #518) is built the same way: spec
+`docs/models/movement-speed-spec.md` (written from ForgePact's `docs/mark1-set-research.md`
+§ Mod live 1 results and its Phase 2 decision), fixture `curated/movement_speed_measurements.json`
+(MS1-MS2 the unlevered walk and the id-64 answer, 151 every frame; MS3-MS8 the `speed-sweep`
+windows at multipliers 1.5 to -0.5; MS9 `speed-half`; MS10 phase 1's Live 2 point at 13.4 ms a
+frame; MS11 the frame clock), checks `tests/test_movement_speed_model.py`. It gives the walk's
+modal step as proportional to the dispatcher's id-64 answer plus `STEP_OFFSET` (200, measured;
+no cap reached, `STEP_CAP` is `None`), the ratio between two answers at one frame time, and the
+answer that makes the step a given fraction of another's. The window's scale (px per point) moves
+with the frame time and is a parameter, never a constant. The model records which speed lever
+Mark 1 ships and why (`SPEED_ROUTE`, `"stat-model"`, and `SPEED_ROUTE_REASON`): the step is
+affine, so halving the answer gives 0.785, and the lever answers (x - 200) / 2 instead. That
+lever stays in the test as a transform; the `movement` item's `LeverParity` tests pin
+`Mark1Movement.hpp`'s constants to the model's.
 
 ---
 
