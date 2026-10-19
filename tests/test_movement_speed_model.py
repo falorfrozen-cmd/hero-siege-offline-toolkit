@@ -7,7 +7,8 @@ research doc's Phase 2 decision picked.
 
 Baseline: what the game does with no mod. Target: what the lever must turn it
 into. Measured: every swept point of Mod live 1, replayed within 3%. That is
-the order `AGENTS.md` § "Mod Development Workflow" asks for.
+the order `AGENTS.md` § "Mod Development Workflow" asks for. LeverParity: the
+plugin's constants (ForgePact's `Mark1Movement.hpp`) are the model's.
 """
 import json
 import re
@@ -21,6 +22,7 @@ SDK_PY = ROOT / "hs-game-sdk" / "python"
 SPEC_DOC = ROOT / "docs" / "models" / "movement-speed-spec.md"
 FIXTURE = ROOT / "hs-game-sdk" / "curated" / "movement_speed_measurements.json"
 RESEARCH_DOC = ROOT / "ForgePact" / "docs" / "mark1-set-research.md"
+PLUGIN_HEADER = ROOT / "ForgePact" / "plugin" / "include" / "ForgePact" / "Mark1Movement.hpp"
 
 sys.path.insert(0, str(SDK_PY))
 from hs_game_sdk import movement_speed_model as model  # noqa: E402
@@ -257,6 +259,56 @@ class MeasuredTests(unittest.TestCase):
         ratio = (model.step_per_point_from(slow, SORAK_ANSWER)
                  / model.step_per_point_from(fast, SORAK_ANSWER))
         self.assertLessEqual(abs(ratio - slow_ms / fast_ms), Fraction(5, 100) * ratio)
+
+
+@unittest.skipUnless(PLUGIN_HEADER.exists(), "ForgePact is not checked out")
+class LeverParity(unittest.TestCase):
+    """The plugin's lever (ForgePact's Mark1Movement.hpp) uses the model's
+    constants, so the half walk the tests above prove is the one that ships."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.header = PLUGIN_HEADER.read_text(encoding="utf-8")
+
+    def constant(self, kind, name):
+        found = re.search(r"inline constexpr " + kind + r" " + name + r" = ([^;]+);", self.header)
+        self.assertIsNotNone(found, name + " is not in Mark1Movement.hpp")
+        return found.group(1).strip()
+
+    def number(self, name):
+        return Fraction(self.constant("double", name))
+
+    def test_the_offset_is_the_models(self):
+        self.assertEqual(self.number("kStepOffset"), Fraction(model.STEP_OFFSET))
+
+    def test_the_cap_is_the_models(self):
+        capped = self.constant("bool", "kStepCapped")
+        if model.STEP_CAP is None:
+            self.assertEqual(capped, "false")
+        else:
+            self.assertEqual(capped, "true")
+            self.assertEqual(self.number("kStepCap"), Fraction(model.STEP_CAP))
+
+    def test_the_stat_id_is_the_models(self):
+        self.assertEqual(self.number("kMovementSpeedStatId"), model.MOVEMENT_SPEED_STAT_ID)
+
+    def test_the_ratio_is_half(self):
+        self.assertEqual(self.number("kWalkRatio"), Fraction(1, 2))
+
+    def test_the_route_is_the_models(self):
+        self.assertEqual(self.constant("std::string_view", "kSpeedRoute"), '"' + model.SPEED_ROUTE + '"')
+
+    def test_the_plugins_formula_is_the_models_inverse(self):
+        # The header's formula, evaluated here with its own constants, gives
+        # the answer the model says halves the step at every swept answer.
+        self.assertIn("return kWalkRatio * (counted + kStepOffset) - kStepOffset;", self.header)
+        ratio, offset = self.number("kWalkRatio"), self.number("kStepOffset")
+        low, high = model.MEASURED_ANSWERS
+        for answer in [low + (high - low) * i / 12 for i in range(13)] + [Fraction(SORAK_ANSWER)]:
+            with self.subTest(answer=answer):
+                plugin = ratio * (answer + offset) - offset
+                self.assertEqual(plugin, model.answer_for_ratio(answer, Fraction(1, 2)))
+                self.assertEqual(plugin, mark1_stat_model_answer(answer))
 
 
 class SpecTests(unittest.TestCase):
