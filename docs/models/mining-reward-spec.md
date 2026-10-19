@@ -138,7 +138,7 @@ The entries below are Live procedure 1, all dated 2026-09-28. Source for each:
 - **Mining experience under extra rolls is once per dig** (measured 2026-10-19,
   ForgePact #223 Live 2): a dig with no re-run gained 7 mining XP and one text
   "mining +7"; the next, with two re-runs, gained 6 and one text "mining +6".
-  Only the ore repeats.
+  None of the silenced rewards repeats per roll.
 - **Not measured:** bonus finds and non-ore rewards under any lever, and the Miner's Helmet with rolls above 1 (not
   run in Live procedure 1). The records above say nothing about them.
 
