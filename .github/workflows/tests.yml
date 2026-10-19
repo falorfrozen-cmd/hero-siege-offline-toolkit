@@ -13,6 +13,13 @@
 # gitlink and nothing the suite reads, so a PR that touches only submodule
 # paths starts no run. The list is every path in .gitmodules, kept equal by
 # tests/test_tests_workflow.py. The suite still runs on the push to main.
+#
+# Nor on a catalog PR (#532). catalog.yml opens it as github-actions too, and
+# the same wait left #526 and #531 for a person, since merge_catalog_pr.py
+# also merges only on `clean`. Such a PR changes only the two files that
+# script accepts (its FILES), and catalog.yml has already run this suite
+# against the new catalog before opening it. tests/test_tests_workflow.py
+# keeps the two catalog entries equal to FILES.
 name: Tests
 
 on:
@@ -28,6 +35,8 @@ on:
       - Hs-Offline-Loot-Forge
       - hero-siege-item-editor
       - hs-stat-forge
+      - catalog/catalog.json
+      - catalog/catalog.json.minisig
   push:
     branches: [main]
 
