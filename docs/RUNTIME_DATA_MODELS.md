@@ -534,42 +534,48 @@ main menu on 2026-09-26 (`pe-6aaa6779-0cad4fc8`). All **measured**.
 
 ### 5.11 What a plugin's exception handlers see at a crash
 
-**Measured**, once: 2026-10-19, ForgePact #223 Live 1, game 7.0.13.0 with the
-ForgePact research DLL built at `a4db66c`.
+**Measured** twice, both on 2026-10-19 with game 7.0.13.0: ForgePact #223
+Live 1 (research DLL built at `a4db66c`) and Live 2 (research DLL built from
+`38acede`'s plugin code). The captures are the hub workorder files
+`forgepact-222-223-extra-rolls-crash-trap-live-1.md` and `-live-2.md`, kept
+locally.
 
-- The crash was crashwatch's positive control, run in-mod `ipc`: an access
+- Each crash was crashwatch's positive control, run in-mod `ipc`: an access
   violation (`0xC0000005`) raised on the game thread inside
-  `BloodPactPlugin.dll` (at `+0x1BC12A`). The process ended with exit code
-  `0xC0000005`.
+  `BloodPactPlugin.dll` (Live 1 at `+0x1BC12A`, Live 2 at `+0x1BC53A`). Both
+  processes ended with exit code `0xC0000005`.
 - The plugin had installed two routes: a vectored handler registered first
   (it sees the exception at first chance), and a top-level
-  unhandled-exception filter (`SetUnhandledExceptionFilter`). Just before the
+  unhandled-exception filter (`SetUnhandledExceptionFilter`). Before each
   crash, `incident stat` read the filter as installed and still top-level
   (`unhandled armed (top-level)`).
-- The vectored handler ran: it wrote its `route=first-chance` record line.
-  The top-level filter was **not observed** to run: no `route=unhandled`
-  line, and none of the work it starts (the dump, the log copies) happened.
-- The process was not a clean one. Headless x64dbg (`tools.x64dbg_mcp`) was
-  attached to that same process (pid 29784) for most of the session, from
+- In both sessions the vectored handler ran and recorded `route=first-chance`.
+  The top-level filter was **not observed** to run in either: neither crash
+  recorded a `route=unhandled` line. In Live 1 none of the work the filter
+  started at that time (the dump, the log copies) happened either.
+- Live 1's process was not a clean one. Headless x64dbg (`tools.x64dbg_mcp`)
+  was attached to that same process (pid 29784) for most of the session, from
   shortly after its 12:11 UTC launch, and detached, confirmed, before the
   crash control at about 13:03:25 UTC. An attached debugger makes Windows
-  skip the top-level filter; that the detach left nothing behind that still
-  has the same effect is **not established**.
-- Why the filter did not run is **not established**. Another handler ending
-  the process, a frame that catches the fault and terminates, an effect of
-  the earlier debugger attach that outlived the detach, or something else
-  are all open; one crash says nothing about which.
+  skip the top-level filter, so on its own Live 1 left open whether the
+  detach had left something behind with the same effect.
+- Live 2 repeated the crash control on a process no debugger touched at any
+  point (pid 23600, crash at about 14:18 UTC), and the result was the same:
+  `first-chance` only, the top-level filter not observed to run. So the
+  earlier debugger attach does not explain the result on its own.
+- Why the filter does not run is **not established**. Another handler ending
+  the process, a frame that catches the fault and terminates, or something
+  else are all open; two crashes, each from the same in-plugin control, say
+  nothing about which.
 
 So this is not a measurement that the top-level filter never runs in Hero
-Siege. On this evidence, ForgePact's crash trap was designed not to rely on
-the top-level filter alone: whatever has to be captured at a crash is
-started from first chance, as the trap does since that session. The
-measurement that settles the filter question is ForgePact #223 Live 2's crash
-control and its `trap.route` reading (steps 6 and 7, `[trap-route]`), run
-with no debugger attached. A `first-chance` result there is the first
-measurement on a process no debugger touched, not a repeat of this one; an
-`unhandled` result means the filter does run once no debugger has been
-attached. The trap's design, its staging rules and the Live 1 result are in
+Siege: both crashes are one kind of fault, raised in one place. It is a
+measurement that, for that fault, the filter did not run, with and without a
+debugger having been attached earlier. ForgePact's crash trap therefore does
+not rely on the top-level filter: whatever has to be captured at a crash is
+started from first chance, and in Live 2 that staging produced the report's
+dump and log tails. The trap's design, its staging rules and both sessions'
+results are in
 [ForgePact/docs/incident-report.md](../ForgePact/docs/incident-report.md).
 
 ---
@@ -2353,11 +2359,23 @@ polling `instance_exists(Enemy_Parent_obj)` (measured, below).
   Ore Extra Rolls, `hs-game-sdk/curated/mining_reward_measurements.json` MR4-MR6).
 - `miningPlayer` starts as `noone` (-4) and is still `noone` when a keyboard dig
   pays out; ground loot this client creates is credited to the local player.
-  `GetMiningLevel()` returns the character's mining level. **Measured** and
-  **static reading.** On 2026-09-28 (Highland Mines Copper Veins) every node
+  **Measured** and **static reading.** On 2026-09-28 (Highland Mines Copper Veins) every node
   snapshot, before and after completions, read `miningPlayer` as an instance
   reference (`312664r`), not `noone`; whether that instance is the local player
   was not checked, and when the game sets it is not established.
+- **Mining XP is an account value, and `GetMiningLevel()` returns it raw**, not
+  a level derived from it. The game keeps it in the account file
+  `%LOCALAPPDATA%\Hero_Siege\hs2saves\shop.ini`, section `[mining]`, keys
+  `mining` and `mining_hc`, not in a character save. Both keys were edited to
+  225 before a launch (HSSaveEditor writes the two together, so which one a
+  softcore hero reads is not separated); in game `GetMiningLevel()` then read
+  `225.0`, and each later dig moved that reading by exactly the "+n" of the
+  dig's on-screen XP text (225 -> 232 with "mining +7", 232 -> 238 with
+  "mining +6"). The game wrote the changed value back to `shop.ini` at its own
+  save on exit. **Measured 2026-10-19** (ForgePact #223 Live 1 and Live 2, hero
+  slot 14). The account's value before the sessions was 5000, which the owner
+  reports as maxed; at 4000 one dig showed "mining +0" (Live 1), and why is not
+  established.
 - **The ore reward:** `MiningNodeStepMain` calls `LootGroundCreate` directly.
   Argument 2 (zero-based) is the item type (Material, 14); argument 3 is a params
   struct whose `b` is the base definition and optional `o` the stack quantity
@@ -2407,7 +2425,20 @@ polling `instance_exists(Enemy_Parent_obj)` (measured, below).
   over four digs and 17 completion runs (`MiningAdd` 0 calls; `CombatText` 0
   calls across a whole dig while the same detour counted kill XP text;
   `update_quest` 0, probably no active quest), against the static reading; which
-  branch skips them is not established (MR8).
+  branch skips them is not established (MR8). On 2026-10-19, at mining XP 225,
+  digs were observed calling both: the `MiningAdd` detour counted one call per
+  dig, and for a dig with two completion re-runs the `CombatText` detour
+  counted one call from the dig and one from each re-run, while an x64dbg
+  logpoint on `CombatText` logged three hits inside `MiningNodeStepMain`'s
+  window. **Measured 2026-10-19** (ForgePact #223 Live 1 and Live 2). So MR8's
+  zeros do not hold for every dig; the condition that skips the calls is still
+  not established.
+  A completion re-run whose `MiningAdd`, `ExperienceUpdate` and
+  `GuildExperienceAdd` calls are skipped adds no mining XP: on the same
+  character a dig with no re-run gained 7 (one text, "mining +7") and the next
+  dig, with two such re-runs, gained 6 (one text, "mining +6"), the detours
+  reading 2 skipped calls of each script for the two re-runs. Only the ore
+  repeats. **Measured 2026-10-19** (ForgePact #223 Live 2, x1 +7, x3 +6).
   **The dig reads one side effect's result: the `CombatText` instance.**
   `CombatText` creates one `Combat_Text_obj` (973) instance, sets its variables
   from its arguments and returns that instance. Of the step's six `CombatText`
