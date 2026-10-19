@@ -1138,6 +1138,17 @@ From the same reading as § 7.7 (2026-10-13, static unless marked). The
   `playerSequenceDirection`, `manaArrayPos`) did not settle back within 90
   frames, so none of them follows the penalty's course; the member that
   holds the penalty was not observed (`penalty-vars`).
+- **`manaArrayPos` is plausibly the mana graph's ring index, not mana.**
+  **Static reading (2026-10-14, unannotated)**, through the ghidra MCP, of
+  `gml_Script_PlayerManaUpdate`: its body came out with no variable names, but
+  it reads an array at a few small constant indices and advances a position
+  that wraps back to the start at 100, writing into a 100-entry history array.
+  That shape fits Live 1's observation that `manaArrayPos` rose by one per
+  update and never settled back after a cast: it is plausibly the write
+  position of a 100-sample mana history (the kind a mana graph draws), so a
+  change in it says a mana update ran, not how much mana the player holds.
+  Where current mana is held is **not established** (plausibly an entry of
+  `pSt`, the player's stat values, unread).
 - **`PlayerMovement` (2774)** calls `TalentUseClass` (3833) once and
   `CheckTalentUse` once, reads its own `playerEffect` at 21 sites and takes it
   for writing at 19, and reads `pSt` (the player's stat values) at 32 sites.
@@ -5725,6 +5736,28 @@ slot 14, in `Town_01_rm`, on the same build): see
   cached `pSt` values `PlayerMovement` reads), and why the getter's own
   result was not a number to the probe (`skip=240`) are **not established**;
   the last is an open instrument question for the choice of speed lever.
+- **The walk's per-frame step comes in multiples of half its modal step
+  (measured), so compare walks by their modal step.** In the same Live 2
+  (`forgepact-166-mark1-set-live-2.md`, T7 and its recheck), the per-frame
+  steps of a 240-frame walk were not one value: unscaled, 138 frames moved
+  5.979 px, 6 moved 2.989 and 4 moved 8.968; with the id-64 answer halved, 128
+  frames moved 4.693 px, 13 moved 7.039 and 2 moved 2.346. Every step is 0.5,
+  1 or 1.5 times that walk's most common step, and in T5, where a per-frame
+  logpoint lengthened the frame, the steps rose to 8.968 and 11.958 px, 1.5
+  and 2 times the unscaled 5.979. So a
+  frame-time factor in steps of 0.5 multiplies the step, and a walk's total
+  distance moves with the frame time; the **modal step** is the comparison
+  that frame timing does not move, and the 0.785 above is a ratio of modal
+  steps. What the 0.785 leaves open is **not established**: a step affine in
+  the answer (a base plus a part proportional to the stat, such as a "+N%"
+  stat over a base speed, which with these two points puts this character
+  near +75%); a step capped at a maximum the unscaled answer already exceeds;
+  or a walk that also reads a cached copy of the stat (`pSt`, plausibly
+  refreshed by Alarm 8, below) the dispatcher lever does not reach, which
+  would show as a lever whose effect drifts within a window (the 128 frames
+  at one constant step argue against it but do not rule it out). The first
+  two predict different levers, and one measured ratio cannot tell them
+  apart.
 - **What `StatMovementSpeed` reads.** The player's `playerBuff` (about 380
   reads) through the `GetBuffValue` and `GetBuffStack` methods, `buffArray`,
   `debuffArray`, `buffMult` and `skpDb`; it asks the dispatcher for ids 106,
