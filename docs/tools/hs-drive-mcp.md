@@ -782,6 +782,16 @@ screen, and the whole call took 17.5 s from the main menu to
 `character_loaded`. The fixed wait is gone. Each screen now takes as long as
 the game needs to list its next button.
 
+**`slot` N loads the save files numbered N-1.** The save files count from 0,
+so slot 1 is `herosiege0.hss` and slot 14 (Sorak, the live procedures'
+character) is `herosiege13.hss` and `inventory_order_13.hss`. Measured by
+rows M-L2 and M-L2b (2026-09-21: slot 1 changed `herosiege0.hss`, slot 2
+`herosiege1.hss`) and by ForgePact #185's Live procedure 1
+(`forgepact-185-tracker-move-live-1`, 2026-10-13), which read file 14 for
+slot 14 and found another character there; RDM § 8.2. A procedure that
+reads a save after `hs_select_character` names the file's number, not the
+slot.
+
 ## Exit to the menu
 
 `hs_exit_to_menu(timeout_s=60, label=None)` (`tools/hs_drive_mcp/menuexit.py`,
@@ -1374,9 +1384,11 @@ rather than by falling back to another launcher:
   (static reading, not measured). With one of those installed, `0xC0000409` on a close that
   `hs_stop_game` requested is not by itself a crash: check for the incident
   monitor's clean-shutdown line, and the dump's stack, before blaming
-  ForgePact or the game. With HS-Offline-Tracker v0.1.4's producer
-  (`5f83e542…`, pinned from ForgePact #185, shipped from 2.3.0) a graceful
-  close was measured at `0x00000000` with no dump (capture
+  ForgePact or the game. ForgePact 2.3.0 ships no producer and pins none
+  (#185); its Install Mod Plugin moves a producer with an aborting hash out of
+  the game's mods folder and leaves any other one alone. With
+  HS-Offline-Tracker v0.1.4's producer (`5f83e542…`, the build HS Offline
+  Tracker 0.1.4 installs itself) a graceful close was measured at `0x00000000` with no dump (capture
   `forgepact-185-tracker-mod-live-1`, 2026-10-13: an in-world close, a close
   after Save & Exit and an in-world close with `lootann` on), so on those
   three close paths `0xC0000409` is a real signal to investigate. A main-menu
@@ -1890,6 +1902,22 @@ move from the stash into the bag are still not measured.
   Act 1 kills and pick-up, the trip back to a zone, one right-click
   transfer, and the Act 2 trip with kills and a pick-up. Each capture lists
   them with the reason no tool could take them.
+  ForgePact #185's Live procedure 1 (`forgepact-185-tracker-move-live-1`,
+  2026-10-13, 13 minutes from lease to release) had one owner block, by hand
+  for two reasons. The pick-up of a placed item and its drop from the bag:
+  no verb gives an item's or the player's screen position, so `hs_input`
+  had no point to click. The travel to a combat zone and about three minutes
+  of fighting and gold pick-ups: no tool travels or fights.
+  ForgePact #185's Live procedure 2 (`forgepact-185-tracker-zone-fix-live-2`,
+  2026-10-14, 8 minutes from lease to release) had no owner steps. Both
+  travels went through the research build's `pcall NetworkRoomGoto <room>`
+  over `hs_command`, which did travel: `Town_01_rm` to `Act_01_01` and back,
+  each answering `st=0`, with a `room` record at the first poll and one
+  debugger hit on `NetworkRoomGoto` per travel. The fighting (58 kills) was
+  raw `hs_input`: a held S to walk into a pack, then left clicks and the Q,
+  E and R skills at points the operator chose from screenshots. That is
+  still no verb that fights; it worked for one pack-dense zone, and the
+  player build has no `pcall`.
 - **Synthetic input anywhere but the game's own window.** Both tools refuse
   unless the target window belongs to a running `hero_siege.exe`, and on the
   `send_input` route both re-prove that the game holds the foreground

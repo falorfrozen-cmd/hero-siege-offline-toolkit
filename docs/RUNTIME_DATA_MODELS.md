@@ -106,6 +106,30 @@ Note the contrast with the next section: *items* really are structs
 (`VALUE_OBJECT`), and struct accessors do require that kind. The rule is
 per-surface — an instance handle and an item struct are not interchangeable.
 
+**A room with no `Player_obj` has no local player, for every reader.**
+`GetMyPlayer` walks the `Player_obj` instances and answers `noone` (-4) when
+none matches (**static reading**, the decompiler copy of this build through
+the Ghidra MCP, 2026-10-13, in our own words). So wherever there is no
+`Player_obj`, every read that goes through the local player answers "no
+player": the player's `name`, `GPV` with the player as `self`, a scan of the
+player's buffs. Measured cases: while the world map is open there is no
+`Player_obj` and every player read answers "no player"
+([satanic zone, Live 4](../ForgePact/docs/satanic-zone-mods-research.md#live-4-2026-10-04-what-loadsataniczone-really-answers-and-the-map-marker));
+and `Player_obj` gets a new instance id on a room change (§ 19.5), so a
+handle kept across one is stale. A room's setup spans frames
+(`NetworkRoomSetupDone` asks `EnemyCreatorPending` before its "room is set
+up" work, static reading), and in Live procedure 1 of
+`forgepact-185-tracker-move` the tracker's one read of the name and the zone
+on a room change's own tick answered neither (measured; that the player was
+the missing piece is consistent with the record but was not measured). How
+many ticks a new room runs without a player is not measured. Live procedure 2
+of `forgepact-185-tracker-zone-fix` (2026-10-14) bounds it for one travel into
+`Act_01_01`: the zone readers, polled every 15 ticks, failed twice, the last
+time with `no-player`, then answered, so 15 to 30 ticks (§ 14.1). That is a
+bound, not a duration. So a reader
+that must answer once per room reads until it answers, not once on the room
+change's tick.
+
 ---
 
 ## 2. Item Definition & Runtime Struct (`itemDefinitionStruct`)
@@ -1228,6 +1252,16 @@ All **measured** (2026-09-21/22).
 - Loading a character and leaving from town changed at most `shop.ini` in the save
   folder, which holds `herosiege<N>.hss`, `inventory_order_<N>.hss` and
   `shop.ini`.
+- **The save files count from 0: card `slot` N loads `herosiege<N-1>.hss`**
+  (and `inventory_order_<N-1>.hss`), so `hs_select_character` slot 14 is
+  `herosiege13.hss`. **Measured** by hs-drive's rows M-L2 and M-L2b on
+  2026-09-21 (slot 1 changed `herosiege0.hss`, slot 2 `herosiege1.hss`;
+  `docs/tools/hs-drive-mcp.md`, Verification), and again by Live procedure 1
+  of `forgepact-185-tracker-move` (2026-10-13): slot 14 loaded Sorak, file 13
+  reads Sorak and file 14 another character, and after the session
+  `herosiege13.hss` and `inventory_order_13.hss` had changed. A tool that
+  takes a save file's number (ForgePact's `tools/tracker_replay.py --save`)
+  takes N-1, not the card's slot.
 
 All **measured** (2026-09-21).
 [character select, Results](../ForgePact/docs/character-select-research.md#results),
@@ -3194,6 +3228,71 @@ A monster that special content spawned carries a non-zero `specialType` in its s
 
 AFK FARM design, 0.9 (a private repository)
 
+### 13.11 Gold, XP and kill counters (HS Offline Tracker's routes)
+
+Three scripts the game calls on a gold pickup's UI log, an experience gain
+and a monster kill; one call per kill is measured, and whether every gold or
+experience credit (vendor sales, quest rewards, a mod's `PickUpGoldCheck`
+credit) passes through `GoldLogAdd`/`ExperienceUpdate` is not established.
+HS-Offline-Tracker's producer DLL counts through them (its
+`aurie-producer/README.md` § "Current counter contract", a reviewed code
+profile bound to the build's fingerprint; only the kill count cites a live
+run), and ForgePact's `tracker` sensor (ForgePact #185,
+`ForgePact/docs/tracker-research.md`) counts through the same three, by name.
+So a gold or experience total built on them is what these scripts saw, not
+yet known to be every credit. In our own words, with labels:
+
+- **`GoldLogAdd`** is the gold credit's UI-log writer (§ 13.10: it does not
+  change the balance; `PickUpGoldCheck` does). It takes **two arguments**, and
+  on the 2026-08-29 build the earned amount is **argument 1** (argument 0 on
+  the older Season 10 build the Tracker reviewed first). **The Tracker's
+  reviewed code profile (static reading)**; its producer validates the amount
+  as a finite, positive whole number. A local reading of the current build's function agrees that it is a
+  two-argument UI-log writer (**static reading**, 2026-10-13). ForgePact's
+  sensor accepts 1 to 4 arguments and counts the last one that decodes as a
+  positive whole number (the producer's adaptive rule), so the amount at
+  index 1 is what it counts.
+- **`ExperienceUpdate`** takes **two arguments**; **argument 0** is the
+  experience credited. A call the game refuses returns an explicit boolean
+  `false`, and that call is not a gain. **The Tracker's reviewed code profile
+  (static reading)**, its reviewed rejection exit. It is reached by direct calls, so only a native
+  detour sees it: mining's completion run calls it once per run (§ 12,
+  measured 2026-09-28), and calling it directly from a mod reports a hash
+  mismatch (§ 22), so the sensor only observes it.
+- **`EnemyAddStatistics`** takes **one argument**, the kill's
+  `killStatistic` id (a non-negative whole number, 0 included), which equals
+  the monster's rank (§ 13.7). **One call per kill:** in a packaged live run
+  the Tracker's candidate calls rose 96 to 152 (+56) while the same
+  character's saved `statisticTotalMonsterKills` rose 45,516 to 45,572 (+56)
+  over the same save interval. **Measured by the Tracker.**
+
+**Measured on ForgePact's own instrument** (Live procedure 1 of the toolkit
+workorder `forgepact-185-tracker-move`, capture
+`forgepact-185-tracker-move-live-1`, 2026-10-13, this build, the owner's
+play in `Act_01_01`):
+- each script's debugger logpoint hits equal the sensor's matching `*-calls=`
+  rise, beside a rising control logpoint: 17 `GoldLogAdd`, 588
+  `ExperienceUpdate` and 588 `EnemyAddStatistics` calls;
+- every hit logged 2, 2 and 1 arguments respectively, so each script's
+  argument count is now measured. Gold's amount index stays the reviewed
+  profile above, and whether every gold credit passes through `GoldLogAdd`
+  stays not established;
+- Sorak's save file 13 moved by exactly the sensor's sums, experience
+  +501,483 and kills +588 (the operator's reads of file 13 in the capture's
+  steps 1 and 12);
+- the procedure's own `kills-vs-save` and `xp-vs-save` checks read file 14,
+  another character's (the save files count from 0, § 8.2), and stay `fail`
+  as written.
+
+Live procedure 2 of the toolkit workorder `forgepact-185-tracker-zone-fix`
+(capture `forgepact-185-tracker-zone-fix-live-2`, 2026-10-14, the same
+character in `Act_01_01`, fought through `hs_input`) read file 13 itself,
+before and after: experience 16,441,857 to 16,511,032 (+69,175) and kills
+797,474 to 797,532 (+58), exactly the sensor's `xp-sum=69175` and
+`kills-sum=58` (`kills-vs-save` and `xp-vs-save` `pass`, **measured**). Its
+gold sum (201, from 3 `GoldLogAdd` calls) has no save counterpart in that
+check.
+
 ---
 
 ## 14. Satanic Zone and Special Content
@@ -3247,6 +3346,65 @@ AFK FARM design, 0.9 (a private repository)
 [Live 3](../ForgePact/docs/satanic-zone-mods-research.md#live-3-2026-10-03-issue-155-the-re-probe-and-the-zone-value-is-writable),
 [Live 4](../ForgePact/docs/satanic-zone-mods-research.md#live-4-2026-10-04-what-loadsataniczone-really-answers-and-the-map-marker),
 [The mechanism that shipped](../ForgePact/docs/satanic-zone-mods-research.md#the-mechanism-that-shipped-poll-and-correct-not-a-routine-hook)
+
+**How the game rolls the zone: static reading** (the decompiler copy of this
+build through the Ghidra MCP, 2026-10-13, for ForgePact #185's tracker; in
+our own words, not run):
+- `GetSatanicZoneOffline` rolls only when `GetSatanicZoneEligible` says yes.
+- `GetSatanicZoneEligible` answers through `IsDifficultyUnlocked`, for a
+  value it reads, in one of three cases. Which value it reads was not read.
+- When eligible, `GetSatanicZoneOffline` picks one room, by a random index,
+  from a fixed list of 40: zones 01-05 of acts 1-8, `Act_01_01` to
+  `Act_08_05`, with no act 9, no `_06` zone and no boss or sub-area room. So
+  every rolled zone has the `Act_<a>_<z>` shape, which the tracker and HS
+  Offline Tracker's producer name `Satanic_<1-8>_<1-5>`.
+- `GPV` picks one of two implementations by a global mode value and hands
+  each its caller's `self` and `other`. Whether either implementation reads
+  `self` was not read, so ForgePact's readers keep the measured shape: the
+  local player as `self`.
+- **Not established:** what triggers a roll. Callers of
+  `GetSatanicZoneOffline` and `GetSatanicZoneEligible` were not observed (a
+  `-noanalysis` import leaves the reference table mostly empty, so that is
+  not a negative). Live procedure 2 of the toolkit workorder
+  `forgepact-185-tracker-zone-fix` puts debugger logpoints on both beside its room
+  changes. How many ticks a newly generated act zone runs without a
+  `Player_obj`, so without an answer from the zone's readers, is not
+  established either (§ 1, "How the local player arrives").
+
+**Measured on a room change and a pin** (Live procedure 2 of the toolkit
+workorder `forgepact-185-tracker-zone-fix`, capture
+`forgepact-185-tracker-zone-fix-live-2`, 2026-10-14, this build, Sorak, two
+travels by `NetworkRoomGoto` called by name with the player as `self`):
+- **The act zone's first ticks have no local player.** After the travel from
+  `Town_01_rm` to `Act_01_01`, the tracker's zone readers failed twice before
+  answering, the last time for want of a local player (`zone-why=no-player`,
+  which keeps only the last failure's reason; `zone-unresolved=` 0 to 2).
+  Read every 15 ticks, that bounds the player's arrival between 15 and 30
+  ticks after the room change; it is a bound, not a measured duration
+  (2,482 ms between the two records: an upper bound on when the readers
+  answered, which depends on how long the ticks ran during the load, not on
+  the poll period alone; at 2,482 ms for at most 30 ticks they ran far
+  slower than 60 a second). Between the stat after the fighting and the one
+  after the travel back to `Town_01_rm`, three more reads failed, the last
+  for want of a local player (633 ms between the travel's records); all 3
+  fell after the travel's room change: `name-unresolved=` rose with them,
+  and the name is read only while it is owed after a room change. The player's `name` read empty as often
+  (`name-unresolved=` in step) and answered with the zone.
+- **These two travels did not roll the zone.** Debugger logpoints on
+  `GetSatanicZoneOffline` and `GetSatanicZoneEligible` had no hit over about
+  4.5 minutes that held both travels, beside a control that kept rising and
+  a `NetworkRoomGoto` logpoint that hit once per travel; the store kept the
+  pinned `Act_01_01` across both travels and after the pin was released. Not
+  observed: a roll beside a `NetworkRoomGoto` travel called by name (n=2,
+  the pin on for the first). The game's own travel routes (waypoint menu,
+  portal, death, a new game) did not run, so whether one of them rolls is
+  not established. What does trigger a roll stays
+  **not established**, because no natural re-roll came in the session's
+  337 s, so the logpoints had none to catch.
+- **A pin with no room change re-points the store and leaves the arrays.**
+  `SPV` of the key to `Act_01_01` from town (ForgePact's `satzone pin 1`)
+  was read back within 3 s, with the buff and debuff arrays unchanged
+  (`[3,21,10]` / `[19,17]`).
 
 ### 14.2 `global.eSt`: the special-content parameters
 
