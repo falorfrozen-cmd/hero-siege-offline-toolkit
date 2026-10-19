@@ -1174,12 +1174,13 @@ From the same reading as § 7.7 (2026-10-13, static unless marked). The
   false and changed `playerEffect[196]` and `playerEffect[250]` 18 frames
   after it; `playerEffect[54]`, `[56]` and `[192]` count down by one a
   frame. The movement speed stat's answer did not move through the slowdown
-  (151 on every frame, `penalty-stat`), no number or bool element of `pSt`
-  changed at a frame boundary in the 90 frames after a cast (the watch reads
-  only those kinds, and has no positive control within `pSt`, so this does
-  not rule `pSt` out as the holder of the flat part: **not established**,
-  see the `pSt` bullet in § 7), and of the player's builtin variables only
-  `image_index` did. The slowdown lasted more frames than Live 1's 21 at
+  (151 on every frame, `penalty-stat`). The `pst` watch (number and bool
+  entries only; how many of the 54 it covered was not recorded; no positive
+  control within `pSt` in that session) saw no change at a frame boundary in
+  the 90 frames after a cast, which is not observed, not a negative: the
+  cached `pSt` values `PlayerMovement` reads remain an open candidate for
+  the 57 flat frames (**not established**, see the `pSt` bullet in § 7). Of
+  the player's builtin variables only `image_index` changed. The slowdown lasted more frames than Live 1's 21 at
   about half this frame rate; whether it is timed in frames or in time is
   **not established**. **Measured** too (`dbg-cast-active`): an x64dbg
   logpoint on `CA_playerTalentActive` logged no hit over a standing Healing
@@ -1203,14 +1204,15 @@ From the same reading as § 7.7 (2026-10-13, static unless marked). The
   Which of these holds the caster still while a skill is cast is **not
   established**. **Measured** in Live 1: the player's `pSt` is an array of
   54 entries, not a struct or an instance, so a watch of named members reads
-  nothing from it. **Measured** in Mod live 1 (2026-10-19, above): watched
-  element by element, no number or bool element of `pSt` changed at a frame
-  boundary in the 90 frames after a cast, nor in the 60 after a key cast or a
-  forced one. The watch reads only number and bool elements (an array,
-  struct or reference entry is left out without a word) and did not record
-  how many of the 54 those were, and no `pSt` element changed in any watch of
-  the session, so this has no positive control and does not rule `pSt` out as
-  what holds the slowdown's flat part (**not established**).
+  nothing from it. **Not observed** in Mod live 1 (2026-10-19, above): the
+  element-wise `pst` watch saw no change at a frame boundary in the 90 frames
+  after a cast, nor in the 60 after a key cast or a forced one. That watch
+  reads only number and bool entries (an array, struct or reference entry is
+  left out without a word), how many of the 54 it covered was not recorded,
+  and no `pSt` element changed in any watch of the session, so it had no
+  positive control within `pSt`. The cached `pSt` values `PlayerMovement`
+  reads therefore remain an open candidate for what holds the cast
+  slowdown's 57 flat frames (**not established**).
 
 [Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
 
@@ -5844,10 +5846,13 @@ in `Town_01_rm` and the Outskirts of Inoya): see
   Step event the answer is turned into the step is not read, so the constant
   200 is measured for this game build, not read.
 - **The walk's step halved between two sessions (measured, 2026-10-19).**
-  Mod live 1, at 6.94 ms a frame, measured a modal step of 2.989 px, half of
-  Live 2's 5.979 px at 13.4 ms. The frame time ratio was 0.518, not 0.5, so
-  the step is not simply proportional to frame time; what sets the per-frame
-  step is **not established**.
+  Mod live 1, at 6.94 ms a frame, measured a modal step of 2.989 px against
+  Live 2's 5.979 px at 13.4 ms: a step ratio of 0.500 at a frame time ratio
+  of 0.518. The step halved exactly while the frame time did not halve; a
+  step proportional to frame time would have been about 3.10 px, 3.6% off
+  the measured one. The cause (the frame clock, a target-rate setting or a
+  per-frame constant) is **not established**, so nothing here supports
+  scaling a step, or a frame-counted window, by measured frame time.
 - **What `StatMovementSpeed` reads.** The player's `playerBuff` (about 380
   reads) through the `GetBuffValue` and `GetBuffStack` methods, `buffArray`,
   `debuffArray`, `buffMult` and `skpDb`; it asks the dispatcher for ids 106,
