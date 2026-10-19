@@ -2368,6 +2368,24 @@ polling `instance_exists(Enemy_Parent_obj)` (measured, below).
   calls across a whole dig while the same detour counted kill XP text;
   `update_quest` 0, probably no active quest), against the static reading; which
   branch skips them is not established (MR8).
+  **The dig reads one side effect's result: the `CombatText` instance.**
+  `CombatText` creates one `Combat_Text_obj` (973) instance, sets its variables
+  from its arguments and returns that instance. Of the step's six `CombatText`
+  call sites, two (each after an `ExperienceUpdate` + `GuildExperienceAdd` pair,
+  behind a further condition that is not established) keep the returned
+  instance and at once set its `font`, `vspeed` and `hspeed`; the other four
+  discard it. The results of `MiningAdd`, `ExperienceUpdate`,
+  `GuildExperienceAdd` and `update_quest` are never read. **Static reading,
+  2026-10-19**, on build `498d588550d8`; the installed build `dab03f13...` holds
+  game code byte-identical to it (only the Aurie-appended section differs, by
+  byte compare), so the reading holds there too. A detour that returns no value
+  at those two sites leaves the step setting `font` on a non-instance, and the
+  game raises its runtime error as a C++ exception: **inferred** from the
+  2026-10-19 crash logs and reproduced in ForgePact's harness, **not measured**
+  in the game. Why the 2026-09-28 session never saw `CombatText` from a dig
+  (MR8 above) is consistent with that character being at the mining cap, but
+  not established.
+  [Extra rolls](../ForgePact/docs/mining-ore-research.md#extra-rolls).
 - `material_mining_*` items have `droprate.base` 50,000,000, so no drop type
   produces them: ore comes only from mining (§13.2). **Measured.**
 
