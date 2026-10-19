@@ -549,14 +549,27 @@ ForgePact research DLL built at `a4db66c`.
 - The vectored handler ran: it wrote its `route=first-chance` record line.
   The top-level filter was **not observed** to run: no `route=unhandled`
   line, and none of the work it starts (the dump, the log copies) happened.
-- Why it did not run is **not established**. Another handler ending the
-  process, a frame that catches the fault and terminates, or something else
+- The process was not a clean one. Headless x64dbg (`tools.x64dbg_mcp`) was
+  attached to that same process (pid 29784) for most of the session, from
+  shortly after its 12:11 UTC launch, and detached, confirmed, before the
+  crash control at about 13:03:25 UTC. An attached debugger makes Windows
+  skip the top-level filter; that the detach left nothing behind that still
+  has the same effect is **not established**.
+- Why the filter did not run is **not established**. Another handler ending
+  the process, a frame that catches the fault and terminates, an effect of
+  the earlier debugger attach that outlived the detach, or something else
   are all open; one crash says nothing about which.
 
-So a crash trap on this build must not rely on the top-level filter alone:
-whatever has to be captured at a crash has to be started from first chance,
-which is what ForgePact's crash trap does since that session. The trap's
-design, its staging rules and the Live 1 result are in
+So this is not a measurement that the top-level filter never runs in Hero
+Siege. On this evidence, ForgePact's crash trap was designed not to rely on
+the top-level filter alone: whatever has to be captured at a crash is
+started from first chance, as the trap does since that session. The
+measurement that settles the filter question is ForgePact #223 Live 2's crash
+control and its `trap.route` reading (steps 6 and 7, `[trap-route]`), run
+with no debugger attached. A `first-chance` result there is the first
+measurement on a process no debugger touched, not a repeat of this one; an
+`unhandled` result means the filter does run once no debugger has been
+attached. The trap's design, its staging rules and the Live 1 result are in
 [ForgePact/docs/incident-report.md](../ForgePact/docs/incident-report.md).
 
 ---
