@@ -1060,6 +1060,23 @@ parts come from the research's Live 1 session on 2026-10-13 (the
   write on Soul Spurn's column switched the toggle on and off 13 times in 600
   frames (`toggle-flips`), and on an empty column it called no `TalentUse` at
   all (`empty-slot`).
+- **The same write on Healing Zone and Soul Spurn (measured, 2026-10-19).**
+  In the Mark 1 research's Mod live 1
+  ([Mod live 1 results](../ForgePact/docs/mark1-set-research.md#mod-live-1-results);
+  the same character and game build, a later research DLL, at about 144
+  frames a second), writing
+  4 into `inputState[4]` (E, column 4) for one gate call cast Healing Zone,
+  once inside a walk and once standing, each counted by the probe's
+  `TalentUse` row; the same write made soon after a key cast of it cast
+  nothing (plausibly its cooldown, which was not read). One such write into
+  `inputState[5]` (R) switched Soul Spurn on, its on-state object
+  `White_Mage_Soul_Spurn_AOE_obj` appearing 19 frames later
+  (`toggle-settle`). A second write switched it off 20 frames after the
+  press, and it was on again 57 frames after it with no further write; what
+  switched it back on was not read. Whether a forced cast costs mana is still
+  **not established** (`cast-mana`, not-observed): no element of the
+  player's `pSt` changed on a key cast or a forced one, and none changed in
+  any `pSt` watch of that session, so nothing shows mana is held there.
 - **The game has its own input simulation.** `gml_Script_InputSimulate`
   (1903) takes a profile slot index, a key and a value, and stores the value under
   the key in that profile slot entry's `inputSimMap` (a ds_map). That map is
@@ -1138,6 +1155,32 @@ From the same reading as § 7.7 (2026-10-13, static unless marked). The
   `playerSequenceDirection`, `manaArrayPos`) did not settle back within 90
   frames, so none of them follows the penalty's course; the member that
   holds the penalty was not observed (`penalty-vars`).
+- **The slowdown has a flat part and a ramp, and `playerEffect[199]` follows
+  the ramp (measured, 2026-10-19).** In the Mark 1 research's Mod live 1
+  ([Mod live 1 results](../ForgePact/docs/mark1-set-research.md#mod-live-1-results)),
+  at 6.94 ms a frame, a Healing Zone cast one second into a walk dropped the
+  step from 2.989 px to 1.943 px (0.650) for 57 frames, then a 16-frame ramp
+  brought it back (`penalty-control`). Element-wise watches from the cast
+  showed `playerEffect[199]` falling from 1 to 0.65 on the cast frame and
+  climbing back to 1 frame for frame with the ramp, 57 to 73 frames after
+  the cast (`penalty-watch`); so `playerEffect[199]` is the cast's speed
+  factor during the ramp. Holding it at 1 during `PlayerMovement` removed the
+  ramp and left the 57 flat frames at 0.650 (`penalty-lever`), so the flat
+  part's 0.65 comes from somewhere that hold does not reach, which is **not
+  established**. `playerEffect[204]` turned from true to false 56 frames
+  after the cast, the frame before the ramp, a candidate for the flat part
+  that was not held. The cast also turned `playerEffect[205]` from true to
+  false and changed `playerEffect[196]` and `playerEffect[250]` 18 frames
+  after it; `playerEffect[54]`, `[56]` and `[192]` count down by one a
+  frame. The movement speed stat's answer did not move through the slowdown
+  (151 on every frame, `penalty-stat`), no `pSt` element changed in the 90
+  frames after a cast, and of the player's builtin variables only
+  `image_index` did. The slowdown lasted more frames than Live 1's 21 at
+  about half this frame rate; whether it is timed in frames or in time is
+  **not established**. **Measured** too (`dbg-cast-active`): an x64dbg
+  logpoint on `CA_playerTalentActive` logged no hit over a standing Healing
+  Zone cast while the control logged, so it is not on a key cast's path (not
+  observed).
 - **`manaArrayPos` is plausibly the mana graph's ring index, not mana.**
   **Static reading (2026-10-14, unannotated)**, through the ghidra MCP, of
   `gml_Script_PlayerManaUpdate`: its body came out with no variable names, but
@@ -1156,7 +1199,9 @@ From the same reading as § 7.7 (2026-10-13, static unless marked). The
   Which of these holds the caster still while a skill is cast is **not
   established**. **Measured** in Live 1: the player's `pSt` is an array of
   54 entries, not a struct or an instance, so a watch of named members reads
-  nothing from it, and it was not read across a cast.
+  nothing from it. **Measured** in Mod live 1 (2026-10-19, above): watched
+  element by element, none of the 54 entries changed in the 90 frames after
+  a cast, nor in the 60 after a key cast or a forced one.
 
 [Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
 
@@ -5707,6 +5752,11 @@ one touches and whether it reads or writes them, not the arithmetic. The
 (the `mark1probe` rows, levers and `pos` sampler plus x64dbg logpoints, save
 slot 14, in `Town_01_rm`, on the same build): see
 [Mark 1 research, Live 2 results](../ForgePact/docs/mark1-set-research.md#live-2-results).
+The parts marked **measured, 2026-10-19** come from the research's phase 2
+session, Mod live 1 (the same character and game build, the probe extended
+with eleven builtin rows, a per-call stat log and a modal step per window,
+in `Town_01_rm` and the Outskirts of Inoya): see
+[Mark 1 research, Mod live 1 results](../ForgePact/docs/mark1-set-research.md#mod-live-1-results).
 
 - **The movement speed stat is read in the player's Step event.** The stat
   dispatcher sends id 64 to `gml_Script_StatMovementSpeed` (3389), whose only
@@ -5756,7 +5806,8 @@ slot 14, in `Town_01_rm`, on the same build): see
   2x frame-time artefact that is not a speed effect. The 0.785 above is a
   ratio of modal steps taken at comparable frame time (T4 and T7, neither with
   the per-frame logpoint).
-  What the 0.785 leaves open is **not established**: a step affine in
+  Live 2 left the shape open, and Mod live 1 settled it as affine (next
+  bullet). What Live 2 could not tell apart: a step affine in
   the answer (a base plus a part proportional to the stat, such as a "+N%"
   stat over a base speed, which with these two points puts this character
   near +75%); a step capped at a maximum the unscaled answer already exceeds;
@@ -5766,6 +5817,26 @@ slot 14, in `Town_01_rm`, on the same build): see
   at one constant step argue against it but do not rule it out). The first
   two predict different levers, and one measured ratio cannot tell them
   apart.
+- **The walk's step is affine in the movement speed stat (measured,
+  2026-10-19).** In Mod live 1 (`speed-sweep`, `speed-half`), with id 64's
+  answer multiplied at the dispatcher by 1.5, 0.75, 0.5, 0.25, 0 and -0.5
+  for a walk each, the modal step went 1.215, 0.893, 0.785, 0.678, 0.570 and
+  0.355 of the unlevered 2.989 px, every frame of each window at that one
+  step. All six points lie on one line to within 0.02%: the step is
+  proportional to the answer plus about 200 (fitted 200.0), so this
+  character's 151 walks at 1.755 times the step an answer of 0 gives. No cap
+  was reached up to an answer of 226.5, a negative answer slowed the walk
+  further, and the same 0.785 at half the answer as Live 2 found came back at
+  another frame rate. Answering about -24.5, (151 - 200) / 2, gave a ratio of
+  0.500. The id-64 call came once a frame, 151 each time, outside every row
+  the probe wraps (`PlayerMovement`, `CheckTalentUse` and the rest), as the
+  static reading placed it in the player's Step event (`stat-trace`), and
+  `StatMovementSpeed` was never called outside the dispatcher. Where in the
+  Step event the answer is turned into the step is not read, so the constant
+  200 is measured for this game build, not read.
+- **The walk's step tracks the frame clock (measured, 2026-10-19).** Mod live
+  1 ran at 6.94 ms a frame, and the walk's modal step was 2.989 px, exactly
+  half the 5.979 px Live 2 measured at 13.4 ms.
 - **What `StatMovementSpeed` reads.** The player's `playerBuff` (about 380
   reads) through the `GetBuffValue` and `GetBuffStack` methods, `buffArray`,
   `debuffArray`, `buffMult` and `skpDb`; it asks the dispatcher for ids 106,
@@ -5786,6 +5857,18 @@ slot 14, in `Town_01_rm`, on the same build): see
   `TalentUseSetSpeed`, `ReturnSpecificStat`, `StatMovementSpeed`,
   `skillsLeap`, `playerJumpGravity` or `StatJumpPower`, changes the player's
   position: the walk's displacement is applied somewhere outside all of them.
+  **Measured, 2026-10-19** (Mod live 1, `speed-builtin`, `dbg-walk-movers`,
+  `speed-factor`): eleven movement builtins hooked beside those rows
+  (`place_meeting`, the `mp_linear_step`, `mp_potential_step`, `move_*` and
+  `motion_*` families and `move_and_collide`) moved no walk either; the
+  player called `place_meeting` 8270 times during one, and none of the
+  others was called at all. x64dbg logpoints on `PlayerMoveSkill`,
+  `PlayerMoveSkillFunc` and `CA_playerMove` logged no hit over a walk or a
+  walk with a cast while the control logged. Holding `hSpeedFactor` or
+  `vSpeedFactor` at half during `PlayerMovement` left the step unchanged,
+  but the values the probe read from them were 163556 and 163557,
+  consecutive whole numbers unlike a speed factor, so whether the walk
+  scales with those members is **not established**.
 - **Jump Power is read by the player's Alarm 8 event**, the only script found
   asking the dispatcher for id 66 (`gml_Script_StatJumpPower`, 3391). That
   event asks the dispatcher about 350 times, so it is plausibly the routine
@@ -5890,7 +5973,31 @@ From the same reading as § 19.10 (2026-10-13). Static unless marked.
   (`walkable-control`, [Live 2 results](../ForgePact/docs/mark1-set-research.md#live-2-results))
   because that build's probe counted any number of 0 or more as a meeting,
   so `place_meeting`'s 0 printed as blocked; ForgePact 61243b2 corrected it.
-  A generated zone was not measured.
+  A generated zone was measured later (next bullet).
+
+- **One edge of a generated zone (measured, 2026-10-19).** In the Mark 1
+  research's Mod live 1
+  ([Mod live 1 results](../ForgePact/docs/mark1-set-research.md#mod-live-1-results)),
+  the same reads were taken in the Outskirts of Inoya (`Act_01_01`, reached
+  through the town waypoint's map). At the arrival point and 32 px either
+  side every field read free (`zone-control`). Scanning 96 px steps out in
+  four directions (`zone-edge`), the floor upward ended at an
+  `Invisible_Wall_obj`: in 16 px steps across it, `place_meeting` met the wall
+  one step before the path grid cell read -1 and the wall line crossed it,
+  and past the wall `place_meeting` met nothing again while the grid cell
+  stayed -1 to the room's top edge, the cliff tile layer
+  (`Autotile_Fall_Cliff_tileset`) reading non-zero from the wall on. So, as in town, the
+  edge is an invisible wall that both readings see, and past it only the
+  grid still says no; the research records `zone-edge: both`. Elsewhere the
+  scans crossed cliff bands that only the grid and the wall line marked
+  (with the cliff tiles set), floor that read free again beyond them, and
+  scattered points both readings blocked, plausibly props; the `Void` tile
+  layer read non-zero at two points both readings called free. The
+  screenshot showed no void (the edge lay about 600 px above the player,
+  plausibly just out of view). One edge of one
+  zone was measured; whether every zone marks its edge this way, and how the
+  zone generator's outside rectangles line up with it, are **not
+  established**.
 
 - **The path grid marks blockers, not the map's edge.**
   `gml_Script_PathFindControllerCreate` (2714) destroys any earlier

@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Live measurements for the Mark 1 set (ForgePact#166 phase 1, research only, Live 1, Live 2 and Live 3, all 2026-10-13): how a bar slot can be cast through the game's own gate without a key press, which input entry each of Q, E, R and Y uses, what a toggle does under that lever, what a cast does to the walk, which script moves the player on a walk and during a jump, where a x0.5 on walking speed and a x3 on the jump land, and which reading tells a walkable landing point from one past the walkable map's edge. Research build of ForgePact 2feb9b4 (DLL SHA-256 0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f; the plugin/ tree is unchanged at the head of the 166-mark1-set branch), the `mark1probe` instrument (nine script rows through HookOneScript, its levers and its pos sampler) and x64dbg hardware logpoints (CheckTalentUse as the control; TalentUseSetSpeed, StatMovementSpeed and StatJumpPower as candidates); save slot 14, character Sorak (White Mage), in Town_01_rm, every shipped mod off. Live 3 (walkability only) ran on a rebuilt research DLL, ForgePact 61243b2 (SHA-256 8c47459b15dd0691336efd65e5c9ded6ebd1a46b23e578e9688f71d023ad516e), with the same character, room and starting save and no debugger. The procedures, their checks and the argument are in ForgePact docs/mark1-set-research.md (Live procedure 1, Live procedure 2, Results with Live 3 results, Decision, Not established); the shared facts are docs/RUNTIME_DATA_MODELS.md sections 7.7, 7.8, 19.10 and 19.11; the session captures forgepact-166-mark1-set-live-1.md, -live-2.md and -live-3.md stay with the hub's workorder files and are not tracked. No model or generator reads this file: tests/test_sdk_all.py checks only that curated/ is tracked, and the #166 workorder's criterion 24 reads game_build, cast_route, slot_keys, cast_penalty, walk_mover, speed_lever, jump_mover, jump_lever and walkable. A status is one of: measured, not-observed (the check ran, its control passed, and it saw nothing), not-run (the check did not run, or its control failed, so it says nothing) or static reading (read locally from the game, never measured). The decision value is the research doc's Decision key as recorded; each entry's checks carry their tools/live_checks.py verdicts. Addresses and call-site offsets are never recorded here; the callers are named. Static readings are our own words, never the game's text.",
+  "$schema_note": "Live measurements for the Mark 1 set (ForgePact#166 phase 1, research only, Live 1, Live 2 and Live 3, all 2026-10-13): how a bar slot can be cast through the game's own gate without a key press, which input entry each of Q, E, R and Y uses, what a toggle does under that lever, what a cast does to the walk, which script moves the player on a walk and during a jump, where a x0.5 on walking speed and a x3 on the jump land, and which reading tells a walkable landing point from one past the walkable map's edge. Research build of ForgePact 2feb9b4 (DLL SHA-256 0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f; the plugin/ tree is unchanged at the head of the 166-mark1-set branch), the `mark1probe` instrument (nine script rows through HookOneScript, its levers and its pos sampler) and x64dbg hardware logpoints (CheckTalentUse as the control; TalentUseSetSpeed, StatMovementSpeed and StatJumpPower as candidates); save slot 14, character Sorak (White Mage), in Town_01_rm, every shipped mod off. Live 3 (walkability only) ran on a rebuilt research DLL, ForgePact 61243b2 (SHA-256 8c47459b15dd0691336efd65e5c9ded6ebd1a46b23e578e9688f71d023ad516e), with the same character, room and starting save and no debugger. mod_live_1 is phase 2's first session (2026-10-19, the walk's speed curve, the cast penalty, the toggle's settle time, the piece bases and a generated zone's edge), on the research build of ForgePact 109c908 (SHA-256 a2f64cf3889a4333e03c4fb0667045799b5fcb05f91e535c9fc171ff154ea493) with twenty rows (nine scripts and eleven builtins); its decisions are the research doc's Phase 2 decision keys. The procedures, their checks and the argument are in ForgePact docs/mark1-set-research.md (Live procedure 1, Live procedure 2, Results with Live 3 results, Decision, Not established); the shared facts are docs/RUNTIME_DATA_MODELS.md sections 7.7, 7.8, 19.10 and 19.11; the session captures forgepact-166-mark1-set-live-1.md, -live-2.md and -live-3.md stay with the hub's workorder files and are not tracked. No model or generator reads this file: tests/test_sdk_all.py checks only that curated/ is tracked, and the #166 workorder's criterion 24 reads game_build, cast_route, slot_keys, cast_penalty, walk_mover, speed_lever, jump_mover, jump_lever and walkable. A status is one of: measured, not-observed (the check ran, its control passed, and it saw nothing), not-run (the check did not run, or its control failed, so it says nothing) or static reading (read locally from the game, never measured). The decision value is the research doc's Decision key as recorded; each entry's checks carry their tools/live_checks.py verdicts. Addresses and call-site offsets are never recorded here; the callers are named. Static readings are our own words, never the game's text.",
   "game_build": {
     "status": "measured",
     "exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
@@ -81,6 +81,76 @@
       "walkable-edge": "pass"
     },
     "source": "ForgePact docs/mark1-set-research.md (Live 3 results); forgepact-166-mark1-set-live-3.md, not tracked"
+  },
+  "mod_live_1": {
+    "status": "measured",
+    "date": "2026-10-19",
+    "procedure": "Phase 2's Mod live procedure 1 (the walk's speed curve, the cast penalty, the gate's mana, the toggle's settle time, the piece bases, a generated zone's edge and the debugger's walk callers), research build only, the set's switch never on",
+    "research_dll_sha256": "a2f64cf3889a4333e03c4fb0667045799b5fcb05f91e535c9fc171ff154ea493",
+    "forgepact_commit": "109c908",
+    "character": "save slot 14, Sorak (White Mage), Town_01_rm, then the Outskirts of Inoya (Act_01_01) for the zone checks; no flight charm, jumpscenery off",
+    "frame_ms": 6.94,
+    "summary": "23 checks: 19 pass, 3 fail (penalty-watch, penalty-lever, toggle-settle), 1 not-observed (cast-mana), 0 not-run; every part's control passed",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "hook-native": "pass",
+      "walk-control": "pass",
+      "stat-trace": "pass",
+      "speed-sweep": "pass",
+      "speed-half": "pass",
+      "speed-builtin": "pass",
+      "speed-factor": "pass",
+      "penalty-control": "pass",
+      "penalty-stat": "pass",
+      "penalty-watch": "fail",
+      "penalty-lever": "fail",
+      "cast-mana": "not-observed",
+      "toggle-settle": "fail",
+      "base-control": "pass",
+      "base-check": "pass",
+      "zone-control": "pass",
+      "zone-edge": "pass",
+      "dbg-control": "pass",
+      "dbg-walk-movers": "pass",
+      "dbg-cast-active": "pass"
+    },
+    "decisions": {
+      "speed-route": "stat-model",
+      "speed-shape": "affine",
+      "penalty-route": "none",
+      "cast-mana": "not-observed",
+      "toggle-settle": 19,
+      "piece-bases": "0:7,1:0,2:0,4:0",
+      "zone-edge": "both"
+    },
+    "id64_answer": 151,
+    "control_step_px": 2.989,
+    "speed_sweep": [
+      {"mult": 1.5, "step_px": 3.632, "ratio": 1.215},
+      {"mult": 0.75, "step_px": 2.668, "ratio": 0.893},
+      {"mult": 0.5, "step_px": 2.346, "ratio": 0.785},
+      {"mult": 0.25, "step_px": 2.025, "ratio": 0.678},
+      {"mult": 0.0, "step_px": 1.703, "ratio": 0.570},
+      {"mult": -0.5, "step_px": 1.06, "ratio": 0.355}
+    ],
+    "speed_half": {"mult": -0.162, "step_px": 1.495, "ratio": 0.500},
+    "speed_fit": "ratio = 0.570 + 0.430 x mult over the six points, every point within 0.02%: the modal step is proportional to the id-64 answer plus about 200 (fitted 200.0), no cap reached up to an answer of 226.5, and negative answers slow the walk further",
+    "penalty": {
+      "flat_frames": 57,
+      "flat_ratio": 0.650,
+      "ramp_frames": 16,
+      "id64_answer_through_dip": 151,
+      "playerEffect_199": "1 to 0.65 on the cast frame, back to 1 over the 16 ramp frames (57 to 73 frames after the cast), frame for frame with the step",
+      "hold_playerEffect_199_at_1_during_PlayerMovement": "removed the ramp only; the 57 flat frames stayed at 0.650",
+      "pst_changes_after_cast": 0
+    },
+    "toggle_settle_frames": 19,
+    "toggle_second_press": "switched Soul Spurn off 20 frames after the press and back on 57 frames after it, with no further press from the probe",
+    "piece_bases": {"0": {"b": 7, "name": "Arcane Resisting Great Helm"}, "1": {"b": 0, "name": "Steel Armor of Vitality"}, "2": {"b": 0, "name": "Boots of Sorcerer"}, "4": {"b": 0, "name": "Heavy Gloves of Energy"}},
+    "debugger": "PlayerMoveSkill, PlayerMoveSkillFunc and CA_playerMove logged no hit over a walk and a walk with a cast, and CA_playerTalentActive none over a standing cast, while the CheckTalentUse control logged about once a frame in the same windows; no return location to name",
+    "source": "ForgePact docs/mark1-set-research.md (Phase 2: the mod, Mod live 1 results and Phase 2 decision); forgepact-166-mark1-set-mod-live-1.md, not tracked"
   },
   "gate_args": {
     "status": "measured",
