@@ -87,9 +87,11 @@ D held, at 6.94 ms a frame.
   frame): halving the answer took the step from 5.979 px to 4.693 px, 0.785,
   the same ratio as the m = 0.5 window above. Phase 1 did not print the
   answer; the same character and save answered 151 in Mod live 1.
-- **The step tracks the frame clock.** The unlevered step was 5.979 px at
-  13.4 ms a frame and 2.989 px at 6.94 ms. Within one window the per-frame
-  steps come in multiples of half the modal step (RDM § 19.10).
+- **The step halved between two sessions.** The unlevered step was 5.979 px
+  at 13.4 ms a frame (phase 1) and 2.989 px at 6.94 ms (Mod live 1): a step
+  ratio of 0.500 at a frame-time ratio of 0.518. A step proportional to frame
+  time would be about 3.10 px. Within one window the per-frame steps come in
+  multiples of half the modal step (RDM § 19.10).
 
 ## Our code
 
@@ -124,10 +126,10 @@ plugin's constants to the model's.
 - **Answers at or below -200.** The lowest measured answer is -75.5. The model
   refuses a weight of 0 or less rather than guess whether the walk stops or
   turns back.
-- **The law between frame time and step.** Half the frame time gave exactly
-  half the step, but the per-frame steps are quantized and the frame time
-  ratio of the two sessions was 1.93, not 2. The model takes each window's
-  scale (px per point of answer plus offset) as a parameter.
+- **Why the step halved between sessions.** The frame-time ratio was 0.518
+  while the step ratio was 0.500. The cause (the frame clock, a target-rate
+  setting or a per-frame constant) is not established. The model takes each
+  window's scale (px per point of answer plus offset) as a parameter.
 - **Whether the walk also reads a cached copy of the stat** (`pSt`), which the
   dispatcher lever would not reach. Every window held one step for its 240
   frames, which argues against it.
@@ -149,7 +151,7 @@ A pure function of numbers, with exact fractions
   window's scale as a parameter; `step_per_point_from(step, answer)` derives the
   scale from a window whose answer is known.
 - `step_ratio(answer, reference_answer)`: the step at one answer over the step
-  at another, at the same frame time.
+  at another, in one window.
 - `scaled_answer_ratio(m, answer)`: the ratio the sweep's lever gives.
 - `answer_for_ratio(answer, r)` = r × (answer + 200) - 200: the answer that
   makes the step r times what `answer` gives. At r = 1/2 it is the
