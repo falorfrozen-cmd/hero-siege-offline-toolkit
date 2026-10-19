@@ -11,9 +11,12 @@ they replay.
   answer plus STEP_OFFSET, about 200 (measured, ForgePact#166 Mod live 1).
   No cap was reached up to an answer of 226.5, and negative answers slow the
   walk further.
-- The step also tracks the frame clock, so its scale (px per point of
-  answer-plus-offset) belongs to one window at one frame time and is a
-  parameter here, never a constant. Ratios of two answers are not.
+- The same unlevered walk's step halved between two sessions whose frame
+  times differed by a ratio of 0.518 (step ratio 0.500; measured, MS11). The
+  cause (the frame clock, a target-rate setting or a per-frame constant) is
+  not established, so each window's scale (px per point of
+  answer-plus-offset) is a parameter here, never a constant. Ratios of two
+  answers within one window are not.
 
 This module models the game only. Mark 1's speed lever, which answers the
 local player's id-64 calls with a halved value, is ForgePact's own code and
@@ -94,7 +97,7 @@ def modal_step(answer: Number, step_per_point: Number, offset: Number = STEP_OFF
                cap: Optional[Number] = STEP_CAP) -> Fraction:
     """The walk's modal step in px per frame for one window.
 
-    `step_per_point` is that window's scale, which moves with the frame time;
+    `step_per_point` is that window's scale, which differed between sessions;
     `step_per_point_from` derives it from a window whose answer is known.
     """
     return step_weight(answer, offset, cap) * _frac(step_per_point)
@@ -110,7 +113,7 @@ def step_per_point_from(reference_step: Number, reference_answer: Number,
 def step_ratio(answer: Number, reference_answer: Number, offset: Number = STEP_OFFSET,
                cap: Optional[Number] = STEP_CAP) -> Fraction:
     """The modal step at `answer` over the modal step at `reference_answer`,
-    both at the same frame time. Independent of the window's scale."""
+    both in one window. Independent of the window's scale."""
     return step_weight(answer, offset, cap) / step_weight(reference_answer, offset, cap)
 
 
