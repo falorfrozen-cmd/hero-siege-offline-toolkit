@@ -220,6 +220,7 @@ class RecordTest(unittest.TestCase):
                       {"id": "c", "status": "parked", "reason": "owner: which token?"},
                       {"id": "d", "status": "held", "reason": "after c, which is parked"}],
             "blocking": [{"reviewer": "instrument-blindness-reviewer", "where": "x"}],
+            "record": {**data["result"]["record"], "state": "round: 2\nreviewers: instrument-blindness-reviewer: blocking; docs-sync-reviewer: clean"},
             "unblocked": [{"id": "d", "reason": "after c", "route": "relaunch"}],
         })
         data["logs"] = ["[snapshot:r1] ok",
@@ -232,8 +233,21 @@ class RecordTest(unittest.TestCase):
         self.assertIn("  c: parked -- owner: which token?", out)
         self.assertNotIn("  a: done", out, "a done item is counted, not listed")
         self.assertIn("unblocked: d (after c -> relaunch)", out)
-        self.assertIn("blocking: instrument-blindness-reviewer 1", out)
+        self.assertIn("blocking open: instrument-blindness-reviewer\n", out)
         self.assertIn("session limit: 1 agent(s) stopped on it, resets 1:40pm (Europe/Warsaw)", out)
+
+    def test_a_finding_closed_by_its_reviewer_is_not_reported_open(self):
+        # PR #541 review: items mode's `blocking` keeps every finding the launch
+        # raised; one its reviewer re-read clean is closed, and State says so.
+        path = self.save_run()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["result"]["blocking"] = [{"reviewer": "docs-sync-reviewer", "where": "a"}, {"reviewer": "docs-sync-reviewer", "where": "b"}]
+        data["result"]["record"]["state"] = "round: 1\nphase: pass\nreviewers: docs-sync-reviewer: clean; instrument-blindness-reviewer@ui: blocking"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        code, out, err = self.apply("--run", str(path))
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("docs-sync-reviewer", out)
+        self.assertIn("blocking open: instrument-blindness-reviewer@ui", out, "control: a scoped key still open is named")
 
     def test_no_session_limit_line_without_one_in_the_log(self):
         path = self.save_run()

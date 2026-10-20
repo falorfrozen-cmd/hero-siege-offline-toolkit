@@ -913,7 +913,7 @@ pass, none after a clean one); a fix item whose every finding carries a
 patchable `fix` runs `implementer-medium`; a lost agent puts its work back
 to `pending` uncharged and the launch returns `AGENT-FAILED` without
 starting more; `workorder_record.py apply` prints the outcome, items not
-done, open BLOCKING by reviewer and any session-limit reset; and a
+done, the reviewers still blocking and any session-limit reset; and a
 development verify runs each deferred suite's contract tests in its place.
 (E) Together about 8-12% of list cost at week one's mix, mostly reviewer
 passes, and fewer final-gate failures; re-measure after the next ten

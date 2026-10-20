@@ -44,8 +44,8 @@ every project.
 
 After writing, it prints what the launch came back with, so the driver routes
 from the summary instead of parsing the run record: the outcome and its
-detail, each item that is not done with its reason, open BLOCKING findings by
-reviewer, what waits on a person, and -- when an agent failed on the
+detail, each item that is not done with its reason, the reviewers whose
+BLOCKING findings are still open, what waits on a person, and -- when an agent failed on the
 account's session limit -- that limit's reset time from the run's log. Week
 one after #485 (#540) counted 334 inline Python scripts in 43 driver
 sessions, 68 of them parsing run records by hand.
@@ -274,7 +274,15 @@ def load_record(path: Path) -> tuple:
 SESSION_LIMIT_RE = re.compile(r"session limit\W+resets\s+([^\n\]]+?)\s*$", re.I | re.M)
 
 
-def summary(result: dict, data: dict) -> list:
+def blocking_reviewers(state: str) -> list:
+    """The reviewers a State's `reviewers:` line lists as `blocking`
+    (`<name or key>: blocking[, ...]`, separated by `;`)."""
+    entry = next((t for k, t in state_entries(state) if k == "reviewers"), "")
+    parts = re.sub(r"^reviewers:\s*", "", entry, flags=re.I).replace("\n", " ").split(";")
+    return [m.group(1) for m in (re.match(r"\s*([\w@.-]+):\s*blocking(?![\w-])", x) for x in parts) if m]
+
+
+def summary(result: dict, data: dict, record: dict) -> list:
     """The lines a driver routes from, read off the launch's `result` and
     the run's `logs`; nothing here is judged, only reported."""
     out = [f"outcome: {result.get('outcome')}" + (f" -- {result['detail']}" if result.get("detail") else "")]
@@ -290,14 +298,16 @@ def summary(result: dict, data: dict) -> list:
                 out.append(f"  {i.get('id')}: {i.get('status')} -- {why}" + (f"; replan: {i['replan']}" if i.get("replan") else ""))
     for u in result.get("unblocked") or []:
         out.append(f"unblocked: {u.get('id')} ({u.get('reason')} -> {u.get('route')})")
-    blocking = [b for b in result.get("blocking") or [] if isinstance(b, dict)]
-    if not blocking:
-        blocking = [b for r in result.get("rounds") or [] if isinstance(r, dict) for b in (r.get("blocking") or [])][-50:]
-    if blocking:
-        by: dict = {}
-        for b in blocking:
-            by[b.get("reviewer") or "?"] = by.get(b.get("reviewer") or "?", 0) + 1
-        out.append("blocking: " + ", ".join(f"{k} {v}" for k, v in by.items()))
+    # Open, not ever raised: `result.blocking` only grows in items mode, and a
+    # finding closes when its reviewer re-reads clean. So the reviewers still
+    # open are the ones the launch's final State lists as `blocking`, plus a
+    # decompile_check.py hit in the last round (it has no reviewer state).
+    open_ = blocking_reviewers(record.get("state") or "")
+    rounds = [r for r in result.get("rounds") or [] if isinstance(r, dict)]
+    if rounds and any(isinstance(b, dict) and b.get("reviewer") == "decompile-check" for b in rounds[-1].get("blocking") or []):
+        open_.append("decompile-check")
+    if open_:
+        out.append("blocking open: " + ", ".join(open_))
     for h in result.get("pending_human") or []:
         out.append(f"pending human: {h}")
     logs = "\n".join(x if isinstance(x, str) else json.dumps(x) for x in data.get("logs") or [])
@@ -349,7 +359,7 @@ def apply(args) -> int:
     present = f"; already present: {', '.join(map(str, skipped))}" if skipped else ""
     where = str(plan) if single else f"{plan} + {context}"
     print(f"workorder_record: {slug} {run_id}: applied round(s) {done}{present} -> {where}")
-    for line in summary(result, data):
+    for line in summary(result, data, record):
         print(line)
     return 0
 
