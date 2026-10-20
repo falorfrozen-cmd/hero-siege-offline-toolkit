@@ -28,22 +28,34 @@ Links into `../ForgePact/` resolve in a checkout with the submodule initialised
 The primary player entity in GameMaker is an instance of `GameObject::Player_obj` (object index `3553` in the current SDK; this line said `1440` until 2026-09-24).
 
 ### Equipment Slots Layout (`equippedItems` array)
-The `equippedItems` array (or `inventory` equipped region) organizes items by numeric slot index:
+The `equippedItems` array (or `inventory` equipped region) organizes items by
+numeric slot index. Only some rows are measured; the rest were written before
+any measurement and stay **not measured**, and one of them (slot 3 as the
+gloves) is contradicted for the character measured:
 
-| Slot Index | Equipment Type | Description |
+| Slot Index | Equipment Type | Status |
 |---|---|---|
-| `0` | Helm | Head armor piece |
-| `1` | Chestplate | Body armor piece |
-| `2` | Boots | Footwear |
-| `3` | Gloves | Hand armor |
-| `4` | Belt | Waist gear |
-| `5` | Amulet | Primary neck accessory |
-| `6` | Ring 1 | Left finger ring |
-| `7` | Ring 2 | Right finger ring |
-| `8` | Main Hand | Primary weapon |
-| `9` | Off Hand | Shield, quiver, or secondary weapon |
-| `10` – `14` | Relics (`0`–`4`) | 5 active relic slots |
-| `15` – `18` | Charms | Inventory charm slots |
+| `0` | Helm | **Measured**: the worn helmet (ForgePact #166, Mod live 2, 2026-10-19). |
+| `1` | Body armour | **Measured**: the worn body armour (Mod live 2). |
+| `2` | Boots | **Measured**: the worn boots (Mod live 2). |
+| `3` | (the table said Gloves) | **Not measured.** The gloves are not here on the character measured: Mod live 2 found them at slot 4, and a read of slot 3 did not change when they came off or went back on. |
+| `4` | Gloves (the table said Belt) | **Measured**: the worn gloves (Mod live 2), on save slot 14's Sorak; another character not read. |
+| `5` – `8` | (the table said Amulet, Ring 1, Ring 2, Main Hand) | **Not measured.** |
+| `9` | Off Hand | **Measured**: the off hand (ForgePact #93, 2026-09-27, below). |
+| `10` – `14` | Relics (`0`–`4`) | **Measured**: the five equipped relics (#93, below). |
+| `15` – `18` | (the table said Charms) | **Not measured.** 15-17 were empty on the character measured, and the measured array is 18 strings long (0-17), so it has no slot 18. |
+
+The rows for slots 0, 1, 2 and 4 come from the Mark 1 set's worn read, which
+looks for each of its four pieces among gear slots 0 to 9 of
+`global.equippedItems[global.mplr][0]` and names the slot it found each in
+(`worn=0/1/2/4`, helmet, body armour, boots, gloves; with the gloves off,
+`worn=0/1/2/-`), in `Town_01_rm` on save slot 14, "Sorak" (White Mage):
+[Mark 1 research, Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results).
+The gloves at 4 match their item class (4 in `hs_game_sdk.ItemType`), and so
+do the helmet, body armour and boots (classes 0, 1 and 2), but the off hand's
+fingerprint at 9 ends in class 7 (below), so a slot is not its item class in
+general. `hs_game_sdk.player.EquipmentSlot` still
+carries this table's unmeasured `GLOVES = 3` and `BELT = 4`.
 
 The local character's equipped items are held in the global
 `global.equippedItems[global.mplr][0][slot]`, as **fingerprint strings**, not as
@@ -1124,6 +1136,30 @@ parts come from the research's Live 1 session on 2026-10-13 (the
   of the player's `pSt` changed on a key cast or a forced one, and none
   changed in any `pSt` watch of that session (which reads only those kinds),
   so nothing shows mana is held there.
+- **The same write on three columns at once, every gate call (measured,
+  2026-10-19).** In the Mark 1 research's Mod live 2
+  ([Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results);
+  the same character and game build, the Mark 1 set's shipped automation on a
+  research DLL, at about 144 frames a second), the press value was written
+  into Q's, E's and R's `inputState` entries inside every local
+  `CheckTalentUse` call, with Shadow Bolt on Q, Healing Zone on E and Heavenly
+  Fire on R (both no-cooldown skills read `abilityCooldown` 0.25, Healing
+  Zone 14). Over 1350 gate calls (one a frame) Shadow Bolt cast 20 times,
+  Healing Zone once and Heavenly Fire **never** (`on-automation`), with no
+  read, write or restore failing. So with several columns asking in the same
+  call, one column's skill can keep another's from ever casting; in which
+  order the gate serves the asking slots, and whether it serves more than one
+  a call, is **not established** (the slot loop's order was not read). An
+  empty column (Y) was skipped every call and never pressed.
+- **The game's refusal holds a forced press (measured, 2026-10-19).** In the
+  same session Healing Zone's column, pressed every gate call, cast once in
+  1350 presses (`gate-kept`), and over 3600 frames with no key it was recast
+  at intervals of 661, 910, 1071 and 501 frames, each rise of
+  `White_Mage_Healing_Zone_obj`'s count marking one (`cooldown-recast`; the
+  probe counted four casts against five rises in that window, not
+  reconciled). Its `abilityCooldown` reads 14; 14 seconds would be 2016
+  frames at that frame rate, longer than every interval, so the value's unit,
+  and what makes the intervals differ, are **not established**.
 - **The game has its own input simulation.** `gml_Script_InputSimulate`
   (1903) takes a profile slot index, a key and a value, and stores the value under
   the key in that profile slot entry's `inputSimMap` (a ds_map). That map is
@@ -1232,6 +1268,20 @@ From the same reading as § 7.7 (2026-10-13, static unless marked). The
   logpoint on `CA_playerTalentActive` logged no hit over a standing Healing
   Zone cast while the control logged, so it is not on a key cast's path (not
   observed).
+- **Casts every 60 frames keep `playerEffect[199]` at 0.65 (measured,
+  2026-10-19).** In the Mark 1 research's Mod live 2
+  ([Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results)),
+  with Shadow Bolt cast about every 60 frames by the set's automation and the
+  half walk on, `playerEffect[199]` read 0.65 on every watched frame of three
+  bonus-on walks, rising to 0.670833 for one frame at each Shadow Bolt cast;
+  no frame read 1. So whether the cast's slowdown stacks on a halved walk or
+  replaces it was **not observed** (`on-speed`, `on-penalty`,
+  `penalty-stack`). One consistency observation, not a measurement: those
+  windows' modal step, 0.775 px, is 0.325 of the same session's unlevered
+  2.385 px, and 0.325 equals 0.5 × 0.65, what stacking would give; the
+  frames behind it are all under the slowdown, so nothing compared them with
+  an unslowed bonus-on step. The watch's 400-line reply cap ended each watch
+  after about 126 of its 240 frames.
 - **`manaArrayPos` is plausibly the mana graph's ring index, not mana.**
   **Static reading (2026-10-14, unannotated)**, through the ghidra MCP, of
   `gml_Script_PlayerManaUpdate`: its body came out with no variable names, but
@@ -5942,6 +5992,14 @@ in `Town_01_rm` and the Outskirts of Inoya): see
   the measured one. The cause (the frame clock, a target-rate setting or a
   per-frame constant) is **not established**, so nothing here supports
   scaling a step, or a frame-counted window, by measured frame time.
+- **Gear changes the unlevered step (measured, 2026-10-19).** In the Mark 1
+  research's Mod live 2
+  ([Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results)),
+  at the same 6.93 to 6.96 ms a frame as Mod live 1, Sorak wearing the four
+  Mark 1 pieces in place of his own helmet, body armour, boots and gloves
+  walked at a modal step of 2.385 px with every lever off (two control walks,
+  2.385 both), against Mod live 1's 2.989 px in his own gear. So a walk
+  control is valid only for the gear it was taken in.
 - **What `StatMovementSpeed` reads.** The player's `playerBuff` (about 380
   reads) through the `GetBuffValue` and `GetBuffStack` methods, `buffArray`,
   `debuffArray`, `buffMult` and `skpDb`; it asks the dispatcher for ids 106,
@@ -6025,6 +6083,15 @@ in `Town_01_rm` and the Outskirts of Inoya): see
   250.3 px with it about 300 px away (2.95 times), well past the jump's usual
   reach of about 246 px (§ 19.5). Whether the game's own landing checks still
   hold at the scaled landing point was not measured.
+- **The shipped three-times jump (measured, 2026-10-19).** In the Mark 1
+  research's Mod live 2
+  ([Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results)),
+  the Mark 1 set read the jump's maximum M as jumpscenery's cap, 250.3 px,
+  and its scaled jumps landed 734.9 px (cursor 300 px away), 740.9 px (cursor
+  110 px away) and 750.9 px (cursor 510 px away) from the take-off, 2.94 to
+  3.00 times M, toward the cursor and not at it. With the switch off a jump
+  with the cursor 101 px away covered 96.9 px, and one with the cursor 301 px
+  away 250.3 px, as before. The landing's walkability is § 19.11.
 - **The game has its own collision skip.** `playerSkipCollisions` is
   initialised in the player's Create event and read in its Step event, and is
   referenced through another scope by `playerJumpGravity`, the player's
@@ -6103,6 +6170,33 @@ From the same reading as § 19.10 (2026-10-13). Static unless marked.
   zone was measured; whether every zone marks its edge this way, and how the
   zone generator's outside rectangles line up with it, are **not
   established**.
+
+- **Landings read with these fields hold at a jump's end (measured,
+  2026-10-19).** In the Mark 1 research's Mod live 2
+  ([Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results)),
+  the Mark 1 set's jump passed a landing only when the point and the points
+  16 px either side of it were inside the room, met no `Collision_Parent_obj`
+  and sat on a free path-grid cell, and each granted landing that was read
+  again with the player standing on it read free on every field. A take-off
+  at (912, 1560) aimed due south, whose three-times point lay past the
+  town's south edge (the family blocked from y 2038), backed off to a point
+  250.0 px south; a jump
+  west across the Bounty Board covered 718.9 px and landed past it. At the
+  town's south edge from (912, 1974) no candidate passed, and the jump went
+  its vanilla 40.3 px; the refusal came from the reads' answers (no read
+  failed, the family's rejections rose, and the grid answered free or
+  blocked, never "no grid"). At the Outskirts' edge the zone had loaded in a
+  different layout from Mod live 1's, and the edge was found again by the
+  same signature (an `Invisible_Wall_obj` met by the family, then the grid
+  alone blocked over the cliff tiles): a jump aimed past it was refused and
+  stopped 125.1 px on, inside the wall. So one zone's edge sits in a
+  different place from one load to the next, while its marking stays the
+  same.
+- **The view the cursor can reach (measured, 2026-10-19).** In the same
+  session the view was 1280 × 720 room pixels centred on the player, in town
+  at both points read: an on-screen cursor reaches at most about 645 px from
+  the player horizontally and about 741 px at a corner, so with the jump's
+  M of 250.3 px no on-screen cursor lies past 3M (751 px).
 
 - **The path grid marks blockers, not the map's edge.**
   `gml_Script_PathFindControllerCreate` (2714) destroys any earlier
@@ -7135,6 +7229,20 @@ follow-up's own; § 16.3's info-key table lists key `"11"`, and ForgePact
   whether key `"11"` and the name were saved with the item or put back by that
   registration was not separated. **Measured** for that load; what a piece
   shows with the plugin removed is **not established**.
+- An armour piece (ForgePact #166's Mark 1 Body Armor, a class 1 item given
+  a sprite added at run time under key `"11"`, and given a ground copy of
+  its own by the plugin's `LootGroundInit` consumer): the bag drew the `"11"` sprite, the
+  ground drew the plugin's ground copy, the **worn** body-armour slot drew
+  the same `"11"` sprite as the bag, and the tooltip drew no item icon at
+  all, only its text rows. Before the plugin set key `"11"`, the same piece
+  showed its base item's own bag icon and ground sprite, never the error
+  sprite. **Measured** (the Mark 1 research's Mod live 2, 2026-10-19,
+  `art-default`, `art-load`, `art-ground`, `art-bag`, `art-equipped`,
+  `art-tooltip`:
+  [Mod live 2 results](../ForgePact/docs/mark1-set-research.md#mod-live-2-results)).
+  So the worn slot reads key `"11"` as the bag does, and the tooltip draws no
+  icon for armour either, as for charms; for a class other than charms,
+  keys, consumables and armour it is still **not established**.
 
 ---
 
