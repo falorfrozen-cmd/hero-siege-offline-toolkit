@@ -5182,6 +5182,20 @@ workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
   `LootFilterAffixTierVisible` and `LootFilterAffixTierHighlight`), and a small
   dispatcher that calls `LootGroundRelicStep` or `LootGroundDeActiveStep`.
   **Static reading** (part 2).
+- Which test reads an item's own tier (`itemInfoStruct["32"]`, §16.3) is
+  **not read**. `LootFilterAffixTierVisible` walks the affix slots "10".."14"
+  and reads each slot's own affix tier, not the item's tier. The
+  `m_LootFilter` closure itself (the middle of Create's three by role) did
+  not decompile within 220 s. Its dispatcher sibling was read and only
+  dispatches. What was read around it: the menu's per-type tier action
+  (`UiALootFilterTypeTier`) walks five positions, 0 to 4, and sets or clears
+  one bit per position in a per-type number, and `LootFilterBit(n, k)` answers
+  bit k of n. So the filter keeps a five-position tier mask per item type,
+  which fits the five tiers C to SS; that a position is the item's tier less
+  one is an inference, not read. **Static reading** (2026-10-20, ForgePact
+  #166, workorder `forgepact-166-mark1-set-drops`, item `tier`). Mark 1's
+  pieces are written SS (5) by their dressing for this reason; whether the
+  owner's filter then shows them is that workorder's Live 2 `filter-shown`.
 - The filter verdict is computed in `LootGroundInit`, not in Create:
   `LootGroundCreateFromItem(x, y, item)` calls `CreateLootInFreePos`, then
   `LootGroundInit(instance, item)`, which reads the bound `m_LootFilter` off the
