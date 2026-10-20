@@ -24,6 +24,7 @@ Companion files:
 | F13 uncapped loops | A `launches:` State line, with a stop for the owner after 6. Every PLAN-DEFECT counts toward `replans:` | `workorder-rounds.js`, `SKILL.md` |
 | F06/F09 implementer and planner cost | Not changed: measure first (§23) | — |
 | Telemetry (Appendix C) | One week of local OTel, set up outside the repo in user settings | `scripts/otel_summary.py` |
+| Week one (Appendix D, #540) | Items mode gets the reviewer policy and patch fixers; a lost agent is uncharged; `workorder_record.py` prints a summary; development verifies run deferred suites' contract tests | `workorder-rounds.js`, `workorder_record.py`, `run_criteria.py` |
 
 Abbreviations: **WF** = `.claude/workflows/workorder-rounds.js`, **SK** = `.claude/skills/workorder/SKILL.md`, **CAL** = `docs/agents/workorder-calibration.md`.
 Labels: **M** measured · **SV** statically verified · **E** estimated · **H** hypothesis · **IE** insufficient evidence.
@@ -861,3 +862,59 @@ Each running Claude Code process then serves `http://localhost:9464/metrics`, fo
 6. Turn it off by removing the `env` keys and stopping the collector.
 
 Everything else this audit needed (tokens, spawns, outcomes, timings) the transcripts already give, so the telemetry week mainly answers the hook-latency question and gives model time per role.
+
+## Appendix D: Week one after #485 (2026-10-11 → 10-20, hub #540)
+
+Measured with the scripts above, run once over the whole transcript window
+and split by session start at 2026-10-11 02:00 (after #485 merged); the
+workflow-run records split by file time. 43 workorder sessions, 102
+launches, 21 workorders after, against the baseline's 106, 350 and 134. All
+M unless labelled.
+
+| Measure | Before | After |
+|---|---|---|
+| Launches ending STATE-LOST / LOG-DAMAGED / SCRIBE-FAILED | 92 of 350 (26%) | 0 |
+| Reviewer spawn's first context (median) | 34k | 11-13k |
+| Verifier median run / busy hours | 151 s / 43.8 h | 22 s / 13.2 h |
+| Untyped utility contexts | 782 | 145 (snapshots and amendment commands) |
+| Driver re-warms after idle, per session | 0.89 | 0.44 |
+| Share of list cost: implementer / driver / planner | 31% / 22% / 20% | 45% / 15% / 14% |
+| List cost per launch | $18.5 | $15.4 |
+| Launches per workorder | 2.6 | 4.9 (items mode, live gates) |
+
+What #485 did not reach:
+
+1. **Items mode kept every reviewer per batch.** F03 changed rounds mode,
+   and nearly every launch ran items: decompile-output-guard 161 passes, 0
+   BLOCKING; docs-sync 180 and 14; sdk-contract 111 and 8;
+   instrument-blindness 183 and 142.
+2. **Fix items always ran `implementer`.** 134 of 164 items-mode BLOCKING
+   findings carried an exact `fix`; all 106 fix items ran at high effort.
+   52 of instrument-blindness's fixable findings were on a `.md`.
+3. **Session limits parked work.** All 19 agent failures in 6 launches were
+   "You've hit your session limit"; each parked its item as "the
+   implementer returned nothing", charged an attempt, and held what came
+   after it.
+4. **The driver parsed by hand.** 334 inline Python scripts in 43 sessions,
+   68 of them reading run records; 530 shell reads of plan and context
+   files (F16, about the old rate).
+5. **The final gate failed 11 of 20 times**, mostly on a whole suite or a
+   `(final)` criterion first run there: contract tests pinning plugin
+   source, a model test, an e2e run, two criteria wrong as written.
+6. **The telemetry week captured ~6 h.** The logon task's hidden PowerShell
+   host exits about 13 s after logon (0xC000013A); hook latency (F15) is
+   still unmeasured. On 2026-10-20 the collector moved to a Windows service
+   (`ClaudeCodeOTel`, delayed auto-start, restart on failure), which has no
+   console to lose and starts at boot; the week restarts from that date.
+
+What #540 changed, in the same order: items mode defers docs-sync,
+sdk-contract, tauri-command and decompile-output-guard to its gate (one
+pass, none after a clean one); a fix item whose every finding carries a
+patchable `fix` runs `implementer-medium`; a lost agent puts its work back
+to `pending` uncharged and the launch returns `AGENT-FAILED` without
+starting more; `workorder_record.py apply` prints the outcome, items not
+done, the reviewers still blocking and any session-limit reset; and a
+development verify runs each deferred suite's contract tests in its place.
+(E) Together about 8-12% of list cost at week one's mix, mostly reviewer
+passes, and fewer final-gate failures; re-measure after the next ten
+workorders.

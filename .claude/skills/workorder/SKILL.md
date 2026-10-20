@@ -894,7 +894,15 @@ into `## State` by key, leaving every other line as it is, and appends each
 Log block under `## Log`, marked `<!-- workorder-record run=<runId>
 round=<n> -->`, so a second apply changes nothing. Run it before you read
 the result's routing, before any replan, consultation, relaunch or report,
-and before you end the session: everything after it reads the files. Until
+and before you end the session: everything after it reads the files.
+After the write it prints what the launch came back with: the outcome and
+its detail, each item not done with its reason and route, the reviewers
+whose BLOCKING findings are still open (`blocking open:`, from the final
+State), what waits on a person, and a `session limit:` line
+with the reset time when an agent stopped on the account's limit. Route
+from those lines; open the run record only for what they do not carry. On
+`session limit:`, schedule a wake-up just after the reset and relaunch:
+the lost work is `pending` and uncharged. Until
 2026-10-11 a haiku `scribe` made this write inside the launch and reported
 it back, and 92 of 353 launches (26%) ended `STATE-LOST`, `LOG-DAMAGED` or
 `SCRIBE-FAILED` on that bookkeeping, several of them false alarms (F01);
