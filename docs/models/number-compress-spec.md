@@ -27,8 +27,9 @@ Every claim carries one of four labels, and a source:
   `c789ee5e5850e0d68c42a6d0b84876509eaea4f2ffab1ea9c35e71709c47b88f`),
   export `SteamCompressNumber`, made on 2026-10-20.
 - **Measured**: observed in a running game: the positive limit's lower edge
-  (bracketed between 9.9999e13, which passed, and about 1.025e14, which ended
-  the game), the crash's dump and the cap's text, in Live 2; see
+  (bracketed between 9.9999e13, which passed, and below 1e15: the game ended
+  after a traced 1.025e14, the first value of its decade, so the fatal value
+  was at least 1.025e14 and below 1e15), the crash's dump and the cap's text, in Live 2; see
   § Measurements.
 - **Our code**: what ForgePact does. The model leaves it out, and the test
   expresses it as an input transform.
@@ -146,13 +147,15 @@ which the model's test (`MeasurementTests`) reads. Against this spec:
 - **The positive limit's lower edge** (measured). With ForgePact's cap forced
   off and Total Damage ramped from x11 to x1e6, the values traced into
   `num_compressSteam` (one line per new decade) rose to 15,038,794,170,000,
-  which passed, and ended on 102,480,421,310,000, after which the game ended.
-  In the second launch the cap handed 99,999,000,000,000 itself to the
+  which passed, and last traced 102,480,421,310,000 (the first value of its
+  decade; later values in the decade write no line), after which the game
+  ended. In the second launch the cap handed 99,999,000,000,000 itself to the
   shortener 29,990 times, which drew `99999B` with the game alive: a measured
-  pass at 9.9999e13. So the limit lies in (9.9999e13, 1.025e14], which brackets
-  `POSITIVE_LIMIT` = 1e14; the model passes both passing values and fails the
-  last. Only the band's lower edge is measured: no value between about
-  1.025e14 and the 32-bit overflow ran uncapped.
+  pass at 9.9999e13. So the limit lies in (9.9999e13, 1e15) as measured, which
+  holds `POSITIVE_LIMIT` = 1e14; that it is exactly 1e14 is the static
+  reading. The model passes both passing values and fails the last traced
+  one. Only the band's lower edge is measured: no value of 1e15 or more ran
+  uncapped.
 - **How it ends** (measured). Exit code `0xC0000409`; the dump reads
   `code=0xc0000409 subcode=8 raised-in=PAS_Steam_GMS_x64`, with
   `SteamCompressNumber` on the stack: the range-check fast fail this spec reads.
