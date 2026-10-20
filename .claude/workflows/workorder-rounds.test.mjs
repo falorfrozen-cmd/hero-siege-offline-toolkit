@@ -2521,6 +2521,23 @@ test('items: a fix whose every finding carries an exact fix at a patchable path 
   }
 })
 
+test('items: a scoped instrument-blindness finding keeps the .md-only patch rule (PR #541 review)', async () => {
+  const scoped = { 'instrument-blindness-reviewer': [{ label: 'x', paths: ['panel/**', 'docs/**'] }] }
+  for (const [where, want] of [['panel/a.css:3', 'implementer'], ['docs/c.md:9', 'implementer-medium']]) {
+    let passes = 0
+    const types = {}
+    const review = () => (passes++ === 0
+      ? { ...CLEAN, blocking: [{ where, problem: 'p', evidence: 'e', fix: 'x' }], reviewed_heads: [{ repo: '.', sha: 'h1' }] }
+      : { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'h2' }] })
+    const base = itemsReply({ 'instrument-blindness-reviewer': review })
+    const args = { ...ITEMS_BASE, reviewers: { 'instrument-blindness-reviewer': 'never' }, reviewScopes: scoped }
+    const { result } = await runTimed(args, (label, prompt, opts) => { types[label] = opts.agentType; return base(label, prompt, opts) })
+    assert.equal(result.blocking[0].reviewer, 'instrument-blindness-reviewer@x', 'control: the finding carries the scoped key')
+    const fixer = Object.keys(types).find(l => l.startsWith('fix-implementer:'))
+    assert.equal(types[fixer], want, where)
+  }
+})
+
 test('items: an agent that returns nothing is lost, not failed: uncharged, pending, and nothing more starts', async () => {
   const args = { ...ITEMS_BASE, items: [...ITEMS_BASE.items, { id: 'd', files: ['panel/d.css'], after: ['a'], checks: ['`npm test` ok'] }] }
   const { result, calls } = await runDelayed(args, itemsReply({ 'item-implementer:b:': null }), { 'item-implementer:a:': 80, 'item-implementer:c:': 80 })

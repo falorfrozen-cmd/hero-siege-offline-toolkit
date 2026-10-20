@@ -1219,7 +1219,8 @@ const findingPath = where => {
 // the fix's commit before the finding closes.
 const patchableFix = findings => Array.isArray(findings) && findings.length > 0 && findings.every(f => {
   const p = findingPath(f.where)
-  return typeof f.fix === 'string' && !!f.fix.trim() && !!p && !PATCH_EXCLUDED(p) && (!PATCH_NEVER.has(f.reviewer) || /\.md$/i.test(p))
+  // A scoped reviewer's findings carry its key (`<name>@<label>`, reviewScopes), not its name.
+  return typeof f.fix === 'string' && !!f.fix.trim() && !!p && !PATCH_EXCLUDED(p) && (!PATCH_NEVER.has(String(f.reviewer || '').split('@')[0]) || /\.md$/i.test(p))
 })
 // F10 (owner, 2026-10-11: share results "if it makes sense"): an item
 // implementer's own `--item` run goes to a fixed, gitignored directory under
