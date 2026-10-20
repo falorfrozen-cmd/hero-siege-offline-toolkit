@@ -64,6 +64,7 @@ hs-game-sdk/
 │   │   ├── skill_sliders_model.py # Projectile count, AoE scale and projectile deltaSpeed from their stats, stdlib only, not exported (hand-written)
 │   │   ├── unique_pick_model.py # Which unique the Angelic roll and the ordinary unique roll yield (one entry's share), stdlib only, not exported (hand-written)
 │   │   ├── soul_piece_model.py # A room's act (RoomActIndex's answer), the pickup's stack rule (reals within the epsilon), the number rules a key piece rests on (repository truncation, unique `c`, the save's two decimals, crafting's count, the find), the gem roll a boss soul piece rides and the backpack's use, stdlib only, not exported (hand-written)
+│   │   ├── number_compress_model.py # Which numbers the game's Steam number shortener (num_compressSteam -> SteamCompressNumber) ends the process on, and the text it writes for the rest, stdlib only, not exported (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
 │   ├── pyproject.toml
@@ -580,6 +581,7 @@ contributor can be assumed to have:
 | `test_dungeon_chest_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/DungeonChestMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths and local `.claude/workorders/` captures |
 | `test_unique_pick_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/ModuleMain.cpp` or `ForgePact/plugin/include/ForgePact/FlightCharms.hpp` is absent (hub CI checks out without submodules), while `FixtureShapeTests` skips checking `ForgePact/...` source paths only when `ForgePact/docs` is absent, so a ForgePact checkout that predates the paths the fixture cites fails it rather than skipping |
 | `test_soul_piece_model.py` | nothing (the model, its two curated files, its spec and the tracked room and object bindings); `ForgePact/` checked out for `ParityTests` | always runs; only `ParityTests` skips, when `ForgePact/plugin/include/ForgePact/SoulPieceMod.hpp` is absent (hub CI checks out without submodules) |
+| `test_number_compress_model.py` | nothing (the model and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/NumberGuard.hpp` is absent (hub CI checks out without submodules) |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_sdk_lazy_import.py` | nothing (starts fresh interpreters of the Python running the suite) | always runs |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
@@ -910,7 +912,7 @@ re-run it; regeneration is idempotent, so a second run must produce no diff.
 
 "Every file" is broader than the code, though: `player.py`/`.hpp`/`.ts`, `hooks.hpp`,
 `mod_registry.py`, `item_type.py`/`.hpp`/`.ts`, `drop_roll_model.py`, `mining_reward_model.py`,
-`monster_rank_model.py`, `dungeon_chest_model.py`, `unique_pick_model.py` and `soul_piece_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
+`monster_rank_model.py`, `dungeon_chest_model.py`, `unique_pick_model.py`, `soul_piece_model.py` and `number_compress_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
 models are not wired
 into any aggregate on purpose (import it by its module name), and it has no C++ or TypeScript
 counterpart. They still have to be wired into the aggregates
