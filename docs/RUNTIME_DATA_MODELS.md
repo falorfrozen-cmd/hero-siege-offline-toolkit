@@ -7771,7 +7771,62 @@ not observed, not absent.
   ([Phase 3 static reading](../ForgePact/docs/mark1-set-research.md#phase-3-static-reading)).
 - The Angelic roll keeps only rarity 7 or 10 (§ 13.4).
 - So of these three rolls only `DropItemHeroic` can drop a Heroic (9) unique.
-  **Static reading** (2026-10-11).
+  **Static reading** (2026-10-11). This is about the rarity each roll keeps,
+  not about which items a kill can give: ForgePact's Mark 1 pieces (#166)
+  join the ordinary roll through a Satanic (6) stand-in entry of the piece's
+  own class, which that roll keeps, and the rewrite before the item is built
+  turns a hit on the stand-in into the piece (the kill route below, and
+  [Phase 3 kill route static reading](../ForgePact/docs/mark1-set-research.md#phase-3-kill-route-static-reading)).
+- Read again on 2026-10-20 for the Mark 1 pieces' kill route, after the
+  owner decided they drop from ordinary kills anywhere, the way the game's
+  own SS set items do (White Mage's Sacred set, Zealot's Prophecy), through
+  the hub's ghidra MCP on the same build. The bullets below extend those
+  above.
+- A kill reaches the ordinary unique roll: `Enemy_Parent_obj`'s Destroy event
+  calls `DropItem`, which calls `LoadDrops` (§ 13.1), and `LoadDrops` calls
+  `DropUniqueItems` (first bullet). Drop type 45 is the type § 13.1 measured
+  as "a unique item" by opening every gate on one monster (2026-08-27), so it
+  is the gate in front of this roll on a kill. How often type 45's gate
+  passes on a kill was not read and not measured. Chests, goblins,
+  destructibles and piles reach `DropItem` too (§ 13.1, § 13.6), so they
+  reach the same roll; that is an inference. **Static reading** (2026-10-20,
+  the kill route), with type 45's meaning **measured**.
+- `DropUniqueItems` (1424), decompiled again: it picks the sub-list k from 0
+  to 4 by a zone value with random step-ups, draws one random index of
+  `Controller_obj.lootListUnique[k]`, looks the entry up in
+  `GetUniqueRepoStruct`, keeps it only when its rarity is below 7 and it is
+  not flagged hidden, then calls `CreateDefaultParams` and the placement with
+  the entry's own type. A refused draw places nothing; there is no second
+  draw (§ 23.8). There is no branch for set items anywhere in it.
+  **Static reading** (2026-10-20, the kill route), agreeing with the first
+  bullet and § 23.8.
+- The game's set items are ordinary uniques that the unique repository rates
+  Satanic (6). In ForgePact's Mark 1 drops live 1 (2026-10-20, D4), a
+  by-name call of `DropItemHeroic` placed "Sacred Pendant" from the unique
+  repository (`c` 1) at `rarity=6`. In the same session (D5)
+  `lootListUnique[4]` held 218 entries with flag 40 clear and a rarity
+  neither 7 nor 10, every one rarity 6, and `[5]` held 93 rarity-6 entries
+  among its 203 such entries. **Measured** (2026-10-20). The
+  ordinary roll keeps every rarity below 7, so a set piece on lists 0 to 4
+  can drop from it like any other Satanic unique; that is an inference from
+  the reading above. Which sub-lists hold the Sacred or Zealot's Prophecy
+  pieces is **not established**.
+- `GetSetInformation` maps a set's name to one of 70 set indices. Other
+  set scripts exist by name (`GetSetName`, `GetSetNames`,
+  `DefineSetPieceRequirements`) and were not read, and how an item names the
+  set it belongs to was not read. No drop script names a set (the ghidra
+  MCP's function search over "Drop", "Set", "Unique" and "LootList"): not
+  observed by name, never "there is none". **Static reading** (2026-10-20,
+  the kill route).
+- Not established: which sub-lists hold set pieces, how often a kill runs
+  drop type 45, and the distribution of k. The MCP's callers and disassembly
+  for `DropUniqueItems` are empty, as for `DropItemHeroic`: not observed.
+  **Static reading** (2026-10-20, the kill route).
+- Not readings of the game, and not measured: HS Offline Tracker's item table
+  (`ForgePact/src/forgepact_tracker/item_table.py`) labels the Sacred and
+  Zealot's Prophecy pieces "Set", most at grade 6 (SS), with odds of one in
+  147,455 to 555,250, and the Item Editor's catalog likewise labels set
+  items. Neither label says how the game drops them.
 - The Item Editor's catalog (`hs_full_catalog.json`, not a reading of the
   game and not measured) lists normal charms as Small (`b` 0-19, 1x1), Large
   (20-39, 1x2) and Grand (40-59, 1x3), with no normal 2x2 or 1x5 charm. Its 2x2
