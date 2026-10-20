@@ -15,9 +15,15 @@ covers the gates that come before a roll, and
 [`relic-pick-spec.md`](relic-pick-spec.md) the relic pick, which works
 differently.
 
+ForgePact#166 (hub #518) added a third roll, the Heroic roll
+(`DropItemHeroic`), for the Mark 1 set: with the "Mark 1 drops" switch on, each
+of the four Mark 1 pieces joins that roll with one entry's share, the way the
+flight charms join the Angelic roll.
+
 It was written from the shared references only:
 [`docs/RUNTIME_DATA_MODELS.md`](../RUNTIME_DATA_MODELS.md) (RDM) § 13.4, § 23.4
-and § 23.8, and ForgePact's own source for the Our code section.
+and § 23.8, and ForgePact's own source for the Our code section. The Heroic
+roll's reading of 2026-10-20 is folded into RDM § 23.4 by the same feature.
 
 Every claim carries one of four labels, and a source:
 
@@ -38,6 +44,10 @@ Every claim carries one of four labels, and a source:
   picked. Each roll has its own test, below.
 - **T**: the number of droppable entries on `lootListUnique[5]`, the Angelic
   roll's list, counted with repeats.
+- **T_H**: the number of entries the Heroic roll keeps on the sub-list it
+  reads, counted with repeats. The roll reads `lootListUnique[5]` when its
+  index argument is left undefined; which index its callers pass is not
+  established (see Not established).
 - **L_k**: the length of `lootListUnique[k]`, for k from 0 to 4, the ordinary
   unique roll's sub-lists. **k is always a sub-list index in this spec.**
 - **D_k**: how many entries of sub-list k the ordinary unique roll keeps.
@@ -91,6 +101,33 @@ Every claim carries one of four labels, and a source:
   the ordinary unique roll reads 0 to 4. Other routines read the same lists
   (RDM § 13.4, "Other readers of the list"), which is why ForgePact takes its
   entries off again after each roll.
+- **The Heroic roll re-draws too, with the opposite rarity test** (RDM § 23.4,
+  static reading of 2026-10-11, read again on 2026-10-20 for ForgePact#166).
+  - `DropItemHeroic` (1374) takes three arguments: a position, which it takes
+    from the calling instance when the first two are left undefined, and a
+    sub-list index, which is 5 when left undefined.
+  - It takes a random entry of `lootListUnique` at that index. An entry that
+    is not a triple is drawn again. A triple is looked up through
+    `GetUniqueRepoStruct`, and the roll keeps it only when the base's hidden
+    flag (base-info flag 40) is clear and the definition's rarity (field 27)
+    is neither 7 (Angelic) nor 10 (Unholy). Otherwise it draws again, until
+    it keeps one.
+  - So it keeps Satanic (6) and Heroic (9) uniques, and every other rarity
+    except 7 and 10. An entry listed r times among the T_H entries the roll
+    keeps comes out r / T_H of the time. Because a miss is drawn again, it
+    makes no difference whether the random index can reach the list's length.
+  - After the loop it calls `CreateDefaultParams` once, with the kept entry's
+    sub-type and base, and then the placement, given the entry's own type. So
+    the placed item's class is the entry's, as in the Angelic roll, and one
+    call places one item.
+  - Its direct callers (RDM § 23.4, static reading of a byte scan) are
+    `VaultUse` (4597), which runs when a player uses a vault item from the
+    bag, and a Chaos Tower NPC closure. No caller on a kill has been read.
+    Which index and which calling instance `VaultUse` passes was not read.
+- **On one list the two re-drawing rolls split the entries between them.** An
+  entry that is not flagged hidden is kept by the Angelic roll when its rarity
+  is 7 or 10 and by the Heroic roll otherwise, never by both (static reading,
+  the two tests above).
 
 ## Measured
 
@@ -151,6 +188,13 @@ Every claim carries one of four labels, and a source:
     the model gives with the push and the coin (The model, below). Counts
     this small cannot tell one entry's share from one a few times larger or
     smaller.
+- **The Heroic roll called by name** (RDM § 23.4; the flight charms' Live 1 of
+  2026-10-12, ForgePact's `flight-charms-research.md`, "Live 1 results", and
+  `heroic_route` in `hs-game-sdk/curated/flight_charms_measurements.json`).
+  Ten calls of `DropItemHeroic` with the local player as `self`, which is not
+  a shape the game's own callers use, placed ten items: seven Heroic (9) and
+  three Satanic (6), none Angelic or Unholy, and no charm. Nothing was pushed.
+  Every call placed one item, as the re-draw predicts.
 
 ## Our code
 
@@ -189,6 +233,41 @@ input transforms, and pins them to ForgePact's source.
     1 in 51 and 1 in 222.
   - The ordinary roll drops anything at all with chance (D_k + c) / (L_k + c)
     while Pocket Elf is pushed, and D_k / L_k otherwise.
+- **Mark 1's push onto the Heroic roll** (ForgePact#166, `Mark1Drops.hpp`
+  and its adapter in ForgePact's `ModuleMain.cpp`). While the "Mark 1 drops"
+  switch is on, for the length of one `DropItemHeroic` call, ForgePact adds
+  c copies of one stand-in entry per Mark 1 piece to the sub-list that call
+  reads, and takes them off its tail after the call.
+  - The sub-list is the call's third argument when it is a whole number from
+    0 to 5, and 5 when it is absent or undefined, as the roll itself reads it.
+  - A piece's stand-in is a triple of the piece's own class (helmet 0, body
+    armor 1, boots 2, gloves 4) that the Heroic roll keeps, chosen from the
+    live list: a Heroic (9) one first, then any other kept rarity, ties broken
+    by the lowest sub-type and base. A class with no such triple on the list
+    has no stand-in there, and that piece is not pushed; the others still are.
+  - c is a `constexpr` 1 in the player build (`g_Mark1DropCopies`); only the
+    research build's copies lever changes it.
+  - Mark 1 pushes nothing inside the Angelic or the ordinary roll, and #74's
+    items and the flight charms push nothing inside the Heroic roll.
+- **Mark 1's coin and rewrite.** A hit whose whole triple is a pushed
+  stand-in's goes to that piece with probability c / (n + c), the same coin
+  as above, and otherwise stays the game's own. The record is then rewritten
+  to the piece's own definition, the game builds that base item, and the
+  Mark 1 dressing makes it the piece.
+- **What that gives on the Heroic roll** (arithmetic on the readings above,
+  not measured):
+  - With e pieces pushed at c copies, a piece's stand-in triple is kept with
+    probability (n + c) / (T_H + e), and the coin gives the piece c / (n + c)
+    of that. So each piece takes c / (T_H + e) of the Heroic roll's drops, and
+    each stand-in keeps n / (T_H + e).
+  - At c = 1 with all four pieces pushed, e = 4: each piece takes
+    1 / (T_H + 4), one entry's share, as Headhunter and the flight charms get.
+  - With the switch off nothing is pushed: no piece drops, and each stand-in
+    keeps its own n / T_H.
+  - On `lootListUnique[5]` the 380 entries, every one a triple, split into the
+    T = 48 the Angelic roll keeps, the T_H the Heroic roll keeps, and the
+    entries flagged hidden. So, if the Heroic roll reads list 5, T_H is at most
+    380 - 48 = 332.
 
 ## Not established
 
@@ -213,6 +292,18 @@ input transforms, and pins them to ForgePact's source.
   chance lever.
 - **Indirect calls.** A routine can also be called by index, which the direct
   call-site scans cannot see. None has been observed.
+- **T_H**, the entries the Heroic roll keeps on the sub-list it reads. No
+  session has counted it; ForgePact#166's Live procedure 1 (`pool`) reads it.
+  The model keeps it a parameter. Expect a few hundred, so one piece is about
+  one Heroic roll in a few hundred.
+- **The index `VaultUse` passes**, and the Chaos Tower NPC's, and the calling
+  instance each passes. Its body was not read (RDM § 23.4).
+- **Which Heroic uniques of classes 0, 1, 2 and 4 the list holds**, and so each
+  stand-in's n and whether every piece has a stand-in. The Item Editor's
+  catalog lists 13, 15, 17 and 17 Heroic uniques of those classes, which is
+  not a reading of the game's list.
+- **How often a player opens a vault or uses that NPC**, so how often the
+  Heroic roll runs in play.
 
 ## The model
 
@@ -227,6 +318,11 @@ It is not exported from `hs_game_sdk/__init__.py`, which the SDK generator owns.
   given droppable entry is its copies over the sub-list's length, r / L_k.
 - **The ordinary drop chance**: the chance that one call drops anything is the
   droppable entries over the length, D_k / L_k.
+- **The Heroic keep test** (`heroic_keeps`): an entry not flagged hidden whose
+  rarity is neither 7 nor 10.
+- **The Heroic share** (`heroic_share`): an entry's share of the Heroic roll's
+  drops is its copies over the entries the roll keeps, r / T_H. The test
+  passes T_H + e and the pushed copies in as transforms.
 - **Agreement with a count**: the binomial helpers come from
   [`drop_roll_model`](../../hs-game-sdk/python/hs_game_sdk/drop_roll_model.py)
   (`binomial_band`, `observation_within`), imported and not copied.
@@ -241,12 +337,20 @@ Pocket Elf's band taken over the five lengths L_k, since which sub-list a call
 reads is not established; each keeps a negative control (the other copies
 setting, or no push).
 
+For the Heroic roll the baseline (the "Mark 1 drops" switch off) is no piece
+and each stand-in at n / T_H, and the target is each piece at c / (T_H + e),
+1 / (T_H + 4) in the player build. T_H stays a parameter, so the tests run
+over several values. The flight charms' ten by-name calls (UP14) are replayed:
+every call placed one item, and every rarity measured is one the Heroic test
+keeps. Their negative control is the Angelic test, which rejects every one of
+those rarities.
+
 ## What the model cannot catch
 
 - **Whether a hook attaches.** The push, the typing and the rewrite need inline
-  detours on `DropItemAngelicChance`, `DropUniqueItems`, `CreateDefaultParams`,
-  `GetUniqueRepoStruct` and `CreateItemNew`. Only a live positive control shows
-  that they fired.
+  detours on `DropItemAngelicChance`, `DropUniqueItems`, `DropItemHeroic`,
+  `CreateDefaultParams`, `GetUniqueRepoStruct` and `CreateItemNew`. Only a live
+  positive control shows that they fired.
 - **Typing.** The model assumes a hit is attributed to the entry that was
   picked. That rests on the typing hook reading the right definition, which
   Live 1 to Live 3 of #74 measured for the game's own entries.
@@ -254,4 +358,5 @@ setting, or no push).
   and whether successive picks are independent, are a live question.
 - **How a rate feels in play.** One entry's share is a rate per roll; how often
   a player sees a charm also depends on how often each roll runs, which the
-  model does not cover.
+  model does not cover. For the Mark 1 pieces that is how often a player opens
+  a vault, which no session has measured.

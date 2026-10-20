@@ -7,7 +7,7 @@ checks, against `hs-game-sdk/curated/unique_pick_measurements.json`. It
 complements `drop_roll_model`, which answers *whether* a roll runs; this module
 answers *which* unique comes out once one does.
 
-Two rolls draw from `Controller_obj.lootListUnique`, an array of six lists of
+Three rolls draw from `Controller_obj.lootListUnique`, an array of six lists of
 `(type, sub-type, base)` triples (static reading, with the layout measured):
 - The Angelic roll (`DropItemAngelicChance`) reads list 5 and draws again until
   it keeps a droppable entry: rarity 7 or 10, and not flagged hidden. So an
@@ -17,17 +17,21 @@ Two rolls draw from `Controller_obj.lootListUnique`, an array of six lists of
   flagged hidden; anything else drops nothing, with no second draw. So one call
   drops an entry listed r times in a list of L entries with chance r / L, and
   drops anything with chance D / L, D the entries it keeps.
+- The Heroic roll (`DropItemHeroic`) reads the list its index argument names,
+  5 when that is undefined, and draws again until it keeps an entry: not
+  flagged hidden, and of any rarity but 7 and 10. So an entry listed r times
+  among the T_H entries it keeps comes out r / T_H of the time.
 
-This module models the game only. ForgePact's levers for ForgePact#74 and
-ForgePact#158 (the stand-in entries pushed for the length of a roll, and the
-coin that hands a stand-in hit to the mod's item) are that mod's own code and
-live in the test as input transforms.
+This module models the game only. ForgePact's levers for ForgePact#74,
+ForgePact#158 and ForgePact#166 (the stand-in entries pushed for the length
+of a roll, and the coin that hands a stand-in hit to the mod's item) are that
+mod's own code and live in the test as input transforms.
 
 Every probability is an exact `Fraction`. Nothing here draws a random number or
 tries to reproduce the game's own random sequence. What is not established is
-a parameter: T and D are inputs, and `index_can_reach_length` carries the open
-question of whether the ordinary roll's random index can equal the list's
-length. The binomial helpers a count is compared with are `drop_roll_model`'s,
+a parameter: T, T_H and D are inputs, and `index_can_reach_length` carries
+the open question of whether the ordinary roll's random index can equal the
+list's length. The binomial helpers a count is compared with are `drop_roll_model`'s,
 imported here and not copied.
 
 Not exported from `hs_game_sdk/__init__.py`, which the SDK generator owns;
@@ -51,6 +55,12 @@ ANGELIC_RARITIES: FrozenSet[int] = frozenset({7, 10})
 #: The ordinary unique roll keeps an entry whose rarity is below this
 #: (static reading).
 ORDINARY_RARITY_BELOW = 7
+#: The element of `lootListUnique` the Heroic roll reads when its index
+#: argument is undefined (static reading).
+HEROIC_DEFAULT_LIST_INDEX = 5
+#: The definition rarities the Heroic roll refuses and draws again on: 7
+#: Angelic, 10 Unholy (static reading).
+HEROIC_REFUSED_RARITIES: FrozenSet[int] = frozenset({7, 10})
 
 
 def angelic_keeps(rarity: int, hidden: bool) -> bool:
@@ -63,6 +73,12 @@ def ordinary_keeps(rarity: int, hidden: bool) -> bool:
     """Whether the ordinary unique roll keeps the entry its one draw read: its
     rarity is below 7 and it is not flagged hidden."""
     return not hidden and rarity < ORDINARY_RARITY_BELOW
+
+
+def heroic_keeps(rarity: int, hidden: bool) -> bool:
+    """Whether the Heroic roll keeps an entry once picked: its rarity is
+    neither 7 nor 10 and its base is not flagged hidden."""
+    return not hidden and rarity not in HEROIC_REFUSED_RARITIES
 
 
 def _check_count(name: str, value: int, low: int = 0) -> None:
@@ -84,6 +100,21 @@ def angelic_share(copies: int, droppable: int) -> Fraction:
     _check_count("droppable", droppable, 1)
     if copies > droppable:
         raise ValueError("an entry cannot be listed more often than the droppable entries it is counted in")
+    return Fraction(copies, droppable)
+
+
+def heroic_share(copies: int, droppable: int) -> Fraction:
+    """An entry's share of the Heroic roll's drops: r / T_H.
+
+    `copies` (r) is how many times the entry is listed, counted only when the
+    roll keeps it; `droppable` (T_H) is the entries the roll keeps on the list
+    it reads, counted with repeats, those r included. Like the Angelic roll it
+    draws again until it keeps one, so a list with nothing it keeps refuses.
+    """
+    _check_count("copies", copies)
+    _check_count("droppable", droppable, 1)
+    if copies > droppable:
+        raise ValueError("an entry cannot be listed more often than the kept entries it is counted in")
     return Fraction(copies, droppable)
 
 

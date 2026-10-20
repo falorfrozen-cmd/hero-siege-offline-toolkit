@@ -2,7 +2,9 @@
 against numbers ForgePact already measured (ForgePact#158, hub #500).
 
 `hs_game_sdk.unique_pick_model` models the game only: the Angelic roll's
-re-drawing pick and the ordinary unique roll's one draw. ForgePact's levers
+re-drawing pick, the ordinary unique roll's one draw, and the Heroic roll's
+re-drawing pick (`DropItemHeroic`, added for the Mark 1 pieces of ForgePact#166,
+hub #518; the `test_heroic_*` and `test_up14_*` tests). ForgePact's levers
 (the stand-in entries pushed for the length of one roll, and the coin that
 hands a stand-in hit to the mod's item) are our own code, so they are written
 here as input transforms and never enter the SDK. `LeverParityTests` pins these
@@ -32,6 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SDK_PY = ROOT / "hs-game-sdk" / "python"
 FIXTURE = ROOT / "hs-game-sdk" / "curated" / "unique_pick_measurements.json"
 ANGELIC_LIST_FIXTURE = ROOT / "hs-game-sdk" / "curated" / "angelic_list_measurements.json"
+FLIGHT_FIXTURE = ROOT / "hs-game-sdk" / "curated" / "flight_charms_measurements.json"
 MODEL_FILE = SDK_PY / "hs_game_sdk" / "unique_pick_model.py"
 SPEC_DOC = ROOT / "docs" / "models" / "unique-pick-spec.md"
 HOOKS_DIR = ROOT / ".claude" / "hooks"
@@ -122,6 +125,37 @@ def elf_ordinary_chance(length, n, c, **kwargs):
     return model.ordinary_pick_chance(n + c, length + c, **kwargs) * coin(n, c)
 
 
+# Mark 1 (#166): while the "Mark 1 drops" switch is on, one stand-in per piece
+# that has one on the list is pushed for the length of one `DropItemHeroic`
+# call, onto the list that call reads, and nothing inside the Angelic or the
+# ordinary roll.
+MARK1_PIECES = ("mark1_helmet", "mark1_body", "mark1_boots", "mark1_gloves")
+# T_H, the entries the Heroic roll keeps, is not measured (spec "Not
+# established"), so a claim about it has to hold across these values. The
+# largest is the 380 - 48 entries of list 5 the Angelic roll does not keep
+# (spec "Our code", "What that gives on the Heroic roll").
+T_H_VALUES = (40, 150, 300, 332)
+
+
+def heroic_pushed(drops_on, resolved=MARK1_PIECES, copies=PLAYER_COPIES):
+    """e for one Heroic roll: `copies` per Mark 1 piece that has a stand-in on
+    the list the call reads (`resolved`), and nothing with the switch off."""
+    if not drops_on:
+        return 0
+    return sum(copies for piece in resolved if piece in MARK1_PIECES)
+
+
+def piece_heroic_share(droppable, n, c, e):
+    """A pushed piece's share of the Heroic roll's drops: its stand-in triple
+    is kept with (n + c) / (T_H + e), and the coin hands c / (n + c) of that over."""
+    return model.heroic_share(n + c, droppable + e) * coin(n, c)
+
+
+def stand_in_heroic_share(droppable, n, c, e):
+    """What a piece's stand-in itself keeps of the Heroic roll's drops."""
+    return model.heroic_share(n + c, droppable + e) * (1 - coin(n, c))
+
+
 class BaselineTests(unittest.TestCase):
     """The game with no mod: the spec's static reading, as numbers."""
 
@@ -202,6 +236,62 @@ class BaselineTests(unittest.TestCase):
         self.assertIs(model.binomial_band, drop_roll_model.binomial_band)
         self.assertIs(model.observation_within, drop_roll_model.observation_within)
 
+    # ---- The Heroic roll (`DropItemHeroic`), Mark 1's "Mark 1 drops" switch off ----
+
+    def test_heroic_baseline_the_switch_off_drops_no_piece(self):
+        e = heroic_pushed(False)
+        self.assertEqual(e, 0)
+        for droppable in T_H_VALUES:
+            for n in (0, 1, 2):
+                with self.subTest(T_H=droppable, n=n):
+                    self.assertEqual(piece_heroic_share(droppable, n, 0, e), 0)
+
+    def test_heroic_baseline_each_stand_in_keeps_n_over_t_h(self):
+        e = heroic_pushed(False)
+        for droppable in T_H_VALUES:
+            for n in (1, 2, 3):
+                with self.subTest(T_H=droppable, n=n):
+                    self.assertEqual(model.heroic_share(n, droppable), Fraction(n, droppable))
+                    self.assertEqual(stand_in_heroic_share(droppable, n, 0, e), Fraction(n, droppable))
+
+    def test_heroic_baseline_the_roll_keeps_satanic_and_heroic_and_refuses_angelic_unholy_and_hidden(self):
+        self.assertTrue(model.heroic_keeps(6, False))
+        self.assertTrue(model.heroic_keeps(9, False))
+        for rarity in (7, 10):
+            with self.subTest(rarity=rarity):
+                self.assertFalse(model.heroic_keeps(rarity, False))
+        for rarity in range(0, 17):
+            with self.subTest(rarity=rarity):
+                self.assertEqual(model.heroic_keeps(rarity, False), rarity not in (7, 10))
+                self.assertFalse(model.heroic_keeps(rarity, True))
+
+    def test_heroic_baseline_the_two_re_drawing_rolls_split_a_list_between_them(self):
+        # An entry not flagged hidden is kept by exactly one of the two rolls.
+        for rarity in range(0, 17):
+            for hidden in (False, True):
+                with self.subTest(rarity=rarity, hidden=hidden):
+                    kept_by = int(model.angelic_keeps(rarity, hidden)) + int(model.heroic_keeps(rarity, hidden))
+                    self.assertEqual(kept_by, 0 if hidden else 1)
+
+    def test_heroic_baseline_the_default_list_is_five_and_t_h_fits_on_it(self):
+        self.assertEqual(model.HEROIC_DEFAULT_LIST_INDEX, 5)
+        # On list 5 the entries the Angelic roll does not keep bound T_H (UP11).
+        pool = _entries()["UP11"]["values"]
+        self.assertEqual(pool["angelic_list_size"] - pool["droppable"], max(T_H_VALUES))
+
+    def test_heroic_baseline_a_list_with_nothing_kept_and_bad_inputs_refuse(self):
+        # The roll would draw again for ever.
+        with self.assertRaises(ValueError):
+            model.heroic_share(0, 0)
+        for call in (lambda: model.heroic_share(-1, 300), lambda: model.heroic_share(301, 300)):
+            with self.assertRaises(ValueError):
+                call()
+        for call in (lambda: model.heroic_share(1.5, 300), lambda: model.heroic_share(True, 300),
+                     lambda: model.heroic_share(1, 300.0)):
+            with self.assertRaises(TypeError):
+                call()
+        self.assertIsInstance(model.heroic_share(1, 300), Fraction)
+
 
 class TargetTests(unittest.TestCase):
     """What the push and the coin must give: one entry's share per item."""
@@ -281,6 +371,70 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(coin(1, 0), 0)
         self.assertEqual(stand_in_angelic_share(47, 1, 0, 0), model.angelic_share(1, 47))
         self.assertEqual(elf_ordinary_chance(50, 1, 0), 0)
+
+    # ---- The Heroic roll with "Mark 1 drops" on: one entry's share per piece ----
+
+    def test_heroic_target_each_piece_takes_one_entrys_share(self):
+        e = heroic_pushed(True)
+        self.assertEqual(e, 4)
+        for droppable in T_H_VALUES:
+            for n in (0, 1, 2):
+                with self.subTest(T_H=droppable, n=n):
+                    share = piece_heroic_share(droppable, n, PLAYER_COPIES, e)
+                    self.assertEqual(share, Fraction(1, droppable + 4))
+                    # The same share as a vanilla unique listed once.
+                    self.assertEqual(share, model.heroic_share(1, droppable + e))
+
+    def test_heroic_target_each_stand_in_keeps_n_over_t_h_plus_four(self):
+        e = heroic_pushed(True)
+        for droppable in T_H_VALUES:
+            for n in (0, 1, 2, 3):
+                with self.subTest(T_H=droppable, n=n):
+                    self.assertEqual(stand_in_heroic_share(droppable, n, PLAYER_COPIES, e), Fraction(n, droppable + 4))
+
+    def test_heroic_target_the_shares_add_up_to_every_drop(self):
+        e = heroic_pushed(True)
+        ns = (1, 2, 0, 3)   # each piece's stand-in, listed a different number of times
+        for droppable in T_H_VALUES:
+            with self.subTest(T_H=droppable):
+                vanilla_elsewhere = model.heroic_share(droppable - sum(ns), droppable + e)
+                stand_ins = sum(stand_in_heroic_share(droppable, n, PLAYER_COPIES, e) for n in ns)
+                pieces = sum(piece_heroic_share(droppable, n, PLAYER_COPIES, e) for n in ns)
+                self.assertEqual(pieces, Fraction(4, droppable + 4))
+                self.assertEqual(vanilla_elsewhere + stand_ins + pieces, 1)
+
+    def test_heroic_target_the_copies_lever_scales_both_shares(self):
+        # The research build's copies lever: c / (T_H + 4c) per piece.
+        for c in (1, 7, 200, 400):
+            e = heroic_pushed(True, copies=c)
+            self.assertEqual(e, 4 * c)
+            for droppable in T_H_VALUES:
+                with self.subTest(c=c, T_H=droppable):
+                    self.assertEqual(piece_heroic_share(droppable, 1, c, e), Fraction(c, droppable + 4 * c))
+                    self.assertEqual(stand_in_heroic_share(droppable, 1, c, e), Fraction(1, droppable + 4 * c))
+        # More copies, a larger share for each piece; never more than a quarter.
+        at_one = piece_heroic_share(300, 1, 1, heroic_pushed(True))
+        at_200 = piece_heroic_share(300, 1, 200, heroic_pushed(True, copies=200))
+        self.assertGreater(at_200, at_one)
+        self.assertLess(at_200, Fraction(1, 4))
+
+    def test_heroic_target_a_class_with_no_stand_in_leaves_the_other_three(self):
+        resolved = ("mark1_helmet", "mark1_body", "mark1_boots")   # no gloves stand-in on the list
+        e = heroic_pushed(True, resolved=resolved)
+        self.assertEqual(e, 3)
+        for droppable in T_H_VALUES:
+            with self.subTest(T_H=droppable):
+                self.assertEqual(piece_heroic_share(droppable, 1, PLAYER_COPIES, e), Fraction(1, droppable + 3))
+                # The gloves are not pushed, so they take nothing.
+                self.assertEqual(piece_heroic_share(droppable, 1, 0, e), 0)
+
+    def test_heroic_target_mark1_pushes_only_onto_the_heroic_roll(self):
+        # Mark 1 adds nothing to the Angelic or the ordinary roll ...
+        for index in (model.ANGELIC_LIST_INDEX,) + model.UNIQUE_SUB_LISTS:
+            self.assertEqual(pushed(index, MARK1_PIECES), 0)
+        # ... and #74's items and the flight charms add nothing to the Heroic roll.
+        self.assertEqual(heroic_pushed(True, resolved=ANGELIC_ITEMS + ORDINARY_ITEMS), 0)
+        self.assertEqual(heroic_pushed(True, resolved=MARK1_PIECES + ANGELIC_ITEMS), 4)
 
 
 class MeasuredTests(unittest.TestCase):
@@ -480,6 +634,35 @@ class MeasuredTests(unittest.TestCase):
         self.assertFalse(self._angelic_within(values["broom"], values["hits"], 0))
         self.assertEqual((values["refused"], values["anomalies"]), (0, 0))
 
+    # ---- The Heroic roll called by name (#158 Live 1, for #166) ----
+
+    def test_up14_heroic_route_by_name(self):
+        entry = self.entries["UP14"]
+        values = entry["values"]
+        # Copied from the flight charms' fixture; the two copies must not drift apart.
+        route = json.loads(FLIGHT_FIXTURE.read_text(encoding="utf-8"))["heroic_route"]
+        for key in ("calls", "placed", "rarity_histogram", "charms"):
+            with self.subTest(key=key):
+                self.assertEqual(values[key], route[key])
+        self.assertEqual(entry["date"], route["date"])
+        self.assertEqual(values["pushed"], 0)
+        # The roll draws again until it keeps an entry, so every call places one item.
+        self.assertEqual(values["placed"], values["calls"])
+        histogram = {int(rarity): count for rarity, count in values["rarity_histogram"].items()}
+        self.assertEqual(sum(histogram.values()), values["placed"])
+        self.assertEqual(set(histogram), {6, 9})
+        for rarity in histogram:
+            with self.subTest(rarity=rarity):
+                self.assertTrue(model.heroic_keeps(rarity, False))
+                # Negative control: an Angelic-only filter rejects every measured rarity.
+                self.assertFalse(model.angelic_keeps(rarity, False))
+        # The control can fire: the Angelic filter keeps what the Heroic roll refuses.
+        for rarity in model.ANGELIC_RARITIES:
+            self.assertTrue(model.angelic_keeps(rarity, False))
+            self.assertFalse(model.heroic_keeps(rarity, False))
+        # Only this roll keeps a Heroic (9) unique; the ordinary roll's test refuses it.
+        self.assertFalse(model.ordinary_keeps(9, False))
+
 
 class OurCodeTests(unittest.TestCase):
     """The fixture's two our-code contracts, through the transforms above."""
@@ -536,7 +719,7 @@ class FixtureShapeTests(unittest.TestCase):
         self.assertIn("$schema_note", self.data)
         ids = [e["id"] for e in self.entries]
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertTrue({f"UP{i}" for i in range(1, 14)} <= set(ids))
+        self.assertTrue({f"UP{i}" for i in range(1, 15)} <= set(ids))
         for entry in self.entries:
             for field in self.REQUIRED:
                 self.assertIn(field, entry, entry.get("id"))
@@ -655,7 +838,8 @@ class SpecTests(unittest.TestCase):
                         "## The model", "## What the model cannot catch"):
             self.assertIn("\n" + heading + "\n", spec)
         for name in ("unique_pick_model.py", "test_unique_pick_model.py", "unique_pick_measurements.json",
-                     "DropItemAngelicChance", "DropUniqueItems", "lootListUnique"):
+                     "DropItemAngelicChance", "DropUniqueItems", "lootListUnique",
+                     "DropItemHeroic", "T_H", "Mark 1", "VaultUse"):
             self.assertIn(name, spec)
 
     def test_the_model_is_not_exported_from_the_generated_init(self):
