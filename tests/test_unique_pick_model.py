@@ -1120,6 +1120,70 @@ class LeverParityTests(unittest.TestCase):
                          r"return\s+static_cast<double>\(\s*c\s*\)\s*/\s*static_cast<double>\(\s*n\s*\+\s*c\s*\)\s*;")
         self.assertEqual(coin(1, PLAYER_COPIES), Fraction(1, 2))
 
+    # ---- Mark 1's kill route (#166): `kill_pushed` and the coin, against Mark1Drops.hpp ----
+
+    def test_mark1_kill_pushes_onto_lists_0_to_4(self):
+        mark1 = FORGEPACT_MARK1_DROPS.read_text(encoding="utf-8", errors="replace")
+        self.assertRegex(mark1, rf"inline constexpr int kKillListCount\s*=\s*{len(model.UNIQUE_SUB_LISTS)}\s*;")
+        match = re.search(r"inline constexpr int kKillLists\[kKillListCount\]\s*=\s*\{([^}]*)\}\s*;", mark1)
+        self.assertIsNotNone(match)
+        self.assertEqual(tuple(int(v) for v in match.group(1).split(",")), model.UNIQUE_SUB_LISTS)
+        # Every pushed entry goes onto each of those lists.
+        body = _function_body(mark1, "struct KillPushPlan")
+        self.assertRegex(body, r"int EntryCount\(\) const \{\s*return\s+PerListCount\(\)\s*\*\s*kKillListCount\s*;\s*\}")
+
+    def test_mark1_kill_filter_refuses_what_ordinary_keeps_refuses(self):
+        mark1 = FORGEPACT_MARK1_DROPS.read_text(encoding="utf-8", errors="replace")
+        self.assertRegex(mark1, rf"inline constexpr int kOrdinaryRarityBelow\s*=\s*{model.ORDINARY_RARITY_BELOW}\s*;")
+        body = _function_body(mark1, "inline bool OrdinaryKeeps(")
+        self.assertRegex(body, r"if\s*\(\s*hidden\s*\)\s*return\s+false\s*;\s*return\s+rarity\s*<\s*kOrdinaryRarityBelow\s*;")
+        # The kill route's stand-in rule asks that filter, not the Heroic roll's.
+        resolve = _function_body(mark1, "inline KillResolution ResolveKillStandIns(")
+        self.assertIn("if (!OrdinaryKeeps(rarity, hidden)) continue;", resolve)
+        self.assertNotIn("HeroicKeeps", resolve)
+        # The model and that filter agree on every rarity a definition carries.
+        below = int(re.search(r"kOrdinaryRarityBelow\s*=\s*(\d+)", mark1).group(1))
+        for rarity in range(0, 12):
+            for hidden in (False, True):
+                with self.subTest(rarity=rarity, hidden=hidden):
+                    self.assertEqual(model.ordinary_keeps(rarity, hidden), not hidden and rarity < below)
+
+    def test_mark1_kill_the_player_builds_copies_are_one(self):
+        mark1 = FORGEPACT_MARK1_DROPS.read_text(encoding="utf-8", errors="replace")
+        self.assertRegex(mark1, rf"inline constexpr int kPlayerCopies\s*=\s*{PLAYER_COPIES}\s*;")
+        # The kill route's plan takes the same copies the Heroic roll's does.
+        body = _function_body(mark1, "inline KillPushPlan PlanKillPush(")
+        self.assertRegex(body, r"if\s*\(\s*copies\s*<\s*1\s*\)\s*return\s+plan\s*;")
+        self.assertEqual(kill_pushed(True), PLAYER_COPIES * len(MARK1_PIECES))
+        self.assertEqual(kill_pushed(False), 0)
+
+    def test_mark1_kill_coin_is_c_over_n_plus_c(self):
+        mark1 = FORGEPACT_MARK1_DROPS.read_text(encoding="utf-8", errors="replace")
+        body = _function_body(mark1, "inline KillPushPlan PlanKillPush(")
+        self.assertRegex(body, r"for\s*\(\s*int\s+i\s*=\s*0\s*;\s*i\s*<\s*kPieceCount\b")
+        self.assertRegex(body, r"PushEntry\{\s*kPieces\[i\]\.piece\s*,\s*s\.triple\s*,\s*s\.n\s*,\s*copies\s*\}")
+        # n is the stand-in's count, the same on each of lists 0..4.
+        resolve = _function_body(mark1, "inline KillResolution ResolveKillStandIns(")
+        self.assertRegex(resolve, r"if\s*\(\s*n\s*!=\s*c\[0\]\s*\)\s*equal\s*=\s*false\s*;")
+        self.assertRegex(resolve, r"if\s*\(\s*!equal\s*\)\s*continue\s*;")
+        self.assertRegex(resolve, r"s\.n\s*=\s*c\[0\]\s*;")
+        attribute = _function_body(mark1, "inline bool AttributeHit(const KillPushPlan& plan,")
+        self.assertIn("AttributeHitAmong(plan.entries", attribute)
+        among = _function_body(mark1, "inline bool AttributeHitAmong(")
+        self.assertRegex(among, r"CoinOurs\(\s*e\.n\s*,\s*e\.copies\s*,\s*u\s*\)")
+        coin_body = _function_body(mark1, "inline double CoinShare(")
+        self.assertRegex(coin_body,
+                         r"return\s+static_cast<double>\(\s*c\s*\)\s*/\s*static_cast<double>\(\s*n\s*\+\s*c\s*\)\s*;")
+        # With the common count n on every list, each piece is c / (L_k + p) of
+        # the calls that read list k: the model's kill_share.
+        for length in (50, 61, 79, 152, 221):
+            for n in (0, 1, 2):
+                with self.subTest(length=length, n=n):
+                    p = kill_pushed(True)
+                    self.assertEqual(piece_kill_share(length, n, PLAYER_COPIES, p),
+                                     model.kill_share(PLAYER_COPIES, length, p))
+                    self.assertEqual(coin(n, PLAYER_COPIES), Fraction(PLAYER_COPIES, n + PLAYER_COPIES))
+
 
 if __name__ == "__main__":
     unittest.main()
