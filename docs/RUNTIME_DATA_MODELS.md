@@ -1372,6 +1372,90 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
 [loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading),
 [loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
 
+### 8.7 Numbers on screen: the game's number formatters
+
+Everything in this section is a **static reading** (ForgePact #230,
+2026-10-20) of game build 7.0.13.0: `Hero_Siege.exe` sha256
+`dab03f134327d9b682c67f1dc461822fb822a7e535009636624bb1454f498e2b`, and the
+Steam extension `bin\PAS_Steam_GMS_x64.dll` (127,488 bytes) sha256
+`c789ee5e5850e0d68c42a6d0b84876509eaea4f2ffab1ea9c35e71709c47b88f`. None of
+it is measured yet; ForgePact #230's Live 1 is planned to reproduce the crash
+and measure the route. The shortener's arithmetic, band by band, is written
+up as a spec in [`docs/models/number-compress-spec.md`](models/number-compress-spec.md)
+and modelled in `hs-game-sdk` from it.
+
+**Three formatter scripts and a binder** (static reading):
+
+- `num_compressFunc` binds the script file's two shorteners: it stores
+  `num_compressGML` and `num_compressSteam` as global method values.
+- `num_compressGML` (SDK index 2607) shortens in GML: below 10,000 it is the
+  plain `string()` of the value, above that a suffix chosen by magnitude, and
+  from 1e9 up it always divides by 1e9. It writes into no fixed buffer.
+- `num_compressSteam` (SDK `gml_Script_num_compressSteam`, 2608) takes one
+  argument and returns the text that the Steam extension's
+  `SteamCompressNumber` export builds, called through the runtime's
+  extension-call helper. The extension's id is referenced once in the exe's
+  code, inside `num_compressSteam`. The script has no direct call site, only
+  the binder's reference, so callers reach it through its method value, and
+  only an inline detour at the function's own address sees those calls
+  (§ 5.1). Whether anything else in the game calls the extension function is
+  not established.
+- `RealFormat` (3250) inserts thousands separators, built from the runner's
+  string builtins (`string`, `string_format`, `string_pos`, `string_insert`
+  and others) and `floor`; 42 direct call sites. How it behaves for very large
+  values (that is, how the runner's `string_format` does) is not established.
+
+**`SteamCompressNumber`: one double in, a pointer to an 8-byte static text
+out** (static reading of the DLL's export):
+
+- It clears the 8-byte buffer first. Zero gives the constant text `0`.
+- A negative value is never shortened: the whole part of its magnitude,
+  converted to a 32-bit integer, is written after a minus sign.
+- A positive value below 10,000 is written whole. From 10,000 to below 1e6
+  it is truncated to hundreds (q = trunc(x / 100)) and shown as thousands
+  with one decimal digit and `K`; below 1e9, q = trunc(x / 1e5) with `M`;
+  from 1e9 up, and for NaN (which fails every comparison), q = trunc(x / 1e8)
+  with `B`. The decimal digit follows a comma and is left out when it is 0
+  (`12,3K`, `10K`). q is converted to a 32-bit integer.
+- Every write into the buffer carries the compiler's range check. A failed
+  check calls the C runtime's range-check failure, a fast fail with code 8
+  (`FAST_FAIL_RANGE_CHECK_FAILURE`), and the process ends with exit code
+  `0xC0000409`.
+- **The failure bands.** The text does not fit, and the game ends, exactly
+  when: the value is NaN; the value is positive and q has seven or more
+  digits, that is x ≥ 1e14 (past about 2.1e17 the 32-bit conversion
+  overflows to its minimum, a ten-digit negative, which fails the same way,
+  and so does +inf); or the value is negative and the whole part of its
+  magnitude has seven or more digits, that is x ≤ −1e6 (seven digits plus
+  the sign; −inf overflows the same way). Every other value fits.
+- **The terminator.** A shortened text is digits(q) + 2 characters with a
+  nonzero decimal and digits(q) characters with a zero one; the cleared byte
+  after it ends the string. For a six-digit q whose last digit is not 0
+  (about 1e13 to 1e14) the text fills all 8 bytes and has no terminator
+  inside the buffer; what the game then reads past it is not established.
+  Whole-number texts that do not fail always end inside the buffer.
+
+**Why no plugin handler sees it.** A fast fail ends the process from the
+kernel without dispatching an exception inside it, so a plugin's vectored
+handler, its top-level filter (§ 5.11) and any `ExitProcess`-time code never
+run: the crash bundle names no faulting module and the trap records nothing,
+which is what the two #230 reports of 2026-10-20 show (measured from their
+bundles). Windows Error Reporting still writes a dump when the error mode
+allows it, and the dump names the code, the subcode and the module that
+raised it; an attached debugger takes the fast fail instead and no dump is
+written. The shortener fails for such a number with or without a mod; whether
+an unmodded character can put 1e14 on screen is not known.
+
+**`CombatText` and the floating number** (static reading, extends § 12):
+`CombatText` creates a `Combat_Text_obj` with `instance_create_layer` and
+sets `textText`, `textValue`, `textColor`, `textSize`, `setDestroy` and an
+alarm on it. **Not established:** which formatter turns a hit's damage into
+the floating number, and which one the DPS meter (`DPS_Meter_obj`, 1357)
+uses. A DPS meter sums hits over time and over projectiles, so its total
+would cross 1e14 well before a single hit does (not measured). ForgePact's
+`stat` on `CalculateEndDamage` scales the final per-hit damage (measured
+earlier), which is how its Modifiers reach these numbers.
+
 ---
 
 ## 9. Inventory Grids, Fingerprints and Prospecting
@@ -3637,6 +3721,7 @@ All **measured** unless marked.
 | `EnemyGiveExperience` with no argument | crash | §22.8 |
 | A parsed struct held only in C++ `RValue`s across frames | freed by the runner's GC; the next frame crashes | §22.8, §5.9 |
 | `WM_CLOSE` to YYToolkit's console window | the game ends with 0xC000013A, no normal save | §22.5 |
+| A number of 100 trillion (1e14) or more, NaN, or a negative of a million or more handed to `num_compressSteam` (its `SteamCompressNumber` text does not fit 8 bytes) | the game ends with `0xC0000409`, fast fail 8 raised in `PAS_Steam_GMS_x64.dll`, which no in-process handler sees (**static reading**, ForgePact #230) | §8.7 |
 | A ground monster's path search while the hero is sealed in | about 20 s at 3 fps for a 20-monster wave; `pathFailed = true` avoids it | §22.7 |
 
 ---
