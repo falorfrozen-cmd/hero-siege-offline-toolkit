@@ -479,22 +479,31 @@ active) — **measured** by read-only memory inspection.
   cursor. [population capacity, Failure addressed](../ForgePact/docs/population-capacity.md#failure-addressed)
   - Two more player dumps (2026-10-19/20, density 5 with Special Content at
     100×; 617 monsters and 5,996 instances a minute before the first) fault at
-    the same place: `ac_dll_gm.dll!SetVariable+0xb4`, called with handle -1
-    from the game's own `instance_create_layer`. The store is 512 pages of 512
-    records, 40 bytes each. A handle is split into a page (handle / 512) and a
-    slot (handle % 512), so -1 lands one record before the table and the write
-    goes through a garbage pointer. `InitNewVariableFast` scans forward from a
-    cursor and returns -1.0 when it reaches the end. `FreeVariable` moves the
-    cursor back to a freed record below it, so a -1 means every record really
-    is live, not that the cursor ran past free ones. Nothing on the game's side
-    checks the -1. **Measured** from the dumps and the exported functions'
-    machine code. A consequence, **measured live** on 2026-10-20: a full
-    pool does not refuse cheaply. After any free the next refusal scans
-    from that record to the end of the table, so asking a full pool on every
-    allocation stalled the frame thread inside that scan for seconds at a time
-    ([population capacity, Live 1](../ForgePact/docs/population-capacity.md#live-1-2026-10-20-research-build-slot-14-lease-forgepact-232-pool-capacity-live-1)). What filled the store (live monsters or records that outlive
-    them) is **not established**, because the minidumps do not include the
-    store's memory. ForgePact's capacity router answers it from 2.4.0
+    the same place: `ac_dll_gm.dll!SetVariable+0xb4`, under the game's own
+    `instance_create_layer`. The faulting registers put the write one 40-byte
+    record before the table (page 0, slot -1), which is what handle -1 gives.
+    **Measured** from the dumps.
+    - **Static reading** of the exported functions' machine code:
+      - The store is 512 pages of 512 records, 40 bytes each, and a handle is
+        split into a page (handle / 512) and a slot (handle % 512).
+      - `InitNewVariableFast` scans forward from a cursor and returns -1.0
+        when it reaches the end.
+      - `FreeVariable` moves the cursor back to a freed record below it, so a
+        -1 means every record really is live.
+    - **Measured live** on 2026-10-20
+      ([population capacity, Live 1](../ForgePact/docs/population-capacity.md#live-1-2026-10-20-research-build-slot-14-lease-forgepact-232-pool-capacity-live-1)):
+      the pool does refuse once it is full, since ForgePact's router (which
+      spills only on -1) put 823,541 records into extra pools. It also refuses
+      expensively: the frame thread stalled for seconds inside the scan loop
+      of pools that were full, consistent with a refusal scanning from a
+      rewound cursor to the end.
+    - **Not observed:** a check on the game's side that refuses a -1 handle
+      before `SetVariable` uses it. Both crashes show the -1 reaching it; no
+      call site was searched with a positive control.
+
+    What filled the store (live monsters or records that outlive them) is
+    **not established**, because the minidumps do not include the store's
+    memory. ForgePact's capacity router answers it from 2.4.0
     ([ForgePact#232](https://github.com/falorfrozen-cmd/ForgePact/issues/232)).
 - Special content at 10× plateaued at 12–13.6k active instances and lived; 20×
   died at about 13.4k; density 5 with special content crashed. On room entry the
