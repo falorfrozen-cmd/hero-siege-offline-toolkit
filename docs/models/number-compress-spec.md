@@ -104,14 +104,31 @@ number formatters) and § 15 (calls that crash or hang the game).
   (`...\bin\Hostx64\x64\dumpbin.exe`), with its output kept outside every
   repository.
 
-How a number reaches the shortener (the script's binder sets
-`num_compressSteam` as a global method value, so it has no direct call site in
-the game's code) is a static reading of `Hero_Siege.exe`, recorded in
-`RUNTIME_DATA_MODELS.md` § 8.7.
+How a number reaches the shortener is a static reading of `Hero_Siege.exe`,
+recorded in `RUNTIME_DATA_MODELS.md` § 8.7. The script file's binder stores
+`num_compressSteam` and `num_compressGML` as method values, and no code calls
+either script or reads either of those globals directly. Every caller goes
+through one other global, `num_compress`: the enemy health bars, the HUD, the
+floating combat text (`Combat_Text_obj`), the DPS meter (`DPS_Meter_obj`) and a
+few menus. Which script that global holds on the Steam PC build is not
+established. Three display options decide whether a number gets there. The
+floating text formats its number through `num_compress` only while
+`combatTextCompress` is on, and an enemy hit draws a damage number at all only
+while `showDamage` is on. The DPS meter calls `num_compress` while
+`dpsMeterCompress` is on and the full-digit `RealFormat` otherwise. The player
+sets all three in the game's options, and they are saved in the `[settings]`
+section of `shop.ini`.
 
 ## Measurements
 
-Live 1 of the workorder `forgepact-230-damage-crash` will fill this section:
+Live 1 of the workorder `forgepact-230-damage-crash` (capture
+`forgepact-230-damage-crash-live-1`, 2026-10-20) ran with `showDamage` and
+`dpsMeterCompress` off in the player's settings. It measured no call into
+`num_compressSteam` or `SteamCompressNumber` and no crash up to about 1.6e18
+per hit, so nothing reached the shortener and that session tests nothing in
+this spec: for the shortener its result is "not observed", not a refutation.
+
+Live 2 of the same workorder will fill this section, with those options on:
 the crash reproduced on the research build with ForgePact's cap forced off, the
 dump's exception code, subcode and raising module, which game objects reach
 `num_compressSteam` with what values, and the cap holding past the limit. Its
@@ -196,8 +213,10 @@ pass fit.
 ## What the model cannot catch
 
 It is arithmetic on one number. It cannot tell whether the detour attaches
-(`num_compressSteam` runs through a method value, so only an inline detour at
-the function sees it), which kind of value the game passes (a real, an int32
+(every caller reaches `num_compressSteam` through the global `num_compress`,
+whose value is a method, so only an inline detour at the function sees it, and
+only while `combatTextCompress` or `dpsMeterCompress` routes a number there;
+`RUNTIME_DATA_MODELS.md` § 8.7), which kind of value the game passes (a real, an int32
 or an int64), whether some other route reaches the export, what the game draws
 for an unterminated text, or whether the process that ended actually died in
 this export. Those are the live session's: the dump's subcode 8 and raising
