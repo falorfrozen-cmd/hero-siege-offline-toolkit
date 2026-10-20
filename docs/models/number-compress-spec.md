@@ -193,9 +193,11 @@ enemy health are not changed; only the argument of that one call is.
 - Every other value passes through unchanged, bit for bit, including the
   8-character texts between 1e13 and 1e14: what the game shows for a number it
   can format is left alone.
-- The guard arms only when a Modifiers lever (`stat`, `statadd`,
-  `skillslider`) is set off vanilla; with every lever at vanilla nothing is
-  hooked.
+- The guard arms only when a Modifiers lever that can raise a shown number
+  is set off vanilla: `stat`'s damage and crit entries (`damage`,
+  `critdamage`, `critchance`, `spellcritdamage`, `spellcritchance`; the
+  other `stat` entries, such as `movespeed` or `exp`, never arm it),
+  `statadd` and `skillslider`. With every lever at vanilla nothing is hooked.
 
 The two limits are the game's and live in the model; the two safe values are
 ForgePact's choice and live in the test's transform. The test's
