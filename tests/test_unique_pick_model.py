@@ -41,6 +41,7 @@ HOOKS_DIR = ROOT / ".claude" / "hooks"
 FORGEPACT = ROOT / "ForgePact"
 FORGEPACT_PLUGIN = FORGEPACT / "plugin" / "ModuleMain.cpp"
 FORGEPACT_FLIGHT = FORGEPACT / "plugin" / "include" / "ForgePact" / "FlightCharms.hpp"
+FORGEPACT_MARK1_DROPS = FORGEPACT / "plugin" / "include" / "ForgePact" / "Mark1Drops.hpp"
 
 sys.path.insert(0, str(SDK_PY))
 from hs_game_sdk import drop_roll_model  # noqa: E402
@@ -916,6 +917,40 @@ class LeverParityTests(unittest.TestCase):
         body = _function_body(self.header, "inline double CoinShare(")
         self.assertRegex(body, r"if\s*\(\s*n\s*<\s*0\s*\|\|\s*c\s*<=\s*0\s*\)\s*return\s+0\.0\s*;")
         self.assertRegex(body, r"return\s+static_cast<double>\(\s*c\s*\)\s*/\s*static_cast<double>\(\s*n\s*\+\s*c\s*\)\s*;")
+
+    # ---- Mark 1 (#166): `heroic_pushed` and the coin, against Mark1Drops.hpp ----
+
+    def test_mark1_the_default_list_index_is_the_heroic_rolls(self):
+        mark1 = FORGEPACT_MARK1_DROPS.read_text(encoding="utf-8", errors="replace")
+        self.assertRegex(mark1, r"inline constexpr int kHeroicDefaultListIndex\s*=\s*"
+                         + str(model.HEROIC_DEFAULT_LIST_INDEX) + r"\s*;")
+        # Absent or undefined, the call reads that list.
+        body = _function_body(mark1, "inline int ListIndexOf(")
+        self.assertRegex(body, r"if\s*\(\s*kind\s*==\s*ArgKind::Absent\s*\|\|\s*kind\s*==\s*ArgKind::Undefined\s*\)"
+                         r"\s*return\s+kHeroicDefaultListIndex\s*;")
+
+    def test_mark1_the_player_builds_copies_are_one(self):
+        mark1 = FORGEPACT_MARK1_DROPS.read_text(encoding="utf-8", errors="replace")
+        self.assertRegex(mark1, rf"inline constexpr int kPlayerCopies\s*=\s*{PLAYER_COPIES}\s*;")
+        self.assertEqual(heroic_pushed(True), PLAYER_COPIES * len(MARK1_PIECES))
+
+    def test_mark1_the_roll_refuses_what_the_model_refuses(self):
+        mark1 = FORGEPACT_MARK1_DROPS.read_text(encoding="utf-8", errors="replace")
+        match = re.search(r"inline constexpr int kRefusedRarities\[kRefusedRarityCount\]\s*=\s*\{([^}]*)\}\s*;", mark1)
+        self.assertIsNotNone(match)
+        self.assertEqual({int(v) for v in match.group(1).split(",")}, set(model.HEROIC_REFUSED_RARITIES))
+        self.assertRegex(_function_body(mark1, "inline bool HeroicKeeps("), r"if\s*\(\s*hidden\s*\)\s*return\s+false\s*;")
+
+    def test_mark1_each_piece_pushes_its_copies_and_the_coin_is_c_over_n_plus_c(self):
+        mark1 = FORGEPACT_MARK1_DROPS.read_text(encoding="utf-8", errors="replace")
+        body = _function_body(mark1, "inline PushPlan PlanPush(")
+        self.assertRegex(body, r"for\s*\(\s*int\s+i\s*=\s*0\s*;\s*i\s*<\s*kPieceCount\b")
+        self.assertRegex(body, r"PushEntry\{\s*kPieces\[i\]\.piece\s*,\s*s\.triple\s*,\s*s\.n\s*,\s*copies\s*\}")
+        coin_body = _function_body(mark1, "inline double CoinShare(")
+        self.assertRegex(coin_body, r"if\s*\(\s*n\s*<\s*0\s*\|\|\s*c\s*<=\s*0\s*\)\s*return\s+0\.0\s*;")
+        self.assertRegex(coin_body,
+                         r"return\s+static_cast<double>\(\s*c\s*\)\s*/\s*static_cast<double>\(\s*n\s*\+\s*c\s*\)\s*;")
+        self.assertEqual(coin(1, PLAYER_COPIES), Fraction(1, 2))
 
 
 if __name__ == "__main__":
