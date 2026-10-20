@@ -7683,7 +7683,8 @@ not observed, not absent.
   Heroic or a Satanic unique, then calls `CreateDefaultParams` and the
   placement. Its direct callers are `VaultUse` (4597) and a Chaos Tower NPC
   closure. **Static reading** (2026-10-11). Called by name with the local
-  player as `self` (not a shape the game's own callers use), ten calls placed
+  player as `self` (which `self` the game's own callers pass was not read
+  then; see the 2026-10-20 bullets below), ten calls placed
   ten items: seven Heroic (9) and three Satanic (6), none Angelic or Unholy,
   and no charm. **Measured** (2026-10-12).
 - Read again on 2026-10-20 for ForgePact's Mark 1 drops (#166), through the
