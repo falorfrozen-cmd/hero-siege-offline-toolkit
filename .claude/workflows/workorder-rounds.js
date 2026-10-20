@@ -1316,7 +1316,9 @@ async function runItems(n) {
   // them; one with no numbered failure (a structural finding) has no brief.
   const fixSel = it => {
     if (it.kind === 'gate-fix') {
-      const ks = [...new Set((it.failed || []).map(c => c.k).filter(Number.isInteger))]
+      // A development companion (run_criteria.py, #540) is numbered after the
+      // plan's criteria, so the brief cannot select it; its evidence is in the prompt.
+      const ks = [...new Set((it.failed || []).filter(c => !/development companion/.test(c.criterion || '')).map(c => c.k).filter(Number.isInteger))]
       return ks.length ? `--criteria ${ks.join(',')}` : ''
     }
     return it.files === '*' ? '' : pathsSel(it.files)
@@ -1520,14 +1522,25 @@ async function runItems(n) {
   // of its own waits for the gate -- nothing running and every item done --
   // and then reads the whole change once, like the rounds' final gate.
   const atGate = finalCatchUp => finalCatchUp && all.every(it => st[it.id].status === 'done')
+  // `gateRead` marks the pass made at this launch's gate: after it, a clean
+  // deferred reviewer does not re-read the fixes that land later, since the
+  // final gate before the pull request reads the whole change. A clean pass
+  // before the gate (a recheck of a finding it entered with) is not that read.
   const reviewerDue = (rv, finalCatchUp) => {
+    const due = reviewerDueNow(rv, finalCatchUp)
+    if (due && !PER_ROUND.has(rv.name) && rv.state !== 'blocking' && !rv.recheck) rv.gateRead = true
+    return due
+  }
+  const reviewerDueNow = (rv, finalCatchUp) => {
     if (rv.running || rv.failed) return false
     if (rv.recheck) return true
+    if (!PER_ROUND.has(rv.name) && rv.state !== 'blocking') {
+      if (!atGate(finalCatchUp) || rv.gateRead) return false
+      // One that never read this workorder reads it at the gate even when
+      // this launch landed nothing (a relaunch after AGENT-FAILED, say).
+      if (rv.state === 'never') return true
+    }
     if (rv.seen >= landed.length) return false
-    if (!PER_ROUND.has(rv.name) && rv.state !== 'blocking' && !atGate(finalCatchUp)) return false
-    // Once clean at this launch's gate it does not re-read the fixes that land
-    // after it: the final gate before the pull request reads the whole change.
-    if (!PER_ROUND.has(rv.name) && rv.state === 'clean' && rv.passes > 0) { rv.seen = landed.length; return false }
     const fresh = landed.slice(rv.seen)
     const d = deltaOf(fresh)
     const wanted = rv.state === 'never' || rv.state === 'blocking' || ((TRIGGERS[rv.name] || (() => true))(d) && inScope(rv, d.paths))

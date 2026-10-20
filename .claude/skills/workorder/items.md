@@ -30,9 +30,11 @@ steps 2-4 run as one workflow launch with no rounds inside it
   the `HEAD` it started from, never the working tree, and re-runs when new
   commits match its trigger. The other reviewers (docs-sync, sdk-contract,
   tauri-command, decompile-output-guard) wait for the gate: once nothing
-  runs and every item is done, each reads the whole change once, and one
-  that comes back clean does not re-read the fixes that land after it (the
-  final gate before the pull request reads the whole branch again). One
+  runs and every item is done, each reads the whole change once (one that
+  never read this workorder does so even when the launch landed nothing),
+  and one that comes back clean there does not re-read the fixes that land
+  after it (the final gate before the pull request reads the whole branch
+  again). A clean recheck before the gate does not count as that read. One
   that enters `blocking` re-reads at once to confirm its own finding. Every
   reviewer's `BLOCKING` findings become a fix item at once, on the files the
   findings name (or, with no path, run alone once the rest are done). A

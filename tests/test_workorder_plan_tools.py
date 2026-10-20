@@ -33,6 +33,8 @@ import plan_lint  # noqa: E402
 import run_criteria  # noqa: E402
 import workorder_lock  # noqa: E402
 
+PY = Path(sys.executable).as_posix()
+
 
 CAPTURE = """# forgepact-x live 1
 
@@ -1527,6 +1529,8 @@ class ReachRunTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(self.runner()[2], ["1", "2", "3", "4"], "control: the full run is the final gate")
 
     def _suite_plan(self, final=False):
+        # The suite runs under this interpreter, written as a plan would: CI
+        # has no `py` launcher, and the companion reuses the suite's own.
         # Mod's suite: a contract test (writes c) and an ordinary one (writes s).
         tests = self.hub / "Mod" / "tests"
         tests.mkdir(exist_ok=True)
@@ -1538,7 +1542,7 @@ class ReachRunTests(TempDirMixin, unittest.TestCase):
         (tests / "test_a_contract.py").write_text(body.format("c"), encoding="utf-8")
         (tests / "test_b.py").write_text(body.format("s"), encoding="utf-8")
         text = self.plan.read_text(encoding="utf-8") + (
-            f"- [ ] (reads `Mod/**`) {'(final) ' if final else ''}`cd Mod && py -3 -m unittest discover -s tests` exits 0\n")
+            f"- [ ] (reads `Mod/**`) {'(final) ' if final else ''}`cd Mod && \"{PY}\" -m unittest discover -s tests` exits 0\n")
         self.plan.write_text(text, encoding="utf-8")
 
     def test_dev_runs_a_deferred_suites_contract_tests_in_its_place(self):
@@ -1549,7 +1553,7 @@ class ReachRunTests(TempDirMixin, unittest.TestCase):
         rc, out, ran = self.runner("--dev")
         self.assertEqual(rc, 0, out)
         self.assertEqual(ran, ["1", "2", "3", "4", "c"], out)
-        self.assertIn("development companion of criterion 5", out)
+        self.assertIn("contract tests standing in for criterion 5's whole suite", out)
         self.assertEqual(self.runner()[2], ["1", "2", "3", "4", "c", "s"], "control: the full run has the suite, no companion")
 
     def test_a_reach_run_gives_a_companion_only_to_a_suite_it_deferred(self):

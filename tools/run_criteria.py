@@ -440,6 +440,7 @@ def develop(items: list) -> dict:
 # The owner's rule stands -- the whole suite still waits for the final gate --
 # and this is the "relevant subset" it asks development to run.
 CONTRACT_PATTERN = "test_*contract*.py"
+SUITE_PY_RE = re.compile(r"^(.+?)\s+(?:-m\s+unittest\b|\S*run_tests_parallel\.py\b)")
 SUITE_DIR_RE = re.compile(r"\bunittest\s+discover\b.*?\s-s\s+(\"[^\"]+\"|'[^']+'|\S+)")
 
 
@@ -466,7 +467,11 @@ def companions(items: list, scope: dict, root: Path) -> list:
             if (cd, tests) in seen or not any(where.glob(CONTRACT_PATTERN)):
                 continue
             seen.add((cd, tests))
-            run = f'{prefix}py -3 -m unittest discover -s {tests} -p "{CONTRACT_PATTERN}"'
+            # The suite's own interpreter (`py -3`, `python3`, a quoted path),
+            # so the companion starts wherever the suite would.
+            body = cmd.strip()[len(prefix):]
+            py = SUITE_PY_RE.match(body)
+            run = f'{prefix}{py.group(1) if py else "py -3"} -m unittest discover -s {tests} -p "{CONTRACT_PATTERN}"'
             out.append((f"`{run}` exits 0 (development companion of criterion {k}: the contract tests of "
                         f"`{cd + '/' if cd else ''}{tests}`, run in place of its whole suite until the final gate)", k))
     return out

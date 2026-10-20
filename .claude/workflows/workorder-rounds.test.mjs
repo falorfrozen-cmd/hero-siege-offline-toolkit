@@ -2550,3 +2550,34 @@ test('items: an agent that returns nothing is lost, not failed: uncharged, pendi
   assert.match(result.record.rounds[0].stateLines, /items: a=done; b=pending; c=done; d=pending/)
   assert.ok(!calls.some(c => /^verifier:/.test(c)), 'the gate ran after a lost agent')
 })
+
+// PR #541 re-review, three gaps in the items gate.
+test('items: a failed development companion gives the gate-fix no --criteria for it (PR #541 review)', async () => {
+  let gates = 0
+  const companion = { criterion: '`py -3 -m unittest discover -s tests -p "test_*contract*.py"` exits 0 (development companion of criterion 5: ...)', status: 'fail', evidence: 'FAILED', k: 9 }
+  const gate = () => (gates++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [CRIT(2, 'fail'), companion], pending_human: [] } : PASS)
+  const g = await runTimed(ITEMS_BASE, itemsReply({ 'verifier:': gate }))
+  assert.equal(briefOf(g.prompts['fix-implementer:gate-fix-1:r0']), `${BRIEF} --criteria 2`)
+  assert.match(g.prompts['fix-implementer:gate-fix-1:r0'], /development companion of criterion 5/, 'its evidence still reaches the fixer')
+})
+
+test('items: a reviewer clean on its entry recheck still reads the gate (PR #541 review)', async () => {
+  const args = { ...ITEMS_BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' },
+    priorFindings: { 'docs-sync-reviewer': [{ where: 'panel/a.css:1', problem: 'p' }] } }
+  const { result, calls, spans } = await runDelayed(args, itemsReply(), { 'item-implementer:': 60 })
+  assert.equal(result.outcome, 'PASS')
+  const docs = calls.filter(c => c.startsWith('docs-sync-reviewer:'))
+  assert.equal(docs.length, 2, docs.join(', '))
+  const lastImpl = Math.max(...calls.filter(c => c.startsWith('item-')).map(c => spans[c][1]))
+  assert.ok(spans[docs[0]][0] < lastImpl && spans[docs[1]][0] > lastImpl, 'control: one recheck before the items, one read at the gate')
+})
+
+test('items: a never-run deferred reviewer reads the gate even when the launch landed nothing (PR #541 review)', async () => {
+  const args = { ...ITEMS_BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'never', 'sdk-contract-reviewer': 'clean' },
+    state: '## State\nround: 1\nitems: a=done; b=done; c=done\n' }
+  const { result, calls } = await runTimed(args, itemsReply())
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(!calls.some(c => c.startsWith('item-implementer:')), 'control: nothing landed')
+  assert.equal(calls.filter(c => c.startsWith('docs-sync-reviewer:')).length, 1, calls.join(', '))
+  assert.ok(!calls.some(c => c.startsWith('sdk-contract-reviewer:')), 'a reviewer already clean has nothing new to read')
+})
