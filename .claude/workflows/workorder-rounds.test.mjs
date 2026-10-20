@@ -1619,8 +1619,10 @@ test('scheduler: staleBuilds names the done or running builds a commit reached, 
 })
 
 // The 2026-10-02 sequence: `src` lands, `build-dev` (after src) builds, the
-// reviewer reads src and raises a finding on it, and fix-1 commits to it.
-const BUILD_ITEMS = { ...ITEMS_BASE, items: [
+// reviewer reads src and raises a finding on it, and fix-1 commits to it. The
+// reviewer is instrument-blindness: since #540 the only one items mode runs
+// per batch, so the only one whose fix can land while a build runs.
+const BUILD_ITEMS = { ...ITEMS_BASE, reviewers: { 'instrument-blindness-reviewer': 'never' }, items: [
   { id: 'src', title: 'relic drop', files: ['ForgePact/plugin/a.cpp'], checks: ['`grep -c x ForgePact/plugin/a.cpp` prints 1'] },
   { id: 'build-dev', title: 'dev build', files: ['ForgePact/plugin_build/build.log'], after: ['src'],
     checks: ['`cd ForgePact && cmd //c "plugin_build\\build.bat dev"` exits 0 (reads `ForgePact/plugin/**`)'], build_reads: ['ForgePact/plugin/**'] },
@@ -1631,7 +1633,7 @@ const buildReply = where => {
     'item-implementer:src:': { ...DONE, commits: [{ repo: 'ForgePact', sha: 's1' }], paths: ['ForgePact/plugin/a.cpp'], flags: '' },
     'item-implementer:build-dev:': { ...DONE, commits: [], paths: [], flags: '' },
     'fix-implementer:fix-1:': { ...DONE, commits: [{ repo: 'ForgePact', sha: 'f1' }], paths: [where], flags: '' },
-    'docs-sync-reviewer': () => (passes++ === 0
+    'instrument-blindness-reviewer': () => (passes++ === 0
       ? { ...CLEAN, blocking: [{ where: `${where}:3`, problem: 'p', evidence: 'e' }], reviewed_heads: [{ repo: '.', sha: 'h1' }] }
       : { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'h2' }] }),
   })
@@ -1655,7 +1657,7 @@ async function runDelayed(args, reply, delays) {
 }
 const builds = calls => calls.filter(c => c.startsWith('item-implementer:build-dev:'))
 
-for (const [when, delays] of [['after the build is done', { 'docs-sync-reviewer': 120 }], ['while the build runs', { 'item-implementer:build-dev:a1': 150 }]]) {
+for (const [when, delays] of [['after the build is done', { 'instrument-blindness-reviewer': 120 }], ['while the build runs', { 'item-implementer:build-dev:a1': 150 }]]) {
   test(`items: a fix that lands on what a build read ${when} re-runs the build after it`, async () => {
     const { result, calls, spans, prompts } = await runDelayed(BUILD_ITEMS, buildReply('ForgePact/plugin/a.cpp'), delays)
     assert.equal(result.outcome, 'PASS')
@@ -1682,18 +1684,18 @@ test('items: a fix that lands during an attempt whose checks then fail is in the
 })
 
 test('items: control -- a fix outside what the build reads, or a build with no build_reads, is not re-run', async () => {
-  let r = await runDelayed(BUILD_ITEMS, buildReply('docs/c.md'), { 'docs-sync-reviewer': 120 })
+  let r = await runDelayed(BUILD_ITEMS, buildReply('docs/c.md'), { 'instrument-blindness-reviewer': 120 })
   assert.equal(r.result.outcome, 'PASS')
   assert.equal(builds(r.calls).length, 1)
   const plain = { ...BUILD_ITEMS, items: BUILD_ITEMS.items.map(it => ({ ...it, build_reads: undefined })) }
-  r = await runDelayed(plain, buildReply('ForgePact/plugin/a.cpp'), { 'docs-sync-reviewer': 120 })
+  r = await runDelayed(plain, buildReply('ForgePact/plugin/a.cpp'), { 'instrument-blindness-reviewer': 120 })
   assert.equal(r.result.outcome, 'PASS')
   assert.equal(builds(r.calls).length, 1, 'without build_reads the engine has nothing to compare a commit with')
 })
 
 test('items: a relaunch re-runs a build State left done once this launch\'s fix lands on it', async () => {
-  const args = { ...BUILD_ITEMS, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' },
-    priorFindings: { 'docs-sync-reviewer': [{ where: 'ForgePact/plugin/a.cpp:3', problem: 'p' }] },
+  const args = { ...BUILD_ITEMS, round: 1, reviewers: { 'instrument-blindness-reviewer': 'blocking' },
+    priorFindings: { 'instrument-blindness-reviewer': [{ where: 'ForgePact/plugin/a.cpp:3', problem: 'p' }] },
     state: '## State\nround: 1\nitems: src=done; build-dev=done\n' }
   const { result, calls } = await runDelayed(args, buildReply('ForgePact/plugin/a.cpp'), {})
   assert.equal(result.outcome, 'PASS')
@@ -2457,4 +2459,125 @@ test('items: the item-verifier reuses the implementer\'s own run where commit an
   assert.ok(prompts['item-implementer:a:a1:r0'].includes(`--item a --jobs auto --out "${dir}"`), prompts['item-implementer:a:a1:r0'])
   assert.ok(prompts['item-verifier:a:a1:r0'].includes(`--item a --jobs auto --reuse "${dir}" --out "<your scratchpad>/item-a-a1"`))
   assert.match(prompts['item-verifier:a:a1:r0'], /only where the commit and the check's `\(reads \.\.\.\)` hash both match/)
+})
+
+// #540: week one after #485 measured items mode running every reviewer per
+// batch (decompile-output-guard 161 passes, 0 BLOCKING). Only
+// instrument-blindness still reads each batch; the others read once, at the gate.
+test('items: deferred reviewers read once, at the gate; instrument-blindness reads each batch', async () => {
+  const args = { ...ITEMS_BASE, reviewers: { 'docs-sync-reviewer': 'never', 'decompile-output-guard': 'never', 'instrument-blindness-reviewer': 'never' } }
+  const { result, calls, spans } = await runDelayed(args, itemsReply(), { 'item-implementer:c:': 120 })
+  assert.equal(result.outcome, 'PASS')
+  const lastImpl = Math.max(...calls.filter(c => c.startsWith('item-')).map(c => spans[c][1]))
+  for (const name of ['docs-sync-reviewer', 'decompile-output-guard']) {
+    const passes = calls.filter(c => c.startsWith(`${name}:`))
+    assert.equal(passes.length, 1, `${name}: ${passes.join(', ')}`)
+    assert.ok(spans[passes[0]][0] > lastImpl, `${name} read before every item was done`)
+  }
+  const ib = calls.filter(c => c.startsWith('instrument-blindness-reviewer:'))
+  assert.ok(ib.length >= 1 && spans[ib[0]][0] < lastImpl, 'control: instrument-blindness reads a batch while items still run')
+  // A launch that parks never reaches the gate, so the deferred ones never read.
+  const advice = { ...DONE, verdict: 'ADVICE-NEEDED', question: 'q', commits: [], paths: [] }
+  const parked = await runTimed(args, itemsReply({ 'item-implementer:b:': advice }))
+  assert.equal(parked.result.outcome, 'PARKED')
+  assert.ok(!parked.calls.some(c => c.startsWith('docs-sync-reviewer:') || c.startsWith('decompile-output-guard:')), parked.calls.join(', '))
+  assert.ok(parked.calls.some(c => c.startsWith('instrument-blindness-reviewer:')))
+})
+
+test('items: a deferred reviewer clean at the gate does not re-read the fixes that land after it', async () => {
+  let ib = 0
+  const args = { ...ITEMS_BASE, reviewers: { 'docs-sync-reviewer': 'never', 'instrument-blindness-reviewer': 'never' } }
+  const ibOnce = () => (ib++ === 1
+    ? { ...CLEAN, blocking: [{ where: 'docs/c.md:1', problem: 'p', evidence: 'e', fix: 'say not observed' }], reviewed_heads: [{ repo: '.', sha: 'h' }] }
+    : { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'h' }] })
+  const { result, calls } = await runDelayed(args, itemsReply({ 'instrument-blindness-reviewer': ibOnce, 'item-implementer:c:': { ...DONE, commits: [{ repo: '.', sha: 'sha-c' }], paths: ['docs/c.md'], flags: '' } }), { 'item-implementer:c:': 120 })
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(calls.some(c => c.startsWith('fix-implementer:')), calls.join(', '))
+  assert.equal(calls.filter(c => c.startsWith('docs-sync-reviewer:')).length, 1, calls.join(', '))
+})
+
+test('items: a fix whose every finding carries an exact fix at a patchable path runs implementer-medium', async () => {
+  const cases = [
+    [{ reviewer: 'docs-sync-reviewer', where: 'panel/a.css:3', fix: 'use --accent' }, 'implementer-medium'],
+    [{ reviewer: 'instrument-blindness-reviewer', where: 'docs/c.md:9', fix: 'label it not observed' }, 'implementer-medium'],
+    [{ reviewer: 'instrument-blindness-reviewer', where: 'panel/a.css:3', fix: 'x' }, 'implementer'],
+    [{ reviewer: 'docs-sync-reviewer', where: 'panel/a.css:3' }, 'implementer'],
+    [{ reviewer: 'docs-sync-reviewer', where: 'ForgePact/plugin/a.cpp:3', fix: 'x' }, 'implementer'],
+    [{ reviewer: 'docs-sync-reviewer', where: 'the guide', fix: 'x' }, 'implementer'],
+  ]
+  for (const [finding, want] of cases) {
+    const { reviewer, ...f } = finding
+    let passes = 0
+    const types = {}
+    const review = () => (passes++ === 0
+      ? { ...CLEAN, blocking: [{ problem: 'p', evidence: 'e', ...f }], reviewed_heads: [{ repo: '.', sha: 'h1' }] }
+      : { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'h2' }] })
+    const base = itemsReply({ [reviewer]: review })
+    await runTimed({ ...ITEMS_BASE, reviewers: { [reviewer]: 'never' } }, (label, prompt, opts) => { types[label] = opts.agentType; return base(label, prompt, opts) })
+    const fixer = Object.keys(types).find(l => l.startsWith('fix-implementer:'))
+    assert.ok(fixer, `${JSON.stringify(finding)}: no fixer ran`)
+    assert.equal(types[fixer], want, JSON.stringify(finding))
+    assert.equal(types['item-implementer:a:a1:r0'], 'implementer', 'control: a plan item keeps the triaged tier')
+  }
+})
+
+test('items: a scoped instrument-blindness finding keeps the .md-only patch rule (PR #541 review)', async () => {
+  const scoped = { 'instrument-blindness-reviewer': [{ label: 'x', paths: ['panel/**', 'docs/**'] }] }
+  for (const [where, want] of [['panel/a.css:3', 'implementer'], ['docs/c.md:9', 'implementer-medium']]) {
+    let passes = 0
+    const types = {}
+    const review = () => (passes++ === 0
+      ? { ...CLEAN, blocking: [{ where, problem: 'p', evidence: 'e', fix: 'x' }], reviewed_heads: [{ repo: '.', sha: 'h1' }] }
+      : { ...CLEAN, reviewed_heads: [{ repo: '.', sha: 'h2' }] })
+    const base = itemsReply({ 'instrument-blindness-reviewer': review })
+    const args = { ...ITEMS_BASE, reviewers: { 'instrument-blindness-reviewer': 'never' }, reviewScopes: scoped }
+    const { result } = await runTimed(args, (label, prompt, opts) => { types[label] = opts.agentType; return base(label, prompt, opts) })
+    assert.equal(result.blocking[0].reviewer, 'instrument-blindness-reviewer@x', 'control: the finding carries the scoped key')
+    const fixer = Object.keys(types).find(l => l.startsWith('fix-implementer:'))
+    assert.equal(types[fixer], want, where)
+  }
+})
+
+test('items: an agent that returns nothing is lost, not failed: uncharged, pending, and nothing more starts', async () => {
+  const args = { ...ITEMS_BASE, items: [...ITEMS_BASE.items, { id: 'd', files: ['panel/d.css'], after: ['a'], checks: ['`npm test` ok'] }] }
+  const { result, calls } = await runDelayed(args, itemsReply({ 'item-implementer:b:': null }), { 'item-implementer:a:': 80, 'item-implementer:c:': 80 })
+  assert.equal(result.outcome, 'AGENT-FAILED')
+  const b = result.items.find(i => i.id === 'b')
+  assert.deepEqual([b.status, b.attempts, b.reason], ['pending', 0, ''])
+  assert.match(result.detail, /b: the implementer returned nothing/)
+  assert.ok(!calls.some(c => c.startsWith('item-implementer:d:')), 'a new item started after an agent was lost')
+  assert.deepEqual(result.items.filter(i => i.status === 'done').map(i => i.id), ['a', 'c'], 'control: work already running finished')
+  assert.match(result.record.rounds[0].stateLines, /items: a=done; b=pending; c=done; d=pending/)
+  assert.ok(!calls.some(c => /^verifier:/.test(c)), 'the gate ran after a lost agent')
+})
+
+// PR #541 re-review, three gaps in the items gate.
+test('items: a failed development companion gives the gate-fix no --criteria for it (PR #541 review)', async () => {
+  let gates = 0
+  const companion = { criterion: '`py -3 -m unittest discover -s tests -p "test_*contract*.py"` exits 0 (development companion of criterion 5: ...)', status: 'fail', evidence: 'FAILED', k: 9 }
+  const gate = () => (gates++ === 0 ? { verdict: 'IMPL-DEFECT', criteria: [CRIT(2, 'fail'), companion], pending_human: [] } : PASS)
+  const g = await runTimed(ITEMS_BASE, itemsReply({ 'verifier:': gate }))
+  assert.equal(briefOf(g.prompts['fix-implementer:gate-fix-1:r0']), `${BRIEF} --criteria 2`)
+  assert.match(g.prompts['fix-implementer:gate-fix-1:r0'], /development companion of criterion 5/, 'its evidence still reaches the fixer')
+})
+
+test('items: a reviewer clean on its entry recheck still reads the gate (PR #541 review)', async () => {
+  const args = { ...ITEMS_BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'blocking' },
+    priorFindings: { 'docs-sync-reviewer': [{ where: 'panel/a.css:1', problem: 'p' }] } }
+  const { result, calls, spans } = await runDelayed(args, itemsReply(), { 'item-implementer:': 60 })
+  assert.equal(result.outcome, 'PASS')
+  const docs = calls.filter(c => c.startsWith('docs-sync-reviewer:'))
+  assert.equal(docs.length, 2, docs.join(', '))
+  const lastImpl = Math.max(...calls.filter(c => c.startsWith('item-')).map(c => spans[c][1]))
+  assert.ok(spans[docs[0]][0] < lastImpl && spans[docs[1]][0] > lastImpl, 'control: one recheck before the items, one read at the gate')
+})
+
+test('items: a never-run deferred reviewer reads the gate even when the launch landed nothing (PR #541 review)', async () => {
+  const args = { ...ITEMS_BASE, round: 1, reviewers: { 'docs-sync-reviewer': 'never', 'sdk-contract-reviewer': 'clean' },
+    state: '## State\nround: 1\nitems: a=done; b=done; c=done\n' }
+  const { result, calls } = await runTimed(args, itemsReply())
+  assert.equal(result.outcome, 'PASS')
+  assert.ok(!calls.some(c => c.startsWith('item-implementer:')), 'control: nothing landed')
+  assert.equal(calls.filter(c => c.startsWith('docs-sync-reviewer:')).length, 1, calls.join(', '))
+  assert.ok(!calls.some(c => c.startsWith('sdk-contract-reviewer:')), 'a reviewer already clean has nothing new to read')
 })
