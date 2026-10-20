@@ -248,16 +248,21 @@ are pinned to `plugin/ModuleMain.cpp` and `plugin/include/ForgePact/FlightCharms
 
 `number_compress_model.py` (2026-10-20, ForgePact issue #230, hub #539) is built the same way: spec
 `docs/models/number-compress-spec.md` (written from the static reading folded into
-`docs/RUNTIME_DATA_MODELS.md`), no curated fixture yet (ForgePact #230's Live 2 adds one, and a
-`MeasurementTests` class with it), checks `tests/test_number_compress_model.py`. It gives which
-numbers the game's Steam number shortener (`num_compressSteam`, which calls `SteamCompressNumber` in
-`PAS_Steam_GMS_x64.dll`) ends the process on, because its text does not fit the export's 8-byte
-buffer, and for every other number the text it writes and whether that text's terminator still
-fits. Every limit is a static reading, none measured yet: NaN, a positive number of 1e14 or more
-and a negative number of -1e6 or less fail. `BaselineTests` pins those limits and the texts the spec
-names; `TargetTests` checks that ForgePact's cap (`numguard`, kept in the test as the input
+`docs/RUNTIME_DATA_MODELS.md`), curated fixture `curated/number_compress_measurements.json` (ForgePact
+#230's Live 2, capture `forgepact-230-damage-crash-live-2`), checks `tests/test_number_compress_model.py`.
+It gives which numbers the game's Steam number shortener (`num_compressSteam`, which calls
+`SteamCompressNumber` in `PAS_Steam_GMS_x64.dll`) ends the process on, because its text does not
+fit the export's 8-byte buffer, and for every other number the text it writes and whether that
+text's terminator still fits. By the static reading NaN, a positive number of 1e14 or more and a
+negative number of -1e6 or less fail. Live 2 measured the positive limit's lower edge, between
+9.9999e13 (ForgePact's cap, which passed) and about 1.025e14 (which ended the game), and the cap's
+text `99999B`; the rest of the positive band, NaN and the negative limit are not measured.
+`BaselineTests` pins those limits and the texts the spec names; `TargetTests` checks that ForgePact's cap (`numguard`, kept in the test as the input
 transform `numguard_cap`) turns every failing value into one that passes and fits and passes every
-other value through bit for bit; `SpecTests` checks the spec labels its claims and names only
+other value through bit for bit; `MeasurementTests` checks the model against the fixture (it fails
+the value the game ended on, passes every traced value before it and the cap's value, which sits
+below `POSITIVE_LIMIT`, itself at or below the value the game ended on, and writes the texts the
+operator read); `SpecTests` checks the spec labels its claims and names only
 functions the model has; `NoDecompilerOutputTests` keeps decompiled text out of the model's files.
 `LeverParityTests` pins only the four constants (`kNumGuardPositiveLimit`,
 `kNumGuardNegativeLimit`, `kNumGuardLargestSafe`, `kNumGuardSmallestSafe`) to
@@ -601,7 +606,7 @@ contributor can be assumed to have:
 | `test_dungeon_chest_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/DungeonChestMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths and local `.claude/workorders/` captures |
 | `test_unique_pick_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/ModuleMain.cpp` or `ForgePact/plugin/include/ForgePact/FlightCharms.hpp` is absent (hub CI checks out without submodules), while `FixtureShapeTests` skips checking `ForgePact/...` source paths only when `ForgePact/docs` is absent, so a ForgePact checkout that predates the paths the fixture cites fails it rather than skipping |
 | `test_soul_piece_model.py` | nothing (the model, its two curated files, its spec and the tracked room and object bindings); `ForgePact/` checked out for `ParityTests` | always runs; only `ParityTests` skips, when `ForgePact/plugin/include/ForgePact/SoulPieceMod.hpp` is absent (hub CI checks out without submodules) |
-| `test_number_compress_model.py` | nothing (the model and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/NumberGuard.hpp` is absent (hub CI checks out without submodules) |
+| `test_number_compress_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/NumberGuard.hpp` is absent (hub CI checks out without submodules) |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_sdk_lazy_import.py` | nothing (starts fresh interpreters of the Python running the suite) | always runs |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |

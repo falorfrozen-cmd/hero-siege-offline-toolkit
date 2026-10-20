@@ -1382,10 +1382,11 @@ Steam extension `bin\PAS_Steam_GMS_x64.dll` (127,488 bytes) sha256
 the paragraphs "Live 1" and "Live 2" and the claims marked measured, which
 are measured. Live 1 did not reach the shortener; Live 2 (capture
 `forgepact-230-damage-crash-live-2`, 2026-10-20) did, and measured the
-positive failure band and the crash's dump. The NaN and negative bands, the
-32-bit overflow and the 8-character texts are still static readings. The
-shortener's
-arithmetic, band by band, is written
+positive failure band's lower edge (between 9.9999e13, which passed, and
+about 1.025e14, which ended the game) and the crash's dump. The rest of the
+positive band, the NaN and negative bands, the 32-bit overflow and the
+8-character texts are still static readings. The shortener's arithmetic,
+band by band, is written
 up as a spec in [`docs/models/number-compress-spec.md`](models/number-compress-spec.md)
 and modelled in `hs-game-sdk` from it.
 
@@ -1489,10 +1490,12 @@ out** (static reading of the DLL's export):
   and so does +inf); or the value is negative and the whole part of its
   magnitude has seven or more digits, that is x ≤ −1e6 (seven digits plus
   the sign; −inf overflows the same way). Every other value fits. The
-  positive band is **measured** (Live 2, below): the game ended on the first
-  traced value of 1e14 or more, after every smaller traced one had passed. The NaN
-  and negative bands and the 32-bit overflow are not observed (no such value
-  was traced).
+  positive band's lower edge is **measured** (Live 2, below): the game ended
+  on the first traced value of 1e14 or more (about 1.025e14), after every
+  smaller traced one had passed, and 99,999,000,000,000 (9.9999e13) passed
+  29,990 times, so the edge lies in (9.9999e13, 1.025e14]. The band above
+  that edge, the NaN and negative bands and the 32-bit overflow are not
+  observed (no such value ran uncapped).
 - **The terminator.** A shortened text is digits(q) + 2 characters with a
   nonzero decimal and digits(q) characters with a zero one; the cleared byte
   after it ends the string. For a six-digit q whose last digit is not 0
@@ -1570,8 +1573,9 @@ launch `dps_meter_compress` 1 as well):
   `num_compressSteam` (one line per new decade) were, in order, 2,915,427
   up to 15,038,794,170,000 (about 1.5e13, the largest traced value that
   passed), then 102,480,421,310,000 (about 1.025e14), the last line before
-  the end. No negative value was traced. So the limit lies between about
-  1.5e13 and 1.025e14, which fits the reading's 1e14.
+  the end. No negative value was traced. With the second launch's capped
+  value (below), which passed at 9.9999e13, the limit lies in (9.9999e13,
+  1.025e14], which fits the reading's 1e14.
 - **The cap holding.** In the second launch, with the cap automatic, the
   guard was not armed before any lever and armed with the reporter's
   settings. Ramped to Total Damage x1e12, the hook saw values up to about

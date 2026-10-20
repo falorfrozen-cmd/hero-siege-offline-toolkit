@@ -243,6 +243,18 @@ class MeasurementTests(unittest.TestCase):
         self.assertLess(float(self.a["largest_traced_that_passed"]), model.POSITIVE_LIMIT)
         self.assertGreaterEqual(float(self.a["last_before_crash"]), model.POSITIVE_LIMIT)
 
+    def test_the_capped_value_is_the_bracket_s_lower_edge(self):
+        # Launch B handed the capped value itself to the shortener `clamped`
+        # times and the game lived: a measured pass at 9.9999e13, which
+        # narrows the limit to (capped value, last value before the crash].
+        capped = float(self.b["capped_to"])
+        self.assertGreater(self.b["clamped"], 0)
+        self.assertEqual(self.b["exit_code"], "0x00000000")
+        self.assertFalse(model.fails(capped))
+        self.assertGreater(capped, float(self.a["largest_traced_that_passed"]))
+        self.assertLess(capped, model.POSITIVE_LIMIT)
+        self.assertLessEqual(model.POSITIVE_LIMIT, float(self.a["last_before_crash"]))
+
     def test_the_dump_is_the_range_check_fast_fail_in_the_extension(self):
         dump = self.a["dump"]
         self.assertEqual(self.a["exit_code"].lower(), dump["code"])

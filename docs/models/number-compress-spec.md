@@ -26,8 +26,10 @@ Every claim carries one of four labels, and a source:
   bytes, file date 2026-09-18, sha256
   `c789ee5e5850e0d68c42a6d0b84876509eaea4f2ffab1ea9c35e71709c47b88f`),
   export `SteamCompressNumber`, made on 2026-10-20.
-- **Measured**: observed in a running game: the positive limit, the crash's
-  dump and the cap's text, in Live 2; see § Measurements.
+- **Measured**: observed in a running game: the positive limit's lower edge
+  (bracketed between 9.9999e13, which passed, and about 1.025e14, which ended
+  the game), the crash's dump and the cap's text, in Live 2; see
+  § Measurements.
 - **Our code**: what ForgePact does. The model leaves it out, and the test
   expresses it as an input transform.
 - **Not established**: left out of the model, or carried as an open question.
@@ -112,7 +114,8 @@ either script or reads either of those globals directly. Every caller goes
 through one other global, `num_compress`: the enemy health bars, the HUD, the
 floating combat text (`Combat_Text_obj`), the DPS meter (`DPS_Meter_obj`) and a
 few menus. Which script that global holds on the Steam PC build is not
-established. Three display options decide whether a number gets there. The
+established by the reading; Live 2 measured it holding `num_compressSteam`
+(§ Measurements). Three display options decide whether a number gets there. The
 floating text formats its number through `num_compress` only while
 `combatTextCompress` is on, and an enemy hit draws a damage number at all only
 while `showDamage` is on. The DPS meter calls `num_compress` while
@@ -140,13 +143,16 @@ which the model's test (`MeasurementTests`) reads. Against this spec:
   and in one 20 s window debugger logging breakpoints counted 748 calls into
   `num_compressSteam` and 748 into `SteamCompressNumber`, one for one; none into
   `num_compressGML`, beside a control that kept logging.
-- **The positive limit** (measured, within the trace's resolution). With
-  ForgePact's cap forced off and Total Damage ramped from x11 to x1e6, the
-  values traced into `num_compressSteam` (one line per new decade) rose to
-  15,038,794,170,000, which passed, and ended on 102,480,421,310,000, after
-  which the game ended. The model fails the last and passes every earlier one,
-  so the measured limit lies between about 1.5e13 and 1.025e14, which brackets
-  `POSITIVE_LIMIT` = 1e14.
+- **The positive limit's lower edge** (measured). With ForgePact's cap forced
+  off and Total Damage ramped from x11 to x1e6, the values traced into
+  `num_compressSteam` (one line per new decade) rose to 15,038,794,170,000,
+  which passed, and ended on 102,480,421,310,000, after which the game ended.
+  In the second launch the cap handed 99,999,000,000,000 itself to the
+  shortener 29,990 times, which drew `99999B` with the game alive: a measured
+  pass at 9.9999e13. So the limit lies in (9.9999e13, 1.025e14], which brackets
+  `POSITIVE_LIMIT` = 1e14; the model passes both passing values and fails the
+  last. Only the band's lower edge is measured: no value between about
+  1.025e14 and the 32-bit overflow ran uncapped.
 - **How it ends** (measured). Exit code `0xC0000409`; the dump reads
   `code=0xc0000409 subcode=8 raised-in=PAS_Steam_GMS_x64`, with
   `SteamCompressNumber` on the stack: the range-check fast fail this spec reads.
@@ -157,8 +163,9 @@ which the model's test (`MeasurementTests`) reads. Against this spec:
   ramped to x1e12, values up to about 2.2e20 reached the hook, 29,990 were
   capped to `kNumGuardLargestSafe` (99,999,000,000,000), the first at
   100,300,112,243,000, every floating number read `99999B`, and the game lived.
-- **Not exercised:** NaN, the negative band (`NEGATIVE_LIMIT`), the 32-bit
-  overflow past about 2.1e17 without the cap, and the 8-character texts'
+- **Not exercised:** NaN, the negative band (`NEGATIVE_LIMIT`), the positive
+  band above its lower edge and the 32-bit overflow past about 2.1e17 without
+  the cap, and the 8-character texts'
   missing terminator. The DPS meter read `0` with `dpsMeterCompress` on, so
   whether its total reaches the shortener is not observed.
 
