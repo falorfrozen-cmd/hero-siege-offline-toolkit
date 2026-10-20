@@ -5,11 +5,13 @@ game only: which numbers `SteamCompressNumber` ends the process on, and the
 text it writes for the rest. ForgePact's cap (`numguard`) is its own code, so
 it lives here as an input transform (`numguard_cap`). `LeverParityTests` pins
 the transform and the model's limits to `NumberGuard.hpp` when ForgePact is
-checked out.
+checked out. `MeasurementTests` checks the model against Live 2's values
+(`hs-game-sdk/curated/number_compress_measurements.json`).
 
 Baseline: what the game does with no mod. Target: what the cap must turn it
 into. That is the order `AGENTS.md` § "Mod Development Workflow" asks for.
 """
+import json
 import math
 import random
 import re
@@ -22,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SDK_PY = ROOT / "hs-game-sdk" / "python"
 SPEC_DOC = ROOT / "docs" / "models" / "number-compress-spec.md"
 GUARD_HEADER = ROOT / "ForgePact" / "plugin" / "include" / "ForgePact" / "NumberGuard.hpp"
+MEASUREMENTS = ROOT / "hs-game-sdk" / "curated" / "number_compress_measurements.json"
 
 sys.path.insert(0, str(SDK_PY))
 from hs_game_sdk import number_compress_model as model  # noqa: E402
@@ -191,10 +194,104 @@ class TargetTests(unittest.TestCase):
         self.assertTrue(model.fails(SMALLEST_SAFE - 1.0))
 
 
+#: A text the shortener draws: whole digits, an optional ",<digit>", a band suffix.
+_SHOWN = re.compile(r"^(\d+)(?:,(\d))?([KMB])$")
+#: What one unit of q is worth in each band (the spec's divisors).
+_Q_UNIT = {"K": 100.0, "M": 1e5, "B": 1e8}
+
+
+def value_shown_as(shown):
+    """A number whose text, by the spec's band rules, would be `shown`; None when
+    `shown` is not shaped like a shortened text."""
+    match = _SHOWN.match(shown)
+    if match is None:
+        return float(shown) if re.fullmatch(r"-?\d+", shown) else None
+    whole, decimal, suffix = match.groups()
+    q = int(whole) * 10 + int(decimal or 0)
+    return q * _Q_UNIT[suffix]
+
+
+class MeasurementTests(unittest.TestCase):
+    """Live 2 (capture `forgepact-230-damage-crash-live-2`): the values the game
+    met, from `hs-game-sdk/curated/number_compress_measurements.json`."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.data = json.loads(MEASUREMENTS.read_text(encoding="utf-8"))
+        cls.a = cls.data["launch_a"]
+        cls.b = cls.data["launch_b"]
+
+    def test_the_file_is_this_capture(self):
+        self.assertEqual(self.data["capture"], "forgepact-230-damage-crash-live-2")
+        self.assertEqual(self.data["status"], "measured")
+
+    def test_the_model_fails_the_value_the_game_ended_on(self):
+        crash = float(self.a["last_before_crash"])
+        self.assertEqual(crash, float(self.a["traced"][-1]))
+        self.assertTrue(model.fails(crash))
+        self.assertIsNone(model.text(crash))
+
+    def test_the_model_passes_the_largest_value_that_passed(self):
+        largest = float(self.a["largest_traced_that_passed"])
+        self.assertEqual(largest, max(float(v) for v in self.a["traced"][:-1]))
+        self.assertFalse(model.fails(largest))
+        for value in self.a["traced"][:-1]:
+            with self.subTest(value=value):
+                self.assertFalse(model.fails(float(value)))
+
+    def test_the_measured_bracket_holds_the_modelled_limit(self):
+        self.assertLess(float(self.a["largest_traced_that_passed"]), model.POSITIVE_LIMIT)
+        self.assertGreaterEqual(float(self.a["last_before_crash"]), model.POSITIVE_LIMIT)
+
+    def test_the_dump_is_the_range_check_fast_fail_in_the_extension(self):
+        dump = self.a["dump"]
+        self.assertEqual(self.a["exit_code"].lower(), dump["code"])
+        self.assertEqual(dump["code"], "0xc0000409")
+        self.assertEqual(dump["fast_fail_subcode"], 8)
+        self.assertEqual(dump["raised_in"] + ".dll", self.data["build"]["extension"])
+        self.assertEqual(dump["export_on_stack"], "SteamCompressNumber")
+
+    def test_the_route_ran_one_for_one(self):
+        hits = self.data["route"]["hits"]
+        self.assertGreater(hits["num_compressSteam"], 0)
+        self.assertEqual(hits["num_compressSteam"], hits["SteamCompressNumber"])
+        # A zero only counts beside a control that logged in the same window.
+        self.assertEqual(hits["num_compressGML"], 0)
+        self.assertGreater(hits["control_CheckTalentUse"], 0)
+
+    def test_the_shown_texts_are_texts_the_model_writes(self):
+        for shown in self.a["shown_texts"] + [self.b["shown_capped"]]:
+            with self.subTest(shown=shown):
+                value = value_shown_as(shown)
+                self.assertIsNotNone(value)
+                self.assertEqual(model.text(value), shown)
+
+    def test_the_text_check_can_fail(self):
+        # Negative control: texts the shortener never draws.
+        for shown in ("1.2B", "1,0K", "1234567B", "12,34M"):
+            with self.subTest(shown=shown):
+                value = value_shown_as(shown)
+                self.assertTrue(value is None or model.text(value) != shown)
+
+    def test_the_cap_maps_what_launch_b_saw(self):
+        first = float(self.b["first_capped"])
+        self.assertEqual(numguard_cap(first), float(self.b["capped_to"]))
+        self.assertEqual(float(self.b["capped_to"]), LARGEST_SAFE)
+        self.assertEqual(model.text(numguard_cap(first)), self.b["shown_capped"])
+        for value in self.b["traced"] + [self.b["largest_seen"]]:
+            with self.subTest(value=value):
+                value = float(value)
+                self.assertEqual(model.fails(value), value >= model.POSITIVE_LIMIT)
+                self.assertFalse(model.fails(numguard_cap(value)))
+        self.assertGreater(self.b["clamped"], 0)
+        self.assertEqual(self.b["exit_code"], "0x00000000")
+
+
 class NoDecompilerOutputTests(unittest.TestCase):
     """The spec and the model were written clean-room; nothing they ship may carry listing text."""
 
-    FILES = (SPEC_DOC, SDK_PY / "hs_game_sdk" / "number_compress_model.py", Path(__file__).resolve())
+    FILES = (SPEC_DOC, SDK_PY / "hs_game_sdk" / "number_compress_model.py", MEASUREMENTS,
+             Path(__file__).resolve())
 
     @classmethod
     def setUpClass(cls):

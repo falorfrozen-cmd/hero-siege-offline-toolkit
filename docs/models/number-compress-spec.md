@@ -26,7 +26,8 @@ Every claim carries one of four labels, and a source:
   bytes, file date 2026-09-18, sha256
   `c789ee5e5850e0d68c42a6d0b84876509eaea4f2ffab1ea9c35e71709c47b88f`),
   export `SteamCompressNumber`, made on 2026-10-20.
-- **Measured**: observed in a running game. None yet; see § Measurements.
+- **Measured**: observed in a running game: the positive limit, the crash's
+  dump and the cap's text, in Live 2; see § Measurements.
 - **Our code**: what ForgePact does. The model leaves it out, and the test
   expresses it as an input transform.
 - **Not established**: left out of the model, or carried as an open question.
@@ -128,12 +129,38 @@ Live 1 of the workorder `forgepact-230-damage-crash` (capture
 per hit, so nothing reached the shortener and that session tests nothing in
 this spec: for the shortener its result is "not observed", not a refutation.
 
-Live 2 of the same workorder will fill this section, with those options on:
-the crash reproduced on the research build with ForgePact's cap forced off, the
-dump's exception code, subcode and raising module, which game objects reach
-`num_compressSteam` with what values, and the cap holding past the limit. Its
-values will go into `hs-game-sdk/curated/number_compress_measurements.json` for
-the model's test. Until then every claim above is a static reading.
+Live 2 of the same workorder (capture `forgepact-230-damage-crash-live-2`,
+2026-10-20, the research build, Sorak at the Act 1 town's training dummies, the
+reporter's ForgePact settings) ran with `showDamage` and `combatTextCompress`
+on, and in its second launch `dpsMeterCompress` too. Its values are in
+[`hs-game-sdk/curated/number_compress_measurements.json`](../../hs-game-sdk/curated/number_compress_measurements.json),
+which the model's test (`MeasurementTests`) reads. Against this spec:
+
+- **The route** (measured). Floating damage numbers were drawn and shortened,
+  and in one 20 s window debugger logging breakpoints counted 748 calls into
+  `num_compressSteam` and 748 into `SteamCompressNumber`, one for one; none into
+  `num_compressGML`, beside a control that kept logging.
+- **The positive limit** (measured, within the trace's resolution). With
+  ForgePact's cap forced off and Total Damage ramped from x11 to x1e6, the
+  values traced into `num_compressSteam` (one line per new decade) rose to
+  15,038,794,170,000, which passed, and ended on 102,480,421,310,000, after
+  which the game ended. The model fails the last and passes every earlier one,
+  so the measured limit lies between about 1.5e13 and 1.025e14, which brackets
+  `POSITIVE_LIMIT` = 1e14.
+- **How it ends** (measured). Exit code `0xC0000409`; the dump reads
+  `code=0xc0000409 subcode=8 raised-in=PAS_Steam_GMS_x64`, with
+  `SteamCompressNumber` on the stack: the range-check fast fail this spec reads.
+- **The texts** (measured). The numbers drawn read like the model's bands:
+  `970,4K`, `1,2M`, `5M`, `394,6M`, `1,2B`, `1296,2B`, a comma before the one
+  decimal digit and none when it is 0.
+- **The cap** (measured, our code). With the cap automatic and Total Damage
+  ramped to x1e12, values up to about 2.2e20 reached the hook, 29,990 were
+  capped to `kNumGuardLargestSafe` (99,999,000,000,000), the first at
+  100,300,112,243,000, every floating number read `99999B`, and the game lived.
+- **Not exercised:** NaN, the negative band (`NEGATIVE_LIMIT`), the 32-bit
+  overflow past about 2.1e17 without the cap, and the 8-character texts'
+  missing terminator. The DPS meter read `0` with `dpsMeterCompress` on, so
+  whether its total reaches the shortener is not observed.
 
 ## Our code
 
@@ -171,8 +198,9 @@ model's limits and the transform's values.
   the buffer, so what follows depends on the byte after it. The model reports
   such a value as passing but not fitting with its terminator.
 - **Which formatter shows a hit's floating number and which the DPS meter
-  uses** (`CombatText`, `DPS_Meter_obj`). Live 1 measures who calls
-  `num_compressSteam`.
+  uses** (`CombatText`, `DPS_Meter_obj`). Live 2 measured the floating
+  numbers reaching `num_compressSteam` with `combatTextCompress` on; the DPS
+  meter's compressed route was not observed.
 - **Whether anything else reaches `SteamCompressNumber`** than
   `num_compressSteam`.
 - **Whether a vanilla character can put 1e14 on screen.** The shortener fails

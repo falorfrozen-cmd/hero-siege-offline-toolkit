@@ -1,0 +1,81 @@
+{
+  "$schema_note": "Live values that hs_game_sdk.number_compress_model is checked against (tests/test_number_compress_model.py, MeasurementTests); the mechanism is docs/models/number-compress-spec.md and the game facts are docs/RUNTIME_DATA_MODELS.md section 8.7. Data only. Every value comes from Live 2 of the hub workorder forgepact-230-damage-crash (ForgePact#230), 2026-10-20: `capture` names the session's local operator capture (a gitignored hub workorder file) and `research_dll_sha256` the research ForgePact DLL it ran. Launch A ran with ForgePact's number guard forced off (`numguard off`), so every number reached the game's shortener as given; launch B ran with the guard automatic. `traced` lists are ForgePact's `numguard trace: num_compressSteam <value>` lines in order, one line per new decade, so values between two traced ones may have passed untraced. `shown_texts` are the floating damage numbers the operator read from mid-hold screen grabs. No offset inside the game or the extension is recorded here.",
+  "issue": "ForgePact#230",
+  "capture": "forgepact-230-damage-crash-live-2",
+  "date": "2026-10-20",
+  "status": "measured",
+  "build": {
+    "game_version": "7.0.13.0",
+    "hero_siege_exe_sha256": "dab03f134327d9b682c67f1dc461822fb822a7e535009636624bb1454f498e2b",
+    "extension": "PAS_Steam_GMS_x64.dll",
+    "extension_sha256": "c789ee5e5850e0d68c42a6d0b84876509eaea4f2ffab1ea9c35e71709c47b88f",
+    "research_dll_sha256": "aa77e1229eb65f75a75d1e22ebae18df04064d12b8fbbca16bdea76d44d75b98"
+  },
+  "setting": {
+    "character": "slot 14, Sorak",
+    "room": "Town_01_rm",
+    "target": "Attack_Dummy_obj (the Act 1 town's training dummies)"
+  },
+  "reporter_multipliers": {
+    "CalculateEndDamage": 11,
+    "StatCritDamage": 11,
+    "StatCritRate": 6,
+    "StatAttackSpeed": 2,
+    "StatFasterCastRate_add": 100,
+    "projamount_slider_add": 5
+  },
+  "route": {
+    "what": "Debugger logging breakpoints (non-breaking, first bytes checked) in one 20 s window of launch A before the guard was touched, damage numbers drawn and compressed.",
+    "window_s": 20,
+    "hits": {
+      "num_compressSteam": 748,
+      "SteamCompressNumber": 748,
+      "num_compressGML": 0,
+      "control_CheckTalentUse": 322
+    }
+  },
+  "launch_a": {
+    "guard": "forced off",
+    "display_options": {
+      "show_damage": 1,
+      "combat_text_compress": 1,
+      "dps_meter_compress": 0
+    },
+    "CalculateEndDamage_ramp": [11, 100, 10000, 1000000],
+    "ended_at_multiplier": 1000000,
+    "traced": [2915427, 11012142, 170962231, 1025141275, 10465191980, 114222292100, 1016700999360, 15038794170000, 102480421310000],
+    "largest_traced_that_passed": 15038794170000,
+    "last_before_crash": 102480421310000,
+    "negative_values_traced": 0,
+    "exit_code": "0xC0000409",
+    "dump": {
+      "code": "0xc0000409",
+      "fast_fail_subcode": 8,
+      "raised_in": "PAS_Steam_GMS_x64",
+      "export_on_stack": "SteamCompressNumber"
+    },
+    "shown_texts": ["970,4K", "1,2M", "5M",
+                    "394,6M", "389,4M", "777,6M", "507,8M", "13,9M", "157M",
+                    "1,2B", "5,1B", "7,5B", "1,5B", "1,1B", "7B", "1,8B",
+                    "206B", "317B", "482,2B", "1296,2B", "196,8B", "287,7B", "54,9B"]
+  },
+  "launch_b": {
+    "guard": "automatic",
+    "display_options": {
+      "show_damage": 1,
+      "combat_text_compress": 1,
+      "dps_meter_compress": 1
+    },
+    "armed_before_any_lever": false,
+    "CalculateEndDamage_ramp": [11, 100, 10000, 1000000, 100000000, 10000000000, 1000000000000],
+    "traced": [17949217, 115462863, 1086205212, 10130344001, 124814419100, 1028271221160, 11824252520900, 100300112243000, 1.163684312e+15, 1.02248434994e+16, 1.16087828013e+17, 1.00541472932e+18, 1.142222921e+19, 1.00752867645e+20],
+    "largest_seen": 2.1921742131e+20,
+    "first_capped": 100300112243000,
+    "capped_to": 99999000000000,
+    "shown_capped": "99999B",
+    "clamped": 29990,
+    "answered_after_every_window": true,
+    "exit_code": "0x00000000",
+    "dps_meter_shown": "0"
+  }
+}
