@@ -37,6 +37,7 @@ hs-game-sdk/
 │   ├── monster_rank_measurements.json # MK1-MK24: what a monster's rank does (§13.7), the boss report, and ForgePact #44's Live 1 and 1b on bosses, for monster_rank_model.py (data only)
 │   ├── dungeon_chest_measurements.json # DC1-DC23: the dungeon chest's static reading, the kill path (§13.5), and ForgePact #31's Live 1, Live 1b, Live 2 and Live 3 measurements (the estimate's mean, the player build's census, latch and head label), for dungeon_chest_model.py (data only)
 │   ├── skill_sliders_measurements.json # ForgePact #160's live values for skill_sliders_model.py (data only)
+│   ├── number_compress_measurements.json # ForgePact #230's Live 2: the values traced into num_compressSteam, the one it ended on and the largest that passed, the multipliers, the dump's code and subcode, the display options, the cap's text, for number_compress_model.py (data only)
 │   ├── room_acts.json          # RoomActIndex's act per room (its answer is the act): 175 rows (SDK room name, index, act), static reading, six rows measured (Live procedures 1, 2 and 3), for soul_piece_model.py's tests (data only; nothing ships it)
 │   ├── boss_soul_pieces.json   # ForgePact #197: the key piece's base (`keys_bifrost_key`, class 12, `b` + act/10) and its icon (`Gem_Incarnation_spr` under info key "11", ground `Pickup_Gem_Incarnation_spr`), `bag_stack` (the game's `InventoryGridAddToStack`: classes 12 to 15 only, asked before any compare, a cap of 999, the `s_ItemOperation` result's `success`), the legacy piece's base (Edible PAS Logo), act bosses and boss rooms, piece seeds, the Gem of Incarnation's measured rate (9,000), the 4/5 ratio, the travel route (`NetworkRoomGoto` after `ZoneStateResetSingle`), room and use rules, verdict words, shared cases (key pieces and stack counts included) and the open questions of Live procedure 3 and the follow-up's Live procedures 1, 2 and 4, with their answers (Live procedure 4: the bag file is written at stash close, and a saved stack count comes back as written) (data only)
 │   ├── loot_announcement_measurements.json # ForgePact #17: the rare-drop announcement chain, the rarity codes its closure branches on and the route ForgePact ships (§16.10; data only, no model)
@@ -64,6 +65,7 @@ hs-game-sdk/
 │   │   ├── skill_sliders_model.py # Projectile count, AoE scale and projectile deltaSpeed from their stats, stdlib only, not exported (hand-written)
 │   │   ├── unique_pick_model.py # Which unique the Angelic roll and the ordinary unique roll yield (one entry's share), stdlib only, not exported (hand-written)
 │   │   ├── soul_piece_model.py # A room's act (RoomActIndex's answer), the pickup's stack rule (reals within the epsilon), the number rules a key piece rests on (repository truncation, unique `c`, the save's two decimals, crafting's count, the find), the gem roll a boss soul piece rides and the backpack's use, stdlib only, not exported (hand-written)
+│   │   ├── number_compress_model.py # Which numbers the game's Steam number shortener (num_compressSteam -> SteamCompressNumber) ends the process on, and the text it writes for the rest, stdlib only, not exported (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
 │   │   └── satanic_zone.py     # SATANIC_BUFFS/SATANIC_DEBUFFS tuples, generated from curated/satanic_zone.json
 │   ├── pyproject.toml
@@ -243,6 +245,32 @@ c / (n + c) stay in the test as transforms, so each item takes c / (T + e) of th
 Pocket Elf c / (L_k + c) of the ordinary one, one entry's share at the player build's c = 1; they
 are pinned to `plugin/ModuleMain.cpp` and `plugin/include/ForgePact/FlightCharms.hpp` by
 `LeverParityTests`.
+
+`number_compress_model.py` (2026-10-20, ForgePact issue #230, hub #539) is built the same way: spec
+`docs/models/number-compress-spec.md` (written from the static reading folded into
+`docs/RUNTIME_DATA_MODELS.md`), curated fixture `curated/number_compress_measurements.json` (ForgePact
+#230's Live 2, capture `forgepact-230-damage-crash-live-2`), checks `tests/test_number_compress_model.py`.
+It gives which numbers the game's Steam number shortener (`num_compressSteam`, which calls
+`SteamCompressNumber` in `PAS_Steam_GMS_x64.dll`) ends the process on, because its text does not
+fit the export's 8-byte buffer, and for every other number the text it writes and whether that
+text's terminator still fits. By the static reading NaN, a positive number of 1e14 or more and a
+negative number of -1e6 or less fail. Live 2 measured the positive limit's lower edge, between
+9.9999e13 (ForgePact's cap, which passed) and 1e15: the last value traced before the end was about
+1.025e14, the first of its decade, so the value the game ended on lies in [1.025e14, 1e15) and is not
+itself known; the exact 1e14 limit, NaN and the negative limit remain static readings. The cap's text
+`99999B` is measured.
+`BaselineTests` pins those limits and the texts the spec names; `TargetTests` checks that ForgePact's cap (`numguard`, kept in the test as the input
+transform `numguard_cap`) turns every failing value into one that passes and fits and passes every
+other value through bit for bit; `MeasurementTests` checks the model against the fixture (it passes
+every traced value before the end and the cap's value, which sits below `POSITIVE_LIMIT`, which in
+turn sits below 1e15, the measured bracket; it fails the last traced value, which rests on the static
+reading; and it writes the texts the operator read); `SpecTests` checks the spec labels its claims and names only
+functions the model has; `NoDecompilerOutputTests` keeps decompiled text out of the model's files.
+`LeverParityTests` pins only the four constants (`kNumGuardPositiveLimit`,
+`kNumGuardNegativeLimit`, `kNumGuardLargestSafe`, `kNumGuardSmallestSafe`) to
+`plugin/include/ForgePact/NumberGuard.hpp`, skipping when ForgePact is not checked out; the guard's
+comparison directions and its NaN handling are not pinned here, and ForgePact's own harness covers
+them.
 
 ---
 
@@ -580,6 +608,7 @@ contributor can be assumed to have:
 | `test_dungeon_chest_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/DungeonChestMod.hpp` or `ForgePact/src/forgepact.py` is absent (hub CI checks out without submodules), and `FixtureShapeTests` then skips checking `ForgePact/...` source paths and local `.claude/workorders/` captures |
 | `test_unique_pick_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/ModuleMain.cpp` or `ForgePact/plugin/include/ForgePact/FlightCharms.hpp` is absent (hub CI checks out without submodules), while `FixtureShapeTests` skips checking `ForgePact/...` source paths only when `ForgePact/docs` is absent, so a ForgePact checkout that predates the paths the fixture cites fails it rather than skipping |
 | `test_soul_piece_model.py` | nothing (the model, its two curated files, its spec and the tracked room and object bindings); `ForgePact/` checked out for `ParityTests` | always runs; only `ParityTests` skips, when `ForgePact/plugin/include/ForgePact/SoulPieceMod.hpp` is absent (hub CI checks out without submodules) |
+| `test_number_compress_model.py` | nothing (the model, its fixture and its spec); `ForgePact/` checked out for `LeverParityTests` | always runs; only `LeverParityTests` skips, when `ForgePact/plugin/include/ForgePact/NumberGuard.hpp` is absent (hub CI checks out without submodules) |
 | `test_cpp_sdk.py` | Windows + MSVC or g++/clang++ | skips |
 | `test_sdk_lazy_import.py` | nothing (starts fresh interpreters of the Python running the suite) | always runs |
 | `test_item_type_parity.py` | nothing (parses the tracked bindings and this guide); `node` for the executed-TypeScript sub-test | always runs; only `test_executed_enum_matches_python` skips, when `node` is missing from `PATH` or older than 22.7 (no `--experimental-transform-types`); `TestGuideRecordsTheMeasuredRow` checks this guide's ItemType table names only row 14 as "measured in-game" |
@@ -910,7 +939,7 @@ re-run it; regeneration is idempotent, so a second run must produce no diff.
 
 "Every file" is broader than the code, though: `player.py`/`.hpp`/`.ts`, `hooks.hpp`,
 `mod_registry.py`, `item_type.py`/`.hpp`/`.ts`, `drop_roll_model.py`, `mining_reward_model.py`,
-`monster_rank_model.py`, `dungeon_chest_model.py`, `unique_pick_model.py` and `soul_piece_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
+`monster_rank_model.py`, `dungeon_chest_model.py`, `unique_pick_model.py`, `soul_piece_model.py` and `number_compress_model.py` are hand-written, and the generator neither writes nor deletes them. Edit those in place. The
 models are not wired
 into any aggregate on purpose (import it by its module name), and it has no C++ or TypeScript
 counterpart. They still have to be wired into the aggregates
