@@ -245,6 +245,25 @@ Pocket Elf c / (L_k + c) of the ordinary one, one entry's share at the player bu
 are pinned to `plugin/ModuleMain.cpp` and `plugin/include/ForgePact/FlightCharms.hpp` by
 `LeverParityTests`.
 
+`number_compress_model.py` (2026-10-20, ForgePact issue #230, hub #539) is built the same way: spec
+`docs/models/number-compress-spec.md` (written from the static reading folded into
+`docs/RUNTIME_DATA_MODELS.md`), no curated fixture yet (ForgePact #230's Live 2 adds one, and a
+`MeasurementTests` class with it), checks `tests/test_number_compress_model.py`. It gives which
+numbers the game's Steam number shortener (`num_compressSteam`, which calls `SteamCompressNumber` in
+`PAS_Steam_GMS_x64.dll`) ends the process on, because its text does not fit the export's 8-byte
+buffer, and for every other number the text it writes and whether that text's terminator still
+fits. Every limit is a static reading, none measured yet: NaN, a positive number of 1e14 or more
+and a negative number of -1e6 or less fail. `BaselineTests` pins those limits and the texts the spec
+names; `TargetTests` checks that ForgePact's cap (`numguard`, kept in the test as the input
+transform `numguard_cap`) turns every failing value into one that passes and fits and passes every
+other value through bit for bit; `SpecTests` checks the spec labels its claims and names only
+functions the model has; `NoDecompilerOutputTests` keeps decompiled text out of the model's files.
+`LeverParityTests` pins only the four constants (`kNumGuardPositiveLimit`,
+`kNumGuardNegativeLimit`, `kNumGuardLargestSafe`, `kNumGuardSmallestSafe`) to
+`plugin/include/ForgePact/NumberGuard.hpp`, skipping when ForgePact is not checked out; the guard's
+comparison directions and its NaN handling are not pinned here, and ForgePact's own harness covers
+them.
+
 ---
 
 ## Import cost: the tables load on first use (2026-09-28)
