@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Live measurements for the Mark 1 set (ForgePact#166 phase 1, research only, Live 1, Live 2 and Live 3, all 2026-10-13): how a bar slot can be cast through the game's own gate without a key press, which input entry each of Q, E, R and Y uses, what a toggle does under that lever, what a cast does to the walk, which script moves the player on a walk and during a jump, where a x0.5 on walking speed and a x3 on the jump land, and which reading tells a walkable landing point from one past the walkable map's edge. Research build of ForgePact 2feb9b4 (DLL SHA-256 0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f; the plugin/ tree is unchanged at the head of the 166-mark1-set branch), the `mark1probe` instrument (nine script rows through HookOneScript, its levers and its pos sampler) and x64dbg hardware logpoints (CheckTalentUse as the control; TalentUseSetSpeed, StatMovementSpeed and StatJumpPower as candidates); save slot 14, character Sorak (White Mage), in Town_01_rm, every shipped mod off. Live 3 (walkability only) ran on a rebuilt research DLL, ForgePact 61243b2 (SHA-256 8c47459b15dd0691336efd65e5c9ded6ebd1a46b23e578e9688f71d023ad516e), with the same character, room and starting save and no debugger. mod_live_1 is phase 2's first session (2026-10-19, the walk's speed curve, the cast penalty, the toggle's settle time, the piece bases and a generated zone's edge), on the research build of ForgePact 109c908 (SHA-256 a2f64cf3889a4333e03c4fb0667045799b5fcb05f91e535c9fc171ff154ea493) with twenty rows (nine scripts and eleven builtins); its decisions are the research doc's Phase 2 decision keys. mod_live_2 is phase 2's second session (2026-10-19, the built set with its switch on), on the research build of ForgePact c598b5b (SHA-256 0a44a9d06ecd3780f1b4b4117e3178b4115f1094531e7869f368017c36b76362); its checks are the research doc's Mod live 2 results, and its 0.325 is a consistency observation, not a verdict. The procedures, their checks and the argument are in ForgePact docs/mark1-set-research.md (Live procedure 1, Live procedure 2, Results with Live 3 results, Decision, Not established); the shared facts are docs/RUNTIME_DATA_MODELS.md sections 7.7, 7.8, 19.10 and 19.11; the session captures forgepact-166-mark1-set-live-1.md, -live-2.md and -live-3.md stay with the hub's workorder files and are not tracked. No model or generator reads this file: tests/test_sdk_all.py checks only that curated/ is tracked, and the #166 workorder's criterion 24 reads game_build, cast_route, slot_keys, cast_penalty, walk_mover, speed_lever, jump_mover, jump_lever and walkable. A status is one of: measured, not-observed (the check ran, its control passed, and it saw nothing), not-run (the check did not run, or its control failed, so it says nothing) or static reading (read locally from the game, never measured). The decision value is the research doc's Decision key as recorded; each entry's checks carry their tools/live_checks.py verdicts. Addresses and call-site offsets are never recorded here; the callers are named. Static readings are our own words, never the game's text.",
+  "$schema_note": "Live measurements for the Mark 1 set (ForgePact#166 phase 1, research only, Live 1, Live 2 and Live 3, all 2026-10-13): how a bar slot can be cast through the game's own gate without a key press, which input entry each of Q, E, R and Y uses, what a toggle does under that lever, what a cast does to the walk, which script moves the player on a walk and during a jump, where a x0.5 on walking speed and a x3 on the jump land, and which reading tells a walkable landing point from one past the walkable map's edge. Research build of ForgePact 2feb9b4 (DLL SHA-256 0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f; the plugin/ tree is unchanged at the head of the 166-mark1-set branch), the `mark1probe` instrument (nine script rows through HookOneScript, its levers and its pos sampler) and x64dbg hardware logpoints (CheckTalentUse as the control; TalentUseSetSpeed, StatMovementSpeed and StatJumpPower as candidates); save slot 14, character Sorak (White Mage), in Town_01_rm, every shipped mod off. Live 3 (walkability only) ran on a rebuilt research DLL, ForgePact 61243b2 (SHA-256 8c47459b15dd0691336efd65e5c9ded6ebd1a46b23e578e9688f71d023ad516e), with the same character, room and starting save and no debugger. mod_live_1 is phase 2's first session (2026-10-19, the walk's speed curve, the cast penalty, the toggle's settle time, the piece bases and a generated zone's edge), on the research build of ForgePact 109c908 (SHA-256 a2f64cf3889a4333e03c4fb0667045799b5fcb05f91e535c9fc171ff154ea493) with twenty rows (nine scripts and eleven builtins); its decisions are the research doc's Phase 2 decision keys. mod_live_2 is phase 2's second session (2026-10-19, the built set with its switch on), on the research build of ForgePact c598b5b (SHA-256 0a44a9d06ecd3780f1b4b4117e3178b4115f1094531e7869f368017c36b76362); its checks are the research doc's Mod live 2 results, and its 0.325 is a consistency observation, not a verdict. mod_live_3 is phase 2's third session (2026-10-20, the turn rule and the half walk with Healing Zone alone), on the research build of ForgePact 506038b (SHA-256 96c6d215ac87ab5e614b908abc937a404664b3aec60214a24a44c3401781483e); its checks are the research doc's Mod live 3 results, and it measured the 0.325 (penalty-stack: stacks). The procedures, their checks and the argument are in ForgePact docs/mark1-set-research.md (Live procedure 1, Live procedure 2, Results with Live 3 results, Decision, Not established); the shared facts are docs/RUNTIME_DATA_MODELS.md sections 7.7, 7.8, 19.10 and 19.11; the session captures forgepact-166-mark1-set-live-1.md, -live-2.md and -live-3.md stay with the hub's workorder files and are not tracked. No model or generator reads this file: tests/test_sdk_all.py checks only that curated/ is tracked, and the #166 workorder's criterion 24 reads game_build, cast_route, slot_keys, cast_penalty, walk_mover, speed_lever, jump_mover, jump_lever and walkable. A status is one of: measured, not-observed (the check ran, its control passed, and it saw nothing), not-run (the check did not run, or its control failed, so it says nothing) or static reading (read locally from the game, never measured). The decision value is the research doc's Decision key as recorded; each entry's checks carry their tools/live_checks.py verdicts. Addresses and call-site offsets are never recorded here; the callers are named. Static readings are our own words, never the game's text.",
   "game_build": {
     "status": "measured",
     "exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
@@ -242,6 +242,98 @@
     },
     "toggle_guard": "not observed live: Soul Spurn left the bar's cases for the session (owner, 2026-10-19)",
     "source": "ForgePact docs/mark1-set-research.md (Phase 2: the mod, Mod live procedure 2 and Mod live 2 results); forgepact-166-mark1-set-mod-live-2.md, not tracked"
+  },
+  "mod_live_3": {
+    "status": "measured",
+    "date": "2026-10-20",
+    "procedure": "Phase 2's Mod live procedure 3 (the turn rule on Mod live 2's own bar, and the half walk with the cast's slowdown on it re-measured with Healing Zone alone on the bar), research build, one attempt, 09:37 to 09:50 UTC",
+    "research_dll_sha256": "96c6d215ac87ab5e614b908abc937a404664b3aec60214a24a44c3401781483e",
+    "forgepact_commit": "506038b",
+    "character": "save slot 14, Sorak (White Mage), Town_01_rm, from the save before Mod live 2, wearing the four Mark 1 pieces (spawned once by mark1probe spawn set) in place of his own helmet, body armour, boots and gloves; no flight charm, jumpscenery off",
+    "frame_ms": 6.93,
+    "bar": {
+      "part_a": {
+        "Q": {"column": 3, "talent": 0, "ability": "empty"},
+        "E": {"column": 4, "talent": 252, "ability": "healingZone"},
+        "R": {"column": 5, "talent": 0, "ability": "empty"},
+        "Y": {"column": 6, "talent": 0, "ability": "empty"}
+      },
+      "part_b": {
+        "Q": {"column": 3, "talent": 239, "ability": "shadowBolt"},
+        "E": {"column": 4, "talent": 252, "ability": "healingZone"},
+        "R": {"column": 5, "talent": 245, "ability": "heavenlyFire"},
+        "Y": {"column": 6, "talent": 0, "ability": "empty"}
+      },
+      "emptying_a_slot": "a left click on the bar slot opens the skill popup; a left click on the skill already bound to that slot (labelled with the slot's key) unbinds it; done by hs_input, no owner action"
+    },
+    "summary": "14 checks: 13 pass, 1 fail (landed-control, its zone-count clause only), 0 not-observed, 0 not-run; the validity checks, equip-detect, install, walk-control and cast-control passed",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "equip-detect": "pass",
+      "install": "pass",
+      "walk-control": "pass",
+      "cast-control": "pass",
+      "landed-control": "fail",
+      "on-speed": "pass",
+      "on-penalty": "pass",
+      "penalty-stack": "pass",
+      "on-automation": "pass",
+      "turn-landed": "pass",
+      "cooldown-recast": "pass"
+    },
+    "decision": "penalty-stack: stacks",
+    "worn_slots": {"helmet": 0, "body": 1, "boots": 2, "gloves": 4},
+    "control_step_px": 2.385,
+    "healing_zone_alone": {
+      "gate_calls": 5760,
+      "presses": {"Q": 0, "E": 5760, "R": 0, "Y": 0},
+      "landed_column_4": 4,
+      "probe_casts_252": 4,
+      "yielded": "0/0/0/0",
+      "recast_interval_frames": [1575, 1575],
+      "zone_count": "one rise of White_Mage_Healing_Zone_obj's count went 0->2 in each of two windows while the probe counted one cast: one cast can leave two zone instances, so the instance count is at least the casts, not equal to them; landed-control failed on that clause alone and was taken off the required passes by the owner (2026-10-20)"
+    },
+    "turns": {
+      "gate_calls": 4590,
+      "patience_frames": 90,
+      "rest_frames": 288,
+      "presses": {"Q": 1772, "E": 993, "R": 1825, "Y": 0},
+      "casts": {"239": 31, "245": 30, "252": 3},
+      "landed": {"Q": 31, "E": 3, "R": 30, "Y": 0},
+      "skip_turn": {"Q": 2818, "E": 3597, "R": 2765, "Y": 0},
+      "yielded": {"Q": 0, "E": 11, "R": 0, "Y": 0},
+      "cast_calls": 64,
+      "failure_counts": "col-unreadable, orig-unreadable, write-failed and restore-failed 0/0/0/0, threw=0",
+      "positive_control": "with the switch off, one key cast of Q and one of R counted casts=239:1,245:1: Heavenly Fire casts by key on this character in town",
+      "finding": "pressing one column a call, to the one whose last landed cast was longest ago, cast all three skills; the set's landings matched the probe's casts per talent exactly and cast-calls rose by their sum; which of several pressed slots the gate serves is still not read"
+    },
+    "cooldown_recast": {
+      "window_frames": 3600,
+      "healing_zone_rises_at_frames": [94269, 95333, 95920, 97547],
+      "intervals_frames": [1064, 587, 1627],
+      "probe_casts_252": 3,
+      "note": "four rises against three casts; the extra instance at 95333 lasted 88 frames"
+    },
+    "half_walk": {
+      "bonus_off_mode_px": 2.385,
+      "bonus_on_mode_px": 1.192,
+      "watched_frames_at_1": 103,
+      "ratio": 0.4998
+    },
+    "cast_on_half_walk": {
+      "pre_cast_mode_px": 1.192,
+      "pre_cast_watched_frames_at_1": 86,
+      "cast_step_px": 0.775,
+      "ratio": 0.65,
+      "flat_frames": 76,
+      "ramp_frames": 16,
+      "frames_below_0_9": 86,
+      "verdict": "stacks: the cast frames' step is 0.650 of the bonus-on step, so under a cast the set walks at 0.325 of the unlevered step; the flat part ran 76 frames against Mod live 1's 57 for a key cast without the set, why not established",
+      "watch_cap": "the watch effect reply hit its 400-line cap after 132 of 480 frames; the step's return was read from pos"
+    },
+    "source": "ForgePact docs/mark1-set-research.md (Phase 2: the mod, Mod live procedure 3 and Mod live 3 results, Phase 2 decision's penalty-stack); forgepact-166-mark1-set-turns-live-1.md, not tracked"
   },
   "gate_args": {
     "status": "measured",

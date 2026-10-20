@@ -1164,6 +1164,36 @@ parts come from the research's Live 1 session on 2026-10-13 (the
   reconciled). Its `abilityCooldown` reads 14; 14 seconds would be 2016
   frames at that frame rate, longer than every interval, so the value's unit,
   and what makes the intervals differ, are **not established**.
+- **Pressing one column a call casts every skill on the bar (measured,
+  2026-10-20).** In the Mark 1 research's Mod live 3
+  ([Mod live 3 results](../ForgePact/docs/mark1-set-research.md#mod-live-3-results);
+  the same character, game build and frame rate, the set's turn rule on a
+  research DLL), the press value was written into one column's `inputState`
+  entry per local `CheckTalentUse` call, the column whose last landed cast
+  was longest ago, on the same bar as above. Over 4590 gate calls with no key
+  Shadow Bolt cast 31 times, Heavenly Fire 30 and Healing Zone 3
+  (`on-automation`), and a key cast of each no-cooldown skill had counted
+  first (`casts=239:1,245:1`). So Heavenly Fire casts by key on this
+  character in town and through the press write, and the previous bullet's
+  zero came from pressing several columns in one call; which of them the gate
+  serves then is still **not established**. A landed cast is seen as a local
+  `TalentUseSetSpeed` call during the gate's call (§ 7.8): the set's count of
+  those per column matched the probe's `TalentUse` count per talent exactly,
+  alone (4 of 4) and beside the others (31, 3 and 30), and every such call it
+  saw was one of them (`turn-landed`).
+- **One Healing Zone cast can leave two zone instances (measured,
+  2026-10-20).** In the same session (`landed-control`), with Healing Zone
+  alone on the bar and cast by the press write, a rise of
+  `White_Mage_Healing_Zone_obj`'s instance count went from 0 to 2 at one cast
+  in each of two windows while the probe's `TalentUse` row counted one, and
+  in a 3600-frame window beside Shadow Bolt and Heavenly Fire four rises stood
+  against three casts, the extra instance lasting 88 frames
+  (`cooldown-recast`). So the instance count is at least the number of casts,
+  not equal to it, which accounts for the five rises against four casts
+  above. What the second instance is was not read. Alone on the bar, Healing
+  Zone was recast 1575 frames apart in both windows; beside the other two,
+  1064, 587 and 1627 frames apart, so its `abilityCooldown` unit is still
+  **not established**.
 - **The game has its own input simulation.** `gml_Script_InputSimulate`
   (1903) takes a profile slot index, a key and a value, and stores the value under
   the key in that profile slot entry's `inputSimMap` (a ds_map). That map is
@@ -1286,6 +1316,20 @@ From the same reading as § 7.7 (2026-10-13, static unless marked). The
   frames behind it are all under the slowdown, so nothing compared them with
   an unslowed bonus-on step. The watch's 400-line reply cap ended each watch
   after about 126 of its 240 frames.
+- **The cast's slowdown stacks on the half walk (measured, 2026-10-20).** In
+  the Mark 1 research's Mod live 3
+  ([Mod live 3 results](../ForgePact/docs/mark1-set-research.md#mod-live-3-results);
+  the same character and build, 6.93 to 6.94 ms a frame), with Healing Zone
+  alone on the bar and the set's half walk on, a walk's 86 watched frames at
+  `playerEffect[199]` = 1 stepped 1.192 px; an automated Healing Zone cast
+  then dropped `playerEffect[199]` to 0.65 and the step to 0.775 px, 0.650 of
+  the pre-cast step, for 76 frames (one double step among them), and a
+  16-frame ramp brought it back to 1.192 px (`on-penalty`, `penalty-stack`).
+  So the slowdown multiplies the halved walk, and under a cast the set walks
+  at 0.325 of the unlevered step, which the previous bullet's windows showed
+  by arithmetic and this one measured. The flat part ran 76 frames against
+  Mod live 1's 57 for a key cast without the set at the same frame time; why
+  it ran longer is **not established**.
 - **`manaArrayPos` is plausibly the mana graph's ring index, not mana.**
   **Static reading (2026-10-14, unannotated)**, through the ghidra MCP, of
   `gml_Script_PlayerManaUpdate`: its body came out with no variable names, but
@@ -6004,6 +6048,15 @@ in `Town_01_rm` and the Outskirts of Inoya): see
   walked at a modal step of 2.385 px with every lever off (two control walks,
   2.385 both), against Mod live 1's 2.989 px in his own gear. So a walk
   control is valid only for the gear it was taken in.
+- **The half walk measured with the set worn (measured, 2026-10-20).** In the
+  Mark 1 research's Mod live 3
+  ([Mod live 3 results](../ForgePact/docs/mark1-set-research.md#mod-live-3-results)),
+  at 6.93 to 6.94 ms a frame, Sorak in the four pieces walked at 2.385 px with
+  the switch off (two control walks, as in Mod live 2) and at 1.192 px with
+  it on, on all 103 watched frames free of a cast's slowdown (`on-speed`):
+  0.4998 of the control. So the set's answer of (x - 200) / 2 to the local
+  movement speed calls halves the walk in this gear too, as `speed-half`
+  found (0.500) in his own.
 - **What `StatMovementSpeed` reads.** The player's `playerBuff` (about 380
   reads) through the `GetBuffValue` and `GetBuffStack` methods, `buffArray`,
   `debuffArray`, `buffMult` and `skpDb`; it asks the dispatcher for ids 106,
