@@ -7686,6 +7686,74 @@ not observed, not absent.
   player as `self` (not a shape the game's own callers use), ten calls placed
   ten items: seven Heroic (9) and three Satanic (6), none Angelic or Unholy,
   and no charm. **Measured** (2026-10-12).
+- Read again on 2026-10-20 for ForgePact's Mark 1 drops (#166), through the
+  hub's ghidra MCP and, for the two callers the MCP could not decompile, a
+  headless decompile on the same build (`498d5885…`). The bullets below
+  extend the one above.
+- `DropItemHeroic` (1374) takes three arguments: an x, a y and a sub-list
+  index. When the x or the y is undefined it reads that coordinate from
+  `self`; when the index is undefined it uses 5. **Static reading**
+  (2026-10-20).
+- It draws a random entry of `Controller_obj.lootListUnique` at that index
+  and draws again whenever the entry is not an array. For a triple it looks
+  the entry up in `GetUniqueRepoStruct` (819), one lookup per draw, and keeps
+  it only when the definition's flag 40 is clear and its rarity (field 27,
+  § 13.4) is neither 7 nor 10; otherwise it draws again, until it keeps one.
+  So, unlike `DropUniqueItems` (§ 23.8), a call never comes up empty: an
+  entry listed r times among the T_H entries of the sub-list that pass both
+  tests comes out r / T_H of the time, whether or not the random index can
+  reach the list's length. **Static reading** (2026-10-20).
+- Once an entry is kept it calls `CreateDefaultParams` (2349) once, from the
+  entry's sub-type and base and a constant, and then one unnamed placement
+  routine with the position, the entry's own type and those parameters
+  (§ 23.8 names `LootGroundCreate` for the ordinary roll). So the placed
+  item's class is the entry's type, as in the Angelic roll, and an entry
+  standing in for another item must share that item's class. **Static
+  reading** (2026-10-20).
+- Its direct callers, by a byte scan for direct calls (`FindCallers.java`;
+  in the same run `CreateDefaultParams` showed 177 direct sites, the positive
+  control): exactly two, one in `VaultUse` (4597) and one in an unnamed
+  closure that reads `floor` and `towersCleared` around the call, the Chaos
+  Tower NPC closure named above. A call through the script table is invisible
+  to that scan. The ghidra MCP's callers, callees and disassembly for
+  `DropItemHeroic` and `VaultUse` are empty: not observed, never "none".
+  **Static reading** (2026-10-20).
+- `VaultUse` runs when a vault item (repository category 19 "vault", seven
+  entries, § 13.2) is used by its right-click in the bag, the inline dispatch
+  of [§ 21.4](#214-using-an-item-from-the-backpack). Its body sorts the used
+  vault into one of seven tiers, 0 to 6, from a value it asks `GetItemInfo`
+  for (which value was not read; that the seven tiers are category 19's seven
+  vaults is an inference). It sets the roll's sub-list index to 4 and moves
+  it to 5 on a random check whose threshold rises with the tier (400, 800,
+  1000, 1500 and 2500 for tiers 0 to 4, 6500 for tiers 5 and 6). A second
+  random check, with thresholds 1, 5, 10, 30 and 50 for tiers 0 to 4 and 100
+  for tiers 5 and 6, sends the use to an unnamed draw of the Angelic kind
+  (next bullet) instead of `DropItemHeroic`; tier 5 then asks that draw for
+  rarity 7 only and tier 6 for rarity 10 only. The random draws' bound, and so
+  the chances themselves, were not read. When it does call `DropItemHeroic`
+  it passes its own `self` and `other`, the x and y of an instance it resolved
+  earlier in the body (which instance was not read), and that index. So a
+  vault's Heroic roll reads sub-list 4 or 5, not always the default 5.
+  **Static reading** (2026-10-20).
+- The unnamed draw `VaultUse` sends the rest to lies just before
+  `DropItemAngelicChance` (1368) in the executable. Its body takes the same
+  three arguments with the same fallback to `self`'s position, draws from a
+  unique list (which one was not read) until the kept entry's rarity is 7 or
+  10 (only 7, or only 10, when its third argument says so), then calls
+  `CreateDefaultParams` and the placement. That it is `DropItemAngelic`
+  (1366), one of the drop scripts the 2026-09-24 import left unnamed, is an
+  inference from its body and its place. **Static reading** (2026-10-20).
+- The Chaos Tower closure calls `DropItemHeroic` in a loop, behind a random
+  check, a number of times a script works out from `floor`, with all three
+  arguments undefined, so the position is the closure's `self`'s and the
+  sub-list is 5. **Static reading** (2026-10-20).
+- So, as far as is read, the Heroic roll runs when a player uses a vault or
+  that NPC, and not on a kill. **Static reading** (2026-10-20).
+- Not a reading of the game, and not measured: the Item Editor's catalog
+  (`hs_full_catalog.json`) lists 13, 15, 17 and 17 Heroic uniques of classes
+  0, 1, 2 and 4. Which of them `lootListUnique[5]` (380 entries, § 13.4) or
+  `[4]` holds is not established. ForgePact's `mark1probe pool` reads `[5]`
+  ([Phase 3 static reading](../ForgePact/docs/mark1-set-research.md#phase-3-static-reading)).
 - The Angelic roll keeps only rarity 7 or 10 (§ 13.4).
 - So of these three rolls only `DropItemHeroic` can drop a Heroic (9) unique.
   **Static reading** (2026-10-11).
