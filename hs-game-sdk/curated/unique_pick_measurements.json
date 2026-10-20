@@ -220,7 +220,7 @@
         {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "seven Heroic (9) and three Satanic (6), none Angelic or Unholy"}
       ],
       "scripts": ["gml_Script_DropItemHeroic", "gml_Script_GetUniqueRepoStruct", "gml_Script_CreateDefaultParams"],
-      "what": "#158 Live 1 (S14, research dll ef6af41d..., Town_01_rm), copied from flight_charms_measurements.json `heroic_route`: ten calls of DropItemHeroic by name, with the local player as self (not the vault or NPC the game's own callers use) and nothing pushed, placed ten items, seven Heroic (9) and three Satanic (6) uniques, none Angelic or Unholy, and no charm.",
+      "what": "#158 Live 1 (S14, research dll ef6af41d..., Town_01_rm), copied from flight_charms_measurements.json `heroic_route`: ten calls of DropItemHeroic by name, with the local player as self (which self the game's own callers, VaultUse and a Chaos Tower NPC, pass is not read) and nothing pushed, placed ten items, seven Heroic (9) and three Satanic (6) uniques, none Angelic or Unholy, and no charm.",
       "values": {"calls": 10, "placed": 10, "rarity_histogram": {"6": 3, "9": 7}, "charms": 0, "pushed": 0},
       "model": "The Heroic roll draws again until it keeps an entry, so every call places one item (placed = calls), and it keeps only entries whose rarity is neither 7 nor 10: both measured rarities, 6 and 9, pass heroic_keeps. Negative control: the Angelic roll's test (rarity 7 or 10) rejects every measured rarity. T_H is not measured, so this entry does not pin a share.",
       "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up14_heroic_route_by_name"
