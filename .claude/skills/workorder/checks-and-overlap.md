@@ -101,7 +101,12 @@ before the pull request.** A first verify and the items gate run `--dev`, a
 fix round after a verify that passed every other criterion runs the
 criteria the fix reaches plus the failed ones (`run_criteria.py
 --changed-since`), and both defer the whole suites and `(final)` criteria.
-The full set runs once at the final gate before the push (Step 5). The
+In a deferred suite's place each runs that suite's contract tests
+(`unittest discover -s <dir> -p "test_*contract*.py"`, when the directory
+has any), numbered after the plan's criteria as a development companion:
+in the first week after #485, 11 of 20 final gates failed, most on a whole
+suite first run there, and ForgePact's 59 contract files take 44 s. The
+full set runs once at the final gate before the push (Step 5). The
 conditions and fallbacks are in `SKILL.md` Step 3 and [`verify-mechanics.md`](verify-mechanics.md), "Re-verify what the fix
 reaches".
 

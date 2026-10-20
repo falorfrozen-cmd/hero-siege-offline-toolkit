@@ -209,6 +209,39 @@ class RecordTest(unittest.TestCase):
         merged = workorder_record.merge_state(old, workorder_record.state_entries("phase: pass\nround: 1\nlaunches: 2"))
         self.assertEqual([t for _, t in merged], ["round: 1", "phase: pass", "gates: none", "open defects: a\n  more", "launches: 2"])
 
+    def test_apply_prints_what_the_launch_came_back_with(self):
+        # #540: drivers wrote 68 inline scripts in a week to read run records.
+        path = self.save_run()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["result"].update({
+            "outcome": "AGENT-FAILED", "detail": "no result from: b: the implementer returned nothing",
+            "items": [{"id": "a", "status": "done", "reason": ""},
+                      {"id": "b", "status": "pending", "reason": ""},
+                      {"id": "c", "status": "parked", "reason": "owner: which token?"},
+                      {"id": "d", "status": "held", "reason": "after c, which is parked"}],
+            "blocking": [{"reviewer": "instrument-blindness-reviewer", "where": "x"}],
+            "unblocked": [{"id": "d", "reason": "after c", "route": "relaunch"}],
+        })
+        data["logs"] = ["[snapshot:r1] ok",
+                        "[item-implementer:b:a1:r1] failed: You've hit your session limit · resets 1:40pm (Europe/Warsaw)"]
+        path.write_text(json.dumps(data), encoding="utf-8")
+        code, out, err = self.apply("--run", str(path))
+        self.assertEqual(code, 0, err)
+        self.assertIn("outcome: AGENT-FAILED -- no result from: b: the implementer returned nothing", out)
+        self.assertIn("items: 1 done, 1 pending, 1 parked, 1 held", out)
+        self.assertIn("  c: parked -- owner: which token?", out)
+        self.assertNotIn("  a: done", out, "a done item is counted, not listed")
+        self.assertIn("unblocked: d (after c -> relaunch)", out)
+        self.assertIn("blocking: instrument-blindness-reviewer 1", out)
+        self.assertIn("session limit: 1 agent(s) stopped on it, resets 1:40pm (Europe/Warsaw)", out)
+
+    def test_no_session_limit_line_without_one_in_the_log(self):
+        path = self.save_run()
+        code, out, _ = self.apply("--run", str(path))
+        self.assertEqual(code, 0)
+        self.assertIn("outcome: PASS", out)
+        self.assertNotIn("session limit", out, "control: a clean run's log names no limit")
+
 
 if __name__ == "__main__":
     unittest.main()

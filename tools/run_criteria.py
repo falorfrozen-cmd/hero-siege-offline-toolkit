@@ -432,6 +432,46 @@ def develop(items: list) -> dict:
             for k, item in enumerate(items, 1)}
 
 
+# #540 (the /workorder audit's week one, 2026-10-20): 11 of 20 final gates
+# failed, most on a whole suite that first ran there -- a contract test pinning
+# the plugin source, broken by an item and caught one launch late. A scoped run
+# that defers a whole suite therefore runs that suite's contract tests in its
+# place: ForgePact's 59 `test_*contract*.py` files ran 1,554 tests in 44 s.
+# The owner's rule stands -- the whole suite still waits for the final gate --
+# and this is the "relevant subset" it asks development to run.
+CONTRACT_PATTERN = "test_*contract*.py"
+SUITE_DIR_RE = re.compile(r"\bunittest\s+discover\b.*?\s-s\s+(\"[^\"]+\"|'[^']+'|\S+)")
+
+
+def companions(items: list, scope: dict, root: Path) -> list:
+    """`[(text, k)]`: one development companion per distinct test directory
+    whose whole suite this scoped run deferred (scope `FINAL_REASON`), when
+    that directory holds contract tests. `text` is a criterion, `k` the
+    deferred criterion it stands in for. `(final)` criteria get none: their
+    author kept them for the final gate on purpose."""
+    out, seen = [], set()
+    for k, item in enumerate(items, 1):
+        if scope.get(k) != (False, FINAL_REASON) or FINAL_DECL_RE.search(item):
+            continue
+        for cmd in commands(item):
+            if classify(cmd) != "suite":
+                continue
+            m = ANY_CD_RE.match(cmd.strip())
+            prefix = m.group(0) if m else ""
+            cd = "/".join(d.strip("\"'").replace("\\", "/").removeprefix("./")
+                          for d in re.findall(r"cd\s+(\"[^\"]+\"|'[^']+'|\S+?)\s*(?:;|&&)", prefix))
+            s = SUITE_DIR_RE.search(cmd)
+            tests = s.group(1).strip("\"'").replace("\\", "/") if s else "tests"
+            where = (root / cd / tests) if cd else (root / tests)
+            if (cd, tests) in seen or not any(where.glob(CONTRACT_PATTERN)):
+                continue
+            seen.add((cd, tests))
+            run = f'{prefix}py -3 -m unittest discover -s {tests} -p "{CONTRACT_PATTERN}"'
+            out.append((f"`{run}` exits 0 (development companion of criterion {k}: the contract tests of "
+                        f"`{cd + '/' if cd else ''}{tests}`, run in place of its whole suite until the final gate)", k))
+    return out
+
+
 def _submodule_dirs(root: Path) -> list:
     """`.gitmodules` paths that are initialized checkouts, forward-slashed."""
     if not (root / ".gitmodules").is_file():
@@ -1584,9 +1624,17 @@ def _main(argv, starting) -> int:
         return 2
     gates = gates_set(text)
     root = checkout_root(plan)
-    if failed - set(range(1, len(items) + 1)):
-        print(f"run_criteria: --failed names no criterion of {len(items)}: "
-              f"{', '.join(str(k) for k in sorted(failed - set(range(1, len(items) + 1))))}", file=sys.stderr)
+    # A development companion is numbered after the plan's criteria; a reach
+    # run may name one in --failed, so its numbers are known before the check.
+    if (args.dev or scoped) and args.item is None:
+        extra = companions(items, develop(items), root)
+    else:
+        extra = []
+    plan_count = len(items)
+    if failed - set(range(1, plan_count + len(extra) + 1)):
+        print(f"run_criteria: --failed names no criterion of {plan_count + len(extra)}: "
+              f"{', '.join(str(k) for k in sorted(failed - set(range(1, plan_count + len(extra) + 1))))}",
+              file=sys.stderr)
         return 2
     scope = None
     if scoped:
@@ -1596,10 +1644,21 @@ def _main(argv, starting) -> int:
         else:
             changed, why = _read_changed_from(args.changed_from)
             source = f"per {args.changed_from}"
-        full, full_why, scope = select(items, changed, failed, contract_globs(text), why or "")
+        full, full_why, scope = select(items, changed, failed & set(range(1, plan_count + 1)),
+                                       contract_globs(text), why or "")
     elif args.dev:
         scoped, changed, full, full_why, source = True, None, False, "", "development verify"
         scope = develop(items)
+    if scope is not None and extra:
+        # Only a suite this run actually deferred gets its companion run; one
+        # out of reach, or a full fallback, leaves it unselected.
+        for i, (companion, k) in enumerate(extra, plan_count + 1):
+            if scope[k] == (False, FINAL_REASON) or i in failed:
+                scope[i] = (True, "failed last time (--failed)" if i in failed else
+                            f"contract tests standing in for criterion {k}'s whole suite")
+            else:
+                scope[i] = (False, f"criterion {k}'s whole suite is {'selected' if scope[k][0] else 'not selected'}")
+        items = items + [companion for companion, _ in extra]
     if args.list:
         # Runs nothing and writes nothing: no out dir, no status, no report.
         if scoped:

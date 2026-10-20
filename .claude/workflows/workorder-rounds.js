@@ -121,8 +121,15 @@ const TRIGGERS = {
 // they entered with ('blocking'). decompile-output-guard is replaced per
 // round by `tools/decompile_check.py`, which the implementer runs last; the
 // LLM guard stands in for a round whose check did not run, and runs at the
-// final gate when the branch touches `docs/` or a `.md`. Items mode keeps
-// its own per-commit reviewer passes.
+// final gate when the branch touches `docs/` or a `.md`.
+//
+// #540 (week one after #485, 2026-10-11 to 10-20): items mode, which ran
+// nearly every launch, had kept its per-commit passes for every reviewer:
+// decompile-output-guard 161 passes and 0 BLOCKING, docs-sync 180 and 14,
+// sdk-contract 111 and 8. So items mode defers the same reviewers, to its own
+// whole-tree gate (3b: once every item is done) as well as the final gate,
+// so a finding still becomes a fix item inside the launch. Between gates the
+// PostToolUse hook checks every edit for decompiled output.
 const PER_ROUND = new Set(['instrument-blindness-reviewer'])
 const DECOMPILE_CHECK = 'decompile-check' // the reviewer name a decompile_check.py hit is recorded under
 const docsTouched = paths => paths.some(p => /(^|\/)docs\//.test(p) || /\.md$/i.test(p))
@@ -1202,6 +1209,18 @@ const findingPath = where => {
   const m = w.match(/^`?([\w./\\-]+\.\w+)`?(?=$|[:\s§(,])/) || w.match(/`([\w./\\-]+\.\w+)`/)
   return m ? m[1].replace(/\\/g, '/').replace(/^\.\//, '') : null
 }
+// #540: a fix item is a patch, run by PATCH_IMPLEMENTER as rounds mode's
+// patch round is (2i), when every finding carries its reviewer's exact `fix`
+// at a path a patch may touch. Week one: 134 of 164 items-mode BLOCKING
+// findings carried one, and all 106 fix items ran `implementer` at high
+// effort. An instrument-blindness finding qualifies only on a `.md` (52 of
+// its 118 with a fix were documentation wording): what a hook sees in code
+// is never a matter of applying a stated edit. The reviewer still re-reads
+// the fix's commit before the finding closes.
+const patchableFix = findings => Array.isArray(findings) && findings.length > 0 && findings.every(f => {
+  const p = findingPath(f.where)
+  return typeof f.fix === 'string' && !!f.fix.trim() && !!p && !PATCH_EXCLUDED(p) && (!PATCH_NEVER.has(f.reviewer) || /\.md$/i.test(p))
+})
 // F10 (owner, 2026-10-11: share results "if it makes sense"): an item
 // implementer's own `--item` run goes to a fixed, gitignored directory under
 // `.rounds/`, so the item-verifier can hand it to `run_criteria.py --reuse`,
@@ -1275,6 +1294,7 @@ async function runItems(n) {
   })))
   const landed = [] // one entry per item or fix that committed: { id, paths, flags }
   const blocking = [], nonBlocking = [], planDefects = [], gateRuns = [], passLog = {}
+  const lost = [] // #540: work whose agent returned nothing; it goes back to pending
   let fixSeq = 0
   let streaming = !!A.streaming
   let refills = 0
@@ -1337,8 +1357,13 @@ async function runItems(n) {
       // this one starts from (a check retry, or a re-run after an amendment).
       s.stale = false
       const label = it.kind === 'item' ? `item-implementer:${it.id}:a${s.attempts}:r${n}` : `fix-implementer:${it.id}:r${n}`
-      const impl = await spawn(it.kind === 'item' ? itemPrompt(it, s) : fixPrompt(it, s), { label, phase: 'Implement', agentType: IMPLEMENTER, model: A.implementerModel || 'opus', schema: ITEM_IMPL_SCHEMA })
-      if (!impl) return { park: 'the implementer returned nothing' }
+      const agentType = it.kind === 'fix' && patchableFix(it.findings) ? PATCH_IMPLEMENTER : IMPLEMENTER
+      const impl = await spawn(it.kind === 'item' ? itemPrompt(it, s) : fixPrompt(it, s), { label, phase: 'Implement', agentType, model: A.implementerModel || 'opus', schema: ITEM_IMPL_SCHEMA })
+      // #540: an agent that returned nothing is lost, not failed -- in week
+      // one every one of them (19 of 19) had hit the account's session limit.
+      // The attempt is not charged and the item is not parked; the launch
+      // stops starting work and returns AGENT-FAILED for a relaunch.
+      if (!impl) return { lost: 'the implementer returned nothing' }
       if (impl.commits && impl.commits.length) {
         s.commits.push(...impl.commits)
         landed.push({ id: it.id, paths: impl.paths || [], flags: impl.flags || '' })
@@ -1352,7 +1377,7 @@ async function runItems(n) {
       s.committed = !!(impl.commits && impl.commits.length)
       if (it.kind !== 'item' || !it.checks.length) return { verdict: 'DONE' }
       const v = await spawn(checkPrompt(it, s), { label: `item-verifier:${it.id}:a${s.attempts}:r${n}`, phase: 'Verify', agentType: 'verifier', schema: VERIFIER_SCHEMA })
-      if (!v) return { park: 'the item-check verifier returned nothing' }
+      if (!v) return { lost: 'the item-check verifier returned nothing' }
       if (v.verdict === 'PASS' || v.verdict === 'PASS-PENDING-HUMAN') return { verdict: 'DONE', pending: v.pending_human || [] }
       const failedChecks = (v.criteria || []).filter(c => c.status === 'fail')
       s.evidence = failedChecks.map(c => `- FAILED ${c.criterion}: ${c.evidence}`).concat((v.other_defects || []).map(d => `- ${d}`)).join('\n') || `verdict ${v.verdict}`
@@ -1404,6 +1429,14 @@ async function runItems(n) {
     if (s.landedPaths && s.landedPaths.length) { markStale(it.id, s.landedPaths); s.landedPaths = [] }
     if (r && r.verdict === 'DONE' && s.stale) { repend(it.id); return }
     if (r && r.verdict === 'DONE') { s.status = 'done'; s.pending = r.pending || []; return }
+    if (r && r.lost) {
+      // Back in the queue, uncharged: the relaunch carries it from State's
+      // `items:` line, where it reads `pending`.
+      Object.assign(s, { status: 'pending', reason: '' })
+      s.attempts--
+      lost.push(`${it.id}: ${r.lost}`)
+      return
+    }
     s.status = 'parked'
     if (!r) { s.reason = 'the item threw'; return }
     if (r.park) { s.reason = r.park; s.evidence = r.evidence || s.evidence; return }
@@ -1482,10 +1515,18 @@ async function runItems(n) {
     paths: events.flatMap(e => e.paths), instrumentContent: events.some(e => /instrument/.test(e.flags)), sdkContent: events.some(e => /sdk/.test(e.flags)),
   })
   const inScope = (rv, paths) => !rv.scope || paths.some(p => (rv.scope.paths || []).some(g => pathsOverlap(g, p)))
+  // #540: a deferred reviewer (not PER_ROUND) that is not confirming a finding
+  // of its own waits for the gate -- nothing running and every item done --
+  // and then reads the whole change once, like the rounds' final gate.
+  const atGate = finalCatchUp => finalCatchUp && all.every(it => st[it.id].status === 'done')
   const reviewerDue = (rv, finalCatchUp) => {
     if (rv.running || rv.failed) return false
     if (rv.recheck) return true
     if (rv.seen >= landed.length) return false
+    if (!PER_ROUND.has(rv.name) && rv.state !== 'blocking' && !atGate(finalCatchUp)) return false
+    // Once clean at this launch's gate it does not re-read the fixes that land
+    // after it: the final gate before the pull request reads the whole change.
+    if (!PER_ROUND.has(rv.name) && rv.state === 'clean' && rv.passes > 0) { rv.seen = landed.length; return false }
     const fresh = landed.slice(rv.seen)
     const d = deltaOf(fresh)
     const wanted = rv.state === 'never' || rv.state === 'blocking' || ((TRIGGERS[rv.name] || (() => true))(d) && inScope(rv, d.paths))
@@ -1524,7 +1565,7 @@ async function runItems(n) {
     rv.running = false
     rv.passes++
     ;(passLog[rv.key] = passLog[rv.key] || { passes: 0, skipped: 0 }).passes++
-    if (!r) { rv.failed = true; return }
+    if (!r) { rv.failed = true; lost.push(`${rv.key}: the reviewer returned nothing`); return }
     rv.seen = upto
     const heads = headsMap(r.reviewed_heads)
     if (heads) rv.base = { ...(rv.base || {}), ...heads }
@@ -1602,7 +1643,9 @@ async function runItems(n) {
       else if (key.startsWith('review:')) settleReview(value || { rv: reviewers.find(x => `review:${x.key}` === key), r: null, upto: 0 })
       else if (key.startsWith('amend:')) settleAmendment(value || { it: all.find(x => `amend:${x.id}` === key), am: { confirmed: false, why: 'the amendment returned nothing' } })
       else settleRefill(value)
-      if (overCeiling()) stopping = true
+      // A lost agent is most likely the session limit, which every later
+      // spawn would hit too: start nothing more, let what runs finish.
+      if (overCeiling() || lost.length) stopping = true
     }
   }
 
@@ -1661,8 +1704,8 @@ async function runItems(n) {
     await drain()
     // The gate reads a finished tree: anything still pending here could not
     // be scheduled, and counts as held rather than as done.
-    for (const it of all) if (st[it.id].status === 'pending' && !overCeiling()) { st[it.id].status = 'held'; st[it.id].reason = planUnsafe ? `not started: ${planUnsafe}` : 'could not be scheduled' }
-    if (reviewers.some(rv => rv.failed)) return finish('AGENT-FAILED', { detail: `no result from: ${reviewers.filter(rv => rv.failed).map(rv => rv.key).join(', ')}` })
+    for (const it of all) if (st[it.id].status === 'pending' && !overCeiling() && !lost.length) { st[it.id].status = 'held'; st[it.id].reason = planUnsafe ? `not started: ${planUnsafe}` : 'could not be scheduled' }
+    if (lost.length) return finish('AGENT-FAILED', { detail: `no result from: ${lost.join('; ')}. Nothing was charged and the items are pending; if \`workorder_record.py apply\` reports a session limit, relaunch after its reset`, lost })
     if (overCeiling()) return finish('CEILING', { detail: `the launch spent ${agents} agents${A.tokenCeiling ? ` or ${A.tokenCeiling} output tokens` : ''}; relaunch to carry on from State's items: line` })
     if (lintFailure) return finish('PLAN-DEFECT', { detail: 'plan_lint refused the items the planner released; the refill stopped', lint: lintFailure })
     if (planDefects.length) return finish('PLAN-DEFECT', { detail: planDefects.map(p => `${p.reviewer}: ${p.summary}`).join(' || ') })
