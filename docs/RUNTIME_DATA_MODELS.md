@@ -1378,9 +1378,10 @@ Everything in this section is a **static reading** (ForgePact #230,
 2026-10-20) of game build 7.0.13.0: `Hero_Siege.exe` sha256
 `dab03f134327d9b682c67f1dc461822fb822a7e535009636624bb1454f498e2b`, and the
 Steam extension `bin\PAS_Steam_GMS_x64.dll` (127,488 bytes) sha256
-`c789ee5e5850e0d68c42a6d0b84876509eaea4f2ffab1ea9c35e71709c47b88f`. None of
-it is measured yet; ForgePact #230's Live 1 is planned to reproduce the crash
-and measure the route. The shortener's arithmetic, band by band, is written
+`c789ee5e5850e0d68c42a6d0b84876509eaea4f2ffab1ea9c35e71709c47b88f`, except
+the paragraph "Live 1", which is measured. Live 1 did not reach the
+shortener, so its failure bands below are still untested. The shortener's
+arithmetic, band by band, is written
 up as a spec in [`docs/models/number-compress-spec.md`](models/number-compress-spec.md)
 and modelled in `hs-game-sdk` from it.
 
@@ -1395,15 +1396,58 @@ and modelled in `hs-game-sdk` from it.
   argument and returns the text that the Steam extension's
   `SteamCompressNumber` export builds, called through the runtime's
   extension-call helper. The extension's id is referenced once in the exe's
-  code, inside `num_compressSteam`. The script has no direct call site, only
-  the binder's reference, so callers reach it through its method value, and
-  only an inline detour at the function's own address sees those calls
-  (§ 5.1). Whether anything else in the game calls the extension function is
-  not established.
+  code, inside `num_compressSteam`. Neither shortener script, nor the two
+  globals the binder stores them in, is called or read anywhere else in the
+  exe's code (byte scan for direct calls and references), so whatever reaches
+  `num_compressSteam` does so through a method value, and only an inline
+  detour at the function's own address sees those calls (§ 5.1). Whether
+  anything else in the game calls the extension function is not established.
 - `RealFormat` (3250) inserts thousands separators, built from the runner's
   string builtins (`string`, `string_format`, `string_pos`, `string_insert`
   and others) and `floor`; 42 direct call sites. How it behaves for very large
-  values (that is, how the runner's `string_format` does) is not established.
+  values (that is, how the runner's `string_format` does) is not established
+  statically; Live 1 below measured the DPS meter's use of it.
+
+**Every caller goes through the global `num_compress`** (static reading, a
+byte scan of the exe for references to the global, since the Ghidra
+project's caller and reference tables come back empty here, which is "not
+observed"):
+
+- `DefineGlobals` sets it up. The game code that reads it is
+  `DrawEnemyHealthBars`, `DrawHudCoop`, `DrawHudMobile`, a closure of
+  `Combat_Text_obj`, a closure of `DPS_Meter_obj`, and code belonging to
+  `Player_Death_Sequence_obj`, `Player_Talent_Tooltip_obj`, `Quest_Text_obj`
+  (`m_UpdateQuestRewards`), `UI_Button_Cost_obj` and `UI_Steam_Cloud_obj`.
+  Code is attributed to the nearest preceding named symbol, and the symbol
+  table names closures sparsely, so "code belonging to" an object is as
+  precise as this reading gets.
+- **Not established:** which script `num_compress` holds on the Steam PC
+  build (`num_compressSteam`, `num_compressGML`, or
+  `PS5_NumCompressGMLWrapper`). No write to it was found outside
+  `DefineGlobals`.
+
+**Three display options decide whether a number reaches it** (static
+reading):
+
+- `showDamage`: read by `enemyCollisionDamageParent`,
+  `enemyCollisionProjectile`, `sc_hurt` and the `Combat_Text_obj` closure.
+  The floating damage number for a hit on an enemy is created only while it
+  is on.
+- `combatTextCompress`: the `Combat_Text_obj` closure (which also reads
+  `textValue`, `textText`, `textCritSize` and calls the builtin `string`)
+  formats the number through `num_compress` only while it is on. What it
+  draws with the option off is not established.
+- `dpsMeterCompress`: the DPS meter's draw code (`DPS_Meter_obj`, 1357)
+  formats through `num_compress` while it is on and through `RealFormat`
+  otherwise. `UiADpsMeterCompress`, behind the meter's dropdown, flips it.
+- `SaveLocalSettings` writes all three and `OptionsReset` resets them; the
+  Gameplay options screen (`UI_Options_Gameplay_obj`) reads `showDamage` and
+  `combatTextCompress`. On disk they are the keys `show_damage`,
+  `combat_text_compress` and `dps_meter_compress` in the `[settings]`
+  section of the save directory's `shop.ini`
+  (`%LOCALAPPDATA%\Hero_Siege\hs2saves\shop.ini`; the key strings are in the
+  exe, and the file was read on a player's machine). That the game applies
+  the file at start is inferred from that save and load pair, not measured.
 
 **`SteamCompressNumber`: one double in, a pointer to an 8-byte static text
 out** (static reading of the DLL's export):
@@ -1449,12 +1493,36 @@ an unmodded character can put 1e14 on screen is not known.
 **`CombatText` and the floating number** (static reading, extends § 12):
 `CombatText` creates a `Combat_Text_obj` with `instance_create_layer` and
 sets `textText`, `textValue`, `textColor`, `textSize`, `setDestroy` and an
-alarm on it. **Not established:** which formatter turns a hit's damage into
-the floating number, and which one the DPS meter (`DPS_Meter_obj`, 1357)
-uses. A DPS meter sums hits over time and over projectiles, so its total
-would cross 1e14 well before a single hit does (not measured). ForgePact's
-`stat` on `CalculateEndDamage` scales the final per-hit damage (measured
-earlier), which is how its Modifiers reach these numbers.
+alarm on it. None of `CombatText`'s 28 direct call sites falls in the
+enemy-collision code, so whether a hit's number goes through `CombatText` or
+creates the object itself is not established; the formatting happens in
+`Combat_Text_obj` either way, through `num_compress` while
+`combatTextCompress` is on (above). A DPS meter sums hits over time and over
+projectiles, so its total would cross 1e14 well before a single hit does
+(not measured). ForgePact's `stat` on `CalculateEndDamage` scales the final
+per-hit damage (measured earlier), which is how its Modifiers reach these
+numbers.
+
+**Live 1** (measured, ForgePact #230, 2026-10-20, capture
+`forgepact-230-damage-crash-live-1`; a research build, the Act 1 town with
+training dummies, the Modifiers ramped from x11 to x1e12): the player's
+`shop.ini` had `show_damage` 0 and `dps_meter_compress` 0
+(`combat_text_compress` 1).
+
+- No floating damage number was drawn at any multiplier.
+- Debugger logging breakpoints on `num_compressSteam` and
+  `SteamCompressNumber` logged no call all session, while a control
+  breakpoint in the same session logged 792 hits and one on `RealFormat` 820
+  in a 20 s window. ForgePact's own inline hook on `num_compressSteam` (its
+  number guard, with a `CalculateEndDamage` trace as its control) counted no
+  call either, while `CalculateEndDamage` returned up to about 1.63e18 per
+  hit.
+- The DPS meter drew full digits (the `RealFormat` route) up to about
+  7.9e18 with the game alive, and both launches exited `0x00000000`.
+- **What it means:** with those options off, no `num_compress` consumer ran
+  and the shortener was out of reach. Its failure bands above are therefore
+  **untested, not refuted**. The run is a measured positive only for the
+  `RealFormat` route.
 
 ---
 
