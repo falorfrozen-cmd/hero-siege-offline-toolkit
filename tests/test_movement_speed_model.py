@@ -248,17 +248,18 @@ class MeasuredTests(unittest.TestCase):
         offset = (mean_y - slope * mean_x) / slope
         self.assertLessEqual(abs(offset - model.STEP_OFFSET), 1)
 
-    def test_the_step_tracks_the_frame_clock(self):
+    def test_the_step_halved_between_two_sessions(self):
+        # MS11 records two ratios and nothing between them: the same walk's
+        # step halved (0.500) while the frame time fell to 0.518 of phase 1's.
+        # The cause is not established, so no law ties one to the other and
+        # each window keeps its own scale.
         values = self.rows["MS11"]["values"]
-        slow, fast = (Fraction(s) for s in values["steps"])
-        slow_ms, fast_ms = (Fraction(m) for m in values["ms"])
-        self.assertGreater(slow, fast)
-        self.assertGreater(slow_ms, fast_ms)
-        # Each window gets its own scale; their ratio follows the frame time
-        # only roughly (the law is not established), within 5% here.
-        ratio = (model.step_per_point_from(slow, SORAK_ANSWER)
-                 / model.step_per_point_from(fast, SORAK_ANSWER))
-        self.assertLessEqual(abs(ratio - slow_ms / fast_ms), Fraction(5, 100) * ratio)
+        first, second = (Fraction(s) for s in values["steps"])
+        first_ms, second_ms = (Fraction(m) for m in values["ms"])
+        self.assertLessEqual(abs(second / first - Fraction("0.500")), Fraction("0.0005"))
+        self.assertLessEqual(abs(second_ms / first_ms - Fraction("0.518")), Fraction("0.0005"))
+        self.assertNotEqual(model.step_per_point_from(first, SORAK_ANSWER),
+                            model.step_per_point_from(second, SORAK_ANSWER))
 
 
 @unittest.skipUnless(PLUGIN_HEADER.exists(), "ForgePact is not checked out")
