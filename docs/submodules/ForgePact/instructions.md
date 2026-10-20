@@ -3730,6 +3730,35 @@ creates loot, forces node health or synthesizes player input.
 
 ### Local early-population capacity candidate (2026-09-21)
 
+**Armed by every raised population lever since 2.4.0 (ForgePact#232, 2026-10-20).**
+Until then nothing called `PreparePopulationCapacity()`, so the router below
+never ran in a player build, and modstate read `population.reason` "Not
+requested". Two player crashes at density 5 with Special Content at 100× faulted
+in `ac_dll_gm.dll!SetVariable` with handle -1, the full-store failure this
+section describes (hub `docs/RUNTIME_DATA_MODELS.md` § 5.8). `FrameCallback` now
+arms it once per process, after setup, while `PopulationCapacityWanted()` holds:
+density above 1, any Special Content multiplier (`g_ObjMult`), `enemyall` above
+1, or map reveal's spawn pass. Bank zero stays the game's own pool, and extra
+pools take only allocations it refuses. **Nothing caps or refuses a raised
+population.** The owner's rule (2026-10-20) is that a player who raises a lever
+gets the monsters and the frame-rate cost is theirs to choose, so do not add a
+headroom cap or a "holding back" guard to density or Special Content. The one
+existing capacity gate, on density copies while the spawn pass is on, is
+unchanged. `tests/test_population_capacity_arming.py` pins the arming, its
+single caller and the absence of a cap. **Live, 2026-10-20 (research build):**
+the router held about 1.09 M live records (823,541 in extra pools) at density 5,
+Special Content 100×, `enemyall` 10 and the spawn pass, with no crash and a
+clean close. That run also found a router defect, now fixed. A full native pool
+refuses only after scanning from its rewound cursor to the end, and asking every
+full pool on every allocation froze the game for 3.4–12.1 s at a time. Since
+the fix, a pool that refused is skipped until a free gives it room
+(`tests/population_full_bank.cpp`); afterwards no stall sample landed in a
+pool. Record: `ForgePact/docs/population-capacity.md` § "Live 1". Protected-key readers (`BossProbeKeyInRange`,
+`PackMarkers::KeyInRange`, `ChaosPillarTips::kStoreRecords`) still accept only
+keys below 262,144. A record the game puts in an overflow pool therefore reads
+as unreadable there: a pack marker stays and a pillar box shows, rather than the
+reader faulting.
+
 Read `ForgePact/docs/population-capacity.md` before modifying this candidate.
 The observed dense-map crash exhausted the native protected-variable store;
 pacing alone cannot increase its live capacity. The candidate pairs independent
@@ -3773,8 +3802,9 @@ and `test_map_reveal*.py`. Optional `FORGEPACT_POOL_TEST_DLL` enables the actual
 native-library harness; `FORGEPACT_MINHOOK_SOURCE` additionally tests real
 detours plus the production drop getter. No game process is involved. Native
 checks remain native; the memory-query wrapper provides caller stack space for
-the supported library's oversized query-buffer request. The candidate is local,
-not a release claim: map-entry/combat and mining acceptance remain live checks.
+the supported library's oversized query-buffer request. Map-entry, combat and
+mining acceptance remain live checks. The router ships armed from 2.4.0
+(above), but those checks are still owed.
 
 
 ## AFK FARM independent reward compatibility (local, 2026-09-22)

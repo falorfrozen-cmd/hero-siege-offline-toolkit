@@ -42,6 +42,14 @@ checkout's project directory (`$CLAUDE_CONFIG_DIR` or `~/.claude`, then
 `projects/<cwd with every non-alphanumeric character as '-'>`), else under
 every project.
 
+After writing, it prints what the launch came back with, so the driver routes
+from the summary instead of parsing the run record: the outcome and its
+detail, each item that is not done with its reason, the reviewers whose
+BLOCKING findings are still open, what waits on a person, and -- when an agent failed on the
+account's session limit -- that limit's reset time from the run's log. Week
+one after #485 (#540) counted 334 inline Python scripts in 43 driver
+sessions, 68 of them parsing run records by hand.
+
 Exit codes: 0 applied (or already applied); 2 usage; 3 no run record, or none
 carrying a `record` (a launch from before 2026-10-11, or one that failed
 before returning); 4 the record names another workorder than `--slug`, its
@@ -258,7 +266,56 @@ def load_record(path: Path) -> tuple:
         raise Fail(3, f"{path} carries no `record` (outcome {outcome or 'none'}): a launch from before "
                       "2026-10-11, or one that never returned; repair State and Log by hand from its `result`")
     run_id = str(data.get("runId") or path.stem)
-    return run_id, record, data.get("args") if isinstance(data.get("args"), dict) else {}
+    return run_id, record, data.get("args") if isinstance(data.get("args"), dict) else {}, result, data
+
+
+# `[label] failed: You've hit your session limit · resets 1:40pm (Europe/Warsaw)`,
+# as a run's `logs` record an agent the account's limit stopped.
+SESSION_LIMIT_RE = re.compile(r"session limit\W+resets\s+([^\n\]]+?)\s*$", re.I | re.M)
+
+
+def blocking_reviewers(state: str) -> list:
+    """The reviewers a State's `reviewers:` line lists as `blocking`
+    (`<name or key>: blocking[, ...]`, separated by `;`)."""
+    entry = next((t for k, t in state_entries(state) if k == "reviewers"), "")
+    parts = re.sub(r"^reviewers:\s*", "", entry, flags=re.I).replace("\n", " ").split(";")
+    return [m.group(1) for m in (re.match(r"\s*([\w@.-]+):\s*blocking(?![\w-])", x) for x in parts) if m]
+
+
+def summary(result: dict, data: dict, record: dict) -> list:
+    """The lines a driver routes from, read off the launch's `result` and
+    the run's `logs`; nothing here is judged, only reported."""
+    out = [f"outcome: {result.get('outcome')}" + (f" -- {result['detail']}" if result.get("detail") else "")]
+    items = [i for i in result.get("items") or [] if isinstance(i, dict)]
+    if items:
+        counts: dict = {}
+        for i in items:
+            counts[i.get("status")] = counts.get(i.get("status"), 0) + 1
+        out.append("items: " + ", ".join(f"{v} {k}" for k, v in counts.items()))
+        for i in items:
+            if i.get("status") != "done":
+                why = i.get("reason") or "-"
+                out.append(f"  {i.get('id')}: {i.get('status')} -- {why}" + (f"; replan: {i['replan']}" if i.get("replan") else ""))
+    for u in result.get("unblocked") or []:
+        out.append(f"unblocked: {u.get('id')} ({u.get('reason')} -> {u.get('route')})")
+    # Open, not ever raised: `result.blocking` only grows in items mode, and a
+    # finding closes when its reviewer re-reads clean. So the reviewers still
+    # open are the ones the launch's final State lists as `blocking`, plus a
+    # decompile_check.py hit in the last round (it has no reviewer state).
+    open_ = blocking_reviewers(record.get("state") or "")
+    rounds = [r for r in result.get("rounds") or [] if isinstance(r, dict)]
+    if rounds and any(isinstance(b, dict) and b.get("reviewer") == "decompile-check" for b in rounds[-1].get("blocking") or []):
+        open_.append("decompile-check")
+    if open_:
+        out.append("blocking open: " + ", ".join(open_))
+    for h in result.get("pending_human") or []:
+        out.append(f"pending human: {h}")
+    logs = "\n".join(x if isinstance(x, str) else json.dumps(x) for x in data.get("logs") or [])
+    resets = SESSION_LIMIT_RE.findall(logs)
+    if resets:
+        out.append(f"session limit: {len(resets)} agent(s) stopped on it, resets {resets[-1]}; "
+                   "relaunch after the reset (nothing was charged)")
+    return out
 
 
 def resolve(p: str, checkout: str) -> Path:
@@ -273,7 +330,7 @@ def apply(args) -> int:
     if args.latest and not args.slug:
         raise Fail(2, "--latest needs --slug")
     path = find_latest(args.slug, args.project_dir) if args.latest else find_run(args.run, args.project_dir)
-    run_id, record, run_args = load_record(path)
+    run_id, record, run_args, result, data = load_record(path)
     slug = record.get("slug")
     for who, other in (("--slug", args.slug), ("the run's own args", run_args.get("slug"))):
         if other and other != slug:
@@ -302,6 +359,8 @@ def apply(args) -> int:
     present = f"; already present: {', '.join(map(str, skipped))}" if skipped else ""
     where = str(plan) if single else f"{plan} + {context}"
     print(f"workorder_record: {slug} {run_id}: applied round(s) {done}{present} -> {where}")
+    for line in summary(result, data, record):
+        print(line)
     return 0
 
 

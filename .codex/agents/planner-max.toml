@@ -567,8 +567,10 @@ changes that can each be finished and checked on their own: the polish
 workorder's nine owner items, the ship workorder's eight finish-review fixes.
 The workflow gives each item its own implementer, starts it as soon as no
 running item holds its files, runs the item's `checks:` through an
-independent verifier the moment it is done, and commits it. Reviewers read
-each commit as it lands, and their findings become fix items at once. The
+independent verifier the moment it is done, and commits it.
+`instrument-blindness-reviewer` reads each commit as it lands; the other
+reviewers read the whole change once at the gate. Their findings become fix
+items at once. The
 `## Acceptance criteria` are the whole-tree gate, run once when nothing is
 left to run, as a development verify (`--dev`): every criterion but the whole
 suites and the `(final)` ones, which the final gate before the pull request

@@ -270,7 +270,10 @@ A workorder's first verify, and the items gate, run during development. Your
 dispatch then gives you `run_criteria.py <plan> --jobs auto --dev`: every
 criterion except a whole suite (`unittest discover`, `run_tests_parallel.py`,
 a bare `pytest`) and any marked `(final)`, which the runner prints as `NOT
-SELECTED (final gate only: ...)`. Run it exactly as step 2 says, in the
+SELECTED (final gate only: ...)`. In a deferred suite's place the runner
+adds a criterion of its own after the plan's, a `development companion` that
+runs that suite's contract tests: report it like any other criterion, with
+the number the runner printed. Run it exactly as step 2 says, in the
 background, and report each deferred criterion as `not-selected` with that
 reason, never `pass`. Skip step 3. The full set, suites included, runs once
 as the final gate before the pull request, from a dispatch with none of

@@ -33,6 +33,8 @@ import plan_lint  # noqa: E402
 import run_criteria  # noqa: E402
 import workorder_lock  # noqa: E402
 
+PY = Path(sys.executable).as_posix()
+
 
 CAPTURE = """# forgepact-x live 1
 
@@ -1525,6 +1527,58 @@ class ReachRunTests(TempDirMixin, unittest.TestCase):
         self.assertIn("scope: development verify: every criterion but the final-gate ones", out)
         self.assertIn(f"NOT SELECTED ({run_criteria.FINAL_REASON})", out)
         self.assertEqual(self.runner()[2], ["1", "2", "3", "4"], "control: the full run is the final gate")
+
+    def _suite_plan(self, final=False):
+        # The suite runs under this interpreter, written as a plan would: CI
+        # has no `py` launcher, and the companion reuses the suite's own.
+        # Mod's suite: a contract test (writes c) and an ordinary one (writes s).
+        tests = self.hub / "Mod" / "tests"
+        tests.mkdir(exist_ok=True)
+        body = ("import os, unittest\n"
+                "class T(unittest.TestCase):\n"
+                "    def test_it(self):\n"
+                "        with open(os.path.join(os.path.dirname(__file__), '..', '..', 'ran.txt'), 'a') as f:\n"
+                "            f.write('{}\\n')\n")
+        (tests / "test_a_contract.py").write_text(body.format("c"), encoding="utf-8")
+        (tests / "test_b.py").write_text(body.format("s"), encoding="utf-8")
+        text = self.plan.read_text(encoding="utf-8") + (
+            f"- [ ] (reads `Mod/**`) {'(final) ' if final else ''}`cd Mod && \"{PY}\" -m unittest discover -s tests` exits 0\n")
+        self.plan.write_text(text, encoding="utf-8")
+
+    def test_dev_runs_a_deferred_suites_contract_tests_in_its_place(self):
+        # #540: 11 of 20 final gates failed, most on a whole suite first run
+        # there. A development run keeps deferring the suite (the owner's
+        # rule) and runs its contract tests instead.
+        self._suite_plan()
+        rc, out, ran = self.runner("--dev")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(ran, ["1", "2", "3", "4", "c"], out)
+        self.assertIn("contract tests standing in for criterion 5's whole suite", out)
+        self.assertEqual(self.runner()[2], ["1", "2", "3", "4", "c", "s"], "control: the full run has the suite, no companion")
+
+    def test_a_reach_run_gives_a_companion_only_to_a_suite_it_deferred(self):
+        self._suite_plan()
+        self.git(self.hub / "Mod", "add", "-A")
+        self.git(self.hub / "Mod", "commit", "-q", "-m", "tests")
+        self.git(self.hub, "add", "-A")
+        self.git(self.hub, "commit", "-q", "-m", "pointer")
+        self.git(self.hub, "tag", "base2")
+        (self.hub / "docs" / "guide.md").write_text("g2\n", encoding="utf-8")
+        self.git(self.hub, "commit", "-q", "-am", "docs only")
+        self.assertEqual(self.runner("--changed-since", "base2")[2], ["3"], "Mod unchanged: no suite, no companion")
+        (self.hub / "Mod" / "py.txt").write_text("p2\n", encoding="utf-8")
+        self.git(self.hub / "Mod", "commit", "-q", "-am", "mod change")
+        self.assertEqual(self.runner("--changed-since", "base2")[2], ["2", "3", "c"])
+        rc, out, ran = self.runner("--changed-since", "base2", "--failed", "6")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("c", ran, "a failed companion is a criterion number --failed accepts")
+
+    def test_a_final_suite_and_a_suite_without_contract_tests_get_no_companion(self):
+        self._suite_plan(final=True)
+        self.assertEqual(self.runner("--dev")[2], ["1", "2", "3", "4"])
+        (self.hub / "Mod" / "tests" / "test_a_contract.py").unlink()
+        self.plan.write_text(self.plan.read_text(encoding="utf-8").replace("(final) ", ""), encoding="utf-8")
+        self.assertEqual(self.runner("--dev")[2], ["1", "2", "3", "4"])
 
     def test_usage_errors_exit_2(self):
         for argv in (["--dev", "--changed-since", "base"], ["--dev", "--item", "a"], ["--dev", "--failed", "1"],

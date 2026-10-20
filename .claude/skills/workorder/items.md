@@ -26,12 +26,25 @@ steps 2-4 run as one workflow launch with no rounds inside it
 - The moment an implementer returns, an independent `verifier` runs that
   item's `checks:` (`run_criteria.py --item <id>`). A failure sends the item
   back to a fresh implementer with the evidence, up to three attempts.
-- Reviewers read the commits as they land, each pinned to the `HEAD` it
-  started from, never the working tree. A reviewer re-runs when new commits
-  match its trigger, and its `BLOCKING` findings become a fix item at once,
-  on the files the findings name (or, with no path, run alone once the rest
-  are done). A reviewer may be split by screen or dimension with
-  `reviewScopes`, and its scopes run as separate reviewers.
+- `instrument-blindness-reviewer` reads the commits as they land, pinned to
+  the `HEAD` it started from, never the working tree, and re-runs when new
+  commits match its trigger. The other reviewers (docs-sync, sdk-contract,
+  tauri-command, decompile-output-guard) wait for the gate: once nothing
+  runs and every item is done, each reads the whole change once (one that
+  never read this workorder does so even when the launch landed nothing),
+  and one that comes back clean there does not re-read the fixes that land
+  after it (the final gate before the pull request reads the whole branch
+  again). A clean recheck before the gate does not count as that read. One
+  that enters `blocking` re-reads at once to confirm its own finding. Every
+  reviewer's `BLOCKING` findings become a fix item at once, on the files the
+  findings name (or, with no path, run alone once the rest are done). A
+  reviewer may be split by screen or dimension with `reviewScopes`, and its
+  scopes run as separate reviewers.
+- A fix item whose every finding carries the reviewer's exact `fix`, at a
+  path a patch may touch (not `ForgePact/plugin/`, a hook installer, a
+  `-research.md` or a release note), runs `implementer-medium`, as a rounds
+  patch does. An `instrument-blindness-reviewer` finding qualifies only on a
+  `.md`. Any other fix runs the triaged implementer.
 - A build is never trusted past a later commit on what it reads. An item
   whose `build`/`exclusive` checks declare `(reads ...)` (`plan_lint.py
   --items-json` hands the workflow their globs as `build_reads`; a build
@@ -136,7 +149,10 @@ no `items` runs in rounds (`SKILL.md` "Driver discipline").
 A plan of items returns `PASS`, `PASS-PENDING-HUMAN`, `PARKED`, `PLAN-DEFECT`
 (a reviewer's plan defect, the gate's unrunnable criterion, or a refill that
 `plan_lint` refused), `CEILING`, `CAP` (the gate failed three times),
-`AGENT-FAILED`, always with `items:` beside
+`AGENT-FAILED` (an agent returned nothing: in week one after #485 every
+such agent had hit the account's session limit, so the launch starts
+nothing more, lets what runs finish, and puts the lost work back to
+`pending`, its attempt uncharged), always with `items:` beside
 it (each item's `id`, `status`, `reason`, `attempts`, `commits`, `evidence`
 and `progress`, and `replan` when an amendment was tried and did not hold)
 and `gate:` (each gate run). It also carries `defaulted` (each owner item
@@ -149,9 +165,10 @@ entry is `### Round <n> (items)`, with `unblocked:`, `defaulted (k):` and
 `amendments (k):` lines when they apply, and State gains `items:
 <id>=<status>; ...`, where an item done on its default reads `defaulted`.
 
-Items mode keeps its own reviewer passes on every landed commit, all
-reviewers included (the yield rule in `SKILL.md` Step 3 is for rounds), and
-still spends one haiku agent on the launch's snapshot and one per `refill`
+Items mode applies the yield rule in `SKILL.md` Step 3 at its own gate
+(above). Until #540 it ran every reviewer on every landed batch: in its
+first week, decompile-output-guard made 161 passes with no BLOCKING finding,
+docs-sync 180 passes with 14 and sdk-contract 111 with 8. It still spends one haiku agent on the launch's snapshot and one per `refill`
 poll and per amendment command. Each item's checks run twice, by its
 implementer and by an independent item-verifier; the verifier passes
 `--reuse` with the implementer's own run
