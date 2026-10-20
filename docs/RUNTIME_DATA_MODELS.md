@@ -488,7 +488,11 @@ active) — **measured** by read-only memory inspection.
     cursor back to a freed record below it, so a -1 means every record really
     is live, not that the cursor ran past free ones. Nothing on the game's side
     checks the -1. **Measured** from the dumps and the exported functions'
-    machine code. What filled the store (live monsters or records that outlive
+    machine code. A consequence, **measured live** on 2026-10-20: a full
+    pool does not refuse cheaply. After any free the next refusal scans
+    from that record to the end of the table, so asking a full pool on every
+    allocation stalled the frame thread inside that scan for seconds at a time
+    ([population capacity, Live 1](../ForgePact/docs/population-capacity.md#live-1-2026-10-20-research-build-slot-14-lease-forgepact-232-pool-capacity-live-1)). What filled the store (live monsters or records that outlive
     them) is **not established**, because the minidumps do not include the
     store's memory. ForgePact's capacity router answers it from 2.4.0
     ([ForgePact#232](https://github.com/falorfrozen-cmd/ForgePact/issues/232)).

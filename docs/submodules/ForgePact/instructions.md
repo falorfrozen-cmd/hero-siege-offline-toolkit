@@ -3700,8 +3700,15 @@ gets the monsters and the frame-rate cost is theirs to choose, so do not add a
 headroom cap or a "holding back" guard to density or Special Content. The one
 existing capacity gate, on density copies while the spawn pass is on, is
 unchanged. `tests/test_population_capacity_arming.py` pins the arming, its
-single caller and the absence of a cap. Live confirmation at those settings is
-pending. Protected-key readers (`BossProbeKeyInRange`,
+single caller and the absence of a cap. **Live, 2026-10-20 (research build):**
+the router held about 1.09 M live records (823,541 in extra pools) at density 5,
+Special Content 100×, `enemyall` 10 and the spawn pass, with no crash and a
+clean close. That run also found a router defect, now fixed. A full native pool
+refuses only after scanning from its rewound cursor to the end, and asking every
+full pool on every allocation froze the game for 3.4–12.1 s at a time. Since
+the fix, a pool that refused is skipped until a free gives it room
+(`tests/population_full_bank.cpp`); afterwards no stall sample landed in a
+pool. Record: `ForgePact/docs/population-capacity.md` § "Live 1". Protected-key readers (`BossProbeKeyInRange`,
 `PackMarkers::KeyInRange`, `ChaosPillarTips::kStoreRecords`) still accept only
 keys below 262,144. A record the game puts in an overflow pool therefore reads
 as unreadable there: a pack marker stays and a pillar box shows, rather than the
