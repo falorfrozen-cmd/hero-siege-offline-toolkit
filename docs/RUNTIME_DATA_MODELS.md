@@ -1382,8 +1382,10 @@ Steam extension `bin\PAS_Steam_GMS_x64.dll` (127,488 bytes) sha256
 the paragraphs "Live 1" and "Live 2" and the claims marked measured, which
 are measured. Live 1 did not reach the shortener; Live 2 (capture
 `forgepact-230-damage-crash-live-2`, 2026-10-20) did, and measured the
-positive failure band's lower edge (between 9.9999e13, which passed, and
-about 1.025e14, which ended the game) and the crash's dump. The rest of the
+positive failure band's lower edge to within (9.9999e13, 1e15): 9.9999e13
+passed, and the value that ended the game was at least 1.025e14 and below
+1e15 (the trace writes one line per decade). That the limit is exactly 1e14
+is the static reading. It also recorded the crash's dump. The rest of the
 positive band, the NaN and negative bands, the 32-bit overflow and the
 8-character texts are still static readings. The shortener's arithmetic,
 band by band, is written
@@ -1490,10 +1492,14 @@ out** (static reading of the DLL's export):
   and so does +inf); or the value is negative and the whole part of its
   magnitude has seven or more digits, that is x ≤ −1e6 (seven digits plus
   the sign; −inf overflows the same way). Every other value fits. The
-  positive band's lower edge is **measured** (Live 2, below): the game ended
-  on the first traced value of 1e14 or more (about 1.025e14), after every
-  smaller traced one had passed, and 99,999,000,000,000 (9.9999e13) passed
-  29,990 times, so the edge lies in (9.9999e13, 1.025e14]. The band above
+  positive band's lower edge is **measured** only to a bracket (Live 2,
+  below): 99,999,000,000,000 (9.9999e13) passed 29,990 times, and the last
+  traced value before the game ended was about 1.025e14, the first value of
+  its decade. The trace writes one line per new decade, so later values in
+  [1.025e14, 1e15) went in untraced, and the value that ended the game is
+  only known to be at least 1.025e14 and below 1e15. The edge therefore lies
+  in (9.9999e13, 1e15) measured; that it is exactly 1e14 is the static
+  reading above. The band above
   that edge, the NaN and negative bands and the 32-bit overflow are not
   observed (no such value ran uncapped).
 - **The terminator.** A shortened text is digits(q) + 2 characters with a
@@ -1573,9 +1579,13 @@ launch `dps_meter_compress` 1 as well):
   `num_compressSteam` (one line per new decade) were, in order, 2,915,427
   up to 15,038,794,170,000 (about 1.5e13, the largest traced value that
   passed), then 102,480,421,310,000 (about 1.025e14), the last line before
-  the end. No negative value was traced. With the second launch's capped
-  value (below), which passed at 9.9999e13, the limit lies in (9.9999e13,
-  1.025e14], which fits the reading's 1e14.
+  the end. That is the first value of its decade, not necessarily the value
+  the game ended on: values later in the same decade write no line, so the
+  fatal value was at least 1.025e14 and below 1e15. No negative value was
+  traced. With the second launch's capped value (below), which passed at
+  9.9999e13, the limit lies in (9.9999e13, 1e15) as measured, which fits the
+  reading's 1e14; pinning it tighter needs a trace of every value at or
+  above 1e13, a later session's work.
 - **The cap holding.** In the second launch, with the cap automatic, the
   guard was not armed before any lever and armed with the reporter's
   settings. Ramped to Total Damage x1e12, the hook saw values up to about
@@ -3855,7 +3865,7 @@ All **measured** unless marked.
 | `EnemyGiveExperience` with no argument | crash | §22.8 |
 | A parsed struct held only in C++ `RValue`s across frames | freed by the runner's GC; the next frame crashes | §22.8, §5.9 |
 | `WM_CLOSE` to YYToolkit's console window | the game ends with 0xC000013A, no normal save | §22.5 |
-| A number of 100 trillion (1e14) or more, NaN, or a negative of a million or more handed to `num_compressSteam` (its `SteamCompressNumber` text does not fit 8 bytes) | the game ends with `0xC0000409`, fast fail 8 raised in `PAS_Steam_GMS_x64.dll`, which no in-process handler sees (**measured** for a positive value, ForgePact #230 Live 2, 2026-10-20, capture `forgepact-230-damage-crash-live-2`: the game ended on a traced 1.025e14 after 1.5e13 passed, dump `code=0xc0000409 subcode=8 raised-in=PAS_Steam_GMS_x64`; NaN and the negative band a **static reading**) | §8.7 |
+| A number of 100 trillion (1e14) or more, NaN, or a negative of a million or more handed to `num_compressSteam` (its `SteamCompressNumber` text does not fit 8 bytes) | the game ends with `0xC0000409`, fast fail 8 raised in `PAS_Steam_GMS_x64.dll`, which no in-process handler sees (**measured** for a positive value, ForgePact #230 Live 2, 2026-10-20, capture `forgepact-230-damage-crash-live-2`: 9.9999e13 passed, and the game ended after a traced 1.025e14, the first value of its decade (one trace line per decade), so the fatal value was at least 1.025e14 and below 1e15; the exact 1e14 limit is the static reading; dump `code=0xc0000409 subcode=8 raised-in=PAS_Steam_GMS_x64`; NaN and the negative band a **static reading**) | §8.7 |
 | A ground monster's path search while the hero is sealed in | about 20 s at 3 fps for a 20-monster wave; `pathFailed = true` avoids it | §22.7 |
 
 ---
