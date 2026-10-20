@@ -2895,10 +2895,12 @@ The data tables in this section are also in
   for type 43. The two disagree; not resolved.
 - `Enemy_Parent_obj`'s Destroy calls `DropItem` only when the protected HP is 0
   or less. **Static reading.**
-- A kill reaches `DropUniqueItems` only through drop type 45. Its ordinary
-  uniques come from `DropItem`'s own draw on
-  `lootListUnique[LoadSatanicDropTier's answer]`, which runs without
-  `LoadDrops` (§ 13.12). **Static reading** (2026-10-20, ForgePact #166).
+- The only direct call of `DropUniqueItems` found is drop type 45's;
+  indirect calls were not scanned. A kill's ordinary uniques can come from
+  `DropItem`'s own draw on `lootListUnique[LoadSatanicDropTier's answer]`,
+  which runs without `LoadDrops` (§ 13.12); that they do is an inference
+  until ForgePact's Mod live procedure 7 measures it. **Static reading**
+  (2026-10-20, ForgePact #166).
 - A boss kill rolls its part several times. Karp King in Act_01_01 dropped:
   - 11 bellybuttons in 15 kills at the vanilla base of 27;
   - 36 in 12 kills at base 5.4;
@@ -3646,8 +3648,10 @@ the order and shape of calls, paraphrased; no listing is reproduced here.
   45 inside `LoadDrops` holds the only direct call of `DropUniqueItems`
   (1424). It calls `DropItemAngelicChance` (1368) once (§ 13.4). **Static
   reading** (2026-10-20, ForgePact #166).
-- So a kill reaches `DropUniqueItems` only through drop type 45, and a kill's
-  ordinary uniques can come from `DropItem`'s own draw without it. Live 3's
+- So a kill reaches `DropUniqueItems` directly only through drop type 45
+  (calls through the script table or a method value were not scanned), and
+  a kill's ordinary uniques can come from `DropItem`'s own draw without it.
+  Live 3's
   four natural uniques with `DropUniqueItems` flat fit that; that they came
   from this draw is an inference until ForgePact's Mod live procedure 7
   measures it. **Static reading** (2026-10-20, ForgePact #166).
@@ -7907,11 +7911,11 @@ not observed, not absent.
   destructibles and piles reach `DropItem` too (§ 13.1, § 13.6), so they
   reach the same roll; that is an inference. **Static reading** (2026-10-20,
   the kill route), with type 45's meaning **measured**.
-- That route is the only one from a kill to `DropUniqueItems`, and it is not
-  where a kill's ordinary uniques come from: `DropItem` draws a unique
-  itself, from `lootListUnique[k]` with k from `LoadSatanicDropTier`, and
-  builds it without `LoadDrops` (§ 13.12). **Static reading** (2026-10-20,
-  ForgePact #166).
+- That route holds the only direct call from a kill to `DropUniqueItems`
+  (§ 13.12). In ForgePact's Mark 1 drops Live 3 (2026-10-20), four natural
+  uniques dropped from kills with `DropUniqueItems` not entered
+  (**measured**, one session, not observed). That `DropItem`'s own draw
+  built them is an inference (§ 13.12).
 - `DropUniqueItems` (1424), decompiled again: it picks the sub-list k from 0
   to 4 by a zone value with random step-ups, draws one random index of
   `Controller_obj.lootListUnique[k]`, looks the entry up in
