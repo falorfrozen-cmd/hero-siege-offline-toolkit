@@ -18,7 +18,10 @@ differently.
 ForgePact#166 (hub #518) added a third roll, the Heroic roll
 (`DropItemHeroic`), for the Mark 1 set: with the "Mark 1 drops" switch on, each
 of the four Mark 1 pieces joins that roll with one entry's share, the way the
-flight charms join the Angelic roll.
+flight charms join the Angelic roll. On the owner's 2026-10-20 route the
+pieces also drop from ordinary kills, the way the game's own set items do: the
+same switch pushes them onto the ordinary unique roll (`DropUniqueItems`), the
+kill route, beside Pocket Elf.
 
 It was written from the shared references only:
 [`docs/RUNTIME_DATA_MODELS.md`](../RUNTIME_DATA_MODELS.md) (RDM) § 13.4, § 23.4
@@ -97,6 +100,24 @@ Every claim carries one of four labels, and a source:
     die per entry.
   - So one call drops a given entry listed r times in sub-list k with chance
     r / L_k, and drops anything at all with chance D_k / L_k.
+- **A kill reaches the ordinary unique roll through drop type 45** (RDM
+  § 13.1 and § 23.4). An enemy's Destroy event calls `DropItem`, which calls
+  `LoadDrops` (§ 13.1, static reading). Drop type 45 is "a unique item"
+  (§ 13.1, measured on 2026-08-27 by opening every gate on one monster), and
+  `LoadDrops` calls `DropUniqueItems` (§ 23.4, static reading of
+  2026-10-11). Chests, goblins, destructibles and piles reach `DropItem` too
+  (§ 13.1), so whatever joins the ordinary roll can come from those as well;
+  that is an inference, not a reading of each.
+- **Set items are Satanic uniques of that roll's lists** (RDM § 23.4). The
+  roll was read again on 2026-10-20 for ForgePact#166: one draw from
+  `lootListUnique[k]`, kept when the repository rarity is below 7 and the
+  entry is not hidden, and no branch for set items (static reading). A game
+  set piece, Sacred Pendant, came out of the unique repository at rarity 6
+  (Satanic) when the Heroic roll was called by name (measured, ForgePact#166
+  Live 1), and every one of the 218 kept entries on `lootListUnique[4]` is
+  rarity 6 (measured, same session). The ordinary roll keeps every rarity
+  below 7, so a set piece that sits on one of lists 0 to 4 drops through it
+  with one entry's share, like any other unique there.
 - **The two rolls read different sub-lists.** The Angelic roll reads index 5;
   the ordinary unique roll reads 0 to 4. Other routines read the same lists
   (RDM § 13.4, "Other readers of the list"), which is why ForgePact takes its
@@ -248,8 +269,47 @@ input transforms, and pins them to ForgePact's source.
     has no stand-in there, and that piece is not pushed; the others still are.
   - c is a `constexpr` 1 in the player build (`g_Mark1DropCopies`); only the
     research build's copies lever changes it.
-  - Mark 1 pushes nothing inside the Angelic or the ordinary roll, and #74's
-    items and the flight charms push nothing inside the Heroic roll.
+  - Mark 1 pushes nothing inside the Angelic roll, and #74's items and the
+    flight charms push nothing inside the Heroic roll. On the ordinary roll
+    Mark 1 pushes too, by the kill route below.
+- **Mark 1's push onto the ordinary roll, the kill route** (ForgePact#166,
+  the owner's 2026-10-20 route, `Mark1Drops.hpp` and the shared
+  `DropUniqueItems` detour in ForgePact's `ModuleMain.cpp`). While the "Mark 1
+  drops" switch is on, for the length of one `DropUniqueItems` call,
+  ForgePact adds c copies of one stand-in entry per Mark 1 piece onto each of
+  `lootListUnique[0]` to `[4]`, beside Pocket Elf's, and takes them off the
+  tail after the call.
+  - The ordinary roll keeps only rarities below 7, so the Heroic route's
+    rarity-9 stand-ins would be refused there. A kill-route stand-in is a
+    triple of the piece's own class that the ordinary roll keeps (a Satanic
+    one, as the lists hold) and that each of the five sub-lists holds the same
+    number of times n: the equal-count rule Pocket Elf's stand-in follows,
+    because the roll cannot say which sub-list it read, so the coin is exact
+    only when n is the same on all five. n = 0 is preferred, then the smaller
+    n, ties by the lowest sub-type and base. A class with no such triple has
+    no stand-in on the kill route; the other pieces still drop, and the
+    Heroic route is untouched.
+  - The coin is the same: a hit whose whole triple is a pushed stand-in's goes
+    to that piece with probability c / (n + c), and the record is rewritten to
+    the piece's definition. Pocket Elf's stand-in is a charm (type 10) and
+    the pieces' types are 0, 1, 2 and 4, so one hit never matches both.
+  - One detour on `DropUniqueItems` serves both features; each pushes its
+    entries only with its own switch on. With the Mark 1 switch off the
+    ordinary roll behaves exactly as it did with Pocket Elf alone.
+- **What that gives on the ordinary roll** (arithmetic on the readings above,
+  not measured; the model's `kill_share`):
+  - With p entries pushed onto list k in all (the pieces' and any other
+    mod's), each piece is c / (L_k + p) of the calls that read list k, each
+    stand-in keeps n / (L_k + p), and each of the game's own entries is
+    1 / (L_k + p) per listing. A call that draws an entry the roll refuses
+    still drops nothing, as before.
+  - With all four pieces at c copies, p = 4c, so each piece is
+    c / (L_k + 4c); with Pocket Elf's e copies too, c / (L_k + 4c + e).
+  - At c = 1 with the measured lengths of 50, 61, 79, 152 and 221 (Measured),
+    each piece is between 1 call in 225 and 1 in 54 of list k's calls: the
+    share of any single unique listed once on that list, which is what a set
+    piece listed there gets. Per kill it is that times the chance that the
+    kill runs drop type 45, which is not established.
 - **Mark 1's coin and rewrite.** A hit whose whole triple is a pushed
   stand-in's goes to that piece with probability c / (n + c), the same coin
   as above, and otherwise stays the game's own. The record is then rewritten
@@ -305,6 +365,15 @@ input transforms, and pins them to ForgePact's source.
   not a reading of the game's list.
 - **How often a player opens a vault or uses that NPC**, so how often the
   Heroic roll runs in play.
+- **How often a kill runs drop type 45**, so how often a kill reaches the
+  ordinary unique roll. Its gate (RDM § 13.1) was neither read nor measured
+  for type 45, so the kill route's shares are per call, not per kill.
+- **k's distribution** on the kill route, as above: which sub-list a call
+  reads is not measured, so a piece's share is given for each list.
+- **Which lists hold set items**, Sacred's and Zealot's Prophecy's pieces
+  among them, and so whether each piece class has a kill-route stand-in with
+  the same n on all five lists. ForgePact#166's Live procedure 2
+  (`pool-kill`) reads it.
 
 ## The model
 
@@ -324,6 +393,11 @@ It is not exported from `hs_game_sdk/__init__.py`, which the SDK generator owns.
 - **The Heroic share** (`heroic_share`): an entry's share of the Heroic roll's
   drops is its copies over the entries the roll keeps, r / T_H. The test
   passes T_H + e and the pushed copies in as transforms.
+- **The kill share** (`kill_share`): a pushed item's share of one ordinary
+  unique-roll call on sub-list k, c / (L_k + p), with p the entries pushed onto
+  that list in all; c / (L_k + p + 1) when the index can reach the length. It
+  is the one draw over the lengthened list; the test checks that the push and
+  the coin give the same number for any n.
 - **Agreement with a count**: the binomial helpers come from
   [`drop_roll_model`](../../hs-game-sdk/python/hs_game_sdk/drop_roll_model.py)
   (`binomial_band`, `observation_within`), imported and not copied.
@@ -346,6 +420,13 @@ every call placed one item, and every rarity measured is one the Heroic test
 keeps. Their negative control is the Angelic test, which rejects every one of
 those rarities.
 
+For the kill route the baseline (the switch off) is no piece and every entry
+of list k at 1 / L_k, and Pocket Elf alone unchanged at c / (L_k + c). The
+target is each piece at c / (L_k + 4c), and c / (L_k + 4c + e) with Pocket Elf
+on too, the shares and the empty draws adding up to every call. The measured
+lengths give each piece between 1 in 225 and 1 in 54 at c = 1. k and how often
+a kill runs drop type 45 stay parameters.
+
 ## What the model cannot catch
 
 - **Whether a hook attaches.** The push, the typing and the rewrite need inline
@@ -359,5 +440,6 @@ those rarities.
   and whether successive picks are independent, are a live question.
 - **How a rate feels in play.** One entry's share is a rate per roll; how often
   a player sees a charm also depends on how often each roll runs, which the
-  model does not cover. For the Mark 1 pieces that is how often a player opens
-  a vault, which no session has measured.
+  model does not cover. For the Mark 1 pieces that is how often a kill runs
+  drop type 45, and how often a player opens a vault, neither of which any
+  session has measured.

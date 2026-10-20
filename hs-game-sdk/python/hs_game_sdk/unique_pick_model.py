@@ -16,7 +16,9 @@ Three rolls draw from `Controller_obj.lootListUnique`, an array of six lists of
   makes one draw. It keeps an entry whose rarity is below 7 and that is not
   flagged hidden; anything else drops nothing, with no second draw. So one call
   drops an entry listed r times in a list of L entries with chance r / L, and
-  drops anything with chance D / L, D the entries it keeps.
+  drops anything with chance D / L, D the entries it keeps. A kill reaches it
+  through drop type 45; with p entries added to the list for one call, an
+  item with c of them comes out c / (L + p) of the time (`kill_share`).
 - The Heroic roll (`DropItemHeroic`) reads the list its index argument names,
   5 when that is undefined, and draws again until it keeps an entry: not
   flagged hidden, and of any rarity but 7 and 10. So an entry listed r times
@@ -150,3 +152,25 @@ def ordinary_drop_chance(droppable: int, length: int, *, index_can_reach_length:
     if droppable > length:
         raise ValueError("a list cannot keep more entries than it holds")
     return Fraction(droppable, draws)
+
+
+def kill_share(copies: int, length: int, pushed: int, *, index_can_reach_length: bool = False) -> Fraction:
+    """An item's share of one ordinary unique-roll call on a list already
+    chosen, while extra entries sit on that list: c / (L + p).
+
+    `copies` (c) is how many of the entries on the list are the item's,
+    `length` (L) the list's own length, and `pushed` (p) every entry added to
+    it for that call, those c included. The roll's one draw reads the
+    lengthened list, so the item comes out with c / (L + p), each entry the
+    game listed once with 1 / (L + p), and a draw of an entry the roll refuses
+    still drops nothing. With `index_can_reach_length`, c / (L + p + 1), as
+    for `ordinary_pick_chance`. Which list a call reads, and how often a kill
+    runs the roll, are not modelled here.
+    """
+    _check_count("copies", copies)
+    _check_count("length", length)
+    _check_count("pushed", pushed)
+    if copies > pushed:
+        raise ValueError("an item cannot have more entries on the list than were pushed onto it")
+    draws = _ordinary_draws(length + pushed, index_can_reach_length)
+    return Fraction(copies, draws)

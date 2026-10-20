@@ -4,7 +4,9 @@ against numbers ForgePact already measured (ForgePact#158, hub #500).
 `hs_game_sdk.unique_pick_model` models the game only: the Angelic roll's
 re-drawing pick, the ordinary unique roll's one draw, and the Heroic roll's
 re-drawing pick (`DropItemHeroic`, added for the Mark 1 pieces of ForgePact#166,
-hub #518; the `test_heroic_*` and `test_up14_*` tests). ForgePact's levers
+hub #518; the `test_heroic_*` and `test_up14_*` tests). The Mark 1 pieces join
+the ordinary unique roll too, the kill route (`kill_share`, the `test_kill_*`
+tests). ForgePact's levers
 (the stand-in entries pushed for the length of one roll, and the coin that
 hands a stand-in hit to the mod's item) are our own code, so they are written
 here as input transforms and never enter the SDK. `LeverParityTests` pins these
@@ -96,7 +98,9 @@ def pushed(list_index, switched_on, copies=PLAYER_COPIES):
     if list_index == model.ANGELIC_LIST_INDEX:
         owners = ANGELIC_ITEMS
     elif list_index in model.UNIQUE_SUB_LISTS:
-        owners = ORDINARY_ITEMS
+        # Pocket Elf and, on the kill route, each Mark 1 piece that has a
+        # stand-in there (`MARK1_PIECES`, below).
+        owners = ORDINARY_ITEMS + MARK1_PIECES
     else:
         return 0
     return sum(copies for item in switched_on if item in owners)
@@ -155,6 +159,35 @@ def piece_heroic_share(droppable, n, c, e):
 def stand_in_heroic_share(droppable, n, c, e):
     """What a piece's stand-in itself keeps of the Heroic roll's drops."""
     return model.heroic_share(n + c, droppable + e) * (1 - coin(n, c))
+
+
+# The kill route (#166, the owner's 2026-10-20 route): with the switch on, one
+# stand-in per piece that has one is pushed onto each of the ordinary roll's
+# lists for the length of one `DropUniqueItems` call, beside Pocket Elf's, in
+# the one detour both features share. Each feature pushes only with its own
+# switch on.
+def kill_pushed(drops_on, elf_on=False, resolved=MARK1_PIECES, copies=PLAYER_COPIES,
+                elf_copies=PLAYER_COPIES):
+    """p for one ordinary unique-roll call: what `pushed` gives on one of
+    lists 0..4 for the switched-on items, the pieces at `copies` each and
+    Pocket Elf at `elf_copies`."""
+    pieces = pushed(0, resolved if drops_on else (), copies=copies)
+    elf =pushed(0, ORDINARY_ITEMS if elf_on else (), copies=elf_copies)
+    return pieces + elf
+
+
+def piece_kill_share(length, n, c, p, **kwargs):
+    """A pushed piece's share of one ordinary unique-roll call on a list of
+    `length`: its stand-in triple is drawn with (n + c) / (L_k + p), and the
+    coin hands c / (n + c) of that over."""
+    if c == 0:
+        return Fraction(0)
+    return model.ordinary_pick_chance(n + c, length + p, **kwargs) * coin(n, c)
+
+
+def stand_in_kill_share(length, n, c, p, **kwargs):
+    """What a piece's kill-route stand-in itself keeps of those calls."""
+    return model.ordinary_pick_chance(n + c, length + p, **kwargs) * (1 - coin(n, c))
 
 
 class BaselineTests(unittest.TestCase):
@@ -293,6 +326,53 @@ class BaselineTests(unittest.TestCase):
                 call()
         self.assertIsInstance(model.heroic_share(1, 300), Fraction)
 
+    # ---- The kill route (`DropUniqueItems`), Mark 1's "Mark 1 drops" switch off ----
+
+    def test_kill_baseline_the_switch_off_drops_no_piece(self):
+        for elf_on in (False, True):
+            p = kill_pushed(False, elf_on=elf_on)
+            self.assertEqual(p, 1 if elf_on else 0)
+            for length in _ordinary_lengths():
+                for n in (0, 1, 2):
+                    with self.subTest(elf=elf_on, L=length, n=n):
+                        self.assertEqual(piece_kill_share(length, n, 0, p), 0)
+                        self.assertEqual(model.kill_share(0, length, p), 0)
+
+    def test_kill_baseline_every_entry_keeps_one_over_l_k(self):
+        p = kill_pushed(False)
+        for length in _ordinary_lengths():
+            for n in (1, 2, 3):
+                with self.subTest(L=length, n=n):
+                    self.assertEqual(model.ordinary_pick_chance(1, length + p), Fraction(1, length))
+                    # A would-be stand-in keeps its own n / L_k.
+                    self.assertEqual(stand_in_kill_share(length, n, 0, p), Fraction(n, length))
+
+    def test_kill_baseline_pocket_elf_alone_is_unchanged(self):
+        p = kill_pushed(False, elf_on=True)
+        self.assertEqual(p, pushed(0, ORDINARY_ITEMS))
+        for length in _ordinary_lengths():
+            for n in (0, 1, 3):
+                with self.subTest(L=length, n=n):
+                    self.assertEqual(model.kill_share(PLAYER_COPIES, length, p), Fraction(1, length + 1))
+                    self.assertEqual(model.kill_share(PLAYER_COPIES, length, p),
+                                     elf_ordinary_chance(length, n, PLAYER_COPIES))
+        # Mark 1 adds nothing to the Angelic list, on or off.
+        self.assertEqual(pushed(model.ANGELIC_LIST_INDEX, MARK1_PIECES), 0)
+
+    def test_kill_baseline_bad_inputs_refuse(self):
+        for call in (lambda: model.kill_share(-1, 50, 4),
+                     lambda: model.kill_share(1, -1, 4),
+                     lambda: model.kill_share(1, 50, -1),
+                     lambda: model.kill_share(5, 50, 4),        # more copies than were pushed
+                     lambda: model.kill_share(0, 0, 0)):        # an empty list: no draw to read
+            with self.assertRaises(ValueError):
+                call()
+        for call in (lambda: model.kill_share(1.5, 50, 4), lambda: model.kill_share(True, 50, 4),
+                     lambda: model.kill_share(1, 50.0, 4), lambda: model.kill_share(1, 50, 4.0)):
+            with self.assertRaises(TypeError):
+                call()
+        self.assertIsInstance(model.kill_share(1, 50, 4), Fraction)
+
 
 class TargetTests(unittest.TestCase):
     """What the push and the coin must give: one entry's share per item."""
@@ -429,13 +509,101 @@ class TargetTests(unittest.TestCase):
                 # The gloves are not pushed, so they take nothing.
                 self.assertEqual(piece_heroic_share(droppable, 1, 0, e), 0)
 
-    def test_heroic_target_mark1_pushes_only_onto_the_heroic_roll(self):
-        # Mark 1 adds nothing to the Angelic or the ordinary roll ...
-        for index in (model.ANGELIC_LIST_INDEX,) + model.UNIQUE_SUB_LISTS:
-            self.assertEqual(pushed(index, MARK1_PIECES), 0)
+    def test_heroic_target_mark1_pushes_onto_the_heroic_and_the_ordinary_roll(self):
+        # Mark 1 adds nothing to the Angelic roll ...
+        self.assertEqual(pushed(model.ANGELIC_LIST_INDEX, MARK1_PIECES), 0)
+        # ... pushes each piece onto every one of the ordinary roll's lists (the
+        # kill route, owner 2026-10-20) ...
+        for index in model.UNIQUE_SUB_LISTS:
+            with self.subTest(k=index):
+                self.assertEqual(pushed(index, MARK1_PIECES), len(MARK1_PIECES) * PLAYER_COPIES)
         # ... and #74's items and the flight charms add nothing to the Heroic roll.
         self.assertEqual(heroic_pushed(True, resolved=ANGELIC_ITEMS + ORDINARY_ITEMS), 0)
         self.assertEqual(heroic_pushed(True, resolved=MARK1_PIECES + ANGELIC_ITEMS), 4)
+
+    # ---- The kill route with "Mark 1 drops" on: one entry's share per piece ----
+
+    def test_kill_target_each_piece_takes_c_over_l_plus_4c_on_every_list(self):
+        p = kill_pushed(True)
+        self.assertEqual(p, 4)
+        for length in _ordinary_lengths():
+            for n in (0, 1, 2):
+                with self.subTest(L=length, n=n):
+                    share = piece_kill_share(length, n, PLAYER_COPIES, p)
+                    self.assertEqual(share, Fraction(1, length + 4))
+                    self.assertEqual(share, model.kill_share(PLAYER_COPIES, length, p))
+                    # The same share as a vanilla unique listed once on the lengthened list.
+                    self.assertEqual(share, model.ordinary_pick_chance(1, length + p))
+                    self.assertEqual(stand_in_kill_share(length, n, PLAYER_COPIES, p), Fraction(n, length + 4))
+
+    def test_kill_target_with_pocket_elf_each_piece_takes_c_over_l_plus_4c_plus_e(self):
+        for c, e in ((1, 1), (1, 200), (200, 1), (7, 3)):
+            p = kill_pushed(True, elf_on=True, copies=c, elf_copies=e)
+            self.assertEqual(p, 4 * c + e)
+            for length in _ordinary_lengths():
+                with self.subTest(c=c, e=e, L=length):
+                    for n in (0, 1, 2):
+                        self.assertEqual(piece_kill_share(length, n, c, p), Fraction(c, length + 4 * c + e))
+                    self.assertEqual(model.kill_share(c, length, p), Fraction(c, length + 4 * c + e))
+                    # Pocket Elf keeps its own entry's share of the lengthened list.
+                    self.assertEqual(model.kill_share(e, length, p), Fraction(e, length + 4 * c + e))
+                    self.assertEqual(elf_ordinary_chance(length + 4 * c, 0, e), Fraction(e, length + 4 * c + e))
+
+    def test_kill_target_the_shares_and_the_empty_draws_add_up_to_every_call(self):
+        ns = (1, 0, 2, 0)   # each piece's stand-in, listed a different number of times
+        for elf_on in (False, True):
+            p = kill_pushed(True, elf_on=elf_on)
+            for length, kept in ((50, 40), (61, 61), (221, 200)):
+                with self.subTest(elf=elf_on, L=length, D=kept):
+                    pieces = sum(piece_kill_share(length, n, PLAYER_COPIES, p) for n in ns)
+                    stand_ins = sum(stand_in_kill_share(length, n, PLAYER_COPIES, p) for n in ns)
+                    elf = model.kill_share(PLAYER_COPIES, length, p) if elf_on else 0
+                    # The stand-ins are among the D_k entries the roll keeps.
+                    vanilla_elsewhere = model.ordinary_pick_chance(kept - sum(ns), length + p)
+                    empty = 1 - model.ordinary_drop_chance(kept + p, length + p)
+                    self.assertEqual(pieces, Fraction(4, length + p))
+                    self.assertEqual(empty, Fraction(length - kept, length + p))
+                    self.assertEqual(pieces + stand_ins + elf + vanilla_elsewhere + empty, 1)
+
+    def test_kill_target_the_copies_lever_scales_the_shares(self):
+        for c in (1, 7, 200, 400):
+            p = kill_pushed(True, copies=c)
+            self.assertEqual(p, 4 * c)
+            for length in _ordinary_lengths():
+                with self.subTest(c=c, L=length):
+                    self.assertEqual(piece_kill_share(length, 1, c, p), Fraction(c, length + 4 * c))
+                    self.assertEqual(stand_in_kill_share(length, 1, c, p), Fraction(1, length + 4 * c))
+                    self.assertEqual(model.kill_share(c, length, p), Fraction(c, length + 4 * c))
+        # More copies, a larger share for each piece; never more than a quarter.
+        at_one = model.kill_share(1, 50, kill_pushed(True))
+        at_200 = model.kill_share(200, 50, kill_pushed(True, copies=200))
+        self.assertGreater(at_200, at_one)
+        self.assertLess(at_200, Fraction(1, 4))
+
+    def test_kill_target_a_class_with_no_stand_in_leaves_the_other_three(self):
+        resolved = ("mark1_helmet", "mark1_body", "mark1_gloves")   # no boots stand-in on the lists
+        p = kill_pushed(True, resolved=resolved)
+        self.assertEqual(p, 3)
+        for length in _ordinary_lengths():
+            with self.subTest(L=length):
+                self.assertEqual(piece_kill_share(length, 0, PLAYER_COPIES, p), Fraction(1, length + 3))
+                # The boots are not pushed, so they take nothing.
+                self.assertEqual(piece_kill_share(length, 0, 0, p), 0)
+        # The Heroic roll's push is its own: the boots' Heroic stand-in, if any, still counts there.
+        self.assertEqual(heroic_pushed(True), 4)
+
+    def test_kill_target_up6_lengths_give_a_piece_between_1_in_225_and_1_in_54(self):
+        lengths = _ordinary_lengths()
+        self.assertEqual(lengths, [50, 61, 79, 152, 221])
+        p = kill_pushed(True)
+        shares = [model.kill_share(PLAYER_COPIES, length, p) for length in lengths]
+        self.assertEqual(max(shares), Fraction(1, 54))
+        self.assertEqual(min(shares), Fraction(1, 225))
+        # Negative control: the switch off gives no piece on any list.
+        self.assertEqual({model.kill_share(0, length, kill_pushed(False)) for length in lengths}, {0})
+        # With an index that can reach the length, one more empty draw per list.
+        self.assertEqual(model.kill_share(PLAYER_COPIES, 50, p, index_can_reach_length=True), Fraction(1, 55))
+        self.assertEqual(piece_kill_share(50, 1, PLAYER_COPIES, p, index_can_reach_length=True), Fraction(1, 55))
 
 
 class MeasuredTests(unittest.TestCase):
