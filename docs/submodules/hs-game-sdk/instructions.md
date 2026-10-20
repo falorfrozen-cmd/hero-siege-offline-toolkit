@@ -255,14 +255,16 @@ It gives which numbers the game's Steam number shortener (`num_compressSteam`, w
 fit the export's 8-byte buffer, and for every other number the text it writes and whether that
 text's terminator still fits. By the static reading NaN, a positive number of 1e14 or more and a
 negative number of -1e6 or less fail. Live 2 measured the positive limit's lower edge, between
-9.9999e13 (ForgePact's cap, which passed) and about 1.025e14 (which ended the game), and the cap's
-text `99999B`; the rest of the positive band, NaN and the negative limit are not measured.
+9.9999e13 (ForgePact's cap, which passed) and 1e15: the last value traced before the end was about
+1.025e14, the first of its decade, so the value the game ended on lies in [1.025e14, 1e15) and is not
+itself known; the exact 1e14 limit, NaN and the negative limit remain static readings. The cap's text
+`99999B` is measured.
 `BaselineTests` pins those limits and the texts the spec names; `TargetTests` checks that ForgePact's cap (`numguard`, kept in the test as the input
 transform `numguard_cap`) turns every failing value into one that passes and fits and passes every
-other value through bit for bit; `MeasurementTests` checks the model against the fixture (it fails
-the value the game ended on, passes every traced value before it and the cap's value, which sits
-below `POSITIVE_LIMIT`, itself at or below the value the game ended on, and writes the texts the
-operator read); `SpecTests` checks the spec labels its claims and names only
+other value through bit for bit; `MeasurementTests` checks the model against the fixture (it passes
+every traced value before the end and the cap's value, which sits below `POSITIVE_LIMIT`, which in
+turn sits below 1e15, the measured bracket; it fails the last traced value, which rests on the static
+reading; and it writes the texts the operator read); `SpecTests` checks the spec labels its claims and names only
 functions the model has; `NoDecompilerOutputTests` keeps decompiled text out of the model's files.
 `LeverParityTests` pins only the four constants (`kNumGuardPositiveLimit`,
 `kNumGuardNegativeLimit`, `kNumGuardLargestSafe`, `kNumGuardSmallestSafe`) to

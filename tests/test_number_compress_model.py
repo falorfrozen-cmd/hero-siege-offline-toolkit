@@ -225,11 +225,15 @@ class MeasurementTests(unittest.TestCase):
         self.assertEqual(self.data["capture"], "forgepact-230-damage-crash-live-2")
         self.assertEqual(self.data["status"], "measured")
 
-    def test_the_model_fails_the_value_the_game_ended_on(self):
-        crash = float(self.a["last_before_crash"])
-        self.assertEqual(crash, float(self.a["traced"][-1]))
-        self.assertTrue(model.fails(crash))
-        self.assertIsNone(model.text(crash))
+    def test_the_last_traced_value_before_the_end_is_in_the_failing_band(self):
+        # The trace writes one line per decade, so this is the first value of
+        # the fatal decade, not the value the game ended on (that one lies in
+        # [last traced, 1e15) and is not known). That the model fails it rests
+        # on the static-reading limit of 1e14, not on Live 2.
+        last = float(self.a["last_before_crash"])
+        self.assertEqual(last, float(self.a["traced"][-1]))
+        self.assertTrue(model.fails(last))
+        self.assertIsNone(model.text(last))
 
     def test_the_model_passes_the_largest_value_that_passed(self):
         largest = float(self.a["largest_traced_that_passed"])
@@ -240,20 +244,22 @@ class MeasurementTests(unittest.TestCase):
                 self.assertFalse(model.fails(float(value)))
 
     def test_the_measured_bracket_holds_the_modelled_limit(self):
+        # Measured: values up to the cap's 9.9999e13 passed, and the fatal
+        # value lies below 1e15 (the trace's next decade, never logged).
         self.assertLess(float(self.a["largest_traced_that_passed"]), model.POSITIVE_LIMIT)
-        self.assertGreaterEqual(float(self.a["last_before_crash"]), model.POSITIVE_LIMIT)
+        self.assertLess(float(self.b["capped_to"]), model.POSITIVE_LIMIT)
+        self.assertLess(model.POSITIVE_LIMIT, 1e15)
 
     def test_the_capped_value_is_the_bracket_s_lower_edge(self):
         # Launch B handed the capped value itself to the shortener `clamped`
         # times and the game lived: a measured pass at 9.9999e13, which
-        # narrows the limit to (capped value, last value before the crash].
+        # puts the limit in (capped value, 1e15), as the spec records.
         capped = float(self.b["capped_to"])
         self.assertGreater(self.b["clamped"], 0)
         self.assertEqual(self.b["exit_code"], "0x00000000")
         self.assertFalse(model.fails(capped))
         self.assertGreater(capped, float(self.a["largest_traced_that_passed"]))
         self.assertLess(capped, model.POSITIVE_LIMIT)
-        self.assertLessEqual(model.POSITIVE_LIMIT, float(self.a["last_before_crash"]))
 
     def test_the_dump_is_the_range_check_fast_fail_in_the_extension(self):
         dump = self.a["dump"]
