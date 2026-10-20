@@ -191,9 +191,10 @@ Every claim carries one of four labels, and a source:
 - **The Heroic roll called by name** (RDM § 23.4; the flight charms' Live 1 of
   2026-10-12, ForgePact's `flight-charms-research.md`, "Live 1 results", and
   `heroic_route` in `hs-game-sdk/curated/flight_charms_measurements.json`).
-  Ten calls of `DropItemHeroic` with the local player as `self`, which is not
-  a shape the game's own callers use, placed ten items: seven Heroic (9) and
-  three Satanic (6), none Angelic or Unholy, and no charm. Nothing was pushed.
+  Ten calls of `DropItemHeroic` with the local player as `self` placed ten
+  items (which `self` the game's own callers, `VaultUse` and a Chaos Tower
+  NPC, pass is not read): seven Heroic (9) and three Satanic (6), none
+  Angelic or Unholy, and no charm. Nothing was pushed.
   Every call placed one item, as the re-draw predicts.
 
 ## Our code
