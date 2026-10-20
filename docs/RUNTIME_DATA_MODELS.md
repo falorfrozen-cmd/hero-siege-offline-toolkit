@@ -1426,8 +1426,13 @@ observed"):
   `PS5_NumCompressGMLWrapper`). No write to it was found outside
   `DefineGlobals`.
 
-**Three display options decide whether a number reaches it** (static
-reading):
+**Three display options decide whether a hit's floating number or the DPS
+meter's total reaches it** (static reading). The other readers listed above
+(`DrawEnemyHealthBars`, `DrawHudCoop`, `DrawHudMobile`, `Quest_Text_obj`,
+`UI_Button_Cost_obj`, `Player_Talent_Tooltip_obj`,
+`Player_Death_Sequence_obj`, `UI_Steam_Cloud_obj`) are not gated by these
+options: none of them is among the code found to read any of the three, so
+they can reach `num_compress` whatever the options say (static reading):
 
 - `showDamage`: read by `enemyCollisionDamageParent`,
   `enemyCollisionProjectile`, `sc_hurt` and the `Combat_Text_obj` closure.
@@ -1519,10 +1524,12 @@ training dummies, the Modifiers ramped from x11 to x1e12): the player's
   hit.
 - The DPS meter drew full digits (the `RealFormat` route) up to about
   7.9e18 with the game alive, and both launches exited `0x00000000`.
-- **What it means:** with those options off, no `num_compress` consumer ran
-  and the shortener was out of reach. Its failure bands above are therefore
-  **untested, not refuted**. The run is a measured positive only for the
-  `RealFormat` route.
+- **What it means:** no call reached `num_compressSteam` or
+  `SteamCompressNumber`. No logpoint was set on `num_compressGML` or
+  `PS5_NumCompressGMLWrapper`, so whether any `num_compress` consumer ran,
+  and which script the global holds, is not measured. The shortener's
+  failure bands above are therefore **untested, not refuted**. The run is a
+  measured positive only for the `RealFormat` route.
 
 ---
 
