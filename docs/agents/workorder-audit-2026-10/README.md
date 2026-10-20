@@ -903,7 +903,9 @@ What #485 did not reach:
    source, a model test, an e2e run, two criteria wrong as written.
 6. **The telemetry week captured ~6 h.** The logon task's hidden PowerShell
    host exits about 13 s after logon (0xC000013A); hook latency (F15) is
-   still unmeasured.
+   still unmeasured. On 2026-10-20 the collector moved to a Windows service
+   (`ClaudeCodeOTel`, delayed auto-start, restart on failure), which has no
+   console to lose and starts at boot; the week restarts from that date.
 
 What #540 changed, in the same order: items mode defers docs-sync,
 sdk-contract, tauri-command and decompile-output-guard to its gate (one
