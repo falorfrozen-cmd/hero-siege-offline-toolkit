@@ -2895,6 +2895,10 @@ The data tables in this section are also in
   for type 43. The two disagree; not resolved.
 - `Enemy_Parent_obj`'s Destroy calls `DropItem` only when the protected HP is 0
   or less. **Static reading.**
+- A kill reaches `DropUniqueItems` only through drop type 45. Its ordinary
+  uniques come from `DropItem`'s own draw on
+  `lootListUnique[LoadSatanicDropTier's answer]`, which runs without
+  `LoadDrops` (§ 13.12). **Static reading** (2026-10-20, ForgePact #166).
 - A boss kill rolls its part several times. Karp King in Act_01_01 dropped:
   - 11 bellybuttons in 15 kills at the vanilla base of 27;
   - 36 in 12 kills at base 5.4;
@@ -3574,6 +3578,90 @@ before and after: experience 16,441,857 to 16,511,032 (+69,175) and kills
 `kills-sum=58` (`kills-vs-save` and `xp-vs-save` `pass`, **measured**). Its
 gold sum (201, from 3 `GoldLogAdd` calls) has no save counterpart in that
 check.
+
+### 13.12 The unique draw inside DropItem
+
+Read on 2026-10-20 for ForgePact's Mark 1 drops (#166), after the drops
+workorder's Live 3 saw four natural uniques drop from kills in Hell while
+`DropUniqueItems` (§ 23.4, § 23.8) was never entered and drop type 45's
+chance was never above 0 on any `LoadDrops` array
+([Mark 1 research, Phase 4](../ForgePact/docs/mark1-set-research.md#phase-4-the-unique-draw-inside-dropitem)).
+The means: the hub's ghidra MCP on build `498d5885…` for
+`LoadSatanicDropTier` and `ReturnRandomSatanic`, and, because `DropItem` is
+too large for the decompiler (a headless decompile timed out on it on
+2026-10-02) and has no body in the MCP, a headless byte scan for direct calls
+(`FindCallers.java`), its call list (`ListCallsIn.java`) and a local
+disassembly listing. The byte scan's positive control, in the same run, was
+`CreateDefaultParams` (2349) with 177 direct sites. Every reading below is
+the order and shape of calls, paraphrased; no listing is reproduced here.
+
+- `DropItem` (1364) has 19 direct call sites, all in unnamed object events,
+  and every one passes 12 arguments. **Static reading** (2026-10-20,
+  ForgePact #166).
+- `DropItem` is the only direct caller of both `LoadCommonDropTier` (2172)
+  and `LoadSatanicDropTier` (2173), each called once and each result kept in
+  a local of its own. That scan ran on these two names alone, so its hit cap
+  was not reached. `LoadSatanicDropTier` answers a whole number from 0 to 5:
+  it sorts the monster's level into brackets (bounds at 200, 123, 100, 75,
+  42, 24 and 15) and, inside each bracket, steps the answer by cumulative
+  random cut-offs. ForgePact's `raredrop satanic` already lifts its first
+  argument. **Static reading** (2026-10-20, ForgePact #166).
+- `DropItem` draws a unique itself, apart from every named unique roll. It
+  takes `Controller_obj.lootListUnique[k]`, with k the value
+  `LoadSatanicDropTier` returned, reads its size, draws a random index, reads
+  the entry there and needs it to be an array. It looks the entry's triple up
+  with a direct `GetUniqueRepoStruct` (819) call and reads the definition's
+  fields 28 (level-like), 40 and 41 (flags) and 27 (the rarity, § 13.4). A
+  set field 40 or 41 sends it back to draw again, inside a loop whose counter
+  starts at 500, so a call can draw up to about 500 times. **Static reading**
+  (2026-10-20, ForgePact #166).
+- The rarity then picks one of four branches: 6 (Satanic), 9 (Heroic), 7 or
+  10 (Angelic or Unholy), and any other value. In the rarity-6 branch an
+  entry whose field 32 (the tier) is 5 meets one more test, on protected
+  value slot 75. Whether each branch keeps the entry or draws again was not
+  read branch by branch. Whether the loop keeps the first entry it accepts,
+  or weighs the accepted entries by a computed value and keeps the best, was
+  not read either: a local that starts at 100,000,000 and is compared and
+  lowered inside the loop hints at a weighing. **Static reading** (2026-10-20,
+  ForgePact #166); the keep-or-weigh question is **not established**, and
+  ForgePact's Mod live procedure 7 (`draw-reads`, `draw-mode`) is written to
+  answer it. If the draw weighs entries, an entry added to list k is not
+  picked on c / (L_k + c) of draws, and its own fields (field 28 first) may
+  decide whether it is ever picked.
+- The build follows the draw. In the call list that `GetUniqueRepoStruct`
+  call is followed by one `CreateDefaultParams` call and one call to the
+  unnamed placement routine (§ 23.8 names `LootGroundCreate` for the ordinary
+  roll) before any other build. That is the order of the calls, not a
+  reading of the control flow between them. **Static reading** (2026-10-20,
+  ForgePact #166).
+- A second draw of the same shape reads a ds_list passed as `DropItem`'s
+  argument 7 (counting from 0), when that argument is present and passes a
+  builtin test. Which builtin was not read, and whether a kill passes a list
+  there was not read. It has its own `GetUniqueRepoStruct`,
+  `CreateDefaultParams` and placement calls. **Static reading** (2026-10-20,
+  ForgePact #166).
+- What else `DropItem` builds: a normal item, through `GetNormalRepoStruct`,
+  then `CreateDefaultParams`, then the placement. It calls `LoadDrops`
+  (2171) once, and is that script's only direct caller (§ 13.1); drop type
+  45 inside `LoadDrops` holds the only direct call of `DropUniqueItems`
+  (1424). It calls `DropItemAngelicChance` (1368) once (§ 13.4). **Static
+  reading** (2026-10-20, ForgePact #166).
+- So a kill reaches `DropUniqueItems` only through drop type 45, and a kill's
+  ordinary uniques can come from `DropItem`'s own draw without it. Live 3's
+  four natural uniques with `DropUniqueItems` flat fit that; that they came
+  from this draw is an inference until ForgePact's Mod live procedure 7
+  measures it. **Static reading** (2026-10-20, ForgePact #166).
+- `ReturnRandomSatanic` (3326) draws from `lootListUnique[argument 1]` until
+  it finds an entry whose definition matches argument 0, is not hidden and,
+  unless argument 2 is set, is neither Angelic nor Unholy, and it returns
+  that definition. The byte scan found no direct call site, which is not
+  observed: it may be called through the script table or a method value.
+  **Static reading** (2026-10-20, ForgePact #166).
+- Not observed, never "none": the ghidra MCP's callers, callees and xrefs
+  were empty for every function above (the project is a `-noanalysis`
+  import), and the MCP shows neither a body nor a disassembly for `DropItem`.
+  The decompile index held no earlier record of any of these scripts for
+  this build. **Static reading** (2026-10-20, ForgePact #166).
 
 ---
 
@@ -7819,6 +7907,11 @@ not observed, not absent.
   destructibles and piles reach `DropItem` too (§ 13.1, § 13.6), so they
   reach the same roll; that is an inference. **Static reading** (2026-10-20,
   the kill route), with type 45's meaning **measured**.
+- That route is the only one from a kill to `DropUniqueItems`, and it is not
+  where a kill's ordinary uniques come from: `DropItem` draws a unique
+  itself, from `lootListUnique[k]` with k from `LoadSatanicDropTier`, and
+  builds it without `LoadDrops` (§ 13.12). **Static reading** (2026-10-20,
+  ForgePact #166).
 - `DropUniqueItems` (1424), decompiled again: it picks the sub-list k from 0
   to 4 by a zone value with random step-ups, draws one random index of
   `Controller_obj.lootListUnique[k]`, looks the entry up in
