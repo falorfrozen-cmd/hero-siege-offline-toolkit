@@ -1145,12 +1145,16 @@ parts come from the research's Live 1 session on 2026-10-13 (the
   `CheckTalentUse` call, with Shadow Bolt on Q, Healing Zone on E and Heavenly
   Fire on R (both no-cooldown skills read `abilityCooldown` 0.25, Healing
   Zone 14). Over 1350 gate calls (one a frame) Shadow Bolt cast 20 times,
-  Healing Zone once and Heavenly Fire **never** (`on-automation`), with no
-  read, write or restore failing. So with several columns asking in the same
-  call, one column's skill can keep another's from ever casting; in which
-  order the gate serves the asking slots, and whether it serves more than one
-  a call, is **not established** (the slot loop's order was not read). An
-  empty column (Y) was skipped every call and never pressed.
+  Healing Zone once, and a cast of Heavenly Fire was **not observed** in any
+  of them (`on-automation`), with no read, write or restore failing. Why it
+  never cast is **not established**: Shadow Bolt's column may have been
+  served first on every call, or Heavenly Fire may not be castable through
+  the press write, in town, or within the mana Shadow Bolt's casts left (no
+  mana value is known), and no session records a cast of Heavenly Fire, by
+  key or forced, that would tell these apart. In which order the gate serves
+  the asking slots, and whether it serves more than one a call, is likewise
+  **not established** (the slot loop's order was not read). An empty column
+  (Y) was skipped every call and never pressed.
 - **The game's refusal holds a forced press (measured, 2026-10-19).** In the
   same session Healing Zone's column, pressed every gate call, cast once in
   1350 presses (`gate-kept`), and over 3600 frames with no key it was recast
