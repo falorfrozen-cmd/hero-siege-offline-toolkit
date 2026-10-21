@@ -22,7 +22,7 @@ export const native = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in 
 
 const DEFAULT_SETTINGS = {
   work_offline: false,
-  check_on_launch: true,
+  check_on_launch: false,
   auto_download: false,
   auto_install: false,
   theme: 'obsidian',

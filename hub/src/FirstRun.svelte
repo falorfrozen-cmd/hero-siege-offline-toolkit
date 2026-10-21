@@ -12,7 +12,7 @@
 
   const current = $derived(settings());
 
-  let checkOnLaunch = $state(true);
+  let checkOnLaunch = $state(false);
   let autoDownload = $state(false);
 
   function begin(workOffline) {

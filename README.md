@@ -31,6 +31,8 @@ fix.
 - **Nothing of yours is moved.** The hub manages program files only. Your saves,
   settings and backups stay exactly where each tool puts them, and every tool
   behaves identically whether you start it from the hub or by hand.
+- **No update check unless you ask.** Checking on launch is off by default; turn
+  it on in Settings, or press Check for updates.
 - **Work offline** is one switch that stops every outbound request, including the
   check on launch. On first run the hub tells you what it would contact, before
   it contacts anything.

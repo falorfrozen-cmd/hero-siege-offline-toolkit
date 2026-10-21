@@ -171,7 +171,8 @@ something already running.
 
 ## Updating
 
-Policy: check on launch and on a button; a setting for auto-download; and, nested
+Policy: check on a button, and on launch only if the player turns that on (off
+by default, a security requirement); a setting for auto-download; and, nested
 under it, auto-install. `Settings::effective_auto_install()` enforces the nesting
 in Rust as well as in the UI, so a hand-edited `state.json` cannot get past it.
 
