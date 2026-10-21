@@ -4831,6 +4831,78 @@ the controls and the table are in the Item Editor's
 [loot announcements, Live procedure 2](../ForgePact/docs/loot-announcement-research.md#live-procedure-2),
 [loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
 
+### 16.12 A set piece's tooltip, and a skill grant's description
+
+- **Measured** (Item Truth's tooltip captures on the owner's machine,
+  `%LOCALAPPDATA%\Hero_Siege\itemtruth\journal\*.ndjson`, game build
+  `pe-6aaa6779-0cad4fc8`, recorded 2026-09-27 to 2026-10-21; each capture
+  holds one tooltip pass's `draw_text` calls with colour, x and y, and its
+  `DrawInventoryStatsNew` calls): 230 tooltips of set pieces, whose type line
+  reads `Satanic Set <type>`. `UI_Inventory_Tooltip_obj` drew those of items
+  in the bag or worn, `UI_Pickup_Tooltip_obj` those of items on the ground.
+  The set's part of the tooltip comes after the item's own stats and
+  sockets, in this order:
+  - a gap of two rows, then the set's bonus lines. They are stat lines like
+    any other, through `DrawInventoryStatsNew` with format 5 (a percent) or
+    6 (a flat number) and style 8 or 9 (§ 16.6). A line drawn active is
+    7844807 (RGB 199,180,119, a pale gold), one drawn inactive 4210752
+    (RGB 64,64,64, a dark grey);
+  - a gap of two rows, then the set's name, centred, in 7844807;
+  - one centred row per piece of the set, in the set's own order and the
+    hovered piece among them: 65280 (green) when the player wears that
+    piece, 4210752 when not. No count of worn pieces is drawn;
+  - a gap of two rows, then the footer.
+- **Measured**, how the colours split over those 230: in the 191 with no
+  piece name green, every bonus line was 4210752. Of the 39 with at least one
+  piece green, 19 drew one or more bonus lines in 7844807.
+- **Measured**, the row pitch: every stat call in these captures reported a
+  row height of 28 at the capture's scale, where § 16.6 measured 30 and
+  ForgePact's forged rows draw at 30.
+- **Measured**, a skill grant's line and the description under it (same
+  captures): the Heroic Shield `Celestial's Authority` draws `+1` and `to
+  Celestial Might` as stat 203's line (`DrawInventoryStatsNew`, format 3,
+  style 8) in 18687 (RGB 255,72,0, an orange). Under it comes the talent's
+  description, the `talent_desc_celestialMight` text, in 8421504
+  (RGB 128,128,128, a grey), wrapped over two centred rows, and then a
+  parameter row: its name (`Conversion `) in 7844807 and its value (`80%`) in
+  white. All 200 captured tooltips with a stat-203 line drew the description
+  under it. The item editor's own static analysis sends that description
+  through `DrawSkillDescription`
+  (`hero-siege-item-editor/hs_stat_semantics_s10.json`, its grant block).
+- **Static reading** (2026-10-21, the hub's ghidra MCP, in our own words):
+  - `GetSetName` (`gml_Script_GetSetName`, a method that `GetSetNames`
+    defines) turns a set index from 1 to 70 into that set's localized name,
+    one of the `*_setname` keys of `translationsItem.csv`; any other index
+    gets a fallback string.
+  - `DefineSetPieceRequirements` fills `global.requiredPieces` at indices 1
+    to 70 with 2, 3 or 4, one value per set. What reads the array was not
+    read.
+  - `gml_Script_s_SetItemInfo` builds the reference to one set piece out of
+    three fields, `itemType`, `weaponType` and `itemId` (slot names taken
+    from `tools/decomp_index.py slot-name`). So the game names a set's
+    pieces as unique-repository triples, and an item built as a base item
+    (as ForgePact's Mark 1 pieces are) is no such triple.
+  - `GetSetInformation` sorts a set name into one of 70 cases.
+  - `DrawInventoryItemV2Func` makes `DrawInventoryItemV2` (§ 16.6's tooltip
+    pass) a method value, and the MCP's decompiler gives up on that method's
+    body at its flow limit, so the pass itself was not read.
+- **Not established:**
+  - the rule that draws a bonus line active: per line, and at which count of
+    worn pieces;
+  - how the pass decides that an item belongs to a set (how an item names
+    its set), and how it counts the worn pieces;
+  - whether a gear item's skill-grant description is drawn outside the ALT
+    information view (§ 16.6 says ALT adds skill descriptions). The 39
+    captures with ranges were ALT views, and the 161 without were potions
+    and relics, which roll no ranges, so the captures cannot tell;
+  - the 28 against 30 px row pitch: which one a live tooltip uses at the
+    player's scale.
+
+ForgePact's Mark 1 set draws its own set block in the pieces' tooltips from
+these measurements, and its Mod live procedure 9 checks the layout and the
+open grant question on screen:
+[Mark 1 research, Phase 5](../ForgePact/docs/mark1-set-research.md#phase-5-the-set-tooltip-and-the-pieces-art).
+
 ---
 
 ## 17. Stash Special Tabs & the Crafting Route
