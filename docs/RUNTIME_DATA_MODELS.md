@@ -1700,6 +1700,236 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
 [loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading),
 [loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
 
+### 8.7 Numbers on screen: the game's number formatters
+
+Everything in this section is a **static reading** (ForgePact #230,
+2026-10-20) of game build 7.0.13.0: `Hero_Siege.exe` sha256
+`dab03f134327d9b682c67f1dc461822fb822a7e535009636624bb1454f498e2b`, and the
+Steam extension `bin\PAS_Steam_GMS_x64.dll` (127,488 bytes) sha256
+`c789ee5e5850e0d68c42a6d0b84876509eaea4f2ffab1ea9c35e71709c47b88f`, except
+the paragraphs "Live 1" and "Live 2" and the claims marked measured, which
+are measured. Live 1 did not reach the shortener; Live 2 (capture
+`forgepact-230-damage-crash-live-2`, 2026-10-20) did. What it measured on
+the positive side is one pass and one end: 9.9999e13 passed, and the game
+ended after a value of at least 1.025e14 was handed in. The trace writes
+only the first value of each decade, so the fatal value lies somewhere in
+[1.025e14, 1e15) and is not itself known; the upper edge is not measured.
+That the limit is exactly 1e14 is the static reading. It also recorded the crash's dump. The rest of the
+positive band, the NaN and negative bands, the 32-bit overflow and the
+8-character texts are still static readings. The shortener's arithmetic,
+band by band, is written
+up as a spec in [`docs/models/number-compress-spec.md`](models/number-compress-spec.md)
+and modelled in `hs-game-sdk` from it.
+
+**Three formatter scripts and a binder** (static reading):
+
+- `num_compressFunc` binds the script file's two shorteners: it stores
+  `num_compressGML` and `num_compressSteam` as global method values.
+- `num_compressGML` (SDK index 2607) shortens in GML: below 10,000 it is the
+  plain `string()` of the value, above that a suffix chosen by magnitude, and
+  from 1e9 up it always divides by 1e9. It writes into no fixed buffer.
+- `num_compressSteam` (SDK `gml_Script_num_compressSteam`, 2608) takes one
+  argument and returns the text that the Steam extension's
+  `SteamCompressNumber` export builds, called through the runtime's
+  extension-call helper. The extension's id is referenced once in the exe's
+  code, inside `num_compressSteam`. Neither shortener script, nor the two
+  globals the binder stores them in, is called or read anywhere else in the
+  exe's code (byte scan for direct calls and references), so whatever reaches
+  `num_compressSteam` does so through a method value, and only an inline
+  detour at the function's own address sees those calls (§ 5.1). Whether
+  anything else in the game calls the extension function is not established.
+- `RealFormat` (3250) inserts thousands separators, built from the runner's
+  string builtins (`string`, `string_format`, `string_pos`, `string_insert`
+  and others) and `floor`; 42 direct call sites. How it behaves for very large
+  values (that is, how the runner's `string_format` does) is not established
+  statically; Live 1 below measured the DPS meter's use of it.
+
+**Every caller goes through the global `num_compress`** (static reading, a
+byte scan of the exe for references to the global, since the Ghidra
+project's caller and reference tables come back empty here, which is "not
+observed"):
+
+- `DefineGlobals` sets it up. The game code that reads it is
+  `DrawEnemyHealthBars`, `DrawHudCoop`, `DrawHudMobile`, a closure of
+  `Combat_Text_obj`, a closure of `DPS_Meter_obj`, and code belonging to
+  `Player_Death_Sequence_obj`, `Player_Talent_Tooltip_obj`, `Quest_Text_obj`
+  (`m_UpdateQuestRewards`), `UI_Button_Cost_obj` and `UI_Steam_Cloud_obj`.
+  Code is attributed to the nearest preceding named symbol, and the symbol
+  table names closures sparsely, so "code belonging to" an object is as
+  precise as this reading gets.
+- **Which script `num_compress` holds on the Steam PC build: `num_compressSteam`**
+  (**measured**, Live 2, 2026-10-20, build 7.0.13.0). With the floating damage
+  numbers drawn and compressed, debugger logging breakpoints in one 20 s
+  window logged 748 calls into `num_compressSteam` and 748 into
+  `SteamCompressNumber`, while `num_compressGML` logged none beside a control
+  that logged 322 (a zero with the control logging; its first bytes were
+  checked). No logpoint was set on `PS5_NumCompressGMLWrapper`. No write to
+  the global was found outside `DefineGlobals` (static reading).
+
+**Three display options decide whether a hit's floating number or the DPS
+meter's total reaches it** (static reading). The other readers listed above
+(`DrawEnemyHealthBars`, `DrawHudCoop`, `DrawHudMobile`, `Quest_Text_obj`,
+`UI_Button_Cost_obj`, `Player_Talent_Tooltip_obj`,
+`Player_Death_Sequence_obj`, `UI_Steam_Cloud_obj`) are not gated by these
+options: none of them is among the code found to read any of the three, so
+they can reach `num_compress` whatever the options say (static reading):
+
+- `showDamage`: read by `enemyCollisionDamageParent`,
+  `enemyCollisionProjectile`, `sc_hurt` and the `Combat_Text_obj` closure.
+  The floating damage number for a hit on an enemy is created only while it
+  is on.
+- `combatTextCompress`: the `Combat_Text_obj` closure (which also reads
+  `textValue`, `textText`, `textCritSize` and calls the builtin `string`)
+  formats the number through `num_compress` only while it is on. What it
+  draws with the option off is not established.
+- `dpsMeterCompress`: the DPS meter's draw code (`DPS_Meter_obj`, 1357)
+  formats through `num_compress` while it is on and through `RealFormat`
+  otherwise. `UiADpsMeterCompress`, behind the meter's dropdown, flips it.
+- `SaveLocalSettings` writes all three and `OptionsReset` resets them; the
+  Gameplay options screen (`UI_Options_Gameplay_obj`) reads `showDamage` and
+  `combatTextCompress`. On disk they are the keys `show_damage`,
+  `combat_text_compress` and `dps_meter_compress` in the `[settings]`
+  section of the save directory's `shop.ini`
+  (`%LOCALAPPDATA%\Hero_Siege\hs2saves\shop.ini`; the key strings are in the
+  exe, and the file was read on a player's machine). The game applies the
+  file at start (**measured**, Live 2): with `show_damage` set to 1 in the file
+  while the game was closed, the next launch drew floating damage numbers over
+  the training dummies, which Live 1 with 0 never did, and with
+  `combat_text_compress` 1 they were shortened (`970,4K`, `1,2M`, `394,6M`,
+  `1296,2B`).
+
+**`SteamCompressNumber`: one double in, a pointer to an 8-byte static text
+out** (static reading of the DLL's export):
+
+- It clears the 8-byte buffer first. Zero gives the constant text `0`.
+- A negative value is never shortened: the whole part of its magnitude,
+  converted to a 32-bit integer, is written after a minus sign.
+- A positive value below 10,000 is written whole. From 10,000 to below 1e6
+  it is truncated to hundreds (q = trunc(x / 100)) and shown as thousands
+  with one decimal digit and `K`; below 1e9, q = trunc(x / 1e5) with `M`;
+  from 1e9 up, and for NaN (which fails every comparison), q = trunc(x / 1e8)
+  with `B`. The decimal digit follows a comma and is left out when it is 0
+  (`12,3K`, `10K`). q is converted to a 32-bit integer.
+- Every write into the buffer carries the compiler's range check. A failed
+  check calls the C runtime's range-check failure, a fast fail with code 8
+  (`FAST_FAIL_RANGE_CHECK_FAILURE`), and the process ends with exit code
+  `0xC0000409`.
+- **The failure bands.** The text does not fit, and the game ends, exactly
+  when: the value is NaN; the value is positive and q has seven or more
+  digits, that is x ≥ 1e14 (past about 2.1e17 the 32-bit conversion
+  overflows to its minimum, a ten-digit negative, which fails the same way,
+  and so does +inf); or the value is negative and the whole part of its
+  magnitude has seven or more digits, that is x ≤ −1e6 (seven digits plus
+  the sign; −inf overflows the same way). Every other value fits. What is
+  **measured** of the positive edge (Live 2, below) is its passing side:
+  99,999,000,000,000 (9.9999e13) passed 29,990 times. On the other side,
+  the game ended after a value of at least 1.025e14 was handed in. The
+  trace writes only the first value of each new decade, and about 1.025e14
+  was the first of its decade, so later values in [1.025e14, 1e15) went in
+  untraced and the fatal value is only known to lie in that range. That is
+  not a measured upper edge; that the edge is exactly 1e14 is the static
+  reading above. The band above
+  that edge, the NaN and negative bands and the 32-bit overflow are not
+  observed (no such value ran uncapped).
+- **The terminator.** A shortened text is digits(q) + 2 characters with a
+  nonzero decimal and digits(q) characters with a zero one; the cleared byte
+  after it ends the string. For a six-digit q whose last digit is not 0
+  (about 1e13 to 1e14) the text fills all 8 bytes and has no terminator
+  inside the buffer; what the game then reads past it is not established.
+  Whole-number texts that do not fail always end inside the buffer.
+
+**Why no plugin handler sees it.** A fast fail ends the process from the
+kernel without dispatching an exception inside it, so a plugin's vectored
+handler, its top-level filter (§ 5.11) and any `ExitProcess`-time code never
+run: the crash bundle names no faulting module and the trap records nothing,
+which is what the two #230 reports of 2026-10-20 show (measured from their
+bundles). Windows Error Reporting still writes a dump when the error mode
+allows it, and the dump names the code, the subcode and the module that
+raised it (**measured**, Live 2: the dump of the run that ended reads
+`code=0xc0000409 subcode=8 raised-in=PAS_Steam_GMS_x64`, with
+`SteamCompressNumber` on its stack); an attached debugger takes the fast fail
+instead and no dump is written (not measured here; Live 2 detached its
+debugger before the crash). The shortener fails for such a number with or
+without a mod; whether
+an unmodded character can put 1e14 on screen is not known.
+
+**`CombatText` and the floating number** (static reading, extends § 12):
+`CombatText` creates a `Combat_Text_obj` with `instance_create_layer` and
+sets `textText`, `textValue`, `textColor`, `textSize`, `setDestroy` and an
+alarm on it. None of `CombatText`'s 28 direct call sites falls in the
+enemy-collision code, so whether a hit's number goes through `CombatText` or
+creates the object itself is not established; the formatting happens in
+`Combat_Text_obj` either way, through `num_compress` while
+`combatTextCompress` is on (above). A DPS meter sums hits over time and over
+projectiles, so its total would cross 1e14 well before a single hit does
+(not measured). ForgePact's `stat` on `CalculateEndDamage` scales the final
+per-hit damage (measured earlier), which is how its Modifiers reach these
+numbers.
+
+**Live 1** (measured, ForgePact #230, 2026-10-20, capture
+`forgepact-230-damage-crash-live-1`; a research build, the Act 1 town with
+training dummies, the Modifiers ramped from x11 to x1e12): the player's
+`shop.ini` had `show_damage` 0 and `dps_meter_compress` 0
+(`combat_text_compress` 1).
+
+- No floating damage number was drawn at any multiplier.
+- Debugger logging breakpoints on `num_compressSteam` and
+  `SteamCompressNumber` logged no call all session, while a control
+  breakpoint in the same session logged 792 hits and one on `RealFormat` 820
+  in a 20 s window. ForgePact's own inline hook on `num_compressSteam` (its
+  number guard, with a `CalculateEndDamage` trace as its control) counted no
+  call either, while `CalculateEndDamage` returned up to about 1.63e18 per
+  hit.
+- The DPS meter drew full digits (the `RealFormat` route) up to about
+  7.9e18 with the game alive, and both launches exited `0x00000000`.
+- **What it means:** no call reached `num_compressSteam` or
+  `SteamCompressNumber`. No logpoint was set on `num_compressGML` or
+  `PS5_NumCompressGMLWrapper`, so whether any `num_compress` consumer ran,
+  and which script the global holds, is not measured. The shortener's
+  failure bands above are therefore **untested, not refuted**. The run is a
+  measured positive only for the `RealFormat` route.
+
+**Live 2** (measured, ForgePact #230, 2026-10-20, capture
+`forgepact-230-damage-crash-live-2`; the same research build, character, town
+and dummies as Live 1, the reporter's 63 ForgePact settings, with
+`show_damage` 1 and `combat_text_compress` 1 in `shop.ini`, and in the second
+launch `dps_meter_compress` 1 as well):
+
+- **The damage text reaches the shortener.** Floating damage numbers were
+  drawn over the dummies and shortened, and `num_compress` led to
+  `num_compressSteam` and on to `SteamCompressNumber` one call for one (748
+  and 748 in a 20 s window; `num_compressGML` 0 beside a logging control).
+- **The crash, with ForgePact's cap forced off.** The Modifiers were ramped
+  from the reporter's x11 (Total Damage, with Critical Strike Damage x11 and
+  Critical Strike Chance x6) to Total Damage x100, x1e4 and x1e6, and the game
+  ended in the x1e6 window with exit code `0xC0000409`. Its dump reads
+  `code=0xc0000409 subcode=8 raised-in=PAS_Steam_GMS_x64`, with
+  `SteamCompressNumber` on the stack. The values ForgePact's hook traced into
+  `num_compressSteam` (one line per new decade) were, in order, 2,915,427
+  up to 15,038,794,170,000 (about 1.5e13, the largest traced value that
+  passed), then 102,480,421,310,000 (about 1.025e14), the last line before
+  the end. That is the first value of its decade, not necessarily the value
+  the game ended on: values later in the same decade write no line, so the
+  fatal value was at least 1.025e14 and below 1e15. No negative value was
+  traced. The second launch's capped value (below) passed at 9.9999e13, a
+  measured pass just under the reading's 1e14. The fatal value is not
+  measured, only placed in [1.025e14, 1e15) by the per-decade trace, so
+  1e14 as the limit stays the static reading; measuring it needs a trace
+  of every value at or above 1e13, a later session's work.
+- **The cap holding.** In the second launch, with the cap automatic, the
+  guard was not armed before any lever and armed with the reporter's
+  settings. Ramped to Total Damage x1e12, the hook saw values up to about
+  2.2e20; it capped 29,990 of them (the first at about 1.003e14) to
+  99,999,000,000,000, every floating number read `99999B` in the last window,
+  the game answered after every window and the launch exited `0x00000000`.
+- **At the reporter's x11** the values handed in reached about 2.1e9 per
+  call (Sorak, Act 1 town), far below 1e14. Whether the reporter's own crash
+  (another character, an Act 5 dummy) reached this limit is not measured.
+- **Not established:** the DPS meter read `0` with `dps_meter_compress` on,
+  in the x1e12 window too, so whether its compressed total reaches the
+  shortener was not observed; what the game shows for an 8-character text;
+  the NaN and negative bands.
+
 ---
 
 ## 9. Inventory Grids, Fingerprints and Prospecting
@@ -4193,6 +4423,7 @@ All **measured** unless marked.
 | `EnemyGiveExperience` with no argument | crash | §22.8 |
 | A parsed struct held only in C++ `RValue`s across frames | freed by the runner's GC; the next frame crashes | §22.8, §5.9 |
 | `WM_CLOSE` to YYToolkit's console window | the game ends with 0xC000013A, no normal save | §22.5 |
+| A number of 100 trillion (1e14) or more, NaN, or a negative of a million or more handed to `num_compressSteam` (its `SteamCompressNumber` text does not fit 8 bytes) | the game ends with `0xC0000409`, fast fail 8 raised in `PAS_Steam_GMS_x64.dll`, which no in-process handler sees (**measured** for a positive value, ForgePact #230 Live 2, 2026-10-20, capture `forgepact-230-damage-crash-live-2`: 9.9999e13 passed (measured), and the game ended after a value of at least 1.025e14 was handed in; the trace logs only the first value of each decade, so the fatal value lies in [1.025e14, 1e15) and is not itself measured, and the 1e14 limit is the static reading; dump `code=0xc0000409 subcode=8 raised-in=PAS_Steam_GMS_x64`; NaN and the negative band a **static reading**) | §8.7 |
 | A ground monster's path search while the hero is sealed in | about 20 s at 3 fps for a 20-monster wave; `pathFailed = true` avoids it | §22.7 |
 
 ---
