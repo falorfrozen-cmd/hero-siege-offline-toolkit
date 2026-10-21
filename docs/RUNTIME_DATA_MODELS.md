@@ -4869,6 +4869,15 @@ the controls and the table are in the Item Editor's
   under it. The item editor's own static analysis sends that description
   through `DrawSkillDescription`
   (`hero-siege-item-editor/hs_stat_semantics_s10.json`, its grant block).
+- **Measured**, the width an item's description or lore row wraps at
+  (Item Truth's captures, 182 journals of the same build): the game draws
+  those rows with `draw_text_ext` at a line separation of -1, and the width
+  it passes is not one constant but follows the tooltip's box. 1,176
+  captured tooltips carry such a row, at widths from 478 to 1160; 504 is
+  the commonest (382 bag or worn tooltips and 437 ground ones), and 622
+  belongs to a few wide boxes (Elixir of Death, Ghostly Potion, Celestial's
+  Authority). Which instance variable holds a box's width was not read
+  (§ 16.6 names `inventorySurfaceWidth` beside the cache branch, unread).
 - **Static reading** (2026-10-21, the hub's ghidra MCP, in our own words):
   - `GetSetName` (`gml_Script_GetSetName`, a method that `GetSetNames`
     defines) turns a set index from 1 to 70 into that set's localized name,
@@ -4900,7 +4909,10 @@ the controls and the table are in the Item Editor's
 
 ForgePact's Mark 1 set draws its own set block in the pieces' tooltips from
 these measurements, and its Mod live procedure 9 checks the layout and the
-open grant question on screen:
+open grant question on screen. The pieces' description wraps at 478, the
+narrowest width the game itself used in any captured tooltip, after Mod live
+9 found a row wrapped at 622 running past both edges of a piece's box; Mod
+live procedure 10 checks it on screen:
 [Mark 1 research, Phase 5](../ForgePact/docs/mark1-set-research.md#phase-5-the-set-tooltip-and-the-pieces-art).
 
 ---
