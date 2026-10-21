@@ -3596,6 +3596,12 @@ too large for the decompiler (a headless decompile timed out on it on
 disassembly listing. The byte scan's positive control, in the same run, was
 `CreateDefaultParams` (2349) with 177 direct sites. Every reading below is
 the order and shape of calls, paraphrased; no listing is reproduced here.
+ForgePact's Mod live procedure 7 then measured the route, k, the reads per
+build, argument 7, the lever's pushed entries reaching the draw and the
+tier-5 check. It ran in three sessions (2026-10-20 and 2026-10-21, slot 14,
+Hell, build `498d5885…`), recorded in
+[Mod live 7 results](../ForgePact/docs/mark1-set-research.md#mod-live-7-results).
+Each label below says which.
 
 - `DropItem` (1364) has 19 direct call sites, all in unnamed object events,
   and every one passes 12 arguments. **Static reading** (2026-10-20,
@@ -3607,7 +3613,14 @@ the order and shape of calls, paraphrased; no listing is reproduced here.
   it sorts the monster's level into brackets (bounds at 200, 123, 100, 75,
   42, 24 and 15) and, inside each bracket, steps the answer by cumulative
   random cut-offs. ForgePact's `raredrop satanic` already lifts its first
-  argument. **Static reading** (2026-10-20, ForgePact #166).
+  argument. **Static reading** (2026-10-20, ForgePact #166). **Measured**
+  (Mod live 7) is how its answers spread in Hell (zone levels 243 to 245
+  and the owner's own play): answers 0 to 5 counted 0, 405, 401, 410, 3449
+  and 3432 over 8146 `DropItem` calls (Live 1c, magic find x10), and 0,
+  179, 193, 169, 1530 and 1432 over 3544 calls (Live 1b). k = 0 never came
+  up. In those two sessions there was about one answer per call; in Live 1
+  the answers outnumbered the calls (867 against 497), and why is not
+  established.
 - `DropItem` draws a unique itself, apart from every named unique roll. It
   takes `Controller_obj.lootListUnique[k]`, with k the value
   `LoadSatanicDropTier` returned, reads its size, draws a random index, reads
@@ -3617,6 +3630,23 @@ the order and shape of calls, paraphrased; no listing is reproduced here.
   set field 40 or 41 sends it back to draw again, inside a loop whose counter
   starts at 500, so a call can draw up to about 500 times. **Static reading**
   (2026-10-20, ForgePact #166).
+  **Measured** (Mod live 7): this draw is the route a kill's unique takes.
+  - In Live 1's owner window (about 10 minutes) all 4 natural uniques were
+    built inside a `DropItem` call and outside every nested roll. While
+    that happened, `DropUniqueItems`, `ReturnRandomSatanic` and the builds
+    outside `DropItem` each rose by 0. The two the owner named were among
+    the four.
+  - Live 1b built 9 that way and Live 1c 105, with 2 inside the nested
+    `DropUniqueItems` roll in each session.
+  - Each natural draw build's triple sat on list k (Live 1: 4 of 4; Live
+    1b: 8 of 8; Live 1c: 103 of 103), and its tier, field 32, equalled k.
+    So list k holds the tier-k uniques.
+  - The lookups per build are mostly few. Over Live 1's and Live 1b's 12
+    natural draw builds the reads since the last build had a median of 4,
+    and over Live 1c's 103 a median of 3. The tail runs to 249.
+  - Lookups per call: in Live 1c about 8.8 a call (71988 over 8146 calls).
+    Operator kills in Live 1 made 7 a call (276 over 40 calls) and built no
+    unique.
 - The rarity then picks one of four branches: 6 (Satanic), 9 (Heroic), 7 or
   10 (Angelic or Unholy), and any other value. In the rarity-6 branch an
   entry whose field 32 (the tier) is 5 meets one more test, on protected
@@ -3630,18 +3660,48 @@ the order and shape of calls, paraphrased; no listing is reproduced here.
   answer it. If the draw weighs entries, an entry added to list k is not
   picked on c / (L_k + c) of draws, and its own fields (field 28 first) may
   decide whether it is ever picked.
+  **Measured** (Mod live 7) for the keep-or-weigh question: the rule's
+  answer is `first-kept`. The natural draw builds' median of 4 reads met
+  it, and so did Live 1b's below-SS lever, at 1 pick per 3 typed draw builds
+  against the 0.13 the rule asks. The lever half rests on 3 builds, so it is
+  a weak reading.
+  **Measured** (Mod live 7, Live 1b and Live 1c) for the tier-5 test:
+  - A pushed rarity-6, tier-5 stand-in that the draw picks is built, but
+    rarely. 2 of 47 picks were built at magic find x10, both at k 0 to 4
+    where no natural copy sits. 0 of 13 were built at x1.
+  - A picked entry that was not built never reached the draw's
+    `CreateDefaultParams` call: that call's hits equalled the draw builds,
+    105 of 105.
+  - Both reads of slot 75 were reached, more than once a call. Every logged
+    hit read 75.0, a real. The comparison after the read was not logged, so
+    why most picked SS entries go back is **not established**.
+  - In 28 minutes at x10 no natural rarity-6, tier-5 unique was built
+    through the draw.
+  - Natural tier-5 builds through the draw did come at k = 5 with rarity 7
+    (Angelic, 1) and rarity 9 (Heroic, 2), outside the `angelic=` and
+    `heroic=` roll scopes. So list 5 holds those rarities too, and the draw
+    builds them itself.
 - The build follows the draw. In the call list that `GetUniqueRepoStruct`
   call is followed by one `CreateDefaultParams` call and one call to the
   unnamed placement routine (§ 23.8 names `LootGroundCreate` for the ordinary
   roll) before any other build. That is the order of the calls, not a
   reading of the control flow between them. **Static reading** (2026-10-20,
-  ForgePact #166).
+  ForgePact #166). **Measured** (Mod live 7): a debugger logpoint on that
+  `CreateDefaultParams` call counted one hit per unique the draw built (4
+  of 4 in Live 1, 105 of 105 in Live 1c), and none when 10 uniques were
+  placed by name through `DropUniqueItems`.
 - A second draw of the same shape reads a ds_list passed as `DropItem`'s
   argument 7 (counting from 0), when that argument is present and passes a
   builtin test. Which builtin was not read, and whether a kill passes a list
   there was not read. It has its own `GetUniqueRepoStruct`,
   `CreateDefaultParams` and placement calls. **Static reading** (2026-10-20,
-  ForgePact #166).
+  ForgePact #166). **Measured** (Mod live 7): most kills pass a list there.
+  `DropItem` was always called with 12 arguments, and argument 7 was a list
+  on 392 of 497 calls (Live 1), 2682 of 3544 (Live 1b) and 6934 of 8146
+  (Live 1c). In Live 1's owner window this draw's `GetUniqueRepoStruct`
+  call was reached 49 times, but no unique was built through it: every
+  draw-scope build went through the Satanic draw's own `CreateDefaultParams`
+  call.
 - What else `DropItem` builds: a normal item, through `GetNormalRepoStruct`,
   then `CreateDefaultParams`, then the placement. It calls `LoadDrops`
   (2171) once, and is that script's only direct caller (§ 13.1); drop type
@@ -3652,15 +3712,29 @@ the order and shape of calls, paraphrased; no listing is reproduced here.
   (calls through the script table or a method value were not scanned), and
   a kill's ordinary uniques can come from `DropItem`'s own draw without it.
   Live 3's
-  four natural uniques with `DropUniqueItems` flat fit that; that they came
-  from this draw is an inference until ForgePact's Mod live procedure 7
-  measures it. **Static reading** (2026-10-20, ForgePact #166).
+  four natural uniques with `DropUniqueItems` flat fit that. **Static
+  reading** (2026-10-20, ForgePact #166). **Measured** (Mod live 7, route
+  `satanic-draw`): an ordinary kill's unique comes from `DropItem`'s own draw
+  on `lootListUnique[k]`, as the draw bullet above records.
+- Entries added to `lootListUnique[0..5]` during a `DropItem` call reach
+  this draw. **Measured** (Mod live 7, Live 1b and Live 1c, ForgePact's
+  research lever `mark1probe draws push`).
+  - The draw read pushed entries: 1943 times over 971 calls with four
+    below-SS stand-ins, 4538 over 2336 with four SS ones, and 14729 over
+    8146 in Live 1c.
+  - It picked them, and the below-SS gloves stand-in was built at k = 5,
+    where no natural copy sits.
+  - The lists' lengths were back to 50, 61, 79, 152, 221 and 380 after the
+    lever was switched off.
 - `ReturnRandomSatanic` (3326) draws from `lootListUnique[argument 1]` until
   it finds an entry whose definition matches argument 0, is not hidden and,
   unless argument 2 is set, is neither Angelic nor Unholy, and it returns
   that definition. The byte scan found no direct call site, which is not
   observed: it may be called through the script table or a method value.
-  **Static reading** (2026-10-20, ForgePact #166).
+  **Static reading** (2026-10-20, ForgePact #166). Mod live 7 counted its
+  calls through a count-only hook by name. The count stayed 0 in all three
+  sessions, but no positive control for that hook exists, so this is **not
+  observed**, never "not called".
 - Not observed, never "none": the ghidra MCP's callers, callees and xrefs
   were empty for every function above (the project is a `-noanalysis`
   import), and the MCP shows neither a body nor a disassembly for `DropItem`.

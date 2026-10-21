@@ -609,5 +609,123 @@
     "live_2": "walkable-control failed: that build's probe counted any number of 0 or more from place_meeting as a meeting, so its real 0 printed blocked everywhere; corrected in ForgePact 61243b2",
     "what": "In Town_01_rm a walkable landing point is one inside the room where the player would meet nothing of Collision_Parent_obj. family alone saw the prop, which the path grid and the wall line missed, and turned blocked at the edge 16 px before them, but read free past the room's bottom, where only room and the grid still said no. Not measured: a generated zone, why the path grid's cells under the Bounty Board read free, whether pockets between blockers are reachable on foot, and the test at a jump's landing.",
     "source": "ForgePact docs/mark1-set-research.md (Live 3 results, Decision, Not established); forgepact-166-mark1-set-live-3.md (W2 to W4), not tracked"
+  },
+  "mod_live_7": {
+    "status": "measured",
+    "date": "2026-10-20 to 2026-10-21",
+    "procedure": "Phase 4's Mod live procedure 7, the unique draw inside DropItem, in three sessions on save slot 14 Sorak in Hell with every Mark 1 and flight switch off: Live 1 (2026-10-20, 21:48 to 22:06 UTC; operator kills, the push lever, then the owner's 10-minute window; debugger attached), Live 1b (2026-10-21, 08:37 to 09:19 UTC; the owner's play with the lever at c = 25, below-SS half then SS half; no debugger) and Live 1c (2026-10-21, 09:51 to 10:24 UTC; SS half only at magic find x10, debugger attached; the below control half was not run because the owner closed the session once ss-build read seen)",
+    "game_exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "research_dll_sha256": {
+      "live_1": "8aef7ec5a2949fc4e03668581d66b240ba2da321ab5bc272c43d33289ef3884c",
+      "live_1b": "b46e5ab34d4005cb85da82633b4e8f1fa0efeff147513a83ef8263b9a5511f85",
+      "live_1c": "b46e5ab34d4005cb85da82633b4e8f1fa0efeff147513a83ef8263b9a5511f85"
+    },
+    "forgepact_commit": {
+      "live_1": "c45f940",
+      "live_1b": "501a928",
+      "live_1c": "501a928"
+    },
+    "summary": "Live 1: 18 checks, 16 pass, 2 not observed (push-sees, retsat). Live 1b: 9 checks, 8 pass, 1 fail (push-sees). Live 1c: 15 checks, 12 pass, 1 fail (dbg-draw-build), 1 not observed (ss-native), 1 not run (below-builds). Every session-validity check passed in all three.",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "dbg-control": "pass",
+      "draws-on": "pass",
+      "kill-control": "pass",
+      "kill-normal": "pass",
+      "push-off": "pass",
+      "push-sees": "not-observed",
+      "pool-draw": "pass",
+      "vanilla-route": "pass",
+      "tier-k": "pass",
+      "draw-reads": "pass",
+      "arg7": "pass",
+      "retsat": "not-observed",
+      "dbg-draw": "pass",
+      "dbg-draw-build": "pass",
+      "dbg-arglist": "pass",
+      "live_1b": {
+        "dll-hash": "pass",
+        "control": "pass",
+        "draws-on": "pass",
+        "push-standins": "pass",
+        "push-held": "pass",
+        "window-draw": "pass",
+        "push-kept-below": "pass",
+        "push-sees": "fail",
+        "push-off": "pass"
+      },
+      "live_1c": {
+        "dll-hash": "pass",
+        "control": "pass",
+        "switches-off": "pass",
+        "draws-on": "pass",
+        "mf-on": "pass",
+        "push-held": "pass",
+        "push-off": "pass",
+        "dbg-control": "pass",
+        "ss-picks": "pass",
+        "ss-build": "pass",
+        "ss-native": "not-observed",
+        "below-builds": "not-run",
+        "dbg-ss75-a": "pass",
+        "dbg-ss75-b": "pass",
+        "dbg-draw-build": "fail"
+      }
+    },
+    "decision": {
+      "unique-route": "satanic-draw",
+      "tier-k": "matches",
+      "push-route": "seen",
+      "draw-mode": "first-kept",
+      "ss-build": "seen"
+    },
+    "route": {
+      "value": "satanic-draw",
+      "what": "An ordinary kill's unique is built by DropItem's own draw on Controller_obj.lootListUnique[k], k being LoadSatanicDropTier's answer, outside every nested roll. Live 1's owner window built 4 natural uniques that way (2 named by the owner), with DropUniqueItems, ReturnRandomSatanic and builds outside DropItem flat; the debugger logpoint on the draw's own CreateDefaultParams call rose by 4. Live 1b built 9 and Live 1c 105 that way, and 2 in each inside the nested DropUniqueItems roll. The rule's clause that the argument-7 draw's lookup stay flat did not hold (49 hits in Live 1's window), but every draw-scope build went through the Satanic draw's own build call (4 of 4, 105 of 105), and the driver read the route as satanic-draw on 2026-10-21."
+    },
+    "tier_histogram": {
+      "what": "LoadSatanicDropTier's answers 0 to 5 as raredrop's one detour counted them (tiers=), against DropItem's calls=. About one answer per call in Live 1b and 1c; in Live 1 the answers outnumber the calls, and why is not established.",
+      "live_1_session": {"tiers": [0, 12, 14, 9, 99, 733], "calls": 497},
+      "live_1_owner_window": {"tiers": [0, 9, 11, 6, 73, 81], "calls": 112},
+      "live_1b_session": {"tiers": [0, 179, 193, 169, 1530, 1432], "calls": 3544},
+      "live_1c_ss_half": {"tiers": [0, 405, 401, 410, 3449, 3432], "calls": 8146}
+    },
+    "draw_builds_by_k": {
+      "what": "Natural uniques built in scope draw, by the call's k; each one's triple sat on list k and its tier equalled k (on-k), none off it (off-k=0). Stand-in builds (pick-builds) are not included.",
+      "live_1_owner_window": [0, 1, 2, 0, 1, 0],
+      "live_1b": [0, 0, 0, 0, 8, 0],
+      "live_1c_ss_half": [0, 22, 5, 14, 59, 3]
+    },
+    "draw_reads": {
+      "what": "reads= of each natural draw build: GetUniqueRepoStruct reads in its scope since the last build",
+      "live_1": [28, 9, 19, 85],
+      "live_1b": [4, 2, 5, 3, 2, 2, 4, 3],
+      "median_live_1_and_1b": 4,
+      "live_1c_median": 3,
+      "live_1c_max": 249
+    },
+    "arg7": {
+      "what": "DropItem calls whose argument 7 was a list, against all calls (always 12 arguments); in Live 1's owner window the argument-7 draw's GetUniqueRepoStruct call logged 49 hits and built no unique",
+      "live_1": {"list": 392, "undefined": 105, "calls": 497},
+      "live_1b": {"list": 2682, "undefined": 862, "calls": 3544},
+      "live_1c": {"list": 6934, "undefined": 1212, "calls": 8146}
+    },
+    "lever": {
+      "standins_ss": "helmet 0:15, body 0:1, boots 0:9, gloves 0:16; rarity 6, tier 5, on list 5 only",
+      "standins_below": "helmet 0:0 tier 4, body 0:0 tier 4, boots 0:0 tier 1, gloves 0:0 tier 2; rarity 6, each on its own tier's list",
+      "pool_draw_elf": "class 10: 51 candidates, 24 SS, best SS 0:1 tier 5 on list 5 only; best below SS 0:0 tier 4",
+      "live_1b_below": {"s": 4, "c": 25, "calls": 971, "reads": 8562, "draw": 3, "on_k": 2, "off_k": 0, "picks": 1, "pick_builds": 1, "push_held": 971, "push_skipped": 0, "pushed_reads": 1943, "dropunique": 2, "n": 3, "mean_list_k_length": 274.0},
+      "live_1b_ss": {"s": 4, "c": 25, "calls": 2336, "reads": 20113, "draw": 6, "on_k": 6, "off_k": 0, "picks": 13, "pick_builds": 0, "push_held": 2336, "push_skipped": 0, "pushed_reads": 4538, "dropunique": 0, "n": 6, "n_by_owner_attribution": 5, "mean_list_k_length": 221, "ss_share": 2.17},
+      "live_1c_ss_x10": {"s": 4, "c": 25, "minutes": 28, "calls": 8146, "reads": 71988, "draw": 105, "on_k": 103, "off_k": 0, "picks": 47, "pick_builds": 2, "push_held": 8146, "push_skipped": 0, "pushed_reads": 14729, "dropunique": 2, "outside": 11, "draw_per_minute": 3.75, "picks_per_minute": 1.7, "picks_per_read_interval": [10, 7, 30, 0], "draw_per_read_interval": [12, 20, 73, 0]},
+      "below_pick_build": "Live 1b: Shadow's Grasp (class 4, base 0, tier 2, list 2 only) built in scope draw at k = 5, the gloves below-SS stand-in; this record's reading of the capture, which the watch's pick-builds=1 agrees with",
+      "ss_pick_builds": "Live 1c: Pirate Captain's Hat (class 0, base 15, rarity 6, tier 5, list 5 only) at k = 2 and Pirate Captain's Boots (class 2, base 9, rarity 6, tier 5, list 5 only) at k = 4, both in scope draw, both named by the owner"
+    },
+    "ss_check": {
+      "what": "The draw's tier-5 test on protected value slot 75. A picked SS stand-in is built, but rarely: 2 of 47 picks at magic find x10 (Live 1c), 0 of 13 at x1 (Live 1b; not pooled). The 45 picks that were not built never reached the draw's CreateDefaultParams call, whose logpoint hits equalled the draw builds (105). Both slot-75 read sites were reached (at least 3.1 and 1.57 hits a call; the log condition's literals were read as hex, so counts resolve to 512) and every logged hit read 75.0, a real (139 lines). Why most picked SS entries go back is not established. No natural rarity-6 tier-5 unique was built through the draw in 28 minutes at x10; natural tier-5 draw builds came at k = 5 with rarity 7 (1, the owner calls it Angelic) and rarity 9 (2, Heroic). Aimbot.exe (class 10, base 76, rarity 6, tier 5) was built 8 times in scope outside.",
+      "slot_75_value": 75.0
+    },
+    "source": "ForgePact docs/mark1-set-research.md (Mod live 7 results, Phase 4 decision); docs/RUNTIME_DATA_MODELS.md 13.12; forgepact-166-mark1-set-uniques-live-1.md, -live-1b.md and -live-1c.md, not tracked"
   }
 }
