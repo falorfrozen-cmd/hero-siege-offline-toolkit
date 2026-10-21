@@ -18,6 +18,9 @@ pub struct Settings {
     /// on its own" -- and a hub whose job *is* distribution still owes the
     /// player an honest way out.
     pub work_offline: bool,
+    /// Off by default, a security requirement: the hub checks for updates
+    /// only when asked, unless the player opts in. Only a missing key takes
+    /// this default, so a `state.json` that already says `true` keeps it.
     pub check_on_launch: bool,
     pub auto_download: bool,
     /// Nested under auto_download: installing without asking presupposes having
@@ -39,7 +42,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             work_offline: false,
-            check_on_launch: true,
+            check_on_launch: false,
             auto_download: false,
             auto_install: false,
             theme: "obsidian".to_string(),
@@ -246,7 +249,7 @@ mod tests {
     fn defaults_are_offline_friendly_and_never_install_behind_your_back() {
         let settings = Settings::default();
         assert!(!settings.work_offline);
-        assert!(settings.check_on_launch);
+        assert!(!settings.check_on_launch);
         assert!(!settings.auto_download);
         assert!(!settings.auto_install);
         assert!(!settings.first_run_done);
@@ -263,6 +266,14 @@ mod tests {
         assert!(!settings.effective_auto_install());
         settings.auto_download = true;
         assert!(settings.effective_auto_install());
+    }
+
+    #[test]
+    fn launch_check_is_off_unless_the_state_file_turns_it_on() {
+        let fresh: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!fresh.check_on_launch);
+        let opted_in: Settings = serde_json::from_str(r#"{"check_on_launch":true}"#).unwrap();
+        assert!(opted_in.check_on_launch);
     }
 
     #[test]

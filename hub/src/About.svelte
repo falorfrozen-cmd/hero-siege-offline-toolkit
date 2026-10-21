@@ -65,7 +65,8 @@
   <h3>Updating the hub itself</h3>
   <p>
     The tools update from the catalog. The hub updates from its own signed
-    release — checked on launch along with the catalog, and never installed
+    release — checked along with the catalog, on launch only if you turn that
+    on in Settings, and never installed
     without you saying so.
   </p>
   <div class="row">
