@@ -4594,8 +4594,9 @@ content, never by the hash alone. **Measured.**
   - relic skills are named from the game's `translations*.csv`
     (`talent_name_relicMeatHook` → `Meat Hook`).
 - Every tooltip carries the key hint `ALT - Show Information`. Holding ALT draws
-  the information view, which adds each rolled line's range (` [45-75]`) and
-  skill descriptions.
+  the information view, which adds each rolled line's range (` [45-75]`).
+  It was taken to add skill descriptions too, but a gear item's skill-grant
+  description shows with and without it (§ 16.12, measured).
 - An unidentified item draws `Unidentified` and no stat lines.
 - All 344 direct call sites of `DrawInventoryStatsNew` in the build Ghidra
   imported (§ 19.7 names its hash) lie inside `DrawInventoryItemV2`, one after
@@ -4624,6 +4625,24 @@ content, never by the hash alone. **Measured.**
   also for an item without stats, which agrees with the cache inference
   above; the branch's logic itself is still not read.
   [Mod live 2 results](../ForgePact/docs/flight-charms-research.md#mod-live-2-results)
+- The call runs on every frame the tooltip shows, while the tooltip's text,
+  the type line under the name included, is drawn on the first frame of a
+  hover only. A hook on the call armed for one item counted hundreds of
+  calls per hover and kept counting with the pointer resting on the item
+  (about 24,600 over three minutes), while the hook's swap of the type line
+  and its own rows counted 1 per hover; the swapped type line showed on
+  every frame, so the cached copy holds it. **Measured** (2026-10-21,
+  ForgePact's Mark 1 Mod live 9, `tip-rehover` and `tip-ground`). Counting
+  each call by whether the game drew in it, one call per hover drew and the
+  later ones drew nothing (49 such calls in a 1 s hover, 2,190 more over a
+  5 s rest), and a debugger logpoint on a direct `DrawInventoryStatsNew`
+  call inside the pass rose by the same 1 on each of three hovers (ground,
+  bag, worn) and stayed flat over the rest while a control logpoint logged.
+  **Measured** (2026-10-21, Mark 1 Mod live 10, `tip-ground`, `tip-cached`
+  and `dbg-stat-site`). The same site also logged once for other items'
+  tooltips between those hovers.
+  [Mod live 9 results](../ForgePact/docs/mark1-set-research.md#mod-live-9-results),
+  [Mod live 10 results](../ForgePact/docs/mark1-set-research.md#mod-live-10-results)
 
 **Measured 2026-09-24.** The stat call's arguments and return value were
 live-traced on 2026-09-04 (ForgePact's forged tooltip rows).
@@ -4869,6 +4888,12 @@ the controls and the table are in the Item Editor's
   under it. The item editor's own static analysis sends that description
   through `DrawSkillDescription`
   (`hero-siege-item-editor/hs_stat_semantics_s10.json`, its grant block).
+- **Measured**, a gear item's grant description outside the ALT view
+  (2026-10-21, ForgePact's Mark 1 Mod live 9, `desc-plain`): a worn Zealot's
+  Book of Prophecy, line `+11 to Satan's Mark (White Mage)`, drew the skill's
+  description under the line without ALT and with ALT held, the tooltip the
+  same in both.
+  [Mod live 9 results](../ForgePact/docs/mark1-set-research.md#mod-live-9-results)
 - **Measured**, the width an item's description or lore row wraps at
   (Item Truth's captures, 182 journals of the same build): the game draws
   those rows with `draw_text_ext` at a line separation of -1, and the width
@@ -4900,20 +4925,19 @@ the controls and the table are in the Item Editor's
     worn pieces;
   - how the pass decides that an item belongs to a set (how an item names
     its set), and how it counts the worn pieces;
-  - whether a gear item's skill-grant description is drawn outside the ALT
-    information view (§ 16.6 says ALT adds skill descriptions). The 39
-    captures with ranges were ALT views, and the 161 without were potions
-    and relics, which roll no ranges, so the captures cannot tell;
   - the 28 against 30 px row pitch: which one a live tooltip uses at the
     player's scale.
 
 ForgePact's Mark 1 set draws its own set block in the pieces' tooltips from
-these measurements, and its Mod live procedure 9 checks the layout and the
-open grant question on screen. The pieces' description wraps at 478, the
-narrowest width the game itself used in any captured tooltip, after Mod live
-9 found a row wrapped at 622 running past both edges of a piece's box; Mod
-live procedure 10 checks it on screen:
-[Mark 1 research, Phase 5](../ForgePact/docs/mark1-set-research.md#phase-5-the-set-tooltip-and-the-pieces-art).
+these measurements. The pieces' description wraps at 478, the narrowest
+width the game itself used in any captured tooltip, after Mod live 9 found a
+row wrapped at 622 running past both edges of a piece's box. At 478 the
+description took four rows, and every row of the block sat inside the box,
+no letter cut and none over another row or the footer, in a ground, a bag
+and a worn piece's tooltip, with the bonus line grey and gold. **Measured**
+(2026-10-21, Mod live 10, `tip-layout`):
+[Mark 1 research, Phase 5](../ForgePact/docs/mark1-set-research.md#phase-5-the-set-tooltip-and-the-pieces-art),
+[Mod live 10 results](../ForgePact/docs/mark1-set-research.md#mod-live-10-results).
 
 ---
 
@@ -8561,8 +8585,14 @@ sprite table gives each sprite's name and size.
   generates, which has no `Pickup_` companion, so the lookup fails and the
   ground item draws `Error_spr`. That is the reading behind Live 1's
   `sprite-draw: partial` (§ 23.5: our sprite drawn in the bag, the error
-  placeholder on the ground). **Static reading** (2026-10-12); the generated
-  name itself was not read live.
+  placeholder on the ground). **Static reading** (2026-10-12). The generated
+  name reads `__newsprite<n>`: `sprite_get_name` on the ground sprites of
+  ForgePact's four Mark 1 pieces, which ForgePact adds with `sprite_add` and
+  sets after the game's call, read `__newsprite32286`, `__newsprite32288`,
+  `__newsprite32290` and `__newsprite32292`, one per piece in the order they
+  were made. **Measured** (2026-10-21, Mark 1 Mod live 10, `soulprobe
+  ground`).
+  [Mod live 10 results](../ForgePact/docs/mark1-set-research.md#mod-live-10-results)
 - `gml_Script_LootGroundDraw` (2355) draws the ground item's `sprite_index`,
   after a glow drawn from its `img`. **Static reading** (2026-10-12).
 - `LootGroundInit` has 10 direct call sites. **Static reading** (2026-10-12,
@@ -8575,6 +8605,21 @@ sprite table gives each sprite's name and size.
   Mod live 1, `ground-control` and `ground-icon`). That the lookup goes by
   name stays the reading above.
   [Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results)
+- A ground item lying on the town's waypoint is drawn under it: only its
+  name label shows, whatever its sprite. In Inoya, a Mark 1 piece on the
+  waypoint showed its label and no sprite (Mark 1 Mod live 2, 2026-10-19,
+  step V2a of its capture `forgepact-166-mark1-set-mod-live-2.md`, kept with
+  the hub's workorder files and not tracked), and four pieces placed on it
+  showed their four labels and no sprite of any kind while ForgePact had set
+  its own sprite on all four (Mod live 9, 2026-10-21). The same four, placed
+  138 px south of the waypoint and viewed from 128 px away, showed their
+  sprites, and a debugger logpoint on `LootGroundDraw` counted 0 before they
+  were placed, 745 hits about 5 s after the player moved beside them and
+  2,099 when it was cleared (Mod live 10, 2026-10-21, `art-spawn` and
+  `dbg-ground-draw`). **Measured.** So a ground check is made off the
+  waypoint; a count of sprite writes cannot see this.
+  [Mod live 9 results](../ForgePact/docs/mark1-set-research.md#mod-live-9-results),
+  [Mod live 10 results](../ForgePact/docs/mark1-set-research.md#mod-live-10-results)
 
 ### 23.8 The ordinary unique roll makes one draw
 
