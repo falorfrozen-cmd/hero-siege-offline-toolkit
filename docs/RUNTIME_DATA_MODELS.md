@@ -3666,15 +3666,26 @@ Each label below says which.
   against the 0.13 the rule asks. The lever half rests on 3 builds, so it is
   a weak reading.
   **Measured** (Mod live 7, Live 1b and Live 1c) for the tier-5 test:
-  - A pushed rarity-6, tier-5 stand-in that the draw picks is built, but
-    rarely. 2 of 47 picks were built at magic find x10, both at k 0 to 4
-    where no natural copy sits. 0 of 13 were built at x1.
-  - A picked entry that was not built never reached the draw's
-    `CreateDefaultParams` call: that call's hits equalled the draw builds,
-    105 of 105.
+  - A pushed rarity-6, tier-5 stand-in is rarely built through the draw.
+    Live 1c built 2 SS stand-ins among 105 draw builds at magic find x10,
+    both at k 0 to 4 where no natural copy sits, and Live 1b built 0 among
+    6 at x1. With s·c = 100 copies pushed on lists of about 221 entries, a
+    draw that keeps the first entry it reads would build one on about 0.3
+    of draws. Why SS stand-ins are rarely built is **not established**.
+  - The probe's `picks=` (47 in Live 1c, 13 in Live 1b) is an instrument
+    count, not the draw's picks. It counts any `CreateDefaultParams` call
+    in the draw's scope whose sub and b match a pushed triple read since
+    the read window was last cleared; it does not compare the class, and a
+    normal build does not clear the window. The debugger logpoint on the
+    draw's own `CreateDefaultParams` call hit 105 times, equal to the 105
+    draw builds and including both stand-ins, so the other 45 counted calls
+    ran at a different call site. They are not the draw picking a stand-in
+    and sending it back.
   - Both reads of slot 75 were reached, more than once a call. Every logged
-    hit read 75.0, a real. The comparison after the read was not logged, so
-    why most picked SS entries go back is **not established**.
+    hit carried 75.0, a real, as the logpoint's logged value. Whether that
+    is the index argument or the value stored in slot 75 is **not
+    established**, and the comparison after the read was not logged, so
+    whether the tier-5 test rejects anything is **not established** either.
   - In 28 minutes at x10 no natural rarity-6, tier-5 unique was built
     through the draw.
   - Natural tier-5 builds through the draw did come at k = 5 with rarity 7
