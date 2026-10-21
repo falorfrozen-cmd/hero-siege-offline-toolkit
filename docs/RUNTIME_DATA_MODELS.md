@@ -3152,8 +3152,19 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
 - **What a hit's placement reads.** `CreateDefaultParams(sub, b, 1.0)` builds
   its parameter struct from its three arguments, and reads no repository. The
   struct it returns is exactly `{j, b, c}`: `j` the first argument (the sub),
-  `b` the second (the unique's index), `c` the third (1, the unique
-  repository); it has no field `a` (**measured**, Live 2, below). The built
+  `b` the second (the unique's index), `c` from the third (1, the unique
+  repository); it has no field `a` (**measured**, Live 2, below). `c` is not
+  the third argument itself but a real derived from it: 1 when the runner's
+  own truth test passes on that argument, else 0, and a missing or undefined
+  third argument counts as 0. That truth test passes a real or a bool above
+  0.5, an int32 or a reference above 0, an int64 above 0 and a pointer that
+  is not null; undefined fails it, and a string or any other kind raises a
+  runner error. So a caller may pass the class as a bool or as a number and
+  get the same record, and a hook that reads the argument before the game
+  does must apply the same test rather than read it as a number. Which kind
+  the Angelic roll passes was not read; nothing on this path reads the
+  argument after `CreateDefaultParams` has stored `c`. **Static reading**
+  (2026-10-21, ForgePact #166, build 498d5885…). The built
   item's `a` comes from `LootGroundCreate` itself: on both of its branches
   that build an item locally it stores a value of its own into the record's
   `a`, unconditionally and before the item instance exists, then hands the
@@ -3714,7 +3725,17 @@ Each label below says which.
   draw-scope build went through the Satanic draw's own `CreateDefaultParams`
   call.
 - What else `DropItem` builds: a normal item, through `GetNormalRepoStruct`,
-  then `CreateDefaultParams`, then the placement. It calls `LoadDrops`
+  then `CreateDefaultParams`, then the placement. All three of `DropItem`'s
+  `CreateDefaultParams` calls (the Satanic draw's build, the argument-7 list
+  draw's build and this normal build) pass three arguments, and each passes
+  its class, the third, as a bool rather than a number: the Satanic draw's
+  build passes true on its unique path and false on one fallback build of a
+  fixed sub and b, the argument-7 build passes a constant true, and the
+  normal build a constant false. `CreateDefaultParams` turns that bool into
+  the real 1 or 0 it stores as `c` (§ 13.4), so a read of the stored `c` sees
+  a number while a read of the argument sees a bool; a number-only read of
+  the argument therefore never sees a unique build here. **Static reading**
+  (2026-10-21, ForgePact #166, build 498d5885…). It calls `LoadDrops`
   (2171) once, and is that script's only direct caller (§ 13.1); drop type
   45 inside `LoadDrops` holds the only direct call of `DropUniqueItems`
   (1424). It calls `DropItemAngelicChance` (1368) once (§ 13.4). **Static
