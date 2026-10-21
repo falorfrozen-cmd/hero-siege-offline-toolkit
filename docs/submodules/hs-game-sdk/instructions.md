@@ -44,6 +44,7 @@ hs-game-sdk/
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── flight_charms_measurements.json # ForgePact #158 phase 1: walk callers, charm size keys, sprite key, the Heroic roll (RDM §19.6, §23), and the mod's Mod live 1-3 records (data only)
 │   ├── unique_pick_measurements.json # UP1-UP22: #74's stand-in picks, the unique list's lengths, ForgePact's push and coin, the flight charms' Mod live 1 and 2 counts, the Heroic roll (UP14, UP21) and DropItem's draw (UP15-UP20), and the Mark 1 kill route by name (UP22), for unique_pick_model.py (data only)
+│   ├── mark1_set_measurements.json # ForgePact #166: the Mark 1 set's Mod live 1-8 records (casts, walk, jump, the Heroic roll's pool, the DropUniqueItems route by name, the kill lever, DropItem's draw; data only)
 │   ├── movement_speed_measurements.json # MS1-MS11: ForgePact #166's Mod live 1 sweep of the walk's modal step against the id-64 answer, its half point and phase 1's point, for movement_speed_model.py (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
