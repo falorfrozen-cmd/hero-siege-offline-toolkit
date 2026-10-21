@@ -8605,8 +8605,8 @@ sprite table gives each sprite's name and size.
   Mod live 1, `ground-control` and `ground-icon`). That the lookup goes by
   name stays the reading above.
   [Mod live 1 results](../ForgePact/docs/flight-charms-research.md#mod-live-1-results)
-- A ground item lying on the town's waypoint is drawn under it: only its
-  name label shows, whatever its sprite. In Inoya, a Mark 1 piece on the
+- A ground item lying on the town's waypoint shows only its name label,
+  whatever its sprite. In Inoya, a Mark 1 piece on the
   waypoint showed its label and no sprite (Mark 1 Mod live 2, 2026-10-19,
   step V2a of its capture `forgepact-166-mark1-set-mod-live-2.md`, kept with
   the hub's workorder files and not tracked), and four pieces placed on it
@@ -8616,8 +8616,14 @@ sprite table gives each sprite's name and size.
   sprites, and a debugger logpoint on `LootGroundDraw` counted 0 before they
   were placed, 745 hits about 5 s after the player moved beside them and
   2,099 when it was cleared (Mod live 10, 2026-10-21, `art-spawn` and
-  `dbg-ground-draw`). **Measured.** So a ground check is made off the
-  waypoint; a count of sprite writes cannot see this.
+  `dbg-ground-draw`). **Measured**, for what the screen shows. **Why** the
+  sprite is missing is **not established**: no debugger ran with a piece on
+  the waypoint (the `LootGroundDraw` count above was taken off it, and the
+  two waypoint observations are screenshots), so "drawn, then covered by the
+  waypoint" cannot be told apart from "never drawn" (`LootGroundDraw` not
+  running for an item there, or the draw skipped). Do not assume a ground
+  draw or a draw hook fires for an item on the waypoint. So a ground check
+  is made off the waypoint; a count of sprite writes cannot see this.
   [Mod live 9 results](../ForgePact/docs/mark1-set-research.md#mod-live-9-results),
   [Mod live 10 results](../ForgePact/docs/mark1-set-research.md#mod-live-10-results)
 
