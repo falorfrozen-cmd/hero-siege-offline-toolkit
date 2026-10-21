@@ -336,9 +336,11 @@ Every claim carries one of four labels, and a source:
   entries, UP6's lengths again, and each class's stand-in held 0 times on
   every one of them (n = 0). At 200 copies of each stand-in, 40 calls placed
   40 items, 35 of them pieces (helmet 5, body 8, boots 10, gloves 12).
-  Neither session ran either roll from a kill or a vault: Mod live 6 found
-  that ordinary kills never enter `DropUniqueItems` (RDM § 13.1), so the
-  model does not predict that route's share per kill.
+  Neither session ran either roll from a kill or a vault. Mod live 6 saw no
+  kill enter `DropUniqueItems` in Act 1 on Hell (type 45's chance 0 on all
+  1831 arrays), while Mod live 7 and Mod live 8 saw it run inside a kill's
+  `DropItem` call a few times (RDM § 13.1), so the model does not predict
+  that route's share per kill.
 
 ## Our code
 
