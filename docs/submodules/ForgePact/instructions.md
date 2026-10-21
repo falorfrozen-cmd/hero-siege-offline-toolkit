@@ -7257,8 +7257,11 @@ directly after the Mark 1 set's) is the pieces' drop, on its own switch, apart
 from the bonus. Startup sends `mark1set drops 1` only when it is on (safe at
 launch: with no character it only arms), and `/api/set` sends `mark1set drops
 1|0` while the game runs. Its description says the four pieces can drop from
-the monsters you kill anywhere, and from vaults, among the game's own items,
-and names the set `a ForgePact item set` once.
+the monsters you kill, among the game's own items, and join the roll a vault
+makes for its loot, and names the set `a ForgePact item set` once. It says
+neither "anywhere" (Mod live 8 measured kills in Hell only) nor "from vaults"
+(no vault's own call of the Heroic roll was observed);
+`test_mark1_drops_panel_contract.py` pins both.
 
 **Rules.**
 
