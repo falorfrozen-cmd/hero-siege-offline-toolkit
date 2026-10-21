@@ -728,5 +728,59 @@
       "slot_75_logpoint_logged_value_note": "the value the slot-75 logpoint logged on every hit; it may be the index argument rather than the value stored in slot 75 (not established)"
     },
     "source": "ForgePact docs/mark1-set-research.md (Mod live 7 results, Phase 4 decision); docs/RUNTIME_DATA_MODELS.md 13.12; forgepact-166-mark1-set-uniques-live-1.md, -live-1b.md and -live-1c.md, not tracked"
+  },
+  "mod_live_8": {
+    "status": "measured",
+    "date": "2026-10-21",
+    "procedure": "Phase 4's Mod live procedure 8, the Mark 1 drops and Pocket Elf moved onto DropItem's own unique draw, on save slot 14 Sorak in Hell with no debugger. Attempt 2 (14:57 to 15:45 UTC) is the record: L3 and the operator's L4 batches in the Outskirts of Inoya (zone level 243), the owner's L4 play in The Devil's Breach (zone level 276). Magic find x10 from L3, raised to x100 partway through L4 by the owner (an owner deviation, at draw-typed=2/21); L4 at copies 400 for every piece and Pocket Elf. Attempt 1 (13:34 to 13:59 UTC, ForgePact e19b70d, DLL SHA-256 e1642ea3eef60543dc891bf7bffb6cd558dbb977eaf224cc8f75e3ae04f98d13) stopped in L3: its typed-build count read the class as a number only and saw none of the unique builds (draw-typed=0/0 over 8342 draw calls while the owner saw uniques drop), so its checks were not run.",
+    "game_exe_sha256": "not recorded in the capture; the procedure requires Mod live procedure 7's build, 498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "research_dll_sha256": "10fdd37cb6c882771b604d57ba73b7c3aa2146fccdb62a143d1dd2711f15572b",
+    "forgepact_commit": "b59a017",
+    "summary": "14 checks: 13 pass, 0 fail, 1 not observed (natural-draw). Every session-validity check passed.",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "draw-control": "pass",
+      "drops-on": "pass",
+      "elf-on": "pass",
+      "draw-pieces": "pass",
+      "draw-elf": "pass",
+      "nested-clean": "pass",
+      "heroic-still": "pass",
+      "unique-still": "pass",
+      "drop-off": "pass",
+      "natural-draw": "not-observed",
+      "draw-scope": "pass"
+    },
+    "decision": {
+      "draw-claim": "yes",
+      "elf-claim": "yes"
+    },
+    "draw_control": {
+      "what": "L3's second operator batch at copies 1, magic find x10: draw-calls and draw-pushed 0 to 102, draw-typed 0/0 to 0/2, elf-draw-typed 0/0 to 0/2, draw-class-check 0/0/0 to 17/0/0 on both lines, draw-class bool:2/15,num:0/0. No fail exit at any read."
+    },
+    "l4": {
+      "copies": 400,
+      "draw_typed": {"start": "0/2", "end": "8/61", "rise": 67, "own_standin_rise": 8, "rise_at_magic_find_x10": 21, "rise_at_magic_find_x100": 46},
+      "elf_draw_typed": {"start": "0/2", "end": "1/68", "rise": 67, "own_standin_rise": 1, "rise_at_magic_find_x10": 21, "rise_at_magic_find_x100": 46},
+      "draw_builds": {"helmet": 2, "body": 4, "boots": 1, "gloves": 1, "pocket_elf": 1},
+      "own_standin_typed_builds_that_hit": "9 of 9 (8 pieces, 1 Pocket Elf)",
+      "model_share_at_copies_400": "four pieces together about 4.0% (list 5) to 6.6% (list 4) of typed builds, Pocket Elf 1.0% to 1.7%, more on shorter lists (unique_pick_model.draw_share, procedure 8); measured 8 of 67 and 1 of 67; no build's k was recorded",
+      "on_screen_ss": "Mark 1 Body Armor, Mark 1 Helmet and Mark 1 Boots from the draw, Pocket Elf from the draw; no beam or announcement in any frame, lootshow at the drop moment not observed",
+      "anomalies": 0,
+      "refused": 0,
+      "tier_unread": 0,
+      "draw_nested": 7,
+      "draw_outside": "busy:0,aside:5,lists:0,roll:0"
+    },
+    "class_argument": {
+      "what": "Over L3 and L4, 13457 CreateDefaultParams calls in the draw's scope: the third argument read as a bool or absent, never a number. True on the 69 unique builds, false on 8482 normal builds, absent or unset on 4906 more normal builds (which call made those was not read). draw-class-check agreed with the c the game stored on all 13457, 0 disagreements, 0 unread.",
+      "draw_class": "bool:69/8482,num:0/0,none:4906,other:0",
+      "draw_class_check": "13457/0/0"
+    },
+    "dropuniqueitems_on_kills": "kill-calls 0 to 7 with draw-nested 0 to 7 in the owner's L4 play in The Devil's Breach: the ordinary unique roll ran 7 times inside a kill's DropItem call, over about 2900 outermost DropItem calls, and at copies 400 built Mark 1 Boots twice and Mark 1 Gloves once. What opened drop type 45's gate there is not established.",
+    "hit_lines": "No kill draw hit line, and no unique roll hit line for the kills' DropUniqueItems hits, reached bp_ipc out.txt; L6's by-name calls printed theirs in the command reply. Where a hit line made outside a command goes was not looked at.",
+    "source": "ForgePact docs/mark1-set-research.md (Mod live 8 results, Phase 4 decision); docs/RUNTIME_DATA_MODELS.md 13.12; forgepact-166-mark1-set-uniques-live-2.md, not tracked"
   }
 }

@@ -3612,6 +3612,11 @@ build, argument 7, the lever's pushed entries reaching the draw and the
 tier-5 check. It ran in three sessions (2026-10-20 and 2026-10-21, slot 14,
 Hell, build `498d5885…`), recorded in
 [Mod live 7 results](../ForgePact/docs/mark1-set-research.md#mod-live-7-results).
+ForgePact's Mod live procedure 8 (2026-10-21, slot 14, Hell, the research
+build that moves the Mark 1 drops and Pocket Elf onto this draw) measured
+the class argument, the stand-ins pushed for a call being built, and
+`DropUniqueItems` running inside a kill's `DropItem` call, recorded in
+[Mod live 8 results](../ForgePact/docs/mark1-set-research.md#mod-live-8-results).
 Each label below says which.
 
 - `DropItem` (1364) has 19 direct call sites, all in unnamed object events,
@@ -3703,6 +3708,13 @@ Each label below says which.
     (Angelic, 1) and rarity 9 (Heroic, 2), outside the `angelic=` and
     `heroic=` roll scopes. So list 5 holds those rarities too, and the draw
     builds them itself.
+  - **Measured** (Mod live 8): pushed rarity-6, tier-5 stand-ins are built
+    through the draw at a high push. With every Mark 1 piece class's SS
+    stand-in and Pocket Elf's pushed 400 times a call onto each of the six
+    lists, at magic find x10 and then x100, the draw built 9 of them among
+    67 unique builds (8 pieces, 1 Pocket Elf; ForgePact's rewrite then made
+    each the item). It does not say how often the tier-5 test passes at
+    one copy.
 - The build follows the draw. In the call list that `GetUniqueRepoStruct`
   call is followed by one `CreateDefaultParams` call and one call to the
   unnamed placement routine (§ 23.8 names `LootGroundCreate` for the ordinary
@@ -3735,7 +3747,14 @@ Each label below says which.
   the real 1 or 0 it stores as `c` (§ 13.4), so a read of the stored `c` sees
   a number while a read of the argument sees a bool; a number-only read of
   the argument therefore never sees a unique build here. **Static reading**
-  (2026-10-21, ForgePact #166, build 498d5885…). It calls `LoadDrops`
+  (2026-10-21, ForgePact #166, build 498d5885…). **Measured** (Mod live 8):
+  over 13457 `CreateDefaultParams` calls in the draw's scope, the third
+  argument read as a bool or absent and never as a number. It read true on
+  the 69 unique builds and false on 8482 normal ones, and 4906 more normal
+  builds passed no third argument, or passed it unset; which call made
+  them was not read. On all 13457 the argument's truth agreed with the `c`
+  the game stored. ForgePact's first counter, which read only a number, saw
+  none of the unique builds in 8342 calls. It calls `LoadDrops`
   (2171) once, and is that script's only direct caller (§ 13.1); drop type
   45 inside `LoadDrops` holds the only direct call of `DropUniqueItems`
   (1424). It calls `DropItemAngelicChance` (1368) once (§ 13.4). **Static
@@ -3747,7 +3766,13 @@ Each label below says which.
   four natural uniques with `DropUniqueItems` flat fit that. **Static
   reading** (2026-10-20, ForgePact #166). **Measured** (Mod live 7, route
   `satanic-draw`): an ordinary kill's unique comes from `DropItem`'s own draw
-  on `lootListUnique[k]`, as the draw bullet above records.
+  on `lootListUnique[k]`, as the draw bullet above records. **Measured**
+  (Mod live 8): kills do sometimes reach `DropUniqueItems`. In about 40
+  minutes of the owner's play in The Devil's Breach (Hell, zone level 276)
+  at magic find x10 and then x100, it ran 7 times inside a `DropItem`
+  call, over about 2900 outermost `DropItem` calls. The drops workorder's Live 3 saw
+  it never run in Act 1 on Hell. What opened type 45's gate there (the
+  zone, its level or the magic find) is **not established**.
 - Entries added to `lootListUnique[0..5]` during a `DropItem` call reach
   this draw. **Measured** (Mod live 7, Live 1b and Live 1c, ForgePact's
   research lever `mark1probe draws push`).
@@ -3758,6 +3783,11 @@ Each label below says which.
     where no natural copy sits.
   - The lists' lengths were back to 50, 61, 79, 152, 221 and 380 after the
     lever was switched off.
+  - **Measured** (Mod live 8): entries the Mark 1 drops and Pocket Elf push
+    for each outermost `DropItem` call are built from kills. Every build
+    typed on one of those stand-ins (9 of 67 typed builds, at 400 copies a
+    call) was rewritten into its item and built, and the lists read 50, 61,
+    79, 152, 221 and 380 again afterwards.
 - `ReturnRandomSatanic` (3326) draws from `lootListUnique[argument 1]` until
   it finds an entry whose definition matches argument 0, is not hidden and,
   unless argument 2 is set, is neither Angelic nor Unholy, and it returns
