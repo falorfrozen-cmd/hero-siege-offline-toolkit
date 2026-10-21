@@ -23,10 +23,19 @@ pieces also drop from ordinary kills, the way the game's own set items do: the
 same switch pushes them onto the ordinary unique roll (`DropUniqueItems`), the
 kill route, beside Pocket Elf.
 
+ForgePact#166's Mod live procedure 7 then found that an ordinary kill does not
+reach `DropUniqueItems` at all: its unique comes from a draw inside `DropItem`
+itself, from `lootListUnique[k]` with k what `LoadSatanicDropTier` answered in
+the same call ("the draw" below). With their switches on, each Mark 1 piece
+and Pocket Elf join that draw too, and the spec covers it in each section. The
+`DropUniqueItems` and Heroic routes stay as they were.
+
 It was written from the shared references only:
-[`docs/RUNTIME_DATA_MODELS.md`](../RUNTIME_DATA_MODELS.md) (RDM) § 13.4, § 23.4
-and § 23.8, and ForgePact's own source for the Our code section. The Heroic
-roll's reading of 2026-10-20 is folded into RDM § 23.4 by the same feature.
+[`docs/RUNTIME_DATA_MODELS.md`](../RUNTIME_DATA_MODELS.md) (RDM) § 13.4, § 13.12,
+§ 23.4 and § 23.8, ForgePact's `mark1-set-research.md` ("Mod live 7 results"
+and "Phase 4 decision") for the draw's measurements, and ForgePact's own
+source for the Our code section. The Heroic roll's reading of 2026-10-20 is
+folded into RDM § 23.4, and the draw's into RDM § 13.12, by the same feature.
 
 Every claim carries one of four labels, and a source:
 
@@ -52,7 +61,8 @@ Every claim carries one of four labels, and a source:
   index argument is left undefined; which index its callers pass is not
   established (see Not established).
 - **L_k**: the length of `lootListUnique[k]`, for k from 0 to 4, the ordinary
-  unique roll's sub-lists. **k is always a sub-list index in this spec.**
+  unique roll's sub-lists, and from 0 to 5 on the draw. **k is always a
+  sub-list index in this spec.**
 - **D_k**: how many entries of sub-list k the ordinary unique roll keeps.
 - **c**: how many copies of a stand-in entry ForgePact pushes for one item in one
   roll. ForgePact's research commands call this "copies k"; this spec calls it c
@@ -64,6 +74,20 @@ Every claim carries one of four labels, and a source:
 - **m**: how many droppable vanilla entries of `lootListUnique[5]` carry the sub
   and `b` (the pair, not the triple) of either of #74's validated stand-ins. It
   is only needed to read #74's `standinPicks=` counter (see Measured).
+- **The draw**: the unique draw inside `DropItem`, from `lootListUnique[k]`.
+  **Here k is the tier `LoadSatanicDropTier` answered in the same call, 0 to
+  5**, which is also the index of the list the draw reads.
+- **a**: an entry's acceptance on the draw, the chance the draw keeps it once
+  it has read it: 0 for an entry flagged by field 40 or 41, and otherwise set
+  by its rarity branch, whose keep rule is not read.
+- **W_k**: the kept weight of `lootListUnique[k]`, the sum of a over its own
+  entries, counted with repeats. When every entry is either kept or refused
+  outright, it is the number of entries the draw keeps.
+- **p**: on the draw, the kept weight of the entries ForgePact adds to each
+  list for one `DropItem` call; with every pushed entry kept as read, the sum
+  of c over the items switched on.
+- **n_k**: how many entries of `lootListUnique[k]` carry exactly a draw
+  stand-in's whole triple.
 
 ## Static reading
 
@@ -149,6 +173,42 @@ Every claim carries one of four labels, and a source:
   entry that is not flagged hidden is kept by the Angelic roll when its rarity
   is 7 or 10 and by the Heroic roll otherwise, never by both (static reading,
   the two tests above).
+- **`DropItem` draws a unique itself** (RDM § 13.12, static reading of
+  2026-10-20 for ForgePact#166, from a byte scan for direct calls and a call
+  list, since `DropItem` is too large for the decompiler).
+  - `DropItem` is the only direct caller of `LoadSatanicDropTier` (2173),
+    which answers a whole number from 0 to 5 by brackets of the monster's
+    level, stepped inside each bracket by random cut-offs.
+  - It reads `Controller_obj.lootListUnique[k]`, k that answer, draws a random
+    index of it, needs the entry there to be an array, and looks its triple up
+    through `GetUniqueRepoStruct`.
+  - A definition with field 40 or 41 set sends it back to draw again. The
+    loop's counter starts at 500, so one call can read up to about 500
+    entries. What a call does when the counter runs out was not read.
+  - The definition's rarity then picks one of four branches: 6 (Satanic), 9
+    (Heroic), 7 or 10 (Angelic or Unholy), and any other value. In the
+    rarity-6 branch an entry whose tier (field 32) is 5 meets one more test,
+    on a protected value. Whether each branch keeps the entry or draws again
+    was not read branch by branch, so the model carries an entry's acceptance
+    a as an input.
+  - After the draw, one `CreateDefaultParams` call and one placement call
+    build the item, in that order in the call list.
+  - Whether the loop keeps the first entry it accepts or weighs the accepted
+    ones by a computed value was not read; a local that starts very large and
+    is lowered inside the loop hints at a weighing. Mod live 7 measured it
+    (`first-kept`, Measured below).
+- **The draw is apart from every named unique roll** (RDM § 13.12, static
+  reading). `DropItem` reaches `DropUniqueItems` only through `LoadDrops`' drop
+  type 45, and calls `DropItemAngelicChance` once. A second draw of the same
+  shape reads a list passed as `DropItem`'s argument 7; it is not modelled
+  here, because no kill's unique was built through it (Measured).
+- **So, on the draw, an entry listed r times on list k with acceptance a comes
+  out r * a / W_k of the draw's builds from that list**, if the draw keeps the
+  first entry it accepts: it throws back what it does not keep and reads
+  again, so each entry is kept in proportion to its acceptance. That share
+  holds given that the draw kept an entry within its counter; the chance it
+  keeps none in 500 reads is (1 - W_k / L_k) ** 500, which the model gives
+  apart (`draw_runs_out_chance`). Arithmetic on the readings above.
 
 ## Measured
 
@@ -217,6 +277,46 @@ Every claim carries one of four labels, and a source:
   NPC, pass is not read): seven Heroic (9) and three Satanic (6), none
   Angelic or Unholy, and no charm. Nothing was pushed.
   Every call placed one item, as the re-draw predicts.
+- **The draw is a kill's unique route** (ForgePact#166, Mod live procedure 7:
+  Live 1 on 2026-10-20 and Live 1b and Live 1c on 2026-10-21, slot 14, Hell;
+  RDM § 13.12 and ForgePact's "Mod live 7 results", UP15). In Live 1's owner
+  window all 4 natural uniques were built in the draw's scope, while
+  `DropUniqueItems`, `ReturnRandomSatanic` and the builds outside `DropItem`
+  each rose by 0 (`unique-route: satanic-draw`). Live 1b built 9 that way and
+  Live 1c 105. A debugger logpoint on the draw's own `CreateDefaultParams`
+  call hit once per draw build (4 of 4, and 105 of 105).
+- **List k holds the tier-k uniques** (`tier-k: matches`, UP15). Every natural
+  draw build's triple sat on list k and its tier equalled k: 4 of 4, 8 of 8
+  and 103 of 103. Live 1c's came at k = 1 to 5 as 22, 5, 14, 59 and 3; the
+  three at k = 5 were rarity 7 and 9, so list 5 holds those rarities too and
+  the draw builds them itself.
+- **`LoadSatanicDropTier`'s answers** (UP16). In Live 1c (magic find x10) the
+  answers 0 to 5 counted 0, 405, 401, 410, 3449 and 3432 over 8146 `DropItem`
+  calls, and in Live 1b (x1) 0, 179, 193, 169, 1530 and 1432 over 3544: about
+  one a call, and k = 0 never came up. In Live 1 the answers outnumbered the
+  calls (867 against 497), which is not explained.
+- **The draw keeps the first entry it accepts** (`draw-mode: first-kept`, UP17
+  and UP18). The reads since the last build over Live 1's and Live 1b's 12
+  natural draw builds had a median of 4 (Live 1c's 103: a median of 3, up to
+  249), within the rule's 10. Live 1b's below-SS lever, 25 copies of each of 4
+  below-SS stand-ins on every list, built 1 stand-in in 3 typed draw builds,
+  against the rule's 0.13, half of 100 / (274 + 100) at the mean list length.
+  The lever half rests on 3 builds, so the reading is thin.
+- **Entries pushed onto lists 0 to 5 during a `DropItem` call reach the draw**
+  (`push-route: seen`, UP18). The draw read them 1943 times over 971 calls in
+  Live 1b's below half, and built the gloves stand-in at k = 5, where no
+  natural copy sits. The lists read 50, 61, 79, 152, 221 and 380 again after
+  the lever was off.
+- **A pushed SS entry the draw reads is rarely built** (`ss-build: seen`,
+  UP19). With 25 copies of each of 4 SS stand-ins (rarity 6, tier 5, each on
+  list 5 only), Live 1c (x10, about 28 minutes) built 2 stand-ins among 105
+  draw builds, the helmet at k = 2 and the boots at k = 4; Live 1b's SS half
+  (x1) built none among 6. Kept as read, they would have taken at least
+  100 / (L_k + 100) of the builds on any list. Why they are not is not
+  established: the tier-5 test's reads were reached on every call, but what
+  they compare was not logged. No natural rarity-6, tier-5 unique was built
+  through the draw in that window. The probe's `picks=` count is an
+  instrument count, not the draw's picks, and the model does not use it.
 
 ## Our code
 
@@ -329,6 +429,43 @@ input transforms, and pins them to ForgePact's source.
     T = 48 the Angelic roll keeps, the T_H the Heroic roll keeps, and the
     entries flagged hidden. So, if the Heroic roll reads list 5, T_H is at most
     380 - 48 = 332.
+- **The draw push** (ForgePact#166 under `move: go`; `Mark1Drops.hpp`,
+  `FlightCharms.hpp` and the adapter in ForgePact's `ModuleMain.cpp`, UP20).
+  With "Mark 1 drops" or Pocket Elf's switch on, for the length of each
+  outermost `DropItem` call, every resolved draw stand-in goes onto each of
+  `lootListUnique[0]` to `[5]`, c times, and comes off its tail afterwards.
+  - The stand-ins are pushed through DropManager's one `DropItem` detour, and
+    k is recorded through raredrop's one `LoadSatanicDropTier` detour (after
+    raredrop's lift, if any) for the innermost `DropItem` call in progress.
+  - A draw stand-in is a triple of the item's own class on any of lists 0 to 5
+    that the draw keeps as read: rarity 6 with fields 40 and 41 clear. Mark 1
+    prefers an SS (tier 5) one and falls back below SS only for a class with
+    none (`kDrawPrefersSs`); Pocket Elf takes tier 5 only (`kElfDrawTier`),
+    the rarity and tier of Aimbot.exe. Then the smallest largest count over
+    the six lists, then the lowest sub-type and base. There is no
+    equal-count rule.
+  - c is a `constexpr` 1 in the player build (`kPlayerCopies` through
+    `g_Mark1DropCopies`, and `g_FlightDropCopies`); only the research build's
+    copies levers change it, up to 400.
+  - A roll nested in the call (#74's Angelic roll, `DropUniqueItems`, the
+    Heroic hook) sees the lists without the call's entries.
+- **The draw's coin.** A typed hit on a stand-in's whole triple is the item's
+  with probability c / (n_k + c), k the call's recorded tier and n_k the
+  stand-in's own count on list k; with no tier recorded the hit is refused
+  (`tier-unread=`). Each hit in a call is settled before the next.
+- **What that gives on the draw** (arithmetic on the readings above, not
+  measured; the model's `draw_share` with the coin as a test transform):
+  - The stand-in triple is kept with (n_k + c) * a / (W_k + p), and the coin
+    hands the item c / (n_k + c) of that, so each item takes c * a / (W_k + p)
+    of the draw's builds from list k, whichever k it was, and the stand-in
+    keeps n_k * a / (W_k + p).
+  - Kept as read (a = 1), with all four pieces and Pocket Elf on at c = 1,
+    p = 5 and each item takes 1 / (W_k + 5): one entry's share of that list.
+  - A pushed SS entry is kept far less often than that (Measured), so a
+    piece's or Pocket Elf's SS share is c * a / (W_k + p) with a well below 1.
+    The rate the player text states comes from ForgePact#166's Live 2, not
+    from this arithmetic.
+  - Switched off nothing is pushed, and each entry keeps its r * a / W_k.
 
 ## Not established
 
@@ -374,6 +511,22 @@ input transforms, and pins them to ForgePact's source.
   among them, and so whether each piece class has a kill-route stand-in with
   the same n on all five lists. ForgePact#166's Live procedure 2
   (`pool-kill`) reads it.
+- **Each entry's acceptance a on the draw**, and so W_k. Which rarity branch
+  keeps an entry was not read, nor what the tier-5 test compares. A pushed SS
+  stand-in's a is well below 1 (Measured) and its value is not measured; at
+  W_k = L_k an a of 1/100 fits Live 1c's count. The model keeps both inputs.
+- **Whether the draw weighs its entries.** Measured `first-kept` rests on 12
+  natural builds' reads and 3 lever builds. If a later session reads
+  `weighed`, the share has no formula here: `draw_share` then takes a measured
+  pick rate as its input, and the coin still applies on top, because a
+  stand-in's copies and its natural copies are one triple.
+- **What the draw does when its counter of about 500 runs out.**
+- **How often a kill runs the draw, and k's distribution per kill.** The
+  answers counted in Mod live 7 are per `DropItem` call, in Hell at zone
+  levels 243 to 245, and Live 1's surplus of answers over calls is not
+  explained.
+- **Why Aimbot.exe was built outside `DropItem`** (8 times in Live 1c, scope
+  `outside`), which is a route this spec does not cover.
 
 ## The model
 
@@ -398,6 +551,17 @@ It is not exported from `hs_game_sdk/__init__.py`, which the SDK generator owns.
   that list in all; c / (L_k + p + 1) when the index can reach the length. It
   is the one draw over the lengthened list; the test checks that the push and
   the coin give the same number for any n.
+- **The draw's redraw test** (`draw_redraws`): field 40 or 41 set. The lists
+  it can read are `DRAW_LIST_INDICES`, 0 to 5, and its counter
+  `DRAW_LOOP_BUDGET`, 500.
+- **The draw share** (`draw_share`): under `first-kept`, an entry's share of
+  the draw's builds from list k is r * a / (W_k + p), with r its entries on
+  the list, a their acceptance and p the kept weight pushed for the call;
+  r * a / W_k with nothing pushed. Under `weighed` or `not-observed` the
+  formula is not established, and it returns the measured pick rate it is
+  given, which it then requires.
+- **The draw's empty chance** (`draw_runs_out_chance`): (1 - W / L) ** 500,
+  the chance a call keeps nothing within its counter, apart from the share.
 - **Agreement with a count**: the binomial helpers come from
   [`drop_roll_model`](../../hs-game-sdk/python/hs_game_sdk/drop_roll_model.py)
   (`binomial_band`, `observation_within`), imported and not copied.
@@ -427,6 +591,22 @@ on too, the shares and the empty draws adding up to every call. The measured
 lengths give each piece between 1 in 225 and 1 in 54 at c = 1. k and how often
 a kill runs drop type 45 stay parameters.
 
+For the draw inside `DropItem` the baseline (every switch off,
+`test_draw_baseline_*`) is the draw from list k with nothing pushed: an entry
+r times among the kept weight W_k comes out r * a / W_k, the draw redraws on
+fields 40 and 41, and the counter does not change the share. The target
+(`test_draw_target_*`) applies the push onto lists 0 to 5 and the coin: the
+coin c / (n_k + c) is exact for every k from 0 to 5 and refuses a hit with no
+tier, each item takes c * a / (W_k + p), the shares add up to every build, and
+switched off is the baseline; under `weighed` the measured pick rate is the
+input. Mod live 7's counts are replayed (UP15 to UP19): the route and k, the
+tier answers, the reads that read `first-kept`, Live 1b's below-SS lever
+within the 3-sigma band at a = 1 with no push as the negative control, and
+Live 1c's 2 SS stand-ins in 105 builds, which a = 1 cannot give and an
+acceptance well below 1 can. `LeverParityTests` pins the push onto lists 0 to
+5, the player build's one copy, the coin's k from the recorded tier and the
+stand-in rule to ForgePact's source.
+
 ## What the model cannot catch
 
 - **Whether a hook attaches.** The push, the typing and the rewrite need inline
@@ -442,4 +622,9 @@ a kill runs drop type 45 stay parameters.
   a player sees a charm also depends on how often each roll runs, which the
   model does not cover. For the Mark 1 pieces that is how often a kill runs
   drop type 45, and how often a player opens a vault, neither of which any
-  session has measured.
+  session has measured. On the draw it is how often a kill's `DropItem` call
+  builds a unique at all, and the SS acceptance a, which only ForgePact#166's
+  Live 2 kill counts measure.
+- **The draw's hooks.** The draw push needs DropManager's `DropItem` detour
+  and raredrop's `LoadSatanicDropTier` detour to be inline, and the tier to be
+  recorded for the right call; only a live positive control shows that.

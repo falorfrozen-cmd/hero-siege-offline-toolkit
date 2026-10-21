@@ -23,6 +23,15 @@ Three rolls draw from `Controller_obj.lootListUnique`, an array of six lists of
   5 when that is undefined, and draws again until it keeps an entry: not
   flagged hidden, and of any rarity but 7 and 10. So an entry listed r times
   among the T_H entries it keeps comes out r / T_H of the time.
+- The kill's own draw inside `DropItem` (static reading, with the route, k and
+  the keep-first mode measured) reads list k, k what `LoadSatanicDropTier`
+  answered in the same call, 0 to 5. It draws again on an entry flagged by
+  field 40 or 41, and keeps the first entry it accepts (`draw-mode:
+  first-kept`, a thin measurement). Which entries each rarity branch accepts
+  is not read, so an entry's acceptance is an input: an entry listed r times
+  with acceptance a, on a list whose entries weigh W_k in all, comes out
+  r * a / W_k (`draw_share`). Were the draw found to weigh its entries, the
+  share is an input measured live, not a formula.
 
 This module models the game only. ForgePact's levers for ForgePact#74,
 ForgePact#158 and ForgePact#166 (the stand-in entries pushed for the length
@@ -43,7 +52,8 @@ import it as `from hs_game_sdk import unique_pick_model`.
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import FrozenSet, Tuple
+from numbers import Rational
+from typing import FrozenSet, Optional, Tuple
 
 from .drop_roll_model import binomial_band, observation_within  # noqa: F401  (re-exported)
 
@@ -63,6 +73,21 @@ HEROIC_DEFAULT_LIST_INDEX = 5
 #: The definition rarities the Heroic roll refuses and draws again on: 7
 #: Angelic, 10 Unholy (static reading).
 HEROIC_REFUSED_RARITIES: FrozenSet[int] = frozenset({7, 10})
+#: The elements of `lootListUnique` the draw inside `DropItem` can read: k is
+#: what `LoadSatanicDropTier` answered in the same call, 0 to 5 (static
+#: reading; measured: each natural draw build sat on list k, and its tier was k).
+DRAW_LIST_INDICES: Tuple[int, ...] = (0, 1, 2, 3, 4, 5)
+#: The definition fields that send the draw back to draw again when set
+#: (static reading).
+DRAW_REDRAW_FIELDS: Tuple[int, ...] = (40, 41)
+#: The draw's loop counter starts here, so one call reads at most about this
+#: many entries (static reading). What a call does when the counter runs out is
+#: not read; `draw_share` leaves the counter out (see `draw_runs_out_chance`).
+DRAW_LOOP_BUDGET = 500
+#: How the draw chooses among the entries it accepts. `first-kept` was
+#: measured, thinly (Mod live 7); `weighed` and `not-observed` are the other
+#: values its decision line can take.
+DRAW_MODES: Tuple[str, ...] = ("first-kept", "weighed", "not-observed")
 
 
 def angelic_keeps(rarity: int, hidden: bool) -> bool:
@@ -174,3 +199,83 @@ def kill_share(copies: int, length: int, pushed: int, *, index_can_reach_length:
         raise ValueError("an item cannot have more entries on the list than were pushed onto it")
     draws = _ordinary_draws(length + pushed, index_can_reach_length)
     return Fraction(copies, draws)
+
+
+def draw_redraws(f40: bool, f41: bool) -> bool:
+    """Whether the draw inside `DropItem` throws an entry back on its flags
+    alone: field 40 or 41 of its definition is set. An entry with both clear
+    still meets its rarity branch, whose keep rule is not read."""
+    return bool(f40) or bool(f41)
+
+
+def _check_weight(name: str, value, low=0) -> Fraction:
+    if isinstance(value, bool) or not isinstance(value, Rational):
+        raise TypeError(f"{name} must be a whole number or a Fraction")
+    if value < low:
+        raise ValueError(f"{name} must be {low} or more")
+    return Fraction(value)
+
+
+def _check_acceptance(name: str, value) -> Fraction:
+    value = _check_weight(name, value)
+    if value > 1:
+        raise ValueError(f"{name} is a chance, at most 1")
+    return value
+
+
+def draw_share(copies: int, kept_weight, pushed=0, *, acceptance=1,
+               draw_mode: str = "first-kept", measured_pick_rate: Optional[Fraction] = None) -> Fraction:
+    """An entry's share of the entries the draw inside `DropItem` keeps from
+    list k: r * a / (W_k + p) under `draw-mode: first-kept`.
+
+    `copies` (r) is how many entries carrying the triple sit on list k for the
+    call, natural or pushed; `acceptance` (a) the chance the draw keeps one of
+    them once read (1 when kept as read, 0 when flagged by field 40 or 41: the
+    branches' keep rules are not read, so it is an input); `kept_weight` (W_k)
+    the list's own entries' acceptance summed, which is the count of the
+    entries it keeps when each is kept or refused outright; and `pushed` (p)
+    the same sum over the entries added to the list for the call. The r
+    entries are counted in W_k + p. With nothing pushed this is the baseline,
+    r * a / W_k; with p entries pushed, each pushed entry the draw keeps as read
+    takes 1 / (W_k + p).
+
+    The draw throws back what it does not keep and draws again, so the kept
+    entry is each entry with chance proportional to its acceptance. That holds
+    given that it kept one within its loop budget, so the counter does not
+    change the share; `draw_runs_out_chance` is the chance it keeps none.
+
+    Under `weighed` or `not-observed` how the draw chooses is not established,
+    so there is no formula: `measured_pick_rate`, the share Mod live 7 or a
+    later session measured, is returned as it is, and is required.
+    """
+    _check_count("copies", copies)
+    kept_weight = _check_weight("kept_weight", kept_weight)
+    pushed = _check_weight("pushed", pushed)
+    acceptance = _check_acceptance("acceptance", acceptance)
+    if draw_mode not in DRAW_MODES:
+        raise ValueError(f"draw_mode must be one of {', '.join(DRAW_MODES)}")
+    total = kept_weight + pushed
+    if total <= 0:
+        raise ValueError("a list the draw keeps nothing from never ends the draw")
+    if copies * acceptance > total:
+        raise ValueError("an entry cannot weigh more than the entries it is counted in")
+    if draw_mode != "first-kept":
+        if measured_pick_rate is None:
+            raise ValueError(f"draw-mode {draw_mode}: the formula is not established, so a measured pick rate is required")
+        return _check_acceptance("measured_pick_rate", measured_pick_rate)
+    if measured_pick_rate is not None:
+        raise ValueError("draw-mode first-kept has a formula; a measured pick rate is not an input")
+    return copies * acceptance / total
+
+
+def draw_runs_out_chance(kept_weight, length: int, draws: int = DRAW_LOOP_BUDGET) -> Fraction:
+    """The chance that one call's draw keeps no entry within `draws` reads:
+    (1 - W / L) ** draws, `kept_weight` (W) the list's acceptance summed,
+    pushed entries included, and `length` (L) its entries. What the call does
+    then is not read."""
+    kept_weight = _check_weight("kept_weight", kept_weight)
+    _check_count("length", length, 1)
+    _check_count("draws", draws, 1)
+    if kept_weight > length:
+        raise ValueError("a list cannot keep more weight than it has entries")
+    return (1 - kept_weight / length) ** draws

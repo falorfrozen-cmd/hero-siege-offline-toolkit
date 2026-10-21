@@ -6,7 +6,10 @@ re-drawing pick, the ordinary unique roll's one draw, and the Heroic roll's
 re-drawing pick (`DropItemHeroic`, added for the Mark 1 pieces of ForgePact#166,
 hub #518; the `test_heroic_*` and `test_up14_*` tests). The Mark 1 pieces join
 the ordinary unique roll too, the kill route (`kill_share`, the `test_kill_*`
-tests). ForgePact's levers
+tests). A kill's own unique comes from the draw inside `DropItem`, from the
+list `LoadSatanicDropTier` names (`draw_share`, the `test_draw_*` and
+`test_up15_*` to `test_up20_*` tests), which the pieces and Pocket Elf join
+under `move: go`. ForgePact's levers
 (the stand-in entries pushed for the length of one roll, and the coin that
 hands a stand-in hit to the mod's item) are our own code, so they are written
 here as input transforms and never enter the SDK. `LeverParityTests` pins these
@@ -27,6 +30,7 @@ Run from the hub root: `py -3 -m unittest tests.test_unique_pick_model -v`.
 import functools
 import json
 import re
+import statistics
 import sys
 import unittest
 from fractions import Fraction
@@ -188,6 +192,52 @@ def piece_kill_share(length, n, c, p, **kwargs):
 def stand_in_kill_share(length, n, c, p, **kwargs):
     """What a piece's kill-route stand-in itself keeps of those calls."""
     return model.ordinary_pick_chance(n + c, length + p, **kwargs) * (1 - coin(n, c))
+
+
+# The kill's own draw inside `DropItem` (#166, under `move: go`): with a
+# feature's switch on, for the length of each outermost `DropItem` call, each
+# resolved draw stand-in (one per Mark 1 piece, one for Pocket Elf) goes onto
+# every list the draw can read, [0] to [5], `copies` times. A hit on a stand-in's
+# whole triple is the item's with c / (n_k + c), k the tier `LoadSatanicDropTier`
+# answered in that call and n_k the stand-in's own count on list k; with no tier
+# the hit is refused (`tier-unread=`).
+DRAW_ITEMS = MARK1_PIECES + ORDINARY_ITEMS
+# The two SS stand-ins Live 1c built (helmet 0:15, boots 0:9) read their own
+# counts on lists 0..5 as this (UP19): list 5 only, once.
+SS_STANDIN_COUNTS = (0, 0, 0, 0, 0, 1)
+
+
+def draw_pushed(drops_on, elf_on=False, resolved=MARK1_PIECES, copies=PLAYER_COPIES,
+                elf_copies=PLAYER_COPIES, acceptance=1):
+    """p for one `DropItem` call on any list the draw reads: the kept weight
+    of the entries pushed, `copies` per resolved piece and `elf_copies` for
+    Pocket Elf, each kept with `acceptance` once read; nothing switched off."""
+    pieces = sum(copies for piece in resolved if piece in MARK1_PIECES) if drops_on else 0
+    elf = elf_copies if elf_on else 0
+    return (pieces + elf) * Fraction(acceptance)
+
+
+def draw_coin(counts, c, k):
+    """The share of a hit on a pushed stand-in's whole triple that goes to the
+    item: c / (n_k + c), k the call's recorded tier. A k that names no list (no
+    tier recorded) is refused: nothing goes to the item."""
+    if not isinstance(k, int) or k not in model.DRAW_LIST_INDICES:
+        return Fraction(0)
+    return coin(counts[k], c)
+
+
+def item_draw_share(kept_weight, counts, c, p, k, acceptance=1):
+    """A pushed item's share of the draw's builds from list k: its stand-in
+    triple (n_k natural, c pushed) is kept with (n_k + c) * a / (W_k + p), and
+    the coin hands c / (n_k + c) of that over."""
+    if c == 0:
+        return Fraction(0)
+    return model.draw_share(counts[k] + c, kept_weight, p, acceptance=acceptance) * draw_coin(counts, c, k)
+
+
+def stand_in_draw_share(kept_weight, counts, c, p, k, acceptance=1):
+    """What a draw stand-in itself keeps of the draw's builds from list k."""
+    return model.draw_share(counts[k] + c, kept_weight, p, acceptance=acceptance) * (1 - draw_coin(counts, c, k))
 
 
 class BaselineTests(unittest.TestCase):
@@ -372,6 +422,90 @@ class BaselineTests(unittest.TestCase):
             with self.assertRaises(TypeError):
                 call()
         self.assertIsInstance(model.kill_share(1, 50, 4), Fraction)
+
+    # ---- The draw inside `DropItem`, every switch off ----
+
+    def test_draw_baseline_an_entry_listed_r_times_comes_out_r_over_w_k(self):
+        for kept in (3, 50, 221, 380):
+            for r in (1, 2, 3):
+                with self.subTest(W=kept, r=r):
+                    self.assertEqual(model.draw_share(r, kept), Fraction(r, kept))
+                    # An entry kept only some of the times it is read weighs that much less.
+                    self.assertEqual(model.draw_share(r, kept, acceptance=Fraction(1, 4)), Fraction(r, 4 * kept))
+                    self.assertIsInstance(model.draw_share(r, kept), Fraction)
+
+    def test_draw_baseline_the_draw_redraws_on_fields_40_and_41(self):
+        self.assertEqual(model.DRAW_REDRAW_FIELDS, (40, 41))
+        self.assertFalse(model.draw_redraws(False, False))
+        for f40, f41 in ((True, False), (False, True), (True, True)):
+            with self.subTest(f40=f40, f41=f41):
+                self.assertTrue(model.draw_redraws(f40, f41))
+        # A flagged entry has acceptance 0: listed any number of times, it never comes out.
+        self.assertEqual(model.draw_share(7, 50, acceptance=0), 0)
+        # A list of kept, flagged and half-kept entries: the shares add up to every build.
+        entries = ((10, 1), (5, 0), (8, Fraction(1, 2)), (1, 1))     # (r, a)
+        weight = sum(r * Fraction(a) for r, a in entries)
+        self.assertEqual(weight, 15)
+        self.assertEqual(sum(model.draw_share(r, weight, acceptance=a) for r, a in entries), 1)
+
+    def test_draw_baseline_the_draw_reads_lists_0_to_5(self):
+        self.assertEqual(model.DRAW_LIST_INDICES, (0, 1, 2, 3, 4, 5))
+        # It reads the ordinary roll's lists and the Angelic roll's list alike.
+        self.assertTrue(set(model.UNIQUE_SUB_LISTS) < set(model.DRAW_LIST_INDICES))
+        self.assertIn(model.ANGELIC_LIST_INDEX, model.DRAW_LIST_INDICES)
+        self.assertEqual(len(_entries()["UP6"]["values"]["sub_list_lengths"]), len(model.DRAW_LIST_INDICES))
+        self.assertEqual(model.DRAW_MODES, ("first-kept", "weighed", "not-observed"))
+        self.assertEqual(model.DRAW_LOOP_BUDGET, 500)
+
+    def test_draw_baseline_the_switches_off_push_nothing_and_no_item_drops(self):
+        for elf_on in (False, True):
+            self.assertEqual(draw_pushed(False, elf_on=elf_on), 1 if elf_on else 0)
+        p = draw_pushed(False)
+        self.assertEqual(p, 0)
+        for kept in (50, 221, 380):
+            for k in model.DRAW_LIST_INDICES:
+                with self.subTest(W=kept, k=k):
+                    self.assertEqual(item_draw_share(kept, SS_STANDIN_COUNTS, 0, p, k), 0)
+                    # A would-be stand-in keeps its own n_k / W_k; one on no list keeps nothing.
+                    n = SS_STANDIN_COUNTS[k]
+                    self.assertEqual(stand_in_draw_share(kept, SS_STANDIN_COUNTS, 0, p, k), Fraction(n, kept))
+
+    def test_draw_baseline_the_loop_budget_does_not_change_the_share(self):
+        # Given that the draw kept an entry within its budget, each entry is
+        # still r * a / W: the chance of keeping entry e within N reads is
+        # (a_e / L) * (1 - (1 - W/L) ** N) / (W / L).
+        length, budget = 380, model.DRAW_LOOP_BUDGET
+        for kept in (2, 3, 48, 380):
+            runs_out = model.draw_runs_out_chance(kept, length)
+            self.assertEqual(runs_out, (1 - Fraction(kept, length)) ** budget)
+            for r in (1, 2):
+                within = Fraction(r, length) * (1 - runs_out) / Fraction(kept, length)
+                with self.subTest(W=kept, r=r):
+                    self.assertEqual(within / (1 - runs_out), model.draw_share(r, kept))
+        # A list it keeps everything from never runs out; one entry it keeps
+        # in 380 runs out on about a quarter of the calls.
+        self.assertEqual(model.draw_runs_out_chance(380, 380), 0)
+        self.assertAlmostEqual(float(model.draw_runs_out_chance(1, 380)), 0.268, places=3)
+
+    def test_draw_baseline_bad_inputs_refuse(self):
+        for call in (lambda: model.draw_share(-1, 50),
+                     lambda: model.draw_share(1, -1),
+                     lambda: model.draw_share(1, 50, -1),
+                     lambda: model.draw_share(51, 50),                          # more weight than the list
+                     lambda: model.draw_share(0, 0),                            # nothing kept: the draw never ends
+                     lambda: model.draw_share(1, 50, acceptance=Fraction(3, 2)),
+                     lambda: model.draw_share(1, 50, acceptance=-1),
+                     lambda: model.draw_share(1, 50, draw_mode="best"),
+                     lambda: model.draw_runs_out_chance(51, 50),
+                     lambda: model.draw_runs_out_chance(1, 0),
+                     lambda: model.draw_runs_out_chance(1, 50, 0)):
+            with self.assertRaises(ValueError):
+                call()
+        for call in (lambda: model.draw_share(1.5, 50), lambda: model.draw_share(True, 50),
+                     lambda: model.draw_share(1, 50.0), lambda: model.draw_share(1, 50, 4.0),
+                     lambda: model.draw_share(1, 50, acceptance=0.5)):
+            with self.assertRaises(TypeError):
+                call()
 
 
 class TargetTests(unittest.TestCase):
@@ -605,6 +739,104 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(model.kill_share(PLAYER_COPIES, 50, p, index_can_reach_length=True), Fraction(1, 55))
         self.assertEqual(piece_kill_share(50, 1, PLAYER_COPIES, p, index_can_reach_length=True), Fraction(1, 55))
 
+    # ---- The draw inside `DropItem` with "Mark 1 drops" and Pocket Elf on ----
+
+    def test_draw_target_the_coin_is_c_over_n_k_plus_c_for_every_k(self):
+        for counts in (SS_STANDIN_COUNTS, (0, 0, 0, 0, 0, 0), (2, 0, 1, 0, 3, 1)):
+            for c in (1, 25, 200):
+                for k in model.DRAW_LIST_INDICES:
+                    with self.subTest(counts=counts, c=c, k=k):
+                        self.assertEqual(draw_coin(counts, c, k), Fraction(c, counts[k] + c))
+        # An SS stand-in on list 5 only: every hit off list 5 is the item's, one in two on it.
+        self.assertEqual([draw_coin(SS_STANDIN_COUNTS, PLAYER_COPIES, k) for k in model.DRAW_LIST_INDICES],
+                         [1, 1, 1, 1, 1, Fraction(1, 2)])
+        # No tier recorded: the hit is refused, whatever the counts.
+        for k in (-1, 6, None):
+            with self.subTest(k=k):
+                self.assertEqual(draw_coin(SS_STANDIN_COUNTS, PLAYER_COPIES, k), 0)
+
+    def test_draw_target_first_kept_each_pushed_entry_takes_c_over_w_k_plus_p(self):
+        p = draw_pushed(True, elf_on=True)
+        self.assertEqual(p, len(DRAW_ITEMS))
+        for kept in (50, 221, 380):
+            for k in model.DRAW_LIST_INDICES:
+                for counts in (SS_STANDIN_COUNTS, (1, 1, 1, 1, 1, 1)):
+                    with self.subTest(W=kept, k=k, counts=counts):
+                        n = counts[k]
+                        share = item_draw_share(kept, counts, PLAYER_COPIES, p, k)
+                        self.assertEqual(share, Fraction(1, kept + 5))
+                        # The pushed entries' own share, with no coin: one entry's share.
+                        self.assertEqual(share, model.draw_share(PLAYER_COPIES, kept, p))
+                        self.assertEqual(stand_in_draw_share(kept, counts, PLAYER_COPIES, p, k), Fraction(n, kept + 5))
+
+    def test_draw_target_switched_off_is_the_baseline(self):
+        for kept in (50, 380):
+            for k in model.DRAW_LIST_INDICES:
+                with self.subTest(W=kept, k=k):
+                    off = draw_pushed(False)
+                    self.assertEqual(model.draw_share(3, kept, off), model.draw_share(3, kept))
+                    self.assertEqual(item_draw_share(kept, SS_STANDIN_COUNTS, 0, off, k), 0)
+        # Mark 1 alone, Pocket Elf alone: each pushes only with its own switch on.
+        self.assertEqual(draw_pushed(True), len(MARK1_PIECES))
+        self.assertEqual(draw_pushed(False, elf_on=True), 1)
+
+    def test_draw_target_the_shares_add_up_to_every_build(self):
+        ns = (1, 0, 0, 2, 0)    # the four pieces' and Pocket Elf's own counts on list k
+        for elf_on in (False, True):
+            p = draw_pushed(True, elf_on=elf_on)
+            items = ns if elf_on else ns[:4]
+            for kept in (50, 221, 380):
+                with self.subTest(elf=elf_on, W=kept):
+                    shares = sum(model.draw_share(n + 1, kept, p) * coin(n, 1) for n in items)
+                    stand_ins = sum(model.draw_share(n + 1, kept, p) * (1 - coin(n, 1)) for n in items)
+                    vanilla_elsewhere = model.draw_share(kept - sum(items), kept, p)
+                    self.assertEqual(shares, Fraction(len(items), kept + p))
+                    self.assertEqual(shares + stand_ins + vanilla_elsewhere, 1)
+
+    def test_draw_target_the_copies_lever_scales_the_shares(self):
+        for c in (1, 25, 200, 400):
+            p = draw_pushed(True, copies=c)
+            self.assertEqual(p, 4 * c)
+            for kept in (50, 380):
+                for k in model.DRAW_LIST_INDICES:
+                    with self.subTest(c=c, W=kept, k=k):
+                        self.assertEqual(item_draw_share(kept, SS_STANDIN_COUNTS, c, p, k), Fraction(c, kept + 4 * c))
+        # More copies, a larger share for each piece; never more than a quarter.
+        at_one = model.draw_share(1, 50, draw_pushed(True))
+        at_400 = model.draw_share(400, 50, draw_pushed(True, copies=400))
+        self.assertGreater(at_400, at_one)
+        self.assertLess(at_400, Fraction(1, 4))
+
+    def test_draw_target_an_entry_kept_rarely_takes_its_acceptance_of_the_share(self):
+        # A pushed SS entry the draw reads is kept with an acceptance well below
+        # 1 (UP19): the item's share scales by it, and the coin is unchanged.
+        for a in (Fraction(1), Fraction(1, 10), Fraction(1, 100)):
+            p = draw_pushed(True, acceptance=a)
+            for kept in (50, 221, 380):
+                for k in model.DRAW_LIST_INDICES:
+                    with self.subTest(a=a, W=kept, k=k):
+                        share = item_draw_share(kept, SS_STANDIN_COUNTS, PLAYER_COPIES, p, k, acceptance=a)
+                        self.assertEqual(share, a / (kept + 4 * a))
+        # Acceptance 0 (a flagged entry): no build at all, which a = 1 would not give.
+        self.assertEqual(item_draw_share(221, SS_STANDIN_COUNTS, 1, draw_pushed(True, acceptance=0), 4, acceptance=0), 0)
+        self.assertGreater(item_draw_share(221, SS_STANDIN_COUNTS, 1, draw_pushed(True), 4), 0)
+
+    def test_draw_target_weighed_or_not_observed_takes_the_measured_rate(self):
+        rate = Fraction(1, 3)     # Live 1b's below half: 1 pick in 3 typed draw builds (UP18)
+        for mode in ("weighed", "not-observed"):
+            with self.subTest(mode=mode):
+                self.assertEqual(model.draw_share(25, 274, 100, draw_mode=mode, measured_pick_rate=rate), rate)
+                # No formula is established in this mode, so the rate is required.
+                with self.assertRaises(ValueError):
+                    model.draw_share(25, 274, 100, draw_mode=mode)
+                with self.assertRaises(ValueError):
+                    model.draw_share(25, 274, 100, draw_mode=mode, measured_pick_rate=Fraction(3, 2))
+        # first-kept has the formula, and refuses a rate passed in beside it.
+        with self.assertRaises(ValueError):
+            model.draw_share(25, 274, 100, measured_pick_rate=rate)
+        # The coin still applies on top: the pushed copies and the natural ones are one triple.
+        self.assertEqual(rate * draw_coin(SS_STANDIN_COUNTS, 25, 5), rate * Fraction(25, 26))
+
 
 class MeasuredTests(unittest.TestCase):
     """The model against #74's counts, for one T in 40..60."""
@@ -832,6 +1064,110 @@ class MeasuredTests(unittest.TestCase):
         # Only this roll keeps a Heroic (9) unique; the ordinary roll's test refuses it.
         self.assertFalse(model.ordinary_keeps(9, False))
 
+    # ---- The draw inside `DropItem` (#166, Mod live 7: Live 1, 1b and 1c) ----
+
+    def test_up15_the_draw_route_and_tier_k(self):
+        values = self.entries["UP15"]["values"]
+        live1, live1b, live1c = values["live1"], values["live1b"], values["live1c"]
+        # Live 1: every natural unique built through the draw, none elsewhere.
+        self.assertEqual(live1["on_k"] + live1["off_k"], live1["draw_builds"])
+        self.assertEqual(live1["dbg_draw_build"], live1["draw_builds"])
+        self.assertEqual((live1["dropunique"], live1["outside"], live1["retsat_calls"]), (0, 0, 0))
+        # Each natural draw build sat on list k: off-k stays 0 in every session.
+        for name, session, builds in (("live1", live1, live1["draw_builds"]),
+                                      ("live1b", live1b, live1b["natural_draw_builds"]),
+                                      ("live1c", live1c, live1c["natural_draw_builds"])):
+            with self.subTest(session=name):
+                self.assertEqual(session["off_k"], 0)
+                self.assertEqual(session["on_k"], builds)
+        histogram = {int(k): n for k, n in live1c["k_histogram"].items()}
+        self.assertEqual(sum(histogram.values()), live1c["natural_draw_builds"])
+        self.assertTrue(set(histogram) <= set(model.DRAW_LIST_INDICES))
+        # The draw built the two stand-ins besides, once per logpoint hit.
+        self.assertEqual(live1c["dbg_draw_build"], live1c["draw_builds"])
+        self.assertEqual(live1c["draw_builds"] - live1c["natural_draw_builds"],
+                         self.entries["UP19"]["values"]["live1c"]["pick_builds"])
+        # Negative control: the ordinary roll's lists cannot hold the k = 5 builds.
+        self.assertIn(5, histogram)
+        self.assertNotIn(5, model.UNIQUE_SUB_LISTS)
+
+    def test_up16_the_satanic_tier_answers(self):
+        values = self.entries["UP16"]["values"]
+        for name in ("live1c", "live1b", "live1"):
+            session = values[name]
+            with self.subTest(session=name):
+                # One count per list the draw reads, and k = 0 never came up.
+                self.assertEqual(len(session["tiers"]), len(model.DRAW_LIST_INDICES))
+                self.assertEqual(session["tiers"][0], 0)
+        # About one answer a call in Live 1b and Live 1c.
+        for name in ("live1c", "live1b"):
+            session = values[name]
+            with self.subTest(session=name):
+                answers = sum(session["tiers"])
+                self.assertLessEqual(answers, session["calls"])
+                self.assertGreaterEqual(answers / session["calls"], 0.98)
+        # Live 1's answers outnumbered its calls; recorded, not explained.
+        self.assertEqual(sum(values["live1"]["tiers"]), 867)
+        self.assertGreater(sum(values["live1"]["tiers"]), values["live1"]["calls"])
+
+    def test_up17_the_reads_per_build_meet_first_kept(self):
+        values = self.entries["UP17"]["values"]
+        reads = values["natural_draw_build_reads"]
+        self.assertEqual(len(reads), 12)
+        self.assertEqual(statistics.median(reads), values["median"])
+        self.assertLessEqual(values["median"], values["first_kept_max_median"])
+        # The mode the formula exists for.
+        self.assertEqual(model.DRAW_MODES[0], "first-kept")
+        model.draw_share(1, 274, 100)    # no measured rate needed
+        live1c = values["live1c"]
+        self.assertLessEqual(live1c["min"], live1c["median"])
+        self.assertLessEqual(live1c["median"], values["first_kept_max_median"])
+        self.assertLessEqual(live1c["median"], live1c["max"])
+
+    def test_up18_live1b_below_ss_lever(self):
+        values = self.entries["UP18"]["values"]
+        pushed = values["copies"] * values["stand_ins"]
+        self.assertEqual(pushed, values["pushed_per_list"])
+        self.assertEqual(values["push_held"], values["calls"])
+        self.assertEqual(values["push_skipped"], 0)
+        self.assertEqual(values["lengths_after_off"], _entries()["UP6"]["values"]["sub_list_lengths"])
+        builds, picks = values["typed_draw_builds"], values["pick_builds"]
+        # Kept as read, the stand-ins take at least s*c / (L_k + s*c) of the
+        # draw's builds, since W_k is at most L_k.
+        length = round(values["mean_list_length"])
+        self.assertEqual(length, 274)
+        share = model.draw_share(pushed, length, pushed)
+        self.assertEqual(share, Fraction(100, 374))
+        self.assertTrue(model.observation_within(picks, builds, float(share), float(share)))
+        # The Phase 4 rule's threshold, half that share, fits too.
+        self.assertAlmostEqual(float(share) / 2, 0.13, places=2)
+        self.assertGreaterEqual(Fraction(picks, builds), share / 2)
+        # Negative control: no push reaches the draw (a share of 0).
+        self.assertFalse(model.observation_within(picks, builds, 0.0, 0.0))
+
+    def test_up19_ss_stand_ins_are_kept_rarely(self):
+        values = self.entries["UP19"]["values"]
+        live1c, live1b = values["live1c"], values["live1b_ss"]
+        lengths = values["list_lengths"]
+        self.assertEqual(lengths, _entries()["UP6"]["values"]["sub_list_lengths"])
+        self.assertEqual(tuple(values["ss_standin_counts"]), SS_STANDIN_COUNTS)
+        pushed = live1c["copies"] * live1c["stand_ins"]
+        self.assertEqual(pushed, live1c["pushed_per_list"])
+        # Kept as read (a = 1), with W_k at most L_k, the stand-ins would take at
+        # least this on any list: 2 of 105 lies far below it.
+        floor = min(model.draw_share(pushed, length, pushed) for length in lengths)
+        self.assertEqual(floor, Fraction(100, 480))
+        self.assertFalse(model.observation_within(live1c["pick_builds"], live1c["draw_builds"], float(floor), 1.0))
+        # So the acceptance is an input; at W_k = L_k an acceptance of 1/100 fits.
+        a = Fraction(1, 100)
+        low = min(model.draw_share(pushed, length, pushed * a, acceptance=a) for length in lengths)
+        high = max(model.draw_share(pushed, length, pushed * a, acceptance=a) for length in lengths)
+        self.assertTrue(model.observation_within(live1c["pick_builds"], live1c["draw_builds"], float(low), float(high)))
+        # Live 1b's SS half (all six at k = 4) is too short to reject a = 1.
+        share_k4 = model.draw_share(pushed, lengths[live1b["list_k"]], pushed)
+        self.assertTrue(model.observation_within(live1b["pick_builds"], live1b["draw_builds"], float(share_k4), float(share_k4)))
+        self.assertEqual(live1c["natural_ss_satanic_draw_builds"], 0)
+
 
 class OurCodeTests(unittest.TestCase):
     """The fixture's two our-code contracts, through the transforms above."""
@@ -873,6 +1209,33 @@ class OurCodeTests(unittest.TestCase):
                         self.assertEqual(stand_in_angelic_share(droppable, n, c, e), Fraction(n, droppable + e))
                         self.assertEqual(elf_ordinary_chance(152, n, c), Fraction(c, 152 + c))
 
+    def test_up20_the_draw_push(self):
+        values = self.entries["UP20"]["values"]
+        self.assertEqual(values["player_copies"], PLAYER_COPIES)
+        self.assertEqual(values["research_copies_max"], 400)
+        self.assertEqual(tuple(values["draw_lists"]), model.DRAW_LIST_INDICES)
+        self.assertEqual(values["coin"], "c / (n_k + c)")
+        self.assertEqual(values["no_tier"], "refused")
+        self.assertEqual(tuple(values["redraw_fields"]), model.DRAW_REDRAW_FIELDS)
+        # The stand-in rule keeps a Satanic entry the ordinary roll keeps too, and SS is tier 5.
+        self.assertTrue(model.ordinary_keeps(values["kept_rarity"], False))
+        self.assertEqual(values["elf_tier"], values["ss_tier"])
+        self.assertTrue(values["mark1_prefers_ss"])
+        # Every list the draw reads gets c per resolved item; each item takes
+        # c * a / (W_k + p) whatever k the call drew from, and its stand-in n_k / (W_k + p).
+        counts = tuple(_entries()["UP19"]["values"]["ss_standin_counts"])
+        for c in (values["player_copies"], values["research_copies_max"]):
+            p = draw_pushed(True, elf_on=True, copies=c, elf_copies=c)
+            self.assertEqual(p, len(DRAW_ITEMS) * c)
+            for k in model.DRAW_LIST_INDICES:
+                for kept in (50, 380):
+                    with self.subTest(c=c, k=k, W=kept):
+                        self.assertEqual(item_draw_share(kept, counts, c, p, k), Fraction(c, kept + p))
+                        self.assertEqual(stand_in_draw_share(kept, counts, c, p, k), Fraction(counts[k], kept + p))
+        # Switched off nothing is added, and no tier recorded hands nothing over.
+        self.assertEqual(draw_pushed(False), 0)
+        self.assertEqual(draw_coin(counts, PLAYER_COPIES, -1), 0)
+
 
 class FixtureShapeTests(unittest.TestCase):
     """`hs-game-sdk/curated/unique_pick_measurements.json` stays checkable."""
@@ -888,7 +1251,7 @@ class FixtureShapeTests(unittest.TestCase):
         self.assertIn("$schema_note", self.data)
         ids = [e["id"] for e in self.entries]
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertTrue({f"UP{i}" for i in range(1, 15)} <= set(ids))
+        self.assertTrue({f"UP{i}" for i in range(1, 21)} <= set(ids))
         for entry in self.entries:
             for field in self.REQUIRED:
                 self.assertIn(field, entry, entry.get("id"))
@@ -1008,7 +1371,8 @@ class SpecTests(unittest.TestCase):
             self.assertIn("\n" + heading + "\n", spec)
         for name in ("unique_pick_model.py", "test_unique_pick_model.py", "unique_pick_measurements.json",
                      "DropItemAngelicChance", "DropUniqueItems", "lootListUnique",
-                     "DropItemHeroic", "T_H", "Mark 1", "VaultUse"):
+                     "DropItemHeroic", "T_H", "Mark 1", "VaultUse",
+                     "DropItem", "LoadSatanicDropTier", "draw_share", "W_k", "first-kept"):
             self.assertIn(name, spec)
 
     def test_the_model_is_not_exported_from_the_generated_init(self):
@@ -1183,6 +1547,83 @@ class LeverParityTests(unittest.TestCase):
                     self.assertEqual(piece_kill_share(length, n, PLAYER_COPIES, p),
                                      model.kill_share(PLAYER_COPIES, length, p))
                     self.assertEqual(coin(n, PLAYER_COPIES), Fraction(PLAYER_COPIES, n + PLAYER_COPIES))
+
+    # ---- The draw inside `DropItem` (#166): `draw_pushed` and `draw_coin`, against
+    # Mark1Drops.hpp, FlightCharms.hpp and the adapter in ModuleMain.cpp ----
+
+    def test_draw_lists_are_0_to_5(self):
+        mark1 = FORGEPACT_MARK1_DROPS.read_text(encoding="utf-8", errors="replace")
+        count = len(model.DRAW_LIST_INDICES)
+        self.assertRegex(mark1, rf"inline constexpr int kListCount\s*=\s*{count}\s*;")
+        self.assertRegex(mark1, r"inline constexpr int kDrawListCount\s*=\s*kListCount\s*;")
+        self.assertRegex(self.header, rf"inline constexpr int kDrawListCount\s*=\s*{count}\s*;")
+        # Every planned entry goes onto every list the draw reads.
+        plan = _function_body(mark1, "struct DrawPlan")
+        self.assertRegex(plan, r"int EntryCount\(\) const \{\s*return\s+PerListCount\(\)\s*\*\s*kDrawListCount\s*;\s*\}")
+        # The adapter reads and pushes onto each of [0] to [5], Pocket Elf's copies counted on each.
+        push = _function_body(self.plugin, "static void KillDrawPush(")
+        self.assertRegex(push, r"for\s*\(\s*int\s+k\s*=\s*0\s*;\s*k\s*<\s*M1dNs::kListCount\s*;\s*\+\+k\s*\)\s*d\.subs\[k\]\s*=\s*subs\[k\]\s*;")
+        self.assertRegex(push, r"g_FlightDrop\.injected\s*\+=\s*\(long\)elfCopies\s*\*\s*M1dNs::kListCount\s*;")
+
+    def test_draw_copies_are_one_in_the_player_build(self):
+        mark1 = FORGEPACT_MARK1_DROPS.read_text(encoding="utf-8", errors="replace")
+        self.assertRegex(mark1, rf"inline constexpr int kPlayerCopies\s*=\s*{PLAYER_COPIES}\s*;")
+        self.assertRegex(self.plugin, r"#ifdef FORGEPACT_RELEASE\s*\n\s*static constexpr int g_Mark1DropCopies\s*=\s*M1dNs::kPlayerCopies\s*;")
+        self.assertRegex(self.plugin, rf"#ifdef FORGEPACT_RELEASE\s*\n\s*static constexpr int g_FlightDropCopies\s*=\s*{PLAYER_COPIES}\s*;")
+        # The draw push takes those copies: the pieces' plan and Pocket Elf's.
+        push = _function_body(self.plugin, "static void KillDrawPush(")
+        self.assertIn("PlanDrawFor(*r, g_Mark1DropCopies)", push)
+        self.assertIn("FcNs::ElfDrawCopies(elfStandIn, g_FlightDropCopies)", push)
+        plan = _function_body(mark1, "inline DrawPlan PlanDrawPush(")
+        self.assertRegex(plan, r"if\s*\(\s*copies\s*<\s*1\s*\)\s*return\s+plan\s*;")
+        self.assertRegex(plan, r"DrawPushEntry\{\s*kPieces\[i\]\.piece\s*,\s*s\.triple\s*,\s*s\.counts\s*,\s*copies\s*\}")
+        elf = _function_body(self.header, "inline int ElfDrawCopies(")
+        self.assertRegex(elf, r"if\s*\(\s*!s\.resolved\s*\|\|\s*copies\s*<\s*1\s*\)\s*return\s+0\s*;")
+        self.assertEqual(draw_pushed(True, elf_on=True), PLAYER_COPIES * len(DRAW_ITEMS))
+
+    def test_draw_coin_takes_k_from_the_tier(self):
+        mark1 = FORGEPACT_MARK1_DROPS.read_text(encoding="utf-8", errors="replace")
+        # c / (n_k + c) on list k, and nothing for a k that names no list.
+        share = _function_body(mark1, "inline double DrawCoinShare(")
+        self.assertRegex(share, r"if\s*\(\s*k\s*<\s*0\s*\|\|\s*k\s*>=\s*kDrawListCount\s*\)\s*return\s+0\.0\s*;")
+        self.assertRegex(share, r"return\s+CoinShare\(\s*e\.counts\[static_cast<size_t>\(k\)\]\s*,\s*e\.copies\s*\)\s*;")
+        elf_share = _function_body(self.header, "inline double ElfDrawShare(")
+        self.assertRegex(elf_share, r"k\s*<\s*0\s*\|\|\s*k\s*>=\s*kDrawListCount\s*\)\s*return\s+0\.0\s*;")
+        self.assertRegex(elf_share, r"return\s+CoinShare\(\s*s\.counts\[static_cast<size_t>\(k\)\]\s*,\s*copies\s*\)\s*;")
+        # A stand-in's triple with no tier recorded is refused, not settled.
+        hit = _function_body(mark1, "inline DrawHit AttributeDrawHit(")
+        self.assertRegex(hit, r"if\s*\(\s*k\s*<\s*0\s*\|\|\s*k\s*>=\s*kDrawListCount\s*\)\s*return\s+DrawHit::TierUnread\s*;")
+        # k is LoadSatanicDropTier's answer, a whole number 0 to 5, for the innermost DropItem call.
+        note = _function_body(mark1, "void NoteDrawTier(")
+        self.assertRegex(note, r"k\s*>=\s*0\s*&&\s*k\s*<\s*kDrawListCount")
+        self.assertRegex(note, r"drawKs_\.back\(\)\s*=\s*whole\s*\?\s*static_cast<int>\(k\)\s*:\s*kDrawNoTier\s*;")
+        hook = _function_body(self.plugin, "static RValue& HookSatanicTier(")
+        self.assertIn("KillDrawNoteTier(r);", hook)
+        tier = _function_body(self.plugin, "static void KillDrawNoteTier(")
+        self.assertIn("g_M1Drop.core.NoteDrawTier(ok, v);", tier)
+        self.assertRegex(tier, r"g_ElfDraw\.NoteTier\(")
+        # The transform agrees: c / (n_k + c), and 0 with no tier.
+        for k in model.DRAW_LIST_INDICES:
+            self.assertEqual(draw_coin(SS_STANDIN_COUNTS, PLAYER_COPIES, k), coin(SS_STANDIN_COUNTS[k], PLAYER_COPIES))
+        self.assertEqual(draw_coin(SS_STANDIN_COUNTS, PLAYER_COPIES, -1), 0)
+
+    def test_draw_stand_ins_are_entries_the_model_does_not_redraw(self):
+        mark1 = FORGEPACT_MARK1_DROPS.read_text(encoding="utf-8", errors="replace")
+        keeps = _function_body(mark1, "inline bool DrawKeeps(")
+        self.assertRegex(keeps, r"return\s+r\.rarity\s*==\s*kDrawKeptRarity\s*&&\s*!r\.f40\s*&&\s*!r\.f41\s*;")
+        self.assertRegex(self.header, r"inline bool DrawKeeps\(const DrawVerdict& v\)\s*\{\s*return\s+v\.rarity\s*==\s*kDrawRarity\s*&&\s*!v\.f40\s*&&\s*!v\.f41\s*;\s*\}")
+        self.assertRegex(mark1, r"inline constexpr int kDrawKeptRarity\s*=\s*6\s*;")
+        self.assertRegex(self.header, r"inline constexpr int kDrawRarity\s*=\s*6\s*;")
+        # SS first for Mark 1; Pocket Elf at the SS tier only.
+        self.assertRegex(mark1, r"inline constexpr int kDrawSsTier\s*=\s*5\s*;")
+        self.assertRegex(mark1, r"inline constexpr bool kDrawPrefersSs\s*=\s*true\s*;")
+        self.assertRegex(self.header, r"inline constexpr int kElfDrawTier\s*=\s*kDrawSsTier\s*;")
+        # A stand-in is never one the draw throws back on its flags.
+        for f40 in (False, True):
+            for f41 in (False, True):
+                with self.subTest(f40=f40, f41=f41):
+                    plugin_keeps = not f40 and not f41    # at rarity 6
+                    self.assertEqual(plugin_keeps, not model.draw_redraws(f40, f41))
 
 
 if __name__ == "__main__":
