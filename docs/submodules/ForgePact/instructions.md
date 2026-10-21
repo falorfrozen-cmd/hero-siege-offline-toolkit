@@ -7423,11 +7423,12 @@ kill draw and Gabriel Wings the Angelic roll (Flight charms › *Drops*):
   [Mod live 8 results](../../../ForgePact/docs/mark1-set-research.md#mod-live-8-results)).
   Its own rules are the *kill draw* ones below.
 - **The `DropUniqueItems` route**, the ordinary unique roll by name, kept
-  beside the draw as built (the uniques workorder's default). Mod live 6
-  (the drops workorder's Live 3) measured that ordinary kills never enter
-  it (`vanilla-unique-path: other-path`): a kill reaches it only through
-  `LoadDrops`' drop type 45, whose chance read 0 on every one of 1831
-  arrays. A type-45 drop or a by-name call (the research build's
+  beside the draw as built (the uniques workorder's default). Kills seldom
+  enter it. Mod live 6 (the drops workorder's Live 3) saw none do so in
+  Act 1 on Hell (`vanilla-unique-path: other-path`): a kill reaches it only
+  through `LoadDrops`' drop type 45, whose chance read 0 on every one of
+  1831 arrays there. Mod live 8 counted it 7 times in about 2900
+  `DropItem` calls in The Devil's Breach (RDM § 13.1). A type-45 drop or a by-name call (the research build's
   `mark1probe unique`) still runs it. Its rules are the *`DropUniqueItems`
   route* ones below; its stat fields keep their `kill-` names.
 - **The Heroic roll**, `DropItemHeroic`, which a vault used from the bag and a
@@ -7514,9 +7515,10 @@ its own gate, stand-ins and tallies.
   step-ups, draws one entry, and keeps it only when its repository rarity is
   below 7 and it is not hidden; a refused draw drops nothing, and there is no
   branch for set items: the game's own set pieces are Satanic (6) uniques the
-  roll keeps like any other. Ordinary kills do not run it (measured, Mod live
-  6: type 45's chance read 0 on every `LoadDrops` array while four natural
-  uniques dropped), which is why the kill route moved to the
+  roll keeps like any other. Ordinary kills seldom run it (Mod live 6 saw
+  none in Act 1 on Hell, where type 45's chance read 0 on every `LoadDrops`
+  array while four natural uniques dropped; Mod live 8 counted 7 in about
+  2900 `DropItem` calls), which is why the kill route moved to the
   draw; this route stays for a type-45 drop or a by-name call.
 - *`DropUniqueItems` route: one detour, shared with Pocket Elf.* A script takes one inline
   detour, and a second install would be table-only and blind, so Mark 1 has
