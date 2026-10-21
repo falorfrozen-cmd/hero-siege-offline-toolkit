@@ -4,9 +4,9 @@ against numbers ForgePact already measured (ForgePact#158, hub #500).
 `hs_game_sdk.unique_pick_model` models the game only: the Angelic roll's
 re-drawing pick, the ordinary unique roll's one draw, and the Heroic roll's
 re-drawing pick (`DropItemHeroic`, added for the Mark 1 pieces of ForgePact#166,
-hub #518; the `test_heroic_*` and `test_up14_*` tests). The Mark 1 pieces join
-the ordinary unique roll too, the kill route (`kill_share`, the `test_kill_*`
-tests). A kill's own unique comes from the draw inside `DropItem`, from the
+hub #518; the `test_heroic_*`, `test_up14_*` and `test_up21_*` tests). The Mark 1
+pieces join the ordinary unique roll too, the kill route (`kill_share`, the
+`test_kill_*` and `test_up22_*` tests). A kill's own unique comes from the draw inside `DropItem`, from the
 list `LoadSatanicDropTier` names (`draw_share`, the `test_draw_*` and
 `test_up15_*` to `test_up20_*` tests), which the pieces and Pocket Elf join
 under `move: go`. ForgePact's levers
@@ -1168,6 +1168,114 @@ class MeasuredTests(unittest.TestCase):
         self.assertTrue(model.observation_within(live1b["pick_builds"], live1b["draw_builds"], float(share_k4), float(share_k4)))
         self.assertEqual(live1c["natural_ss_satanic_draw_builds"], 0)
 
+    # ---- Mark 1's phase 3 by-name sessions (#166, Mod live 4 and Mod live 5) ----
+
+    def _pieces_within(self, pieces, calls, shares):
+        """Whether `pieces` in `calls` fits a share between min and max of `shares`."""
+        return model.observation_within(pieces, calls, float(min(shares)), float(max(shares)))
+
+    def test_up21_mod_live4_heroic_pool_reach_and_rate(self):
+        values = self.entries["UP21"]["values"]
+        list5, list4 = values["list_5"], values["list_4"]
+        lengths = self.entries["UP6"]["values"]["sub_list_lengths"]
+        # The pool: T_H = 203 on list 5, and the list adds up.
+        droppable = list5["kept"]
+        self.assertEqual(droppable, 203)
+        kept = {int(r): n for r, n in list5["kept_by_rarity"].items()}
+        refused = {int(r): n for r, n in list5["refused_by_rarity"].items()}
+        self.assertEqual(sum(kept.values()), droppable)
+        for rarity in kept:
+            self.assertTrue(model.heroic_keeps(rarity, False), rarity)
+        for rarity in refused:
+            self.assertFalse(model.heroic_keeps(rarity, False), rarity)
+            # What the Heroic roll refuses on list 5 is what the Angelic roll keeps.
+            self.assertTrue(model.angelic_keeps(rarity, False), rarity)
+        self.assertEqual(sum(refused.values()), _measured_t())
+        self.assertEqual(droppable + sum(refused.values()) + list5["hidden"], list5["length"])
+        self.assertEqual(list5["length"], lengths[model.HEROIC_DEFAULT_LIST_INDEX])
+        self.assertEqual(list4["kept"] + list4["hidden"], list4["length"])
+        self.assertEqual(list4["length"], lengths[4])
+        # A stand-in for every class on both lists, each listed once.
+        for name in ("list_5", "list_4"):
+            self.assertEqual(values["standin_n"][name], [1] * len(MARK1_PIECES))
+        n = values["standin_n"]["list_5"][0]
+        self.assertEqual(model.heroic_share(n, droppable), Fraction(1, 203))
+        # reach: 200 copies, every call places one item, each piece at c / (T_H + 4c).
+        reach = values["reach"]
+        c = reach["copies"]
+        e = heroic_pushed(True, copies=c)
+        self.assertEqual(reach["placed"], reach["calls"])
+        share = piece_heroic_share(droppable, n, c, e)
+        self.assertEqual(share, Fraction(200, 1003))
+        self.assertEqual(coin(n, c), Fraction(200, 201))
+        counts = reach["pieces"]
+        for piece, count in counts.items():
+            with self.subTest(piece=piece):
+                self.assertTrue(self._pieces_within(count, reach["calls"], [share]))
+        together = sum(counts.values())
+        self.assertEqual(together, 32)
+        self.assertTrue(self._pieces_within(together, reach["calls"], [4 * share]))
+        # rate: the player build's one copy, 4 / (T_H + 4) for the four together.
+        rate = values["rate"]
+        e1 = heroic_pushed(True, copies=rate["copies"])
+        one = piece_heroic_share(droppable, n, rate["copies"], e1)
+        self.assertEqual(4 * one, Fraction(4, 207))
+        self.assertEqual(coin(n, rate["copies"]), Fraction(1, 2))
+        low, high = model.binomial_band(rate["calls"], float(4 * one))
+        self.assertAlmostEqual(low, -2.197, places=3)
+        self.assertAlmostEqual(high, 6.062, places=3)
+        self.assertTrue(self._pieces_within(rate["pieces"], rate["calls"], [4 * one]))
+        # The pushed entries: one list per Heroic call, e each.
+        self.assertEqual(values["injected"], reach["calls"] * e + rate["calls"] * e1)
+        self.assertEqual((values["refused"], values["anomalies"]), (0, 0))
+        # Negative controls: each count fails the other copies setting, and the
+        # switch off (no piece, a zero-width band) rejects both.
+        self.assertFalse(self._pieces_within(together, reach["calls"], [4 * one]))
+        self.assertFalse(self._pieces_within(rate["pieces"], rate["calls"], [4 * share]))
+        self.assertEqual(piece_heroic_share(droppable, n, 0, heroic_pushed(False)), 0)
+        self.assertFalse(self._pieces_within(together, reach["calls"], [0]))
+        self.assertFalse(self._pieces_within(rate["pieces"], rate["calls"], [0]))
+
+    def test_up22_mod_live5_kill_pool_and_reach(self):
+        values = self.entries["UP22"]["values"]
+        lengths = values["sub_list_lengths"]
+        # The lists are #74's lists 0 to 4.
+        self.assertEqual(lengths, _ordinary_lengths())
+        counts = values["standin_counts"]
+        self.assertEqual(len(counts), len(MARK1_PIECES))
+        for piece, per_list in counts.items():
+            with self.subTest(piece=piece):
+                self.assertEqual(len(per_list), len(model.UNIQUE_SUB_LISTS))
+                self.assertEqual(len(set(per_list)), 1)   # held equally on every list
+        n = counts["helmet"][0]
+        self.assertEqual(n, 0)
+        reach = values["reach_kill"]
+        c = reach["copies"]
+        p = kill_pushed(True, copies=c)
+        self.assertEqual(p, 800)
+        self.assertEqual(reach["placed"], reach["calls"])
+        # Which list a call reads is not established: the band runs over all five.
+        shares = [piece_kill_share(length, n, c, p) for length in lengths]
+        self.assertEqual(max(shares), Fraction(200, 850))
+        self.assertEqual(min(shares), Fraction(200, 1021))
+        self.assertEqual(coin(n, c), 1)
+        for piece, count in reach["pieces"].items():
+            with self.subTest(piece=piece):
+                self.assertTrue(self._pieces_within(count, reach["calls"], shares))
+        together = sum(reach["pieces"].values())
+        self.assertEqual(together, 35)
+        self.assertTrue(self._pieces_within(together, reach["calls"], [4 * s for s in shares]))
+        # p entries on each of the five lists per call, plus the one earlier call at one copy.
+        p1 = kill_pushed(True)
+        self.assertEqual(values["injected"],
+                         (reach["calls"] * p + values["earlier_calls_at_one_copy"] * p1) * len(model.UNIQUE_SUB_LISTS))
+        self.assertEqual((values["refused"], values["anomalies"]), (0, 0))
+        # Negative controls: the player build's one copy, and the switch off.
+        ones = [4 * piece_kill_share(length, n, 1, p1) for length in lengths]
+        self.assertFalse(self._pieces_within(together, reach["calls"], ones))
+        self.assertEqual(kill_pushed(False), 0)
+        self.assertFalse(self._pieces_within(together, reach["calls"], [0]))
+
 
 class OurCodeTests(unittest.TestCase):
     """The fixture's two our-code contracts, through the transforms above."""
@@ -1251,7 +1359,7 @@ class FixtureShapeTests(unittest.TestCase):
         self.assertIn("$schema_note", self.data)
         ids = [e["id"] for e in self.entries]
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertTrue({f"UP{i}" for i in range(1, 21)} <= set(ids))
+        self.assertTrue({f"UP{i}" for i in range(1, 23)} <= set(ids))
         for entry in self.entries:
             for field in self.REQUIRED:
                 self.assertIn(field, entry, entry.get("id"))

@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Hand-curated record of the counts the unique picks are checked against, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/unique_pick_model.py never reads it; tests/test_unique_pick_model.py reads both and checks that the model reproduces each entry. The mechanism, in our own words, is docs/models/unique-pick-spec.md, whose notation (T, L_k, D_k, c, e, n, m) the `model` fields use. Every entry has `id`, `kind` (`baseline` = vanilla, nothing pushed; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`measured` or `our_code`), `date` (the measurement date; for `our_code` entries, the date the code was read), `source` (a list of {path, section} or {repo, commit}; paths are relative to the hub root, `section` is text that appears in that file), `scripts` (every `gml_Script_*` the entry involves, all bound in hs_game_sdk.scripts.GameScript), `what` (the observation), `values`, `model` (what the model must show) and, once the model's tests exist, exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). Every #74 count below was made with the Angelic roll's chance raised by a research lever, never at the natural chance; `standinPicks=` is keyed on a stand-in's sub and b (the pair, not the triple), so its vanilla share is m / T. The flight charms' own live counts (UP9 to UP13, #158's Mod live 1 and Mod live 2) cite ForgePact/docs/flight-charms-research.md's Mod live 1 results and Mod live 2 results, where they are recorded; like #74's, they were made with the Angelic roll's chance raised by a research lever, the ordinary unique roll is called by name, and UP11's `flightprobe pool` pins T at 48. UP14 (ForgePact#166, the Mark 1 pieces on the Heroic roll) is the flight charms' Live 1 `heroic_route`, copied from hs-game-sdk/curated/flight_charms_measurements.json with its source: ten by-name DropItemHeroic calls with the player as self and nothing pushed; T_H, the entries the Heroic roll keeps, is not measured and stays a parameter. UP15 to UP20 (ForgePact#166, the kill's own draw inside DropItem) are Mark 1's Mod live procedure 7, three sessions on 2026-10-20 and 2026-10-21 (Live 1, 1b and 1c, slot 14, Hell), recorded in ForgePact/docs/mark1-set-research.md's Mod live 7 results and Phase 4 decision and folded into docs/RUNTIME_DATA_MODELS.md § 13.12; they use W_k (the acceptance-weighted entries of list k the draw keeps), n_k (a stand-in's own count on list k) and a (an entry's acceptance), the spec's notation for the draw. Live 1c ran at magic find x10, the other two at x1. The live captures are gitignored and never cited here.",
+  "$schema_note": "Hand-curated record of the counts the unique picks are checked against, NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file, and hs_game_sdk/unique_pick_model.py never reads it; tests/test_unique_pick_model.py reads both and checks that the model reproduces each entry. The mechanism, in our own words, is docs/models/unique-pick-spec.md, whose notation (T, L_k, D_k, c, e, n, m) the `model` fields use. Every entry has `id`, `kind` (`baseline` = vanilla, nothing pushed; `target` = a ForgePact lever applied; `our_code` = a contract of ForgePact's own code, not the game), `status` (`measured` or `our_code`), `date` (the measurement date; for `our_code` entries, the date the code was read), `source` (a list of {path, section} or {repo, commit}; paths are relative to the hub root, `section` is text that appears in that file), `scripts` (every `gml_Script_*` the entry involves, all bound in hs_game_sdk.scripts.GameScript), `what` (the observation), `values`, `model` (what the model must show) and, once the model's tests exist, exactly one of `reproduced_by` (the dotted id of the test that reproduces it) or `not_reproduced` (why it cannot be). Every #74 count below was made with the Angelic roll's chance raised by a research lever, never at the natural chance; `standinPicks=` is keyed on a stand-in's sub and b (the pair, not the triple), so its vanilla share is m / T. The flight charms' own live counts (UP9 to UP13, #158's Mod live 1 and Mod live 2) cite ForgePact/docs/flight-charms-research.md's Mod live 1 results and Mod live 2 results, where they are recorded; like #74's, they were made with the Angelic roll's chance raised by a research lever, the ordinary unique roll is called by name, and UP11's `flightprobe pool` pins T at 48. UP14 (ForgePact#166, the Mark 1 pieces on the Heroic roll) is the flight charms' Live 1 `heroic_route`, copied from hs-game-sdk/curated/flight_charms_measurements.json with its source: ten by-name DropItemHeroic calls with the player as self and nothing pushed; T_H, the entries the Heroic roll keeps, was not measured then (UP21 measures it). UP15 to UP20 (ForgePact#166, the kill's own draw inside DropItem) are Mark 1's Mod live procedure 7, three sessions on 2026-10-20 and 2026-10-21 (Live 1, 1b and 1c, slot 14, Hell), recorded in ForgePact/docs/mark1-set-research.md's Mod live 7 results and Phase 4 decision and folded into docs/RUNTIME_DATA_MODELS.md § 13.12; they use W_k (the acceptance-weighted entries of list k the draw keeps), n_k (a stand-in's own count on list k) and a (an entry's acceptance), the spec's notation for the draw. Live 1c ran at magic find x10, the other two at x1. UP21 and UP22 (ForgePact#166, phase 3) are Mark 1's Mod live 4 and Mod live 5, both on 2026-10-20 (slot 14), recorded in ForgePact/docs/mark1-set-research.md's Mod live 4 results, Mod live 5 results and Phase 3 decision: UP21 the Heroic roll's pool (T_H = 203 on list 5), `reach` and `rate`, UP22 the DropUniqueItems route's `pool-kill` and `reach-kill`, both rolls called by name. Mod live 6's type-45 reading is not a pick count and stays in hs-game-sdk/curated/mark1_set_measurements.json and docs/RUNTIME_DATA_MODELS.md § 13.1. The live captures are gitignored and never cited here.",
   "measurements": [
     {
       "id": "UP1",
@@ -347,6 +347,65 @@
                  "kept_rarity": 6, "redraw_fields": [40, 41], "ss_tier": 5, "mark1_prefers_ss": true, "elf_tier": 5},
       "model": "As an input transform: a call with the switches on adds p = c per resolved item to every list the draw can read; the stand-in triple is kept with (n_k + c) * a / (W_k + p) and the coin hands the item c / (n_k + c) of that, so each item takes c * a / (W_k + p) whichever k the call drew from. Switched off nothing is added, and every entry keeps its baseline r * a / W_k.",
       "reproduced_by": "tests.test_unique_pick_model.OurCodeTests.test_up20_the_draw_push"
+    },
+    {
+      "id": "UP21",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-20",
+      "source": [
+        {"path": "ForgePact/docs/mark1-set-research.md", "section": "### Mod live 4 results"},
+        {"path": "ForgePact/docs/mark1-set-research.md", "section": "heroic-t: 203"},
+        {"path": "hs-game-sdk/curated/mark1_set_measurements.json", "section": "\"mod_live_4\": {"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "the roll keeps **T_H = 203**"}
+      ],
+      "scripts": [
+        "gml_Script_DropItemHeroic",
+        "gml_Script_GetUniqueRepoStruct",
+        "gml_Script_CreateDefaultParams"
+      ],
+      "what": "Mark 1's Mod live 4 (research DLL 3ab4ec05..., ForgePact 9132dea), the Heroic roll called by name with the player as self. `pool`, nothing pushed: lootListUnique[5] held 380 entries, 203 the roll keeps (93 of rarity 6, 110 of rarity 9), 48 refused for rarity 7 (31) or 10 (17), 129 flagged hidden; [4] held 221, 218 kept (all rarity 6), 3 hidden; each of the four pieces' classes had a stand-in listed once on both lists. `reach`: at 200 copies of each piece's stand-in, 40 calls on list 5 placed 40 items, 32 of them pieces (helmet 10, body 13, boots 6, gloves 3), each hit on a stand-in handed over at 200 in 201. `rate`: at the player build's one copy, 100 calls gave 2 pieces, each hit handed over at 1 in 2. `injected=` reached 32400 over both steps, refused 0, anomalies 0.",
+      "values": {
+        "list_5": {"length": 380, "kept": 203, "kept_by_rarity": {"6": 93, "9": 110}, "refused_by_rarity": {"7": 31, "10": 17}, "hidden": 129},
+        "list_4": {"length": 221, "kept": 218, "kept_by_rarity": {"6": 218}, "hidden": 3},
+        "standin_n": {"list_5": [1, 1, 1, 1], "list_4": [1, 1, 1, 1]},
+        "reach": {"copies": 200, "calls": 40, "placed": 40, "pieces": {"helmet": 10, "body": 13, "boots": 6, "gloves": 3}},
+        "rate": {"copies": 1, "calls": 100, "pieces": 2},
+        "injected": 32400,
+        "refused": 0,
+        "anomalies": 0
+      },
+      "model": "T_H = 203 on list 5: the kept entries are what heroic_keeps passes, the refused ones are the T = 48 the Angelic roll keeps (UP11), and kept + refused + hidden is the list's length (UP6). With e = 4c pushed and each stand-in at n = 1, each piece takes c / (T_H + 4c): at c = 200 the four together take 800 / 1003 of the calls, and `reach`'s 32 of 40 lies within its 3-sigma band, each piece's count within 200 / 1003; at c = 1, 4 / 207, and `rate`'s 2 of 100 lies within it. Negative controls: each count fails the other copies setting's band, and the switch off (no piece) rejects both. injected = calls x e summed over the two steps.",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up21_mod_live4_heroic_pool_reach_and_rate"
+    },
+    {
+      "id": "UP22",
+      "kind": "target",
+      "status": "measured",
+      "date": "2026-10-20",
+      "source": [
+        {"path": "ForgePact/docs/mark1-set-research.md", "section": "### Mod live 5 results"},
+        {"path": "ForgePact/docs/mark1-set-research.md", "section": "kstandins: all"},
+        {"path": "hs-game-sdk/curated/mark1_set_measurements.json", "section": "\"mod_live_5\": {"},
+        {"path": "docs/RUNTIME_DATA_MODELS.md", "section": "read by `mark1probe pool kill` in Mark"}
+      ],
+      "scripts": [
+        "gml_Script_DropUniqueItems",
+        "gml_Script_GetUniqueRepoStruct",
+        "gml_Script_CreateDefaultParams"
+      ],
+      "what": "Mark 1's Mod live 5 (research DLL d65ce50a..., ForgePact 9c6756e), the ordinary unique roll DropUniqueItems called by name with the player as self, through the detour Pocket Elf shares (Pocket Elf's switch off). `pool-kill`, nothing pushed: lootListUnique[0..4] read 50, 61, 79, 152 and 221 entries, none unread, and each of the four pieces' classes had a rarity-6 stand-in held 0 times on every one of the five lists. `reach-kill`: at 200 copies of each piece's stand-in on each list, 40 calls placed 40 items, 35 of them pieces (helmet 5, body 8, boots 10, gloves 12), all rarity 6, tier 5; `injected=` 160020 after those 40 calls and one earlier call at one copy; refused 0, anomalies 0.",
+      "values": {
+        "sub_list_lengths": [50, 61, 79, 152, 221],
+        "standin_counts": {"helmet": [0, 0, 0, 0, 0], "body": [0, 0, 0, 0, 0], "boots": [0, 0, 0, 0, 0], "gloves": [0, 0, 0, 0, 0]},
+        "reach_kill": {"copies": 200, "calls": 40, "placed": 40, "pieces": {"helmet": 5, "body": 8, "boots": 10, "gloves": 12}},
+        "earlier_calls_at_one_copy": 1,
+        "injected": 160020,
+        "refused": 0,
+        "anomalies": 0
+      },
+      "model": "The lengths are UP6's lists 0 to 4. With n = 0 the coin hands every hit to the piece, and with p = 4c pushed on each list each piece takes c / (L_k + 4c) of the calls that read list k: at c = 200 the four together take between 800 / 1021 and 800 / 850, and `reach-kill`'s 35 of 40 lies within the 3-sigma band over those lengths, as does each piece's count. Which list a call reads is not established, so the band runs over all five. Negative control: the player build's one copy (4 / (L_k + 4)) rejects 35. injected = calls x p x 5 lists.",
+      "reproduced_by": "tests.test_unique_pick_model.MeasuredTests.test_up22_mod_live5_kill_pool_and_reach"
     }
   ]
 }

@@ -3126,11 +3126,32 @@ The data tables in this section are also in
 - `Enemy_Parent_obj`'s Destroy calls `DropItem` only when the protected HP is 0
   or less. **Static reading.**
 - The only direct call of `DropUniqueItems` found is drop type 45's;
-  indirect calls were not scanned. A kill's ordinary uniques can come from
-  `DropItem`'s own draw on `lootListUnique[LoadSatanicDropTier's answer]`,
-  which runs without `LoadDrops` (§ 13.12); that they do is an inference
-  until ForgePact's Mod live procedure 7 measures it. **Static reading**
-  (2026-10-20, ForgePact #166).
+  indirect calls were not scanned. **Static reading** (2026-10-20, ForgePact
+  #166). A kill's ordinary uniques come from `DropItem`'s own draw on
+  `lootListUnique[LoadSatanicDropTier's answer]`, which runs without
+  `LoadDrops` (§ 13.12). ForgePact's Mod live procedure 7 measured it
+  (`unique-route: satanic-draw`): every natural unique of its Live 1 owner
+  window was built in the draw's scope, and of Live 1b's and Live 1c's all
+  but 4, which were built inside a nested `DropUniqueItems` roll. **Measured**
+  (2026-10-20 and 2026-10-21;
+  [Mod live 7 results](../ForgePact/docs/mark1-set-research.md#mod-live-7-results)).
+- Drop type 45 on ordinary kills, with nothing forced: in ForgePact's Mod
+  live 6 (2026-10-20, slot 14 "Sorak", Hell, from the Outskirts of Inoya,
+  zone level 243), the owner's 8.7 minutes of play ran `LoadDrops` 45332
+  times over 1831 distinct drop arrays, and type 45's chance was 0 on every
+  one of them (`c45-nonzero=` 0, `c45-max=` 0), as on 51 more arrays from
+  the operator's kills. The game made no type-45 call of its own
+  (`game45=` 0), and `DropUniqueItems` was not entered while 4 natural
+  uniques dropped (`vanilla-unique-path: other-path`, with its by-name
+  control passing in the same session). With the research build's
+  `killgate` lever forcing type 45's gate open once per kill, inside the
+  game's own `LoadDrops` call, 57 kills ran `DropUniqueItems` through
+  `LoadDrops`' direct call, 57 on a debugger logpoint and 57 on the detour
+  alike. **Measured** (one session;
+  [Mod live 6 results](../ForgePact/docs/mark1-set-research.md#mod-live-6-results)).
+  Type 45 is not always 0: Mod live 8 counted 7 `DropUniqueItems` calls
+  inside about 2900 outermost `DropItem` calls of the owner's play in The
+  Devil's Breach at raised magic find (§ 13.12). What opened the gate there is not established.
 - A boss kill rolls its part several times. Karp King in Act_01_01 dropped:
   - 11 bellybuttons in 15 kills at the vanilla base of 27;
   - 36 in 12 kills at base 5.4;
@@ -5681,8 +5702,18 @@ workorder `forgepact-issue-95`, 2026-09-28, and part 2b, the mod's workorder
   which fits the five tiers C to SS; that a position is the item's tier less
   one is an inference, not read. **Static reading** (2026-10-20, ForgePact
   #166, workorder `forgepact-166-mark1-set-drops`, item `tier`). Mark 1's
-  pieces are written SS (5) by their dressing for this reason; whether the
-  owner's filter then shows them is that workorder's Live 2 `filter-shown`.
+  pieces are written SS (5) by their dressing for this reason.
+- An item written rarity 6, tier 5 shows past a filter that shows SS items:
+  in ForgePact's Mod live 6 (2026-10-20, `filter-shown`, pass) a Mark 1 Boots
+  placed at rarity 6, tier 5 showed its ground label `Mark 1 Boots | SS`
+  under the owner's own filter, with no `lootshow`, and Mod live 5 read
+  `Tier SS` in its tooltip (`tier-ss`). Its control, a vanilla tier-5 item
+  with no affix lines (`filter-control`), was not observed in either
+  session, because no by-name call placed one; a pass needs no control.
+  That the tier mask's position is the item's tier less one stays an
+  inference. **Measured**
+  ([Mod live 6 results](../ForgePact/docs/mark1-set-research.md#mod-live-6-results),
+  [Mod live 5 results](../ForgePact/docs/mark1-set-research.md#mod-live-5-results)).
 - The filter verdict is computed in `LootGroundInit`, not in Create:
   `LootGroundCreateFromItem(x, y, item)` calls `CreateLootInFreePos`, then
   `LootGroundInit(instance, item)`, which reads the bound `m_LootFilter` off the
@@ -8256,6 +8287,27 @@ not observed, not absent.
   0, 1, 2 and 4. Which of them `lootListUnique[5]` (380 entries, § 13.4) or
   `[4]` holds is not established. ForgePact's `mark1probe pool` reads `[5]`
   ([Phase 3 static reading](../ForgePact/docs/mark1-set-research.md#phase-3-static-reading)).
+- What the Heroic roll keeps on its lists, read by ForgePact's `mark1probe
+  pool` in Mark 1's Mod live 4 (2026-10-20, slot 14, nothing pushed):
+  `lootListUnique[5]` held 380 entries, of which the roll keeps **T_H = 203**
+  (93 of rarity 6 and 110 of rarity 9, counted with repeats); 48 are rarity
+  7 (31) or 10 (17), the T = 48 the Angelic roll keeps, and 129 are flagged
+  hidden. `[4]` held 221, of which it keeps 218, all rarity 6, and 3 are
+  hidden. Each of the classes 0, 1, 2 and 4 has kept triples on both lists
+  (10 to 23 per class and list), and the stand-in Mark 1 chose for each is
+  listed once. With one entry pushed per Mark 1 piece, 100
+  by-name calls gave 2 pieces, inside the band for 4 / (203 + 4).
+  **Measured**
+  ([Mod live 4 results](../ForgePact/docs/mark1-set-research.md#mod-live-4-results)).
+  Which list a vault's call reads stays a static reading (above), so the
+  rate per vault is not measured.
+- The ordinary roll's lists 0 to 4, read by `mark1probe pool kill` in Mark
+  1's Mod live 5 (2026-10-20): lengths 50, 61, 79, 152 and 221 again (§ 13.4),
+  and for each of the classes 0, 1, 2 and 4 a rarity-6 triple the roll keeps
+  that is held the same number of times on every one of the five lists (0
+  times each). 40 by-name `DropUniqueItems` calls at 200 copies of each piece's
+  entry built 35 pieces, all rarity 6, tier 5. **Measured**
+  ([Mod live 5 results](../ForgePact/docs/mark1-set-research.md#mod-live-5-results)).
 - The Angelic roll keeps only rarity 7 or 10 (§ 13.4).
 - So of these three rolls only `DropItemHeroic` can drop a Heroic (9) unique.
   **Static reading** (2026-10-11). This is about the rarity each roll keeps,
@@ -8279,10 +8331,11 @@ not observed, not absent.
   reach the same roll; that is an inference. **Static reading** (2026-10-20,
   the kill route), with type 45's meaning **measured**.
 - That route holds the only direct call from a kill to `DropUniqueItems`
-  (§ 13.12). In ForgePact's Mark 1 drops Live 3 (2026-10-20), four natural
-  uniques dropped from kills with `DropUniqueItems` not entered
-  (**measured**, one session, not observed). That `DropItem`'s own draw
-  built them is an inference (§ 13.12).
+  (§ 13.12). In ForgePact's Mark 1 Mod live 6 (the drops workorder's Live 3,
+  2026-10-20), four natural uniques dropped from kills with `DropUniqueItems`
+  not entered and type 45's chance 0 on every `LoadDrops` array (§ 13.1;
+  **measured**, one session). That `DropItem`'s own draw builds a kill's
+  uniques was then measured by Mod live 7 (§ 13.1, § 13.12).
 - `DropUniqueItems` (1424), decompiled again: it picks the sub-list k from 0
   to 4 by a zone value with random step-ups, draws one random index of
   `Controller_obj.lootListUnique[k]`, looks the entry up in

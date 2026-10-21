@@ -43,7 +43,7 @@ hs-game-sdk/
 │   ├── loot_announcement_measurements.json # ForgePact #17: the rare-drop announcement chain, the rarity codes its closure branches on and the route ForgePact ships (§16.10; data only, no model)
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── flight_charms_measurements.json # ForgePact #158 phase 1: walk callers, charm size keys, sprite key, the Heroic roll (RDM §19.6, §23), and the mod's Mod live 1-3 records (data only)
-│   ├── unique_pick_measurements.json # UP1-UP13: #74's stand-in picks, the unique list's lengths, ForgePact's push and coin, and the flight charms' Mod live 1 and 2 counts, for unique_pick_model.py (data only)
+│   ├── unique_pick_measurements.json # UP1-UP22: #74's stand-in picks, the unique list's lengths, ForgePact's push and coin, the flight charms' Mod live 1 and 2 counts, the Heroic roll (UP14, UP21) and DropItem's draw (UP15-UP20), and the Mark 1 kill route by name (UP22), for unique_pick_model.py (data only)
 │   ├── movement_speed_measurements.json # MS1-MS11: ForgePact #166's Mod live 1 sweep of the walk's modal step against the id-64 answer, its half point and phase 1's point, for movement_speed_model.py (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
@@ -64,7 +64,7 @@ hs-game-sdk/
 │   │   ├── monster_rank_model.py # What a monster's rank does to health, damage, XP and drop values, stdlib only, not exported (hand-written)
 │   │   ├── dungeon_chest_model.py # When a key dungeon's end chest opens (no monster alive) and the kill tally's quantities, stdlib only, not exported (hand-written)
 │   │   ├── skill_sliders_model.py # Projectile count, AoE scale and projectile deltaSpeed from their stats, stdlib only, not exported (hand-written)
-│   │   ├── unique_pick_model.py # Which unique the Angelic roll and the ordinary unique roll yield (one entry's share), stdlib only, not exported (hand-written)
+│   │   ├── unique_pick_model.py # Which unique the Angelic roll, the ordinary unique roll, the Heroic roll and DropItem's own draw yield (one entry's share), stdlib only, not exported (hand-written)
 │   │   ├── movement_speed_model.py # The walk's modal step against the movement speed stat (affine: answer + 200) and the answer that halves it, stdlib only, not exported (hand-written)
 │   │   ├── soul_piece_model.py # A room's act (RoomActIndex's answer), the pickup's stack rule (reals within the epsilon), the number rules a key piece rests on (repository truncation, unique `c`, the save's two decimals, crafting's count, the find), the gem roll a boss soul piece rides and the backpack's use, stdlib only, not exported (hand-written)
 │   │   ├── number_compress_model.py # Which numbers the game's Steam number shortener (num_compressSteam -> SteamCompressNumber) ends the process on, and the text it writes for the rest, stdlib only, not exported (hand-written)
@@ -229,12 +229,15 @@ rolls) is a parameter, never a guessed constant. ForgePact's research levers (`p
 `LeverParityTests`.
 
 `unique_pick_model.py` (2026-10-13, ForgePact issue #158, hub #500) is built the same way: spec
-`docs/models/unique-pick-spec.md` (written from `docs/RUNTIME_DATA_MODELS.md` § 13.4, § 23.4 and
-§ 23.8), fixture `curated/unique_pick_measurements.json` (UP1-UP5 #74's `standinPicks=` counts from
+`docs/models/unique-pick-spec.md` (written from `docs/RUNTIME_DATA_MODELS.md` § 13.4, § 13.12, § 23.4
+and § 23.8), fixture `curated/unique_pick_measurements.json` (UP1-UP5 #74's `standinPicks=` counts from
 its list-injection Lives 1 to 3 of 2026-10-02, with nothing pushed and with Headhunter at 200
 copies; UP6 the measured lengths of `lootListUnique[0..5]`; UP7-UP8 ForgePact's push and coin, as
 our-code contracts; UP9-UP13 the flight charms' Mod live 1 and 2 counts, replayed at the measured
-T = 48), checks `tests/test_unique_pick_model.py`. It gives an entry's share of the
+T = 48; UP14 the Heroic roll `DropItemHeroic` called by name; UP15-UP20 `DropItem`'s own unique draw,
+Mark 1's Mod live 7 and the draw push it takes under `move: go`; UP21 Mark 1's Mod live 4 on the
+Heroic roll, replayed at the measured T_H = 203; UP22 Mark 1's Mod live 5 on the `DropUniqueItems`
+route by name), checks `tests/test_unique_pick_model.py`. It gives an entry's share of the
 Angelic roll's drops (r / T: the roll draws again until it keeps a droppable entry), and the
 ordinary unique roll's chance of dropping a given entry or anything at all (r / L and D / L: one
 draw, nothing on a miss). T, the droppable entries on the Angelic list, was measured as 48 by the flight charms' Mod live 2

@@ -317,6 +317,28 @@ Every claim carries one of four labels, and a source:
   they compare was not logged. No natural rarity-6, tier-5 unique was built
   through the draw in that window. The probe's `picks=` count is an
   instrument count, not the draw's picks, and the model does not use it.
+- **T_H and the Heroic roll's stand-ins** (ForgePact#166, Mod live 4,
+  2026-10-20, slot 14, the roll called by name with the player as `self`;
+  RDM § 23.4 and ForgePact's "Mod live 4 results", UP21). `mark1probe pool`,
+  nothing pushed: `lootListUnique[5]` held 380 entries, of which the Heroic
+  roll keeps **T_H = 203** (93 of rarity 6, 110 of rarity 9, counted with
+  repeats); 48 are rarity 7 or 10, the T = 48 the Angelic roll keeps, and 129
+  are flagged hidden. `[4]` held 221, of which it keeps 218. Each of the four
+  pieces' classes had a stand-in on both lists, listed once (n = 1).
+  - `reach`: at 200 copies of each stand-in, 40 calls placed 40 items, 32 of
+    them pieces (helmet 10, body 13, boots 6, gloves 3).
+  - `rate`: at the player build's one copy, 100 calls gave 2 pieces, inside
+    the 3-sigma band for 4 / (203 + 4).
+- **The ordinary roll's lists and the pieces' stand-ins on them**
+  (ForgePact#166, Mod live 5, 2026-10-20, slot 14, `DropUniqueItems` called
+  by name; RDM § 23.4 and ForgePact's "Mod live 5 results", UP22).
+  `mark1probe pool kill` read lists 0 to 4 at 50, 61, 79, 152 and 221
+  entries, UP6's lengths again, and each class's stand-in held 0 times on
+  every one of them (n = 0). At 200 copies of each stand-in, 40 calls placed
+  40 items, 35 of them pieces (helmet 5, body 8, boots 10, gloves 12).
+  Neither session ran either roll from a kill or a vault: Mod live 6 found
+  that ordinary kills never enter `DropUniqueItems` (RDM § 13.1), so the
+  model does not predict that route's share per kill.
 
 ## Our code
 
@@ -490,16 +512,18 @@ input transforms, and pins them to ForgePact's source.
   chance lever.
 - **Indirect calls.** A routine can also be called by index, which the direct
   call-site scans cannot see. None has been observed.
-- **T_H**, the entries the Heroic roll keeps on the sub-list it reads. No
-  session has counted it; ForgePact#166's Live procedure 1 (`pool`) reads it.
-  The model keeps it a parameter. Expect a few hundred, so one piece is about
-  one Heroic roll in a few hundred.
+- **Which sub-list a vault's Heroic roll reads**, so which T_H applies. T_H
+  was measured as 203 on list 5 and 218 on list 4 (Mod live 4, UP21, above),
+  but a vault starts at list 4 and moves to 5 on a check whose bound was not
+  read. The model keeps T_H a parameter; one piece is about one Heroic roll
+  in two hundred either way.
 - **The index `VaultUse` passes**, and the Chaos Tower NPC's, and the calling
   instance each passes. Its body was not read (RDM § 23.4).
-- **Which Heroic uniques of classes 0, 1, 2 and 4 the list holds**, and so each
-  stand-in's n and whether every piece has a stand-in. The Item Editor's
-  catalog lists 13, 15, 17 and 17 Heroic uniques of those classes, which is
-  not a reading of the game's list.
+- **Which Heroic uniques of classes 0, 1, 2 and 4 the list holds**, by name.
+  Each stand-in's n and whether every piece has a stand-in are measured on
+  this game build (Mod live 4: a stand-in for every class on lists 5 and 4,
+  n = 1), not on another. The Item Editor's catalog lists 13, 15, 17 and 17
+  Heroic uniques of those classes, which is not a reading of the game's list.
 - **How often a player opens a vault or uses that NPC**, so how often the
   Heroic roll runs in play.
 - **How often a kill runs drop type 45**, so how often a kill reaches the
@@ -579,7 +603,10 @@ setting, or no push).
 For the Heroic roll the baseline (the "Mark 1 drops" switch off) is no piece
 and each stand-in at n / T_H, and the target is each piece at c / (T_H + e),
 1 / (T_H + 4) in the player build. T_H stays a parameter, so the tests run
-over several values. The flight charms' ten by-name calls (UP14) are replayed:
+over several values, and Mod live 4's counts (UP21) are replayed at the
+measured T_H = 203, with the other copies setting and the switch off as
+negative controls; Mod live 5's (UP22) are replayed on the kill route's
+share over UP6's five lengths. The flight charms' ten by-name calls (UP14) are replayed:
 every call placed one item, and every rarity measured is one the Heroic test
 keeps. Their negative control is the Angelic test, which rejects every one of
 those rarities.

@@ -610,6 +610,136 @@
     "what": "In Town_01_rm a walkable landing point is one inside the room where the player would meet nothing of Collision_Parent_obj. family alone saw the prop, which the path grid and the wall line missed, and turned blocked at the edge 16 px before them, but read free past the room's bottom, where only room and the grid still said no. Not measured: a generated zone, why the path grid's cells under the Bounty Board read free, whether pockets between blockers are reachable on foot, and the test at a jump's landing.",
     "source": "ForgePact docs/mark1-set-research.md (Live 3 results, Decision, Not established); forgepact-166-mark1-set-live-3.md (W2 to W4), not tracked"
   },
+  "mod_live_4": {
+    "status": "measured",
+    "date": "2026-10-20",
+    "procedure": "Phase 3's Mod live procedure 4, the Mark 1 drops on the Heroic roll (DropItemHeroic) called by name, on save slot 14 Sorak with the debugger attached, 14:21 to 14:38 UTC. The build predates the kill route and the tier change: the pieces it built read rarity 9 and were not SS, so the owner's loot filter hid them.",
+    "game_exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "research_dll_sha256": "3ab4ec05ed3ad7f3bc92098fefbde89512f90d28aeffc860c56c054a5fae1da8",
+    "forgepact_commit": "9132dea",
+    "summary": "15 checks: 10 pass, 1 fail (drops-on), 4 not observed (drop-built, drop-art, heroic-natural, dbg-heroic). drops-on failed because the stand-ins read none before the first roll had resolved them; Mod live 5 re-checked drops-on, drop-built and drop-art and they passed.",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "fresh-off": "pass",
+      "dbg-control": "pass",
+      "heroic-control": "pass",
+      "pool": "pass",
+      "drops-on": "fail",
+      "reach": "pass",
+      "drop-built": "not-observed",
+      "drop-art": "not-observed",
+      "rate": "pass",
+      "drop-off": "pass",
+      "heroic-natural": "not-observed",
+      "dbg-heroic": "not-observed"
+    },
+    "decision": {
+      "standins": "all",
+      "heroic-t": 203,
+      "heroic-natural": "not-observed"
+    },
+    "heroic_control": "drops off, 10 by-name calls: placed 10, rarity 6 x4 and 9 x6, no piece; dbg-heroic 10 hits",
+    "pool": {
+      "list_5": {"length": 380, "kept": 203, "kept_by_rarity": {"6": 93, "9": 110}, "refused_by_rarity": {"7": 31, "10": 17}, "hidden": 129},
+      "list_4": {"length": 221, "kept": 218, "kept_by_rarity": {"6": 218}, "hidden": 3},
+      "standins_list_5": {"helmet": "0:1 rarity 9 x1", "body": "0:35 rarity 9 x1", "boots": "0:36 rarity 9 x1", "gloves": "0:29 rarity 9 x1"},
+      "standins_list_4": {"helmet": "0:0 rarity 6 x1", "body": "0:0 rarity 6 x1", "boots": "0:7 rarity 6 x1", "gloves": "0:4 rarity 6 x1"}
+    },
+    "reach": "copies 200, 40 by-name calls on list 5: 32 pieces (helmet 10, body 13, boots 6, gloves 3), each ours and built, refused 0, anomalies 0, heroic-calls 0 to 40; dbg-heroic stayed 10 (by-name calls after the detour no longer pass the logpoint's entry)",
+    "rate": "copies 1, 100 by-name calls: 2 pieces (body 1, gloves 1), each handed over by the coin at 1 in 2; the 3-sigma band for 4 / (203 + 4) over 100 calls is (-2.197, 6.062); refused 0, anomalies 0; injected 32400 over the session (40 x 800 + 100 x 4)",
+    "drop_off": "copies 200, drops off, 20 calls: 20 placed, no piece, injected 32400 unchanged",
+    "heroic_natural": "no vault item in the bag; no natural Heroic roll made",
+    "source": "ForgePact docs/mark1-set-research.md (Mod live 4 results, Phase 3 decision); docs/RUNTIME_DATA_MODELS.md 23.4; forgepact-166-mark1-set-drops-live-1.md, not tracked"
+  },
+  "mod_live_5": {
+    "status": "measured",
+    "date": "2026-10-20",
+    "procedure": "Phase 3's Mod live procedure 5, the Mark 1 drops' DropUniqueItems route (the kill route of that build, through the detour shared with Pocket Elf), the pieces' SS tier and the owner's loot filter, on save slot 14 Sorak with the debugger attached, from 16:47 UTC; the kill window was 30 minutes of kills and chests in the Outskirts of Inoya on Hell.",
+    "game_exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "research_dll_sha256": "d65ce50aad1ddf9b66f4552de6d0bbdbb8f2fa724eb838aabad4bec864376961",
+    "forgepact_commit": "9c6756e",
+    "summary": "20 checks: 17 pass, 2 not observed (filter-control, kill-natural), 1 not run (filter-shown, its control not observed). Every by-name check passed; the kill route stayed inconclusive because no kill ran DropUniqueItems in 30 minutes.",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "dbg-control": "pass",
+      "kill-control": "pass",
+      "filter-control": "not-observed",
+      "drops-on": "pass",
+      "pool-kill": "pass",
+      "reach-kill": "pass",
+      "tier-read": "pass",
+      "sig-untouched": "pass",
+      "filter-shown": "not-run",
+      "drop-built": "pass",
+      "drop-art": "pass",
+      "tier-ss": "pass",
+      "heroic-still": "pass",
+      "spawn-tier": "pass",
+      "kill-natural": "not-observed",
+      "dbg-unique": "pass",
+      "drop-off": "pass"
+    },
+    "decision": {
+      "kstandins": "all",
+      "kill-natural": "not-observed in this session; see mod_live_6"
+    },
+    "pool_kill": {
+      "lengths": [50, 61, 79, 152, 221],
+      "unread": 0,
+      "standins": {"helmet": "0:15 rarity 6", "body": "0:1 rarity 6", "boots": "0:9 rarity 6", "gloves": "0:16 rarity 6"},
+      "standin_counts_on_lists_0_to_4": [0, 0, 0, 0, 0]
+    },
+    "reach_kill": "copies 200, 40 by-name DropUniqueItems calls: 35 pieces (helmet 5, body 8, boots 10, gloves 12), each ours and built, refused 0, anomalies 0, kill-calls 1 to 41, injected 160020 (40 x 800 x 5 lists, plus 20 from the one call at copies 1)",
+    "tier": "35 of 35 Mark 1 placed lines rarity 6, tier 5; tooltip Tier SS on the ground and in the bag (tier-ss) and on the spawned helmet (spawn-tier)",
+    "kill_natural": "30 minutes of kills and chests in Hell: dbg-unique 50 to 50, kill-calls 42 to 42, the control logging throughout",
+    "source": "ForgePact docs/mark1-set-research.md (Mod live 5 results, Phase 3 decision); docs/RUNTIME_DATA_MODELS.md 18.5 and 23.4; forgepact-166-mark1-set-drops-live-2.md, not tracked"
+  },
+  "mod_live_6": {
+    "status": "measured",
+    "date": "2026-10-20",
+    "procedure": "Phase 3's Mod live procedure 6, the kill lever (mark1probe killgate on LoadDrops) and whether a vanilla kill's unique comes through DropUniqueItems, on save slot 14 Sorak with the debugger attached. Attempt 1 (from 18:28 UTC) was aborted: a hardware logpoint on LoadDrops logged 14398 of the game's calls, the game fell to about 1 fps and froze, and it was force-stopped and restored; none of its checks is used. Attempt 2 (19:05 to 19:25 UTC) is the record: the operator's kills in the Outskirts of Inoya on Hell (zone level 243), then about 8.7 minutes of the owner's own play at about 101 to 227 fps, lever off.",
+    "game_exe_sha256": "498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0",
+    "research_dll_sha256": "0845ee4f6a7b2116d20e6ad5d10af4d912910f0d55a2269d858f980ebda67cb7",
+    "forgepact_commit": "38c35ea",
+    "summary": "Attempt 2: 16 checks, 15 pass, 1 not observed (filter-control). kill-natural read seen only with the lever on; with it off no kill ran DropUniqueItems, and vanilla-unique-path read other-path with kill-control passing in the same attempt.",
+    "checks": {
+      "dll-hash": "pass",
+      "control": "pass",
+      "marker": "pass",
+      "dbg-control": "pass",
+      "kill-control": "pass",
+      "filter-control": "not-observed",
+      "drops-on": "pass",
+      "filter-shown": "pass",
+      "lever-sees": "pass",
+      "dbg-loaddrops": "pass",
+      "natural-45": "pass",
+      "kill-natural": "pass",
+      "dbg-unique": "pass",
+      "lever-opened": "pass",
+      "lever-off": "pass",
+      "vanilla-unique-path": "pass"
+    },
+    "decision": {
+      "kill-natural": "seen",
+      "vanilla-unique-path": "other-path"
+    },
+    "filter_shown": "Mark 1 Boots, rarity 6, tier 5, ground label 'Mark 1 Boots | SS' past the owner's filter with no lootshow; filter-control not observed (no tier-5 item in 30 calls)",
+    "type_45": {
+      "operator_lever_off": {"loaddrops": 922, "arrays": 51, "c45_nonzero": 0, "c45_max": 0, "game45": 0},
+      "owner_window_lever_off": {"minutes": 8.7, "loaddrops": 45332, "arrays": 1831, "c45_nonzero": 0, "c45_max": 0, "game45": 0, "kill_calls": 0, "dbg_unique": 0}
+    },
+    "lever": {
+      "on": "one batch: arrays 51 to 108, reentered 0 to 57, raised 0, threw 0, unique-during 0 to 57, kill-calls 1 to 58, dbg-unique 40 to 97; 48 pieces built (helmet 13, body 13, boots 9, gloves 13), on screen with SS labels",
+      "off_again": "two batches: loaddrops 1565 to 2240, arrays 108 to 147, raised and reentered unchanged, kill-calls and dbg-unique flat"
+    },
+    "vanilla_uniques": "4 natural uniques in the owner's window (Molten Boots, Arcane Robes of Authority, Heaven's Champion, Gladiator's Skullet), each with dbg-unique +0 and kill-calls +0",
+    "source": "ForgePact docs/mark1-set-research.md (Mod live 6 results, Phase 3 decision); docs/RUNTIME_DATA_MODELS.md 13.1 and 18.5; forgepact-166-mark1-set-drops-live-3.md (# Attempt 2), not tracked"
+  },
   "mod_live_7": {
     "status": "measured",
     "date": "2026-10-20 to 2026-10-21",
