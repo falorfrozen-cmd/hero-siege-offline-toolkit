@@ -6302,8 +6302,9 @@ inserted before `mod_jump_scenery`). Record: `docs/flight-charms-research.md`
   refuses partway takes off the entries that did go on and counts one anomaly,
   so neither the roll nor #74's tail-checked removal after it meets a partial
   push (the angelic harness's `flight_partial_push_*` scenarios). That
-  `DropUniqueItems` route stays as built, but ordinary kills never run that
-  roll (the Mark 1 drops workorder's Live 3), so Pocket Elf's kill route is
+  `DropUniqueItems` route stays as built, but ordinary kills seldom run that
+  roll (the Mark 1 drops workorder's Live 3 saw none in Act 1 on Hell; Mod
+  live 8 counted 7 in about 2900 `DropItem` calls, RDM § 13.1), so Pocket Elf's kill route is
   the kill draw, `DropItem`'s own unique draw from `lootListUnique[k]` (Mark
   1 set › *Drops*, *kill draw*; hub RDM § 13.12): with `flightcharm elf 1`,
   for the length of each outermost `DropItem` call outside every roll, one
