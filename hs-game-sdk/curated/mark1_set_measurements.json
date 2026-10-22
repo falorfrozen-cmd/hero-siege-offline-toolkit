@@ -989,5 +989,324 @@
     "layout": "The description wrapped at 478 over four rows; every row inside the box in S3, S5, S6 and S7.",
     "life_observation": "Life 4374 / 4374 at S1, 4108 with the Helmet worn, 3833 with all four; 3833 before mark1set bonus 1, 3360 just after, 3779 about 5 s after, 645 about 30 s after bonus 0, in town, damage meter 526 020. Cause not read.",
     "source": "ForgePact docs/mark1-set-research.md (Mod live 10 results); docs/RUNTIME_DATA_MODELS.md 16.6, 16.12, 23.7; forgepact-166-mark1-set-tooltip-live-2.md, not tracked"
+  },
+  "playtest2": {
+    "live1": {
+      "status": "measured",
+      "date": "2026-10-22",
+      "procedure": "Stats live procedure 1 of the 2026-10-22 playtest (ForgePact#166): the rolled pieces, the set bonus, the tooltip, the priority cycle, held input, and the proc route against the press route, on save slot 14 Sorak (White Mage) in town, 12:43 to 14:52 UTC, with the hub's x64dbg MCP attached from D1 (after S2) to after D3; saves restored clean at the end.",
+      "research_dll_sha256": "c5f3376b9e5d42f939d300d7cdd5a33a1017f06901b20692a134806be57eefe1",
+      "forgepact_commit": "13c9c1b",
+      "summary": "61 checks: 40 pass, 8 fail, 9 not-observed, 4 not-run. Validity 5 of 5 pass; acceptance 9 pass, 5 fail (bonus-3, ms-applies, prio-order, lock-key, icon-grey), 3 not-observed (tip-lit, bonus-2, bonus-4); research 26 pass, 3 fail, 6 not-observed, 4 not-run.",
+      "bar": "row 0: 0,0 darkOath (242), 0,2 chainOfHolyLight (250, the right button), 0,3 manaOrb (253, Q), 0,4 healingZone (252, E), 0,5 soulSpurn (240, R, a toggle), 0,6 shadowBolt (239, Y, bound by the owner by hand during D3); auto talents=253/252/240/239 free=0/0/-/1; abilityCooldown 6, 14, 0.25, 0.25 at game speed 144",
+      "checks": {
+        "dll-hash": {
+          "verdict": "pass",
+          "observed": "lease dll_sha256 c5f3376b9e5d42f939d300d7cdd5a33a1017f06901b20692a134806be57eefe1"
+        },
+        "control": {
+          "verdict": "pass",
+          "observed": "pong (YYTK 4.0.1)"
+        },
+        "marker": {
+          "verdict": "pass",
+          "observed": "all as expected; dressed=0 legacy=0"
+        },
+        "dbg-control": {
+          "verdict": "pass",
+          "observed": "pm #698 at arm to pm #452325 at D3 end; instrument proven true"
+        },
+        "proc-control": {
+          "verdict": "pass",
+          "observed": "239 line self=Player_obj argc=10 a0=real:239 and 252 line a0=real:252 (second press, after the verbose budget ran out); casts=239:1,252:1"
+        },
+        "roll-spawn": {
+          "verdict": "pass",
+          "observed": "exactly those four; dressed 0 to 4"
+        },
+        "roll-lines": {
+          "verdict": "pass",
+          "observed": "all listed lines and Sockets (2)/(4) present, each with a Defense header"
+        },
+        "tip-order": {
+          "verdict": "pass",
+          "observed": "that order on all four pieces"
+        },
+        "tip-layout": {
+          "verdict": "pass",
+          "observed": "no cut or overlapping rows (the cursor sprite covers some text in shots)"
+        },
+        "tip-lit": {
+          "verdict": "not-observed",
+          "observed": "S5 and S7 as expected; no hover taken at S6",
+          "note": "S6 hover missing"
+        },
+        "desc-font": {
+          "verdict": "pass",
+          "observed": "tip desc-font=small; about 17 px vs 22 px cap height"
+        },
+        "ms-line": {
+          "verdict": "pass",
+          "observed": "own row; description has no \"half speed\""
+        },
+        "bonus-2": {
+          "verdict": "not-observed",
+          "observed": "pieces=2 lit=1/0/0; other ids unchanged; 92 never read (92=-)",
+          "note": "92's answer unread"
+        },
+        "bonus-3": {
+          "verdict": "fail",
+          "observed": "pieces=3 lit=1/1/0; 161 266 to 301 (+35); 38 46 to 46 (+0)",
+          "note": "38 not raised at S6 (read 159 to 184 at S7)"
+        },
+        "bonus-4": {
+          "verdict": "not-observed",
+          "observed": "lit as expected, 2 28 to 33, 36 4901 to 5651, HUD max 5651 and 4901; 97 never read (97=-)",
+          "note": "97's answer unread"
+        },
+        "bonus-off": {
+          "verdict": "pass",
+          "observed": "all equal; answered=0/185/457/455/50/0 at both reads 5 s apart"
+        },
+        "ms-applies": {
+          "verdict": "fail",
+          "observed": "mode 0.775/2.385 = 0.325, mean 0.329; effect[199] read 0.65, never 1"
+        },
+        "prio-order": {
+          "verdict": "fail",
+          "observed": "landed Q +0, E +2, R +0 (toggle on), Y +72; free=0/0/-/1; casts 239:72 and 252:2 equal landed",
+          "note": "Q (manaOrb, cooldown 6) did not land in the window"
+        },
+        "roll-save": {
+          "verdict": "pass",
+          "observed": "dressed=8; all four pieces with S4 values, helmet with gem lines merged"
+        },
+        "lock-key": {
+          "verdict": "fail",
+          "observed": "off: 253 casts 0, landed +0; on: 253 casts 1, landed +1, locked 0 to 576",
+          "note": "control window did not show key casts landing in the yield"
+        },
+        "icon-grey": {
+          "verdict": "fail",
+          "observed": "grey=4 grey-box=0 with 4 automated columns; E 17.8 vs 46.1 and Y 14.8 vs 40.6 darker; R 54.4 vs 54.4 and Q 44.9 vs 46.2 not darker; nothing outside the bar",
+          "note": "R and Q icons not darker"
+        },
+        "icon-clear": {
+          "verdict": "pass",
+          "observed": "grey=0 grey-box=0; normal look at 18 s (E dark at 2.5 s during its cooldown)"
+        },
+        "dbg-maxlife": {
+          "verdict": "pass",
+          "observed": "about 1.0/s idle (10 in 10.26 s); +4 in 3.6 s over gloves off; +16 in 15 s over gloves on"
+        },
+        "dbg-allres": {
+          "verdict": "pass",
+          "observed": "about 2.0/s idle (20 in 10.26 s); +10 in 3.6 s; +48 in 15 s after re-equip"
+        },
+        "dbg-fireres": {
+          "verdict": "not-observed",
+          "observed": "0 hits over D1..D2 while pm logged 25k+"
+        },
+        "def-header": {
+          "verdict": "pass",
+          "observed": "Defense: 224 [80] [26-38]"
+        },
+        "desc-match": {
+          "verdict": "pass",
+          "observed": "same letter height and line pitch (crops)"
+        },
+        "desc-view": {
+          "verdict": "pass",
+          "observed": "both ALT views identical with ranges and description shown; Options Gameplay Show Item Information on"
+        },
+        "piece-sheet": {
+          "verdict": "fail",
+          "observed": "2 25 to 25, 161 240 to 236, 36 4374 to 4718 (pieces replaced worn items)"
+        },
+        "allres-route": {
+          "verdict": "not-observed",
+          "observed": "162 never read (162=-) either way"
+        },
+        "bonus-equip": {
+          "verdict": "fail",
+          "observed": "0.4 s after 5188 / 5651 (max unchanged) with pieces=3; about 7 s after 4520 / 4718; back to 5651 after re-equip",
+          "note": "max dropped later than 1 s and by 933"
+        },
+        "hold-cadence": {
+          "verdict": "pass",
+          "observed": "casts=239:24 in 10 s; about 62 frames between casts"
+        },
+        "free-cadence": {
+          "verdict": "pass",
+          "observed": "hold 4 239:26; hold 3 239:25"
+        },
+        "held-entry": {
+          "verdict": "pass",
+          "observed": "entries 2, 27, 40: 1 to 4 then 4 to 3"
+        },
+        "held-blocks": {
+          "verdict": "pass",
+          "observed": "landings Q0 E1 R0 Y20; 250 cast 18"
+        },
+        "held-mask": {
+          "verdict": "pass",
+          "observed": "mask default 0,1,2,7..11 (lacks 27, 40); landings Q0 E1 R0 Y21; 250 cast 1"
+        },
+        "held-continues": {
+          "verdict": "not-observed",
+          "observed": "250 cast 1 in the window; 3 s after switch off casts=none with no button held",
+          "note": "after-window run without the button held"
+        },
+        "proc-cast": {
+          "verdict": "pass",
+          "observed": "shapes A and B both cast 239 (effect 0 to 1) and 252 (zone seen) with TalentUse 0/0; B used"
+        },
+        "proc-cooldown": {
+          "verdict": "pass",
+          "observed": "control second key press cast nothing; after the proc the key press landed (casts=252:1)"
+        },
+        "proc-mana": {
+          "verdict": "not-run",
+          "observed": "five key casts 2352 to 2352 (control did not fall)",
+          "note": "instrument: HUD mana did not show key-cast cost"
+        },
+        "proc-level": {
+          "verdict": "pass",
+          "observed": "heal 17 = 17, augmentLevel 0 = 0, isProc false both; differing deltaTimer, destroyTimer, inviewCheck, trail_x, trail_y"
+        },
+        "proc-cd": {
+          "verdict": "pass",
+          "observed": "10.42 s vs sum 11.42 s (within 15%); the longer-of-two 10.94 s is closer"
+        },
+        "proc-auto": {
+          "verdict": "not-observed",
+          "observed": "route=proc procs 0 to 57 proc-fail=0; Y landed 48 (at least 37); HZ 3 calls; TalentUse 1 (an R press only); per-call spacing not printed",
+          "note": "HZ call spacing unread"
+        },
+        "proc-held": {
+          "verdict": "pass",
+          "observed": "procs 90 to 106; 250 cast 16"
+        },
+        "socket-fill": {
+          "verdict": "pass",
+          "observed": "green gem drawn in the helmet, gem stats merged into its lines, required level 26 to 67"
+        },
+        "dbg-manaregen": {
+          "verdict": "pass",
+          "observed": "idle 0 in 10.26 s; +20 over five Y casts (14.7 s)"
+        },
+        "dbg-maxmana": {
+          "verdict": "pass",
+          "observed": "idle +11 in 10.26 s; +14 over the cast window"
+        },
+        "dbg-manaupdate": {
+          "verdict": "pass",
+          "observed": "idle 0; +25 over five Y casts"
+        },
+        "proc-interval": {
+          "verdict": "pass",
+          "observed": "Q 5.0 s vs 4.69; E 10.0 s vs 10.94; Y 0.63 s vs 0.649"
+        },
+        "lock-click": {
+          "verdict": "not-observed",
+          "observed": "a left click on the icon opens the bar editor; no casts with lock off; lock-on window not run",
+          "note": "click opens the editor"
+        },
+        "lock-proc": {
+          "verdict": "pass",
+          "observed": "procs 106 to 119; 253 TalentUse casts 0"
+        },
+        "grey-enabled": {
+          "verdict": "pass",
+          "observed": "Q E R Y drawn dark; tooltip shows; click opens the editor as normal"
+        },
+        "grey-game": {
+          "verdict": "not-run",
+          "observed": "none seen failing its requirement",
+          "note": "no skill on the bar failing its requirement"
+        },
+        "cast-interval": {
+          "verdict": "pass",
+          "observed": "24 casts, 417 ms (fcr 106)"
+        },
+        "cast-interval-fcr": {
+          "verdict": "pass",
+          "observed": "30 casts, 333 ms"
+        },
+        "stat-read": {
+          "verdict": "fail",
+          "observed": "106 to 192 (+86), read with the switch on"
+        },
+        "interval-model": {
+          "verdict": "pass",
+          "observed": "0.858 s vs 0.973 s (13.4%, fcr as read); 18.9% with fcr 206",
+          "note": "within 15% only with the read fcr"
+        },
+        "regen-units": {
+          "verdict": "not-observed",
+          "observed": "mana at max 2352 before and after; 42=415",
+          "note": "mana stayed at max"
+        },
+        "drain-applies": {
+          "verdict": "not-run",
+          "observed": "G0 window reached max (983 to 2352); spending by key casts moved no HUD mana",
+          "note": "instrument: no way to keep mana below max"
+        },
+        "maxmana-applies": {
+          "verdict": "pass",
+          "observed": "n=3, 2352 x 0.4 = 940.8; HUD 940.80; 37 2352 to 940.8"
+        },
+        "drain-zero": {
+          "verdict": "not-run",
+          "observed": "not run",
+          "note": "drain-applies not passed"
+        }
+      },
+      "getter_rates": {
+        "what": "Debugger logpoints at each function's own address, beside a PlayerMovement control at about 73 a second.",
+        "StatMaxLife": "about 1/s idle (10 in 10.26 s); +4 in 3.6 s around a piece taken off; +16 in 15 s around it worn again",
+        "StatAllResistances": "about 2/s idle (20 in 10.26 s); +10 in 3.6 s; +48 in 15 s",
+        "StatFireResist": "0 over D1 to D2 (about 7 minutes) while the control logged more than 25,000: not observed",
+        "StatManaReplenish": "0 in a 10.26 s idle; +20 over five key casts in 14.7 s",
+        "StatMaxMana": "+11 in the idle; +14 over the casts",
+        "PlayerManaUpdate": "0 in the idle; +25 over the casts"
+      },
+      "dispatcher_ids_not_asked_in_town": [
+        21,
+        92,
+        97,
+        162,
+        163,
+        164,
+        165
+      ],
+      "numbers": {
+        "bonus_answers": "2: 28 to 33; 36: 4901 to 5651 (HUD max moved 4901 and 5651); 161: 266 to 301; 38: 159 to 184 at S7 (46 to 46 at S6, no call after the boots); 37 under cost maxmana: 2352 to 940.8 (HUD 941 / 940.80, n = 3)",
+        "arcane_167_original": "339 with the 161 answer off, 374 with it on",
+        "walk": "switch off mode 2.385 px/frame (mean 2.393, 298 samples); switch on mode 0.775 (mean 0.788, 295 samples); ratio 0.325 = 0.50 x 0.65; playerEffect[199] read 0.65 (briefly 0.670833), never 1",
+        "cadence": "Shadow Bolt key held 10 s: 24 casts (about 62 frames, 417 ms) at fcr 106; 30 casts (333 ms) with castrate +100; automated 10 s: 26 casts at hold 4, 25 at hold 3; gate calls 149/s",
+        "healing_zone_key_interval": "3 casts over 31.25 s held = 10.42 s; model cooldown 14 / 1.28 = 10.94 s, cast 1 / 2.06 = 0.485 s, sum 11.42 s",
+        "proc_interval": "mean spacing over 30.05 s: Q 5.0 s (computed 4.69), E 10.0 s (10.94), Y 0.63 s (0.649); procs 0 to 57, proc-fail 0",
+        "icon_luminance": "slot boxes darkOath, Q, E, R, Y: switch on [42.0, 44.9, 17.8, 54.4, 14.8]; off 2.5 s [42.0, 46.3, 20.4, 54.4, 40.6]; off 18 s [42.2, 46.2, 46.1, 54.4, 40.6]",
+        "mana": "983 to 2352 (maximum) within 10 s; five key casts left 2352 / 2352; id 42 original 415, id 37 original 2352",
+        "fcr_reads": [
+          55,
+          106,
+          54,
+          68,
+          106,
+          56,
+          57,
+          70,
+          102,
+          106,
+          192,
+          55,
+          54
+        ],
+        "held_input": "right button: inputState entries 2, 27, 40 read 4 for one frame then 3; mask off: landings Q0 E1 R0 Y20, 250 cast 18; default mask: Q0 E1 R0 Y21, 250 cast 1"
+      },
+      "source": "ForgePact docs/mark1-set-research.md (Stats live 1 results, Stats live 1 decision); docs/RUNTIME_DATA_MODELS.md 7.3, 7.9, 7.10, 16.6, 16.13; forgepact-166-mark1-set-playtest2-live-1.md, not tracked"
+    }
   }
 }

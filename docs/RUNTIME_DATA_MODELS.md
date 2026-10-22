@@ -835,6 +835,30 @@ Shout and Berserk add theirs outside it.
   not read for it. Without Chosen One: not observed (the cast was not
   confirmed).
   [dev2 bug batch, #83](../ForgePact/docs/dev2-bug-batch-research.md#83-mana-orb-showed-no-countdown-with-chosen-one)
+- **The key refuses Mana Orb beyond its cooldown.** Its talent reads
+  `abilityCooldown` 6 and `abilityLength` 240. With Mark 1's automation
+  pressing Q, 74 presses in 30 s landed no Mana Orb, and a hand-held Q for
+  4 s while the automation left the gate alone cast none either, where the
+  same windows landed Healing Zone at its cooldown and Shadow Bolt
+  continuously; across the session a Q press landed only now and then (one
+  in a 10 s window, one in a 4 s hold). § 7.7 measured a forced Mana Orb
+  press casting once in more than 480 frames. Why the game refuses it is
+  **not established**; plausibly while its orb lives (about 35 s with
+  Chosen One, above). Whether a direct `TalentUseClass` call (§ 7.9) casts
+  it while the key refuses it was not established: the session's direct
+  calls of Mana Orb passed the player as a number, not a ref, and were
+  counted as calls that returned, not as casts. **Measured 2026-10-22** (ForgePact's Mark 1 Stats live 1,
+  `prio-order`, `lock-key`, `free-cadence`).
+- **What Mana Orb and Healing Zone do besides their effect** (the owner's
+  word, 2026-10-22, **not measured**): Mana Orb raises the player's mana
+  regen, so with it on the bar the HUD mana can refill too fast to show a
+  cost; Healing Zone has a constant life drain while it runs, which the
+  owner gave as the cause of the low life seen in that session (as low as
+  531 of 5651). Measured beside it: with the automation casting Healing
+  Zone, the life replenish's dispatcher original (id 38) read 159 and 242
+  where it had read 46 before (plausibly the zone's own replenish; not
+  established).
+  [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
 
 [toggle skills, Toggle skill table](../ForgePact/docs/toggle-skills-research.md#toggle-skill-table),
 [Duration sweep](../ForgePact/docs/toggle-skills-research.md#duration-sweep-session-8-every-classs-timed-skill),
@@ -1458,6 +1482,51 @@ value are invisible to the scan: a caller missing below is **not observed**.
   - what `TalentUseClass`'s own `SetCooldown` site sets, and when it runs;
   - which level a proc casts at: whether it is passed in or read from the
     player's talents.
+- **Measured 2026-10-22** (ForgePact's Mark 1 Stats live 1, slot 14
+  "Sorak", White Mage, in town; `tgprobe hook TalentUseClass` with
+  `tgprobe verbose on`, `skillprobe call`, and `mark1probe hook`'s
+  `TalentUse` row as the count of key casts):
+  - **The player's own call** on a key cast of Shadow Bolt (239) and of
+    Healing Zone (252): self and other `Player_obj`, argc 10, a0 the talent
+    id (a real), a1 a ref (kind 15) to the player's own instance, a2 1, a3
+    false, a4 true, a5 0, a6 and a7 -1 (a8 and a9 were not printed). Inside
+    it the game makes a second `TalentUseClass` call with a0 243 (an
+    integer), a4 false and a5 55; what talent 243 is was not read. The
+    double-cast proc's call in the same session read self
+    `Universal_Double_Cast_obj`, a0 239 (or 252), a1 the player's ref, a4
+    false, a5 0 or 43, a6 109.17 and a7 3.15, which is not the player's
+    position (912, 960); what a6 and a7 are there is not established.
+  - **Two call shapes cast both talents with `TalentUse` unmoved**, through
+    `skillprobe call TalentUseClass Player_obj 0 … confirm` with argc 8:
+    shape A, the player's own arguments as logged (a4 true, a6 and a7 -1),
+    and shape B, the same with a4 false and a6, a7 the player's x and y.
+    Each raised the skill's `effect=` count from 0 to 1 (Shadow Bolt's
+    bolt, Healing Zone's zone in the screenshot) with no throw, while the
+    `TalentUse` row stayed at 0: no wind-up. Shape A also made the nested
+    243 call (and for Healing Zone a double-cast proc); shape B made
+    neither.
+  - **A direct call sets no cooldown the key respects.** Control: Healing
+    Zone pressed twice 0.5 s apart cast once. After a shape-B call of
+    Healing Zone, its key pressed within 1 s cast it again.
+  - **The skill's strength is the same.** `White_Mage_Healing_Zone_obj`
+    read after a key cast and after a direct call had `heal` 17,
+    `augmentLevel` 0, `deadly` 1, `skillId` 252, `isProc` false and
+    `tick_frequency` 144 in both; only `deltaTimer`, `destroyTimer`,
+    `inviewCheck`, `trail_x` and `trail_y` differed. So with a2 at 1 the
+    direct call casts at the player's strength; whether a2 is the level is
+    still not read.
+  - **A direct call is made regardless of held input.** With the right
+    button held 8 s (its skill casting 16 times), Mark 1's direct calls
+    kept being made and returning (16 in the window); with Mana Orb's key
+    held 5 s under the automation's lockout too (13), and the key cast
+    none. Those calls passed the player in a1 as a number rather than a
+    ref, so they were counted as calls that returned, not as casts.
+  - **A held cooldown skill's repeat**: Healing Zone's key held 30 s cast 3
+    times over 31.25 s (10.42 s each, crude: window over casts) at Skill
+    Haste 56 and Faster Cast Rate 106, against a cooldown of 14 / 1.28 =
+    10.94 s and a cast time of about 0.49 s; closer to the longer of the two
+    than to their sum (§ 7.10).
+  [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
 
 [Mark 1 research, the 2026-10-22 playtest](../ForgePact/docs/mark1-set-research.md#the-2026-10-22-playtest-stats-cast-priority-and-held-input),
 [Playtest static reading](../ForgePact/docs/mark1-set-research.md#playtest-static-reading)
@@ -1536,10 +1605,60 @@ HUD's methods; one headless slot-reference scan (`FindSlotRefSites.java`) of
   cooldown (§ 7.1, **measured**); Skill Haste divides a running cooldown by
   1 + haste / 200, the total stopped at 200 (§ 7.5, **measured**), and
   `GetTalentCooldown` reads no Skill Haste (§ 7.5).
+- **Measured 2026-10-22** (ForgePact's Mark 1 Stats live 1, slot 14
+  "Sorak", White Mage, in town, at 2560 × 1440):
+  - **A draw inside a bar slot from `DrawHudBuffs` does not show.** Icons
+    redrawn darker, or a dark box drawn over them, from the `DrawHudBuffs`
+    hook changed no slot's look: the slot boxes' mean luminance read the
+    same with the redraw on and 18 s after it went off for Q (44.9 against
+    46.2) and R (54.4 against 54.4), and E's and Y's darker reads were the
+    game's own (E's cooldown, Y cast continuously). A red outline drawn
+    from the same hook around the slots shows. Plausibly the
+    `UI_Talent_Button_obj` nodes draw their icons after `DrawHudBuffs`, over
+    anything drawn inside a slot (an inference).
+  - **A button's `enabled` false draws the game's dark look.** Writing
+    `enabled` false on the four automated columns' buttons drew Q, E, R and
+    Y dark in the game's own "cannot use" look; the skill's tooltip still
+    showed on hover, and a left click still opened the bar editor.
+  - **A left click on a bar icon opens the skill-bar editor** and casts
+    nothing: the bar shows the empty slots Y, U, I, O, H, J and K to the
+    right of R and a skill list above the bar. A left click on open ground
+    closes it; Escape does not. To bind, the slot, then the skill in the
+    list (the owner bound Shadow Bolt to Y this way). A right click on an
+    icon shows only the skill's tooltip.
+  - **Mana refills fast.** Sorak's mana rose from 983 to 2352, its
+    maximum, within 10 s (at least 137 a second) with id 42's original at
+    415, and five key casts of Shadow Bolt 2 s apart left the HUD at
+    2352 / 2352 before and after: with Mana Orb on the bar (the owner: it
+    raises mana regen) the HUD showed no key cast's cost. The unit of id
+    42's answer is still not established.
+  - **The HUD's maximum mana follows id 37's dispatcher answer.** With
+    Mark 1 answering id 37 with 0.4 × its original (2352 to 940.8), the
+    HUD read 941 / 940.80 within 3 s.
+  - **How often the game reads mana** (debugger logpoints at each
+    function's own address, with a positive control on `PlayerMovement`
+    logging about 73 a second): `StatManaReplenish` none in a 10.26 s idle
+    and 20 over five key casts in 14.7 s; `StatMaxMana` 11 in the idle and
+    14 over the casts; `PlayerManaUpdate` none in the idle and 25 over the
+    casts. Mana was not read during that idle and was plausibly at its
+    maximum, so the idle zeros do not say whether the regen calls them
+    while mana is below it; which code applies the regen is still not
+    established.
+  - **The held right button's input**: `inputState` entries 2, 27 and 40
+    of the profile read 4 for one frame, then 3 for as long as it was held.
+  - **A held key's repeat and the cast's speed**: Shadow Bolt's key held
+    10 s cast 24 times at Faster Cast Rate 106 (about 62 gate frames
+    between casts, 417 ms) and 30 times with 100 more Faster Cast Rate
+    added (333 ms). Base = interval × (1 + FCR / 100) gives 0.858 s and
+    0.973 s, 13.4% apart, with the second FCR read as 192 (the cached
+    read, which drifted between 54 and 106 over the session); the shape
+    base / (1 + FCR / 100) holds only that loosely.
+  [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
 - **Not established:**
   - what the other three blends mean (plausibly mana, cooldown or stacks);
-  - who else writes a button's `enabled`, and what else it changes (clicks,
-    navigation, the tooltip);
+  - who else writes a button's `enabled`, and what else it changes besides
+    the look (the tooltip and the left click were unchanged, measured
+    above; navigation not read);
   - the unit of id 42's answer, and whether a replenish below zero drains
     mana or stops at zero;
   - whether id 43's part is a share of the mana pool;
@@ -1548,7 +1667,8 @@ HUD's methods; one headless slot-reference scan (`FindSlotRefSites.java`) of
     talents);
   - where current mana can be read from outside the protected store;
   - any path that casts a bar skill without the gate's key read (a gamepad,
-    `abilityQueue`, `mobileTalentPressed`, a click on the HUD icon).
+    `abilityQueue`, `mobileTalentPressed`); a left click on the HUD icon
+    is not one (it opens the bar editor, measured above).
 
 [Mark 1 research, the 2026-10-22 playtest](../ForgePact/docs/mark1-set-research.md#the-2026-10-22-playtest-stats-cast-priority-and-held-input),
 [Playtest static reading](../ForgePact/docs/mark1-set-research.md#playtest-static-reading)
@@ -4762,6 +4882,33 @@ content, never by the hash alone. **Measured.**
   the information view, which adds each rolled line's range (` [45-75]`).
   It was taken to add skill descriptions too, but a gear item's skill-grant
   description shows with and without it (§ 16.12, measured).
+  With the gameplay option `Show Item Information` on (Options ›
+  Gameplay), both ALT states draw the information view: Zealot's Book of
+  Prophecy read the same in both, its ranges (` [31-36]`, ` [7-12]`,
+  ` [10-20]`) and its grant description shown in both. **Measured
+  2026-10-22** (ForgePact's Mark 1 Stats live 1, `desc-view`). With the
+  option off: not observed.
+- **How a range is drawn** (**measured 2026-10-22**, from Mark 1 Stats live
+  1's Item Truth journal, whose tooltip records carry each drawn text with
+  its stat, colour and position): `DrawInventoryStatsNew` draws a rolled
+  line's range as a third `draw_text` after the value and the label, the
+  text ` [lo-hi]` in colour 8421504 (grey), left-aligned at the label's
+  right edge, with the whole line (value, label, range) centred on the
+  tooltip. Zealot's Book's line 203 drew `+11` at x 1816, its label at 1859
+  and ` [7-12]` at 2214. The header draws `Defense: N`, then the item's own
+  Defense (key 154) in white as ` [80]`, then a grey ` [lo-hi]`; a sockets
+  row draws `Sockets (N)` and a grey ` [lo-hi]`. A fixed line draws no
+  range (Pitfiend's Thorn, Wall of the Legion). An item placed by a mod
+  over a set item's base (ForgePact's Mark 1 pieces) drew the base piece's
+  header and sockets ranges, not its own, and no range on its own rolled
+  lines.
+- **Where a set item's or a unique's line ranges come from** was not read.
+  Generated affixes carry theirs in `itemStatStruct` keys `"10"` to `"14"`
+  as `[stat, min, max, tier]` (§ 16.3), but across every Item Truth journal
+  on the owner's machine none of 141,676 rarity-6 records carries such an
+  entry (**measured 2026-10-22**, replan 1 of ForgePact#166's playtest). So
+  writing them onto a rarity-6 item makes a state the game never makes.
+  [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
 - An unidentified item draws `Unidentified` and no stat lines.
 - All 344 direct call sites of `DrawInventoryStatsNew` in the build Ghidra
   imported (§ 19.7 names its hash) lie inside `DrawInventoryItemV2`, one after
@@ -5239,16 +5386,61 @@ words; nothing here quotes the game's code.
     777000 to 799999, ForgePact's own built-ins among them, and ForgePact's
     `angelicdrop` placements draw their seeds from 100,000,000 to
     999,999,999, also below that bound.
+- **Static reading** (replan 1, 2026-10-22, the hub's ghidra MCP):
+  `StatFireResist` itself calls `ReturnSpecificStat` at ten sites; which
+  ids it asks for was not read.
+- **Measured 2026-10-22** (ForgePact's Mark 1 Stats live 1, slot 14
+  "Sorak", White Mage, in town; Mark 1's `ReturnSpecificStat` consumer
+  records each id's last local call as original and answer, and debugger
+  logpoints at the getters' own addresses counted their calls beside a
+  positive control on `PlayerMovement`):
+  - **An answer changed at the dispatcher reaches what the player sees.**
+    Answering id 36 with its original plus 750 moved the HUD's maximum life
+    between 4901 and 5651 as the answer was switched; id 2 read 28 to 33
+    and id 161 266 to 301 under the same answers, and with the answers off
+    every id read its original again. Taking a piece off, the HUD maximum
+    had not moved 0.4 s later and had moved about 7 s later, after the
+    game's next `StatMaxLife` read. This measures the dispatcher route the
+    byte scan above found; the claim that every consumer goes through it
+    stays scoped to the consumers seen.
+  - **The getters are read periodically, not every frame.** `StatMaxLife`
+    about once a second idle (10 in 10.26 s) and `StatAllResistances` about
+    twice a second (20), both faster around an equip change (16 and 48 in
+    the 15 s after wearing a piece). `StatFireResist` logged no call over
+    about seven minutes in town while the control logged more than 25,000:
+    **not observed**, plausibly asked only on events the town did not
+    produce (a hit taken, the character sheet; not established).
+  - **Ids not asked in town**: 92 (Defense), 97 (Physical Damage Taken
+    Reduced), 162 to 165 (fire, cold, poison, lightning) and 21 had no
+    local dispatcher call in the whole session, the set equipped and
+    unequipped and the automation casting. Not observed, not "never asked".
+  - **Id 38** (life replenish) was asked when the automation cast Healing
+    Zone (its original 159 then 242, against 46 before), and not after a
+    piece was worn with no skill cast.
+  - **Id 167 (arcane resistance) follows id 161.** Its original read 339
+    with Mark 1's 161 answer off and 374 with it on, 35 more, the size of
+    that answer. So `StatArcaneResist` plausibly takes the all-resistance
+    answer through the dispatcher (an inference from one id; 162 to 165
+    were not asked).
+  - **The description font is smaller in our tooltips too.** A description
+    drawn through the game's `font_item_stats_small` had capitals about
+    17 px high against the bonus lines' 22 px at 2560 × 1440, the same
+    letter height and line pitch as Zealot's Book of Prophecy's grant
+    description in the same session.
+  [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
 - **Not established:**
   - which line the game lights at 3 and at 4 pieces for its own sets (the
     one measured case: with 2 pieces counted, Zealot's Prophecy's first line
     is lit, 37 captures);
   - whether the element resistances (ids 162 to 167) take the
-    all-resistance answer (id 161) through the dispatcher;
+    all-resistance answer (id 161) through the dispatcher: 167 did in Stats
+    live 1 (above), and 162 to 165 were not asked;
   - whether key 294 feeds the dispatcher's id 199, the cast slowdown the
     gate asks for (§ 7.7, § 7.8);
   - whether the game hides a grant description outside the information
-    view, and so whether § 16.12's `desc-plain` saw a plain view at all.
+    view, and so whether § 16.12's `desc-plain` saw a plain view at all
+    (Stats live 1 found `Show Item Information` on, which makes both ALT
+    states the information view, § 16.6).
 
 ForgePact's Mark 1 set writes its pieces' stats under the item keys above
 and gives its set bonus as dispatcher answers of the ids above:
