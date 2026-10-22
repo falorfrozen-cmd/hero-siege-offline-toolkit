@@ -5428,6 +5428,51 @@ words; nothing here quotes the game's code.
     letter height and line pitch as Zealot's Book of Prophecy's grant
     description in the same session.
   [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
+- **Measured 2026-10-22, Stats live 2** (ForgePact's Mark 1, slot 14
+  "Sorak", White Mage, in town and in Outskirts of Inoya; the same consumer
+  records, `statask` asking the dispatcher itself with the local player as
+  self, and debugger logpoints at `StatDefense` and
+  `StatPhysicalDamageReduction` logging each call's self beside a
+  `PlayerMovement` control):
+  - **The element resistances do not take the all-resistance answer.** With
+    Mark 1's id-161 answer on (161 266 to 301), id 162 (fire) read 83 with
+    the answer off and 83 with it on (`statask`, the dispatcher asked with
+    the local self). So `StatFireResist` does not add the dispatcher's 161
+    answer. Measured for 162 only: 163 and 165 were not asked, and 164's one
+    record (83 -> 83, in Outskirts) came from a call made around the
+    switch's change, so it decides nothing. Id 167's original followed 161
+    in Stats live 1 (above): what makes the difference for 167 is not read.
+  - **Who asks for 92 and 97.** While the debugger was attached (the sheet
+    windows in town and the Outskirts window), only our own `statask` asked 92 or 97 with the local player as self. Each opening of
+    the talent screen (T) made two fresh instances ask, 92 twice and 97
+    three times, and in Outskirts one instance asked 92 about every 344
+    control hits and 97 in pairs; neither was the player. Measured; who those
+    selves are is the static reading below, and whether an enemy's hit asks
+    with the player as self is not observed (the session separated no hit
+    from Soul Spurn's own life drain).
+  - **The game asks for the maximum life with the local self** inside both
+    windows, the sheet's and Outskirts': id 36's record read 4901 -> 5651
+    with Mark 1's answer on (in town it is asked about once a second, Stats
+    live 1). The talent screen itself
+    showed Life 4901 while the HUD read 5651: the sheet's number does not
+    come from a call with the player as self.
+  - **Id 37's answer reaches the HUD's maximum mana**: answered 940.8, the
+    HUD read `941 / 940.80`.
+  - **Id 42's answer reaches the regen.** Forced to 0, mana held at 1428 for
+    5 s after a spend (a 10 s key spend took 924 in the same window, the
+    control). At its own value R = 257, mana rose 676 in 2.98 s (0.883 a
+    second per unit, read from HUD crops); answered 128.581, about half, it
+    rose 338 in 2.97 s, half as much.
+  - **A skill fired through `TalentUseClass` from outside the input gate**
+    charges no mana (0 spent over 10 s, against 1219 by the same skills'
+    key presses) and skips the game's own pre-cast refusals: Mana Orb, whose
+    key press the game refused in Stats live 1 for a reason beyond its
+    cooldown (plausibly while its orb lives; not established), reached 7
+    instances at once.
+  - **Faster Cast Rate's id 106 moves on its own**: it read 55, 85 and 106 in
+    one session with no change of gear, so a before-and-after read seconds
+    apart does not isolate a change (`statadd castrate 100` read 55 -> 158).
+  [Mark 1 Stats live 2 results](../ForgePact/docs/mark1-set-research.md#stats-live-2-results)
 - **Static reading after Stats live 2** (2026-10-22, ForgePact's Mark 1
   replan 4: who else asks the dispatcher for Defense, id 92, and Physical
   Damage Taken Reduced, id 97). Sources: the hub's ghidra MCP (it decompiled
@@ -5502,9 +5547,9 @@ words; nothing here quotes the game's code.
   - which line the game lights at 3 and at 4 pieces for its own sets (the
     one measured case: with 2 pieces counted, Zealot's Prophecy's first line
     is lit, 37 captures);
-  - whether the element resistances (ids 162 to 167) take the
-    all-resistance answer (id 161) through the dispatcher: 167 did in Stats
-    live 1 (above), and 162 to 165 were not asked;
+  - whether ids 163 to 165 take the all-resistance answer (id 161), and
+    why 167's original follows it while 162's does not (Stats live 1 and
+    2, above);
   - whether key 294 feeds the dispatcher's id 199, the cast slowdown the
     gate asks for (§ 7.7, § 7.8);
   - whether the game hides a grant description outside the information
