@@ -5428,6 +5428,76 @@ words; nothing here quotes the game's code.
     letter height and line pitch as Zealot's Book of Prophecy's grant
     description in the same session.
   [Mark 1 Stats live 1 results](../ForgePact/docs/mark1-set-research.md#stats-live-1-results)
+- **Static reading after Stats live 2** (2026-10-22, ForgePact's Mark 1
+  replan 4: who else asks the dispatcher for Defense, id 92, and Physical
+  Damage Taken Reduced, id 97). Sources: the hub's ghidra MCP (it decompiled
+  `GetMyPlayer`; `StatDefense` and `StatPhysicalDamageReduction` timed out),
+  and local byte scans of an import copy of `Hero_Siege.exe` (build
+  `498d588550d8`) for direct `call rel32` sites into the dispatcher with a
+  constant id, and for each script's direct callers. The scans and their
+  outputs are local research material on the owner's machine, outside any
+  repository (`%USERPROFILE%\tools\hs-decomp\issue166\` and
+  `%USERPROFILE%\tools\hs-decomp\mark1-playtest2-replan2\`), and hold names
+  and counts only. **Positive controls**, same scans: the constant-id scan
+  listed id 64's askers exactly as § 7.8 lists them (the player's Step,
+  `StatTotalDamage`, `StatAttackDamage`, `StatMagicSkillDamage`,
+  `TalentsSamurai`, `Mercenary_obj`'s Alarm 5), and the caller scan found
+  `CheckTalentUse` called from `PlayerMovement`. A call through the script
+  table, a global or a method value, or with a computed id, is invisible to
+  them: an asker they did not find is **not observed**, not absent.
+  - **Who asks for 92 and 97 with a constant id** (static reading): 92 is
+    asked by `StatMaxLife` (one site), by `StatDefense` itself, and by the
+    collision events of `Player_obj` and of `Mercenary_obj` with
+    `Enemy_Damage_Parent_Projectile_obj`. 97 is asked by `sc_hurt` (one
+    site) and by `Mercenary_obj`'s collision events with
+    `Enemy_Damage_Parent_obj` and with `Enemy_Damage_Parent_Projectile_obj`
+    (two sites each).
+  - **A hit on the player asks with the player as self** (static reading,
+    then inference): `sc_hurt` is called directly from `Player_obj`'s two
+    collision events with enemy damage and from `CA_playerHurt`, and
+    `PlayerTakeDamage` from the same two events. A collision event runs on
+    the instance it belongs to, and a called script keeps its caller's self
+    (GameMaker's rule, not read in this build), so the player's own Defense
+    and PDR are asked with the player as self when an enemy strikes it. An
+    inference, to be measured.
+  - **The mercenary asks for itself** (static reading): `Mercenary_obj`'s
+    Alarm 5 asks 36, 37, 64, 2, 8 and more at 18 sites, and its melee
+    collision asks 97 at two. That fits what Stats live 2 measured outside
+    town, a non-player self asking 92 about once every 344 control hits (a
+    periodic alarm) and 97 in pairs, while the character played (slot 14,
+    Sorak) has a mercenary (§ 7.6). That this self is a `Mercenary_obj` is
+    **not established**.
+  - **The talent screen asks with its own objects as self** (static reading
+    and measured): the T screen is the character sheet (Player tab: Base
+    Stats, Offensive, Defensive, Summoned, Statistics; it scrolls).
+    `UI_Button_Talent_Player_obj`'s Alarm 0 calls the dispatcher at 15 sites
+    with no constant id and its Draw GUI at 27 with constant damage ids;
+    `UI_Talent_Screen_Attribute_obj`'s and `UI_Talent_Screen_Allocate_obj`'s
+    Alarm 0 at about 30 each (127, 68, 69, 155, 32 and 33 as constants, the
+    rest computed); `Player_Talent_Tooltip_obj`'s Create method at 34. No
+    `UI_Mercenary_*` object calls the dispatcher directly (not observed).
+    Stats live 2 measured two fresh instances asking 92 twice and 97 three
+    times on each opening of the sheet, and the sheet showed Life 4901 while
+    the HUD read 5651 with Mark 1's id-36 answer on: the sheet asks for the
+    player's stats with a self that is not the player. Which of the four
+    objects draws Base Stats' Life is **not established**.
+  - `Load_Player_Stats_obj`'s Step calls the dispatcher at 226 sites, all
+    with constant damage ids (2, 3 to 10, 79, 194, 355, 361, 561 to 565),
+    none of them 36, 92 or 97 (static reading).
+  - **Argument 0, the stat's unit** (static reading): the dispatcher hands
+    its first argument to `GetMyPlayer` (seen in id 102's case), and
+    `GetMyPlayer` given an undefined argument takes a global value and walks
+    the `Player_obj` instances for the one whose player number matches.
+    `StatDefense`, `StatPhysicalDamageReduction` and `StatMaxLife` read
+    `playerBuff` (63, 181 and 85 references) and test `instance_exists` (9,
+    28 and 13). So the unit a stat is computed for may be argument 0 rather
+    than self; **not established**.
+  - **The HUD's numbers** (static reading): `DrawHud` draws text through
+    `draw_text` (32 references) after reading values through the protected
+    store (`gDataProtected`'s `GetVariable`, 45 references) and `pSt` (8).
+    That its life and mana `current / max` texts are among them is
+    plausible, **not established**.
+  [Static reading after Stats live 2](../ForgePact/docs/mark1-set-research.md#static-reading-after-stats-live-2)
 - **Not established:**
   - which line the game lights at 3 and at 4 pieces for its own sets (the
     one measured case: with 2 pieces counted, Zealot's Prophecy's first line
