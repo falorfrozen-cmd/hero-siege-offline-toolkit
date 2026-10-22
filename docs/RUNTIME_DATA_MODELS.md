@@ -1388,6 +1388,171 @@ From the same reading as § 7.7 (2026-10-13, static unless marked). The
 
 [Mark 1 research, Static reading](../ForgePact/docs/mark1-set-research.md#static-reading)
 
+### 7.9 Procs: how the game fires a skill without a cast
+
+Written for ForgePact#166 (2026-10-22), when the owner asked whether Mark 1's
+automation could fire a skill the way the game fires an item proc, with no
+cast time. **Static reading** (2026-10-22, in our own words) except where
+§ 7.2 measured it: one headless `FindCallers.java` byte scan of the direct
+call sites of `TalentUseClass`, `TalentUse`, `TalentUseSetSpeed`,
+`SetCooldown` and `GetTalentCooldown` (positive control: `CheckTalentUse`
+called from `PlayerMovement`, found), a `ListCallsIn.java` listing of
+`TalentUse`'s calls, and annotated decompiles of `EnemyDestroyKillProc` and
+`SetCooldown`. The ghidra MCP timed out on `TalentUse` and `TalentUseClass`,
+so their bodies were not read. Calls through the script table or a method
+value are invisible to the scan: a caller missing below is **not observed**.
+
+- **A key cast.** `CheckTalentUse` (the gate: the key, the requirement, and
+  the mana update after it, § 7.7) calls `TalentUse`, whose direct callers
+  are `CheckTalentUse`, `MercenaryAbilities`, `skillsBasic` (two sites) and
+  one unnamed function. `TalentUse` calls `TalentUseSetSpeed` (the wind-up:
+  cast and attack speed, the `playerEffect` writes and `image_speed`, § 7.10),
+  `SetCooldown` at one site, `NetworkSendClientTalentUse`, `TalentUseClass`
+  at one site, `ReturnSpecificStat` 27 times and `GetTalentInfo` 11 times.
+  **Measured** (§ 7.2): the player's own `TalentUseClass` call comes about 19
+  frames after `TalentUse`; that delay is the cast time.
+  `TalentUseSetSpeed`'s direct callers are `TalentUse` and
+  `CA_playerTalentActive`.
+- **`TalentUseClass`'s direct callers**: `enemyCollisionDamageParent` (two
+  sites), `enemyCollisionProjectile`, `EnemyDestroyKillProc`,
+  `EnemyKillAfterShock`, `EnemyKillCelestialCreation`, `PlayerTakeDamage`,
+  `ProjectileCollision00Skills` (two), `SummonAttackScript` (two),
+  `skillsBasic` (two), `CA_playerTalentActive`, `PlayerMovement`,
+  `TalentUse`, `TalentUseClass` itself (two, the chained sub-skills of
+  § 7.2) and 15 sites in unnamed functions.
+- **`SetCooldown`'s direct callers**: `TalentUse` (one site),
+  `TalentUseSetSpeed` (two), `TalentUseClass` (one),
+  `enemyCollisionDamageParent` (two), `enemyCollisionProjectile`,
+  `EnemyDestroyKillProc`, `CA_playerTalentActive`, `TalentsNomad` (two),
+  `TalentsViking` and `TalentsRelics`. `GetTalentCooldown`'s:
+  `TalentUseSetSpeed`, `TalentsRelics`, `DrawMobileTalentIcon`, the Create
+  events of `Player_Talent_Tooltip_obj` and `UI_Hud_Talent_obj`, and one
+  unnamed function.
+- **The proc paths' shape.** In the hit and kill paths
+  (`enemyCollisionDamageParent`, both sites, `enemyCollisionProjectile` and
+  `EnemyDestroyKillProc`) a `SetCooldown` site comes just before the
+  `TalentUseClass` site, and none of these functions calls `TalentUse`.
+  `PlayerTakeDamage` (the struck path) calls `TalentUseClass` and has no
+  direct `SetCooldown` site of its own; how it paces its proc was not read.
+  So the game fires an item proc straight into `TalentUseClass`, and paces
+  it with its own `SetCooldown` entry where it paces it at all.
+- **What that skips**: the gate, so its key read, its requirement check and
+  its mana update; `TalentUse`, so the wind-up and the cast speed that
+  `TalentUseSetSpeed` applies; and the cooldown `TalentUse` and
+  `TalentUseSetSpeed` set.
+- **The kill proc's call** (`EnemyDestroyKillProc`, annotated): it first
+  calls `SetCooldown` with five arguments (its own first two arguments, a
+  value halved, and two more), then `TalentUseClass` with ten (the same two,
+  the target's x and y, a direction, and a random number from 1 to 65000).
+  Which argument is the talent and which the level was not read.
+- **`SetCooldown`** keeps its entries in two lists in the game's protected
+  data, `cooldownList` and `cooldownProcList`, one branch each. Which
+  argument picks the list was not read.
+- **The one measured case** (§ 7.2): the double-cast proc is a
+  `TalentUseClass` call with `self` = `Universal_Double_Cast_obj`, a4
+  false and a6, a7 a world x and y, with no `TalentUse` before it.
+- **Not established:**
+  - `TalentUseClass`'s arguments besides a0 and a4 to a7 (§ 7.2 recorded
+    those of the player's call; a1 to a3 and anything after a7 were not
+    recorded);
+  - what `TalentUseClass`'s own `SetCooldown` site sets, and when it runs;
+  - which level a proc casts at: whether it is passed in or read from the
+    player's talents.
+
+[Mark 1 research, the 2026-10-22 playtest](../ForgePact/docs/mark1-set-research.md#the-2026-10-22-playtest-stats-cast-priority-and-held-input),
+[Playtest static reading](../ForgePact/docs/mark1-set-research.md#playtest-static-reading)
+
+### 7.10 The skill bar's buttons, mana and the cast's speed
+
+Written for the same playtest's second amendment (2026-10-22): a skill under
+Mark 1's automation cannot be cast by hand, its bar icon is drawn grey, each
+proc fires at an interval computed from the skill's cooldown and cast speed,
+and a mana cost counters the free procs. **Static reading** (2026-10-22, in
+our own words) except where earlier sections measured it: the ghidra MCP's
+decompiles of `PlayerManaUpdate`, `StatMaxMana`, `StatManaPerKill`,
+`ManaPerHit`, `GetTalentCooldown`, `DrawHudAbilityButtons` and the talent
+HUD's methods; one headless slot-reference scan (`FindSlotRefSites.java`) of
+`drawButton`, `manualDisable` and `manaCost`; and long headless decompiles of
+`UI_Talent_Button_obj`'s Draw GUI event, `StatManaReplenish` and
+`TalentUseSetSpeed`. `TalentUse` and `DrawHud` timed out.
+
+- **The bar's buttons.** `DrawHudAbilityButtons` draws no icon itself: it
+  calls the talent HUD's `m_SetupTalentButtons` method and creates UI nodes.
+  The elements of `UI_Hud_Talent_obj.row0` (whose `navBbox*` members
+  ForgePact's Mark 1 border already reads) are `UI_Talent_Button_obj`
+  instances: the slot scan found `drawButton` written and read only by the
+  talent HUD's setup method and that object's Create and Draw GUI events.
+- **The button's Draw GUI blend.** That event draws the icon sprite
+  (`sprite_index`, `image_index`, at `x`, `y`, `image_xscale`,
+  `image_yscale` and `image_angle`) with a blend colour that starts white.
+  The blend is set to a dark grey, 3158064 (RGB 48,48,48), when the button's
+  own `enabled` reads false or when `TalentRequirement` refuses the talent.
+  So the game's own "cannot use" look is the icon drawn with that dark-grey
+  blend. Three more blends are set in branches whose conditions were not
+  fully read (they read the player's `pSt` and the game's protected data):
+  9474192 (RGB 144,144,144), 9250839 and 138 (in GameMaker's colour order,
+  red in the low byte: RGB 23,40,141 and RGB 138,0,0). The event also draws
+  a cooldown sweep (`draw_rectangle_cd`).
+- **The key the gate reads per column** is `inputState` of the profile
+  entry, column c at entry c (Q 3, E 4, R 5, Y 6, **measured**, § 7.7
+  `slot-keys`): 3 held, 4 pressed, 1 resting.
+- **Where mana lives.** `PlayerManaUpdate` (the gate calls it, § 7.7) reads
+  the player's `pSt` entries 17, 18 and 23 and gets and sets their values
+  through the game's protected store (an extension's `GetVariable` and
+  `SetVariable`). It compares the value it finds with the last entry of its
+  100-sample `manaArray` history (`manaArrayPos` is that history's write
+  position, § 7.8) and, on a mismatch, takes `debug_get_callstack` and can
+  call `ReportClient` or `show_message_async`. So a mana value changed
+  outside the game's own update is plausibly detected.
+- **The dispatcher ids around mana** (`ReturnSpecificStat`'s case map, § 7.5):
+  37 `StatMaxMana`, 42 `StatManaReplenish`, 46 `StatManaPerKill`, 147
+  `ManaPerHit`, 340 `StatManaCost`, 103 `StatSpellHaste` and 106
+  `StatFasterCastRate`. The item keys that feed them
+  (`hs_stat_semantics_s10.json`, labels measured in Item Truth's captures):
+  60 `to Mana`, 61 `Mana Increased by`, 63 `Replenish Mana`, 64 `Mana
+  stolen per Hit`, 65 `Mana per second`, 66 `Mana After each Kill`, 167 `of
+  Damage Taken Recouped as Mana`, 200 `Mana Costs decreased by`, 385 `Mana
+  Regeneration Increased by`, and 38 and 39, Energy (4 mana a point).
+- **`StatManaReplenish`** (partly read) asks the dispatcher for Energy
+  (id 20) and scales it by 0.175, asks ids 43, 37 (maximum mana), 44 and
+  309, multiplies 43's answer by 37's when 43's is above zero and floors the
+  product, and adds the player's buff values. So the base replenish follows
+  Energy, and maximum mana enters only through id 43's part. `StatMaxMana`
+  is id 37's getter; its total is element 0 of the array it returns, as for
+  the other getters (§ 7.5).
+- **`TalentUseSetSpeed`, the cast's speed** (partly read): it takes the
+  Faster Cast Rate answer (id 106) times 0.01, adds the talent's own
+  sub-talent cast-speed bonuses (`LoadSubTalentDamage` times 0.01, from a
+  24-case table by talent), and divides a per-talent base (from
+  `GetTalentInfo`'s entry 66) by one plus that sum; ids 68 and 69 (attack
+  speed) go into the same speed on another branch. So a cast's time has the
+  shape base / (1 + Faster Cast Rate / 100).
+- **When a key cast's cooldown starts** (same body): `TalentUseSetSpeed`
+  reads `GetTalentCooldown` first and, for a cooldown above a small
+  threshold, calls `SetCooldown` with that cooldown times `game_get_speed`
+  (steps), at the start of the wind-up. So a held key's repeat of a
+  cooldown skill is plausibly the longer of its cooldown and its cast time,
+  not their sum. A talent's `abilityCooldown` of 0.25 means it has no
+  cooldown (§ 7.1, **measured**); Skill Haste divides a running cooldown by
+  1 + haste / 200, the total stopped at 200 (§ 7.5, **measured**), and
+  `GetTalentCooldown` reads no Skill Haste (§ 7.5).
+- **Not established:**
+  - what the other three blends mean (plausibly mana, cooldown or stacks);
+  - who else writes a button's `enabled`, and what else it changes (clicks,
+    navigation, the tooltip);
+  - the unit of id 42's answer, and whether a replenish below zero drains
+    mana or stops at zero;
+  - whether id 43's part is a share of the mana pool;
+  - a talent's base cast time, and its sub-talent bonus;
+  - whether `GetTalentCooldown`'s base differs from `abilityCooldown` (sub
+    talents);
+  - where current mana can be read from outside the protected store;
+  - any path that casts a bar skill without the gate's key read (a gamepad,
+    `abilityQueue`, `mobileTalentPressed`, a click on the HUD icon).
+
+[Mark 1 research, the 2026-10-22 playtest](../ForgePact/docs/mark1-set-research.md#the-2026-10-22-playtest-stats-cast-priority-and-held-input),
+[Playtest static reading](../ForgePact/docs/mark1-set-research.md#playtest-static-reading)
+
 ---
 
 ## 8. HUD, Menus and UI Nodes
@@ -4892,7 +5057,9 @@ the controls and the table are in the Item Editor's
   (2026-10-21, ForgePact's Mark 1 Mod live 9, `desc-plain`): a worn Zealot's
   Book of Prophecy, line `+11 to Satan's Mark (White Mage)`, drew the skill's
   description under the line without ALT and with ALT held, the tooltip the
-  same in both.
+  same in both. Both of its screenshots show the rolled ranges, which § 16.6
+  puts in the information view, so whether the plain view was among them is
+  **not established** (§ 16.13).
   [Mod live 9 results](../ForgePact/docs/mark1-set-research.md#mod-live-9-results)
 - **Measured**, the width an item's description or lore row wraps at
   (Item Truth's captures, 182 journals of the same build): the game draws
@@ -4938,6 +5105,155 @@ and a worn piece's tooltip, with the bonus line grey and gold. **Measured**
 (2026-10-21, Mod live 10, `tip-layout`):
 [Mark 1 research, Phase 5](../ForgePact/docs/mark1-set-research.md#phase-5-the-set-tooltip-and-the-pieces-art),
 [Mod live 10 results](../ForgePact/docs/mark1-set-research.md#mod-live-10-results).
+
+### 16.13 Set bonuses, item stat keys and the item description font
+
+Written for ForgePact#166's second playtest (2026-10-22), when the Mark 1
+pieces got rolled stats and the set a bonus at 2, 3 and 4 pieces. In our own
+words; nothing here quotes the game's code.
+
+- **Static reading** (2026-10-22; the owner's headless decompile of the set
+  scripts, the hub's ghidra MCP, and one headless `FindCallers.java` byte
+  scan whose positive control, `CheckTalentUse` called from
+  `PlayerMovement`, was found):
+  - **`GetSetInformation`** takes a set's name and a line number from 1 to 5
+    and returns one bonus line per call: the set's class id (-1 for none),
+    the value, the id the stat dispatcher `ReturnSpecificStat` takes, a draw
+    style (8 or 9) and a format (5 a percent, 6 a flat number). A line the
+    set does not use returns nothing, and no line carries a count of pieces.
+    The owner's positive controls: Pit Fighter's and Zealot's five lines
+    decode to exactly what Item Truth's tooltips of those sets show, and
+    Zealot's line 1 is dispatcher id 64, movement speed, at 25%.
+  - `DefineSetPieceRequirements`' one value per set (§ 16.12) equals the
+    set's piece count for 59 of the 70 sets: plausibly the pieces for the
+    full set, an inference. Line counts do not follow piece counts (Sheep
+    King has five lines and three pieces), so "one line per extra piece" is
+    ruled out for those sets.
+  - **Who reads set lines** (byte scan, direct calls only):
+    `GetSetInformation` is called from `LoadSpecificStat` (one site) and
+    from two unnamed functions (five sites each; one of them also calls
+    `DrawSkillDescription` 23 times, so it is plausibly the tooltip pass's
+    body). `LoadSpecificStat` is called from `RunItemEquipped` (two),
+    `GuildPerkActivate` (eight), `JewelcraftingAdd`, `MiningAdd`,
+    `PickupRelic` and one unnamed function, and from no `Stat*` getter. So
+    the game's stat aggregation reads set lines, on equip-time paths.
+  - **The dispatcher ids a set bonus can answer, and their getters**
+    (`ReturnSpecificStat`'s case map, the 2026-10-04 reading, § 7.5): 2
+    `StatAllSkills`, 21 `StatArmor`, 22 `StatVitality`, 36 `StatMaxLife`, 38
+    `StatLifeReplenish`, 45 `StatLifePerKill`, 64 `StatMovementSpeed`, 92
+    `StatDefense`, 97 `StatPhysicalDamageReduction`, 161
+    `StatAllResistances`, 162 `StatFireResist`, 163 `StatColdResist`, 164
+    `StatPoisonResist`, 165 `StatLightningResist`, 167 `StatArcaneResist`.
+    These are the dispatcher's ids: not item stat keys (the table below),
+    and not `hs-game-sdk`'s `StatId`, whose numbering is neither (hub #546).
+  - Each of `StatMaxLife`, `StatDefense`, `StatArmor`, `StatAllResistances`,
+    `StatFireResist`, `StatLifeReplenish`, `StatPhysicalDamageReduction`,
+    `StatAllSkills` and `StatLifePerKill` has exactly one direct caller,
+    `ReturnSpecificStat`. So every direct-call consumer of those stats goes
+    through the dispatcher, and an answer changed there reaches them. A call
+    through the script table or a method value is invisible to the scan:
+    such consumers are **not observed**, not excluded.
+  - **`DrawSkillDescription`**, the script that draws a skill grant's
+    description: it reads three font globals, `font_item_stats`,
+    `font_item_stats_small` and `font_item_stats_smaller`, and `hud_res`. It
+    sets the colour to grey 128,128,128 (8421504) at alpha 1 and the font to
+    `font_item_stats_small`, or to `font_item_stats_smaller` when an
+    optional argument asks for it, and hands the text to a rich-text object
+    (`inventorySurfaceRichText`, through its `SetText`, `SetRichTextFont`,
+    `CalculateRowWidths` and `Draw` methods). That the builtin it gives the
+    font to is `draw_set_font` is inferred from the argument. Its body reads
+    no key, input, view, compare or option value: any view rule would sit in
+    its caller.
+  - `DrawSkillDescription`'s only direct caller found is
+    `DrawInventoryItemV2`, the tooltip pass (§ 16.6), at 23 sites. So the
+    game draws a grant description only inside an item's tooltip pass.
+    Whether that pass skips those calls outside the information view was
+    not read: the pass's body is about 1.6 MB of code, past what the
+    decompiler finishes.
+  - **The `alwaysShowInfo` option.** The game keeps a gameplay option of
+    that name. A scan of its slot's references found it used only by the
+    startup name table, the gameplay options screen's Create event and the
+    game's global function table, and not directly in `DrawInventoryItemV2`
+    (**not observed**: how its value reaches the pass was not read). If it
+    is on, a tooltip shown without ALT is the information view too.
+  - **`SetCooldown`** keeps the active cooldowns in two lists in the game's
+    protected data, `cooldownList` and `cooldownProcList`, one branch each
+    (§ 7.9). Reading by name whether a talent is on cooldown is not
+    established.
+  - `GetSetInformation`'s cross-references through the MCP: one data
+    reference. **Not observed**, not a negative: the import was made with
+    `-noanalysis` (AGENTS.md, the Ghidra section).
+- **Measured** (Item Truth's captures, 184 journals on the owner's machine,
+  build `pe-6aaa6779-0cad4fc8`, 2026-09-27 to 2026-10-21; what a capture
+  holds is in § 16.12):
+  - **The item stat keys**, against `hero-siege-item-editor`'s
+    `hs_stat_semantics_s10.json` (schema 1, generated 2026-09-02) and the
+    labels the game drew:
+
+    | key | name | drawn as (label, format, style) |
+    |---|---|---|
+    | 154 | Defense | the header `Defense: N`, no stat call |
+    | 29 | Enhanced Defense | `Enhanced Defense`, 2, 8 |
+    | 48 | to Vitality | `to Vitality`, 3, 8 |
+    | 173 | to All Resistances | `to All Resistances`, 2, 8 |
+    | 201 | to All Skills | `to All Skills`, 3, 8 (the class from key 21) |
+    | 170 | Faster Hit Recovery | `Faster Hit Recovery`, 2, 8 |
+    | 52 | to Life | `to Life`, 3, 8 |
+    | 59 | Life After each Kill | `Life After each Kill`, 3, 8 |
+    | 51 | to All Attributes | `to All Attributes`, 3, 8 |
+    | 55 | Replenish Life | `Replenish Life`, 2, 9 |
+    | 159 | Physical Damage Taken Reduced by | `Physical Damage Taken Reduced by`, 2, 9 |
+    | 20 | Sockets | the `Sockets (N)` text row after the stat lines |
+    | 25 | Increased Movement Speed | `Increased Movement Speed`, 2, 8 |
+    | 294 | Skill Movement Diminish decreased by | `Skill Movement Diminish decreased by`, 2, 9 |
+
+  - **Key 294**, translation key `stat_movement_diminish`: 72 captured
+    tooltips drew it under that label, on items carrying 10 to 100. By its
+    label it reduces the cast's movement slowdown (§ 7.8); it is not a
+    movement-speed stat, and it does not express "-50% Movement Speed".
+  - **A set line as the game draws it**: `DrawInventoryStatsNew` with the
+    value as its argument 3 and the label as its argument 4, format 5 or 6,
+    style 8 (value first, signed) or 9 (label first), row height 30.
+    Captured: `Defense` 6/8 at 350, 475 and 500; `to All Resistances` 5/8;
+    `Replenish Life` 5/9 at 25; `to All Skills` 6/8; `to Life` 6/8 at 235 to
+    1250; `Physical Damage Taken Reduced by` 5/9 at 15, 20 and 30; `Movement
+    Speed` 5/8 at 25 (Zealot's line 1). A negative value is drawn signed
+    (`-125% to All Resistances`). The words a row reads: `+500 Defense`,
+    `+35% to All Resistances`, `Replenish Life 25%`, `+5 to All Skills`,
+    `+750 to Life`, `Physical Damage Taken Reduced by 20%`, `-50% Movement
+    Speed`.
+  - **The order of an item's stat lines in a pass** (a pass calls every
+    stat line it knows in one fixed order, § 16.6): of the keys above, 29
+    comes first, then 201, 48, 51, 52, 170, 59 and 173. At least 50 other
+    drawn ids came after 173, so a format 2 or 3 call always follows the
+    last of an item's own lines.
+  - **After the sockets row**, in 614 passes of socketed items, only a set
+    item's bonus calls (format 5 or 6) ever followed; a non-set item makes
+    no stat call after its `Sockets (N)` row.
+  - **The description font is smaller.** A skill grant's description
+    (Celestial's Authority, 2026-09-28) was drawn glyph by glyph in 8421504,
+    its rows 26 px apart at about 10 px a glyph, where the same pass's stat
+    rows were 28 px apart at about 13.6 px a glyph.
+  - **The natural seed bound**: 485,148 item records carry a definition `a`
+    from 0 to 999,981,452, none at or above 1,000,000,000. 684 sit in
+    777000 to 799999, ForgePact's own built-ins among them, and ForgePact's
+    `angelicdrop` placements draw their seeds from 100,000,000 to
+    999,999,999, also below that bound.
+- **Not established:**
+  - which line the game lights at 3 and at 4 pieces for its own sets (the
+    one measured case: with 2 pieces counted, Zealot's Prophecy's first line
+    is lit, 37 captures);
+  - whether the element resistances (ids 162 to 167) take the
+    all-resistance answer (id 161) through the dispatcher;
+  - whether key 294 feeds the dispatcher's id 199, the cast slowdown the
+    gate asks for (§ 7.7, § 7.8);
+  - whether the game hides a grant description outside the information
+    view, and so whether § 16.12's `desc-plain` saw a plain view at all.
+
+ForgePact's Mark 1 set writes its pieces' stats under the item keys above
+and gives its set bonus as dispatcher answers of the ids above:
+[Mark 1 research, the 2026-10-22 playtest](../ForgePact/docs/mark1-set-research.md#the-2026-10-22-playtest-stats-cast-priority-and-held-input),
+[Playtest static reading](../ForgePact/docs/mark1-set-research.md#playtest-static-reading).
 
 ---
 
