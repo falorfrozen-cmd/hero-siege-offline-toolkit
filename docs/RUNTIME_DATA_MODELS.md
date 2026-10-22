@@ -5434,14 +5434,15 @@ words; nothing here quotes the game's code.
   self, and debugger logpoints at `StatDefense` and
   `StatPhysicalDamageReduction` logging each call's self beside a
   `PlayerMovement` control):
-  - **The element resistances do not take the all-resistance answer.** With
-    Mark 1's id-161 answer on (161 266 to 301), id 162 (fire) read 83 with
-    the answer off and 83 with it on (`statask`, the dispatcher asked with
-    the local self). So `StatFireResist` does not add the dispatcher's 161
-    answer. Measured for 162 only: 163 and 165 were not asked, and 164's one
-    record (83 -> 83, in Outskirts) came from a call made around the
-    switch's change, so it decides nothing. Id 167's original followed 161
-    in Stats live 1 (above): what makes the difference for 167 is not read.
+  - **Id 162 (fire) did not move with Mark 1's 161 answer.** With the
+    answer on (161 266 to 301), id 162 read 83 with the answer off and 83
+    with it on (`statask`, the dispatcher asked with the local self); 164
+    also read 83 (83 -> 83, in Outskirts, from a call made around the
+    switch's change). Whether `StatFireResist` adds 161 is **not
+    established**: 83 on two elements against 161 = 266 fits a cap clamping
+    the value, which no read separated (no read below a cap, no negative 161
+    answer). 163 and 165 were not asked. Id 167 (arcane), which read 339 and
+    so is not at 83, followed 161 by +35 in Stats live 1 (above).
   - **Who asks for 92 and 97.** While the debugger was attached (the sheet
     windows in town and the Outskirts window), only our own `statask` asked 92 or 97 with the local player as self. Each opening of
     the talent screen (T) made two fresh instances ask, 92 twice and 97
@@ -5547,9 +5548,9 @@ words; nothing here quotes the game's code.
   - which line the game lights at 3 and at 4 pieces for its own sets (the
     one measured case: with 2 pieces counted, Zealot's Prophecy's first line
     is lit, 37 captures);
-  - whether ids 163 to 165 take the all-resistance answer (id 161), and
-    why 167's original follows it while 162's does not (Stats live 1 and
-    2, above);
+  - whether ids 162 to 165 take the all-resistance answer (id 161) (162
+    and 164 sat at 83 with it on and off, possibly a cap), and what 167
+    does differently (Stats live 1 and 2, above);
   - whether key 294 feeds the dispatcher's id 199, the cast slowdown the
     gate asks for (§ 7.7, § 7.8);
   - whether the game hides a grant description outside the information

@@ -1342,7 +1342,7 @@
         "icon-grey": {"verdict": "pass", "observed": "luminance on 23.0/15.7/17.0/14.1 vs off 79.4/43.0/45.7/36.5; grey=4; procs 908->942"},
         "icon-clear": {"verdict": "pass", "observed": "grey=0, every slot brighter, Shadow Bolt tooltip on hover"},
         "maxmana-applies": {"verdict": "pass", "observed": "n=3: HUD 941 / 940.80, statask 37 940.8 = 2352 x 0.4"},
-        "allres-route": {"verdict": "pass", "observed": "162 83 -> 83 with the switch off and on: the element resistances do not take the all-resistance answer", "note": "research, recorded"},
+        "allres-route": {"verdict": "pass", "observed": "162 83 -> 83 with the switch off and on (161 266 -> 301); 164 also 83", "note": "research, recorded: unchanged; a cap not excluded, so whether 162 adds 161 is not established"},
         "piece-sheet": {"verdict": "pass", "observed": "helmet off: 2 28->25, 161 266->236, 36 4901->4581"},
         "bonus-equip": {"verdict": "not-observed", "observed": "36 drops 933 (on) and 183 (off), 933 = 183 + 750; HUD max old at 0.4/0.9 s, new by about 5/7 s; no shot at 1.5 or 3 s", "note": "the 3 s HUD timing was not captured; not re-run"},
         "ms-cast": {"verdict": "pass", "observed": "no hold: mode 1.278 (0.536 of 2.385); playerEffect[199] 0.65 with the switch on; 42 movers; watch line-capped at 135 frames", "note": "research, recorded"},
