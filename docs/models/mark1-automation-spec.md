@@ -73,19 +73,34 @@ speed).
 - **The Skill Haste cap.** The game counts at most 200 Skill Haste, so a
   cooldown takes at least half its base time (ForgePact#114 Live 1, RDM
   § 7.5, `skill_stat_measurements.json`).
-- Nothing about the proc interval or the mana cost has been measured yet.
-  Live 1 of the Mark 1 playtest measures the key-hold interval at two Faster
-  Cast Rates, Healing Zone's interval, the replenish answer's unit and
-  whether a replenish below zero drains (the research doc's Live procedure
-  1: `cast-interval`, `cast-interval-fcr`, `proc-cd`, `regen-units`,
-  `drain-applies`).
+- **The mana cost's references** (Live 2 of the Mark 1 playtest, Sorak on
+  slot 14, 2352 maximum mana; the research doc's Live procedure 2):
+  - **Procs are free** (`proc-mana`): proc-fired casts took no mana, so a
+    cost is needed.
+  - **The replenish answer reaches the regen, linearly** (`drain-applies`):
+    with id 42 answered at about half its original, the mana gained over
+    3 s fell from 676 to 338.
+  - **Sorak's replenish answer was 257** (`statask 42`, Mana Orb unbound): an
+    invested character, about 9.7% of the maximum a second, not the
+    uninvested 2% baseline the rule below is set against.
+  - **About 0.883 mana a second per unit of id 42's answer** (`regen-units`):
+    one 2.98 s window, read from HUD crops, so the unit stays an assumption
+    until a session reads it in process.
+- **The drain is the shipped cost**, the owner's choice (2026-10-22), at
+  1.0% of maximum mana a second per automated skill: Live 2's numbers do not
+  argue for another percent (on Sorak two automated skills take 47 of 257,
+  four take 94). The 20% maximum-mana cut stays built as the alternative.
+- Whether a replenish below zero drains was not observed: Live 2's window
+  began at full mana. Live 3 starts it below the maximum.
 
 ## Assumption
 
 - **The base cast time is 1.0 s** for every skill (`BASE_CAST_SECONDS`).
   Live 1's decision sets it (`cast-base:`).
 - **One unit of the replenish answer is one mana a second**
-  (`REPLENISH_UNIT`, Live 1 `regen-units`).
+  (`REPLENISH_UNIT`). Live 2 read about 0.883 from HUD crops (Measured,
+  above), so the shipped 1% takes about 0.88% a second; it stays 1 until
+  Live 3 reads it in process.
 - **The reference character**: 1500 maximum mana and a base replenish of
   2.0% of maximum mana a second with no investment. Energy gives 0.175
   replenish for 4 mana, which is 4.4% of the mana it gives a second; if
@@ -93,9 +108,10 @@ speed).
 - **The reference investments**: +100% Replenish Mana (+2.0% a second, if it
   scales the base replenish), +20 Mana per second (+1.33%), and +10 Mana
   After each Kill at one kill a second (+0.67%).
-- **The proposed numbers are the owner's call**: a drain of 1.0% of maximum
-  mana a second per automated skill (half the assumed baseline replenish),
-  and, for the alternative, a 20% cut of maximum mana per automated skill.
+- **The numbers are the owner's call**: a drain of 1.0% of maximum mana a
+  second per automated skill (half the assumed baseline replenish), adopted
+  and shipped, and, for the alternative, a 20% cut of maximum mana per
+  automated skill.
 
 ## Not established
 
@@ -107,7 +123,7 @@ speed).
   it does.
 - **What id 43 is.** Plausibly a share of the pool; not read.
 - **Whether a replenish below zero lowers mana or stops at zero**
-  (Live 1 `drain-applies`). The model gives the answer the consumer returns
+  (`drain-below`, not observed in Live 2; Live 3). The model gives the answer the consumer returns
   and the net a second as if it lowers mana.
 - **Current mana.** It is in the protected store and not read, so the model
   starts from a full pool and nothing pauses the automation at zero mana.
