@@ -5599,17 +5599,23 @@ words; nothing here quotes the game's code.
   click on "Discharge Mercenary", not the game):
   - **When an enemy strikes the player** (four hits), `sc_hurt` runs with
     the player as self and each hit is followed by an ask for the player's
-    97 with the player as self, as in Stats live 3; this time with Mark 1
-    answering 97 21->41 in the same window.
-  - **The player's 92 is asked with the player as self** while it fights:
-    once in the struck window, with Mark 1 answering 92 7056->7556. That
-    ask did not sit next to a hit, so which game event asked was not read;
-    the static reading (above) puts it in the player's collision with an
-    enemy projectile, and whether these hits were projectiles was not read.
+    97 with the player as self, as in Stats live 3; this time with
+    `bonusread` reading 97 21->41 in the same window.
+  - **The player's 92 was asked with the player as self** once in the
+    struck window (`bonusread` read 92 7056->7556 there), not next to any
+    of the four hits (window-relative line 3035 against 6633 to 6749).
+    Which code asked was not read: the static reading above lists
+    `StatMaxLife` (one site) and the player's collision with an enemy
+    projectile as constant-id askers, and cannot see a computed-id one;
+    whether any hit was a projectile was not read.
   - The logpoints read each call's self, not the answer it got; life read
-    full throughout, so how much damage the hits dealt was not read.
-  - **Another self asked 92 and 97 again** (25 and 6 times), beside
-    `Mercenary_obj`'s own 92 and 97 asks, all left as the game answered.
+    full throughout, so whether the set's numbers changed the damage the
+    hits dealt was not read.
+  - **Another self asked 92 and 97 again**, the same self as
+    `Mercenary_obj`'s 92 and 97 asks by count: from the recorder's reset
+    on arrival in Outskirts, 31 `df` and 8 `pd` lines with that self
+    against `Mercenary_obj`'s 31 asks of 92 and 8 of 97, all left as the
+    game answered them.
   [Mark 1 Stats live 4 results](../ForgePact/docs/mark1-set-research.md#stats-live-4-results)
 - **The talent screen's page** (ForgePact's Mark 1, Amendment 8,
   2026-10-23):
