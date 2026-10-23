@@ -3714,7 +3714,8 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   and it keeps re-picking until one passes. These are the same two filters
   ForgePact's `BuildAngelicPool` applies. Roughly one entry in eight passes,
   which accounts for the ~8 definition reads per roll measured above. **Static
-  reading (2026-10-02, issue #74).**
+  reading (2026-10-02, issue #74).** Potions (type 18) and the roll, which
+  tests no item type, are § 13.13.
 - **Where the list lives.** The roll reads the list as a variable of an
   object-scoped reference whose constant encodes object index 984, which the
   SDK names `Controller_obj` (`HeroSiege::Objects::GameObject::Controller_obj`):
@@ -4457,6 +4458,130 @@ Each label below says which.
   import), and the MCP shows neither a body nor a disassembly for `DropItem`.
   The decompile index held no earlier record of any of these scripts for
   this build. **Static reading** (2026-10-20, ForgePact #166).
+
+### 13.13 Potions and the Angelic roll
+
+Read on 2026-10-23 for ForgePact #229 (the Gold Inlaid Mysterious Potion,
+the game's one Angelic potion, never dropped from the Loot tab's Angelic /
+Unholy Drops slider). The means: the hub's ghidra MCP on
+`DropItemAngelicChance`, `CreateDefaultParams`, `GetUniqueRepoStruct` and
+`DefineItemUniqueConsumable`, plus a read-only byte scan for the slot of
+`Controller_obj`'s `lootListUnique` variable. Every reading below is
+paraphrased; no listing is reproduced here. Each label says which.
+Measured since in ForgePact #229's Live 1 (2026-10-23, capture
+`forgepact-229-gold-inlaid-potion-live-1`; research build, slot 14, Hell,
+Outskirts of Inoya at zone level 243, one session, Liquor Holster
+`{8, 0, 51}` the positive control for each read): the potions' definitions
+as the game answers them, their counts in each `lootListUnique[k]`, and the
+Gold Inlaid Mysterious Potion's built item, ground label, pickup, use and
+save. The reads went through the research build's `angeliclist` and
+`angelicprobe pool find|drop` (the guide's Known Limitations item 63).
+
+- **The roll has no item-type rule.** `DropItemAngelicChance` takes an entry
+  of `Controller_obj.lootListUnique[5]`, reads its definition and re-picks
+  until the hidden flag (base-info field 40) is clear and the rarity
+  (field 27) is 7 or 10 (§ 13.4, "The pick"). Nothing in it tests the
+  entry's type; the type goes from the entry to the placement unchanged. So
+  a potion entry (type 18) that passes those two tests reaches the
+  placement call exactly like any other Angelic or Unholy entry; what the
+  placement does with a type-18 entry was **not read**. **Static reading**
+  (2026-10-23, ForgePact #229). That the potion's own entry passes both
+  filters is **measured** (below); the game's own roll picking and placing
+  it was **not observed** (offline that roll practically never fires,
+  § 13.4, and Live 1 did not force it).
+- **The placement's parameters carry no type.** `CreateDefaultParams` takes
+  three values (the sub, with a fallback when it is absent, the base index
+  and a unique flag) and returns `{j, b, c}`, with no type in it; the roll
+  hands it the entry's sub and base, and the entry's type separately to the
+  placement. **Static reading** (2026-10-23, ForgePact #229), consistent
+  with #74 Live 2's measured `{"b":51.0,"j":0.0,"c":1.0}` for Liquor
+  Holster `{8, 0, 51}` (§ 13.4).
+- **The repository's potion entries.** `DefineItemUniqueConsumable` fills
+  repository type 11 (consumables) only. **Static reading** (2026-10-23,
+  ForgePact #229). The type-18 unique entries come from another loader,
+  by name `DefineItemUniqueFlask`, whose MCP decompile timed out, so the
+  loader itself was not read. The triples `{18, 0, 8}` (Gold Inlaid
+  Mysterious Potion) and `{18, 0, 5}` (Elixir of Unworldly Cognition) come
+  from ForgePact's `kAngelicBases` table, taken from the Item Editor's
+  catalog. **Measured** (Live 1, 2026-10-23, capture
+  `forgepact-229-gold-inlaid-potion-live-1`): `GetUniqueRepoStruct` answers
+  both triples, read outside any roll. `{18, 0, 8}`: key (base info `"28"`)
+  `consumable_gold_inlaid_mysterious_potion`, rarity (`"27"`) 7, hidden
+  flag (`"40"`) absent, so the Angelic roll's two filters keep it and the
+  ordinary unique roll's (rarity below 7, § 23.4) do not; `InitItemFromJson`
+  builds it at rarity 7 too. `{18, 0, 5}`: key
+  `consumable_elixir_of_unworldly_cognition`, rarity 9, hidden flag absent,
+  so neither roll's filters keep it, and `InitItemFromJson` builds it at
+  rarity 9 (Heroic, as HS Offline Tracker's table has it, not the Unholy
+  `kAngelicBases` labels it). Both keys match the table's.
+- **Where the lists are built.** The byte scan (positive controls: the two
+  known readers, `DropItemAngelicChance` and `DropUniqueItems`, two sites
+  each) found 59 references to `lootListUnique`'s slot in 17 functions:
+  the two rolls, `DropItemHeroic`, `DropItemDebug`, `CreateShrineEffect`,
+  `DoCraftResult`, the two merchant grids, `ReturnRandomSatanic`, the gamba
+  machine's event and six unnamed functions. One unnamed function, placed
+  just after `Controller_obj`'s Create-event closures (that it is the Create
+  event is an inference, not a reading), creates the eleven lists (five
+  `lootListNormal`, six `lootListUnique`) and fills them in a loop that reads
+  unique definitions through `GetUniqueRepoStruct` and normal ones through
+  `GetNormalRepoStruct`; another destroys all eleven and sets the variables
+  to -1. **Static reading** (2026-10-23, ForgePact #229). The builder does
+  not decompile (the MCP timed out at 300 s, a headless decompile at 1800 s
+  with the decompiler near 16 GB of memory), and its membership rule sits
+  inline in it, so **the rule that decides which entries go into which list
+  is not established**. Do not decompile the builder whole again; read the
+  lists instead.
+- **The potions on the lists. Measured** (Live 1, 2026-10-23, capture
+  `forgepact-229-gold-inlaid-potion-live-1`, each sub-list counted for
+  entries equal to the whole triple): `{18, 0, 8}`, the Gold Inlaid
+  Mysterious Potion, is on `lootListUnique[5]` once and on `[0]` to `[4]`
+  not at all, the same pattern as the control Liquor Holster `{8, 0, 51}`
+  (§ 13.4). So the list the game's Angelic roll draws from carries the
+  potion, and its filters keep it: the game's roll can pick it like any
+  other entry. `{18, 0, 5}`, the Elixir, is also on `[5]`
+  once and nowhere else, but its rarity 9 fails the roll's filter, so the
+  roll re-picks past it. The six sizes read 50, 61, 79, 152, 221 and 380,
+  as #74 measured them. That the game's roll then places a type-18 entry as
+  an item was **not observed**: Live 1 placed the potion through ForgePact's
+  own spawn (next bullet), not through the game's roll. The 48 droppable
+  entries § 13.4 counted on `[5]` now match ForgePact's 48 validated
+  candidates with the potion among them; that the potion is the one extra
+  entry over the old 47 is consistent with this, not checked entry by entry.
+- **The potion as an item. Measured** (Live 1, 2026-10-23, capture
+  `forgepact-229-gold-inlaid-potion-live-1`, one copy, the local player as
+  `self`). Built by `InitItemFromJson` from `{18, 0, 8}` and placed by
+  `LootGroundCreateFromItem` (ForgePact's `SpawnAngelicItem`), it became a
+  ground item (the `Loot_Ground_obj` count rose by one) at rarity 7, its
+  label reading "Gold Inlaid Mysterious Potion | SS" under the owner's loot
+  filter. The built item's `itemInfoStruct["28"]` reads the display name
+  ("Gold Inlaid Mysterious Potion"), not the repository key, so a line that
+  prints it names the item. Hovering the label and pressing F picked it up
+  ("[Gold Inlaid Mysterious Potion] Picked up") into the bag grid, not the
+  potion slots. Its tooltip there: "Potion", 0 charges out of 1, a 45 s
+  flask cooldown, a 15 s effect, Endless Wealth (Magic Find 275%, Gold
+  Amount 26%), tier SS, level 1. With 0 charges it could not be drunk:
+  neither a right-click in the bag nor its potion-slot key used it. Moved
+  into a potion slot, it stayed there through Save & Exit and a reload of
+  the character, and came back with 1 charge out of 1; the slot's key then
+  drank it, giving a 15 s "Endless Wealth" buff (Magic Find +275%, extra
+  gold from kills 26%), and it stayed in the slot as a recharging flask,
+  not used up. The same key press drank every charged potion slot at once,
+  both times (as seen; not explained). **Not observed:** a second copy, the
+  game's own roll placing it, another difficulty or zone tier, co-op, and
+  whether the item refills its charge over time rather than on reload.
+- **ForgePact's own pool rejected potions before #229.** From the slider's
+  first release (v1.3.14) ForgePact's `BuildAngelicPool` threw out every
+  `kAngelicBases` row of type 18, with the reason `potion`, before its three
+  real tests (the repository key, the hidden flag and the rarity the game
+  builds), so neither type-18 row could ever enter ForgePact's own die.
+  Nothing else in ForgePact filtered them. This was ForgePact's rule, not
+  the game's: the roll above has none. A player's own loot filter can still
+  hide a type-18 ground item (§ 18.5). With the rule removed, Live 1
+  (2026-10-23, capture `forgepact-229-gold-inlaid-potion-live-1`)
+  **measured** the potion validated (`-> ok`), the pool at 48 candidates
+  and 10 rejected (nine for the hidden flag, the Elixir for its built
+  rarity 9), and the slider at one in one kill dropping it twice in 24
+  rolls (24 drops, 0 fails).
 
 ---
 
