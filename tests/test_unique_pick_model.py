@@ -1528,6 +1528,20 @@ class LeverParityTests(unittest.TestCase):
         self.assertRegex(self.plugin,
                          r"#ifdef FORGEPACT_RELEASE\s*\n\s*static constexpr int g_SigListIndex\s*=\s*kAngelicListIndex\s*;")
 
+    def test_the_angelic_rarities_are_the_models(self):
+        # kAngelicRarities, beside kAngelicListIndex, is what the research flightprobe's
+        # droppable test keeps; it must be the model's ANGELIC_RARITIES, no more, no less.
+        found = re.search(r"static constexpr int kAngelicRarities\[\]\s*=\s*\{(?P<values>[^}]*)\}\s*;", self.plugin)
+        self.assertIsNotNone(found, "ModuleMain.cpp has no kAngelicRarities")
+        values = [int(v) for v in found.group("values").split(",") if v.strip()]
+        self.assertEqual(len(values), len(set(values)))
+        self.assertEqual(frozenset(values), model.ANGELIC_RARITIES)
+        self.assertLess(self.plugin.index("static const int kAngelicListIndex"), found.start())
+        body = _function_body(self.plugin, "static bool FlpAngelicDroppable(")
+        self.assertRegex(body, r"for\s*\(\s*const int kept\s*:\s*kAngelicRarities\s*\)")
+        # Negative control: no rarity literal of its own in the droppable test.
+        self.assertIsNone(re.search(r"rarity\s*==\s*\d", body))
+
     def test_74s_push_is_g_sig_copies_per_switched_on_item(self):
         body = _function_body(self.plugin, "static void SignatureInjectPush(")
         self.assertRegex(body, r"if\s*\(\s*!SignatureSwitchOn\(\s*w\s*\)\s*\)\s*continue\s*;")
