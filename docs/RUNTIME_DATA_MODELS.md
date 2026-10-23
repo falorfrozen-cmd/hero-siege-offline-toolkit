@@ -3714,7 +3714,8 @@ and 0 of 150 with `GetRelicQuest` answering true for them.
   and it keeps re-picking until one passes. These are the same two filters
   ForgePact's `BuildAngelicPool` applies. Roughly one entry in eight passes,
   which accounts for the ~8 definition reads per roll measured above. **Static
-  reading (2026-10-02, issue #74).**
+  reading (2026-10-02, issue #74).** Potions (type 18) and the roll, which
+  tests no item type, are § 13.13.
 - **Where the list lives.** The roll reads the list as a variable of an
   object-scoped reference whose constant encodes object index 984, which the
   SDK names `Controller_obj` (`HeroSiege::Objects::GameObject::Controller_obj`):
@@ -4457,6 +4458,70 @@ Each label below says which.
   import), and the MCP shows neither a body nor a disassembly for `DropItem`.
   The decompile index held no earlier record of any of these scripts for
   this build. **Static reading** (2026-10-20, ForgePact #166).
+
+### 13.13 Potions and the Angelic roll
+
+Read on 2026-10-23 for ForgePact #229 (the Gold Inlaid Mysterious Potion,
+the game's one Angelic potion, never dropped from the Loot tab's Angelic /
+Unholy Drops slider). The means: the hub's ghidra MCP on
+`DropItemAngelicChance`, `CreateDefaultParams`, `GetUniqueRepoStruct` and
+`DefineItemUniqueConsumable`, plus a read-only byte scan for the slot of
+`Controller_obj`'s `lootListUnique` variable. Every reading below is
+paraphrased; no listing is reproduced here. Each label says which.
+
+- **The roll has no item-type rule.** `DropItemAngelicChance` takes an entry
+  of `Controller_obj.lootListUnique[5]`, reads its definition and re-picks
+  until the hidden flag (base-info field 40) is clear and the rarity
+  (field 27) is 7 or 10 (§ 13.4, "The pick"). Nothing in it tests the
+  entry's type; the type goes from the entry to the placement unchanged. So
+  a potion entry (type 18) that passes those two tests would drop exactly
+  like any other Angelic or Unholy item. **Static reading** (2026-10-23,
+  ForgePact #229).
+- **The placement's parameters carry no type.** `CreateDefaultParams` takes
+  three values (the sub, with a fallback when it is absent, the base index
+  and a unique flag) and returns `{j, b, c}`, with no type in it; the roll
+  hands it the entry's sub and base, and the entry's type separately to the
+  placement. **Static reading** (2026-10-23, ForgePact #229), consistent
+  with #74 Live 2's measured `{"b":51.0,"j":0.0,"c":1.0}` for Liquor
+  Holster `{8, 0, 51}` (§ 13.4).
+- **The repository's potion entries.** `DefineItemUniqueConsumable` fills
+  repository type 11 (consumables) only. **Static reading** (2026-10-23,
+  ForgePact #229). The type-18 unique entries come from another loader,
+  by name `DefineItemUniqueFlask`, whose MCP decompile timed out, so the
+  potions' definitions (key, hidden flag, rarity) are **not established**
+  from the game. The Gold Inlaid Mysterious Potion's key
+  `consumable_gold_inlaid_mysterious_potion` and triple `{18, 0, 8}`, and
+  the Elixir of Unworldly Cognition's `{18, 0, 5}`, come from ForgePact's
+  `kAngelicBases` table, which was taken from the Item Editor's catalog,
+  not read from the game.
+- **Where the lists are built.** The byte scan (positive controls: the two
+  known readers, `DropItemAngelicChance` and `DropUniqueItems`, two sites
+  each) found 59 references to `lootListUnique`'s slot in 17 functions:
+  the two rolls, `DropItemHeroic`, `DropItemDebug`, `CreateShrineEffect`,
+  `DoCraftResult`, the two merchant grids, `ReturnRandomSatanic`, the gamba
+  machine's event and six unnamed functions. One unnamed function, placed
+  just after `Controller_obj`'s Create-event closures (that it is the Create
+  event is an inference, not a reading), creates the eleven lists (five
+  `lootListNormal`, six `lootListUnique`) and fills them in a loop that reads
+  unique definitions through `GetUniqueRepoStruct` and normal ones through
+  `GetNormalRepoStruct`; another destroys all eleven and sets the variables
+  to -1. **Static reading** (2026-10-23, ForgePact #229). The builder does
+  not decompile (the MCP timed out at 300 s, a headless decompile at 1800 s
+  with the decompiler near 16 GB of memory), and its membership rule sits
+  inline in it, so **which entries go into which list is not established**,
+  and with it whether `lootListUnique[5]` carries the potion. The 48
+  droppable entries § 13.4 measured are one more than ForgePact's 47
+  validated candidates; the extra one could be the potion, a repeat or an
+  Angelic the table lacks, which is a hint, not a reading. Do not decompile
+  the builder whole again; ForgePact #229's live session measures the list.
+- **ForgePact's own pool rejected potions before #229.** From the slider's
+  first release (v1.3.14) ForgePact's `BuildAngelicPool` threw out every
+  `kAngelicBases` row of type 18, with the reason `potion`, before its three
+  real tests (the repository key, the hidden flag and the rarity the game
+  builds), so neither type-18 row could ever enter ForgePact's own die.
+  Nothing else in ForgePact filtered them. This was ForgePact's rule, not
+  the game's: the roll above has none. A player's own loot filter can still
+  hide a type-18 ground item (§ 18.5).
 
 ---
 
