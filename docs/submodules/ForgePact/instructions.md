@@ -7422,7 +7422,7 @@ neither "anywhere" (Mod live 8 measured kills in Hell only) nor "from vaults"
   only when, read at that call, `instance_number` gives at least 1 for
   `UI_Talent_Screen_obj` and 0 for `UI_Mercenary_Talents_obj`
   (`TalentPageOf`, `AnswersAsker`, `Mark1TalentPageNow`): the Mercenary
-  tab keeps the game's values. Both objects are resolved by their
+  tab is meant to keep the game's values (not checked in play yet). Both objects are resolved by their
   `hs-game-sdk` names beside the four; the count is never cached, because
   a tab action runs inside a step event. The local player's own calls never
   depend on the page. `sheet=` on the `mark1set bonus:` line counts the

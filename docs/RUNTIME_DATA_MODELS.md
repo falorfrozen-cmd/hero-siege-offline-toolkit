@@ -5598,8 +5598,9 @@ words; nothing here quotes the game's code.
     Mercenary tab the rows ask the dispatcher with the same objects as on
     the Player tab (`UI_Talent_Screen_Attribute_obj`,
     `UI_Button_Talent_Player_obj`), argument 0 read 1 on both pages, and
-    the originals were the mercenary's own (36 12527, 92 5114, 97 86, 42
-    31, the numbers `Mercenary_obj`'s own asks read). So neither the asker's
+    the originals were the mercenary's own (36 12527, 37 742, 92 5114, 97
+    86, the numbers `Mercenary_obj`'s own asks read; 42 read 31, not the
+    player's 140, and no `Mercenary_obj` 42 ask was recorded). So neither the asker's
     object nor argument 0 tells the sheet's two pages apart.
     [Mark 1 Stats live 3 results](../ForgePact/docs/mark1-set-research.md#stats-live-3-results)
   - **Static reading** (the hub's ghidra MCP decompiled
