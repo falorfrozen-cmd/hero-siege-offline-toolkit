@@ -1682,12 +1682,16 @@ HUD's methods; one headless slot-reference scan (`FindSlotRefSites.java`) of
   - **The mercenary's version**, `stepMercenaryTimers`, counts a `pSt`
     timer down by the mercenary's own `deltaFrame` each step, adds the
     rounded-up answers to 38 and 42 when it runs out, and resets the timer
-    from `game_get_speed`. No `deltaFrame` slot appears in the player's
-    scripts.
+    from `game_get_speed`. The local slot scan (RIP-relative references
+    only, the kind that missed id 42 above) and the names-only trace of
+    `Player_obj`'s Step did not show a `deltaFrame` slot; whether the
+    player's timing reads one is not established.
   - **The game's step rate.** `SetRoomSpeed` reads the video FPS option
     (protected data entry 76) and sets `game_set_speed` to 60, 120 or 144
     (options 0, 1, 2; 60 otherwise). GameMaker runs one step per drawn
-    frame, so the step rate is the frame rate, capped at that setting.
+    frame (engine behaviour, not read from this binary; consistent with
+    Live 3's measured rate below), so the step rate is the frame rate,
+    capped at that setting.
     `Timer_obj`'s Step keeps a real-time factor, the frame's `delta_time`
     over the target frame time, clamped to 0.9 .. 4.0 and stored in the
     protected data (entry 294); the player's tick and `PlayerUpdateTimers`
@@ -1702,8 +1706,13 @@ HUD's methods; one headless slot-reference scan (`FindSlotRefSites.java`) of
 - **Inferred from those windows' measured gains:** each is a whole number
   of ticks of the answer over ten, rounded up: S7 (answer 140) gained
   154 = 11 × 14, S8 (answer 92.96) gained 110 = 11 × 10, S9 (answer −140)
-  lost 518 = 37 × 14. So the divisor is 10 and a tick came every 16.2 to
-  16.4 frames, about 8.7 to 8.9 ticks a second.
+  lost 518 = 37 × 14. The gains alone also fit a divisor of 20
+  (154 = 22 × 7, 110 = 22 × 5, 518 = 74 × 7); the mod's own count of id 42
+  asks it answered (`forced=`) excludes that: it rose 133 to 223 and 223 to
+  323 over the two 10 s switch-off spends, about 9 asks a second, one per
+  tick at about 8.8 ticks a second, not the 17.5 a divisor of 20 would
+  need. So at the 144 setting the divisor is 10 and a tick came every 16.2
+  to 16.4 frames, about 8.7 to 8.9 ticks a second.
 - **The replenish readings side by side.** Read as mana a second per unit
   of the whole answer, S7 gives 0.874 (§ 16.13). Read on the drain side,
   S7 minus S8 gives 35.05 mana a second over 47.04 drained units, 0.745 a
@@ -1721,6 +1730,8 @@ HUD's methods; one headless slot-reference scan (`FindSlotRefSites.java`) of
     taken from `game_get_speed`) or timed by the clock, so whether the
     regen, and Mark 1's drain with it, slows at a lower frame rate (Live
     procedure 5 measures 144 against 60);
+  - whether the tick's divisor (the Step's argument; the Step reads
+    `game_get_speed` just before the call) depends on the FPS setting;
   - the drain's measured share of maximum mana a second at the shipped
     unit;
   - what the other three blends mean (plausibly mana, cooldown or stacks);
