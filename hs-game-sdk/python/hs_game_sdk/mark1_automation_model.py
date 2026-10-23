@@ -69,7 +69,8 @@ MAX_MANA_CUT_PCT = 20
 #: (35.05 mana a second over 47.04 drained units; S7 alone read 0.874 a unit of
 #: the answer). The drain divides by it, so each automated skill takes about
 #: DRAIN_PCT_PER_SECOND % of maximum mana a second (the owner's choice,
-#: 2026-10-23); that rate is not measured in a game session yet. ForgePact's
+#: 2026-10-23). Stats live 5 then measured that rate: 1.117% a second per
+#: skill at about 144 frames a second and 0.956% at 60. ForgePact's
 #: `kMark1ReplenishUnit` is the same.
 REPLENISH_UNIT = Fraction(745, 1000)
 

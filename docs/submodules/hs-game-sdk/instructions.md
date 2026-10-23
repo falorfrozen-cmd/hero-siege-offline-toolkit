@@ -44,7 +44,9 @@ hs-game-sdk/
 │   ├── special_content.json    # global.eSt slot -> stat -> content map + Spawn_*_obj markers (data only)
 │   ├── flight_charms_measurements.json # ForgePact #158 phase 1: walk callers, charm size keys, sprite key, the Heroic roll (RDM §19.6, §23), and the mod's Mod live 1-3 records (data only)
 │   ├── unique_pick_measurements.json # UP1-UP22: #74's stand-in picks, the unique list's lengths, ForgePact's push and coin, the flight charms' Mod live 1 and 2 counts, the Heroic roll (UP14, UP21) and DropItem's draw (UP15-UP20), and the Mark 1 kill route by name (UP22), for unique_pick_model.py (data only)
-│   ├── mark1_set_measurements.json # ForgePact #166: the Mark 1 set's Mod live 1-8 records (casts, walk, jump, the Heroic roll's pool, the DropUniqueItems route by name, the kill lever, DropItem's draw; data only)
+│   ├── mark1_set_measurements.json # ForgePact #166: the Mark 1 set's Mod live 1-10 records (casts, walk, jump, the Heroic roll's pool, the DropUniqueItems route by name, the kill lever, DropItem's draw) and the 2026-10-22 playtest's Stats live 1-5 (`playtest2`; data only)
+│   ├── mark1_automation_cases.json # ForgePact #166: the Mark 1 automation's shared cases (proc interval, drain, maximum-mana cut), computed by mark1_automation_model.py, which ForgePact's Mark1Priority.hpp and Mark1Cost.hpp are held to as well (data only)
+│   ├── item_stat_keys.json     # ForgePact #166: item stat keys (an item's stats map) beside ReturnSpecificStat's dispatcher ids and their getters, and the tooltip's set-bonus lines; neither numbering is StatId's (data only, no generator)
 │   ├── movement_speed_measurements.json # MS1-MS11: ForgePact #166's Mod live 1 sweep of the walk's modal step against the id-64 answer, its half point and phase 1's point, for movement_speed_model.py (data only)
 │   ├── item_info.json          # Rarity codes, itemInfoStruct keys, affix slots, tooltip stat-line call (data only)
 │   └── stash_containers.json   # Stash map/special-tab Controller_obj var names (ForgePact #14, data-only, no generator)
@@ -67,6 +69,7 @@ hs-game-sdk/
 │   │   ├── skill_sliders_model.py # Projectile count, AoE scale and projectile deltaSpeed from their stats, stdlib only, not exported (hand-written)
 │   │   ├── unique_pick_model.py # Which unique the Angelic roll, the ordinary unique roll, the Heroic roll and DropItem's own draw yield (one entry's share), stdlib only, not exported (hand-written)
 │   │   ├── movement_speed_model.py # The walk's modal step against the movement speed stat (affine: answer + 200) and the answer that halves it, stdlib only, not exported (hand-written)
+│   │   ├── mark1_automation_model.py # The Mark 1 automation's proc interval (cooldown at Skill Haste plus cast time at Faster Cast Rate) and its mana cost (the drain, the maximum-mana cut), stdlib only, not exported (hand-written)
 │   │   ├── soul_piece_model.py # A room's act (RoomActIndex's answer), the pickup's stack rule (reals within the epsilon), the number rules a key piece rests on (repository truncation, unique `c`, the save's two decimals, crafting's count, the find), the gem roll a boss soul piece rides and the backpack's use, stdlib only, not exported (hand-written)
 │   │   ├── number_compress_model.py # Which numbers the game's Steam number shortener (num_compressSteam -> SteamCompressNumber) ends the process on, and the text it writes for the rest, stdlib only, not exported (hand-written)
 │   │   ├── mod_registry.py     # ModDefinition & ModRegistry for declarative mods
@@ -266,6 +269,21 @@ Mark 1 ships and why (`SPEED_ROUTE`, `"stat-model"`, and `SPEED_ROUTE_REASON`): 
 affine, so halving the answer gives 0.785, and the lever answers (x - 200) / 2 instead. That
 lever stays in the test as a transform; the `movement` item's `LeverParity` tests pin
 `Mark1Movement.hpp`'s constants to the model's.
+
+`mark1_automation_model.py` (2026-10-22, ForgePact issue #166, hub #518) is built the same way:
+spec `docs/models/mark1-automation-spec.md` (written from ForgePact's `docs/mark1-set-research.md`
+§ "The 2026-10-22 playtest: stats, cast priority and held input" and the hub's RDM § 7.5 and
+§ 7.10), shared cases `curated/mark1_automation_cases.json`, checks
+`tests/test_mark1_automation_model.py`. It gives the proc route's interval for each automated skill
+(its cooldown at the player's Skill Haste, reusing `skill_stat_model`, plus its cast time at the
+player's Faster Cast Rate, the cast time alone for a skill with no cooldown) and the mana cost: the
+shipped drain, which lowers the game's own replenish answer by a share of maximum mana per automated
+skill a second divided by `REPLENISH_UNIT` (0.745, measured in Stats live 3), and the documented
+maximum-mana cut beside it. Stats live 5 measured the drain at 1.117% a second per skill at about
+144 frames a second and 0.956% at 60; how much regeneration a character needs to sustain a number of
+skills rests on an assumed baseline and is modelled, not measured. ForgePact's `Mark1Priority.hpp`
+and `Mark1Cost.hpp` are held to the same cases by its `test_mark1_priority_behavior.py` and
+`test_mark1_cost_behavior.py`.
 
 `number_compress_model.py` (2026-10-20, ForgePact issue #230, hub #539) is built the same way: spec
 `docs/models/number-compress-spec.md` (written from the static reading folded into

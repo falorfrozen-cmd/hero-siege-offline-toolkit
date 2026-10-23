@@ -93,8 +93,10 @@ speed).
   of the answer, S8 alone 0.940, Live 2's halving about 0.877 and S9's
   below-zero window 0.887; the readings disagree. The consumer's id-42
   answer divides the drain by 0.745 (the owner's choices, 2026-10-23), so
-  each automated skill takes about 1.0% of maximum mana a second; that rate
-  is not measured in a game session yet. The build Live 3 measured, with a
+  each automated skill takes about 1.0% of maximum mana a second. Stats
+  live 5 then measured that rate: 1.117% a second per skill at about 144
+  frames a second and 0.956% at 60 (ForgePact `mark1-set-research.md`
+  § Stats live 5 results). The build Live 3 measured, with a
   unit of 1.0, took about 0.745% a second per skill, read directly (S7
   minus S8); the 0.87% recorded for it is inferred from S7's 0.874.
 - **The drain is the shipped cost**, the owner's choice (2026-10-22), at
