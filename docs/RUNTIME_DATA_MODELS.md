@@ -2091,13 +2091,21 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   part in (186,184,182), which is 11974842 (#BAB8B6) exactly, and the text
   part in exactly the text colour passed (details in this section's last
   bullet), so on the feed the sender and the text each carry their own
-  colour. That nothing inside the text can change its colour and the
-  6776816 rule stay a static reading (neither was exercised). **Not
+  colour. **Measured** 2026-10-23 again (capture
+  `forgepact-228-loot-colors-live-2`, ForgePact#228's Live 2, same
+  character and place): three lines with sender colour 18687 drew the
+  sender in (255,72,0), which is 18687 (#FF4800) exactly, and on a message
+  type 0 line the separator straight after the sender is a colon and a
+  space, `: `, in (199,179,119), which is 7844807 (#C7B377) exactly, the
+  colour the reading gives it; the feed read `[hh:mm] Sorak: found <item>`.
+  The time stamp sampled (128,128,128), 8421504 (#808080), on that
+  session's red control line and its Heroic line, which is the stamp colour
+  the reading gives. That nothing inside the text can change its colour and
+  the 6776816 rule stay a static reading (neither was exercised). **Not
   established**: that the bottom-left feed draws through `DrawChatMessage`
-  (inference: the measured feed lines show a stamp, a sender and a text in
-  the two colours the reading gives), the separator's exact characters for
-  message type 0 and its colour (not sampled), and what a click on a sender
-  name in the opened chat window does offline.
+  (inference: the measured feed lines show a stamp, a sender, a separator
+  and a text in exactly the colours the reading gives), and what a click
+  on a sender name in the opened chat window does offline.
 - **`ChatAddServerMessage(text, channel)` cannot carry a colour.** **Static
   reading** (ForgePact#228): it passes the sender (measured `"SERVER"`), red
   255 (#FF0000) as both the sender and the text colour, message type 1 and the
@@ -2116,7 +2124,11 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   the text is `GetItemDropMessage`'s: a `[Softcore] ` or `[Hardcore] ` tag,
   the finder's name, the localized `just_found` phrase and the item's loot
   name in square brackets, all in that one text colour. So online colours the
-  whole text, not only the item name.
+  whole text, not only the item name. That 18687 draws the sender part
+  orange (255,72,0) on the feed is **measured** (capture
+  `forgepact-228-loot-colors-live-2`, ForgePact's own `ChatAddMessage` line,
+  below); that the online path passes it, and these text colours, stays a
+  static reading.
 - **Offline, the player cannot type in chat**: the chat window opens and closes,
   but no line can be sent, so the call the game makes for a typed line was not
   observed. One `Ingame_Chat_obj` exists in a loaded game; `UI_Ingame_Chat_obj`
@@ -2158,8 +2170,9 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   3): `<character> found <item name>` (the name from the item's
   `itemInfoStruct["28"]`, the character's from the player's `name`) shows as
   a red `SERVER: Sorak found Headhunter` line, one per call. ForgePact's Loot
-  announcements switch (`lootann`) ships this route for Heroic, Angelic and
-  Unholy items; in Live procedure 3 it announced placed items, held a
+  announcements switch (`lootann`) shipped this route for Heroic, Angelic and
+  Unholy items until ForgePact#228 made it the fallback of the coloured
+  route below; in Live procedure 3 it announced placed items, held a
   Satanic one, held a bag drop, and announced one natural drop with Magic
   Find raised.
 - **A coloured drop announcement: `ChatAddMessage` with its own sender and
@@ -2169,10 +2182,12 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   0, two reals 0, a `[hh:mm]` stamp and six `undefined` showed
   `[00:49] ForgePact : ForgePact chat test 8`; the line's colour was not
   recorded. ForgePact#228 moves Loot announcements to this route
-  (`chatcolour`): sender part `<character> found` and text part the item name,
-  the sender in the grey 11974842 and the item name in the online
-  announcement's colour for its rarity (9764608, 10681599 or 7224024), with
-  the red `SERVER:` line as its fallback. **Measured** 2026-10-23 (capture
+  (`chatcolour`) in the online announcement's layout: sender part the
+  character's name in the online sender colour 18687 (#FF4800, orange),
+  text part `found <item name>` in the online announcement's colour for its
+  rarity (9764608, 10681599 or 7224024), with the red `SERVER:` line as its
+  fallback. **Measured** 2026-10-23 in two sessions. The first build, an
+  earlier layout with the grey `<character> found` as the sender (capture
   `forgepact-228-loot-colors-live-1`, ForgePact#228's Live 1; research
   build sha256 `e053249d…0d77151`, slot 14 "Sorak", Town of Inoya): with
   `self` the local `Player_obj`, sender `"Sorak found"`, sender colour
@@ -2187,13 +2202,25 @@ mostly screens that block play; `Enemy_Aggroable_obj` is the parent of exactly
   items' ground labels showed the same hue, darker (about 0.85 of the chat
   value per channel: (0,217,126), (216,217,130), (184,49,94)). A placed
   Satanic item and a Heroic item placed with the switch off showed no line.
-  **Not observed live**: the fallback to the red line (no call refused),
-  natural drops on this route, co-op, the time stamp's and the separator's
-  colours.
+  The layout that ships (capture `forgepact-228-loot-colors-live-2`,
+  ForgePact#228's Live 2; research build sha256 `f87496ed…aaf14d28` at
+  ForgePact `8bbeaa0`, same character and place): the same call with sender
+  `"Sorak"`, sender colour 18687 as a real and the text `found <item name>`
+  in its rarity's colour; a placed Heroic, Angelic and Unholy item each
+  showed `[hh:mm] Sorak: found <item name>` with no `SERVER:` prefix (for
+  example `[22:51] Sorak: found Cobra Heavy Belt`). Pixels: `Sorak`
+  (255,72,0) = 18687 on all three lines, the separator `: ` (199,179,119) =
+  7844807, and `found <item name>` exactly the colour passed, `found`
+  included: (0,255,148), (255,252,162) and (216,58,110). `layout: online`.
+  A placed Satanic item and a Heroic item placed with the switch off again
+  showed no line. **Not observed live**: the fallback to the red line (no
+  call refused in either session), natural drops on this route, the line
+  with `enableGeneralChat` off, and co-op.
 
 [dungeon chest, Chat route](../ForgePact/docs/dungeon-chest-research.md#chat-route),
 [loot announcements, Static reading](../ForgePact/docs/loot-announcement-research.md#static-reading),
-[loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3)
+[loot announcements, Live procedure 3](../ForgePact/docs/loot-announcement-research.md#live-procedure-3),
+[loot announcements, #228 Session results 2](../ForgePact/docs/loot-announcement-research.md#session-results-2)
 
 ### 8.7 Numbers on screen: the game's number formatters
 

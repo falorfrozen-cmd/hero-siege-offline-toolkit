@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Hand-curated record of how Hero Siege announces a rare ground drop in chat, for ForgePact#17 (Loot announcements). NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. Every entry carries its own `status`: `static_reading` (read from the compiled game locally and paraphrased in our own words; no script text is kept anywhere), `inference`, `not_established`, or `measured` (`route.previous.status`, from ForgePact#17's Live procedure 3, `chat_line.measured_call`, from the dungeon chest's Live procedure 1b, and the parts of `chaos_tower_loot_burst` its `live` block lists, from capture forgepact-227-chaos-tower-announce-live-1; `route.status`, `route.live`, `chat_line.measured_colours` and each `announcement_colours` entry's `seen_on_feed`, from capture forgepact-228-loot-colors-live-1). `scripts` is the announcement chain by SDK name, in call order. `rarity_key` is the itemInfoStruct key the closure is taken to read: that key \"27\" holds the rarity is measured (docs/RUNTIME_DATA_MODELS.md section 16.4), but that the closure reads it is an inference from the codes it compares, because the key strings were not read. `rarity_codes_in_closure` lists every rarity code the closure compares on a branch of its own, and for each whether the online path announces it; the list is what was read, and `announced_online` is `not_established` where the reading does not say. `route` is the call ForgePact's `lootann` ships to show the line offline: `chatcolour` since ForgePact#228 (2026-10-23; ChatAddMessage by name in dungeon-chest shape 8's argument kinds, the item name in its rarity's announcement colour; `measured` since capture forgepact-228-loot-colors-live-1, which `route.live` records), with `route.previous` the `server` route it replaced and now falls back to (chosen 2026-10-04 after Live procedures 1 and 3; the game's own path, `method`, could not be tested offline (the probe's anon control did not resolve)). `chat_line` (ForgePact#228) records how ChatAddMessage builds and draws a line: its fifteen parameters in order, the segments and their colours, and that a line carries two text colours and no inline markup. `rarity_colours` is the game's rarity colour table (GetRarityColor, codes 1-11), `announcement_colours` the text colour the online announcement passes per rarity, and `announcement_sender_colour` its sender colour. Colours are GameMaker's decimal blue-green-red integers (`bgr`) with `#RRGGBB` (`rgb`) beside them; docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.4 carry the same facts. The argument is ForgePact docs/loot-announcement-research.md; the shared facts are docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.10. `chaos_tower_loot_burst` (ForgePact#227) records how a Chaos Tower floor holds its new ground items in Controller_obj.lootExplosionList until gml_Script_LootExplosion puts them back on the ground at the floor's end (docs/RUNTIME_DATA_MODELS.md section 16.14), with its own `status` and a `not_established` list.",
+  "$schema_note": "Hand-curated record of how Hero Siege announces a rare ground drop in chat, for ForgePact#17 (Loot announcements). NOT mechanically extracted (see hs-game-sdk/curated/satanic_zone.json for why curated/ exists). Data only: no binding is generated from this file. Every entry carries its own `status`: `static_reading` (read from the compiled game locally and paraphrased in our own words; no script text is kept anywhere), `inference`, `not_established`, or `measured` (`route.previous.status`, from ForgePact#17's Live procedure 3, `chat_line.measured_call`, from the dungeon chest's Live procedure 1b, and the parts of `chaos_tower_loot_burst` its `live` block lists, from capture forgepact-227-chaos-tower-announce-live-1; `route.status`, `route.live`, `chat_line.measured_colours` and the `seen_on_feed` of the `announcement_colours` entries for codes 9, 7 and 10 (the Satanic entry has none), from capture forgepact-228-loot-colors-live-1; `route.live2`, `chat_line.layout`, the `measured` fields of `chat_line.segments` and `announcement_sender_colour.seen_on_feed`, from capture forgepact-228-loot-colors-live-2). `route.status` `measured` covers the coloured line only: the fallback to the red server line ran in neither session (`route.live.not_run`, `route.live2.not_run`). `scripts` is the announcement chain by SDK name, in call order. `rarity_key` is the itemInfoStruct key the closure is taken to read: that key \"27\" holds the rarity is measured (docs/RUNTIME_DATA_MODELS.md section 16.4), but that the closure reads it is an inference from the codes it compares, because the key strings were not read. `rarity_codes_in_closure` lists every rarity code the closure compares on a branch of its own, and for each whether the online path announces it; the list is what was read, and `announced_online` is `not_established` where the reading does not say. `route` is the call ForgePact's `lootann` ships to show the line offline: `chatcolour` since ForgePact#228 (2026-10-23; ChatAddMessage by name in dungeon-chest shape 8's argument kinds, in the online announcement's layout: the character's name as the sender part in the online sender colour 18687 and 'found <item name>' as the text part in its rarity's announcement colour; `measured` since capture forgepact-228-loot-colors-live-1, which `route.live` records for an earlier layout, and the layout that ships measured in capture forgepact-228-loot-colors-live-2, `route.live2`), with `route.previous` the `server` route it replaced and now falls back to (chosen 2026-10-04 after Live procedures 1 and 3; the game's own path, `method`, could not be tested offline (the probe's anon control did not resolve)). `chat_line` (ForgePact#228) records how ChatAddMessage builds and draws a line: its fifteen parameters in order, the segments and their colours, the layout ForgePact ships (`layout`), and that a line carries two text colours and no inline markup. `rarity_colours` is the game's rarity colour table (GetRarityColor, codes 1-11), `announcement_colours` the text colour the online announcement passes per rarity, and `announcement_sender_colour` its sender colour. Colours are GameMaker's decimal blue-green-red integers (`bgr`) with `#RRGGBB` (`rgb`) beside them; docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.4 carry the same facts. The argument is ForgePact docs/loot-announcement-research.md; the shared facts are docs/RUNTIME_DATA_MODELS.md sections 8.6 and 16.10. `chaos_tower_loot_burst` (ForgePact#227) records how a Chaos Tower floor holds its new ground items in Controller_obj.lootExplosionList until gml_Script_LootExplosion puts them back on the ground at the floor's end (docs/RUNTIME_DATA_MODELS.md section 16.14), with its own `status` and a `not_established` list.",
   "source": [
     {
       "path": "ForgePact/docs/loot-announcement-research.md",
@@ -8,6 +8,10 @@
     {
       "path": "ForgePact/docs/loot-announcement-research.md",
       "section": "Live procedure 3"
+    },
+    {
+      "path": "ForgePact/docs/loot-announcement-research.md",
+      "section": "Rarity colours (#228)"
     },
     {
       "path": "docs/RUNTIME_DATA_MODELS.md",
@@ -104,13 +108,14 @@
     "status": "measured",
     "chosen": "2026-10-23",
     "issue": "falorfrozen-cmd/ForgePact#228",
-    "session": "capture forgepact-228-loot-colors-live-1 (ForgePact#228's Live 1, 2026-10-23): research build sha256 e053249d326ed1cabd88ea373314e97ed92dcad7190f750da2aac83cc0d77151 from build.bat dev at ForgePact 9fcb9fd, slot 14 Sorak, Town of Inoya; items placed with lootannprobe place, read through out.txt's lootann line: lines, lootann stat and pixels sampled on full-resolution screenshots",
-    "sink": "gml_Script_ChatAddMessage by name, the local Player_obj as self, in dungeon-chest shape 8's argument kinds: sender part '<character> found' (the player's name, else 'You'), text part the item name (itemInfoStruct[\"28\"]), sender colour 11974842 (the game's grey chat text), text colour the online announcement's colour for the rarity (9764608 Heroic, 10681599 Angelic, 7224024 Unholy); when that call refuses, the server route's red SERVER: line is shown instead",
-    "why": "ForgePact#228 asks for the item name in its rarity's colour; ChatAddServerMessage passes red 255 for both colours and takes none (static reading), while a line carries exactly two text colours (sender and text, no inline markup; static reading), so the item name alone is coloured by putting it in the text part. That ChatAddMessage called by name with another sender shows a line is measured: dungeon-chest shape 8 (ForgePact docs/dungeon-chest-research.md, Live procedure 1b). The colours a player sees are measured in `live` (capture forgepact-228-loot-colors-live-1).",
+    "session": "capture forgepact-228-loot-colors-live-1 (ForgePact#228's Live 1, 2026-10-23): research build sha256 e053249d326ed1cabd88ea373314e97ed92dcad7190f750da2aac83cc0d77151 from build.bat dev at ForgePact 9fcb9fd, slot 14 Sorak, Town of Inoya; items placed with lootannprobe place, read through out.txt's lootann line: lines, lootann stat and pixels sampled on full-resolution screenshots. The layout that ships: capture forgepact-228-loot-colors-live-2 (ForgePact#228's Live 2, 2026-10-23, `live2`), research build sha256 f87496ed290c20303f0f364c016944fc341c6bfaac62551591f092a5aaf14d28 at ForgePact 8bbeaa0, the same character, place and method",
+    "sink": "gml_Script_ChatAddMessage by name, the local Player_obj as self, in dungeon-chest shape 8's argument kinds, in the online announcement's layout: sender part the character's name alone (the player's name, else 'You') in the online sender colour 18687 (#FF4800, orange), text part 'found <item name>' (the name from itemInfoStruct[\"28\"], no square brackets) in the online announcement's colour for the rarity (9764608 Heroic, 10681599 Angelic, 7224024 Unholy); the game draws its own stamp and separator, so the feed reads '[hh:mm] Sorak: found <item name>' (measured, `live2`); when that call refuses, the server route's red SERVER: line ('<character> found <item name>') is shown instead",
+    "why": "ForgePact#228 asks for the item name in its rarity's colour; ChatAddServerMessage passes red 255 for both colours and takes none (static reading), while a line carries exactly two text colours (sender and text, no inline markup; static reading). Live 1's build put the item name alone in the text part, with '<character> found' as a grey sender; the owner then chose the online announcement's layout (2026-10-23: the name in the online sender colour and 'found <item name>' in the rarity's colour), kept if the game draws it, which Live 2 measured. That ChatAddMessage called by name with another sender shows a line is measured: dungeon-chest shape 8 (ForgePact docs/dungeon-chest-research.md, Live procedure 1b). The colours a player sees are measured in `live` (capture forgepact-228-loot-colors-live-1) and `live2` (capture forgepact-228-loot-colors-live-2).",
     "live": {
       "capture": "forgepact-228-loot-colors-live-1",
       "date": "2026-10-23",
       "route_token": "segment-route: two-colours",
+      "layout": "an earlier build's layout, not the one that ships: the sender part '<character> found' in the grey 11974842 and the item name alone as the text part; replaced by the online layout, measured in `live2`",
       "measured": [
         "a placed Heroic (\"27\" 9), Angelic (7) and Unholy (10) item each gave one lootann line: sink=chatcolour line with sender \"Sorak found\", the item name as body, sender-colour=11974842 and dispatched=1, and the feed showed '[hh:mm] Sorak found: <item name>' with no SERVER: prefix; announced 0 to 3, sink-refused 0",
         "on all three lines the sender part was (186,184,182) = 11974842 (#BAB8B6) and the item name exactly the text colour passed: Heroic (0,255,148) = 9764608 (#00FF94), Angelic (255,252,162) = 10681599 (#FFFCA2, pale yellow, plainly apart from the grey), Unholy (216,58,110) = 7224024 (#D83A6E); one colour per part, two per line",
@@ -122,7 +127,26 @@
         "the fallback to the red server line (no call refused); harness and contract only",
         "natural drops on the coloured route",
         "co-op",
-        "the time stamp's and the separator's colours (not sampled)"
+        "the time stamp's and the separator's colours (not sampled; sampled in `live2`)"
+      ]
+    },
+    "live2": {
+      "capture": "forgepact-228-loot-colors-live-2",
+      "date": "2026-10-23",
+      "route_token": "layout: online",
+      "build": "research build sha256 f87496ed290c20303f0f364c016944fc341c6bfaac62551591f092a5aaf14d28 from build.bat dev at ForgePact 8bbeaa0, equal to the installed DLL's; slot 14 Sorak, Town of Inoya",
+      "measured": [
+        "the feed control, ChatAddServerMessage through lootannprobe say, showed a red '[22:51] SERVER: control' at once (sender, separator and text all (255,0,0), the stamp (128,128,128)), so the feed showed channel-0 lines in that session",
+        "a placed Heroic (\"27\" 9), Angelic (7) and Unholy (10) item each gave one lootann line: sink=chatcolour line with sender \"Sorak\", body \"found <item name>\", sender-colour=18687 and dispatched=1, and the feed showed '[hh:mm] Sorak: found <item name>' with no SERVER: prefix (for example '[22:51] Sorak: found Cobra Heavy Belt'); announced 0 to 3, sink-refused 0",
+        "on all three lines the sender part 'Sorak' was (255,72,0) = 18687 (#FF4800), and 'found <item name>', 'found' included, exactly the text colour passed: Heroic (0,255,148) = 9764608, Angelic (255,252,162) = 10681599, Unholy (216,58,110) = 7224024",
+        "on these message type 0 lines the game drew its own separator straight after the sender, a colon and a space (': '), in (199,179,119) = 7844807 (#C7B377), neither part's colour; the time stamp was (128,128,128) = 8421504 (#808080)",
+        "a placed Satanic item (\"27\" 6) was held as held-rarity with no line; with the switch off a placed Heroic item changed no count and showed no line"
+      ],
+      "not_run": [
+        "the fallback to the red server line (no call refused); harness and contract only",
+        "natural drops on the coloured route",
+        "the line with the game's enableGeneralChat option off",
+        "co-op"
       ]
     },
     "previous": {
@@ -176,11 +200,15 @@
     "segments": [
       {
         "part": "time stamp",
-        "colour": {"bgr": 8421504, "rgb": "#808080"}
+        "colour": {"bgr": 8421504, "rgb": "#808080"},
+        "ships": "the mod's own [hh:mm] clock stamp, drawn by the game",
+        "measured": "(128,128,128) on the feed (capture forgepact-228-loot-colors-live-2)"
       },
       {
         "part": "sender",
-        "colour": "msgNameColor (the sender colour)"
+        "colour": "msgNameColor (the sender colour)",
+        "ships": "the character's name alone (the player's name, else 'You') in the online sender colour 18687 (#FF4800)",
+        "measured": "'Sorak' in (255,72,0) = 18687 on every announced line (capture forgepact-228-loot-colors-live-2)"
       },
       {
         "part": "platform badges",
@@ -188,13 +216,28 @@
       },
       {
         "part": "separator",
-        "colour": {"bgr": 7844807, "rgb": "#C7B377"}
+        "colour": {"bgr": 7844807, "rgb": "#C7B377"},
+        "ships": "the game's own; ForgePact passes nothing for it",
+        "measured": "a colon and a space (': ') straight after the sender on a message type 0 line, in (199,179,119) = 7844807 (capture forgepact-228-loot-colors-live-2)"
       },
       {
         "part": "text, one character at a time with emoji images between characters",
-        "colour": "messageColor (the text colour); the default grey 11974842 instead when msgNameColor is exactly 6776816 (#F06767); an item link at the text's start sets it to that item's GetItemColor"
+        "colour": "messageColor (the text colour); the default grey 11974842 instead when msgNameColor is exactly 6776816 (#F06767); an item link at the text's start sets it to that item's GetItemColor",
+        "ships": "'found <item name>' in the online announcement's colour for the rarity (9764608, 10681599 or 7224024)",
+        "measured": "the whole text, 'found' included, in exactly the colour passed (capture forgepact-228-loot-colors-live-2)"
       }
     ],
+    "layout": {
+      "name": "online",
+      "status": "measured",
+      "capture": "forgepact-228-loot-colors-live-2",
+      "date": "2026-10-23",
+      "route_token": "layout: online",
+      "chosen_by": "the owner, 2026-10-23: the online announcement's layout if the game can draw it, else Live 1's measured layout",
+      "sender": "the character's name in 18687 (#FF4800, orange), the online announcement's sender colour",
+      "text": "'found <item name>' in the rarity's announcement colour, no square brackets",
+      "seen": "a placed Heroic, Angelic and Unholy item each drew '[hh:mm] Sorak: found <item name>': 'Sorak' (255,72,0), the separator ': ' (199,179,119), and 'found <item name>' (0,255,148), (255,252,162) and (216,58,110), each exactly the colour passed; so the game draws the online layout and it ships (route.live2)"
+    },
     "two_colours": "a line carries two text colours, the sender's and the text's; nothing in the text changes its colour (no colour command exists for the text)",
     "server_message": {
       "script": "gml_Script_ChatAddServerMessage",
@@ -208,12 +251,11 @@
     },
     "measured_colours": {
       "status": "measured",
-      "session": "capture forgepact-228-loot-colors-live-1 (route.live)",
-      "note": "the same call shape with sender colour 11974842 and text colour 9764608, 10681599 or 7224024 as reals drew, on the bottom-left feed, the sender part in 11974842 and the text part in exactly the text colour passed (pixel samples in route.live), so the sender and the text each carry their own colour; that nothing in the text can change its colour and the 6776816 rule were not exercised and stay static_reading"
+      "session": "captures forgepact-228-loot-colors-live-1 (route.live) and forgepact-228-loot-colors-live-2 (route.live2)",
+      "note": "the same call shape with sender colour 11974842 and text colour 9764608, 10681599 or 7224024 as reals drew, on the bottom-left feed, the sender part in 11974842 and the text part in exactly the text colour passed (pixel samples in route.live), so the sender and the text each carry their own colour; with sender colour 18687 (Live 2) the sender part drew in (255,72,0) = 18687 and the separator in 7844807 (route.live2); that nothing in the text can change its colour and the 6776816 rule were not exercised and stay static_reading"
     },
     "not_established": [
-      "that the bottom-left feed draws through DrawChatMessage (inference: the measured feed lines show a stamp and a sender)",
-      "the separator's exact characters for message type 0",
+      "that the bottom-left feed draws through DrawChatMessage (inference: the measured feed lines show a stamp, a sender, a separator and a text in exactly the colours the reading gives)",
       "what a click on a sender name in the opened chat window does offline"
     ]
   },
@@ -232,17 +274,18 @@
   ],
   "rarity_colours_note": "GetRarityColor answers white for any other code; gml_Script_GetItemColor gives an ordinary equipment item's name GetRarityColor of its itemInfoStruct[\"27\"], other item kinds have branches of their own (static reading)",
   "announcement_colours": [
-    {"code": 9, "rarity": "Heroic", "bgr": 9764608, "rgb": "#00FF94", "chosen_by": "GetRarityColor(9), on the closure's branch for \"27\" 9", "status": "static_reading", "seen_on_feed": {"status": "measured", "capture": "forgepact-228-loot-colors-live-1", "pixel": "(0,255,148)", "note": "ForgePact's chatcolour line's item name, passed as the text colour; the online path's choice of this colour stays static_reading"}},
-    {"code": 7, "rarity": "Angelic", "bgr": 10681599, "rgb": "#FFFCA2", "chosen_by": "a fixed colour on the closure's branch for \"27\" 7 or tier \"32\" 6; not the table's Angelic 10092542", "status": "static_reading", "seen_on_feed": {"status": "measured", "capture": "forgepact-228-loot-colors-live-1", "pixel": "(255,252,162)", "note": "ForgePact's chatcolour line's item name, pale yellow, plainly apart from the grey sender part; the online path's choice of this colour stays static_reading"}},
-    {"code": 10, "rarity": "Unholy", "bgr": 7224024, "rgb": "#D83A6E", "chosen_by": "a fixed colour on the closure's branch for \"27\" 10, equal to GetRarityColor(10)", "status": "static_reading", "seen_on_feed": {"status": "measured", "capture": "forgepact-228-loot-colors-live-1", "pixel": "(216,58,110)", "note": "ForgePact's chatcolour line's item name, passed as the text colour; the online path's choice of this colour stays static_reading"}},
+    {"code": 9, "rarity": "Heroic", "bgr": 9764608, "rgb": "#00FF94", "chosen_by": "GetRarityColor(9), on the closure's branch for \"27\" 9", "status": "static_reading", "seen_on_feed": {"status": "measured", "capture": "forgepact-228-loot-colors-live-1", "pixel": "(0,255,148)", "note": "ForgePact's chatcolour line's item name, passed as the text colour; the same pixel over the whole 'found <item name>' text in capture forgepact-228-loot-colors-live-2; the online path's choice of this colour stays static_reading"}},
+    {"code": 7, "rarity": "Angelic", "bgr": 10681599, "rgb": "#FFFCA2", "chosen_by": "a fixed colour on the closure's branch for \"27\" 7 or tier \"32\" 6; not the table's Angelic 10092542", "status": "static_reading", "seen_on_feed": {"status": "measured", "capture": "forgepact-228-loot-colors-live-1", "pixel": "(255,252,162)", "note": "ForgePact's chatcolour line's item name, pale yellow, plainly apart from the grey sender part; the same pixel over the whole 'found <item name>' text in capture forgepact-228-loot-colors-live-2; the online path's choice of this colour stays static_reading"}},
+    {"code": 10, "rarity": "Unholy", "bgr": 7224024, "rgb": "#D83A6E", "chosen_by": "a fixed colour on the closure's branch for \"27\" 10, equal to GetRarityColor(10)", "status": "static_reading", "seen_on_feed": {"status": "measured", "capture": "forgepact-228-loot-colors-live-1", "pixel": "(216,58,110)", "note": "ForgePact's chatcolour line's item name, passed as the text colour; the same pixel over the whole 'found <item name>' text in capture forgepact-228-loot-colors-live-2; the online path's choice of this colour stays static_reading"}},
     {"code": 6, "rarity": "Satanic", "bgr": 1447638, "rgb": "#D61616", "chosen_by": "a Satanic item of tier \"32\" 5 (SS) takes the Heroic branch, with GetRarityColor(6)", "status": "static_reading", "note": "whether a Satanic drop is announced online is not established (rarity_codes_in_closure); ForgePact does not announce it"}
   ],
-  "announcement_colours_note": "the colour NetworkSendChatMessageIngame passes as the text colour; with message type 3 the text is GetItemDropMessage's ([Softcore] or [Hardcore] tag, the finder's name, the localized just_found phrase, the loot name in square brackets), all in that one colour, so online colours the whole text. ForgePact#228's chatcolour route uses the 9, 7 and 10 colours for the item name alone",
+  "announcement_colours_note": "the colour NetworkSendChatMessageIngame passes as the text colour; with message type 3 the text is GetItemDropMessage's ([Softcore] or [Hardcore] tag, the finder's name, the localized just_found phrase, the loot name in square brackets), all in that one colour, so online colours the whole text. ForgePact#228's chatcolour route uses the 9, 7 and 10 colours for its own text part, 'found <item name>' (no tag, no localized phrase, no square brackets)",
   "announcement_sender_colour": {
     "bgr": 18687,
     "rgb": "#FF4800",
-    "note": "the sender colour NetworkSendChatMessageIngame passes (orange); the sender name comes from a protected-store read whose value is not established. ForgePact#228 does not use it: its sender part is the grey 11974842",
-    "status": "static_reading"
+    "note": "the sender colour NetworkSendChatMessageIngame passes (orange); the sender name comes from a protected-store read whose value is not established. ForgePact#228's chatcolour route passes it as its own sender colour, with the character's name as the sender part",
+    "status": "static_reading",
+    "seen_on_feed": {"status": "measured", "capture": "forgepact-228-loot-colors-live-2", "pixel": "(255,72,0)", "note": "ForgePact's chatcolour line's sender part 'Sorak', passed 18687 as the sender colour, on all three announced lines; the online path's choice of this colour stays static_reading"}
   },
   "chaos_tower_loot_burst": {
     "status": "static_reading",
