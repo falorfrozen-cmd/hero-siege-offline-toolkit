@@ -1418,7 +1418,7 @@
         "sheet": "switch on: Life 5651, Defense 7556, PDR 41% (equal to statask); switch off: Life 4901",
         "mercenary_page": "switch on: Life 12527 -> 13277, Defense 5114 -> 5614, PDR 86 -> 106, Mana Replenish 31 -> -16.04",
         "drain": "M 2352, R 140, n 2: 42 answered 92.96; mana regen 122.417 a second off, 87.37 on (81.29 expected)",
-        "replenish_unit": "0.874 mana a second per unit of id 42 (in process; Stats live 2's HUD crops 0.883)",
+        "replenish_unit": "0.874 mana a second per unit of id 42 (in process; Stats live 2's HUD crops 0.883); S7 minus S8 reads 0.745 mana a second per drained unit (35.05 over 47.04), the value kMark1ReplenishUnit adopts",
         "below_zero": "42 forced to -140: -124.131 mana a second from 1428",
         "fcr_reads": "statask 106: 54, 158 (castrate 100), 54"
       },
@@ -1507,6 +1507,270 @@
         "id 38's original read 49 in S5's bonusread and 140 in S6's (answered 74 and 165)"
       ],
       "source": "ForgePact docs/mark1-set-research.md (Stats live 4 results, Stats live 4 decision); docs/RUNTIME_DATA_MODELS.md 16.13; forgepact-166-mark1-set-playtest2-live-4.md, not tracked"
+    },
+    "live5": {
+      "status": "measured",
+      "date": "2026-10-23",
+      "procedure": "Stats live procedure 5 of the 2026-10-22 playtest (ForgePact#166): the player's mana regen tick at the game's frame rate as found (about 144) and at 60, and the Mark 1 drain's measured share at the shipped unit 0.745, on save slot 14 Sorak (White Mage) with Mana Orb (Q) and Soul Spurn (R) unbound and Shadow Bolt bound to Y, mana read in process (mark1probe vitals), 10:11 to 10:49 UTC, with the hub's x64dbg MCP attached at D1 (default rate) and D2 (60); saves restored clean at the end.",
+      "research_dll_sha256": "f8e36e7701a6aaf1911cc0cb7eae23c1ad6661949155c79bf07cf394da21dc1c",
+      "forgepact_commit": "2d3e9dd",
+      "summary": "16 checks: 11 pass, 3 fail, 1 not-observed, 1 not-run. drain-pct pass at 1.117% (+/-0.005) of maximum mana a second per skill at unit 0.745; drain-capped 0.956% at 60; tick-shape pass (divisor 10 at both rates); regen-fps not-observed (r 0.856); fps-default fail against the Video page's disabled Framerate row (60) while the game ran 143.7 by its own counter (the owner dropped it from the required set, data kept); dbg-tick and dbg-replenish fail their rule at D1 only because the logpoints slowed the game to about 60.5 FPS, one hit a tick by the gain at both settings.",
+      "bar": "row 0: 0,0 darkOath, 0,2 chainOfHolyLight, 0,4 healingZone (252, E), 0,6 shadowBolt (239, Y, bound by the operator); Mana Orb (Q) and Soul Spurn (R) unbound at S0; auto talents=-/252/-/239 free=-/0/-/1",
+      "fps_setting": "Video page: VSync Off, Framerate row 60 drawn dim (menulayout enabled=0 on both its buttons); the game's own counter 143-144. The owner capped the game at 60 (what was changed not stated; the page then showed VSync On, Framerate still 60 disabled, counter 60); the operator set VSync Off again in S9 (143.5 FPS).",
+      "checks": {
+        "dll-hash": {
+          "verdict": "pass",
+          "observed": "lease dll_sha256 f8e36e7701a6aaf1911cc0cb7eae23c1ad6661949155c79bf07cf394da21dc1c"
+        },
+        "control": {
+          "verdict": "pass",
+          "observed": "pong (YYTK 4.0.1)"
+        },
+        "marker": {
+          "verdict": "pass",
+          "observed": "research build; cost=drain drain=1.00 unit=0.745 drained=0; S0b install=installed, no refused line"
+        },
+        "zero-control": {
+          "verdict": "pass",
+          "observed": "manaregen 0 (statask 42=0): 600 frames, dt 4174 ms, mana-gain=0"
+        },
+        "fps-default": {
+          "verdict": "fail",
+          "observed": "600/4.174 = 143.7 FPS (perf 144.1) against the displayed Framerate 60, a disabled row; within 0.2% of 144, which the page did not show"
+        },
+        "tick-rate-default": {
+          "verdict": "pass",
+          "observed": "statask 42=1; gain 219 in 25.007 s, T 8.7575 ticks/s (+/-0.46%)"
+        },
+        "tick-shape": {
+          "verdict": "pass",
+          "observed": "off 308 vs 14 x T x dt = 307.37 (tol 20.15); on 176 vs 8 x T x dt = 175.85 (tol 11.52); R 140, R-D 76.8591"
+        },
+        "drain-pct": {
+          "verdict": "pass",
+          "observed": "a = 14 - 8 = 6 (p_off - p_on 6.02), T 8.7575, n 2, M 2352, unit 0.745: 1.117% +/-0.005"
+        },
+        "drain-tune": {
+          "verdict": "not-run",
+          "observed": "drain-pct in band; S5 not needed"
+        },
+        "fps-capped": {
+          "verdict": "pass",
+          "observed": "600/10.013 = 59.9 FPS (perf 16.66 ms = 60.0); the owner set the cap"
+        },
+        "tick-rate-capped": {
+          "verdict": "pass",
+          "observed": "statask 42=1; gain 225 in 30.008 s, T 7.498 ticks/s, 8.0 frames a tick"
+        },
+        "drain-capped": {
+          "verdict": "pass",
+          "observed": "d 10 (630 vs 631.41, tol 26.63), a 6 (p_off - p_on 5.99): 0.956%, ratio 0.856 to drain-pct; clock prediction 1.083-1.150 and frame-count 0.466 both not met"
+        },
+        "regen-fps": {
+          "verdict": "not-observed",
+          "observed": "d 10; r = 7.498/8.7575 = 0.856; frame band <= 0.479; 122.6 mana/s at the default, 105.0 at 60 (R 140)"
+        },
+        "dbg-control": {
+          "verdict": "pass",
+          "observed": "pm 609 per 10 s (D1), 571 (D2); instrument proven at both attaches by the frame counter"
+        },
+        "dbg-tick": {
+          "verdict": "fail",
+          "observed": "D1 (60.5 FPS under the debugger) tk 144-159 vs 1201 frames and 173.8 ticks by S3's T (0.83-0.91), 0.95-1.05 of the gain's 152 ticks; D2 tk 150-166 vs 157.8 (0.95-1.05), every tick"
+        },
+        "dbg-replenish": {
+          "verdict": "fail",
+          "observed": "D1 rp 144-159 (0.83-0.91 of S3's ticks, 0.95-1.05 of the gain's 152); D2 rp 150-166 vs 157.8 (0.95-1.05); gain/rp 13.4-14.8 (D1), 13.3-14.7 (D2)"
+        }
+      },
+      "numbers": {
+        "max_mana": 2352,
+        "replenish_answer": 140,
+        "proc_columns": 2,
+        "windows": [
+          {
+            "step": "S2",
+            "fps_setting": "default (about 144)",
+            "switch": "off",
+            "forced_answer": 0,
+            "frames": 600,
+            "ms": 4174,
+            "gain": 0,
+            "fps": 143.7,
+            "perf_ms_per_frame": 6.94
+          },
+          {
+            "step": "S3",
+            "fps_setting": "default",
+            "switch": "off",
+            "forced_answer": 1,
+            "frames": 3601,
+            "ms": 25007,
+            "gain": 219,
+            "ticks": 219,
+            "per_tick": 1,
+            "ticks_per_s": 8.7575
+          },
+          {
+            "step": "S4 off",
+            "fps_setting": "default",
+            "switch": "off",
+            "answer": 140,
+            "frames": 361,
+            "ms": 2507,
+            "gain": 308,
+            "ticks": 22,
+            "per_tick": 14,
+            "p": 14.03
+          },
+          {
+            "step": "S4 on",
+            "fps_setting": "default",
+            "switch": "on",
+            "answer": 76.8591,
+            "drained_units": 63.1409,
+            "unit": 0.745,
+            "frames": 361,
+            "ms": 2510,
+            "gain": 176,
+            "ticks": 22,
+            "per_tick": 8,
+            "p": 8.01
+          },
+          {
+            "step": "D1",
+            "fps_setting": "default, about 60.5 FPS under the logpoints",
+            "switch": "off",
+            "answer": 140,
+            "frames": 1201,
+            "ms": 19849,
+            "gain": 2128,
+            "ticks": 152,
+            "per_tick": 14,
+            "pm_hits": [
+              1148,
+              1263
+            ],
+            "tk_hits": [
+              144,
+              159
+            ],
+            "rp_hits": [
+              144,
+              159
+            ]
+          },
+          {
+            "step": "S6",
+            "fps_setting": "60",
+            "switch": "off",
+            "forced_answer": 0,
+            "frames": 600,
+            "ms": 10013,
+            "gain": 0,
+            "fps": 59.9,
+            "perf_ms_per_frame": 16.66
+          },
+          {
+            "step": "S7",
+            "fps_setting": "60",
+            "switch": "off",
+            "forced_answer": 1,
+            "frames": 1801,
+            "ms": 30008,
+            "gain": 225,
+            "ticks": 225,
+            "per_tick": 1,
+            "ticks_per_s": 7.498
+          },
+          {
+            "step": "S8 off",
+            "fps_setting": "60",
+            "switch": "off",
+            "answer": 140,
+            "frames": 361,
+            "ms": 6015,
+            "gain": 630,
+            "ticks": 45,
+            "per_tick": 14,
+            "p": 13.97,
+            "divisor": 10
+          },
+          {
+            "step": "S8 on",
+            "fps_setting": "60",
+            "switch": "on",
+            "answer": 76.8591,
+            "drained_units": 63.1409,
+            "unit": 0.745,
+            "frames": 361,
+            "ms": 6016,
+            "gain": 360,
+            "ticks": 45,
+            "per_tick": 8,
+            "p": 7.98
+          },
+          {
+            "step": "D2",
+            "fps_setting": "60",
+            "switch": "off",
+            "answer": 140,
+            "frames": 1201,
+            "ms": 21051,
+            "gain": 2212,
+            "ticks": 158,
+            "per_tick": 14,
+            "pm_hits": [
+              1140,
+              1264
+            ],
+            "tk_hits": [
+              150,
+              166
+            ],
+            "rp_hits": [
+              150,
+              166
+            ]
+          },
+          {
+            "step": "S9",
+            "fps_setting": "default again",
+            "frames": 300,
+            "ms": 2091,
+            "gain": 0,
+            "fps": 143.5
+          }
+        ],
+        "frames_per_tick": {
+          "about 144 FPS": 16.4,
+          "60 FPS": 8.0,
+          "60.5 FPS under the debugger": 7.9
+        },
+        "units_tried": [
+          {
+            "unit": 0.745,
+            "fps": "about 144",
+            "drain_pct": 1.117,
+            "uncertainty": 0.005
+          },
+          {
+            "unit": 0.745,
+            "fps": "60",
+            "drain_pct": 0.956
+          }
+        ],
+        "regen_fps": {
+          "r": 0.856,
+          "divisor_at_60": 10,
+          "frame_rate_ratio": 0.417,
+          "mana_per_s_at_R140": {
+            "default": 122.6,
+            "60": 105.0
+          }
+        }
+      },
+      "source": "ForgePact docs/mark1-set-research.md (Stats live procedure 5, Stats live 5 results, Stats live 5 decision); docs/RUNTIME_DATA_MODELS.md 7.10; forgepact-166-mark1-set-playtest2-live-5.md, not tracked"
     }
   }
 }

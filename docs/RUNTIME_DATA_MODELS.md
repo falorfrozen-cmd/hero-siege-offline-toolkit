@@ -1721,19 +1721,50 @@ HUD's methods; one headless slot-reference scan (`FindSlotRefSites.java`) of
   unit, explains the gap: the drain took 14 − 10 = 4 whole mana a tick
   where 4.70 was asked. At the shipped 0.745 (answer 140, maximum 2352, two
   proc columns, 63.14 drained) each tick would take 14 − 8 = 6 mana, about
-  1.12% of maximum mana a second per skill (inferred; not measured). One
-  mana a tick is about 0.19% of that maximum a second per column, so the
-  drain moves in steps of that size.
+  1.12% of maximum mana a second per skill (measured in Stats live 5,
+  below). One mana a tick is about 0.19% of that maximum a second per
+  column, so the drain moves in steps of that size.
   [Regen and the frame rate](../ForgePact/docs/mark1-set-research.md#regen-and-the-frame-rate-static-reading)
+- **Measured, Stats live 5 (2026-10-23), in process (`vitals` windows,
+  the replenish forced to 1 for the tick counts, every other regen source
+  off the bar), on one character (maximum mana 2352, answer 140):**
+  - **The tick's rate at each frame rate.** At about 143.7 frames a second
+    (VSync off; the Video page's Framerate row drawn disabled and showing
+    60 throughout, the game's own counter at 143 to 144): 219 ticks in
+    25.007 s, 8.76 a second, a tick every 16.4 frames. At 59.9 frames a
+    second (VSync on): 225 ticks in 30.008 s, 7.50 a second, a tick every
+    8.0 frames. The tick rate fell to 0.856 of the higher rate while the
+    frame rate fell to 0.417, so the tick is neither a fixed frame count
+    (which predicts about 0.42) nor held at the same rate a second within
+    10% (which predicts 0.9 to 1.1). Which `game_get_speed` value was in
+    force at each rate was not read, since the setting row showed 60 in
+    both. With the logpoints armed at the higher setting the game slowed
+    to about 60.5 frames a second and ticked 7.66 a second, a tick every
+    7.9 frames, close to the 60 FPS window (inferred: the tick follows the
+    frame rate the game reaches, not only its setting).
+  - **The per-tick amount is the answer over ten, rounded up, at both
+    rates.** Every window's gain was a whole number of ticks of
+    ceil(answer / 10): answer 140 gave 14 a tick (308 and 630 = 45 × 14),
+    answer 76.86 (the drain on) gave 8 a tick (176 and 360 = 45 × 8); the
+    divisor stayed 10 at 60.
+  - **What the logpoints counted.** The entries of `playerUpdateTimerMana`
+    and `StatManaReplenish` were each hit once per tick, within 5% of each
+    window's ticks (from its gain), and far fewer times than frames (0.12
+    to 0.14 a frame), at both settings: the tick script runs only when a
+    tick is due, and the game asks id 42 once a tick. Mana gained per hit
+    read 13.3 to 14.8 against 14 a tick.
+  - **Mark 1's drain.** At the shipped unit 0.745 with two proc columns
+    each tick took 14 − 8 = 6 mana: 1.117% of maximum mana a second per
+    skill at about 144 frames a second (±0.005) and 0.956% at 60, both
+    inside the owner's 0.95% to 1.15% band.
+  [Stats live 5 results](../ForgePact/docs/mark1-set-research.md#stats-live-5-results)
 - **Not established:**
-  - whether the player's tick is counted in frames (a fixed count, or one
-    taken from `game_get_speed`) or timed by the clock, so whether the
-    regen, and Mark 1's drain with it, slows at a lower frame rate (Live
-    procedure 5 measures 144 against 60);
-  - whether the tick's divisor (the Step's argument; the Step reads
-    `game_get_speed` just before the call) depends on the FPS setting;
-  - the drain's measured share of maximum mana a second at the shipped
-    unit;
+  - how the player's tick is timed: Stats live 5 measured 8.76 ticks a
+    second at about 144 frames a second and 7.50 at 60, which fits neither
+    a fixed frame count nor a clock-held rate; the mechanism (the Step's
+    argument and what it reads) was not read;
+  - what the Video page's disabled Framerate row means, and which
+    `game_get_speed` value the game runs with while it is disabled;
   - what the other three blends mean (plausibly mana, cooldown or stacks);
   - who else writes a button's `enabled`, and what else it changes besides
     the look (the tooltip and the left click were unchanged, measured
