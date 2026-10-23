@@ -4166,6 +4166,14 @@ A monster that special content spawned carries a non-zero `specialType` in its s
 
   No stock routine offers keys, fragments, materials, socketables or relics. The gamble is not a vendor routine or a named script: it is the gamba machine object, `Slot_Machine_01_obj`, whose logic lives in its own events (§ 20).
 - **Selling to a vendor pays** the item's info value 9 × the stack, rounded up. Materials are worth a token 10, runes and gems 125-381, most keys 15-5,000. **Static reading.**
+- **The merchant sale** (**static reading**, 2026-10-23, build `498d588550d8`, ForgePact #196), in our own words:
+  - **No named script sells an item.** Every SDK script whose name mentions merchant, vendor, shop, sell, buyback, price or value was checked, and each is something else: `CallbackMerchantSellPoolExit` and `CallbackMerchantSellPoolResetGold` handle an online API answer (they decrypt and hash it); `GetMerchantPrice` is a fixed table of 174 names to values, not an item's sale price; `GetItemBuyPrice` belongs to buying from the merchant (it sits beside a purchase's gold checks); the `UiAMarket*` scripts are the player market.
+  - **The sale is one branch of a UI closure**: `UI_Inventory_Grid_obj`'s `m_MoveItemToGrid` (§ 9.8 lists it on the 2026-09-17 build; its `anon@N` name moves with every patch, § 5.3), taken when an item is moved into the merchant's grid. The closure takes the item from the drag state, not from an argument ([stash move research](../ForgePact/docs/stash-move-research.md), § Static reading), so a ground item cannot be handed to it.
+  - **Its steps, in order:** check the item's hash (`ItemCheckHash`, reporting the client through `ReportClient` on a failure); take the dragged item's fingerprint (`itemDragFingerprint`) and append it to the merchant window's `sellPoolFingerprintList` (the buyback / sell pool) with `ds_list_add`; compute the price as `ceil` of the item's `GetItemInfo` answer for key 9 multiplied by a second value; credit it with `PickUpGoldCheck(GetCounterHash(), price, 1, undefined, undefined, undefined)`, six arguments; write the UI gold log with `GoldLogAdd(18, price)`, two arguments (§ 13.11); then make one more call, which looks like a sound and was not identified.
+  - **A second branch** credits `PickUpGoldCheck(hash, price, undefined, undefined, undefined, undefined)` and writes no gold log. Its condition was not read, so when a sale takes it is **not established**.
+  - **What this confirms of the bullet above.** `GetItemInfo(key, default)` answers the item's `itemInfoStruct[key]` (§ 23.2), so the first factor is `itemInfoStruct["9"]`; this reading confirms the key 9, the multiplication and the rounding up (`ceil`). That the second factor is the stack count (`itemDefinitionStruct.o`, absent counting as 1) is AFK FARM's earlier reading and was **not re-read** here.
+  - **`GenerateItemPrice`** reads the item's definition and its rarity code (a base of 15, 30, 50, 225 or 450 by rarity, 5 otherwise) and writes item info through `SetItemInfo`. Which key it writes is **not established**; key 9 is the natural guess.
+  - What the sale changes, then: the gold balance (through `PickUpGoldCheck` only, as below), the UI gold log on the first branch, and the buyback list. ForgePact's `autosell` (#196) mirrors the first branch's price, credit and log for a filter-hidden ground item by name and leaves the buyback list alone.
 - **Gold** is account-wide, with separate pools for softcore, hardcore and Blood Pact (`hs2saves\shop.ini`, `[gold]`). The offline cap is 500,000,000.
   - `PickUpGoldCheck(GetCounterHash(), amount, …)` is the only call that changes the balance, both credits and debits. `GoldLogAdd` only writes the UI log.
   - AFK FARM's `worker pay` and `worker credit` (0.9) use `PickUpGoldCheck` with a fresh hash, one receipt per request. **Measured** 2026-09-25: a `worker credit` of 5,000 raised the balance by exactly 5,000.
@@ -4206,7 +4214,10 @@ yet known to be every credit. In our own words, with labels:
   two-argument UI-log writer (**static reading**, 2026-10-13). ForgePact's
   sensor accepts 1 to 4 arguments and counts the last one that decodes as a
   positive whole number (the producer's adaptive rule), so the amount at
-  index 1 is what it counts.
+  index 1 is what it counts. The merchant sale's first branch logs through
+  it with argument 0 = 18 and the price at argument 1, so a vendor sale on
+  that branch reaches it; the second branch writes no gold log (**static
+  reading**, 2026-10-23, ForgePact #196, § 13.10 "The merchant sale").
 - **`ExperienceUpdate`** takes **two arguments**; **argument 0** is the
   experience credited. A call the game refuses returns an explicit boolean
   `false`, and that call is not a gain. **The Tracker's reviewed code profile
