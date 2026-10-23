@@ -1375,6 +1375,54 @@
         "regen": "R 257: 676 in 2.98 s (0.883 per unit per second, HUD crops); answer 128.581: 338 in 2.97 s"
       },
       "source": "ForgePact docs/mark1-set-research.md (Stats live 2 results, Stats live 2 decision); docs/RUNTIME_DATA_MODELS.md 16.13; forgepact-166-mark1-set-playtest2-live-2.md (Attempt 2), not tracked"
+    },
+    "live3": {
+      "status": "measured",
+      "date": "2026-10-23",
+      "procedure": "Stats live procedure 3 of the 2026-10-22 playtest (ForgePact#166): who asks for Defense (92) and PDR (97) when the player is struck, the other asker's object, the character sheet's answered askers and the mercenary's page, the shipped mana drain from below the maximum, a replenish below zero, the replenish unit in process, and stat-read in one command file, on save slot 14 Sorak (White Mage) with Mana Orb (Q) and Soul Spurn (R) unbound, 07:11 to 07:27 UTC, with the hub's x64dbg MCP attached from D1 (after S2) to D2 (before S4); saves restored clean at the end.",
+      "research_dll_sha256": "d265cb6571c30e1ae4bd4b51b3da6c89376cf51bfb3d1d6e40fa3e9e23472531",
+      "forgepact_commit": "6545891",
+      "summary": "21 checks: 17 pass, 2 fail, 2 not-observed. Required 10 of 10 pass; validity dbg-getters and hit-control pass; research 5 pass, 2 fail (merc-page, stat-read), 2 not-observed (bonus-def-hit, bonus-pdr-hit).",
+      "bar": "row 0: 0,0 darkOath (242), 0,2 chainOfHolyLight (250, the right button), 0,4 healingZone (252, E), 0,6 shadowBolt (239, Y); Mana Orb (Q) and Soul Spurn (R) unbound by the operator through the bar editor at S0; auto talents=-/252/-/239 free=-/0/-/1",
+      "checks": {
+        "dll-hash": {"verdict": "pass", "observed": "lease dll_sha256 d265cb6571c30e1ae4bd4b51b3da6c89376cf51bfb3d1d6e40fa3e9e23472531"},
+        "control": {"verdict": "pass", "observed": "pong (YYTK 4.0.1)"},
+        "marker": {"verdict": "pass", "observed": "research build; route=proc cost=drain drain=1.00 drained=0 sheet=0; S0b install=installed, no refused line"},
+        "dbg-control": {"verdict": "pass", "observed": "777 lines over a 10 s idle at a 13.0 ms baseline; logging through every window; instrument proven by the frame counter (29325 to 29434, no answer at the hold, 29671)"},
+        "vitals-control": {"verdict": "pass", "observed": "vitals 4374/4374 and 3341/3341 against statask 36=4374 37=3341; manaregen 0 -> 42=0; Y held 10 s: mana 3341 -> 1937 (-42.0%)"},
+        "others-control": {"verdict": "pass", "observed": "switch off, the sheet's bonusothers: 25 entries"},
+        "no-leak": {"verdict": "pass", "observed": "every Mercenary_obj, Companion_obj, Controller_obj, White_Mage_Healing_Zone_obj, Legion_Skeleton(_Archer)_Passive_obj, Spider_Passive_obj and Zombie_Passive_obj entry X->X; only UI_Talent_Screen_Attribute_obj and UI_Button_Talent_Player_obj differed"},
+        "sheet-life": {"verdict": "pass", "observed": "36:UI_Talent_Screen_Attribute_obj 4901->5651 on, 4901->4901 off"},
+        "sheet-defense": {"verdict": "pass", "observed": "92:UI_Talent_Screen_Attribute_obj 7056->7556, 97: 21->41"},
+        "drain-default": {"verdict": "pass", "observed": "M 2352, R 140, n 2: 37 2352 off and on; 42 on 92.96 (expected 92.96); cost=drain drain=1.00 drained=42 (S0 0)"},
+        "dbg-getters": {"verdict": "pass", "observed": "statask 92,97: one df and one pd line with one self in town, a new self in Act_01_01"},
+        "hit-control": {"verdict": "pass", "observed": "S3a: 4 hu (sc_hurt) lines with the room's reference self; S3b none"},
+        "bonus-def-hit": {"verdict": "not-observed", "observed": "no df line with the reference self in S3a or S3b; S3b's 67 df lines carried another self", "note": "research"},
+        "bonus-pdr-hit": {"verdict": "not-observed", "observed": "S3a: 4 pd with the reference self after each hu, 97 21->21 at two pieces (as designed); S3b: no hit, 14 pd with another self", "note": "research"},
+        "other-object": {"verdict": "pass", "observed": "92 and 97: Mercenary_obj (92*69, 97*14 against S3b's 67 df and 14 pd with that self); 36: Legion_Skeleton_Archer_Passive_obj, Legion_Skeleton_Passive_obj, Spider_Passive_obj, Zombie_Passive_obj; 64: Companion_obj, Mercenary_obj; every a0=1", "note": "research, recorded"},
+        "merc-page": {"verdict": "fail", "observed": "the talent screen's Mercenary tab, switch on: UI_Talent_Screen_Attribute_obj 36 12527->13277, 92 5114->5614, 97 86->106, 38 886->911, 161 140->175, 42 31->-16.04; UI_Button_Talent_Player_obj 2 0->5; the page showed Life 13277, Mana Replenish -16.04", "note": "research: the bonus and the cost reach the mercenary's page on the sheet; the mercenary's own calls stayed X->X"},
+        "sheet-view": {"verdict": "pass", "observed": "Base Stats Life 5651 = statask 36; Defensive tab (hover, then a held left click at 744,544): Defense 7556 = 92, PDR 41% = 97", "note": "research"},
+        "regen-units": {"verdict": "pass", "observed": "R 140, switch off: 154 mana in 1258 ms, 122.417 a second, 0.874 per unit", "note": "research, recorded; read in process (mark1probe vitals)"},
+        "drain-rate": {"verdict": "pass", "observed": "switch on (42 = 92.96): 87.37 a second against 81.29 expected (+7.5%)", "note": "research"},
+        "drain-below": {"verdict": "pass", "observed": "manaregen -140 from 1428/2352: -518 (-22.0%) in 4173 ms, -124.131 a second; drains", "note": "research, recorded; a first attempt from the maximum is not counted"},
+        "stat-read": {"verdict": "fail", "observed": "one command file: 106 54, 158 after statadd castrate 100 (first boosted call 52 -> 152), 54 after castrate 0; +104 against 100 +- 2", "note": "research"}
+      },
+      "dispatcher_askers": {
+        "what": "x64dbg logpoints at StatDefense (df), StatPhysicalDamageReduction (pd) and sc_hurt (hu), each logging its self, beside a PlayerMovement control; Mark 1's bonusothers recorder naming each non-player asker's object and argument 0.",
+        "struck": "S3a: four sc_hurt calls with the player's self, each followed by a PDR (97) ask with the player's self; no Defense (92) ask with the player's self in either window",
+        "outside_town": "Mercenary_obj asks 92 and 97 (the non-player self of Stats live 2); summons' and pets' passives ask 36; Companion_obj and Mercenary_obj ask 64",
+        "sheet": "Player tab: UI_Talent_Screen_Attribute_obj asks 2, 21, 36, 37, 38, 42, 64, 92, 97, 103, 106, 161 to 165, 167; UI_Button_Talent_Player_obj asks 2; Mercenary tab: the same objects ask for the mercenary's stats, Load_Mana_Costs_obj asks 2; UI_Talent_Screen_Allocate_obj and Player_Talent_Tooltip_obj not seen asking",
+        "argument_0": "1 on every asker, the player's sheet, the mercenary and the passives alike"
+      },
+      "numbers": {
+        "sheet": "switch on: Life 5651, Defense 7556, PDR 41% (equal to statask); switch off: Life 4901",
+        "mercenary_page": "switch on: Life 12527 -> 13277, Defense 5114 -> 5614, PDR 86 -> 106, Mana Replenish 31 -> -16.04",
+        "drain": "M 2352, R 140, n 2: 42 answered 92.96; mana regen 122.417 a second off, 87.37 on (81.29 expected)",
+        "replenish_unit": "0.874 mana a second per unit of id 42 (in process; Stats live 2's HUD crops 0.883)",
+        "below_zero": "42 forced to -140: -124.131 mana a second from 1428",
+        "fcr_reads": "statask 106: 54, 158 (castrate 100), 54"
+      },
+      "source": "ForgePact docs/mark1-set-research.md (Stats live 3 results, Stats live 3 decision); docs/RUNTIME_DATA_MODELS.md 16.13; forgepact-166-mark1-set-playtest2-live-3.md, not tracked"
     }
   }
 }

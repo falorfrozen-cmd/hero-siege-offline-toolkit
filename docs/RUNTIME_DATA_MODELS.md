@@ -5504,15 +5504,18 @@ words; nothing here quotes the game's code.
     `PlayerTakeDamage` from the same two events. A collision event runs on
     the instance it belongs to, and a called script keeps its caller's self
     (GameMaker's rule, not read in this build), so the player's own Defense
-    and PDR are asked with the player as self when an enemy strikes it. An
-    inference, to be measured.
+    and PDR are asked with the player as self when an enemy strikes it.
+    **Measured in part** (Stats live 3, below): four hits on the player each
+    ran `sc_hurt` with the player as self and then asked 97 with the player
+    as self; no 92 ask with the player as self came with them (not
+    observed; whether those hits were projectiles was not read).
   - **The mercenary asks for itself** (static reading): `Mercenary_obj`'s
     Alarm 5 asks 36, 37, 64, 2, 8 and more at 18 sites, and its melee
     collision asks 97 at two. That fits what Stats live 2 measured outside
     town, a non-player self asking 92 about once every 344 control hits (a
     periodic alarm) and 97 in pairs, while the character played (slot 14,
     Sorak) has a mercenary (§ 7.6). That this self is a `Mercenary_obj` is
-    **not established**.
+    **measured** (Stats live 3, below).
   - **The talent screen asks with its own objects as self** (static reading
     and measured): the T screen is the character sheet (Player tab: Base
     Stats, Offensive, Defensive, Summoned, Statistics; it scrolls).
@@ -5525,8 +5528,9 @@ words; nothing here quotes the game's code.
     Stats live 2 measured two fresh instances asking 92 twice and 97 three
     times on each opening of the sheet, and the sheet showed Life 4901 while
     the HUD read 5651 with Mark 1's id-36 answer on: the sheet asks for the
-    player's stats with a self that is not the player. Which of the four
-    objects draws Base Stats' Life is **not established**.
+    player's stats with a self that is not the player. Which object asks
+    for Base Stats' Life is **measured** (Stats live 3, below):
+    `UI_Talent_Screen_Attribute_obj`, for 36, 92 and 97 alike.
   - `Load_Player_Stats_obj`'s Step calls the dispatcher at 226 sites, all
     with constant damage ids (2, 3 to 10, 79, 194, 355, 361, 561 to 565),
     none of them 36, 92 or 97 (static reading).
@@ -5537,13 +5541,55 @@ words; nothing here quotes the game's code.
     `StatDefense`, `StatPhysicalDamageReduction` and `StatMaxLife` read
     `playerBuff` (63, 181 and 85 references) and test `instance_exists` (9,
     28 and 13). So the unit a stat is computed for may be argument 0 rather
-    than self; **not established**.
+    than self; **not established**. Measured in Stats live 3 (below):
+    argument 0 read 1 on every asker recorded, the player's sheet, the
+    mercenary and summons alike, so it does not tell them apart.
   - **The HUD's numbers** (static reading): `DrawHud` draws text through
     `draw_text` (32 references) after reading values through the protected
     store (`gDataProtected`'s `GetVariable`, 45 references) and `pSt` (8).
     That its life and mana `current / max` texts are among them is
-    plausible, **not established**.
+    **measured** (Stats live 3, below: the text it draws agreed with the
+    dispatcher's 36 and 37).
   [Static reading after Stats live 2](../ForgePact/docs/mark1-set-research.md#static-reading-after-stats-live-2)
+- **Measured 2026-10-23, Stats live 3** (ForgePact's Mark 1, slot 14
+  "Sorak", White Mage, in town and in Outskirts of Inoya, Mana Orb and Soul
+  Spurn off the bar; debugger logpoints at `StatDefense`,
+  `StatPhysicalDamageReduction` and `sc_hurt` logging each call's self
+  beside a `PlayerMovement` control; Mark 1's recorder naming each
+  non-player asker's object and argument 0; life and mana read in process
+  from the text `DrawHud` draws):
+  - **When an enemy strikes the player**, `sc_hurt` runs with the player
+    as self and the player's 97 is asked with the player as self, once per
+    hit (four hits). The player's 92 was not asked with the player as self
+    on those hits (not observed).
+  - **The other self outside town is the mercenary.** `Mercenary_obj`
+    asked 92 and 97 (69 and 14 times, matching the logpoints' counts for
+    that self); summons' and pets' passives (`Legion_Skeleton_Passive_obj`,
+    `Legion_Skeleton_Archer_Passive_obj`, `Spider_Passive_obj`,
+    `Zombie_Passive_obj`) asked 36 with the player's values; `Companion_obj`
+    and `Mercenary_obj` asked 64. Argument 0 read 1 on every asker.
+  - **The character sheet's askers.** On its Player tab
+    `UI_Talent_Screen_Attribute_obj` asks 2, 21, 36, 37, 38, 42, 64, 92, 97,
+    103, 106, 161 to 165 and 167, and `UI_Button_Talent_Player_obj` asks 2;
+    the sheet's Base Stats Life and its Defensive tab's Defense and Physical
+    damage reduction equal what the dispatcher answers those asks.
+    `UI_Talent_Screen_Allocate_obj` and `Player_Talent_Tooltip_obj` were not
+    seen asking. The sheet's own Mercenary tab asks for the mercenary's
+    stats through the same `UI_Talent_Screen_Attribute_obj` (and id 2
+    through `UI_Button_Talent_Player_obj` and `Load_Mana_Costs_obj`), so an
+    answer keyed on that object reaches the mercenary's page too.
+  - **The HUD's life and mana text** matches the dispatcher's 36 and 37
+    maxima, and follows a spend (mana 3341 to 1937 over a 10 s key hold).
+  - **The replenish unit**: with id 42 at its own 140, mana rose 122.417 a
+    second, 0.874 a second per unit (read in process; Stats live 2's HUD
+    crops read 0.883). With 42 answered 92.96 it rose 87.37 a second, within
+    8% of that unit's prediction.
+  - **A replenish below zero drains.** With 42 forced to −140 from 1428 of
+    2352, mana fell 518 in 4.2 s, −124.131 a second: the game's regen
+    applies a negative replenish, it does not stop at zero.
+  - **Faster Cast Rate's 106** read 54, 158 and 54 in one command file
+    around `statadd castrate 100` and back to 0: +104, not +100.
+  [Mark 1 Stats live 3 results](../ForgePact/docs/mark1-set-research.md#stats-live-3-results)
 - **Not established:**
   - which line the game lights at 3 and at 4 pieces for its own sets (the
     one measured case: with 2 pieces counted, Zealot's Prophecy's first line
